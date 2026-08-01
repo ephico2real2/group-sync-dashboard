@@ -588,12 +588,21 @@ function groupDetail() {
   const members = d.members || [];
   const memberBody = members.length
     ? `<div class="scroll-x"><table>
-        <thead><tr><th>User</th><th>Member since (first observed)</th><th>Last confirmed</th></tr></thead>
-        <tbody>${members.map((m) => `<tr class="rowlink" data-user="${esc(m.user_name)}">
+        <thead><tr><th>User</th><th>In this group since</th><th>First ever granted</th>
+          <th>Last confirmed</th></tr></thead>
+        <tbody>${members.map((m) => {
+          // Distinguished on purpose: if a user left and rejoined, "since" is the current
+          // unbroken stretch while "first ever" is the original grant. Showing only the
+          // former would tell an auditor access is newer than it is.
+          const rejoined = m.original_first_seen_at
+            && m.original_first_seen_at !== m.first_seen_at;
+          return `<tr class="rowlink" data-user="${esc(m.user_name)}">
           <td><span class="drill" tabindex="0" role="button">${esc(m.user_name)}</span></td>
           <td class="mono">${esc(fmtTime(m.first_seen_at))} <span class="muted">(${esc(ago(m.first_seen_at))})</span></td>
+          <td class="mono ${rejoined ? "" : "muted"}">${esc(fmtTime(m.original_first_seen_at))}${
+            rejoined ? ` <span class="badge warning" style="margin-left:4px"><span class="glyph" aria-hidden="true"></span>rejoined</span>` : ""}</td>
           <td class="mono muted">${esc(ago(m.last_seen_at))}</td>
-        </tr>`).join("")}</tbody>
+        </tr>`;}).join("")}</tbody>
       </table></div>`
     : `<div class="empty-note">This group has no members. If it is operator-managed, the
         LDAP-side members either do not resolve or were filtered out — no object is created

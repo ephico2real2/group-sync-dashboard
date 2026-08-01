@@ -16,6 +16,7 @@ Two tables here are not in PLAN §10 and are additions the first slice found it 
 from __future__ import annotations
 
 import sqlite3
+import threading
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -128,6 +129,7 @@ class Store:
         self.path = path
         if path != ":memory:":
             Path(path).parent.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.RLock()
         self._conn = sqlite3.connect(path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
@@ -140,7 +142,19 @@ class Store:
 
     @contextmanager
     def _tx(self) -> Iterator[sqlite3.Connection]:
-        with self._conn:
+        """Serialise whole transactions, not just statements.
+
+        One connection is shared by a poller thread PER CLUSTER plus every API handler.
+        Python's sqlite3 serialises individual statement execution, but NOT the multi-
+        statement transaction boundary this block spans — so without the lock, two poller
+        threads can interleave inside `with self._conn:` and one thread's commit can commit
+        the other's half-written work, or a rollback discard it.
+
+        Latent while only one cluster is configured (the default deployment), real the
+        moment a second is added. RLock rather than Lock so a future nested _tx cannot
+        self-deadlock.
+        """
+        with self._lock, self._conn:
             yield self._conn
 
     # -- configuration -----------------------------------------------------------------
@@ -239,6 +253,11 @@ class Store:
     ) -> int:
         """Reconcile observed membership and append an event for every change.
 
+        ``memberships`` MUST be the complete map for this cluster — every group and every
+        member seen in the poll. Any group absent from it is treated as deleted upstream and
+        its members are recorded as departures. Passing a partial map (say, one group at a
+        time) therefore silently empties every group you left out.
+
         Diff-and-append rather than replace: the replace strategy used for `group_state`
         would be wrong here, because it destroys `first_seen_at` and can record no history.
         The whole value of this table is the two questions the API cannot answer — when did
@@ -277,12 +296,19 @@ class Store:
                     )
                     changes += 1
 
-                if observed:
+                # Chunked because SQLITE_LIMIT_VARIABLE_NUMBER is per-statement and varies by
+                # build: 32766 in the UBI9 runtime (SQLite 3.34.1) but 250000 on a dev Mac
+                # (3.53.0). An unchunked IN-list therefore passes every local test and then
+                # raises "too many SQL variables" in production on a group with >32k members,
+                # which a large LDAP directory can genuinely have.
+                observed_users = sorted(observed)
+                for start in range(0, len(observed_users), 500):
+                    batch = observed_users[start:start + 500]
                     conn.execute(
                         f"""UPDATE group_member SET last_seen_at=?
                              WHERE cluster_id=? AND group_name=?
-                               AND user_name IN ({','.join('?' * len(observed))})""",
-                        (observed_at, cluster_id, group, *sorted(observed)),
+                               AND user_name IN ({','.join('?' * len(batch))})""",
+                        (observed_at, cluster_id, group, *batch),
                     )
 
                 for user in sorted(known - observed):
@@ -316,12 +342,28 @@ class Store:
         return changes
 
     def group_members(self, cluster_id: str, group_name: str) -> list[dict]:
+        """Current members, with BOTH the current and the original join date.
+
+        `first_seen_at` resets when a user leaves and rejoins, because the row is deleted
+        and reinserted — that is correct for "how long has this access been continuous?",
+        but on its own it silently overwrites the original grant date, which is the one an
+        auditor asking "when did this person get access?" actually wants.
+
+        The original is recovered from membership_event, which is append-only and keeps
+        every join even across removals — so no schema change is needed to answer both.
+        """
         return [
             dict(r)
             for r in self._conn.execute(
-                """SELECT user_name, first_seen_at, last_seen_at
-                     FROM group_member WHERE cluster_id=? AND group_name=?
-                    ORDER BY user_name""",
+                """SELECT m.user_name, m.first_seen_at, m.last_seen_at,
+                          (SELECT MIN(e.observed_at) FROM membership_event e
+                            WHERE e.cluster_id = m.cluster_id
+                              AND e.group_name = m.group_name
+                              AND e.user_name  = m.user_name
+                              AND e.change = 'added') AS original_first_seen_at
+                     FROM group_member m
+                    WHERE m.cluster_id=? AND m.group_name=?
+                    ORDER BY m.user_name""",
                 (cluster_id, group_name),
             )
         ]

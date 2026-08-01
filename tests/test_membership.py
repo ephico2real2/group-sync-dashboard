@@ -134,3 +134,75 @@ class TestIsolation:
         sync(store, {"a": ["alice"], "b": []}, T2)
         assert [m["user_name"] for m in store.group_members("crc", "a")] == ["alice"]
         assert store.group_members("crc", "b") == []
+
+
+class TestSecondPassFixes:
+    """Regressions for defects found in the forensic second pass (one via Codex review)."""
+
+    def test_large_group_does_not_exceed_the_sqlite_variable_limit(self, store):
+        """The IN-list was unchunked, which passes on a dev Mac (SQLITE_LIMIT_VARIABLE_NUMBER
+        250000, SQLite 3.53) and raises "too many SQL variables" in the UBI9 runtime (32766,
+        SQLite 3.34.1) — confirmed by running the real code inside the deployment image.
+
+        40000 exceeds the production limit, so this fails on an unchunked build even though
+        the local interpreter would happily allow it.
+        """
+        members = [f"user{i:06d}" for i in range(40_000)]
+        sync(store, {"big": members}, T1)
+        sync(store, {"big": members}, T2)  # second pass exercises the UPDATE ... IN (...)
+        assert len(store.group_members("crc", "big")) == 40_000
+
+    def test_concurrent_writers_do_not_corrupt_each_other(self, store):
+        """One connection is shared by a poller thread per cluster. Without a lock around
+        the whole transaction, two threads interleave inside `with conn:` and one commit can
+        land the other's half-written work."""
+        import threading
+
+        store.upsert_cluster("c2", "https://c2", True)
+        errors: list[Exception] = []
+
+        # The full map every call: sync_members treats absent groups as deleted, so passing
+        # one group at a time would wipe the others and test nothing about concurrency.
+        def writer(cluster: str, tag: str):
+            payload = {f"g{i}": [f"{tag}-u{j:02d}" for j in range(20)] for i in range(25)}
+            try:
+                for _ in range(25):
+                    store.sync_members(cluster, payload, {}, T1)
+            except Exception as exc:  # noqa: BLE001
+                errors.append(exc)
+
+        threads = [
+            threading.Thread(target=writer, args=("crc", "a")),
+            threading.Thread(target=writer, args=("c2", "b")),
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=60)
+
+        assert errors == [], f"concurrent writes raised: {errors}"
+        # Each cluster must see exactly its own writes, uncontaminated by the other.
+        assert [m["user_name"] for m in store.group_members("crc", "g0")] == [
+            f"a-u{j:02d}" for j in range(20)
+        ]
+        assert [m["user_name"] for m in store.group_members("c2", "g0")] == [
+            f"b-u{j:02d}" for j in range(20)
+        ]
+
+    def test_rejoin_keeps_the_original_grant_date_available(self, store):
+        """first_seen_at resets on rejoin (correct for "continuous access since"), but the
+        ORIGINAL grant must remain answerable or an audit is told access is newer than it
+        is. Recovered from the append-only event log, so no schema change."""
+        sync(store, {"g": ["alice"]}, T1)
+        sync(store, {"g": []}, T2)
+        sync(store, {"g": ["alice"]}, T3)
+        member = store.group_members("crc", "g")[0]
+        assert member["first_seen_at"] == T3, "current unbroken stretch"
+        assert member["original_first_seen_at"] == T1, "original grant, across the gap"
+
+    def test_never_removed_member_has_matching_dates(self, store):
+        """No rejoin means the two dates agree, so the UI shows no spurious 'rejoined'."""
+        sync(store, {"g": ["alice"]}, T1)
+        sync(store, {"g": ["alice"]}, T2)
+        member = store.group_members("crc", "g")[0]
+        assert member["first_seen_at"] == member["original_first_seen_at"] == T1
