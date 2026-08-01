@@ -242,6 +242,7 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 1
     <h1>GroupSync dashboard</h1>
     <span class="sub" id="scope-note"></span>
     <span class="spacer"></span>
+    <span class="sub" id="build-info"></span>
     <span class="sub" id="last-refresh"></span>
     <button id="refresh">Refresh</button>
   </header>
@@ -797,6 +798,14 @@ function render() {
   }
   $("scope-note").textContent = view.cluster ? `· ${view.cluster}` : "";
   $("last-refresh").textContent = "updated " + new Date().toTimeString().slice(0, 8);
+  if (data.version) {
+    const v = data.version;
+    // Shown in the header so "is my change deployed?" is answerable by looking, rather
+    // than by inspecting the image. `dirty` is called out because such a build matches
+    // no commit at all.
+    $("build-info").textContent = `v${v.version} · ${v.commit}${v.dirty ? " (dirty)" : ""}`;
+    $("build-info").title = `branch ${v.branch}`;
+  }
   main.classList.remove("stale");
 }
 
@@ -859,6 +868,7 @@ function wireTooltip() {
 async function refresh() {
   $("main").classList.add("stale");
   try {
+    if (!data.version) { try { data.version = await api("/api/version"); } catch (e) { /* older build */ } }
     data.clusters = await api("/api/clusters");
     if (!view.cluster && data.clusters.length) view.cluster = data.clusters[0].id;
     data.alerts = await api("/api/alerts");

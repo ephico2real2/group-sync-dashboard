@@ -1,6 +1,6 @@
 [project]
 name = "group-sync-dashboard"
-version = "0.3.1"
+version = "0.3.2"
 description = "Read-only multi-cluster dashboard for the redhat-cop group-sync-operator"
 requires-python = ">=3.11"
 dependencies = [

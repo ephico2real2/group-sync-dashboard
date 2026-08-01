@@ -18,6 +18,15 @@ RUN python -m pip install --no-cache-dir --upgrade pip build \
 # assemble scripts. (There is no ubi9/python-311-minimal — that tag does not exist.)
 FROM registry.access.redhat.com/ubi9-minimal:latest
 
+# Stamped at build time so a running pod can prove which source it was built from.
+# This exists because of a real failure: an image was built, the source was then changed,
+# and the older image was deployed — the commit contained the fix and the running pod did
+# not, with nothing to reveal the gap. GIT_COMMIT carries `-dirty` when the tree had
+# uncommitted changes, so a build that no commit can reproduce says so.
+ARG GIT_COMMIT=unknown
+ARG GIT_BRANCH=unknown
+ARG BUILD_VERSION=unknown
+
 # OpenShift runs containers as an arbitrary high UID in the root group, not as the UID the
 # image declares. Anything the process writes at runtime must therefore be group-writable
 # and group-owned by root — the SQLite file included.
@@ -29,7 +38,17 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONPATH=/install/lib/python3.11/site-packages:/install/lib64/python3.11/site-packages \
     GSD_CONFIG=/etc/gsd/clusters.yaml \
     GSD_DB_PATH=/data/gsd.db \
-    GSD_LOG_LEVEL=INFO
+    GSD_LOG_LEVEL=INFO \
+    GSD_GIT_COMMIT=$GIT_COMMIT \
+    GSD_GIT_BRANCH=$GIT_BRANCH \
+    GSD_VERSION=$BUILD_VERSION
+
+# OCI-standard labels, so `podman inspect` / `oc image info` answer "what is this?" without
+# running it.
+LABEL org.opencontainers.image.revision="$GIT_COMMIT" \
+      org.opencontainers.image.version="$BUILD_VERSION" \
+      org.opencontainers.image.title="group-sync-dashboard" \
+      org.opencontainers.image.source="https://github.com/ephico2real2/group-sync-dashboard"
 #   GSD_LOG_LEVEL: DEBUG | INFO | WARNING | ERROR | CRITICAL
 #   Set explicitly rather than left to the code default so it is discoverable in
 #   `podman inspect` / `oc set env --list` — an env var nobody knows exists is not a

@@ -15,6 +15,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from . import __version__
 from . import state as st
 from .config import Settings, load_settings
 from .poller import Poller
@@ -300,6 +301,22 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
     @app.get("/healthz")
     def healthz() -> dict:
         return {"status": "ok"}
+
+    @app.get("/api/version")
+    def version() -> dict:
+        """What is actually running, provable back to a commit.
+
+        Stamped into the image at build time. `dirty: true` means the build included
+        uncommitted changes, so no commit reproduces it — which is the honest answer when
+        someone asks "is my fix in there?".
+        """
+        commit = os.environ.get("GSD_GIT_COMMIT", "unknown")
+        return {
+            "version": os.environ.get("GSD_VERSION", __version__),
+            "commit": commit,
+            "branch": os.environ.get("GSD_GIT_BRANCH", "unknown"),
+            "dirty": commit.endswith("-dirty"),
+        }
 
     @app.get("/readyz")
     def readyz() -> dict:
