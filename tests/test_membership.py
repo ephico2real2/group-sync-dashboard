@@ -206,3 +206,54 @@ class TestSecondPassFixes:
         sync(store, {"g": ["alice"]}, T2)
         member = store.group_members("crc", "g")[0]
         assert member["first_seen_at"] == member["original_first_seen_at"] == T1
+
+
+class TestReadWriteRace:
+    """Reads share the writer's connection, so they can see UNCOMMITTED state."""
+
+    def test_reader_never_sees_a_partially_replaced_table(self, tmp_path):
+        """Regression for the defect an independent review caught after the first fix.
+
+        The write lock alone was not enough: every query method read self._conn directly,
+        so a reader could land inside the delete/insert window of replace_group_state and
+        observe a half-empty table. Measured before the fix at 40030 of 40419 reads
+        returning a wrong count, including 0 — i.e. the dashboard reporting that every
+        group had vanished, which is the exact false alarm it exists to avoid raising.
+        """
+        import threading
+        import time
+
+        from gsd.store import Store
+
+        store = Store(str(tmp_path / "race.db"))
+        store.upsert_cluster("crc", "https://x", True)
+        rows = [
+            {"name": f"g{i}", "member_count": 1, "sync_provider": "cr_ldap",
+             "group_synced_at": None, "ldap_uid": None}
+            for i in range(200)
+        ]
+        store.replace_group_state("crc", rows, "T0")
+
+        stop = threading.Event()
+        seen: list[int] = []
+
+        def writer():
+            while not stop.is_set():
+                store.replace_group_state("crc", rows, "T1")
+
+        def reader():
+            while not stop.is_set():
+                seen.append(store.group_counts("crc")["total"])
+
+        threads = [threading.Thread(target=writer), threading.Thread(target=reader)]
+        for t in threads:
+            t.start()
+        time.sleep(2)
+        stop.set()
+        for t in threads:
+            t.join(timeout=30)
+        store.close()
+
+        assert seen, "reader never ran"
+        wrong = [n for n in seen if n != 200]
+        assert not wrong, f"{len(wrong)}/{len(seen)} reads saw a torn table, e.g. {sorted(set(wrong))[:5]}"

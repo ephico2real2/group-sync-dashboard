@@ -138,7 +138,10 @@ class Store:
         self._conn.commit()
 
     def close(self) -> None:
-        self._conn.close()
+        # Under the lock: closing while another thread is mid-transaction would
+        # otherwise raise from inside that thread rather than here.
+        with self._lock:
+            self._conn.close()
 
     @contextmanager
     def _tx(self) -> Iterator[sqlite3.Connection]:
@@ -151,11 +154,35 @@ class Store:
         the other's half-written work, or a rollback discard it.
 
         Latent while only one cluster is configured (the default deployment), real the
-        moment a second is added. RLock rather than Lock so a future nested _tx cannot
-        self-deadlock.
+        moment a second is added.
+
+        RLock avoids a self-deadlock if _tx is ever nested, but nesting would still be
+        WRONG: the inner ``with self._conn`` commits the shared transaction when it exits,
+        so the outer block's remaining work would land outside it. Do not nest _tx.
         """
         with self._lock, self._conn:
             yield self._conn
+
+    def _rows(self, sql: str, params: tuple | list = ()) -> list[dict]:
+        """Run a read under the same lock the writers use.
+
+        Reads share the writer's connection, so they see its UNCOMMITTED state. Without
+        this lock a reader can land inside the delete/insert window of
+        ``replace_group_state`` and observe a partially-populated table — measured at
+        40030 of 40419 concurrent reads returning a wrong count, including zero groups.
+        Reporting "0 groups" while a poll is in flight is precisely the false
+        everything-vanished alarm this dashboard exists to avoid raising.
+
+        Every read goes through here or _row; a bare ``self._conn.execute`` in a query
+        method is a bug.
+        """
+        with self._lock:
+            return [dict(r) for r in self._conn.execute(sql, params).fetchall()]
+
+    def _row(self, sql: str, params: tuple | list = ()) -> dict | None:
+        with self._lock:
+            row = self._conn.execute(sql, params).fetchone()
+        return dict(row) if row else None
 
     # -- configuration -----------------------------------------------------------------
 
@@ -169,13 +196,12 @@ class Store:
             )
 
     def clusters(self) -> list[dict]:
-        rows = self._conn.execute(
+        return self._rows(
             """SELECT c.id, c.api_url, c.enabled,
                       p.status, p.message, p.observed_at AS last_poll
                  FROM cluster c LEFT JOIN poll_outcome p ON p.cluster_id = c.id
                 ORDER BY c.id"""
-        ).fetchall()
-        return [dict(r) for r in rows]
+        )
 
     # -- poll results ------------------------------------------------------------------
 
@@ -352,9 +378,7 @@ class Store:
         The original is recovered from membership_event, which is append-only and keeps
         every join even across removals — so no schema change is needed to answer both.
         """
-        return [
-            dict(r)
-            for r in self._conn.execute(
+        return self._rows(
                 """SELECT m.user_name, m.first_seen_at, m.last_seen_at,
                           (SELECT MIN(e.observed_at) FROM membership_event e
                             WHERE e.cluster_id = m.cluster_id
@@ -365,15 +389,14 @@ class Store:
                     WHERE m.cluster_id=? AND m.group_name=?
                     ORDER BY m.user_name""",
                 (cluster_id, group_name),
-            )
-        ]
+        )
 
     def group_detail(self, cluster_id: str, group_name: str) -> dict | None:
-        row = self._conn.execute(
+        row = self._row(
             """SELECT name, member_count, sync_provider, group_synced_at, ldap_uid, observed_at
                  FROM group_state WHERE cluster_id=? AND name=?""",
             (cluster_id, group_name),
-        ).fetchone()
+        )
         return dict(row) if row else None
 
     def membership_events(
@@ -391,7 +414,7 @@ class Store:
             params.append(user_name)
         sql += " ORDER BY id DESC LIMIT ?"
         params.append(limit)
-        return [dict(r) for r in self._conn.execute(sql, params).fetchall()]
+        return self._rows(sql, params)
 
     def user_groups(self, cluster_id: str, user_name: str) -> list[dict]:
         """Every group a user belongs to — the reverse lookup.
@@ -399,9 +422,7 @@ class Store:
         This is the "why does this person have access?" question, which the cluster can only
         answer by scanning every Group object by hand.
         """
-        return [
-            dict(r)
-            for r in self._conn.execute(
+        return self._rows(
                 """SELECT m.group_name, m.first_seen_at, m.last_seen_at, g.sync_provider
                      FROM group_member m
                      LEFT JOIN group_state g
@@ -409,19 +430,15 @@ class Store:
                     WHERE m.cluster_id=? AND m.user_name=?
                     ORDER BY m.group_name""",
                 (cluster_id, user_name),
-            )
-        ]
+        )
 
     def users(self, cluster_id: str) -> list[dict]:
-        return [
-            dict(r)
-            for r in self._conn.execute(
+        return self._rows(
                 """SELECT user_name, COUNT(*) AS group_count, MIN(first_seen_at) AS first_seen_at
                      FROM group_member WHERE cluster_id=?
                     GROUP BY user_name ORDER BY user_name""",
                 (cluster_id,),
-            )
-        ]
+        )
 
     def upsert_reconcile_error(
         self,
@@ -452,7 +469,7 @@ class Store:
     # -- queries -----------------------------------------------------------------------
 
     def groupsyncs(self, cluster_id: str) -> list[dict]:
-        rows = self._conn.execute(
+        return self._rows(
             """SELECT g.name, g.namespace, g.schedule, g.ldap_filter, g.last_sync_at,
                       g.generation, g.provider_key, g.observed_at,
                       e.failed_at AS error_at, e.message AS error_message,
@@ -466,8 +483,7 @@ class Store:
                 WHERE g.cluster_id = ?
                 ORDER BY g.name""",
             (cluster_id,),
-        ).fetchall()
-        return [dict(r) for r in rows]
+        )
 
     def sync_events(self, cluster_id: str, name: str, since: str | None, limit: int) -> list[dict]:
         sql = """SELECT synced_at, observed_at, schedule, group_count
@@ -479,7 +495,7 @@ class Store:
             params.append(since)
         sql += " ORDER BY synced_at DESC LIMIT ?"
         params.append(limit)
-        return [dict(r) for r in self._conn.execute(sql, params).fetchall()]
+        return self._rows(sql, params)
 
     def groups(self, cluster_id: str, state: str = "all") -> list[dict]:
         sql = """SELECT name, member_count, sync_provider, group_synced_at, ldap_uid,
@@ -497,17 +513,17 @@ class Store:
         elif state != "all":
             raise ValueError(f"unknown group state filter {state!r}")
         sql += " ORDER BY name"
-        return [dict(r) for r in self._conn.execute(sql, params).fetchall()]
+        return self._rows(sql, params)
 
     def group_counts(self, cluster_id: str) -> dict:
-        row = self._conn.execute(
+        row = self._row(
             """SELECT COUNT(*) AS total,
                       SUM(CASE WHEN member_count = 0 AND sync_provider IS NOT NULL
                                THEN 1 ELSE 0 END) AS empty,
                       SUM(CASE WHEN sync_provider IS NULL THEN 1 ELSE 0 END) AS unattributed
                  FROM group_state WHERE cluster_id=?""",
             (cluster_id,),
-        ).fetchone()
+        )
         return {
             "total": row["total"] or 0,
             "empty": row["empty"] or 0,
@@ -515,9 +531,9 @@ class Store:
         }
 
     def oldest_last_sync(self, cluster_id: str) -> str | None:
-        row = self._conn.execute(
+        row = self._row(
             """SELECT MIN(last_sync_at) AS oldest FROM groupsync_state
                 WHERE cluster_id=? AND last_sync_at IS NOT NULL""",
             (cluster_id,),
-        ).fetchone()
+        )
         return row["oldest"] if row else None
