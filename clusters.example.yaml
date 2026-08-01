@@ -1,0 +1,24 @@
+# Dashboard configuration (PLAN §5). Copy to clusters.yaml and edit.
+#
+# No token appears in this file — only the name of the env var or the path of the mounted
+# Secret that holds one. The API never returns a token and the browser never sees one.
+
+pollIntervalSeconds: 60      # PLAN §6 — 60x finer than the fastest schedule in practice
+scheduleGraceSeconds: 120    # scheduler latency + poll lag, before a CR is called late
+dbPath: gsd.db
+
+clusters:
+  # Local development against CRC: token from the environment.
+  #   export GSD_TOKEN_CRC=$(oc whoami -t)
+  - name: crc-local
+    apiUrl: https://api.crc.testing:6443
+    tokenEnv: GSD_TOKEN_CRC
+    caBundleFile: crc-ca.crt   # extracted from kubeconfig; prefer this over skipping verify
+    enabled: true
+
+  # In-cluster: the ServiceAccount token is mounted, so read it from the filesystem.
+  # - name: prod-east
+  #   apiUrl: https://api.prod-east.example.com:6443
+  #   tokenFile: /var/run/secrets/gsd/prod-east/token
+  #   caBundleFile: /var/run/secrets/gsd/prod-east/ca.crt
+  #   enabled: true

@@ -1,0 +1,566 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GroupSync dashboard</title>
+<style>
+/* Roles, not raw hex, throughout. Light/dark swap in one place.
+   Status hues are reserved and never used for a series; the state badges pair every
+   colour with a distinct SHAPE and a text label, because good vs critical measures
+   deutan ΔE 4.1 — green and red are all but identical to a deuteranope, and "is this
+   CR overdue?" is the most consequential question the page answers. */
+:root {
+  color-scheme: light;
+  --surface-1: #fcfcfb;
+  --page: #f9f9f7;
+  --text-primary: #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted: #898781;
+  --gridline: #e1e0d9;
+  --baseline: #c3c2b7;
+  --border: rgba(11, 11, 11, 0.10);
+  --series-1: #2a78d6;
+  --series-1-wash: rgba(42, 120, 214, 0.10);
+  --status-good: #0ca30c;
+  --status-warning: #fab219;
+  --status-critical: #d03b3b;
+  --status-unknown: #898781;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --surface-1: #1a1a19;
+    --page: #0d0d0d;
+    --text-primary: #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted: #898781;
+    --gridline: #2c2c2a;
+    --baseline: #383835;
+    --border: rgba(255, 255, 255, 0.10);
+    --series-1: #3987e5;
+    --series-1-wash: rgba(57, 135, 229, 0.14);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --surface-1: #1a1a19;
+  --page: #0d0d0d;
+  --text-primary: #ffffff;
+  --text-secondary: #c3c2b7;
+  --text-muted: #898781;
+  --gridline: #2c2c2a;
+  --baseline: #383835;
+  --border: rgba(255, 255, 255, 0.10);
+  --series-1: #3987e5;
+  --series-1-wash: rgba(57, 135, 229, 0.14);
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--page);
+  color: var(--text-primary);
+  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+a { color: inherit; }
+h1, h2, h3 { font-weight: 600; margin: 0; }
+h1 { font-size: 18px; }
+h2 { font-size: 15px; }
+h3 { font-size: 13px; color: var(--text-secondary); }
+
+.wrap { max-width: 1180px; margin: 0 auto; padding: 20px 20px 64px; }
+
+header.top {
+  display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+  padding-bottom: 14px; border-bottom: 1px solid var(--border); margin-bottom: 18px;
+}
+header.top .sub { color: var(--text-muted); font-size: 12px; }
+header.top .spacer { flex: 1; }
+
+/* One filter row above everything it scopes — never a filter inside a card. */
+.filters {
+  display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+  margin-bottom: 18px;
+}
+.filters label { color: var(--text-secondary); font-size: 12px; }
+select, button {
+  font: inherit; font-size: 13px; color: var(--text-primary);
+  background: var(--surface-1); border: 1px solid var(--border);
+  border-radius: 6px; padding: 5px 9px; cursor: pointer;
+}
+button:hover, select:hover { border-color: var(--baseline); }
+
+/* Refetch holds the previous render at reduced opacity — no skeleton flash, no jump. */
+.stale { opacity: 0.55; transition: opacity 120ms ease; }
+
+.card {
+  background: var(--surface-1); border: 1px solid var(--border);
+  border-radius: 10px; padding: 16px; margin-bottom: 14px;
+}
+.grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+
+/* Hero: the one number the dashboard leads with. Proportional figures, system sans. */
+.hero { display: flex; align-items: baseline; gap: 12px; margin-bottom: 4px; }
+.hero .value { font-size: 48px; font-weight: 600; line-height: 1; letter-spacing: -0.02em; }
+.hero .label { color: var(--text-secondary); }
+
+/* Stat tiles: the number IS the chart. No one-bar bar charts. */
+.kpis { display: flex; gap: 22px; flex-wrap: wrap; margin-top: 12px; }
+.kpi .label { font-size: 11px; color: var(--text-muted); text-transform: none; }
+.kpi .value { font-size: 22px; font-weight: 600; line-height: 1.25; }
+.kpi .value.muted { color: var(--text-muted); font-weight: 500; }
+
+/* State badge: shape + colour + text. Colour is never the only channel. */
+.badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12px; font-weight: 500; color: var(--text-primary);
+  border: 1px solid var(--border); border-radius: 999px; padding: 2px 9px 2px 7px;
+  white-space: nowrap;
+}
+.badge .glyph { width: 9px; height: 9px; flex: none; display: inline-block; }
+.badge.ok       .glyph { background: var(--status-good); border-radius: 50%; }
+.badge.late     .glyph,
+.badge.warning  .glyph { background: var(--status-warning); clip-path: polygon(50% 0, 100% 100%, 0 100%); }
+.badge.overdue  .glyph,
+.badge.critical .glyph { background: var(--status-critical); border-radius: 1px; }
+.badge.unknown  .glyph { border: 1.5px solid var(--status-unknown); border-radius: 50%; background: none; }
+
+.muted { color: var(--text-muted); }
+.mono { font-variant-numeric: tabular-nums; }
+
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th, td {
+  text-align: left; padding: 6px 10px 6px 0;
+  border-bottom: 1px solid var(--gridline); vertical-align: top;
+}
+th { color: var(--text-muted); font-weight: 500; font-size: 11px; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; padding-right: 16px; }
+.scroll-x { overflow-x: auto; }
+
+.rowlink { cursor: pointer; }
+.rowlink:hover td { background: var(--series-1-wash); }
+
+.chart-wrap { position: relative; }
+svg .grid-line { stroke: var(--gridline); stroke-width: 1; }
+svg .axis-line { stroke: var(--baseline); stroke-width: 1; }
+svg text { fill: var(--text-muted); font-size: 10px; font-variant-numeric: tabular-nums; }
+svg .series-line { fill: none; stroke: var(--series-1); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+svg .series-area { fill: var(--series-1-wash); }
+/* 2px surface ring keeps dots legible where they overlap, and enlarges the hit area. */
+svg .dot { fill: var(--series-1); stroke: var(--surface-1); stroke-width: 2; }
+svg .hit { fill: transparent; cursor: pointer; }
+
+.tooltip {
+  position: absolute; pointer-events: none; z-index: 5;
+  background: var(--surface-1); color: var(--text-primary);
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 6px 9px; font-size: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.14);
+  white-space: nowrap; opacity: 0; transition: opacity 90ms ease;
+}
+.tooltip.on { opacity: 1; }
+.tooltip .t-label { color: var(--text-muted); }
+
+.alert-row { display: flex; gap: 10px; align-items: flex-start; padding: 7px 0; border-bottom: 1px solid var(--gridline); }
+.alert-row:last-child { border-bottom: 0; }
+.alert-row .who { min-width: 190px; font-weight: 500; word-break: break-all; }
+.alert-row .what { color: var(--text-secondary); }
+
+.empty-note { color: var(--text-muted); font-size: 13px; padding: 10px 0; }
+.back { background: none; border: 0; padding: 0; color: var(--series-1); cursor: pointer; font-size: 13px; }
+.filterbar-note { font-size: 12px; color: var(--text-muted); }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.err { color: var(--status-critical); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <h1>GroupSync dashboard</h1>
+    <span class="sub" id="scope-note"></span>
+    <span class="spacer"></span>
+    <span class="sub" id="last-refresh"></span>
+    <button id="refresh">Refresh</button>
+  </header>
+
+  <div class="filters" id="filters"></div>
+  <main id="main"></main>
+</div>
+
+<script>
+"use strict";
+
+const STATES = {
+  ok:      { label: "ok" },
+  late:    { label: "late" },
+  overdue: { label: "overdue" },
+  unknown: { label: "unknown" },
+};
+
+const view = { page: "overview", cluster: null, groupsync: null, groupFilter: "all" };
+let data = { clusters: [], alerts: [], groupsyncs: [], groups: [], events: null };
+
+const $ = (id) => document.getElementById(id);
+
+async function api(path) {
+  const res = await fetch(path, { headers: { Accept: "application/json" } });
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText} on ${path}`);
+  return res.json();
+}
+
+function fmtTime(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (isNaN(d)) return iso;
+  return d.toISOString().replace("T", " ").replace(/\.\d+Z$/, "Z").replace("Z", "Z");
+}
+
+function ago(iso) {
+  if (!iso) return "never";
+  const secs = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (!isFinite(secs)) return "—";
+  if (secs < 0) return "in " + ago(new Date(Date.now() + (-secs * 1000)).toISOString());
+  if (secs < 60) return `${secs}s ago`;
+  if (secs < 3600) return `${Math.floor(secs / 60)}m ago`;
+  if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`;
+  return `${Math.floor(secs / 86400)}d ago`;
+}
+
+function badge(state) {
+  const s = STATES[state] ? state : "unknown";
+  return `<span class="badge ${s}"><span class="glyph" aria-hidden="true"></span>${STATES[s].label}</span>`;
+}
+
+/* Severity and CR-state are different vocabularies and must not borrow each other's
+   words: an auth_failed cluster is `critical`, it is not "overdue". The label is the
+   channel a colourblind reader actually reads, so a wrong label is a real defect. */
+function sevBadge(severity, label) {
+  const s = severity === "critical" ? "critical" : "warning";
+  return `<span class="badge ${s}"><span class="glyph" aria-hidden="true"></span>${esc(label || s)}</span>`;
+}
+
+function esc(s) {
+  return String(s ?? "").replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+/* ---------- rendering ---------- */
+
+function renderFilters() {
+  const clusters = data.clusters;
+  const opts = clusters.map((c) =>
+    `<option value="${esc(c.id)}"${c.id === view.cluster ? " selected" : ""}>${esc(c.id)}</option>`).join("");
+  let html = `<label for="f-cluster">Cluster</label>
+    <select id="f-cluster">${opts}</select>`;
+  if (view.page === "groups") {
+    html += `<label for="f-state">Group state</label>
+      <select id="f-state">
+        <option value="all"${view.groupFilter === "all" ? " selected" : ""}>all</option>
+        <option value="empty"${view.groupFilter === "empty" ? " selected" : ""}>empty</option>
+        <option value="unattributed"${view.groupFilter === "unattributed" ? " selected" : ""}>unattributed</option>
+      </select>`;
+  }
+  html += `<span class="spacer"></span>
+    <button data-nav="overview">Overview</button>
+    <button data-nav="groups">Groups</button>`;
+  $("filters").innerHTML = html;
+
+  const cl = $("f-cluster");
+  if (cl) cl.onchange = (e) => { view.cluster = e.target.value; view.groupsync = null; refresh(); };
+  const st = $("f-state");
+  if (st) st.onchange = (e) => { view.groupFilter = e.target.value; refresh(); };
+  document.querySelectorAll("[data-nav]").forEach((b) => {
+    b.onclick = () => { view.page = b.dataset.nav; view.groupsync = null; refresh(); };
+  });
+}
+
+function clusterCard(c) {
+  const degraded = c.status && c.status !== "ok";
+  const never = c.status === null;
+  // A cluster that cannot be reached renders as a degraded CARD, never as a page-level
+  // error — one bad token must not blank the dashboard for every other cluster.
+  const state = never ? "unknown" : (degraded ? "critical" : "ok");
+  const stateText = never ? "no data yet" : (degraded ? c.status : "reachable");
+  return `<section class="card">
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <h2>${esc(c.id)}</h2>
+      <span class="badge ${state}"><span class="glyph" aria-hidden="true"></span>${esc(stateText)}</span>
+      <span class="spacer" style="flex:1"></span>
+      <span class="muted mono" style="font-size:12px">${esc(ago(c.last_poll))}</span>
+    </div>
+    <div class="muted" style="font-size:12px;margin-top:3px"><code>${esc(c.api_url)}</code></div>
+    ${degraded ? `<div class="err" style="margin-top:8px;font-size:12px">${esc(c.error || "")}</div>` : ""}
+    <div class="kpis">
+      <div class="kpi"><div class="label">GroupSync CRs</div><div class="value">${c.groupsync_count}</div></div>
+      <div class="kpi"><div class="label">Groups</div><div class="value">${c.group_count}</div></div>
+      <div class="kpi"><div class="label">Empty</div>
+        <div class="value ${c.empty_groups ? "" : "muted"}">${c.empty_groups}</div></div>
+      <div class="kpi"><div class="label">Unattributed</div>
+        <div class="value ${c.unattributed_groups ? "" : "muted"}">${c.unattributed_groups}</div></div>
+      <div class="kpi"><div class="label">Oldest last sync</div>
+        <div class="value muted" style="font-size:15px">${esc(ago(c.oldest_last_sync))}</div></div>
+    </div>
+  </section>`;
+}
+
+function alertsCard() {
+  const a = data.alerts;
+  const body = a.length === 0
+    ? `<div class="empty-note">No alerts. Nothing overdue, empty, unattributed, stale, or failing.</div>`
+    : a.map((x) => `<div class="alert-row">
+        ${sevBadge(x.severity)}
+        <div class="who">${esc(x.subject)}<div class="muted" style="font-weight:400;font-size:11px">${esc(x.cluster)} · ${esc(x.kind)}</div></div>
+        <div class="what">${esc(x.detail)}</div>
+      </div>`).join("");
+  return `<section class="card">
+    <div class="hero">
+      <div class="value">${a.length}</div>
+      <div class="label">${a.length === 1 ? "alert" : "alerts"} across ${data.clusters.length} cluster${data.clusters.length === 1 ? "" : "s"}</div>
+    </div>
+    ${body}
+  </section>`;
+}
+
+function groupsyncTable() {
+  const rows = data.groupsyncs;
+  if (!rows.length) return `<section class="card"><h2>GroupSync CRs</h2>
+    <div class="empty-note">None observed on this cluster yet.</div></section>`;
+  return `<section class="card">
+    <h2>GroupSync CRs</h2>
+    <div class="scroll-x"><table>
+      <thead><tr>
+        <th>Name</th><th>State</th><th>Schedule</th>
+        <th class="num">Groups</th><th>Last sync</th><th>Next expected</th>
+      </tr></thead>
+      <tbody>${rows.map((r) => `
+        <tr class="rowlink" data-cr="${esc(r.name)}">
+          <td>${esc(r.name)}<div class="muted" style="font-size:11px">${esc(r.namespace)}</div></td>
+          <td>${badge(r.state)}${r.error_is_current ? " " + sevBadge("critical", "reconcile error") : ""}</td>
+          <td><code>${esc(r.schedule || "—")}</code>${r.schedule_valid ? "" : ` <span class="err">invalid</span>`}</td>
+          <td class="num">${r.group_count}</td>
+          <td class="mono">${esc(ago(r.last_sync_at))}</td>
+          <td class="mono">${esc(r.next_expected ? fmtTime(r.next_expected) : "—")}</td>
+        </tr>`).join("")}
+      </tbody>
+    </table></div>
+  </section>`;
+}
+
+/* Sync timeline: ONE series (group count at each observed sync) so no legend box —
+   the heading names it. Step line, because the count holds between syncs rather than
+   drifting continuously. Always shipped with the table twin below it, so no value is
+   reachable only via hover. */
+function timelineChart(events) {
+  const pts = events.slice().reverse().filter((e) => e.synced_at);
+  if (pts.length < 2) return "";
+
+  const W = 720, H = 190, PAD = { t: 14, r: 16, b: 28, l: 40 };
+  const xs = pts.map((p) => new Date(p.synced_at).getTime());
+  const ys = pts.map((p) => p.group_count ?? 0);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs);
+  const yMax = Math.max(...ys, 1);
+  // Include zero so a count cliff reads as a cliff, not as a rescaled plateau.
+  const yTop = Math.ceil(yMax * 1.15);
+  const px = (t) => PAD.l + (x1 === x0 ? (W - PAD.l - PAD.r) / 2 : ((t - x0) / (x1 - x0)) * (W - PAD.l - PAD.r));
+  const py = (v) => H - PAD.b - (v / yTop) * (H - PAD.t - PAD.b);
+
+  let d = "";
+  pts.forEach((p, i) => {
+    const X = px(xs[i]), Y = py(ys[i]);
+    d += i === 0 ? `M${X},${Y}` : `L${X},${py(ys[i - 1])} L${X},${Y}`;
+  });
+  const area = `${d} L${px(xs[xs.length - 1])},${py(0)} L${px(xs[0])},${py(0)} Z`;
+
+  const ticks = [0, Math.round(yTop / 2), yTop];
+  const gridlines = ticks.map((t) =>
+    `<line class="grid-line" x1="${PAD.l}" y1="${py(t)}" x2="${W - PAD.r}" y2="${py(t)}"/>
+     <text x="${PAD.l - 7}" y="${py(t) + 3}" text-anchor="end">${t}</text>`).join("");
+
+  const dots = pts.map((p, i) => {
+    const X = px(xs[i]), Y = py(ys[i]);
+    return `<circle class="dot" cx="${X}" cy="${Y}" r="4"/>
+      <circle class="hit" cx="${X}" cy="${Y}" r="13"
+        data-t="${esc(p.synced_at)}" data-v="${ys[i]}" data-o="${esc(p.observed_at || "")}"/>`;
+  }).join("");
+
+  const xLabels = [pts[0], pts[pts.length - 1]].map((p, i) => {
+    const X = px(new Date(p.synced_at).getTime());
+    return `<text x="${X}" y="${H - 9}" text-anchor="${i === 0 ? "start" : "end"}">${esc(
+      fmtTime(p.synced_at).slice(5, 16))}</text>`;
+  }).join("");
+
+  return `<div class="chart-wrap">
+    <h3 style="margin-bottom:6px">Groups owned, at each observed sync</h3>
+    <!-- No height attribute: a fixed height alongside a viewBox letterboxes the plot,
+         pinning it to 1:1 and floating it in the middle of a wider card. width:100% +
+         height:auto lets the viewBox scale to the container and keeps the x-axis band. -->
+    <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" role="img"
+         style="width:100%;height:auto;display:block"
+         aria-label="Group count at each observed sync">
+      ${gridlines}
+      <path class="series-area" d="${area}"/>
+      <path class="series-line" d="${d}"/>
+      ${dots}
+      <line class="axis-line" x1="${PAD.l}" y1="${H - PAD.b}" x2="${W - PAD.r}" y2="${H - PAD.b}"/>
+      ${xLabels}
+    </svg>
+    <div class="tooltip" id="tip"></div>
+  </div>`;
+}
+
+function groupsyncDetail() {
+  const cr = data.groupsyncs.find((g) => g.name === view.groupsync);
+  if (!cr) return `<section class="card"><div class="empty-note">CR not found.</div></section>`;
+  const ev = data.events || { events: [], note: "" };
+
+  const eventsTable = ev.events.length
+    ? `<div class="scroll-x"><table>
+        <thead><tr><th>Synced at (operator)</th><th>Observed at (dashboard)</th>
+          <th class="num">Lag</th><th class="num">Groups</th><th>Schedule then</th></tr></thead>
+        <tbody>${ev.events.map((e) => {
+          const lag = e.observed_at && e.synced_at
+            ? Math.round((new Date(e.observed_at) - new Date(e.synced_at)) / 1000) : null;
+          return `<tr>
+            <td class="mono">${esc(fmtTime(e.synced_at))}</td>
+            <td class="mono">${esc(fmtTime(e.observed_at))}</td>
+            <td class="num">${lag === null ? "—" : lag + "s"}</td>
+            <td class="num">${e.group_count ?? "—"}</td>
+            <td><code>${esc(e.schedule || "—")}</code></td>
+          </tr>`;
+        }).join("")}</tbody></table></div>`
+    : `<div class="empty-note">No syncs observed yet. The timeline is accumulated by polling,
+        so it starts when this dashboard does — an empty list here does not mean the
+        operator has never synced.</div>`;
+
+  return `<section class="card">
+    <button class="back" id="back">← all GroupSync CRs</button>
+    <div style="display:flex;align-items:center;gap:10px;margin-top:10px;flex-wrap:wrap">
+      <h2>${esc(cr.name)}</h2>${badge(cr.state)}
+    </div>
+    <div class="kpis">
+      <div class="kpi"><div class="label">Schedule</div><div class="value" style="font-size:15px"><code>${esc(cr.schedule || "—")}</code></div></div>
+      <div class="kpi"><div class="label">Groups owned</div><div class="value">${cr.group_count}</div></div>
+      <div class="kpi"><div class="label">Last sync</div><div class="value" style="font-size:15px">${esc(ago(cr.last_sync_at))}</div></div>
+      <div class="kpi"><div class="label">Next expected</div><div class="value" style="font-size:15px">${esc(cr.next_expected ? fmtTime(cr.next_expected).slice(5, 16) : "—")}</div></div>
+    </div>
+    ${cr.ldap_filter ? `<div style="margin-top:12px"><h3>LDAP group filter</h3>
+      <code>${esc(cr.ldap_filter)}</code></div>` : ""}
+    ${cr.error_at ? `<div style="margin-top:12px">
+      <h3>Last reconcile error ${cr.error_is_current
+        ? `<span class="err">— current</span>`
+        : `<span class="muted">— stale, superseded by a later success</span>`}</h3>
+      <div class="muted mono" style="font-size:12px">${esc(fmtTime(cr.error_at))} (generation ${esc(cr.error_generation ?? "?")})</div>
+      <div style="font-size:12px;margin-top:4px">${esc(cr.error_message || "")}</div>
+    </div>` : ""}
+  </section>
+  <section class="card">
+    ${timelineChart(ev.events)}
+    <h3 style="margin-top:14px">Observed syncs</h3>
+    <div class="muted" style="font-size:11px;margin-bottom:6px">${esc(ev.note || "")}</div>
+    ${eventsTable}
+  </section>`;
+}
+
+function groupsPage() {
+  const rows = data.groups;
+  const note = {
+    empty: "Synced with zero members — an LDAP-side problem, e.g. a member DN that does not resolve.",
+    unattributed: "No sync-provider label, so not managed by any GroupSync CR.",
+    all: "",
+  }[view.groupFilter];
+  return `<section class="card">
+    <h2>Groups <span class="muted" style="font-weight:400">· ${rows.length} shown</span></h2>
+    ${note ? `<div class="filterbar-note" style="margin-top:4px">${esc(note)}</div>` : ""}
+    ${rows.length === 0
+      ? `<div class="empty-note">No groups match this filter.</div>`
+      : `<div class="scroll-x"><table>
+          <thead><tr><th>Name</th><th class="num">Members</th><th>Owner (sync-provider)</th>
+            <th>Group sync-time</th><th>Source DN</th></tr></thead>
+          <tbody>${rows.map((g) => `<tr>
+            <td>${esc(g.name)}</td>
+            <td class="num">${g.member_count}</td>
+            <td>${g.sync_provider ? `<code>${esc(g.sync_provider)}</code>` : `<span class="err">none</span>`}</td>
+            <td class="mono">${esc(ago(g.group_synced_at))}</td>
+            <td class="muted"><code>${esc(g.ldap_uid || "—")}</code></td>
+          </tr>`).join("")}</tbody>
+        </table></div>`}
+  </section>`;
+}
+
+function render() {
+  renderFilters();
+  const main = $("main");
+  if (view.page === "groups") {
+    main.innerHTML = groupsPage();
+  } else if (view.groupsync) {
+    main.innerHTML = groupsyncDetail();
+    const back = $("back");
+    if (back) back.onclick = () => { view.groupsync = null; refresh(); };
+    wireTooltip();
+  } else {
+    main.innerHTML = alertsCard()
+      + `<div class="grid">${data.clusters.map(clusterCard).join("")}</div>`
+      + groupsyncTable();
+    document.querySelectorAll("[data-cr]").forEach((tr) => {
+      tr.onclick = () => { view.groupsync = tr.dataset.cr; refresh(); };
+    });
+  }
+  $("scope-note").textContent = view.cluster ? `· ${view.cluster}` : "";
+  $("last-refresh").textContent = "updated " + new Date().toTimeString().slice(0, 8);
+  main.classList.remove("stale");
+}
+
+/* Hover enhances; it never gates a value — the same numbers are in the table below. */
+function wireTooltip() {
+  const tip = $("tip");
+  if (!tip) return;
+  document.querySelectorAll("circle.hit").forEach((h) => {
+    const show = (e) => {
+      const wrap = h.closest(".chart-wrap").getBoundingClientRect();
+      const r = h.getBoundingClientRect();
+      tip.innerHTML = `<div><span class="t-label">synced</span> ${esc(fmtTime(h.dataset.t))}</div>
+        <div><span class="t-label">groups</span> ${esc(h.dataset.v)}</div>`;
+      tip.style.left = Math.max(0, r.left - wrap.left - 40) + "px";
+      tip.style.top = (r.top - wrap.top - 52) + "px";
+      tip.classList.add("on");
+    };
+    const hide = () => tip.classList.remove("on");
+    h.addEventListener("mouseenter", show);
+    h.addEventListener("mouseleave", hide);
+    h.addEventListener("focus", show);
+    h.addEventListener("blur", hide);
+    h.setAttribute("tabindex", "0");
+  });
+}
+
+/* ---------- data ---------- */
+
+async function refresh() {
+  $("main").classList.add("stale");
+  try {
+    data.clusters = await api("/api/clusters");
+    if (!view.cluster && data.clusters.length) view.cluster = data.clusters[0].id;
+    data.alerts = await api("/api/alerts");
+    if (view.cluster) {
+      data.groupsyncs = await api(`/api/clusters/${encodeURIComponent(view.cluster)}/groupsyncs`);
+      if (view.page === "groups") {
+        data.groups = await api(
+          `/api/clusters/${encodeURIComponent(view.cluster)}/groups?state=${view.groupFilter}`);
+      }
+      data.events = view.groupsync
+        ? await api(`/api/clusters/${encodeURIComponent(view.cluster)}/groupsyncs/${encodeURIComponent(view.groupsync)}/events`)
+        : null;
+    }
+    render();
+  } catch (err) {
+    $("main").classList.remove("stale");
+    $("main").innerHTML = `<section class="card"><div class="err">Dashboard API error: ${esc(err.message)}</div></section>`;
+  }
+}
+
+$("refresh").onclick = refresh;
+refresh();
+setInterval(refresh, 30000);
+</script>
+</body>
+</html>

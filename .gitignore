@@ -1,0 +1,20 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.db
+*.db-wal
+*.db-shm
+clusters.yaml
+.pytest_cache/
+test-results/
+node_modules/
+*.egg-info/
+dist/
+build/
+.ctr/
+
+# Cluster CA bundles: environment-specific and regenerable from kubeconfig
+*.crt
+*.pem
+*.key

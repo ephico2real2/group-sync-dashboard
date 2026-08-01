@@ -1,0 +1,17 @@
+.git/
+.venv/
+venv/
+tests/
+*.db
+*.db-wal
+*.db-shm
+clusters.yaml
+crc-ca.crt
+__pycache__/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+test-results/
+docs/
+*.png
