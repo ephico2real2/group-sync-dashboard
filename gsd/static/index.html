@@ -187,6 +187,20 @@ tbody tr:nth-child(even) td { background: var(--zebra); }
   border: 1px solid var(--border); border-radius: 999px;
   font-size: 12px; background: var(--zebra);
 }
+
+/* A drillable name must LOOK drillable. Without this the usernames rendered as plain
+   black text identical to every other cell, so nothing invited the click — the handler
+   worked and the affordance did not, which a selector-driven test cannot catch. */
+.drill {
+  color: var(--series-1); cursor: pointer;
+  text-decoration: underline; text-decoration-style: dotted;
+  text-underline-offset: 3px; text-decoration-color: var(--baseline);
+}
+.drill:hover, .drill:focus-visible {
+  text-decoration-style: solid; text-decoration-color: var(--series-1);
+  outline: none;
+}
+.drill::after { content: " ›"; color: var(--text-muted); }
 .change-added   { color: var(--status-good); font-weight: 600; }
 .change-removed { color: var(--status-critical); font-weight: 600; }
 
@@ -576,7 +590,7 @@ function groupDetail() {
     ? `<div class="scroll-x"><table>
         <thead><tr><th>User</th><th>Member since (first observed)</th><th>Last confirmed</th></tr></thead>
         <tbody>${members.map((m) => `<tr class="rowlink" data-user="${esc(m.user_name)}">
-          <td>${esc(m.user_name)}</td>
+          <td><span class="drill" tabindex="0" role="button">${esc(m.user_name)}</span></td>
           <td class="mono">${esc(fmtTime(m.first_seen_at))} <span class="muted">(${esc(ago(m.first_seen_at))})</span></td>
           <td class="mono muted">${esc(ago(m.last_seen_at))}</td>
         </tr>`).join("")}</tbody>
@@ -591,7 +605,8 @@ function groupDetail() {
         <thead><tr><th>Change</th><th>User</th><th>Observed</th><th>Sync that carried it</th></tr></thead>
         <tbody>${changes.map((c) => `<tr>
           <td class="change-${esc(c.change)}">${c.change === "added" ? "+ joined" : "− left"}</td>
-          <td>${esc(c.user_name)}</td>
+          <td><span class="drill" tabindex="0" role="button"
+                data-user="${esc(c.user_name)}">${esc(c.user_name)}</span></td>
           <td class="mono">${esc(fmtTime(c.observed_at))}</td>
           <td class="mono muted">${esc(c.group_synced_at ? fmtTime(c.group_synced_at) : "—")}</td>
         </tr>`).join("")}</tbody>
@@ -618,6 +633,7 @@ function groupDetail() {
   <section class="card">
     <h2>Members <span class="muted" style="font-weight:400">· ${members.length}</span></h2>
     <div class="filterbar-note" style="margin:4px 0 8px">
+      <strong>Select a user to see every group they belong to.</strong>
       "Member since" is when this dashboard first observed the user in the group — not when
       LDAP added them. It cannot predate this dashboard.
     </div>
@@ -647,14 +663,31 @@ function userDetail() {
   </section>
   <section class="card">
     <h2>Group memberships</h2>
-    <div class="scroll-x"><table>
-      <thead><tr><th>Group</th><th>Owner</th><th>Member since</th></tr></thead>
-      <tbody>${groups.map((g) => `<tr class="rowlink" data-group="${esc(g.group_name)}">
-        <td>${esc(g.group_name)}</td>
-        <td>${ownerCell(g.sync_provider)}</td>
-        <td class="mono">${esc(fmtTime(g.first_seen_at))}</td>
-      </tr>`).join("")}</tbody>
-    </table></div>
+    ${groups.length === 0
+      ? `<div class="empty-note">This user is currently in no groups on this cluster. They
+          were in at least one before — see the history below. That is the answer to
+          "did they lose everything, or just this one?", not an error.</div>`
+      : `<div class="scroll-x"><table>
+          <thead><tr><th>Group</th><th>Owner</th><th>Member since</th></tr></thead>
+          <tbody>${groups.map((g) => `<tr class="rowlink" data-group="${esc(g.group_name)}">
+            <td><span class="drill">${esc(g.group_name)}</span></td>
+            <td>${ownerCell(g.sync_provider)}</td>
+            <td class="mono">${esc(fmtTime(g.first_seen_at))}</td>
+          </tr>`).join("")}</tbody>
+        </table></div>`}
+  </section>
+  <section class="card">
+    <h2>History</h2>
+    ${(d.changes || []).length === 0
+      ? `<div class="empty-note">No membership changes observed for this user yet.</div>`
+      : `<div class="scroll-x"><table>
+          <thead><tr><th>Change</th><th>Group</th><th>Observed</th></tr></thead>
+          <tbody>${d.changes.map((c) => `<tr class="rowlink" data-group="${esc(c.group_name)}">
+            <td class="change-${esc(c.change)}">${c.change === "added" ? "+ joined" : "− left"}</td>
+            <td><span class="drill">${esc(c.group_name)}</span></td>
+            <td class="mono">${esc(fmtTime(c.observed_at))}</td>
+          </tr>`).join("")}</tbody>
+        </table></div>`}
   </section>`;
 }
 
@@ -693,9 +726,21 @@ function wireDrilldown() {
     el.onclick = () => { view.group = el.dataset.group; view.user = null; refresh(); };
   });
   document.querySelectorAll("[data-user]").forEach((el) => {
-    el.onclick = (e) => {
+    const go = (e) => {
       e.stopPropagation();
       view.user = el.dataset.user; view.group = null; refresh();
+    };
+    el.onclick = go;
+  });
+  // Keyboard parity: a drillable name is reachable by Tab and fires on Enter/Space, so the
+  // affordance is not mouse-only.
+  document.querySelectorAll(".drill").forEach((el) => {
+    el.onkeydown = (e) => {
+      if (e.key !== "Enter" && e.key !== " ") return;
+      e.preventDefault();
+      const target = el.dataset.user || el.closest("[data-user]")?.dataset.user;
+      if (!target) return;
+      view.user = target; view.group = null; refresh();
     };
   });
   const back = $("back-groups");

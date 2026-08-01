@@ -97,7 +97,7 @@ No `watch`, no write verbs anywhere (§4, §6). Token lifetime is an open questi
 ## Container
 
 ```bash
-podman build -t group-sync-dashboard:0.2.0 -f Containerfile .
+podman build -t group-sync-dashboard:0.2.1 -f Containerfile .
 ```
 
 Runs as a non-root UID with a group-writable `/data`, so it works both standalone and under

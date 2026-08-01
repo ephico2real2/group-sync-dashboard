@@ -345,6 +345,41 @@ class TestGroupDrilldown:
         dash.wait_for_function("() => !document.querySelector('#back-groups')")
         assert dash.locator("tbody tr").count() == 3
 
+    def test_member_names_look_drillable(self, dash):
+        """Regression: the click handler worked but the names rendered as plain black text
+        identical to every other cell, so nothing invited the click. A selector-driven test
+        cannot notice that, which is exactly why this asserts the affordance itself.
+        """
+        self._open_group(dash, "app-ocp-rbac-alpha-ns-admin")
+        name = dash.locator("tr[data-user='alice'] .drill").first
+        assert name.count() == 1, "member name carries no drill affordance"
+        colour = name.evaluate("e => getComputedStyle(e).color")
+        plain = dash.locator("h2").first.evaluate("e => getComputedStyle(e).color")
+        assert colour != plain, "drillable name is styled the same as ordinary text"
+        assert name.evaluate("e => getComputedStyle(e).cursor") == "pointer"
+
+    def test_members_table_says_the_names_are_clickable(self, dash):
+        self._open_group(dash, "app-ocp-rbac-alpha-ns-admin")
+        assert "Select a user" in dash.locator("body").inner_text()
+
+    def test_departed_user_is_drillable_from_the_change_log(self, dash):
+        """A user who left appears ONLY in the change log — which is precisely when you
+        want to check what else they still belong to."""
+        self._open_group(dash, "app-ocp-rbac-alpha-ns-admin")
+        bob = dash.locator(".drill[data-user='bob']").first
+        assert bob.count() == 1, "departed user is not drillable"
+        bob.click()
+        dash.wait_for_selector("text=Group memberships")
+        assert "bob" in dash.locator("h2").first.inner_text()
+
+    def test_drill_works_from_the_keyboard(self, dash):
+        self._open_group(dash, "app-ocp-rbac-alpha-ns-admin")
+        name = dash.locator("tr[data-user='alice'] .drill").first
+        name.focus()
+        name.press("Enter")
+        dash.wait_for_selector("text=Group memberships")
+        assert "alice" in dash.locator("h2").first.inner_text()
+
     def test_user_reverse_lookup(self, dash):
         """"Why does this person have access?" — click a member, see every group."""
         self._open_group(dash, "app-ocp-rbac-alpha-ns-admin")

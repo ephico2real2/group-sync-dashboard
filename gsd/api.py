@@ -168,13 +168,17 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
         """
         require_cluster(cluster_id)
         groups = store.user_groups(cluster_id, name)
-        if not groups:
+        changes = store.membership_events(cluster_id, user_name=name, limit=100)
+        # A user with no CURRENT groups is not unknown — they may have just been removed
+        # from the last one, and "they are in nothing now" is the answer to the question,
+        # not an error. 404 only when we have never seen them at all.
+        if not groups and not changes:
             raise HTTPException(status_code=404, detail=f"unknown user {name!r}")
         return {
             "user": name,
             "cluster": cluster_id,
             "groups": groups,
-            "changes": store.membership_events(cluster_id, user_name=name, limit=100),
+            "changes": changes,
         }
 
     @app.get("/api/clusters/{cluster_id}/membership-changes")
