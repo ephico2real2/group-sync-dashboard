@@ -97,7 +97,7 @@ No `watch`, no write verbs anywhere (§4, §6). Token lifetime is an open questi
 ## Container
 
 ```bash
-podman build -t group-sync-dashboard:0.1.0 -f Containerfile .
+podman build -t group-sync-dashboard:0.2.0 -f Containerfile .
 ```
 
 Runs as a non-root UID with a group-writable `/data`, so it works both standalone and under
@@ -111,8 +111,12 @@ All read-only (§11).
 ```text
 GET /api/clusters                                     id, reachable, last_poll, error, counts
 GET /api/clusters/{id}/groupsyncs                     schedule, filter, last_sync, next_expected, state
-GET /api/clusters/{id}/groupsyncs/{name}/events       the accumulated timeline
+GET /api/clusters/{id}/groupsyncs/{name}/events       the accumulated sync timeline
 GET /api/clusters/{id}/groups?state=all|empty|unattributed
+GET /api/clusters/{id}/groups/{name}                  members, owner, and membership changes
+GET /api/clusters/{id}/users                          every user, with a group count
+GET /api/clusters/{id}/users/{name}                   reverse lookup: every group a user is in
+GET /api/clusters/{id}/membership-changes             who joined or left, cluster-wide
 GET /api/alerts                                       computed, across all clusters
 GET /healthz  /readyz
 ```
@@ -133,6 +137,35 @@ blinks `late` once per cycle and operators learn to ignore it.
 
 `next_expected` uses a real cron parser. `0 * * * *` and `*/30 * * * *` both look hourly if
 you only measure gaps between events — they differ only at `:30`.
+
+## Membership
+
+Group detail shows the members themselves, not just a count: a count answers "is this group
+empty?", only the names answer "why does this person have access?".
+
+Membership is accumulated the same way sync events are, because the API keeps no history:
+
+* **Member since** is when *this dashboard* first observed the user in the group — not when
+  LDAP added them. It cannot predate the dashboard.
+* **Membership changes** record joins and departures. A user quietly dropping out of a group
+  is the invisible absence this exists for: nothing logs it, no event fires, and the group
+  looks perfectly healthy afterwards.
+* Each change carries the group's `sync-time` at the moment it was seen, which distinguishes
+  *"the operator did this"* from *"someone edited the object"*. A change stamped with a stale
+  sync-time did not come from a sync.
+* **Reverse lookup** (`/users/{name}`) answers the RBAC question the cluster can only answer
+  by scanning every Group object by hand.
+
+## Deployment model
+
+**One instance per cluster**, each observing itself via the pod's projected ServiceAccount
+token (§13.1). That token is rotated by kubelet and re-read on every poll, so there is no
+long-lived credential to mint or expire.
+
+Multi-cluster is still supported — add entries to the config. Be aware it reopens the
+authorization gap in `docs/PLAN_oauth_proxy.md`: OAuth authenticates against the hosting
+cluster only, so one instance holding several clusters' data can show a user membership from
+a cluster they have no rights on.
 
 ## Not in this slice
 

@@ -134,6 +134,62 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
         require_cluster(cluster_id)
         return store.groups(cluster_id, state)
 
+    @app.get("/api/clusters/{cluster_id}/groups/{name}")
+    def group_detail(cluster_id: str, name: str) -> dict:
+        require_cluster(cluster_id)
+        detail = store.group_detail(cluster_id, name)
+        if detail is None:
+            raise HTTPException(status_code=404, detail=f"unknown group {name!r}")
+        owner = None
+        if detail.get("sync_provider"):
+            for cr in store.groupsyncs(cluster_id):
+                if cr.get("provider_key") == detail["sync_provider"]:
+                    owner = {"name": cr["name"], "namespace": cr["namespace"],
+                             "schedule": cr["schedule"]}
+                    break
+        return {
+            **detail,
+            "owner": owner,
+            "members": store.group_members(cluster_id, name),
+            "changes": store.membership_events(cluster_id, group_name=name, limit=100),
+        }
+
+    @app.get("/api/clusters/{cluster_id}/users")
+    def list_users(cluster_id: str) -> list[dict]:
+        require_cluster(cluster_id)
+        return store.users(cluster_id)
+
+    @app.get("/api/clusters/{cluster_id}/users/{name}")
+    def user_detail(cluster_id: str, name: str) -> dict:
+        """Reverse lookup: every group this user is in.
+
+        The cluster cannot answer this directly — it means scanning every Group object — yet
+        it is the question behind most "why does this person have access?" investigations.
+        """
+        require_cluster(cluster_id)
+        groups = store.user_groups(cluster_id, name)
+        if not groups:
+            raise HTTPException(status_code=404, detail=f"unknown user {name!r}")
+        return {
+            "user": name,
+            "cluster": cluster_id,
+            "groups": groups,
+            "changes": store.membership_events(cluster_id, user_name=name, limit=100),
+        }
+
+    @app.get("/api/clusters/{cluster_id}/membership-changes")
+    def membership_changes(
+        cluster_id: str, limit: int = Query(default=100, ge=1, le=1000)
+    ) -> dict:
+        require_cluster(cluster_id)
+        events = store.membership_events(cluster_id, limit=limit)
+        return {
+            "cluster": cluster_id,
+            "count": len(events),
+            "note": "accumulated from polling; covers only the period since this dashboard started",
+            "changes": events,
+        }
+
     @app.get("/api/alerts")
     def list_alerts() -> list[dict]:
         now = datetime.now(UTC)

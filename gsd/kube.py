@@ -73,6 +73,11 @@ class GroupView:
     sync_provider: str | None
     group_synced_at: str | None
     ldap_uid: str | None
+    members: list[str]
+    """The usernames themselves, not just the count.
+
+    A count answers "is this group empty?"; only the names answer "why does this person have
+    access?" — which is the question an operator actually arrives with."""
 
 
 class ClusterClient:
@@ -206,10 +211,13 @@ def _group_view(obj: dict) -> GroupView:
     # `users` is a top-level field on Group, not under spec, and is null rather than []
     # when the group is empty — which is precisely the EMPTY state of PLAN §7.
     users = obj.get("users") or []
+    # Sorted so a membership diff between polls reflects real change, not API ordering.
+    members = sorted(str(u) for u in users)
     return GroupView(
         name=meta.get("name", ""),
-        member_count=len(users),
+        member_count=len(members),
         sync_provider=labels.get(SYNC_PROVIDER_LABEL),
         group_synced_at=annotations.get(SYNC_TIME_ANNOTATION),
         ldap_uid=annotations.get(LDAP_UID_ANNOTATION),
+        members=members,
     )

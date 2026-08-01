@@ -1,8 +1,17 @@
 # In-cluster deployment of the GroupSync dashboard, observing the cluster it runs on.
 #
-# PLAN §13 Q3 notes the tradeoff: running on an observed cluster means that cluster cannot
-# report its own outage. That is acceptable for a single-cluster first slice and is the
-# reason the multi-cluster form should eventually run standalone.
+# This is the intended operational shape (PLAN §13.1, decided 2026-08-01): ONE INSTANCE PER
+# CLUSTER, each observing only itself. Cross-cluster polling does not scale the same way —
+# every poll crosses a network boundary and grows with the observed cluster's group count.
+#
+# The multi-cluster capability is unchanged in the code; add more entries to the ConfigMap
+# below to use it. Note that doing so reopens the authorization gap in docs/PLAN_oauth_proxy.md:
+# OAuth authenticates against the hosting cluster only, so one instance holding several
+# clusters' data can show a user group membership from a cluster they have no rights on.
+#
+# The accepted cost of running on the observed cluster: it cannot report its own total
+# outage. That failure is visible from every other monitoring path, whereas the failures
+# this dashboard exists for are the invisible ones inside a working cluster.
 #
 #   oc apply -f deploy/dashboard.yaml
 ---
@@ -95,7 +104,16 @@ spec:
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: dashboard
-          image: image-registry.openshift-image-registry.svc:5000/group-sync-dashboard/group-sync-dashboard:0.1.0
+          image: image-registry.openshift-image-registry.svc:5000/group-sync-dashboard/group-sync-dashboard:0.2.0
+          # Always: a re-push of the same tag takes effect on the next restart, which is
+          # what you want while iterating.
+          #
+          # It does make every restart depend on the registry being reachable at that
+          # instant — this pod sat in ErrImagePull for ~3h50m after the node suspended and
+          # resumed, and recovered on a plain `oc delete pod` with nothing else changed.
+          # But the pull was the second link in that chain, not the first: a 1s liveness
+          # timeout killed a healthy process on wake, and only then did the re-pull happen.
+          # The probe tolerances below fix the trigger, which is what keeps Always safe.
           imagePullPolicy: Always
           ports:
             - {containerPort: 8080, name: http}
@@ -114,14 +132,25 @@ spec:
           # reachable cluster. An unreachable cluster is a thing this dashboard exists to
           # display, so failing a probe for one would take it down exactly when it has
           # something to report (PLAN §5).
+          # The default 1s probe timeout is too tight for a host that suspends and resumes:
+          # on wake, every probe in flight fails with "context deadline exceeded" and
+          # liveness kills a process that is fine. Observed here — 3 readiness failures and
+          # one liveness kill, all timeouts, none of them a real fault.
+          # Liveness is deliberately the more forgiving of the two: a failed readiness only
+          # removes the pod from the Service, while a failed liveness destroys the
+          # accumulated in-flight state and forces a re-pull.
           livenessProbe:
             httpGet: {path: /healthz, port: http}
             initialDelaySeconds: 10
             periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 6
           readinessProbe:
             httpGet: {path: /readyz, port: http}
             initialDelaySeconds: 5
             periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
           resources:
             requests: {cpu: 50m, memory: 128Mi}
             limits: {cpu: 500m, memory: 512Mi}

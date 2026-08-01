@@ -118,13 +118,22 @@ def poll_once(store: Store, cluster: ClusterConfig) -> str:
         observed_at,
     )
 
+    # Step 7: reconcile membership and record who joined or left since the last poll.
+    member_changes = store.sync_members(
+        cluster_id=cluster.name,
+        memberships={g.name: g.members for g in groups},
+        sync_times={g.name: g.group_synced_at for g in groups},
+        observed_at=observed_at,
+    )
+
     store.record_poll(cluster.name, OK, None)
     log.info(
-        "polled %s: %d CRs, %d groups, %d new sync event(s)",
+        "polled %s: %d CRs, %d groups, %d new sync event(s), %d membership change(s)",
         cluster.name,
         len(groupsyncs),
         len(groups),
         new_events,
+        member_changes,
     )
     return OK
 

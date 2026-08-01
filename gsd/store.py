@@ -86,6 +86,36 @@ CREATE TABLE IF NOT EXISTS poll_outcome (
     status              TEXT NOT NULL,  -- ok | auth_failed | forbidden | unreachable
     message             TEXT
 );
+
+-- Current membership. Unlike group_state this is NOT wholly replaced each poll: first_seen_at
+-- must survive, or "when did this user join?" resets on every cycle and answers nothing.
+CREATE TABLE IF NOT EXISTS group_member (
+    cluster_id          TEXT NOT NULL,
+    group_name          TEXT NOT NULL,
+    user_name           TEXT NOT NULL,
+    first_seen_at       TEXT NOT NULL,  -- when WE first observed them, not when LDAP added them
+    last_seen_at        TEXT NOT NULL,
+    PRIMARY KEY(cluster_id, group_name, user_name)
+);
+CREATE INDEX IF NOT EXISTS group_member_by_user
+    ON group_member(cluster_id, user_name);
+
+-- Membership changes, append-only. The API has no history (PLAN §2), and a user quietly
+-- dropping out of a group is exactly the invisible absence this dashboard exists for:
+-- nothing logs it, no event fires, and the group still looks healthy afterwards.
+CREATE TABLE IF NOT EXISTS membership_event (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    cluster_id          TEXT NOT NULL,
+    group_name          TEXT NOT NULL,
+    user_name           TEXT NOT NULL,
+    change              TEXT NOT NULL,  -- added | removed
+    observed_at         TEXT NOT NULL,
+    group_synced_at     TEXT            -- the group's own sync-time when we saw the change
+);
+CREATE INDEX IF NOT EXISTS membership_event_lookup
+    ON membership_event(cluster_id, group_name, id DESC);
+CREATE INDEX IF NOT EXISTS membership_event_by_user
+    ON membership_event(cluster_id, user_name, id DESC);
 """
 
 
@@ -199,6 +229,157 @@ class Store:
                           :group_synced_at,:ldap_uid,:observed_at)""",
                 [{**r, "cluster_id": cluster_id, "observed_at": observed_at} for r in rows],
             )
+
+    def sync_members(
+        self,
+        cluster_id: str,
+        memberships: dict[str, list[str]],
+        sync_times: dict[str, str | None],
+        observed_at: str,
+    ) -> int:
+        """Reconcile observed membership and append an event for every change.
+
+        Diff-and-append rather than replace: the replace strategy used for `group_state`
+        would be wrong here, because it destroys `first_seen_at` and can record no history.
+        The whole value of this table is the two questions the API cannot answer — when did
+        this user join, and who quietly disappeared.
+
+        Returns the number of change events written.
+        """
+        changes = 0
+        with self._tx() as conn:
+            existing: dict[str, set[str]] = {}
+            for row in conn.execute(
+                "SELECT group_name, user_name FROM group_member WHERE cluster_id=?",
+                (cluster_id,),
+            ):
+                existing.setdefault(row["group_name"], set()).add(row["user_name"])
+
+            for group, members in memberships.items():
+                observed = set(members)
+                known = existing.get(group, set())
+                synced_at = sync_times.get(group)
+
+                for user in sorted(observed - known):
+                    conn.execute(
+                        """INSERT INTO group_member(cluster_id, group_name, user_name,
+                               first_seen_at, last_seen_at)
+                           VALUES(?,?,?,?,?)
+                           ON CONFLICT(cluster_id, group_name, user_name)
+                           DO UPDATE SET last_seen_at=excluded.last_seen_at""",
+                        (cluster_id, group, user, observed_at, observed_at),
+                    )
+                    conn.execute(
+                        """INSERT INTO membership_event(cluster_id, group_name, user_name,
+                               change, observed_at, group_synced_at)
+                           VALUES(?,?,?,'added',?,?)""",
+                        (cluster_id, group, user, observed_at, synced_at),
+                    )
+                    changes += 1
+
+                if observed:
+                    conn.execute(
+                        f"""UPDATE group_member SET last_seen_at=?
+                             WHERE cluster_id=? AND group_name=?
+                               AND user_name IN ({','.join('?' * len(observed))})""",
+                        (observed_at, cluster_id, group, *sorted(observed)),
+                    )
+
+                for user in sorted(known - observed):
+                    conn.execute(
+                        "DELETE FROM group_member WHERE cluster_id=? AND group_name=? AND user_name=?",
+                        (cluster_id, group, user),
+                    )
+                    conn.execute(
+                        """INSERT INTO membership_event(cluster_id, group_name, user_name,
+                               change, observed_at, group_synced_at)
+                           VALUES(?,?,?,'removed',?,?)""",
+                        (cluster_id, group, user, observed_at, synced_at),
+                    )
+                    changes += 1
+
+            # A group deleted upstream takes its membership with it, and each departure is
+            # recorded — otherwise the members simply vanish from the store with no trace.
+            for group in set(existing) - set(memberships):
+                for user in sorted(existing[group]):
+                    conn.execute(
+                        "DELETE FROM group_member WHERE cluster_id=? AND group_name=? AND user_name=?",
+                        (cluster_id, group, user),
+                    )
+                    conn.execute(
+                        """INSERT INTO membership_event(cluster_id, group_name, user_name,
+                               change, observed_at, group_synced_at)
+                           VALUES(?,?,?,'removed',?,NULL)""",
+                        (cluster_id, group, user, observed_at),
+                    )
+                    changes += 1
+        return changes
+
+    def group_members(self, cluster_id: str, group_name: str) -> list[dict]:
+        return [
+            dict(r)
+            for r in self._conn.execute(
+                """SELECT user_name, first_seen_at, last_seen_at
+                     FROM group_member WHERE cluster_id=? AND group_name=?
+                    ORDER BY user_name""",
+                (cluster_id, group_name),
+            )
+        ]
+
+    def group_detail(self, cluster_id: str, group_name: str) -> dict | None:
+        row = self._conn.execute(
+            """SELECT name, member_count, sync_provider, group_synced_at, ldap_uid, observed_at
+                 FROM group_state WHERE cluster_id=? AND name=?""",
+            (cluster_id, group_name),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def membership_events(
+        self, cluster_id: str, group_name: str | None = None,
+        user_name: str | None = None, limit: int = 200,
+    ) -> list[dict]:
+        sql = """SELECT group_name, user_name, change, observed_at, group_synced_at
+                   FROM membership_event WHERE cluster_id=?"""
+        params: list = [cluster_id]
+        if group_name:
+            sql += " AND group_name=?"
+            params.append(group_name)
+        if user_name:
+            sql += " AND user_name=?"
+            params.append(user_name)
+        sql += " ORDER BY id DESC LIMIT ?"
+        params.append(limit)
+        return [dict(r) for r in self._conn.execute(sql, params).fetchall()]
+
+    def user_groups(self, cluster_id: str, user_name: str) -> list[dict]:
+        """Every group a user belongs to — the reverse lookup.
+
+        This is the "why does this person have access?" question, which the cluster can only
+        answer by scanning every Group object by hand.
+        """
+        return [
+            dict(r)
+            for r in self._conn.execute(
+                """SELECT m.group_name, m.first_seen_at, m.last_seen_at, g.sync_provider
+                     FROM group_member m
+                     LEFT JOIN group_state g
+                            ON g.cluster_id = m.cluster_id AND g.name = m.group_name
+                    WHERE m.cluster_id=? AND m.user_name=?
+                    ORDER BY m.group_name""",
+                (cluster_id, user_name),
+            )
+        ]
+
+    def users(self, cluster_id: str) -> list[dict]:
+        return [
+            dict(r)
+            for r in self._conn.execute(
+                """SELECT user_name, COUNT(*) AS group_count, MIN(first_seen_at) AS first_seen_at
+                     FROM group_member WHERE cluster_id=?
+                    GROUP BY user_name ORDER BY user_name""",
+                (cluster_id,),
+            )
+        ]
 
     def upsert_reconcile_error(
         self,

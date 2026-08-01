@@ -26,6 +26,18 @@
   --status-warning: #fab219;
   --status-critical: #d03b3b;
   --status-unknown: #898781;
+  /* Categorical slots, fixed order. Used for the OWNING CR, not for individual groups:
+     there are 62 groups and only ~2 CRs, and past ~7 hues carrying meaning adjacent
+     classes blur, so a colour per group would destroy the readability it was meant to add.
+     Row-level readability comes from zebra striping instead. */
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-4: #eda100;
+  --series-5: #e87ba4;
+  --series-6: #008300;
+  --series-7: #4a3aa7;
+  --series-8: #e34948;
+  --zebra: rgba(11, 11, 11, 0.025);
 }
 @media (prefers-color-scheme: dark) {
   :root:where(:not([data-theme="light"])) {
@@ -40,6 +52,14 @@
     --border: rgba(255, 255, 255, 0.10);
     --series-1: #3987e5;
     --series-1-wash: rgba(57, 135, 229, 0.14);
+    --series-2: #d95926;
+    --series-3: #199e70;
+    --series-4: #c98500;
+    --series-5: #d55181;
+    --series-6: #008300;
+    --series-7: #9085e9;
+    --series-8: #e66767;
+    --zebra: rgba(255, 255, 255, 0.035);
   }
 }
 :root[data-theme="dark"] {
@@ -54,6 +74,14 @@
   --border: rgba(255, 255, 255, 0.10);
   --series-1: #3987e5;
   --series-1-wash: rgba(57, 135, 229, 0.14);
+  --series-2: #d95926;
+  --series-3: #199e70;
+  --series-4: #c98500;
+  --series-5: #d55181;
+  --series-6: #008300;
+  --series-7: #9085e9;
+  --series-8: #e66767;
+  --zebra: rgba(255, 255, 255, 0.035);
 }
 
 * { box-sizing: border-box; }
@@ -138,8 +166,29 @@ th { color: var(--text-muted); font-weight: 500; font-size: 11px; }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; padding-right: 16px; }
 .scroll-x { overflow-x: auto; }
 
+/* Zebra striping is what actually makes a 60-row table scannable — the eye tracks a row
+   across columns without losing it. Deliberately faint: it separates rows, it does not
+   encode anything, so it must not compete with the data. */
+tbody tr:nth-child(even) td { background: var(--zebra); }
+
 .rowlink { cursor: pointer; }
 .rowlink:hover td { background: var(--series-1-wash); }
+
+/* Owner dot: identity for the CR that produced a group. The dot sits beside the CR's
+   NAME, never alone — hue is the fast channel, the text is the reliable one. */
+.cr-dot {
+  width: 9px; height: 9px; border-radius: 50%; flex: none;
+  display: inline-block; margin-right: 6px; vertical-align: baseline;
+}
+.owner { display: inline-flex; align-items: center; white-space: nowrap; }
+
+.chip {
+  display: inline-block; padding: 1px 7px; margin: 0 4px 4px 0;
+  border: 1px solid var(--border); border-radius: 999px;
+  font-size: 12px; background: var(--zebra);
+}
+.change-added   { color: var(--status-good); font-weight: 600; }
+.change-removed { color: var(--status-critical); font-weight: 600; }
 
 .chart-wrap { position: relative; }
 svg .grid-line { stroke: var(--gridline); stroke-width: 1; }
@@ -197,8 +246,10 @@ const STATES = {
   unknown: { label: "unknown" },
 };
 
-const view = { page: "overview", cluster: null, groupsync: null, groupFilter: "all" };
-let data = { clusters: [], alerts: [], groupsyncs: [], groups: [], events: null };
+const view = { page: "overview", cluster: null, groupsync: null, groupFilter: "all",
+                group: null, user: null };
+let data = { clusters: [], alerts: [], groupsyncs: [], groups: [], events: null,
+             group: null, user: null };
 
 const $ = (id) => document.getElementById(id);
 
@@ -244,6 +295,29 @@ function esc(s) {
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
+/* Colour follows the entity, not its rank. The slot is derived from the CR's position in
+   the full sorted CR list, so filtering the group table down to one owner never repaints
+   the survivors — a reader who learned "ldap-groupsync is blue" keeps that. */
+function crSlot(provider) {
+  if (!provider) return null;
+  const owners = data.groupsyncs.map((g) => g.provider_key).filter(Boolean).sort();
+  const i = owners.indexOf(provider);
+  if (i < 0) return null;
+  // Never generate a 9th hue: past the 8 slots, identity folds into the text alone.
+  return i < 8 ? i + 1 : null;
+}
+
+function ownerCell(provider) {
+  if (!provider) return `<span class="err">unattributed</span>`;
+  const slot = crSlot(provider);
+  const dot = slot
+    ? `<span class="cr-dot" style="background:var(--series-${slot})" aria-hidden="true"></span>`
+    : "";
+  // Strip the "_<provider>" suffix for display; the full value stays in the group detail.
+  const label = provider.replace(/_[^_]+$/, "");
+  return `<span class="owner">${dot}<code>${esc(label)}</code></span>`;
+}
+
 /* ---------- rendering ---------- */
 
 function renderFilters() {
@@ -270,7 +344,11 @@ function renderFilters() {
   const st = $("f-state");
   if (st) st.onchange = (e) => { view.groupFilter = e.target.value; refresh(); };
   document.querySelectorAll("[data-nav]").forEach((b) => {
-    b.onclick = () => { view.page = b.dataset.nav; view.groupsync = null; refresh(); };
+    b.onclick = () => {
+      view.page = b.dataset.nav;
+      view.groupsync = null; view.group = null; view.user = null;
+      refresh();
+    };
   });
 }
 
@@ -474,24 +552,124 @@ function groupsPage() {
     ${rows.length === 0
       ? `<div class="empty-note">No groups match this filter.</div>`
       : `<div class="scroll-x"><table>
-          <thead><tr><th>Name</th><th class="num">Members</th><th>Owner (sync-provider)</th>
-            <th>Group sync-time</th><th>Source DN</th></tr></thead>
-          <tbody>${rows.map((g) => `<tr>
+          <thead><tr><th>Name</th><th class="num">Members</th><th>Owner</th>
+            <th>Last refreshed</th><th>Source DN</th></tr></thead>
+          <tbody>${rows.map((g) => `<tr class="rowlink" data-group="${esc(g.name)}">
             <td>${esc(g.name)}</td>
             <td class="num">${g.member_count}</td>
-            <td>${g.sync_provider ? `<code>${esc(g.sync_provider)}</code>` : `<span class="err">none</span>`}</td>
+            <td>${ownerCell(g.sync_provider)}</td>
             <td class="mono">${esc(ago(g.group_synced_at))}</td>
             <td class="muted"><code>${esc(g.ldap_uid || "—")}</code></td>
           </tr>`).join("")}</tbody>
-        </table></div>`}
+        </table></div>
+        <div class="filterbar-note" style="margin-top:8px">Select a group to see its members.</div>`}
+  </section>`;
+}
+
+/* Group drill-down: who is in it, since when, and what has changed. */
+function groupDetail() {
+  const d = data.group;
+  if (!d) return `<section class="card"><div class="empty-note">Loading…</div></section>`;
+
+  const members = d.members || [];
+  const memberBody = members.length
+    ? `<div class="scroll-x"><table>
+        <thead><tr><th>User</th><th>Member since (first observed)</th><th>Last confirmed</th></tr></thead>
+        <tbody>${members.map((m) => `<tr class="rowlink" data-user="${esc(m.user_name)}">
+          <td>${esc(m.user_name)}</td>
+          <td class="mono">${esc(fmtTime(m.first_seen_at))} <span class="muted">(${esc(ago(m.first_seen_at))})</span></td>
+          <td class="mono muted">${esc(ago(m.last_seen_at))}</td>
+        </tr>`).join("")}</tbody>
+      </table></div>`
+    : `<div class="empty-note">This group has no members. If it is operator-managed, the
+        LDAP-side members either do not resolve or were filtered out — no object is created
+        for a member that cannot be resolved, so nothing else on the cluster shows this.</div>`;
+
+  const changes = d.changes || [];
+  const changeBody = changes.length
+    ? `<div class="scroll-x"><table>
+        <thead><tr><th>Change</th><th>User</th><th>Observed</th><th>Sync that carried it</th></tr></thead>
+        <tbody>${changes.map((c) => `<tr>
+          <td class="change-${esc(c.change)}">${c.change === "added" ? "+ joined" : "− left"}</td>
+          <td>${esc(c.user_name)}</td>
+          <td class="mono">${esc(fmtTime(c.observed_at))}</td>
+          <td class="mono muted">${esc(c.group_synced_at ? fmtTime(c.group_synced_at) : "—")}</td>
+        </tr>`).join("")}</tbody>
+      </table></div>`
+    : `<div class="empty-note">No membership changes seen yet. This timeline is accumulated
+        by polling, so it starts when this dashboard does — it is not a history of the group.</div>`;
+
+  return `<section class="card">
+    <button class="back" id="back-groups">← all groups</button>
+    <h2 style="margin-top:10px">${esc(d.name)}</h2>
+    <div class="kpis">
+      <div class="kpi"><div class="label">Members</div><div class="value">${d.member_count}</div></div>
+      <div class="kpi"><div class="label">Owner</div>
+        <div class="value" style="font-size:15px">${d.owner
+          ? ownerCell(d.sync_provider) : `<span class="err">unattributed</span>`}</div></div>
+      <div class="kpi"><div class="label">Schedule</div>
+        <div class="value" style="font-size:15px"><code>${esc(d.owner ? d.owner.schedule : "—")}</code></div></div>
+      <div class="kpi"><div class="label">Last refreshed</div>
+        <div class="value" style="font-size:15px">${esc(ago(d.group_synced_at))}</div></div>
+    </div>
+    ${d.ldap_uid ? `<div style="margin-top:12px"><h3>Source DN</h3>
+      <code>${esc(d.ldap_uid)}</code></div>` : ""}
+  </section>
+  <section class="card">
+    <h2>Members <span class="muted" style="font-weight:400">· ${members.length}</span></h2>
+    <div class="filterbar-note" style="margin:4px 0 8px">
+      "Member since" is when this dashboard first observed the user in the group — not when
+      LDAP added them. It cannot predate this dashboard.
+    </div>
+    ${memberBody}
+  </section>
+  <section class="card">
+    <h2>Membership changes</h2>
+    ${changeBody}
+  </section>`;
+}
+
+/* Reverse lookup — the "why does this person have access?" view. */
+function userDetail() {
+  const d = data.user;
+  if (!d) return `<section class="card"><div class="empty-note">Loading…</div></section>`;
+  const groups = d.groups || [];
+  return `<section class="card">
+    <button class="back" id="back-groups">← all groups</button>
+    <h2 style="margin-top:10px">${esc(d.user)}</h2>
+    <div class="kpis">
+      <div class="kpi"><div class="label">Groups</div><div class="value">${groups.length}</div></div>
+    </div>
+    <div class="filterbar-note" style="margin-top:8px">
+      Every group this user belongs to on this cluster. The cluster itself can only answer
+      this by scanning every Group object.
+    </div>
+  </section>
+  <section class="card">
+    <h2>Group memberships</h2>
+    <div class="scroll-x"><table>
+      <thead><tr><th>Group</th><th>Owner</th><th>Member since</th></tr></thead>
+      <tbody>${groups.map((g) => `<tr class="rowlink" data-group="${esc(g.group_name)}">
+        <td>${esc(g.group_name)}</td>
+        <td>${ownerCell(g.sync_provider)}</td>
+        <td class="mono">${esc(fmtTime(g.first_seen_at))}</td>
+      </tr>`).join("")}</tbody>
+    </table></div>
   </section>`;
 }
 
 function render() {
   renderFilters();
   const main = $("main");
-  if (view.page === "groups") {
+  if (view.page === "groups" && view.user) {
+    main.innerHTML = userDetail();
+    wireDrilldown();
+  } else if (view.page === "groups" && view.group) {
+    main.innerHTML = groupDetail();
+    wireDrilldown();
+  } else if (view.page === "groups") {
     main.innerHTML = groupsPage();
+    wireDrilldown();
   } else if (view.groupsync) {
     main.innerHTML = groupsyncDetail();
     const back = $("back");
@@ -508,6 +686,20 @@ function render() {
   $("scope-note").textContent = view.cluster ? `· ${view.cluster}` : "";
   $("last-refresh").textContent = "updated " + new Date().toTimeString().slice(0, 8);
   main.classList.remove("stale");
+}
+
+function wireDrilldown() {
+  document.querySelectorAll("[data-group]").forEach((el) => {
+    el.onclick = () => { view.group = el.dataset.group; view.user = null; refresh(); };
+  });
+  document.querySelectorAll("[data-user]").forEach((el) => {
+    el.onclick = (e) => {
+      e.stopPropagation();
+      view.user = el.dataset.user; view.group = null; refresh();
+    };
+  });
+  const back = $("back-groups");
+  if (back) back.onclick = () => { view.group = null; view.user = null; refresh(); };
 }
 
 /* Hover enhances; it never gates a value — the same numbers are in the table below. */
@@ -544,8 +736,14 @@ async function refresh() {
     if (view.cluster) {
       data.groupsyncs = await api(`/api/clusters/${encodeURIComponent(view.cluster)}/groupsyncs`);
       if (view.page === "groups") {
-        data.groups = await api(
-          `/api/clusters/${encodeURIComponent(view.cluster)}/groups?state=${view.groupFilter}`);
+        const base = `/api/clusters/${encodeURIComponent(view.cluster)}`;
+        if (view.user) {
+          data.user = await api(`${base}/users/${encodeURIComponent(view.user)}`);
+        } else if (view.group) {
+          data.group = await api(`${base}/groups/${encodeURIComponent(view.group)}`);
+        } else {
+          data.groups = await api(`${base}/groups?state=${view.groupFilter}`);
+        }
       }
       data.events = view.groupsync
         ? await api(`/api/clusters/${encodeURIComponent(view.cluster)}/groupsyncs/${encodeURIComponent(view.groupsync)}/events`)

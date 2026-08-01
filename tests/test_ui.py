@@ -100,6 +100,29 @@ def _seed(db_path: str) -> None:
         _iso(now),
     )
 
+    # Membership across two polls, so the UI has both current members and a change to show:
+    # bob leaves the admin group, dave joins. Both are silent on the cluster.
+    store.sync_members(
+        "crc-local",
+        {
+            "app-ocp-rbac-alpha-ns-admin": ["alice", "bob"],
+            "app-ocp-rbac-abcd-ns-superuser": [],
+            "gsd-test-unattributed": [],
+        },
+        {"app-ocp-rbac-alpha-ns-admin": _iso(now - timedelta(hours=1))},
+        _iso(now - timedelta(hours=1)),
+    )
+    store.sync_members(
+        "crc-local",
+        {
+            "app-ocp-rbac-alpha-ns-admin": ["alice", "dave"],
+            "app-ocp-rbac-abcd-ns-superuser": [],
+            "gsd-test-unattributed": [],
+        },
+        {"app-ocp-rbac-alpha-ns-admin": _iso(now - timedelta(minutes=4))},
+        _iso(now - timedelta(minutes=4)),
+    )
+
     # Enough events for the timeline to draw a line, with a count cliff in the middle.
     for i, count in enumerate([40, 41, 41, 28, 41]):
         ts = _iso(now - timedelta(minutes=30 * (5 - i)))
@@ -267,6 +290,71 @@ class TestGroupExplorer:
     def test_source_dn_is_shown(self, dash):
         self._open_groups(dash)
         assert "ou=Groups,dc=ephico2real,dc=com" in dash.locator("tbody").inner_text()
+
+    def test_rows_are_zebra_striped(self, dash):
+        """Striping is what makes a 60-row table scannable; it must actually render."""
+        self._open_groups(dash)
+        rows = dash.locator("tbody tr")
+        odd = rows.nth(0).locator("td").first.evaluate("e => getComputedStyle(e).backgroundColor")
+        even = rows.nth(1).locator("td").first.evaluate("e => getComputedStyle(e).backgroundColor")
+        assert odd != even, "adjacent rows render identically — no striping"
+
+    def test_owner_colour_is_accompanied_by_the_name(self, dash):
+        """Hue is the fast channel, never the only one."""
+        self._open_groups(dash)
+        owner = dash.locator("tbody .owner").first
+        assert owner.locator(".cr-dot").count() == 1
+        assert owner.inner_text().strip(), "owner dot with no name beside it"
+
+
+class TestGroupDrilldown:
+    def _open_group(self, dash, name):
+        dash.locator("button[data-nav='groups']").click()
+        dash.wait_for_selector("#f-state")
+        dash.locator(f"tr[data-group='{name}']").click()
+        dash.wait_for_selector("#back-groups")
+
+    def test_members_are_listed_with_join_time(self, dash):
+        self._open_group(dash, "app-ocp-rbac-alpha-ns-admin")
+        body = dash.locator("body").inner_text()
+        assert "alice" in body and "dave" in body
+        assert "Member since" in body
+
+    def test_departed_member_is_not_shown_as_current(self, dash):
+        """bob left in the second poll; he belongs in the change log, not the member list."""
+        self._open_group(dash, "app-ocp-rbac-alpha-ns-admin")
+        members = dash.locator("tr[data-user]").all_inner_texts()
+        assert not any("bob" in m for m in members)
+
+    def test_membership_changes_show_both_directions(self, dash):
+        """A user quietly dropping out is the invisible absence this view exists for."""
+        self._open_group(dash, "app-ocp-rbac-alpha-ns-admin")
+        body = dash.locator("body").inner_text()
+        assert "joined" in body and "left" in body
+        assert "bob" in body, "the departure must still be visible in the change log"
+
+    def test_empty_group_explains_itself(self, dash):
+        self._open_group(dash, "app-ocp-rbac-abcd-ns-superuser")
+        assert "no members" in dash.locator("body").inner_text().lower()
+
+    def test_back_returns_to_the_group_list(self, dash):
+        self._open_group(dash, "app-ocp-rbac-alpha-ns-admin")
+        dash.locator("#back-groups").click()
+        # Wait on something unique to the list view: #f-state is present in both, so
+        # waiting on it returns instantly and reads the pre-render DOM.
+        dash.wait_for_function("() => !document.querySelector('#back-groups')")
+        assert dash.locator("tbody tr").count() == 3
+
+    def test_user_reverse_lookup(self, dash):
+        """"Why does this person have access?" — click a member, see every group."""
+        self._open_group(dash, "app-ocp-rbac-alpha-ns-admin")
+        dash.locator("tr[data-user='alice']").click()
+        # Both views carry #back-groups, so wait for the user view's own heading.
+        dash.wait_for_selector("text=Group memberships")
+        body = dash.locator("body").inner_text()
+        assert "alice" in body
+        assert "app-ocp-rbac-alpha-ns-admin" in body
+        assert "Group memberships" in body
 
 
 class TestRendering:

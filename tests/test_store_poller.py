@@ -148,7 +148,7 @@ class TestProviderAttribution:
         return GroupSyncView(name, "ns", "0 * * * *", None, None, 1, None, None, None, None)
 
     def _group(self, name, provider):
-        return GroupView(name, 1, provider, None, None)
+        return GroupView(name, 1, provider, None, None, ["alice"])
 
     def test_matches_the_label_actually_present(self, store):
         """The provider suffix is not on the CR status, so it is discovered from the
