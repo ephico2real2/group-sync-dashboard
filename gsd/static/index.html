@@ -262,6 +262,29 @@ const STATES = {
 
 const view = { page: "overview", cluster: null, groupsync: null, groupFilter: "all",
                 group: null, user: null };
+/* Where the reader came FROM, so Back retraces the path instead of jumping to a fixed
+   page. Drilling group -> user -> another group and pressing Back three times must walk
+   back through exactly those, which a single hardcoded destination cannot do. */
+const trail = [];
+function pushTrail() {
+  trail.push({ page: view.page, groupsync: view.groupsync,
+               group: view.group, user: view.user });
+  if (trail.length > 50) trail.shift();
+}
+function popTrail() {
+  const prev = trail.pop();
+  if (!prev) { view.group = null; view.user = null; view.groupsync = null; return; }
+  view.page = prev.page; view.groupsync = prev.groupsync;
+  view.group = prev.group; view.user = prev.user;
+}
+function backLabel() {
+  const prev = trail[trail.length - 1];
+  if (!prev) return "← all groups";
+  if (prev.user) return `← ${prev.user}`;
+  if (prev.group) return `← ${prev.group}`;
+  if (prev.groupsync) return `← ${prev.groupsync}`;
+  return prev.page === "groups" ? "← all groups" : "← overview";
+}
 let data = { clusters: [], alerts: [], groupsyncs: [], groups: [], events: null,
              group: null, user: null };
 
@@ -361,6 +384,7 @@ function renderFilters() {
     b.onclick = () => {
       view.page = b.dataset.nav;
       view.groupsync = null; view.group = null; view.user = null;
+      trail.length = 0;
       refresh();
     };
   });
@@ -525,7 +549,7 @@ function groupsyncDetail() {
         operator has never synced.</div>`;
 
   return `<section class="card">
-    <button class="back" id="back">← all GroupSync CRs</button>
+    <button class="back" id="back">${backLabel()}</button>
     <div style="display:flex;align-items:center;gap:10px;margin-top:10px;flex-wrap:wrap">
       <h2>${esc(cr.name)}</h2>${badge(cr.state)}
     </div>
@@ -624,8 +648,13 @@ function groupDetail() {
         by polling, so it starts when this dashboard does — it is not a history of the group.</div>`;
 
   return `<section class="card">
-    <button class="back" id="back-groups">← all groups</button>
-    <h2 style="margin-top:10px">${esc(d.name)}</h2>
+    <button class="back" id="back-groups">${backLabel()}</button>
+    <h2 style="margin-top:10px">${esc(d.name)}
+      ${d.deleted ? sevBadge("warning", "deleted") : ""}</h2>
+    ${d.deleted ? `<div class="filterbar-note" style="margin-top:6px">
+      This group no longer exists on the cluster. It is still reachable from the membership
+      history below, which is why this page is not an error — the record of who was in it,
+      and when it went, is the answer to the click.</div>` : ""}
     <div class="kpis">
       <div class="kpi"><div class="label">Members</div><div class="value">${d.member_count}</div></div>
       <div class="kpi"><div class="label">Owner</div>
@@ -648,9 +677,49 @@ function groupDetail() {
     </div>
     ${memberBody}
   </section>
+  ${bindingsCard(d.bindings, "This group")}
   <section class="card">
     <h2>Membership changes</h2>
     ${changeBody}
+  </section>`;
+}
+
+/* Direct bindings only. The heading and the note both say so, because a reader who thinks
+   this is an effective-permission calculation could conclude access is absent when it is
+   not — a false negative here gets an incident closed wrongly. */
+function bindingsCard(bindings, who) {
+  const rows = bindings || [];
+  const ns = rows.filter((b) => b.binding_kind === "RoleBinding");
+  const cluster = rows.filter((b) => b.binding_kind === "ClusterRoleBinding");
+  const namespaces = [...new Set(ns.map((b) => b.binding_namespace))];
+
+  const table = (list, scoped) => `<div class="scroll-x"><table>
+      <thead><tr>${scoped ? "<th>Namespace</th>" : ""}<th>Role</th><th>Binding</th>
+        ${list[0] && list[0].via_group ? "<th>Via group</th>" : ""}</tr></thead>
+      <tbody>${list.map((b) => `<tr>
+        ${scoped ? `<td>${esc(b.binding_namespace)}</td>` : ""}
+        <td><code>${esc(b.role_name)}</code> <span class="muted">${esc(b.role_kind)}</span></td>
+        <td class="muted">${esc(b.binding_name)}</td>
+        ${b.via_group ? `<td><span class="drill" data-group="${esc(b.via_group)}">${esc(b.via_group)}</span></td>` : ""}
+      </tr>`).join("")}</tbody></table></div>`;
+
+  return `<section class="card">
+    <h2>Access granted <span class="muted" style="font-weight:400">· direct role bindings</span></h2>
+    <div class="filterbar-note" style="margin:4px 0 10px">
+      ${esc(who)} is named by these bindings. Role rules are <strong>not</strong> evaluated,
+      so this is what has been granted, not a computed list of permitted actions.
+    </div>
+    ${rows.length === 0
+      ? `<div class="empty-note">No RoleBindings or ClusterRoleBindings name this group.
+          It grants no access on this cluster — which, for a synced group, usually means
+          the binding was never created.</div>`
+      : `<div class="kpis" style="margin-top:0">
+          <div class="kpi"><div class="label">Namespaces</div><div class="value">${namespaces.length}</div></div>
+          <div class="kpi"><div class="label">Cluster-wide roles</div>
+            <div class="value ${cluster.length ? "" : "muted"}">${cluster.length}</div></div>
+        </div>
+        ${cluster.length ? `<h3 style="margin-top:14px">Cluster-wide</h3>${table(cluster, false)}` : ""}
+        ${ns.length ? `<h3 style="margin-top:14px">Namespaced</h3>${table(ns, true)}` : ""}`}
   </section>`;
 }
 
@@ -660,7 +729,7 @@ function userDetail() {
   if (!d) return `<section class="card"><div class="empty-note">Loading…</div></section>`;
   const groups = d.groups || [];
   return `<section class="card">
-    <button class="back" id="back-groups">← all groups</button>
+    <button class="back" id="back-groups">${backLabel()}</button>
     <h2 style="margin-top:10px">${esc(d.user)}</h2>
     <div class="kpis">
       <div class="kpi"><div class="label">Groups</div><div class="value">${groups.length}</div></div>
@@ -685,6 +754,7 @@ function userDetail() {
           </tr>`).join("")}</tbody>
         </table></div>`}
   </section>
+  ${bindingsCard(d.bindings, esc(d.user))}
   <section class="card">
     <h2>History</h2>
     ${(d.changes || []).length === 0
@@ -715,14 +785,14 @@ function render() {
   } else if (view.groupsync) {
     main.innerHTML = groupsyncDetail();
     const back = $("back");
-    if (back) back.onclick = () => { view.groupsync = null; refresh(); };
+    if (back) back.onclick = () => { popTrail(); refresh(); };
     wireTooltip();
   } else {
     main.innerHTML = alertsCard()
       + `<div class="grid">${data.clusters.map(clusterCard).join("")}</div>`
       + groupsyncTable();
     document.querySelectorAll("[data-cr]").forEach((tr) => {
-      tr.onclick = () => { view.groupsync = tr.dataset.cr; refresh(); };
+      tr.onclick = () => { pushTrail(); view.groupsync = tr.dataset.cr; refresh(); };
     });
   }
   $("scope-note").textContent = view.cluster ? `· ${view.cluster}` : "";
@@ -732,11 +802,15 @@ function render() {
 
 function wireDrilldown() {
   document.querySelectorAll("[data-group]").forEach((el) => {
-    el.onclick = () => { view.group = el.dataset.group; view.user = null; refresh(); };
+    el.onclick = () => {
+      pushTrail();
+      view.group = el.dataset.group; view.user = null; refresh();
+    };
   });
   document.querySelectorAll("[data-user]").forEach((el) => {
     const go = (e) => {
       e.stopPropagation();
+      pushTrail();
       view.user = el.dataset.user; view.group = null; refresh();
     };
     el.onclick = go;
@@ -749,11 +823,12 @@ function wireDrilldown() {
       e.preventDefault();
       const target = el.dataset.user || el.closest("[data-user]")?.dataset.user;
       if (!target) return;
+      pushTrail();
       view.user = target; view.group = null; refresh();
     };
   });
   const back = $("back-groups");
-  if (back) back.onclick = () => { view.group = null; view.user = null; refresh(); };
+  if (back) back.onclick = () => { popTrail(); refresh(); };
 }
 
 /* Hover enhances; it never gates a value — the same numbers are in the table below. */
@@ -805,8 +880,18 @@ async function refresh() {
     }
     render();
   } catch (err) {
+    // An error must never strand the reader: keep a working Back so a dead link is a
+    // detour, not a dead end. This was reported from the field — a 404 on a deleted group
+    // replaced the whole page, back button included.
     $("main").classList.remove("stale");
-    $("main").innerHTML = `<section class="card"><div class="err">Dashboard API error: ${esc(err.message)}</div></section>`;
+    $("main").innerHTML = `<section class="card">
+      <button class="back" id="back-groups">${backLabel()}</button>
+      <div class="err" style="margin-top:10px">Dashboard API error: ${esc(err.message)}</div>
+      <div class="filterbar-note" style="margin-top:6px">
+        The object may have been deleted since this page was rendered.</div>
+    </section>`;
+    const eb = $("back-groups");
+    if (eb) eb.onclick = () => { popTrail(); refresh(); };
   }
 }
 

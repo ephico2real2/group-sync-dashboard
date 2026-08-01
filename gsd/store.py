@@ -117,6 +117,35 @@ CREATE INDEX IF NOT EXISTS membership_event_lookup
     ON membership_event(cluster_id, group_name, id DESC);
 CREATE INDEX IF NOT EXISTS membership_event_by_user
     ON membership_event(cluster_id, user_name, id DESC);
+
+-- One row per (binding, Group subject). Current state, replaced each refresh: a binding
+-- is fully re-readable from the API, so nothing here is irreplaceable history.
+CREATE TABLE IF NOT EXISTS rbac_group_binding (
+    cluster_id          TEXT NOT NULL,
+    binding_kind        TEXT NOT NULL,   -- RoleBinding | ClusterRoleBinding
+    binding_namespace   TEXT NOT NULL,   -- '' for ClusterRoleBinding
+    binding_name        TEXT NOT NULL,
+    role_kind           TEXT NOT NULL,   -- Role | ClusterRole
+    role_name           TEXT NOT NULL,
+    group_name          TEXT NOT NULL,
+    observed_at         TEXT NOT NULL,
+    PRIMARY KEY(cluster_id, binding_kind, binding_namespace, binding_name, group_name)
+);
+CREATE INDEX IF NOT EXISTS rbac_binding_by_group
+    ON rbac_group_binding(cluster_id, group_name);
+
+-- Provenance: group names we have EVER seen carrying an operator sync-provider label.
+-- This is what separates "this binding's group broke" from "this binding names something
+-- that never existed". Append-only and never replaced — the whole point is that it
+-- outlives the Group object's disappearance.
+CREATE TABLE IF NOT EXISTS managed_group_seen (
+    cluster_id          TEXT NOT NULL,
+    group_name          TEXT NOT NULL,
+    sync_provider       TEXT,
+    first_seen_at       TEXT NOT NULL,
+    last_seen_at        TEXT NOT NULL,
+    PRIMARY KEY(cluster_id, group_name)
+);
 """
 
 
@@ -438,6 +467,107 @@ class Store:
                      FROM group_member WHERE cluster_id=?
                     GROUP BY user_name ORDER BY user_name""",
                 (cluster_id,),
+        )
+
+    # -- RBAC bindings -----------------------------------------------------------------
+
+    def replace_bindings(self, cluster_id: str, rows: list[dict], observed_at: str) -> None:
+        """Replace this cluster's binding rows wholesale, in one transaction."""
+        with self._tx() as conn:
+            conn.execute("DELETE FROM rbac_group_binding WHERE cluster_id=?", (cluster_id,))
+            conn.executemany(
+                """INSERT OR REPLACE INTO rbac_group_binding(
+                       cluster_id, binding_kind, binding_namespace, binding_name,
+                       role_kind, role_name, group_name, observed_at)
+                   VALUES(:cluster_id,:binding_kind,:binding_namespace,:binding_name,
+                          :role_kind,:role_name,:group_name,:observed_at)""",
+                [{**r, "cluster_id": cluster_id, "observed_at": observed_at} for r in rows],
+            )
+
+    def record_managed_groups(
+        self, cluster_id: str, groups: list[dict], observed_at: str
+    ) -> None:
+        """Remember which groups the operator manages, so their later absence is meaningful.
+
+        Only groups carrying a sync-provider label are recorded. A group we have never seen
+        managed cannot later be called a broken binding — at most an unresolved one.
+        """
+        managed = [g for g in groups if g.get("sync_provider")]
+        if not managed:
+            return
+        with self._tx() as conn:
+            conn.executemany(
+                """INSERT INTO managed_group_seen(
+                       cluster_id, group_name, sync_provider, first_seen_at, last_seen_at)
+                   VALUES(?,?,?,?,?)
+                   ON CONFLICT(cluster_id, group_name) DO UPDATE SET
+                       sync_provider=excluded.sync_provider,
+                       last_seen_at=excluded.last_seen_at""",
+                [
+                    (cluster_id, g["name"], g["sync_provider"], observed_at, observed_at)
+                    for g in managed
+                ],
+            )
+
+    def group_bindings(self, cluster_id: str, group_name: str) -> list[dict]:
+        """Direct role bindings naming this group. NOT effective permissions."""
+        return self._rows(
+            """SELECT binding_kind, binding_namespace, binding_name, role_kind, role_name
+                 FROM rbac_group_binding
+                WHERE cluster_id=? AND group_name=?
+                ORDER BY binding_kind, binding_namespace, binding_name""",
+            (cluster_id, group_name),
+        )
+
+    def user_bindings(self, cluster_id: str, user_name: str) -> list[dict]:
+        """Every binding reachable by this user THROUGH their current group memberships.
+
+        `via_group` is carried on every row: without it the user page would assert access
+        with no way to see which membership confers it, which is the first thing anyone
+        asks when revoking it.
+        """
+        return self._rows(
+            """SELECT b.binding_kind, b.binding_namespace, b.binding_name,
+                      b.role_kind, b.role_name, b.group_name AS via_group
+                 FROM group_member m
+                 JOIN rbac_group_binding b
+                   ON b.cluster_id = m.cluster_id AND b.group_name = m.group_name
+                WHERE m.cluster_id=? AND m.user_name=?
+                ORDER BY b.binding_kind, b.binding_namespace, b.binding_name""",
+            (cluster_id, user_name),
+        )
+
+    def binding_findings(self, cluster_id: str) -> list[dict]:
+        """Classify every binding whose Group subject has no Group object.
+
+        Three tiers, because two would be useless here. On the target cluster 110 of 149
+        distinct Group subjects are built-in virtual groups; lumping those in with real
+        problems gives 119 findings of which 9 matter, and a list that is 92% noise is one
+        operators stop reading.
+
+            built_in    system:* — virtual, authorises real access, no object expected
+            dangling    was observed operator-managed, now absent -> something broke
+            unresolved  never seen managed -> names a group that has never existed
+
+        `dangling` is the high-confidence tier and is the only one that should alert.
+        """
+        return self._rows(
+            """SELECT b.binding_kind, b.binding_namespace, b.binding_name,
+                      b.role_kind, b.role_name, b.group_name,
+                      CASE
+                        WHEN b.group_name LIKE 'system:%' THEN 'built_in'
+                        WHEN s.group_name IS NOT NULL     THEN 'dangling'
+                        ELSE 'unresolved'
+                      END AS finding
+                 FROM rbac_group_binding b
+                 LEFT JOIN group_state g
+                        ON g.cluster_id = b.cluster_id AND g.name = b.group_name
+                 LEFT JOIN managed_group_seen s
+                        ON s.cluster_id = b.cluster_id AND s.group_name = b.group_name
+                WHERE b.cluster_id = ?
+                  AND g.name IS NULL
+                ORDER BY b.group_name, b.binding_kind, b.binding_namespace, b.binding_name""",
+            (cluster_id,),
         )
 
     def upsert_reconcile_error(

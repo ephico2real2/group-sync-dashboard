@@ -33,6 +33,23 @@ rules:
   - apiGroups: ["user.openshift.io"]
     resources: ["groups"]
     verbs: ["get", "list"]
+  # Needed for the RBAC view: which namespaces/roles a group is bound to, and which
+  # bindings name a group that no longer exists. Read-only, no `watch`.
+  #
+  # We do not request roles/clusterroles, because the dashboard shows direct bindings and
+  # never evaluates role rules. Note this is a statement of intent, NOT an isolation
+  # boundary: OpenShift binds the `basic-user` ClusterRole to `system:authenticated`, and
+  # that already grants get/list on clusterroles to every authenticated identity including
+  # this ServiceAccount. Verified with `oc auth can-i list clusterroles --as=...` -> yes,
+  # before this rule was added. Withholding it here withholds nothing.
+  #
+  # What this rule genuinely adds is the binding topology — who is bound to what, across
+  # every namespace. That is real information expansion and worth a deliberate decision;
+  # it is not a privilege escalation, since the SA already lists every Group and the
+  # usernames inside each one.
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["rolebindings", "clusterrolebindings"]
+    verbs: ["get", "list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -56,6 +73,10 @@ data:
   clusters.yaml: |
     pollIntervalSeconds: 60
     scheduleGraceSeconds: 120
+    # Bindings are listed across every namespace, which is far more expensive than the two
+    # group calls, and they change on admin action rather than on a sync schedule.
+    bindingIntervalSeconds: 300
+    requestTimeoutSeconds: 15
     clusters:
       # Observing the cluster we run on: the pod's own projected ServiceAccount token and
       # the cluster CA are already mounted, so no Secret of our own is needed. Reading the
@@ -104,7 +125,7 @@ spec:
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: dashboard
-          image: image-registry.openshift-image-registry.svc:5000/group-sync-dashboard/group-sync-dashboard:0.2.3
+          image: image-registry.openshift-image-registry.svc:5000/group-sync-dashboard/group-sync-dashboard:0.3.1
           # Always: a re-push of the same tag takes effect on the next restart, which is
           # what you want while iterating.
           #
@@ -120,6 +141,11 @@ spec:
           env:
             - {name: GSD_CONFIG, value: /etc/gsd/clusters.yaml}
             - {name: GSD_DB_PATH, value: /data/gsd.db}
+            # DEBUG | INFO | WARNING | ERROR | CRITICAL. Declared explicitly so it shows up
+            # in `oc set env deploy/group-sync-dashboard --list`; turn to DEBUG with
+            # `oc set env deploy/group-sync-dashboard GSD_LOG_LEVEL=DEBUG` to get per-poll
+            # timing, HTTP request lines and page counts.
+            - {name: GSD_LOG_LEVEL, value: INFO}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

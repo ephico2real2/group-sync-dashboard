@@ -108,6 +108,9 @@ def _seed(db_path: str) -> None:
             "app-ocp-rbac-alpha-ns-admin": ["alice", "bob"],
             "app-ocp-rbac-abcd-ns-superuser": [],
             "gsd-test-unattributed": [],
+            # Present in history, never in group_state -> a group deleted from the cluster.
+            # Still reachable from every change row that names it.
+            "app-ocp-rbac-gone-ns-viewer": ["alice"],
         },
         {"app-ocp-rbac-alpha-ns-admin": _iso(now - timedelta(hours=1))},
         _iso(now - timedelta(hours=1)),
@@ -413,3 +416,97 @@ class TestRendering:
         page.locator("tr[data-cr='ldap-groupsync']").click()
         page.wait_for_selector("svg .series-line")
         assert errors == []
+
+
+class TestNavigationTrail:
+    """Reported from the field: Back jumped to a fixed page instead of retracing, and a
+    404 replaced the whole page including the Back button, stranding the reader."""
+
+    def _open_group(self, dash, name):
+        dash.locator("button[data-nav='groups']").click()
+        dash.wait_for_selector("#f-state")
+        dash.locator(f"tr[data-group='{name}']").click()
+        dash.wait_for_selector("#back-groups")
+
+    def test_back_retraces_group_then_user(self, dash):
+        """group -> user -> Back must land on the GROUP, not the group list."""
+        self._open_group(dash, "app-ocp-rbac-alpha-ns-admin")
+        dash.locator("tr[data-user='alice']").click()
+        dash.wait_for_selector("text=Group memberships")
+        assert "alice" in dash.locator("h2").first.inner_text()
+
+        dash.locator("#back-groups").click()
+        dash.wait_for_selector("text=Membership changes")
+        assert "app-ocp-rbac-alpha-ns-admin" in dash.locator("h2").first.inner_text()
+
+    def test_back_label_names_the_destination(self, dash):
+        """A back button that says where it goes is what makes a trail usable."""
+        self._open_group(dash, "app-ocp-rbac-alpha-ns-admin")
+        dash.locator("tr[data-user='alice']").click()
+        dash.wait_for_selector("text=Group memberships")
+        assert "app-ocp-rbac-alpha-ns-admin" in dash.locator("#back-groups").inner_text()
+
+    def test_back_twice_returns_to_the_list(self, dash):
+        self._open_group(dash, "app-ocp-rbac-alpha-ns-admin")
+        dash.locator("tr[data-user='alice']").click()
+        dash.wait_for_selector("text=Group memberships")
+        dash.locator("#back-groups").click()
+        dash.wait_for_selector("text=Membership changes")
+        dash.locator("#back-groups").click()
+        dash.wait_for_function("() => !document.querySelector('#back-groups')")
+        assert dash.locator("tbody tr").count() == 3
+
+    def test_nav_button_clears_the_trail(self, dash):
+        """Jumping to a section is a fresh start, not a continuation of the old path."""
+        self._open_group(dash, "app-ocp-rbac-alpha-ns-admin")
+        dash.locator("tr[data-user='alice']").click()
+        dash.wait_for_selector("text=Group memberships")
+        dash.locator("button[data-nav='groups']").click()
+        dash.wait_for_function("() => !document.querySelector('#back-groups')")
+        assert dash.locator("tbody tr").count() == 3
+
+    def test_error_page_still_offers_a_way_back(self, dash):
+        """The reported dead end: a 404 replaced the page, back button included."""
+        self._open_group(dash, "app-ocp-rbac-alpha-ns-admin")
+        dash.evaluate("""() => {
+            pushTrail();                       // what a real click does
+            view.group = 'definitely-not-a-real-group-xyz';
+            refresh();
+        }""")
+        dash.wait_for_selector("text=Dashboard API error")
+        assert dash.locator("#back-groups").count() == 1, "no way back from the error"
+        dash.locator("#back-groups").click()
+        dash.wait_for_selector("text=Membership changes")
+        assert "app-ocp-rbac-alpha-ns-admin" in dash.locator("h2").first.inner_text()
+
+
+class TestDeletedGroup:
+    def test_deleted_group_renders_its_history_instead_of_404(self, dash):
+        """Reported from the field: clicking a group named in a change row, after the group
+        had been deleted, returned 404 and replaced the page. "This group is gone, here is
+        who was in it" is the answer to that click."""
+        dash.locator("button[data-nav='groups']").click()
+        dash.wait_for_selector("#f-state")
+        dash.evaluate("""() => {
+            pushTrail();
+            view.group = 'app-ocp-rbac-gone-ns-viewer';
+            refresh();
+        }""")
+        dash.wait_for_selector("text=Membership changes")
+        body = dash.locator("body").inner_text()
+        assert "deleted" in body.lower()
+        assert "alice" in body, "the history of who was in it must survive"
+        assert "Dashboard API error" not in body
+
+    def test_back_works_from_a_deleted_group(self, dash):
+        dash.locator("button[data-nav='groups']").click()
+        dash.wait_for_selector("#f-state")
+        dash.evaluate("""() => {
+            pushTrail();
+            view.group = 'app-ocp-rbac-gone-ns-viewer';
+            refresh();
+        }""")
+        dash.wait_for_selector("#back-groups")
+        dash.locator("#back-groups").click()
+        dash.wait_for_function("() => !document.querySelector('#back-groups')")
+        assert dash.locator("tbody tr").count() == 3

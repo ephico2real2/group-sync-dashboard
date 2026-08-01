@@ -28,7 +28,14 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONPATH=/install/lib/python3.11/site-packages:/install/lib64/python3.11/site-packages \
     GSD_CONFIG=/etc/gsd/clusters.yaml \
-    GSD_DB_PATH=/data/gsd.db
+    GSD_DB_PATH=/data/gsd.db \
+    GSD_LOG_LEVEL=INFO
+#   GSD_LOG_LEVEL: DEBUG | INFO | WARNING | ERROR | CRITICAL
+#   Set explicitly rather than left to the code default so it is discoverable in
+#   `podman inspect` / `oc set env --list` — an env var nobody knows exists is not a
+#   feature. DEBUG adds per-poll timing, HTTP request lines, page counts and the
+#   countdown to the next binding refresh; it is safe to leave on briefly but is chatty
+#   at one line or more per poll per cluster.
 
 USER 0
 RUN microdnf install -y python3.11 \

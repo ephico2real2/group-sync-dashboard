@@ -23,6 +23,18 @@ labels and annotations the operator writes use `redhat-cop.io` (hyphenated). The
 one character apart and transposing them yields a 404 that looks like a missing CRD."""
 
 GROUP_API = "/apis/user.openshift.io/v1/groups"
+ROLEBINDING_API = "/apis/rbac.authorization.k8s.io/v1/rolebindings"
+CLUSTERROLEBINDING_API = "/apis/rbac.authorization.k8s.io/v1/clusterrolebindings"
+
+SYSTEM_GROUP_PREFIX = "system:"
+"""Kubernetes reserves this prefix for built-in identities.
+
+Binding subjects like ``system:serviceaccounts:<ns>`` and ``system:authenticated`` are
+VIRTUAL groups: they authorise real access but no Group object exists or ever will. On the
+target cluster 110 of 149 distinct Group subjects are of this form, so treating "absent
+from the Group API" as broken would bury the 9 genuinely broken ones in 110 false
+positives. Reserved-by-convention rather than guaranteed, so these are classified and
+labelled, never silently dropped."""
 
 SYNC_PROVIDER_LABEL = "group-sync-operator.redhat-cop.io/sync-provider"
 SYNC_TIME_ANNOTATION = "group-sync-operator.redhat-cop.io/sync-time"
@@ -78,6 +90,28 @@ class GroupView:
 
     A count answers "is this group empty?"; only the names answer "why does this person have
     access?" — which is the question an operator actually arrives with."""
+
+
+@dataclass
+class BindingView:
+    """One (binding, Group subject) pair.
+
+    Flattened per subject rather than per binding: a binding naming three groups is three
+    rows, which is the shape both drill-downs read it in ("which bindings name THIS
+    group?"). Only ``kind: Group`` subjects are kept — User and ServiceAccount subjects
+    cannot contribute to a user's access-via-groups, which is the question being answered.
+    """
+
+    binding_kind: str          # RoleBinding | ClusterRoleBinding
+    binding_namespace: str     # "" for ClusterRoleBinding
+    binding_name: str
+    role_kind: str             # Role | ClusterRole
+    role_name: str
+    group_name: str
+
+    @property
+    def is_system_group(self) -> bool:
+        return self.group_name.startswith(SYSTEM_GROUP_PREFIX)
 
 
 class ClusterClient:
@@ -156,6 +190,22 @@ class ClusterClient:
             groups = [_group_view(o) for o in self._list_all(client, GROUP_API)]
         return groupsyncs, groups
 
+    def fetch_bindings(self) -> list[BindingView]:
+        """Every RoleBinding and ClusterRoleBinding subject of kind Group.
+
+        Separate from fetch() and on its own slower cadence: this lists bindings across
+        every namespace, which is far more expensive than the two list calls above, and
+        bindings change on administrative action rather than on a sync schedule.
+        """
+        out: list[BindingView] = []
+        with self._client() as client:
+            for obj in self._list_all(client, ROLEBINDING_API):
+                out.extend(_binding_views(obj, "RoleBinding"))
+            for obj in self._list_all(client, CLUSTERROLEBINDING_API):
+                out.extend(_binding_views(obj, "ClusterRoleBinding"))
+        log.debug("fetched %d group-subject binding rows from %s", len(out), self.cluster.name)
+        return out
+
 
 def _condition(obj: dict, wanted: str) -> dict | None:
     for condition in (obj.get("status") or {}).get("conditions") or []:
@@ -202,6 +252,33 @@ def _ldap_filter(spec: dict) -> str | None:
             if query.get("filter"):
                 return query["filter"]
     return None
+
+
+def _binding_views(obj: dict, binding_kind: str) -> list[BindingView]:
+    """Flatten one binding into a row per Group subject.
+
+    Subject matching is on ``kind`` exactly. A binding with no Group subject contributes
+    nothing, which is why 530 RoleBindings on the target cluster reduce to 178 rows.
+    """
+    meta = obj.get("metadata") or {}
+    role_ref = obj.get("roleRef") or {}
+    rows: list[BindingView] = []
+    for subject in obj.get("subjects") or []:
+        if subject.get("kind") != "Group" or not subject.get("name"):
+            continue
+        rows.append(
+            BindingView(
+                binding_kind=binding_kind,
+                # ClusterRoleBindings have no namespace; "" rather than None so it can sit
+                # in a NOT NULL primary key column without a sentinel row per binding.
+                binding_namespace=meta.get("namespace", "") or "",
+                binding_name=meta.get("name", ""),
+                role_kind=role_ref.get("kind", ""),
+                role_name=role_ref.get("name", ""),
+                group_name=subject["name"],
+            )
+        )
+    return rows
 
 
 def _group_view(obj: dict) -> GroupView:

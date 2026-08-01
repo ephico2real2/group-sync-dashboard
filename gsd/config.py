@@ -105,6 +105,25 @@ class Settings:
     cycle and the state flaps to ``late`` on each pass. See state.py.
     """
 
+    binding_interval_seconds: int = 300
+    """How often to re-read RoleBindings/ClusterRoleBindings — deliberately slower than
+    the group poll.
+
+    Bindings change on administrative action, not on a sync schedule, so minute-level
+    freshness buys nothing. The cost is not hypothetical: this resource is listed across
+    every namespace, and at 100x the measured CRC scale (530 RoleBindings, 236
+    ClusterRoleBindings) a refresh is roughly 154 paged API requests. Five minutes cuts
+    that by 80% against a 60s poll while staying operationally current.
+    """
+
+    request_timeout_seconds: float = 15.0
+    """Per-request timeout against a cluster's API server.
+
+    Configurable rather than hardcoded because it is the main lever for not overwhelming
+    a busy API server: a slow cluster should time out and degrade to a card, not stall its
+    poll thread indefinitely.
+    """
+
     db_path: str = "gsd.db"
 
     def cluster(self, name: str) -> ClusterConfig | None:
@@ -198,6 +217,8 @@ def load_settings(path: str | Path) -> Settings:
         clusters=clusters,
         poll_interval_seconds=int(raw.get("pollIntervalSeconds", 60)),
         schedule_grace_seconds=int(raw.get("scheduleGraceSeconds", 120)),
+        binding_interval_seconds=int(raw.get("bindingIntervalSeconds", 300)),
+        request_timeout_seconds=float(raw.get("requestTimeoutSeconds", 15.0)),
         # GSD_DB_PATH wins over the file so the config can ship as a ConfigMap that does
         # not need to know where the writable volume is mounted.
         db_path=os.environ.get("GSD_DB_PATH") or str(raw.get("dbPath", "gsd.db")),

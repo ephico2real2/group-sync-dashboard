@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from datetime import UTC, datetime
 
 from .config import ClusterConfig, Settings
@@ -39,14 +40,14 @@ def provider_key_for(cr: GroupSyncView, groups: list[GroupView]) -> str | None:
     return None
 
 
-def poll_once(store: Store, cluster: ClusterConfig) -> str:
+def poll_once(store: Store, cluster: ClusterConfig, timeout: float = 15.0) -> str:
     """One poll of one cluster. Returns the outcome string (PLAN §12 step 7).
 
     Never raises for cluster-side failures: an unreachable or forbidden cluster is recorded
     as a degraded outcome so it renders as a degraded card rather than blanking the
     dashboard (PLAN §5).
     """
-    client = ClusterClient(cluster)
+    client = ClusterClient(cluster, timeout=timeout)
     try:
         groupsyncs, groups = client.fetch()
     except ClusterError as exc:
@@ -118,6 +119,15 @@ def poll_once(store: Store, cluster: ClusterConfig) -> str:
         observed_at,
     )
 
+    # Provenance for RBAC finding classification: remember which groups the operator
+    # manages, so that a binding naming one of them later becomes meaningful evidence
+    # rather than an unresolvable name.
+    store.record_managed_groups(
+        cluster.name,
+        [{"name": g.name, "sync_provider": g.sync_provider} for g in groups],
+        observed_at,
+    )
+
     # Step 7: reconcile membership and record who joined or left since the last poll.
     member_changes = store.sync_members(
         cluster_id=cluster.name,
@@ -138,6 +148,43 @@ def poll_once(store: Store, cluster: ClusterConfig) -> str:
     return OK
 
 
+def refresh_bindings(store: Store, cluster: ClusterConfig, timeout: float) -> str:
+    """Re-read RoleBindings/ClusterRoleBindings for one cluster.
+
+    Deliberately does NOT record a poll outcome. A binding-list failure — most likely a
+    403, since this needs RBAC the group poll does not — must not mark the cluster
+    unreachable and blank out perfectly good group data. It is logged and retried on the
+    next binding interval.
+    """
+    client = ClusterClient(cluster, timeout=timeout)
+    try:
+        bindings = client.fetch_bindings()
+    except ClusterError as exc:
+        log.warning(
+            "binding refresh for %s failed: %s (%s) — group data is unaffected",
+            cluster.name, exc.message, exc.outcome,
+        )
+        return exc.outcome
+
+    store.replace_bindings(
+        cluster.name,
+        [
+            {
+                "binding_kind": b.binding_kind,
+                "binding_namespace": b.binding_namespace,
+                "binding_name": b.binding_name,
+                "role_kind": b.role_kind,
+                "role_name": b.role_name,
+                "group_name": b.group_name,
+            }
+            for b in bindings
+        ],
+        now_iso(),
+    )
+    log.info("refreshed %d group bindings for %s", len(bindings), cluster.name)
+    return OK
+
+
 class Poller:
     """Runs one polling thread per enabled cluster."""
 
@@ -150,15 +197,32 @@ class Poller:
     def _run_cluster(self, cluster: ClusterConfig) -> None:
         # Poll immediately on start rather than sleeping first: a restarted dashboard that
         # shows nothing for its first interval is indistinguishable from a broken one.
+        next_binding_refresh = 0.0
         while not self._stop.is_set():
             started = datetime.now(UTC)
             try:
-                poll_once(self.store, cluster)
+                poll_once(self.store, cluster, self.settings.request_timeout_seconds)
             except Exception:  # noqa: BLE001 - a poll thread must never die silently
                 log.exception("unhandled error polling %s", cluster.name)
                 self.store.record_poll(cluster.name, "unreachable", "internal poller error")
 
+            # Bindings ride the same thread but on their own due-time, so an expensive
+            # cluster-wide binding list does not run every group poll.
+            now = time.monotonic()
+            if now >= next_binding_refresh:
+                try:
+                    refresh_bindings(
+                        self.store, cluster, self.settings.request_timeout_seconds
+                    )
+                except Exception:  # noqa: BLE001
+                    log.exception("unhandled error refreshing bindings for %s", cluster.name)
+                next_binding_refresh = now + self.settings.binding_interval_seconds
+
             elapsed = (datetime.now(UTC) - started).total_seconds()
+            log.debug(
+                "%s poll cycle took %.2fs; next binding refresh in %.0fs",
+                cluster.name, elapsed, max(0.0, next_binding_refresh - time.monotonic()),
+            )
             self._stop.wait(max(1.0, self.settings.poll_interval_seconds - elapsed))
 
     def start(self) -> None:

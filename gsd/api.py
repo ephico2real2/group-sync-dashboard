@@ -139,7 +139,27 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
         require_cluster(cluster_id)
         detail = store.group_detail(cluster_id, name)
         if detail is None:
-            raise HTTPException(status_code=404, detail=f"unknown group {name!r}")
+            # A group we have history for but no current state is DELETED, not unknown.
+            # It is still reachable from every membership-change row that mentions it, and
+            # "this group no longer exists, here is who was in it and when it went" is the
+            # answer to that click — 404 strands the reader on a dead end instead.
+            history = store.membership_events(cluster_id, group_name=name, limit=100)
+            if not history:
+                raise HTTPException(status_code=404, detail=f"unknown group {name!r}")
+            return {
+                "name": name,
+                "deleted": True,
+                "member_count": 0,
+                "sync_provider": None,
+                "group_synced_at": None,
+                "ldap_uid": None,
+                "observed_at": None,
+                "owner": None,
+                "members": [],
+                "changes": history,
+                "bindings": store.group_bindings(cluster_id, name),
+            }
+        detail["deleted"] = False
         owner = None
         if detail.get("sync_provider"):
             for cr in store.groupsyncs(cluster_id):
@@ -152,6 +172,9 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
             "owner": owner,
             "members": store.group_members(cluster_id, name),
             "changes": store.membership_events(cluster_id, group_name=name, limit=100),
+            # DIRECT bindings only. Role rules are never fetched or expanded, so this is
+            # not an effective-permission calculation and must not be presented as one.
+            "bindings": store.group_bindings(cluster_id, name),
         }
 
     @app.get("/api/clusters/{cluster_id}/users")
@@ -179,6 +202,30 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
             "cluster": cluster_id,
             "groups": groups,
             "changes": changes,
+            # Reachable through their group memberships. Each row carries via_group, so
+            # "why do they have this?" is answerable without a second lookup.
+            "bindings": store.user_bindings(cluster_id, name),
+        }
+
+    @app.get("/api/clusters/{cluster_id}/bindings/findings")
+    def binding_findings(cluster_id: str) -> dict:
+        """Bindings whose Group subject resolves to no Group object, classified.
+
+        Three tiers rather than two: on a real cluster the large majority of unresolvable
+        Group subjects are built-in virtual groups (`system:serviceaccounts:*`,
+        `system:authenticated`), which authorise real access and have no object by design.
+        Reporting those as broken buries the few that are.
+        """
+        require_cluster(cluster_id)
+        findings = store.binding_findings(cluster_id)
+        by_tier: dict[str, list[dict]] = {"dangling": [], "unresolved": [], "built_in": []}
+        for row in findings:
+            by_tier.setdefault(row["finding"], []).append(row)
+        return {
+            "cluster": cluster_id,
+            "note": "direct bindings only; role rules are not evaluated",
+            "counts": {tier: len(rows) for tier, rows in by_tier.items()},
+            **by_tier,
         }
 
     @app.get("/api/clusters/{cluster_id}/membership-changes")
@@ -221,6 +268,31 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
                 grace=grace,
             )
             alerts.extend(a.as_dict() for a in computed)
+
+            # Only the `dangling` tier alerts. `built_in` is normal, and `unresolved`
+            # cannot be distinguished from a group that simply has not synced yet, so
+            # alerting on either would produce noise that trains people to ignore this.
+            for row in store.binding_findings(cluster_id):
+                if row["finding"] != "dangling":
+                    continue
+                scope = (
+                    f"namespace {row['binding_namespace']}"
+                    if row["binding_namespace"]
+                    else "cluster-wide"
+                )
+                alerts.append(
+                    {
+                        "cluster": cluster_id,
+                        "kind": "dangling_binding",
+                        "subject": row["binding_name"],
+                        "detail": (
+                            f"{row['binding_kind']} grants {row['role_name']} {scope} to "
+                            f"group {row['group_name']!r}, which the operator used to "
+                            f"manage and no longer exists — this binding now grants nobody"
+                        ),
+                        "severity": "critical",
+                    }
+                )
         severity_rank = {"critical": 0, "warning": 1}
         alerts.sort(key=lambda a: (severity_rank.get(a["severity"], 9), a["cluster"], a["kind"]))
         return alerts
