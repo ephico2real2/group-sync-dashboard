@@ -75,6 +75,16 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
             "error_is_current": error_current,
         }
 
+    def _binding_counts(cluster_id: str) -> dict:
+        counts = {"dangling": 0, "unresolved": 0, "built_in": 0}
+        for finding in store.binding_findings(cluster_id):
+            counts[finding["finding"]] = counts.get(finding["finding"], 0) + 1
+        return {
+            "dangling_bindings": counts["dangling"],
+            "unresolved_bindings": counts["unresolved"],
+            "builtin_bindings": counts["built_in"],
+        }
+
     @app.get("/api/clusters")
     def list_clusters() -> list[dict]:
         out = []
@@ -97,6 +107,12 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
                     "empty_groups": counts["empty"],
                     "unattributed_groups": counts["unattributed"],
                     "oldest_last_sync": store.oldest_last_sync(row["id"]),
+                    # Surfaced on the landing page so binding problems are discoverable
+                    # without knowing to navigate anywhere. `unresolved` does not alert
+                    # (it cannot be told from a not-yet-synced group), so without a count
+                    # here a UI-only reader would see "No alerts" and conclude nothing is
+                    # wrong while bindings grant nobody.
+                    **_binding_counts(row["id"]),
                 }
             )
         return out

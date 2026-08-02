@@ -374,7 +374,8 @@ function renderFilters() {
   }
   html += `<span class="spacer"></span>
     <button data-nav="overview">Overview</button>
-    <button data-nav="groups">Groups</button>`;
+    <button data-nav="groups">Groups</button>
+    <button data-nav="bindings">Bindings</button>`;
   $("filters").innerHTML = html;
 
   const cl = $("f-cluster");
@@ -414,6 +415,9 @@ function clusterCard(c) {
         <div class="value ${c.empty_groups ? "" : "muted"}">${c.empty_groups}</div></div>
       <div class="kpi"><div class="label">Unattributed</div>
         <div class="value ${c.unattributed_groups ? "" : "muted"}">${c.unattributed_groups}</div></div>
+      <div class="kpi"><div class="label">Bindings to review</div>
+        <div class="value ${(c.dangling_bindings + c.unresolved_bindings) ? "" : "muted"}">${
+          (c.dangling_bindings || 0) + (c.unresolved_bindings || 0)}</div></div>
       <div class="kpi"><div class="label">Oldest last sync</div>
         <div class="value muted" style="font-size:15px">${esc(ago(c.oldest_last_sync))}</div></div>
     </div>
@@ -771,10 +775,84 @@ function userDetail() {
   </section>`;
 }
 
+
+/* Bindings whose Group subject resolves to nothing.
+   Three tiers, ordered by what a reader should act on. `built_in` is collapsed by default:
+   on a real cluster it is the large majority (145 of 154 here) and showing it inline would
+   bury the nine that matter — the exact noise ratio that makes people stop reading a list. */
+function bindingsPage() {
+  const d = data.findings;
+  if (!d) return `<section class="card"><div class="empty-note">Loading…</div></section>`;
+  const c = d.counts || {};
+
+  const table = (rows) => `<div class="scroll-x"><table>
+      <thead><tr><th>Group named by the binding</th><th>Grants</th><th>Scope</th>
+        <th>Binding</th></tr></thead>
+      <tbody>${rows.map((r) => `<tr>
+        <td><span class="drill" data-group="${esc(r.group_name)}">${esc(r.group_name)}</span></td>
+        <td><code>${esc(r.role_name)}</code> <span class="muted">${esc(r.role_kind)}</span></td>
+        <td>${r.binding_namespace
+              ? esc(r.binding_namespace)
+              : `<span class="muted">cluster-wide</span>`}</td>
+        <td class="muted">${esc(r.binding_name)}</td>
+      </tr>`).join("")}</tbody></table></div>`;
+
+  const total = (c.dangling || 0) + (c.unresolved || 0);
+  return `<section class="card">
+    <div class="hero">
+      <div class="value">${total}</div>
+      <div class="label">binding${total === 1 ? "" : "s"} that grant nobody</div>
+    </div>
+    <div class="filterbar-note">
+      Each of these names a Group that does not exist, so the access it grants reaches no
+      one. Nothing on the cluster reports this: <code>oc get rolebinding</code> shows a
+      perfectly healthy object. Direct bindings only — role rules are not evaluated.
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>${sevBadge("critical", "dangling")} <span class="muted" style="font-weight:400">· ${
+      c.dangling || 0} — the group was operator-managed and has disappeared</span></h2>
+    ${(d.dangling || []).length
+      ? table(d.dangling)
+      : `<div class="empty-note">None. No binding names a group that we watched the
+          operator manage and then lose.</div>`}
+  </section>
+
+  <section class="card">
+    <h2>${sevBadge("warning", "unresolved")} <span class="muted" style="font-weight:400">· ${
+      c.unresolved || 0} — the group has never existed here</span></h2>
+    <div class="filterbar-note" style="margin-bottom:8px">
+      These do not raise alerts: a group that has never been seen cannot be told apart from
+      one that simply has not synced yet. They still grant nobody, so they are worth
+      reading — typically a misspelled group name, or an onboarding that stopped halfway.
+    </div>
+    ${(d.unresolved || []).length
+      ? table(d.unresolved)
+      : `<div class="empty-note">None.</div>`}
+  </section>
+
+  <section class="card">
+    <h2>Built-in <span class="muted" style="font-weight:400">· ${c.built_in || 0}</span></h2>
+    <div class="filterbar-note">
+      Kubernetes virtual groups such as <code>system:authenticated</code> and
+      <code>system:serviceaccounts:*</code>. They authorise real access and no Group object
+      exists for them by design, so their absence is expected and not a fault.
+    </div>
+    <details style="margin-top:8px">
+      <summary style="cursor:pointer;color:var(--series-1)">Show all ${c.built_in || 0}</summary>
+      <div style="margin-top:8px">${(d.built_in || []).length ? table(d.built_in) : ""}</div>
+    </details>
+  </section>`;
+}
+
 function render() {
   renderFilters();
   const main = $("main");
-  if (view.page === "groups" && view.user) {
+  if (view.page === "bindings") {
+    main.innerHTML = bindingsPage();
+    wireDrilldown();
+  } else if (view.page === "groups" && view.user) {
     main.innerHTML = userDetail();
     wireDrilldown();
   } else if (view.page === "groups" && view.group) {
@@ -874,6 +952,10 @@ async function refresh() {
     data.alerts = await api("/api/alerts");
     if (view.cluster) {
       data.groupsyncs = await api(`/api/clusters/${encodeURIComponent(view.cluster)}/groupsyncs`);
+      if (view.page === "bindings") {
+        data.findings = await api(
+          `/api/clusters/${encodeURIComponent(view.cluster)}/bindings/findings`);
+      }
       if (view.page === "groups") {
         const base = `/api/clusters/${encodeURIComponent(view.cluster)}`;
         if (view.user) {

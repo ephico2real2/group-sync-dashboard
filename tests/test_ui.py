@@ -126,6 +126,32 @@ def _seed(db_path: str) -> None:
         _iso(now - timedelta(minutes=4)),
     )
 
+    # Bindings covering all three finding tiers: one genuinely broken, one that names a
+    # group which never existed, and the built-in noise that must not drown them.
+    store.record_managed_groups(
+        "crc-local", [{"name": "was-managed", "sync_provider": "ldap-groupsync_ldap"}],
+        _iso(now - timedelta(days=1)),
+    )
+    store.replace_bindings(
+        "crc-local",
+        [
+            {"binding_kind": "RoleBinding", "binding_namespace": "prod-ns",
+             "binding_name": "was-managed-rb", "role_kind": "ClusterRole",
+             "role_name": "admin", "group_name": "was-managed"},
+            {"binding_kind": "RoleBinding", "binding_namespace": "klt-pass-both",
+             "binding_name": "klta-audit-rb", "role_kind": "ClusterRole",
+             "role_name": "view", "group_name": "app-ocp-rbac-klta-ns-audit"},
+        ]
+        + [
+            {"binding_kind": "RoleBinding", "binding_namespace": f"ns{i}",
+             "binding_name": f"pullers-{i}", "role_kind": "ClusterRole",
+             "role_name": "system:image-puller",
+             "group_name": f"system:serviceaccounts:ns{i}"}
+            for i in range(6)
+        ],
+        _iso(now),
+    )
+
     # Enough events for the timeline to draw a line, with a count cliff in the middle.
     for i, count in enumerate([40, 41, 41, 28, 41]):
         ts = _iso(now - timedelta(minutes=30 * (5 - i)))
@@ -510,3 +536,51 @@ class TestDeletedGroup:
         dash.locator("#back-groups").click()
         dash.wait_for_function("() => !document.querySelector('#back-groups')")
         assert dash.locator("tbody tr").count() == 3
+
+
+class TestBindingFindingsVisible:
+    """The findings existed only on the API. A UI-only operator saw "No alerts" and
+    concluded nothing was wrong, while bindings granted nobody — which is exactly the
+    invisible-absence failure this dashboard is built to prevent."""
+
+    def _open(self, dash):
+        dash.locator("button[data-nav='bindings']").click()
+        dash.wait_for_selector("text=grant nobody")
+
+    def test_findings_are_reachable_from_the_nav(self, dash):
+        assert dash.locator("button[data-nav='bindings']").count() == 1
+        self._open(dash)
+
+    def test_dangling_and_unresolved_are_both_shown(self, dash):
+        self._open(dash)
+        body = dash.locator("body").inner_text()
+        assert "was-managed" in body, "the dangling binding must be listed"
+        assert "app-ocp-rbac-klta-ns-audit" in body, "the unresolved binding must be listed"
+
+    def test_the_headline_counts_only_actionable_findings(self, dash):
+        """Built-in groups must not inflate the number — 145 of 154 on the real cluster."""
+        self._open(dash)
+        assert dash.locator(".hero .value").inner_text().strip() == "2"
+
+    def test_builtin_is_collapsed_not_inline(self, dash):
+        """Showing them inline would bury the findings that matter."""
+        self._open(dash)
+        assert dash.locator("details").count() >= 1
+        summary = dash.locator("details summary").first.inner_text()
+        assert "6" in summary
+
+    def test_the_namespace_and_role_are_named(self, dash):
+        """"Grants admin in prod-ns" is the actionable form; a group name alone is not."""
+        self._open(dash)
+        body = dash.locator("body").inner_text()
+        assert "prod-ns" in body and "admin" in body
+
+    def test_group_names_drill_through(self, dash):
+        self._open(dash)
+        assert dash.locator(".drill[data-group='was-managed']").count() == 1
+
+    def test_cluster_card_surfaces_the_count_without_navigating(self, dash):
+        """Discoverability: the landing page must show that there is something to look at,
+        or the page may as well not exist."""
+        body = dash.locator("body").inner_text()
+        assert "Bindings to review" in body
