@@ -14,6 +14,23 @@ metadata:
     # unrecoverably. Removing it is made an explicit act:
     #   oc delete pvc {{ include "gsd.fullname" . }}-data -n {{ .Release.Namespace }}
     helm.sh/resource-policy: keep
+    {{- if and .Values.argocd.enabled .Values.argocd.preservePVC }}
+    # Argo reconciles manifests rather than running Helm's uninstall path, so
+    # helm.sh/resource-policy above does not protect this from a prune or an Application
+    # delete. Three separate protections, because they cover different moments:
+    #
+    #   Prune=false      not removed when it leaves the source
+    #   Delete=false     not removed when the Application itself is deleted (cascade)
+    #   PruneLast=true   if it is ever pruned deliberately, it goes AFTER the workload, so
+    #                    the pod is not left running with its volume pulled out from under it
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false,PruneLast=true
+    {{- if .Values.argocd.ignoreExtraneousPVC }}
+    # Keeps it out of the diff entirely, so a storage class that mutates the spec — most do,
+    # adding volumeName and bound metadata — does not leave the Application permanently
+    # OutOfSync and inviting someone to "fix" it with a sync.
+    argocd.argoproj.io/compare-options: IgnoreExtraneous
+    {{- end }}
+    {{- end }}
 spec:
   accessModes: [{{ .Values.persistence.accessMode }}]
   {{- with .Values.persistence.storageClass }}

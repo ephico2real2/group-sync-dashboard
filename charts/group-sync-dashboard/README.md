@@ -108,6 +108,73 @@ always wins.
 | `monitoring.prometheusRule.overdueSeconds` | `7200` | |
 | `monitoring.prometheusRule.notPollingSeconds` | `600` | catches a dead poll loop, which the health endpoints cannot |
 
+## Deploying with ArgoCD
+
+Set `argocd.enabled=true`. It adds annotations for two problems that each cost you
+something real if unhandled.
+
+**The PVC gets pruned.** Argo reconciles manifests; it does not run Helm's uninstall path,
+so `helm.sh/resource-policy: keep` does not protect it. A prune, or deleting the
+Application, destroys the accumulated sync timeline and membership history — the only state
+the Kubernetes API cannot reproduce.
+
+`argocd.preservePVC` applies four protections, covering different moments:
+
+| Annotation | Protects against |
+|---|---|
+| `Prune=false` | removal when the resource leaves the source |
+| `Delete=false` | removal when the Application itself is deleted (cascade) |
+| `PruneLast=true` | a deliberate prune taking the volume before the workload, leaving the pod running without it |
+| `IgnoreExtraneous` (`argocd.ignoreExtraneousPVC`) | permanent OutOfSync — a bound PVC is mutated by the storage class, so it drifts from the manifest forever and invites someone to "fix" it with a sync |
+
+**The injected CA ConfigMap fights the operator.** The chart ships it empty and OpenShift
+writes `data.ca-bundle.crt` into it. Argo sees live data the manifest lacks, reports
+OutOfSync permanently, and with self-heal enabled **wipes the CA bundle** — making every
+external cluster unreachable until the operator refills it.
+
+`argocd.serverSideApplyInjectedCA` reduces that by letting the operator keep field
+ownership, but it does not end it. The Application also needs an `ignoreDifferences` entry,
+which cannot be set from the chart because it lives on the Application:
+
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: group-sync-dashboard
+  namespace: openshift-gitops
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/ephico2real2/group-sync-dashboard
+    path: charts/group-sync-dashboard
+    helm:
+      values: |
+        argocd:
+          enabled: true
+        oauthProxy:
+          enabled: true
+  destination:
+    namespace: group-sync-dashboard
+    server: https://kubernetes.default.svc
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+  # Without this, the injected CA bundle is reverted on every sync.
+  ignoreDifferences:
+    - group: ""
+      kind: ConfigMap
+      name: group-sync-dashboard-trusted-ca
+      jsonPointers:
+        - /data
+```
+
+> Verified as manifests, not at runtime: the reference cluster has the Argo CRDs installed
+> but no controller running, so the annotations were checked by rendering and applying, not
+> by observing a sync.
+
 ## Upgrading
 
 ```bash

@@ -127,6 +127,44 @@ clusters:
     enabled: true
 
 # ---------------------------------------------------------------------------
+# ArgoCD / GitOps
+# ---------------------------------------------------------------------------
+# Adds Argo-specific annotations. Off by default because they are inert noise when you are
+# not running GitOps, and misleading metadata is worse than none.
+#
+# Two distinct problems, both of which cost you data or sleep if unhandled:
+#
+# 1. PRUNING THE PVC. Argo deletes what leaves the source, and cascades on Application
+#    delete. That volume holds the accumulated sync timeline and membership history, which
+#    the Kubernetes API cannot reproduce — so a routine prune destroys the only
+#    irreplaceable state in the system. `helm.sh/resource-policy: keep` does NOT help here:
+#    Argo does not run Helm's uninstall path, it reconciles manifests.
+#
+# 2. THE INJECTED CA ConfigMap. The chart ships it EMPTY and OpenShift writes
+#    `data.ca-bundle.crt` into it. Argo sees live data the manifest lacks, reports
+#    OutOfSync permanently, and with self-heal on will WIPE the CA bundle the pod depends
+#    on — turning every external cluster unreachable on a sync.
+argocd:
+  enabled: false
+
+  # Prune=false     — not removed when it leaves the source
+  # Delete=false    — not removed when the Application itself is deleted (cascade)
+  # PruneLast=true  — if ever pruned deliberately, it goes after the workload, so the pod is
+  #                   not left running with its volume pulled out from under it
+  preservePVC: true
+
+  # Also keep the PVC out of the diff. A bound PVC is mutated by the storage class —
+  # volumeName, bound metadata — so it drifts from the manifest permanently and shows the
+  # Application as OutOfSync, which invites someone to "fix" it with a sync.
+  ignoreExtraneousPVC: true
+
+  # ServerSideApply lets the operator keep ownership of the fields it writes. It reduces the
+  # fight but does not end it: Argo still diffs the data it does not know about, so the
+  # Application ALSO needs an ignoreDifferences entry. See the chart README — the chart
+  # cannot set that, because it lives on the Application, not on the resource.
+  serverSideApplyInjectedCA: true
+
+# ---------------------------------------------------------------------------
 # Trusted CA bundle (for EXTERNAL clusters)
 # ---------------------------------------------------------------------------
 # Creates an empty ConfigMap labelled `config.openshift.io/inject-trusted-cabundle: "true"`,
