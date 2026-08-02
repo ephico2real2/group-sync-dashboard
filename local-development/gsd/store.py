@@ -164,6 +164,34 @@ CREATE TABLE IF NOT EXISTS rbac_group_binding (
     PRIMARY KEY(cluster_id, binding_kind, binding_namespace, binding_name, group_name)
 );
 
+-- Bindings that name a USER directly, rather than a group. Replaced each refresh.
+--
+-- The governance violation in its purest form: access tied to a person instead of to an
+-- enterprise-managed group. It survives offboarding — removing someone from an LDAP group
+-- revokes their access everywhere, while a direct binding keeps granting to a name nobody
+-- reviews — and it is invisible to every group-based audit, this dashboard's own included
+-- until now.
+--
+-- is_platform separates cluster-internal identities (system:*, kube-apiserver, the node
+-- identities) from people. Measured on the reference cluster: 36 direct-user bindings, 22
+-- of them platform. They are STORED rather than filtered at ingest so the UI can report
+-- what it excluded — a tool that silently drops rows cannot be trusted about the ones it
+-- keeps.
+CREATE TABLE IF NOT EXISTS user_binding (
+    cluster_id          TEXT NOT NULL,
+    binding_kind        TEXT NOT NULL,
+    binding_namespace   TEXT NOT NULL,   -- '' for ClusterRoleBinding
+    binding_name        TEXT NOT NULL,
+    role_kind           TEXT NOT NULL,
+    role_name           TEXT NOT NULL,
+    user_name           TEXT NOT NULL,
+    is_platform         INTEGER NOT NULL DEFAULT 0,
+    observed_at         TEXT NOT NULL,
+    PRIMARY KEY(cluster_id, binding_kind, binding_namespace, binding_name, user_name)
+);
+CREATE INDEX IF NOT EXISTS user_binding_by_namespace
+    ON user_binding(cluster_id, binding_namespace);
+
 -- Health of the namespace-configuration-operator's CRs, replaced on the binding cadence.
 -- Reconcile conditions ONLY: these CRs template the RoleBindings that give synced groups
 -- their access, so a failing one means RBAC silently stops reconciling — but they have no
@@ -1182,6 +1210,75 @@ class Store:
                 ORDER BY b.group_name, b.binding_kind, b.binding_namespace, b.binding_name""",
             (cluster_id,),
         )
+
+    def replace_user_bindings(
+        self, cluster_id: str, rows: list[dict], observed_at: str
+    ) -> None:
+        """Replace this cluster's direct-user binding rows wholesale."""
+        with self._write() as conn:
+            conn.execute("DELETE FROM user_binding WHERE cluster_id=?", (cluster_id,))
+            conn.executemany(
+                """INSERT OR REPLACE INTO user_binding(
+                       cluster_id, binding_kind, binding_namespace, binding_name,
+                       role_kind, role_name, user_name, is_platform, observed_at)
+                   VALUES(:cluster_id,:binding_kind,:binding_namespace,:binding_name,
+                          :role_kind,:role_name,:user_name,:is_platform,:observed_at)""",
+                [{**r, "cluster_id": cluster_id, "observed_at": observed_at} for r in rows],
+            )
+
+    def user_bindings_by_namespace(self, cluster_id: str) -> list[dict]:
+        """Direct-user grants rolled up per namespace — the migration worklist.
+
+        Ordered worst-first: most violations, then namespace name. Platform identities are
+        excluded from the per-namespace rollup (they are not migratable and would swamp it)
+        but counted separately by `platform_user_binding_count`, so the page can say what
+        it left out rather than quietly shrinking the number.
+
+        `distinct_users` matters as much as the binding count: one person with five
+        bindings in a namespace is one offboarding risk, five people is five.
+        """
+        return self._rows(
+            """SELECT CASE WHEN binding_namespace = '' THEN '(cluster-scoped)'
+                           ELSE binding_namespace END AS namespace,
+                      COUNT(*) AS bindings,
+                      COUNT(DISTINCT user_name) AS distinct_users,
+                      GROUP_CONCAT(DISTINCT user_name) AS users
+                 FROM user_binding
+                WHERE cluster_id=? AND is_platform=0
+                GROUP BY namespace
+                ORDER BY bindings DESC, namespace""",
+            (cluster_id,),
+        )
+
+    def direct_user_bindings(
+        self, cluster_id: str, include_platform: bool = False
+    ) -> list[dict]:
+        """Every binding naming a User subject, worst-first by privilege then namespace.
+
+        NOT to be confused with `user_bindings(cluster_id, user_name)` above, which answers
+        the opposite question: what a person reaches THROUGH their group memberships. This
+        one is the governance violation — a grant that names the person directly. The
+        original name for this collided with that method and silently overrode it, which
+        broke two reverse-lookup tests; the names now say which question each answers.
+        """
+        sql = """SELECT binding_kind, binding_namespace, binding_name, role_kind,
+                        role_name, user_name, is_platform
+                   FROM user_binding WHERE cluster_id=?"""
+        if not include_platform:
+            sql += " AND is_platform=0"
+        # cluster-admin first, then cluster-scoped, then namespaced: the order somebody
+        # migrating would work in.
+        sql += """ ORDER BY CASE WHEN role_name='cluster-admin' THEN 0 ELSE 1 END,
+                            CASE WHEN binding_namespace='' THEN 0 ELSE 1 END,
+                            binding_namespace, user_name"""
+        return self._rows(sql, (cluster_id,))
+
+    def platform_user_binding_count(self, cluster_id: str) -> int:
+        rows = self._rows(
+            "SELECT COUNT(*) AS n FROM user_binding WHERE cluster_id=? AND is_platform=1",
+            (cluster_id,),
+        )
+        return int(rows[0]["n"]) if rows else 0
 
     # -- namespace-configuration-operator health -----------------------------------------
 

@@ -599,3 +599,6 @@ monitoring:
       # A config CR's reconcile is retried by its operator; a couple of minutes of failing
       # is a blip, sustained failure is stopped RBAC reconciliation.
       configError: 10m
+      # Long: this is a migration backlog, not an incident. It should be visible and
+      # tracked, never paging anyone at 3am.
+      directUserGrants: 1h

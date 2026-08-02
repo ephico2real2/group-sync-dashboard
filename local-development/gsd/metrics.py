@@ -298,6 +298,7 @@ class DashboardCollector:
                     cluster=cluster,
                     groupsyncs=self.store.groupsyncs(cluster),
                     operator_configs=self.store.operator_configs(cluster)["configs"],
+                    user_bindings=self.store.direct_user_bindings(cluster),
                     groups=self.store.groups(cluster, "all"),
                     now=now,
                     grace=self.grace,

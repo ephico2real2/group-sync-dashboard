@@ -33,6 +33,27 @@ ROLEBINDING_API = "/apis/rbac.authorization.k8s.io/v1/rolebindings"
 CLUSTERROLEBINDING_API = "/apis/rbac.authorization.k8s.io/v1/clusterrolebindings"
 
 SYSTEM_GROUP_PREFIX = "system:"
+
+# Platform identities that appear as `kind: User` on bindings the cluster ships with, and
+# which must never be reported as a governance violation. Measured on the reference
+# cluster: 36 direct-user bindings, of which 22 are these — kube-apiserver, kube-scheduler,
+# kube-controller-manager, the node identities, and SA-shaped users like
+# `system:serviceaccount:...`. Flagging them would bury the real findings under platform
+# noise, which is the same mistake the `system:` GROUP tiering exists to avoid.
+PLATFORM_USER_PREFIXES = ("system:",)
+PLATFORM_USER_NAMES = frozenset({
+    "kube-apiserver", "kubelet", "kube-controller-manager", "kube-scheduler", "kube-proxy",
+    # kubeadmin is OpenShift's break-glass cluster identity, not a person with an LDAP
+    # account. Flagging it as a migration violation is noise: there is nowhere to migrate
+    # it TO, and on the reference cluster it accounted for 12 of the 14 non-system rows —
+    # so leaving it in would have made the finding look like a kubeadmin report.
+    "kubeadmin",
+})
+
+
+def is_platform_user(name: str) -> bool:
+    """Whether a User subject is a cluster-internal identity rather than a person."""
+    return name.startswith(PLATFORM_USER_PREFIXES) or name in PLATFORM_USER_NAMES
 """Kubernetes reserves this prefix for built-in identities.
 
 Binding subjects like ``system:serviceaccounts:<ns>`` and ``system:authenticated`` are
@@ -123,6 +144,32 @@ class GroupView:
 
     A count answers "is this group empty?"; only the names answer "why does this person have
     access?" — which is the question an operator actually arrives with."""
+
+
+@dataclass
+class UserBindingView:
+    """A binding granting a role DIRECTLY to a User subject.
+
+    The governance violation this dashboard exists to make visible, in its purest form: a
+    grant tied to a person rather than to an enterprise-managed group. It survives
+    offboarding — LDAP removing someone from a group revokes their access everywhere, while
+    a direct binding keeps granting to a name nobody is watching — and it is invisible to
+    every group-based review, including the rest of this dashboard.
+
+    Kept separate from BindingView because the questions differ: that one asks "does this
+    group exist?", this one asks "why is a person named here at all?".
+    """
+
+    binding_kind: str
+    binding_namespace: str
+    binding_name: str
+    role_kind: str
+    role_name: str
+    user_name: str
+    is_platform: bool
+    """Cluster-internal identity (system:*, kube-apiserver, …) rather than a person.
+    Carried rather than filtered out, so the UI can report the whole picture and the count
+    of what it excluded — silently dropping rows is how a tool loses trust."""
 
 
 @dataclass
@@ -273,6 +320,21 @@ class ClusterClient:
             groupsyncs = [_groupsync_view(o) for o in self._list_all(client, GROUPSYNC_API)]
             groups = [_group_view(o) for o in self._list_all(client, GROUP_API)]
         return groupsyncs, groups
+
+    def fetch_user_bindings(self) -> list[UserBindingView]:
+        """Every RoleBinding and ClusterRoleBinding subject of kind User.
+
+        Rides the same cadence and the same two list calls' worth of data as
+        fetch_bindings — bindings change on administrative action, not on a schedule.
+        """
+        out: list[UserBindingView] = []
+        with self._client() as client:
+            for obj in self._list_all(client, ROLEBINDING_API):
+                out.extend(_user_binding_views(obj, "RoleBinding"))
+            for obj in self._list_all(client, CLUSTERROLEBINDING_API):
+                out.extend(_user_binding_views(obj, "ClusterRoleBinding"))
+        log.debug("fetched %d direct-user binding rows from %s", len(out), self.cluster.name)
+        return out
 
     def fetch_bindings(self) -> list[BindingView]:
         """Every RoleBinding and ClusterRoleBinding subject of kind Group.
@@ -454,6 +516,28 @@ def _ldap_filter(spec: dict) -> str | None:
             if query.get("filter"):
                 return query["filter"]
     return None
+
+
+def _user_binding_views(obj: dict, binding_kind: str) -> list[UserBindingView]:
+    """Flatten one binding into a row per User subject. Empty for the vast majority."""
+    meta = obj.get("metadata") or {}
+    role_ref = obj.get("roleRef") or {}
+    rows: list[UserBindingView] = []
+    for subject in obj.get("subjects") or []:
+        if subject.get("kind") != "User" or not subject.get("name"):
+            continue
+        rows.append(
+            UserBindingView(
+                binding_kind=binding_kind,
+                binding_namespace=meta.get("namespace", "") or "",
+                binding_name=meta.get("name", ""),
+                role_kind=role_ref.get("kind", ""),
+                role_name=role_ref.get("name", ""),
+                user_name=subject["name"],
+                is_platform=is_platform_user(subject["name"]),
+            )
+        )
+    return rows
 
 
 def _binding_views(obj: dict, binding_kind: str) -> list[BindingView]:

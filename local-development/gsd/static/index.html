@@ -64,6 +64,7 @@
   --tab-groups: #108172;
   --tab-bindings: #6d4bc7;
   --tab-policy: #9333ea;
+  --tab-nsaudit: #b3306e;
   --tab-usage: #c2410c;
   --accent: var(--tab-overview);
 }
@@ -101,6 +102,7 @@
     --tab-groups: #12907f;
     --tab-bindings: #8468d0;
     --tab-policy: #a855f7;
+    --tab-nsaudit: #e0559a;
     --tab-usage: #d9490d;
   }
 }
@@ -134,6 +136,7 @@
   --tab-groups: #12907f;
   --tab-bindings: #8468d0;
   --tab-policy: #a855f7;
+  --tab-nsaudit: #e0559a;
   --tab-usage: #d9490d;
 }
 
@@ -391,6 +394,7 @@ body[data-page="overview"] { --accent: var(--tab-overview); }
 body[data-page="groups"]   { --accent: var(--tab-groups); }
 body[data-page="bindings"] { --accent: var(--tab-bindings); }
 body[data-page="policy"]   { --accent: var(--tab-policy); }
+body[data-page="nsaudit"]  { --accent: var(--tab-nsaudit); }
 body[data-page="usage"]    { --accent: var(--tab-usage); }
 
 .tabs { display: inline-flex; gap: 4px; }
@@ -600,6 +604,7 @@ function renderFilters() {
       ${tab("groups", "Groups")}
       ${tab("bindings", "Access granted")}
       ${tab("policy", "RBAC policy")}
+      ${tab("nsaudit", "Namespace audit")}
       ${tab("usage", "Usage")}
     </nav>`;
   $("filters").innerHTML = html;
@@ -1277,6 +1282,95 @@ function policyPage() {
       unmanaged, sevBadge("warning", "unmanaged"))}`;
 }
 
+/* Roles granted directly to a person, rolled up per namespace: the migration worklist.
+   A direct user binding is the violation this whole dashboard is shaped around — it
+   survives offboarding, because revoking an LDAP group membership does nothing to a
+   binding that names the person. Presented per namespace because that is the unit the
+   migration is done in, and because "which namespaces still do this?" is the question an
+   owner actually asks. */
+function nsAuditPage() {
+  const ub = data.userBindings;
+  if (!ub) return `<section class="card"><div class="empty-note">Loading…</div></section>`;
+  return `<section class="card">
+    <h2>Namespace audit</h2>
+    <div class="filterbar-note">
+      Which namespaces still grant access to <strong>people</strong> instead of to
+      LDAP-managed groups. Everything else this dashboard shows assumes group-based
+      access; these are the grants that sit outside that model entirely.
+    </div>
+  </section>
+  ${directUserGrants(ub)}`;
+}
+
+function directUserGrants(ub) {
+  if (!ub) return "";
+  const rows = ub.by_namespace || [];
+  const bindings = ub.bindings || [];
+  const users = new Set(bindings.map((b) => b.user_name));
+  const elevated = bindings.filter((b) => ["admin", "cluster-admin"].includes(b.role_name));
+
+  if (!rows.length) {
+    return `<section class="card">
+      <h3>Direct user grants</h3>
+      <div class="empty-note">
+        None. Every role on this cluster is granted to a group, which is what lets an LDAP
+        change revoke access everywhere at once.
+        ${ub.excluded_platform ? `<br><span class="muted">${ub.excluded_platform} platform
+          identit${ub.excluded_platform === 1 ? "y" : "ies"} (system components, kubeadmin)
+          excluded — nowhere to migrate those to.</span>` : ""}
+      </div>
+    </section>`;
+  }
+
+  return `<section class="card">
+    <h3>Direct user grants — migrate to LDAP groups</h3>
+    <div class="hero" style="margin-top:6px">
+      <span class="value mono">${bindings.length}</span>
+      <span class="label">binding${bindings.length === 1 ? "" : "s"} naming
+        ${users.size} ${users.size === 1 ? "person" : "people"} across
+        ${rows.length} namespace${rows.length === 1 ? "" : "s"}</span>
+    </div>
+    <div class="filterbar-note" style="margin:2px 0 10px">
+      Each of these grants access to a <strong>person</strong> rather than to an
+      enterprise-managed group, so it <strong>survives offboarding</strong>: removing
+      someone from an LDAP group revokes their access everywhere at once, while a binding
+      that names them keeps granting until somebody remembers it exists. No group-based
+      access review can see them.
+      <strong>Migration:</strong> add the person to the LDAP group the operator syncs for
+      that role, then delete the binding.
+      ${ub.excluded_platform ? `<br><span class="muted">${ub.excluded_platform} platform
+        identit${ub.excluded_platform === 1 ? "y" : "ies"} (system components, kubeadmin)
+        excluded — break-glass and cluster-internal, with nowhere to migrate to.</span>` : ""}
+    </div>
+    <div class="scroll-x"><table>
+      <thead><tr><th>Namespace</th><th class="num">Bindings</th><th class="num">People</th>
+        <th>Who</th></tr></thead>
+      <tbody>${rows.map((r) => `<tr>
+        <td>${r.namespace === "(cluster-scoped)"
+              ? `<span class="err">cluster-scoped</span>` : esc(r.namespace)}</td>
+        <td class="num">${r.bindings}</td>
+        <td class="num">${r.distinct_users}</td>
+        <td class="muted">${esc(r.users || "")}</td>
+      </tr>`).join("")}</tbody>
+    </table></div>
+    ${elevated.length ? `<div class="err" style="margin-top:8px;font-size:12px">
+      ${elevated.length} of these grant <code>admin</code> or <code>cluster-admin</code>.</div>` : ""}
+    <details style="margin-top:10px">
+      <summary class="filterbar-note" style="cursor:pointer">Every binding</summary>
+      <div class="scroll-x" style="margin-top:6px"><table>
+        <thead><tr><th>User</th><th>Grants</th><th>Scope</th><th>Binding</th></tr></thead>
+        <tbody>${bindings.map((b) => `<tr>
+          <td>${esc(b.user_name)}</td>
+          <td><code>${esc(b.role_name)}</code> <span class="muted">${esc(b.role_kind)}</span></td>
+          <td>${b.binding_namespace ? esc(b.binding_namespace)
+                : `<span class="err">cluster-wide</span>`}</td>
+          <td class="muted">${esc(b.binding_name)}</td>
+        </tr>`).join("")}</tbody>
+      </table></div>
+    </details>
+  </section>`;
+}
+
 /* The policy operator's CR health. Rendered only when the CRDs exist on the cluster —
    absent is a different truth from "installed with zero CRs", and a section that says
    "all healthy" about a concept the cluster lacks would be a lie of layout. */
@@ -1314,7 +1408,9 @@ function configHealth(oc) {
 function render() {
   renderFilters();
   const main = $("main");
-  if (view.page === "policy") {
+  if (view.page === "nsaudit") {
+    main.innerHTML = nsAuditPage();
+  } else if (view.page === "policy") {
     main.innerHTML = policyPage();
     wireDrilldown();
   } else if (view.page === "usage") {
@@ -1463,6 +1559,10 @@ async function refresh(opts = {}) {
     if (view.page === "policy" && view.cluster) {
       data.findings = await get(
         `/api/clusters/${encodeURIComponent(view.cluster)}/bindings/findings`);
+    }
+    if (view.page === "nsaudit" && view.cluster) {
+      data.userBindings = await get(
+        `/api/clusters/${encodeURIComponent(view.cluster)}/user-bindings`);
     }
     render();
   } catch (err) {

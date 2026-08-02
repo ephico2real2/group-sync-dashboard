@@ -165,6 +165,7 @@ def compute_alerts(
     write_window: timedelta = timedelta(minutes=2),
     no_schedule_stale_after: timedelta = timedelta(hours=24),
     operator_configs: list[dict] | None = None,
+    user_bindings: list[dict] | None = None,
 ) -> list[Alert]:
     """Compute the PLAN §8 conditions the first slice has data for.
 
@@ -312,6 +313,31 @@ def compute_alerts(
                     severity="critical",
                 )
             )
+
+    # Direct-user grants. ONE alert with the total, not one per binding: 36 separate
+    # alerts would drown every other finding on the page, and the actionable unit is the
+    # migration effort, not each row. The detail lives on the RBAC policy page.
+    people = [u for u in (user_bindings or []) if not u.get("is_platform")]
+    if people:
+        namespaces = {u.get("binding_namespace") or "(cluster-scoped)" for u in people}
+        elevated = [u for u in people if u.get("role_name") in ("cluster-admin", "admin")]
+        alerts.append(
+            Alert(
+                cluster=cluster,
+                kind="direct_user_binding",
+                subject=f"{len(people)} direct user grant{'' if len(people) == 1 else 's'}",
+                detail=(
+                    f"across {len(namespaces)} namespace"
+                    f"{'' if len(namespaces) == 1 else 's'}"
+                    f"{f', {len(elevated)} granting admin or cluster-admin' if elevated else ''}"
+                    " — access bound to a person rather than an enterprise-managed group. "
+                    "These survive offboarding: removing someone from an LDAP group revokes "
+                    "their access everywhere, a direct binding keeps granting to a name "
+                    "nobody reviews."
+                ),
+                severity="warning",
+            )
+        )
 
     return alerts
 

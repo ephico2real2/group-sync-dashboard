@@ -330,3 +330,93 @@ class TestOperatorConfigAlerts:
                                "success_at": "2026-08-02T17:58:23Z"}],
         )
         assert alerts == []
+
+
+class TestDirectUserGrants:
+    """Namespace audit: roles bound to a PERSON rather than an LDAP-managed group.
+
+    The violation survives offboarding — removing someone from an LDAP group revokes their
+    access everywhere at once, while a binding that names them keeps granting to a name
+    nobody reviews — and no group-based audit, including the rest of this dashboard, can
+    see it.
+    """
+
+    def _seed(self, store, rows):
+        store.replace_user_bindings("crc", rows, "2026-08-02T20:00:00Z")
+
+    def _u(self, ns, name, user, role="edit", platform=0, kind="RoleBinding"):
+        return {"binding_kind": kind, "binding_namespace": ns, "binding_name": name,
+                "role_kind": "ClusterRole", "role_name": role, "user_name": user,
+                "is_platform": platform}
+
+    def test_platform_identities_are_excluded_by_default(self, store):
+        """22 of 36 direct-user bindings on the reference cluster are system components.
+        Including them would make the finding a platform-noise report."""
+        self._seed(store, [self._u("ns-a", "real", "jdoe"),
+                           self._u("", "sys", "system:admin", platform=1,
+                                   kind="ClusterRoleBinding")])
+        assert [r["user_name"] for r in store.direct_user_bindings("crc")] == ["jdoe"]
+        assert store.platform_user_binding_count("crc") == 1
+
+    def test_excluded_rows_are_counted_not_silently_dropped(self, store):
+        """A tool that quietly discards rows cannot be trusted about the ones it keeps."""
+        self._seed(store, [self._u("", "s", "system:x", platform=1,
+                                   kind="ClusterRoleBinding")])
+        assert store.direct_user_bindings("crc") == []
+        assert store.platform_user_binding_count("crc") == 1
+        assert len(store.direct_user_bindings("crc", include_platform=True)) == 1
+
+    def test_the_rollup_is_per_namespace_worst_first(self, store):
+        self._seed(store, [
+            self._u("quiet-ns", "one", "jdoe"),
+            self._u("busy-ns", "a", "jdoe"), self._u("busy-ns", "b", "asmith"),
+            self._u("busy-ns", "c", "bwilliams"),
+        ])
+        rollup = store.user_bindings_by_namespace("crc")
+        assert [r["namespace"] for r in rollup] == ["busy-ns", "quiet-ns"]
+        assert rollup[0]["bindings"] == 3 and rollup[0]["distinct_users"] == 3
+
+    def test_distinct_users_differs_from_binding_count(self, store):
+        """One person with three bindings is one offboarding risk; three people is three."""
+        self._seed(store, [self._u("ns-a", f"b{i}", "jdoe") for i in range(3)])
+        row = store.user_bindings_by_namespace("crc")[0]
+        assert row["bindings"] == 3 and row["distinct_users"] == 1
+
+    def test_cluster_scoped_bindings_are_labelled_not_blank(self, store):
+        self._seed(store, [self._u("", "crb", "jdoe", kind="ClusterRoleBinding")])
+        assert store.user_bindings_by_namespace("crc")[0]["namespace"] == "(cluster-scoped)"
+
+    def test_the_worklist_is_ordered_by_privilege(self, store):
+        """cluster-admin first, then cluster-scoped, then namespaced: migration order."""
+        self._seed(store, [
+            self._u("ns-a", "low", "jdoe", role="view"),
+            self._u("", "worst", "jdoe", role="cluster-admin", kind="ClusterRoleBinding"),
+        ])
+        assert [r["role_name"] for r in store.direct_user_bindings("crc")] == [
+            "cluster-admin", "view"]
+
+
+class TestDirectUserAlert:
+    def test_one_alert_summarises_all_of_them(self, store):
+        """One alert, not one per binding: 36 separate alerts would drown every other
+        finding, and the actionable unit is the migration, not each row."""
+        from datetime import UTC, datetime, timedelta as td
+        import gsd.state as st
+        alerts = st.compute_alerts(
+            "crc", [], [], datetime.now(UTC), td(minutes=2),
+            user_bindings=[
+                {"binding_namespace": "ns-a", "role_name": "admin", "is_platform": 0},
+                {"binding_namespace": "ns-b", "role_name": "view", "is_platform": 0},
+            ],
+        )
+        assert [a.kind for a in alerts] == ["direct_user_binding"]
+        assert "2 direct user grants" in alerts[0].subject
+        assert "2 namespaces" in alerts[0].detail
+
+    def test_platform_only_raises_nothing(self, store):
+        from datetime import UTC, datetime, timedelta as td
+        import gsd.state as st
+        assert st.compute_alerts(
+            "crc", [], [], datetime.now(UTC), td(minutes=2),
+            user_bindings=[{"binding_namespace": "", "role_name": "x", "is_platform": 1}],
+        ) == []

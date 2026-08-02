@@ -372,6 +372,31 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
             **by_tier,
         }
 
+    @app.get("/api/clusters/{cluster_id}/user-bindings")
+    def direct_user_bindings(cluster_id: str, include_platform: bool = False) -> dict:
+        """Roles granted DIRECTLY to a user, with a per-namespace migration worklist.
+
+        The governance violation this reports: access bound to a person instead of to an
+        enterprise-managed group. It survives offboarding — removing someone from an LDAP
+        group revokes their access everywhere, while a direct binding keeps granting to a
+        name nobody reviews — and no group-based audit can see it.
+
+        Cluster-internal identities (system:*, the kube components) and OpenShift's
+        break-glass `kubeadmin` are excluded by default: there is nowhere to migrate them
+        to, and on the reference cluster they were 34 of 36 rows, so including them would
+        make the finding unreadable. `include_platform=true` shows them, and the count is
+        always reported so the page can say what it left out.
+        """
+        require_cluster(cluster_id)
+        rows = store.direct_user_bindings(cluster_id, include_platform=include_platform)
+        return {
+            "cluster": cluster_id,
+            "note": "direct user grants; migrate these to LDAP-managed groups",
+            "by_namespace": store.user_bindings_by_namespace(cluster_id),
+            "excluded_platform": store.platform_user_binding_count(cluster_id),
+            "bindings": rows,
+        }
+
     @app.get("/api/clusters/{cluster_id}/operator-configs")
     def operator_configs(cluster_id: str) -> dict:
         """Health of the namespace-configuration-operator's CRs on this cluster.
@@ -420,6 +445,7 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
                 cluster=cluster_id,
                 groupsyncs=store.groupsyncs(cluster_id),
                 operator_configs=store.operator_configs(cluster_id)["configs"],
+                user_bindings=store.direct_user_bindings(cluster_id),
                 groups=store.groups(cluster_id, "all"),
                 now=now,
                 grace=grace,

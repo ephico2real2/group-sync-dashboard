@@ -84,8 +84,15 @@ GRAPHICAL = [
       for i in range(1, 9)],
 ]
 # Active tab labels sit on the page; the accent also tints a card edge and the hero numeral.
-TABS = [(f"tab-{name}", "page", AA_TEXT, f"active {name} tab label")
-        for name in ("overview", "groups", "bindings", "usage")]
+# Derived from the stylesheet, not hardcoded: a hardcoded list silently stops covering a
+# new tab, which is exactly what happened when `policy` and `nsaudit` were added — the
+# suite stayed green while two accents went unchecked.
+def _tab_tokens(css: str) -> list[str]:
+    return sorted(set(re.findall(r"--(tab-[a-z]+):", css)))
+
+
+TAB_NAMES = _tab_tokens(INDEX.read_text())
+TABS = [(token, "page", AA_TEXT, f"active {token} label") for token in TAB_NAMES]
 
 
 @pytest.mark.parametrize("theme", ["light", "dark"])

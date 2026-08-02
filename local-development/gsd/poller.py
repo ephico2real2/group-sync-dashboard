@@ -262,6 +262,28 @@ def refresh_bindings(
         now_iso(),
     )
 
+    # Direct-user bindings ride the same cadence and the same two list calls' worth of
+    # cluster data. Fetched separately rather than in one pass because the two questions
+    # are different — "does this group exist?" vs "why is a person named here?" — and
+    # conflating them made both harder to read.
+    try:
+        user_rows = client.fetch_user_bindings()
+    except ClusterError as exc:
+        log.warning("user-binding refresh for %s failed: %s — group data is unaffected",
+                    cluster.name, exc.message)
+    else:
+        store.replace_user_bindings(
+            cluster.name,
+            [{"binding_kind": u.binding_kind, "binding_namespace": u.binding_namespace,
+              "binding_name": u.binding_name, "role_kind": u.role_kind,
+              "role_name": u.role_name, "user_name": u.user_name,
+              "is_platform": 1 if u.is_platform else 0} for u in user_rows],
+            now_iso(),
+        )
+        people = sum(1 for u in user_rows if not u.is_platform)
+        log.info("%s: %d direct-user binding(s), %d naming a person",
+                 cluster.name, len(user_rows), people)
+
     # The policy operator's CR health rides the SAME cadence, for the same reason: these
     # CRs change on administrative action, not on a schedule, and they are the source of
     # the very bindings fetched above. Auto-detected — a cluster without the
