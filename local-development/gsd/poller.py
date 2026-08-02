@@ -23,22 +23,28 @@ from .store import Store, now_iso
 log = logging.getLogger(__name__)
 
 
-def provider_key_for(cr: GroupSyncView, groups: list[GroupView]) -> str | None:
-    """Work out which sync-provider label value belongs to this CR (PLAN §3).
+def provider_keys_for(cr: GroupSyncView, groups: list[GroupView]) -> list[str]:
+    """Every sync-provider label value belonging to this CR (PLAN §3).
 
     The operator writes ``<groupsync-name>_<provider>``, but the provider's name lives in
     the CR spec while the label is only observable on the Groups. Rather than reconstruct
-    the string and hope, match against the label values actually present: the CR owns the
+    the string and hope, match against the label values actually present: the CR owns every
     value whose prefix is its own name.
 
-    Returns None when no group carries a matching label — a CR that has produced nothing
-    yet. That is deliberately distinct from an empty string, which would match everything.
+    ALL of them, not the first. A CR may declare several providers, and each produces its
+    own label value — ``corp_ldap-a`` and ``corp_ldap-b`` for a CR named ``corp``. Taking
+    only the first left every group of every later provider with no owner: not flagged
+    unattributed, because it does carry a label, and never staleness-checked, because no CR
+    claimed it. Silently invisible is the one failure this dashboard exists to prevent.
+
+    Returns [] when no group carries a matching label — a CR that has produced nothing yet.
+    That is deliberately distinct from [""], which would match every unlabelled group.
+    Sorted, so attribution is stable across polls regardless of Group list order.
     """
     prefix = f"{cr.name}_"
-    for group in groups:
-        if group.sync_provider and group.sync_provider.startswith(prefix):
-            return group.sync_provider
-    return None
+    return sorted(
+        {g.sync_provider for g in groups if g.sync_provider and g.sync_provider.startswith(prefix)}
+    )
 
 
 def poll_once(store: Store, cluster: ClusterConfig, timeout: float = 15.0) -> str:
@@ -62,8 +68,9 @@ def poll_once(store: Store, cluster: ClusterConfig, timeout: float = 15.0) -> st
     cr_rows = []
     new_events = 0
     for cr in groupsyncs:
-        key = provider_key_for(cr, groups)
-        group_count = sum(1 for g in groups if g.sync_provider == key) if key else 0
+        keys = provider_keys_for(cr, groups)
+        owned = set(keys)
+        group_count = sum(1 for g in groups if g.sync_provider in owned)
 
         cr_rows.append(
             {
@@ -73,7 +80,7 @@ def poll_once(store: Store, cluster: ClusterConfig, timeout: float = 15.0) -> st
                 "ldap_filter": cr.ldap_filter,
                 "last_sync_at": cr.last_sync_at,
                 "generation": cr.generation,
-                "provider_key": key,
+                "provider_keys": keys,
             }
         )
 

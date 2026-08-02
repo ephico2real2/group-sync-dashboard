@@ -343,7 +343,10 @@ function esc(s) {
    the survivors — a reader who learned "ldap-groupsync is blue" keeps that. */
 function crSlot(provider) {
   if (!provider) return null;
-  const owners = data.groupsyncs.map((g) => g.provider_key).filter(Boolean).sort();
+  // flatMap, because a CR with several providers owns several label values and each needs
+  // its own slot — colouring by CR would give two visibly different provider groupings the
+  // same dot and hide exactly the distinction the colour exists to draw.
+  const owners = data.groupsyncs.flatMap((g) => g.provider_keys || []).filter(Boolean).sort();
   const i = owners.indexOf(provider);
   if (i < 0) return null;
   // Never generate a 9th hue: past the 8 slots, identity folds into the text alone.

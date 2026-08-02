@@ -194,7 +194,7 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
         owner = None
         if detail.get("sync_provider"):
             for cr in store.groupsyncs(cluster_id):
-                if cr.get("provider_key") == detail["sync_provider"]:
+                if detail["sync_provider"] in (cr.get("provider_keys") or []):
                     owner = {"name": cr["name"], "namespace": cr["namespace"],
                              "schedule": cr["schedule"]}
                     break

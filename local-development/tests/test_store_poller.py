@@ -3,7 +3,7 @@
 import pytest
 
 from gsd.kube import GroupSyncView, GroupView
-from gsd.poller import provider_key_for
+from gsd.poller import provider_keys_for
 from gsd.store import Store
 
 
@@ -118,7 +118,7 @@ class TestReconcileError:
         store.replace_groupsync_state(
             "crc",
             [{"name": "cr", "namespace": "ns", "schedule": "0 * * * *", "ldap_filter": None,
-              "last_sync_at": "2026-08-01T07:00:10Z", "generation": 2, "provider_key": "cr_ldap"}],
+              "last_sync_at": "2026-08-01T07:00:10Z", "generation": 2, "provider_keys": ["cr_ldap"]}],
             "2026-08-01T07:00:30Z",
         )
         row = store.groupsyncs("crc")[0]
@@ -127,6 +127,61 @@ class TestReconcileError:
 
         store.upsert_reconcile_error("crc", "cr", None, None, None)
         assert store.groupsyncs("crc")[0]["error_at"] is None
+
+
+class TestMultiProviderAttribution:
+    """A CR declaring several providers, end to end through the store."""
+
+    def _write(self, store, provider_keys, groups):
+        store.replace_groupsync_state(
+            "crc",
+            [{"name": "corp", "namespace": "ns", "schedule": "0 * * * *", "ldap_filter": None,
+              "last_sync_at": "2026-08-01T07:00:10Z", "generation": 1,
+              "provider_keys": provider_keys}],
+            "2026-08-01T07:00:30Z",
+        )
+        store.replace_group_state(
+            "crc",
+            [{"name": n, "member_count": 1, "sync_provider": p,
+              "group_synced_at": None, "ldap_uid": None} for n, p in groups],
+            "2026-08-01T07:00:30Z",
+        )
+
+    def test_all_keys_round_trip(self, store):
+        self._write(store, ["corp_ldap-a", "corp_ldap-b"], [])
+        assert store.groupsyncs("crc")[0]["provider_keys"] == ["corp_ldap-a", "corp_ldap-b"]
+
+    def test_group_count_spans_every_provider(self, store):
+        """The count on the CR card. Keeping only the first key undercounted it by every
+        group the later providers produced, which reads as 'the sync shrank'."""
+        self._write(
+            store,
+            ["corp_ldap-a", "corp_ldap-b"],
+            [("g1", "corp_ldap-a"), ("g2", "corp_ldap-b"), ("g3", "corp_ldap-b"),
+             ("other", "unrelated_ldap")],
+        )
+        assert store.groupsyncs("crc")[0]["group_count"] == 3
+
+    def test_providers_are_replaced_not_accumulated(self, store):
+        """Same delete-then-insert contract as the CR state itself: a provider removed from
+        the CR must stop owning groups, or its stale attribution outlives it forever."""
+        self._write(store, ["corp_ldap-a", "corp_ldap-b"], [])
+        self._write(store, ["corp_ldap-a"], [])
+        assert store.groupsyncs("crc")[0]["provider_keys"] == ["corp_ldap-a"]
+
+    def test_cr_with_no_providers_yet_has_an_empty_list(self, store):
+        """Never None: every caller treats this as a list to test membership against."""
+        self._write(store, [], [("g1", "corp_ldap-a")])
+        row = store.groupsyncs("crc")[0]
+        assert row["provider_keys"] == [] and row["group_count"] == 0
+
+    def test_a_second_cluster_does_not_inherit_the_attributions(self, store):
+        """cluster_id is in the key, but the DELETE is per-cluster and the subquery joins on
+        it — a leak here would silently give one cluster's groups another cluster's owner."""
+        store.upsert_cluster("other", "https://api.other:6443", True)
+        self._write(store, ["corp_ldap-a"], [("g1", "corp_ldap-a")])
+        assert store.groupsyncs("other") == []
+        assert store.groupsyncs("crc")[0]["provider_keys"] == ["corp_ldap-a"]
 
 
 class TestPollOutcome:
@@ -154,14 +209,34 @@ class TestProviderAttribution:
         """The provider suffix is not on the CR status, so it is discovered from the
         Groups rather than reconstructed and hoped for."""
         groups = [self._group("g1", "ldap-groupsync_ldap"), self._group("g2", "bda-rbac-groupsync_ldap")]
-        assert provider_key_for(self._cr("ldap-groupsync"), groups) == "ldap-groupsync_ldap"
-        assert provider_key_for(self._cr("bda-rbac-groupsync"), groups) == "bda-rbac-groupsync_ldap"
+        assert provider_keys_for(self._cr("ldap-groupsync"), groups) == ["ldap-groupsync_ldap"]
+        assert provider_keys_for(self._cr("bda-rbac-groupsync"), groups) == ["bda-rbac-groupsync_ldap"]
 
-    def test_cr_with_no_groups_yet_returns_none(self):
-        """None, not '', so it cannot accidentally match every unlabelled group."""
-        assert provider_key_for(self._cr("brand-new"), [self._group("g", "other_ldap")]) is None
+    def test_cr_with_no_groups_yet_returns_empty(self):
+        """Empty, not [''], so it cannot accidentally match every unlabelled group."""
+        assert provider_keys_for(self._cr("brand-new"), [self._group("g", "other_ldap")]) == []
 
     def test_prefix_match_is_anchored(self):
         """`ldap-groupsync` must not claim `ldap-groupsync-staging_ldap`'s groups."""
         groups = [self._group("g", "ldap-groupsync-staging_ldap")]
-        assert provider_key_for(self._cr("ldap-groupsync"), groups) is None
+        assert provider_keys_for(self._cr("ldap-groupsync"), groups) == []
+
+    def test_every_provider_of_a_multi_provider_cr_is_claimed(self):
+        """A CR declaring several providers produces one label value per provider. Taking
+        only the first left the rest with no owner, and an unowned group is never
+        staleness-checked — it just disappears from every overdue calculation."""
+        groups = [
+            self._group("g1", "corp_ldap-a"),
+            self._group("g2", "corp_ldap-b"),
+            self._group("g3", "corp_ldap-a"),
+            self._group("g4", "other_ldap"),
+        ]
+        assert provider_keys_for(self._cr("corp"), groups) == ["corp_ldap-a", "corp_ldap-b"]
+
+    def test_keys_are_sorted_so_attribution_is_stable(self):
+        """The Group list arrives in whatever order the API returns it. Attribution must
+        not change between polls just because that order did."""
+        forward = [self._group("g1", "corp_a"), self._group("g2", "corp_b")]
+        assert provider_keys_for(self._cr("corp"), forward) == provider_keys_for(
+            self._cr("corp"), list(reversed(forward))
+        )

@@ -58,7 +58,7 @@ def test_groups_are_attributed_to_their_cr(polled):
     store, cluster, _ = polled
     groups = store.groups(cluster.name, "all")
     assert groups, "no groups found"
-    keys = {cr["provider_key"] for cr in store.groupsyncs(cluster.name)}
+    keys = {k for cr in store.groupsyncs(cluster.name) for k in cr["provider_keys"]}
     managed = [g for g in groups if g["sync_provider"]]
     assert managed, "no group carries a sync-provider label"
     assert {g["sync_provider"] for g in managed} <= keys

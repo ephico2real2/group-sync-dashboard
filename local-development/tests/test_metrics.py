@@ -34,7 +34,7 @@ def scrape():
         [{"name": "ldap-groupsync", "namespace": "group-sync-operator",
           "schedule": "*/30 * * * *", "ldap_filter": None,
           "last_sync_at": _iso(now - timedelta(minutes=3)), "generation": 2,
-          "provider_key": "ldap-groupsync_ldap"}],
+          "provider_keys": ["ldap-groupsync_ldap"]}],
         _iso(now),
     )
     store.replace_group_state(

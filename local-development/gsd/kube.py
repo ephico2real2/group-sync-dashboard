@@ -264,8 +264,10 @@ def _groupsync_view(obj: dict) -> GroupSyncView:
 def _ldap_filter(spec: dict) -> str | None:
     """First provider's group query filter, for display on the detail page.
 
-    Only the first provider is shown: the CRs in use carry exactly one, and rendering a
-    merged filter across several would misrepresent which one produced a given group.
+    Deliberately only the first, even though a CR may declare several: a merged filter would
+    misrepresent which provider produced a given group, and the honest alternative — one
+    filter per provider — needs the detail page to attribute each to its own label value.
+    This is display only. Attribution and staleness use every provider (poller.provider_keys_for).
     """
     for provider in spec.get("providers") or []:
         ldap = provider.get("ldap") or {}

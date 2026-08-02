@@ -125,7 +125,7 @@ class TestAlerts:
             "name": "ldap-groupsync",
             "schedule": HALF_HOURLY,
             "last_sync_at": "2026-08-01T09:00:00Z",
-            "provider_key": "ldap-groupsync_ldap",
+            "provider_keys": ["ldap-groupsync_ldap"],
         }
         base.update(kw)
         return base
@@ -181,6 +181,22 @@ class TestAlerts:
         stale = [a for a in alerts if a.kind == "stale_group"]
         assert len(stale) == 1 and stale[0].subject == "forgotten"
 
+    def test_stale_group_of_a_later_provider_is_still_detected(self):
+        """The regression this guards: attribution once kept only the FIRST provider key of
+        a multi-provider CR, so a stale group belonging to the second was matched by no CR
+        and checked by nothing. It was not reported as unattributed either — it carries a
+        perfectly good label — so it left no trace anywhere. Silence, not a wrong answer."""
+        now = t("2026-08-01T09:10:00")
+        cr = self._cr(name="corp", provider_keys=["corp_ldap-a", "corp_ldap-b"])
+        groups = [
+            self._group(name="from-a", sync_provider="corp_ldap-a"),
+            self._group(
+                name="from-b", sync_provider="corp_ldap-b", group_synced_at="2026-08-01T06:00:00Z"
+            ),
+        ]
+        stale = [a for a in st.compute_alerts("crc", [cr], groups, now, GRACE) if a.kind == "stale_group"]
+        assert [a.subject for a in stale] == ["from-b"]
+
     def test_intra_sync_write_window_does_not_alert(self):
         """A group stamped 10s before its CR is normal, not stale (PLAN §3.1)."""
         now = t("2026-08-01T09:10:00")
@@ -219,7 +235,7 @@ class TestStoppedSyncWithUnusableSchedule:
     def _cr(self, schedule, last_sync):
         return {"name": "cr", "schedule": schedule,
                 "last_sync_at": last_sync.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                "provider_key": "cr_ldap"}
+                "provider_keys": ["cr_ldap"]}
 
     @pytest.mark.parametrize("schedule", ["not-a-cron", None, "", "* * *"])
     def test_unusable_schedule_alerts_even_though_state_is_unknown(self, schedule):

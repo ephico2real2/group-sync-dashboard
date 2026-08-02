@@ -275,7 +275,7 @@ def compute_alerts(
         if last_sync is None:
             continue
         threshold = stale_group_threshold(interval, write_window)
-        for group in by_provider.get(_provider_key(cr), []):
+        for group in (g for key in _provider_keys(cr) for g in by_provider.get(key, [])):
             group_synced = parse_time(group.get("group_synced_at"))
             if group_synced is None:
                 continue
@@ -296,14 +296,18 @@ def compute_alerts(
     return alerts
 
 
-def _provider_key(cr: dict) -> str:
-    """The sync-provider label value a CR's groups carry (PLAN §3).
+def _provider_keys(cr: dict) -> list[str]:
+    """Every sync-provider label value a CR's groups carry (PLAN §3).
 
     The operator writes ``<groupsync-name>_<provider>``. The provider suffix is not on the
-    CR status, so the poller records the label values it actually saw and the CR carries the
-    one matching its name; see poller.attribute_groups.
+    CR status, so the poller records the label values it actually saw and the CR carries
+    every one matching its name; see poller.provider_keys_for. A CR with several providers
+    has several, and missing the later ones means their groups are never staleness-checked.
+
+    Falls back to the bare CR name for a CR the poller has attributed nothing to, which is
+    what a CR that has produced no groups yet looks like.
     """
-    return cr.get("provider_key") or cr["name"]
+    return cr.get("provider_keys") or [cr["name"]]
 
 
 def _ago(delta: timedelta | None) -> str:

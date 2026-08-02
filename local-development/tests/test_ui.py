@@ -56,7 +56,7 @@ def _seed(db_path: str) -> None:
                 "ldap_filter": "(&(objectClass=groupOfNames)(cn=app-ocp-rbac-*))",
                 "last_sync_at": _iso(now - timedelta(minutes=4)),
                 "generation": 2,
-                "provider_key": "ldap-groupsync_ldap",
+                "provider_keys": ["ldap-groupsync_ldap"],
             },
             {
                 # Hours past two hourly intervals -> overdue.
@@ -66,7 +66,7 @@ def _seed(db_path: str) -> None:
                 "ldap_filter": "(&(objectClass=groupOfNames)(cn=bda-rbac-*))",
                 "last_sync_at": _iso(now - timedelta(hours=6)),
                 "generation": 2,
-                "provider_key": "bda-rbac-groupsync_ldap",
+                "provider_keys": ["bda-rbac-groupsync_ldap"],
             },
         ],
         _iso(now),

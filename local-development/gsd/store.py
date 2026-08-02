@@ -57,10 +57,26 @@ CREATE TABLE IF NOT EXISTS groupsync_state (
     ldap_filter         TEXT,
     last_sync_at        TEXT,
     generation          INTEGER,
-    provider_key        TEXT,           -- the sync-provider label value its groups carry
     observed_at         TEXT NOT NULL,
     PRIMARY KEY(cluster_id, name, namespace)
 );
+
+-- The sync-provider label values a CR's groups carry, replaced with the CR state above and
+-- in the same transaction. A separate table because a CR may declare SEVERAL providers and
+-- each produces its own label value; the single `provider_key` column this replaces held
+-- only the first, so every group of every later provider had no owner and so was never
+-- staleness-checked. Databases created before this keep that column, unwritten and unread:
+-- groupsync_state is a per-poll cache, so a vestigial NULL column costs nothing and there
+-- is no migration step to get wrong.
+CREATE TABLE IF NOT EXISTS groupsync_provider (
+    cluster_id          TEXT NOT NULL,
+    groupsync_name      TEXT NOT NULL,
+    groupsync_namespace TEXT NOT NULL,
+    provider_key        TEXT NOT NULL,
+    PRIMARY KEY(cluster_id, groupsync_name, groupsync_namespace, provider_key)
+);
+CREATE INDEX IF NOT EXISTS groupsync_provider_key
+    ON groupsync_provider(cluster_id, provider_key);
 
 -- Current group state, replaced each poll; history not kept (PLAN §10).
 CREATE TABLE IF NOT EXISTS group_state (
@@ -421,14 +437,35 @@ class Store:
             return cursor.rowcount > 0
 
     def replace_groupsync_state(self, cluster_id: str, rows: list[dict], observed_at: str) -> None:
+        """Replace this cluster's CR rows and their provider attributions together.
+
+        Both in ONE transaction: a CR whose state is visible while its providers are not
+        owns nothing for the duration, and every one of its groups would read as
+        unattributed — a burst of phantom findings on each poll.
+        """
         with self._tx() as conn:
             conn.execute("DELETE FROM groupsync_state WHERE cluster_id=?", (cluster_id,))
             conn.executemany(
                 """INSERT INTO groupsync_state(cluster_id, name, namespace, schedule,
-                       ldap_filter, last_sync_at, generation, provider_key, observed_at)
+                       ldap_filter, last_sync_at, generation, observed_at)
                    VALUES(:cluster_id,:name,:namespace,:schedule,:ldap_filter,
-                          :last_sync_at,:generation,:provider_key,:observed_at)""",
-                [{**r, "cluster_id": cluster_id, "observed_at": observed_at} for r in rows],
+                          :last_sync_at,:generation,:observed_at)""",
+                [
+                    {k: v for k, v in r.items() if k != "provider_keys"}
+                    | {"cluster_id": cluster_id, "observed_at": observed_at}
+                    for r in rows
+                ],
+            )
+            conn.execute("DELETE FROM groupsync_provider WHERE cluster_id=?", (cluster_id,))
+            conn.executemany(
+                """INSERT INTO groupsync_provider(
+                       cluster_id, groupsync_name, groupsync_namespace, provider_key)
+                   VALUES(?,?,?,?)""",
+                [
+                    (cluster_id, r["name"], r["namespace"], key)
+                    for r in rows
+                    for key in r.get("provider_keys") or []
+                ],
             )
 
     def replace_group_state(self, cluster_id: str, rows: list[dict], observed_at: str) -> None:
@@ -764,14 +801,25 @@ class Store:
     # -- queries -----------------------------------------------------------------------
 
     def groupsyncs(self, cluster_id: str) -> list[dict]:
-        return self._rows(
+        """Current CR state, each row carrying the full list of provider keys it owns.
+
+        `provider_keys` is stitched in from a second read rather than GROUP_CONCAT'd: the
+        callers need a list to test membership against, and building one by splitting a
+        delimited string means picking a delimiter that a label value can never contain.
+        Two reads of a handful of rows is the cheaper correctness.
+        """
+        rows = self._rows(
             """SELECT g.name, g.namespace, g.schedule, g.ldap_filter, g.last_sync_at,
-                      g.generation, g.provider_key, g.observed_at,
+                      g.generation, g.observed_at,
                       e.failed_at AS error_at, e.message AS error_message,
                       e.observed_generation AS error_generation,
                       (SELECT COUNT(*) FROM group_state gs
                         WHERE gs.cluster_id = g.cluster_id
-                          AND gs.sync_provider = g.provider_key) AS group_count
+                          AND gs.sync_provider IN (
+                              SELECT p.provider_key FROM groupsync_provider p
+                               WHERE p.cluster_id = g.cluster_id
+                                 AND p.groupsync_name = g.name
+                                 AND p.groupsync_namespace = g.namespace)) AS group_count
                  FROM groupsync_state g
                  LEFT JOIN reconcile_error e
                         ON e.cluster_id = g.cluster_id AND e.groupsync_name = g.name
@@ -779,6 +827,19 @@ class Store:
                 ORDER BY g.name""",
             (cluster_id,),
         )
+        keys: dict[tuple[str, str], list[str]] = {}
+        for p in self._rows(
+            """SELECT groupsync_name, groupsync_namespace, provider_key
+                 FROM groupsync_provider WHERE cluster_id=?
+                ORDER BY provider_key""",
+            (cluster_id,),
+        ):
+            keys.setdefault((p["groupsync_name"], p["groupsync_namespace"]), []).append(
+                p["provider_key"]
+            )
+        for row in rows:
+            row["provider_keys"] = keys.get((row["name"], row["namespace"]), [])
+        return rows
 
     def sync_events(self, cluster_id: str, name: str, since: str | None, limit: int) -> list[dict]:
         sql = """SELECT synced_at, observed_at, schedule, group_count
