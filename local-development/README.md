@@ -1,7 +1,16 @@
 # Local development
 
-The application, its build tooling and its manifests. The repository root is kept clear for
-the Helm chart that will be generated from `deploy/dashboard.yaml`.
+The application and its build tooling. The Helm chart at `../charts/group-sync-dashboard` is
+the single source of truth for RBAC, config and workload shape; plain YAML is **generated
+from it** by `./render-manifests.sh`, never hand-written.
+
+That direction used to be the other way round, and it is worth knowing why it changed. A
+hand-maintained `deploy/dashboard.yaml` sat here for 62 commits without anyone noticing it
+had gone stale. It was missing the `coordination.k8s.io/leases` grant the poller needs, so a
+cluster deployed from it came up passing both probes and silently never polled — and since
+every object name matched the Helm release, applying it over a live cluster stripped the
+oauth-proxy sidecar off a dashboard that serves group membership. Two hand-kept copies of
+RBAC cannot be kept in agreement; one generated copy is in agreement by construction.
 
 Run everything below from **this** directory.
 
@@ -45,10 +54,36 @@ Same tagging and verification rules as the external script: `<version>-<git-sha>
 dirty tree, verifies the commit stamp inside the image before pushing, and reads it back out
 of the running pod afterwards.
 
-It also pins the released tag into `deploy/dashboard.yaml`, which leaves the tree dirty until
-you commit it. That is deliberate — `oc apply` with an unpinned manifest silently rolls the
-deployment back to the older tag, which was verified with `--dry-run=server` and is very hard
-to attribute after the fact.
+It deploys with `helm upgrade --install`, passing the released tag with `--set`. Nothing is
+written back into the tree: `helm get values` already records what is deployed, so there is
+no manifest to pin and no commit to remember.
+
+## Plain YAML, for reading and testing
+
+```bash
+./render-manifests.sh          # chart -> deploy/, one file per object
+oc diff  -f deploy/            # what would change
+oc apply -f deploy/            # if you want to apply it yourself
+```
+
+`deploy/` is generated output and is gitignored. The script never applies anything — the
+folder exists so a human, a review, or a diff in a ticket sees the exact objects before the
+cluster does.
+
+Two values the chart normally reads from the live cluster are resolved by the script instead,
+because `helm template` runs with no cluster connection and every `lookup` in the chart
+returns empty:
+
+* **the Ingress host**, derived from the cluster's apps domain — without it the chart's own
+  guard aborts, since a hostless Ingress produces no Route at all on OpenShift;
+* **the oauth cookie secret**, read back from the live Secret. This one matters: the chart
+  mints a fresh `randAlpha 32` whenever it cannot find an existing Secret, so two consecutive
+  renders produce two different keys and applying them in turn signs every logged-in user
+  out. The script reuses the live value and says which it did.
+
+**`helm upgrade --install` remains the supported deploy.** Applying rendered YAML leaves no
+Helm release, so `helm list`, `helm rollback` and `helm diff` know nothing about it. Do not
+mix the two paths against one namespace and expect Helm's stored state to stay truthful.
 
 ## Live smoke test
 

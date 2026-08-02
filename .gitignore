@@ -38,3 +38,10 @@ ideas-multipods.md
 # it is reinstallable in one command and is tooling, not product. Track it instead if the
 # team should share a pinned copy.
 .claude/
+
+# Rendered chart output (local-development/render-manifests.sh). Generated, never authored:
+# it is the chart rendered for inspection and testing. Two reasons it must not be committed —
+# it embeds the oauth cookie secret read from the live cluster, and a checked-in copy becomes
+# a second source of truth for RBAC and config, which is exactly how the hand-written
+# deploy/dashboard.yaml went 62 commits stale while still looking authoritative.
+local-development/deploy/

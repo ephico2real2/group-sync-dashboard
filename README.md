@@ -15,6 +15,9 @@ output does not notice. None of these raise an event or a failed reconcile:
 | A group silently stopped being refreshed | nothing — the CR still reports success |
 | A user quietly dropped out of a group | nothing — no event, no log |
 | A CR whose schedule is unparseable | nothing — it simply never runs again |
+| A NamespaceConfig stopped reconciling | nothing — RBAC silently stops being templated, and both its conditions stay `True` |
+| A RoleBinding names a **person** instead of a group | nothing — and it survives offboarding, because removing them from LDAP revokes nothing |
+| A hand-made grant on an operator-synced group | nothing — it looks identical to one the policy system produced |
 
 On the reference cluster it finds **9 RoleBindings granting `admin`, `view` and `edit` to
 groups that have never existed** — access reaching nobody, in three namespaces, which
@@ -24,22 +27,23 @@ groups that have never existed** — access reaching nobody, in three namespaces
 
 | Where | What |
 |---|---|
-| [`charts/group-sync-dashboard/`](charts/group-sync-dashboard/) | the Helm chart — how you deploy it |
+| [`docs/reference-architecture.md`](docs/reference-architecture.md) | **start here to operate or extend it** — components, poll and request flow, data model, concurrency, security, and the reason behind each deliberate constraint |
+| [`charts/group-sync-dashboard/`](charts/group-sync-dashboard/) | the Helm chart — how you deploy it, and every value |
 | [`local-development/`](local-development/README.md) | the application, tests, build tooling and raw manifests |
 | [`local-development/API.md`](local-development/API.md) | every endpoint, what each field means, the ones routinely misread |
+| [`docs/`](docs/) | design notes: the storage seam, the audit write path, the namespace report, the image scan |
 
 ## Install
 
 ```bash
 helm install group-sync-dashboard charts/group-sync-dashboard \
-  --namespace group-sync-dashboard --create-namespace \
-  --set oauthProxy.enabled=true
+  --namespace group-sync-dashboard --create-namespace
 ```
 
 That is enough. The host is derived from the cluster's own apps domain, the image comes from
-a public registry, and the dashboard observes the cluster it runs on using the pod's
-projected ServiceAccount token — which kubelet rotates and the app re-reads every poll, so
-there is no long-lived credential to mint or expire.
+a public registry, the OAuth proxy is on by default, and the dashboard observes the cluster
+it runs on using the pod's projected ServiceAccount token — which kubelet rotates and the app
+re-reads every poll, so there is no long-lived credential to mint or expire.
 
 Every value is documented in
 [`charts/group-sync-dashboard/values.yaml`](charts/group-sync-dashboard/values.yaml). The
@@ -47,14 +51,17 @@ ones most likely to matter:
 
 | Value | Default | Why you would change it |
 |---|---|---|
-| `oauthProxy.enabled` | `false` | **Turn this on.** Without it the route is unauthenticated and the dashboard exposes group membership |
+| `oauthProxy.enabled` | `true` | **Leave it on.** With it off the route is unauthenticated and the dashboard exposes group membership |
 | `ingress.host` | derived | Set explicitly if you do not want `<name>-<ns>.<apps domain>` |
 | `clusters` | the local cluster | Add entries to observe others |
 | `trustedCA.*` | injected on | Corporate CAs for external clusters — see below |
 | `persistence.enabled` | `true` | Leave on. The accumulated history cannot be re-fetched |
+| `config.backup.enabled` | `true` | Leave on. The only protection for that history, though it lands on the same volume |
+| `config.userActivity.visibility` | `self` | `all` lets everyone see everyone's dashboard usage. It is identifiable personnel data |
+| `config.unmanagedAudit.mode` | `off` | The only write path. `log` rehearses it with zero write access — see below |
 | `monitoring.serviceMonitor.enabled` | `false` | Needs the Prometheus Operator CRDs |
 | `replicaCount` | `1` | Leave at 1. Above one, each pod keeps its own database and history diverges — see the chart README's Scaling section |
-| `config.pollIntervalSeconds` | `60` | Poll cadence |
+| `config.pollIntervalSeconds` | `60` | Poll cadence, and the error bar on "when did this person lose access?" |
 | `logLevel` | `INFO` | `DEBUG` adds per-poll timing and HTTP request lines |
 
 ## Authentication
@@ -112,7 +119,7 @@ about what it trusts, and silently widening it would be the wrong kind of helpfu
 
 ## Monitoring
 
-`/metrics` serves Prometheus exposition; the chart ships a ServiceMonitor and four alerting
+`/metrics` serves Prometheus exposition; the chart ships a ServiceMonitor and eight alerting
 rules, both off by default because they need the Prometheus Operator CRDs.
 
 Cardinality is bounded deliberately: series are per cluster and per GroupSync CR only, never
@@ -130,13 +137,20 @@ The alert worth knowing about is `GroupSyncDashboardNotPolling`. It catches a de
 which the health endpoints structurally cannot: `/healthz` is unconditional and `/readyz`
 only reads the store, so both stay green while the dashboard serves frozen data.
 
-The other two cover SQLite. `GroupSyncDashboardWalGrowing` catches a write-ahead log that is
-not being checkpointed — checkpoints yield to open readers, so a steady read load can starve
-them, and the WAL grows until the volume fills while the database file stays small.
+Two more cover SQLite, and are the other failures where the pod stays Ready and nothing else
+looks wrong. `GroupSyncDashboardWalGrowing` catches a write-ahead log that is not being
+checkpointed — checkpoints yield to open readers, so a steady read load can starve them, and
+the WAL grows until the volume fills while the database file stays small.
 `GroupSyncDashboardWalDisabled` catches WAL never having engaged: it is requested at startup
 but a filesystem without working shared memory (NFS, EFS, SMB) refuses it silently, and reads
-then block on every write. Both are failures where the pod stays Ready and nothing else looks
-wrong.
+then block on every write.
+
+The remaining five are `GroupSyncOverdue`, `DanglingRoleBinding`,
+`GroupSyncClusterUnreachable`, `GroupSyncDashboardConfigReconcileError` (a `NamespaceConfig`
+or `GroupConfig` has stopped reconciling, so RBAC is no longer being templated) and
+`GroupSyncDashboardDirectUserGrants` (grants that still name a person — a migration backlog,
+deliberately given a one-hour `for` so it is visible without paging anyone). The chart README
+lists all eight with their thresholds.
 
 ## Building and shipping
 
@@ -157,27 +171,71 @@ Full detail, including CRC-specific traps, in
 
 ## What it shows
 
-**Overview** — per cluster: reachable, CR count, group count, empty and unattributed groups,
-bindings needing review, oldest last sync.
+Six tabs.
 
-**GroupSync detail** — schedule, LDAP filter, last sync, next expected (from a real cron
-parser), the accumulated sync timeline, and the groups the CR owns.
+**Overview** — per cluster: reachable, CR count, group count, empty and unattributed groups,
+bindings needing review, oldest last sync, and the health of the
+namespace-configuration-operator's CRs. Alongside it, the computed alerts.
+
+Drill into a CR for its schedule, LDAP filter, last sync, next expected (from a real cron
+parser), the accumulated sync timeline, and the groups it owns.
 
 **Groups** — every group, filterable to `empty` and `unattributed`. Drill in for members,
-when each was first seen, the membership change log, and the access the group grants.
+when each was first seen, the membership change log, and the access the group grants. From
+any member, the reverse lookup: every group that user belongs to and every binding that
+reaches them, each row naming the group that confers it. The cluster can only answer that by
+scanning every Group object by hand.
 
-**Users** — the reverse lookup: every group a user belongs to and every binding that reaches
-them, each row naming the group that confers it. The cluster can only answer this by scanning
-every Group object by hand.
+**Access granted** — every group-subject binding, classified `ok`, `dangling` (the group was
+operator-managed and has disappeared), `unresolved` (names a group that has never existed),
+`built_in` (Kubernetes virtual groups, expected), or `unmanaged` (a hand-made grant on a
+synced group, outside the policy system). Filterable, defaulting to what needs review.
 
-**Access granted** — every group-subject binding, classified `granted`, `dangling` (the group
-was operator-managed and has disappeared), `unresolved` (names a group that has never
-existed), or `built_in` (Kubernetes virtual groups, expected). Filterable, defaulting to what
-needs review.
+**RBAC policy** — the namespace-configuration-operator's `NamespaceConfig` and `GroupConfig`
+CRs beside the provenance of the bindings they template. These CRs are the other half of the
+access pipeline: group-sync creates the groups, these grant them their access. A failing one
+means RBAC has silently stopped reconciling — new namespaces get nothing, drift stops being
+corrected, and nothing else on the cluster reports it. The tab shows nothing at all on a
+cluster without the operator, which is auto-detected and deliberately distinct from
+"installed with zero CRs".
 
-Direct bindings only. Role rules are never fetched or expanded, and the UI says so — an
-incomplete effective-permission calculation could show access as absent when it is not, and a
-false negative there gets an incident closed wrongly.
+**Namespace audit** — bindings that name a **person** rather than a group, ranked per
+namespace by the worst privilege granted there rather than by count: one forgotten
+`cluster-admin` outranks twenty `view` grants. Sortable columns, a namespace selector, and
+server-side paging — the filter is applied in SQL, not by trimming a full response in the
+browser. Platform identities and `kubeadmin` are excluded and the count of what was left out
+is always reported.
+
+These are the governance violation in its purest form. They survive offboarding: removing
+someone from an LDAP group revokes their access everywhere at once, while a binding that
+names them keeps granting until somebody remembers it exists — and no group-based access
+review can see it.
+
+**Usage** — who used the dashboard, one row per user per UTC day. Self-scoped by default;
+requires the OAuth proxy, because without it there is no authenticated identity to attribute
+anything to.
+
+Every binding view is **direct bindings only**. Role rules are never fetched or expanded, and
+the UI says so — an incomplete effective-permission calculation could show access as absent
+when it is not, and a false negative there gets an incident closed wrongly.
+
+## The one thing it writes
+
+`config.unmanagedAudit.mode` is `off` by default, and off means no write-path code executes
+at all. Turned on, it stamps bindings it has classified `unmanaged` so they can be found from
+the objects themselves rather than only in this UI:
+
+```bash
+oc get rolebindings,clusterrolebindings -A -l rbac.ocp.io/unmanaged=true
+```
+
+`log` mode computes and logs the full plan with **zero write access** — run that first.
+`annotate` mode patches, and the chart renders the `patch` RBAC grant only in that mode.
+Nothing but three metadata keys is ever written: not subjects, not `roleRef`.
+
+Kubernetes caps it in a way more RBAC cannot fix, and `oc auth can-i` will not tell you.
+Design, invariants and the live-cluster evidence:
+[`docs/unmanaged-audit-design.md`](docs/unmanaged-audit-design.md).
 
 ## Two things to know before reading a screen
 

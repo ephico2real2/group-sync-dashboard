@@ -90,35 +90,21 @@ echo "pushed  : ${REF}"
 
 INTERNAL="image-registry.openshift-image-registry.svc:5000/${NAMESPACE}/${IMAGE}:${TAG}"
 
-# Write the released tag into the manifest FIRST, then apply it.
+# Deploy through the chart, which is the only place RBAC, config and probes are defined.
 #
-# The alternative — apply the manifest, then `oc set image` — leaves the file naming a
-# different tag than the cluster runs. A later routine `oc apply` then silently rolls the
-# deployment back to the older tag, undoing a release with no error and no obvious cause.
-# Verified against this cluster with `--dry-run=server`: applying the unmodified manifest
-# reverted 0.3.2-<sha> to 0.3.2.
+# This used to rewrite an image line in a hand-maintained deploy/dashboard.yaml and apply
+# that. Two things were wrong with it. The rewrite was already dead — its regex required the
+# internal-registry form and the file had been switched to a Quay ref, so it matched 0 lines
+# and the script would have aborted on `found 0`. And the manifest itself had drifted 62
+# commits behind the chart, missing the coordination.k8s.io/leases grant without which the
+# poller never polls while both probes still pass.
 #
-# Updating the file makes the tree dirty, so the next release refuses until it is
-# committed. That is deliberate: it keeps git the source of truth for what is deployed.
-python3 - "$INTERNAL" <<'PY'
-import pathlib, re, sys
-ref = sys.argv[1]
-path = pathlib.Path("deploy/dashboard.yaml")
-text = path.read_text()
-new, n = re.subn(
-    r"(?m)^(\s+image: )image-registry\.openshift-image-registry\.svc:5000/\S+$",
-    lambda m: m.group(1) + ref,
-    text,
-)
-if n != 1:
-    sys.exit(f"expected exactly one image line to rewrite, found {n}")
-path.write_text(new)
-PY
-echo "manifest: deploy/dashboard.yaml now pins ${TAG}"
-
-# Apply the whole manifest so config, RBAC and probe changes ship with the image, not just
-# the image itself.
-oc apply -f deploy/dashboard.yaml >/dev/null
+# The tag no longer needs writing anywhere: --set carries it, and `helm get values` records
+# what is deployed. For plain YAML to read or diff, use ./render-manifests.sh.
+helm upgrade --install "${IMAGE}" ../charts/group-sync-dashboard \
+  --namespace "${NAMESPACE}" --create-namespace \
+  --set image.repository="${INTERNAL%:*}" \
+  --set image.tag="${TAG}"
 oc rollout status "deploy/${IMAGE}" -n "${NAMESPACE}" --timeout=300s
 
 # Prove the running pod is the build we just made, not a cached older one.
@@ -129,11 +115,3 @@ if [ "$RUNNING" != "$COMMIT" ]; then
   exit 1
 fi
 echo "running : ${COMMIT} — verified in-pod"
-
-# The manifest now differs from HEAD. Say so plainly: an uncommitted deploy manifest is how
-# the cluster and git drift apart again.
-if [ -n "$(git status --porcelain deploy/dashboard.yaml)" ]; then
-  echo
-  echo "NEXT: deploy/dashboard.yaml was updated to pin ${TAG}. Commit it so git records"
-  echo "      what is deployed:  git commit -am 'deploy: pin ${TAG}'"
-fi

@@ -216,47 +216,27 @@ fi
 # ---------------------------------------------------------------------------
 # Optional deploy
 # ---------------------------------------------------------------------------
-# The manifest is updated in place with the released ref, then applied. Rendering to a temp
-# file instead would leave deploy/dashboard.yaml naming a different image than the cluster
-# runs, and a later routine `oc apply` would silently roll the deployment back — verified
-# with --dry-run=server on the CRC path, and very hard to attribute after the fact.
+# The chart is the deployment path — the same reasoning as --update-values above, applied to
+# the deploy step rather than only printed.
 #
-# The pull secret is still injected only into the rendered copy, since it is environment
-# specific and empty for a public repository.
-python3 - "$REF" <<'PIN'
-import pathlib, re, sys
-ref = sys.argv[1]
-path = pathlib.Path("deploy/dashboard.yaml")
-text = path.read_text()
-new, n = re.subn(r"(?m)^(\s+image: ).*$", lambda m: m.group(1) + ref, text)
-if n != 1:
-    sys.exit(f"expected exactly one image line, found {n}")
-path.write_text(new)
-PIN
-echo "manifest: deploy/dashboard.yaml now pins ${REF}"
-
-RENDERED=$(mktemp -t gsd-deploy).yaml
-python3 - "$REF" "$IMAGE_PULL_SECRET" "$RENDERED" <<'PY'
-import re, sys, pathlib
-ref, pull_secret, out = sys.argv[1], sys.argv[2], sys.argv[3]
-text = pathlib.Path("deploy/dashboard.yaml").read_text()
-
-# imagePullSecrets is added ONLY when one is configured. A public repository needs none,
-# and an empty/omitted secret reference makes the pod fail to schedule rather than fall
-# back to anonymous pull.
-if pull_secret:
-    text, n = re.subn(
-        r"(?m)^(      serviceAccountName: group-sync-dashboard)$",
-        lambda m: m.group(1) + f"\n      imagePullSecrets:\n        - name: {pull_secret}",
-        text,
-    )
-    if n != 1:
-        sys.exit("could not insert imagePullSecrets")
-pathlib.Path(out).write_text(text)
-PY
-
-oc apply -f "$RENDERED" >/dev/null
-rm -f "$RENDERED"
+# This used to `oc apply -f deploy/dashboard.yaml`, a hand-maintained copy of the manifests.
+# It went 62 commits stale without anything noticing. It lacked the coordination.k8s.io/leases
+# grant the poller needs to poll at all, so a cluster deployed that way came up healthy on
+# both probes and silently never polled; and because every object name collides with the Helm
+# release, applying it over a live cluster stripped the oauth-proxy sidecar off a dashboard
+# that serves group membership. A second hand-written source of truth for RBAC and config
+# cannot be kept honest.
+#
+# For plain YAML — to read, to diff, or to hand to something that wants files — use
+# ./render-manifests.sh, which generates it FROM this chart into deploy/.
+#
+# ingress.host is deliberately not passed: the chart derives it from the cluster's apps
+# domain via `lookup`, which works here because this is a real upgrade, not a template render.
+helm upgrade --install group-sync-dashboard ../charts/group-sync-dashboard \
+  --namespace "${K8S_NAMESPACE}" --create-namespace \
+  --set image.repository="${REGISTRY}/${REGISTRY_NAMESPACE}/${IMAGE_NAME}" \
+  --set image.tag="${TAG}" \
+  ${IMAGE_PULL_SECRET:+--set "image.pullSecrets[0].name=${IMAGE_PULL_SECRET}"}
 oc rollout status "deploy/${IMAGE_NAME}" -n "${K8S_NAMESPACE}" --timeout=300s
 
 RUNNING=$(oc exec -n "${K8S_NAMESPACE}" "deploy/${IMAGE_NAME}" -- sh -c 'echo "$GSD_GIT_COMMIT"' 2>/dev/null | tr -d '\r\n')
