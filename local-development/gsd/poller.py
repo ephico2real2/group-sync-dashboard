@@ -18,7 +18,8 @@ from datetime import UTC, datetime
 from .config import ClusterConfig, Settings
 from .kube import OK, ClusterClient, ClusterError, GroupSyncView, GroupView
 from .leader import LeaderElector
-from .store import Store, now_iso
+from .store import Store
+from .timeutil import now_iso
 
 log = logging.getLogger(__name__)
 

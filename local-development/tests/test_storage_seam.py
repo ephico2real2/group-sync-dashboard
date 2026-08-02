@@ -26,13 +26,23 @@ GSD = pathlib.Path(__file__).resolve().parents[1] / "gsd"
 BACKEND = "store.py"
 
 # Anything that names a specific engine or speaks its dialect.
-ENGINE_IMPORTS = {"sqlite3", "psycopg", "psycopg2", "asyncpg", "pymysql", "sqlalchemy"}
-SQL_VERBS = ("SELECT ", "INSERT ", "UPDATE ", "DELETE FROM", "CREATE TABLE", "PRAGMA ")
+ENGINE_IMPORTS = {
+    "sqlite3", "aiosqlite", "apsw",
+    "psycopg", "psycopg2", "asyncpg",
+    "pymysql", "MySQLdb", "sqlalchemy",
+}
+# No trailing spaces: whitespace is collapsed before matching, so "SELECT\n*" is caught
+# where a literal " " requirement missed it.
+SQL_VERBS = ("SELECT", "INSERT INTO", "UPDATE ", "DELETE FROM", "CREATE TABLE", "PRAGMA")
 
 
 def modules():
-    """Every application module except the backend itself."""
-    return [p for p in sorted(GSD.glob("*.py")) if p.name != BACKEND]
+    """Every application module except the backend itself.
+
+    rglob, not glob: a subpackage such as gsd/db/queries.py would otherwise never be
+    looked at, and "put the SQL in a subdirectory" is the first thing anyone tries.
+    """
+    return [p for p in sorted(GSD.rglob("*.py")) if p.name != BACKEND]
 
 
 @pytest.mark.parametrize("path", modules(), ids=lambda p: p.name)
@@ -50,6 +60,20 @@ def test_no_module_imports_a_database_driver(path):
             found |= {a.name.split(".")[0] for a in node.names}
         elif isinstance(node, ast.ImportFrom) and node.module:
             found.add(node.module.split(".")[0])
+        # Dynamic imports, which the plain Import/ImportFrom walk cannot see:
+        #     sqlite3 = __import__("sqlite3")
+        #     sqlite3 = importlib.import_module("sqlite3")
+        # Both were a clean bypass of the original check.
+        elif isinstance(node, ast.Call):
+            name = None
+            if isinstance(node.func, ast.Name):
+                name = node.func.id
+            elif isinstance(node.func, ast.Attribute):
+                name = node.func.attr
+            if name in ("__import__", "import_module") and node.args:
+                first = node.args[0]
+                if isinstance(first, ast.Constant) and isinstance(first.value, str):
+                    found.add(first.value.split(".")[0])
     leaked = found & ENGINE_IMPORTS
     assert not leaked, (
         f"{path.name} imports {leaked}. Storage engines belong behind gsd/storage.py — "
@@ -70,9 +94,30 @@ def test_no_module_writes_sql(path):
         for node in ast.walk(tree)
         if isinstance(node, ast.Constant)
         and isinstance(node.value, str)
-        and any(verb in node.value.upper() for verb in SQL_VERBS)
+        # Whitespace collapsed first: "SELECT\n  * FROM x" and "SELECT\t*" read the same
+        # as "SELECT * FROM x", and the original check missed both.
+        and any(verb in " ".join(node.value.upper().split()) for verb in SQL_VERBS)
     ]
     assert not offenders, f"{path.name} contains SQL: {offenders}"
+
+
+def test_the_enforcement_documents_what_it_cannot_catch():
+    """Honest framing beats false confidence.
+
+    This is a lint, not a sandbox. A determined author can still route around it — the
+    known holes are listed here so nobody mistakes a green suite for a guarantee:
+
+    * SQL assembled by concatenation, so no single literal contains a verb
+      (``"SEL" + "ECT * FROM cluster"``).
+    * SQL read from a file, a template or a constant defined outside ``gsd/``.
+    * A driver reached through an already-imported module
+      (``import gsd.store; gsd.store.sqlite3``).
+
+    What it does catch is the realistic accident: somebody adds ``import sqlite3`` to a
+    module because it was quicker than adding a store method. That is the failure mode
+    that actually erodes a seam, and it is now impossible to merge quietly.
+    """
+    assert True
 
 
 class TestContract:
@@ -87,7 +132,11 @@ class TestContract:
         replaced by maintain() and health(), which say nothing about the engine."""
         store = Store(":memory:")
         try:
-            for gone in ("wal_bytes", "maybe_checkpoint"):
+            # journal_mode and checkpoint_busy_total were missed the first time: the
+            # methods were privatised but these two ATTRIBUTES stayed public, so the claim
+            # "the three SQLite nouns are private" was wrong for two of them.
+            for gone in ("wal_bytes", "maybe_checkpoint",
+                         "journal_mode", "checkpoint_busy_total"):
                 assert not hasattr(store, gone), (
                     f"Store.{gone}() is public again; the poller/collector can reach "
                     f"SQLite internals through it"
@@ -104,9 +153,49 @@ class TestContract:
         finally:
             store.close()
         assert isinstance(health, dict)
+        # `engine` is the only key any backend must supply. The rest are this engine's
+        # vocabulary, and the collector must read them defensively — a backend with no WAL
+        # returns none of them, and a collector that assumed they existed would emit
+        # wal_enabled=0 and fire GroupSyncDashboardWalDisabled against a healthy database.
         assert health["engine"] == "sqlite"
-        # A caller reads keys defensively; nothing here may be required to exist.
         assert set(health) >= {"wal_enabled", "wal_bytes", "checkpoint_busy_total"}
+
+    def test_a_backend_without_a_wal_emits_no_wal_metrics(self):
+        """The false-alarm case. A server-based engine reports no wal_* keys, and the
+        collector must omit those series rather than invent a 0 that means
+        'the filesystem refused WAL and readers now block on every write'."""
+        from datetime import timedelta
+        from prometheus_client import generate_latest
+        from gsd.metrics import build_registry
+
+        class _NoWal:
+            def health(self):
+                return {"engine": "postgres"}
+            def clusters(self):
+                return []
+
+        text = generate_latest(build_registry(_NoWal(), timedelta(minutes=2))).decode()
+        for series in ("gsd_sqlite_wal_bytes", "gsd_sqlite_wal_enabled",
+                       "gsd_sqlite_checkpoint_busy_total"):
+            assert series not in text, f"{series} invented for an engine that has no WAL"
+
+    def test_a_failing_health_omits_the_series_rather_than_zeroing_them(self):
+        """Reporting a failure to measure as a measurement of failure is the worst
+        available answer: wal_enabled=0 fires GroupSyncDashboardWalDisabled. Omitting
+        leaves Prometheus holding the last good value."""
+        from datetime import timedelta
+        from prometheus_client import generate_latest
+        from gsd.metrics import build_registry
+
+        class _Broken:
+            def health(self):
+                raise RuntimeError("storage unavailable")
+            def clusters(self):
+                return []
+
+        text = generate_latest(build_registry(_Broken(), timedelta(minutes=2))).decode()
+        assert "gsd_sqlite_wal_enabled" not in text, "a broken store reported WAL as disabled"
+        assert "gsd_build_info" in text, "the rest of the scrape should still succeed"
 
     def test_maintain_is_safe_on_an_engine_with_nothing_to_do(self):
         """:memory: has no WAL, so upkeep is a no-op — and must return a dict, not None,

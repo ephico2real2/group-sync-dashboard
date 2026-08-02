@@ -101,7 +101,7 @@ class TestWal:
     def test_wal_is_verified_not_assumed(self, tmp_path):
         store = Store(str(tmp_path / "gsd.db"))
         try:
-            assert store.journal_mode == "wal"
+            assert store._journal_mode == "wal"
         finally:
             store.close()
 
@@ -109,7 +109,7 @@ class TestWal:
         """`:memory:` cannot do WAL and that is not a misconfiguration."""
         store = Store(":memory:")
         try:
-            assert store.journal_mode == "memory"
+            assert store._journal_mode == "memory"
             assert store._wal_bytes() == 0
             assert store._checkpoint() is None
         finally:
@@ -164,7 +164,7 @@ class TestWal:
                 assert result is not None
                 busy, _frames, _moved = result
                 assert busy == 1, "the open snapshot should have blocked the truncation"
-                assert store.checkpoint_busy_total == 1
+                assert store._checkpoint_busy_total == 1
             finally:
                 reader.rollback()
                 reader.close()

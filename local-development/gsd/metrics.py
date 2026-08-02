@@ -93,43 +93,59 @@ class DashboardCollector:
         try:
             health = self.store.health()
         except Exception:  # noqa: BLE001
-            log.exception("metrics: storage health unavailable; omitting those series")
-            health = {}
+            # OMITTED, never zeroed. An earlier version of this guard fell back to an empty
+            # dict, which produced `gsd_sqlite_wal_enabled 0` on a successful scrape — and
+            # that value means "the filesystem refused WAL, readers now block on every
+            # write", so GroupSyncDashboardWalDisabled would fire while nothing was wrong.
+            # Reporting a failure to measure as a measurement of failure is the worst
+            # available answer. Omitting leaves Prometheus holding the last good value,
+            # which is what the pre-refactor code did by letting the scrape fail outright.
+            log.exception("metrics: storage health unavailable; omitting those three series")
+            health = None
 
-        # The WAL is the one thing here that can fill the volume while every other signal
-        # stays green: checkpointing is best-effort and yields to open readers, so a steady
-        # read load can starve it indefinitely. The database file stops growing, the API
-        # keeps answering, and the pod dies on a full disk with nothing having warned.
-        wal = GaugeMetricFamily(
-            "gsd_sqlite_wal_bytes",
-            "Size of the SQLite write-ahead log. Sustained growth means checkpoints are "
-            "being starved by open readers; compare against the PVC size.",
-            labels=[],
-        )
-        wal.add_metric([], int(health.get("wal_bytes", 0)))
-        yield wal
+        if health is not None:
+            # The WAL is the one thing here that can fill the volume while every other
+            # signal stays green: checkpointing is best-effort and yields to open readers,
+            # so a steady read load can starve it indefinitely. The database file stops
+            # growing, the API keeps answering, and the pod dies on a full disk with nothing
+            # having warned.
+            #
+            # Emitted only for an engine that reports them. A backend without a WAL — any
+            # server-based engine — returns no such keys, and inventing a 0 for
+            # wal_enabled would fire the same false alarm as the failure case above.
+            if "wal_bytes" in health:
+                wal = GaugeMetricFamily(
+                    "gsd_sqlite_wal_bytes",
+                    "Size of the SQLite write-ahead log. Sustained growth means checkpoints "
+                    "are being starved by open readers; compare against the PVC size.",
+                    labels=[],
+                )
+                wal.add_metric([], int(health["wal_bytes"]))
+                yield wal
 
-        ckpt = CounterMetricFamily(
-            "gsd_sqlite_checkpoint_busy_total",
-            "Checkpoints that could not complete because a reader held an older snapshot. "
-            "Occasional is normal; monotonic increase alongside rising WAL size is the "
-            "starvation case.",
-            labels=[],
-        )
-        ckpt.add_metric([], int(health.get("checkpoint_busy_total", 0)))
-        yield ckpt
+            if "checkpoint_busy_total" in health:
+                ckpt = CounterMetricFamily(
+                    "gsd_sqlite_checkpoint_busy_total",
+                    "Checkpoints that could not complete because a reader held an older "
+                    "snapshot. Occasional is normal; monotonic increase alongside rising "
+                    "WAL size is the starvation case.",
+                    labels=[],
+                )
+                ckpt.add_metric([], int(health["checkpoint_busy_total"]))
+                yield ckpt
 
-        # 1 only when WAL actually engaged. It is requested at startup but the filesystem
-        # can refuse it, and in rollback mode readers block on every write — a latency
-        # cliff with no other symptom.
-        journal = GaugeMetricFamily(
-            "gsd_sqlite_wal_enabled",
-            "1 if the database is in WAL mode. 0 means the filesystem refused it and "
-            "readers now block on writes.",
-            labels=[],
-        )
-        journal.add_metric([], 1 if health.get("wal_enabled") else 0)
-        yield journal
+            # 1 only when WAL actually engaged. It is requested at startup but the
+            # filesystem can refuse it, and in rollback mode readers block on every write —
+            # a latency cliff with no other symptom.
+            if "wal_enabled" in health:
+                journal = GaugeMetricFamily(
+                    "gsd_sqlite_wal_enabled",
+                    "1 if the database is in WAL mode. 0 means the filesystem refused it "
+                    "and readers now block on writes.",
+                    labels=[],
+                )
+                journal.add_metric([], 1 if health["wal_enabled"] else 0)
+                yield journal
 
         # gsd_dashboard_active_users USED TO BE EXPOSED HERE AND WAS REMOVED.
         # /metrics is deliberately unauthenticated so Prometheus can scrape it without

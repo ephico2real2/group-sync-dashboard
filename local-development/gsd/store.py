@@ -24,6 +24,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Iterator
 
+from .timeutil import now_iso
+
 log = logging.getLogger(__name__)
 
 SCHEMA = """
@@ -205,8 +207,11 @@ def _safe_pragma_word(value: str, default: str) -> str:
     return word
 
 
-def now_iso() -> str:
-    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+# `now_iso` is imported at the top and therefore still re-exported from this module for any
+# caller that has not moved. Its definition lives in gsd/timeutil.py: it was never a storage
+# concern, and keeping it here meant a service split would need the SQLite module just to
+# stamp a timestamp.
+__all__ = ["Store", "now_iso"]
 
 
 class Store:
@@ -239,7 +244,7 @@ class Store:
         # a moment of contention into a failed probe and a restarted pod.
         self.reader_busy_timeout_ms = reader_busy_timeout_ms
         self.wal_checkpoint_bytes = int(wal_checkpoint_mb * 1024 * 1024)
-        self.checkpoint_busy_total = 0
+        self._checkpoint_busy_total = 0
         self._lock = threading.RLock()
         self._local = threading.local()
 
@@ -254,15 +259,15 @@ class Store:
         # blocks for the whole duration of the writer's transaction, so every API request
         # queues behind the bulk poll. Read it back and say so, because the alternative is
         # diagnosing that from latency graphs.
-        self.journal_mode = str(
+        self._journal_mode = str(
             self._conn.execute("PRAGMA journal_mode=WAL").fetchone()[0]
         ).lower()
-        if path != ":memory:" and self.journal_mode != "wal":
+        if path != ":memory:" and self._journal_mode != "wal":
             log.error(
                 "SQLite is in %r mode, not WAL — the filesystem under %s does not support it. "
                 "Readers will now BLOCK on every write. This is expected on NFS/EFS/SMB and "
                 "is why network storage is not supported for the database file.",
-                self.journal_mode,
+                self._journal_mode,
                 path,
             )
 
@@ -357,7 +362,7 @@ class Store:
         retries. It IS worth counting, because a busy result EVERY cycle is the starvation
         case and the metric is how you would ever notice.
         """
-        if self.path == ":memory:" or self.journal_mode != "wal":
+        if self.path == ":memory:" or self._journal_mode != "wal":
             return None
         if self._wal_bytes() < self.wal_checkpoint_bytes:
             return None
@@ -365,7 +370,7 @@ class Store:
             row = self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
         busy, log_frames, moved = int(row[0]), int(row[1]), int(row[2])
         if busy:
-            self.checkpoint_busy_total += 1
+            self._checkpoint_busy_total += 1
             log.warning(
                 "WAL checkpoint blocked by an open reader (%d frames, %.1f MiB); will retry "
                 "next cycle",
@@ -406,10 +411,10 @@ class Store:
         """
         return {
             "engine": "sqlite",
-            "journal_mode": self.journal_mode,
-            "wal_enabled": self.journal_mode == "wal",
+            "journal_mode": self._journal_mode,
+            "wal_enabled": self._journal_mode == "wal",
             "wal_bytes": self._wal_bytes(),
-            "checkpoint_busy_total": self.checkpoint_busy_total,
+            "checkpoint_busy_total": self._checkpoint_busy_total,
         }
 
     def _rows(self, sql: str, params: tuple | list = ()) -> list[dict]:

@@ -23,7 +23,7 @@ from .config import Settings, load_settings
 from .leader import LeaderElector
 from .metrics import build_registry
 from .poller import Poller
-from .store import Store
+from .storage import StorageBackend, open_backend
 
 log = logging.getLogger(__name__)
 
@@ -35,13 +35,9 @@ SKIP_AUTH_PATHS = frozenset({"/healthz", "/readyz", "/metrics"})
 
 
 def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
-    store = Store(
-        settings.db_path,
-        busy_timeout_ms=settings.sqlite_busy_timeout_ms,
-        reader_busy_timeout_ms=settings.sqlite_reader_busy_timeout_ms,
-        synchronous=settings.sqlite_synchronous,
-        wal_checkpoint_mb=settings.sqlite_wal_checkpoint_mb,
-    )
+    # The application asks for "the configured backend" and does not name an engine or its
+    # tuning knobs. open_backend() owns that; see gsd/storage.py.
+    store: StorageBackend = open_backend(settings)
     elector = LeaderElector(name=settings.leader_lease_name) if settings.leader_election else None
     poller = Poller(store, settings, elector)
     grace = timedelta(seconds=settings.schedule_grace_seconds)

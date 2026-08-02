@@ -134,3 +134,26 @@ class StorageBackend(Protocol):
         user_name: str | None = None,
     ) -> list[dict]: ...
     def active_user_count(self, day: str) -> int: ...
+
+
+def open_backend(settings) -> StorageBackend:
+    """Construct the configured backend. The ONE place the application names an engine.
+
+    Before this, `api.py` built a `Store` and passed `busy_timeout_ms`, `synchronous` and
+    `wal_checkpoint_mb` — three SQLite tuning knobs — so the only dependency-injection site
+    in the app was itself engine-shaped. A backend that does not take those could not be
+    constructed without editing the application module, which is exactly what the seam is
+    supposed to prevent.
+
+    The Protocol deliberately says nothing about `__init__`: construction differs per engine
+    and is this function's problem, not the contract's.
+    """
+    from .store import Store
+
+    return Store(
+        settings.db_path,
+        busy_timeout_ms=settings.sqlite_busy_timeout_ms,
+        reader_busy_timeout_ms=settings.sqlite_reader_busy_timeout_ms,
+        synchronous=settings.sqlite_synchronous,
+        wal_checkpoint_mb=settings.sqlite_wal_checkpoint_mb,
+    )

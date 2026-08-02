@@ -45,7 +45,8 @@ import logging
 import threading
 from datetime import date, timedelta
 
-from .store import Store, now_iso
+from .store import Store
+from .timeutil import now_iso
 
 log = logging.getLogger(__name__)
 
