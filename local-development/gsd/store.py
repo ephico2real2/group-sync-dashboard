@@ -1229,10 +1229,13 @@ class Store:
     def user_bindings_by_namespace(self, cluster_id: str) -> list[dict]:
         """Direct-user grants rolled up per namespace — the migration worklist.
 
-        Ordered worst-first: most violations, then namespace name. Platform identities are
-        excluded from the per-namespace rollup (they are not migratable and would swamp it)
-        but counted separately by `platform_user_binding_count`, so the page can say what
-        it left out rather than quietly shrinking the number.
+        Ordered worst-first by PRIVILEGE, then cluster-scope, then count, then name — one
+        forgotten cluster-admin outranks twenty view grants, and ordering by count alone
+        put the twenty first and pushed the cluster-admin below the fold.
+
+        Platform identities are excluded from the rollup (they are not migratable and would
+        swamp it) but counted separately by `platform_user_binding_count`, so the page can
+        say what it left out rather than quietly shrinking the number.
 
         `distinct_users` matters as much as the binding count: one person with five
         bindings in a namespace is one offboarding risk, five people is five.
