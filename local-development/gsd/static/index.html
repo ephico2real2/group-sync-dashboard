@@ -667,11 +667,58 @@ async function api(path, mark) {
   return res.json();
 }
 
+/* The zone every absolute time on this page is rendered in.
+   The SERVER's zone, not the browser's. Two reasons. The logs are stamped in the container's
+   zone, so matching it means a log line and a dashboard row can be compared by reading them
+   rather than by doing arithmetic. And every viewer sees the same numbers, so "the sync
+   failed at 17:31" means one instant in a conversation between two people in two countries.
+   Falls back to UTC when the server reports no zone — an explicit UTC beats a guess. */
+let displayZone = null;   // IANA name, or null for UTC
+let displayAbbrev = "Z";  // what we print after the time
+
+function setDisplayZone(tz) {
+  if (!tz || !tz.name) { displayZone = null; displayAbbrev = "Z"; return; }
+  try {
+    // Prove the browser knows this zone before adopting it. An unknown IANA name makes
+    // Intl throw, and a page that throws on its first timestamp is worse than one showing
+    // UTC — this is exactly the tab-renderer blindness that hid two bugs before.
+    new Intl.DateTimeFormat("en-CA", { timeZone: tz.name }).format(new Date());
+    displayZone = tz.name;
+    displayAbbrev = tz.abbrev || tz.name;
+  } catch (e) {
+    displayZone = null;
+    displayAbbrev = "Z";
+  }
+}
+
+/* Absolute time, in the display zone, always carrying its zone label.
+   The label is not optional: the same wall-clock string means different instants in
+   different zones, and this page is read next to `oc` output and log lines that may be in
+   another. Unlabelled local time is the bug this replaced, not the fix. */
 function fmtTime(iso) {
   if (!iso) return "—";
   const d = new Date(iso);
   if (isNaN(d)) return iso;
-  return d.toISOString().replace("T", " ").replace(/\.\d+Z$/, "Z").replace("Z", "Z");
+  if (!displayZone) {
+    return d.toISOString().replace("T", " ").replace(/\.\d+Z$/, "Z");
+  }
+  // en-CA gives YYYY-MM-DD, which sorts and scans like the ISO form it replaces.
+  //
+  // timeZoneName comes from the FORMATTER, not from the server, and that is a correctness
+  // point rather than a style one. The abbreviation depends on the instant: 2026-01-15 in
+  // America/New_York is EST and 2026-07-15 is EDT. The server can only report the zone as
+  // it stands right now, so stamping that on every row would mislabel every timestamp on
+  // the other side of a DST boundary. The browser ships the full IANA database, so asking
+  // it per-timestamp is both correct and free.
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: displayZone, hour12: false,
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
+    timeZoneName: "short",
+  }).formatToParts(d).reduce((a, p) => (a[p.type] = p.value, a), {});
+  return `${parts.year}-${parts.month}-${parts.day} ` +
+         `${parts.hour}:${parts.minute}:${parts.second} ` +
+         `${parts.timeZoneName || displayAbbrev}`;
 }
 
 function ago(iso) {
@@ -1091,7 +1138,7 @@ function usagePage() {
       ? `<div class="empty-note">Nothing recorded yet. Rows appear after the first flush,
            which runs on the configured interval rather than per request.</div>`
       : `<div class="scroll-x"><table>
-          <thead><tr><th>User</th><th>Day</th><th>First seen</th><th>Last seen</th>
+          <thead><tr><th>User</th><th>Day (UTC)</th><th>First seen</th><th>Last seen</th>
             <th class="num">Interactions</th></tr></thead>
           <tbody>${rows.map((r) => `<tr>
             <td>${esc(r.user_name)}${r.email
@@ -1107,7 +1154,13 @@ function usagePage() {
       rows. The counts above cover all of them.
     </div>` : ""}
     <div class="filterbar-note" style="margin-top:8px">
-      Times are UTC. An interaction is one deliberate action — opening the dashboard,
+      Times render in the server's timezone; the <strong>Day</strong> column is a
+      <strong>UTC</strong> date. That split is deliberate rather than an oversight: the day
+      is a stored bucket, computed server-side when the activity was recorded, so
+      re-labelling it local would misstate rows already written, and re-bucketing would make
+      the same column mean one thing before a deploy and another after. Near midnight a
+      session can therefore sit on the following UTC day.
+      An interaction is one deliberate action — opening the dashboard,
       switching tab, drilling in, changing a filter — not one HTTP request: the page
       refreshes itself every 30s and counting those measured how long a tab was left open
       rather than whether anyone used it. Reading time is invisible, so a long look at one
@@ -1845,8 +1898,7 @@ function render() {
   // header five hours adrift from the timestamps directly beneath it, with nothing on screen
   // to say the two were measured differently. One clock per page, or the page is lying to
   // somebody.
-  $("last-refresh").textContent =
-    "updated " + new Date().toISOString().slice(11, 19) + "Z";
+  $("last-refresh").textContent = "updated " + fmtTime(new Date().toISOString()).slice(11);
   if (data.version) {
     const v = data.version;
     // Shown in the header so "is my change deployed?" is answerable by looking, rather
@@ -1955,7 +2007,12 @@ async function refresh(opts = {}) {
   let mark = !opts.auto;
   const get = (path) => { const m = mark; mark = false; return api(path, m); };
   try {
-    if (!data.version) { try { data.version = await get("/api/version"); } catch (e) { /* older build */ } }
+    if (!data.version) {
+      try {
+        data.version = await get("/api/version");
+        setDisplayZone(data.version.timezone);
+      } catch (e) { /* older build */ }
+    }
     data.clusters = await get("/api/clusters");
     if (!view.cluster && data.clusters.length) view.cluster = data.clusters[0].id;
     data.alerts = await get("/api/alerts");

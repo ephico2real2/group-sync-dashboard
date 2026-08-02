@@ -737,12 +737,28 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
         someone asks "is my fix in there?".
         """
         commit = os.environ.get("GSD_GIT_COMMIT", "unknown")
+        # The timezone the CONTAINER is running in, so the browser can render timestamps in
+        # the same zone the logs are stamped with. Without this the page would show UTC
+        # beside a log line reading local, and correlating the two becomes arithmetic.
+        #
+        # The IANA name is what the browser needs (Intl.DateTimeFormat takes `timeZone`);
+        # the abbreviation and offset are for labelling, and are resolved HERE because only
+        # the server knows whether TZ actually took effect — with no tzdata installed, TZ
+        # parses as a POSIX spec and silently means UTC.
+        now = datetime.now().astimezone()
         return {
             "leader": elector.is_leader if elector is not None else None,
             "version": os.environ.get("GSD_VERSION", __version__),
             "commit": commit,
             "branch": os.environ.get("GSD_GIT_BRANCH", "unknown"),
             "dirty": commit.endswith("-dirty"),
+            "timezone": {
+                # None when TZ is unset: the browser then falls back to UTC rather than
+                # guessing, because a wrong zone is worse than an explicit one.
+                "name": os.environ.get("TZ") or None,
+                "abbrev": now.tzname(),
+                "utc_offset": now.strftime("%z"),
+            },
         }
 
     @app.get("/readyz")
