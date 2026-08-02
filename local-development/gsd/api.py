@@ -11,13 +11,14 @@ import os
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 
 from . import __version__
 from . import state as st
+from .activity import EMAIL_HEADER, USER_HEADER, ActivityRecorder
 from .config import Settings, load_settings
 from .leader import LeaderElector
 from .metrics import build_registry
@@ -41,6 +42,21 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
     poller = Poller(store, settings, elector)
     grace = timedelta(seconds=settings.schedule_grace_seconds)
 
+    # Both conditions, not either: the setting is the operator's choice, the proxy flag is
+    # whether any identity we see is worth believing. See activity.py.
+    activity = ActivityRecorder(
+        store,
+        enabled=settings.user_activity_enabled and settings.oauth_proxy_enabled,
+        flush_interval_seconds=settings.user_activity_flush_seconds,
+        retention_days=settings.user_activity_retention_days,
+    )
+    if settings.user_activity_enabled and not settings.oauth_proxy_enabled:
+        log.info(
+            "user-activity capture is configured on but the oauth proxy is not enabled; "
+            "nothing will be recorded, because without the proxy there is no authentication "
+            "and X-Forwarded-User would be caller-supplied"
+        )
+
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         if run_poller:
@@ -52,13 +68,37 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
             # never-polled rather than omitting them entirely.
             for cluster in settings.clusters:
                 store.upsert_cluster(cluster.name, cluster.api_url, cluster.enabled)
+        activity.start()
         yield
+        # Before the store closes: stop() does a final flush, and the buffer is only in
+        # memory. Every replica runs this, leader or not — each serves its own requests.
+        activity.stop()
         poller.stop()
         if elector is not None:
             elector.stop()
         store.close()
 
     app = FastAPI(title="GroupSync dashboard", version="0.1.0", lifespan=lifespan)
+
+    @app.middleware("http")
+    async def record_dashboard_use(request, call_next):
+        """Note who made this request, before serving it.
+
+        Static assets are skipped: they are cached inconsistently by browsers, so counting
+        them would make request_count a measure of cache behaviour rather than of use. The
+        unauthenticated paths (/healthz, /readyz, /metrics — oauthProxy.skipAuthRegex)
+        need no special case, since they carry no user header and are skipped by that.
+        """
+        if not request.url.path.startswith("/static/"):
+            try:
+                activity.record(
+                    request.headers.get(USER_HEADER), request.headers.get(EMAIL_HEADER)
+                )
+            except Exception:  # noqa: BLE001
+                # Logged with a trace rather than swallowed, but never propagated: failing
+                # to note who read a page is not a reason to fail the page.
+                log.exception("could not record dashboard use; serving the request anyway")
+        return await call_next(request)
 
     def require_cluster(cluster_id: str):
         cluster = settings.cluster(cluster_id)
@@ -350,6 +390,36 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
     @app.get("/healthz")
     def healthz() -> dict:
         return {"status": "ok"}
+
+    @app.get("/api/whoami")
+    def whoami(request: Request) -> dict:
+        """Who the proxy says this request is. Reflected, never stored by this endpoint.
+
+        `authenticated` is false when the proxy is disabled even if a username is present,
+        because in that mode the caller supplied it themselves.
+        """
+        user = request.headers.get(USER_HEADER)
+        return {
+            "user": user if settings.oauth_proxy_enabled else None,
+            "email": request.headers.get(EMAIL_HEADER) if settings.oauth_proxy_enabled else None,
+            "authenticated": bool(user) and settings.oauth_proxy_enabled,
+        }
+
+    @app.get("/api/dashboard/activity")
+    def dashboard_activity(
+        since: str | None = Query(None, description="UTC date, YYYY-MM-DD"),
+        limit: int = Query(500, ge=1, le=5000),
+    ) -> dict:
+        """Who used the dashboard, one row per user per UTC day.
+
+        Deliberately not a page-view log — see the dashboard_user_activity comment in
+        store.py for why this is aggregated rather than per-request.
+        """
+        return {
+            "enabled": activity.enabled,
+            "retention_days": settings.user_activity_retention_days,
+            "activity": store.user_activity(since_day=since, limit=limit),
+        }
 
     @app.get("/api/version")
     def version() -> dict:

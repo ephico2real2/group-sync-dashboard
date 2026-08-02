@@ -172,6 +172,42 @@ config:
     # while the database file itself stays small. Watch gsd_sqlite_wal_bytes.
     walCheckpointMb: 8
 
+  # Who used the dashboard. Requires oauthProxy.enabled — with the proxy off there is no
+  # authentication, X-Forwarded-User would be whatever the caller typed, and recording it
+  # would manufacture an audit trail rather than keep one. Nothing is recorded in that mode
+  # no matter what `enabled` says here.
+  #
+  # AGGREGATED, one row per user per UTC day: first seen, last seen, request count. It is
+  # deliberately not a page-view log. That bounds the table at users x days instead of
+  # growing without limit, and it answers "who uses this and when" without accumulating a
+  # record of which colleague read whose group membership. Read it at
+  # /api/dashboard/activity, or watch gsd_dashboard_active_users.
+  #
+  # NOTE this cannot see logins. The proxy owns the session; the app only ever observes
+  # requests that are already authenticated, so there is no login or logout event to
+  # record and "session" here means the first-to-last-seen window on a given day.
+  #
+  # WHO CAN READ IT: /api/dashboard/activity is behind the same authentication as
+  # everything else, and the default access model admits anyone who can log into the
+  # cluster. So every user can see which colleagues used the dashboard and when. That is a
+  # different KIND of data from the rest of this tool — it is about people, not about
+  # groups — so if your organisation would not accept that, either set `enabled: false` or
+  # restrict the whole dashboard with oauthProxy.sar.
+  #
+  # ABOVE ONE REPLICA it is per-pod, like the rest of the history: each pod counts only the
+  # requests it served, into its own database. gsd_dashboard_active_users is then a per-pod
+  # figure and summing it double-counts anyone who hit more than one pod.
+  userActivity:
+    enabled: true
+    # Requests are buffered in memory and written once per interval. A write per request
+    # would put every API call behind the SQLite writer lock, contending with the poll's
+    # bulk write — the latency the WAL work exists to prevent. The cost is that an
+    # ungraceful kill loses up to this many seconds of counts; a graceful one flushes.
+    flushSeconds: 60
+    # Aggregation already bounds the table, so this is a backstop for a long-lived
+    # deployment rather than the growth control a request log would need. 0 disables it.
+    retentionDays: 400
+
 # DEBUG | INFO | WARNING | ERROR | CRITICAL.
 # DEBUG adds per-poll timing, HTTP request lines, page counts and the countdown to the next
 # binding refresh. Safe to leave on briefly; chatty at one line or more per poll per cluster.

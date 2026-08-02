@@ -14,6 +14,14 @@ data:
     sqliteSynchronous: {{ .Values.config.sqlite.synchronous | quote }}
     sqliteWalCheckpointMb: {{ .Values.config.sqlite.walCheckpointMb }}
     requestTimeoutSeconds: {{ .Values.config.requestTimeoutSeconds }}
+    # The app cannot see its own sidecar, and must not infer authentication from the
+    # presence of X-Forwarded-User — that header is precisely what an unauthenticated
+    # caller would set. So the chart states it, and the app records identity only when
+    # this is true.
+    oauthProxyEnabled: {{ .Values.oauthProxy.enabled }}
+    userActivityEnabled: {{ .Values.config.userActivity.enabled }}
+    userActivityFlushSeconds: {{ .Values.config.userActivity.flushSeconds }}
+    userActivityRetentionDays: {{ .Values.config.userActivity.retentionDays }}
     leaderElection: {{ .Values.leaderElection.enabled }}
     leaderLeaseName: {{ .Values.leaderElection.leaseName | quote }}
     clusters:

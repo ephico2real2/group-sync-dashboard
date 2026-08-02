@@ -214,6 +214,15 @@ class Settings:
     sqlite_synchronous: str = "NORMAL"
     sqlite_wal_checkpoint_mb: float = 8.0
 
+    # Whether the oauth-proxy sidecar is in front of us. The app cannot detect this for
+    # itself, and it must not infer it from the presence of X-Forwarded-User — that header
+    # is exactly what an unauthenticated caller would supply. Reported by the chart from
+    # its own oauthProxy.enabled; false means no identity is trustworthy.
+    oauth_proxy_enabled: bool = False
+    user_activity_enabled: bool = True
+    user_activity_flush_seconds: int = 60
+    user_activity_retention_days: int = 400
+
     def cluster(self, name: str) -> ClusterConfig | None:
         for c in self.clusters:
             if c.name == name:
@@ -238,6 +247,24 @@ def _num_setting(raw: dict, env_name: str, yaml_key: str, default, cast):
     except (TypeError, ValueError):
         log.warning("%s=%r is not a number; using %r", env_name, source, default)
         return default
+
+
+def _bool_setting(raw: dict, env_name: str, yaml_key: str, default: bool) -> bool:
+    """Env wins over the ConfigMap. Accepts the YAML spellings, not Python truthiness.
+
+    ``bool("false")`` is True, so a plain cast would turn every explicit disable in an env
+    var into an enable — silently, and in the direction that grants rather than withholds.
+    """
+    source = os.environ.get(env_name)
+    if source is None:
+        return bool(raw.get(yaml_key, default))
+    word = source.strip().lower()
+    if word in ("true", "yes", "on", "1"):
+        return True
+    if word in ("false", "no", "off", "0"):
+        return False
+    log.warning("%s=%r is not a boolean; using %r", env_name, source, default)
+    return default
 
 
 def _require(raw: dict, key: str, where: str) -> object:
@@ -341,5 +368,17 @@ def load_settings(path: str | Path) -> Settings:
         or str(raw.get("sqliteSynchronous", "NORMAL")),
         sqlite_wal_checkpoint_mb=_num_setting(
             raw, "GSD_SQLITE_WAL_CHECKPOINT_MB", "sqliteWalCheckpointMb", 8.0, float
+        ),
+        oauth_proxy_enabled=_bool_setting(
+            raw, "GSD_OAUTH_PROXY_ENABLED", "oauthProxyEnabled", False
+        ),
+        user_activity_enabled=_bool_setting(
+            raw, "GSD_USER_ACTIVITY_ENABLED", "userActivityEnabled", True
+        ),
+        user_activity_flush_seconds=_num_setting(
+            raw, "GSD_USER_ACTIVITY_FLUSH_SECONDS", "userActivityFlushSeconds", 60, int
+        ),
+        user_activity_retention_days=_num_setting(
+            raw, "GSD_USER_ACTIVITY_RETENTION_DAYS", "userActivityRetentionDays", 400, int
         ),
     )

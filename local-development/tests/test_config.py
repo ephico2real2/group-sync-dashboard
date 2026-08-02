@@ -80,6 +80,43 @@ class TestDbPathOverride:
         assert load_settings(write(tmp_path, BASE + "dbPath: local.db\n")).db_path == "local.db"
 
 
+class TestBooleanSettings:
+    def test_a_false_env_var_actually_disables(self, tmp_path, monkeypatch):
+        """The trap this exists for: bool("false") is True, so a plain cast turns every
+        explicit disable in an env var into an enable — silently, and in the direction
+        that grants rather than withholds."""
+        monkeypatch.setenv("GSD_OAUTH_PROXY_ENABLED", "false")
+        assert load_settings(write(tmp_path, BASE)).oauth_proxy_enabled is False
+
+    def test_the_yaml_spellings_are_accepted(self, tmp_path, monkeypatch):
+        for word in ("true", "TRUE", "yes", "on", "1"):
+            monkeypatch.setenv("GSD_OAUTH_PROXY_ENABLED", word)
+            assert load_settings(write(tmp_path, BASE)).oauth_proxy_enabled is True
+        for word in ("false", "FALSE", "no", "off", "0"):
+            monkeypatch.setenv("GSD_OAUTH_PROXY_ENABLED", word)
+            assert load_settings(write(tmp_path, BASE)).oauth_proxy_enabled is False
+
+    def test_a_nonsense_value_falls_back_rather_than_crashing(self, tmp_path, monkeypatch):
+        """Falls back to the default, which for the proxy flag is the SAFE direction:
+        no identity is trusted."""
+        monkeypatch.setenv("GSD_OAUTH_PROXY_ENABLED", "maybe")
+        assert load_settings(write(tmp_path, BASE)).oauth_proxy_enabled is False
+
+    def test_the_configmap_value_is_used_when_no_env(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("GSD_OAUTH_PROXY_ENABLED", raising=False)
+        cfg = BASE + "oauthProxyEnabled: true\n"
+        assert load_settings(write(tmp_path, cfg)).oauth_proxy_enabled is True
+
+    def test_user_activity_defaults_on_but_is_inert_without_the_proxy(self, tmp_path, monkeypatch):
+        """Both flags are needed. On its own the setting grants nothing, because without
+        the proxy there is no authentication to attribute a request to."""
+        monkeypatch.delenv("GSD_OAUTH_PROXY_ENABLED", raising=False)
+        monkeypatch.delenv("GSD_USER_ACTIVITY_ENABLED", raising=False)
+        settings = load_settings(write(tmp_path, BASE))
+        assert settings.user_activity_enabled is True
+        assert settings.oauth_proxy_enabled is False
+
+
 class TestTokenResolution:
     def test_token_from_env(self, monkeypatch):
         monkeypatch.setenv("TOK", "  abc123  ")

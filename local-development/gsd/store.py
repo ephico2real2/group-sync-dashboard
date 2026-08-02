@@ -166,6 +166,30 @@ CREATE TABLE IF NOT EXISTS managed_group_seen (
     last_seen_at        TEXT NOT NULL,
     PRIMARY KEY(cluster_id, group_name)
 );
+
+-- Who used the dashboard, aggregated to one row per user per UTC day.
+--
+-- Deliberately NOT a per-request access log. Aggregating bounds the table at
+-- users x days — a hundred users for three years is ~110k rows — where a request log grows
+-- without limit and would need the retention policy the event tables still lack. It also
+-- keeps this to "who uses this and when", not "who looked at whose membership": the
+-- dashboard shows group membership, and a page-view trail of colleagues reading it is a
+-- materially different thing to hold.
+--
+-- Identity comes from the oauth-proxy's X-Forwarded-User header, so rows exist only when
+-- the proxy is enabled. With it disabled the app binds 0.0.0.0 with no authentication at
+-- all and the header would be trivially forgeable — see activity.py.
+CREATE TABLE IF NOT EXISTS dashboard_user_activity (
+    user_name           TEXT NOT NULL,
+    day                 TEXT NOT NULL,  -- UTC date, YYYY-MM-DD
+    email               TEXT,
+    first_seen_at       TEXT NOT NULL,
+    last_seen_at        TEXT NOT NULL,
+    request_count       INTEGER NOT NULL,
+    PRIMARY KEY(user_name, day)
+);
+CREATE INDEX IF NOT EXISTS dashboard_user_activity_by_day
+    ON dashboard_user_activity(day DESC);
 """
 
 
@@ -797,6 +821,62 @@ class Store:
                        message=excluded.message""",
                 (cluster_id, name, failed_at, generation, message),
             )
+
+    # -- dashboard access ----------------------------------------------------------------
+
+    def record_user_activity(self, buckets: list[dict]) -> int:
+        """Merge buffered per-user-per-day activity. Returns the number of buckets written.
+
+        One transaction for the whole flush, not one per user: this runs while the poller
+        may be mid-cycle, and taking the write lock once for a handful of rows keeps it out
+        of the way. Callers buffer in memory and flush on an interval — see activity.py for
+        why a write per request is the wrong shape.
+
+        first/last_seen use SQLite's two-argument min/max rather than the caller's values,
+        so a flush that arrives out of order — a slow flush overtaken by a later one — still
+        widens the window instead of narrowing it. Lexicographic comparison IS chronological
+        here because now_iso() emits fixed-width UTC with a Z suffix.
+        """
+        if not buckets:
+            return 0
+        with self._tx() as conn:
+            conn.executemany(
+                """INSERT INTO dashboard_user_activity(
+                       user_name, day, email, first_seen_at, last_seen_at, request_count)
+                   VALUES(:user_name,:day,:email,:first_seen_at,:last_seen_at,:request_count)
+                   ON CONFLICT(user_name, day) DO UPDATE SET
+                       email         = COALESCE(excluded.email, email),
+                       first_seen_at = min(first_seen_at, excluded.first_seen_at),
+                       last_seen_at  = max(last_seen_at, excluded.last_seen_at),
+                       request_count = request_count + excluded.request_count""",
+                buckets,
+            )
+        return len(buckets)
+
+    def prune_user_activity(self, before_day: str) -> int:
+        """Drop activity rows for days strictly before ``before_day`` (YYYY-MM-DD)."""
+        with self._tx() as conn:
+            cursor = conn.execute(
+                "DELETE FROM dashboard_user_activity WHERE day < ?", (before_day,)
+            )
+            return cursor.rowcount
+
+    def user_activity(self, since_day: str | None = None, limit: int = 500) -> list[dict]:
+        sql = """SELECT user_name, day, email, first_seen_at, last_seen_at, request_count
+                   FROM dashboard_user_activity"""
+        params: list = []
+        if since_day:
+            sql += " WHERE day >= ?"
+            params.append(since_day)
+        sql += " ORDER BY day DESC, user_name LIMIT ?"
+        params.append(limit)
+        return self._rows(sql, params)
+
+    def active_user_count(self, day: str) -> int:
+        rows = self._rows(
+            "SELECT COUNT(*) AS n FROM dashboard_user_activity WHERE day = ?", (day,)
+        )
+        return int(rows[0]["n"]) if rows else 0
 
     # -- queries -----------------------------------------------------------------------
 
