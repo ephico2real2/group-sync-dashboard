@@ -85,9 +85,24 @@ existed, the pod was healthy, and nothing was serving.
 `lookup` returns empty during `helm template` and dry-run, which is why the fallback below
 fails loudly rather than emitting a host that would be wrong.
 */ -}}
+{{- /*
+NAME.DOMAIN, not NAME-NAMESPACE.DOMAIN.
+
+OpenShift's own Route auto-generation uses <name>-<namespace> to keep two namespaces from
+claiming one hostname. That convention earns its keep for arbitrary app Routes; it does not
+here, where the usual install is one dashboard per cluster and the release name and the
+namespace are both `group-sync-dashboard`, so the generated host said the same word twice:
+group-sync-dashboard-group-sync-dashboard.apps.example.com.
+
+THE TRADE, stated because it is real: two releases in DIFFERENT namespaces now derive the
+SAME host, and the second Route is rejected with HostAlreadyClaimed. That is a loud, legible
+failure at install time rather than a silent one, and the fix is one flag — set
+`ingress.host` explicitly on the second. Worth it for a URL a human can type and read out in
+a meeting.
+*/ -}}
 {{- $cfg := (lookup "config.openshift.io/v1" "Ingress" "" "cluster") -}}
 {{- if and $cfg $cfg.spec.domain -}}
-{{ printf "%s-%s.%s" (include "gsd.fullname" .) .Release.Namespace $cfg.spec.domain }}
+{{ printf "%s.%s" (include "gsd.fullname" .) $cfg.spec.domain }}
 {{- else -}}
 {{- fail "ingress.host is not set and the cluster apps domain could not be read. Set it explicitly:\n  --set ingress.host=<name>.$(oc get ingresses.config/cluster -o jsonpath='{.spec.domain}')\nAn Ingress without a host produces NO Route on OpenShift, so the release would install cleanly and be unreachable." -}}
 {{- end -}}

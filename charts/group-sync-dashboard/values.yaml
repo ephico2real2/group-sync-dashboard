@@ -494,8 +494,21 @@ service:
 ingress:
   enabled: true
   className: openshift-default
-  # Leave empty and it is derived as <fullname>-<namespace>.<cluster apps domain>, read from
-  # the cluster's ingresses.config/cluster object.
+  # LEAVE EMPTY. It is auto-detected as <fullname>.<cluster apps domain>, reading the domain
+  # from the cluster's own ingresses.config/cluster object, so a default install needs no
+  # flag and no knowledge of the cluster:
+  #
+  #   group-sync-dashboard.apps-crc.testing
+  #
+  # Not <fullname>-<namespace>, which is OpenShift's Route auto-generation convention. That
+  # exists so two namespaces cannot claim one hostname, and it is the right default for
+  # arbitrary app Routes — but here the release and the namespace are both
+  # `group-sync-dashboard`, so it produced a URL that said the same word twice. A host a
+  # human can type, and read out in a review meeting, is worth more.
+  #
+  # The trade, because it is real: two releases in DIFFERENT namespaces derive the SAME host
+  # and the second Route is rejected with HostAlreadyClaimed. That fails loudly at install
+  # time, and the fix is to set this explicitly on the second one.
   #
   # It cannot simply be omitted: a Route auto-generates its host, but an Ingress does not,
   # and OpenShift's ingress-to-route controller silently creates NO Route for a hostless
