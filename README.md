@@ -94,11 +94,53 @@ No `watch`, no write verbs anywhere (§4, §6). Token lifetime is an open questi
 > not read `groups.user.openshift.io` while the **background** controller could. Being able
 > to read core resources does not imply being able to read Groups.
 
-## Container
+## Building and shipping
+
+Two paths, deliberately separate.
+
+**External registry (the real one).** Builds this Containerfile offline and pushes to any
+registry every cluster can pull from — Quay by default. No dependency on a cluster's
+internal registry.
 
 ```bash
-podman build -t group-sync-dashboard:0.3.2 -f Containerfile .
+cp .env.example .env && chmod 600 .env && $EDITOR .env
+./build-and-push-external.sh                       # build + push
+./build-and-push-external.sh --build-only          # no push, no credentials needed
+./build-and-push-external.sh --deploy              # + roll out to K8S_NAMESPACE
+./build-and-push-external.sh --create-pull-secret  # private repositories only
 ```
+
+**CRC only.** `scripts/release.sh` pushes to CRC's built-in registry over its default
+route. Convenient on that one machine, portable nowhere.
+
+Both tag images `<version>-<git-sha>` and refuse to build from a dirty tree without
+`--allow-dirty`, because a tag derived from a commit has to describe that commit's source.
+Both verify the commit stamp inside the image before pushing, and read it back out of the
+running pod after deploying. That check exists because the failure it catches actually
+happened here: an image built before a change was deployed after it, and nothing revealed
+the gap because both were called `0.3.1`.
+
+`/api/version` and the dashboard header report the running commit, so "is my change
+deployed?" is answerable by looking at the page.
+
+### Credentials
+
+Registry credentials live in `.env`, which is gitignored; `.env.example` carries
+placeholders. The file is **parsed, not sourced** — sourcing would execute it, so a
+placeholder like `<change-me>` becomes a shell redirect and any command substitution in the
+file would run. Login uses `--password-stdin`, never `-p`, keeping the secret out of `ps`
+and shell history.
+
+Use a Quay **robot account** rather than a personal password: it can be revoked on its own.
+If a token is ever pasted somewhere it should not be, regenerate it — exposure is not
+undone by deleting the message.
+
+### Image pull secrets
+
+Optional, and omitted entirely unless `IMAGE_PULL_SECRET` is set. A public repository needs
+none, and an empty secret reference makes a pod fail to schedule rather than falling back
+to anonymous pull. For a private repository, set the name and run with
+`--create-pull-secret`.
 
 Runs as a non-root UID with a group-writable `/data`, so it works both standalone and under
 OpenShift's arbitrary-UID SCC. One worker on purpose: the poller runs in-process and owns

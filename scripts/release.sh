@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # CRC-ONLY convenience release. For anything other than a local CRC cluster use
-# ../build-and-push.sh, which builds the same Containerfile and pushes to an external
+# ../build-and-push-external.sh, which builds the same Containerfile and pushes to an external
 # registry (Quay) that every cluster can pull from. This script talks to CRC's built-in
 # registry over its default route and is not portable off that machine.
 #

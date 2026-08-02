@@ -7,10 +7,10 @@
 # CRC-only convenience and only works against one cluster's built-in registry.
 #
 #   cp .env.example .env && $EDITOR .env      # once
-#   ./build-and-push.sh                       # build + push
-#   ./build-and-push.sh --build-only          # no push, no credentials needed
-#   ./build-and-push.sh --deploy              # also roll it out to K8S_NAMESPACE
-#   ./build-and-push.sh --create-pull-secret  # private repo: create/refresh the secret
+#   ./build-and-push-external.sh                       # build + push
+#   ./build-and-push-external.sh --build-only          # no push, no credentials needed
+#   ./build-and-push-external.sh --deploy              # also roll it out to K8S_NAMESPACE
+#   ./build-and-push-external.sh --create-pull-secret  # private repo: create/refresh the secret
 #
 # Configuration comes from .env (gitignored) or the environment. Credentials are never
 # written to disk by this script, never echoed, and never passed on a command line that
@@ -171,7 +171,7 @@ fi
 if [ "$DEPLOY" != true ]; then
   echo
   echo "NEXT: deploy with"
-  echo "  IMAGE_REF=${REF} ./build-and-push.sh --deploy"
+  echo "  IMAGE_REF=${REF} ./build-and-push-external.sh --deploy"
   echo "or point your manifest at ${REF}"
   exit 0
 fi
