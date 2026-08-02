@@ -613,3 +613,34 @@ def test_index_is_never_heuristically_cached(server):
     response = httpx.get(server + "/", timeout=10)
     cache = response.headers.get("cache-control", "")
     assert "no-cache" in cache, f"index served with Cache-Control: {cache!r}"
+
+
+class TestClusterScopedNavigation:
+    """Found adversarially: the trail stored page/groupsync/group/user but NOT cluster."""
+
+    def test_switching_cluster_abandons_the_drilldown(self, dash):
+        """Group names repeat across clusters, so carrying a drill-down across a switch
+        re-requests that name against the new cluster — a different object under the same
+        name, or a 404 error page."""
+        dash.locator("button[data-nav='groups']").click()
+        dash.wait_for_selector("#f-state")
+        dash.locator("tr[data-group='app-ocp-rbac-alpha-ns-admin']").click()
+        dash.wait_for_selector("#back-groups")
+
+        dash.select_option("#f-cluster", "prod-east")
+        dash.wait_for_function("() => !document.querySelector('#back-groups')")
+        body = dash.locator("body").inner_text()
+        assert "Dashboard API error" not in body, "carried the drill-down into the new cluster"
+
+    def test_back_restores_the_cluster_it_was_captured_with(self, dash):
+        dash.locator("button[data-nav='groups']").click()
+        dash.wait_for_selector("#f-state")
+        dash.locator("tr[data-group='app-ocp-rbac-alpha-ns-admin']").click()
+        dash.wait_for_selector("#back-groups")
+        dash.locator("tr[data-user='alice']").click()
+        dash.wait_for_selector("text=Group memberships")
+
+        assert dash.evaluate("() => trail[trail.length - 1].cluster") == "crc-local"
+        dash.locator("#back-groups").click()
+        dash.wait_for_selector("text=Membership changes")
+        assert dash.evaluate("() => view.cluster") == "crc-local"

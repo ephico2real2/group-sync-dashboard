@@ -268,7 +268,11 @@ const view = { page: "overview", cluster: null, groupsync: null, groupFilter: "a
    back through exactly those, which a single hardcoded destination cannot do. */
 const trail = [];
 function pushTrail() {
-  trail.push({ page: view.page, groupsync: view.groupsync,
+  // `cluster` is part of the position, not context around it. Without it, Back after a
+  // cluster switch restores a group name against whichever cluster is now selected — and
+  // group names repeat across clusters, so it silently shows a DIFFERENT object under the
+  // name you expected, or 404s.
+  trail.push({ page: view.page, cluster: view.cluster, groupsync: view.groupsync,
                group: view.group, user: view.user });
   if (trail.length > 50) trail.shift();
 }
@@ -277,6 +281,7 @@ function popTrail() {
   if (!prev) { view.group = null; view.user = null; view.groupsync = null; return; }
   view.page = prev.page; view.groupsync = prev.groupsync;
   view.group = prev.group; view.user = prev.user;
+  if (prev.cluster) view.cluster = prev.cluster;
 }
 function backLabel() {
   const prev = trail[trail.length - 1];
@@ -388,7 +393,15 @@ function renderFilters() {
   $("filters").innerHTML = html;
 
   const cl = $("f-cluster");
-  if (cl) cl.onchange = (e) => { view.cluster = e.target.value; view.groupsync = null; refresh(); };
+  if (cl) cl.onchange = (e) => {
+    // A drill-down is scoped to its cluster. Carrying `group` or `user` across a cluster
+    // switch would re-request that name against the new cluster — a different object with
+    // the same name, or a 404 — so the position is abandoned and the trail with it.
+    view.cluster = e.target.value;
+    view.groupsync = null; view.group = null; view.user = null;
+    trail.length = 0;
+    refresh();
+  };
   const st = $("f-state");
   if (st) st.onchange = (e) => { view.groupFilter = e.target.value; refresh(); };
   const bf = $("f-binding");

@@ -159,6 +159,7 @@ class Store:
         if path != ":memory:":
             Path(path).parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
+        self._local = threading.local()
         self._conn = sqlite3.connect(path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
@@ -192,8 +193,35 @@ class Store:
         with self._lock, self._conn:
             yield self._conn
 
+    def _reader(self) -> sqlite3.Connection:
+        """A per-thread READ connection, separate from the writer's.
+
+        WAL gives such a connection a consistent snapshot of committed data without taking
+        the writer's lock, which fixes both problems at once: it cannot observe a half-
+        written transaction, and it does not queue behind one.
+
+        The previous approach — every read taking the write lock — was correct but
+        serialising. Measured against a 50k-row binding refresh, exactly ONE read completed
+        for the whole duration of the write, at 0.92s on fast local storage. /readyz does a
+        read and has a 5s timeout, so on slower storage the pod goes NotReady during a
+        routine refresh while /healthz stays green — an outage caused by the fix for a
+        different bug.
+
+        `:memory:` is the exception and must keep using the shared connection: each
+        connection to `:memory:` is its OWN empty database, so a separate reader would see
+        nothing at all. Tests use it; the deployment uses a file.
+        """
+        if self.path == ":memory:":
+            return self._conn
+        conn = getattr(self._local, "conn", None)
+        if conn is None:
+            conn = sqlite3.connect(self.path, check_same_thread=False)
+            conn.row_factory = sqlite3.Row
+            self._local.conn = conn
+        return conn
+
     def _rows(self, sql: str, params: tuple | list = ()) -> list[dict]:
-        """Run a read under the same lock the writers use.
+        """Run a read on the per-thread reader (or under the lock for :memory:).
 
         Reads share the writer's connection, so they see its UNCOMMITTED state. Without
         this lock a reader can land inside the delete/insert window of
@@ -205,12 +233,17 @@ class Store:
         Every read goes through here or _row; a bare ``self._conn.execute`` in a query
         method is a bug.
         """
-        with self._lock:
-            return [dict(r) for r in self._conn.execute(sql, params).fetchall()]
+        if self.path == ":memory:":
+            with self._lock:
+                return [dict(r) for r in self._conn.execute(sql, params).fetchall()]
+        return [dict(r) for r in self._reader().execute(sql, params).fetchall()]
 
     def _row(self, sql: str, params: tuple | list = ()) -> dict | None:
-        with self._lock:
-            row = self._conn.execute(sql, params).fetchone()
+        if self.path == ":memory:":
+            with self._lock:
+                row = self._conn.execute(sql, params).fetchone()
+        else:
+            row = self._reader().execute(sql, params).fetchone()
         return dict(row) if row else None
 
     # -- configuration -----------------------------------------------------------------
