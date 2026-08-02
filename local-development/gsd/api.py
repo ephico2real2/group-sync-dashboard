@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import __version__
 from . import state as st
-from .activity import EMAIL_HEADER, USER_HEADER, ActivityRecorder
+from .activity import EMAIL_HEADER, INTERACTION_HEADER, USER_HEADER, ActivityRecorder
 from .config import Settings, load_settings
 from .leader import LeaderElector
 from .metrics import build_registry
@@ -84,12 +84,15 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
     async def record_dashboard_use(request, call_next):
         """Note who made this request, before serving it.
 
-        Static assets are skipped: they are cached inconsistently by browsers, so counting
-        them would make request_count a measure of cache behaviour rather than of use. The
-        unauthenticated paths (/healthz, /readyz, /metrics — oauthProxy.skipAuthRegex)
-        need no special case, since they carry no user header and are skipped by that.
+        Only requests the client marked as a human action are counted. The page polls
+        itself every 30s and each poll is several API calls, so counting requests measured
+        how long a tab had been open rather than whether anyone used the dashboard — one
+        real session read 722. See activity.INTERACTION_HEADER.
+
+        The unauthenticated paths (/healthz, /readyz, /metrics — oauthProxy.skipAuthRegex)
+        need no special case: they carry neither header.
         """
-        if not request.url.path.startswith("/static/"):
+        if request.headers.get(INTERACTION_HEADER):
             try:
                 activity.record(
                     request.headers.get(USER_HEADER), request.headers.get(EMAIL_HEADER)

@@ -446,8 +446,14 @@ let data = { clusters: [], alerts: [], groupsyncs: [], groups: [], events: null,
 
 const $ = (id) => document.getElementById(id);
 
-async function api(path) {
-  const res = await fetch(path, { headers: { Accept: "application/json" } });
+/* `mark` stamps this request as a human action for the usage counter. Exactly one request
+   per user-initiated refresh carries it — see refresh(). Without that the counter measures
+   the 30s auto-refresh, which fires whether or not anyone is looking: 4 API calls every
+   30s is 480 requests an hour from a tab left open on an empty desk. */
+async function api(path, mark) {
+  const headers = { Accept: "application/json" };
+  if (mark) headers["X-GSD-Interaction"] = "1";
+  const res = await fetch(path, { headers });
   if (!res.ok) throw new Error(`${res.status} ${res.statusText} on ${path}`);
   return res.json();
 }
@@ -821,7 +827,7 @@ function usagePage() {
         <div class="value mono">${users.size}</div></div>
       <div class="kpi"><div class="label">Days recorded</div>
         <div class="value mono">${days.size}</div></div>
-      <div class="kpi"><div class="label">Requests</div>
+      <div class="kpi"><div class="label">Interactions</div>
         <div class="value mono">${requests.toLocaleString()}</div></div>
       <div class="kpi"><div class="label">Retention</div>
         <div class="value mono muted">${d.retention_days} days</div></div>
@@ -834,7 +840,7 @@ function usagePage() {
            which runs on the configured interval rather than per request.</div>`
       : `<div class="scroll-x"><table>
           <thead><tr><th>User</th><th>Day</th><th>First seen</th><th>Last seen</th>
-            <th class="num">Requests</th></tr></thead>
+            <th class="num">Interactions</th></tr></thead>
           <tbody>${rows.map((r) => `<tr>
             <td>${esc(r.user_name)}${r.email
               ? ` <span class="muted">· ${esc(r.email)}</span>` : ""}</td>
@@ -845,9 +851,12 @@ function usagePage() {
           </tr>`).join("")}</tbody>
         </table></div>`}
     <div class="filterbar-note" style="margin-top:8px">
-      Times are UTC. This records requests, not logins — the proxy owns the session, so the
-      dashboard never sees a sign-in or sign-out, only the window between a user's first
-      and last request on a day.
+      Times are UTC. An interaction is one deliberate action — opening the dashboard,
+      switching tab, drilling in, changing a filter — not one HTTP request: the page
+      refreshes itself every 30s and counting those measured how long a tab was left open
+      rather than whether anyone used it. Reading time is invisible, so a long look at one
+      page counts once. These are not logins either: the proxy owns the session, so the
+      dashboard never sees a sign-in or sign-out.
     </div>
   </section>`;
 }
@@ -1214,36 +1223,42 @@ function wireTooltip() {
 
 /* ---------- data ---------- */
 
-async function refresh() {
+async function refresh(opts = {}) {
   $("main").classList.add("stale");
+  // Count ONE interaction per user-initiated refresh, not one per HTTP request. `get`
+  // stamps the first call and then stops, so a click is a click no matter how many
+  // endpoints the page happens to need. The 30s timer passes {auto: true} and stamps
+  // nothing — it is the browser talking to itself, not a person using the dashboard.
+  let mark = !opts.auto;
+  const get = (path) => { const m = mark; mark = false; return api(path, m); };
   try {
-    if (!data.version) { try { data.version = await api("/api/version"); } catch (e) { /* older build */ } }
-    data.clusters = await api("/api/clusters");
+    if (!data.version) { try { data.version = await get("/api/version"); } catch (e) { /* older build */ } }
+    data.clusters = await get("/api/clusters");
     if (!view.cluster && data.clusters.length) view.cluster = data.clusters[0].id;
-    data.alerts = await api("/api/alerts");
+    data.alerts = await get("/api/alerts");
     if (view.cluster) {
-      data.groupsyncs = await api(`/api/clusters/${encodeURIComponent(view.cluster)}/groupsyncs`);
+      data.groupsyncs = await get(`/api/clusters/${encodeURIComponent(view.cluster)}/groupsyncs`);
       if (view.page === "bindings") {
-        data.findings = await api(
+        data.findings = await get(
           `/api/clusters/${encodeURIComponent(view.cluster)}/bindings/findings`);
       }
       if (view.page === "groups") {
         const base = `/api/clusters/${encodeURIComponent(view.cluster)}`;
         if (view.user) {
-          data.user = await api(`${base}/users/${encodeURIComponent(view.user)}`);
+          data.user = await get(`${base}/users/${encodeURIComponent(view.user)}`);
         } else if (view.group) {
-          data.group = await api(`${base}/groups/${encodeURIComponent(view.group)}`);
+          data.group = await get(`${base}/groups/${encodeURIComponent(view.group)}`);
         } else {
-          data.groups = await api(`${base}/groups?state=${view.groupFilter}`);
+          data.groups = await get(`${base}/groups?state=${view.groupFilter}`);
         }
       }
       data.events = view.groupsync
-        ? await api(`/api/clusters/${encodeURIComponent(view.cluster)}/groupsyncs/${encodeURIComponent(view.groupsync)}/events`)
+        ? await get(`/api/clusters/${encodeURIComponent(view.cluster)}/groupsyncs/${encodeURIComponent(view.groupsync)}/events`)
         : null;
     }
     // Not cluster-scoped: this is who used the DASHBOARD, which has no cluster dimension.
     // Fetched only on its own tab, so the other pages do not pay for it.
-    if (view.page === "usage") data.usage = await api("/api/dashboard/activity");
+    if (view.page === "usage") data.usage = await get("/api/dashboard/activity");
     render();
   } catch (err) {
     // An error must never strand the reader: keep a working Back so a dead link is a
@@ -1263,7 +1278,8 @@ async function refresh() {
 
 $("refresh").onclick = refresh;
 refresh();
-setInterval(refresh, 30000);
+// {auto: true}: background polling must not register as somebody using the page.
+setInterval(() => refresh({ auto: true }), 30000);
 </script>
 </body>
 </html>

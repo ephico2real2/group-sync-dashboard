@@ -47,6 +47,18 @@ log = logging.getLogger(__name__)
 USER_HEADER = "x-forwarded-user"
 EMAIL_HEADER = "x-forwarded-email"
 
+# Set by the dashboard's own JS on exactly one request per user-initiated refresh.
+#
+# Counting every request instead measured the 30s auto-refresh: four API calls twice a
+# minute is 480 an hour from a tab left open on an empty desk, and a real session showed
+# 722 "requests" for roughly a dozen actual clicks. The number was arithmetically correct
+# and told you nothing about whether anyone had used the dashboard.
+#
+# An authenticated user could of course set this header by hand and inflate their own
+# figure. That is not worth defending against: these are usage statistics, not an audit
+# trail, and the only thing they could forge is their own row.
+INTERACTION_HEADER = "x-gsd-interaction"
+
 
 def _day(at: str) -> str:
     """The UTC date an ISO-8601 Z timestamp falls on."""

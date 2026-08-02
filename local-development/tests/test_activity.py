@@ -156,19 +156,52 @@ class TestTrustBoundary:
             ).json()
             assert body == {"user": "alice", "email": "a@x.com", "authenticated": True}
 
-    def test_requests_are_captured_and_survive_shutdown(self, tmp_path):
+    def test_interactions_are_captured_and_survive_shutdown(self, tmp_path):
         """The buffer is memory-only, so a graceful shutdown must flush it."""
         db = str(tmp_path / "gsd.db")
         settings = Settings(db_path=db, oauth_proxy_enabled=True)
         with TestClient(build_app(settings, run_poller=False)) as c:
             for _ in range(3):
-                c.get("/api/whoami", headers={"X-Forwarded-User": "alice"})
+                c.get("/api/whoami", headers={"X-Forwarded-User": "alice",
+                                              "X-GSD-Interaction": "1"})
         # The app has shut down; a fresh store reads what its final flush persisted.
         store = Store(db)
         rows = store.user_activity()
         store.close()
         assert len(rows) == 1
-        assert rows[0]["user_name"] == "alice" and rows[0]["request_count"] >= 3
+        assert rows[0]["user_name"] == "alice" and rows[0]["request_count"] == 3
+
+    def test_background_polling_is_not_counted_as_use(self, tmp_path):
+        """THE regression this guards. The page refreshes itself every 30s and each refresh
+        is several API calls, so counting every request measured how long a tab had been
+        left open: a real session recorded 722 for about a dozen clicks. Only requests the
+        client marks as a human action count."""
+        db = str(tmp_path / "gsd.db")
+        settings = Settings(db_path=db, oauth_proxy_enabled=True)
+        with TestClient(build_app(settings, run_poller=False)) as c:
+            for _ in range(50):  # an hour of idle auto-refresh
+                c.get("/api/clusters", headers={"X-Forwarded-User": "alice"})
+            c.get("/api/clusters", headers={"X-Forwarded-User": "alice",
+                                            "X-GSD-Interaction": "1"})
+        store = Store(db)
+        rows = store.user_activity()
+        store.close()
+        assert len(rows) == 1, "the one real action should still be recorded"
+        assert rows[0]["request_count"] == 1, (
+            f"background polling inflated the count to {rows[0]['request_count']}"
+        )
+
+    def test_an_idle_tab_records_nothing_at_all(self, tmp_path):
+        """A tab left open overnight must not invent a user who was never there."""
+        db = str(tmp_path / "gsd.db")
+        settings = Settings(db_path=db, oauth_proxy_enabled=True)
+        with TestClient(build_app(settings, run_poller=False)) as c:
+            for _ in range(20):
+                c.get("/api/alerts", headers={"X-Forwarded-User": "alice"})
+        store = Store(db)
+        rows = store.user_activity()
+        store.close()
+        assert rows == []
 
     def test_capture_off_records_nothing_even_behind_the_proxy(self, tmp_path):
         db = str(tmp_path / "gsd.db")
