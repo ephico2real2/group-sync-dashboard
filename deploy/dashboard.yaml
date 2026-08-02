@@ -125,7 +125,7 @@ spec:
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: dashboard
-          image: image-registry.openshift-image-registry.svc:5000/group-sync-dashboard/group-sync-dashboard:0.5.0-337ccc8323
+          image: image-registry.openshift-image-registry.svc:5000/group-sync-dashboard/group-sync-dashboard:0.5.1-6e20c8a9d2
           # Always: a re-push of the same tag takes effect on the next restart, which is
           # what you want while iterating.
           #
