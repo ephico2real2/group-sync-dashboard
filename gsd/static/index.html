@@ -261,7 +261,7 @@ const STATES = {
   unknown: { label: "unknown" },
 };
 
-const view = { page: "overview", cluster: null, groupsync: null, groupFilter: "all",
+const view = { page: "overview", cluster: null, groupsync: null, groupFilter: "all", bindingFilter: "review",
                 group: null, user: null };
 /* Where the reader came FROM, so Back retraces the path instead of jumping to a fixed
    page. Drilling group -> user -> another group and pressing Back three times must walk
@@ -364,6 +364,15 @@ function renderFilters() {
     `<option value="${esc(c.id)}"${c.id === view.cluster ? " selected" : ""}>${esc(c.id)}</option>`).join("");
   let html = `<label for="f-cluster">Cluster</label>
     <select id="f-cluster">${opts}</select>`;
+  if (view.page === "bindings") {
+    html += `<label for="f-binding">Show</label>
+      <select id="f-binding">
+        <option value="review"${view.bindingFilter === "review" ? " selected" : ""}>needs review</option>
+        <option value="all"${view.bindingFilter === "all" ? " selected" : ""}>all bindings</option>
+        <option value="ok"${view.bindingFilter === "ok" ? " selected" : ""}>granted (group exists)</option>
+        <option value="built_in"${view.bindingFilter === "built_in" ? " selected" : ""}>built-in</option>
+      </select>`;
+  }
   if (view.page === "groups") {
     html += `<label for="f-state">Group state</label>
       <select id="f-state">
@@ -382,6 +391,8 @@ function renderFilters() {
   if (cl) cl.onchange = (e) => { view.cluster = e.target.value; view.groupsync = null; refresh(); };
   const st = $("f-state");
   if (st) st.onchange = (e) => { view.groupFilter = e.target.value; refresh(); };
+  const bf = $("f-binding");
+  if (bf) bf.onchange = (e) => { view.bindingFilter = e.target.value; refresh(); };
   document.querySelectorAll("[data-nav]").forEach((b) => {
     b.onclick = () => {
       view.page = b.dataset.nav;
@@ -776,14 +787,16 @@ function userDetail() {
 }
 
 
-/* Bindings whose Group subject resolves to nothing.
-   Three tiers, ordered by what a reader should act on. `built_in` is collapsed by default:
-   on a real cluster it is the large majority (145 of 154 here) and showing it inline would
-   bury the nine that matter — the exact noise ratio that makes people stop reading a list. */
+/* Every group-subject binding on the cluster, classified, filtered by the row above.
+   Defaults to "needs review" because that is the only part nothing else reports — but the
+   healthy majority is one filter away, so the page describes the cluster rather than only
+   its faults. An earlier version showed ONLY the non-resolving rows under the same
+   "Bindings" label, which misrepresented 228 bindings as 154. */
 function bindingsPage() {
   const d = data.findings;
   if (!d) return `<section class="card"><div class="empty-note">Loading…</div></section>`;
   const c = d.counts || {};
+  const review = (c.dangling || 0) + (c.unresolved || 0);
 
   const table = (rows) => `<div class="scroll-x"><table>
       <thead><tr><th>Group named by the binding</th><th>Grants</th><th>Scope</th>
@@ -797,53 +810,74 @@ function bindingsPage() {
         <td class="muted">${esc(r.binding_name)}</td>
       </tr>`).join("")}</tbody></table></div>`;
 
-  const total = (c.dangling || 0) + (c.unresolved || 0);
-  return `<section class="card">
-    <div class="hero">
-      <div class="value">${total}</div>
-      <div class="label">binding${total === 1 ? "" : "s"} that grant nobody</div>
-    </div>
-    <div class="filterbar-note">
-      Each of these names a Group that does not exist, so the access it grants reaches no
-      one. Nothing on the cluster reports this: <code>oc get rolebinding</code> shows a
-      perfectly healthy object. Direct bindings only — role rules are not evaluated.
-    </div>
-  </section>
-
-  <section class="card">
-    <h2>${sevBadge("critical", "dangling")} <span class="muted" style="font-weight:400">· ${
-      c.dangling || 0} — the group was operator-managed and has disappeared</span></h2>
-    ${(d.dangling || []).length
-      ? table(d.dangling)
-      : `<div class="empty-note">None. No binding names a group that we watched the
-          operator manage and then lose.</div>`}
-  </section>
-
-  <section class="card">
-    <h2>${sevBadge("warning", "unresolved")} <span class="muted" style="font-weight:400">· ${
-      c.unresolved || 0} — the group has never existed here</span></h2>
-    <div class="filterbar-note" style="margin-bottom:8px">
-      These do not raise alerts: a group that has never been seen cannot be told apart from
-      one that simply has not synced yet. They still grant nobody, so they are worth
-      reading — typically a misspelled group name, or an onboarding that stopped halfway.
-    </div>
-    ${(d.unresolved || []).length
-      ? table(d.unresolved)
-      : `<div class="empty-note">None.</div>`}
-  </section>
-
-  <section class="card">
-    <h2>Built-in <span class="muted" style="font-weight:400">· ${c.built_in || 0}</span></h2>
-    <div class="filterbar-note">
-      Kubernetes virtual groups such as <code>system:authenticated</code> and
-      <code>system:serviceaccounts:*</code>. They authorise real access and no Group object
-      exists for them by design, so their absence is expected and not a fault.
-    </div>
-    <details style="margin-top:8px">
-      <summary style="cursor:pointer;color:var(--series-1)">Show all ${c.built_in || 0}</summary>
-      <div style="margin-top:8px">${(d.built_in || []).length ? table(d.built_in) : ""}</div>
-    </details>
+  const section = (title, note, rows, badge) => `<section class="card">
+    <h2>${badge || ""} ${esc(title)} <span class="muted" style="font-weight:400">· ${rows.length}</span></h2>
+    ${note ? `<div class="filterbar-note" style="margin:4px 0 8px">${note}</div>` : ""}
+    ${rows.length ? table(rows) : `<div class="empty-note">None.</div>`}
   </section>`;
+
+  const header = `<section class="card">
+    <div class="kpis" style="margin-top:0">
+      <div class="kpi"><div class="label">Group bindings on this cluster</div>
+        <div class="value">${d.total || 0}</div></div>
+      <div class="kpi"><div class="label">Grant a real group</div>
+        <div class="value muted">${c.ok || 0}</div></div>
+      <div class="kpi"><div class="label">Need review</div>
+        <div class="value ${review ? "" : "muted"}">${review}</div></div>
+      <div class="kpi"><div class="label">Built-in</div>
+        <div class="value muted">${c.built_in || 0}</div></div>
+    </div>
+    <div class="filterbar-note" style="margin-top:10px">
+      Direct RoleBindings and ClusterRoleBindings whose subject is a Group. Role rules are
+      <strong>not</strong> evaluated, so this is what has been granted, not a computed list
+      of permitted actions.
+    </div>
+  </section>`;
+
+  if (view.bindingFilter === "ok") {
+    return header + section("Granted",
+      "The group named by each of these exists, so the access reaches its members.",
+      d.ok || []);
+  }
+  if (view.bindingFilter === "built_in") {
+    return header + section("Built-in",
+      `Kubernetes virtual groups such as <code>system:authenticated</code> and
+       <code>system:serviceaccounts:*</code>. They authorise real access and no Group object
+       exists for them by design, so their absence is expected and not a fault.`,
+      d.built_in || []);
+  }
+  if (view.bindingFilter === "all") {
+    return header
+      + section("Dangling", "The group was operator-managed and has disappeared — this "
+          + "binding now grants nobody.", d.dangling || [], sevBadge("critical", "dangling"))
+      + section("Unresolved", "Names a group that has never existed here.",
+          d.unresolved || [], sevBadge("warning", "unresolved"))
+      + section("Granted", "The group exists; access reaches its members.", d.ok || [])
+      + section("Built-in", "Virtual groups; no Group object is expected.", d.built_in || []);
+  }
+
+  // default: needs review. The header goes here too — without it this view would show a
+  // subset with no statement of the whole, which is the exact misrepresentation the filter
+  // was added to fix.
+  return header + `<section class="card">
+    <div class="hero">
+      <div class="value">${review}</div>
+      <div class="label">binding${review === 1 ? "" : "s"} that grant nobody</div>
+    </div>
+    <div class="filterbar-note">
+      Each names a Group that does not exist, so the access it grants reaches no one.
+      Nothing on the cluster reports this — <code>oc get rolebinding</code> shows a
+      perfectly healthy object. Switch the filter above to see all ${d.total || 0} group
+      bindings.
+    </div>
+  </section>
+  ${section("Dangling", "The group was operator-managed and has disappeared.",
+      d.dangling || [], sevBadge("critical", "dangling"))}
+  ${section("Unresolved",
+      `These do not raise alerts: a group that has never been seen cannot be told apart
+       from one that simply has not synced yet. They still grant nobody — typically a
+       misspelled group name, or an onboarding that stopped halfway.`,
+      d.unresolved || [], sevBadge("warning", "unresolved"))}`;
 }
 
 function render() {

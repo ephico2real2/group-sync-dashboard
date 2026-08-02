@@ -551,10 +551,21 @@ class Store:
 
         `dangling` is the high-confidence tier and is the only one that should alert.
         """
+        return [r for r in self.all_bindings(cluster_id) if r["finding"] != "ok"]
+
+    def all_bindings(self, cluster_id: str) -> list[dict]:
+        """Every group-subject binding, each classified.
+
+        Includes the ones that resolve normally (`ok`). Those are the majority of a healthy
+        cluster — 74 of 228 here — and omitting them made a view labelled "Bindings" show
+        only the broken subset, which misrepresents what is on the cluster.
+        """
         return self._rows(
             """SELECT b.binding_kind, b.binding_namespace, b.binding_name,
                       b.role_kind, b.role_name, b.group_name,
                       CASE
+                        -- A resolving group is the normal case and outranks everything.
+                        WHEN g.name IS NOT NULL            THEN 'ok'
                         -- Provenance FIRST. We watched the operator manage this group, so
                         -- its disappearance is evidence, and evidence outranks a naming
                         -- heuristic. Testing `system:` first silently downgraded a real
@@ -571,7 +582,6 @@ class Store:
                  LEFT JOIN managed_group_seen s
                         ON s.cluster_id = b.cluster_id AND s.group_name = b.group_name
                 WHERE b.cluster_id = ?
-                  AND g.name IS NULL
                 ORDER BY b.group_name, b.binding_kind, b.binding_namespace, b.binding_name""",
             (cluster_id,),
         )

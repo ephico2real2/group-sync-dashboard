@@ -562,12 +562,29 @@ class TestBindingFindingsVisible:
         self._open(dash)
         assert dash.locator(".hero .value").inner_text().strip() == "2"
 
-    def test_builtin_is_collapsed_not_inline(self, dash):
-        """Showing them inline would bury the findings that matter."""
+    def test_builtin_is_not_on_the_default_view(self, dash):
+        """Built-in groups are 145 of 154 on the real cluster. Listing them beside the
+        findings would bury the signal, so the default view excludes them."""
         self._open(dash)
-        assert dash.locator("details").count() >= 1
-        summary = dash.locator("details summary").first.inner_text()
-        assert "6" in summary
+        body = dash.locator("body").inner_text()
+        assert "system:serviceaccounts:ns0" not in body
+
+    def test_builtin_is_reachable_through_the_filter(self, dash):
+        """Excluded from the default view, not hidden — the tab claims to be about
+        bindings, so every binding must be reachable from it."""
+        self._open(dash)
+        dash.select_option("#f-binding", "built_in")
+        dash.wait_for_function(
+            "() => document.body.innerText.includes('system:serviceaccounts:ns0')")
+
+    def test_healthy_bindings_are_reachable_too(self, dash):
+        """The original tab showed only non-resolving rows under a "Bindings" label,
+        presenting 228 bindings as 154. Every one must be reachable."""
+        self._open(dash)
+        assert "Group bindings on this cluster" in dash.locator("body").inner_text()
+        dash.select_option("#f-binding", "all")
+        dash.wait_for_function(
+            "() => document.body.innerText.includes('Granted')")
 
     def test_the_namespace_and_role_are_named(self, dash):
         """"Grants admin in prod-ns" is the actionable form; a group name alone is not."""

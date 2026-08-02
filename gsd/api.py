@@ -234,14 +234,20 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
         Reporting those as broken buries the few that are.
         """
         require_cluster(cluster_id)
-        findings = store.binding_findings(cluster_id)
-        by_tier: dict[str, list[dict]] = {"dangling": [], "unresolved": [], "built_in": []}
-        for row in findings:
+        # Every binding, including the ones that resolve normally. A view labelled
+        # "bindings" that omitted the healthy majority (74 of 228 here) misrepresented the
+        # cluster; the caller filters, rather than the API deciding what is worth seeing.
+        rows = store.all_bindings(cluster_id)
+        by_tier: dict[str, list[dict]] = {
+            "ok": [], "dangling": [], "unresolved": [], "built_in": []
+        }
+        for row in rows:
             by_tier.setdefault(row["finding"], []).append(row)
         return {
             "cluster": cluster_id,
             "note": "direct bindings only; role rules are not evaluated",
-            "counts": {tier: len(rows) for tier, rows in by_tier.items()},
+            "total": len(rows),
+            "counts": {tier: len(v) for tier, v in by_tier.items()},
             **by_tier,
         }
 
