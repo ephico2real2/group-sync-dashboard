@@ -213,6 +213,10 @@ class Settings:
     sqlite_reader_busy_timeout_ms: int = 2000
     sqlite_synchronous: str = "NORMAL"
     sqlite_wal_checkpoint_mb: float = 8.0
+    # Backups of the ONLY data in this system that cannot be re-fetched. Empty disables.
+    backup_dir: str = ""
+    backup_interval_hours: float = 6.0
+    backup_keep: int = 4
 
     # Whether the oauth-proxy sidecar is in front of us. The app cannot detect this for
     # itself, and it must not infer it from the presence of X-Forwarded-User — that header
@@ -387,6 +391,11 @@ def load_settings(path: str | Path) -> Settings:
         ),
         sqlite_synchronous=os.environ.get("GSD_SQLITE_SYNCHRONOUS")
         or str(raw.get("sqliteSynchronous", "NORMAL")),
+        backup_dir=os.environ.get("GSD_BACKUP_DIR") or str(raw.get("backupDir", "")),
+        backup_interval_hours=_num_setting(
+            raw, "GSD_BACKUP_INTERVAL_HOURS", "backupIntervalHours", 6.0, float
+        ),
+        backup_keep=_num_setting(raw, "GSD_BACKUP_KEEP", "backupKeep", 4, int),
         sqlite_wal_checkpoint_mb=_num_setting(
             raw, "GSD_SQLITE_WAL_CHECKPOINT_MB", "sqliteWalCheckpointMb", 8.0, float
         ),

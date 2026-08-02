@@ -13,6 +13,7 @@ the only thing that keeps a second implementation possible.
 from __future__ import annotations
 
 import ast
+import contextlib
 import pathlib
 
 import pytest
@@ -167,6 +168,11 @@ class TestContract:
         from gsd.metrics import build_registry
 
         class _NoWal:
+            # A minimal backend, which is the point: it implements only what the collector
+            # is allowed to need. read_snapshot is part of that surface now.
+            @contextlib.contextmanager
+            def read_snapshot(self):
+                yield
             def health(self):
                 return {"engine": "postgres"}
             def clusters(self):
@@ -186,6 +192,9 @@ class TestContract:
         from gsd.metrics import build_registry
 
         class _Broken:
+            @contextlib.contextmanager
+            def read_snapshot(self):
+                yield
             def health(self):
                 raise RuntimeError("storage unavailable")
             def clusters(self):

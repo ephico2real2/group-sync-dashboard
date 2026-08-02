@@ -48,7 +48,26 @@ class DashboardCollector:
         self.grace = grace
         self.elector = elector
 
-    def collect(self):  # noqa: C901 - a flat list of metric definitions
+    def collect(self):
+        """Materialise the whole exposition inside ONE snapshot, then yield it.
+
+        collect() is a GENERATOR, and prometheus_client drives it lazily while writing the
+        response. Wrapping the generator itself in a read snapshot would therefore hold a
+        WAL read-mark for the entire duration of the HTTP response rather than the duration
+        of the queries — and a held read-mark blocks wal_checkpoint(TRUNCATE) from
+        reclaiming anything, so a slow scrape would stall the poller's checkpoint and let
+        the WAL grow. That is the precise failure this arrangement avoids: gather under the
+        snapshot, release it, then yield.
+
+        Consistency matters here for the same reason as the API: a scrape makes five store
+        calls per cluster, and a poll committing between them exports a group count from
+        one generation beside a CR state from the next.
+        """
+        with self.store.read_snapshot():
+            families = list(self._gather())
+        yield from families
+
+    def _gather(self):  # noqa: C901 - a flat list of metric definitions
         build = GaugeMetricFamily(
             "gsd_build_info",
             "Always 1; the running build is carried in the labels.",

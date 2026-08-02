@@ -200,6 +200,28 @@ config:
     # while the database file itself stays small. Watch gsd_sqlite_wal_bytes.
     walCheckpointMb: 8
 
+  # Periodic backup of the accumulated sync and membership history.
+  #
+  # THIS IS THE ONLY EXISTENTIAL RISK IN THE SYSTEM. Everything else the dashboard stores
+  # is a cache that the next poll re-fetches; the history exists only because this process
+  # observed it, and nothing upstream can replay it. Until this existed, a corrupted or
+  # deleted PVC lost it outright.
+  #
+  # VACUUM INTO, not a file copy: it takes a read transaction for the duration, so the
+  # output is consistent even while the poller writes. Copying gsd.db with a live WAL
+  # produces a torn file that opens without complaint and is missing the newest commits —
+  # a backup that restores, which is the worst kind.
+  #
+  # HALF AN ANSWER BY DESIGN. These land on the SAME volume they protect against, so they
+  # cover corruption, a bad migration and accidental deletion — not loss of the volume.
+  # Ship them off it with a CronJob mounting the same PVC read-only; the dashboard
+  # deliberately does not grow credentials for object storage.
+  backup:
+    enabled: true
+    dir: /data/backup
+    intervalHours: 6
+    keep: 4     # 4 x 6h = the last day, at roughly the size of the database each
+
   # Who used the dashboard. Requires oauthProxy.enabled — with the proxy off there is no
   # authentication, X-Forwarded-User would be whatever the caller typed, and recording it
   # would manufacture an audit trail rather than keep one. Nothing is recorded in that mode

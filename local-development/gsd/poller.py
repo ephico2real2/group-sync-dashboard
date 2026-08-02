@@ -111,47 +111,63 @@ def poll_once(store: StorageBackend, cluster: ClusterConfig, timeout: float = 15
                     group_count,
                 )
 
-        # Step 5: the failure condition, stored whether or not it is current (PLAN §2.1).
-        store.upsert_reconcile_error(
-            cluster.name, cr.name, cr.error_at, cr.error_generation, cr.error_message
+    # ONE TRANSACTION FROM HERE TO record_poll. Everything below lands together or not at
+    # all. It used to be seven separate commits, so any read arriving mid-cycle saw a
+    # mixture — measured at 11,598 torn reads in 19,208, a 60.38% failure rate — and a
+    # cycle that died halfway could still stamp record_poll(OK) over half-written state,
+    # which looks healthy and is the worse failure.
+    #
+    # record_sync_event is deliberately ABOVE this line and already committed: its key is
+    # the operator's own lastSyncSuccessTime, so a rollback loses an observation for good
+    # rather than re-deriving it next cycle.
+    with store.poll_snapshot():
+        for cr in groupsyncs:
+            # Step 5: the failure condition, stored whether or not it is current (PLAN §2.1).
+            store.upsert_reconcile_error(
+                cluster.name, cr.name, cr.error_at, cr.error_generation, cr.error_message
+            )
+
+        store.replace_groupsync_state(cluster.name, cr_rows, observed_at)
+
+        # Step 6
+        store.replace_group_state(
+            cluster.name,
+            [
+                {
+                    "name": g.name,
+                    "member_count": g.member_count,
+                    "sync_provider": g.sync_provider,
+                    "group_synced_at": g.group_synced_at,
+                    "ldap_uid": g.ldap_uid,
+                }
+                for g in groups
+            ],
+            observed_at,
         )
 
-    store.replace_groupsync_state(cluster.name, cr_rows, observed_at)
+        # Provenance for RBAC finding classification: remember which groups the operator
+        # manages, so that a binding naming one of them later becomes meaningful evidence
+        # rather than an unresolvable name.
+        store.record_managed_groups(
+            cluster.name,
+            [{"name": g.name, "sync_provider": g.sync_provider} for g in groups],
+            observed_at,
+        )
 
-    # Step 6
-    store.replace_group_state(
-        cluster.name,
-        [
-            {
-                "name": g.name,
-                "member_count": g.member_count,
-                "sync_provider": g.sync_provider,
-                "group_synced_at": g.group_synced_at,
-                "ldap_uid": g.ldap_uid,
-            }
-            for g in groups
-        ],
-        observed_at,
-    )
+        # Step 7: reconcile membership and record who joined or left since the last poll.
+        # Inside the transaction, and safe to be: a membership event self-heals. If this
+        # cycle rolls back, the next one re-derives the identical change with a later
+        # observed_at, degrading the timestamp by one poll interval — which values.yaml
+        # already documents as the error bar on "when did this person lose access?".
+        member_changes = store.sync_members(
+            cluster_id=cluster.name,
+            memberships={g.name: g.members for g in groups},
+            sync_times={g.name: g.group_synced_at for g in groups},
+            observed_at=observed_at,
+        )
 
-    # Provenance for RBAC finding classification: remember which groups the operator
-    # manages, so that a binding naming one of them later becomes meaningful evidence
-    # rather than an unresolvable name.
-    store.record_managed_groups(
-        cluster.name,
-        [{"name": g.name, "sync_provider": g.sync_provider} for g in groups],
-        observed_at,
-    )
-
-    # Step 7: reconcile membership and record who joined or left since the last poll.
-    member_changes = store.sync_members(
-        cluster_id=cluster.name,
-        memberships={g.name: g.members for g in groups},
-        sync_times={g.name: g.group_synced_at for g in groups},
-        observed_at=observed_at,
-    )
-
-    store.record_poll(cluster.name, OK, None)
+        # Last inside the transaction: OK is only true if everything above committed.
+        store.record_poll(cluster.name, OK, None)
     log.info(
         "polled %s: %d CRs, %d groups, %d new sync event(s), %d membership change(s)",
         cluster.name,
@@ -229,6 +245,32 @@ class Poller:
         self.elector = elector
         self._stop = threading.Event()
         self._threads: list[threading.Thread] = []
+        # 0 so the first cycle after start takes one immediately: a pod that
+        # has just come up is exactly when you want a copy on disk.
+        self._next_backup = 0.0
+
+    def _maybe_backup(self) -> None:
+        """Snapshot the irreplaceable history on its own slower schedule.
+
+        Leader-and-poll-thread only, the same rule as maintain(): VACUUM INTO holds a read
+        transaction for the length of the copy, and doing that from a request handler would
+        put a user's page behind it.
+
+        This is the ONLY protection for data that cannot be re-fetched from the Kubernetes
+        API. Everything else here is a cache. Note the honest limit: these land on the same
+        PVC they protect against, so they cover corruption and accidental deletion but not
+        loss of the volume — shipping them off it is a CronJob's job, not this process's.
+        """
+        if not self.settings.backup_dir:
+            return
+        now = time.monotonic()
+        if now < self._next_backup:
+            return
+        self._next_backup = now + self.settings.backup_interval_hours * 3600
+        try:
+            self.store.backup(self.settings.backup_dir, keep=self.settings.backup_keep)
+        except Exception:  # noqa: BLE001 - a failed backup must never stop the poll
+            log.exception("backup failed; the poll continues and the history is unprotected")
 
     def _run_cluster(self, cluster: ClusterConfig) -> None:
         # Poll immediately on start rather than sleeping first: a restarted dashboard that
@@ -258,6 +300,7 @@ class Poller:
                 # does not know or care what the engine actually does — for SQLite it is a
                 # WAL checkpoint; for another engine it may be nothing at all.
                 self.store.maintain()
+                self._maybe_backup()
             except Exception:  # noqa: BLE001 - a poll thread must never die silently
                 log.exception("unhandled error polling %s", cluster.name)
                 # The recovery write can fail for the SAME reason the poll did — a full or

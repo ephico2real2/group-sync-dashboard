@@ -13,6 +13,11 @@ data:
     sqliteReaderBusyTimeoutMs: {{ .Values.config.sqlite.readerBusyTimeoutMs }}
     sqliteSynchronous: {{ .Values.config.sqlite.synchronous | quote }}
     sqliteWalCheckpointMb: {{ .Values.config.sqlite.walCheckpointMb }}
+    {{- if .Values.config.backup.enabled }}
+    backupDir: {{ .Values.config.backup.dir | quote }}
+    backupIntervalHours: {{ .Values.config.backup.intervalHours }}
+    backupKeep: {{ .Values.config.backup.keep }}
+    {{- end }}
     requestTimeoutSeconds: {{ .Values.config.requestTimeoutSeconds }}
     # The app cannot see its own sidecar, and must not infer authentication from the
     # presence of X-Forwarded-User — that header is precisely what an unauthenticated

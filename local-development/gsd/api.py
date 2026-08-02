@@ -6,6 +6,7 @@ service and never holds a cluster credential (PLAN §9).
 
 from __future__ import annotations
 
+import functools
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -107,6 +108,28 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
                 log.exception("could not record dashboard use; serving the request anyway")
         return await call_next(request)
 
+    def consistent(fn):
+        """Serve this handler from ONE database snapshot.
+
+        For handlers that call the store more than once. Six independent statements are
+        six independent points in time, and a poll committing between any two of them
+        produces a response that is internally contradictory — a CR listing providers
+        whose groups the same response says do not exist. Measured at 3.00% of reads even
+        after the poll itself became atomic.
+
+        Deliberately NOT applied to single-call handlers: a snapshot holds a WAL read-mark
+        and blocks checkpointing, so it is worth taking only where it buys consistency.
+
+        The wrapped function must be synchronous and must not stream, yield or await —
+        that would hold the snapshot for the life of the response rather than the life of
+        the query. tests/test_read_snapshot_scope.py enforces it.
+        """
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            with store.read_snapshot():
+                return fn(*args, **kwargs)
+        return wrapper
+
     def require_cluster(cluster_id: str):
         cluster = settings.cluster(cluster_id)
         if cluster is None:
@@ -147,6 +170,7 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
         }
 
     @app.get("/api/clusters")
+    @consistent
     def list_clusters() -> list[dict]:
         out = []
         for row in store.clusters():
@@ -213,6 +237,7 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
         return store.groups(cluster_id, state)
 
     @app.get("/api/clusters/{cluster_id}/groups/{name}")
+    @consistent
     def group_detail(cluster_id: str, name: str) -> dict:
         require_cluster(cluster_id)
         detail = store.group_detail(cluster_id, name)
@@ -256,11 +281,29 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
         }
 
     @app.get("/api/clusters/{cluster_id}/users")
-    def list_users(cluster_id: str) -> list[dict]:
+    def list_users(
+        cluster_id: str, limit: int = Query(default=1000, ge=1, le=10000)
+    ) -> dict:
+        """Users with a membership, bounded and honest about it.
+
+        This used to return a bare unbounded list — 102,921 bytes at reference scale, and
+        it grows with the size of the directory rather than with anything the dashboard
+        controls. The response is now an object so `truncated` can be reported: a clipped
+        list that looks like a complete one is the failure worth avoiding.
+        """
         require_cluster(cluster_id)
-        return store.users(cluster_id)
+        rows = store.users(cluster_id, limit=limit)
+        truncated = len(rows) > limit
+        return {
+            "cluster": cluster_id,
+            "count": min(len(rows), limit),
+            "truncated": truncated,
+            "limit": limit,
+            "users": rows[:limit],
+        }
 
     @app.get("/api/clusters/{cluster_id}/users/{name}")
+    @consistent
     def user_detail(cluster_id: str, name: str) -> dict:
         """Reverse lookup: every group this user is in.
 
@@ -326,6 +369,7 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
         }
 
     @app.get("/api/alerts")
+    @consistent
     def list_alerts() -> list[dict]:
         now = datetime.now(UTC)
         alerts: list[dict] = []

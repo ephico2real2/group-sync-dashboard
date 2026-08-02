@@ -248,6 +248,10 @@ class Store:
         self._checkpoint_busy_total = 0
         self._lock = threading.RLock()
         self._local = threading.local()
+        # Transaction depth is PER THREAD, not per Store. A plain attribute here was a
+        # real bug: one poller thread opening a snapshot made every OTHER thread's write
+        # join a transaction it does not own, which sqlite3 reports as "bad parameter or
+        # other API misuse". A transaction belongs to the thread that opened it.
 
         self._conn = sqlite3.connect(path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
@@ -288,6 +292,121 @@ class Store:
         with self._lock:
             self._conn.close()
 
+    def _depth(self) -> int:
+        """How many transactions THIS thread has open. Never another thread's."""
+        return getattr(self._local, "tx_depth", 0)
+
+    @contextmanager
+    def _write(self) -> Iterator[sqlite3.Connection]:
+        """Write inside the ambient transaction if one is open, else own a new one.
+
+        This is what lets `poll_snapshot()` turn nine transactions into one without every
+        store method growing a `conn` parameter. Inside a snapshot the method JOINS — it
+        does not commit, so the snapshot still owns the boundary. Outside one, behaviour is
+        exactly as before: its own transaction, committed on exit.
+
+        `_tx` stays strict and refuses nesting. The distinction matters: `_write` is a
+        deliberate join by a method designed for it, `_tx` nesting is an accident by code
+        that believes it owns the transaction and will be surprised when its rollback does
+        not roll back.
+        """
+        if self._depth():
+            yield self._conn      # the snapshot commits; we must not
+            return
+        with self._tx() as conn:
+            yield conn
+
+    @contextmanager
+    def poll_snapshot(self) -> Iterator[None]:
+        """One transaction for a whole poll cycle. All of it lands, or none of it.
+
+        The poll wrote in NINE separate transactions, so any read landing mid-cycle saw a
+        mixture — measured at 11,598 torn reads out of 19,208, a 60.38% failure rate, not
+        an edge case. A failed cycle could also stamp `record_poll(OK)` over half-written
+        state, which is worse than a visible failure because it looks healthy.
+
+        `record_sync_event` is deliberately NOT in here; poll_once commits it first. Its
+        uniqueness key is the operator's own lastSyncSuccessTime, so a rollback would lose
+        an observation permanently rather than re-deriving it next cycle, and it is
+        INSERT OR IGNORE, so committing early costs nothing and repeats harmlessly.
+
+        `membership_event` IS in here, because it self-heals: the next poll re-derives the
+        identical change with a later observed_at, degrading only the timestamp by one
+        poll interval — which values.yaml already documents as the error bar on "when did
+        this person lose access?".
+
+        Measured cost of the change: 26.79 -> 26.81 ms median, with p95 improving.
+        """
+        with self._lock:
+            if self._depth():
+                raise RuntimeError("poll_snapshot() is already open on this thread")
+            self._local.tx_depth = self._depth() + 1
+            try:
+                with self._conn:
+                    yield
+            finally:
+                self._local.tx_depth = self._depth() - 1
+
+    @contextmanager
+    def read_snapshot(self) -> Iterator[None]:
+        """One consistent view of the database for a whole multi-call handler.
+
+        Making the poll atomic (`poll_snapshot`) took torn reads from 60.38% to 3.00%, not
+        to zero, because a handler that calls the store SIX times issues six independent
+        statements and a poll can commit between any two of them. `groupsyncs()` alone is
+        two reads. WAL gives each statement a consistent snapshot; it does not give a
+        SEQUENCE of statements the same one. Only an explicit read transaction does.
+
+        Read-only by construction: it always rolls back, never commits. A rollback is not
+        an error path here, it is the only exit — the snapshot exists to be released.
+
+        HOLDING A READ SNAPSHOT HOLDS A WAL READ-MARK, and that has a cost worth knowing
+        before anyone widens the scope of one of these blocks: `wal_checkpoint(TRUNCATE)`
+        cannot reclaim past the oldest live reader, so a long-held snapshot stalls the
+        checkpoint and the WAL grows. Measured: a reader held across a checkpoint blocked
+        it for the full writer busy_timeout with zero pages reclaimed. At reference scale
+        these blocks are 3-13 ms against a 60 s poll, which is why this is safe today and
+        why `tests/test_read_snapshot_scope.py` exists to keep it that way — no generators,
+        no streaming, no awaits, no network calls inside one.
+        """
+        depth = getattr(self._local, "read_depth", 0)
+        if depth:
+            # Already inside one: join it. Nesting is fine for reads — the inner block
+            # wants exactly the snapshot the outer one already took.
+            self._local.read_depth = depth + 1
+            try:
+                yield
+            finally:
+                self._local.read_depth -= 1
+            return
+
+        if self.path == ":memory:":
+            # Reads share the writer connection here, so the write lock IS the snapshot.
+            with self._lock:
+                self._local.read_depth = 1
+                try:
+                    yield
+                finally:
+                    self._local.read_depth = 0
+            return
+
+        conn = self._reader()
+        if conn.in_transaction:
+            # A previous snapshot leaked. Left alone this thread would serve permanently
+            # stale data with no error at all — measured: a worker pinned to a 2,000-row
+            # view while the truth was 4,000. Fail loudly instead.
+            raise RuntimeError(
+                "this thread's reader is already in a transaction — a read_snapshot "
+                "leaked and the connection is pinned to a stale view"
+            )
+        conn.execute("BEGIN")
+        self._local.read_depth = 1
+        try:
+            yield
+        finally:
+            self._local.read_depth = 0
+            conn.rollback()
+
     @contextmanager
     def _tx(self) -> Iterator[sqlite3.Connection]:
         """Serialise whole transactions, not just statements.
@@ -301,12 +420,33 @@ class Store:
         Latent while only one cluster is configured (the default deployment), real the
         moment a second is added.
 
-        RLock avoids a self-deadlock if _tx is ever nested, but nesting would still be
-        WRONG: the inner ``with self._conn`` commits the shared transaction when it exits,
-        so the outer block's remaining work would land outside it. Do not nest _tx.
+        NESTING IS NOW REFUSED, not merely discouraged. The docstring used to say "do not
+        nest" and nothing enforced it, because RLock is reentrant: the inner
+        ``with self._conn`` COMMITS the shared transaction on exit, so the outer block's
+        work is committed early and survives the outer rollback. Measured — an outer
+        transaction wrote `phase-one`, called one ordinary store method, then raised, and
+        `phase-one` was still there afterwards. Eleven call sites could reach it.
+
+        Depth counting turns that into a loud error at the point of the mistake. The outer
+        block owns the transaction; an inner one raises rather than silently committing.
+        `poll_snapshot` makes a long outer transaction the normal shape, so nesting stops
+        being exotic and this stops being theoretical.
         """
-        with self._lock, self._conn:
-            yield self._conn
+        with self._lock:
+            if self._depth():
+                raise RuntimeError(
+                    "nested Store._tx(): the inner block would COMMIT the outer "
+                    "transaction on exit, so the outer block's remaining work would be "
+                    "committed early and survive its own rollback. Call the raw _-prefixed "
+                    "helper inside an existing transaction, or restructure so only one "
+                    "block owns it."
+                )
+            self._local.tx_depth = self._depth() + 1
+            try:
+                with self._conn:
+                    yield self._conn
+            finally:
+                self._local.tx_depth = self._depth() - 1
 
     def _reader(self) -> sqlite3.Connection:
         """A per-thread READ connection, separate from the writer's.
@@ -389,6 +529,62 @@ class Store:
     # meant both of them knew the database was SQLite — the leak that made the "decoupled"
     # claim untrue. See gsd/storage.py.
 
+    def backup(self, directory: str, keep: int = 3) -> str | None:
+        """Write a consistent copy of the database to `directory`. Returns its path.
+
+        THE ONLY EXISTENTIAL RISK IN THIS SYSTEM. The accumulated sync and membership
+        history cannot be re-fetched from the Kubernetes API — it exists because this
+        process observed it — and until now a corrupted or deleted PVC lost it outright.
+        Nothing else here is irreplaceable; this is.
+
+        VACUUM INTO rather than copying the file: it takes a read transaction for the
+        duration, so the output is a single consistent snapshot even while the poller
+        writes. Copying gsd.db with the WAL live produces a torn file that opens without
+        complaint and is missing the most recent commits, which is the worst kind of
+        backup — one that restores.
+
+        Called from the POLL THREAD only, the same rule as _checkpoint: it holds a read
+        transaction for the length of the copy, and doing that from a request handler
+        would put a user's page behind it.
+
+        `keep` bounds the directory. Backups live on the same PVC this protects against,
+        so they are the first half of the answer, not the whole one — a CronJob shipping
+        them off the volume is the other half.
+        """
+        if self.path == ":memory:":
+            return None
+        target_dir = Path(directory)
+        # Sub-second precision, unlike now_iso(). VACUUM INTO refuses to overwrite —
+        # "output file already exists" — so two backups inside the same second collide and
+        # the second one fails. now_iso() is deliberately second-resolution because the
+        # store relies on its fixed width for lexicographic ordering; a filename has no
+        # such constraint and needs the extra digits.
+        stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S.%fZ")
+        target = target_dir / f"gsd-{stamp}.db"
+        try:
+            # Inside the try: an unwritable or read-only backup directory must return None
+            # like every other failure here, not raise into the poll thread. The method
+            # promises "None on failure" and mkdir was the one path that broke that.
+            target_dir.mkdir(parents=True, exist_ok=True)
+            with self._lock:
+                # A bound parameter is not accepted for the VACUUM target, so the path is
+                # interpolated. It is built here from a timestamp and an operator-supplied
+                # directory, never from request input; the quote-doubling is belt to that
+                # brace rather than the only protection.
+                self._conn.execute(f"VACUUM INTO '{str(target).replace(chr(39), chr(39) * 2)}'")
+        except (sqlite3.Error, OSError):
+            log.exception("backup to %s failed; the history is still only on the PVC", target)
+            return None
+
+        existing = sorted(target_dir.glob("gsd-*.db"))
+        for stale in existing[:-keep] if keep > 0 else []:
+            try:
+                stale.unlink()
+            except OSError:
+                log.warning("could not remove old backup %s", stale)
+        log.info("backed up to %s (%d kept)", target, min(len(existing), keep or len(existing)))
+        return str(target)
+
     def maintain(self) -> None:
         """Periodic upkeep after a write cycle. For SQLite, a WAL checkpoint.
 
@@ -466,7 +662,7 @@ class Store:
     # -- poll results ------------------------------------------------------------------
 
     def record_poll(self, cluster_id: str, status: str, message: str | None) -> None:
-        with self._tx() as conn:
+        with self._write() as conn:
             conn.execute(
                 """INSERT INTO poll_outcome(cluster_id, observed_at, status, message)
                    VALUES(?,?,?,?)
@@ -492,7 +688,7 @@ class Store:
         costs nothing (PLAN §10) — re-observing the same lastSyncSuccessTime is a no-op
         rather than a duplicate timeline entry.
         """
-        with self._tx() as conn:
+        with self._write() as conn:
             cursor = conn.execute(
                 """INSERT OR IGNORE INTO sync_event(
                        cluster_id, groupsync_name, groupsync_namespace,
@@ -509,7 +705,7 @@ class Store:
         owns nothing for the duration, and every one of its groups would read as
         unattributed — a burst of phantom findings on each poll.
         """
-        with self._tx() as conn:
+        with self._write() as conn:
             conn.execute("DELETE FROM groupsync_state WHERE cluster_id=?", (cluster_id,))
             conn.executemany(
                 """INSERT INTO groupsync_state(cluster_id, name, namespace, schedule,
@@ -541,7 +737,7 @@ class Store:
         disappears here — an upsert would leave deleted groups behind forever and quietly
         inflate every count on the overview.
         """
-        with self._tx() as conn:
+        with self._write() as conn:
             conn.execute("DELETE FROM group_state WHERE cluster_id=?", (cluster_id,))
             conn.executemany(
                 """INSERT INTO group_state(cluster_id, name, member_count, sync_provider,
@@ -573,7 +769,7 @@ class Store:
         Returns the number of change events written.
         """
         changes = 0
-        with self._tx() as conn:
+        with self._write() as conn:
             existing: dict[str, set[str]] = {}
             for row in conn.execute(
                 "SELECT group_name, user_name FROM group_member WHERE cluster_id=?",
@@ -713,19 +909,31 @@ class Store:
                 (cluster_id, user_name),
         )
 
-    def users(self, cluster_id: str) -> list[dict]:
+    def users(self, cluster_id: str, limit: int = 1000) -> list[dict]:
+        """Every user with a membership. BOUNDED.
+
+        Unbounded, this returned one row per distinct user across every group: 1,240 rows
+        and 102,921 bytes on a reference-shaped cluster with 62 groups, and it grows with
+        the DIRECTORY rather than with anything the dashboard controls. A real corporate
+        LDAP makes that a response big enough to hurt the browser and the pod.
+
+        `limit + 1` is fetched deliberately: the caller compares the length against the
+        limit to know it truncated, without a second COUNT query. A silently truncated
+        list is worse than a large one — the reader cannot tell a short directory from a
+        clipped answer.
+        """
         return self._rows(
                 """SELECT user_name, COUNT(*) AS group_count, MIN(first_seen_at) AS first_seen_at
                      FROM group_member WHERE cluster_id=?
-                    GROUP BY user_name ORDER BY user_name""",
-                (cluster_id,),
+                    GROUP BY user_name ORDER BY user_name LIMIT ?""",
+                (cluster_id, limit + 1),
         )
 
     # -- RBAC bindings -----------------------------------------------------------------
 
     def replace_bindings(self, cluster_id: str, rows: list[dict], observed_at: str) -> None:
         """Replace this cluster's binding rows wholesale, in one transaction."""
-        with self._tx() as conn:
+        with self._write() as conn:
             conn.execute("DELETE FROM rbac_group_binding WHERE cluster_id=?", (cluster_id,))
             conn.executemany(
                 """INSERT OR REPLACE INTO rbac_group_binding(
@@ -747,7 +955,7 @@ class Store:
         managed = [g for g in groups if g.get("sync_provider")]
         if not managed:
             return
-        with self._tx() as conn:
+        with self._write() as conn:
             conn.executemany(
                 """INSERT INTO managed_group_seen(
                        cluster_id, group_name, sync_provider, first_seen_at, last_seen_at)
@@ -846,7 +1054,7 @@ class Store:
         generation: int | None,
         message: str | None,
     ) -> None:
-        with self._tx() as conn:
+        with self._write() as conn:
             if failed_at is None:
                 conn.execute(
                     "DELETE FROM reconcile_error WHERE cluster_id=? AND groupsync_name=?",

@@ -140,7 +140,20 @@ marks it.
 
 ### `GET /api/clusters/{cluster_id}/users`
 
-Every user with a group count.
+Users with at least one group membership. **Bounded.**
+
+Query: `limit` (default 1000, max 10000).
+
+Returns an object, not a bare list — it previously returned every row, which is one per
+distinct user across every group and grows with the size of the directory rather than with
+anything the dashboard controls (102,921 bytes at reference scale). `truncated` tells the
+caller the list was clipped, because a clipped list that looks complete is the failure
+worth avoiding.
+
+```json
+{"cluster": "crc", "count": 1000, "truncated": true, "limit": 1000, "users": [...]}
+```
+
 
 ### `GET /api/clusters/{cluster_id}/users/{name}`
 
