@@ -1,21 +1,37 @@
-# Two stages so the wheel-build toolchain never reaches the runtime image.
-FROM registry.access.redhat.com/ubi9/python-311:latest AS build
+# Two stages so build-time tooling never reaches the runtime image.
+#
+# Python 3.14 from the RHEL APPSTREAM, deliberately not from python.org. UBI9 ships
+# python3.14 (3.14.5 vs python.org's 3.14.6 — Red Hat backports security fixes into
+# theirs), and the RPM keeps interpreter CVEs on Red Hat's books: they patch it, a
+# rebuild picks it up, and Trivy sees it. A hand-compiled /usr/local python is invisible
+# to the rpm database, so every scanner reports a clean image while the interpreter
+# quietly ages — the worst of both worlds.
+#
+# ubi9-minimal for BOTH stages, replacing the old ubi9/python-311 s2i build image (no
+# python-314 s2i image exists yet, and none is needed): our own wheel is pure Python and
+# every compiled dependency — pydantic-core, uvloop, httptools — ships prebuilt cp314
+# wheels, so the "build" stage needs pip, not gcc.
+FROM registry.access.redhat.com/ubi9-minimal:latest AS build
 
 USER 0
 WORKDIR /build
+
+# update first: the base is rebuilt by Red Hat on their cadence, and this picks up any
+# fixes published since, on every one of OUR builds rather than only on theirs.
+RUN microdnf update -y \
+ && microdnf install -y python3.14 python3.14-pip \
+ && microdnf clean all
 
 COPY pyproject.toml README.md ./
 COPY gsd ./gsd
 
 # Build a wheel and resolve dependencies into a self-contained prefix, so the runtime
 # stage needs no compiler and no package index.
-RUN python -m pip install --no-cache-dir --upgrade pip build \
- && python -m build --wheel --outdir /wheels \
- && python -m pip install --no-cache-dir --prefix=/install /wheels/*.whl
+RUN python3.14 -m pip install --no-cache-dir --upgrade pip build \
+ && python3.14 -m build --wheel --outdir /wheels \
+ && python3.14 -m pip install --no-cache-dir --prefix=/install /wheels/*.whl
 
 
-# ubi9-minimal + python3.11 rather than the s2i python image: no build toolchain, no
-# assemble scripts. (There is no ubi9/python-311-minimal — that tag does not exist.)
 FROM registry.access.redhat.com/ubi9-minimal:latest
 
 # Stamped at build time so a running pod can prove which source it was built from.
@@ -35,7 +51,7 @@ ARG BUILD_VERSION=unknown
 # land in lib. Listing only lib imports pydantic but not pydantic_core.
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONPATH=/install/lib/python3.11/site-packages:/install/lib64/python3.11/site-packages \
+    PYTHONPATH=/install/lib/python3.14/site-packages:/install/lib64/python3.14/site-packages \
     GSD_CONFIG=/etc/gsd/clusters.yaml \
     GSD_DB_PATH=/data/gsd.db \
     GSD_LOG_LEVEL=INFO \
@@ -57,7 +73,12 @@ LABEL org.opencontainers.image.revision="$GIT_COMMIT" \
 #   at one line or more per poll per cluster.
 
 USER 0
-RUN microdnf install -y python3.11 \
+# `update` cannot clear the known curl-minimal HIGHs today — Red Hat has published no fix,
+# and a dry run confirms "Nothing to do" on a fresh base — but it means every rebuild of
+# THIS image picks up whatever has been fixed since Red Hat last rebuilt the base, instead
+# of waiting on their cadence.
+RUN microdnf update -y \
+ && microdnf install -y python3.14 \
  && microdnf clean all \
  && rm -rf /var/cache/yum
 
@@ -78,11 +99,11 @@ VOLUME ["/data"]
 # thing this dashboard exists to display, so failing readiness for one would take the
 # dashboard down exactly when it has something to report.
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-    CMD ["python3.11", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=2).status==200 else 1)"]
+    CMD ["python3.14", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=2).status==200 else 1)"]
 
-# `python3.11 -m uvicorn`, not the /install/bin/uvicorn console script: that script's
+# `python3.14 -m uvicorn`, not the /install/bin/uvicorn console script: that script's
 # shebang points at the *build* stage's interpreter path, which does not exist here.
 # Single worker on purpose — the poller runs in-process and owns the SQLite store, so a
 # second worker would mean two pollers racing on the same file and duplicate observations.
-CMD ["python3.11", "-m", "uvicorn", "gsd.api:create_app", "--factory", \
+CMD ["python3.14", "-m", "uvicorn", "gsd.api:create_app", "--factory", \
      "--host", "0.0.0.0", "--port", "8080", "--workers", "1"]
