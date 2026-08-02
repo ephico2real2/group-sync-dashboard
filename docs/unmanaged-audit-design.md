@@ -56,6 +56,47 @@ cycle to pull the flag.
 **I8 — Failure isolation.** A failed patch (403, conflict, timeout) is logged and skipped;
 it never fails the refresh, never blocks other stamps, and never affects the read pipeline.
 
+## Kubernetes will not let this work on the objects that matter most
+
+**Discovered on the live cluster, after the feature was built and enabled.** Granting
+`patch` is necessary but NOT sufficient. Kubernetes applies *privilege escalation
+prevention* to RBAC objects: to write one — even a metadata-only merge patch that touches
+no rule and no subject — the writer must already hold every permission that object grants.
+The API server's own words, from the pod:
+
+```
+clusterrolebindings "demo-cluster-audit-crb" is forbidden: user
+"system:serviceaccount:group-sync-dashboard:group-sync-dashboard" is attempting to grant
+RBAC permissions not currently held: {APIGroups:[""], Resources:[...], Verbs:[...]}  (x~200)
+```
+
+`SelfSubjectAccessReview` says `allowed: true` — the RBAC grant is correct — and the patch
+is still refused by the escalation check, which runs afterwards. Anyone reasoning from
+`oc auth can-i` alone will conclude this works. It does not.
+
+**The consequence is a hard ceiling, not a tuning problem.** For the dashboard to stamp a
+binding that grants `cluster-admin`, the dashboard would itself need `cluster-admin`. The
+audit feature would therefore require the *most* privilege on exactly the *most* dangerous
+grants — precisely inverting what a read-only auditing tool should be. Two escape hatches
+exist and both are refused here:
+
+* grant the dashboard `cluster-admin` — absurd for a read-only dashboard, and it makes a
+  compromise of this pod a full cluster compromise;
+* grant `escalate` on `rbac.authorization.k8s.io` — the verb that switches the check off,
+  which is the same thing wearing a smaller word.
+
+**Therefore `annotate` mode can only ever stamp bindings whose grants the dashboard already
+holds** — in practice the narrow, low-privilege ones. It fails safe: each refusal is a
+logged warning, the refresh continues, and the finding remains visible in the UI and the
+API. The dashboard reports the grant either way; only the on-object convenience label is
+lost. Enabling annotate mode remains reasonable for clusters where the unmanaged set is
+low-privilege, and `log` mode is fully useful everywhere.
+
+**What to use instead for a cluster-wide audit trail:** the API and UI already carry the
+complete set with no write access at all
+(`GET /api/clusters/{id}/bindings/findings` → `unmanaged`), and a privileged CI job or an
+admin running `oc annotate` can stamp objects the dashboard cannot.
+
 ## The cost, stated plainly
 
 Kubernetes RBAC has **no annotations-only patch scope**. Annotate mode requires `patch` on
