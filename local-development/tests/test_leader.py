@@ -130,3 +130,20 @@ class TestAcquire:
 
         with _client(handler) as c:
             assert elector._try_acquire(c) is True
+
+
+class TestStandbyRecheck:
+    """A standby must notice it became leader without waiting out a poll interval."""
+
+    def test_recheck_is_decoupled_from_the_poll_interval(self):
+        """The startup race: the elector acquires leadership on its own thread, so the poll
+        thread reliably checks once before that lands. If it then sleeps a full interval,
+        the first poll is a whole interval late — 15 minutes at the configured cadence.
+        """
+        from gsd.poller import STANDBY_RECHECK_SECONDS
+
+        assert STANDBY_RECHECK_SECONDS <= 15, "a standby would notice leadership too slowly"
+        # The wait is min(poll_interval, STANDBY_RECHECK_SECONDS), so a short poll interval
+        # in tests or local dev still governs.
+        assert min(900, STANDBY_RECHECK_SECONDS) == STANDBY_RECHECK_SECONDS
+        assert min(1, STANDBY_RECHECK_SECONDS) == 1

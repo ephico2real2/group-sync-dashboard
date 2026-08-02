@@ -22,6 +22,12 @@ from .store import Store, now_iso
 
 log = logging.getLogger(__name__)
 
+# How often a non-leader re-checks whether it has become the leader. Deliberately decoupled
+# from the poll interval: this costs a flag read, while tying it to the poll interval makes
+# the delay before a new leader's first poll scale with a value chosen for a different
+# reason entirely.
+STANDBY_RECHECK_SECONDS = 5
+
 
 def provider_keys_for(cr: GroupSyncView, groups: list[GroupView]) -> list[str]:
     """Every sync-provider label value belonging to this CR (PLAN §3).
@@ -216,8 +222,16 @@ class Poller:
             if self.elector is not None and not self.elector.is_leader:
                 # Standby: serve reads, write nothing. Checked every cycle rather than once,
                 # so leadership lost mid-life stops the writes promptly.
+                #
+                # Re-checked on a SHORT tick, not the poll interval. Leadership is acquired
+                # asynchronously by the elector thread, so at startup this thread reliably
+                # loses the race and lands here once — and sleeping a full interval then
+                # means the first poll is a whole interval late, which defeats the
+                # poll-immediately-on-start above. At 60s that was a shrug; at 900s it is a
+                # 15-minute blackout after every restart. The wait is free: standby does no
+                # I/O, it reads a flag the elector already maintains.
                 log.debug("%s: not leader, skipping poll", cluster.name)
-                self._stop.wait(self.settings.poll_interval_seconds)
+                self._stop.wait(min(self.settings.poll_interval_seconds, STANDBY_RECHECK_SECONDS))
                 continue
             try:
                 poll_once(self.store, cluster, self.settings.request_timeout_seconds)
