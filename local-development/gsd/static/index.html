@@ -836,6 +836,21 @@ function fmtTime(iso) {
          `${parts.timeZoneName || displayAbbrev}`;
 }
 
+/* Just the clock, in the display zone. For tables where the date is already a column.
+   Shares displayZone with fmtTime rather than slicing the ISO string, which is what the
+   Usage panel used to do — `.slice(11, 19)` reads the raw UTC hour, so that one table stayed
+   on UTC while every other time on the page moved to the container's zone. */
+function fmtClock(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (isNaN(d)) return iso;
+  if (!displayZone) return iso.slice(11, 19);
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: displayZone, hour12: false,
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
+  }).format(d);
+}
+
 function ago(iso) {
   if (!iso) return "never";
   const secs = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
@@ -1253,14 +1268,16 @@ function usagePage() {
       ? `<div class="empty-note">Nothing recorded yet. Rows appear after the first flush,
            which runs on the configured interval rather than per request.</div>`
       : `<div class="scroll-x"><table>
-          <thead><tr><th>User</th><th>Day (UTC)</th><th>First seen</th><th>Last seen</th>
+          <thead><tr><th>User</th><th>Day (UTC)</th>
+            <th>First seen (${esc(displayAbbrev)})</th>
+            <th>Last seen (${esc(displayAbbrev)})</th>
             <th class="num">Interactions</th></tr></thead>
           <tbody>${rows.map((r) => `<tr>
             <td>${esc(r.user_name)}${r.email
               ? ` <span class="muted">· ${esc(r.email)}</span>` : ""}</td>
             <td class="mono">${esc(r.day)}</td>
-            <td class="mono">${esc((r.first_seen_at || "").slice(11, 19) || "—")}</td>
-            <td class="mono">${esc((r.last_seen_at || "").slice(11, 19) || "—")}</td>
+            <td class="mono">${esc(fmtClock(r.first_seen_at))}</td>
+            <td class="mono">${esc(fmtClock(r.last_seen_at))}</td>
             <td class="num">${r.request_count}</td>
           </tr>`).join("")}</tbody>
         </table></div>`}

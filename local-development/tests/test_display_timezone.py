@@ -138,6 +138,22 @@ def test_the_page_falls_back_to_utc_when_the_zone_is_unusable():
     assert 'displayAbbrev = "Z"' in fn, "no UTC fallback on an unusable zone"
 
 
+def test_the_usage_panel_uses_the_display_zone_too():
+    """First/Last seen were sliced straight out of the ISO string — raw UTC.
+
+    Every other time on the page moved to the container's zone and this one table did not,
+    so the Usage panel disagreed with the header above it. `.slice(11, 19)` on an ISO string
+    is the tell: it reads the UTC hour and cannot know about a zone.
+    """
+    html = INDEX.read_text()
+    usage = html[html.index("<th>Day (UTC)</th>"):]
+    usage = usage[:usage.index("</table>")]
+    assert "fmtClock(r.first_seen_at)" in usage, "First seen is not going through the formatter"
+    assert "fmtClock(r.last_seen_at)" in usage, "Last seen is not going through the formatter"
+    assert "slice(11, 19)" not in usage, "still slicing the raw UTC hour"
+    assert "displayAbbrev" in usage, "the columns do not say which zone they are in"
+
+
 def test_the_usage_day_column_says_it_is_utc():
     """Display is local but the day bucket is a stored UTC date, so the page must say so.
 
