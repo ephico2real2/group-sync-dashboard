@@ -522,7 +522,18 @@ code { font-family: var(--font-mono); font-size: var(--text-sm); }
 .audit-table tbody tr:nth-child(even) td { background: none; }
 .audit-table .ns-cell strong { font-size: var(--text-lg); }
 .audit-table td.strong { font-weight: 700; }
-.audit-table .who { font-size: var(--text-sm); }
+/* The names column is the one that can grow without bound, so it is the one that must be
+   told not to. max-width stops it dictating the table's width; overflow-wrap breaks an LDAP
+   DN, which has no spaces and would otherwise force a horizontal scrollbar on the whole
+   page. Names are inline-block so they wrap as units rather than mid-identifier. */
+.audit-table .who {
+  font-size: var(--text-sm);
+  max-width: 30ch;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+.audit-table .who-name { display: inline-block; margin-right: 6px; }
+.who-more { margin-left: 2px; white-space: nowrap; }
 .priv { font-weight: 600; }
 
 /* A tint the width of the row, so severity is visible without reading the pill. */
@@ -726,6 +737,10 @@ const view = { page: "overview", cluster: null, groupsync: null, groupFilter: "a
                    reads as the page fighting them. */
                 nsNamespace: "all", nsSort: "risk", nsDir: "desc",
                 nsGrantSort: "risk", nsGrantDir: "desc",
+                /* Namespaces whose full exposed-user list is expanded. In `view` like every
+                   other control on this page, so a 60s poll repaint does not collapse a list
+                   the reader just opened. */
+                nsWhoOpen: new Set(),
                 /* Closed on arrival. The per-namespace rollup is the view that answers the
                    question; the flat list is a detail nobody reads end to end, and on a
                    cluster with thousands of grants rendering it unasked is time spent to
@@ -1670,6 +1685,28 @@ function riskTier(row) {
   return { key: "low", label: "Low", rank: 1 };
 }
 
+/* The exposed-user list for one namespace, bounded.
+   A namespace with forty direct grants would otherwise put forty names in one cell and the
+   column would decide the width of the whole table — on the view that is supposed to be the
+   scannable one. Show the first few, then an honest count and a way to see the rest.
+
+   WHO_PREVIEW is small on purpose. The question this table answers is "which namespaces are
+   exposed and how badly"; the names are corroboration, and the full roster lives one section
+   down in Every grant. */
+const WHO_PREVIEW = 4;
+
+function whoCell(row) {
+  const users = row.users || [];
+  if (!users.length) return '<span class="muted">—</span>';
+  const open = view.nsWhoOpen.has(row.namespace);
+  const shown = open ? users : users.slice(0, WHO_PREVIEW);
+  const hidden = users.length - shown.length;
+  const names = shown.map((u) => `<span class="who-name">${esc(u)}</span>`).join("");
+  if (!hidden && !open) return names;
+  return names + `<button type="button" class="linkish who-more" data-who="${esc(row.namespace)}">`
+    + (open ? "show fewer" : `+${hidden} more`) + "</button>";
+}
+
 const PRIVILEGE_NAME = { 4: "cluster-admin", 3: "admin", 2: "edit", 1: "view" };
 const PRIVILEGE_RANK = { "cluster-admin": 4, admin: 3, edit: 2, view: 1 };
 
@@ -1854,7 +1891,7 @@ function directUserGrants(ub) {
         <td><code class="priv">${esc(PRIVILEGE_NAME[r.worst_privilege] || "view")}</code></td>
         <td class="num strong">${r.distinct_users}</td>
         <td class="num">${r.bindings}</td>
-        <td class="muted who">${esc((r.users || []).join(", "))}</td>
+        <td class="muted who">${whoCell(r)}</td>
       </tr>`).join("")}</tbody>
     </table></div>
     ${ub.excluded_platform ? `<div class="filterbar-note" style="margin-top:8px">
@@ -2069,6 +2106,15 @@ function wireNsAudit() {
   };
   const clear = document.querySelector("[data-ns-pick-clear]");
   if (clear) clear.onclick = () => { view.nsNamespace = "all"; refresh(); };
+
+  document.querySelectorAll("[data-who]").forEach((el) => {
+    el.onclick = () => {
+      const ns = el.dataset.who;
+      // Pure re-render of data already held — no refetch, so it is instant.
+      view.nsWhoOpen.has(ns) ? view.nsWhoOpen.delete(ns) : view.nsWhoOpen.add(ns);
+      render();
+    };
+  });
 
   const disclose = document.querySelector("[data-ns-grants]");
   if (disclose) disclose.onclick = () => { view.nsGrantsOpen = !view.nsGrantsOpen; render(); };
