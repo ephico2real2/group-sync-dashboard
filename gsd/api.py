@@ -371,7 +371,15 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
 
     @app.get("/")
     def index() -> FileResponse:
-        return FileResponse(os.path.join(STATIC_DIR, "index.html"))
+        # With no Cache-Control, browsers apply heuristic caching to HTML and keep serving
+        # the old page after a redeploy — the user sees a version that no longer exists and
+        # reasonably concludes the change was never shipped. The whole app is this one
+        # file, so it must always be revalidated; there is nothing here worth caching and a
+        # stale shell silently disables every fix behind it.
+        return FileResponse(
+            os.path.join(STATIC_DIR, "index.html"),
+            headers={"Cache-Control": "no-cache, must-revalidate"},
+        )
 
     if os.path.isdir(STATIC_DIR):
         app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

@@ -601,3 +601,15 @@ class TestBindingFindingsVisible:
         or the page may as well not exist."""
         body = dash.locator("body").inner_text()
         assert "Bindings to review" in body
+
+
+def test_index_is_never_heuristically_cached(server):
+    """Reported from the field: a deploy landed but the browser kept the old page, so a
+    shipped fix looked like it was never shipped. Without Cache-Control, browsers apply
+    heuristic caching to HTML — and this single file IS the whole app, so a stale shell
+    silently disables every change behind it."""
+    import httpx
+
+    response = httpx.get(server + "/", timeout=10)
+    cache = response.headers.get("cache-control", "")
+    assert "no-cache" in cache, f"index served with Cache-Control: {cache!r}"
