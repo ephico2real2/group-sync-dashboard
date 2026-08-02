@@ -7,6 +7,13 @@ metadata:
   name: {{ include "gsd.fullname" . }}-data
   namespace: {{ .Release.Namespace }}
   labels: {{- include "gsd.labels" . | nindent 4 }}
+  annotations:
+    # Survive `helm uninstall`. This volume holds the accumulated sync timeline and
+    # membership history, which the Kubernetes API cannot reproduce — deleting the release
+    # would otherwise destroy the only irreplaceable state in the system, silently and
+    # unrecoverably. Removing it is made an explicit act:
+    #   oc delete pvc {{ include "gsd.fullname" . }}-data -n {{ .Release.Namespace }}
+    helm.sh/resource-policy: keep
 spec:
   accessModes: [{{ .Values.persistence.accessMode }}]
   {{- with .Values.persistence.storageClass }}
