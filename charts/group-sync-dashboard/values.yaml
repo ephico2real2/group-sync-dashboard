@@ -163,24 +163,25 @@ service:
   type: ClusterIP
   port: 8080
 
-# NOTE: the Route has NO authentication. The dashboard aggregates group membership, which is
-# sensitive. Do not expose it on a shared cluster until that is resolved — see
-# docs/PLAN_oauth_proxy.md, which is researched and parked.
-route:
-  enabled: true
-  host: ""             # "" -> OpenShift generates one
-  annotations: {}
-  tls:
-    termination: edge
-    insecureEdgeTerminationPolicy: Redirect
-
+# Ingress, not Route. On OpenShift the ingress-to-route controller converts this into a
+# Route automatically (ingressClassName: openshift-default), so one manifest serves both
+# OpenShift and plain Kubernetes.
+#
+# WARNING: with oauthProxy.enabled=false there is NO authentication and the dashboard
+# exposes group membership. Do not expose it on a shared cluster that way.
 ingress:
-  # For non-OpenShift clusters, where Route does not exist.
-  enabled: false
-  className: ""
-  annotations: {}
+  enabled: true
+  className: openshift-default
+  # REQUIRED when oauthProxy.enabled — the OAuth callback URL cannot be derived, because
+  # ingress-to-route names the generated Route unpredictably. The render fails rather than
+  # emitting a callback that silently never matches.
   host: ""
+  annotations: {}
   tls: []
+  # Carried as route.openshift.io annotations, since Ingress has no field for either.
+  # Overridden to reencrypt automatically whenever the proxy is enabled.
+  termination: edge
+  insecureEdgeTerminationPolicy: Redirect
 
 # ---------------------------------------------------------------------------
 # OpenShift OAuth proxy
@@ -197,7 +198,22 @@ ingress:
 oauthProxy:
   enabled: false
 
-  image: registry.redhat.io/openshift4/ose-oauth-proxy:v4.14
+  # The version-matched image that ships WITH the cluster, already present as an
+  # imagestream and served from the internal registry — so starting a pod needs no external
+  # registry, no pull secret, and no mirroring step.
+  #
+  # The `v4.4` tag name is misleading and worth not being fooled by: its digest is exactly
+  # what `oc adm release info --image-for=oauth-proxy` returns for this cluster, i.e. it IS
+  # the current 4.18 oauth-proxy. There is no v4.18 or v4.17 tag in registry.redhat.io —
+  # both 404 — and that registry's `latest` is v4.14.0, a genuinely OLDER build than this.
+  # oauth-proxy is a stable component and is not re-tagged per OpenShift release.
+  #
+  # Confirm the right image for any cluster with:
+  #   oc adm release info --image-for=oauth-proxy
+  #
+  # Override for a disconnected cluster that mirrors elsewhere:
+  #   --set oauthProxy.image=<your-mirror>/openshift4/ose-oauth-proxy:<tag>
+  image: image-registry.openshift-image-registry.svc:5000/openshift/oauth-proxy:v4.4
   imagePullPolicy: IfNotPresent
   port: 8443
 

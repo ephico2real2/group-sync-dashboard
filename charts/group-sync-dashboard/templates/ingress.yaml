@@ -1,13 +1,26 @@
 {{- if .Values.ingress.enabled }}
+{{- /*
+Ingress rather than a Route. On OpenShift the ingress-to-route controller
+(openshift.io/ingress-to-route) converts this into a Route automatically, so one manifest
+covers both OpenShift and plain Kubernetes.
+
+TLS termination is carried by an annotation because Ingress has no field for it. Verified on
+this cluster: the generated Route came out `reencrypt/Redirect`.
+*/}}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: {{ include "gsd.fullname" . }}
   namespace: {{ .Release.Namespace }}
   labels: {{- include "gsd.labels" . | nindent 4 }}
-  {{- with .Values.ingress.annotations }}
-  annotations: {{- toYaml . | nindent 4 }}
-  {{- end }}
+  annotations:
+    # reencrypt whenever the proxy is on — it terminates TLS itself with the service-ca
+    # certificate, so the router must re-encrypt to it. See the gsd.routeTermination helper.
+    route.openshift.io/termination: {{ include "gsd.routeTermination" . | quote }}
+    {{- if .Values.ingress.insecureEdgeTerminationPolicy }}
+    route.openshift.io/insecureEdgeTerminationPolicy: {{ .Values.ingress.insecureEdgeTerminationPolicy | quote }}
+    {{- end }}
+    {{- with .Values.ingress.annotations }}{{- toYaml . | nindent 4 }}{{- end }}
 spec:
   {{- with .Values.ingress.className }}
   ingressClassName: {{ . }}
@@ -26,6 +39,8 @@ spec:
             backend:
               service:
                 name: {{ include "gsd.fullname" . }}
+                # The Service port stays 8080 in both modes; only its targetPort moves to
+                # the proxy, so this reference does not change.
                 port:
                   number: {{ .Values.service.port }}
 {{- end }}

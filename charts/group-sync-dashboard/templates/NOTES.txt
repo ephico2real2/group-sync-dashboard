@@ -2,14 +2,14 @@
 
 Image: {{ include "gsd.image" . }}
 
-{{- if .Values.route.enabled }}
+{{- if .Values.ingress.enabled }}
 
 Route:
-  oc get route {{ include "gsd.fullname" . }} -n {{ .Release.Namespace }} -o jsonpath='{.spec.host}'
+  oc get ingress {{ include "gsd.fullname" . }} -n {{ .Release.Namespace }} -o jsonpath='{.spec.rules[0].host}'
 {{- end }}
 
 Confirm what is actually running — the pod reports the commit it was built from:
-  curl -sk https://$(oc get route {{ include "gsd.fullname" . }} -n {{ .Release.Namespace }} -o jsonpath='{.spec.host}')/api/version
+  curl -sk https://{{ .Values.ingress.host | default "<ingress.host>" }}/api/version
 
 {{- if not .Values.persistence.enabled }}
 
@@ -21,8 +21,14 @@ by polling and cannot be re-fetched from the API, so they reset on every restart
 WARNING: replicaCount is {{ .Values.replicaCount }}. The poller owns a SQLite file and there
 is no leader election, so extra replicas mean concurrent writers on one database.
 {{- end }}
-{{- if .Values.route.enabled }}
+{{- if .Values.ingress.enabled }}
+{{- if .Values.oauthProxy.enabled }}
 
-NOTE: the Route has no authentication and the dashboard exposes group membership. Do not
-expose it on a shared cluster until that is resolved.
+Authentication: OpenShift OAuth. Anyone who can log into this cluster can view the
+dashboard{{ if .Values.oauthProxy.sar }}, subject to the SubjectAccessReview in oauthProxy.sar{{ end }}.
+{{- else }}
+
+WARNING: the Ingress has NO authentication and the dashboard exposes group membership.
+Set oauthProxy.enabled=true (and ingress.host) before exposing it on a shared cluster.
+{{- end }}
 {{- end }}

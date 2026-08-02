@@ -85,7 +85,13 @@ spec:
               # Through the proxy, over HTTPS: the app no longer listens on the pod IP.
               # oauthProxy.skipAuthRegex must cover this path or kubelet gets a 302 to the
               # login page and kills a healthy pod.
-              port: oauth-proxy
+              # NUMERIC, not the port name. A named port resolves only within the
+              # container that declares it, and this probe runs on the dashboard container
+              # while the name belongs to the sidecar. kubelet then parses the name as an
+              # integer and every probe errors with `strconv.Atoi: parsing "oauth-proxy"`.
+              # Both `helm template` and `oc apply --dry-run=server` accept it, so only a
+              # real deploy catches this.
+              port: {{ .Values.oauthProxy.port }}
               scheme: HTTPS
               {{- else }}
               port: http
@@ -100,7 +106,13 @@ spec:
             httpGet:
               path: {{ .Values.probes.readiness.path }}
               {{- if .Values.oauthProxy.enabled }}
-              port: oauth-proxy
+              # NUMERIC, not the port name. A named port resolves only within the
+              # container that declares it, and this probe runs on the dashboard container
+              # while the name belongs to the sidecar. kubelet then parses the name as an
+              # integer and every probe errors with `strconv.Atoi: parsing "oauth-proxy"`.
+              # Both `helm template` and `oc apply --dry-run=server` accept it, so only a
+              # real deploy catches this.
+              port: {{ .Values.oauthProxy.port }}
               scheme: HTTPS
               {{- else }}
               port: http
