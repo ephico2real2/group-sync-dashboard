@@ -12,16 +12,70 @@ same thing; the plan's ``tokenSecretRef`` is the Kubernetes-side name of the fil
 
 from __future__ import annotations
 
+import logging
 import os
 import ssl
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
 
+log = logging.getLogger(__name__)
+
 
 class ConfigError(Exception):
     """Raised for a malformed or unusable cluster configuration."""
+
+
+_ca_cache: dict[str, ssl.SSLContext] = {}
+_ca_cache_lock = threading.Lock()
+
+
+def _trusted_ca_context() -> ssl.SSLContext | None:
+    """Build one SSL context from every CA bundle mounted into the pod.
+
+    GSD_TRUSTED_CA_FILE is colon-separated, like SSL_CERT_FILE, because two independent
+    sources can be mounted: the bundle OpenShift injects (system trust merged with
+    proxy/cluster.spec.trustedCA) and a ConfigMap supplied by hand for a CA the cluster has
+    never been told about. Either, both, or neither.
+
+    They are LOADED IN TURN rather than concatenated into a temporary file: the root
+    filesystem is read-only, and writing certificates to /tmp to work around that would put
+    them somewhere less controlled than where they started.
+
+    Cached, because this is consulted on every poll of every cluster and parsing a 226 KB,
+    148-certificate bundle each time is pure waste. Two details matter:
+
+    * the cache is keyed on the ENV VALUE, not global, so changing the configured paths
+      takes effect rather than being masked by a stale entry;
+    * a null result is NOT cached. The injected ConfigMap is populated asynchronously, so
+      it can legitimately be absent for the first moments of a pod's life; caching that
+      absence would mean never picking it up without a restart.
+    """
+    raw = os.environ.get("GSD_TRUSTED_CA_FILE", "")
+    if not raw:
+        return None
+
+    cached = _ca_cache.get(raw)
+    if cached is not None:
+        return cached
+
+    paths = [p for p in (part.strip() for part in raw.split(":")) if p and Path(p).is_file()]
+    if not paths:
+        return None  # deliberately uncached — see above
+
+    context = ssl.create_default_context()
+    for path in paths:
+        try:
+            context.load_verify_locations(cafile=path)
+        except (OSError, ssl.SSLError) as exc:
+            raise ConfigError(f"cannot load trusted CA bundle {path!r}: {exc}") from exc
+
+    with _ca_cache_lock:
+        _ca_cache[raw] = context
+    log.info("loaded %d trusted CA bundle(s): %s", len(paths), ", ".join(paths))
+    return context
 
 
 @dataclass(frozen=True)
@@ -94,23 +148,17 @@ class ClusterConfig:
         # Deliberately a fallback rather than a merge: a cluster that names its own bundle is
         # making a specific statement about what it trusts, and silently widening that would
         # be the wrong kind of helpful.
-        source = "caBundleFile"
-        if not bundle:
-            trusted = os.environ.get("GSD_TRUSTED_CA_FILE")
-            if trusted and Path(trusted).is_file():
-                bundle, source = trusted, "injected trusted CA bundle"
-
         if bundle:
             try:
                 return ssl.create_default_context(cafile=bundle)
             except (OSError, ssl.SSLError) as exc:
-                # Name the SOURCE, not just the path: "cannot load /etc/pki/..." sends
-                # someone hunting a file, when the fix is in whichever of the two places
-                # actually set it.
+                # Name the SOURCE, not only the path: "cannot load /etc/pki/..." sends
+                # someone hunting a file when the fix is in whichever setting named it.
                 raise ConfigError(
-                    f"cluster {self.name!r}: cannot load {source} {bundle!r}: {exc}"
+                    f"cluster {self.name!r}: cannot load caBundleFile {bundle!r}: {exc}"
                 ) from exc
-        return True
+
+        return _trusted_ca_context() or True
 
 
 @dataclass(frozen=True)

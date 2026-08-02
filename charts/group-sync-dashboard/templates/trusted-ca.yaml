@@ -1,4 +1,4 @@
-{{- if .Values.trustedCA.enabled }}
+{{- if .Values.trustedCA.injected.enabled }}
 {{- /*
 Deliberately EMPTY. OpenShift's network operator fills in `ca-bundle.crt` because of the
 label, merging the system trust store with whatever corporate CA is configured in

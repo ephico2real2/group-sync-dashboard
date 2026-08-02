@@ -10,7 +10,7 @@ image:
   # tags <version>-<git-sha>. Editing them by hand works, but the script keeps them
   # consistent with an image that actually exists in the registry.
   repository: quay.io/ephico2real/group-sync-dashboard
-  tag: "0.6.0-90bedef38f"
+  tag: "0.6.0-ee8799c4d3"
   pullPolicy: Always
 
   # Only needed for a PRIVATE registry. Leave empty for a public repository: an empty
@@ -143,7 +143,31 @@ clusters:
 # Harmless when observing only the local cluster (the SA's own ca.crt is named explicitly),
 # so it defaults on. Set false on non-OpenShift, where nothing injects it.
 trustedCA:
-  enabled: true
+  # METHOD 1 — injected. An empty ConfigMap labelled
+  # `config.openshift.io/inject-trusted-cabundle: "true"`, which OpenShift fills with the
+  # system trust store merged with proxy/cluster.spec.trustedCA. Nothing to maintain, but
+  # it only carries CAs the CLUSTER already knows about.
+  injected:
+    enabled: true
+
+  # METHOD 2 — a ConfigMap you supply. For a CA the cluster has not been told about: a
+  # partner's internal CA, a lab signer, or an external cluster whose CA is not in your
+  # corporate bundle. Create it yourself, out of band:
+  #
+  #   oc create configmap enterprise-ca --from-file=ca-bundle.crt=/path/to/ca.pem \
+  #     -n <namespace>
+  #
+  # Deliberately NOT templated into the chart: certificates in values.yaml end up in git,
+  # in `helm get values`, and in every CI log that echoes them.
+  existingConfigMap:
+    enabled: false
+    name: enterprise-ca
+    key: ca-bundle.crt
+
+  # BOTH may be enabled at once. They are concatenated into one bundle at startup, in the
+  # order injected-then-manual, because a bundle is just a list of PEM blocks and there is
+  # no reason to make the operator choose. Enabling neither falls back to Python's default
+  # trust store.
   mountPath: /etc/pki/ca-trust/extracted/pem
 
 # ---------------------------------------------------------------------------

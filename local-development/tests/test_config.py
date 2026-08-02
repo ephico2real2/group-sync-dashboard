@@ -169,3 +169,49 @@ class TestTrustedCABundleFallback:
         """A mount that is not there must not break verification outright."""
         monkeypatch.setenv("GSD_TRUSTED_CA_FILE", "/nonexistent/ca-bundle.crt")
         assert ClusterConfig("c", "https://x").verify() is True
+
+
+class TestBothCASources:
+    """Two independent CA sources can be mounted: the one OpenShift injects, and a
+    ConfigMap supplied by hand for a CA the cluster has never been told about."""
+
+    def _ca(self, tmp_path, cn):
+        import subprocess
+        crt = tmp_path / f"{cn}.crt"
+        subprocess.run(
+            ["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
+             "-subj", f"/CN={cn}", "-keyout", str(tmp_path / f"{cn}.key"), "-out", str(crt)],
+            check=True, capture_output=True,
+        )
+        return str(crt)
+
+    def test_both_bundles_load_together(self, tmp_path, monkeypatch):
+        a, b = self._ca(tmp_path, "injected"), self._ca(tmp_path, "enterprise")
+        monkeypatch.setenv("GSD_TRUSTED_CA_FILE", f"{a}:{b}")
+        ctx = ClusterConfig("c", "https://x").verify()
+        assert isinstance(ctx, ssl.SSLContext)
+        subjects = {c["subject"][0][0][1] for c in ctx.get_ca_certs()}
+        assert {"injected", "enterprise"} <= subjects, "both CAs must be trusted"
+
+    def test_a_missing_path_is_skipped_not_fatal(self, tmp_path, monkeypatch):
+        """The injected ConfigMap is populated asynchronously, so it can legitimately be
+        absent for the first moments of a pod's life."""
+        good = self._ca(tmp_path, "present")
+        monkeypatch.setenv("GSD_TRUSTED_CA_FILE", f"/nonexistent/a.crt:{good}")
+        ctx = ClusterConfig("c", "https://x").verify()
+        assert isinstance(ctx, ssl.SSLContext)
+        assert "present" in {c["subject"][0][0][1] for c in ctx.get_ca_certs()}
+
+    def test_absence_is_not_cached_so_a_late_mount_is_picked_up(self, tmp_path, monkeypatch):
+        """Caching the empty result would mean never seeing the injected bundle without a
+        pod restart."""
+        late = tmp_path / "late.crt"
+        monkeypatch.setenv("GSD_TRUSTED_CA_FILE", str(late))
+        assert ClusterConfig("c", "https://x").verify() is True   # not there yet
+        import shutil
+        shutil.copy(self._ca(tmp_path, "late-arrival"), late)
+        assert isinstance(ClusterConfig("c", "https://x").verify(), ssl.SSLContext)
+
+    def test_neither_source_falls_back_to_system_trust(self, monkeypatch):
+        monkeypatch.delenv("GSD_TRUSTED_CA_FILE", raising=False)
+        assert ClusterConfig("c", "https://x").verify() is True

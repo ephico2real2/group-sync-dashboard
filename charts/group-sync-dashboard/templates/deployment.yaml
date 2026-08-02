@@ -67,11 +67,18 @@ spec:
               value: /data/gsd.db
             - name: GSD_LOG_LEVEL
               value: {{ .Values.logLevel | quote }}
-            {{- if .Values.trustedCA.enabled }}
-            # Used for any cluster that does not name its own caBundleFile — which is the
-            # normal case for an external, corporate-signed cluster.
+            {{- $ca := list }}
+            {{- if .Values.trustedCA.injected.enabled }}
+            {{- $ca = append $ca (printf "%s/injected/ca-bundle.crt" .Values.trustedCA.mountPath) }}
+            {{- end }}
+            {{- if .Values.trustedCA.existingConfigMap.enabled }}
+            {{- $ca = append $ca (printf "%s/enterprise/%s" .Values.trustedCA.mountPath .Values.trustedCA.existingConfigMap.key) }}
+            {{- end }}
+            {{- if $ca }}
+            # Colon-separated, like SSL_CERT_FILE. Used for any cluster that does not name
+            # its own caBundleFile — the normal case for an external, corporate-signed one.
             - name: GSD_TRUSTED_CA_FILE
-              value: {{ .Values.trustedCA.mountPath }}/ca-bundle.crt
+              value: {{ join ":" $ca | quote }}
             {{- end }}
           securityContext: {{- toYaml .Values.securityContext | nindent 12 }}
           volumeMounts:
@@ -83,9 +90,14 @@ spec:
             # readOnlyRootFilesystem is on, so anything writing to /tmp needs a volume.
             - name: tmp
               mountPath: /tmp
-            {{- if .Values.trustedCA.enabled }}
-            - name: trusted-ca
-              mountPath: {{ .Values.trustedCA.mountPath }}
+            {{- if .Values.trustedCA.injected.enabled }}
+            - name: trusted-ca-injected
+              mountPath: {{ .Values.trustedCA.mountPath }}/injected
+              readOnly: true
+            {{- end }}
+            {{- if .Values.trustedCA.existingConfigMap.enabled }}
+            - name: trusted-ca-enterprise
+              mountPath: {{ .Values.trustedCA.mountPath }}/enterprise
               readOnly: true
             {{- end }}
           {{- if .Values.probes.liveness.enabled }}
@@ -185,16 +197,20 @@ spec:
         {{- end }}
         - name: tmp
           emptyDir: {}
-        {{- if .Values.trustedCA.enabled }}
-        - name: trusted-ca
+        {{- if .Values.trustedCA.injected.enabled }}
+        - name: trusted-ca-injected
           configMap:
             name: {{ include "gsd.fullname" . }}-trusted-ca
             # optional: the operator populates this shortly after creation, and a pod that
-            # refuses to start until then would fail the first rollout of every install.
+            # refused to start until then would fail the first rollout of every install.
             optional: true
-            items:
-              - key: ca-bundle.crt
-                path: ca-bundle.crt
+        {{- end }}
+        {{- if .Values.trustedCA.existingConfigMap.enabled }}
+        - name: trusted-ca-enterprise
+          configMap:
+            # NOT optional: you named this explicitly, so its absence is a mistake worth
+            # failing on rather than silently starting without the CA you asked for.
+            name: {{ .Values.trustedCA.existingConfigMap.name }}
         {{- end }}
         {{- if .Values.oauthProxy.enabled }}
         - name: oauth-tls
