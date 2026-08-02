@@ -69,6 +69,26 @@
   --tab-usage: #c2410c;
   --accent: var(--tab-overview);
 
+  /* TYPEFACES, self-hosted from gsd/static/vendor (see local-development/vendor-assets.sh).
+     Two voices, and the split is meaningful rather than decorative:
+
+     Space Grotesk carries the chrome — headings, labels, the tab bar. Geometric and
+     approachable, so the page reads as an instrument rather than a developer tool someone
+     wandered into. This dashboard is shown in access reviews with engineers AND their
+     management in the room; the headline layer has to read across a table.
+
+     JetBrains Mono carries IDENTIFIERS ONLY — namespace and role and binding names, counts,
+     timestamps. Things a reader might copy, compare character by character, or match against
+     `oc` output. Mono for prose would make the whole page look like a terminal, which is the
+     opposite of the brief; mono for a namespace called `legacy-payments` next to one called
+     `legacy-reporting` is what makes the difference visible at a glance.
+
+     Latin subset, three weights each, 100KB total for all six faces. font-display: swap so
+     text is never invisible while they load — they are same-origin and small, so the swap is
+     imperceptible, but an unstyled flash beats a blank table. */
+  --font-ui: "Space Grotesk", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
   /* TYPE SCALE. An audit counted ten distinct font-size values chosen per component, with
      no ladder connecting them — which is what makes an interface read as assembled rather
      than designed, and what lets an eleventh size arrive unnoticed. These are those ten
@@ -160,13 +180,56 @@
   --tab-usage: #d9490d;
 }
 
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("/static/vendor/jetbrains-mono-400.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("/static/vendor/jetbrains-mono-500.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("/static/vendor/jetbrains-mono-700.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Space Grotesk";
+  src: url("/static/vendor/space-grotesk-400.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Space Grotesk";
+  src: url("/static/vendor/space-grotesk-500.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Space Grotesk";
+  src: url("/static/vendor/space-grotesk-700.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
 * { box-sizing: border-box; }
 body {
   margin: 0;
   color: var(--text-primary);
   /* Split rather than the `font:` shorthand so the size comes from the scale. The
      shorthand would also reset line-height and family if either were ever omitted. */
-  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-family: var(--font-ui);
   font-size: var(--text-base);
   line-height: 1.5;
   /* Depth without cost: a fixed wash so the page reads as a surface rather than a flat
@@ -307,7 +370,7 @@ button:hover, select:hover { border-color: var(--baseline); }
 .badge.unknown  .glyph { border: 1.5px solid var(--status-unknown); border-radius: 50%; background: none; }
 
 .muted { color: var(--text-muted); }
-.mono { font-variant-numeric: tabular-nums; }
+.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 
 table { border-collapse: collapse; width: 100%; font-size: var(--text-md); }
 th, td {
@@ -412,7 +475,7 @@ svg .hit { fill: transparent; cursor: pointer; }
 .empty-note { color: var(--text-muted); font-size: var(--text-md); padding: 10px 0; }
 .back { background: none; border: 0; padding: 0; color: var(--series-1); cursor: pointer; font-size: var(--text-md); }
 .filterbar-note { font-size: var(--text-sm); color: var(--text-muted); }
-code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--text-sm); }
+code { font-family: var(--font-mono); font-size: var(--text-sm); }
 .err { color: var(--status-critical); }
 
 /* ---- Risk presentation (Namespace audit) --------------------------------------------
@@ -566,6 +629,58 @@ body[data-page="usage"]    { --accent: var(--tab-usage); }
    Section identity does not depend on this: the tab, the page bloom, the h2 leading rule
    and the hero numeral all still carry the accent. */
 .card { box-shadow: var(--elev-1); }
+
+/* ---- The headline layer -------------------------------------------------------------
+   This is read in access reviews with engineers and their management both present, so the
+   top of every page has to carry across a table while the detail stays one glance below.
+   Three moves, no new colours — the palette is solved against WCAG and stays put. */
+
+/* The hero numeral is the thing someone reads from the far side of a room. Space Grotesk
+   at a tighter track, and tabular so it cannot reflow when a poll lands mid-sentence. */
+.hero .value {
+  font-family: var(--font-ui);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.03em;
+}
+/* Section headings stay sentence case, deliberately.
+   Uppercase was tried and reverted: these are sentences — "Why this is a risk", "Observed
+   syncs", "Policy operator (NamespaceConfig / GroupConfig)" — and the design pattern that
+   calls for tracked-out caps is meant for short LABELS, not for prose. Shouting a sentence
+   costs exactly the legibility this layer exists to buy, and it grows worse the longer the
+   heading. Uppercase is kept for table column headers below, which really are labels. */
+.card > h3 { font-family: var(--font-ui); letter-spacing: -0.005em; }
+.card > h2 { font-family: var(--font-ui); letter-spacing: -0.01em; }
+
+/* Table headers get the same treatment, so a table and a section agree about what a label
+   looks like. Already muted and 11px; this adds the tracking that makes uppercase legible. */
+th { text-transform: uppercase; letter-spacing: 0.05em; }
+
+/* ---- Tactile ------------------------------------------------------------------------
+   Interactive things respond; non-interactive things do not. That distinction IS the
+   feedback — a hover state on a row you cannot click teaches the reader a lie about what
+   is clickable, which on an audit tool costs them a click and some trust.
+
+   All of this is inside the existing prefers-reduced-motion collapse, which drops every
+   transition to 0.01ms rather than removing it. */
+.rowlink { transition: background-color 160ms ease, box-shadow 160ms ease; }
+.rowlink:hover { cursor: pointer; }
+/* The accent rail on hover, matching the lead-card treatment: the section's colour is how
+   this page says "this one", and reusing it for hover keeps one vocabulary. */
+.rowlink:hover td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+
+/* Buttons and the disclosure lift very slightly. 1px, not the skill's 2px: these sit in
+   dense table headers where a 2px lift reads as the row jumping. */
+button, .disclose {
+  transition: background-color 160ms ease, border-color 160ms ease, transform 160ms ease;
+}
+button:not(.tab):not(.th-sort):not(.linkish):hover,
+.disclose:hover { transform: translateY(-1px); }
+button:not(.tab):not(.th-sort):not(.linkish):active,
+.disclose:active { transform: translateY(0); }
+
+/* The active tab's bar grows from the label rather than appearing, so switching sections
+   feels connected instead of instant-swapped. */
+.tab[aria-current="page"]::after { transition: left 160ms ease, right 160ms ease; }
 main > .card:first-child,
 main > .grid:first-child > .card {
   border-top: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
