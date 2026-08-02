@@ -434,7 +434,31 @@ cycle means starvation, flat means the checkpoint is merely lagging a burst.
 
 ## Deploying with ArgoCD
 
-Set `argocd.enabled=true`. It adds annotations for two problems that each cost you
+**Set `ingress.host` explicitly. This is not optional under GitOps.**
+
+Everywhere else the host is auto-detected from the cluster's own `ingresses.config/cluster`
+object, so a plain `helm install` needs no flag. ArgoCD renders with `helm template`, which
+runs with **no cluster connection**, so the `lookup` returns nothing. The chart refuses to
+render rather than emit a hostless Ingress — which on OpenShift produces no Route at all,
+leaving a release that syncs green and is unreachable.
+
+```yaml
+# Application.spec.source.helm
+parameters:
+  - name: ingress.host
+    value: group-sync-dashboard.apps.<your-cluster-domain>
+```
+
+Get the domain once with:
+
+```bash
+oc get ingresses.config/cluster -o jsonpath='{.spec.domain}'
+```
+
+The same applies to Flux, `helm template` by hand, and any installer whose identity cannot
+read `ingresses.config/cluster` — it is cluster-scoped and an ordinary user cannot read it.
+
+Then set `argocd.enabled=true`. It adds annotations for two problems that each cost you
 something real if unhandled.
 
 **The PVC gets pruned.** Argo reconciles manifests; it does not run Helm's uninstall path,

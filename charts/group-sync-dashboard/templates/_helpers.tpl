@@ -104,7 +104,7 @@ a meeting.
 {{- if and $cfg $cfg.spec.domain -}}
 {{ printf "%s.%s" (include "gsd.fullname" .) $cfg.spec.domain }}
 {{- else -}}
-{{- fail "ingress.host is not set and the cluster apps domain could not be read. Set it explicitly:\n  --set ingress.host=<name>.$(oc get ingresses.config/cluster -o jsonpath='{.spec.domain}')\nAn Ingress without a host produces NO Route on OpenShift, so the release would install cleanly and be unreachable." -}}
+{{- fail "ingress.host is not set and the cluster apps domain could not be read.\n\nThe domain is normally auto-detected, so a plain `helm install`/`helm upgrade` needs no flag. It cannot be detected in three cases, and one of them is probably yours:\n\n  1. GitOps. ArgoCD, Flux and anything else built on `helm template` render with NO cluster connection, so the lookup returns nothing. Set ingress.host in your Application values.\n  2. `helm template` or `--dry-run` run by hand. Use `--dry-run=server`, or pass the host.\n  3. The installing identity cannot read ingresses.config/cluster. It is cluster-scoped and NOT readable by an ordinary user, so a namespace-scoped installer must be given the host.\n\nSet it with:\n  --set ingress.host=group-sync-dashboard.$(oc get ingresses.config/cluster -o jsonpath='{.spec.domain}')\n\nThis fails the render on purpose. An Ingress without a host produces NO Route on OpenShift, so the alternative is a release that installs cleanly, reports healthy, and is unreachable." -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}
