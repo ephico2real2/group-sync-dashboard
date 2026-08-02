@@ -179,18 +179,30 @@ fi
 # ---------------------------------------------------------------------------
 # Optional deploy
 # ---------------------------------------------------------------------------
-# Rendered to a temp file rather than editing the committed manifest: the external registry
-# ref and the pull secret are environment-specific, and baking them into a tracked file
-# would make the manifest wrong for anyone else.
+# The manifest is updated in place with the released ref, then applied. Rendering to a temp
+# file instead would leave deploy/dashboard.yaml naming a different image than the cluster
+# runs, and a later routine `oc apply` would silently roll the deployment back — verified
+# with --dry-run=server on the CRC path, and very hard to attribute after the fact.
+#
+# The pull secret is still injected only into the rendered copy, since it is environment
+# specific and empty for a public repository.
+python3 - "$REF" <<'PIN'
+import pathlib, re, sys
+ref = sys.argv[1]
+path = pathlib.Path("deploy/dashboard.yaml")
+text = path.read_text()
+new, n = re.subn(r"(?m)^(\s+image: ).*$", lambda m: m.group(1) + ref, text)
+if n != 1:
+    sys.exit(f"expected exactly one image line, found {n}")
+path.write_text(new)
+PIN
+echo "manifest: deploy/dashboard.yaml now pins ${REF}"
+
 RENDERED=$(mktemp -t gsd-deploy).yaml
 python3 - "$REF" "$IMAGE_PULL_SECRET" "$RENDERED" <<'PY'
 import re, sys, pathlib
 ref, pull_secret, out = sys.argv[1], sys.argv[2], sys.argv[3]
 text = pathlib.Path("deploy/dashboard.yaml").read_text()
-
-text, n = re.subn(r"(?m)^(\s+image: ).*$", lambda m: m.group(1) + ref, text)
-if n != 1:
-    sys.exit(f"expected exactly one image line, found {n}")
 
 # imagePullSecrets is added ONLY when one is configured. A public repository needs none,
 # and an empty/omitted secret reference makes the pod fail to schedule rather than fall
