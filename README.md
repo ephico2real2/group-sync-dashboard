@@ -15,202 +15,160 @@ Everything this surfaces is an *absence*, and absences are what a human scanning
 
 | Failure | How it presents without this |
 |---|---|
-| Group referenced by a RoleBinding but absent | nothing — the binding looks healthy and grants nobody |
+| A RoleBinding names a Group that does not exist | nothing — the binding looks healthy and grants nobody |
 | Group synced but empty | nothing — a blank USERS column |
 | CR not honouring its schedule | nothing until you diff timestamps by hand |
 | A group silently stopped being refreshed | nothing — the CR still reports success |
+| A user quietly dropped out of a group | nothing — no event, no log |
 
-## The constraint
+On the reference cluster it finds **9 RoleBindings granting `admin`, `view` and `edit` to
+groups that have never existed** — access reaching nobody, in three namespaces, which
+`oc get rolebinding` reports as perfectly healthy.
 
-**The API keeps no sync history.** A GroupSync CR carries one timestamp
-(`.status.lastSyncSuccessTime`) and each Group carries one of its own
-(`group-sync-operator.redhat-cop.io/sync-time`). So a timeline cannot be fetched — it is
-*accumulated* by polling and storing an observation each time a timestamp changes (§2).
+## Prerequisites
 
-Two consequences worth knowing before reading a screen:
+| Need | For | Notes |
+|---|---|---|
+| `podman` | building the image | Docker works too — the file is named `Containerfile`, which podman finds automatically and `docker build -f Containerfile` accepts |
+| `oc` (or `kubectl`) | deploying | logged in to the target cluster |
+| Python 3.11+ | developing or running locally | 3.11 is the floor; the image ships 3.11 |
+| A container registry | shipping the image | Quay, ECR, Harbor, anything |
+| Cluster admin, once | creating the ClusterRole in `deploy/dashboard.yaml` | the dashboard is read-only and needs no admin at runtime |
 
-* An empty timeline means *this dashboard* has not seen a sync yet. It does not mean the
-  operator never synced.
-* `ReconcileError` is **sticky**. The operator never clears it on a later success, so a CR
-  in perfect health carries both `ReconcileSuccess` and `ReconcileError` at `status: True`
-  indefinitely. The dashboard calls an error current only when its `lastTransitionTime` is
-  newer than the success's — reading the condition's status alone would paint a healthy CR
-  permanently red (§2.1).
+Nothing else. The image is self-contained: SQLite is a library inside the process, not a
+service, so there is no database to run and one container is the whole deployment.
 
-## Run it locally
+## Build and ship
 
-```bash
-python3 -m venv .venv && ./.venv/bin/pip install -e ".[dev]"
-
-# CA bundle from your kubeconfig — preferred over insecureSkipVerify, even for dev
-kubectl config view --raw --minify \
-  -o jsonpath='{.clusters[0].cluster.certificate-authority-data}' | base64 -d > crc-ca.crt
-
-cp clusters.example.yaml clusters.yaml
-export GSD_TOKEN_CRC=$(oc whoami -t)
-./.venv/bin/uvicorn gsd.api:create_app --factory --port 8099
-```
-
-Then open <http://127.0.0.1:8099>.
-
-## Tests
+**External registry — the real path.** Builds this Containerfile offline and pushes to any
+registry your clusters can pull from. No dependency on a cluster's internal registry.
 
 ```bash
-./.venv/bin/python -m pytest tests/ -q                    # unit + Playwright UI
-./.venv/bin/playwright install chromium                   # once, for the UI tests
-
-# optional: smoke against a real cluster
-GSD_TOKEN_CRC=$(oc whoami -t) GSD_LIVE_CONFIG=clusters.yaml \
-  ./.venv/bin/python -m pytest tests/test_live_smoke.py -q
-```
-
-The UI tests run against a *seeded* store, not a live cluster: the states worth testing
-hardest — an overdue CR, a rejected token, a current reconcile error — are exactly the ones
-a healthy cluster never shows, and live counts change while the test runs.
-
-## Configuration
-
-See `clusters.example.yaml`. No token appears in it — only the name of the env var or the
-path of the mounted Secret holding one. The API never returns a token and the browser never
-holds a cluster credential (§9, §11).
-
-`GSD_DB_PATH` overrides `dbPath`, so the config can ship as a ConfigMap that does not need
-to know where the writable volume is mounted.
-
-## RBAC per observed cluster
-
-```bash
-oc create sa group-sync-dashboard -n group-sync-operator
-oc create clusterrole group-sync-reader \
-  --verb=get,list --resource=groupsyncs.redhatcop.redhat.io,groups.user.openshift.io
-oc adm policy add-cluster-role-to-user group-sync-reader \
-  -z group-sync-dashboard -n group-sync-operator
-oc create token group-sync-dashboard -n group-sync-operator --duration=8760h
-```
-
-No `watch`, no write verbs anywhere (§4, §6). Token lifetime is an open question — see §13.
-
-> Verify per cluster rather than assuming: on CRC the Kyverno **admission** controller could
-> not read `groups.user.openshift.io` while the **background** controller could. Being able
-> to read core resources does not imply being able to read Groups.
-
-## Building and shipping
-
-Two paths, deliberately separate.
-
-**External registry (the real one).** Builds this Containerfile offline and pushes to any
-registry every cluster can pull from — Quay by default. No dependency on a cluster's
-internal registry.
-
-```bash
-cp .env.example .env && chmod 600 .env && $EDITOR .env
+cp .env.example .env && chmod 600 .env && $EDITOR .env   # once
 ./build-and-push-external.sh                       # build + push
 ./build-and-push-external.sh --build-only          # no push, no credentials needed
 ./build-and-push-external.sh --deploy              # + roll out to K8S_NAMESPACE
 ./build-and-push-external.sh --create-pull-secret  # private repositories only
 ```
 
-**CRC only.** `scripts/release.sh` pushes to CRC's built-in registry over its default
-route. Convenient on that one machine, portable nowhere.
+Everything is parameterised in `.env` — registry host, namespace, image name, credentials,
+target namespace, pull secret. `.env.example` documents each; `.env` is gitignored.
 
-Both tag images `<version>-<git-sha>` and refuse to build from a dirty tree without
-`--allow-dirty`, because a tag derived from a commit has to describe that commit's source.
-Both verify the commit stamp inside the image before pushing, and read it back out of the
-running pod after deploying. That check exists because the failure it catches actually
-happened here: an image built before a change was deployed after it, and nothing revealed
-the gap because both were called `0.3.1`.
+Images are tagged `<version>-<git-sha>`, so the tag moves whenever the source does. A dirty
+tree is refused unless you pass `--allow-dirty`, which tags `-dirty` rather than claiming a
+commit the image does not match. The commit is stamped into the image, served at
+`/api/version`, shown in the dashboard header, and read back out of the running pod after
+deploy — because "the image was built before the fix and deployed after it" is a real thing
+that happened here, and nothing revealed it.
 
-`/api/version` and the dashboard header report the running commit, so "is my change
-deployed?" is answerable by looking at the page.
+**Local CRC development** lives in [`local-development/`](local-development/README.md).
+The API is documented in [`local-development/API.md`](local-development/API.md); the running
+instance also serves `/docs`, `/redoc` and `/openapi.json`, generated from the code.
 
 ### Credentials
 
-Registry credentials live in `.env`, which is gitignored; `.env.example` carries
-placeholders. The file is **parsed, not sourced** — sourcing would execute it, so a
-placeholder like `<change-me>` becomes a shell redirect and any command substitution in the
-file would run. Login uses `--password-stdin`, never `-p`, keeping the secret out of `ps`
-and shell history.
+`.env` is **parsed, not sourced**. Sourcing executes the file, which makes a `<change-me>`
+placeholder a shell redirect and lets any command substitution inside it run. Login uses
+`--password-stdin`, never `-p`, so the secret stays out of `ps` and shell history.
 
-Use a Quay **robot account** rather than a personal password: it can be revoked on its own.
-If a token is ever pasted somewhere it should not be, regenerate it — exposure is not
-undone by deleting the message.
+Use a registry **robot account** rather than a personal password — it can be revoked on its
+own. If a token is ever pasted where it should not be, regenerate it; exposure is not undone
+by deleting the message.
 
 ### Image pull secrets
 
-Optional, and omitted entirely unless `IMAGE_PULL_SECRET` is set. A public repository needs
-none, and an empty secret reference makes a pod fail to schedule rather than falling back
-to anonymous pull. For a private repository, set the name and run with
-`--create-pull-secret`.
+Optional, and omitted from the deployment entirely unless `IMAGE_PULL_SECRET` is set. A
+public repository needs none, and an empty secret reference makes a pod fail to schedule
+rather than falling back to anonymous pull. For a private repository, set the name and run
+with `--create-pull-secret`.
 
-Runs as a non-root UID with a group-writable `/data`, so it works both standalone and under
-OpenShift's arbitrary-UID SCC. One worker on purpose: the poller runs in-process and owns
-the SQLite file, so a second worker would mean two pollers racing on it.
+## Deploy
 
-## API
-
-All read-only (§11).
-
-```text
-GET /api/clusters                                     id, reachable, last_poll, error, counts
-GET /api/clusters/{id}/groupsyncs                     schedule, filter, last_sync, next_expected, state
-GET /api/clusters/{id}/groupsyncs/{name}/events       the accumulated sync timeline
-GET /api/clusters/{id}/groups?state=all|empty|unattributed
-GET /api/clusters/{id}/groups/{name}                  members, owner, and membership changes
-GET /api/clusters/{id}/users                          every user, with a group count
-GET /api/clusters/{id}/users/{name}                   reverse lookup: every group a user is in
-GET /api/clusters/{id}/membership-changes             who joined or left, cluster-wide
-GET /api/alerts                                       computed, across all clusters
-GET /healthz  /readyz
+```bash
+oc apply -f deploy/dashboard.yaml
 ```
 
-`state` is computed, never stored:
+One instance **per cluster**, each observing itself through the pod's projected
+ServiceAccount token (§13.1). kubelet rotates that token and it is re-read on every poll, so
+there is no long-lived credential to mint or expire. Multi-cluster still works — add entries
+to the ConfigMap — but see the authorization caveat in `docs/PLAN_oauth_proxy.md`.
 
-```text
-ok        age <= 1 interval + grace
-late      age >  1 interval + grace
-overdue   age >  2 intervals + grace     -> alert
-unknown   unreachable, no sync seen yet, or an unparseable schedule
+RBAC is read-only: `get`/`list` on groupsyncs, groups, rolebindings, clusterrolebindings. No
+`watch`, no write verbs, and deliberately not `roles`/`clusterroles`, since role rules are
+never evaluated.
+
+> Verify per cluster rather than assuming: on CRC the Kyverno **admission** controller could
+> not read `groups.user.openshift.io` while the **background** controller could. Being able
+> to read core resources does not imply being able to read Groups.
+
+## Monitoring
+
+`/metrics` serves Prometheus exposition; `deploy/dashboard.yaml` ships a ServiceMonitor and
+four alerting rules. Enabling OpenShift user-workload monitoring is a separate, deliberate
+step — it is off by default and costs a Prometheus + Thanos Ruler pair. The one-liner is in
+the manifest.
+
+Cardinality is bounded on purpose: series are emitted per cluster and per GroupSync CR only,
+never per group or per user. That is a scale concern — 500 groups must not mean 500 series —
+and a disclosure one, since `/metrics` is unauthenticated so a ServiceMonitor can reach it.
+
+`gsd_groupsync_last_sync_timestamp_seconds` is a unix timestamp rather than a precomputed age
+or boolean, so the threshold lives in the alert where it can be seen and tuned:
+
+```promql
+(time() - gsd_groupsync_last_sync_timestamp_seconds) > 7200
 ```
 
-`grace` (default 120s) exists because the literal thresholds flap. A sync lands 3–14s after
-its cron minute and we observe it up to a poll interval later, so a healthy CR's observed
-age exceeds one interval for ~70s at the end of *every* cycle. Without grace the state
-blinks `late` once per cycle and operators learn to ignore it.
+## Develop
 
-`next_expected` uses a real cron parser. `0 * * * *` and `*/30 * * * *` both look hourly if
-you only measure gaps between events — they differ only at `:30`.
+```bash
+python3 -m venv .venv && ./.venv/bin/pip install -e ".[dev]"
+./.venv/bin/playwright install chromium        # once, for the UI tests
+./.venv/bin/python -m pytest tests/ -q
+```
 
-## Membership
+Running against a real cluster: [`local-development/README.md`](local-development/README.md).
 
-Group detail shows the members themselves, not just a count: a count answers "is this group
-empty?", only the names answer "why does this person have access?".
+UI tests run against a *seeded* store rather than a live cluster. The states worth testing
+hardest — an overdue CR, a rejected token, a current reconcile error — are exactly the ones a
+healthy cluster never shows, and live counts change while the test runs.
 
-Membership is accumulated the same way sync events are, because the API keeps no history:
+## What it shows
 
-* **Member since** is when *this dashboard* first observed the user in the group — not when
-  LDAP added them. It cannot predate the dashboard.
-* **Membership changes** record joins and departures. A user quietly dropping out of a group
-  is the invisible absence this exists for: nothing logs it, no event fires, and the group
-  looks perfectly healthy afterwards.
-* Each change carries the group's `sync-time` at the moment it was seen, which distinguishes
-  *"the operator did this"* from *"someone edited the object"*. A change stamped with a stale
-  sync-time did not come from a sync.
-* **Reverse lookup** (`/users/{name}`) answers the RBAC question the cluster can only answer
-  by scanning every Group object by hand.
+**Overview** — per cluster: reachable, CR count, group count, empty and unattributed groups,
+bindings needing review, oldest last sync.
 
-## Deployment model
+**GroupSync detail** — schedule, LDAP filter, last sync, next expected (from a real cron
+parser), the accumulated sync timeline, and the groups the CR owns.
 
-**One instance per cluster**, each observing itself via the pod's projected ServiceAccount
-token (§13.1). That token is rotated by kubelet and re-read on every poll, so there is no
-long-lived credential to mint or expire.
+**Groups** — every group, filterable to `empty` and `unattributed`. Drill in for members,
+when each was first seen, the membership change log, and the access the group grants.
 
-Multi-cluster is still supported — add entries to the config. Be aware it reopens the
-authorization gap in `docs/PLAN_oauth_proxy.md`: OAuth authenticates against the hosting
-cluster only, so one instance holding several clusters' data can show a user membership from
-a cluster they have no rights on.
+**Users** — the reverse lookup: every group a user belongs to and every binding that reaches
+them, each row naming the group that confers it. The cluster can only answer this by scanning
+every Group object by hand.
 
-## Not in this slice
+**Access granted** — every group-subject binding, classified: `granted`, `dangling` (the
+group was operator-managed and has disappeared), `unresolved` (names a group that has never
+existed), `built_in` (Kubernetes virtual groups, expected and not a fault).
 
-Binding health (dangling RoleBinding subjects), log-scrape enrichment, and the group-count
-cliff alert — the last needs a floor as well as a ratio, since a CR owning three groups
-loses 33% by losing one (§8, §14).
+Direct bindings only. Role rules are never fetched or expanded, and the UI says so — an
+incomplete effective-permission calculation could show access as absent when it is not, and a
+false negative there gets an incident closed wrongly.
+
+## Two things to know before reading a screen
+
+**The API keeps no history.** A CR carries one timestamp and each Group carries one of its
+own, so timelines and membership changes are *accumulated* by polling (§2). An empty timeline
+means this dashboard has not seen a sync yet — not that the operator never synced.
+
+**`ReconcileError` is sticky.** The operator never clears it on a later success, so a healthy
+CR carries both `ReconcileSuccess` and `ReconcileError` at `status: True` indefinitely. An
+error counts as current only when its `lastTransitionTime` is newer than the success's;
+reading the condition's status alone would paint a healthy CR permanently red (§2.1).
+
+## Not built yet
+
+Effective-permission expansion, log-scrape enrichment, the group-count cliff alert (needs a
+floor as well as a ratio), and authentication in front of the Route — see
+`docs/PLAN_oauth_proxy.md`, researched and deliberately parked.

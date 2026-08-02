@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# CRC-ONLY convenience release. For anything other than a local CRC cluster use
-# ../build-and-push-external.sh, which builds the same Containerfile and pushes to an external
-# registry (Quay) that every cluster can pull from. This script talks to CRC's built-in
-# registry over its default route and is not portable off that machine.
+# CRC-ONLY convenience release. For anything else use ../build-and-push-external.sh, which
+# builds the same Containerfile and pushes to an external registry every cluster can pull
+# from. This one talks to CRC's built-in registry over its default route and is portable
+# nowhere else.
 #
 # Build, push and deploy an image tagged with the git commit it was built from.
 #
@@ -12,9 +12,9 @@
 # both were called "0.3.1". A commit-derived tag makes that impossible to miss: the tag
 # changes when the source does.
 #
-#   ./scripts/release.sh              build + push + deploy
-#   ./scripts/release.sh --build-only
-#   ./scripts/release.sh --allow-dirty   build from an uncommitted tree (tagged -dirty)
+#   ./local-development/release-crc.sh              build + push + deploy
+#   ./local-development/release-crc.sh --build-only
+#   ./local-development/release-crc.sh --allow-dirty   uncommitted tree (tagged -dirty)
 #
 # Immutability rule: a given <version>-<sha> tag always means the same source. Pushing a
 # different image under an existing tag is refused rather than silently overwritten.

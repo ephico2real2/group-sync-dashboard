@@ -194,6 +194,11 @@ kind: Service
 metadata:
   name: group-sync-dashboard
   namespace: group-sync-dashboard
+  # REQUIRED by the ServiceMonitor below, which selects Services by their metadata labels
+  # — not by spec.selector. Without this the ServiceMonitor matches nothing and scrapes
+  # nothing, while both objects exist and look correct. Verified with:
+  #   oc get svc -l app=group-sync-dashboard
+  labels: {app: group-sync-dashboard}
 spec:
   selector: {app: group-sync-dashboard}
   ports:
