@@ -222,6 +222,9 @@ spec:
             {{- if .Values.oauthProxy.sar }}
             - -openshift-sar={{ .Values.oauthProxy.sar }}
             {{- end }}
+            {{- if .Values.oauthProxy.apiTokenAccess.enabled }}
+            - -openshift-delegate-urls={{ .Values.oauthProxy.apiTokenAccess.delegateUrls }}
+            {{- end }}
             {{- if .Values.oauthProxy.skipProviderButton }}
             - -skip-provider-button
             {{- end }}

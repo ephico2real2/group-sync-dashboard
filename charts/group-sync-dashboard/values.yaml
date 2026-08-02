@@ -585,6 +585,57 @@ oauthProxy:
   #   sar: '{"resource":"groups","resourceAPIGroup":"user.openshift.io","verb":"list"}'
   sar: ""
 
+  # ---------------------------------------------------------------------------
+  # Direct API access with a bearer token
+  # ---------------------------------------------------------------------------
+  # Lets `curl -H "Authorization: Bearer $(oc whoami -t)" https://<host>/api/...` work.
+  #
+  # WHY IT IS OFF WITHOUT THIS. The proxy authenticates BROWSER sessions with a cookie. A
+  # request carrying a bearer token and no cookie is simply unauthenticated as far as it is
+  # concerned, so /api returns 403 and the body is the login page — measured, and confusing,
+  # because the token is perfectly valid.
+  #
+  # -openshift-delegate-urls is the flag that changes it. Per the upstream README it applies
+  # ONLY to requests carrying `Authorization: Bearer` or a client certificate, which is
+  # exactly the machine case: browser sessions keep using the cookie flow untouched, and the
+  # token path is authorised by delegating to the API server.
+  #
+  # THE FLAG IS NOT ENOUGH ON ITS OWN. Delegated authorization means the PROXY calls
+  # TokenReview and SubjectAccessReview, so its ServiceAccount needs system:auth-delegator.
+  # Enabling this therefore also renders a ClusterRoleBinding — see rbac.yaml for what that
+  # grants and what it does not.
+  #
+  # WHAT THE REVIEW REQUIRES. The default asks the caller to be able to `list groups`
+  # cluster-wide, which is the honest gate: the API returns group membership, so anyone who
+  # can read it here could already read it with `oc get groups`. Tighten it to a namespace or
+  # a different resource if your access model differs.
+  #
+  # SCOPED TO /api DELIBERATELY. The prefix map does not cover "/", so the UI keeps its
+  # browser-only door and a token cannot be used to drive the HTML. Measured: with this on,
+  # `curl -H "Authorization: Bearer $(oc whoami -t)" .../api/clusters` returns 200 while the
+  # same token against "/" still returns 403.
+  #
+  # TWO SIDES, AND THEY NEED DIFFERENT THINGS. Worth being precise, because conflating them
+  # leads to over-granting:
+  #
+  #   THE PROXY'S ServiceAccount needs system:auth-delegator. It is the party that calls
+  #   TokenReview and SubjectAccessReview, so it needs create on both. The chart binds it
+  #   when this is enabled.
+  #
+  #   THE CALLER — an LDAP account, or a service account an aggregator runs as — needs ONLY
+  #   the permission named in delegateUrls above. It does NOT need system:auth-delegator, and
+  #   granting it would let every caller validate arbitrary tokens for no benefit. Measured:
+  #   a ServiceAccount that cannot `list groups` gets 403; an identity that can gets 200, and
+  #   neither was given auth-delegator to achieve it.
+  #
+  # So to let a reporting account through, grant it exactly the read the review names:
+  #   oc create clusterrole gsd-api-reader \
+  #     --verb=list --resource=groups.user.openshift.io
+  #   oc adm policy add-cluster-role-to-user gsd-api-reader <ldap-user-or-sa>
+  apiTokenAccess:
+    enabled: false
+    delegateUrls: '{"/api":{"resource":"groups","group":"user.openshift.io","verb":"list"}}'
+
   # The interstitial page that offers exactly one login choice.
   #
   # true skips it and redirects straight to the cluster's OAuth server. That is one fewer

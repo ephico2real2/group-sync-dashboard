@@ -27,18 +27,21 @@ HOW IT AUTHENTICATES, AND THE ONE THING THAT DOES NOT WORK YET
 
 Two transports, tried in order:
 
-  1. DIRECT — https://<host>/api with `Authorization: Bearer <token>`. This is the one you
-     want for an external aggregator: no cluster tooling, no port-forward, just a token and
-     a URL. MEASURED: it returns 403 today. The oauth-proxy in front of the dashboard
-     authenticates browser sessions by cookie and does not accept bearer tokens unless it is
-     started with -openshift-delegate-urls. Enabling that is a chart change plus almost
-     certainly the system:auth-delegator role on the ServiceAccount, since delegated
-     authorization means the proxy itself calls TokenReview and SubjectAccessReview. Until
-     that lands, this path will fail and the script falls through.
+  1. DIRECT — https://<host>/api with `Authorization: Bearer <token>`. This is the one an
+     external aggregator wants: no cluster tooling, no port-forward, just a token and a URL.
+     It needs `oauthProxy.apiTokenAccess.enabled=true` on the chart, which adds
+     -openshift-delegate-urls for /api and binds system:auth-delegator to the PROXY's
+     ServiceAccount. Without it the proxy only understands browser cookies and /api returns
+     403 with the login page as the body — a valid token, rejected, confusingly.
 
-  2. PORT-FORWARD — `oc port-forward` to the pod and read 127.0.0.1. Works today, uses the
-     credentials you already have: `oc login` with an LDAP account IS the LDAP
-     authentication, so nothing separate is needed. Requires oc and a reachable cluster.
+     The CALLER needs only the permission the review names — `list groups` cluster-wide by
+     default — and specifically NOT system:auth-delegator. Measured: a ServiceAccount that
+     cannot list groups gets 403, an identity that can gets 200, and neither needed
+     auth-delegator. `oc login` with an LDAP account is therefore all the authentication
+     required, which is the whole point.
+
+  2. PORT-FORWARD — `oc port-forward` to the pod and read 127.0.0.1. The fallback, for a
+     cluster where apiTokenAccess is off. Requires oc and a reachable cluster.
 
 The report is identical either way, so the transport can be swapped without touching the
 content — which is the point of writing it this way rather than hardcoding port-forward.
