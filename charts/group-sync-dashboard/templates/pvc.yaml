@@ -1,0 +1,18 @@
+{{- if and .Values.persistence.enabled (not .Values.persistence.existingClaim) }}
+# The accumulated timeline and membership history cannot be re-fetched from the API
+# (PLAN §2), so this is the one piece of genuinely irreplaceable state.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "gsd.fullname" . }}-data
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "gsd.labels" . | nindent 4 }}
+spec:
+  accessModes: [{{ .Values.persistence.accessMode }}]
+  {{- with .Values.persistence.storageClass }}
+  storageClassName: {{ . }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.size }}
+{{- end }}

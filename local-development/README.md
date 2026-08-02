@@ -1,8 +1,9 @@
 # Local development
 
-Everything here is for running against a local CRC cluster. None of it is needed to build,
-ship or deploy the dashboard — that is `../build-and-push-external.sh`, documented in the
-[root README](../README.md).
+The application, its build tooling and its manifests. The repository root is kept clear for
+the Helm chart that will be generated from `deploy/dashboard.yaml`.
+
+Run everything below from **this** directory.
 
 | File | What it is |
 |---|---|
@@ -15,18 +16,16 @@ ship or deploy the dashboard — that is `../build-and-push-external.sh`, docume
 ## Run the dashboard against CRC
 
 ```bash
-cd ..
 python3 -m venv .venv && ./.venv/bin/pip install -e ".[dev]"
 
 # CRC's CA, so TLS is verified rather than skipped even in development
 kubectl config view --raw --minify \
   -o jsonpath='{.clusters[0].cluster.certificate-authority-data}' \
-  | base64 -d > local-development/crc-ca.crt
+  | base64 -d > crc-ca.crt
 
-cp local-development/clusters.example.yaml local-development/clusters.yaml
+cp clusters.example.yaml clusters.yaml
 export GSD_TOKEN_CRC=$(oc whoami -t)
-GSD_CONFIG=local-development/clusters.yaml ./.venv/bin/uvicorn gsd.api:create_app \
-  --factory --port 8099
+GSD_CONFIG=clusters.yaml ./.venv/bin/uvicorn gsd.api:create_app --factory --port 8099
 ```
 
 Then <http://127.0.0.1:8099>.
@@ -38,8 +37,8 @@ follows you into a cluster that matters.
 ## Release to CRC's internal registry
 
 ```bash
-./local-development/release-crc.sh              # build + push + deploy
-./local-development/release-crc.sh --build-only
+./release-crc.sh              # build + push + deploy
+./release-crc.sh --build-only
 ```
 
 Same tagging and verification rules as the external script: `<version>-<git-sha>`, refuses a
@@ -54,7 +53,7 @@ to attribute after the fact.
 ## Live smoke test
 
 ```bash
-GSD_TOKEN_CRC=$(oc whoami -t) GSD_LIVE_CONFIG=local-development/clusters.yaml \
+GSD_TOKEN_CRC=$(oc whoami -t) GSD_LIVE_CONFIG=clusters.yaml \
   ./.venv/bin/python -m pytest tests/test_live_smoke.py -q
 ```
 

@@ -1,0 +1,18 @@
+apiVersion: v2
+name: group-sync-dashboard
+description: Read-only observability for the redhat-cop group-sync-operator
+type: application
+
+# version  — the CHART version, bumped when templates or defaults change.
+# appVersion — the application version. The image tag is set independently in values.yaml
+#              (image.tag), because the build script writes the exact <version>-<git-sha>
+#              there and that must not be confused with the chart's own versioning.
+version: 0.1.0
+appVersion: "0.5.2"
+
+keywords: [openshift, ldap, rbac, groupsync, observability]
+home: https://github.com/ephico2real2/group-sync-dashboard
+sources:
+  - https://github.com/ephico2real2/group-sync-dashboard
+maintainers:
+  - name: ephico2real

@@ -1,0 +1,28 @@
+{{ include "gsd.fullname" . }} deployed to namespace {{ .Release.Namespace }}.
+
+Image: {{ include "gsd.image" . }}
+
+{{- if .Values.route.enabled }}
+
+Route:
+  oc get route {{ include "gsd.fullname" . }} -n {{ .Release.Namespace }} -o jsonpath='{.spec.host}'
+{{- end }}
+
+Confirm what is actually running — the pod reports the commit it was built from:
+  curl -sk https://$(oc get route {{ include "gsd.fullname" . }} -n {{ .Release.Namespace }} -o jsonpath='{.spec.host}')/api/version
+
+{{- if not .Values.persistence.enabled }}
+
+WARNING: persistence is disabled. The sync timeline and membership history are accumulated
+by polling and cannot be re-fetched from the API, so they reset on every restart.
+{{- end }}
+{{- if gt (int .Values.replicaCount) 1 }}
+
+WARNING: replicaCount is {{ .Values.replicaCount }}. The poller owns a SQLite file and there
+is no leader election, so extra replicas mean concurrent writers on one database.
+{{- end }}
+{{- if .Values.route.enabled }}
+
+NOTE: the Route has no authentication and the dashboard exposes group membership. Do not
+expose it on a shared cluster until that is resolved.
+{{- end }}

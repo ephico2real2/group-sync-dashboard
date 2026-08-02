@@ -26,5 +26,3 @@ build/
 *.dockerconfigjson
 auth.json
 
-local-development/clusters.yaml
-local-development/*.db*

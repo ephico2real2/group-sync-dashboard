@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "gsd.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  # These labels are REQUIRED by the ServiceMonitor, which selects Services by their
+  # metadata labels — not by spec.selector. Without them it matches nothing and scrapes
+  # nothing while both objects look correct. That bug was found on this deployment.
+  labels: {{- include "gsd.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  selector: {{- include "gsd.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: http

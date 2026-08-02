@@ -5,7 +5,7 @@
 
 pollIntervalSeconds: 60      # PLAN §6 — 60x finer than the fastest schedule in practice
 scheduleGraceSeconds: 120    # scheduler latency + poll lag, before a CR is called late
-dbPath: local-development/gsd.db
+dbPath: gsd.db
 
 clusters:
   # Local development against CRC: token from the environment.
@@ -13,7 +13,7 @@ clusters:
   - name: crc-local
     apiUrl: https://api.crc.testing:6443
     tokenEnv: GSD_TOKEN_CRC
-    caBundleFile: local-development/crc-ca.crt   # extracted from kubeconfig; prefer this to skipping verify
+    caBundleFile: crc-ca.crt   # extracted from kubeconfig; prefer this to skipping verify
     enabled: true
 
   # In-cluster: the ServiceAccount token is mounted, so read it from the filesystem.

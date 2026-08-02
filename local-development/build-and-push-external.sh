@@ -11,6 +11,8 @@
 #   ./build-and-push-external.sh --build-only          # no push, no credentials needed
 #   ./build-and-push-external.sh --deploy              # also roll it out to K8S_NAMESPACE
 #   ./build-and-push-external.sh --create-pull-secret  # private repo: create/refresh the secret
+#   ./build-and-push-external.sh --update-values       # build, push, and write the ref into
+#                                                      # the chart's values.yaml for Helm
 #
 # Configuration comes from .env (gitignored) or the environment. Credentials are never
 # written to disk by this script, never echoed, and never passed on a command line that
@@ -22,12 +24,14 @@ cd "$(dirname "$0")"
 BUILD_ONLY=false
 DEPLOY=false
 CREATE_PULL_SECRET=false
+UPDATE_VALUES=false
 ALLOW_DIRTY=false
 for arg in "$@"; do
   case "$arg" in
     --build-only)         BUILD_ONLY=true ;;
     --deploy)             DEPLOY=true ;;
     --create-pull-secret) CREATE_PULL_SECRET=true ;;
+    --update-values)      UPDATE_VALUES=true ;;
     --allow-dirty)        ALLOW_DIRTY=true ;;
     -h|--help)            sed -n '2,20p' "$0"; exit 0 ;;
     *) echo "unknown argument: $arg" >&2; exit 2 ;;
@@ -150,6 +154,39 @@ echo "login   : ok as ${REGISTRY_USERNAME}"
 
 podman push "${REF}"
 echo "pushed  : ${REF}"
+
+# ---------------------------------------------------------------------------
+# Optional: hand the built image to the Helm chart
+# ---------------------------------------------------------------------------
+# This is the Helm path: the script's job ends at producing an image and recording where it
+# is. `helm upgrade` does the deploying, so values.yaml — not a patched manifest — is the
+# record of what is deployed.
+#
+# Only image.repository and image.tag are touched. Rewriting more would silently discard
+# whatever else the operator has tuned in that file.
+if [ "$UPDATE_VALUES" = true ]; then
+  VALUES="${VALUES_FILE:-../charts/group-sync-dashboard/values.yaml}"
+  if [ ! -f "$VALUES" ]; then
+    echo "ERROR: values file not found: ${VALUES}" >&2
+    echo "       set VALUES_FILE to point at your chart's values.yaml" >&2
+    exit 1
+  fi
+  python3 - "$VALUES" "${REGISTRY}/${REGISTRY_NAMESPACE}/${IMAGE_NAME}" "$TAG" <<'VALS'
+import pathlib, re, sys
+path, repo, tag = pathlib.Path(sys.argv[1]), sys.argv[2], sys.argv[3]
+text = path.read_text()
+text, n_repo = re.subn(r"(?m)^(  repository: ).*$", lambda m: m.group(1) + repo, text, count=1)
+text, n_tag = re.subn(r'(?m)^(  tag: ).*$', lambda m: m.group(1) + f'"{tag}"', text, count=1)
+if n_repo != 1 or n_tag != 1:
+    sys.exit(f"expected one repository and one tag line under image:, found {n_repo}/{n_tag}")
+path.write_text(text)
+VALS
+  echo "values  : ${VALUES} now pins ${TAG}"
+  echo
+  echo "NEXT: deploy with Helm"
+  echo "  helm upgrade --install group-sync-dashboard ../charts/group-sync-dashboard \\"
+  echo "    --namespace ${K8S_NAMESPACE} --create-namespace"
+fi
 
 # ---------------------------------------------------------------------------
 # Optional: pull secret, only needed for a PRIVATE repository

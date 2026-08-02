@@ -20,7 +20,7 @@
 # different image under an existing tag is refused rather than silently overwritten.
 
 set -euo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")"
 
 REGISTRY="${REGISTRY:-default-route-openshift-image-registry.apps-crc.testing}"
 NAMESPACE="${NAMESPACE:-group-sync-dashboard}"

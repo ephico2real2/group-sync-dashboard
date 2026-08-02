@@ -1,0 +1,75 @@
+{{- if .Values.monitoring.serviceMonitor.enabled }}
+# Requires the Prometheus Operator CRDs. Disabled by default because applying this where
+# they are absent fails the whole install.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "gsd.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gsd.labels" . | nindent 4 }}
+    {{- with .Values.monitoring.serviceMonitor.labels }}{{- toYaml . | nindent 4 }}{{- end }}
+spec:
+  selector:
+    matchLabels: {{- include "gsd.selectorLabels" . | nindent 6 }}
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: {{ .Values.monitoring.serviceMonitor.interval }}
+      scrapeTimeout: {{ .Values.monitoring.serviceMonitor.scrapeTimeout }}
+{{- end }}
+{{- if .Values.monitoring.prometheusRule.enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "gsd.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gsd.labels" . | nindent 4 }}
+    {{- with .Values.monitoring.prometheusRule.labels }}{{- toYaml . | nindent 4 }}{{- end }}
+spec:
+  groups:
+    - name: {{ include "gsd.fullname" . }}
+      rules:
+        # The metric is a unix timestamp, not a precomputed age, so the threshold is
+        # visible and tunable here rather than baked into the exporter.
+        - alert: GroupSyncOverdue
+          expr: (time() - gsd_groupsync_last_sync_timestamp_seconds) > {{ .Values.monitoring.prometheusRule.overdueSeconds }}
+          for: {{ .Values.monitoring.prometheusRule.for.overdue }}
+          labels: {severity: warning}
+          annotations:
+            summary: "GroupSync {{ `{{ $labels.groupsync }}` }} has not synced recently"
+            description: >-
+              Last successful sync was {{ `{{ $value | humanizeDuration }}` }} ago on
+              cluster {{ `{{ $labels.cluster }}` }}.
+
+        # The group was operator-managed and has disappeared, so the binding grants nobody
+        # while `oc get rolebinding` shows a healthy object.
+        - alert: DanglingRoleBinding
+          expr: gsd_bindings_total{finding="dangling"} > 0
+          for: {{ .Values.monitoring.prometheusRule.for.dangling }}
+          labels: {severity: critical}
+          annotations:
+            summary: "{{ `{{ $value }}` }} RoleBinding(s) grant access to a group that no longer exists"
+
+        # Catches a dead poll loop, which the health endpoints structurally cannot:
+        # /healthz is unconditional and /readyz only reads the store, so both stay green
+        # while the dashboard serves frozen data.
+        - alert: GroupSyncDashboardNotPolling
+          expr: (time() - gsd_cluster_last_poll_timestamp_seconds) > {{ .Values.monitoring.prometheusRule.notPollingSeconds }}
+          for: {{ .Values.monitoring.prometheusRule.for.notPolling }}
+          labels: {severity: critical}
+          annotations:
+            summary: "Dashboard has not polled {{ `{{ $labels.cluster }}` }} recently"
+            description: >-
+              The data shown is stale. The pod may be running and reporting healthy while
+              its poll loop has stopped.
+
+        - alert: GroupSyncClusterUnreachable
+          expr: gsd_cluster_up == 0
+          for: {{ .Values.monitoring.prometheusRule.for.unreachable }}
+          labels: {severity: warning}
+          annotations:
+            summary: "Dashboard cannot poll cluster {{ `{{ $labels.cluster }}` }}"
+{{- end }}

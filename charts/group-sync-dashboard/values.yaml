@@ -1,0 +1,211 @@
+# Defaults reproduce exactly what is running today, so `helm install` with no overrides
+# yields the deployment that was verified on the cluster. Everything below is here because
+# it is plausibly environment-specific; anything genuinely invariant stays in the templates.
+
+# ---------------------------------------------------------------------------
+# Image
+# ---------------------------------------------------------------------------
+image:
+  # repository and tag are written by local-development/build-and-push-external.sh, which
+  # tags <version>-<git-sha>. Editing them by hand works, but the script keeps them
+  # consistent with an image that actually exists in the registry.
+  repository: quay.io/ephico2real/group-sync-dashboard
+  tag: ""            # empty -> falls back to Chart.appVersion
+  pullPolicy: Always
+
+  # Only needed for a PRIVATE registry. Leave empty for a public repository: an empty
+  # secret reference makes a pod fail to schedule rather than falling back to anonymous
+  # pull, so it must be absent rather than blank.
+  pullSecrets: []
+  # pullSecrets:
+  #   - name: quay-pull-secret
+
+nameOverride: ""
+fullnameOverride: ""
+
+# ---------------------------------------------------------------------------
+# Workload
+# ---------------------------------------------------------------------------
+# Keep at 1. The poller runs in-process and owns a SQLite file on a ReadWriteOnce volume,
+# so a second replica means two pollers writing the same database. There is no leader
+# election; raising this does not scale the dashboard, it corrupts it.
+replicaCount: 1
+
+# Recreate, not RollingUpdate, for the same reason: overlapping pods contend for the volume.
+strategy: Recreate
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+podAnnotations: {}
+podLabels: {}
+
+# ---------------------------------------------------------------------------
+# Probes
+# ---------------------------------------------------------------------------
+# Neither probe is gated on a reachable cluster: an unreachable cluster is a thing this
+# dashboard exists to DISPLAY, so failing a probe for one would take it down exactly when
+# it has something to report.
+#
+# The 1s default timeout is deliberately not used. On a host that suspends and resumes,
+# every in-flight probe fails with "context deadline exceeded" and liveness kills a healthy
+# process — observed here, and it cascaded into a ~4h outage. Liveness is the more forgiving
+# of the two because a failed readiness only removes the pod from the Service, while a
+# failed liveness destroys in-flight state and forces an image re-pull.
+probes:
+  liveness:
+    enabled: true
+    path: /healthz
+    initialDelaySeconds: 10
+    periodSeconds: 30
+    timeoutSeconds: 5
+    failureThreshold: 6
+  readiness:
+    enabled: true
+    path: /readyz
+    initialDelaySeconds: 5
+    periodSeconds: 15
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+# ---------------------------------------------------------------------------
+# Application configuration
+# ---------------------------------------------------------------------------
+config:
+  # PLAN §6 — 60x finer than the fastest schedule seen in practice.
+  pollIntervalSeconds: 60
+
+  # Slack before a CR is called late. Without it the state flaps every cycle: a sync lands
+  # 3-14s after its cron minute and is observed up to a poll interval later, so a healthy
+  # CR briefly exceeds one interval on EVERY pass.
+  scheduleGraceSeconds: 120
+
+  # Bindings are listed across every namespace, far more expensive than the two group
+  # calls, and they change on administrative action rather than on a schedule. At 100x the
+  # reference cluster a refresh is ~154 paged requests, so this is deliberately slower.
+  bindingIntervalSeconds: 300
+
+  requestTimeoutSeconds: 15
+
+# DEBUG | INFO | WARNING | ERROR | CRITICAL.
+# DEBUG adds per-poll timing, HTTP request lines, page counts and the countdown to the next
+# binding refresh. Safe to leave on briefly; chatty at one line or more per poll per cluster.
+logLevel: INFO
+
+# Clusters to observe. The default observes the cluster the pod runs on, using its own
+# projected ServiceAccount token — which kubelet rotates and the app re-reads every poll, so
+# there is no long-lived credential to mint or expire.
+#
+# Adding entries here enables multi-cluster, but note the authorization caveat in
+# docs/PLAN_oauth_proxy.md: OAuth authenticates against the HOSTING cluster only, so one
+# instance holding several clusters' data can show a user membership from a cluster they
+# have no rights on.
+clusters:
+  - name: crc-local
+    apiUrl: https://kubernetes.default.svc
+    tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+    caBundleFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+    enabled: true
+
+# ---------------------------------------------------------------------------
+# Storage
+# ---------------------------------------------------------------------------
+# The accumulated sync timeline and membership history are the ONLY things that cannot be
+# re-fetched from the API (PLAN §2). An emptyDir would silently reset them on every restart,
+# so persistence defaults to on.
+persistence:
+  enabled: true
+  size: 1Gi
+  accessMode: ReadWriteOnce
+  storageClass: ""     # "" -> cluster default
+  existingClaim: ""    # set to reuse a claim instead of creating one
+
+# ---------------------------------------------------------------------------
+# RBAC
+# ---------------------------------------------------------------------------
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+rbac:
+  # Creates a ClusterRole + binding granting get/list on groupsyncs, groups, rolebindings
+  # and clusterrolebindings. No watch, no write verbs anywhere.
+  create: true
+
+  # RoleBindings/ClusterRoleBindings power the "Access granted" view and dangling-binding
+  # detection. Disable to drop that grant; the dashboard degrades to group data only.
+  bindings: true
+
+# ---------------------------------------------------------------------------
+# Networking
+# ---------------------------------------------------------------------------
+service:
+  type: ClusterIP
+  port: 8080
+
+# NOTE: the Route has NO authentication. The dashboard aggregates group membership, which is
+# sensitive. Do not expose it on a shared cluster until that is resolved — see
+# docs/PLAN_oauth_proxy.md, which is researched and parked.
+route:
+  enabled: true
+  host: ""             # "" -> OpenShift generates one
+  annotations: {}
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+
+ingress:
+  # For non-OpenShift clusters, where Route does not exist.
+  enabled: false
+  className: ""
+  annotations: {}
+  host: ""
+  tls: []
+
+# ---------------------------------------------------------------------------
+# Monitoring
+# ---------------------------------------------------------------------------
+# Both default OFF: they need the Prometheus Operator CRDs, and applying them where those
+# CRDs are absent fails the install outright. On CRC monitoring is disabled at the CVO
+# level, so they would be inert even if applied.
+monitoring:
+  serviceMonitor:
+    enabled: false
+    # 30s: every series is recomputed from SQLite on scrape and each scrape takes the
+    # store's lock. Faster buys no resolution — the data only changes once per poll.
+    interval: 30s
+    scrapeTimeout: 10s
+    labels: {}
+
+  prometheusRule:
+    enabled: false
+    labels: {}
+    # Thresholds live here rather than inside the exporter, so they can be seen and tuned.
+    # The metric is a unix timestamp, so the rule expresses staleness against real time.
+    overdueSeconds: 7200      # GroupSync has not synced for this long
+    notPollingSeconds: 600    # the dashboard itself has stopped polling
+    for:
+      overdue: 10m
+      dangling: 15m
+      notPolling: 5m
+      unreachable: 15m
