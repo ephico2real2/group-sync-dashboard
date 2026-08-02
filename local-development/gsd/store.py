@@ -152,7 +152,36 @@ CREATE TABLE IF NOT EXISTS rbac_group_binding (
     role_name           TEXT NOT NULL,
     group_name          TEXT NOT NULL,
     observed_at         TEXT NOT NULL,
+    -- Provenance (migration 1). managed_source is the policy operator's config-source
+    -- label; NULL means hand-made. exception is the operator-acknowledged justification
+    -- for a deliberate hand-made binding, carried as an annotation on the object itself.
+    managed_source      TEXT,
+    exception           TEXT,
     PRIMARY KEY(cluster_id, binding_kind, binding_namespace, binding_name, group_name)
+);
+
+-- Health of the namespace-configuration-operator's CRs, replaced on the binding cadence.
+-- Reconcile conditions ONLY: these CRs template the RoleBindings that give synced groups
+-- their access, so a failing one means RBAC silently stops reconciling — but they have no
+-- schedule, so there is no staleness to compute and no timeline worth accumulating.
+CREATE TABLE IF NOT EXISTS operator_config_state (
+    cluster_id          TEXT NOT NULL,
+    kind                TEXT NOT NULL,   -- NamespaceConfig | GroupConfig
+    name                TEXT NOT NULL,
+    error_at            TEXT,
+    error_message       TEXT,
+    success_at          TEXT,
+    observed_at         TEXT NOT NULL,
+    PRIMARY KEY(cluster_id, kind, name)
+);
+
+-- Whether the operator's CRDs even exist on the cluster, auto-detected each refresh.
+-- Absent (0) is a different truth from "present with zero CRs", and the UI must not
+-- render "all healthy" for a concept the cluster does not have.
+CREATE TABLE IF NOT EXISTS operator_config_presence (
+    cluster_id          TEXT PRIMARY KEY,
+    present             INTEGER NOT NULL,
+    observed_at         TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS rbac_binding_by_group
     ON rbac_group_binding(cluster_id, group_name);
@@ -194,6 +223,49 @@ CREATE TABLE IF NOT EXISTS dashboard_user_activity (
 CREATE INDEX IF NOT EXISTS dashboard_user_activity_by_day
     ON dashboard_user_activity(day DESC);
 """
+
+
+# -- schema migrations ----------------------------------------------------------------
+#
+# THIS PROJECT'S FIRST REAL MIGRATION MECHANISM, built because the implicit one silently
+# does nothing: the schema is applied with CREATE TABLE IF NOT EXISTS, so on an EXISTING
+# database a column added to the SCHEMA string simply never appears — the table already
+# exists, the statement no-ops, and the first SELECT naming the new column crashes at
+# runtime on upgraded deployments while working perfectly on fresh ones. Measured before
+# this existed, not assumed.
+#
+# PRAGMA user_version is the cursor: 0 on any database created before this mechanism,
+# incremented once per applied step. Steps run in order, inside the writer's transaction,
+# at startup, before anything reads. They must be written to be safe on a database that
+# already has the change (fresh databases get the new SCHEMA and then replay migrations
+# against it), which for ALTER TABLE ADD COLUMN means tolerating "duplicate column name".
+_MIGRATIONS: list[tuple[int, str, list[str]]] = [
+    (
+        1,
+        "rbac_group_binding gains provenance: managed_source + exception",
+        [
+            "ALTER TABLE rbac_group_binding ADD COLUMN managed_source TEXT",
+            "ALTER TABLE rbac_group_binding ADD COLUMN exception TEXT",
+        ],
+    ),
+]
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    version = int(conn.execute("PRAGMA user_version").fetchone()[0])
+    for target, title, statements in _MIGRATIONS:
+        if version >= target:
+            continue
+        for sql in statements:
+            try:
+                conn.execute(sql)
+            except sqlite3.OperationalError as exc:
+                # A fresh database already has the column from SCHEMA; replaying the
+                # migration against it must be a no-op, not a crash.
+                if "duplicate column name" not in str(exc):
+                    raise
+        conn.execute(f"PRAGMA user_version = {target}")
+        log.info("schema migration %d applied: %s", target, title)
 
 
 _PRAGMA_WORDS = {"OFF", "NORMAL", "FULL", "EXTRA"}
@@ -284,6 +356,7 @@ class Store:
         self._conn.execute(f"PRAGMA synchronous={_safe_pragma_word(synchronous, 'NORMAL')}")
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._conn.executescript(SCHEMA)
+        _migrate(self._conn)
         self._conn.commit()
 
     def close(self) -> None:
@@ -938,10 +1011,13 @@ class Store:
             conn.executemany(
                 """INSERT OR REPLACE INTO rbac_group_binding(
                        cluster_id, binding_kind, binding_namespace, binding_name,
-                       role_kind, role_name, group_name, observed_at)
+                       role_kind, role_name, group_name, observed_at,
+                       managed_source, exception)
                    VALUES(:cluster_id,:binding_kind,:binding_namespace,:binding_name,
-                          :role_kind,:role_name,:group_name,:observed_at)""",
-                [{**r, "cluster_id": cluster_id, "observed_at": observed_at} for r in rows],
+                          :role_kind,:role_name,:group_name,:observed_at,
+                          :managed_source,:exception)""",
+                [{"managed_source": None, "exception": None, **r,
+                  "cluster_id": cluster_id, "observed_at": observed_at} for r in rows],
             )
 
     def record_managed_groups(
@@ -1023,18 +1099,30 @@ class Store:
         return self._rows(
             """SELECT b.binding_kind, b.binding_namespace, b.binding_name,
                       b.role_kind, b.role_name, b.group_name,
+                      b.managed_source, b.exception,
                       CASE
-                        -- A resolving group is the normal case and outranks everything.
-                        WHEN g.name IS NOT NULL            THEN 'ok'
-                        -- Provenance FIRST. We watched the operator manage this group, so
-                        -- its disappearance is evidence, and evidence outranks a naming
-                        -- heuristic. Testing `system:` first silently downgraded a real
-                        -- dangling binding to `built_in` whenever a managed group happened
-                        -- to carry that prefix — a grants-nobody binding with no alert,
-                        -- which is the worst failure this dashboard can have.
-                        WHEN s.group_name IS NOT NULL     THEN 'dangling'
-                        WHEN b.group_name LIKE 'system:%' THEN 'built_in'
-                        ELSE 'unresolved'
+                        -- Broken-resolution tiers first: a binding that grants NOBODY is
+                        -- worse than one that grants outside governance, whoever made it.
+                        WHEN g.name IS NULL AND s.group_name IS NOT NULL
+                                                           THEN 'dangling'
+                        WHEN g.name IS NULL AND b.group_name LIKE 'system:%'
+                                                           THEN 'built_in'
+                        WHEN g.name IS NULL                THEN 'unresolved'
+                        -- The group resolves. Now provenance: an operator-SYNCED group
+                        -- granted access by a binding NO policy system manages is somebody
+                        -- bypassing governance by hand. Requires the policy operator to be
+                        -- in use at all (any managed binding on the cluster), or every
+                        -- binding on a cluster that has never heard of config-source
+                        -- labels would flag. An exception annotation on the binding
+                        -- acknowledges a deliberate one and suppresses the finding.
+                        WHEN b.managed_source IS NULL
+                             AND b.exception IS NULL
+                             AND s.group_name IS NOT NULL
+                             AND EXISTS (SELECT 1 FROM rbac_group_binding m
+                                          WHERE m.cluster_id = b.cluster_id
+                                            AND m.managed_source IS NOT NULL)
+                                                           THEN 'unmanaged'
+                        ELSE 'ok'
                       END AS finding
                  FROM rbac_group_binding b
                  LEFT JOIN group_state g
@@ -1045,6 +1133,53 @@ class Store:
                 ORDER BY b.group_name, b.binding_kind, b.binding_namespace, b.binding_name""",
             (cluster_id,),
         )
+
+    # -- namespace-configuration-operator health -----------------------------------------
+
+    def replace_operator_configs(
+        self, cluster_id: str, configs: list[dict] | None, observed_at: str
+    ) -> None:
+        """Replace this cluster's operator-config health rows. None means CRDs absent.
+
+        Presence is stored explicitly rather than inferred from row count, because
+        "operator not installed" and "operator installed with zero CRs" are different
+        truths: the first must render as nothing at all, the second as an empty-but-real
+        section. Conflating them shows 'all healthy' for a concept the cluster lacks.
+        """
+        with self._write() as conn:
+            conn.execute(
+                """INSERT INTO operator_config_presence(cluster_id, present, observed_at)
+                   VALUES(?,?,?)
+                   ON CONFLICT(cluster_id) DO UPDATE SET
+                       present=excluded.present, observed_at=excluded.observed_at""",
+                (cluster_id, 0 if configs is None else 1, observed_at),
+            )
+            conn.execute("DELETE FROM operator_config_state WHERE cluster_id=?", (cluster_id,))
+            if configs:
+                conn.executemany(
+                    """INSERT INTO operator_config_state(
+                           cluster_id, kind, name, error_at, error_message,
+                           success_at, observed_at)
+                       VALUES(:cluster_id,:kind,:name,:error_at,:error_message,
+                              :success_at,:observed_at)""",
+                    [{**c, "cluster_id": cluster_id, "observed_at": observed_at}
+                     for c in configs],
+                )
+
+    def operator_configs(self, cluster_id: str) -> dict:
+        """Health of the policy operator's CRs: {present: bool, configs: [...]}."""
+        presence = self._row(
+            "SELECT present FROM operator_config_presence WHERE cluster_id=?", (cluster_id,)
+        )
+        return {
+            "present": bool(presence and presence["present"]),
+            "configs": self._rows(
+                """SELECT kind, name, error_at, error_message, success_at, observed_at
+                     FROM operator_config_state WHERE cluster_id=?
+                    ORDER BY kind, name""",
+                (cluster_id,),
+            ),
+        }
 
     def upsert_reconcile_error(
         self,

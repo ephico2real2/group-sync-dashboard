@@ -575,6 +575,7 @@ function renderFilters() {
         <option value="all"${view.bindingFilter === "all" ? " selected" : ""}>all bindings</option>
         <option value="ok"${view.bindingFilter === "ok" ? " selected" : ""}>granted (group exists)</option>
         <option value="built_in"${view.bindingFilter === "built_in" ? " selected" : ""}>built-in</option>
+        <option value="unmanaged"${view.bindingFilter === "unmanaged" ? " selected" : ""}>unmanaged</option>
       </select>`;
   }
   if (view.page === "groups") {
@@ -1137,6 +1138,16 @@ function bindingsPage() {
     </div>
   </section>`;
 
+  if (view.bindingFilter === "unmanaged") {
+    return header + section("Unmanaged",
+      `The group is operator-synced, other bindings on this cluster carry the policy
+       operator's <code>config-source</code> label, and this one carries none — somebody
+       granted access by hand, outside the policy system. A deliberate one can be
+       acknowledged with the <code>rbac.ocp.io/unmanaged-exception</code> annotation on the
+       binding itself, which records the justification next to the object and clears it
+       from this list.`,
+      d.unmanaged || [], sevBadge("warning", "unmanaged"));
+  }
   if (view.bindingFilter === "ok") {
     return header + section("Granted",
       "The group named by each of these exists, so the access reaches its members.",
@@ -1155,6 +1166,8 @@ function bindingsPage() {
           + "binding now grants nobody.", d.dangling || [], sevBadge("critical", "dangling"))
       + section("Unresolved", "Names a group that has never existed here.",
           d.unresolved || [], sevBadge("warning", "unresolved"))
+      + section("Unmanaged", "Hand-made grant on an operator-synced group, outside the "
+          + "policy system.", d.unmanaged || [], sevBadge("warning", "unmanaged"))
       + section("Granted", "The group exists; access reaches its members.", d.ok || [])
       + section("Built-in", "Virtual groups; no Group object is expected.", d.built_in || []);
   }
@@ -1180,7 +1193,47 @@ function bindingsPage() {
       `These do not raise alerts: a group that has never been seen cannot be told apart
        from one that simply has not synced yet. They still grant nobody — typically a
        misspelled group name, or an onboarding that stopped halfway.`,
-      d.unresolved || [], sevBadge("warning", "unresolved"))}`;
+      d.unresolved || [], sevBadge("warning", "unresolved"))}
+  ${section("Unmanaged",
+      `Hand-made grants on operator-synced groups, outside the policy system. Acknowledge
+       a deliberate one with the <code>rbac.ocp.io/unmanaged-exception</code> annotation on
+       the binding; the justification then lives next to the object and clears it here.`,
+      d.unmanaged || [], sevBadge("warning", "unmanaged"))}
+  ${configHealth(d.operator_configs)}`;
+}
+
+/* The policy operator's CR health. Rendered only when the CRDs exist on the cluster —
+   absent is a different truth from "installed with zero CRs", and a section that says
+   "all healthy" about a concept the cluster lacks would be a lie of layout. */
+function configHealth(oc) {
+  if (!oc || !oc.present) return "";
+  const rows = oc.configs || [];
+  const failing = rows.filter((c) =>
+    c.error_at && (!c.success_at || c.error_at > c.success_at));
+  return `<section class="card">
+    <h3>Policy operator (NamespaceConfig / GroupConfig)</h3>
+    <div class="filterbar-note" style="margin-bottom:6px">
+      These CRs template the RoleBindings above. A currently-failing one means RBAC has
+      quietly stopped reconciling — new namespaces receive nothing and drift stops being
+      corrected, with no error anywhere else.
+    </div>
+    ${rows.length === 0
+      ? `<div class="empty-note">Operator installed; no NamespaceConfig or GroupConfig CRs yet.</div>`
+      : `<div class="scroll-x"><table>
+          <thead><tr><th>Kind</th><th>Name</th><th>State</th><th>Last success</th></tr></thead>
+          <tbody>${rows.map((c) => {
+            const bad = c.error_at && (!c.success_at || c.error_at > c.success_at);
+            return `<tr>
+              <td>${esc(c.kind)}</td>
+              <td><code>${esc(c.name)}</code></td>
+              <td>${bad ? sevBadge("critical", "reconcile error") : badge("ok")}</td>
+              <td class="mono">${esc(ago(c.success_at))}</td>
+            </tr>`;
+          }).join("")}</tbody>
+        </table></div>
+        ${failing.length ? `<div class="err" style="margin-top:8px;font-size:12px">
+          ${esc(failing[0].error_message || "")}</div>` : ""}`}
+  </section>`;
 }
 
 function render() {

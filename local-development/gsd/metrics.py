@@ -297,6 +297,7 @@ class DashboardCollector:
                 for alert in st.compute_alerts(
                     cluster=cluster,
                     groupsyncs=self.store.groupsyncs(cluster),
+                    operator_configs=self.store.operator_configs(cluster)["configs"],
                     groups=self.store.groups(cluster, "all"),
                     now=now,
                     grace=self.grace,

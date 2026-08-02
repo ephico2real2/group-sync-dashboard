@@ -228,3 +228,105 @@ class TestAdversarialFindings:
         store.replace_group_state("crc", [], T1)
         store.replace_bindings("crc", [bind("system:authenticated")], T1)
         assert store.binding_findings("crc")[0]["finding"] == "built_in"
+
+
+class TestUnmanagedFinding:
+    """A hand-made grant on an operator-synced group, outside the policy system.
+
+    Live motivation: on the reference cluster 77 of 85 convention bindings carry the
+    policy operator's `rbac.ocp.io/config-source` label, and the handful that do not are
+    exactly the hand-made ones — including a ClusterRoleBinding granting cluster-admin
+    that nothing manages. The finding makes that class visible; the exception annotation
+    lets a deliberate one be acknowledged ON the binding, so the justification lives next
+    to the object instead of in a dashboard-side allowlist.
+    """
+
+    def _seed(self, store, bindings):
+        store.replace_group_state(
+            "crc",
+            [{"name": "app-ocp-rbac-team-ns-admin", "member_count": 1,
+              "sync_provider": "ldap-groupsync_ldap", "group_synced_at": None,
+              "ldap_uid": None}],
+            "2026-08-02T18:00:00Z",
+        )
+        store.record_managed_groups(
+            "crc", [{"name": "app-ocp-rbac-team-ns-admin",
+                     "sync_provider": "ldap-groupsync_ldap"}],
+            "2026-08-02T18:00:00Z",
+        )
+        store.replace_bindings("crc", bindings, "2026-08-02T18:00:00Z")
+
+    def _binding(self, name, **kw):
+        return {"binding_kind": "RoleBinding", "binding_namespace": "ns-a",
+                "binding_name": name, "role_kind": "ClusterRole", "role_name": "admin",
+                "group_name": "app-ocp-rbac-team-ns-admin",
+                "managed_source": None, "exception": None, **kw}
+
+    def test_a_hand_made_grant_on_a_managed_group_is_flagged(self, store):
+        self._seed(store, [
+            self._binding("managed", managed_source="prod-rbac"),
+            self._binding("hand-made"),
+        ])
+        findings = {r["binding_name"]: r["finding"] for r in store.all_bindings("crc")}
+        assert findings["managed"] == "ok"
+        assert findings["hand-made"] == "unmanaged"
+
+    def test_the_exception_annotation_acknowledges_it(self, store):
+        """The justification travels on the binding itself; the finding clears."""
+        self._seed(store, [
+            self._binding("managed", managed_source="prod-rbac"),
+            self._binding("deliberate", exception="test scaffolding — JIRA-123"),
+        ])
+        findings = {r["binding_name"]: r["finding"] for r in store.all_bindings("crc")}
+        assert findings["deliberate"] == "ok"
+
+    def test_silent_on_a_cluster_that_does_not_use_the_policy_operator(self, store):
+        """No binding anywhere carries a config-source label -> the concept does not
+        exist on this cluster, and flagging every binding would be 100% noise."""
+        self._seed(store, [self._binding("hand-made")])
+        findings = {r["binding_name"]: r["finding"] for r in store.all_bindings("crc")}
+        assert findings["hand-made"] == "ok"
+
+    def test_broken_resolution_outranks_provenance(self, store):
+        """A binding that grants NOBODY is worse than one that grants outside governance;
+        it must not be downgraded to `unmanaged` just because it is also unlabelled."""
+        store.record_managed_groups(
+            "crc", [{"name": "was-managed", "sync_provider": "ldap-groupsync_ldap"}],
+            "2026-08-01T00:00:00Z",
+        )
+        store.replace_bindings("crc", [
+            self._binding("managed-elsewhere", managed_source="prod-rbac"),
+            self._binding("grants-nobody", group_name="was-managed"),
+        ], "2026-08-02T18:00:00Z")
+        findings = {r["binding_name"]: r["finding"] for r in store.all_bindings("crc")}
+        assert findings["grants-nobody"] == "dangling"
+
+
+class TestOperatorConfigAlerts:
+    def test_a_current_config_error_alerts(self, store):
+        from datetime import UTC, datetime, timedelta as td
+        import gsd.state as st
+        alerts = st.compute_alerts(
+            "crc", [], [], datetime.now(UTC), td(minutes=2),
+            operator_configs=[{"kind": "NamespaceConfig", "name": "multitenant",
+                               "error_at": "2026-08-02T18:00:00Z",
+                               "error_message": "webhook refused",
+                               "success_at": "2026-08-02T17:00:00Z"}],
+        )
+        assert [a.kind for a in alerts] == ["config_reconcile_error"]
+        assert alerts[0].subject == "NamespaceConfig/multitenant"
+
+    def test_a_superseded_error_stays_quiet(self, store):
+        """The operator never clears ReconcileError — both conditions sit True forever —
+        so only the transition-time ordering decides. Same trap as GroupSync, verified
+        live: `multitenant` carried a day-old error under a fresh success."""
+        from datetime import UTC, datetime, timedelta as td
+        import gsd.state as st
+        alerts = st.compute_alerts(
+            "crc", [], [], datetime.now(UTC), td(minutes=2),
+            operator_configs=[{"kind": "NamespaceConfig", "name": "multitenant",
+                               "error_at": "2026-08-01T22:22:17Z",
+                               "error_message": "net/http: request canceled",
+                               "success_at": "2026-08-02T17:58:23Z"}],
+        )
+        assert alerts == []

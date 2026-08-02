@@ -86,6 +86,19 @@ spec:
           annotations:
             summary: "Dashboard cannot poll cluster {{ `{{ $labels.cluster }}` }}"
 
+        - alert: GroupSyncDashboardConfigReconcileError
+          expr: gsd_alerts_total{kind="config_reconcile_error"} > 0
+          for: {{ .Values.monitoring.prometheusRule.for.configError }}
+          labels: {severity: critical}
+          annotations:
+            summary: "A NamespaceConfig/GroupConfig is failing to reconcile"
+            description: >-
+              The namespace-configuration-operator CR named in the dashboard's alerts view
+              is currently failing. These CRs template the RoleBindings that give synced
+              groups their access, so while this persists RBAC has silently stopped
+              reconciling: new namespaces receive no bindings and drift stops being
+              corrected. Nothing else on the cluster reports this.
+
         # Both of the following are SILENT failures: the pod stays Ready, every other metric
         # looks normal, and the first visible symptom is a full volume or a latency cliff.
         - alert: GroupSyncDashboardWalGrowing

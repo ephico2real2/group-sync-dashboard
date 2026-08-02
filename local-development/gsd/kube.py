@@ -23,6 +23,12 @@ labels and annotations the operator writes use `redhat-cop.io` (hyphenated). The
 one character apart and transposing them yields a 404 that looks like a missing CRD."""
 
 GROUP_API = "/apis/user.openshift.io/v1/groups"
+
+# The namespace-configuration-operator's CRs — SAME API group as GroupSync, different
+# CRDs. Cluster-scoped. These template out the RoleBindings that grant the synced groups
+# their access, so they are the other half of the pipeline this dashboard watches.
+NAMESPACECONFIG_API = "/apis/redhatcop.redhat.io/v1alpha1/namespaceconfigs"
+GROUPCONFIG_API = "/apis/redhatcop.redhat.io/v1alpha1/groupconfigs"
 ROLEBINDING_API = "/apis/rbac.authorization.k8s.io/v1/rolebindings"
 CLUSTERROLEBINDING_API = "/apis/rbac.authorization.k8s.io/v1/clusterrolebindings"
 
@@ -37,6 +43,8 @@ positives. Reserved-by-convention rather than guaranteed, so these are classifie
 labelled, never silently dropped."""
 
 SYNC_PROVIDER_LABEL = "group-sync-operator.redhat-cop.io/sync-provider"
+CONFIG_SOURCE_LABEL = "rbac.ocp.io/config-source"
+UNMANAGED_EXCEPTION_ANNOTATION = "rbac.ocp.io/unmanaged-exception"
 SYNC_TIME_ANNOTATION = "group-sync-operator.redhat-cop.io/sync-time"
 LDAP_UID_ANNOTATION = "openshift.io/ldap.uid"
 
@@ -106,6 +114,24 @@ class GroupView:
 
 
 @dataclass
+class OperatorConfigView:
+    """A NamespaceConfig or GroupConfig CR — reconcile health only, per the design scope.
+
+    Deliberately NOT the spec templates: diffing "what bindings should exist" would mean
+    re-implementing the operator's templating engine. These CRs have no schedule either,
+    so unlike GroupSync there is no staleness to compute and no timeline worth keeping —
+    the only question is "is its latest reconcile an error?", answered by the same sticky
+    ReconcileError/ReconcileSuccess ordering trick GroupSync needs (the operator never
+    clears ReconcileError; both conditions sit True forever)."""
+
+    kind: str                # NamespaceConfig | GroupConfig
+    name: str
+    error_at: str | None
+    error_message: str | None
+    success_at: str | None
+
+
+@dataclass
 class BindingView:
     """One (binding, Group subject) pair.
 
@@ -121,6 +147,14 @@ class BindingView:
     role_kind: str             # Role | ClusterRole
     role_name: str
     group_name: str
+    managed_source: str | None = None
+    """The provenance label value the policy operator stamps on bindings it templates
+    (`rbac.ocp.io/config-source` by default). None means nothing manages this binding —
+    somebody created it by hand, which is the `unmanaged` finding."""
+    exception: str | None = None
+    """The operator-acknowledged justification for an unmanaged binding, carried as an
+    annotation ON the binding so the truth lives next to the object rather than in a
+    dashboard-side allowlist. Suppresses the `unmanaged` finding."""
 
     @property
     def is_system_group(self) -> bool:
@@ -241,6 +275,44 @@ class ClusterClient:
         log.debug("fetched %d group-subject binding rows from %s", len(out), self.cluster.name)
         return out
 
+    def fetch_operator_configs(self) -> list[OperatorConfigView] | None:
+        """NamespaceConfig and GroupConfig health, or None when the operator is absent.
+
+        AUTO-DETECTED, not configured: a 404 on the CRD path means the
+        namespace-configuration-operator is not installed on this cluster, and that is a
+        normal state rather than an error — most clusters running group-sync do not run
+        it. None (absent) is deliberately distinct from [] (installed, zero CRs), because
+        the UI must not render "0 configs, all healthy" on a cluster where the concept
+        does not exist.
+        """
+        out: list[OperatorConfigView] = []
+        any_crd_answered = False
+        with self._client() as client:
+            for path, kind in ((NAMESPACECONFIG_API, "NamespaceConfig"),
+                               (GROUPCONFIG_API, "GroupConfig")):
+                try:
+                    items = self._list_all(client, path)
+                except ClusterError as exc:
+                    if "404" in exc.message:
+                        # This CRD is not installed. Tracked per-CRD rather than assumed
+                        # pairwise: the operator ships both, but a cluster mid-install or
+                        # with a pruned CRD is not a reason to lose the other's health.
+                        log.debug("%s: %s CRD not present", self.cluster.name, kind)
+                        continue
+                    raise
+                any_crd_answered = True
+                for obj in items:
+                    error = _condition(obj, "ReconcileError")
+                    success = _condition(obj, "ReconcileSuccess")
+                    out.append(OperatorConfigView(
+                        kind=kind,
+                        name=(obj.get("metadata") or {}).get("name", ""),
+                        error_at=(error or {}).get("lastTransitionTime"),
+                        error_message=(error or {}).get("message"),
+                        success_at=(success or {}).get("lastTransitionTime"),
+                    ))
+        return out if any_crd_answered else None
+
 
 def _condition(obj: dict, wanted: str) -> dict | None:
     for condition in (obj.get("status") or {}).get("conditions") or []:
@@ -309,6 +381,8 @@ def _binding_views(obj: dict, binding_kind: str) -> list[BindingView]:
     """
     meta = obj.get("metadata") or {}
     role_ref = obj.get("roleRef") or {}
+    labels = meta.get("labels") or {}
+    annotations = meta.get("annotations") or {}
     rows: list[BindingView] = []
     for subject in obj.get("subjects") or []:
         if subject.get("kind") != "Group" or not subject.get("name"):
@@ -323,6 +397,8 @@ def _binding_views(obj: dict, binding_kind: str) -> list[BindingView]:
                 role_kind=role_ref.get("kind", ""),
                 role_name=role_ref.get("name", ""),
                 group_name=subject["name"],
+                managed_source=labels.get(CONFIG_SOURCE_LABEL),
+                exception=annotations.get(UNMANAGED_EXCEPTION_ANNOTATION),
             )
         )
     return rows

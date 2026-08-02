@@ -343,7 +343,7 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
         # cluster; the caller filters, rather than the API deciding what is worth seeing.
         rows = store.all_bindings(cluster_id)
         by_tier: dict[str, list[dict]] = {
-            "ok": [], "dangling": [], "unresolved": [], "built_in": []
+            "ok": [], "dangling": [], "unresolved": [], "built_in": [], "unmanaged": []
         }
         for row in rows:
             by_tier.setdefault(row["finding"], []).append(row)
@@ -352,6 +352,10 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
             "note": "direct bindings only; role rules are not evaluated",
             "total": len(rows),
             "counts": {tier: len(v) for tier, v in by_tier.items()},
+            # The policy operator that TEMPLATES these bindings, when installed. `present`
+            # distinguishes "not installed" from "installed, zero CRs" so the UI never
+            # renders all-healthy for a concept the cluster does not have.
+            "operator_configs": store.operator_configs(cluster_id),
             **by_tier,
         }
 
@@ -391,6 +395,7 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
             computed = st.compute_alerts(
                 cluster=cluster_id,
                 groupsyncs=store.groupsyncs(cluster_id),
+                operator_configs=store.operator_configs(cluster_id)["configs"],
                 groups=store.groups(cluster_id, "all"),
                 now=now,
                 grace=grace,

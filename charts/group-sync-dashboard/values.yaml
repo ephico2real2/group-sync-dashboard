@@ -571,3 +571,6 @@ monitoring:
       # WAL mode is decided once at startup and never changes, so this only needs long
       # enough to outlast a rollout.
       walDisabled: 10m
+      # A config CR's reconcile is retried by its operator; a couple of minutes of failing
+      # is a blip, sustained failure is stopped RBAC reconciliation.
+      configError: 10m

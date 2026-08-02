@@ -247,11 +247,39 @@ def refresh_bindings(store: StorageBackend, cluster: ClusterConfig, timeout: flo
                 "role_kind": b.role_kind,
                 "role_name": b.role_name,
                 "group_name": b.group_name,
+                "managed_source": b.managed_source,
+                "exception": b.exception,
             }
             for b in bindings
         ],
         now_iso(),
     )
+
+    # The policy operator's CR health rides the SAME cadence, for the same reason: these
+    # CRs change on administrative action, not on a schedule, and they are the source of
+    # the very bindings fetched above. Auto-detected — a cluster without the
+    # namespace-configuration-operator records "absent" and the UI shows nothing, rather
+    # than an empty-but-healthy-looking section.
+    try:
+        configs = client.fetch_operator_configs()
+    except ClusterError as exc:
+        log.warning(
+            "operator-config refresh for %s failed: %s — binding data is unaffected",
+            cluster.name, exc.message,
+        )
+    else:
+        store.replace_operator_configs(
+            cluster.name,
+            None if configs is None else [
+                {"kind": c.kind, "name": c.name, "error_at": c.error_at,
+                 "error_message": c.error_message, "success_at": c.success_at}
+                for c in configs
+            ],
+            now_iso(),
+        )
+        if configs is not None:
+            log.info("refreshed %d operator config(s) for %s", len(configs), cluster.name)
+
     log.info("refreshed %d group bindings for %s", len(bindings), cluster.name)
     return OK
 

@@ -164,6 +164,7 @@ def compute_alerts(
     grace: timedelta,
     write_window: timedelta = timedelta(minutes=2),
     no_schedule_stale_after: timedelta = timedelta(hours=24),
+    operator_configs: list[dict] | None = None,
 ) -> list[Alert]:
     """Compute the PLAN §8 conditions the first slice has data for.
 
@@ -292,6 +293,25 @@ def compute_alerts(
                         ),
                     )
                 )
+
+    # The policy operator's CRs — the source of the RoleBindings that give synced groups
+    # their access. A currently-failing one means RBAC has silently stopped reconciling:
+    # new namespaces get nothing, drift stops being corrected, and nothing else alerts.
+    # Same sticky-condition trap as GroupSync (ReconcileError stays True forever), so the
+    # same current-vs-stale resolution applies: only the transition-time ordering decides.
+    for config in operator_configs or []:
+        if reconcile_error_is_current(
+            parse_time(config.get("error_at")), parse_time(config.get("success_at"))
+        ):
+            alerts.append(
+                Alert(
+                    cluster=cluster,
+                    kind="config_reconcile_error",
+                    subject=f'{config["kind"]}/{config["name"]}',
+                    detail=(config.get("error_message") or "reconcile failed").strip()[:400],
+                    severity="critical",
+                )
+            )
 
     return alerts
 

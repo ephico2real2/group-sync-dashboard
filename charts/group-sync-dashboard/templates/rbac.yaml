@@ -10,6 +10,16 @@ rules:
   - apiGroups: ["redhatcop.redhat.io"]
     resources: ["groupsyncs"]
     verbs: ["get", "list"]
+  # The namespace-configuration-operator's CRs — the other half of the access pipeline:
+  # group-sync creates the groups, these template the RoleBindings that grant them access.
+  # The dashboard AUTO-DETECTS the CRDs: on a cluster without the operator the list 404s,
+  # which is recorded as "absent" and renders as nothing. WITHOUT this grant the same call
+  # 403s instead, which is treated as a refresh failure and logs a warning every cycle —
+  # so keep the grant even on clusters that may never install the operator; an authorised
+  # 404 is quiet and a forbidden 403 is not.
+  - apiGroups: ["redhatcop.redhat.io"]
+    resources: ["namespaceconfigs", "groupconfigs"]
+    verbs: ["get", "list"]
   - apiGroups: ["user.openshift.io"]
     resources: ["groups"]
     verbs: ["get", "list"]
