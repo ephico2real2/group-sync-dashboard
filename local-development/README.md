@@ -58,6 +58,23 @@ It deploys with `helm upgrade --install`, passing the released tag with `--set`.
 written back into the tree: `helm get values` already records what is deployed, so there is
 no manifest to pin and no commit to remember.
 
+## API docs
+
+Swagger UI at `/api` (`/api/docs` redirects there), ReDoc at `/api/redoc`, the spec at
+`/api/openapi.json`. Both renderers are served from bundles committed to this repository, not
+from a CDN, so they work on a cluster with no route to the internet.
+
+Refreshing them is a five-minute job every couple of months:
+
+```bash
+./vendor-assets.sh --outdated    # anything newer?
+./vendor-assets.sh --upgrade     # take it
+./vendor-assets.sh               # re-check, offline
+```
+
+Full procedure and the reasoning: [`docs/updating-vendored-assets.md`](../docs/updating-vendored-assets.md).
+Rules for adding an endpoint: [`docs/api-contract.md`](../docs/api-contract.md).
+
 ## Plain YAML, for reading and testing
 
 ```bash

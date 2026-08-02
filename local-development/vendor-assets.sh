@@ -6,6 +6,8 @@
 #   ./vendor-assets.sh --update        re-fetch the pinned versions    (repair)
 #   ./vendor-assets.sh --upgrade       move to the latest and re-pin   (the 2-monthly job)
 #
+# Full procedure: docs/updating-vendored-assets.md
+#
 # ---------------------------------------------------------------------------------------
 # WHY THE FILES ARE COMMITTED, instead of curl'd during the container build
 # ---------------------------------------------------------------------------------------
