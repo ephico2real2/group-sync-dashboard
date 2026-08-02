@@ -115,6 +115,64 @@ always wins.
 | `monitoring.prometheusRule.overdueSeconds` | `7200` | |
 | `monitoring.prometheusRule.notPollingSeconds` | `600` | catches a dead poll loop, which the health endpoints cannot |
 
+### Unmanaged-grant audit stamping
+
+| Key | Default | Notes |
+|---|---|---|
+| `config.unmanagedAudit.mode` | `"off"` | `off` \| `log` \| `annotate`. **The chart renders the `patch` RBAC grant only in `annotate`.** Anything unrecognised is treated as `off` |
+| `config.unmanagedAudit.maxPerCycle` | `20` | stamps per 300s refresh. Healing (label removal) is never capped |
+
+This is the dashboard's **only write to any cluster**, and it is off by default. When enabled
+it stamps bindings it has classified `unmanaged` — a hand-made grant on an operator-synced
+group, outside the policy system — so they can be found from the objects themselves rather
+than only in this UI:
+
+```bash
+oc get rolebindings,clusterrolebindings -A -l rbac.ocp.io/unmanaged=true
+```
+
+| Key written | Kind | Meaning |
+|---|---|---|
+| `rbac.ocp.io/unmanaged: "true"` | label | *currently* classified unmanaged — this is what the CLI selects on |
+| `rbac.ocp.io/unmanaged-detected-at` | annotation | first detection, **never overwritten** — "how long has this existed unacknowledged" |
+| `rbac.ocp.io/unmanaged-detected-by` | annotation | `group-sync-dashboard` |
+
+Nothing else is ever written: not subjects, not `roleRef`, not any other key.
+
+#### The three modes
+
+* **`off`** — no write-path code executes at all.
+* **`log`** — computes the full stamp plan and logs it, patching nothing. This is the
+  rehearsal mode, and it needs **zero write access**. Useful on every cluster.
+* **`annotate`** — actually patches, and `rbac.yaml` grants `patch` on
+  rolebindings/clusterrolebindings only in this mode.
+
+Roll out in that order. Sit in `log` for at least one full refresh cycle and check the
+planned stamps against what you expect before enabling `annotate`.
+
+#### Two things to know before enabling `annotate`
+
+**1. Kubernetes caps it, and not in a way more RBAC can fix.** Privilege-escalation
+prevention means that to patch an RBAC object — even a metadata-only merge patch touching
+no rule and no subject — the writer must already hold every permission that object grants.
+So the dashboard cannot stamp a binding granting `cluster-admin` unless it *is*
+cluster-admin, which inverts what a read-only auditing tool should be. It fails safe: each
+refusal is a logged warning, the refresh continues, and the finding stays visible in the UI
+and at `GET /api/clusters/{id}/bindings/findings`. In practice `annotate` stamps the
+low-privilege grants and skips exactly the ones you care about most.
+
+Note that `oc auth can-i` will tell you this works — `SelfSubjectAccessReview` returns
+`allowed: true` because the RBAC grant is genuinely correct. The escalation check runs
+afterwards and refuses anyway.
+
+**2. There is no annotations-only patch scope in Kubernetes RBAC.** `annotate` mode
+therefore grants `patch` on bindings, and a subject holding that verb can technically modify
+what a binding grants. The application never does — the patch body is built in one function
+and contains only the three keys above — but the *capability* is real, and an attacker who
+compromised the pod would inherit it. That is why the default is `off` and why `log` exists.
+
+Full design, invariants and the live-cluster evidence: [`docs/unmanaged-audit-design.md`](../../docs/unmanaged-audit-design.md).
+
 ## Scaling
 
 **1 replica is the recommendation.** This polls every 60s and serves a handful of operators;

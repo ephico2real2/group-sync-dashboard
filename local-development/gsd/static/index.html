@@ -289,6 +289,11 @@ table { border-collapse: collapse; width: 100%; font-size: 13px; }
 th, td {
   text-align: left; padding: 6px 10px 6px 0;
   border-bottom: 1px solid var(--gridline); vertical-align: top;
+  /* Tabular figures everywhere, not just in .num columns. This dashboard repaints on a
+     poll: with proportional digits a count going 9 -> 10, or a timestamp ticking, changes
+     the cell's width and nudges the column, so a table the eye had settled on shifts
+     under it every refresh. Fixed-width digits hold the grid still. */
+  font-variant-numeric: tabular-nums;
 }
 th { color: var(--text-muted); font-weight: 500; font-size: 11px; }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; padding-right: 16px; }
@@ -477,13 +482,23 @@ body[data-page="usage"]    { --accent: var(--tab-usage); }
   .tab[aria-current="page"]::after { background: Highlight; forced-color-adjust: none; }
 }
 
-/* The card keeps its quiet surface and gains the section's colour as a hairline top edge —
-   enough to tie the page together, not enough to compete with the data inside it. */
-.card {
-  box-shadow: var(--elev-1);
+/* Elevation on every card; the accent rail on only the FIRST one.
+   Every card used to wear the accent top edge. With five or six stacked that reads as a
+   striped page rather than a hierarchy — everything equally loud is the same as nothing
+   emphasised, and the eye has nowhere to land first. The lead card is the page's verdict
+   (the hero count, the risk tier), so it keeps the rail and the rest go quiet.
+   Section identity does not depend on this: the tab, the page bloom, the h2 leading rule
+   and the hero numeral all still carry the accent. */
+.card { box-shadow: var(--elev-1); }
+main > .card:first-child,
+main > .grid:first-child > .card {
   border-top: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
 }
 .hero .value { color: var(--accent); }
+
+/* The header rule picks up the section colour, so the chrome agrees with the body about
+   which page you are on. Decorative: the tab already carries this in three channels. */
+header.top { border-bottom-color: color-mix(in srgb, var(--accent) 30%, var(--border)); }
 </style>
 </head>
 <body data-page="overview">
