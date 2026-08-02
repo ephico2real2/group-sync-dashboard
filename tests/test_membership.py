@@ -257,3 +257,41 @@ class TestReadWriteRace:
         assert seen, "reader never ran"
         wrong = [n for n in seen if n != 200]
         assert not wrong, f"{len(wrong)}/{len(seen)} reads saw a torn table, e.g. {sorted(set(wrong))[:5]}"
+
+
+class TestMalformedResponseGuard:
+    """Found adversarially (GPT-5.6 Sol): a 200 whose body is not a Kubernetes List was
+    read as an authoritative empty collection."""
+
+    def test_a_200_without_items_is_an_error_not_an_empty_cluster(self):
+        import httpx
+
+        from gsd.config import ClusterConfig
+        from gsd.kube import GROUP_API, ClusterError, ClusterClient
+
+        def handler(request):
+            # A proxy error page or login redirect rendered as JSON: HTTP 200, no items.
+            return httpx.Response(200, json={"kind": "Status", "status": "Failure"})
+
+        client = ClusterClient(ClusterConfig("c", "https://x", token_env="T"))
+        with httpx.Client(transport=httpx.MockTransport(handler),
+                          base_url="https://x") as http:
+            with pytest.raises(ClusterError) as exc:
+                client._list_all(http, GROUP_API)
+        assert exc.value.outcome == "unreachable"
+        assert "items" in exc.value.message
+
+    def test_a_genuinely_empty_collection_is_still_accepted(self):
+        import httpx
+
+        from gsd.config import ClusterConfig
+        from gsd.kube import GROUP_API, ClusterClient
+
+        for body in ({"kind": "GroupList", "items": []},
+                     {"kind": "GroupList", "items": None}):
+            client = ClusterClient(ClusterConfig("c", "https://x", token_env="T"))
+            with httpx.Client(
+                transport=httpx.MockTransport(lambda r, b=body: httpx.Response(200, json=b)),
+                base_url="https://x",
+            ) as http:
+                assert client._list_all(http, GROUP_API) == []

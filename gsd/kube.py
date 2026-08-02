@@ -158,7 +158,29 @@ class ClusterClient:
         params: dict[str, Any] = {"limit": PAGE_SIZE}
         while True:
             payload = self._get(client, path, params)
-            items.extend(payload.get("items") or [])
+
+            # A 200 whose body is not a Kubernetes List must NOT be read as "no objects".
+            # `payload.get("items") or []` turns any unexpected 200 — a proxy error page, a
+            # login redirect rendered as JSON, a truncated body — into an authoritative
+            # empty result. The poll then deletes every group, records a departure for
+            # every member into append-only history, and reports `ok`. Measured: one such
+            # response wiped 60 groups and wrote 120 false "removed" events.
+            #
+            # An genuinely empty collection still has the key (`"items": []` or null), so
+            # requiring its presence rejects malformed bodies without rejecting empty ones.
+            if "items" not in payload:
+                raise ClusterError(
+                    UNREACHABLE,
+                    f"{path} returned HTTP 200 without an 'items' field "
+                    f"(kind={payload.get('kind')!r}) — refusing to treat this as an empty "
+                    f"collection",
+                )
+            page = payload.get("items")
+            if page is not None and not isinstance(page, list):
+                raise ClusterError(
+                    UNREACHABLE, f"{path} returned 'items' of type {type(page).__name__}"
+                )
+            items.extend(page or [])
             token = (payload.get("metadata") or {}).get("continue")
             if not token:
                 return items

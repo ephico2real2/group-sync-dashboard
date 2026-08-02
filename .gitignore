@@ -18,3 +18,10 @@ build/
 *.crt
 *.pem
 *.key
+
+# Registry credentials — never commit. .env.example carries the placeholders instead.
+.env
+.env.*
+!.env.example
+*.dockerconfigjson
+auth.json

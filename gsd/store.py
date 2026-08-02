@@ -555,8 +555,14 @@ class Store:
             """SELECT b.binding_kind, b.binding_namespace, b.binding_name,
                       b.role_kind, b.role_name, b.group_name,
                       CASE
-                        WHEN b.group_name LIKE 'system:%' THEN 'built_in'
+                        -- Provenance FIRST. We watched the operator manage this group, so
+                        -- its disappearance is evidence, and evidence outranks a naming
+                        -- heuristic. Testing `system:` first silently downgraded a real
+                        -- dangling binding to `built_in` whenever a managed group happened
+                        -- to carry that prefix — a grants-nobody binding with no alert,
+                        -- which is the worst failure this dashboard can have.
                         WHEN s.group_name IS NOT NULL     THEN 'dangling'
+                        WHEN b.group_name LIKE 'system:%' THEN 'built_in'
                         ELSE 'unresolved'
                       END AS finding
                  FROM rbac_group_binding b

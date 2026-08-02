@@ -209,3 +209,42 @@ class TestAlerts:
 def test_parse_time_is_total(value, expected_none):
     """A malformed timestamp must not crash a poll — it degrades to 'unknown'."""
     assert (st.parse_time(value) is None) is expected_none
+
+
+class TestStoppedSyncWithUnusableSchedule:
+    """Found adversarially: a CR whose schedule cannot be parsed fell into `unknown`, and
+    `unknown` alerts on nothing — so a CR that had stopped syncing for days reported
+    complete silence. The worst failure class for this dashboard."""
+
+    def _cr(self, schedule, last_sync):
+        return {"name": "cr", "schedule": schedule,
+                "last_sync_at": last_sync.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "provider_key": "cr_ldap"}
+
+    @pytest.mark.parametrize("schedule", ["not-a-cron", None, "", "* * *"])
+    def test_unusable_schedule_alerts_even_though_state_is_unknown(self, schedule):
+        now = t("2026-08-01T12:00:00")
+        long_ago = now - timedelta(days=3)
+        alerts = st.compute_alerts("crc", [self._cr(schedule, long_ago)], [], now, GRACE)
+        kinds = {a.kind for a in alerts}
+        assert "invalid_schedule" in kinds, "the config defect itself must be reported"
+        assert "sync_stopped" in kinds, "a 3-day-old sync must not be silent"
+        assert st.compute_state(long_ago, schedule, now, GRACE) == st.UNKNOWN
+
+    def test_recent_sync_with_bad_schedule_reports_config_not_stoppage(self):
+        """A bad schedule is always a defect, but a CR that synced minutes ago has not
+        stopped — saying so would be a false alarm."""
+        now = t("2026-08-01T12:00:00")
+        alerts = st.compute_alerts(
+            "crc", [self._cr("not-a-cron", now - timedelta(minutes=5))], [], now, GRACE
+        )
+        kinds = {a.kind for a in alerts}
+        assert "invalid_schedule" in kinds
+        assert "sync_stopped" not in kinds
+
+    def test_valid_schedule_is_unaffected(self):
+        now = t("2026-08-01T12:00:00")
+        alerts = st.compute_alerts(
+            "crc", [self._cr("*/30 * * * *", now - timedelta(minutes=2))], [], now, GRACE
+        )
+        assert alerts == []

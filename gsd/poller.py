@@ -204,7 +204,21 @@ class Poller:
                 poll_once(self.store, cluster, self.settings.request_timeout_seconds)
             except Exception:  # noqa: BLE001 - a poll thread must never die silently
                 log.exception("unhandled error polling %s", cluster.name)
-                self.store.record_poll(cluster.name, "unreachable", "internal poller error")
+                # The recovery write can fail for the SAME reason the poll did — a full or
+                # locked database. Unguarded, that second failure escapes this handler and
+                # kills the thread permanently, while /healthz stays unconditionally green
+                # and /readyz only does a read: the dashboard then serves frozen data
+                # forever and reports itself healthy. Never let cleanup end the loop.
+                try:
+                    self.store.record_poll(
+                        cluster.name, "unreachable", "internal poller error"
+                    )
+                except Exception:  # noqa: BLE001
+                    log.exception(
+                        "could not even record the poll failure for %s; "
+                        "the poll loop continues",
+                        cluster.name,
+                    )
 
             # Bindings ride the same thread but on their own due-time, so an expensive
             # cluster-wide binding list does not run every group poll.

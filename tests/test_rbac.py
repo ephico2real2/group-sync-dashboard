@@ -205,3 +205,26 @@ class TestLookups:
         store.replace_bindings("c2", [bind("g", ns="b")], T1)
         assert store.group_bindings("crc", "g")[0]["binding_namespace"] == "a"
         assert store.group_bindings("c2", "g")[0]["binding_namespace"] == "b"
+
+
+class TestAdversarialFindings:
+    """Defects found by an adversarial review (Grok 4.5), reproduced before fixing."""
+
+    def test_managed_group_with_system_prefix_still_reports_dangling(self, store):
+        """The CASE tested `system:%` BEFORE provenance, so a group we had watched the
+        operator manage was downgraded to `built_in` when it vanished — a binding granting
+        nobody, with no alert. Evidence must outrank a naming heuristic.
+        """
+        g = group_row("system:ldap-admins")
+        store.replace_group_state("crc", [g], T1)
+        store.record_managed_groups("crc", [g], T1)
+        store.replace_bindings("crc", [bind("system:ldap-admins")], T1)
+        store.replace_group_state("crc", [], T2)
+        assert store.binding_findings("crc")[0]["finding"] == "dangling"
+
+    def test_genuine_virtual_group_is_still_built_in(self, store):
+        """The fix must not swing the other way: a real virtual group has no provenance and
+        must stay out of the alerting tier."""
+        store.replace_group_state("crc", [], T1)
+        store.replace_bindings("crc", [bind("system:authenticated")], T1)
+        assert store.binding_findings("crc")[0]["finding"] == "built_in"

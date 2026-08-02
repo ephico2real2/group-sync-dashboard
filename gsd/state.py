@@ -163,6 +163,7 @@ def compute_alerts(
     now: datetime,
     grace: timedelta,
     write_window: timedelta = timedelta(minutes=2),
+    no_schedule_stale_after: timedelta = timedelta(hours=24),
 ) -> list[Alert]:
     """Compute the PLAN §8 conditions the first slice has data for.
 
@@ -205,6 +206,39 @@ def compute_alerts(
         last_sync = parse_time(cr.get("last_sync_at"))
         schedule = cr.get("schedule")
         interval = schedule_interval(schedule, now) if schedule else None
+
+        # An unparseable or missing schedule is itself a defect: the operator cannot
+        # schedule the CR at all. It also makes every interval-based check unusable, so
+        # without this the CR falls into `unknown` and alerts on NOTHING — a sync that has
+        # stopped for days reports total silence. Alert on the cause, then fall back to an
+        # absolute staleness bound so the stoppage is still caught.
+        if not is_valid_schedule(schedule):
+            alerts.append(
+                Alert(
+                    cluster=cluster,
+                    kind="invalid_schedule",
+                    subject=name,
+                    detail=(
+                        f"schedule {schedule!r} is missing or not a valid cron expression — "
+                        f"the operator cannot schedule this CR, and no interval-based "
+                        f"staleness check can be applied to it"
+                    ),
+                    severity="critical",
+                )
+            )
+            if last_sync is not None and (now - last_sync) > no_schedule_stale_after:
+                alerts.append(
+                    Alert(
+                        cluster=cluster,
+                        kind="sync_stopped",
+                        subject=name,
+                        detail=(
+                            f"last sync {_ago(now - last_sync)} ago and the schedule is "
+                            f"unusable — this CR has stopped syncing"
+                        ),
+                        severity="critical",
+                    )
+                )
 
         state = compute_state(last_sync, schedule, now, grace)
         if state == OVERDUE:
