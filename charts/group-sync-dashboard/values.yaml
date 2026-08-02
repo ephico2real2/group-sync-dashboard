@@ -462,8 +462,18 @@ oauthProxy:
   #   sar: '{"resource":"groups","resourceAPIGroup":"user.openshift.io","verb":"list"}'
   sar: ""
 
-  # Skips the interstitial page that offers exactly one login choice.
-  skipProviderButton: true
+  # The interstitial page that offers exactly one login choice.
+  #
+  # true skips it and redirects straight to the cluster's OAuth server. That is one fewer
+  # click, but when anything goes wrong mid-flow the first thing a user sees is the proxy's
+  # own error page — headed "403 Permission Denied", which reads as "you are not allowed
+  # in" rather than "your session expired, sign in again". Observed on this deployment:
+  # a rollout landed between the redirect and the callback, the CSRF cookie no longer
+  # matched, and the 403 page was indistinguishable from a permissions failure.
+  #
+  # false shows an explicit Log In button instead. One extra click, and the unauthenticated
+  # state is a page that says sign in.
+  skipProviderButton: false
   requestLogging: false
 
   resources:

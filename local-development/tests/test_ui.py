@@ -328,12 +328,18 @@ class TestGroupExplorer:
         even = rows.nth(1).locator("td").first.evaluate("e => getComputedStyle(e).backgroundColor")
         assert odd != even, "adjacent rows render identically — no striping"
 
-    def test_owner_colour_is_accompanied_by_the_name(self, dash):
-        """Hue is the fast channel, never the only one."""
+    def test_owner_is_named_and_not_colour_coded(self, dash):
+        """The per-CR dot was removed: the name is the whole signal.
+
+        This used to assert the opposite — that a dot was present and accompanied by text.
+        The requirement changed, so the test changed with it rather than being deleted: it
+        now pins that no colour swatch came back, and that the name is still there, which
+        is the part that always mattered.
+        """
         self._open_groups(dash)
         owner = dash.locator("tbody .owner").first
-        assert owner.locator(".cr-dot").count() == 1
-        assert owner.inner_text().strip(), "owner dot with no name beside it"
+        assert owner.locator(".cr-dot").count() == 0, "owner colour swatch is back"
+        assert owner.inner_text().strip(), "owner cell renders no name"
 
 
 class TestGroupDrilldown:

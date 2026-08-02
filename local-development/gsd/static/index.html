@@ -279,12 +279,7 @@ tbody tr:nth-child(even) td { background: var(--zebra); }
 .rowlink { cursor: pointer; }
 .rowlink:hover td { background: var(--series-1-wash); }
 
-/* Owner dot: identity for the CR that produced a group. The dot sits beside the CR's
-   NAME, never alone — hue is the fast channel, the text is the reliable one. */
-.cr-dot {
-  width: 9px; height: 9px; border-radius: 50%; flex: none;
-  display: inline-block; margin-right: 6px; vertical-align: baseline;
-}
+/* The owner is named, not colour-coded — see ownerCell. */
 .owner { display: inline-flex; align-items: center; white-space: nowrap; }
 
 .chip {
@@ -296,14 +291,22 @@ tbody tr:nth-child(even) td { background: var(--zebra); }
 /* A drillable name must LOOK drillable. Without this the usernames rendered as plain
    black text identical to every other cell, so nothing invited the click — the handler
    worked and the affordance did not, which a selector-driven test cannot catch. */
+/* A real <button>, not a span with role="button". The span version was reachable only by
+   mouse: rows carry the click handler and a <tr> cannot be focused, so entire tables were
+   keyboard-dead (WCAG 2.1.1). A button gets Tab, Enter and Space for free, announces
+   itself, and needs no keydown shim to emulate any of it. Reset to look like text. */
 .drill {
+  background: none; border: 0; padding: 0; margin: 0; font: inherit; text-align: left;
   color: var(--series-1); cursor: pointer;
   text-decoration: underline; text-decoration-style: dotted;
   text-underline-offset: 3px; text-decoration-color: var(--baseline);
 }
+/* No `outline: none` here. It used to sit on :focus-visible and, at specificity 0,2,0,
+   it beat the global :where(...) focus rule at 0,1,0 — so the one element a keyboard user
+   navigates by had no focus ring at all. The underline going solid is a supplement to the
+   ring, never a replacement for it. */
 .drill:hover, .drill:focus-visible {
   text-decoration-style: solid; text-decoration-color: var(--series-1);
-  outline: none;
 }
 .drill::after { content: " ›"; color: var(--text-muted); }
 .change-added   { color: var(--status-good); font-weight: 600; }
@@ -485,30 +488,16 @@ function esc(s) {
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
-/* Colour follows the entity, not its rank. The slot is derived from the CR's position in
-   the full sorted CR list, so filtering the group table down to one owner never repaints
-   the survivors — a reader who learned "ldap-groupsync is blue" keeps that. */
-function crSlot(provider) {
-  if (!provider) return null;
-  // flatMap, because a CR with several providers owns several label values and each needs
-  // its own slot — colouring by CR would give two visibly different provider groupings the
-  // same dot and hide exactly the distinction the colour exists to draw.
-  const owners = data.groupsyncs.flatMap((g) => g.provider_keys || []).filter(Boolean).sort();
-  const i = owners.indexOf(provider);
-  if (i < 0) return null;
-  // Never generate a 9th hue: past the 8 slots, identity folds into the text alone.
-  return i < 8 ? i + 1 : null;
-}
-
+/* The owner is named, not colour-coded. The per-CR dot that used to sit here was removed
+   deliberately: the CR name is already the reliable channel, and a hue per owner competed
+   with the status colours — which are the ones that actually mean something on this page —
+   for a distinction the text was already making. Dropping it also retires the 8-slot
+   palette, the "what about a 9th CR" edge case, and the re-sort on every render. */
 function ownerCell(provider) {
   if (!provider) return `<span class="err">unattributed</span>`;
-  const slot = crSlot(provider);
-  const dot = slot
-    ? `<span class="cr-dot" style="background:var(--series-${slot})" aria-hidden="true"></span>`
-    : "";
   // Strip the "_<provider>" suffix for display; the full value stays in the group detail.
   const label = provider.replace(/_[^_]+$/, "");
-  return `<span class="owner">${dot}<code>${esc(label)}</code></span>`;
+  return `<span class="owner"><code>${esc(label)}</code></span>`;
 }
 
 /* ---------- rendering ---------- */
@@ -880,7 +869,7 @@ function groupDetail() {
           const rejoined = m.original_first_seen_at
             && m.original_first_seen_at !== m.first_seen_at;
           return `<tr class="rowlink" data-user="${esc(m.user_name)}">
-          <td><span class="drill" tabindex="0" role="button">${esc(m.user_name)}</span></td>
+          <td><button type="button" class="drill">${esc(m.user_name)}</button></td>
           <td class="mono">${esc(fmtTime(m.first_seen_at))} <span class="muted">(${esc(ago(m.first_seen_at))})</span></td>
           <td class="mono ${rejoined ? "" : "muted"}">${esc(fmtTime(m.original_first_seen_at))}${
             rejoined ? ` <span class="badge warning" style="margin-left:4px"><span class="glyph" aria-hidden="true"></span>rejoined</span>` : ""}</td>
@@ -897,8 +886,8 @@ function groupDetail() {
         <thead><tr><th>Change</th><th>User</th><th>Observed</th><th>Sync that carried it</th></tr></thead>
         <tbody>${changes.map((c) => `<tr>
           <td class="change-${esc(c.change)}">${c.change === "added" ? "+ joined" : "− left"}</td>
-          <td><span class="drill" tabindex="0" role="button"
-                data-user="${esc(c.user_name)}">${esc(c.user_name)}</span></td>
+          <td><button type="button" class="drill"
+                data-user="${esc(c.user_name)}">${esc(c.user_name)}</button></td>
           <td class="mono">${esc(fmtTime(c.observed_at))}</td>
           <td class="mono muted">${esc(c.group_synced_at ? fmtTime(c.group_synced_at) : "—")}</td>
         </tr>`).join("")}</tbody>
@@ -959,7 +948,7 @@ function bindingsCard(bindings, who) {
         ${scoped ? `<td>${esc(b.binding_namespace)}</td>` : ""}
         <td><code>${esc(b.role_name)}</code> <span class="muted">${esc(b.role_kind)}</span></td>
         <td class="muted">${esc(b.binding_name)}</td>
-        ${b.via_group ? `<td><span class="drill" data-group="${esc(b.via_group)}">${esc(b.via_group)}</span></td>` : ""}
+        ${b.via_group ? `<td><button type="button" class="drill" data-group="${esc(b.via_group)}">${esc(b.via_group)}</button></td>` : ""}
       </tr>`).join("")}</tbody></table></div>`;
 
   return `<section class="card">
@@ -1007,7 +996,7 @@ function userDetail() {
       : `<div class="scroll-x"><table>
           <thead><tr><th>Group</th><th>Owner</th><th>Member since</th></tr></thead>
           <tbody>${groups.map((g) => `<tr class="rowlink" data-group="${esc(g.group_name)}">
-            <td><span class="drill">${esc(g.group_name)}</span></td>
+            <td><button type="button" class="drill" data-group="${esc(g.group_name)}">${esc(g.group_name)}</button></td>
             <td>${ownerCell(g.sync_provider)}</td>
             <td class="mono">${esc(fmtTime(g.first_seen_at))}</td>
           </tr>`).join("")}</tbody>
@@ -1022,7 +1011,7 @@ function userDetail() {
           <thead><tr><th>Change</th><th>Group</th><th>Observed</th></tr></thead>
           <tbody>${d.changes.map((c) => `<tr class="rowlink" data-group="${esc(c.group_name)}">
             <td class="change-${esc(c.change)}">${c.change === "added" ? "+ joined" : "− left"}</td>
-            <td><span class="drill">${esc(c.group_name)}</span></td>
+            <td><button type="button" class="drill" data-group="${esc(c.group_name)}">${esc(c.group_name)}</button></td>
             <td class="mono">${esc(fmtTime(c.observed_at))}</td>
           </tr>`).join("")}</tbody>
         </table></div>`}
@@ -1045,7 +1034,7 @@ function bindingsPage() {
       <thead><tr><th>Group named by the binding</th><th>Grants</th><th>Scope</th>
         <th>Binding</th></tr></thead>
       <tbody>${rows.map((r) => `<tr>
-        <td><span class="drill" data-group="${esc(r.group_name)}">${esc(r.group_name)}</span></td>
+        <td><button type="button" class="drill" data-group="${esc(r.group_name)}">${esc(r.group_name)}</button></td>
         <td><code>${esc(r.role_name)}</code> <span class="muted">${esc(r.role_kind)}</span></td>
         <td>${r.binding_namespace
               ? esc(r.binding_namespace)

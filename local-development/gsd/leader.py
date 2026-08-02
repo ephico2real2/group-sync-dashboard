@@ -88,7 +88,21 @@ class LeaderElector:
         )
 
     def _now(self) -> str:
-        return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+        """A Kubernetes MicroTime: RFC3339 with EXACTLY six fractional digits.
+
+        The apiserver parses acquireTime/renewTime with the Go layout
+        ``2006-01-02T15:04:05.000000Z07:00``, and Go's ``.000000`` means exactly six digits
+        — not "up to six". Emitting milliseconds instead produced:
+
+            Lease in version "v1" cannot be handled as a Lease: parsing time
+            "...T05:04:05.491Z" as "2006-01-02T15:04:05.000000Z07:00":
+            cannot parse "Z" as ".000000"
+
+        so every create was rejected 400, the lease was never taken, and because the poller
+        is gated on leadership the dashboard silently never polled. %f is already six
+        digits; the truncation that made it three was the whole bug.
+        """
+        return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z"
 
     def _body(self, transitions: int) -> dict:
         return {
@@ -113,7 +127,17 @@ class LeaderElector:
             created = client.post(path, json=self._body(0))
             # 409 means another replica created it in the same instant; it won, and that is
             # a normal outcome rather than an error.
-            return created.status_code in (200, 201)
+            if created.status_code in (200, 201, 409):
+                return created.status_code in (200, 201)
+            # Anything else is a real fault and must SAY so. This returned a bare False for
+            # months: a malformed body was rejected 400 on every round, the pod stood down
+            # forever, and the only visible symptom was data that quietly stopped updating.
+            # The apiserver puts the reason in the body, so log it rather than the code alone.
+            log.error(
+                "leader election: could not create lease %s/%s — HTTP %s: %s",
+                self.namespace, self.name, created.status_code, created.text[:400],
+            )
+            return False
 
         if response.status_code != 200:
             log.warning("leader election: GET lease returned %s", response.status_code)
@@ -145,6 +169,13 @@ class LeaderElector:
 
         body["metadata"]["resourceVersion"] = lease["metadata"]["resourceVersion"]
         updated = client.put(f"{path}/{self.name}", json=body)
+        # Same reasoning as the create path: 409 is the mechanism working, anything else
+        # is a fault that must not be swallowed into a silent stand-down.
+        if updated.status_code not in (200, 409):
+            log.error(
+                "leader election: could not renew lease %s/%s — HTTP %s: %s",
+                self.namespace, self.name, updated.status_code, updated.text[:400],
+            )
         # 409 = someone else wrote first. Losing a race is the mechanism working, not a fault.
         return updated.status_code == 200
 
