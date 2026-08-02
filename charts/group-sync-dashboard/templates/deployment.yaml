@@ -63,7 +63,7 @@ spec:
           # inside the cluster can skip the proxy entirely by addressing the pod directly,
           # which would make the authentication decorative.
           command:
-            - python3.11
+            - python3.14
             - -m
             - uvicorn
             - gsd.api:create_app
