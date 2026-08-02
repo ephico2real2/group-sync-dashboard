@@ -64,6 +64,13 @@ podDisruptionBudget:
 leaderElection:
   # Only the lease holder polls; every replica still serves the API and /metrics.
   #
+  # BEST-EFFORT, not a write fence. Leadership is checked once before each poll cycle and
+  # never again during it, so a pod that stalls after the check can lose the lease and
+  # still finish its writes. Two pods can also both consider themselves leader briefly,
+  # since expiry is judged against each pod's own clock. Treat this as reducing the
+  # ordinary overlap cases, not as a guarantee that one process writes — the guarantee
+  # comes from the deployment shape: one replica, Recreate, one database file.
+  #
   # Worth leaving on even at one replica: `Recreate` is not instantaneous, `kubectl scale`
   # is one keystroke, and a partitioned node can leave an old pod running while a new one
   # starts. Each of those puts two pollers on one database.
@@ -208,18 +215,28 @@ config:
   # requests that are already authenticated, so there is no login or logout event to
   # record and "session" here means the first-to-last-seen window on a given day.
   #
-  # WHO CAN READ IT: /api/dashboard/activity is behind the same authentication as
-  # everything else, and the default access model admits anyone who can log into the
-  # cluster. So every user can see which colleagues used the dashboard and when. That is a
-  # different KIND of data from the rest of this tool — it is about people, not about
-  # groups — so if your organisation would not accept that, either set `enabled: false` or
-  # restrict the whole dashboard with oauthProxy.sar.
+  # WHO CAN READ IT — `visibility` below. Default `self`: each user sees only their own
+  # row. This response is identifiable personnel data (who was present, on which days,
+  # between which times, how often), and the argument that carries the rest of this
+  # dashboard — "you could read the groups with oc anyway" — is true of group membership
+  # and false of who looked at it. It previously returned everyone to everyone.
   #
   # ABOVE ONE REPLICA it is per-pod, like the rest of the history: each pod counts only the
   # requests it served, into its own database. gsd_dashboard_active_users is then a per-pod
   # figure and summing it double-counts anyone who hit more than one pod.
   userActivity:
     enabled: true
+    # self | all.
+    #   self  each authenticated user sees only their own activity (default)
+    #   all   everyone sees everyone — the pre-existing behaviour, now an explicit choice
+    # Anything else is treated as `self`: an unrecognised value must never be the one that
+    # widens access to a personnel dataset.
+    #
+    # There is deliberately no "admins only" tier. Doing that properly means a
+    # SubjectAccessReview from the app against the Kubernetes API on every read, which
+    # makes a personal-data query depend on API-server availability. If you need it,
+    # oauthProxy.sar already restricts the WHOLE dashboard to a group you choose.
+    visibility: self
     # Requests are buffered in memory and written once per interval. A write per request
     # would put every API call behind the SQLite writer lock, contending with the poll's
     # bulk write — the latency the WAL work exists to prevent. The cost is that an

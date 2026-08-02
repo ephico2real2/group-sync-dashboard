@@ -7,6 +7,9 @@
 {{- if and (eq (include "gsd.accessMode" .) "ReadWriteOncePod") (eq (toString .Values.strategy) "RollingUpdate") }}
 {{- fail "strategy=RollingUpdate deadlocks against a ReadWriteOncePod volume: the incoming pod cannot be scheduled until the outgoing one releases the claim, and RollingUpdate will not terminate the outgoing pod until the incoming one is Ready. Use Recreate, or leave strategy empty to derive it." }}
 {{- end }}
+{{- if and (eq (int .Values.replicaCount) 1) .Values.persistence.enabled (eq (toString .Values.strategy) "RollingUpdate") }}
+{{- fail "strategy=RollingUpdate is unsafe at replicaCount 1 with persistence enabled, whatever the access mode. RollingUpdate starts the incoming pod BEFORE terminating the outgoing one, and at one replica both use /data/gsd.db — two processes on one SQLite file, which corrupts rather than errors because WAL coordinates through an mmap'd -shm file that assumes a single host. The guard above catches only ReadWriteOncePod, where the scheduler refuses the second pod anyway; the DEFAULT ReadWriteMany happily mounts twice and was therefore the dangerous case, not the protected one. Use Recreate, or leave strategy empty to derive it. Above one replica RollingUpdate is correct and stays allowed, because each pod owns /data/$POD_NAME/gsd.db." }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:

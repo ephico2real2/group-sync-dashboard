@@ -205,10 +205,26 @@ class Poller:
     def __init__(self, store: Store, settings: Settings, elector: LeaderElector | None = None):
         self.store = store
         self.settings = settings
-        # Only the leader writes. Without this, a scale-up, a slow Recreate, or a partitioned
-        # node puts two pollers on one database — and the poll loop is not idempotent across
-        # writers, so racing sync_members calls emit membership events for changes that never
-        # happened.
+        # BEST-EFFORT admission control, NOT a write fence. Read this before relying on it.
+        #
+        # Leadership is checked once, in _run_cluster, before poll_once is entered. Nothing
+        # re-checks it during the seven writes that follow, and nothing carries a fence
+        # token the store could reject. So a pod that passes the check and then pauses —
+        # CPU throttling, a stop-the-world GC, a network partition — can lose the lease,
+        # have another pod take over, and still complete every one of its writes on resume.
+        # Two pods can also both believe they hold it for up to renew_seconds, because the
+        # loser does not clear its own flag until its next round, and expiry is judged
+        # against each pod's own clock.
+        #
+        # What it therefore DOES buy: it stops the ordinary cases — a scale-up, a slow
+        # Recreate rollover — from having two steady-state pollers. What it does NOT buy is
+        # a guarantee that only one process ever writes. The real protection against that
+        # is the deployment shape: one replica, Recreate, one database file.
+        #
+        # Making it a true fence would mean every store write comparing a monotonic token
+        # inside the same transaction, with the new leader advancing it first. That is a
+        # distributed-systems protocol layered over SQLite, and it is not proportionate for
+        # a single-writer application whose primary defence is that there is only one pod.
         self.elector = elector
         self._stop = threading.Event()
         self._threads: list[threading.Thread] = []

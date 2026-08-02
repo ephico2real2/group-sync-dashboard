@@ -220,6 +220,10 @@ class Settings:
     # its own oauthProxy.enabled; false means no identity is trustworthy.
     oauth_proxy_enabled: bool = False
     user_activity_enabled: bool = True
+    # "self" | "all". Who may read /api/dashboard/activity. Defaults to self, because the
+    # response is identifiable personnel data — who was present, when, and how much — and
+    # the dashboard's usual "you could read this with oc anyway" argument does not cover it.
+    user_activity_visibility: str = "self"
     user_activity_flush_seconds: int = 60
     user_activity_retention_days: int = 400
 
@@ -247,6 +251,23 @@ def _num_setting(raw: dict, env_name: str, yaml_key: str, default, cast):
     except (TypeError, ValueError):
         log.warning("%s=%r is not a number; using %r", env_name, source, default)
         return default
+
+
+def _visibility_setting(raw: dict) -> str:
+    """Fail SAFE on anything unrecognised: an unknown value means self, never all.
+
+    The failure direction is the whole point. A typo here — "All", "everyone", "ture" —
+    must not silently widen who can read a personnel dataset, so only the exact string
+    "all" opts in.
+    """
+    source = os.environ.get("GSD_USER_ACTIVITY_VISIBILITY")
+    if source is None:
+        source = raw.get("userActivityVisibility", "self")
+    word = str(source).strip().lower()
+    if word in ("self", "all"):
+        return word
+    log.warning("userActivityVisibility=%r is not 'self' or 'all'; using 'self'", source)
+    return "self"
 
 
 def _bool_setting(raw: dict, env_name: str, yaml_key: str, default: bool) -> bool:
@@ -375,6 +396,7 @@ def load_settings(path: str | Path) -> Settings:
         user_activity_enabled=_bool_setting(
             raw, "GSD_USER_ACTIVITY_ENABLED", "userActivityEnabled", True
         ),
+        user_activity_visibility=_visibility_setting(raw),
         user_activity_flush_seconds=_num_setting(
             raw, "GSD_USER_ACTIVITY_FLUSH_SECONDS", "userActivityFlushSeconds", 60, int
         ),

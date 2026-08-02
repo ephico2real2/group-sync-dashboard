@@ -29,6 +29,10 @@ log = logging.getLogger(__name__)
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 
+# Mirrors oauthProxy.skipAuthRegex. Requests here reach the app WITHOUT authentication, so
+# nothing they claim about identity can be believed or recorded.
+SKIP_AUTH_PATHS = frozenset({"/healthz", "/readyz", "/metrics"})
+
 
 def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
     store = Store(
@@ -92,7 +96,11 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
         The unauthenticated paths (/healthz, /readyz, /metrics — oauthProxy.skipAuthRegex)
         need no special case: they carry neither header.
         """
-        if request.headers.get(INTERACTION_HEADER):
+        # Excluded EXPLICITLY, not by assuming they arrive header-less. These three
+        # bypass the proxy entirely (oauthProxy.skipAuthRegex), so whether they carry an
+        # identity header is decided by the caller — which is exactly the input we must not
+        # let decide whether we record.
+        if request.url.path not in SKIP_AUTH_PATHS and request.headers.get(INTERACTION_HEADER):
             try:
                 activity.record(
                     request.headers.get(USER_HEADER), request.headers.get(EMAIL_HEADER)
@@ -410,18 +418,46 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
 
     @app.get("/api/dashboard/activity")
     def dashboard_activity(
+        request: Request,
         since: str | None = Query(None, description="UTC date, YYYY-MM-DD"),
         limit: int = Query(500, ge=1, le=5000),
     ) -> dict:
         """Who used the dashboard, one row per user per UTC day.
 
+        SELF-ONLY by default. This returns identifiable personnel data — username, email,
+        the dates somebody was present and the window they worked in — and it used to hand
+        all of it to every authenticated user. The dashboard's usual justification does not
+        stretch this far: "you could read the groups with oc anyway" is true of group
+        membership and false of who looked at it.
+
+        `userActivity.visibility: all` restores the old behaviour for a deployment that
+        genuinely wants it, as a deliberate, documented choice rather than a default.
+
         Deliberately not a page-view log — see the dashboard_user_activity comment in
         store.py for why this is aggregated rather than per-request.
         """
+        # Never from a caller-supplied header. With the proxy disabled the app binds
+        # 0.0.0.0 with no authentication, so X-Forwarded-User is whatever was typed, and
+        # honouring it here would let anyone read everyone by asserting a name.
+        if not settings.oauth_proxy_enabled:
+            raise HTTPException(
+                status_code=403,
+                detail="dashboard usage requires the OAuth proxy; without it there is no "
+                       "authenticated identity to scope this to",
+            )
+        viewer = request.headers.get(USER_HEADER)
+        if not viewer:
+            raise HTTPException(status_code=403, detail="no authenticated identity")
+
+        everyone = settings.user_activity_visibility == "all"
         return {
             "enabled": activity.enabled,
             "retention_days": settings.user_activity_retention_days,
-            "activity": store.user_activity(since_day=since, limit=limit),
+            "scope": "all" if everyone else "self",
+            "viewer": viewer,
+            "activity": store.user_activity(
+                since_day=since, limit=limit, user_name=None if everyone else viewer
+            ),
         }
 
     @app.get("/api/version")

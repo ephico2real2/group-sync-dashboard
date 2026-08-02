@@ -27,7 +27,7 @@ from prometheus_client import CollectorRegistry
 from prometheus_client.core import CounterMetricFamily, GaugeMetricFamily
 
 from . import __version__, state as st
-from .store import Store, now_iso
+from .store import Store
 
 log = logging.getLogger(__name__)
 
@@ -116,23 +116,13 @@ class DashboardCollector:
         journal.add_metric([], 1 if self.store.journal_mode == "wal" else 0)
         yield journal
 
-        # Unlabelled by user on purpose: a per-user series would grow Prometheus
-        # cardinality with the size of the organisation, and the per-user detail already
-        # lives in the database where it can be queried without that cost.
-        active = GaugeMetricFamily(
-            "gsd_dashboard_active_users",
-            "Distinct users who have used the dashboard today (UTC). 0 when the oauth "
-            "proxy is disabled, since there is then no identity to attribute requests to.",
-            labels=[],
-        )
-        # Guarded like the cluster listing below: this is a store query, and a usage
-        # statistic must never be the reason a scrape 500s and takes every other metric
-        # with it.
-        try:
-            active.add_metric([], self.store.active_user_count(now_iso()[:10]))
-        except Exception:  # noqa: BLE001
-            log.exception("metrics: active-user count failed; omitting it from this scrape")
-        yield active
+        # gsd_dashboard_active_users USED TO BE EXPOSED HERE AND WAS REMOVED.
+        # /metrics is deliberately unauthenticated so Prometheus can scrape it without
+        # credentials (oauthProxy.skipAuthRegex), and a distinct-user-count is still
+        # personnel information: it reports how many people worked on a given day to
+        # anyone who can reach the Service. Unlabelled is not anonymous enough to publish
+        # without authentication. The per-user detail remains in the database, behind
+        # /api/dashboard/activity, which is authenticated and self-scoped.
 
         up = GaugeMetricFamily(
             "gsd_cluster_up",

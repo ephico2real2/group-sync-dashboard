@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from gsd.activity import ActivityRecorder
+from gsd.activity import MAX_FLUSH_ATTEMPTS, ActivityRecorder
 from gsd.api import build_app
 from gsd.config import Settings
 from gsd.store import Store
@@ -146,7 +146,10 @@ class TestTrustBoundary:
         with _client(tmp_path, oauth_proxy_enabled=False) as c:
             body = c.get("/api/whoami", headers={"X-Forwarded-User": "impostor"}).json()
             assert body == {"user": None, "email": None, "authenticated": False}
-            assert c.get("/api/dashboard/activity").json()["activity"] == []
+            # Refused, not merely empty. This used to return an empty list, which is the
+            # same answer a legitimately-unused dashboard gives — so it could not be told
+            # apart from "there is nothing to see". 403 says why.
+            assert c.get("/api/dashboard/activity").status_code == 403
 
     def test_identity_is_honoured_when_the_proxy_is_on(self, tmp_path):
         with _client(tmp_path, oauth_proxy_enabled=True) as c:
@@ -212,3 +215,193 @@ class TestTrustBoundary:
         rows = store.user_activity()
         store.close()
         assert rows == []
+
+
+def _seed_two_users(db):
+    store = Store(db)
+    store.record_user_activity([
+        {"user_name": u, "day": "2026-08-02", "email": f"{u}@x.com",
+         "first_seen_at": "2026-08-02T09:00:00Z", "last_seen_at": "2026-08-02T17:00:00Z",
+         "request_count": n}
+        for u, n in (("alice", 5), ("bob", 9))
+    ])
+    store.close()
+
+
+class TestActivityDisclosure:
+    """Who may read the activity endpoint.
+
+    It used to return every row to every authenticated user: username, email, which days
+    somebody was present and the window they worked in. The dashboard's usual argument —
+    "you could read the groups with oc anyway" — is true of group membership and false of
+    who looked at it.
+    """
+
+    def test_self_only_by_default(self, tmp_path):
+        db = str(tmp_path / "gsd.db")
+        _seed_two_users(db)
+        settings = Settings(db_path=db, oauth_proxy_enabled=True)
+        with TestClient(build_app(settings, run_poller=False)) as c:
+            body = c.get("/api/dashboard/activity",
+                         headers={"X-Forwarded-User": "alice"}).json()
+        assert body["scope"] == "self"
+        assert {r["user_name"] for r in body["activity"]} == {"alice"}, \
+            "alice can read bob's presence data"
+
+    def test_visibility_all_is_an_explicit_opt_in(self, tmp_path):
+        db = str(tmp_path / "gsd.db")
+        _seed_two_users(db)
+        settings = Settings(db_path=db, oauth_proxy_enabled=True,
+                            user_activity_visibility="all")
+        with TestClient(build_app(settings, run_poller=False)) as c:
+            body = c.get("/api/dashboard/activity",
+                         headers={"X-Forwarded-User": "alice"}).json()
+        assert body["scope"] == "all"
+        assert {r["user_name"] for r in body["activity"]} == {"alice", "bob"}
+
+    def test_refused_outright_when_the_proxy_is_off(self, tmp_path):
+        """Without the proxy the username header is caller-supplied, so scoping to it would
+        let anyone read anyone by simply asserting a name. Refuse rather than scope."""
+        db = str(tmp_path / "gsd.db")
+        _seed_two_users(db)
+        with TestClient(build_app(Settings(db_path=db, oauth_proxy_enabled=False),
+                                  run_poller=False)) as c:
+            assert c.get("/api/dashboard/activity",
+                         headers={"X-Forwarded-User": "bob"}).status_code == 403
+
+    def test_refused_when_no_identity_is_present(self, tmp_path):
+        db = str(tmp_path / "gsd.db")
+        _seed_two_users(db)
+        with TestClient(build_app(Settings(db_path=db, oauth_proxy_enabled=True),
+                                  run_poller=False)) as c:
+            assert c.get("/api/dashboard/activity").status_code == 403
+
+    def test_the_limit_applies_after_scoping_not_before(self, tmp_path):
+        """Filtering in SQL, not in Python. With the filter applied after the fetch, a
+        busier colleague's rows would consume the page and the caller would see fewer of
+        their own than `limit` allows."""
+        db = str(tmp_path / "gsd.db")
+        store = Store(db)
+        store.record_user_activity(
+            [{"user_name": "bob", "day": f"2026-07-{d:02d}", "email": None,
+              "first_seen_at": f"2026-07-{d:02d}T09:00:00Z",
+              "last_seen_at": f"2026-07-{d:02d}T09:00:00Z", "request_count": 1}
+             for d in range(1, 21)]
+            + [{"user_name": "alice", "day": "2026-06-01", "email": None,
+                "first_seen_at": "2026-06-01T09:00:00Z",
+                "last_seen_at": "2026-06-01T09:00:00Z", "request_count": 1}]
+        )
+        store.close()
+        settings = Settings(db_path=db, oauth_proxy_enabled=True)
+        with TestClient(build_app(settings, run_poller=False)) as c:
+            body = c.get("/api/dashboard/activity?limit=5",
+                         headers={"X-Forwarded-User": "alice"}).json()
+        assert [r["user_name"] for r in body["activity"]] == ["alice"]
+
+
+class TestUnauthenticatedPaths:
+    def test_skipped_paths_never_record_even_with_headers(self, tmp_path):
+        """/healthz, /readyz and /metrics bypass the proxy, so whether they carry an
+        identity header is the caller's choice — which must not decide whether we record."""
+        db = str(tmp_path / "gsd.db")
+        settings = Settings(db_path=db, oauth_proxy_enabled=True)
+        with TestClient(build_app(settings, run_poller=False)) as c:
+            for path in ("/healthz", "/readyz", "/metrics"):
+                c.get(path, headers={"X-Forwarded-User": "impostor",
+                                     "X-GSD-Interaction": "1"})
+        store = Store(db)
+        rows = store.user_activity()
+        store.close()
+        assert rows == []
+
+    def test_metrics_exposes_no_personnel_data(self, tmp_path):
+        """/metrics is deliberately unauthenticated. A distinct-user count still reports
+        how many people worked on a given day to anyone who can reach the Service."""
+        db = str(tmp_path / "gsd.db")
+        _seed_two_users(db)
+        settings = Settings(db_path=db, oauth_proxy_enabled=True)
+        with TestClient(build_app(settings, run_poller=False)) as c:
+            body = c.get("/metrics").text
+        assert "gsd_dashboard_active_users" not in body
+        for name in ("alice", "bob", "@x.com"):
+            assert name not in body, f"{name!r} leaked into unauthenticated /metrics"
+
+
+class TestFlushFailure:
+    """A failed write used to destroy already-captured data.
+
+    flush() swaps the buffer out before writing, so on an exception the swapped batch was
+    simply gone — one moment of lock contention past busy_timeout and it was lost, with a
+    log line that said so and no way to get it back.
+    """
+
+    class _FailingStore:
+        """Wraps a real store and fails the next `fail_times` writes."""
+
+        def __init__(self, inner, fail_times):
+            self.inner, self.remaining, self.writes = inner, fail_times, 0
+
+        def record_user_activity(self, buckets):
+            self.writes += 1
+            if self.remaining > 0:
+                self.remaining -= 1
+                raise RuntimeError("database is locked")
+            return self.inner.record_user_activity(buckets)
+
+    def test_a_failed_flush_is_retried_without_losing_or_double_counting(self, store):
+        failing = self._FailingStore(store, fail_times=1)
+        rec = ActivityRecorder(failing, enabled=True, flush_interval_seconds=3600)
+
+        rec.record("alice", "a@x.com", "2026-08-01T09:00:00Z")
+        assert rec.flush() == 0, "the first write is supposed to fail"
+        assert store.user_activity() == []
+
+        # More activity arrives while the failed batch waits.
+        rec.record("alice", "a@x.com", "2026-08-01T18:00:00Z")
+        assert rec.flush() == 1
+
+        row = store.user_activity()[0]
+        assert row["request_count"] == 2, "the requeued interaction was lost or duplicated"
+        assert row["first_seen_at"] == "2026-08-01T09:00:00Z"
+        assert row["last_seen_at"] == "2026-08-01T18:00:00Z"
+
+    def test_a_permanently_failing_store_does_not_grow_the_buffer(self, store):
+        """Retrying forever turns a storage outage into an OOM."""
+        failing = self._FailingStore(store, fail_times=10_000)
+        rec = ActivityRecorder(failing, enabled=True, flush_interval_seconds=3600)
+        rec.record("alice", None, "2026-08-01T09:00:00Z")
+        for _ in range(MAX_FLUSH_ATTEMPTS + 3):
+            rec.flush()
+        assert rec._buckets == {}, "buckets are retained past the retry bound"
+
+    def test_buckets_survive_until_the_bound(self, store):
+        failing = self._FailingStore(store, fail_times=10_000)
+        rec = ActivityRecorder(failing, enabled=True, flush_interval_seconds=3600)
+        rec.record("alice", None, "2026-08-01T09:00:00Z")
+        rec.flush()
+        assert rec._buckets, "dropped on the very first failure — the original bug"
+
+    def test_stop_does_not_start_a_second_flush_while_one_is_in_flight(self, store):
+        """The old stop() joined with a timeout and then flushed regardless, which could run
+        a second concurrent write and still not make the first one finish."""
+        import threading
+
+        started, release = threading.Event(), threading.Event()
+
+        class _Blocking:
+            writes = 0
+
+            def record_user_activity(self, buckets):
+                _Blocking.writes += 1
+                started.set()
+                release.wait(timeout=10)
+                return len(buckets)
+
+        rec = ActivityRecorder(_Blocking(), enabled=True, flush_interval_seconds=0.05)
+        rec.record("alice", None, "2026-08-01T09:00:00Z")
+        rec.start()
+        assert started.wait(timeout=5), "the flush thread never began writing"
+        rec.record("bob", None, "2026-08-01T09:00:00Z")
+        rec.stop()                      # must NOT launch a second write
+        assert _Blocking.writes == 1
+        release.set()

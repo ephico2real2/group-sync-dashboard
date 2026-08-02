@@ -20,6 +20,7 @@ data:
     # this is true.
     oauthProxyEnabled: {{ .Values.oauthProxy.enabled }}
     userActivityEnabled: {{ .Values.config.userActivity.enabled }}
+    userActivityVisibility: {{ .Values.config.userActivity.visibility | quote }}
     userActivityFlushSeconds: {{ .Values.config.userActivity.flushSeconds }}
     userActivityRetentionDays: {{ .Values.config.userActivity.retentionDays }}
     leaderElection: {{ .Values.leaderElection.enabled }}

@@ -28,10 +28,15 @@ latency the WAL and busy_timeout work exists to prevent, and it would be self-in
 is also heavy: one page view is several API calls, so the write amplification is ~10x for
 data whose whole purpose is to be read in aggregate.
 
-The cost of buffering is that an ungraceful kill loses up to one flush interval of counts.
-That is acceptable *for this data specifically*: it is derived usage statistics, not the
-accumulated sync and membership history, which is the part that cannot be re-fetched.
-Shutdown flushes, so only a crash loses anything.
+The cost of buffering is that a kill loses up to one flush interval of counts. That is
+acceptable *for this data specifically*: it is derived usage statistics, not the accumulated
+sync and membership history, which is the part that cannot be re-fetched.
+
+Shutdown flushes, but it is NOT lossless and this file no longer claims it is. stop() joins
+the worker with a timeout and, if that expires while a store call is still in flight,
+reports the fact rather than starting a second concurrent write that could not make the
+first one finish. A failed flush is requeued and retried up to MAX_FLUSH_ATTEMPTS, then
+dropped loudly — retrying forever would turn a storage outage into unbounded memory growth.
 """
 
 from __future__ import annotations
@@ -58,6 +63,11 @@ EMAIL_HEADER = "x-forwarded-email"
 # figure. That is not worth defending against: these are usage statistics, not an audit
 # trail, and the only thing they could forge is their own row.
 INTERACTION_HEADER = "x-gsd-interaction"
+
+# How many times a failed flush is retried before its buckets are dropped. Small on
+# purpose: this covers a transient lock or a brief storage hiccup, not an outage. Retrying
+# indefinitely would grow the buffer without bound while new user-days keep arriving.
+MAX_FLUSH_ATTEMPTS = 3
 
 
 def _day(at: str) -> str:
@@ -122,6 +132,16 @@ class ActivityRecorder:
 
         The buffer is swapped out under the lock and written outside it, so a slow write
         never blocks the request threads that are still recording.
+
+        A failed write is RETRIED, up to MAX_FLUSH_ATTEMPTS. The swap means the failed
+        buckets are no longer in `_buckets`, so before this they were simply gone — one
+        moment of lock contention past busy_timeout silently destroyed data that had
+        already been captured. They are now merged back in.
+
+        Bounded, because the obvious version is worse than the bug: retrying forever
+        against a permanently broken store grows the buffer without limit as new user-days
+        keep arriving, and turns a storage outage into an OOM. After the bound the buckets
+        are dropped, loudly.
         """
         with self._lock:
             if not self._buckets:
@@ -130,8 +150,46 @@ class ActivityRecorder:
         try:
             return self.store.record_user_activity(pending)
         except Exception:  # noqa: BLE001 - usage stats must not take the process down
-            log.exception("could not flush %d user-activity bucket(s); they are lost", len(pending))
+            self._requeue(pending)
             return 0
+
+    def _requeue(self, pending: list[dict]) -> None:
+        """Merge failed buckets back, dropping any that have exhausted their retries.
+
+        Merged rather than reinserted: the same user-day may have accumulated more
+        interactions while the failed write was in flight, and overwriting would discard
+        them. Same rule as the SQL upsert — counts add, the window widens.
+        """
+        kept, dropped = 0, 0
+        with self._lock:
+            for bucket in pending:
+                bucket["attempts"] = bucket.get("attempts", 0) + 1
+                if bucket["attempts"] >= MAX_FLUSH_ATTEMPTS:
+                    dropped += 1
+                    continue
+                key = (bucket["user_name"], bucket["day"])
+                current = self._buckets.get(key)
+                if current is None:
+                    self._buckets[key] = bucket
+                else:
+                    current["request_count"] += bucket["request_count"]
+                    current["first_seen_at"] = min(
+                        current["first_seen_at"], bucket["first_seen_at"]
+                    )
+                    current["last_seen_at"] = max(
+                        current["last_seen_at"], bucket["last_seen_at"]
+                    )
+                    current["email"] = current.get("email") or bucket.get("email")
+                    current["attempts"] = bucket["attempts"]
+                kept += 1
+        if dropped:
+            log.error(
+                "dropping %d user-activity bucket(s) after %d failed flushes; that usage "
+                "is lost. %d bucket(s) still queued for retry",
+                dropped, MAX_FLUSH_ATTEMPTS, kept,
+            )
+        else:
+            log.warning("flush failed; %d user-activity bucket(s) requeued", kept)
 
     def prune(self, today: str | None = None) -> int:
         """Drop activity older than the retention window. At most once per day.
@@ -163,11 +221,27 @@ class ActivityRecorder:
         self._thread.start()
 
     def stop(self) -> None:
-        """Stop the loop and flush what is left, so a graceful shutdown loses nothing."""
+        """Stop the loop and flush what is left.
+
+        Deliberately NOT promising that a graceful shutdown loses nothing — it did claim
+        that, and it was not true. If the worker is still inside a store call when the join
+        times out, a final flush here would run a SECOND concurrent write and still not
+        make the first one finish. So the timeout is reported instead of papered over.
+
+        The join is bounded rather than indefinite because these are derived usage
+        statistics: a stuck filesystem call must not hold pod termination open past the
+        Kubernetes grace period for data of this value.
+        """
         self._stop.set()
-        if self._thread is not None:
-            self._thread.join(timeout=5)
-            self._thread = None
+        thread, self._thread = self._thread, None
+        if thread is not None:
+            thread.join(timeout=5)
+            if thread.is_alive():
+                log.warning(
+                    "activity flush thread still running at shutdown; not starting another "
+                    "write. Up to one flush interval of usage counts may be unpersisted"
+                )
+                return
         self.flush()
 
     def _loop(self) -> None:

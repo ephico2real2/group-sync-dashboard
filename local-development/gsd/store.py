@@ -861,13 +861,31 @@ class Store:
             )
             return cursor.rowcount
 
-    def user_activity(self, since_day: str | None = None, limit: int = 500) -> list[dict]:
+    def user_activity(
+        self,
+        since_day: str | None = None,
+        limit: int = 500,
+        user_name: str | None = None,
+    ) -> list[dict]:
+        """Activity rows, optionally narrowed to one user.
+
+        `user_name` is the privacy scope, not a convenience filter: the API passes the
+        authenticated viewer's own name unless the deployment has opted into showing
+        everyone. Filtering in SQL rather than after the fetch matters — `limit` is applied
+        by the database, so filtering afterwards would silently return fewer than `limit`
+        of the caller's own rows whenever busier colleagues filled the page.
+        """
         sql = """SELECT user_name, day, email, first_seen_at, last_seen_at, request_count
                    FROM dashboard_user_activity"""
-        params: list = []
+        where, params = [], []
         if since_day:
-            sql += " WHERE day >= ?"
+            where.append("day >= ?")
             params.append(since_day)
+        if user_name:
+            where.append("user_name = ?")
+            params.append(user_name)
+        if where:
+            sql += " WHERE " + " AND ".join(where)
         sql += " ORDER BY day DESC, user_name LIMIT ?"
         params.append(limit)
         return self._rows(sql, params)

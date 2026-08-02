@@ -867,15 +867,26 @@ function usagePage() {
   const today = new Date().toISOString().slice(0, 10);
   const activeToday = rows.filter((r) => r.day === today).length;
 
+  const selfOnly = d.scope !== "all";
   return `<section class="card">
     <h2>Dashboard usage</h2>
+    ${selfOnly
+      ? `<div class="filterbar-note" style="margin-bottom:8px">Showing
+          <strong>${esc(d.viewer || "your")}</strong> activity only. This is identifiable
+          personnel data, so each person sees their own by default — an administrator can
+          set <code>config.userActivity.visibility: all</code> to widen it.</div>`
+      : `<div class="filterbar-note" style="margin-bottom:8px">Showing
+          <strong>all users</strong>, because this deployment sets
+          <code>userActivity.visibility: all</code>.</div>`}
     <div class="hero">
       <span class="value mono">${activeToday}</span>
-      <span class="label">${activeToday === 1 ? "person" : "people"} used the dashboard today</span>
+      <span class="label">${selfOnly
+        ? (activeToday ? "active today" : "no activity today")
+        : `${activeToday === 1 ? "person" : "people"} used the dashboard today`}</span>
     </div>
     <div class="kpis">
-      <div class="kpi"><div class="label">Distinct users</div>
-        <div class="value mono">${users.size}</div></div>
+      ${selfOnly ? "" : `<div class="kpi"><div class="label">Distinct users</div>
+        <div class="value mono">${users.size}</div></div>`}
       <div class="kpi"><div class="label">Days recorded</div>
         <div class="value mono">${days.size}</div></div>
       <div class="kpi"><div class="label">Interactions</div>
