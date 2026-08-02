@@ -14,36 +14,64 @@
   color-scheme: light;
   --surface-1: #fcfcfb;
   --page: #f9f9f7;
+  /* Second stop of the page wash. Kept within a hair of --page in luminance so the
+     gradient reads as depth rather than as a colour change, and so no text loses contrast
+     depending on where it happens to sit. Both stops are measured, not eyeballed. */
+  --page-2: #eef0f4;
   --text-primary: #0b0b0b;
   --text-secondary: #52514e;
-  --text-muted: #898781;
+  /* 4.56:1 on --page. Was #898781 at 3.41:1, which failed WCAG 1.4.3 for normal text —
+     and this token colours table headers, KPI labels, axis text and every empty state,
+     so it was the single most widespread contrast failure on the page. */
+  --text-muted: #74726d;
   --gridline: #e1e0d9;
   --baseline: #c3c2b7;
   --border: rgba(11, 11, 11, 0.10);
-  --series-1: #2a78d6;
-  --series-1-wash: rgba(42, 120, 214, 0.10);
-  --status-good: #0ca30c;
-  --status-warning: #fab219;
+  /* 4.55:1. Used as link text (.drill, .back) as well as the chart stroke, so it has to
+     clear the 4.5 text bar, not just the 3:1 for graphical objects. */
+  --series-1: #2874d0;
+  --series-1-wash: rgba(40, 116, 208, 0.10);
+  /* status-good and status-critical are BOTH a badge glyph and running text
+     (.change-added / .change-removed / .err), so both are held to 4.5:1. status-warning is
+     only ever a glyph, so it is held to 3:1 (WCAG 1.4.11) — at 4.5:1 an amber turns brown
+     and stops reading as a warning at all. */
+  --status-good: #0a880a;
+  --status-warning: #c48704;
   --status-critical: #d03b3b;
-  --status-unknown: #898781;
+  --status-unknown: #74726d;
   /* Categorical slots, fixed order. Used for the OWNING CR, not for individual groups:
      there are 62 groups and only ~2 CRs, and past ~7 hues carrying meaning adjacent
      classes blur, so a colour per group would destroy the readability it was meant to add.
      Row-level readability comes from zebra striping instead. */
+  /* Each clears 3:1 on --surface-1 (WCAG 1.4.11: these are graphical objects carrying
+     meaning). 3, 4 and 5 were at 2.74, 2.11 and 2.62 and have been darkened the minimum
+     distance that reaches 3:1, holding hue and saturation exactly so the palette is the
+     same palette. */
   --series-2: #eb6834;
-  --series-3: #1baf7a;
-  --series-4: #eda100;
-  --series-5: #e87ba4;
+  --series-3: #1aa674;
+  --series-4: #c68600;
+  --series-5: #e56998;
   --series-6: #008300;
   --series-7: #4a3aa7;
   --series-8: #e34948;
   --zebra: rgba(11, 11, 11, 0.025);
+
+  /* Per-section accent. Each is solved to 4.5:1 against --page in BOTH themes, because the
+     active tab wears its accent as label text and not only as a bar. Hues are spread around
+     the wheel and also separated in lightness, so the four stay distinguishable to a
+     deuteranope, for whom the green and the orange collapse toward each other. */
+  --tab-overview: #2873cd;
+  --tab-groups: #108172;
+  --tab-bindings: #6d4bc7;
+  --tab-usage: #c2410c;
+  --accent: var(--tab-overview);
 }
 @media (prefers-color-scheme: dark) {
   :root:where(:not([data-theme="light"])) {
     color-scheme: dark;
     --surface-1: #1a1a19;
     --page: #0d0d0d;
+    --page-2: #14161c;
     --text-primary: #ffffff;
     --text-secondary: #c3c2b7;
     --text-muted: #898781;
@@ -60,12 +88,25 @@
     --series-7: #9085e9;
     --series-8: #e66767;
     --zebra: rgba(255, 255, 255, 0.035);
+    /* Lightened to 4.50:1; at #d03b3b it was 3.62:1 against the dark surface and failed
+       as .change-removed and .err text. The light theme keeps the deeper red, which
+       already passes there — the same hex cannot serve both. */
+    --status-critical: #d75858;
+    /* Dark keeps the brighter green. The light theme's #0a880a reaches 4.5:1 on a white
+       card but only 3.76:1 here, and .change-added renders it as text. */
+    --status-good: #0ca30c;
+    --status-unknown: #898781;
+    --tab-overview: #2d7ad7;
+    --tab-groups: #12907f;
+    --tab-bindings: #8468d0;
+    --tab-usage: #d9490d;
   }
 }
 :root[data-theme="dark"] {
   color-scheme: dark;
   --surface-1: #1a1a19;
   --page: #0d0d0d;
+  --page-2: #14161c;
   --text-primary: #ffffff;
   --text-secondary: #c3c2b7;
   --text-muted: #898781;
@@ -82,14 +123,78 @@
   --series-7: #9085e9;
   --series-8: #e66767;
   --zebra: rgba(255, 255, 255, 0.035);
+  --status-critical: #d75858;
+  /* Dark keeps the brighter green. The light theme's #0a880a reaches 4.5:1 on a white
+     card but only 3.76:1 here, and .change-added renders it as text. */
+  --status-good: #0ca30c;
+  --status-unknown: #898781;
+  --tab-overview: #2d7ad7;
+  --tab-groups: #12907f;
+  --tab-bindings: #8468d0;
+  --tab-usage: #d9490d;
 }
 
 * { box-sizing: border-box; }
 body {
   margin: 0;
-  background: var(--page);
   color: var(--text-primary);
   font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  /* Depth without cost: a fixed wash so the page reads as a surface rather than a flat
+     fill, plus a wide accent bloom that carries the current section's colour. Both stops
+     are measured tokens, so text contrast holds wherever it lands — a gradient that
+     changes luminance under the text is how a "nicer" background quietly fails 1.4.3.
+     background-attachment: fixed keeps it from sliding under long tables. */
+  background:
+    radial-gradient(1200px 520px at 50% -12%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 70%),
+    linear-gradient(180deg, var(--page-2), var(--page) 420px);
+  background-attachment: fixed;
+  background-color: var(--page);
+  min-height: 100dvh;
+}
+
+/* One elevation scale, not a shadow invented per component. Dark needs a deeper shadow
+   because a soft one is invisible against a near-black page.
+   The dark rule must sit INSIDE the media query: `:not([data-theme="light"])` is true in
+   light mode too whenever no theme is pinned, so unqualified it would put the dark shadow
+   under every card on a white page. */
+:root { --elev-1: 0 1px 2px rgba(11,11,11,0.05), 0 1px 8px rgba(11,11,11,0.04); }
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    --elev-1: 0 1px 2px rgba(0,0,0,0.5), 0 1px 10px rgba(0,0,0,0.35);
+  }
+}
+:root[data-theme="dark"] { --elev-1: 0 1px 2px rgba(0,0,0,0.5), 0 1px 10px rgba(0,0,0,0.35); }
+
+/* One focus treatment for everything focusable. There was none before: `select, button`
+   inherited the UA outline, and `.drill` actively removed it. A 2px ring plus a 2px offset
+   stays visible against both the card and the accent tint. :focus-visible, not :focus, so
+   a mouse click does not leave a ring behind. */
+:where(a, button, select, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Skip link: the tables are long, and without this a keyboard user tabs the whole nav on
+   every page change. Visible only when focused. */
+.skip {
+  position: absolute; left: 8px; top: -44px; z-index: 100;
+  background: var(--surface-1); color: var(--text-primary);
+  border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px;
+  transition: top 140ms ease;
+}
+.skip:focus { top: 8px; }
+
+@media (prefers-reduced-motion: reduce) {
+  /* Not `animation: none` — some transitions carry meaning (the stale-refetch fade). They
+     are collapsed to effectively instant instead of removed, so nothing depends on an
+     animation that never fires. */
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 a { color: inherit; }
 h1, h2, h3 { font-weight: 600; margin: 0; }
@@ -234,9 +339,51 @@ svg .hit { fill: transparent; cursor: pointer; }
 .filterbar-note { font-size: 12px; color: var(--text-muted); }
 code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
 .err { color: var(--status-critical); }
+
+/* ---- Section identity ---------------------------------------------------------------
+   Each view owns an accent, which drives the tab, the page bloom, the card top edge and
+   the focus ring. One variable, swapped on <body>, so a new view needs one line here and
+   nothing else. */
+body[data-page="overview"] { --accent: var(--tab-overview); }
+body[data-page="groups"]   { --accent: var(--tab-groups); }
+body[data-page="bindings"] { --accent: var(--tab-bindings); }
+body[data-page="usage"]    { --accent: var(--tab-usage); }
+
+.tabs { display: inline-flex; gap: 4px; }
+.tab {
+  position: relative;
+  background: none; border: 0; border-radius: 6px 6px 0 0;
+  padding: 7px 12px 9px; font-size: 13px; font-weight: 500;
+  color: var(--text-secondary); cursor: pointer;
+  transition: color 160ms ease, background-color 160ms ease;
+}
+.tab:hover { color: var(--text-primary); background: var(--zebra); border-color: transparent; }
+/* THREE channels, not one. Colour alone would leave the current section invisible to a
+   monochrome display, a deuteranope on the green tab, or anyone with forced-colors on —
+   so the label also gains weight and a 3px bar, and aria-current carries it to a screen
+   reader. WCAG 1.4.1. */
+.tab[aria-current="page"] { color: var(--accent); font-weight: 700; }
+.tab[aria-current="page"]::after {
+  content: ""; position: absolute; left: 8px; right: 8px; bottom: 0; height: 3px;
+  background: var(--accent); border-radius: 3px 3px 0 0;
+}
+/* forced-colors strips author colours entirely; without this the active tab loses every
+   visual channel except the weight. */
+@media (forced-colors: active) {
+  .tab[aria-current="page"]::after { background: Highlight; forced-color-adjust: none; }
+}
+
+/* The card keeps its quiet surface and gains the section's colour as a hairline top edge —
+   enough to tie the page together, not enough to compete with the data inside it. */
+.card {
+  box-shadow: var(--elev-1);
+  border-top: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+}
+.hero .value { color: var(--accent); }
 </style>
 </head>
-<body>
+<body data-page="overview">
+<a class="skip" href="#main">Skip to main content</a>
 <div class="wrap">
   <header class="top">
     <h1>GroupSync dashboard</h1>
@@ -370,7 +517,10 @@ function renderFilters() {
   const clusters = data.clusters;
   const opts = clusters.map((c) =>
     `<option value="${esc(c.id)}"${c.id === view.cluster ? " selected" : ""}>${esc(c.id)}</option>`).join("");
-  let html = `<label for="f-cluster">Cluster</label>
+  // Usage is a property of the DASHBOARD, not of a cluster. Leaving the cluster selector
+  // up would say these numbers are scoped to crc-local, and changing it would appear to
+  // filter them while silently doing nothing.
+  let html = view.page === "usage" ? "" : `<label for="f-cluster">Cluster</label>
     <select id="f-cluster">${opts}</select>`;
   if (view.page === "bindings") {
     html += `<label for="f-binding">Show</label>
@@ -389,11 +539,20 @@ function renderFilters() {
         <option value="unattributed"${view.groupFilter === "unattributed" ? " selected" : ""}>unattributed</option>
       </select>`;
   }
+  // aria-current, not just a class: it is what tells a screen reader which section is
+  // open. The visual bar and the bolder label are the sighted half of the same signal.
+  const tab = (id, label) =>
+    `<button class="tab" data-nav="${id}"${view.page === id ? ' aria-current="page"' : ""}>${label}</button>`;
   html += `<span class="spacer"></span>
-    <button data-nav="overview">Overview</button>
-    <button data-nav="groups">Groups</button>
-    <button data-nav="bindings">Access granted</button>`;
+    <nav class="tabs" aria-label="Dashboard sections">
+      ${tab("overview", "Overview")}
+      ${tab("groups", "Groups")}
+      ${tab("bindings", "Access granted")}
+      ${tab("usage", "Usage")}
+    </nav>`;
   $("filters").innerHTML = html;
+  // Drives the accent for the whole page — tab, bloom, card edge, focus ring.
+  document.body.dataset.page = view.page;
 
   const cl = $("f-cluster");
   if (cl) cl.onchange = (e) => {
@@ -633,6 +792,74 @@ function groupsPage() {
           </tr>`).join("")}</tbody>
         </table></div>
         <div class="filterbar-note" style="margin-top:8px">Select a group to see its members.</div>`}
+  </section>`;
+}
+
+/* Who used the dashboard. Aggregated per user per UTC day, never a page-view log — see
+   the dashboard_user_activity comment in store.py for why that boundary is deliberate. */
+function usagePage() {
+  const d = data.usage;
+  if (!d) return `<section class="card"><div class="empty-note">Loading…</div></section>`;
+
+  // Disabled is a DIFFERENT state from "nobody has visited yet", and conflating them sends
+  // the reader looking for users who were never going to be recorded. Say which it is.
+  if (!d.enabled) {
+    return `<section class="card">
+      <h2>Dashboard usage</h2>
+      <div class="empty-note">
+        Not being recorded. Identity comes from the OAuth proxy, so this needs
+        <code>oauthProxy.enabled=true</code>; with the proxy off there is no authentication
+        and the username header would be supplied by the caller.
+      </div>
+    </section>`;
+  }
+
+  const rows = d.activity || [];
+  const days = new Set(rows.map((r) => r.day));
+  const users = new Set(rows.map((r) => r.user_name));
+  const requests = rows.reduce((n, r) => n + r.request_count, 0);
+  const today = new Date().toISOString().slice(0, 10);
+  const activeToday = rows.filter((r) => r.day === today).length;
+
+  return `<section class="card">
+    <h2>Dashboard usage</h2>
+    <div class="hero">
+      <span class="value mono">${activeToday}</span>
+      <span class="label">${activeToday === 1 ? "person" : "people"} used the dashboard today</span>
+    </div>
+    <div class="kpis">
+      <div class="kpi"><div class="label">Distinct users</div>
+        <div class="value mono">${users.size}</div></div>
+      <div class="kpi"><div class="label">Days recorded</div>
+        <div class="value mono">${days.size}</div></div>
+      <div class="kpi"><div class="label">Requests</div>
+        <div class="value mono">${requests.toLocaleString()}</div></div>
+      <div class="kpi"><div class="label">Retention</div>
+        <div class="value mono muted">${d.retention_days} days</div></div>
+    </div>
+  </section>
+  <section class="card">
+    <h3>By user and day</h3>
+    ${rows.length === 0
+      ? `<div class="empty-note">Nothing recorded yet. Rows appear after the first flush,
+           which runs on the configured interval rather than per request.</div>`
+      : `<div class="scroll-x"><table>
+          <thead><tr><th>User</th><th>Day</th><th>First seen</th><th>Last seen</th>
+            <th class="num">Requests</th></tr></thead>
+          <tbody>${rows.map((r) => `<tr>
+            <td>${esc(r.user_name)}${r.email
+              ? ` <span class="muted">· ${esc(r.email)}</span>` : ""}</td>
+            <td class="mono">${esc(r.day)}</td>
+            <td class="mono">${esc((r.first_seen_at || "").slice(11, 19) || "—")}</td>
+            <td class="mono">${esc((r.last_seen_at || "").slice(11, 19) || "—")}</td>
+            <td class="num">${r.request_count}</td>
+          </tr>`).join("")}</tbody>
+        </table></div>`}
+    <div class="filterbar-note" style="margin-top:8px">
+      Times are UTC. This records requests, not logins — the proxy owns the session, so the
+      dashboard never sees a sign-in or sign-out, only the window between a user's first
+      and last request on a day.
+    </div>
   </section>`;
 }
 
@@ -899,7 +1126,9 @@ function bindingsPage() {
 function render() {
   renderFilters();
   const main = $("main");
-  if (view.page === "bindings") {
+  if (view.page === "usage") {
+    main.innerHTML = usagePage();
+  } else if (view.page === "bindings") {
     main.innerHTML = bindingsPage();
     wireDrilldown();
   } else if (view.page === "groups" && view.user) {
@@ -924,7 +1153,10 @@ function render() {
       tr.onclick = () => { pushTrail(); view.groupsync = tr.dataset.cr; refresh(); };
     });
   }
-  $("scope-note").textContent = view.cluster ? `· ${view.cluster}` : "";
+  // Same reason the cluster selector is hidden on Usage: the scope note would claim a
+  // cluster scope this page does not have.
+  $("scope-note").textContent =
+    view.cluster && view.page !== "usage" ? `· ${view.cluster}` : "";
   $("last-refresh").textContent = "updated " + new Date().toTimeString().slice(0, 8);
   if (data.version) {
     const v = data.version;
@@ -1020,6 +1252,9 @@ async function refresh() {
         ? await api(`/api/clusters/${encodeURIComponent(view.cluster)}/groupsyncs/${encodeURIComponent(view.groupsync)}/events`)
         : null;
     }
+    // Not cluster-scoped: this is who used the DASHBOARD, which has no cluster dimension.
+    // Fetched only on its own tab, so the other pages do not pay for it.
+    if (view.page === "usage") data.usage = await api("/api/dashboard/activity");
     render();
   } catch (err) {
     // An error must never strand the reader: keep a working Back so a dead link is a

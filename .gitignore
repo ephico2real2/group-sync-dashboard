@@ -32,3 +32,9 @@ auth.json
 # stamp one that no commit reproduces.
 RESUME.md
 ideas-multipods.md
+
+# Vendored UI/UX Pro Max skill (~2.8M of CSV design data + scripts), installed by
+# `npm i -g ui-ux-pro-max-cli && uipro init --ai claude`. Ignored rather than committed:
+# it is reinstallable in one command and is tooling, not product. Track it instead if the
+# team should share a pinned copy.
+.claude/

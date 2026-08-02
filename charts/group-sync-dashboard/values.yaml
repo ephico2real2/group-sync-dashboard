@@ -10,7 +10,7 @@ image:
   # tags <version>-<git-sha>. Editing them by hand works, but the script keeps them
   # consistent with an image that actually exists in the registry.
   repository: quay.io/ephico2real/group-sync-dashboard
-  tag: "0.6.0-e30b097f4a"
+  tag: "0.6.0-f62eeca9be"
   pullPolicy: Always
 
   # Only needed for a PRIVATE registry. Leave empty for a public repository: an empty
@@ -137,18 +137,32 @@ probes:
 # Application configuration
 # ---------------------------------------------------------------------------
 config:
-  # PLAN §6 — 60x finer than the fastest schedule seen in practice.
-  pollIntervalSeconds: 60
+  # 15 minutes. Still far finer than the fastest schedule seen in practice (*/30), and a
+  # sync event is recorded by its own lastSyncSuccessTime, so a slower poll delays when a
+  # sync is NOTICED without losing it or distorting the recorded timeline.
+  #
+  # THREE VALUES ARE TIED TO THIS and were raised with it. Changing pollIntervalSeconds on
+  # its own breaks all three, and two of them fail loudly:
+  #   * scheduleGraceSeconds below            (or every healthy CR flaps to `late`)
+  #   * monitoring.prometheusRule.notPollingSeconds (or that alert fires forever)
+  #   * bindingIntervalSeconds below          (or bindings refresh faster than groups)
+  pollIntervalSeconds: 900
 
   # Slack before a CR is called late. Without it the state flaps every cycle: a sync lands
-  # 3-14s after its cron minute and is observed up to a poll interval later, so a healthy
+  # 3-14s after its cron minute and is observed up to a POLL INTERVAL later, so a healthy
   # CR briefly exceeds one interval on EVERY pass.
-  scheduleGraceSeconds: 120
+  #
+  # This must therefore stay above pollIntervalSeconds — the observation lag it absorbs IS
+  # the poll interval. At 900s polling and the old 120s grace, every CR on a */30 schedule
+  # would show `late` for most of each cycle. 960 = 900 + a minute for scheduler latency.
+  scheduleGraceSeconds: 960
 
   # Bindings are listed across every namespace, far more expensive than the two group
   # calls, and they change on administrative action rather than on a schedule. At 100x the
-  # reference cluster a refresh is ~154 paged requests, so this is deliberately slower.
-  bindingIntervalSeconds: 300
+  # reference cluster a refresh is ~154 paged requests, so this is deliberately slower than
+  # the group poll — which means it has to move when the group poll does, or the expensive
+  # call becomes the frequent one.
+  bindingIntervalSeconds: 1800
 
   requestTimeoutSeconds: 15
 
@@ -482,7 +496,11 @@ monitoring:
     # Thresholds live here rather than inside the exporter, so they can be seen and tuned.
     # The metric is a unix timestamp, so the rule expresses staleness against real time.
     overdueSeconds: 7200      # GroupSync has not synced for this long
-    notPollingSeconds: 600    # the dashboard itself has stopped polling
+    # The dashboard itself has stopped polling. MUST stay above ~2x config.pollIntervalSeconds:
+    # the measured gap between polls is one interval, so at 900s polling the old 600s
+    # threshold was below the normal gap and the alert would have fired continuously,
+    # forever, on a perfectly healthy deployment. 2400 = 2 intervals plus a cycle of slack.
+    notPollingSeconds: 2400
     # MiB. 25% of the default 1Gi PVC — high enough that normal churn never fires it, low
     # enough to leave room to act before the volume fills. Raise it with persistence.size.
     walMiB: 256
