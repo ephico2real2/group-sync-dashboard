@@ -26,12 +26,29 @@ fullnameOverride: ""
 # ---------------------------------------------------------------------------
 # Workload
 # ---------------------------------------------------------------------------
-# Keep at 1. The poller runs in-process and owns a SQLite file on a ReadWriteOnce volume,
-# so a second replica means two pollers writing the same database. There is no leader
-# election; raising this does not scale the dashboard, it corrupts it.
+# Raising this needs BOTH of the following, and the second is the harder one.
+#
+# 1. Leader election (below, on by default) so only one replica polls. Without it two
+#    pollers write the same database and emit membership events for changes that never
+#    happened.
+# 2. ReadWriteMany storage. The store is a SQLite FILE — a second replica cannot even mount
+#    a ReadWriteOnce volume, so extra replicas will not schedule. And SQLite over a network
+#    filesystem has real locking caveats, so RWX makes it possible rather than advisable.
+#
+# Extra replicas add READ capacity only; the poll rate is fixed by the leader either way.
+# Unless you are serving a lot of concurrent users, 1 is the right answer.
 replicaCount: 1
 
-# Recreate, not RollingUpdate, for the same reason: overlapping pods contend for the volume.
+leaderElection:
+  # Only the lease holder polls; every replica still serves the API and /metrics.
+  #
+  # Worth leaving on even at one replica: `Recreate` is not instantaneous, `kubectl scale`
+  # is one keystroke, and a partitioned node can leave an old pod running while a new one
+  # starts. Each of those puts two pollers on one database.
+  enabled: true
+  leaseName: group-sync-dashboard
+
+# Recreate, not RollingUpdate: overlapping pods contend for a ReadWriteOnce volume.
 strategy: Recreate
 
 resources:

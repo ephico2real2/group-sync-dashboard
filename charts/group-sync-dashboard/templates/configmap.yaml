@@ -10,5 +10,7 @@ data:
     scheduleGraceSeconds: {{ .Values.config.scheduleGraceSeconds }}
     bindingIntervalSeconds: {{ .Values.config.bindingIntervalSeconds }}
     requestTimeoutSeconds: {{ .Values.config.requestTimeoutSeconds }}
+    leaderElection: {{ .Values.leaderElection.enabled }}
+    leaderLeaseName: {{ .Values.leaderElection.leaseName | quote }}
     clusters:
       {{- toYaml .Values.clusters | nindent 6 }}

@@ -17,6 +17,7 @@ from datetime import UTC, datetime
 
 from .config import ClusterConfig, Settings
 from .kube import OK, ClusterClient, ClusterError, GroupSyncView, GroupView
+from .leader import LeaderElector
 from .store import Store, now_iso
 
 log = logging.getLogger(__name__)
@@ -188,9 +189,14 @@ def refresh_bindings(store: Store, cluster: ClusterConfig, timeout: float) -> st
 class Poller:
     """Runs one polling thread per enabled cluster."""
 
-    def __init__(self, store: Store, settings: Settings):
+    def __init__(self, store: Store, settings: Settings, elector: LeaderElector | None = None):
         self.store = store
         self.settings = settings
+        # Only the leader writes. Without this, a scale-up, a slow Recreate, or a partitioned
+        # node puts two pollers on one database — and the poll loop is not idempotent across
+        # writers, so racing sync_members calls emit membership events for changes that never
+        # happened.
+        self.elector = elector
         self._stop = threading.Event()
         self._threads: list[threading.Thread] = []
 
@@ -200,6 +206,12 @@ class Poller:
         next_binding_refresh = 0.0
         while not self._stop.is_set():
             started = datetime.now(UTC)
+            if self.elector is not None and not self.elector.is_leader:
+                # Standby: serve reads, write nothing. Checked every cycle rather than once,
+                # so leadership lost mid-life stops the writes promptly.
+                log.debug("%s: not leader, skipping poll", cluster.name)
+                self._stop.wait(self.settings.poll_interval_seconds)
+                continue
             try:
                 poll_once(self.store, cluster, self.settings.request_timeout_seconds)
             except Exception:  # noqa: BLE001 - a poll thread must never die silently

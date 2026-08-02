@@ -13,6 +13,13 @@ rules:
   - apiGroups: ["user.openshift.io"]
     resources: ["groups"]
     verbs: ["get", "list"]
+  {{- if .Values.leaderElection.enabled }}
+  # Leader election. Namespaced, so this belongs in a Role rather than the ClusterRole —
+  # but keeping one object is simpler and the grant is confined to one named Lease anyway.
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "create", "update"]
+  {{- end }}
   {{- if .Values.rbac.bindings }}
   # Powers the "Access granted" view and dangling-binding detection.
   #

@@ -43,9 +43,10 @@ def _epoch(value: str | None) -> float | None:
 class DashboardCollector:
     """Reads the store on each scrape and yields the current picture."""
 
-    def __init__(self, store: Store, grace: timedelta):
+    def __init__(self, store: Store, grace: timedelta, elector=None):
         self.store = store
         self.grace = grace
+        self.elector = elector
 
     def collect(self):  # noqa: C901 - a flat list of metric definitions
         build = GaugeMetricFamily(
@@ -62,6 +63,23 @@ class DashboardCollector:
             1,
         )
         yield build
+
+        # Every replica exposes the same gauge names, so Prometheus sees N series per
+        # metric distinguished by `pod`. That is normal and not a clash, but it makes
+        # `sum()` wrong — the counts are cluster facts, not per-pod facts, so aggregate
+        # with max() or filter on gsd_leader. This series is what makes that filtering
+        # possible, and also answers "which pod is actually writing?".
+        leader = GaugeMetricFamily(
+            "gsd_leader",
+            "1 on the replica holding the poll lease, 0 on standbys. Use it to pick one "
+            "replica's series: gsd_groups_total and on(pod) gsd_leader == 1",
+            labels=["cluster"],
+        )
+        if self.elector is not None:
+            leader.add_metric([""], 1 if self.elector.is_leader else 0)
+        else:
+            leader.add_metric([""], 1)
+        yield leader
 
         up = GaugeMetricFamily(
             "gsd_cluster_up",
@@ -205,9 +223,9 @@ class DashboardCollector:
         )
 
 
-def build_registry(store: Store, grace: timedelta) -> CollectorRegistry:
+def build_registry(store: Store, grace: timedelta, elector=None) -> CollectorRegistry:
     """A dedicated registry — the default one carries process/GC collectors we do not want
     duplicated per app instance, and tests build several apps in one interpreter."""
     registry = CollectorRegistry()
-    registry.register(DashboardCollector(store, grace))
+    registry.register(DashboardCollector(store, grace, elector))
     return registry

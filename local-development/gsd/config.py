@@ -197,6 +197,14 @@ class Settings:
     poll thread indefinitely.
     """
 
+    leader_election: bool = True
+    """Only the lease holder polls; every replica still serves reads.
+
+    On by default because the cost is one Lease object and the failure it prevents — two
+    pollers writing one database — is silent and corrupts accumulated history."""
+
+    leader_lease_name: str = "group-sync-dashboard"
+
     db_path: str = "gsd.db"
 
     def cluster(self, name: str) -> ClusterConfig | None:
@@ -294,5 +302,7 @@ def load_settings(path: str | Path) -> Settings:
         request_timeout_seconds=float(raw.get("requestTimeoutSeconds", 15.0)),
         # GSD_DB_PATH wins over the file so the config can ship as a ConfigMap that does
         # not need to know where the writable volume is mounted.
+        leader_election=bool(raw.get("leaderElection", True)),
+        leader_lease_name=str(raw.get("leaderLeaseName", "group-sync-dashboard")),
         db_path=os.environ.get("GSD_DB_PATH") or str(raw.get("dbPath", "gsd.db")),
     )

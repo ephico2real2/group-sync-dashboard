@@ -19,6 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from . import __version__
 from . import state as st
 from .config import Settings, load_settings
+from .leader import LeaderElector
 from .metrics import build_registry
 from .poller import Poller
 from .store import Store
@@ -30,12 +31,15 @@ STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 
 def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
     store = Store(settings.db_path)
-    poller = Poller(store, settings)
+    elector = LeaderElector(name=settings.leader_lease_name) if settings.leader_election else None
+    poller = Poller(store, settings, elector)
     grace = timedelta(seconds=settings.schedule_grace_seconds)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         if run_poller:
+            if elector is not None:
+                elector.start()
             poller.start()
         else:
             # Still register configured clusters so the overview lists them as
@@ -44,6 +48,8 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
                 store.upsert_cluster(cluster.name, cluster.api_url, cluster.enabled)
         yield
         poller.stop()
+        if elector is not None:
+            elector.stop()
         store.close()
 
     app = FastAPI(title="GroupSync dashboard", version="0.1.0", lifespan=lifespan)
@@ -322,7 +328,7 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
         alerts.sort(key=lambda a: (severity_rank.get(a["severity"], 9), a["cluster"], a["kind"]))
         return alerts
 
-    metrics_registry = build_registry(store, grace)
+    metrics_registry = build_registry(store, grace, elector)
 
     @app.get("/metrics")
     def metrics() -> Response:
@@ -349,6 +355,7 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
         """
         commit = os.environ.get("GSD_GIT_COMMIT", "unknown")
         return {
+            "leader": elector.is_leader if elector is not None else None,
             "version": os.environ.get("GSD_VERSION", __version__),
             "commit": commit,
             "branch": os.environ.get("GSD_GIT_BRANCH", "unknown"),

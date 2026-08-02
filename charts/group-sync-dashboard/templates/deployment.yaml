@@ -67,6 +67,12 @@ spec:
               value: /data/gsd.db
             - name: GSD_LOG_LEVEL
               value: {{ .Values.logLevel | quote }}
+            # So the Lease names the actual pod holding it, which is the first thing you
+            # want when asking "which replica is writing?".
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
             {{- $ca := list }}
             {{- if .Values.trustedCA.injected.enabled }}
             {{- $ca = append $ca (printf "%s/injected/ca-bundle.crt" .Values.trustedCA.mountPath) }}
