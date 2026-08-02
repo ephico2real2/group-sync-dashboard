@@ -4,6 +4,10 @@
     ./cluster-report.py                                   # current oc context
     ./cluster-report.py --format markdown -o report.md
     ./cluster-report.py --clusters prod,staging,dev --domain example.com
+
+    # no oc, no kubeconfig — credentials exchanged for a token per cluster
+    read -rs GSD_PASSWORD && export GSD_PASSWORD
+    ./cluster-report.py --clusters prod,staging --domain example.com --ldap-user svc-reporter
     ./cluster-report.py --cluster prod=https://group-sync-dashboard.apps.prod.example.com
 
 The parameterised form expands each name through --url-template, whose default is the usual
@@ -91,6 +95,120 @@ def _get(base: str, path: str, token: str | None = None) -> dict | list:
         return json.loads(r.read())
 
 
+# ---------------------------------------------------------------------------
+# authentication
+# ---------------------------------------------------------------------------
+def oauth_token(dashboard_url: str, user: str, password: str) -> str:
+    """Exchange a username and password for a short-lived OpenShift bearer token.
+
+    No `oc`, no kubeconfig — the same API calls `oc login -u -p` makes, which is how this was
+    derived: captured with `oc login --loglevel=8` and reproduced. Sequence:
+
+      1. GET  /oauth/authorize?client_id=openshift-challenging-client
+                &code_challenge=<S256>&code_challenge_method=S256
+                &redirect_uri=<issuer>/oauth/token/implicit&response_type=code
+         with Authorization: Basic and X-Csrf-Token: 1
+         -> 302, Location carries ?code=<code>
+      2. POST /oauth/token   grant_type=authorization_code, code, code_verifier, client_id
+         -> {"access_token": ...}
+
+    PKCE (response_type=code), not the older implicit flow. Both work on this cluster —
+    response_type=token was tried first and returned a usable token — but oc moved to PKCE and
+    matching it matters for two reasons: the token never appears in a URL, where it would land
+    in proxy logs and history; and a hardened cluster can disable the implicit grant, which
+    would leave the simpler version working here and failing in production.
+
+    Two details that silently yield no token:
+
+    * X-Csrf-Token must be present and non-empty, or the server assumes a browser and serves
+      a login page instead of issuing a basic-auth challenge. The request then "succeeds"
+      with no code in it.
+    * Redirects must NOT be followed. The code is in the Location header of the 302; following
+      it discards the thing we came for.
+    """
+    import base64
+    import hashlib
+    import secrets
+    import ssl
+    import urllib.parse
+
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+
+    class _NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, *a, **kw):
+            return None
+
+    opener = urllib.request.build_opener(_NoRedirect,
+                                         urllib.request.HTTPSHandler(context=ctx))
+
+    # The OAuth route sits on the same apps domain as the dashboard, so it is derived rather
+    # than being another flag. oc discovers it from the API server's well-known document; we
+    # cannot, because an aggregator is given the dashboard URL, not the API URL.
+    host = dashboard_url.removeprefix("https://").split("/")[0]
+    issuer = f"https://oauth-openshift.{host.split('.', 1)[1]}" if "." in host else \
+             f"https://oauth-openshift.{host}"
+
+    # PKCE: verifier is the secret, challenge is its SHA-256, base64url without padding.
+    verifier = secrets.token_urlsafe(64)
+    challenge = base64.urlsafe_b64encode(
+        hashlib.sha256(verifier.encode()).digest()).decode().rstrip("=")
+    redirect_uri = f"{issuer}/oauth/token/implicit"
+
+    query = urllib.parse.urlencode({
+        "client_id": "openshift-challenging-client",
+        "code_challenge": challenge,
+        "code_challenge_method": "S256",
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+    })
+    basic = base64.b64encode(f"{user}:{password}".encode()).decode()
+    req = urllib.request.Request(f"{issuer}/oauth/authorize?{query}")
+    req.add_header("Authorization", f"Basic {basic}")
+    req.add_header("X-Csrf-Token", "1")
+    try:
+        location = opener.open(req, timeout=TIMEOUT).headers.get("Location", "")
+    except urllib.error.HTTPError as exc:
+        if exc.code == 401:
+            raise RuntimeError(f"OAuth rejected the credentials for {user!r}") from None
+        location = (exc.headers or {}).get("Location", "")
+        if not location:
+            raise RuntimeError(f"OAuth returned {exc.code} with no Location") from None
+
+    code = urllib.parse.parse_qs(
+        urllib.parse.urlparse(location).query).get("code", [None])[0]
+    if not code:
+        raise RuntimeError(
+            "OAuth returned no authorization code. The usual cause is a missing X-Csrf-Token "
+            f"header, which makes the server serve a login page instead of challenging. "
+            f"Location was: {location[:120]}")
+
+    body = urllib.parse.urlencode({
+        "grant_type": "authorization_code",
+        "code": code,
+        "code_verifier": verifier,
+        "client_id": "openshift-challenging-client",
+        "redirect_uri": redirect_uri,
+    }).encode()
+    tok_req = urllib.request.Request(f"{issuer}/oauth/token", data=body)
+    tok_req.add_header("Content-Type", "application/x-www-form-urlencoded")
+    # A public client still has to identify itself on the token endpoint.
+    tok_req.add_header("Authorization",
+                       "Basic " + base64.b64encode(
+                           b"openshift-challenging-client:").decode())
+    try:
+        payload = json.loads(opener.open(tok_req, timeout=TIMEOUT).read())
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError(
+            f"token exchange failed: {exc.code} {exc.read()[:200].decode(errors='replace')}"
+        ) from None
+    token = payload.get("access_token")
+    if not token:
+        raise RuntimeError(f"token endpoint returned no access_token: {list(payload)}")
+    return token
+
+
 def _oc(*args: str) -> str:
     return subprocess.run(("oc",) + args, capture_output=True, text=True,
                           timeout=TIMEOUT).stdout.strip()
@@ -131,10 +249,12 @@ def _port_forward(namespace: str):
 
 
 @contextmanager
-def connect(name: str, url: str | None, namespace: str):
+def connect(name: str, url: str | None, namespace: str, token: str | None = None):
     """Yield (base_url, how) for one cluster, preferring the direct path."""
     if url:
-        token = _oc("whoami", "-t")
+        # An explicitly supplied token (from --ldap-user) wins. Falling back to `oc whoami -t`
+        # keeps the convenience of an existing session for someone at a terminal.
+        token = token or _oc("whoami", "-t")
         try:
             _get(url, "/api/version", token)
             yield url, "direct (bearer token)"
@@ -308,6 +428,11 @@ def main() -> int:
     p.add_argument("--namespace", default=NAMESPACE,
                    help=f"namespace of the dashboard for the port-forward path "
                         f"(default {NAMESPACE})")
+    p.add_argument("--ldap-user", metavar="USERNAME",
+                   help="authenticate by exchanging these credentials for a short-lived "
+                        "OpenShift token, no oc and no kubeconfig. The password is read from "
+                        "the GSD_PASSWORD environment variable, never a flag — an argument is "
+                        "visible in `ps` to every user on the host and lands in shell history.")
     p.add_argument("--format", choices=("markdown", "text"), default="markdown")
     p.add_argument("-o", "--output", help="write here instead of stdout")
     args = p.parse_args()
@@ -333,11 +458,25 @@ def main() -> int:
         ctx = _oc("config", "current-context") or "current context"
         targets = [(ctx, None)]
 
+    password = None
+    if args.ldap_user:
+        import os
+        password = os.environ.get("GSD_PASSWORD")
+        if not password:
+            p.error("--ldap-user needs the password in GSD_PASSWORD, e.g.\n"
+                    "  read -rs GSD_PASSWORD && export GSD_PASSWORD")
+
     results: dict[str, dict] = {}
     for name, url in targets:
         try:
-            with connect(name, url, args.namespace) as (base, how):
-                token = _oc("whoami", "-t") if base.startswith("https") else None
+            # One token per cluster: an OpenShift token is issued by that cluster's OAuth
+            # server and is meaningless to any other, so a fleet needs N exchanges, not one.
+            tok = None
+            if args.ldap_user and url:
+                tok = oauth_token(url, args.ldap_user, password)
+                print(f"  {name}: got a token for {args.ldap_user}", file=sys.stderr)
+            with connect(name, url, args.namespace, tok) as (base, how):
+                token = tok or (_oc("whoami", "-t") if base.startswith("https") else None)
                 data = collect(base, token)
                 data["_how"] = how
                 results[name] = data

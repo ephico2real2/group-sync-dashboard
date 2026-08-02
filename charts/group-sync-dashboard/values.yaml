@@ -636,6 +636,42 @@ oauthProxy:
     enabled: false
     delegateUrls: '{"/api":{"resource":"groups","group":"user.openshift.io","verb":"list"}}'
 
+    # Accounts allowed to call /api with a bearer token. Rendered by
+    # templates/api-readers.yaml into a ClusterRole matching delegateUrls above plus one
+    # binding. Empty means nobody is granted BY THIS CHART — existing cluster-admins and
+    # anyone who can already `list groups` still get in, because that is what the review asks.
+    #
+    # Name each account exactly as the cluster does; the kind is inferred:
+    #
+    #   system:serviceaccount:<namespace>:<name>   ServiceAccount
+    #   group:<name>                               Group   (preferred, see below)
+    #   <anything without a colon>                 User    (an LDAP username)
+    #
+    # A colon in any other shape fails the render rather than silently creating a User named
+    # "system:serviceaccount:foo" that matches nothing — a binding that grants nobody looks
+    # correct in `oc get` and is the same defect this dashboard reports as `dangling`.
+    #
+    # PREFER group:. It is the argument the Namespace audit tab makes about the cluster,
+    # applied to this chart: a binding naming a person survives their departure, one naming a
+    # group is revoked by the directory removing them from it.
+    readers: []
+    # readers:
+    #   - group:app-ocp-rbac-platform-ns-audit
+    #   - system:serviceaccount:rbac-reporting:aggregator
+    #   - svc-rbac-reporter
+
+    # Also give those accounts system:auth-delegator. ALMOST CERTAINLY UNNECESSARY.
+    #
+    # That role is for whoever CALLS TokenReview and SubjectAccessReview, which is the proxy,
+    # not the client. Measured with apiTokenAccess on and neither identity holding it:
+    #   system:serviceaccount:default:default  cannot list groups -> 403
+    #   kubeadmin                              can list groups    -> 200
+    #
+    # Turning this on lets every listed account validate arbitrary bearer tokens and query any
+    # subject's permissions, which buys nothing for reading this API. It exists for a caller
+    # that needs it for an unrelated reason.
+    grantAuthDelegator: false
+
   # The interstitial page that offers exactly one login choice.
   #
   # true skips it and redirects straight to the cluster's OAuth server. That is one fewer
