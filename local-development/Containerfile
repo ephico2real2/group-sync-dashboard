@@ -133,11 +133,35 @@ USER 1001
 EXPOSE 8080
 VOLUME ["/data"]
 
+# For `podman run` / `docker run` ONLY, and it is worth knowing that before trusting it.
+#
+# TWO REASONS IT IS NOT PROTECTING THE DEPLOYMENT:
+#
+#   1. It is not in the shipped image. `podman build` defaults to the OCI manifest format,
+#      whose image config has no healthcheck field, so the instruction is dropped and the
+#      build logs "HEALTHCHECK is not supported for OCI image format and will be ignored".
+#      Verified on a built image: Config keys are Cmd, Env, ExposedPorts, Labels, User,
+#      Volumes, WorkingDir — no healthcheck of any kind. Keeping OCI is the right trade;
+#      switching to --format docker to preserve this would change the manifest format of a
+#      published image to rescue a check Kubernetes ignores anyway.
+#   2. Kubernetes never reads it. kubelet uses the probes in the chart, not the image's own
+#      healthcheck, so on the cluster this is inert twice over.
+#
+# INTERVAL 300s, matching probes.liveness.periodSeconds in the chart, deliberately. It was
+# 30s, which is both wasteful and inconsistent: it spawns a Python interpreter every half
+# minute for the lifetime of the container, and it implied a urgency the chart had already
+# decided against. The reasoning there applies here — being wrong about liveness is
+# expensive, because a restart destroys in-flight state and this process holds the only copy
+# of accumulated history between checkpoints — so one mental model, one number.
+#
+# retries=2 for the same reason: 2 x 300s is a 10-minute budget before the container is
+# called unhealthy, which is the same budget the chart's liveness probe gives it.
+#
 # Readiness is deliberately not gated on a reachable cluster: an unreachable cluster is a
-# thing this dashboard exists to display, so failing readiness for one would take the
-# dashboard down exactly when it has something to report.
-HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-    CMD ["python3.14", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=2).status==200 else 1)"]
+# thing this dashboard exists to display, so failing a check for one would take the
+# dashboard down exactly when it has something to report. /healthz is unconditional.
+HEALTHCHECK --interval=300s --timeout=5s --start-period=15s --retries=2 \
+    CMD ["python3.14", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=3).status==200 else 1)"]
 
 # `python3.14 -m uvicorn`, not the /install/bin/uvicorn console script: that script's
 # shebang points at the *build* stage's interpreter path, which does not exist here.

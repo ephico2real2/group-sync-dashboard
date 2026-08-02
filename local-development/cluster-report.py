@@ -120,11 +120,15 @@ def oauth_token(dashboard_url: str, user: str, password: str) -> str:
 
     Two details that silently yield no token:
 
-    * X-Csrf-Token must be present and non-empty, or the server assumes a browser and serves
-      a login page instead of issuing a basic-auth challenge. The request then "succeeds"
-      with no code in it.
-    * Redirects must NOT be followed. The code is in the Location header of the 302; following
-      it discards the thing we came for.
+    * X-Csrf-Token controls whether the server will issue a basic-auth CHALLENGE. Measured:
+      with no credentials and no header the reply is a bare 401; with the header it is 401 +
+      `WWW-Authenticate: Basic realm="openshift"`. Because this sends Authorization: Basic
+      preemptively it would work without the header — but it is sent anyway, since the
+      OpenShift docs require it and a cluster that enforces it would otherwise fail here for
+      a reason nobody would guess from a 401.
+    * Redirects must NOT be followed. The code arrives in the Location header of the 302, and
+      a client that follows it lands on /oauth/token/implicit with the code buried in the
+      final URL instead — recoverable, but not where anything expects to read it.
     """
     import base64
     import hashlib

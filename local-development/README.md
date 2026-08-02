@@ -75,6 +75,20 @@ Refreshing them is a five-minute job every couple of months:
 Full procedure and the reasoning: [`docs/updating-vendored-assets.md`](../docs/updating-vendored-assets.md).
 Rules for adding an endpoint: [`docs/api-contract.md`](../docs/api-contract.md).
 
+## Reading the API from outside the cluster
+
+```bash
+read -rs GSD_PASSWORD && export GSD_PASSWORD
+./cluster-report.py --clusters prod,staging --domain example.com --ldap-user svc-reporter
+```
+
+Credentials are exchanged for a short-lived token against each cluster's own OAuth server, so
+no `oc` and no kubeconfig are involved. Needs `oauthProxy.apiTokenAccess.enabled` on the chart
+plus the calling account in `apiTokenAccess.readers`.
+
+curl and Postman recipes, and the two Postman defaults that break the flow:
+[`docs/api-access.md`](../docs/api-access.md).
+
 ## Plain YAML, for reading and testing
 
 ```bash
