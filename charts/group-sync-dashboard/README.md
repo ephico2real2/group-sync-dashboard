@@ -508,6 +508,10 @@ spec:
     path: charts/group-sync-dashboard
     helm:
       values: |
+        # REQUIRED under GitOps. Argo renders with `helm template`, which has no cluster
+        # connection, so the chart cannot auto-detect the apps domain and refuses to render.
+        ingress:
+          host: group-sync-dashboard.apps.<your-cluster-domain>
         argocd:
           enabled: true
         oauthProxy:
@@ -521,7 +525,6 @@ spec:
       selfHeal: true
     syncOptions:
       - CreateNamespace=true
-  # Without this, the injected CA bundle is reverted on every sync.
   ignoreDifferences:
     # Without this, the injected CA bundle is reverted on every sync.
     - group: ""
@@ -537,7 +540,36 @@ spec:
       jsonPointers:
         - /spec/volumeName
         - /spec/storageClassName
+    # OpenShift injects a dockercfg pull secret into every ServiceAccount. Measured on the
+    # reference cluster, `managedFields` shows
+    # openshift.io/image-registry-pull-secrets_service-account-controller owning `secrets`
+    # and `imagePullSecrets` via Apply, while Helm owns only metadata. None of it is in git,
+    # so a client-side diff reports the Application permanently OutOfSync.
+    #
+    # ~1 is a literal `/` inside a JSON Pointer key (RFC 6901). Without the escape the
+    # pointer is parsed as a path and silently matches nothing.
+    - group: ""
+      kind: ServiceAccount
+      name: group-sync-dashboard
+      jsonPointers:
+        - /secrets
+        - /imagePullSecrets
+        - /metadata/annotations/openshift.io~1internal-registry-pull-secret-ref
+    # The ingress-to-route controller writes status.loadBalancer once a Route exists.
+    - group: networking.k8s.io
+      kind: Ingress
+      name: group-sync-dashboard
+      jsonPointers:
+        - /status
 ```
+
+**Both mechanisms, deliberately.** `ServerSideApply=true` on the objects addresses the
+cause — the API server merges by field ownership, so fields the chart never claims are not
+compared. `ignoreDifferences` addresses the symptom. They are not redundant: the first
+depends on Argo computing its predicted-live state through an SSA dry-run, which is its
+documented behaviour but was **not** observed here, because this cluster has the Argo CRDs
+installed and no controller running. The second holds regardless of Argo's version or diff
+strategy. Keep both until you have watched a sync on your own cluster.
 
 > Verified as manifests, not at runtime: the reference cluster has the Argo CRDs installed
 > but no controller running, so the annotations were checked by rendering and applying, not

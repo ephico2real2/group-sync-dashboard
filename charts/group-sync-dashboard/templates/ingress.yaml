@@ -14,6 +14,18 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels: {{- include "gsd.labels" . | nindent 4 }}
   annotations:
+    {{- if .Values.argocd.enabled }}
+    {{- /*
+    The ingress-to-route controller writes `status.loadBalancer` here, and on a cluster with
+    a mutating webhook or a service mesh more can appear. Server-side apply keeps Argo's
+    ownership to the fields the chart actually sets, so nothing the cluster adds later reads
+    as drift.
+
+    The route.openshift.io annotations below are OURS, not injected — they are what tells the
+    controller how to terminate TLS — so they are not the reason this is here.
+    */}}
+    argocd.argoproj.io/sync-options: ServerSideApply=true
+    {{- end }}
     # reencrypt whenever the proxy is on — it terminates TLS itself with the service-ca
     # certificate, so the router must re-encrypt to it. See the gsd.routeTermination helper.
     route.openshift.io/termination: {{ include "gsd.routeTermination" . | quote }}
