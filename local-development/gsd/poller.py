@@ -47,11 +47,40 @@ def provider_keys_for(cr: GroupSyncView, groups: list[GroupView]) -> list[str]:
     Returns [] when no group carries a matching label — a CR that has produced nothing yet.
     That is deliberately distinct from [""], which would match every unlabelled group.
     Sorted, so attribution is stable across polls regardless of Group list order.
+
+    EXACT MATCH FIRST. When the CR declares its provider names, the label the operator
+    writes is exactly ``<cr.name>_<provider>``, so it is reconstructed and intersected with
+    what the Groups actually carry — reconstruction checked against observation, rather
+    than either alone. Prefix matching alone is ambiguous and the ambiguity is reachable:
+    a CR named ``corp`` and a CR named ``corp_extra`` BOTH match ``corp_extra_ldap``, so
+    that group gets two owners, is counted in both CRs' group_count, and raises two stale
+    alerts for one problem.
+
+    The prefix path remains for a CR whose spec declares no provider names, and it now
+    yields a label to the LONGEST matching CR name: between ``corp`` and ``corp_extra``,
+    ``corp_extra_ldap`` belongs to ``corp_extra``. That is a tie-break, not a fix — see
+    `ambiguous_attribution` for the case nothing can resolve.
     """
+    observed = {g.sync_provider for g in groups if g.sync_provider}
+    if cr.provider_names:
+        return sorted(observed & {f"{cr.name}_{p}" for p in cr.provider_names})
+
     prefix = f"{cr.name}_"
-    return sorted(
-        {g.sync_provider for g in groups if g.sync_provider and g.sync_provider.startswith(prefix)}
-    )
+    return sorted(label for label in observed if label.startswith(prefix))
+
+
+def ambiguous_attribution(groupsyncs: list[GroupSyncView]) -> list[str]:
+    """CR names that cannot be told apart from a Group label. Returns the colliding names.
+
+    Two CRs with the SAME NAME in different namespaces produce byte-identical labels: the
+    operator writes ``<name>_<provider>`` and namespace appears nowhere in it. No amount of
+    care here resolves that — the information is not in the data. The honest response is to
+    say so rather than silently attribute the groups to whichever CR was iterated first.
+    """
+    seen: dict[str, set[str]] = {}
+    for cr in groupsyncs:
+        seen.setdefault(cr.name, set()).add(cr.namespace)
+    return sorted(name for name, namespaces in seen.items() if len(namespaces) > 1)
 
 
 def poll_once(store: StorageBackend, cluster: ClusterConfig, timeout: float = 15.0) -> str:
@@ -68,6 +97,17 @@ def poll_once(store: StorageBackend, cluster: ClusterConfig, timeout: float = 15
         log.warning("poll %s failed: %s (%s)", cluster.name, exc.message, exc.outcome)
         store.record_poll(cluster.name, exc.outcome, exc.message)
         return exc.outcome
+
+    # Undecidable, so say so rather than attributing to whichever CR came first. Two CRs
+    # with the same name in different namespaces produce byte-identical Group labels — the
+    # operator writes <name>_<provider> and namespace appears nowhere in it.
+    for collision in ambiguous_attribution(groupsyncs):
+        log.warning(
+            "%s: GroupSync %r exists in more than one namespace and the sync-provider "
+            "label carries no namespace, so its groups cannot be attributed to one CR. "
+            "Ownership, group_count and stale-group alerts for those groups are ambiguous.",
+            cluster.name, collision,
+        )
 
     observed_at = now_iso()
 

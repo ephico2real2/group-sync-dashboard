@@ -74,6 +74,19 @@ class GroupSyncView:
     error_message: str | None
     error_generation: int | None
     success_at: str | None
+    provider_names: tuple[str, ...] = ()
+    """The names the CR declares in spec.providers[].name.
+
+    These make attribution EXACT. The operator labels each Group it creates with
+    ``<groupsync-name>_<provider-name>``, so with the names in hand the expected label is
+    reconstructible rather than guessed at by prefix — and prefix guessing is genuinely
+    ambiguous: a CR named ``corp`` and a CR named ``corp_extra`` both match the label
+    ``corp_extra_ldap``, so one group ends up with two owners, counted twice and
+    staleness-checked twice.
+
+    Empty for a CR whose spec declares no names, in which case poller.provider_keys_for
+    falls back to prefix matching. See there.
+    """
 
 
 @dataclass
@@ -249,6 +262,7 @@ def _groupsync_view(obj: dict) -> GroupSyncView:
         namespace=meta.get("namespace", ""),
         schedule=spec.get("schedule"),
         ldap_filter=_ldap_filter(spec),
+        provider_names=_provider_names(spec),
         last_sync_at=status.get("lastSyncSuccessTime"),
         generation=meta.get("generation"),
         # Kept even when stale: it is the only failure record the API retains, and it
@@ -258,6 +272,15 @@ def _groupsync_view(obj: dict) -> GroupSyncView:
         error_message=(error or {}).get("message"),
         error_generation=(error or {}).get("observedGeneration"),
         success_at=(success or {}).get("lastTransitionTime"),
+    )
+
+
+def _provider_names(spec: dict) -> tuple[str, ...]:
+    """The declared provider names, in order. Empty when the spec omits them."""
+    return tuple(
+        str(p["name"])
+        for p in (spec.get("providers") or [])
+        if isinstance(p, dict) and p.get("name")
     )
 
 

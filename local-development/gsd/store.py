@@ -1155,7 +1155,17 @@ class Store:
         callers need a list to test membership against, and building one by splitting a
         delimited string means picking a delimiter that a label value can never contain.
         Two reads of a handful of rows is the cheaper correctness.
+
+        THOSE TWO READS TAKE THEIR OWN SNAPSHOT. WAL gives each statement a consistent
+        view, not each pair of statements, so a poll committing between them stitched CR
+        rows to a different generation of provider rows — a CR listing providers whose
+        groups the same response says do not exist. Callers must not have to know this
+        method reads twice; nesting is free because read_snapshot joins an open one.
         """
+        with self.read_snapshot():
+            return self._groupsyncs(cluster_id)
+
+    def _groupsyncs(self, cluster_id: str) -> list[dict]:
         rows = self._rows(
             """SELECT g.name, g.namespace, g.schedule, g.ldap_filter, g.last_sync_at,
                       g.generation, g.observed_at,
