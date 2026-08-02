@@ -282,6 +282,42 @@ def _migrate(conn: sqlite3.Connection) -> None:
 _PRAGMA_WORDS = {"OFF", "NORMAL", "FULL", "EXTRA"}
 
 
+def _harden(conn: sqlite3.Connection) -> None:
+    """Drop capabilities this application never uses, on every connection.
+
+    MITIGATES (partially): CVE-2025-70873 — SQLite information disclosure via a crafted
+    ZIP file, reachable only through the zipfile extension. Disabling extension loading
+    removes the mechanism it needs.
+
+    RELATED, NOT MITIGATED BY THIS: CVE-2024-0232 — use-after-free in
+    jsonParseAddNodeArray. It needs SQL JSON functions, which this store does not use
+    (zero `json_` / `->>` occurrences); nothing here changes its reachability either way.
+
+    NEITHER IS FIXABLE BY UPGRADING. UBI9 ships exactly one build,
+    sqlite-libs-3.34.1-10.el9_8: `microdnf repoquery sqlite-libs` offers no other, and
+    `microdnf update sqlite-libs` reports "Nothing to do". Since the version cannot move,
+    the surface it exposes is reduced instead.
+
+    Extension loading was ENABLED by default — verified in the shipped image, not assumed.
+    It lets SQL pull arbitrary shared objects into the process, which beyond CVE-2025-70873
+    is a general escalation primitive if a SQL string ever became attacker-influenced. The
+    store builds every statement itself and binds every parameter, so nothing legitimate
+    needed the capability and turning it off costs nothing.
+
+    Applied to the writer AND to every per-thread reader: this is connection state, so
+    hardening only the writer would leave every API request thread unprotected.
+
+    Guarded because sqlite3 may be compiled without the call, in which case the capability
+    already does not exist and there is nothing to disable.
+
+    See docs/image-vulnerability-scan.md for the full scan and reachability analysis.
+    """
+    try:
+        conn.enable_load_extension(False)
+    except AttributeError:
+        pass
+
+
 def _safe_pragma_word(value: str, default: str) -> str:
     """PRAGMA takes no bound parameters, so its argument is interpolated — allowlist it."""
     word = str(value).strip().upper()
@@ -337,6 +373,7 @@ class Store:
         # other API misuse". A transaction belongs to the thread that opened it.
 
         self._conn = sqlite3.connect(path, check_same_thread=False)
+        _harden(self._conn)
         self._conn.row_factory = sqlite3.Row
 
         # PRAGMA journal_mode returns the mode actually in force, which is NOT always the one
@@ -555,6 +592,7 @@ class Store:
         conn = getattr(self._local, "conn", None)
         if conn is None:
             conn = sqlite3.connect(self.path, check_same_thread=False)
+            _harden(conn)
             conn.row_factory = sqlite3.Row
             # Every connection needs its OWN busy_timeout — it is connection state, not a
             # property of the database, so the writer's setting does not reach these.

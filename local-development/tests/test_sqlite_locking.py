@@ -195,3 +195,47 @@ class TestSynchronous:
             store._rows("SELECT * FROM cluster")  # table still exists
         finally:
             store.close()
+
+
+class TestHardening:
+    """Capabilities dropped from every connection.
+
+    CVE-2025-70873 — SQLite information disclosure via a crafted ZIP file. Reachable only
+    through the zipfile extension, so disabling extension loading removes the mechanism.
+    CVE-2024-0232 — use-after-free in jsonParseAddNodeArray. Not addressed here and not
+    reachable: the store uses no SQL JSON functions.
+
+    Neither is fixable by upgrading — UBI9 ships only sqlite-libs-3.34.1-10.el9_8 and
+    `microdnf update sqlite-libs` reports "Nothing to do" — so the surface is reduced
+    instead of the version moved. docs/image-vulnerability-scan.md has the analysis.
+    """
+
+    def test_extensions_cannot_be_loaded_on_the_writer(self, tmp_path):
+        """Extension loading was ENABLED by default, verified in the shipped image. It
+        lets SQL pull arbitrary shared objects into the process — the mechanism
+        CVE-2025-70873 turns on, and a general escalation primitive besides."""
+        store = Store(str(tmp_path / "gsd.db"))
+        try:
+            with pytest.raises(sqlite3.OperationalError, match="not authorized"):
+                store._conn.execute("SELECT load_extension('/tmp/anything.so')")
+        finally:
+            store.close()
+
+    def test_extensions_cannot_be_loaded_on_a_reader_either(self, tmp_path):
+        """Readers are separate connections, and the setting is per-connection: hardening
+        only the writer would leave every API request thread unprotected."""
+        store = Store(str(tmp_path / "gsd.db"))
+        try:
+            reader = store._reader()
+            with pytest.raises(sqlite3.OperationalError, match="not authorized"):
+                reader.execute("SELECT load_extension('/tmp/anything.so')")
+        finally:
+            store.close()
+
+    def test_normal_queries_are_unaffected(self, tmp_path):
+        store = Store(str(tmp_path / "gsd.db"))
+        try:
+            store.upsert_cluster("crc", "https://x", True)
+            assert [c["id"] for c in store.clusters()] == ["crc"]
+        finally:
+            store.close()

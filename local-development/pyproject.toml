@@ -3,13 +3,24 @@ name = "group-sync-dashboard"
 version = "0.6.0"
 description = "Read-only multi-cluster dashboard for the redhat-cop group-sync-operator"
 requires-python = ">=3.11"
+# FLOORS ARE A SECURITY CONTROL, not just a compatibility statement. These were set once
+# at "whatever was current" and then drifted: `httpx>=0.27` still admitted releases with
+# known advisories, and nothing stopped a rebuild on a machine with a stale cache — or an
+# air-gapped mirror — from resolving to one. A build that silently satisfies an old floor
+# is exactly the supply-chain case nobody notices.
+#
+# Each floor below is a version verified clean on 2026-08-02 against TWO independent
+# databases: Trivy (Aqua) and OSV.dev (Google), both reporting zero findings across the
+# full resolved tree. Upper bounds are deliberately absent — pinning exact versions in a
+# library-style project trades one stale-dependency problem for another; the floor plus
+# `pip install --upgrade` at build time keeps us current, and CI re-scans weekly.
 dependencies = [
-    "fastapi>=0.115",
-    "uvicorn[standard]>=0.30",
-    "httpx>=0.27",
-    "croniter>=2.0",
-    "PyYAML>=6.0",
-    "prometheus-client>=0.20",
+    "fastapi>=0.141.1",
+    "uvicorn[standard]>=0.52.1",
+    "httpx>=0.28.1",
+    "croniter>=6.2.4",
+    "PyYAML>=6.0.3",
+    "prometheus-client>=0.26.0",
 ]
 
 [project.optional-dependencies]

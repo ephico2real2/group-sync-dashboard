@@ -73,10 +73,20 @@ LABEL org.opencontainers.image.revision="$GIT_COMMIT" \
 #   at one line or more per poll per cluster.
 
 USER 0
-# `update` cannot clear the known curl-minimal HIGHs today — Red Hat has published no fix,
-# and a dry run confirms "Nothing to do" on a fresh base — but it means every rebuild of
-# THIS image picks up whatever has been fixed since Red Hat last rebuilt the base, instead
-# of waiting on their cadence.
+# `update` cannot clear the known curl HIGHs today: CVE-2026-8286, CVE-2026-8925,
+# CVE-2026-8927, CVE-2026-9547, CVE-2026-11352 and CVE-2026-11586 against curl-minimal and
+# libcurl-minimal all report NO fixed version from Red Hat, and a dry run on a fresh base
+# says "Nothing to do". They are also unreachable here — every HTTP call goes through
+# Python httpx, nothing shells out to curl, and the HEALTHCHECK below uses urllib.
+#
+# Two sqlite advisories are in the same position (CVE-2024-0232, CVE-2025-70873): UBI9
+# ships only 3.34.1, so they cannot be patched out. sqlite IS used, so gsd/store.py
+# disables extension loading to cut the surface instead. See
+# docs/image-vulnerability-scan.md.
+#
+# The update still earns its place: every rebuild of THIS image picks up whatever HAS been
+# fixed since Red Hat last rebuilt the base, rather than waiting on their cadence.
+# Measured effect when python3.14 landed: MEDIUM 119 -> 113.
 RUN microdnf update -y \
  && microdnf install -y python3.14 \
  && microdnf clean all \
