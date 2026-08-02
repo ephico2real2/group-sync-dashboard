@@ -1242,11 +1242,19 @@ class Store:
                            ELSE binding_namespace END AS namespace,
                       COUNT(*) AS bindings,
                       COUNT(DISTINCT user_name) AS distinct_users,
-                      GROUP_CONCAT(DISTINCT user_name) AS users
+                      GROUP_CONCAT(DISTINCT user_name) AS users,
+                      -- The worst privilege granted here, and whether it is cluster-wide.
+                      -- Risk is ranked on PRIVILEGE, not on count: one forgotten
+                      -- cluster-admin outranks twenty view grants, and a list sorted by
+                      -- count puts the twenty first.
+                      MAX(CASE role_name WHEN 'cluster-admin' THEN 4 WHEN 'admin' THEN 3
+                                         WHEN 'edit' THEN 2 ELSE 1 END) AS worst_privilege,
+                      MAX(CASE WHEN binding_namespace = '' THEN 1 ELSE 0 END) AS cluster_scoped
                  FROM user_binding
                 WHERE cluster_id=? AND is_platform=0
                 GROUP BY namespace
-                ORDER BY bindings DESC, namespace""",
+                ORDER BY worst_privilege DESC, cluster_scoped DESC,
+                         bindings DESC, namespace""",
             (cluster_id,),
         )
 

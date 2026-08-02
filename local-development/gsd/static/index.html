@@ -386,6 +386,62 @@ svg .hit { fill: transparent; cursor: pointer; }
 code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
 .err { color: var(--status-critical); }
 
+/* ---- Risk presentation (Namespace audit) --------------------------------------------
+   A severity has to be readable as a WORD first: the pill carries its label, so the hue
+   is reinforcement rather than the signal. That also keeps the text-contrast problem
+   trivial — the label is --text-primary on a 15%-tinted background, which cannot fail AA
+   whatever the hue, while the full-strength colour lives in the border where the 3:1
+   graphical bar applies. */
+.risk-pill {
+  display: inline-block; padding: 3px 10px; border-radius: 999px;
+  font-size: 12px; font-weight: 700; letter-spacing: 0.02em;
+  color: var(--text-primary); white-space: nowrap;
+  border-left: 3px solid var(--risk-colour, var(--text-muted));
+  background: color-mix(in srgb, var(--risk-colour, var(--text-muted)) 15%, var(--surface-1));
+}
+.risk-critical { --risk-colour: var(--status-critical); }
+.risk-high     { --risk-colour: var(--status-warning); }
+.risk-medium   { --risk-colour: var(--series-4); }
+.risk-low      { --risk-colour: var(--text-muted); }
+
+.risk-headline { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+.risk-headline .risk-pill { font-size: 15px; padding: 6px 14px; }
+
+/* The KPI row is the first thing read, so it gets real size. */
+.kpi.big .value { font-size: 30px; letter-spacing: -0.02em; }
+.kpi.big .label { font-size: 12px; }
+
+/* Why-this-matters: three short arguments side by side rather than one dense paragraph
+   nobody finishes. */
+.risk-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+.risk-item { font-size: 13px; color: var(--text-secondary); line-height: 1.55; }
+.risk-item-h {
+  font-weight: 700; font-size: 13px; color: var(--text-primary); margin-bottom: 3px;
+}
+
+/* The table has to be scannable at a glance, so rows are taller and the identifying
+   column is bold. Zebra striping is dropped here — the risk tint IS the row signal, and
+   two competing backgrounds read as noise. */
+.audit-table th {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--text-muted); font-weight: 600; padding-bottom: 8px;
+}
+.audit-table td { padding: 10px 14px 10px 0; font-size: 14px; vertical-align: middle; }
+.audit-table tbody tr:nth-child(even) td { background: none; }
+.audit-table .ns-cell strong { font-size: 15px; }
+.audit-table td.strong { font-weight: 700; }
+.audit-table .who { font-size: 12px; }
+.priv { font-weight: 600; }
+
+/* A tint the width of the row, so severity is visible without reading the pill. */
+.risk-row td:first-child { border-left: 4px solid var(--risk-colour); padding-left: 10px; }
+.risk-row.risk-critical td { background: color-mix(in srgb, var(--status-critical) 7%, transparent); }
+.risk-row.risk-high td { background: color-mix(in srgb, var(--status-warning) 7%, transparent); }
+
+.runbook { margin: 0; padding-left: 22px; font-size: 13px; line-height: 1.7; color: var(--text-secondary); }
+.runbook li { margin-bottom: 5px; }
+.runbook strong { color: var(--text-primary); }
+
 /* ---- Section identity ---------------------------------------------------------------
    Each view owns an accent, which drives the tab, the page bloom, the card top edge and
    the focus ring. One variable, swapped on <body>, so a new view needs one line here and
@@ -1291,83 +1347,165 @@ function policyPage() {
 function nsAuditPage() {
   const ub = data.userBindings;
   if (!ub) return `<section class="card"><div class="empty-note">Loading…</div></section>`;
-  return `<section class="card">
-    <h2>Namespace audit</h2>
-    <div class="filterbar-note">
-      Which namespaces still grant access to <strong>people</strong> instead of to
-      LDAP-managed groups. Everything else this dashboard shows assumes group-based
-      access; these are the grants that sit outside that model entirely.
-    </div>
-  </section>
-  ${directUserGrants(ub)}`;
+  return directUserGrants(ub);
 }
 
+/* Risk tier for one namespace's worst grant. Ranked on PRIVILEGE and SCOPE, never on
+   count: one forgotten cluster-admin outranks twenty view grants, and a page sorted by
+   volume puts the twenty first and buries the one. */
+function riskTier(row) {
+  const p = row.worst_privilege || 1;
+  const clusterWide = !!row.cluster_scoped;
+  if (clusterWide && p >= 3) return { key: "critical", label: "Critical", rank: 4 };
+  if (p >= 4) return { key: "critical", label: "Critical", rank: 4 };
+  if (p >= 3 || clusterWide) return { key: "high", label: "High", rank: 3 };
+  if (p >= 2) return { key: "medium", label: "Medium", rank: 2 };
+  return { key: "low", label: "Low", rank: 1 };
+}
+
+const PRIVILEGE_NAME = { 4: "cluster-admin", 3: "admin", 2: "edit", 1: "view" };
+
+/* Roles granted directly to a person, ranked by risk. */
 function directUserGrants(ub) {
   if (!ub) return "";
-  const rows = ub.by_namespace || [];
+  const rows = (ub.by_namespace || []).map((r) => ({ ...r, risk: riskTier(r) }));
   const bindings = ub.bindings || [];
-  const users = new Set(bindings.map((b) => b.user_name));
-  const elevated = bindings.filter((b) => ["admin", "cluster-admin"].includes(b.role_name));
+  const people = new Set(bindings.map((b) => b.user_name));
+  const critical = rows.filter((r) => r.risk.key === "critical");
+  const high = rows.filter((r) => r.risk.key === "high");
 
   if (!rows.length) {
     return `<section class="card">
-      <h3>Direct user grants</h3>
-      <div class="empty-note">
-        None. Every role on this cluster is granted to a group, which is what lets an LDAP
-        change revoke access everywhere at once.
+      <h2>Namespace audit</h2>
+      <div class="hero"><span class="value mono">0</span>
+        <span class="label">namespaces grant access to a person</span></div>
+      <div class="filterbar-note">
+        Every role on this cluster is granted to a group. That is what makes offboarding
+        a single action: removing someone from an LDAP group revokes their access
+        everywhere at once.
         ${ub.excluded_platform ? `<br><span class="muted">${ub.excluded_platform} platform
-          identit${ub.excluded_platform === 1 ? "y" : "ies"} (system components, kubeadmin)
-          excluded — nowhere to migrate those to.</span>` : ""}
+          identit${ub.excluded_platform === 1 ? "y" : "ies"} excluded — system components
+          and <code>kubeadmin</code> are break-glass, with nowhere to migrate to.</span>` : ""}
       </div>
     </section>`;
   }
 
+  const worst = rows[0].risk;
   return `<section class="card">
-    <h3>Direct user grants — migrate to LDAP groups</h3>
-    <div class="hero" style="margin-top:6px">
-      <span class="value mono">${bindings.length}</span>
-      <span class="label">binding${bindings.length === 1 ? "" : "s"} naming
-        ${users.size} ${users.size === 1 ? "person" : "people"} across
-        ${rows.length} namespace${rows.length === 1 ? "" : "s"}</span>
+    <h2>Namespace audit</h2>
+    <div class="risk-headline">
+      <span class="risk-pill risk-${worst.key}">${esc(worst.label)} exposure</span>
+      <span class="muted">highest risk on this cluster</span>
     </div>
-    <div class="filterbar-note" style="margin:2px 0 10px">
-      Each of these grants access to a <strong>person</strong> rather than to an
-      enterprise-managed group, so it <strong>survives offboarding</strong>: removing
-      someone from an LDAP group revokes their access everywhere at once, while a binding
-      that names them keeps granting until somebody remembers it exists. No group-based
-      access review can see them.
-      <strong>Migration:</strong> add the person to the LDAP group the operator syncs for
-      that role, then delete the binding.
-      ${ub.excluded_platform ? `<br><span class="muted">${ub.excluded_platform} platform
-        identit${ub.excluded_platform === 1 ? "y" : "ies"} (system components, kubeadmin)
-        excluded — break-glass and cluster-internal, with nowhere to migrate to.</span>` : ""}
+    <div class="kpis" style="margin-top:14px">
+      <div class="kpi big ${critical.length ? "flag-critical" : ""}">
+        <div class="label">Namespaces at risk</div>
+        <div class="value mono">${rows.length}</div></div>
+      <div class="kpi big"><div class="label">People exposed</div>
+        <div class="value mono">${people.size}</div></div>
+      <div class="kpi big"><div class="label">Grants to migrate</div>
+        <div class="value mono">${bindings.length}</div></div>
+      <div class="kpi big ${critical.length ? "flag-critical" : ""}">
+        <div class="label">Critical</div>
+        <div class="value mono ${critical.length ? "err" : "muted"}">${critical.length}</div></div>
+      <div class="kpi big ${high.length ? "flag-warning" : ""}">
+        <div class="label">High</div>
+        <div class="value mono ${high.length ? "" : "muted"}">${high.length}</div></div>
     </div>
-    <div class="scroll-x"><table>
-      <thead><tr><th>Namespace</th><th class="num">Bindings</th><th class="num">People</th>
-        <th>Who</th></tr></thead>
-      <tbody>${rows.map((r) => `<tr>
-        <td>${r.namespace === "(cluster-scoped)"
-              ? `<span class="err">cluster-scoped</span>` : esc(r.namespace)}</td>
+  </section>
+
+  <section class="card">
+    <h3>Why this is a risk</h3>
+    <div class="risk-grid">
+      <div class="risk-item">
+        <div class="risk-item-h">Offboarding does not revoke it</div>
+        Removing someone from an LDAP group revokes their access everywhere at once. A
+        binding that names the <strong>person</strong> keeps granting after they leave the
+        team, change role, or leave the company — until somebody remembers it exists.
+      </div>
+      <div class="risk-item">
+        <div class="risk-item-h">Invisible to access review</div>
+        Every group-based review — including the rest of this dashboard — answers
+        “who is in the group?”. These grants are attached to no group, so a clean review
+        can coexist with standing access nobody approved.
+      </div>
+      <div class="risk-item">
+        <div class="risk-item-h">No approval trail</div>
+        Group membership is granted in the enterprise directory, with a request and an
+        approver. A hand-made binding records only who ran <code>oc</code>, and only for as
+        long as the audit log is retained.
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h3>Exposure by namespace</h3>
+    <div class="filterbar-note" style="margin-bottom:8px">
+      Ranked by the <strong>worst privilege granted</strong>, not by count — one forgotten
+      <code>cluster-admin</code> matters more than twenty <code>view</code> grants.
+    </div>
+    <div class="scroll-x"><table class="audit-table">
+      <thead><tr>
+        <th>Risk</th><th>Namespace</th><th>Highest privilege</th>
+        <th class="num">People</th><th class="num">Grants</th><th>Who is exposed</th>
+      </tr></thead>
+      <tbody>${rows.map((r) => `<tr class="risk-row risk-${r.risk.key}">
+        <td><span class="risk-pill risk-${r.risk.key}">${esc(r.risk.label)}</span></td>
+        <td class="ns-cell">${r.namespace === "(cluster-scoped)"
+            ? `<strong class="err">CLUSTER-WIDE</strong>` : `<strong>${esc(r.namespace)}</strong>`}</td>
+        <td><code class="priv">${esc(PRIVILEGE_NAME[r.worst_privilege] || "view")}</code></td>
+        <td class="num strong">${r.distinct_users}</td>
         <td class="num">${r.bindings}</td>
-        <td class="num">${r.distinct_users}</td>
-        <td class="muted">${esc(r.users || "")}</td>
+        <td class="muted who">${esc((r.users || "").split(",").join(", "))}</td>
       </tr>`).join("")}</tbody>
     </table></div>
-    ${elevated.length ? `<div class="err" style="margin-top:8px;font-size:12px">
-      ${elevated.length} of these grant <code>admin</code> or <code>cluster-admin</code>.</div>` : ""}
-    <details style="margin-top:10px">
-      <summary class="filterbar-note" style="cursor:pointer">Every binding</summary>
-      <div class="scroll-x" style="margin-top:6px"><table>
-        <thead><tr><th>User</th><th>Grants</th><th>Scope</th><th>Binding</th></tr></thead>
-        <tbody>${bindings.map((b) => `<tr>
-          <td>${esc(b.user_name)}</td>
-          <td><code>${esc(b.role_name)}</code> <span class="muted">${esc(b.role_kind)}</span></td>
+    ${ub.excluded_platform ? `<div class="filterbar-note" style="margin-top:8px">
+      ${ub.excluded_platform} platform identit${ub.excluded_platform === 1 ? "y" : "ies"}
+      excluded — system components and <code>kubeadmin</code> are break-glass and
+      cluster-internal, with nowhere to migrate to.</div>` : ""}
+  </section>
+
+  <section class="card">
+    <h3>How to close it</h3>
+    <div class="filterbar-note" style="margin-bottom:10px">
+      Work top-down: the table above is already in the order to do it in.
+    </div>
+    <ol class="runbook">
+      <li><strong>Identify the role.</strong> Match the grant to the LDAP group the
+        operator already syncs for that privilege — the naming convention encodes it
+        (<code>&lt;app&gt;-ns-admin</code>, <code>-ns-developer</code>,
+        <code>-ns-audit</code>).</li>
+      <li><strong>Add the person to that group</strong> in the enterprise directory, through
+        the normal request-and-approve path. Access now has an owner and an audit trail.</li>
+      <li><strong>Wait one sync</strong> and confirm on the Groups tab that they appear as a
+        member. Do not skip this — deleting first leaves them locked out.</li>
+      <li><strong>Delete the direct binding.</strong>
+        <code>oc delete rolebinding &lt;name&gt; -n &lt;namespace&gt;</code></li>
+      <li><strong>Confirm it is gone</strong> here on the next refresh.</li>
+    </ol>
+    <div class="filterbar-note" style="margin-top:10px">
+      <strong>Operational goal:</strong> zero rows on this page. At zero, one directory
+      change offboards a person from the entire cluster, and an access review that reads
+      clean <em>is</em> clean.
+    </div>
+  </section>
+
+  <section class="card">
+    <h3>Every grant</h3>
+    <div class="scroll-x"><table class="audit-table">
+      <thead><tr><th>Person</th><th>Grants</th><th>Scope</th><th>Binding</th></tr></thead>
+      <tbody>${bindings.map((b) => {
+        const crit = ["cluster-admin", "admin"].includes(b.role_name) || !b.binding_namespace;
+        return `<tr class="${crit ? "risk-row risk-high" : ""}">
+          <td><strong>${esc(b.user_name)}</strong></td>
+          <td><code class="priv">${esc(b.role_name)}</code>
+            <span class="muted">${esc(b.role_kind)}</span></td>
           <td>${b.binding_namespace ? esc(b.binding_namespace)
-                : `<span class="err">cluster-wide</span>`}</td>
+                : `<strong class="err">cluster-wide</strong>`}</td>
           <td class="muted">${esc(b.binding_name)}</td>
-        </tr>`).join("")}</tbody>
-      </table></div>
-    </details>
+        </tr>`;
+      }).join("")}</tbody>
+    </table></div>
   </section>`;
 }
 
