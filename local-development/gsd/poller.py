@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 from .config import ClusterConfig, Settings
 from .kube import OK, ClusterClient, ClusterError, GroupSyncView, GroupView
 from .leader import LeaderElector
+from .audit import plan_audit_stamps
 from .storage import StorageBackend
 from .timeutil import now_iso
 
@@ -219,7 +220,13 @@ def poll_once(store: StorageBackend, cluster: ClusterConfig, timeout: float = 15
     return OK
 
 
-def refresh_bindings(store: StorageBackend, cluster: ClusterConfig, timeout: float) -> str:
+def refresh_bindings(
+    store: StorageBackend,
+    cluster: ClusterConfig,
+    timeout: float,
+    audit_mode: str = "off",
+    audit_max_per_cycle: int = 20,
+) -> str:
     """Re-read RoleBindings/ClusterRoleBindings for one cluster.
 
     Deliberately does NOT record a poll outcome. A binding-list failure — most likely a
@@ -281,6 +288,42 @@ def refresh_bindings(store: StorageBackend, cluster: ClusterConfig, timeout: flo
             log.info("refreshed %d operator config(s) for %s", len(configs), cluster.name)
 
     log.info("refreshed %d group bindings for %s", len(bindings), cluster.name)
+
+    # The audit stamp — the dashboard's ONLY write path, and it runs LAST, after this
+    # cycle's rows are stored, so the plan is computed from exactly what was just observed.
+    # docs/unmanaged-audit-design.md carries the invariants; gsd/audit.py the decisions.
+    if audit_mode in ("log", "annotate"):
+        plan = plan_audit_stamps(store.all_bindings(cluster.name), audit_max_per_cycle)
+        if plan.stamp or plan.unstamp or plan.capped:
+            log.info(
+                "%s: unmanaged audit plan — stamp %d, heal %d%s%s",
+                cluster.name, len(plan.stamp), len(plan.unstamp),
+                f", {plan.capped} deferred by the per-cycle cap" if plan.capped else "",
+                " (log mode: nothing will be written)" if audit_mode == "log" else "",
+            )
+        for kind, ns, name in plan.stamp:
+            if audit_mode == "log":
+                log.info("%s: WOULD stamp %s %s/%s", cluster.name, kind, ns or "-", name)
+                continue
+            try:
+                client.stamp_unmanaged_binding(kind, ns, name, now_iso())
+                log.info("%s: stamped %s %s/%s as unmanaged", cluster.name, kind, ns or "-", name)
+            except ClusterError as exc:
+                # I8: one failed patch skips, loudly; it never stops the others or the refresh.
+                log.warning("%s: could not stamp %s %s/%s: %s",
+                            cluster.name, kind, ns or "-", name, exc.message)
+        for kind, ns, name in plan.unstamp:
+            if audit_mode == "log":
+                log.info("%s: WOULD heal (unstamp) %s %s/%s", cluster.name, kind, ns or "-", name)
+                continue
+            try:
+                client.unstamp_unmanaged_binding(kind, ns, name)
+                log.info("%s: healed %s %s/%s — no longer unmanaged; annotations kept",
+                         cluster.name, kind, ns or "-", name)
+            except ClusterError as exc:
+                log.warning("%s: could not heal %s %s/%s: %s",
+                            cluster.name, kind, ns or "-", name, exc.message)
+
     return OK
 
 
@@ -393,7 +436,9 @@ class Poller:
             if now >= next_binding_refresh:
                 try:
                     refresh_bindings(
-                        self.store, cluster, self.settings.request_timeout_seconds
+                        self.store, cluster, self.settings.request_timeout_seconds,
+                        audit_mode=self.settings.unmanaged_audit_mode,
+                        audit_max_per_cycle=self.settings.unmanaged_audit_max_per_cycle,
                     )
                 except Exception:  # noqa: BLE001
                     log.exception("unhandled error refreshing bindings for %s", cluster.name)

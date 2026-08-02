@@ -1,0 +1,52 @@
+"""The unmanaged-audit stamping plan. Pure decisions; the poller executes them.
+
+Design and invariants: docs/unmanaged-audit-design.md. Everything here is deliberately
+free of I/O so every invariant is a plain unit test — for the dashboard's only write
+path, the decision logic being trivially testable is the point.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class StampPlan:
+    """What one refresh cycle intends to write."""
+
+    stamp: list[tuple[str, str, str]]     # (binding_kind, namespace, name)
+    unstamp: list[tuple[str, str, str]]
+    capped: int                           # how many stamps were deferred by the cap
+
+
+def plan_audit_stamps(rows: list[dict], max_per_cycle: int = 20) -> StampPlan:
+    """Decide which bindings to stamp and which to heal, from this cycle's findings.
+
+    `rows` is store.all_bindings() output: one row per (binding, Group subject), so a
+    binding naming two groups appears twice — and its two rows can be classified
+    DIFFERENTLY (one subject's group managed, the other built-in). Decisions are therefore
+    made per OBJECT, not per row:
+
+      * stamp   if ANY of its rows is `unmanaged` and it is not already stamped (I2, I3)
+      * unstamp if it IS stamped and NONE of its rows is `unmanaged` (I4) — the label
+        comes off so the CLI selection means *currently* outside governance; the
+        detected-at annotations stay behind as history, which is the audit trail.
+
+    The cap (I6) bounds a misclassification bug to one screenful of objects per cycle;
+    deferred stamps are counted so the caller can log that convergence is pending.
+    Unstamps are deliberately NOT capped: healing a wrong or stale stamp must never queue
+    behind new detections.
+    """
+    per_object: dict[tuple[str, str, str], dict] = {}
+    for row in rows:
+        key = (row["binding_kind"], row["binding_namespace"], row["binding_name"])
+        entry = per_object.setdefault(key, {"unmanaged": False, "stamped": False})
+        entry["unmanaged"] = entry["unmanaged"] or row["finding"] == "unmanaged"
+        entry["stamped"] = entry["stamped"] or bool(row.get("audit_stamped"))
+
+    stamp = sorted(k for k, v in per_object.items() if v["unmanaged"] and not v["stamped"])
+    unstamp = sorted(k for k, v in per_object.items() if v["stamped"] and not v["unmanaged"])
+    capped = max(0, len(stamp) - max_per_cycle) if max_per_cycle > 0 else 0
+    if max_per_cycle > 0:
+        stamp = stamp[:max_per_cycle]
+    return StampPlan(stamp=stamp, unstamp=unstamp, capped=capped)

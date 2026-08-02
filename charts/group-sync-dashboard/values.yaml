@@ -222,6 +222,31 @@ config:
     intervalHours: 6
     keep: 4     # 4 x 6h = the last day, at roughly the size of the database each
 
+  # Audit stamping of unmanaged grants — THE DASHBOARD'S ONLY WRITE TO ANY CLUSTER.
+  # Design and invariants: docs/unmanaged-audit-design.md. When enabled, bindings the
+  # dashboard classifies `unmanaged` (hand-made grant on an operator-synced group, outside
+  # the policy system) are stamped ON THE OBJECT:
+  #   label       rbac.ocp.io/unmanaged=true            <- selectable:
+  #                 oc get rolebindings,clusterrolebindings -A -l rbac.ocp.io/unmanaged=true
+  #   annotation  rbac.ocp.io/unmanaged-detected-at     <- first detection, never rewritten
+  #   annotation  rbac.ocp.io/unmanaged-detected-by
+  # The label is REMOVED when the binding stops being unmanaged (adopted by the policy
+  # system, or acknowledged with rbac.ocp.io/unmanaged-exception); the annotations stay as
+  # the audit trail.
+  #
+  # THE COST, PLAINLY: Kubernetes has no annotations-only patch scope, so `annotate` mode
+  # grants the ServiceAccount `patch` on rolebindings/clusterrolebindings — a verb that
+  # could modify what a binding grants. The application only ever touches its own three
+  # metadata keys, but the GRANT is broader than the use, and a compromised pod could
+  # abuse it. Hence: default off; the RBAC grant is rendered ONLY in annotate mode; and
+  # `log` mode computes and logs the full plan with zero write access — run that first
+  # and read the plan before flipping to annotate.
+  unmanagedAudit:
+    mode: "off"        # off | log | annotate  (anything else is treated as off)
+    # At most this many stamps per 300s refresh; healing is never capped. Bounds a
+    # misclassification bug to one screenful of objects per cycle instead of the cluster.
+    maxPerCycle: 20
+
   # Who used the dashboard. Requires oauthProxy.enabled — with the proxy off there is no
   # authentication, X-Forwarded-User would be whatever the caller typed, and recording it
   # would manufacture an audit trail rather than keep one. Nothing is recorded in that mode

@@ -157,6 +157,10 @@ CREATE TABLE IF NOT EXISTS rbac_group_binding (
     -- for a deliberate hand-made binding, carried as an annotation on the object itself.
     managed_source      TEXT,
     exception           TEXT,
+    -- Migration 2: whether the object already carries the dashboard's own unmanaged
+    -- audit label — read back from the cluster each refresh, so it is the cluster's
+    -- truth, not a local counter that can drift from it.
+    audit_stamped       INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY(cluster_id, binding_kind, binding_namespace, binding_name, group_name)
 );
 
@@ -246,6 +250,13 @@ _MIGRATIONS: list[tuple[int, str, list[str]]] = [
         [
             "ALTER TABLE rbac_group_binding ADD COLUMN managed_source TEXT",
             "ALTER TABLE rbac_group_binding ADD COLUMN exception TEXT",
+        ],
+    ),
+    (
+        2,
+        "rbac_group_binding records the audit stamp, for stamp idempotency + healing",
+        [
+            "ALTER TABLE rbac_group_binding ADD COLUMN audit_stamped INTEGER NOT NULL DEFAULT 0",
         ],
     ),
 ]
@@ -1012,11 +1023,11 @@ class Store:
                 """INSERT OR REPLACE INTO rbac_group_binding(
                        cluster_id, binding_kind, binding_namespace, binding_name,
                        role_kind, role_name, group_name, observed_at,
-                       managed_source, exception)
+                       managed_source, exception, audit_stamped)
                    VALUES(:cluster_id,:binding_kind,:binding_namespace,:binding_name,
                           :role_kind,:role_name,:group_name,:observed_at,
-                          :managed_source,:exception)""",
-                [{"managed_source": None, "exception": None, **r,
+                          :managed_source,:exception,:audit_stamped)""",
+                [{"managed_source": None, "exception": None, "audit_stamped": 0, **r,
                   "cluster_id": cluster_id, "observed_at": observed_at} for r in rows],
             )
 
@@ -1099,7 +1110,7 @@ class Store:
         return self._rows(
             """SELECT b.binding_kind, b.binding_namespace, b.binding_name,
                       b.role_kind, b.role_name, b.group_name,
-                      b.managed_source, b.exception,
+                      b.managed_source, b.exception, b.audit_stamped,
                       CASE
                         -- Broken-resolution tiers first: a binding that grants NOBODY is
                         -- worse than one that grants outside governance, whoever made it.

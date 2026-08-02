@@ -129,7 +129,9 @@ def _seed(db_path: str) -> None:
     # Bindings covering all three finding tiers: one genuinely broken, one that names a
     # group which never existed, and the built-in noise that must not drown them.
     store.record_managed_groups(
-        "crc-local", [{"name": "was-managed", "sync_provider": "ldap-groupsync_ldap"}],
+        "crc-local", [{"name": "was-managed", "sync_provider": "ldap-groupsync_ldap"},
+                      {"name": "app-ocp-rbac-alpha-ns-admin",
+                       "sync_provider": "ldap-groupsync_ldap"}],
         _iso(now - timedelta(days=1)),
     )
     store.replace_bindings(
@@ -141,6 +143,16 @@ def _seed(db_path: str) -> None:
             {"binding_kind": "RoleBinding", "binding_namespace": "klt-pass-both",
              "binding_name": "klta-audit-rb", "role_kind": "ClusterRole",
              "role_name": "view", "group_name": "app-ocp-rbac-klta-ns-audit"},
+            # Operator-templated: its presence is what proves this cluster uses the policy
+            # system at all, which the `unmanaged` finding requires before flagging anything.
+            {"binding_kind": "RoleBinding", "binding_namespace": "prod-ns",
+             "binding_name": "managed-admin-rb", "role_kind": "ClusterRole",
+             "role_name": "admin", "group_name": "app-ocp-rbac-alpha-ns-admin",
+             "managed_source": "prod-rbac"},
+            # Hand-made on a synced group -> `unmanaged`.
+            {"binding_kind": "ClusterRoleBinding", "binding_namespace": "",
+             "binding_name": "hand-made-crb", "role_kind": "ClusterRole",
+             "role_name": "cluster-admin", "group_name": "app-ocp-rbac-alpha-ns-admin"},
         ]
         + [
             {"binding_kind": "RoleBinding", "binding_namespace": f"ns{i}",
@@ -148,6 +160,21 @@ def _seed(db_path: str) -> None:
              "role_name": "system:image-puller",
              "group_name": f"system:serviceaccounts:ns{i}"}
             for i in range(6)
+        ],
+        _iso(now),
+    )
+
+    # The policy operator: one healthy CR and one currently failing, so the RBAC-policy
+    # page renders both states and the alert path is exercised.
+    store.replace_operator_configs(
+        "crc-local",
+        [
+            {"kind": "GroupConfig", "name": "cluster-admin-groupconfig-rbac",
+             "error_at": None, "error_message": None, "success_at": _iso(now)},
+            {"kind": "NamespaceConfig", "name": "multitenant",
+             "error_at": _iso(now - timedelta(minutes=1)),
+             "error_message": "failed calling webhook validate.kyverno.svc-fail",
+             "success_at": _iso(now - timedelta(days=1))},
         ],
         _iso(now),
     )
@@ -648,3 +675,32 @@ class TestClusterScopedNavigation:
         dash.locator("#back-groups").click()
         dash.wait_for_selector("text=Membership changes")
         assert dash.evaluate("() => view.cluster") == "crc-local"
+
+
+class TestRbacPolicyPage:
+    """The RBAC-policy tab. It shipped broken — `section is not defined`, because the
+    renderer was local to bindingsPage() — and the suite did not notice, because nothing
+    opened the tab. Every page needs at least one test that renders it."""
+
+    def _open(self, dash):
+        dash.click('button.tab:text-is("RBAC policy")')
+        dash.wait_for_selector("h2:text-is('RBAC policy')")
+
+    def test_the_page_renders_without_a_javascript_error(self, dash):
+        errors = []
+        dash.on("pageerror", lambda e: errors.append(str(e)))
+        self._open(dash)
+        body = dash.locator("body").inner_text()
+        assert "Dashboard API error" not in body, body[:300]
+        assert not errors, errors
+
+    def test_it_reports_the_policy_operator_and_the_unmanaged_set(self, dash):
+        self._open(dash)
+        body = dash.locator("body").inner_text()
+        assert "Policy operator" in body
+        assert "outside the policy system" in body
+
+    def test_the_tab_is_marked_current(self, dash):
+        self._open(dash)
+        current = dash.locator('button.tab[aria-current="page"]').inner_text()
+        assert current.strip() == "RBAC policy"

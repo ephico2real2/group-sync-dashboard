@@ -30,6 +30,16 @@ rules:
     resources: ["leases"]
     verbs: ["get", "create", "update"]
   {{- end }}
+  {{- if eq (toString .Values.config.unmanagedAudit.mode) "annotate" }}
+  # RENDERED ONLY IN ANNOTATE MODE, deliberately: patch on bindings is a verb that could
+  # change what a binding grants, and the grant must not exist while the feature is off or
+  # rehearsing in log mode. The application confines itself to three metadata keys —
+  # docs/unmanaged-audit-design.md I1 — but the grant is broader than the use, and that
+  # asymmetry is the price of this feature. Kubernetes has no metadata-only patch scope.
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["rolebindings", "clusterrolebindings"]
+    verbs: ["patch"]
+  {{- end }}
   {{- if .Values.rbac.bindings }}
   # Powers the "Access granted" view and dangling-binding detection.
   #

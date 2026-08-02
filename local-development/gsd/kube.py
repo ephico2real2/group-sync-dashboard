@@ -45,6 +45,18 @@ labelled, never silently dropped."""
 SYNC_PROVIDER_LABEL = "group-sync-operator.redhat-cop.io/sync-provider"
 CONFIG_SOURCE_LABEL = "rbac.ocp.io/config-source"
 UNMANAGED_EXCEPTION_ANNOTATION = "rbac.ocp.io/unmanaged-exception"
+
+# The audit stamp, written by the dashboard itself when config.unmanagedAudit.annotate is
+# enabled — its ONLY write to any cluster. A LABEL for the value that must be selectable:
+#
+#     oc get rolebindings,clusterrolebindings -A -l rbac.ocp.io/unmanaged=true
+#
+# and ANNOTATIONS for the audit detail, because annotations cannot be selected on:
+# detected-at is the FIRST detection and is never overwritten, so it stays meaningful as
+# "how long has this hand-made grant existed unacknowledged".
+UNMANAGED_LABEL = "rbac.ocp.io/unmanaged"
+UNMANAGED_DETECTED_AT_ANNOTATION = "rbac.ocp.io/unmanaged-detected-at"
+UNMANAGED_DETECTED_BY_ANNOTATION = "rbac.ocp.io/unmanaged-detected-by"
 SYNC_TIME_ANNOTATION = "group-sync-operator.redhat-cop.io/sync-time"
 LDAP_UID_ANNOTATION = "openshift.io/ldap.uid"
 
@@ -155,6 +167,9 @@ class BindingView:
     """The operator-acknowledged justification for an unmanaged binding, carried as an
     annotation ON the binding so the truth lives next to the object rather than in a
     dashboard-side allowlist. Suppresses the `unmanaged` finding."""
+    audit_stamped: bool = False
+    """Whether this binding already carries the dashboard's unmanaged audit label —
+    the idempotency check, so a stamp is written once and never re-patched."""
 
     @property
     def is_system_group(self) -> bool:
@@ -274,6 +289,74 @@ class ClusterClient:
                 out.extend(_binding_views(obj, "ClusterRoleBinding"))
         log.debug("fetched %d group-subject binding rows from %s", len(out), self.cluster.name)
         return out
+
+    def stamp_unmanaged_binding(
+        self, binding_kind: str, namespace: str, name: str, detected_at: str
+    ) -> None:
+        """Stamp one binding as detected-unmanaged. THE DASHBOARD'S ONLY WRITE.
+
+        A strategic-merge of metadata only: the label makes the set selectable from the
+        CLI, the annotations carry when and by what. Raises ClusterError on failure —
+        the caller decides whether that stops anything (it must not).
+        """
+        if binding_kind == "ClusterRoleBinding":
+            path = f"{CLUSTERROLEBINDING_API}/{name}"
+        else:
+            path = f"/apis/rbac.authorization.k8s.io/v1/namespaces/{namespace}/rolebindings/{name}"
+        body = {"metadata": {
+            "labels": {UNMANAGED_LABEL: "true"},
+            "annotations": {
+                UNMANAGED_DETECTED_AT_ANNOTATION: detected_at,
+                UNMANAGED_DETECTED_BY_ANNOTATION: "group-sync-dashboard",
+            },
+        }}
+        with self._client() as client:
+            try:
+                response = client.patch(
+                    path, json=body,
+                    headers={"Content-Type": "application/merge-patch+json"},
+                )
+            except httpx.HTTPError as exc:
+                raise ClusterError(UNREACHABLE, f"{type(exc).__name__}: {exc}") from exc
+        if response.status_code == 403:
+            raise ClusterError(
+                FORBIDDEN,
+                "403 patching a binding — unmanagedAudit.annotate is enabled but the "
+                "token lacks patch on rolebindings/clusterrolebindings",
+            )
+        if response.status_code >= 400:
+            raise ClusterError(
+                UNREACHABLE,
+                f"HTTP {response.status_code} stamping {path}: {response.text[:200]}",
+            )
+
+    def unstamp_unmanaged_binding(
+        self, binding_kind: str, namespace: str, name: str
+    ) -> None:
+        """Remove the audit LABEL from a binding no longer classified unmanaged (I4).
+
+        The label comes off so `-l rbac.ocp.io/unmanaged=true` always means *currently*
+        outside governance. The detected-at/by ANNOTATIONS deliberately stay: they are the
+        history — "detected on X, later acknowledged/adopted" is exactly what an auditor
+        wants to read on the object. Merge-patch null deletes the key.
+        """
+        if binding_kind == "ClusterRoleBinding":
+            path = f"{CLUSTERROLEBINDING_API}/{name}"
+        else:
+            path = f"/apis/rbac.authorization.k8s.io/v1/namespaces/{namespace}/rolebindings/{name}"
+        with self._client() as client:
+            try:
+                response = client.patch(
+                    path, json={"metadata": {"labels": {UNMANAGED_LABEL: None}}},
+                    headers={"Content-Type": "application/merge-patch+json"},
+                )
+            except httpx.HTTPError as exc:
+                raise ClusterError(UNREACHABLE, f"{type(exc).__name__}: {exc}") from exc
+        if response.status_code >= 400:
+            raise ClusterError(
+                UNREACHABLE,
+                f"HTTP {response.status_code} unstamping {path}: {response.text[:200]}",
+            )
 
     def fetch_operator_configs(self) -> list[OperatorConfigView] | None:
         """NamespaceConfig and GroupConfig health, or None when the operator is absent.
@@ -399,6 +482,7 @@ def _binding_views(obj: dict, binding_kind: str) -> list[BindingView]:
                 group_name=subject["name"],
                 managed_source=labels.get(CONFIG_SOURCE_LABEL),
                 exception=annotations.get(UNMANAGED_EXCEPTION_ANNOTATION),
+                audit_stamped=labels.get(UNMANAGED_LABEL) == "true",
             )
         )
     return rows

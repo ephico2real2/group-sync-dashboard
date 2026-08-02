@@ -63,6 +63,7 @@
   --tab-overview: #2873cd;
   --tab-groups: #108172;
   --tab-bindings: #6d4bc7;
+  --tab-policy: #9333ea;
   --tab-usage: #c2410c;
   --accent: var(--tab-overview);
 }
@@ -99,6 +100,7 @@
     --tab-overview: #2d7ad7;
     --tab-groups: #12907f;
     --tab-bindings: #8468d0;
+    --tab-policy: #a855f7;
     --tab-usage: #d9490d;
   }
 }
@@ -131,6 +133,7 @@
   --tab-overview: #2d7ad7;
   --tab-groups: #12907f;
   --tab-bindings: #8468d0;
+  --tab-policy: #a855f7;
   --tab-usage: #d9490d;
 }
 
@@ -387,6 +390,7 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 1
 body[data-page="overview"] { --accent: var(--tab-overview); }
 body[data-page="groups"]   { --accent: var(--tab-groups); }
 body[data-page="bindings"] { --accent: var(--tab-bindings); }
+body[data-page="policy"]   { --accent: var(--tab-policy); }
 body[data-page="usage"]    { --accent: var(--tab-usage); }
 
 .tabs { display: inline-flex; gap: 4px; }
@@ -595,6 +599,7 @@ function renderFilters() {
       ${tab("overview", "Overview")}
       ${tab("groups", "Groups")}
       ${tab("bindings", "Access granted")}
+      ${tab("policy", "RBAC policy")}
       ${tab("usage", "Usage")}
     </nav>`;
   $("filters").innerHTML = html;
@@ -1107,24 +1112,6 @@ function bindingsPage() {
   const c = d.counts || {};
   const review = (c.dangling || 0) + (c.unresolved || 0);
 
-  const table = (rows) => `<div class="scroll-x"><table>
-      <thead><tr><th>Group named by the binding</th><th>Grants</th><th>Scope</th>
-        <th>Binding</th></tr></thead>
-      <tbody>${rows.map((r) => `<tr>
-        <td><button type="button" class="drill" data-group="${esc(r.group_name)}">${esc(r.group_name)}</button></td>
-        <td><code>${esc(r.role_name)}</code> <span class="muted">${esc(r.role_kind)}</span></td>
-        <td>${r.binding_namespace
-              ? esc(r.binding_namespace)
-              : `<span class="muted">cluster-wide</span>`}</td>
-        <td class="muted">${esc(r.binding_name)}</td>
-      </tr>`).join("")}</tbody></table></div>`;
-
-  const section = (title, note, rows, badge) => `<section class="card">
-    <h2>${badge || ""} ${esc(title)} <span class="muted" style="font-weight:400">· ${rows.length}</span></h2>
-    ${note ? `<div class="filterbar-note" style="margin:4px 0 8px">${note}</div>` : ""}
-    ${rows.length ? table(rows) : `<div class="empty-note">None.</div>`}
-  </section>`;
-
   const header = `<section class="card">
     <div class="kpis" style="margin-top:0">
       <div class="kpi"><div class="label">Group bindings on this cluster</div>
@@ -1146,10 +1133,8 @@ function bindingsPage() {
   // The policy-operator strip is part of the page, not of a filter: these CRs template
   // the bindings this page shows, so their health belongs beside them whichever tier is
   // selected. It was originally rendered only on the default filter, where nobody found it.
-  const health = configHealth(d.operator_configs);
-
   if (view.bindingFilter === "unmanaged") {
-    return header + health + section("Unmanaged",
+    return header + bindingSection("Unmanaged",
       `The group is operator-synced, other bindings on this cluster carry the policy
        operator's <code>config-source</code> label, and this one carries none — somebody
        granted access by hand, outside the policy system. A deliberate one can be
@@ -1159,33 +1144,33 @@ function bindingsPage() {
       d.unmanaged || [], sevBadge("warning", "unmanaged"));
   }
   if (view.bindingFilter === "ok") {
-    return header + health + section("Granted",
+    return header + bindingSection("Granted",
       "The group named by each of these exists, so the access reaches its members.",
       d.ok || []);
   }
   if (view.bindingFilter === "built_in") {
-    return header + health + section("Built-in",
+    return header + bindingSection("Built-in",
       `Kubernetes virtual groups such as <code>system:authenticated</code> and
        <code>system:serviceaccounts:*</code>. They authorise real access and no Group object
        exists for them by design, so their absence is expected and not a fault.`,
       d.built_in || []);
   }
   if (view.bindingFilter === "all") {
-    return header + health
-      + section("Dangling", "The group was operator-managed and has disappeared — this "
+    return header
+      + bindingSection("Dangling", "The group was operator-managed and has disappeared — this "
           + "binding now grants nobody.", d.dangling || [], sevBadge("critical", "dangling"))
-      + section("Unresolved", "Names a group that has never existed here.",
+      + bindingSection("Unresolved", "Names a group that has never existed here.",
           d.unresolved || [], sevBadge("warning", "unresolved"))
-      + section("Unmanaged", "Hand-made grant on an operator-synced group, outside the "
+      + bindingSection("Unmanaged", "Hand-made grant on an operator-synced group, outside the "
           + "policy system.", d.unmanaged || [], sevBadge("warning", "unmanaged"))
-      + section("Granted", "The group exists; access reaches its members.", d.ok || [])
-      + section("Built-in", "Virtual groups; no Group object is expected.", d.built_in || []);
+      + bindingSection("Granted", "The group exists; access reaches its members.", d.ok || [])
+      + bindingSection("Built-in", "Virtual groups; no Group object is expected.", d.built_in || []);
   }
 
   // default: needs review. The header goes here too — without it this view would show a
   // subset with no statement of the whole, which is the exact misrepresentation the filter
   // was added to fix.
-  return header + health + `<section class="card">
+  return header + `<section class="card">
     <div class="hero">
       <div class="value">${review}</div>
       <div class="label">binding${review === 1 ? "" : "s"} that grant nobody</div>
@@ -1197,18 +1182,99 @@ function bindingsPage() {
       bindings.
     </div>
   </section>
-  ${section("Dangling", "The group was operator-managed and has disappeared.",
+  ${bindingSection("Dangling", "The group was operator-managed and has disappeared.",
       d.dangling || [], sevBadge("critical", "dangling"))}
-  ${section("Unresolved",
+  ${bindingSection("Unresolved",
       `These do not raise alerts: a group that has never been seen cannot be told apart
        from one that simply has not synced yet. They still grant nobody — typically a
        misspelled group name, or an onboarding that stopped halfway.`,
       d.unresolved || [], sevBadge("warning", "unresolved"))}
-  ${section("Unmanaged",
+  ${bindingSection("Unmanaged",
       `Hand-made grants on operator-synced groups, outside the policy system. Acknowledge
        a deliberate one with the <code>rbac.ocp.io/unmanaged-exception</code> annotation on
        the binding; the justification then lives next to the object and clears it here.`,
       d.unmanaged || [], sevBadge("warning", "unmanaged"))}`;
+}
+
+/* Binding table + section card, at module scope so both the Access-granted and the
+   RBAC-policy pages render bindings identically. These were local to bindingsPage(), and
+   calling them from the new page failed at runtime with "section is not defined" — caught
+   by a screenshot, not by the suite, because no test opened that tab. tests/test_ui.py
+   now does. */
+function bindingTable(rows) {
+  return `<div class="scroll-x"><table>
+      <thead><tr><th>Group named by the binding</th><th>Grants</th><th>Scope</th>
+        <th>Binding</th></tr></thead>
+      <tbody>${rows.map((r) => `<tr>
+        <td><button type="button" class="drill" data-group="${esc(r.group_name)}">${esc(r.group_name)}</button></td>
+        <td><code>${esc(r.role_name)}</code> <span class="muted">${esc(r.role_kind)}</span></td>
+        <td>${r.binding_namespace
+              ? esc(r.binding_namespace)
+              : `<span class="muted">cluster-wide</span>`}</td>
+        <td class="muted">${esc(r.binding_name)}</td>
+      </tr>`).join("")}</tbody></table></div>`;
+}
+
+function bindingSection(title, note, rows, badge) {
+  return `<section class="card">
+    <h2>${badge || ""} ${esc(title)} <span class="muted" style="font-weight:400">· ${rows.length}</span></h2>
+    ${note ? `<div class="filterbar-note" style="margin:4px 0 8px">${note}</div>` : ""}
+    ${rows.length ? bindingTable(rows) : `<div class="empty-note">None.</div>`}
+  </section>`;
+}
+
+/* RBAC policy: who governs the grants, rather than what the grants are.
+   Split out of the Access-granted tab because it answers a different question — that page
+   asks "who has access?", this one asks "is the system that decides access working, and is
+   anything bypassing it?". Two concerns that happen to share a data source. */
+function policyPage() {
+  const oc = data.operatorConfigs;
+  const f = data.findings || {};
+  const unmanaged = f.unmanaged || [];
+  const stamped = unmanaged.filter((r) => r.audit_stamped).length;
+
+  if (oc && !oc.present) {
+    return `<section class="card">
+      <h2>RBAC policy</h2>
+      <div class="empty-note">
+        The namespace-configuration-operator is not installed on <code>${esc(view.cluster)}</code>.
+        This page reports the health of its NamespaceConfig and GroupConfig CRs and finds
+        grants that bypass them; without the operator there is no policy system to report on.
+      </div>
+    </section>`;
+  }
+
+  return `<section class="card">
+    <h2>RBAC policy</h2>
+    <div class="hero">
+      <span class="value mono">${unmanaged.length}</span>
+      <span class="label">grant${unmanaged.length === 1 ? "" : "s"} outside the policy system</span>
+    </div>
+    <div class="kpis">
+      <div class="kpi"><div class="label">Policy CRs</div>
+        <div class="value mono">${(oc && oc.configs || []).length}</div></div>
+      <div class="kpi ${unmanaged.length ? "flag-warning" : ""}">
+        <div class="label">Unmanaged</div>
+        <div class="value mono ${unmanaged.length ? "" : "muted"}">${unmanaged.length}</div></div>
+      <div class="kpi"><div class="label">Audit-stamped</div>
+        <div class="value mono ${stamped ? "" : "muted"}">${stamped}</div></div>
+    </div>
+    <div class="filterbar-note" style="margin-top:10px">
+      A grant is <strong>unmanaged</strong> when it names an operator-synced group but
+      carries none of the policy operator's provenance — somebody granted access by hand.
+      Acknowledge a deliberate one with the
+      <code>rbac.ocp.io/unmanaged-exception</code> annotation on the binding; the
+      justification then lives next to the object and clears it here.
+      ${stamped ? `<br>Audit stamping is enabled, so the current set is also selectable
+        straight from the cluster:
+        <br><code>oc get rolebindings,clusterrolebindings -A -l rbac.ocp.io/unmanaged=true</code>`
+      : ""}
+    </div>
+  </section>
+  ${configHealth(oc)}
+  ${bindingSection("Grants outside the policy system",
+      `Each names a group the operator syncs, and nothing templates the grant itself.`,
+      unmanaged, sevBadge("warning", "unmanaged"))}`;
 }
 
 /* The policy operator's CR health. Rendered only when the CRDs exist on the cluster —
@@ -1248,7 +1314,10 @@ function configHealth(oc) {
 function render() {
   renderFilters();
   const main = $("main");
-  if (view.page === "usage") {
+  if (view.page === "policy") {
+    main.innerHTML = policyPage();
+    wireDrilldown();
+  } else if (view.page === "usage") {
     main.innerHTML = usagePage();
   } else if (view.page === "bindings") {
     main.innerHTML = bindingsPage();
@@ -1387,9 +1456,13 @@ async function refresh(opts = {}) {
     // The policy operator's health belongs on the landing page: these CRs template the
     // RoleBindings that give every synced group its access, and a failing one is exactly
     // the silent stoppage this dashboard exists to surface.
-    if (view.page === "overview" && view.cluster && !view.groupsync) {
+    if (view.cluster && ((view.page === "overview" && !view.groupsync) || view.page === "policy")) {
       data.operatorConfigs = await get(
         `/api/clusters/${encodeURIComponent(view.cluster)}/operator-configs`);
+    }
+    if (view.page === "policy" && view.cluster) {
+      data.findings = await get(
+        `/api/clusters/${encodeURIComponent(view.cluster)}/bindings/findings`);
     }
     render();
   } catch (err) {

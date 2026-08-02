@@ -24,6 +24,8 @@ data:
     # caller would set. So the chart states it, and the app records identity only when
     # this is true.
     oauthProxyEnabled: {{ .Values.oauthProxy.enabled }}
+    unmanagedAuditMode: {{ .Values.config.unmanagedAudit.mode | quote }}
+    unmanagedAuditMaxPerCycle: {{ .Values.config.unmanagedAudit.maxPerCycle }}
     userActivityEnabled: {{ .Values.config.userActivity.enabled }}
     userActivityVisibility: {{ .Values.config.userActivity.visibility | quote }}
     userActivityFlushSeconds: {{ .Values.config.userActivity.flushSeconds }}

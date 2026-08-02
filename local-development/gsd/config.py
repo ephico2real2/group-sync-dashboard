@@ -217,6 +217,11 @@ class Settings:
     backup_dir: str = ""
     backup_interval_hours: float = 6.0
     backup_keep: int = 4
+    # off | log | annotate. The dashboard's ONLY write path; see
+    # docs/unmanaged-audit-design.md. `log` computes and logs the plan without writing —
+    # the rehearsal mode the rollout goes through before annotate.
+    unmanaged_audit_mode: str = "off"
+    unmanaged_audit_max_per_cycle: int = 20
 
     # Whether the oauth-proxy sidecar is in front of us. The app cannot detect this for
     # itself, and it must not infer it from the presence of X-Forwarded-User — that header
@@ -255,6 +260,22 @@ def _num_setting(raw: dict, env_name: str, yaml_key: str, default, cast):
     except (TypeError, ValueError):
         log.warning("%s=%r is not a number; using %r", env_name, source, default)
         return default
+
+
+def _audit_mode_setting(raw: dict) -> str:
+    """Fail SAFE: anything unrecognised means off, never a write mode.
+
+    Same reasoning as the visibility setting — a typo must not be the thing that turns on
+    the only code path that patches cluster objects.
+    """
+    source = os.environ.get("GSD_UNMANAGED_AUDIT_MODE")
+    if source is None:
+        source = raw.get("unmanagedAuditMode", "off")
+    word = str(source).strip().lower()
+    if word in ("off", "log", "annotate"):
+        return word
+    log.warning("unmanagedAuditMode=%r is not off/log/annotate; using 'off'", source)
+    return "off"
 
 
 def _visibility_setting(raw: dict) -> str:
@@ -396,6 +417,10 @@ def load_settings(path: str | Path) -> Settings:
             raw, "GSD_BACKUP_INTERVAL_HOURS", "backupIntervalHours", 6.0, float
         ),
         backup_keep=_num_setting(raw, "GSD_BACKUP_KEEP", "backupKeep", 4, int),
+        unmanaged_audit_mode=_audit_mode_setting(raw),
+        unmanaged_audit_max_per_cycle=_num_setting(
+            raw, "GSD_UNMANAGED_AUDIT_MAX_PER_CYCLE", "unmanagedAuditMaxPerCycle", 20, int
+        ),
         sqlite_wal_checkpoint_mb=_num_setting(
             raw, "GSD_SQLITE_WAL_CHECKPOINT_MB", "sqliteWalCheckpointMb", 8.0, float
         ),

@@ -32,9 +32,19 @@ ENGINE_IMPORTS = {
     "psycopg", "psycopg2", "asyncpg",
     "pymysql", "MySQLdb", "sqlalchemy",
 }
-# No trailing spaces: whitespace is collapsed before matching, so "SELECT\n*" is caught
-# where a literal " " requirement missed it.
-SQL_VERBS = ("SELECT", "INSERT INTO", "UPDATE ", "DELETE FROM", "CREATE TABLE", "PRAGMA")
+# SQL SHAPES, not substrings. The first version matched bare "SELECT" anywhere, which
+# flagged the word "selectable" in a docstring — prose about selecting is not a query.
+# Whitespace is collapsed before matching, so "SELECT\n  * FROM x" is still caught.
+import re as _re
+
+SQL_SHAPES = tuple(_re.compile(pat) for pat in (
+    r"\bSELECT\s+.+\bFROM\b",
+    r"\bINSERT\s+INTO\b",
+    r"\bUPDATE\s+\w+\s+SET\b",
+    r"\bDELETE\s+FROM\b",
+    r"\bCREATE\s+TABLE\b",
+    r"\bPRAGMA\s+\w+",
+))
 
 
 def modules():
@@ -95,9 +105,7 @@ def test_no_module_writes_sql(path):
         for node in ast.walk(tree)
         if isinstance(node, ast.Constant)
         and isinstance(node.value, str)
-        # Whitespace collapsed first: "SELECT\n  * FROM x" and "SELECT\t*" read the same
-        # as "SELECT * FROM x", and the original check missed both.
-        and any(verb in " ".join(node.value.upper().split()) for verb in SQL_VERBS)
+        and any(shape.search(" ".join(node.value.upper().split())) for shape in SQL_SHAPES)
     ]
     assert not offenders, f"{path.name} contains SQL: {offenders}"
 
