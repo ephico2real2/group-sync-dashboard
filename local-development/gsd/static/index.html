@@ -1493,6 +1493,12 @@ const PRIVILEGE_RANK = { "cluster-admin": 4, admin: 3, edit: 2, view: 1 };
    so a truncated page is the top of the list rather than a slice of the middle. */
 const NS_GRANT_PAGE = 200;
 
+/* Same idea for the binding tiers. Unbounded until now: measured at 2,280 rows / 545,800
+   bytes on a cluster ten times the reference size, re-fetched every 30 seconds by the
+   auto-refresh. The response's `counts` are computed server-side over the whole cluster, so
+   the tier totals the page displays stay correct while only the rows are a page. */
+const FINDINGS_PAGE = 500;
+
 /* Sort a copy, never the array the renderer was handed — sorting in place would reorder
    `data.userBindings` itself, so the store's risk ranking would be lost after the first
    click and could never be restored without a refetch. */
@@ -1956,7 +1962,7 @@ async function refresh(opts = {}) {
       data.groupsyncs = await get(`/api/clusters/${encodeURIComponent(view.cluster)}/groupsyncs`);
       if (view.page === "bindings") {
         data.findings = await get(
-          `/api/clusters/${encodeURIComponent(view.cluster)}/bindings/findings`);
+          `/api/clusters/${encodeURIComponent(view.cluster)}/bindings/findings?limit=${FINDINGS_PAGE}`);
       }
       if (view.page === "groups") {
         const base = `/api/clusters/${encodeURIComponent(view.cluster)}`;
@@ -1996,7 +2002,7 @@ async function refresh(opts = {}) {
     }
     if (view.page === "policy" && view.cluster) {
       data.findings = await get(
-        `/api/clusters/${encodeURIComponent(view.cluster)}/bindings/findings`);
+        `/api/clusters/${encodeURIComponent(view.cluster)}/bindings/findings?limit=${FINDINGS_PAGE}`);
     }
     if (view.page === "nsaudit" && view.cluster) {
       // The namespace filter is applied SERVER-side, not by filtering a full response in

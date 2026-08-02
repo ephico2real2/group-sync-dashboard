@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import ast
 import contextlib
+import inspect
 import pathlib
 
 import pytest
@@ -131,9 +132,63 @@ def test_the_enforcement_documents_what_it_cannot_catch():
 
 class TestContract:
     def test_store_satisfies_the_backend_protocol(self):
-        """If Store drifts from the declared contract, a second implementation written
-        against that contract would not be a drop-in — which is the whole point."""
+        """Presence only. isinstance() on a runtime_checkable Protocol checks that the
+        attribute NAMES exist and nothing else — a class whose every method takes zero
+        arguments passes this. The two tests below are what actually hold the seam."""
         assert isinstance(Store(":memory:"), StorageBackend)
+
+    def test_the_protocol_declares_every_method_the_application_calls(self):
+        """The drift this catches was real: six methods across eleven call sites —
+        read_snapshot, poll_snapshot, backup, operator_configs, replace_operator_configs,
+        count_direct_user_bindings — were used on StorageBackend-typed objects while absent
+        from the contract. read_snapshot is the @consistent decorator's whole mechanism and
+        poll_snapshot is the poll's atomicity, so a backend written to the contract as
+        declared would have had neither."""
+        declared = set(StorageBackend.__protocol_attrs__)
+        missing: dict[str, list[str]] = {}
+        for name in ("api.py", "metrics.py", "poller.py", "activity.py"):
+            tree = ast.parse((GSD / name).read_text(), filename=name)
+            for node in ast.walk(tree):
+                target = None
+                # store.foo(...)
+                if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) \
+                        and node.value.id == "store":
+                    target = node
+                # self.store.foo(...)
+                elif isinstance(node, ast.Attribute) and isinstance(node.value, ast.Attribute) \
+                        and isinstance(node.value.value, ast.Name) \
+                        and node.value.value.id == "self" and node.value.attr == "store":
+                    target = node
+                if target is not None and target.attr not in declared:
+                    missing.setdefault(target.attr, []).append(f"{name}:{target.lineno}")
+        assert not missing, (
+            f"called on the backend but not declared in StorageBackend: {missing}. "
+            f"A second implementation would AttributeError on the first request."
+        )
+
+    def test_the_declared_signatures_match_the_implementation(self):
+        """isinstance() cannot see this. `users` gained a `limit` and
+        `direct_user_bindings` gained namespace/limit/offset in the store while the
+        Protocol kept the old shape, so api.py's calls would TypeError against any
+        backend that implemented the contract as written.
+
+        PARAMETERS ONLY, and deliberately. A caller breaks on the arguments it passes, which
+        is the drift worth failing over. Return annotations legitimately differ for the
+        @contextmanager methods: read_snapshot and poll_snapshot are generators annotated
+        `Iterator[None]`, and the decorator hands the caller an AbstractContextManager — the
+        Protocol declares what a caller RECEIVES, the implementation annotates the
+        undecorated generator. Both are right, and comparing the two strings would fail
+        forever on a difference that cannot break anybody.
+        """
+        def params(fn) -> str:
+            return str(inspect.signature(fn).parameters)
+
+        drifted = {
+            name: (params(getattr(StorageBackend, name)), params(getattr(Store, name)))
+            for name in sorted(StorageBackend.__protocol_attrs__)
+            if params(getattr(StorageBackend, name)) != params(getattr(Store, name))
+        }
+        assert not drifted, f"Protocol and Store parameters disagree: {drifted}"
 
     def test_the_engine_specific_helpers_are_private(self):
         """wal_bytes/maybe_checkpoint/journal_mode were PUBLIC, and the poller and the

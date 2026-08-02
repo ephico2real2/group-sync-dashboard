@@ -1,5 +1,12 @@
 # Namespace access report + PDF — design, for approval
 
+> **PARKED — 2026-08-02.** Not rejected and not scheduled. The analysis is finished and the
+> five open questions in §9 are still the gate; nothing here proceeds until they are
+> answered. Kept because the expensive part is already done: the `--openshift-sar` answer in
+> §1 is definitive, and the measurements behind §2 (no groups-forwarding in the proxy,
+> `-pass-access-token` present, SA cannot create SARs) were taken off the shipped binary and
+> the live cluster. Re-verify those three before building — a proxy upgrade could move them.
+
 **Status: proposed, not built.** Nothing in this document is implemented. It exists to be
 approved, amended or rejected first.
 

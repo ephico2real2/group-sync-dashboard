@@ -45,6 +45,7 @@ See ``docs/storage-coupling.md``.
 
 from __future__ import annotations
 
+from contextlib import AbstractContextManager
 from typing import Any, NotRequired, Protocol, TypedDict, runtime_checkable
 
 
@@ -164,7 +165,7 @@ class StorageBackend(Protocol):
         user_name: str | None = None,
         limit: int = 200,
     ) -> list[dict]: ...
-    def users(self, cluster_id: str) -> list[dict]: ...
+    def users(self, cluster_id: str, limit: int = 1000) -> list[dict]: ...
     def user_groups(self, cluster_id: str, user_name: str) -> list[dict]: ...
 
     # -- RBAC bindings -------------------------------------------------------------------
@@ -178,15 +179,50 @@ class StorageBackend(Protocol):
     def group_bindings(self, cluster_id: str, group_name: str) -> list[dict]: ...
     def user_bindings(self, cluster_id: str, user_name: str) -> list[dict]: ...
     def direct_user_bindings(
-        self, cluster_id: str, include_platform: bool = False
+        self,
+        cluster_id: str,
+        include_platform: bool = False,
+        namespace: str | None = None,
+        limit: int | None = None,
+        offset: int = 0,
     ) -> list[dict]: ...
+    def count_direct_user_bindings(
+        self,
+        cluster_id: str,
+        include_platform: bool = False,
+        namespace: str | None = None,
+    ) -> int: ...
     def user_bindings_by_namespace(self, cluster_id: str) -> list[dict]: ...
     def platform_user_binding_count(self, cluster_id: str) -> int: ...
     def replace_user_bindings(
         self, cluster_id: str, rows: list[dict], observed_at: str
     ) -> None: ...
     def binding_findings(self, cluster_id: str) -> list[dict]: ...
-    def all_bindings(self, cluster_id: str) -> list[dict]: ...
+    def all_bindings(
+        self, cluster_id: str, limit: int | None = None, offset: int = 0
+    ) -> list[dict]: ...
+    def count_bindings_by_finding(self, cluster_id: str) -> dict[str, int]: ...
+
+    # -- the policy operator's CRs -------------------------------------------------------
+
+    def replace_operator_configs(
+        self, cluster_id: str, configs: list[dict] | None, observed_at: str
+    ) -> None: ...
+    def operator_configs(self, cluster_id: str) -> dict: ...
+
+    # -- transactions --------------------------------------------------------------------
+    #
+    # These are not an optional extra. `poll_snapshot` IS the poll's atomicity and
+    # `read_snapshot` IS the @consistent decorator's entire mechanism, so a backend that
+    # satisfies everything above and omits these breaks both guarantees the application is
+    # built on. They were absent from this contract while eleven call sites used them.
+
+    def poll_snapshot(self) -> AbstractContextManager[None]: ...
+    def read_snapshot(self) -> AbstractContextManager[None]: ...
+
+    # -- backup --------------------------------------------------------------------------
+
+    def backup(self, directory: str, keep: int = 3) -> str | None: ...
 
     # -- dashboard usage -----------------------------------------------------------------
 

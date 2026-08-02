@@ -1166,17 +1166,10 @@ class Store:
         """
         return [r for r in self.all_bindings(cluster_id) if r["finding"] != "ok"]
 
-    def all_bindings(self, cluster_id: str) -> list[dict]:
-        """Every group-subject binding, each classified.
-
-        Includes the ones that resolve normally (`ok`). Those are the majority of a healthy
-        cluster — 74 of 228 here — and omitting them made a view labelled "Bindings" show
-        only the broken subset, which misrepresents what is on the cluster.
-        """
-        return self._rows(
-            """SELECT b.binding_kind, b.binding_namespace, b.binding_name,
-                      b.role_kind, b.role_name, b.group_name,
-                      b.managed_source, b.exception, b.audit_stamped,
+    # The classification, written once. Both all_bindings and count_bindings_by_finding
+    # need it, and two copies of a five-branch CASE would drift the moment a tier changed —
+    # producing counts that disagree with the rows they are counting.
+    _FINDING_CASE = """
                       CASE
                         -- Broken-resolution tiers first: a binding that grants NOBODY is
                         -- worse than one that grants outside governance, whoever made it.
@@ -1200,16 +1193,55 @@ class Store:
                                             AND m.managed_source IS NOT NULL)
                                                            THEN 'unmanaged'
                         ELSE 'ok'
-                      END AS finding
+                      END"""
+
+    _FINDING_FROM = """
                  FROM rbac_group_binding b
                  LEFT JOIN group_state g
                         ON g.cluster_id = b.cluster_id AND g.name = b.group_name
                  LEFT JOIN managed_group_seen s
                         ON s.cluster_id = b.cluster_id AND s.group_name = b.group_name
-                WHERE b.cluster_id = ?
-                ORDER BY b.group_name, b.binding_kind, b.binding_namespace, b.binding_name""",
+                WHERE b.cluster_id = ?"""
+
+    def count_bindings_by_finding(self, cluster_id: str) -> dict[str, int]:
+        """How many bindings fall in each tier, for the WHOLE cluster.
+
+        Exists so the counts stay true when the rows beside them are paged. Counting a
+        truncated page is the "showing 50 of 30" defect this codebase has now hit three
+        times; the fix each time is a scalar query over the same predicate.
+        """
+        rows = self._rows(
+            "SELECT" + self._FINDING_CASE + " AS finding, COUNT(*) AS n"
+            + self._FINDING_FROM + " GROUP BY finding",
             (cluster_id,),
         )
+        return {r["finding"]: r["n"] for r in rows}
+
+    def all_bindings(
+        self, cluster_id: str, limit: int | None = None, offset: int = 0
+    ) -> list[dict]:
+        """Every group-subject binding, each classified.
+
+        Includes the ones that resolve normally (`ok`). Those are the majority of a healthy
+        cluster — 74 of 228 here — and omitting them made a view labelled "Bindings" show
+        only the broken subset, which misrepresents what is on the cluster.
+
+        `limit` because this was unbounded and grows with the cluster: measured at 2,280
+        rows / 545,800 bytes at ten times the reference cluster, on a 30-second auto-refresh.
+        Pair it with `count_bindings_by_finding` — the counts must describe the cluster, not
+        the page.
+        """
+        sql = ("""SELECT b.binding_kind, b.binding_namespace, b.binding_name,
+                      b.role_kind, b.role_name, b.group_name,
+                      b.managed_source, b.exception, b.audit_stamped,"""
+               + self._FINDING_CASE + " AS finding" + self._FINDING_FROM
+               + """
+                ORDER BY b.group_name, b.binding_kind, b.binding_namespace, b.binding_name""")
+        params: list = [cluster_id]
+        if limit is not None:
+            sql += " LIMIT ? OFFSET ?"
+            params += [limit, offset]
+        return self._rows(sql, tuple(params))
 
     def replace_user_bindings(
         self, cluster_id: str, rows: list[dict], observed_at: str

@@ -410,19 +410,33 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
 
     @app.get("/api/clusters/{cluster_id}/bindings/findings")
     @consistent
-    def binding_findings(cluster_id: str) -> dict:
-        """Bindings whose Group subject resolves to no Group object, classified.
+    def binding_findings(
+        cluster_id: str,
+        limit: int = Query(
+            default=500, ge=1, le=5000,
+            description="Maximum bindings to return across all tiers. `counts` and `total` "
+                        "always describe the whole cluster, not this page."),
+        offset: int = Query(default=0, ge=0, description="Bindings to skip, for paging."),
+    ) -> dict:
+        """Every group-subject binding on a cluster, classified into five tiers.
 
-        Three tiers rather than two: on a real cluster the large majority of unresolvable
-        Group subjects are built-in virtual groups (`system:serviceaccounts:*`,
-        `system:authenticated`), which authorise real access and have no object by design.
-        Reporting those as broken buries the few that are.
+        Three unresolved tiers rather than one: on a real cluster the large majority of
+        unresolvable Group subjects are built-in virtual groups
+        (`system:serviceaccounts:*`, `system:authenticated`), which authorise real access
+        and have no object by design. Reporting those as broken buries the few that are.
         """
         require_cluster(cluster_id)
         # Every binding, including the ones that resolve normally. A view labelled
         # "bindings" that omitted the healthy majority (74 of 228 here) misrepresented the
         # cluster; the caller filters, rather than the API deciding what is worth seeing.
-        rows = store.all_bindings(cluster_id)
+        #
+        # Bounded since: measured at 2,280 rows / 545,800 bytes on a cluster ten times the
+        # reference size, fetched on a 30-second auto-refresh — 5.3x the payload that got
+        # list_users bounded. `counts` comes from a scalar query rather than from these
+        # rows, so it keeps describing the cluster once the rows are a page of it.
+        counts = store.count_bindings_by_finding(cluster_id)
+        total = sum(counts.values())
+        rows = store.all_bindings(cluster_id, limit=limit, offset=offset)
         by_tier: dict[str, list[dict]] = {
             "ok": [], "dangling": [], "unresolved": [], "built_in": [], "unmanaged": []
         }
@@ -431,8 +445,13 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
         return {
             "cluster": cluster_id,
             "note": "direct bindings only; role rules are not evaluated",
-            "total": len(rows),
-            "counts": {tier: len(v) for tier, v in by_tier.items()},
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "truncated": offset + len(rows) < total,
+            # From the scalar query, NOT from by_tier — by_tier holds this page. Counting
+            # the page here is the defect that shipped twice already.
+            "counts": {tier: counts.get(tier, 0) for tier in by_tier},
             # The policy operator that TEMPLATES these bindings, when installed. `present`
             # distinguishes "not installed" from "installed, zero CRs" so the UI never
             # renders all-healthy for a concept the cluster does not have.
