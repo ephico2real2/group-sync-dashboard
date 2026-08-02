@@ -15,12 +15,16 @@ Two tables here are not in PLAN §10 and are additions the first slice found it 
 
 from __future__ import annotations
 
+import logging
+import os
 import sqlite3
 import threading
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Iterator
+
+log = logging.getLogger(__name__)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS cluster (
@@ -149,20 +153,85 @@ CREATE TABLE IF NOT EXISTS managed_group_seen (
 """
 
 
+_PRAGMA_WORDS = {"OFF", "NORMAL", "FULL", "EXTRA"}
+
+
+def _safe_pragma_word(value: str, default: str) -> str:
+    """PRAGMA takes no bound parameters, so its argument is interpolated — allowlist it."""
+    word = str(value).strip().upper()
+    if word not in _PRAGMA_WORDS:
+        log.warning("ignoring unsupported synchronous=%r, using %s", value, default)
+        return default
+    return word
+
+
 def now_iso() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 class Store:
-    def __init__(self, path: str):
+    """SQLite with one writer connection and a reader per thread.
+
+    The locking story has three parts, and all three have to hold or reads stall behind the
+    60s bulk write:
+
+    1. WAL, so readers never block on the writer. Verified rather than assumed — see below.
+    2. `busy_timeout`, so a connection that does hit contention WAITS instead of failing.
+       SQLite's default is 0: it raises "database is locked" the instant a lock is held,
+       with no retry at all. That default is the single most common cause of the error.
+    3. A checkpoint that actually runs, so the WAL does not grow without bound.
+    """
+
+    def __init__(
+        self,
+        path: str,
+        busy_timeout_ms: int = 5000,
+        reader_busy_timeout_ms: int = 2000,
+        synchronous: str = "NORMAL",
+        wal_checkpoint_mb: float = 8.0,
+    ):
         self.path = path
         if path != ":memory:":
             Path(path).parent.mkdir(parents=True, exist_ok=True)
+        self.busy_timeout_ms = busy_timeout_ms
+        # Readers get a SHORTER budget than the writer on purpose: /readyz performs a read
+        # and the probe gives up at 5s, so a reader inheriting the writer's 5s would turn
+        # a moment of contention into a failed probe and a restarted pod.
+        self.reader_busy_timeout_ms = reader_busy_timeout_ms
+        self.wal_checkpoint_bytes = int(wal_checkpoint_mb * 1024 * 1024)
+        self.checkpoint_busy_total = 0
         self._lock = threading.RLock()
         self._local = threading.local()
+
         self._conn = sqlite3.connect(path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
-        self._conn.execute("PRAGMA journal_mode=WAL")
+
+        # PRAGMA journal_mode returns the mode actually in force, which is NOT always the one
+        # requested. WAL coordinates readers and writers through an mmap'd -shm file, so on a
+        # filesystem without working shared memory or POSIX locks — NFS, EFS, SMB, most RWX
+        # network storage — SQLite refuses the switch and stays in rollback-journal mode.
+        # It does that SILENTLY, and the consequence is not subtle: in rollback mode a reader
+        # blocks for the whole duration of the writer's transaction, so every API request
+        # queues behind the bulk poll. Read it back and say so, because the alternative is
+        # diagnosing that from latency graphs.
+        self.journal_mode = str(
+            self._conn.execute("PRAGMA journal_mode=WAL").fetchone()[0]
+        ).lower()
+        if path != ":memory:" and self.journal_mode != "wal":
+            log.error(
+                "SQLite is in %r mode, not WAL — the filesystem under %s does not support it. "
+                "Readers will now BLOCK on every write. This is expected on NFS/EFS/SMB and "
+                "is why network storage is not supported for the database file.",
+                self.journal_mode,
+                path,
+            )
+
+        self._conn.execute(f"PRAGMA busy_timeout={int(busy_timeout_ms)}")
+        # NORMAL is the documented companion to WAL: commits stop fsyncing, and a power loss
+        # can lose the most recent transactions but CANNOT corrupt the database. The exposure
+        # is one poll interval of history; the alternative is an fsync on every commit of a
+        # 50k-row refresh. Set GSD_SQLITE_SYNCHRONOUS=FULL if that trade is wrong for you.
+        self._conn.execute(f"PRAGMA synchronous={_safe_pragma_word(synchronous, 'NORMAL')}")
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._conn.executescript(SCHEMA)
         self._conn.commit()
@@ -217,8 +286,55 @@ class Store:
         if conn is None:
             conn = sqlite3.connect(self.path, check_same_thread=False)
             conn.row_factory = sqlite3.Row
+            # Every connection needs its OWN busy_timeout — it is connection state, not a
+            # property of the database, so the writer's setting does not reach these.
+            conn.execute(f"PRAGMA busy_timeout={int(self.reader_busy_timeout_ms)}")
             self._local.conn = conn
         return conn
+
+    def wal_bytes(self) -> int:
+        """Size of the -wal sidecar, or 0 when there is none (`:memory:`, or rollback mode)."""
+        if self.path == ":memory:":
+            return 0
+        try:
+            return os.path.getsize(self.path + "-wal")
+        except OSError:
+            return 0
+
+    def maybe_checkpoint(self) -> tuple[int, int, int] | None:
+        """Truncate the WAL once it exceeds the threshold. Returns (busy, log, moved).
+
+        SQLite auto-checkpoints when the WAL passes ~1000 pages, but that runs PASSIVE: it
+        copies what it can and gives up the moment a reader holds an older snapshot open.
+        Under a steady trickle of API reads "gives up" can be every single time, and then the
+        WAL grows without bound while the database file itself stays small. The failure
+        surfaces as a FULL VOLUME, not as a database error — which is why the size is also
+        exported as a metric rather than only acted on here.
+
+        TRUNCATE waits for readers and then returns the file to zero. It is called from the
+        poller thread after a cycle, never from a request, so the wait costs no user latency.
+        A busy result is not an error: it means readers were active, and the next cycle
+        retries. It IS worth counting, because a busy result EVERY cycle is the starvation
+        case and the metric is how you would ever notice.
+        """
+        if self.path == ":memory:" or self.journal_mode != "wal":
+            return None
+        if self.wal_bytes() < self.wal_checkpoint_bytes:
+            return None
+        with self._lock:
+            row = self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+        busy, log_frames, moved = int(row[0]), int(row[1]), int(row[2])
+        if busy:
+            self.checkpoint_busy_total += 1
+            log.warning(
+                "WAL checkpoint blocked by an open reader (%d frames, %.1f MiB); will retry "
+                "next cycle",
+                log_frames,
+                self.wal_bytes() / 1048576,
+            )
+        else:
+            log.debug("WAL checkpointed: %d frames reclaimed", moved)
+        return busy, log_frames, moved
 
     def _rows(self, sql: str, params: tuple | list = ()) -> list[dict]:
         """Run a read on the per-thread reader (or under the lock for :memory:).

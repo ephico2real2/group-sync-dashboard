@@ -102,3 +102,28 @@ fails loudly rather than emitting a host that would be wrong.
 8080
 {{- end -}}
 {{- end -}}
+
+{{/*
+The effective PVC access mode. Empty in values derives it from replicaCount, because the
+right mode is a consequence of the replica count rather than an independent choice:
+
+  1 replica  -> ReadWriteOncePod. One pod owns one SQLite file, and RWOP is the only mode
+                that ENFORCES that. Verified on the reference cluster: a second pod claiming
+                the same PVC is refused by the scheduler with "node has pod using
+                PersistentVolumeClaim with the same name and ReadWriteOncePod access mode".
+  >1 replica -> ReadWriteMany. Each pod writes /data/$POD_NAME/gsd.db, so the VOLUME is
+                shared while the files are not.
+
+ReadWriteOnce is deliberately not a default for either. It binds one NODE, not one pod, so
+two pods landing on the same node can both open the same database file — the guarantee it
+appears to give is not the guarantee SQLite needs.
+*/}}
+{{- define "gsd.accessMode" -}}
+{{- if .Values.persistence.accessMode -}}
+{{- .Values.persistence.accessMode -}}
+{{- else if gt (int .Values.replicaCount) 1 -}}
+ReadWriteMany
+{{- else -}}
+ReadWriteOncePod
+{{- end -}}
+{{- end -}}

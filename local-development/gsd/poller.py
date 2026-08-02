@@ -214,6 +214,10 @@ class Poller:
                 continue
             try:
                 poll_once(self.store, cluster, self.settings.request_timeout_seconds)
+                # After the write, never during it, and never from a request handler: a
+                # TRUNCATE checkpoint waits for open readers, and that wait is free here and
+                # would be user-visible latency anywhere else.
+                self.store.maybe_checkpoint()
             except Exception:  # noqa: BLE001 - a poll thread must never die silently
                 log.exception("unhandled error polling %s", cluster.name)
                 # The recovery write can fail for the SAME reason the poll did — a full or

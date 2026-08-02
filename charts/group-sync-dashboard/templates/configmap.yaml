@@ -9,6 +9,10 @@ data:
     pollIntervalSeconds: {{ .Values.config.pollIntervalSeconds }}
     scheduleGraceSeconds: {{ .Values.config.scheduleGraceSeconds }}
     bindingIntervalSeconds: {{ .Values.config.bindingIntervalSeconds }}
+    sqliteBusyTimeoutMs: {{ .Values.config.sqlite.busyTimeoutMs }}
+    sqliteReaderBusyTimeoutMs: {{ .Values.config.sqlite.readerBusyTimeoutMs }}
+    sqliteSynchronous: {{ .Values.config.sqlite.synchronous | quote }}
+    sqliteWalCheckpointMb: {{ .Values.config.sqlite.walCheckpointMb }}
     requestTimeoutSeconds: {{ .Values.config.requestTimeoutSeconds }}
     leaderElection: {{ .Values.leaderElection.enabled }}
     leaderLeaseName: {{ .Values.leaderElection.leaseName | quote }}

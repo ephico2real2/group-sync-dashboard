@@ -53,6 +53,7 @@ ones most likely to matter:
 | `trustedCA.*` | injected on | Corporate CAs for external clusters — see below |
 | `persistence.enabled` | `true` | Leave on. The accumulated history cannot be re-fetched |
 | `monitoring.serviceMonitor.enabled` | `false` | Needs the Prometheus Operator CRDs |
+| `replicaCount` | `1` | Leave at 1. Above one, each pod keeps its own database and history diverges — see the chart README's Scaling section |
 | `config.pollIntervalSeconds` | `60` | Poll cadence |
 | `logLevel` | `INFO` | `DEBUG` adds per-poll timing and HTTP request lines |
 
@@ -128,6 +129,14 @@ or boolean, so the threshold lives in the alert where it can be seen and tuned:
 The alert worth knowing about is `GroupSyncDashboardNotPolling`. It catches a dead poll loop,
 which the health endpoints structurally cannot: `/healthz` is unconditional and `/readyz`
 only reads the store, so both stay green while the dashboard serves frozen data.
+
+The other two cover SQLite. `GroupSyncDashboardWalGrowing` catches a write-ahead log that is
+not being checkpointed — checkpoints yield to open readers, so a steady read load can starve
+them, and the WAL grows until the volume fills while the database file stays small.
+`GroupSyncDashboardWalDisabled` catches WAL never having engaged: it is requested at startup
+but a filesystem without working shared memory (NFS, EFS, SMB) refuses it silently, and reads
+then block on every write. Both are failures where the pod stays Ready and nothing else looks
+wrong.
 
 ## Building and shipping
 

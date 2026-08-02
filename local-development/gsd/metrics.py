@@ -24,7 +24,7 @@ import os
 from datetime import UTC, datetime, timedelta
 
 from prometheus_client import CollectorRegistry
-from prometheus_client.core import GaugeMetricFamily
+from prometheus_client.core import CounterMetricFamily, GaugeMetricFamily
 
 from . import __version__, state as st
 from .store import Store
@@ -80,6 +80,41 @@ class DashboardCollector:
         else:
             leader.add_metric([""], 1)
         yield leader
+
+        # The WAL is the one thing here that can fill the volume while every other signal
+        # stays green: checkpointing is best-effort and yields to open readers, so a steady
+        # read load can starve it indefinitely. The database file stops growing, the API
+        # keeps answering, and the pod dies on a full disk with nothing having warned.
+        wal = GaugeMetricFamily(
+            "gsd_sqlite_wal_bytes",
+            "Size of the SQLite write-ahead log. Sustained growth means checkpoints are "
+            "being starved by open readers; compare against the PVC size.",
+            labels=[],
+        )
+        wal.add_metric([], self.store.wal_bytes())
+        yield wal
+
+        ckpt = CounterMetricFamily(
+            "gsd_sqlite_checkpoint_busy_total",
+            "Checkpoints that could not complete because a reader held an older snapshot. "
+            "Occasional is normal; monotonic increase alongside rising WAL size is the "
+            "starvation case.",
+            labels=[],
+        )
+        ckpt.add_metric([], self.store.checkpoint_busy_total)
+        yield ckpt
+
+        # 1 only when WAL actually engaged. It is requested at startup but the filesystem
+        # can refuse it, and in rollback mode readers block on every write — a latency
+        # cliff with no other symptom.
+        journal = GaugeMetricFamily(
+            "gsd_sqlite_wal_enabled",
+            "1 if the database is in WAL mode. 0 means the filesystem refused it and "
+            "readers now block on writes.",
+            labels=[],
+        )
+        journal.add_metric([], 1 if self.store.journal_mode == "wal" else 0)
+        yield journal
 
         up = GaugeMetricFamily(
             "gsd_cluster_up",

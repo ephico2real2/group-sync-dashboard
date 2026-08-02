@@ -85,4 +85,30 @@ spec:
           labels: {severity: warning}
           annotations:
             summary: "Dashboard cannot poll cluster {{ `{{ $labels.cluster }}` }}"
+
+        # Both of the following are SILENT failures: the pod stays Ready, every other metric
+        # looks normal, and the first visible symptom is a full volume or a latency cliff.
+        - alert: GroupSyncDashboardWalGrowing
+          expr: gsd_sqlite_wal_bytes > {{ .Values.monitoring.prometheusRule.walMiB }} * 1024 * 1024
+          for: {{ .Values.monitoring.prometheusRule.for.walGrowing }}
+          labels: {severity: warning}
+          annotations:
+            summary: "SQLite write-ahead log is not being checkpointed"
+            description: >-
+              Checkpoints yield to open readers, so a sustained read load can starve them.
+              The WAL then grows until the PVC fills while the database file stays small.
+              Check gsd_sqlite_checkpoint_busy_total: if it rises every cycle, the
+              checkpoint is being starved rather than merely lagging.
+
+        - alert: GroupSyncDashboardWalDisabled
+          expr: gsd_sqlite_wal_enabled == 0
+          for: {{ .Values.monitoring.prometheusRule.for.walDisabled }}
+          labels: {severity: warning}
+          annotations:
+            summary: "SQLite is not in WAL mode; reads block on every write"
+            description: >-
+              WAL was requested but the filesystem refused it, which is expected on NFS, EFS
+              and SMB. Without it a reader blocks for the whole duration of the poll's bulk
+              write, so API latency tracks the write rather than being independent of it.
+              Move the database to block storage.
 {{- end }}

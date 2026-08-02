@@ -1,0 +1,32 @@
+{{- if .Values.podDisruptionBudget.enabled }}
+{{- /*
+A PDB on a SINGLE-replica workload is a statement about node drains, not availability —
+there is no second pod to keep serving.
+
+  maxUnavailable: 1   the drain proceeds; the pod moves and the dashboard is briefly gone.
+                      One missed poll, which the next one heals. This is the default.
+
+  minAvailable: 1     the drain BLOCKS, indefinitely, because the budget can never be met
+                      with one replica. Cluster admins hit this during routine maintenance
+                      and cannot tell whose workload is stalling them. Choose it only if a
+                      human MUST be involved before this pod moves, and say so to whoever
+                      operates the cluster.
+
+Kubernetes will report `DisruptionAllowed=False` for the second case, which is the signal
+that a drain is being blocked rather than merely slow.
+*/}}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "gsd.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "gsd.labels" . | nindent 4 }}
+spec:
+  {{- if .Values.podDisruptionBudget.minAvailable }}
+  minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  {{- else }}
+  maxUnavailable: {{ .Values.podDisruptionBudget.maxUnavailable | default 1 }}
+  {{- end }}
+  selector:
+    matchLabels: {{- include "gsd.selectorLabels" . | nindent 6 }}
+{{- end }}

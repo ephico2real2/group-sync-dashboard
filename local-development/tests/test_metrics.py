@@ -155,3 +155,84 @@ class TestResilience:
         store.close()  # every query now raises
         out = generate_latest(build_registry(store, GRACE)).decode()
         assert "gsd_build_info" in out
+
+
+class TestSqliteMetrics:
+    """The WAL series exist and carry real values.
+
+    These three are the only warning of a failure mode with no other symptom: a starved
+    checkpoint fills the volume while the pod stays Ready and every other metric looks fine.
+    """
+
+    def test_wal_series_are_exposed_with_real_values(self, tmp_path):
+        from datetime import timedelta
+
+        from prometheus_client import CollectorRegistry, generate_latest
+
+        from gsd.metrics import DashboardCollector
+        from gsd.store import Store
+
+        store = Store(str(tmp_path / "gsd.db"))
+        try:
+            store.record_poll("c1", "ok", None)
+            registry = CollectorRegistry()
+            registry.register(DashboardCollector(store, timedelta(seconds=120), None))
+            text = generate_latest(registry).decode()
+
+            assert "gsd_sqlite_wal_enabled 1.0" in text, "file-backed store should be in WAL"
+            assert "gsd_sqlite_checkpoint_busy_total 0.0" in text
+            wal = next(
+                float(line.split()[1])
+                for line in text.splitlines()
+                if line.startswith("gsd_sqlite_wal_bytes ")
+            )
+            assert wal > 0, "a committed write should leave frames in the WAL"
+        finally:
+            store.close()
+
+    def test_every_metric_an_alert_references_is_declared_by_the_collector(self):
+        """Guards the rename case: an alert on a metric nobody emits never fires, and a
+        silent alert is indistinguishable from a healthy system."""
+        import re
+        import subprocess
+        from datetime import timedelta
+        from pathlib import Path
+
+        import yaml
+        from prometheus_client import CollectorRegistry, generate_latest
+
+        from gsd.metrics import DashboardCollector
+        from gsd.store import Store
+
+        chart = Path(__file__).resolve().parents[2] / "charts" / "group-sync-dashboard"
+        try:
+            rendered = subprocess.run(
+                ["helm", "template", "t", str(chart), "-n", "x",
+                 "--set", "ingress.host=h",
+                 "--set", "monitoring.prometheusRule.enabled=true"],
+                capture_output=True, text=True, timeout=120,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pytest.skip("helm not available")
+        if rendered.returncode != 0:
+            pytest.skip(f"helm template failed: {rendered.stderr[:200]}")
+
+        referenced = set()
+        for doc in yaml.safe_load_all(rendered.stdout):
+            if doc and doc.get("kind") == "PrometheusRule":
+                for group in doc["spec"]["groups"]:
+                    for rule in group["rules"]:
+                        referenced |= set(re.findall(r"\bgsd_[a-z0-9_]+", rule["expr"]))
+        assert referenced, "no gsd_ metrics found in the rules; the probe itself is broken"
+
+        store = Store(":memory:")
+        try:
+            registry = CollectorRegistry()
+            registry.register(DashboardCollector(store, timedelta(seconds=120), None))
+            text = generate_latest(registry).decode()
+        finally:
+            store.close()
+        # Declared, not emitted: a per-cluster family yields no series until a cluster is
+        # configured, so presence of the HELP line is the right assertion.
+        declared = {line.split()[2] for line in text.splitlines() if line.startswith("# HELP")}
+        assert not (referenced - declared), f"alerts reference undeclared metrics: {referenced - declared}"

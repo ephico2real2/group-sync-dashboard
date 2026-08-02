@@ -206,12 +206,38 @@ class Settings:
     leader_lease_name: str = "group-sync-dashboard"
 
     db_path: str = "gsd.db"
+    # SQLite concurrency. Defaults are the tested ones; see Store's docstring for why each
+    # exists. sqlite_busy_timeout_ms is the important one — SQLite's own default is 0, which
+    # means "raise database-is-locked immediately", with no retry.
+    sqlite_busy_timeout_ms: int = 5000
+    sqlite_reader_busy_timeout_ms: int = 2000
+    sqlite_synchronous: str = "NORMAL"
+    sqlite_wal_checkpoint_mb: float = 8.0
 
     def cluster(self, name: str) -> ClusterConfig | None:
         for c in self.clusters:
             if c.name == name:
                 return c
         return None
+
+
+def _num_setting(raw: dict, env_name: str, yaml_key: str, default, cast):
+    """Env wins over the ConfigMap, and a malformed value falls back rather than crashing.
+
+    These tune SQLite locking, so a typo in one is not worth refusing to start over — the
+    dashboard running with a default timeout beats the dashboard not running. The log line
+    is what makes the fallback discoverable.
+    """
+    source = os.environ.get(env_name)
+    if source is None:
+        if yaml_key not in raw:
+            return default
+        source = raw[yaml_key]
+    try:
+        return cast(source)
+    except (TypeError, ValueError):
+        log.warning("%s=%r is not a number; using %r", env_name, source, default)
+        return default
 
 
 def _require(raw: dict, key: str, where: str) -> object:
@@ -305,4 +331,15 @@ def load_settings(path: str | Path) -> Settings:
         leader_election=bool(raw.get("leaderElection", True)),
         leader_lease_name=str(raw.get("leaderLeaseName", "group-sync-dashboard")),
         db_path=os.environ.get("GSD_DB_PATH") or str(raw.get("dbPath", "gsd.db")),
+        sqlite_busy_timeout_ms=_num_setting(
+            raw, "GSD_SQLITE_BUSY_TIMEOUT_MS", "sqliteBusyTimeoutMs", 5000, int
+        ),
+        sqlite_reader_busy_timeout_ms=_num_setting(
+            raw, "GSD_SQLITE_READER_BUSY_TIMEOUT_MS", "sqliteReaderBusyTimeoutMs", 2000, int
+        ),
+        sqlite_synchronous=os.environ.get("GSD_SQLITE_SYNCHRONOUS")
+        or str(raw.get("sqliteSynchronous", "NORMAL")),
+        sqlite_wal_checkpoint_mb=_num_setting(
+            raw, "GSD_SQLITE_WAL_CHECKPOINT_MB", "sqliteWalCheckpointMb", 8.0, float
+        ),
     )

@@ -1,3 +1,12 @@
+{{- if and (gt (int .Values.replicaCount) 1) .Values.leaderElection.enabled }}
+{{- fail "replicaCount > 1 requires leaderElection.enabled=false. Above one replica each pod keeps its OWN database (/data/$POD_NAME/gsd.db), so every pod must poll for itself. With election on, the pods that lose the lease stop polling but KEEP SERVING reads from their own database, which then goes stale and never recovers — worse than no election at all. Set leaderElection.enabled=false, or return to replicaCount: 1." }}
+{{- end }}
+{{- if and (gt (int .Values.replicaCount) 1) .Values.persistence.enabled (ne (include "gsd.accessMode" .) "ReadWriteMany") }}
+{{- fail "replicaCount > 1 requires a ReadWriteMany volume. Leave persistence.accessMode empty to derive it, or set it explicitly. ReadWriteOnce binds to one NODE and ReadWriteOncePod to one POD, so under either the extra replicas stay Pending forever with no error on the Deployment itself." }}
+{{- end }}
+{{- if and (eq (include "gsd.accessMode" .) "ReadWriteOncePod") (eq (toString .Values.strategy) "RollingUpdate") }}
+{{- fail "strategy=RollingUpdate deadlocks against a ReadWriteOncePod volume: the incoming pod cannot be scheduled until the outgoing one releases the claim, and RollingUpdate will not terminate the outgoing pod until the incoming one is Ready. Use Recreate, or leave strategy empty to derive it." }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -7,7 +16,13 @@ metadata:
 spec:
   replicas: {{ .Values.replicaCount }}
   strategy:
-    type: {{ .Values.strategy }}
+    {{- /*
+    Recreate exists for the single-replica case, where the outgoing and incoming pods would
+    otherwise contend for the same database file. Above one replica each pod owns its own
+    file, so that reason is gone — and keeping Recreate there would take EVERY replica down
+    at once on each upgrade, removing the availability that was the only point of scaling.
+    */}}
+    type: {{ .Values.strategy | default (ternary "RollingUpdate" "Recreate" (gt (int .Values.replicaCount) 1)) }}
   selector:
     matchLabels: {{- include "gsd.selectorLabels" . | nindent 6 }}
   template:
@@ -64,7 +79,20 @@ spec:
             - name: GSD_CONFIG
               value: /etc/gsd/clusters.yaml
             - name: GSD_DB_PATH
+              {{- if gt (int .Values.replicaCount) 1 }}
+              # PER-POD database file. Multiple replicas must NOT share one SQLite file:
+              # WAL coordinates writers through an mmap'd -shm file that assumes all
+              # processes are on ONE host, so sharing it across a ReadWriteMany volume
+              # corrupts rather than errors. A shared VOLUME with unshared FILES is safe.
+              #
+              # The cost is that accumulated history is per-pod: each replica only has the
+              # timeline since its own database existed, so the Service will show different
+              # history depending on which pod answers. Current state self-heals within one
+              # poll; history does not.
+              value: /data/$(POD_NAME)/gsd.db
+              {{- else }}
               value: /data/gsd.db
+              {{- end }}
             - name: GSD_LOG_LEVEL
               value: {{ .Values.logLevel | quote }}
             # So the Lease names the actual pod holding it, which is the first thing you

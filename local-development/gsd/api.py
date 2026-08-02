@@ -30,7 +30,13 @@ STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 
 
 def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
-    store = Store(settings.db_path)
+    store = Store(
+        settings.db_path,
+        busy_timeout_ms=settings.sqlite_busy_timeout_ms,
+        reader_busy_timeout_ms=settings.sqlite_reader_busy_timeout_ms,
+        synchronous=settings.sqlite_synchronous,
+        wal_checkpoint_mb=settings.sqlite_wal_checkpoint_mb,
+    )
     elector = LeaderElector(name=settings.leader_lease_name) if settings.leader_election else None
     poller = Poller(store, settings, elector)
     grace = timedelta(seconds=settings.schedule_grace_seconds)

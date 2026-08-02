@@ -26,18 +26,40 @@ fullnameOverride: ""
 # ---------------------------------------------------------------------------
 # Workload
 # ---------------------------------------------------------------------------
-# Raising this needs BOTH of the following, and the second is the harder one.
+# RECOMMENDED: 1.
 #
-# 1. Leader election (below, on by default) so only one replica polls. Without it two
-#    pollers write the same database and emit membership events for changes that never
-#    happened.
-# 2. ReadWriteMany storage. The store is a SQLite FILE — a second replica cannot even mount
-#    a ReadWriteOnce volume, so extra replicas will not schedule. And SQLite over a network
-#    filesystem has real locking caveats, so RWX makes it possible rather than advisable.
+# This polls every 60s and serves a handful of operators; it is not in anyone's request
+# path. A node drain costs one missed poll, which the next one heals. What a second replica
+# actually buys is HTTP uptime, and it pays for it in DIVERGENT HISTORY — each pod only has
+# the timeline since its own database existed, so the Service answers "when did this user
+# leave?" differently depending on which pod you reach. That history is the irreplaceable
+# part; current state self-heals within one poll.
 #
-# Extra replicas add READ capacity only; the poll rate is fixed by the leader either way.
-# Unless you are serving a lot of concurrent users, 1 is the right answer.
+# If you do raise it, the chart switches GSD_DB_PATH to /data/$(POD_NAME)/gsd.db so each pod
+# gets its OWN file. That is deliberate and not optional: SQLite WAL coordinates writers
+# through an mmap'd -shm file that assumes all processes are on one host, so sharing a
+# single file across a ReadWriteMany volume corrupts rather than errors. A shared VOLUME
+# with unshared FILES is safe; a shared FILE is not.
+#
+# Requirements for >1: ReadWriteMany persistence, and leaderElection DISABLED — with
+# per-pod databases a pod that lost the lease would stop polling while still serving reads
+# from its own now-stale copy, which is worse than no election at all.
+#
+# Note a ReadWriteOnce PVC restricts to one NODE, not one pod, so several pods CAN share it
+# if they land on the same node — but relying on that means pinning them there, and losing
+# that node then loses every replica.
 replicaCount: 1
+
+# A PDB on one replica governs DRAINS, not availability — there is no second pod.
+#   maxUnavailable: 1  the drain proceeds, the pod moves, one poll is missed (default)
+#   minAvailable: 1    the drain BLOCKS indefinitely, because one replica can never satisfy
+#                      it. Cluster admins hit this during maintenance and cannot see whose
+#                      workload is stalling them. Only choose it if a human must be involved
+#                      before this pod moves.
+podDisruptionBudget:
+  enabled: false
+  maxUnavailable: 1
+  minAvailable: ""     # set this INSTEAD of maxUnavailable to block drains
 
 leaderElection:
   # Only the lease holder polls; every replica still serves the API and /metrics.
@@ -45,11 +67,18 @@ leaderElection:
   # Worth leaving on even at one replica: `Recreate` is not instantaneous, `kubectl scale`
   # is one keystroke, and a partitioned node can leave an old pod running while a new one
   # starts. Each of those puts two pollers on one database.
+  #
+  # MUST be false above one replica, and the chart refuses to render otherwise. Each pod then
+  # owns its own database file, so a pod that loses the lease would stop polling while still
+  # serving reads from a copy that never updates again.
   enabled: true
   leaseName: group-sync-dashboard
 
-# Recreate, not RollingUpdate: overlapping pods contend for a ReadWriteOnce volume.
-strategy: Recreate
+# Empty derives it: Recreate at one replica, where overlapping pods would contend for the
+# same database file, and RollingUpdate above one, where each pod owns its own file and
+# Recreate would take the whole deployment down on every upgrade. Set it explicitly to
+# override.
+strategy: ""
 
 resources:
   requests:
@@ -122,6 +151,26 @@ config:
   bindingIntervalSeconds: 300
 
   requestTimeoutSeconds: 15
+
+  # SQLite locking. The defaults are tested; change them only for a diagnosed problem.
+  sqlite:
+    # How long a write waits for a lock another CONNECTION holds before giving up. SQLite's
+    # own default is 0 — it raises "database is locked" instantly, with no retry — and that
+    # default is the usual cause of the error. The collision this covers is the `Recreate`
+    # rollover, where the outgoing pod still holds the lock as the incoming one opens the
+    # file. Threads inside one pod are already serialised and never reach this.
+    busyTimeoutMs: 5000
+    # Deliberately shorter than the writer's: /readyz performs a read and the probe gives up
+    # at 5s, so a reader inheriting 5000 would turn contention into a restarted pod.
+    readerBusyTimeoutMs: 2000
+    # NORMAL is the documented companion to WAL — a power loss can lose the last commits but
+    # cannot corrupt the file, and what is lost is one poll of history that the next poll
+    # largely re-derives. FULL fsyncs every commit of a 50k-row refresh instead.
+    synchronous: NORMAL
+    # Truncate the write-ahead log once it passes this size. Checkpointing yields to open
+    # readers, so a steady read load can starve it and the WAL grows until the VOLUME fills
+    # while the database file itself stays small. Watch gsd_sqlite_wal_bytes.
+    walCheckpointMb: 8
 
 # DEBUG | INFO | WARNING | ERROR | CRITICAL.
 # DEBUG adds per-poll timing, HTTP request lines, page counts and the countdown to the next
@@ -235,7 +284,31 @@ trustedCA:
 persistence:
   enabled: true
   size: 1Gi
-  accessMode: ReadWriteOnce
+  # ReadWriteMany, so the volume never has to be recreated to scale and so it works on the
+  # shared storage most clusters actually provide.
+  #
+  # This trades away an ENFORCED guarantee for an advisory one, and that is worth knowing.
+  # ReadWriteOncePod makes two pods on one database structurally impossible — the scheduler
+  # refuses the second. RWX does not: nothing stops two pods mounting this volume. At one
+  # replica they would share a single /data/gsd.db, which is the case SQLite must not be in.
+  # Three things keep that from happening, none of them enforced by storage:
+  #   * strategy Recreate at one replica, so the outgoing pod is gone before the incoming one
+  #     starts (this is why the derived strategy matters more under RWX than it did before),
+  #   * leader election, so only the lease holder polls, and
+  #   * config.sqlite.busyTimeoutMs, so a rollover overlap waits for the lock instead of
+  #     failing on it.
+  # Above one replica the shared-file problem disappears anyway: each pod gets its own
+  # /data/$POD_NAME/gsd.db.
+  #
+  # WATCH THE FILESYSTEM UNDERNEATH. RWX in practice usually means NFS, and SQLite refuses
+  # WAL there — it coordinates through an mmap'd -shm file that assumes one host. The switch
+  # fails SILENTLY and readers then block on every write. The chart reads the mode back and
+  # alerts on it (GroupSyncDashboardWalDisabled, gsd_sqlite_wal_enabled); do not ignore it.
+  # Block storage or a CSI RWX filesystem with real POSIX locking is fine. NFS/EFS/SMB is not.
+  #
+  # Set ReadWriteOncePod to get the enforced single-pod guarantee back at one replica.
+  # Empty derives it: ReadWriteMany above one replica, ReadWriteOncePod at one.
+  accessMode: ReadWriteMany
   storageClass: ""     # "" -> cluster default
   existingClaim: ""    # set to reuse a claim instead of creating one
 
@@ -374,8 +447,17 @@ monitoring:
     # The metric is a unix timestamp, so the rule expresses staleness against real time.
     overdueSeconds: 7200      # GroupSync has not synced for this long
     notPollingSeconds: 600    # the dashboard itself has stopped polling
+    # MiB. 25% of the default 1Gi PVC — high enough that normal churn never fires it, low
+    # enough to leave room to act before the volume fills. Raise it with persistence.size.
+    walMiB: 256
     for:
       overdue: 10m
       dangling: 15m
       notPolling: 5m
       unreachable: 15m
+      # Long, because a checkpoint legitimately lags behind a burst of reads. Only sustained
+      # growth is the starvation case.
+      walGrowing: 30m
+      # WAL mode is decided once at startup and never changes, so this only needs long
+      # enough to outlast a rollout.
+      walDisabled: 10m
