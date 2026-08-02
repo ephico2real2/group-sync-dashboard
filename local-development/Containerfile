@@ -31,6 +31,34 @@ RUN python3.14 -m pip install --no-cache-dir --upgrade pip build \
  && python3.14 -m build --wheel --outdir /wheels \
  && python3.14 -m pip install --no-cache-dir --prefix=/install /wheels/*.whl
 
+# Vendor the API-docs renderers, because FastAPI serves them from a CDN by default.
+#
+# get_swagger_ui_html and get_redoc_html point at cdn.jsdelivr.net, so /api and /api/redoc
+# render only for a browser with internet access. This chart is built for the opposite: it
+# pulls oauth-proxy from the cluster's internal registry, injects a trusted CA bundle, and
+# documents a disconnected-mirror override. On such a cluster the docs would be blank pages
+# — and the dashboard itself is deliberately one self-contained file with no external
+# assets, so serving these from a CDN broke a rule the rest of the app keeps.
+#
+# It also stops the browser of an authenticated admin making requests to a third party, and
+# stops the renderer changing under us: the defaults are floating majors (redoc@2,
+# swagger-ui-dist@5), so today's page and next month's need not be the same page.
+#
+# Pinned exactly and checksummed. A CDN that serves different bytes fails the build rather
+# than shipping them.
+RUN mkdir -p /vendor \
+ && curl -sSfL -o /vendor/redoc.standalone.js \
+      https://cdn.jsdelivr.net/npm/redoc@2.5.0/bundles/redoc.standalone.js \
+ && curl -sSfL -o /vendor/swagger-ui-bundle.js \
+      https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.29.4/swagger-ui-bundle.js \
+ && curl -sSfL -o /vendor/swagger-ui.css \
+      https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.29.4/swagger-ui.css \
+ && printf '%s\n' \
+      "0ec05be285ac885a330289b02f470e1bdbd2b6b3223a9fa213f24bf805a851d1  /vendor/redoc.standalone.js" \
+      "91393f3bdd1e7258302bc84ea29fd4e428e29703c1102acfec1e3ed8c2934518  /vendor/swagger-ui-bundle.js" \
+      "bc5e8d5c013477cf1f35e2fb8ba1dff66be0f72f24e669a509635657145e1acb  /vendor/swagger-ui.css" \
+    | sha256sum -c -
+
 
 FROM registry.access.redhat.com/ubi9-minimal:latest
 
@@ -119,6 +147,9 @@ RUN microdnf update -y \
  && rm -rf /var/cache/yum
 
 COPY --from=build /install /install
+# The vendored doc renderers, served from /static/vendor so /api and /api/redoc work on a
+# cluster with no route to the internet. See the build stage for why they are pinned.
+COPY --from=build /vendor /install/lib/python3.14/site-packages/gsd/static/vendor
 
 RUN mkdir -p /data /etc/gsd \
  && chgrp -R 0 /data /etc/gsd \

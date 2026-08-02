@@ -55,10 +55,59 @@ def test_docs_are_published_under_api(spec):
     behind the proxy. FastAPI's default /docs would be too, but naming it explicitly means a
     future upgrade that changes the default cannot quietly move the schema.
     """
+    from fastapi.testclient import TestClient
+
     app = build_app(Settings(db_path=":memory:", clusters=[]), run_poller=False)
-    assert app.docs_url == "/api"
+    # The ROUTES, not FastAPI's docs_url attribute. Those attributes are deliberately None:
+    # the built-in handlers load Swagger UI and ReDoc from cdn.jsdelivr.net, so they are
+    # replaced by handlers serving assets vendored into the image. Asserting the attribute
+    # would have failed that improvement while proving nothing a reader cares about.
     assert app.openapi_url == "/api/openapi.json"
-    assert app.redoc_url == "/api/redoc"
+    with TestClient(app) as client:
+        for path in ("/api", "/api/redoc", "/api/openapi.json"):
+            assert client.get(path).status_code == 200, f"{path} is not served"
+
+
+def test_the_docs_do_not_depend_on_the_internet(tmp_path):
+    """A disconnected cluster must still render /api and /api/redoc.
+
+    This chart pulls oauth-proxy from the cluster's internal registry, injects a trusted CA
+    bundle and documents a disconnected-mirror override — it is built for clusters with no
+    route out. FastAPI's stock docs handlers load their JS from cdn.jsdelivr.net, so before
+    this they rendered a blank page there, and the dashboard itself is deliberately one
+    self-contained file with no external assets.
+
+    A source checkout has no vendored bundle and legitimately falls back to the CDN with a
+    warning, so this asserts the wiring rather than the checkout: when the bundle is
+    present, the pages reference it and not a CDN.
+    """
+    from fastapi.testclient import TestClient
+
+    from gsd import api as api_mod
+
+    vendor = pathlib.Path(api_mod.STATIC_DIR) / "vendor"
+    vendor.mkdir(exist_ok=True)
+    created = []
+    for name in ("redoc.standalone.js", "swagger-ui-bundle.js", "swagger-ui.css"):
+        f = vendor / name
+        if not f.exists():
+            f.write_text("/* test stub */")
+            created.append(f)
+    try:
+        app = build_app(Settings(db_path=str(tmp_path / "t.db"), clusters=[]),
+                        run_poller=False)
+        with TestClient(app) as client:
+            for path in ("/api", "/api/redoc"):
+                html = client.get(path).text
+                assert "cdn.jsdelivr.net" not in html, (
+                    f"{path} still loads from a CDN with the vendored bundle present"
+                )
+                assert "/static/vendor/" in html, f"{path} does not use the vendored asset"
+    finally:
+        for f in created:
+            f.unlink()
+        if not any(vendor.iterdir()):
+            vendor.rmdir()
 
 
 def test_r1_every_endpoint_has_a_description(routes):
@@ -195,10 +244,11 @@ def test_r7_hidden_routes_are_explained():
     """R7: a route missing from the schema is invisible to everyone who trusts it."""
     src = API_SRC.read_text()
     for match in re.finditer(r"include_in_schema=False", src):
-        start = max(0, match.start() - 600)
-        preceding = src[start:match.start()]
-        assert re.search(r"#[^\n]*\n|\"\"\"", preceding), (
-            "include_in_schema=False with no nearby comment explaining why"
+        # A window either side: the reason may be a comment block above the decorator or the
+        # handler's own docstring just below it. Both are explanations a reader will find.
+        window = src[max(0, match.start() - 700):match.start() + 400]
+        assert re.search(r"#[^\n]*\n|\"\"\"", window), (
+            "include_in_schema=False with no nearby comment or docstring explaining why"
         )
 
 

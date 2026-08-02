@@ -14,7 +14,8 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 
@@ -94,8 +95,12 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
         title="GroupSync dashboard",
         version=__version__,
         lifespan=lifespan,
-        docs_url="/api",
-        redoc_url="/api/redoc",
+        # The built-in routes are disabled and re-served below from vendored assets:
+        # FastAPI's defaults load Swagger UI and ReDoc from cdn.jsdelivr.net, which renders
+        # a blank page on a cluster with no route to the internet — the kind this chart is
+        # written for.
+        docs_url=None,
+        redoc_url=None,
         openapi_url="/api/openapi.json",
         description=(
             "Read-only observability for the OpenShift group-sync-operator.\n\n"
@@ -753,6 +758,47 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(status_code=503, detail=f"store unavailable: {exc}") from exc
         return {"status": "ready", "clusters": len(settings.clusters)}
+
+    # Served from the image, not from a CDN. Falls back to the CDN only when the vendored
+    # bundle is absent — a source checkout that has never been through a container build —
+    # so `uvicorn gsd.api:create_app` still gives a developer working docs.
+    _vendor = os.path.join(STATIC_DIR, "vendor")
+    _has_vendor = os.path.isfile(os.path.join(_vendor, "redoc.standalone.js"))
+    _JS = "/static/vendor/swagger-ui-bundle.js" if _has_vendor else (
+        "https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js")
+    _CSS = "/static/vendor/swagger-ui.css" if _has_vendor else (
+        "https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css")
+    _REDOC = "/static/vendor/redoc.standalone.js" if _has_vendor else (
+        "https://cdn.jsdelivr.net/npm/redoc@2/bundles/redoc.standalone.js")
+    if not _has_vendor:
+        log.warning(
+            "API docs will load from a CDN: no vendored bundle at %s. In a disconnected "
+            "cluster /api and /api/redoc will render blank. This is expected for a source "
+            "checkout and never for a built image.", _vendor,
+        )
+
+    @app.get("/api", include_in_schema=False)
+    def swagger_ui() -> HTMLResponse:
+        """Swagger UI, rendered from assets shipped in this image."""
+        return get_swagger_ui_html(
+            openapi_url="/api/openapi.json",
+            title="GroupSync dashboard — API",
+            swagger_js_url=_JS,
+            swagger_css_url=_CSS,
+            # The default favicon is fetched from fastapi.tiangolo.com; the app already
+            # serves its own, and one fewer third party sees an authenticated admin's tab.
+            swagger_favicon_url="/static/favicon.svg",
+        )
+
+    @app.get("/api/redoc", include_in_schema=False)
+    def redoc_ui() -> HTMLResponse:
+        """ReDoc, rendered from assets shipped in this image."""
+        return get_redoc_html(
+            openapi_url="/api/openapi.json",
+            title="GroupSync dashboard — API reference",
+            redoc_js_url=_REDOC,
+            redoc_favicon_url="/static/favicon.svg",
+        )
 
     @app.get("/api/docs", include_in_schema=False)
     def api_docs_alias() -> RedirectResponse:
