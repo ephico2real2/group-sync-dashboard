@@ -376,6 +376,20 @@ class TestDirectUserGrants:
         assert [r["namespace"] for r in rollup] == ["busy-ns", "quiet-ns"]
         assert rollup[0]["bindings"] == 3 and rollup[0]["distinct_users"] == 3
 
+    def test_the_user_list_is_a_list_not_a_delimited_string(self, store):
+        """A user name can be an LDAP DN, which contains commas.
+
+        The rollup used to GROUP_CONCAT this, and the page counted distinct people by
+        splitting on a comma — so one `cn=jdoe,ou=people,dc=example,dc=com` became four
+        people. store.py already states the rule for `provider_keys`: building a list by
+        splitting a delimited string means picking a delimiter the value can never contain.
+        """
+        dn = "cn=jdoe,ou=people,dc=example,dc=com"
+        self._seed(store, [self._u("ns-dn", "rb", dn)])
+        row = store.user_bindings_by_namespace("crc")[0]
+        assert row["users"] == [dn]
+        assert row["distinct_users"] == len(row["users"]) == 1
+
     def test_distinct_users_differs_from_binding_count(self, store):
         """One person with three bindings is one offboarding risk; three people is three."""
         self._seed(store, [self._u("ns-a", f"b{i}", "jdoe") for i in range(3)])

@@ -192,6 +192,9 @@ class StorageBackend(Protocol):
 
     def record_user_activity(self, buckets: list[dict]) -> int: ...
     def prune_user_activity(self, before_day: str) -> int: ...
+    def user_activity_summary(
+        self, since_day: str | None = None, user_name: str | None = None
+    ) -> dict: ...
     def user_activity(
         self,
         since_day: str | None = None,

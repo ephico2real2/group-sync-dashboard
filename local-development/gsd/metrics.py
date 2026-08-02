@@ -266,7 +266,11 @@ class DashboardCollector:
                     bindings.add_metric([cluster, finding], count)
 
                 by_kind: dict[tuple[str, str], int] = {}
-                for cr in self.store.groupsyncs(cluster):
+                # Read once and keep it: this list is needed again for compute_alerts below,
+                # and a second call is a second query per cluster on every scrape for rows
+                # that cannot have changed in between — the snapshot is already fixed.
+                cluster_groupsyncs = self.store.groupsyncs(cluster)
+                for cr in cluster_groupsyncs:
                     name, namespace = cr["name"], cr["namespace"]
                     labels = [cluster, name, namespace]
 
@@ -296,7 +300,7 @@ class DashboardCollector:
 
                 for alert in st.compute_alerts(
                     cluster=cluster,
-                    groupsyncs=self.store.groupsyncs(cluster),
+                    groupsyncs=cluster_groupsyncs,
                     operator_configs=self.store.operator_configs(cluster)["configs"],
                     user_bindings=self.store.direct_user_bindings(cluster),
                     groups=self.store.groups(cluster, "all"),

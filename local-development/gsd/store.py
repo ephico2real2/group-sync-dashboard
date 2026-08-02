@@ -1239,27 +1239,50 @@ class Store:
 
         `distinct_users` matters as much as the binding count: one person with five
         bindings in a namespace is one offboarding risk, five people is five.
+
+        `users` is a LIST, stitched in from a second read, never a GROUP_CONCAT. Same
+        reason as `provider_keys` in `groupsyncs()` below: a delimited string means picking
+        a delimiter the value can never contain, and a user name can be an LDAP DN. The page
+        unions these lists to count distinct people, so with GROUP_CONCAT a single
+        `cn=jdoe,ou=people,dc=example,dc=com` split into four and the KPI read 4 people
+        beside a row whose own People column said 1.
         """
-        return self._rows(
-            """SELECT CASE WHEN binding_namespace = '' THEN '(cluster-scoped)'
-                           ELSE binding_namespace END AS namespace,
-                      COUNT(*) AS bindings,
-                      COUNT(DISTINCT user_name) AS distinct_users,
-                      GROUP_CONCAT(DISTINCT user_name) AS users,
-                      -- The worst privilege granted here, and whether it is cluster-wide.
-                      -- Risk is ranked on PRIVILEGE, not on count: one forgotten
-                      -- cluster-admin outranks twenty view grants, and a list sorted by
-                      -- count puts the twenty first.
-                      MAX(CASE role_name WHEN 'cluster-admin' THEN 4 WHEN 'admin' THEN 3
-                                         WHEN 'edit' THEN 2 ELSE 1 END) AS worst_privilege,
-                      MAX(CASE WHEN binding_namespace = '' THEN 1 ELSE 0 END) AS cluster_scoped
-                 FROM user_binding
-                WHERE cluster_id=? AND is_platform=0
-                GROUP BY namespace
-                ORDER BY worst_privilege DESC, cluster_scoped DESC,
-                         bindings DESC, namespace""",
-            (cluster_id,),
-        )
+        with self.read_snapshot():
+            rows = self._rows(
+                """SELECT CASE WHEN binding_namespace = '' THEN '(cluster-scoped)'
+                               ELSE binding_namespace END AS namespace,
+                          COUNT(*) AS bindings,
+                          COUNT(DISTINCT user_name) AS distinct_users,
+                          -- The worst privilege granted here, and whether it is
+                          -- cluster-wide. Risk is ranked on PRIVILEGE, not on count: one
+                          -- forgotten cluster-admin outranks twenty view grants, and a
+                          -- list sorted by count puts the twenty first.
+                          MAX(CASE role_name WHEN 'cluster-admin' THEN 4 WHEN 'admin' THEN 3
+                                             WHEN 'edit' THEN 2 ELSE 1 END) AS worst_privilege,
+                          MAX(CASE WHEN binding_namespace = '' THEN 1 ELSE 0 END)
+                              AS cluster_scoped
+                     FROM user_binding
+                    WHERE cluster_id=? AND is_platform=0
+                    GROUP BY namespace
+                    ORDER BY worst_privilege DESC, cluster_scoped DESC,
+                             bindings DESC, namespace""",
+                (cluster_id,),
+            )
+            people: dict[str, list[str]] = {}
+            for row in self._rows(
+                """SELECT DISTINCT
+                          CASE WHEN binding_namespace = '' THEN '(cluster-scoped)'
+                               ELSE binding_namespace END AS namespace,
+                          user_name
+                     FROM user_binding
+                    WHERE cluster_id=? AND is_platform=0
+                    ORDER BY user_name""",
+                (cluster_id,),
+            ):
+                people.setdefault(row["namespace"], []).append(row["user_name"])
+            for row in rows:
+                row["users"] = people.get(row["namespace"], [])
+            return rows
 
     # Namespace sentinel for the cluster-scoped rows. Their binding_namespace is '', which
     # an HTTP query string cannot distinguish from "parameter absent", so the API and the
@@ -1452,6 +1475,24 @@ class Store:
             )
             return cursor.rowcount
 
+    def _user_activity_where(
+        self, since_day: str | None, user_name: str | None
+    ) -> tuple[str, list]:
+        """The WHERE shared by the row query and its summary, built once.
+
+        Built once for the same reason as `_direct_user_binding_where`: a total computed
+        from a different predicate than the rows it describes is how "showing 50 of 30"
+        reaches a page.
+        """
+        where, params = [], []
+        if since_day:
+            where.append("day >= ?")
+            params.append(since_day)
+        if user_name:
+            where.append("user_name = ?")
+            params.append(user_name)
+        return (" WHERE " + " AND ".join(where)) if where else "", params
+
     def user_activity(
         self,
         since_day: str | None = None,
@@ -1465,21 +1506,40 @@ class Store:
         everyone. Filtering in SQL rather than after the fetch matters — `limit` is applied
         by the database, so filtering afterwards would silently return fewer than `limit`
         of the caller's own rows whenever busier colleagues filled the page.
+
+        BOUNDED. Pair with `user_activity_summary` for any headline number: counting these
+        rows counts the page, not the record.
         """
-        sql = """SELECT user_name, day, email, first_seen_at, last_seen_at, request_count
-                   FROM dashboard_user_activity"""
-        where, params = [], []
-        if since_day:
-            where.append("day >= ?")
-            params.append(since_day)
-        if user_name:
-            where.append("user_name = ?")
-            params.append(user_name)
-        if where:
-            sql += " WHERE " + " AND ".join(where)
-        sql += " ORDER BY day DESC, user_name LIMIT ?"
+        where, params = self._user_activity_where(since_day, user_name)
+        sql = ("""SELECT user_name, day, email, first_seen_at, last_seen_at, request_count
+                   FROM dashboard_user_activity""" + where +
+               " ORDER BY day DESC, user_name LIMIT ?")
         params.append(limit)
         return self._rows(sql, params)
+
+    def user_activity_summary(
+        self, since_day: str | None = None, user_name: str | None = None
+    ) -> dict:
+        """Totals over the WHOLE activity set the caller may see, ignoring any row limit.
+
+        The Usage tab used to compute its KPIs from the returned rows, which are capped:
+        measured at 1,092 stored rows it reported 167 days and 5,000 interactions where the
+        truth was 364 and 10,920.
+
+        Each `COUNT(DISTINCT ...)` here is one scalar over the whole filtered set, not a
+        per-group count that anything adds up — summing per-day distinct users would count
+        everybody again on every day they came back.
+        """
+        where, params = self._user_activity_where(since_day, user_name)
+        rows = self._rows(
+            """SELECT COUNT(*) AS rows_total,
+                      COUNT(DISTINCT user_name) AS distinct_users,
+                      COUNT(DISTINCT day) AS days,
+                      COALESCE(SUM(request_count), 0) AS interactions
+                 FROM dashboard_user_activity""" + where,
+            params,
+        )
+        return dict(rows[0])
 
     def active_user_count(self, day: str) -> int:
         rows = self._rows(

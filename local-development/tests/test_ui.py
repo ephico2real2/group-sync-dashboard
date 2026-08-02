@@ -179,6 +179,33 @@ def _seed(db_path: str) -> None:
         _iso(now),
     )
 
+    # Direct user grants — the whole subject of the Namespace-audit tab, which had no
+    # browser test at all. Two things here are load-bearing:
+    #   * jdoe holds grants in TWO namespaces, so a "People exposed" that sums per-namespace
+    #     distinct_users reports 3 where the truth is 2. That is the bug that shipped.
+    #   * jdoe's name is an LDAP DN, which is what OpenShift produces when the identity
+    #     provider maps `dn`. It contains commas, so any user list built by splitting a
+    #     delimited string reports that one person as four.
+    store.replace_user_bindings(
+        "crc-local",
+        [
+            {"binding_kind": "RoleBinding", "binding_namespace": "prod-ns",
+             "binding_name": "jdoe-admin", "role_kind": "ClusterRole", "role_name": "admin",
+             "user_name": "cn=jdoe,ou=people,dc=ephico2real,dc=com", "is_platform": 0},
+            {"binding_kind": "RoleBinding", "binding_namespace": "dev-ns",
+             "binding_name": "jdoe-edit", "role_kind": "ClusterRole", "role_name": "edit",
+             "user_name": "cn=jdoe,ou=people,dc=ephico2real,dc=com", "is_platform": 0},
+            {"binding_kind": "ClusterRoleBinding", "binding_namespace": "",
+             "binding_name": "carol-ca", "role_kind": "ClusterRole",
+             "role_name": "cluster-admin", "user_name": "carol", "is_platform": 0},
+            # Excluded by default and counted separately: there is nowhere to migrate it to.
+            {"binding_kind": "ClusterRoleBinding", "binding_namespace": "",
+             "binding_name": "ka", "role_kind": "ClusterRole", "role_name": "cluster-admin",
+             "user_name": "kubeadmin", "is_platform": 1},
+        ],
+        _iso(now),
+    )
+
     # Enough events for the timeline to draw a line, with a count cliff in the middle.
     for i, count in enumerate([40, 41, 41, 28, 41]):
         ts = _iso(now - timedelta(minutes=30 * (5 - i)))
@@ -694,6 +721,82 @@ class TestClusterScopedNavigation:
         dash.locator("#back-groups").click()
         dash.wait_for_selector("text=Membership changes")
         assert dash.evaluate("() => view.cluster") == "crc-local"
+
+
+class TestNamespaceAuditPage:
+    """The Namespace-audit tab had no browser test at all.
+
+    The `dash` fixture's pageerror guard covers the page as LOADED; a renderer that throws
+    only when its tab is opened is invisible to it. Proven by injecting
+    `DELIBERATE_BREAKAGE_nsaudit();` at the top of `nsAuditPage()` — the whole suite still
+    reported `431 passed, 4 skipped`. Same gap TestRbacPolicyPage below was written for,
+    reopened for the two newest tabs.
+    """
+
+    def _open(self, dash):
+        dash.click('button.tab:text-is("Namespace audit")')
+        dash.wait_for_selector("h2:text-is('Namespace audit')")
+
+    def test_the_page_renders_without_a_javascript_error(self, dash):
+        errors = []
+        dash.on("pageerror", lambda e: errors.append(str(e)))
+        self._open(dash)
+        assert not errors, errors
+        assert "Dashboard API error" not in dash.locator("body").inner_text()
+
+    def test_people_exposed_counts_people(self, dash):
+        """Both ways this number has been wrong, in one assertion.
+
+        Summing per-namespace `distinct_users` counts jdoe once per namespace and says 3.
+        Splitting the rollup's user list on a comma turns one LDAP DN into four and says 5.
+        The seed holds two people, so the answer is 2.
+        """
+        self._open(dash)
+        kpi = dash.locator(".kpi", has_text="People exposed").first
+        assert kpi.locator(".value").inner_text().strip() == "2"
+
+    def test_a_dn_username_stays_one_person(self, dash):
+        """A user name can be an LDAP DN. Rendering the rollup's user list by splitting a
+        comma-delimited string showed that one person as four names in this cell, beside a
+        People column that said 1."""
+        self._open(dash)
+        who = dash.locator("td.who").all_inner_texts()
+        assert any("cn=jdoe,ou=people,dc=ephico2real,dc=com" in w for w in who), who
+
+    def test_grants_to_migrate_is_the_cluster_not_the_page(self, dash):
+        """Three non-platform grants seeded; kubeadmin is excluded and counted separately."""
+        self._open(dash)
+        kpi = dash.locator(".kpi", has_text="Grants to migrate").first
+        assert kpi.locator(".value").inner_text().strip() == "3"
+
+
+class TestUsagePage:
+    """The Usage tab had no browser test either, and was broken in the default config.
+
+    Proven the same way: `DELIBERATE_BREAKAGE_usage();` at the top of `usagePage()` left the
+    suite at `431 passed, 4 skipped`.
+    """
+
+    def _open(self, dash):
+        dash.click('button.tab:text-is("Usage")')
+        dash.wait_for_selector("h2:text-is('Dashboard usage')")
+
+    def test_the_page_renders_without_a_javascript_error(self, dash):
+        errors = []
+        dash.on("pageerror", lambda e: errors.append(str(e)))
+        self._open(dash)
+        assert not errors, errors
+
+    def test_proxy_off_explains_itself_instead_of_erroring(self, dash):
+        """With the proxy off the endpoint 403s BY DESIGN — there is no authenticated
+        identity to scope personnel data to. The tab rendered that as "Dashboard API error:
+        403 Forbidden" with no way back, and the panel written to explain exactly this could
+        never appear, because api() threw before `data.usage` was ever assigned."""
+        self._open(dash)
+        body = dash.locator("body").inner_text()
+        assert "Dashboard API error" not in body, body[:300]
+        assert "Not being recorded" in body
+        assert "oauthProxy.enabled=true" in body
 
 
 class TestRbacPolicyPage:

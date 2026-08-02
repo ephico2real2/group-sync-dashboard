@@ -23,6 +23,22 @@ spec:
   endpoints:
     - port: http
       path: /metrics
+      {{- if .Values.oauthProxy.enabled }}
+      # HTTPS, because the Service port named `http` targets the PROXY container port when
+      # the proxy is on, and that port speaks TLS only. Prometheus scrapes the pod IP at
+      # that port, so the default `http` scheme fails the handshake on EVERY scrape —
+      # silently, while the Service and the ServiceMonitor both look correct.
+      #
+      # No credential is needed: /metrics is in oauthProxy.skipAuthRegex, so the proxy
+      # passes it through unauthenticated. That is also why the exporter emits counts and
+      # states only, never a group or user name.
+      scheme: https
+      tlsConfig:
+        # service-ca issues the certificate for the SERVICE DNS name and Prometheus connects
+        # to the POD IP, so the name cannot match however the CA is supplied. Verification
+        # would have to be off here regardless of how trust is configured.
+        insecureSkipVerify: true
+      {{- end }}
       interval: {{ .Values.monitoring.serviceMonitor.interval }}
       scrapeTimeout: {{ .Values.monitoring.serviceMonitor.scrapeTimeout }}
 {{- end }}

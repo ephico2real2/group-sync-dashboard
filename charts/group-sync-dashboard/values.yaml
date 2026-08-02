@@ -496,9 +496,10 @@ ingress:
 # ---------------------------------------------------------------------------
 # OpenShift OAuth proxy
 # ---------------------------------------------------------------------------
-# Puts cluster login in front of the dashboard. Off by default so the chart installs
-# anywhere; turn it on for any cluster where the Route is reachable by people other than
-# you, because this exposes group membership.
+# Puts cluster login in front of the dashboard. ON by default, because this exposes group
+# membership and the Ingress is reachable by anyone who can resolve the cluster's apps
+# domain — an unauthenticated default would be the wrong way round. Turn it off only for a
+# local single-user cluster, or where something in front already authenticates the route.
 #
 # ACCESS MODEL: authentication, not authorization. Anyone who can log into the cluster can
 # view. That is the documented default of the OpenShift provider ("defaults to allowing any
@@ -562,11 +563,16 @@ oauthProxy:
     requests: {cpu: 10m, memory: 64Mi}
     limits: {cpu: 200m, memory: 256Mi}
 
-  # How the ServiceAccount advertises its callback URL.
-  #   redirectreference — points at the Route by NAME and lets OpenShift resolve the host.
-  #                       Correct when the Route host is generated rather than fixed.
-  #   redirecturi       — a literal URL, which requires route.host to be set.
-  redirectMode: redirectreference
+  # There is deliberately NO `redirectMode` setting. The ServiceAccount always advertises a
+  # literal redirectURI, because the alternative — redirectREFERENCE — points at a Route by
+  # NAME, and OpenShift's ingress-to-route controller generates that name with a random
+  # suffix (observed: probe-ingress-7669p), so it cannot be known at template time. This
+  # chart ships an Ingress, so the reference form is not available to it at all. See the
+  # gsd.externalHost helper, which is why ingress.host must be set or derivable.
+  #
+  # A `redirectMode: redirectreference` key used to sit here. It was read by nothing, and
+  # its default named the one mode the chart CANNOT use — so it documented the opposite of
+  # the behaviour, in a place an operator would reasonably believe.
 
 # ---------------------------------------------------------------------------
 # Monitoring

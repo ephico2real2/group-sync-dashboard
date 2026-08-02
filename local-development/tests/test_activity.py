@@ -299,6 +299,68 @@ class TestActivityDisclosure:
         assert [r["user_name"] for r in body["activity"]] == ["alice"]
 
 
+class TestUsageTotalsSurviveTheLimit:
+    """A KPI computed from a limited row set counts the page, not the record.
+
+    The Usage tab did exactly that: `days`, `distinct users` and `interactions` were all
+    derived from `body["activity"]`, which the API caps at `limit`. Measured against 1,092
+    stored rows it reported 167 days and 5,000 interactions where the truth was 364 and
+    10,920 — the same silent-truncation defect the user-bindings endpoint was fixed for.
+    """
+
+    @staticmethod
+    def _seed_many(db):
+        store = Store(db)
+        store.record_user_activity(
+            [{"user_name": u, "day": f"2026-{m:02d}-{d:02d}", "email": None,
+              "first_seen_at": f"2026-{m:02d}-{d:02d}T09:00:00Z",
+              "last_seen_at": f"2026-{m:02d}-{d:02d}T17:00:00Z", "request_count": 10}
+             for u in ("alice", "bob", "carol")
+             for m in range(1, 5)
+             for d in range(1, 29)]
+        )
+        store.close()
+        return 3 * 4 * 28  # 336 rows: 3 users x 112 days
+
+    def test_the_summary_is_the_whole_set_not_the_page(self, tmp_path):
+        db = str(tmp_path / "gsd.db")
+        total = self._seed_many(db)
+        settings = Settings(db_path=db, oauth_proxy_enabled=True,
+                            user_activity_visibility="all")
+        with TestClient(build_app(settings, run_poller=False)) as c:
+            body = c.get("/api/dashboard/activity?limit=50",
+                         headers={"X-Forwarded-User": "alice"}).json()
+        assert len(body["activity"]) == 50, "the rows are still bounded"
+        assert body["total"] == total
+        assert body["truncated"] is True
+        assert body["summary"] == {
+            "distinct_users": 3, "days": 112, "interactions": total * 10}
+
+    def test_the_summary_is_scoped_the_same_way_the_rows_are(self, tmp_path):
+        """Self-scope is a privacy boundary. A total that counted everybody would leak the
+        size of everybody else's activity to a viewer who may not read a single row of it."""
+        db = str(tmp_path / "gsd.db")
+        self._seed_many(db)
+        settings = Settings(db_path=db, oauth_proxy_enabled=True)
+        with TestClient(build_app(settings, run_poller=False)) as c:
+            body = c.get("/api/dashboard/activity",
+                         headers={"X-Forwarded-User": "alice"}).json()
+        assert body["scope"] == "self"
+        assert body["total"] == 112, "alice's own days only"
+        assert body["summary"]["distinct_users"] == 1
+
+    def test_a_complete_page_is_not_reported_as_truncated(self, tmp_path):
+        db = str(tmp_path / "gsd.db")
+        _seed_two_users(db)
+        settings = Settings(db_path=db, oauth_proxy_enabled=True,
+                            user_activity_visibility="all")
+        with TestClient(build_app(settings, run_poller=False)) as c:
+            body = c.get("/api/dashboard/activity",
+                         headers={"X-Forwarded-User": "alice"}).json()
+        assert body["total"] == len(body["activity"]) == 2
+        assert body["truncated"] is False
+
+
 class TestUnauthenticatedPaths:
     def test_skipped_paths_never_record_even_with_headers(self, tmp_path):
         """/healthz, /readyz and /metrics bypass the proxy, so whether they carry an

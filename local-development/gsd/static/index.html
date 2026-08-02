@@ -657,7 +657,12 @@ async function api(path, mark) {
   const headers = { Accept: "application/json" };
   if (mark) headers["X-GSD-Interaction"] = "1";
   const res = await fetch(path, { headers });
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText} on ${path}`);
+  if (!res.ok) {
+    // The status rides on the error so a caller can tell a DESIGNED refusal from a fault.
+    const err = new Error(`${res.status} ${res.statusText} on ${path}`);
+    err.status = res.status;
+    throw err;
+  }
   return res.json();
 }
 
@@ -1027,18 +1032,28 @@ function usagePage() {
     return `<section class="card">
       <h2>Dashboard usage</h2>
       <div class="empty-note">
-        Not being recorded. Identity comes from the OAuth proxy, so this needs
-        <code>oauthProxy.enabled=true</code>; with the proxy off there is no authentication
-        and the username header would be supplied by the caller.
+        Not being recorded. This needs <strong>both</strong>
+        <code>oauthProxy.enabled=true</code> — identity comes from the proxy, and with it
+        off there is no authentication and the username header would be whatever the caller
+        typed — and <code>config.userActivity.enabled=true</code>.
       </div>
     </section>`;
   }
 
   const rows = d.activity || [];
-  const days = new Set(rows.map((r) => r.day));
-  const users = new Set(rows.map((r) => r.user_name));
-  const requests = rows.reduce((n, r) => n + r.request_count, 0);
+  // The headline numbers come from the server's summary, which is computed over the whole
+  // set. `rows` is ONE PAGE of it: counting them reports the page, and at 1,092 stored rows
+  // that said 167 days and 5,000 interactions where the truth was 364 and 10,920. The
+  // fallbacks only fire against a build that predates the summary.
+  const s = d.summary || {};
+  const days = s.days != null ? s.days : new Set(rows.map((r) => r.day)).size;
+  const users = s.distinct_users != null
+    ? s.distinct_users : new Set(rows.map((r) => r.user_name)).size;
+  const requests = s.interactions != null
+    ? s.interactions : rows.reduce((n, r) => n + r.request_count, 0);
   const today = new Date().toISOString().slice(0, 10);
+  // Safe to take from `rows`: the API orders day DESC, so today is on the first page unless
+  // more people used the dashboard in one day than the limit.
   const activeToday = rows.filter((r) => r.day === today).length;
 
   const selfOnly = d.scope !== "all";
@@ -1060,9 +1075,9 @@ function usagePage() {
     </div>
     <div class="kpis">
       ${selfOnly ? "" : `<div class="kpi"><div class="label">Distinct users</div>
-        <div class="value mono">${users.size}</div></div>`}
+        <div class="value mono">${users}</div></div>`}
       <div class="kpi"><div class="label">Days recorded</div>
-        <div class="value mono">${days.size}</div></div>
+        <div class="value mono">${days}</div></div>
       <div class="kpi"><div class="label">Interactions</div>
         <div class="value mono">${requests.toLocaleString()}</div></div>
       <div class="kpi"><div class="label">Retention</div>
@@ -1086,6 +1101,10 @@ function usagePage() {
             <td class="num">${r.request_count}</td>
           </tr>`).join("")}</tbody>
         </table></div>`}
+    ${d.truncated ? `<div class="filterbar-note truncation-note" style="margin-top:8px">
+      Showing the <strong>${rows.length}</strong> most recent of <strong>${d.total}</strong>
+      rows. The counts above cover all of them.
+    </div>` : ""}
     <div class="filterbar-note" style="margin-top:8px">
       Times are UTC. An interaction is one deliberate action — opening the dashboard,
       switching tab, drilling in, changing a filter — not one HTTP request: the page
@@ -1529,9 +1548,7 @@ function directUserGrants(ub) {
   // on the reference cluster jdoe holds grants in three, so the sum says 6 where the truth
   // is 4. The rollup's `users` list is never paged, so the union of it is both complete and
   // distinct.
-  const people = new Set(
-    rows.flatMap((r) => (r.users || "").split(",").map((u) => u.trim()).filter(Boolean))
-  ).size;
+  const people = new Set(rows.flatMap((r) => r.users || [])).size;
 
   const NS_SORT = {
     risk: (r) => r.risk.rank * 10 + (r.cluster_scoped ? 1 : 0),
@@ -1645,7 +1662,7 @@ function directUserGrants(ub) {
         <td><code class="priv">${esc(PRIVILEGE_NAME[r.worst_privilege] || "view")}</code></td>
         <td class="num strong">${r.distinct_users}</td>
         <td class="num">${r.bindings}</td>
-        <td class="muted who">${esc((r.users || "").split(",").join(", "))}</td>
+        <td class="muted who">${esc((r.users || []).join(", "))}</td>
       </tr>`).join("")}</tbody>
     </table></div>
     ${ub.excluded_platform ? `<div class="filterbar-note" style="margin-top:8px">
@@ -1814,7 +1831,15 @@ function render() {
   // cluster scope this page does not have.
   $("scope-note").textContent =
     view.cluster && view.page !== "usage" ? `· ${view.cluster}` : "";
-  $("last-refresh").textContent = "updated " + new Date().toTimeString().slice(0, 8);
+  // UTC, like every other time on the page, and labelled so.
+  //
+  // This was `toTimeString()` — the browser's LOCAL zone — while fmtTime() renders UTC with
+  // a trailing Z and the Usage tab buckets by UTC day. An operator in CDT therefore read a
+  // header five hours adrift from the timestamps directly beneath it, with nothing on screen
+  // to say the two were measured differently. One clock per page, or the page is lying to
+  // somebody.
+  $("last-refresh").textContent =
+    "updated " + new Date().toISOString().slice(11, 19) + "Z";
   if (data.version) {
     const v = data.version;
     // Shown in the header so "is my change deployed?" is answerable by looking, rather
@@ -1949,7 +1974,19 @@ async function refresh(opts = {}) {
     }
     // Not cluster-scoped: this is who used the DASHBOARD, which has no cluster dimension.
     // Fetched only on its own tab, so the other pages do not pay for it.
-    if (view.page === "usage") data.usage = await get("/api/dashboard/activity");
+    if (view.page === "usage") {
+      // 403 is the DESIGNED answer when the OAuth proxy is off: there is no authenticated
+      // identity to scope personnel data to. Letting it fall to the catch below replaced
+      // the whole tab with "Dashboard API error: 403 Forbidden" — and the panel written to
+      // explain exactly this could never render. Only 403 is absorbed; a 500 is still a
+      // fault and must still be shown as one.
+      try {
+        data.usage = await get("/api/dashboard/activity");
+      } catch (e) {
+        if (e.status !== 403) throw e;
+        data.usage = { enabled: false, activity: [] };
+      }
+    }
     // The policy operator's health belongs on the landing page: these CRs template the
     // RoleBindings that give every synced group its access, and a failing one is exactly
     // the silent stoppage this dashboard exists to surface.

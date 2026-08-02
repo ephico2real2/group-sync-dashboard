@@ -342,6 +342,7 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
         }
 
     @app.get("/api/clusters/{cluster_id}/bindings/findings")
+    @consistent
     def binding_findings(cluster_id: str) -> dict:
         """Bindings whose Group subject resolves to no Group object, classified.
 
@@ -544,6 +545,7 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
         }
 
     @app.get("/api/dashboard/activity")
+    @consistent
     def dashboard_activity(
         request: Request,
         since: str | None = Query(None, description="UTC date, YYYY-MM-DD"),
@@ -577,14 +579,29 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
             raise HTTPException(status_code=403, detail="no authenticated identity")
 
         everyone = settings.user_activity_visibility == "all"
+        scope_to = None if everyone else viewer
+        # The summary is computed over the whole visible set, the rows are one page of it.
+        # Without the summary the page counted the rows it was handed and called that the
+        # total, which is the same silent-truncation defect the user-bindings endpoint was
+        # fixed for: at 1,092 stored rows it showed 167 days and 5,000 interactions against
+        # a true 364 and 10,920. `@consistent` because that is now two store calls, and a
+        # total from one snapshot beside rows from another can contradict itself.
+        summary = store.user_activity_summary(since_day=since, user_name=scope_to)
+        rows = store.user_activity(since_day=since, limit=limit, user_name=scope_to)
         return {
             "enabled": activity.enabled,
             "retention_days": settings.user_activity_retention_days,
             "scope": "all" if everyone else "self",
             "viewer": viewer,
-            "activity": store.user_activity(
-                since_day=since, limit=limit, user_name=None if everyone else viewer
-            ),
+            "total": summary["rows_total"],
+            "limit": limit,
+            "truncated": len(rows) < summary["rows_total"],
+            "summary": {
+                "distinct_users": summary["distinct_users"],
+                "days": summary["days"],
+                "interactions": summary["interactions"],
+            },
+            "activity": rows,
         }
 
     @app.get("/api/version")

@@ -94,15 +94,6 @@ fails loudly rather than emitting a host that would be wrong.
 {{- end -}}
 {{- end -}}
 
-{{/* The port anything external should reach: the proxy when enabled, else the app. */}}
-{{- define "gsd.servicePort" -}}
-{{- if .Values.oauthProxy.enabled -}}
-{{ .Values.oauthProxy.port }}
-{{- else -}}
-8080
-{{- end -}}
-{{- end -}}
-
 {{/*
 The effective PVC access mode. Empty in values derives it from replicaCount, because the
 right mode is a consequence of the replica count rather than an independent choice:
