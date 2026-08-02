@@ -466,6 +466,58 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: v
 .risk-row.risk-critical td { background: color-mix(in srgb, var(--status-critical) 7%, transparent); }
 .risk-row.risk-high td { background: color-mix(in srgb, var(--status-warning) 7%, transparent); }
 
+/* ---- Namespace-audit controls -------------------------------------------------------- */
+.section-head { display: flex; align-items: center; gap: 12px; margin-bottom: 4px; }
+.section-head .flush { flex: 1; }
+
+/* Sortable column header. A real <button> inside the <th>: a bare th is neither focusable
+   nor announced as actionable, so a click handler on it makes sorting mouse-only. Inherits
+   the th's muted colour and size so the table header does not turn into a row of controls
+   competing with the data. */
+.th-sort {
+  background: none; border: 0; padding: 0; margin: 0; cursor: pointer;
+  font: inherit; color: inherit; text-align: inherit; letter-spacing: inherit;
+  text-transform: inherit; white-space: nowrap;
+}
+.th-sort:hover { color: var(--text-primary); text-decoration: underline; }
+/* The active column is marked by WEIGHT and an arrow, not colour alone (WCAG 1.4.1) — and
+   aria-sort on the th carries the same fact to a screen reader. */
+.th-sort.is-active { color: var(--text-primary); font-weight: 700; }
+
+/* Disclosure for the detail list. Not <details>/<summary>: this page re-renders on every
+   poll, and a native details element would snap shut each time unless its open state were
+   mirrored into `view` anyway — at which point the element buys nothing and costs the
+   styling control the arrow and count need. */
+.disclose {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: var(--text-md); font-weight: 500;
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 4px 10px; background: var(--surface-1); cursor: pointer;
+}
+.disclose:hover { border-color: var(--baseline); }
+.disclose-arrow { color: var(--accent); font-size: var(--text-xs); }
+
+.ns-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+.ns-controls label { font-size: var(--text-sm); color: var(--text-secondary); }
+.ns-controls select { max-width: 340px; }
+
+/* A button that reads as a link. Still a button, because it performs an action rather than
+   navigating — an <a> without an href is not focusable and not announced. */
+.linkish {
+  background: none; border: 0; padding: 0; cursor: pointer;
+  font: inherit; font-size: var(--text-sm); color: var(--series-1); text-decoration: underline;
+}
+.linkish:hover { color: var(--text-primary); }
+
+/* Truncation is stated, never implied. A capped list that looks complete is the failure
+   this whole change exists to avoid, so the note is a warning edge rather than a footnote. */
+.truncation-note {
+  margin-top: 10px; padding: 8px 12px;
+  border-left: 3px solid var(--status-warning);
+  background: color-mix(in srgb, var(--status-warning) 8%, transparent);
+  border-radius: 0 6px 6px 0;
+}
+
 .runbook { margin: 0; padding-left: 22px; font-size: var(--text-md); line-height: 1.7; color: var(--text-secondary); }
 .runbook li { margin-bottom: 5px; }
 .runbook strong { color: var(--text-primary); }
@@ -551,7 +603,19 @@ const STATES = {
 };
 
 const view = { page: "overview", cluster: null, groupsync: null, groupFilter: "all", bindingFilter: "review",
-                group: null, user: null };
+                group: null, user: null,
+                /* Namespace-audit controls. They live HERE and not in the DOM because the
+                   page repaints on every poll: state held in the markup would silently
+                   reset a chosen sort or filter under the reader every 60 seconds, which
+                   reads as the page fighting them. */
+                nsNamespace: "all", nsSort: "risk", nsDir: "desc",
+                nsGrantSort: "risk", nsGrantDir: "desc",
+                /* Closed on arrival. The per-namespace rollup is the view that answers the
+                   question; the flat list is a detail nobody reads end to end, and on a
+                   cluster with thousands of grants rendering it unasked is time spent to
+                   produce a page the reader scrolls past. Opening it is one click, and
+                   choosing a namespace opens it automatically. */
+                nsGrantsOpen: false };
 /* Where the reader came FROM, so Back retraces the path instead of jumping to a fixed
    page. Drilling group -> user -> another group and pressing Back three times must walk
    back through exactly those, which a single hardcoded destination cannot do. */
@@ -1402,15 +1466,91 @@ function riskTier(row) {
 }
 
 const PRIVILEGE_NAME = { 4: "cluster-admin", 3: "admin", 2: "edit", 1: "view" };
+const PRIVILEGE_RANK = { "cluster-admin": 4, admin: 3, edit: 2, view: 1 };
+
+/* How many grants the detail list asks for. Not a display cap — the server applies it, so
+   the rows never cross the wire. 200 is well past what anyone reads in one sitting and
+   still small enough to render instantly; the server orders worst-first before limiting,
+   so a truncated page is the top of the list rather than a slice of the middle. */
+const NS_GRANT_PAGE = 200;
+
+/* Sort a copy, never the array the renderer was handed — sorting in place would reorder
+   `data.userBindings` itself, so the store's risk ranking would be lost after the first
+   click and could never be restored without a refetch. */
+function sortBy(rows, keyFn, dir) {
+  const sign = dir === "asc" ? 1 : -1;
+  return rows.slice().sort((a, b) => {
+    const x = keyFn(a), y = keyFn(b);
+    if (x === y) return 0;
+    // Numbers compare numerically, strings alphabetically. Comparing "10" < "9" as strings
+    // is the classic way a count column sorts wrongly and nobody notices.
+    return (typeof x === "number" ? x - y : String(x).localeCompare(String(y))) * sign;
+  });
+}
+
+/* A sortable column header.
+   A <button> inside the <th>, not a click handler on the <th> itself: a bare th is not
+   focusable and not announced as actionable, so header sorting becomes mouse-only. The
+   arrow is text rather than a glyph so it survives forced-colors, and aria-sort tells a
+   screen reader which column is ordering the table and in which direction. */
+function sortableTh(label, key, activeKey, dir, group, extraClass) {
+  const active = key === activeKey;
+  const next = active && dir === "desc" ? "asc" : "desc";
+  const aria = active ? (dir === "asc" ? "ascending" : "descending") : "none";
+  const arrow = active ? (dir === "asc" ? " ▲" : " ▼") : "";
+  return `<th class="${extraClass || ""}" aria-sort="${aria}">
+    <button type="button" class="th-sort${active ? " is-active" : ""}"
+            data-sort-group="${group}" data-sort-key="${key}" data-sort-dir="${next}"
+            title="Sort by ${esc(label)}">${esc(label)}${arrow}</button>
+  </th>`;
+}
 
 /* Roles granted directly to a person, ranked by risk. */
 function directUserGrants(ub) {
   if (!ub) return "";
   const rows = (ub.by_namespace || []).map((r) => ({ ...r, risk: riskTier(r) }));
   const bindings = ub.bindings || [];
-  const people = new Set(bindings.map((b) => b.user_name));
+  // `total` is the server's count BEFORE its limit. Falling back to the returned length
+  // would make a truncated page claim to be complete, which is the one failure this whole
+  // change exists to avoid.
+  const total = ub.total != null ? ub.total : bindings.length;
+  // Cluster-wide grant count, summed from the rollup because that is the one part of the
+  // response neither paged NOR filtered. `ub.total` is the total for the CURRENT filter,
+  // which is right for the detail list's own labelling and wrong for a headline KPI.
+  const totalAllNamespaces = rows.reduce((n, r) => n + (r.bindings || 0), 0);
   const critical = rows.filter((r) => r.risk.key === "critical");
   const high = rows.filter((r) => r.risk.key === "high");
+  // Distinct PEOPLE, unioned from the rollup rather than counted from `bindings`.
+  //
+  // Two wrong ways to get this number, both of which were briefly in this file. Counting
+  // `bindings` is correct only while nothing is paged — once the detail list is truncated
+  // or filtered to one namespace it silently reports the page, not the cluster. Summing
+  // `distinct_users` across namespaces double-counts anyone with grants in more than one:
+  // on the reference cluster jdoe holds grants in three, so the sum says 6 where the truth
+  // is 4. The rollup's `users` list is never paged, so the union of it is both complete and
+  // distinct.
+  const people = new Set(
+    rows.flatMap((r) => (r.users || "").split(",").map((u) => u.trim()).filter(Boolean))
+  ).size;
+
+  const NS_SORT = {
+    risk: (r) => r.risk.rank * 10 + (r.cluster_scoped ? 1 : 0),
+    namespace: (r) => r.namespace,
+    priv: (r) => r.worst_privilege || 0,
+    people: (r) => r.distinct_users || 0,
+    grants: (r) => r.bindings || 0,
+  };
+  const GRANT_SORT = {
+    person: (b) => b.user_name,
+    // Sort the ROLE by privilege, not alphabetically: "admin" < "edit" < "view" as text
+    // puts the dangerous grants in the middle, which is the opposite of useful.
+    risk: (b) => (PRIVILEGE_RANK[b.role_name] || 0) * 10 + (b.binding_namespace ? 0 : 1),
+    scope: (b) => b.binding_namespace || "",
+    binding: (b) => b.binding_name,
+  };
+  const sorted = sortBy(rows, NS_SORT[view.nsSort] || NS_SORT.risk, view.nsDir);
+  const sortedGrants = sortBy(
+    bindings, GRANT_SORT[view.nsGrantSort] || GRANT_SORT.risk, view.nsGrantDir);
 
   if (!rows.length) {
     return `<section class="card">
@@ -1440,9 +1580,13 @@ function directUserGrants(ub) {
         <div class="label">Namespaces at risk</div>
         <div class="value mono">${rows.length}</div></div>
       <div class="kpi big"><div class="label">People exposed</div>
-        <div class="value mono">${people.size}</div></div>
+        <div class="value mono">${people}</div></div>
       <div class="kpi big"><div class="label">Grants to migrate</div>
-        <div class="value mono">${bindings.length}</div></div>
+        <!-- Cluster-wide, never bindings.length. The list below is paged and may be
+             filtered to one namespace; a headline count taken from it reports the page
+             rather than the cluster, and shrinks when the reader narrows the filter, which
+             reads as the problem getting smaller because they looked at it closely. -->
+        <div class="value mono">${totalAllNamespaces}</div></div>
       <div class="kpi big ${critical.length ? "flag-critical" : ""}">
         <div class="label">Critical</div>
         <div class="value mono ${critical.length ? "err" : "muted"}">${critical.length}</div></div>
@@ -1481,13 +1625,20 @@ function directUserGrants(ub) {
     <div class="filterbar-note" style="margin-bottom:8px">
       Ranked by the <strong>worst privilege granted</strong>, not by count — one forgotten
       <code>cluster-admin</code> matters more than twenty <code>view</code> grants.
+      ${view.nsSort !== "risk" || view.nsDir !== "desc"
+        ? `<button type="button" class="linkish" data-ns-reset>Restore risk order</button>`
+        : ""}
     </div>
     <div class="scroll-x"><table class="audit-table">
       <thead><tr>
-        <th>Risk</th><th>Namespace</th><th>Highest privilege</th>
-        <th class="num">People</th><th class="num">Grants</th><th>Who is exposed</th>
+        ${sortableTh("Risk", "risk", view.nsSort, view.nsDir, "ns")}
+        ${sortableTh("Namespace", "namespace", view.nsSort, view.nsDir, "ns")}
+        ${sortableTh("Highest privilege", "priv", view.nsSort, view.nsDir, "ns")}
+        ${sortableTh("People", "people", view.nsSort, view.nsDir, "ns", "num")}
+        ${sortableTh("Grants", "grants", view.nsSort, view.nsDir, "ns", "num")}
+        <th>Who is exposed</th>
       </tr></thead>
-      <tbody>${rows.map((r) => `<tr class="risk-row risk-${r.risk.key}">
+      <tbody>${sorted.map((r) => `<tr class="risk-row risk-${r.risk.key}">
         <td><span class="risk-pill risk-${r.risk.key}">${esc(r.risk.label)}</span></td>
         <td class="ns-cell">${r.namespace === "(cluster-scoped)"
             ? `<strong class="err">CLUSTER-WIDE</strong>` : `<strong>${esc(r.namespace)}</strong>`}</td>
@@ -1529,21 +1680,62 @@ function directUserGrants(ub) {
   </section>
 
   <section class="card">
-    <h3>Every grant</h3>
-    <div class="scroll-x"><table class="audit-table">
-      <thead><tr><th>Person</th><th>Grants</th><th>Scope</th><th>Binding</th></tr></thead>
-      <tbody>${bindings.map((b) => {
-        const crit = ["cluster-admin", "admin"].includes(b.role_name) || !b.binding_namespace;
-        return `<tr class="${crit ? "risk-row risk-high" : ""}">
-          <td><strong>${esc(b.user_name)}</strong></td>
-          <td><code class="priv">${esc(b.role_name)}</code>
-            <span class="muted">${esc(b.role_kind)}</span></td>
-          <td>${b.binding_namespace ? esc(b.binding_namespace)
-                : `<strong class="err">cluster-wide</strong>`}</td>
-          <td class="muted">${esc(b.binding_name)}</td>
-        </tr>`;
-      }).join("")}</tbody>
-    </table></div>
+    <div class="section-head">
+      <h3 class="flush">Every grant</h3>
+      <button type="button" class="disclose" data-ns-grants
+              aria-expanded="${view.nsGrantsOpen}" aria-controls="every-grant">
+        <span class="disclose-arrow" aria-hidden="true">${view.nsGrantsOpen ? "▾" : "▸"}</span>
+        ${view.nsGrantsOpen ? "Hide" : "Show"} ${total} grant${total === 1 ? "" : "s"}
+      </button>
+    </div>
+    <div class="filterbar-note" style="margin-bottom:10px">
+      The per-namespace table above is the view to work from. This is the flat detail
+      list — collapsed by default on purpose, because on a cluster with thousands of
+      direct grants rendering every row costs time nobody gets value from.
+    </div>
+    <div class="ns-controls">
+      <label for="ns-pick">Namespace</label>
+      <select id="ns-pick" data-ns-pick>
+        <option value="all"${view.nsNamespace === "all" ? " selected" : ""}>
+          All namespaces (${rows.length})</option>
+        ${rows.map((r) => `<option value="${esc(r.namespace)}"${
+          view.nsNamespace === r.namespace ? " selected" : ""}>${
+          r.namespace === "(cluster-scoped)" ? "cluster-wide" : esc(r.namespace)
+        } — ${r.bindings} grant${r.bindings === 1 ? "" : "s"}</option>`).join("")}
+      </select>
+      ${view.nsNamespace !== "all"
+        ? `<button type="button" class="linkish" data-ns-pick-clear>Clear filter</button>` : ""}
+    </div>
+    <div id="every-grant"${view.nsGrantsOpen ? "" : " hidden"}>
+      ${!bindings.length
+        ? `<div class="empty-note">No direct grants${
+             view.nsNamespace === "all" ? "" : ` in ${esc(view.nsNamespace)}`}.</div>`
+        : `<div class="scroll-x"><table class="audit-table">
+        <thead><tr>
+          ${sortableTh("Person", "person", view.nsGrantSort, view.nsGrantDir, "grant")}
+          ${sortableTh("Grants", "risk", view.nsGrantSort, view.nsGrantDir, "grant")}
+          ${sortableTh("Scope", "scope", view.nsGrantSort, view.nsGrantDir, "grant")}
+          ${sortableTh("Binding", "binding", view.nsGrantSort, view.nsGrantDir, "grant")}
+        </tr></thead>
+        <tbody>${sortedGrants.map((b) => {
+          const crit = ["cluster-admin", "admin"].includes(b.role_name) || !b.binding_namespace;
+          return `<tr class="${crit ? "risk-row risk-high" : ""}">
+            <td><strong>${esc(b.user_name)}</strong></td>
+            <td><code class="priv">${esc(b.role_name)}</code>
+              <span class="muted">${esc(b.role_kind)}</span></td>
+            <td>${b.binding_namespace ? esc(b.binding_namespace)
+                  : `<strong class="err">cluster-wide</strong>`}</td>
+            <td class="muted">${esc(b.binding_name)}</td>
+          </tr>`;
+        }).join("")}</tbody>
+      </table></div>`}
+      ${ub.truncated ? `<div class="filterbar-note truncation-note">
+        Showing the <strong>${bindings.length}</strong> highest-privilege of
+        <strong>${total}</strong> grants${view.nsNamespace === "all" ? ""
+          : ` in ${esc(view.nsNamespace)}`}. The rest are not hidden findings — they are
+        ranked below these. Narrow with the namespace selector to see them.
+      </div>` : ""}
+    </div>
   </section>`;
 }
 
@@ -1586,6 +1778,7 @@ function render() {
   const main = $("main");
   if (view.page === "nsaudit") {
     main.innerHTML = nsAuditPage();
+    wireNsAudit();
   } else if (view.page === "policy") {
     main.innerHTML = policyPage();
     wireDrilldown();
@@ -1631,6 +1824,38 @@ function render() {
     $("build-info").title = `branch ${v.branch}`;
   }
   main.classList.remove("stale");
+}
+
+/* Namespace-audit controls: sort, namespace selector, and the detail-list disclosure.
+   Re-bound after every render because render() replaces main's innerHTML wholesale, which
+   discards the previous elements and their handlers along with them. */
+function wireNsAudit() {
+  document.querySelectorAll("[data-sort-key]").forEach((el) => {
+    el.onclick = () => {
+      const grant = el.dataset.sortGroup === "grant";
+      if (grant) { view.nsGrantSort = el.dataset.sortKey; view.nsGrantDir = el.dataset.sortDir; }
+      else { view.nsSort = el.dataset.sortKey; view.nsDir = el.dataset.sortDir; }
+      render();  // Pure re-sort of data already held — no refetch, so it is instant.
+    };
+  });
+  const reset = document.querySelector("[data-ns-reset]");
+  if (reset) reset.onclick = () => { view.nsSort = "risk"; view.nsDir = "desc"; render(); };
+
+  const pick = document.querySelector("[data-ns-pick]");
+  // `onchange`, not `oninput`: a <select> fires input per keyboard arrow while the list is
+  // open, and each one would be a refetch for a namespace the reader is only passing over.
+  if (pick) pick.onchange = () => {
+    view.nsNamespace = pick.value;
+    // Choosing a namespace to inspect and then having to expand the list is a pointless
+    // second click; the selection IS the request to see it.
+    if (view.nsNamespace !== "all") view.nsGrantsOpen = true;
+    refresh();  // Server-side filter, so this one does need a round trip.
+  };
+  const clear = document.querySelector("[data-ns-pick-clear]");
+  if (clear) clear.onclick = () => { view.nsNamespace = "all"; refresh(); };
+
+  const disclose = document.querySelector("[data-ns-grants]");
+  if (disclose) disclose.onclick = () => { view.nsGrantsOpen = !view.nsGrantsOpen; render(); };
 }
 
 function wireDrilldown() {
@@ -1737,8 +1962,13 @@ async function refresh(opts = {}) {
         `/api/clusters/${encodeURIComponent(view.cluster)}/bindings/findings`);
     }
     if (view.page === "nsaudit" && view.cluster) {
+      // The namespace filter is applied SERVER-side, not by filtering a full response in
+      // the browser: the point is to stop shipping thousands of rows, and a client-side
+      // filter still pays for every one of them over the wire and in memory.
+      const q = new URLSearchParams({ limit: String(NS_GRANT_PAGE) });
+      if (view.nsNamespace !== "all") q.set("namespace", view.nsNamespace);
       data.userBindings = await get(
-        `/api/clusters/${encodeURIComponent(view.cluster)}/user-bindings`);
+        `/api/clusters/${encodeURIComponent(view.cluster)}/user-bindings?${q}`);
     }
     render();
   } catch (err) {

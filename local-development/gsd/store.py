@@ -1261,8 +1261,35 @@ class Store:
             (cluster_id,),
         )
 
+    # Namespace sentinel for the cluster-scoped rows. Their binding_namespace is '', which
+    # an HTTP query string cannot distinguish from "parameter absent", so the API and the
+    # UI both speak this token and it is translated here at the boundary.
+    CLUSTER_SCOPE = "(cluster-scoped)"
+
+    def _direct_user_binding_where(
+        self, cluster_id: str, include_platform: bool, namespace: str | None
+    ) -> tuple[str, list]:
+        """The WHERE shared by the row query and its COUNT, built once.
+
+        Built once on purpose: a count computed from a different predicate than the rows
+        it describes is how "showing 50 of 30" reaches a page, and the two drifting apart
+        during a later edit is the likeliest way for that to happen.
+        """
+        sql, params = " WHERE cluster_id=?", [cluster_id]
+        if not include_platform:
+            sql += " AND is_platform=0"
+        if namespace is not None:
+            sql += " AND binding_namespace=?"
+            params.append("" if namespace == self.CLUSTER_SCOPE else namespace)
+        return sql, params
+
     def direct_user_bindings(
-        self, cluster_id: str, include_platform: bool = False
+        self,
+        cluster_id: str,
+        include_platform: bool = False,
+        namespace: str | None = None,
+        limit: int | None = None,
+        offset: int = 0,
     ) -> list[dict]:
         """Every binding naming a User subject, worst-first by privilege then namespace.
 
@@ -1271,18 +1298,40 @@ class Store:
         one is the governance violation — a grant that names the person directly. The
         original name for this collided with that method and silently overrode it, which
         broke two reverse-lookup tests; the names now say which question each answers.
+
+        `namespace` and `limit` exist because this was previously unbounded at every layer:
+        the store returned every row, the API returned every row, and the page rendered
+        every row. On a cluster with thousands of direct grants that is a payload and a DOM
+        nobody asked for, to show a list nobody can read. Pair with
+        `count_direct_user_bindings` so the caller can say what it left out — a silently
+        truncated audit list is worse than a slow one.
         """
-        sql = """SELECT binding_kind, binding_namespace, binding_name, role_kind,
-                        role_name, user_name, is_platform
-                   FROM user_binding WHERE cluster_id=?"""
-        if not include_platform:
-            sql += " AND is_platform=0"
-        # cluster-admin first, then cluster-scoped, then namespaced: the order somebody
-        # migrating would work in.
-        sql += """ ORDER BY CASE WHEN role_name='cluster-admin' THEN 0 ELSE 1 END,
+        where, params = self._direct_user_binding_where(
+            cluster_id, include_platform, namespace)
+        sql = ("""SELECT binding_kind, binding_namespace, binding_name, role_kind,
+                         role_name, user_name, is_platform
+                    FROM user_binding""" + where +
+               # cluster-admin first, then cluster-scoped, then namespaced: the order
+               # somebody migrating would work in. Ordering is applied BEFORE the limit, so
+               # a truncated page is the worst N rather than an arbitrary N.
+               """ ORDER BY CASE WHEN role_name='cluster-admin' THEN 0 ELSE 1 END,
                             CASE WHEN binding_namespace='' THEN 0 ELSE 1 END,
-                            binding_namespace, user_name"""
-        return self._rows(sql, (cluster_id,))
+                            binding_namespace, user_name""")
+        if limit is not None:
+            sql += " LIMIT ? OFFSET ?"
+            params += [limit, offset]
+        return self._rows(sql, tuple(params))
+
+    def count_direct_user_bindings(
+        self, cluster_id: str, include_platform: bool = False,
+        namespace: str | None = None,
+    ) -> int:
+        """How many rows `direct_user_bindings` would return before its limit."""
+        where, params = self._direct_user_binding_where(
+            cluster_id, include_platform, namespace)
+        rows = self._rows(
+            "SELECT COUNT(*) AS n FROM user_binding" + where, tuple(params))
+        return rows[0]["n"] if rows else 0
 
     def platform_user_binding_count(self, cluster_id: str) -> int:
         rows = self._rows(

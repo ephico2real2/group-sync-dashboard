@@ -373,7 +373,16 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
         }
 
     @app.get("/api/clusters/{cluster_id}/user-bindings")
-    def direct_user_bindings(cluster_id: str, include_platform: bool = False) -> dict:
+    @consistent
+    def direct_user_bindings(
+        cluster_id: str,
+        include_platform: bool = False,
+        namespace: str | None = Query(
+            default=None,
+            description="restrict to one namespace; '(cluster-scoped)' for cluster-wide"),
+        limit: int = Query(default=200, ge=1, le=5000),
+        offset: int = Query(default=0, ge=0),
+    ) -> dict:
         """Roles granted DIRECTLY to a user, with a per-namespace migration worklist.
 
         The governance violation this reports: access bound to a person instead of to an
@@ -386,14 +395,37 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
         to, and on the reference cluster they were 34 of 36 rows, so including them would
         make the finding unreadable. `include_platform=true` shows them, and the count is
         always reported so the page can say what it left out.
+
+        `bindings` IS PAGED; `by_namespace` IS NOT, and the asymmetry is deliberate. The
+        rollup is one row per namespace, so it is bounded by a number the cluster already
+        keeps small, and it is the view that actually answers "where is my exposure" — it
+        must never be truncated or the risk ranking would be a ranking of an arbitrary
+        subset. The flat binding list grows with people times grants, is the part that can
+        reach thousands, and is a detail view nobody reads end to end. `total` is always
+        the count BEFORE the limit so the page can state what it left out; a silently
+        truncated audit list is worse than a slow one.
+
+        @consistent because this makes four store calls. Without it the KPI counts, the
+        per-namespace rollup and the paged rows can each land on a different snapshot, and
+        a poll committing between them yields a page whose total disagrees with its own
+        table.
         """
         require_cluster(cluster_id)
-        rows = store.direct_user_bindings(cluster_id, include_platform=include_platform)
+        total = store.count_direct_user_bindings(
+            cluster_id, include_platform=include_platform, namespace=namespace)
+        rows = store.direct_user_bindings(
+            cluster_id, include_platform=include_platform, namespace=namespace,
+            limit=limit, offset=offset)
         return {
             "cluster": cluster_id,
             "note": "direct user grants; migrate these to LDAP-managed groups",
             "by_namespace": store.user_bindings_by_namespace(cluster_id),
             "excluded_platform": store.platform_user_binding_count(cluster_id),
+            "namespace": namespace,
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "truncated": offset + len(rows) < total,
             "bindings": rows,
         }
 

@@ -223,8 +223,27 @@ def server(tmp_path_factory):
 
 @pytest.fixture()
 def dash(page, server):
+    """The dashboard, loaded, with an uncaught JS error treated as an immediate failure.
+
+    Without the pageerror listener this suite reports a syntax error in index.html as a
+    30-second selector timeout, once per test — so a single stray backtick inside a
+    template literal (which is how this was found: the whole page rendered blank and the
+    suite hung for minutes) looks like slowness rather than the total failure it is.
+
+    The page is one file with no build step and no type checker, so this fixture is the
+    only thing standing between a typo and a blank dashboard. It reports the actual
+    exception text, which names the line.
+    """
+    errors: list[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
     page.goto(server)
-    page.wait_for_selector(".hero .value")
+    try:
+        page.wait_for_selector(".hero .value", timeout=10_000)
+    except Exception:
+        if errors:
+            pytest.fail("the page raised and never rendered:\n  " + "\n  ".join(errors))
+        raise
+    assert not errors, "uncaught JS error on load:\n  " + "\n  ".join(errors)
     return page
 
 
