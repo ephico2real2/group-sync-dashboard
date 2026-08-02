@@ -67,6 +67,25 @@
   --tab-nsaudit: #b3306e;
   --tab-usage: #c2410c;
   --accent: var(--tab-overview);
+
+  /* TYPE SCALE. An audit counted ten distinct font-size values chosen per component, with
+     no ladder connecting them — which is what makes an interface read as assembled rather
+     than designed, and what lets an eleventh size arrive unnoticed. These are those ten
+     sizes named, at exactly their current values: nothing moves, but every step now has a
+     purpose, and tests/test_type_scale.py fails on any size that is not one of them. Add a
+     step deliberately or reuse one; do not invent a number at the call site.
+     Sizes are px, not rem, because this stylesheet ships inside one self-contained page
+     with no root-size assumptions to inherit. */
+  --text-micro: 10px;  /* chart axis labels — the one place below 11 is legible enough */
+  --text-xs: 11px;     /* table headers, KPI labels */
+  --text-sm: 12px;     /* metadata, captions, secondary copy */
+  --text-md: 13px;     /* table body, form controls, tabs */
+  --text-base: 14px;   /* body copy */
+  --text-lg: 15px;     /* card headings, emphasised table cells */
+  --text-xl: 18px;     /* page title */
+  --text-2xl: 22px;    /* KPI value */
+  --text-3xl: 30px;    /* KPI value on a lead card */
+  --text-hero: 48px;   /* the one number a page leads with */
 }
 @media (prefers-color-scheme: dark) {
   :root:where(:not([data-theme="light"])) {
@@ -144,7 +163,11 @@
 body {
   margin: 0;
   color: var(--text-primary);
-  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  /* Split rather than the `font:` shorthand so the size comes from the scale. The
+     shorthand would also reset line-height and family if either were ever omitted. */
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: var(--text-base);
+  line-height: 1.5;
   /* Depth without cost: a fixed wash so the page reads as a surface rather than a flat
      fill, plus a wide accent bloom that carries the current section's colour. Both stops
      are measured tokens, so text contrast holds wherever it lands — a gradient that
@@ -213,9 +236,9 @@ h1, h2, h3 { font-weight: 600; margin: 0; }
   width: 3px; height: 0.95em; margin-right: 8px; border-radius: 2px;
   background: var(--accent);
 }
-h1 { font-size: 18px; }
-h2 { font-size: 15px; }
-h3 { font-size: 13px; color: var(--text-secondary); }
+h1 { font-size: var(--text-xl); }
+h2 { font-size: var(--text-lg); }
+h3 { font-size: var(--text-md); color: var(--text-secondary); }
 
 .wrap { max-width: 1180px; margin: 0 auto; padding: 20px 20px 64px; }
 
@@ -223,7 +246,7 @@ header.top {
   display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
   padding-bottom: 14px; border-bottom: 1px solid var(--border); margin-bottom: 18px;
 }
-header.top .sub { color: var(--text-muted); font-size: 12px; }
+header.top .sub { color: var(--text-muted); font-size: var(--text-sm); }
 header.top .spacer { flex: 1; }
 
 /* One filter row above everything it scopes — never a filter inside a card. */
@@ -231,9 +254,9 @@ header.top .spacer { flex: 1; }
   display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
   margin-bottom: 18px;
 }
-.filters label { color: var(--text-secondary); font-size: 12px; }
+.filters label { color: var(--text-secondary); font-size: var(--text-sm); }
 select, button {
-  font: inherit; font-size: 13px; color: var(--text-primary);
+  font: inherit; font-size: var(--text-md); color: var(--text-primary);
   background: var(--surface-1); border: 1px solid var(--border);
   border-radius: 6px; padding: 5px 9px; cursor: pointer;
 }
@@ -250,12 +273,12 @@ button:hover, select:hover { border-color: var(--baseline); }
 
 /* Hero: the one number the dashboard leads with. Proportional figures, system sans. */
 .hero { display: flex; align-items: baseline; gap: 12px; margin-bottom: 4px; }
-.hero .value { font-size: 48px; font-weight: 600; line-height: 1; letter-spacing: -0.02em; }
+.hero .value { font-size: var(--text-hero); font-weight: 600; line-height: 1; letter-spacing: -0.02em; }
 .hero .label { color: var(--text-secondary); }
 
 /* Stat tiles: the number IS the chart. No one-bar bar charts. */
 .kpis { display: flex; gap: 22px; flex-wrap: wrap; margin-top: 12px; }
-.kpi .label { font-size: 11px; color: var(--text-muted); text-transform: none; }
+.kpi .label { font-size: var(--text-xs); color: var(--text-muted); text-transform: none; }
 /* A coloured edge on the counts that represent a problem, and only when the count is not
    zero. The number is still the signal — this just lets you find the one card with
    something wrong without reading six figures on each. Non-text, so the 3:1 bar of WCAG
@@ -264,13 +287,13 @@ button:hover, select:hover { border-color: var(--baseline); }
 .kpi.flag-warning, .kpi.flag-critical { padding-left: 9px; border-left: 3px solid transparent; }
 .kpi.flag-warning  { border-left-color: var(--status-warning); }
 .kpi.flag-critical { border-left-color: var(--status-critical); }
-.kpi .value { font-size: 22px; font-weight: 600; line-height: 1.25; }
+.kpi .value { font-size: var(--text-2xl); font-weight: 600; line-height: 1.25; }
 .kpi .value.muted { color: var(--text-muted); font-weight: 500; }
 
 /* State badge: shape + colour + text. Colour is never the only channel. */
 .badge {
   display: inline-flex; align-items: center; gap: 6px;
-  font-size: 12px; font-weight: 500; color: var(--text-primary);
+  font-size: var(--text-sm); font-weight: 500; color: var(--text-primary);
   border: 1px solid var(--border); border-radius: 999px; padding: 2px 9px 2px 7px;
   white-space: nowrap;
 }
@@ -285,7 +308,7 @@ button:hover, select:hover { border-color: var(--baseline); }
 .muted { color: var(--text-muted); }
 .mono { font-variant-numeric: tabular-nums; }
 
-table { border-collapse: collapse; width: 100%; font-size: 13px; }
+table { border-collapse: collapse; width: 100%; font-size: var(--text-md); }
 th, td {
   text-align: left; padding: 6px 10px 6px 0;
   border-bottom: 1px solid var(--gridline); vertical-align: top;
@@ -295,7 +318,7 @@ th, td {
      under it every refresh. Fixed-width digits hold the grid still. */
   font-variant-numeric: tabular-nums;
 }
-th { color: var(--text-muted); font-weight: 500; font-size: 11px; }
+th { color: var(--text-muted); font-weight: 500; font-size: var(--text-xs); }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; padding-right: 16px; }
 .scroll-x { overflow-x: auto; }
 
@@ -321,7 +344,7 @@ tbody tr:nth-child(even) td { background: var(--zebra); }
 .chip {
   display: inline-block; padding: 1px 7px; margin: 0 4px 4px 0;
   border: 1px solid var(--border); border-radius: 999px;
-  font-size: 12px; background: var(--zebra);
+  font-size: var(--text-sm); background: var(--zebra);
 }
 
 /* A drillable name must LOOK drillable. Without this the usernames rendered as plain
@@ -351,7 +374,7 @@ tbody tr:nth-child(even) td { background: var(--zebra); }
 .chart-wrap { position: relative; }
 svg .grid-line { stroke: var(--gridline); stroke-width: 1; }
 svg .axis-line { stroke: var(--baseline); stroke-width: 1; }
-svg text { fill: var(--text-muted); font-size: 10px; font-variant-numeric: tabular-nums; }
+svg text { fill: var(--text-muted); font-size: var(--text-micro); font-variant-numeric: tabular-nums; }
 svg .series-line { fill: none; stroke: var(--series-1); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
 svg .series-area { fill: var(--series-1-wash); }
 /* 2px surface ring keeps dots legible where they overlap, and enlarges the hit area. */
@@ -362,7 +385,7 @@ svg .hit { fill: transparent; cursor: pointer; }
   position: absolute; pointer-events: none; z-index: 5;
   background: var(--surface-1); color: var(--text-primary);
   border: 1px solid var(--border); border-radius: 6px;
-  padding: 6px 9px; font-size: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.14);
+  padding: 6px 9px; font-size: var(--text-sm); box-shadow: 0 2px 10px rgba(0,0,0,0.14);
   white-space: nowrap; opacity: 0; transition: opacity 90ms ease;
 }
 .tooltip.on { opacity: 1; }
@@ -385,10 +408,10 @@ svg .hit { fill: transparent; cursor: pointer; }
 .alert-row .who { min-width: 190px; font-weight: 500; word-break: break-all; }
 .alert-row .what { color: var(--text-secondary); }
 
-.empty-note { color: var(--text-muted); font-size: 13px; padding: 10px 0; }
-.back { background: none; border: 0; padding: 0; color: var(--series-1); cursor: pointer; font-size: 13px; }
-.filterbar-note { font-size: 12px; color: var(--text-muted); }
-code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.empty-note { color: var(--text-muted); font-size: var(--text-md); padding: 10px 0; }
+.back { background: none; border: 0; padding: 0; color: var(--series-1); cursor: pointer; font-size: var(--text-md); }
+.filterbar-note { font-size: var(--text-sm); color: var(--text-muted); }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--text-sm); }
 .err { color: var(--status-critical); }
 
 /* ---- Risk presentation (Namespace audit) --------------------------------------------
@@ -399,7 +422,7 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 1
    graphical bar applies. */
 .risk-pill {
   display: inline-block; padding: 3px 10px; border-radius: 999px;
-  font-size: 12px; font-weight: 700; letter-spacing: 0.02em;
+  font-size: var(--text-sm); font-weight: 700; letter-spacing: 0.02em;
   color: var(--text-primary); white-space: nowrap;
   border-left: 3px solid var(--risk-colour, var(--text-muted));
   background: color-mix(in srgb, var(--risk-colour, var(--text-muted)) 15%, var(--surface-1));
@@ -410,32 +433,32 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 1
 .risk-low      { --risk-colour: var(--text-muted); }
 
 .risk-headline { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
-.risk-headline .risk-pill { font-size: 15px; padding: 6px 14px; }
+.risk-headline .risk-pill { font-size: var(--text-lg); padding: 6px 14px; }
 
 /* The KPI row is the first thing read, so it gets real size. */
-.kpi.big .value { font-size: 30px; letter-spacing: -0.02em; }
-.kpi.big .label { font-size: 12px; }
+.kpi.big .value { font-size: var(--text-3xl); letter-spacing: -0.02em; }
+.kpi.big .label { font-size: var(--text-sm); }
 
 /* Why-this-matters: three short arguments side by side rather than one dense paragraph
    nobody finishes. */
 .risk-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
-.risk-item { font-size: 13px; color: var(--text-secondary); line-height: 1.55; }
+.risk-item { font-size: var(--text-md); color: var(--text-secondary); line-height: 1.55; }
 .risk-item-h {
-  font-weight: 700; font-size: 13px; color: var(--text-primary); margin-bottom: 3px;
+  font-weight: 700; font-size: var(--text-md); color: var(--text-primary); margin-bottom: 3px;
 }
 
 /* The table has to be scannable at a glance, so rows are taller and the identifying
    column is bold. Zebra striping is dropped here — the risk tint IS the row signal, and
    two competing backgrounds read as noise. */
 .audit-table th {
-  font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em;
+  font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.04em;
   color: var(--text-muted); font-weight: 600; padding-bottom: 8px;
 }
-.audit-table td { padding: 10px 14px 10px 0; font-size: 14px; vertical-align: middle; }
+.audit-table td { padding: 10px 14px 10px 0; font-size: var(--text-base); vertical-align: middle; }
 .audit-table tbody tr:nth-child(even) td { background: none; }
-.audit-table .ns-cell strong { font-size: 15px; }
+.audit-table .ns-cell strong { font-size: var(--text-lg); }
 .audit-table td.strong { font-weight: 700; }
-.audit-table .who { font-size: 12px; }
+.audit-table .who { font-size: var(--text-sm); }
 .priv { font-weight: 600; }
 
 /* A tint the width of the row, so severity is visible without reading the pill. */
@@ -443,7 +466,7 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 1
 .risk-row.risk-critical td { background: color-mix(in srgb, var(--status-critical) 7%, transparent); }
 .risk-row.risk-high td { background: color-mix(in srgb, var(--status-warning) 7%, transparent); }
 
-.runbook { margin: 0; padding-left: 22px; font-size: 13px; line-height: 1.7; color: var(--text-secondary); }
+.runbook { margin: 0; padding-left: 22px; font-size: var(--text-md); line-height: 1.7; color: var(--text-secondary); }
 .runbook li { margin-bottom: 5px; }
 .runbook strong { color: var(--text-primary); }
 
@@ -462,7 +485,7 @@ body[data-page="usage"]    { --accent: var(--tab-usage); }
 .tab {
   position: relative;
   background: none; border: 0; border-radius: 6px 6px 0 0;
-  padding: 7px 12px 9px; font-size: 13px; font-weight: 500;
+  padding: 7px 12px 9px; font-size: var(--text-md); font-weight: 500;
   color: var(--text-secondary); cursor: pointer;
   transition: color 160ms ease, background-color 160ms ease;
 }

@@ -90,6 +90,8 @@ always wins.
 | `persistence.accessMode` | `ReadWriteMany` | scales without recreating the volume. `ReadWriteOncePod` gets an **enforced** single-pod guarantee at one replica; empty derives it. See [Storage](#storage) |
 | `resources` | 50m/128Mi → 500m/512Mi | |
 | `probes.*.timeoutSeconds` | `5` | not the 1s default — that killed a healthy process on host resume and cascaded into a ~4h outage |
+| `probes.liveness.periodSeconds` / `.failureThreshold` | `300` / `2` | **5 min**, because being wrong here restarts the container and destroys in-flight state. 10 min of sustained failure before a restart |
+| `probes.readiness.periodSeconds` / `.failureThreshold` | `15` / `3` | **15s**, because being wrong here only removes the pod from the Service and it comes straight back |
 | `podSecurityContext`, `securityContext` | non-root, read-only rootfs, all caps dropped | |
 | `nodeSelector`, `tolerations`, `affinity`, `podAnnotations`, `podLabels` | empty | |
 

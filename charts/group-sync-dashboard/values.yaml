@@ -124,14 +124,26 @@ podLabels: {}
 # process — observed here, and it cascaded into a ~4h outage. Liveness is the more forgiving
 # of the two because a failed readiness only removes the pod from the Service, while a
 # failed liveness destroys in-flight state and forces an image re-pull.
+#
+# THE TWO PERIODS ARE DELIBERATELY FAR APART, and the reason is what each probe costs when
+# it is wrong. Readiness runs every 15s because it is cheap to be wrong: the pod leaves the
+# Service and comes back. Liveness runs every 5min because it is expensive to be wrong: it
+# destroys in-flight state and forces a container restart, and this process holds the only
+# copy of accumulated history between checkpoints.
+#
+# failureThreshold moved 6 -> 2 with that period. It has to: 6 failures at a 300s period is
+# a THIRTY MINUTE wait before a genuinely wedged pod is restarted, which is not a health
+# check. At 2 the budget is 10 minutes of sustained failure — still more forgiving than the
+# 3 minutes this had at 30s x 6, because the period, not the threshold, is what protects a
+# healthy-but-briefly-slow process.
 probes:
   liveness:
     enabled: true
     path: /healthz
     initialDelaySeconds: 10
-    periodSeconds: 30
+    periodSeconds: 300     # 5 min — see the threshold note above before raising this
     timeoutSeconds: 5
-    failureThreshold: 6
+    failureThreshold: 2    # 2 x 300s = 10 min to restart a wedged pod
   readiness:
     enabled: true
     path: /readyz
