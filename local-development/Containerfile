@@ -98,8 +98,23 @@ USER 0
 #
 # It does not affect stored data: every timestamp in the app is datetime.now(UTC) and every
 # stored string ends in Z. This governs log lines only.
+# REINSTALL, not install — and this is the whole trick.
+#
+# ubi9-minimal already has tzdata in its rpm database (glibc pulls it in), but the base image
+# strips /usr/share/zoneinfo to save space. `microdnf install -y tzdata` therefore sees the
+# dependency satisfied, does nothing, and exits 0. Measured on the shipped image: `rpm -q
+# tzdata` reported tzdata-2026b-1.el9 and `rpm -ql` listed 1,864 zoneinfo paths, while
+# /usr/share/zoneinfo did not exist. `reinstall` rewrites the files.
+#
+# The failure this prevents is silent and actively misleading, not merely absent. With TZ set
+# and no zoneinfo, glibc and Python parse the value as a POSIX TZ spec: "America/New_York"
+# yields zone name "America" with NO offset, so logs get stamped America/EDT-looking labels
+# over UTC times. Verified before and after:
+#   before:  tzname ('America','America')  offset +0000  local == utc
+#   after:   TZ=America/New_York date -> 17:29 EDT -0400  (utc 21:29)
 RUN microdnf update -y \
- && microdnf install -y python3.14 tzdata \
+ && microdnf install -y python3.14 \
+ && (microdnf reinstall -y tzdata || microdnf install -y tzdata) \
  && microdnf clean all \
  && rm -rf /var/cache/yum
 
