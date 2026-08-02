@@ -51,9 +51,24 @@ LOCK="$VENDOR/ASSETS.lock"
 # so --upgrade can rewrite them and git records the bump as a one-line diff.
 #   package : path-inside-tarball : filename we serve
 ASSETS=(
+  # API-docs renderers
   "redoc:package/bundles/redoc.standalone.js:redoc.standalone.js"
   "swagger-ui-dist:package/swagger-ui-bundle.js:swagger-ui-bundle.js"
   "swagger-ui-dist:package/swagger-ui.css:swagger-ui.css"
+
+  # Typefaces, self-hosted for the same reason as everything else here: the page must
+  # render identically on a cluster with no route out, and a webfont that silently falls
+  # back to system-ui changes every column width on the densest tables in the product.
+  #
+  # Latin subset, three weights. @fontsource ships ~60 subsets per family; taking cyrillic
+  # and vietnamese for a Kubernetes RBAC console would be megabytes of git for glyphs no
+  # user of this tool will ever render.
+  "@fontsource/jetbrains-mono:package/files/jetbrains-mono-latin-400-normal.woff2:jetbrains-mono-400.woff2"
+  "@fontsource/jetbrains-mono:package/files/jetbrains-mono-latin-500-normal.woff2:jetbrains-mono-500.woff2"
+  "@fontsource/jetbrains-mono:package/files/jetbrains-mono-latin-700-normal.woff2:jetbrains-mono-700.woff2"
+  "@fontsource/space-grotesk:package/files/space-grotesk-latin-400-normal.woff2:space-grotesk-400.woff2"
+  "@fontsource/space-grotesk:package/files/space-grotesk-latin-500-normal.woff2:space-grotesk-500.woff2"
+  "@fontsource/space-grotesk:package/files/space-grotesk-latin-700-normal.woff2:space-grotesk-700.woff2"
 )
 
 # sha256sum on Linux, shasum on macOS. Neither is present on both, and this script is run
@@ -88,13 +103,17 @@ fetch_and_verify_tarball() {
   # unbound `$version` and `set -u` aborts.
   local pkg="$1"
   local version="$2"
-  local tgz="$WORK/$pkg-$version.tgz"
+  # The scope's slash cannot appear in a temp filename.
+  local tgz="$WORK/${pkg//\//_}-$version.tgz"
   [ -f "$tgz" ] && return 0
 
   local integrity calc
   integrity=$(curl -sSfL "https://registry.npmjs.org/$pkg/$version" \
     | python3 -c 'import json,sys; print(json.load(sys.stdin)["dist"]["integrity"])')
-  curl -sSfL -o "$tgz" "https://registry.npmjs.org/$pkg/-/$pkg-$version.tgz"
+  # Scoped packages live at /@scope/name/-/name-<version>.tgz — the scope is dropped from
+  # the filename, so basename is required or every @fontsource fetch 404s.
+  curl -sSfL -o "$tgz" \
+    "https://registry.npmjs.org/$pkg/-/$(basename "$pkg")-$version.tgz"
 
   # npm publishes sha512 as base64; our digest is hex, so convert before comparing.
   calc="sha512-$(sha512hex "$tgz" | xxd -r -p | base64 | tr -d '\n')"

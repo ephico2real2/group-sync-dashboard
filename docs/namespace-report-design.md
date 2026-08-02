@@ -6,6 +6,11 @@
 > §1 is definitive, and the measurements behind §2 (no groups-forwarding in the proxy,
 > `-pass-access-token` present, SA cannot create SARs) were taken off the shipped binary and
 > the live cluster. Re-verify those three before building — a proxy upgrade could move them.
+>
+> **Re-verified 2026-08-02 on `ose-oauth-proxy-rhel9:v4.15`**, after the chart moved off the
+> cluster's internal `oauth-proxy:v4.4` imagestream. All three still hold: `-pass-access-token`
+> is present, there is still no groups-forwarding flag of any kind, and the SA still cannot
+> create `subjectaccessreviews`. §2's conclusion is unchanged on the newer proxy.
 
 **Status: proposed, not built.** Nothing in this document is implemented. It exists to be
 approved, amended or rejected first.

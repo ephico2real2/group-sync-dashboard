@@ -525,22 +525,33 @@ ingress:
 oauthProxy:
   enabled: true
 
-  # The version-matched image that ships WITH the cluster, already present as an
-  # imagestream and served from the internal registry — so starting a pod needs no external
-  # registry, no pull secret, and no mirroring step.
+  # The RHEL9 oauth-proxy from Red Hat's registry, explicitly versioned.
   #
-  # The `v4.4` tag name is misleading and worth not being fooled by: its digest is exactly
-  # what `oc adm release info --image-for=oauth-proxy` returns for this cluster, i.e. it IS
-  # the current 4.18 oauth-proxy. There is no v4.18 or v4.17 tag in registry.redhat.io —
-  # both 404 — and that registry's `latest` is v4.14.0, a genuinely OLDER build than this.
-  # oauth-proxy is a stable component and is not re-tagged per OpenShift release.
+  # This was previously the cluster's own imagestream
+  # (image-registry.openshift-image-registry.svc:5000/openshift/oauth-proxy:v4.4), chosen
+  # because registry.redhat.io had no tag newer than v4.14.0 at the time and the internal
+  # one needed no credentials. `ose-oauth-proxy-rhel9:v4.15` has since been published and
+  # is the better default: an explicit, auditable version on a RHEL9 base, rather than a
+  # `v4.4` tag whose digest silently tracked whatever the cluster's release payload held.
+  # A pinned name a human can look up beats a stable-looking tag that means something
+  # different on every cluster.
   #
-  # Confirm the right image for any cluster with:
+  # PULL CREDENTIALS. registry.redhat.io needs authentication, where the internal registry
+  # did not. On a normal OpenShift cluster this is already covered: the global pull secret
+  # in openshift-config carries registry.redhat.io, and the MCO distributes it to every
+  # node, so no per-namespace imagePullSecret is required. Verified on the reference
+  # cluster before this became the default. Check yours with:
+  #   oc get secret/pull-secret -n openshift-config -o jsonpath='{.data.\.dockerconfigjson}' \
+  #     | base64 -d | python3 -c 'import json,sys; print(*sorted(json.load(sys.stdin)["auths"]))'
+  #
+  # If registry.redhat.io is absent there, or the cluster is disconnected, override:
+  #   --set oauthProxy.image=<your-mirror>/openshift4/ose-oauth-proxy-rhel9:v4.15
+  #   --set oauthProxy.image=image-registry.openshift-image-registry.svc:5000/openshift/oauth-proxy:v4.4
+  # The second is the old internal-registry path, still valid and still credential-free.
+  #
+  # What your cluster's own release recommends, for comparison:
   #   oc adm release info --image-for=oauth-proxy
-  #
-  # Override for a disconnected cluster that mirrors elsewhere:
-  #   --set oauthProxy.image=<your-mirror>/openshift4/ose-oauth-proxy:<tag>
-  image: image-registry.openshift-image-registry.svc:5000/openshift/oauth-proxy:v4.4
+  image: registry.redhat.io/openshift4/ose-oauth-proxy-rhel9:v4.15
   imagePullPolicy: IfNotPresent
   port: 8443
 

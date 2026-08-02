@@ -38,7 +38,7 @@ group membership, so it ships authenticated and you turn the proxy *off* deliber
 | Key | Default | Notes |
 |---|---|---|
 | `oauthProxy.enabled` | `true` | **leave it on.** With it off the route is unauthenticated and exposes group membership |
-| `oauthProxy.image` | the cluster's own oauth-proxy, via the internal registry | confirm with `oc adm release info --image-for=oauth-proxy` |
+| `oauthProxy.image` | `registry.redhat.io/openshift4/ose-oauth-proxy-rhel9:v4.15` | needs registry.redhat.io credentials, which the cluster's global pull secret normally already carries. Override to the internal imagestream or a mirror if not — see `values.yaml` |
 | `oauthProxy.imagePullPolicy` | `IfNotPresent` | the image is already on the node as an imagestream |
 | `oauthProxy.port` | `8443` | |
 | `oauthProxy.cookieSecret` | `""` | generated once and reused across upgrades |
