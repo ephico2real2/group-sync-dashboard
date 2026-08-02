@@ -55,6 +55,15 @@ ARG BUILD_VERSION=unknown
 # Both lib AND lib64: RHEL splits purelib from platlib, so every compiled wheel
 # (pydantic_core, uvloop, httptools, _yaml) lands in lib64 while the pure-Python packages
 # land in lib. Listing only lib imports pydantic but not pydantic_core.
+# GSD_LOG_LEVEL is set explicitly rather than left to the code default, so it is
+# discoverable in `podman inspect` / `oc set env --list` — an env var nobody knows exists is
+# not a feature. DEBUG | INFO | WARNING | ERROR | CRITICAL. DEBUG adds per-poll timing, HTTP
+# request lines, page counts and the countdown to the next binding refresh; safe to leave on
+# briefly, chatty at a line or more per poll per cluster.
+#
+# TZ is deliberately NOT set here. The chart owns it (values.yaml `timezone`), because it is
+# a per-deployment choice about who reads the logs, not a property of the image. Unset means
+# UTC, which is the right default for an image that could run anywhere.
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONPATH=/install/lib/python3.14/site-packages:/install/lib64/python3.14/site-packages \
@@ -71,12 +80,6 @@ LABEL org.opencontainers.image.revision="$GIT_COMMIT" \
       org.opencontainers.image.version="$BUILD_VERSION" \
       org.opencontainers.image.title="group-sync-dashboard" \
       org.opencontainers.image.source="https://github.com/ephico2real2/group-sync-dashboard"
-#   GSD_LOG_LEVEL: DEBUG | INFO | WARNING | ERROR | CRITICAL
-#   Set explicitly rather than left to the code default so it is discoverable in
-#   `podman inspect` / `oc set env --list` — an env var nobody knows exists is not a
-#   feature. DEBUG adds per-poll timing, HTTP request lines, page counts and the
-#   countdown to the next binding refresh; it is safe to leave on briefly but is chatty
-#   at one line or more per poll per cluster.
 
 USER 0
 # `update` cannot clear the known curl HIGHs today: CVE-2026-8286, CVE-2026-8925,
@@ -93,31 +96,24 @@ USER 0
 # The update still earns its place: every rebuild of THIS image picks up whatever HAS been
 # fixed since Red Hat last rebuilt the base, rather than waiting on their cadence.
 # Measured effect when python3.14 landed: MEDIUM 119 -> 113.
-# tzdata is REQUIRED, not a convenience, if TZ is ever set.
 #
-# ubi9-minimal ships without it, and the failure is silent and misleading rather than loud:
-# with TZ=America/New_York and no zoneinfo, Python parses the value as a POSIX TZ spec,
-# takes "America" as the zone NAME and finds no offset, so it reports
-# tzname=('America','America') while localtime stays UTC. Verified in the shipped pod. Logs
-# would then be stamped with a New York label over UTC times — worse than leaving TZ unset,
-# because it looks configured.
+# TZDATA: REINSTALL, NOT INSTALL — and that is the whole trick.
 #
-# It does not affect stored data: every timestamp in the app is datetime.now(UTC) and every
-# stored string ends in Z. This governs log lines only.
-# REINSTALL, not install — and this is the whole trick.
-#
-# ubi9-minimal already has tzdata in its rpm database (glibc pulls it in), but the base image
-# strips /usr/share/zoneinfo to save space. `microdnf install -y tzdata` therefore sees the
-# dependency satisfied, does nothing, and exits 0. Measured on the shipped image: `rpm -q
-# tzdata` reported tzdata-2026b-1.el9 and `rpm -ql` listed 1,864 zoneinfo paths, while
+# ubi9-minimal already lists tzdata in its rpm database (glibc pulls it in) but strips
+# /usr/share/zoneinfo to save space. `microdnf install -y tzdata` therefore sees the
+# dependency satisfied, does nothing, and exits 0. Measured on the shipped image: `rpm -q`
+# reported tzdata-2026b-1.el9 and `rpm -ql` listed 1,864 zoneinfo paths, while
 # /usr/share/zoneinfo did not exist. `reinstall` rewrites the files.
 #
-# The failure this prevents is silent and actively misleading, not merely absent. With TZ set
-# and no zoneinfo, glibc and Python parse the value as a POSIX TZ spec: "America/New_York"
-# yields zone name "America" with NO offset, so logs get stamped America/EDT-looking labels
-# over UTC times. Verified before and after:
+# The failure it prevents is silent and actively misleading rather than merely absent: with
+# TZ set and no zoneinfo, glibc and Python parse the value as a POSIX TZ spec, so
+# "America/New_York" yields zone name "America" with NO offset and logs get a New York
+# label over a UTC clock. Verified before and after:
 #   before:  tzname ('America','America')  offset +0000  local == utc
 #   after:   TZ=America/New_York date -> 17:29 EDT -0400  (utc 21:29)
+#
+# Stored data is unaffected either way: every timestamp in the app is datetime.now(UTC) and
+# every stored string ends in Z. TZ governs log lines and the rendered UI, nothing else.
 RUN microdnf update -y \
  && microdnf install -y python3.14 \
  && (microdnf reinstall -y tzdata || microdnf install -y tzdata) \
