@@ -46,6 +46,15 @@ RUN python3.14 -m pip install --no-cache-dir --upgrade pip build \
 #
 # Pinned exactly and checksummed. A CDN that serves different bytes fails the build rather
 # than shipping them.
+#
+# The hashes are NOT "whatever the CDN gave us". They were verified against npm's published
+# `integrity` digest for each release tarball — download the tarball from the registry,
+# check it against that digest, extract, then hash the individual file. Hashing a CDN
+# download and pinning the result is trust-on-first-use: it proves the bytes have not
+# changed since you fetched them, and pins a tampered file just as faithfully as a good one.
+#
+# Re-verify or regenerate with ./verify-vendored-assets.sh, which does exactly that and
+# refuses to pass on a mismatch. Run it when bumping a version.
 RUN mkdir -p /vendor \
  && curl -sSfL -o /vendor/redoc.standalone.js \
       https://cdn.jsdelivr.net/npm/redoc@2.5.0/bundles/redoc.standalone.js \
