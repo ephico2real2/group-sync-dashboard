@@ -37,7 +37,10 @@ build-backend = "setuptools.build_meta"
 include = ["gsd*"]
 
 [tool.setuptools.package-data]
-gsd = ["static/*"]
+# static/** not static/*: the single-level glob silently excluded static/vendor/, so the
+# wheel would have shipped without the API-docs bundles and /api would have fallen back to
+# the CDN in the built image — the exact failure vendoring them exists to prevent.
+gsd = ["static/*", "static/vendor/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
