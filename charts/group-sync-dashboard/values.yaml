@@ -28,9 +28,8 @@ fullnameOverride: ""
 # ---------------------------------------------------------------------------
 # RECOMMENDED: 1.
 #
-# This polls every 15 minutes and serves a handful of operators; it is not in anyone's
-# request path. A node drain costs one missed poll, which the next one heals — and at a
-# 15-minute cadence a restart is even less consequential. What a second replica
+# This polls every 60s and serves a handful of operators; it is not in anyone's request
+# path. A node drain costs one missed poll, which the next one heals. What a second replica
 # actually buys is HTTP uptime, and it pays for it in DIVERGENT HISTORY — each pod only has
 # the timeline since its own database existed, so the Service answers "when did this user
 # leave?" differently depending on which pod you reach. That history is the irreplaceable
@@ -138,32 +137,39 @@ probes:
 # Application configuration
 # ---------------------------------------------------------------------------
 config:
-  # 15 minutes. Still far finer than the fastest schedule seen in practice (*/30), and a
-  # sync event is recorded by its own lastSyncSuccessTime, so a slower poll delays when a
-  # sync is NOTICED without losing it or distorting the recorded timeline.
+  # 60s. Measured on the reference cluster, one poll is TWO list calls — groupsyncs and
+  # groups — because 62 groups fit in a single 500-item page. That is 2880 calls a day per
+  # cluster, which is nothing, and it buys the thing this dashboard exists for.
   #
-  # THREE VALUES ARE TIED TO THIS and were raised with it. Changing pollIntervalSeconds on
-  # its own breaks all three, and two of them fail loudly:
+  # The precision argument, since it is the only one that matters here. A sync event
+  # carries the operator's own lastSyncSuccessTime, so a slow poll delays when a sync is
+  # NOTICED without distorting the recorded timeline. A MEMBERSHIP event has no upstream
+  # timestamp — observed_at is ours — so the poll interval IS the error bar on "when did
+  # this person lose access?". At 60s that is +/-1 minute; at 900s it was +/-15. Neither
+  # loses the change; the slower one just cannot say when it happened. That history is the
+  # irreplaceable part, so it gets the resolution.
+  #
+  # THREE VALUES ARE TIED TO THIS and move with it. Changing pollIntervalSeconds alone
+  # breaks all three, and two fail loudly:
   #   * scheduleGraceSeconds below            (or every healthy CR flaps to `late`)
   #   * monitoring.prometheusRule.notPollingSeconds (or that alert fires forever)
   #   * bindingIntervalSeconds below          (or bindings refresh faster than groups)
-  pollIntervalSeconds: 900
+  pollIntervalSeconds: 60
 
   # Slack before a CR is called late. Without it the state flaps every cycle: a sync lands
   # 3-14s after its cron minute and is observed up to a POLL INTERVAL later, so a healthy
   # CR briefly exceeds one interval on EVERY pass.
   #
-  # This must therefore stay above pollIntervalSeconds — the observation lag it absorbs IS
-  # the poll interval. At 900s polling and the old 120s grace, every CR on a */30 schedule
-  # would show `late` for most of each cycle. 960 = 900 + a minute for scheduler latency.
-  scheduleGraceSeconds: 960
+  # Must stay above pollIntervalSeconds — the observation lag it absorbs IS the poll
+  # interval. 120 = 60 for that lag plus a minute for scheduler latency.
+  scheduleGraceSeconds: 120
 
   # Bindings are listed across every namespace, far more expensive than the two group
-  # calls, and they change on administrative action rather than on a schedule. At 100x the
-  # reference cluster a refresh is ~154 paged requests, so this is deliberately slower than
-  # the group poll — which means it has to move when the group poll does, or the expensive
-  # call becomes the frequent one.
-  bindingIntervalSeconds: 1800
+  # calls — ~154 paged requests at 100x the reference cluster — and they change on
+  # administrative action rather than on a schedule, so minute-level freshness buys
+  # nothing. Deliberately slower than the group poll, which means it moves when the group
+  # poll moves, or the expensive call becomes the frequent one.
+  bindingIntervalSeconds: 300
 
   requestTimeoutSeconds: 15
 
@@ -508,10 +514,10 @@ monitoring:
     # The metric is a unix timestamp, so the rule expresses staleness against real time.
     overdueSeconds: 7200      # GroupSync has not synced for this long
     # The dashboard itself has stopped polling. MUST stay above ~2x config.pollIntervalSeconds:
-    # the measured gap between polls is one interval, so at 900s polling the old 600s
-    # threshold was below the normal gap and the alert would have fired continuously,
-    # forever, on a perfectly healthy deployment. 2400 = 2 intervals plus a cycle of slack.
-    notPollingSeconds: 2400
+    # the normal gap between polls is one interval, so a threshold below it makes this alert
+    # fire continuously, forever, on a perfectly healthy deployment. That is not theoretical
+    # — it is what 600 would have done the moment the interval went to 900.
+    notPollingSeconds: 600
     # MiB. 25% of the default 1Gi PVC — high enough that normal churn never fires it, low
     # enough to leave room to act before the volume fills. Raise it with persistence.size.
     walMiB: 256
