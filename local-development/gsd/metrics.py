@@ -81,6 +81,21 @@ class DashboardCollector:
             leader.add_metric([""], 1)
         yield leader
 
+        # One call, three metrics. The collector asks the backend how it is and exports
+        # what comes back; it does not read SQLite attributes off the store, which is what
+        # used to make this file engine-aware.
+        #
+        # The metric NAMES still say sqlite, deliberately. They are accurate today and they
+        # appear in shipped alert rules, so renaming them is an operator-visible breaking
+        # change that belongs with an actual engine change — at which point it is confined
+        # to these few lines. Guarded because a usage statistic must never be why a scrape
+        # 500s and takes every other metric with it.
+        try:
+            health = self.store.health()
+        except Exception:  # noqa: BLE001
+            log.exception("metrics: storage health unavailable; omitting those series")
+            health = {}
+
         # The WAL is the one thing here that can fill the volume while every other signal
         # stays green: checkpointing is best-effort and yields to open readers, so a steady
         # read load can starve it indefinitely. The database file stops growing, the API
@@ -91,7 +106,7 @@ class DashboardCollector:
             "being starved by open readers; compare against the PVC size.",
             labels=[],
         )
-        wal.add_metric([], self.store.wal_bytes())
+        wal.add_metric([], int(health.get("wal_bytes", 0)))
         yield wal
 
         ckpt = CounterMetricFamily(
@@ -101,7 +116,7 @@ class DashboardCollector:
             "starvation case.",
             labels=[],
         )
-        ckpt.add_metric([], self.store.checkpoint_busy_total)
+        ckpt.add_metric([], int(health.get("checkpoint_busy_total", 0)))
         yield ckpt
 
         # 1 only when WAL actually engaged. It is requested at startup but the filesystem
@@ -113,7 +128,7 @@ class DashboardCollector:
             "readers now block on writes.",
             labels=[],
         )
-        journal.add_metric([], 1 if self.store.journal_mode == "wal" else 0)
+        journal.add_metric([], 1 if health.get("wal_enabled") else 0)
         yield journal
 
         # gsd_dashboard_active_users USED TO BE EXPOSED HERE AND WAS REMOVED.

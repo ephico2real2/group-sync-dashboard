@@ -332,7 +332,7 @@ class Store:
             self._local.conn = conn
         return conn
 
-    def wal_bytes(self) -> int:
+    def _wal_bytes(self) -> int:
         """Size of the -wal sidecar, or 0 when there is none (`:memory:`, or rollback mode)."""
         if self.path == ":memory:":
             return 0
@@ -341,7 +341,7 @@ class Store:
         except OSError:
             return 0
 
-    def maybe_checkpoint(self) -> tuple[int, int, int] | None:
+    def _checkpoint(self) -> tuple[int, int, int] | None:
         """Truncate the WAL once it exceeds the threshold. Returns (busy, log, moved).
 
         SQLite auto-checkpoints when the WAL passes ~1000 pages, but that runs PASSIVE: it
@@ -359,7 +359,7 @@ class Store:
         """
         if self.path == ":memory:" or self.journal_mode != "wal":
             return None
-        if self.wal_bytes() < self.wal_checkpoint_bytes:
+        if self._wal_bytes() < self.wal_checkpoint_bytes:
             return None
         with self._lock:
             row = self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
@@ -370,11 +370,47 @@ class Store:
                 "WAL checkpoint blocked by an open reader (%d frames, %.1f MiB); will retry "
                 "next cycle",
                 log_frames,
-                self.wal_bytes() / 1048576,
+                self._wal_bytes() / 1048576,
             )
         else:
             log.debug("WAL checkpointed: %d frames reclaimed", moved)
         return busy, log_frames, moved
+
+    # -- the engine-neutral half of the seam ---------------------------------------------
+    #
+    # These two are what the poller and the metrics collector are allowed to call. They
+    # used to call wal_bytes(), maybe_checkpoint() and read .journal_mode directly, which
+    # meant both of them knew the database was SQLite — the leak that made the "decoupled"
+    # claim untrue. See gsd/storage.py.
+
+    def maintain(self) -> dict[str, object]:
+        """Periodic upkeep after a write cycle. For SQLite, that is a WAL checkpoint.
+
+        Returns what it did rather than a SQLite tuple, so a caller can log or export it
+        without knowing what an engine's upkeep involves. An engine with nothing to do
+        returns an empty dict, and the poller's call site does not change.
+        """
+        result = self._checkpoint()
+        if result is None:
+            return {}
+        busy, frames, moved = result
+        return {"checkpoint_busy": bool(busy), "frames": frames, "frames_reclaimed": moved}
+
+    def health(self) -> dict[str, object]:
+        """Engine-reported operational facts, for metrics and diagnostics.
+
+        Deliberately a dict of whatever this engine can say, not a fixed schema: the
+        collector exports what it finds. Everything here is SQLite vocabulary, which is
+        precisely why it is behind a generic method — when the engine changes, the keys
+        change here and in metrics.py, and nowhere else.
+        """
+        return {
+            "engine": "sqlite",
+            "journal_mode": self.journal_mode,
+            "wal_enabled": self.journal_mode == "wal",
+            "wal_bytes": self._wal_bytes(),
+            "checkpoint_busy_total": self.checkpoint_busy_total,
+        }
 
     def _rows(self, sql: str, params: tuple | list = ()) -> list[dict]:
         """Run a read on the per-thread reader (or under the lock for :memory:).

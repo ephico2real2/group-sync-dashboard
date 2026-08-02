@@ -3,11 +3,22 @@
 Answering: *how do you connect to the SQLite layer currently, and is it designed so we can
 decouple later?*
 
-Short answer: **the call sites are already decoupled; the operational surface is not.**
-Swapping the engine is a contained job. Swapping it without also changing the deployment
-model is not, and that is the part worth knowing before anyone plans it.
+Short answer: **the seam is now declared and enforced.** Swapping the engine is a
+contained job. Swapping it without also changing the deployment model is not, and that is
+the part worth knowing before anyone plans it.
 
-Everything below is measured against the tree at `81b91142cb`, not asserted.
+This document originally described a seam that existed by accident. Since then the
+`refactor/storage-seam` branch turned it into a contract:
+
+* `gsd/storage.py` declares `StorageBackend`, the Protocol a second implementation must
+  satisfy — and nothing more.
+* `tests/test_storage_seam.py` enforces it with an AST check per module: no driver import
+  and no SQL outside the backend, and `Store` must still satisfy the Protocol.
+* The three SQLite nouns that leaked onto the public surface — `wal_bytes()`,
+  `maybe_checkpoint()`, `journal_mode` — are private again, behind engine-neutral
+  `maintain()` and `health()`.
+
+Everything below is measured, not asserted.
 
 ---
 
@@ -73,26 +84,24 @@ All inside `store.py`:
 Also `sqlite3.Row` as the row factory, and `?` placeholders rather than `%s`. None of this
 is hard; it is a day of careful work with the existing test suite as the oracle.
 
-### 3.2 SQLite concepts on the public API — the real leak
+### 3.2 SQLite concepts on the public API — FIXED
 
-Six call sites outside the store know that storage is SQLite, because the *method names and
-metrics say so*:
+This was the real leak. Six call sites outside the store knew the engine, because the
+method names said so: the poller called `maybe_checkpoint()`, and the collector read
+`wal_bytes()`, `checkpoint_busy_total` and `journal_mode` off the store directly.
+
+Now:
 
 ```
-gsd/poller.py:241    self.store.maybe_checkpoint()
-gsd/metrics.py:89    gsd_sqlite_wal_bytes          <- store.wal_bytes()
-gsd/metrics.py:98    gsd_sqlite_checkpoint_busy_total
-gsd/metrics.py:116   gsd_sqlite_wal_enabled        <- store.journal_mode
+gsd/poller.py    self.store.maintain()     # "do your upkeep"; SQLite checkpoints, others may not
+gsd/metrics.py   health = self.store.health()   # one call, three metrics, no engine nouns
 ```
 
-`wal_bytes()` and `maybe_checkpoint()` are on the 31-method public surface, and three
-Prometheus metrics carry `sqlite` in their **names** — which means they are also in the
-alert rules (`templates/monitoring.yaml`) and in any dashboard anyone has built on them.
-Renaming a metric is a breaking change for whoever is alerting on it.
-
-If decoupling ever becomes real, this is the piece to fix *first and independently*: give
-the store a generic health surface (`storage_health() -> dict`) and let the collector
-decide what to export, so the engine name stops appearing in the metric namespace.
+The metric NAMES still say `sqlite`, deliberately. They are accurate today, and they appear
+in shipped alert rules (`templates/monitoring.yaml`) — renaming them is an operator-visible
+breaking change that belongs with an actual engine change, not before it. The difference is
+that the rename is now confined to a few lines of `metrics.py` instead of requiring the
+poller and collector to be rewritten as well.
 
 ### 3.3 Configuration — visible to operators
 
@@ -123,11 +132,11 @@ and it is mostly in the chart rather than in Python.
 
 In this order, because each step is independently useful:
 
-1. **Break the metric/API leak first** (§3.2). Rename `wal_bytes`/`maybe_checkpoint` behind
-   a neutral `storage_health()` / `maintain()`, and decide the metric-naming migration.
-   Do this while still on SQLite, so it is a refactor with no behaviour change.
-2. **Extract the contract.** Turn the 31 methods into a `Protocol` and type the callers
-   against it. Cheap, and it makes the second implementation's job unambiguous.
+1. ~~**Break the metric/API leak first**~~ — done. `maintain()` and `health()` replaced the
+   engine nouns; the metric-name migration is deferred to the engine change and is now a
+   one-file edit.
+2. ~~**Extract the contract.**~~ — done. `gsd/storage.py::StorageBackend`, enforced by
+   `tests/test_storage_seam.py`.
 3. **Write the second implementation against the existing tests.** The suite (234 tests)
    is engine-agnostic wherever it goes through `Store`, so it becomes the conformance
    suite. Two known exceptions to fix: `test_sqlite_locking.py` is deliberately
@@ -141,7 +150,14 @@ In this order, because each step is independently useful:
   wholesale-replace operations (`replace_group_state`) shaped by the fact that a SQLite
   delete-then-insert inside one transaction is cheap. On a network database, those become
   the obvious performance problem, and a few would want rewriting rather than porting.
-- There is no abstract base class, `Protocol`, or interface today. The decoupling described
-  here is a property of how the code is *used*, which convention currently protects and
-  nothing enforces. A single `import sqlite3` in `api.py` would end it, and no test would
-  fail.
+- The Protocol is structural, not nominal: `Store` satisfies it by having the right
+  methods, and nothing forces a future implementation to inherit from it. The seam test
+  checks `isinstance(Store(...), StorageBackend)`, which catches drift in the existing
+  backend but cannot make someone write the second one correctly.
+- `runtime_checkable` Protocols check method NAMES, not signatures. A backend with
+  `groups(self, cluster)` instead of `groups(self, cluster_id, state="all")` would still
+  pass `isinstance`. The conformance guarantee comes from running the existing test suite
+  against the new backend, not from the Protocol.
+- The former caveat — "one `import sqlite3` in `api.py` would end it and no test would
+  fail" — no longer holds. That exact edit now fails
+  `test_no_module_imports_a_database_driver[api.py]`, which was verified by making it.

@@ -251,10 +251,12 @@ class Poller:
                 continue
             try:
                 poll_once(self.store, cluster, self.settings.request_timeout_seconds)
-                # After the write, never during it, and never from a request handler: a
-                # TRUNCATE checkpoint waits for open readers, and that wait is free here and
-                # would be user-visible latency anywhere else.
-                self.store.maybe_checkpoint()
+                # After the write, never during it, and never from a request handler:
+                # whatever upkeep the engine needs may wait on open readers, and that wait
+                # is free here and would be user-visible latency anywhere else. The poller
+                # does not know or care what the engine actually does — for SQLite it is a
+                # WAL checkpoint; for another engine it may be nothing at all.
+                self.store.maintain()
             except Exception:  # noqa: BLE001 - a poll thread must never die silently
                 log.exception("unhandled error polling %s", cluster.name)
                 # The recovery write can fail for the SAME reason the poll did — a full or

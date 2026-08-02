@@ -1,4 +1,9 @@
-"""SQLite locking and WAL behaviour.
+"""ENGINE-SPECIFIC BY DESIGN. This file tests SQLite's own behaviour — WAL, busy_timeout,
+checkpoint starvation — so it reaches past the storage seam and calls the private
+_wal_bytes()/_checkpoint() helpers directly. tests/test_storage_seam.py enforces that no
+APPLICATION module does the same; a backend's own test suite is the one place it is correct.
+
+SQLite locking and WAL behaviour.
 
 These assert against REAL contention rather than against the PRAGMA values, because reading
 back a pragma only proves it was accepted — not that it changes what happens when two
@@ -105,8 +110,8 @@ class TestWal:
         store = Store(":memory:")
         try:
             assert store.journal_mode == "memory"
-            assert store.wal_bytes() == 0
-            assert store.maybe_checkpoint() is None
+            assert store._wal_bytes() == 0
+            assert store._checkpoint() is None
         finally:
             store.close()
 
@@ -114,7 +119,7 @@ class TestWal:
         store = Store(str(tmp_path / "gsd.db"), wal_checkpoint_mb=1024)
         try:
             store.record_poll("c", "ok", None)
-            assert store.maybe_checkpoint() is None
+            assert store._checkpoint() is None
         finally:
             store.close()
 
@@ -125,14 +130,14 @@ class TestWal:
         try:
             for i in range(400):
                 store.record_poll(f"cluster-{i}", "ok", "x" * 200)
-            grown = store.wal_bytes()
+            grown = store._wal_bytes()
             assert grown > store.wal_checkpoint_bytes, f"WAL only reached {grown} bytes"
 
-            result = store.maybe_checkpoint()
+            result = store._checkpoint()
             assert result is not None
             busy, _frames, _moved = result
             assert busy == 0, "no reader was open, so the checkpoint should not be blocked"
-            assert store.wal_bytes() < grown
+            assert store._wal_bytes() < grown
 
             # The data survived the truncation — a checkpoint moves pages into the database,
             # it does not discard them.
@@ -155,7 +160,7 @@ class TestWal:
             reader.execute("SELECT COUNT(*) FROM poll_outcome").fetchone()
             store.record_poll("after-snapshot", "ok", None)
             try:
-                result = store.maybe_checkpoint()
+                result = store._checkpoint()
                 assert result is not None
                 busy, _frames, _moved = result
                 assert busy == 1, "the open snapshot should have blocked the truncation"
