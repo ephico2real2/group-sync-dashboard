@@ -159,6 +159,16 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
             "error_is_current": error_current,
         }
 
+    def _config_summary(cluster_id: str) -> dict | None:
+        oc = store.operator_configs(cluster_id)
+        if not oc["present"]:
+            return None
+        failing = sum(
+            1 for c in oc["configs"]
+            if c["error_at"] and (not c["success_at"] or c["error_at"] > c["success_at"])
+        )
+        return {"total": len(oc["configs"]), "failing": failing}
+
     def _binding_counts(cluster_id: str) -> dict:
         counts = {"dangling": 0, "unresolved": 0, "built_in": 0}
         for finding in store.binding_findings(cluster_id):
@@ -192,6 +202,9 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
                     "empty_groups": counts["empty"],
                     "unattributed_groups": counts["unattributed"],
                     "oldest_last_sync": store.oldest_last_sync(row["id"]),
+                    # Compact policy-operator summary for the card. None when the CRDs are
+                    # absent, so the UI can render nothing rather than a healthy-looking 0.
+                    "operator_configs": _config_summary(row["id"]),
                     # Surfaced on the landing page so binding problems are discoverable
                     # without knowing to navigate anywhere. `unresolved` does not alert
                     # (it cannot be told from a not-yet-synced group), so without a count
@@ -358,6 +371,17 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
             "operator_configs": store.operator_configs(cluster_id),
             **by_tier,
         }
+
+    @app.get("/api/clusters/{cluster_id}/operator-configs")
+    def operator_configs(cluster_id: str) -> dict:
+        """Health of the namespace-configuration-operator's CRs on this cluster.
+
+        `present: false` means the CRDs do not exist there — auto-detected, and a
+        different truth from "installed with zero CRs". Reconcile conditions only, by
+        design: the templates are the operator's business.
+        """
+        require_cluster(cluster_id)
+        return {"cluster": cluster_id, **store.operator_configs(cluster_id)}
 
     @app.get("/api/clusters/{cluster_id}/membership-changes")
     def membership_changes(

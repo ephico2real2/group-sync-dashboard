@@ -651,6 +651,11 @@ function clusterCard(c) {
       <div class="kpi ${(c.dangling_bindings + c.unresolved_bindings) ? "flag-critical" : ""}"><div class="label">Bindings to review</div>
         <div class="value ${(c.dangling_bindings + c.unresolved_bindings) ? "" : "muted"}">${
           (c.dangling_bindings || 0) + (c.unresolved_bindings || 0)}</div></div>
+      ${c.operator_configs ? `<div class="kpi ${c.operator_configs.failing ? "flag-critical" : ""}">
+        <div class="label">Policy configs</div>
+        <div class="value">${c.operator_configs.total}${c.operator_configs.failing
+          ? ` <span class="err" style="font-size:13px">(${c.operator_configs.failing} failing)</span>` : ""}</div>
+      </div>` : ""}
       <div class="kpi"><div class="label">Oldest last sync</div>
         <div class="value muted" style="font-size:15px">${esc(ago(c.oldest_last_sync))}</div></div>
     </div>
@@ -1138,8 +1143,13 @@ function bindingsPage() {
     </div>
   </section>`;
 
+  // The policy-operator strip is part of the page, not of a filter: these CRs template
+  // the bindings this page shows, so their health belongs beside them whichever tier is
+  // selected. It was originally rendered only on the default filter, where nobody found it.
+  const health = configHealth(d.operator_configs);
+
   if (view.bindingFilter === "unmanaged") {
-    return header + section("Unmanaged",
+    return header + health + section("Unmanaged",
       `The group is operator-synced, other bindings on this cluster carry the policy
        operator's <code>config-source</code> label, and this one carries none — somebody
        granted access by hand, outside the policy system. A deliberate one can be
@@ -1149,19 +1159,19 @@ function bindingsPage() {
       d.unmanaged || [], sevBadge("warning", "unmanaged"));
   }
   if (view.bindingFilter === "ok") {
-    return header + section("Granted",
+    return header + health + section("Granted",
       "The group named by each of these exists, so the access reaches its members.",
       d.ok || []);
   }
   if (view.bindingFilter === "built_in") {
-    return header + section("Built-in",
+    return header + health + section("Built-in",
       `Kubernetes virtual groups such as <code>system:authenticated</code> and
        <code>system:serviceaccounts:*</code>. They authorise real access and no Group object
        exists for them by design, so their absence is expected and not a fault.`,
       d.built_in || []);
   }
   if (view.bindingFilter === "all") {
-    return header
+    return header + health
       + section("Dangling", "The group was operator-managed and has disappeared — this "
           + "binding now grants nobody.", d.dangling || [], sevBadge("critical", "dangling"))
       + section("Unresolved", "Names a group that has never existed here.",
@@ -1175,7 +1185,7 @@ function bindingsPage() {
   // default: needs review. The header goes here too — without it this view would show a
   // subset with no statement of the whole, which is the exact misrepresentation the filter
   // was added to fix.
-  return header + `<section class="card">
+  return header + health + `<section class="card">
     <div class="hero">
       <div class="value">${review}</div>
       <div class="label">binding${review === 1 ? "" : "s"} that grant nobody</div>
@@ -1198,8 +1208,7 @@ function bindingsPage() {
       `Hand-made grants on operator-synced groups, outside the policy system. Acknowledge
        a deliberate one with the <code>rbac.ocp.io/unmanaged-exception</code> annotation on
        the binding; the justification then lives next to the object and clears it here.`,
-      d.unmanaged || [], sevBadge("warning", "unmanaged"))}
-  ${configHealth(d.operator_configs)}`;
+      d.unmanaged || [], sevBadge("warning", "unmanaged"))}`;
 }
 
 /* The policy operator's CR health. Rendered only when the CRDs exist on the cluster —
@@ -1261,7 +1270,8 @@ function render() {
   } else {
     main.innerHTML = alertsCard()
       + `<div class="grid">${data.clusters.map(clusterCard).join("")}</div>`
-      + groupsyncTable();
+      + groupsyncTable()
+      + configHealth(data.operatorConfigs);
     document.querySelectorAll("[data-cr]").forEach((tr) => {
       tr.onclick = () => { pushTrail(); view.groupsync = tr.dataset.cr; refresh(); };
     });
@@ -1374,6 +1384,13 @@ async function refresh(opts = {}) {
     // Not cluster-scoped: this is who used the DASHBOARD, which has no cluster dimension.
     // Fetched only on its own tab, so the other pages do not pay for it.
     if (view.page === "usage") data.usage = await get("/api/dashboard/activity");
+    // The policy operator's health belongs on the landing page: these CRs template the
+    // RoleBindings that give every synced group its access, and a failing one is exactly
+    // the silent stoppage this dashboard exists to surface.
+    if (view.page === "overview" && view.cluster && !view.groupsync) {
+      data.operatorConfigs = await get(
+        `/api/clusters/${encodeURIComponent(view.cluster)}/operator-configs`);
+    }
     render();
   } catch (err) {
     // An error must never strand the reader: keep a working Back so a dead link is a
