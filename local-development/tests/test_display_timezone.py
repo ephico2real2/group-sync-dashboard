@@ -151,7 +151,12 @@ def test_the_usage_panel_uses_the_display_zone_too():
     assert "fmtClock(r.first_seen_at)" in usage, "First seen is not going through the formatter"
     assert "fmtClock(r.last_seen_at)" in usage, "Last seen is not going through the formatter"
     assert "slice(11, 19)" not in usage, "still slicing the raw UTC hour"
-    assert "displayAbbrev" in usage, "the columns do not say which zone they are in"
+    # The zone rides on the VALUE, as fmtTime does on every other page — so the assertion is
+    # about fmtClock carrying it, not about the header.
+    fn = html[html.index("function fmtClock"):]
+    fn = fn[:fn.index("\nfunction ")]
+    assert "timeZoneName" in fn, "fmtClock does not label the value with its zone"
+    assert "displayAbbrev" in fn, "fmtClock has no zone-label fallback"
 
 
 def test_the_usage_day_column_says_it_is_utc():

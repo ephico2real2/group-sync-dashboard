@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
-  <title>GroupSync dashboard</title>
+  <title>OCP Access Control Dashboard</title>
 <style>
 /* Roles, not raw hex, throughout. Light/dark swap in one place.
    Status hues are reserved and never used for a series; the state badges pair every
@@ -707,8 +707,7 @@ header.top { border-bottom-color: color-mix(in srgb, var(--accent) 30%, var(--bo
 <a class="skip" href="#main">Skip to main content</a>
 <div class="wrap">
   <header class="top">
-    <h1>GroupSync dashboard</h1>
-    <span class="sub" id="scope-note"></span>
+    <h1>OCP Access Control Dashboard<span id="scope-note"></span></h1>
     <span class="spacer"></span>
     <span class="sub" id="build-info"></span>
     <span class="sub" id="last-refresh"></span>
@@ -859,11 +858,16 @@ function fmtClock(iso) {
   if (!iso) return "—";
   const d = new Date(iso);
   if (isNaN(d)) return iso;
-  if (!displayZone) return iso.slice(11, 19);
-  return new Intl.DateTimeFormat("en-CA", {
+  if (!displayZone) return iso.slice(11, 19) + "Z";
+  // timeZoneName per instant, like fmtTime — the abbreviation depends on the date being
+  // formatted, so January is EST where July is EDT and the server's current zone cannot
+  // speak for both.
+  const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: displayZone, hour12: false,
-    hour: "2-digit", minute: "2-digit", second: "2-digit",
-  }).format(d);
+    hour: "2-digit", minute: "2-digit", second: "2-digit", timeZoneName: "short",
+  }).formatToParts(d).reduce((a, x) => (a[x.type] = x.value, a), {});
+  return `${parts.hour}:${parts.minute}:${parts.second} ` +
+         `${parts.timeZoneName || displayAbbrev}`;
 }
 
 function ago(iso) {
@@ -1283,9 +1287,7 @@ function usagePage() {
       ? `<div class="empty-note">Nothing recorded yet. Rows appear after the first flush,
            which runs on the configured interval rather than per request.</div>`
       : `<div class="scroll-x"><table>
-          <thead><tr><th>User</th><th>Day (UTC)</th>
-            <th>First seen (${esc(displayAbbrev)})</th>
-            <th>Last seen (${esc(displayAbbrev)})</th>
+          <thead><tr><th>User</th><th>Day (UTC)</th><th>First seen</th><th>Last seen</th>
             <th class="num">Interactions</th></tr></thead>
           <tbody>${rows.map((r) => `<tr>
             <td>${esc(r.user_name)}${r.email
@@ -2058,8 +2060,14 @@ function render() {
   }
   // Same reason the cluster selector is hidden on Usage: the scope note would claim a
   // cluster scope this page does not have.
+  // Part of the bold title, not a muted aside: on a screen shared in a review the cluster is
+  // half of what the title means, and " - prod-east" set in grey read as decoration.
+  //
+  // Still suppressed on Usage for the same reason the cluster selector is: that page is
+  // per-pod dashboard activity, not per-cluster, so naming a cluster would claim a scope the
+  // page does not have.
   $("scope-note").textContent =
-    view.cluster && view.page !== "usage" ? `· ${view.cluster}` : "";
+    view.cluster && view.page !== "usage" ? ` - ${view.cluster}` : "";
   // UTC, like every other time on the page, and labelled so.
   //
   // This was `toTimeString()` — the browser's LOCAL zone — while fmtTime() renders UTC with
