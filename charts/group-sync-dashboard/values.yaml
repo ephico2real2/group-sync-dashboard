@@ -183,6 +183,56 @@ ingress:
   tls: []
 
 # ---------------------------------------------------------------------------
+# OpenShift OAuth proxy
+# ---------------------------------------------------------------------------
+# Puts cluster login in front of the dashboard. Off by default so the chart installs
+# anywhere; turn it on for any cluster where the Route is reachable by people other than
+# you, because this exposes group membership.
+#
+# ACCESS MODEL: authentication, not authorization. Anyone who can log into the cluster can
+# view. That is the documented default of the OpenShift provider ("defaults to allowing any
+# user that can log into the OpenShift cluster"), and it is deliberate here — the dashboard
+# shows nothing a user could not already read with `oc get groups`, so gating it behind an
+# access request would add friction without adding protection. Set `sar` to restrict.
+oauthProxy:
+  enabled: false
+
+  image: registry.redhat.io/openshift4/ose-oauth-proxy:v4.14
+  imagePullPolicy: IfNotPresent
+  port: 8443
+
+  # Cookie signing key. Leave empty and the chart generates one, then REUSES it across
+  # upgrades by reading back the existing Secret. Generating inline in the container args
+  # instead — as some examples do — silently regenerates on every `helm upgrade` and logs
+  # every user out.
+  cookieSecret: ""
+
+  # Paths served without authentication. The health endpoints MUST be here or kubelet
+  # probes receive a 302 to the login page and the pod is killed as unhealthy. /metrics is
+  # included so a ServiceMonitor can scrape it; the exporter emits counts and states only,
+  # never a group or user name, precisely because it is reachable unauthenticated.
+  skipAuthRegex: "^/(healthz|readyz|metrics)$"
+
+  # Empty means authentication only. To also require a permission, put a SubjectAccessReview
+  # here, e.g. to admit only those who could read the underlying data anyway:
+  #   sar: '{"resource":"groups","resourceAPIGroup":"user.openshift.io","verb":"list"}'
+  sar: ""
+
+  # Skips the interstitial page that offers exactly one login choice.
+  skipProviderButton: true
+  requestLogging: false
+
+  resources:
+    requests: {cpu: 10m, memory: 64Mi}
+    limits: {cpu: 200m, memory: 256Mi}
+
+  # How the ServiceAccount advertises its callback URL.
+  #   redirectreference — points at the Route by NAME and lets OpenShift resolve the host.
+  #                       Correct when the Route host is generated rather than fixed.
+  #   redirecturi       — a literal URL, which requires route.host to be set.
+  redirectMode: redirectreference
+
+# ---------------------------------------------------------------------------
 # Monitoring
 # ---------------------------------------------------------------------------
 # Both default OFF: they need the Prometheus Operator CRDs, and applying them where those

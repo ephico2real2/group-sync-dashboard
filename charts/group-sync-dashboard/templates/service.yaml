@@ -7,10 +7,22 @@ metadata:
   # metadata labels — not by spec.selector. Without them it matches nothing and scrapes
   # nothing while both objects look correct. That bug was found on this deployment.
   labels: {{- include "gsd.labels" . | nindent 4 }}
+  {{- if .Values.oauthProxy.enabled }}
+  annotations:
+    # service-ca issues and rotates the proxy's TLS certificate into this Secret.
+    service.beta.openshift.io/serving-cert-secret-name: {{ include "gsd.fullname" . }}-tls
+  {{- end }}
 spec:
   type: {{ .Values.service.type }}
   selector: {{- include "gsd.selectorLabels" . | nindent 4 }}
   ports:
     - name: http
       port: {{ .Values.service.port }}
+      {{- if .Values.oauthProxy.enabled }}
+      # Targets the PROXY, not the app. With the proxy enabled the app binds 127.0.0.1
+      # only, so this is the sole way in and the proxy cannot be bypassed from inside the
+      # cluster by talking to the pod directly.
+      targetPort: oauth-proxy
+      {{- else }}
       targetPort: http
+      {{- end }}

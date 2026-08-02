@@ -19,5 +19,14 @@ spec:
     name: {{ include "gsd.fullname" . }}
   port:
     targetPort: http
+  {{- if .Values.oauthProxy.enabled }}
+  # reencrypt, not edge: the proxy terminates TLS itself with the service-ca certificate,
+  # so the router must re-encrypt to it. Leaving this as edge would send plaintext to a
+  # port that only speaks TLS.
+  tls:
+    termination: reencrypt
+    insecureEdgeTerminationPolicy: {{ .Values.route.tls.insecureEdgeTerminationPolicy }}
+  {{- else }}
   tls: {{- toYaml .Values.route.tls | nindent 4 }}
+  {{- end }}
 {{- end }}

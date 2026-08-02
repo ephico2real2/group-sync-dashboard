@@ -40,6 +40,23 @@ spec:
         - name: dashboard
           image: {{ include "gsd.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- if .Values.oauthProxy.enabled }}
+          # Bind loopback only. Otherwise 8080 stays reachable pod-network-wide and anything
+          # inside the cluster can skip the proxy entirely by addressing the pod directly,
+          # which would make the authentication decorative.
+          command:
+            - python3.11
+            - -m
+            - uvicorn
+            - gsd.api:create_app
+            - --factory
+            - --host
+            - 127.0.0.1
+            - --port
+            - "8080"
+            - --workers
+            - "1"
+          {{- end }}
           ports:
             - name: http
               containerPort: 8080
@@ -64,7 +81,15 @@ spec:
           livenessProbe:
             httpGet:
               path: {{ .Values.probes.liveness.path }}
+              {{- if .Values.oauthProxy.enabled }}
+              # Through the proxy, over HTTPS: the app no longer listens on the pod IP.
+              # oauthProxy.skipAuthRegex must cover this path or kubelet gets a 302 to the
+              # login page and kills a healthy pod.
+              port: oauth-proxy
+              scheme: HTTPS
+              {{- else }}
               port: http
+              {{- end }}
             initialDelaySeconds: {{ .Values.probes.liveness.initialDelaySeconds }}
             periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
             timeoutSeconds: {{ .Values.probes.liveness.timeoutSeconds }}
@@ -74,13 +99,55 @@ spec:
           readinessProbe:
             httpGet:
               path: {{ .Values.probes.readiness.path }}
+              {{- if .Values.oauthProxy.enabled }}
+              port: oauth-proxy
+              scheme: HTTPS
+              {{- else }}
               port: http
+              {{- end }}
             initialDelaySeconds: {{ .Values.probes.readiness.initialDelaySeconds }}
             periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
             timeoutSeconds: {{ .Values.probes.readiness.timeoutSeconds }}
             failureThreshold: {{ .Values.probes.readiness.failureThreshold }}
           {{- end }}
           resources: {{- toYaml .Values.resources | nindent 12 }}
+        {{- if .Values.oauthProxy.enabled }}
+        - name: oauth-proxy
+          image: {{ .Values.oauthProxy.image }}
+          imagePullPolicy: {{ .Values.oauthProxy.imagePullPolicy }}
+          args:
+            - -provider=openshift
+            - -https-address=:{{ .Values.oauthProxy.port }}
+            - -http-address=
+            - -email-domain=*
+            - -upstream=http://127.0.0.1:8080
+            - -tls-cert=/etc/tls/private/tls.crt
+            - -tls-key=/etc/tls/private/tls.key
+            - -cookie-secret-file=/etc/proxy/secrets/session_secret
+            - -openshift-service-account={{ include "gsd.serviceAccountName" . }}
+            - -openshift-ca=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+            - -skip-auth-regex={{ .Values.oauthProxy.skipAuthRegex }}
+            {{- if .Values.oauthProxy.sar }}
+            - -openshift-sar={{ .Values.oauthProxy.sar }}
+            {{- end }}
+            {{- if .Values.oauthProxy.skipProviderButton }}
+            - -skip-provider-button
+            {{- end }}
+            - -request-logging={{ .Values.oauthProxy.requestLogging }}
+          ports:
+            - name: oauth-proxy
+              containerPort: {{ .Values.oauthProxy.port }}
+              protocol: TCP
+          securityContext: {{- toYaml .Values.securityContext | nindent 12 }}
+          volumeMounts:
+            - name: oauth-tls
+              mountPath: /etc/tls/private
+              readOnly: true
+            - name: oauth-cookie
+              mountPath: /etc/proxy/secrets
+              readOnly: true
+          resources: {{- toYaml .Values.oauthProxy.resources | nindent 12 }}
+        {{- end }}
       volumes:
         - name: config
           configMap:
@@ -95,3 +162,13 @@ spec:
         {{- end }}
         - name: tmp
           emptyDir: {}
+        {{- if .Values.oauthProxy.enabled }}
+        - name: oauth-tls
+          secret:
+            secretName: {{ include "gsd.fullname" . }}-tls
+            defaultMode: 420
+        - name: oauth-cookie
+          secret:
+            secretName: {{ include "gsd.fullname" . }}-oauth-cookie
+            defaultMode: 420
+        {{- end }}
