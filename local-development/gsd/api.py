@@ -9,11 +9,12 @@ from __future__ import annotations
 import functools
 import logging
 import os
+import time
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 
@@ -79,7 +80,31 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
             elector.stop()
         store.close()
 
-    app = FastAPI(title="GroupSync dashboard", version="0.1.0", lifespan=lifespan)
+    # Docs live under /api, not at FastAPI's default /docs, for one reason that matters:
+    # oauthProxy.skipAuthRegex admits ^/(healthz|readyz|metrics)$ and nothing else, so every
+    # /api path is authenticated by the proxy exactly like the data it describes. A schema
+    # naming every endpoint and every field is a map of this cluster's RBAC surface; it
+    # belongs behind the same door as the data.
+    #
+    #   /api            the schema browser (Swagger UI)
+    #   /api/docs       the same, for anyone who types the conventional path
+    #   /api/redoc      the reference rendering
+    #   /api/openapi.json  the spec itself, for codegen and for the drift test
+    app = FastAPI(
+        title="GroupSync dashboard",
+        version=__version__,
+        lifespan=lifespan,
+        docs_url="/api",
+        redoc_url="/api/redoc",
+        openapi_url="/api/openapi.json",
+        description=(
+            "Read-only observability for the OpenShift group-sync-operator.\n\n"
+            "Every endpoint is a GET and nothing here returns or accepts a cluster "
+            "credential. Timestamps are UTC and end in `Z`; list endpoints that can grow "
+            "without bound report `total` alongside their page so a truncated response "
+            "cannot be mistaken for a complete one."
+        ),
+    )
 
     @app.middleware("http")
     async def record_dashboard_use(request, call_next):
@@ -182,6 +207,12 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
     @app.get("/api/clusters")
     @consistent
     def list_clusters() -> list[dict]:
+        """Every observed cluster with its poll status and headline counts.
+
+        The overview reads this. An unreachable cluster still appears, carrying its error —
+        a cluster this dashboard cannot poll is a thing it exists to report, not a reason to
+        omit the row.
+        """
         out = []
         for row in store.clusters():
             counts = store.group_counts(row["id"])
@@ -217,6 +248,12 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
 
     @app.get("/api/clusters/{cluster_id}/groupsyncs")
     def list_groupsyncs(cluster_id: str) -> list[dict]:
+        """GroupSync CRs on one cluster, with their derived state.
+
+        `state`, `next_expected` and `error_is_current` are computed per request from the
+        schedule and the last sync, never stored — a stored state would be wrong the moment
+        the clock moved past it.
+        """
         require_cluster(cluster_id)
         now = datetime.now(UTC)
         return [enrich(cr, now) for cr in store.groupsyncs(cluster_id)]
@@ -225,15 +262,33 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
     def list_events(
         cluster_id: str,
         name: str,
-        since: str | None = None,
-        limit: int = Query(default=200, ge=1, le=2000),
+        since: str | None = Query(
+            default=None,
+            description="ISO-8601 UTC instant; return only events observed after it"),
+        limit: int = Query(
+            default=200, ge=1, le=2000,
+            description="Maximum events to return, newest first. `truncated` says whether "
+                        "older ones were dropped."),
     ) -> dict:
+        """Observed sync events for one GroupSync CR, newest first.
+
+        Accumulated from polling rather than fetched, so the window starts when this
+        dashboard did — see `note` in the response.
+        """
         require_cluster(cluster_id)
-        events = store.sync_events(cluster_id, name, since, limit)
+        # limit + 1 to learn whether more exist, then hand back only `limit`. The cheap half
+        # of R3 in docs/api-contract.md: it answers "is this all of them?" without a COUNT
+        # over a table that grows with every poll, and it is the idiom list_users already
+        # uses — one paging shape in the codebase rather than two.
+        rows = store.sync_events(cluster_id, name, since, limit + 1)
+        truncated = len(rows) > limit
+        events = rows[:limit]
         return {
             "cluster": cluster_id,
             "groupsync": name,
             "count": len(events),
+            "limit": limit,
+            "truncated": truncated,
             # The timeline is accumulated, not fetched — it only covers the period this
             # dashboard has been running (PLAN §2). Saying so stops an empty list being
             # read as "the operator never synced".
@@ -244,14 +299,23 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
     @app.get("/api/clusters/{cluster_id}/groups")
     def list_groups(
         cluster_id: str,
-        state: str = Query(default="all", pattern="^(all|empty|unattributed)$"),
+        state: str = Query(
+            default="all", pattern="^(all|empty|unattributed)$",
+            description="`all`; `empty` for groups that synced with zero members; "
+                        "`unattributed` for groups no GroupSync CR claims."),
     ) -> list[dict]:
+        """Synced groups on one cluster, optionally narrowed to a problem state."""
         require_cluster(cluster_id)
         return store.groups(cluster_id, state)
 
     @app.get("/api/clusters/{cluster_id}/groups/{name}")
     @consistent
     def group_detail(cluster_id: str, name: str) -> dict:
+        """One group: its members, the CR that syncs it, and what it grants.
+
+        A group with history but no current state is reported as DELETED rather than 404 —
+        it is still named by every membership-change row that mentions it.
+        """
         require_cluster(cluster_id)
         detail = store.group_detail(cluster_id, name)
         if detail is None:
@@ -295,7 +359,10 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
 
     @app.get("/api/clusters/{cluster_id}/users")
     def list_users(
-        cluster_id: str, limit: int = Query(default=1000, ge=1, le=10000)
+        cluster_id: str,
+        limit: int = Query(
+            default=1000, ge=1, le=10000,
+            description="Maximum users to return. `truncated` says whether more exist."),
     ) -> dict:
         """Users with a membership, bounded and honest about it.
 
@@ -377,12 +444,20 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
     @consistent
     def direct_user_bindings(
         cluster_id: str,
-        include_platform: bool = False,
+        include_platform: bool = Query(
+            default=False,
+            description="Include cluster-internal identities (`system:*`, `kubeadmin`). "
+                        "Excluded by default: there is nowhere to migrate them to, and on "
+                        "the reference cluster they were 34 of 36 rows."),
         namespace: str | None = Query(
             default=None,
             description="restrict to one namespace; '(cluster-scoped)' for cluster-wide"),
-        limit: int = Query(default=200, ge=1, le=5000),
-        offset: int = Query(default=0, ge=0),
+        limit: int = Query(
+            default=200, ge=1, le=5000,
+            description="Maximum bindings to return, worst-privilege first. `total` is the "
+                        "count before this limit."),
+        offset: int = Query(
+            default=0, ge=0, description="Bindings to skip, for paging through `total`."),
     ) -> dict:
         """Roles granted DIRECTLY to a user, with a per-namespace migration worklist.
 
@@ -443,13 +518,30 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
 
     @app.get("/api/clusters/{cluster_id}/membership-changes")
     def membership_changes(
-        cluster_id: str, limit: int = Query(default=100, ge=1, le=1000)
+        cluster_id: str,
+        limit: int = Query(
+            default=100, ge=1, le=1000,
+            description="Maximum changes to return, newest first. `truncated` says whether "
+                        "older ones were dropped."),
     ) -> dict:
+        """Who joined or left which group, newest first.
+
+        The only record of a departure: the cluster shows current membership, so once
+        somebody is removed nothing on it says they were ever there. Accumulated from
+        polling, so the window starts when this dashboard did.
+        """
         require_cluster(cluster_id)
-        events = store.membership_events(cluster_id, limit=limit)
+        # limit + 1, as in list_events — see docs/api-contract.md R3. This log previously
+        # cut off at 100 with nothing saying so, which on an audit trail reads as "no
+        # further changes" rather than "not shown".
+        rows = store.membership_events(cluster_id, limit=limit + 1)
+        truncated = len(rows) > limit
+        events = rows[:limit]
         return {
             "cluster": cluster_id,
             "count": len(events),
+            "limit": limit,
+            "truncated": truncated,
             "note": "accumulated from polling; covers only the period since this dashboard started",
             "changes": events,
         }
@@ -457,6 +549,11 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
     @app.get("/api/alerts")
     @consistent
     def list_alerts() -> list[dict]:
+        """Everything currently worth a human's attention, across all clusters.
+
+        Ordered by severity. Derived per request from the same stored observations the rest
+        of the API serves, so an alert here always has a page behind it.
+        """
         now = datetime.now(UTC)
         alerts: list[dict] = []
         for row in store.clusters():
@@ -549,7 +646,10 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
     def dashboard_activity(
         request: Request,
         since: str | None = Query(None, description="UTC date, YYYY-MM-DD"),
-        limit: int = Query(500, ge=1, le=5000),
+        limit: int = Query(
+            500, ge=1, le=5000,
+            description="Maximum day-rows to return, newest first. `total` and `summary` "
+                        "describe the whole set, not this page."),
     ) -> dict:
         """Who used the dashboard, one row per user per UTC day.
 
@@ -635,6 +735,16 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
             raise HTTPException(status_code=503, detail=f"store unavailable: {exc}") from exc
         return {"status": "ready", "clusters": len(settings.clusters)}
 
+    @app.get("/api/docs", include_in_schema=False)
+    def api_docs_alias() -> RedirectResponse:
+        """`/api/docs` is the path people type; `/api` is where the UI is mounted.
+
+        A redirect rather than a second mount, so there is one canonical URL to bookmark,
+        one to link from the README, and no chance of the two rendering different schemas
+        after a FastAPI upgrade.
+        """
+        return RedirectResponse(url="/api", status_code=308)
+
     @app.get("/")
     def index() -> FileResponse:
         # With no Cache-Control, browsers apply heuristic caching to HTML and keep serving
@@ -657,8 +767,25 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
 
 def create_app() -> FastAPI:
     """Entrypoint for `uvicorn gsd.api:create_app --factory`."""
+    # The offset (%z) is not decoration. TZ is settable on the container, so a log line
+    # reading "21:17:59" is UTC on one deployment and local on another, and nothing in the
+    # line says which — the same ambiguity the dashboard header had between its own clock
+    # and the UTC timestamps beneath it. Correlating a log against a stored timestamp (all
+    # of which end in Z) needs the offset present, not inferred from a deployment's values.
     logging.basicConfig(
         level=os.environ.get("GSD_LOG_LEVEL", "INFO"),
-        format="%(asctime)s %(levelname)-7s %(name)s %(message)s",
+        format="%(asctime)s%(tzoffset)s %(levelname)-7s %(name)s %(message)s",
     )
+    # %z is not a logging format code; it belongs to strftime, and asctime is built with a
+    # fixed default format. Injecting it as a record attribute is the documented way to get
+    # the offset into every line without replacing the formatter wholesale.
+    tzoffset = time.strftime("%z")
+    old_factory = logging.getLogRecordFactory()
+
+    def _factory(*args, **kwargs):
+        record = old_factory(*args, **kwargs)
+        record.tzoffset = tzoffset
+        return record
+
+    logging.setLogRecordFactory(_factory)
     return build_app(load_settings(os.environ.get("GSD_CONFIG", "clusters.yaml")))

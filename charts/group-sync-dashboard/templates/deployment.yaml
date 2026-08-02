@@ -118,6 +118,12 @@ spec:
               {{- end }}
             - name: GSD_LOG_LEVEL
               value: {{ .Values.logLevel | quote }}
+            {{- with .Values.timezone }}
+            # Log timestamps only — see values.yaml. Stored and served times stay UTC
+            # because every call in the app is datetime.now(UTC), so this cannot shift data.
+            - name: TZ
+              value: {{ . | quote }}
+            {{- end }}
             {{- $ca := list }}
             {{- if .Values.trustedCA.injected.enabled }}
             {{- $ca = append $ca (printf "%s/injected/ca-bundle.crt" .Values.trustedCA.mountPath) }}

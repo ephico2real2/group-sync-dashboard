@@ -10,7 +10,7 @@ image:
   # tags <version>-<git-sha>. Editing them by hand works, but the script keeps them
   # consistent with an image that actually exists in the registry.
   repository: quay.io/ephico2real/group-sync-dashboard
-  tag: "0.6.0-8a67f827a1"
+  tag: "0.6.0-f3ca2873bf"
   pullPolicy: Always
 
   # Only needed for a PRIVATE registry. Leave empty for a public repository: an empty
@@ -309,6 +309,22 @@ config:
 # DEBUG adds per-poll timing, HTTP request lines, page counts and the countdown to the next
 # binding refresh. Safe to leave on briefly; chatty at one line or more per poll per cluster.
 logLevel: INFO
+
+# Timezone for LOG LINES ONLY. Set it to whoever reads the logs at 3am — correlating an
+# incident against a wall clock is easier than doing UTC arithmetic under pressure.
+#
+# It changes nothing that is stored or served. Every timestamp in the application is
+# datetime.now(UTC) and every stored string ends in Z, the API returns UTC, the dashboard
+# renders UTC, and the Usage tab buckets by UTC day. Only the log prefix moves.
+#
+# Log lines carry the OFFSET (%z), so "2026-08-02 17:17:59-0400" is unambiguous against a
+# stored "2026-08-02T21:17:59Z" whatever this is set to. Leave empty for UTC.
+#
+# Requires tzdata, which the Containerfile installs. It is not in ubi9-minimal by default,
+# and its absence fails misleadingly rather than loudly: Python reads TZ as a POSIX spec,
+# takes "America" from "America/New_York" as the zone name, finds no offset, and reports
+# tzname=('America','America') while the clock stays UTC — a New York label over UTC times.
+timezone: "America/New_York"
 
 # Clusters to observe. The default observes the cluster the pod runs on, using its own
 # projected ServiceAccount token — which kubelet rotates and the app re-reads every poll, so

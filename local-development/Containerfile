@@ -87,8 +87,19 @@ USER 0
 # The update still earns its place: every rebuild of THIS image picks up whatever HAS been
 # fixed since Red Hat last rebuilt the base, rather than waiting on their cadence.
 # Measured effect when python3.14 landed: MEDIUM 119 -> 113.
+# tzdata is REQUIRED, not a convenience, if TZ is ever set.
+#
+# ubi9-minimal ships without it, and the failure is silent and misleading rather than loud:
+# with TZ=America/New_York and no zoneinfo, Python parses the value as a POSIX TZ spec,
+# takes "America" as the zone NAME and finds no offset, so it reports
+# tzname=('America','America') while localtime stays UTC. Verified in the shipped pod. Logs
+# would then be stamped with a New York label over UTC times — worse than leaving TZ unset,
+# because it looks configured.
+#
+# It does not affect stored data: every timestamp in the app is datetime.now(UTC) and every
+# stored string ends in Z. This governs log lines only.
 RUN microdnf update -y \
- && microdnf install -y python3.14 \
+ && microdnf install -y python3.14 tzdata \
  && microdnf clean all \
  && rm -rf /var/cache/yum
 
