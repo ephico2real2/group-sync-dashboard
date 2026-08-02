@@ -10,7 +10,7 @@ image:
   # tags <version>-<git-sha>. Editing them by hand works, but the script keeps them
   # consistent with an image that actually exists in the registry.
   repository: quay.io/ephico2real/group-sync-dashboard
-  tag: "0.6.0-f62eeca9be"
+  tag: "0.6.0-e8fce4c9bf"
   pullPolicy: Always
 
   # Only needed for a PRIVATE registry. Leave empty for a public repository: an empty
@@ -28,8 +28,9 @@ fullnameOverride: ""
 # ---------------------------------------------------------------------------
 # RECOMMENDED: 1.
 #
-# This polls every 60s and serves a handful of operators; it is not in anyone's request
-# path. A node drain costs one missed poll, which the next one heals. What a second replica
+# This polls every 15 minutes and serves a handful of operators; it is not in anyone's
+# request path. A node drain costs one missed poll, which the next one heals — and at a
+# 15-minute cadence a restart is even less consequential. What a second replica
 # actually buys is HTTP uptime, and it pays for it in DIVERGENT HISTORY — each pod only has
 # the timeline since its own database existed, so the Service answers "when did this user
 # leave?" differently depending on which pod you reach. That history is the irreplaceable
