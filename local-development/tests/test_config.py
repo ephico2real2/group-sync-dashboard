@@ -131,3 +131,41 @@ class TestVerify:
         c = ClusterConfig("c", "https://x", ca_bundle_file=str(tmp_path / "missing.crt"))
         with pytest.raises(ConfigError, match="cannot load caBundleFile"):
             c.verify()
+
+
+class TestTrustedCABundleFallback:
+    """External clusters are usually signed by a corporate CA that is not in Python's
+    default trust store. OpenShift injects that CA into a labelled ConfigMap; the app uses
+    it so those clusters verify without per-cluster configuration."""
+
+    def _bundle(self, tmp_path):
+        import subprocess
+        crt = tmp_path / "ca-bundle.crt"
+        subprocess.run(
+            ["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
+             "-subj", "/CN=corp", "-keyout", str(tmp_path / "k.pem"), "-out", str(crt)],
+            check=True, capture_output=True,
+        )
+        return str(crt)
+
+    def test_injected_bundle_is_used_when_no_explicit_one(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("GSD_TRUSTED_CA_FILE", self._bundle(tmp_path))
+        assert isinstance(ClusterConfig("c", "https://x").verify(), ssl.SSLContext)
+
+    def test_explicit_bundle_wins_over_the_injected_one(self, tmp_path, monkeypatch):
+        """A cluster naming its own bundle is stating what it trusts; silently widening
+        that would be the wrong kind of helpful."""
+        monkeypatch.setenv("GSD_TRUSTED_CA_FILE", "/nonexistent/injected.crt")
+        explicit = self._bundle(tmp_path)
+        assert isinstance(
+            ClusterConfig("c", "https://x", ca_bundle_file=explicit).verify(), ssl.SSLContext
+        )
+
+    def test_insecure_still_overrides_everything(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("GSD_TRUSTED_CA_FILE", self._bundle(tmp_path))
+        assert ClusterConfig("c", "https://x", insecure_skip_verify=True).verify() is False
+
+    def test_missing_injected_file_falls_back_to_system_trust(self, monkeypatch):
+        """A mount that is not there must not break verification outright."""
+        monkeypatch.setenv("GSD_TRUSTED_CA_FILE", "/nonexistent/ca-bundle.crt")
+        assert ClusterConfig("c", "https://x").verify() is True

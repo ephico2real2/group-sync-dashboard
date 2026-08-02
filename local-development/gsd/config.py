@@ -77,13 +77,38 @@ class ClusterConfig:
         """
         if self.insecure_skip_verify:
             return False
-        if self.ca_bundle_file:
+
+        # An explicit per-cluster bundle always wins.
+        bundle = self.ca_bundle_file
+
+        # Otherwise fall back to the cluster-wide trusted CA bundle, if one is mounted.
+        #
+        # This is what makes EXTERNAL clusters work without per-cluster configuration. Their
+        # API servers are usually signed by a corporate CA, which is not in Python's default
+        # trust store, so verification fails and the cluster shows as unreachable — a TLS
+        # problem that presents as an outage. OpenShift will inject that CA for us: an empty
+        # ConfigMap labelled `config.openshift.io/inject-trusted-cabundle: "true"` is filled
+        # with the system bundle MERGED with proxy/cluster's trustedCA. Measured on a stock
+        # cluster: 148 certificates.
+        #
+        # Deliberately a fallback rather than a merge: a cluster that names its own bundle is
+        # making a specific statement about what it trusts, and silently widening that would
+        # be the wrong kind of helpful.
+        source = "caBundleFile"
+        if not bundle:
+            trusted = os.environ.get("GSD_TRUSTED_CA_FILE")
+            if trusted and Path(trusted).is_file():
+                bundle, source = trusted, "injected trusted CA bundle"
+
+        if bundle:
             try:
-                return ssl.create_default_context(cafile=self.ca_bundle_file)
+                return ssl.create_default_context(cafile=bundle)
             except (OSError, ssl.SSLError) as exc:
+                # Name the SOURCE, not just the path: "cannot load /etc/pki/..." sends
+                # someone hunting a file, when the fix is in whichever of the two places
+                # actually set it.
                 raise ConfigError(
-                    f"cluster {self.name!r}: cannot load caBundleFile "
-                    f"{self.ca_bundle_file!r}: {exc}"
+                    f"cluster {self.name!r}: cannot load {source} {bundle!r}: {exc}"
                 ) from exc
         return True
 

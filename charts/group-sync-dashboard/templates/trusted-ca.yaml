@@ -1,0 +1,21 @@
+{{- if .Values.trustedCA.enabled }}
+{{- /*
+Deliberately EMPTY. OpenShift's network operator fills in `ca-bundle.crt` because of the
+label, merging the system trust store with whatever corporate CA is configured in
+proxy/cluster.spec.trustedCA. Measured on a stock cluster: 148 certificates.
+
+This is what lets the dashboard verify EXTERNAL clusters. Their API servers are typically
+signed by a corporate CA that is absent from Python's default trust store, so verification
+fails and the cluster renders as unreachable — a TLS problem that presents as an outage.
+
+Do not put data here: the operator owns the contents and will overwrite them.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "gsd.fullname" . }}-trusted-ca
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gsd.labels" . | nindent 4 }}
+    config.openshift.io/inject-trusted-cabundle: "true"
+{{- end }}

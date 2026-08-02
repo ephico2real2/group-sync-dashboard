@@ -67,6 +67,12 @@ spec:
               value: /data/gsd.db
             - name: GSD_LOG_LEVEL
               value: {{ .Values.logLevel | quote }}
+            {{- if .Values.trustedCA.enabled }}
+            # Used for any cluster that does not name its own caBundleFile — which is the
+            # normal case for an external, corporate-signed cluster.
+            - name: GSD_TRUSTED_CA_FILE
+              value: {{ .Values.trustedCA.mountPath }}/ca-bundle.crt
+            {{- end }}
           securityContext: {{- toYaml .Values.securityContext | nindent 12 }}
           volumeMounts:
             - name: config
@@ -77,6 +83,11 @@ spec:
             # readOnlyRootFilesystem is on, so anything writing to /tmp needs a volume.
             - name: tmp
               mountPath: /tmp
+            {{- if .Values.trustedCA.enabled }}
+            - name: trusted-ca
+              mountPath: {{ .Values.trustedCA.mountPath }}
+              readOnly: true
+            {{- end }}
           {{- if .Values.probes.liveness.enabled }}
           livenessProbe:
             httpGet:
@@ -174,6 +185,17 @@ spec:
         {{- end }}
         - name: tmp
           emptyDir: {}
+        {{- if .Values.trustedCA.enabled }}
+        - name: trusted-ca
+          configMap:
+            name: {{ include "gsd.fullname" . }}-trusted-ca
+            # optional: the operator populates this shortly after creation, and a pod that
+            # refuses to start until then would fail the first rollout of every install.
+            optional: true
+            items:
+              - key: ca-bundle.crt
+                path: ca-bundle.crt
+        {{- end }}
         {{- if .Values.oauthProxy.enabled }}
         - name: oauth-tls
           secret:

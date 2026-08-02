@@ -127,6 +127,26 @@ clusters:
     enabled: true
 
 # ---------------------------------------------------------------------------
+# Trusted CA bundle (for EXTERNAL clusters)
+# ---------------------------------------------------------------------------
+# Creates an empty ConfigMap labelled `config.openshift.io/inject-trusted-cabundle: "true"`,
+# which OpenShift fills with the system trust store merged with the corporate CA from
+# proxy/cluster.spec.trustedCA, and mounts it.
+#
+# Needed because an external cluster's API server is usually signed by a corporate CA that
+# is not in Python's default trust store. Without it, verification fails and the cluster
+# renders as unreachable — a TLS problem that looks like an outage.
+#
+# Used only as a FALLBACK: a cluster entry naming its own caBundleFile keeps it, because
+# that is a specific statement about what it trusts.
+#
+# Harmless when observing only the local cluster (the SA's own ca.crt is named explicitly),
+# so it defaults on. Set false on non-OpenShift, where nothing injects it.
+trustedCA:
+  enabled: true
+  mountPath: /etc/pki/ca-trust/extracted/pem
+
+# ---------------------------------------------------------------------------
 # Storage
 # ---------------------------------------------------------------------------
 # The accumulated sync timeline and membership history are the ONLY things that cannot be
