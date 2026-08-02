@@ -26,3 +26,9 @@ build/
 *.dockerconfigjson
 auth.json
 
+
+# Session hand-off notes and design scratch — deliberately untracked, but they must not
+# make the tree dirty: the build scripts derive an image tag from the commit and refuse to
+# stamp one that no commit reproduces.
+RESUME.md
+ideas-multipods.md
