@@ -24,6 +24,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Iterator
 
+from .storage import SqliteHealth, StorageHealth  # noqa: F401
 from .timeutil import now_iso
 
 log = logging.getLogger(__name__)
@@ -388,33 +389,33 @@ class Store:
     # meant both of them knew the database was SQLite — the leak that made the "decoupled"
     # claim untrue. See gsd/storage.py.
 
-    def maintain(self) -> dict[str, object]:
-        """Periodic upkeep after a write cycle. For SQLite, that is a WAL checkpoint.
+    def maintain(self) -> None:
+        """Periodic upkeep after a write cycle. For SQLite, a WAL checkpoint.
 
-        Returns what it did rather than a SQLite tuple, so a caller can log or export it
-        without knowing what an engine's upkeep involves. An engine with nothing to do
-        returns an empty dict, and the poller's call site does not change.
+        Returns nothing. It briefly returned a dict describing the checkpoint, which the
+        only caller discarded — a contract that implied a signal it did not deliver. The
+        durable signal is the starved-checkpoint count, which is cumulative and reported
+        through health() where a scrape can read it.
         """
-        result = self._checkpoint()
-        if result is None:
-            return {}
-        busy, frames, moved = result
-        return {"checkpoint_busy": bool(busy), "frames": frames, "frames_reclaimed": moved}
+        self._checkpoint()
 
-    def health(self) -> dict[str, object]:
-        """Engine-reported operational facts, for metrics and diagnostics.
+    def health(self) -> StorageHealth:
+        """Engine-reported operational facts, namespaced under the engine that produced them.
 
-        Deliberately a dict of whatever this engine can say, not a fixed schema: the
-        collector exports what it finds. Everything here is SQLite vocabulary, which is
-        precisely why it is behind a generic method — when the engine changes, the keys
-        change here and in metrics.py, and nowhere else.
+        Not a flat dict. A flat one was described as engine-neutral and was not: the
+        collector still had to know `wal_bytes`, `wal_enabled` and `checkpoint_busy_total`
+        by name, so the coupling had moved from attributes to string literals. Worse, a
+        backend without a WAL would omit `wal_enabled` and a defaulting caller would read
+        False — which means "the filesystem refused WAL" and fires an alert on a healthy
+        database.
         """
         return {
             "engine": "sqlite",
-            "journal_mode": self._journal_mode,
-            "wal_enabled": self._journal_mode == "wal",
-            "wal_bytes": self._wal_bytes(),
-            "checkpoint_busy_total": self._checkpoint_busy_total,
+            "sqlite": {
+                "wal_enabled": self._journal_mode == "wal",
+                "wal_bytes": self._wal_bytes(),
+                "checkpoint_busy_total": self._checkpoint_busy_total,
+            },
         }
 
     def _rows(self, sql: str, params: tuple | list = ()) -> list[dict]:

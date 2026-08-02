@@ -45,7 +45,7 @@ import logging
 import threading
 from datetime import date, timedelta
 
-from .store import Store
+from .storage import StorageBackend
 from .timeutil import now_iso
 
 log = logging.getLogger(__name__)
@@ -81,7 +81,7 @@ class ActivityRecorder:
 
     def __init__(
         self,
-        store: Store,
+        store: StorageBackend,
         enabled: bool = True,
         flush_interval_seconds: int = 60,
         retention_days: int = 400,

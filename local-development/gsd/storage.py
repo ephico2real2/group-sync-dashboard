@@ -45,7 +45,29 @@ See ``docs/storage-coupling.md``.
 
 from __future__ import annotations
 
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, NotRequired, Protocol, TypedDict, runtime_checkable
+
+
+class SqliteHealth(TypedDict):
+    """What a SQLite backend can report. Nothing else may assume these exist."""
+
+    wal_enabled: bool
+    wal_bytes: int
+    checkpoint_busy_total: int
+
+
+class StorageHealth(TypedDict):
+    """Engine-reported facts. `engine` is the ONLY key every backend must supply.
+
+    Everything else is namespaced under the engine that produced it, so a collector reads
+    `health.get("sqlite")` and finds nothing on a backend that has no WAL — rather than
+    reading a top-level `wal_enabled` that is absent and defaulting it to False, which
+    means "the filesystem refused WAL and readers now block on every write" and fires an
+    alert against a perfectly healthy database.
+    """
+
+    engine: str
+    sqlite: NotRequired[SqliteHealth]
 
 
 @runtime_checkable
@@ -60,22 +82,27 @@ class StorageBackend(Protocol):
 
     def close(self) -> None: ...
 
-    def maintain(self) -> dict[str, Any]:
+    def maintain(self) -> None:
         """Periodic upkeep, called from the poll loop after a write cycle.
 
         Engine-defined and allowed to do nothing. It exists because SQLite's WAL needs a
         checkpoint that must NOT run from a request handler — it waits for open readers,
         and that wait is free on the poller thread and user-visible latency anywhere else.
-        Returns whatever the engine wants to report about what it did.
+
+        Returns nothing, deliberately. An earlier version returned a dict describing what
+        it did, which the only caller discarded — an ornamental contract that implied a
+        signal it did not carry. The signal that matters, the starved-checkpoint count, is
+        cumulative and belongs in health() where a scrape can actually read it.
         """
         ...
 
-    def health(self) -> dict[str, Any]:
+    def health(self) -> StorageHealth:
         """Engine-reported operational facts, for metrics and diagnostics.
 
-        Free-form on purpose: the caller exports what it finds and cannot be written to
-        assume a particular engine's vocabulary. SQLite reports its journal mode, WAL size
-        and starved-checkpoint count; another engine would report something else entirely.
+        Namespaced by engine rather than free-form. The first version returned a flat dict
+        and was described as engine-neutral, which it was not: the collector still had to
+        know the exact keys `wal_bytes`, `wal_enabled` and `checkpoint_busy_total`, so the
+        coupling had merely moved from attribute names to string literals.
         """
         ...
 
@@ -88,7 +115,16 @@ class StorageBackend(Protocol):
 
     # -- GroupSync CRs and their sync history --------------------------------------------
 
-    def record_sync_event(self, **kwargs: Any) -> bool: ...
+    def record_sync_event(
+        self,
+        cluster_id: str,
+        name: str,
+        namespace: str,
+        synced_at: str,
+        observed_at: str,
+        schedule: str | None,
+        group_count: int,
+    ) -> bool: ...
     def replace_groupsync_state(
         self, cluster_id: str, rows: list[dict], observed_at: str
     ) -> None: ...
@@ -96,7 +132,14 @@ class StorageBackend(Protocol):
     def sync_events(
         self, cluster_id: str, name: str, since: str | None, limit: int
     ) -> list[dict]: ...
-    def upsert_reconcile_error(self, *args: Any) -> None: ...
+    def upsert_reconcile_error(
+        self,
+        cluster_id: str,
+        name: str,
+        failed_at: str | None,
+        generation: int | None,
+        message: str | None,
+    ) -> None: ...
 
     # -- groups and membership -----------------------------------------------------------
 
@@ -107,8 +150,20 @@ class StorageBackend(Protocol):
     def group_counts(self, cluster_id: str) -> dict: ...
     def group_detail(self, cluster_id: str, group_name: str) -> dict | None: ...
     def group_members(self, cluster_id: str, group_name: str) -> list[dict]: ...
-    def sync_members(self, **kwargs: Any) -> int: ...
-    def membership_events(self, *args: Any, **kwargs: Any) -> list[dict]: ...
+    def sync_members(
+        self,
+        cluster_id: str,
+        memberships: dict[str, list[str]],
+        sync_times: dict[str, str | None],
+        observed_at: str,
+    ) -> int: ...
+    def membership_events(
+        self,
+        cluster_id: str,
+        group_name: str | None = None,
+        user_name: str | None = None,
+        limit: int = 200,
+    ) -> list[dict]: ...
     def users(self, cluster_id: str) -> list[dict]: ...
     def user_groups(self, cluster_id: str, user_name: str) -> list[dict]: ...
 
@@ -117,7 +172,9 @@ class StorageBackend(Protocol):
     def replace_bindings(
         self, cluster_id: str, rows: list[dict], observed_at: str
     ) -> None: ...
-    def record_managed_groups(self, *args: Any) -> None: ...
+    def record_managed_groups(
+        self, cluster_id: str, groups: list[dict], observed_at: str
+    ) -> None: ...
     def group_bindings(self, cluster_id: str, group_name: str) -> list[dict]: ...
     def user_bindings(self, cluster_id: str, user_name: str) -> list[dict]: ...
     def binding_findings(self, cluster_id: str) -> list[dict]: ...

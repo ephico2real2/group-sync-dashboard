@@ -153,12 +153,10 @@ class TestContract:
         finally:
             store.close()
         assert isinstance(health, dict)
-        # `engine` is the only key any backend must supply. The rest are this engine's
-        # vocabulary, and the collector must read them defensively — a backend with no WAL
-        # returns none of them, and a collector that assumed they existed would emit
-        # wal_enabled=0 and fire GroupSyncDashboardWalDisabled against a healthy database.
+        # `engine` is the only key any backend must supply; its facts are namespaced under
+        # it. See TestHealthIsNamespaced for why the flat version was unsafe.
         assert health["engine"] == "sqlite"
-        assert set(health) >= {"wal_enabled", "wal_bytes", "checkpoint_busy_total"}
+        assert set(health["sqlite"]) >= {"wal_enabled", "wal_bytes", "checkpoint_busy_total"}
 
     def test_a_backend_without_a_wal_emits_no_wal_metrics(self):
         """The false-alarm case. A server-based engine reports no wal_* keys, and the
@@ -198,10 +196,71 @@ class TestContract:
         assert "gsd_build_info" in text, "the rest of the scrape should still succeed"
 
     def test_maintain_is_safe_on_an_engine_with_nothing_to_do(self):
-        """:memory: has no WAL, so upkeep is a no-op — and must return a dict, not None,
-        so callers never have to special-case an engine that had nothing to do."""
+        """:memory: has no WAL, so upkeep is a no-op — and must not raise."""
         store = Store(":memory:")
         try:
-            assert store.maintain() == {}
+            assert store.maintain() is None
+        finally:
+            store.close()
+
+
+class TestConsumersDependOnTheContract:
+    """Both reviewers landed on the same point: a Protocol nobody is typed against is
+    decoration. `StorageBackend` was declared, then every consumer went on annotating the
+    concrete `Store`, so a second backend would have violated those annotations even while
+    satisfying the contract.
+    """
+
+    CONSUMERS = ("poller.py", "metrics.py", "activity.py", "api.py")
+
+    @pytest.mark.parametrize("name", CONSUMERS)
+    def test_no_consumer_annotates_the_concrete_store(self, name):
+        source = (GSD / name).read_text()
+        tree = ast.parse(source, filename=name)
+        offenders = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.arg) and isinstance(node.annotation, ast.Name):
+                if node.annotation.id == "Store":
+                    offenders.append(f"{node.arg}: Store")
+        assert not offenders, (
+            f"{name} depends on the concrete backend: {offenders}. "
+            f"Annotate StorageBackend so a second implementation is substitutable."
+        )
+
+    @pytest.mark.parametrize("name", CONSUMERS)
+    def test_no_consumer_constructs_a_backend(self, name):
+        """Construction is storage.open_backend()'s job. api.py used to build a Store and
+        pass four SQLite tuning knobs, so the only DI site in the app was engine-shaped."""
+        tree = ast.parse((GSD / name).read_text(), filename=name)
+        built = [
+            n.func.id for n in ast.walk(tree)
+            if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "Store"
+        ]
+        assert not built, f"{name} constructs Store directly; use storage.open_backend()"
+
+
+class TestHealthIsNamespaced:
+    def test_engine_facts_are_not_top_level(self):
+        """A flat dict was described as engine-neutral and was not — the collector still
+        had to know `wal_bytes` and `wal_enabled` by name. Worse, a backend without a WAL
+        omits `wal_enabled`, and a defaulting reader turns that absence into False, which
+        means 'the filesystem refused WAL' and fires an alert on a healthy database."""
+        store = Store(":memory:")
+        try:
+            health = store.health()
+        finally:
+            store.close()
+        assert set(health) == {"engine", "sqlite"}, (
+            "engine facts leaked to the top level, where a caller cannot tell an absent "
+            "key from a false one"
+        )
+        assert set(health["sqlite"]) == {"wal_enabled", "wal_bytes", "checkpoint_busy_total"}
+
+    def test_maintain_returns_nothing(self):
+        """It briefly returned a dict the only caller discarded — a contract implying a
+        signal it did not deliver. The durable signal is in health()."""
+        store = Store(":memory:")
+        try:
+            assert store.maintain() is None
         finally:
             store.close()

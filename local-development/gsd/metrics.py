@@ -27,7 +27,7 @@ from prometheus_client import CollectorRegistry
 from prometheus_client.core import CounterMetricFamily, GaugeMetricFamily
 
 from . import __version__, state as st
-from .store import Store
+from .storage import StorageBackend
 
 log = logging.getLogger(__name__)
 
@@ -43,7 +43,7 @@ def _epoch(value: str | None) -> float | None:
 class DashboardCollector:
     """Reads the store on each scrape and yields the current picture."""
 
-    def __init__(self, store: Store, grace: timedelta, elector=None):
+    def __init__(self, store: StorageBackend, grace: timedelta, elector=None):
         self.store = store
         self.grace = grace
         self.elector = elector
@@ -103,6 +103,7 @@ class DashboardCollector:
             log.exception("metrics: storage health unavailable; omitting those three series")
             health = None
 
+        sqlite = (health or {}).get("sqlite") or {}
         if health is not None:
             # The WAL is the one thing here that can fill the volume while every other
             # signal stays green: checkpointing is best-effort and yields to open readers,
@@ -113,17 +114,17 @@ class DashboardCollector:
             # Emitted only for an engine that reports them. A backend without a WAL — any
             # server-based engine — returns no such keys, and inventing a 0 for
             # wal_enabled would fire the same false alarm as the failure case above.
-            if "wal_bytes" in health:
+            if "wal_bytes" in sqlite:
                 wal = GaugeMetricFamily(
                     "gsd_sqlite_wal_bytes",
                     "Size of the SQLite write-ahead log. Sustained growth means checkpoints "
                     "are being starved by open readers; compare against the PVC size.",
                     labels=[],
                 )
-                wal.add_metric([], int(health["wal_bytes"]))
+                wal.add_metric([], int(sqlite["wal_bytes"]))
                 yield wal
 
-            if "checkpoint_busy_total" in health:
+            if "checkpoint_busy_total" in sqlite:
                 ckpt = CounterMetricFamily(
                     "gsd_sqlite_checkpoint_busy_total",
                     "Checkpoints that could not complete because a reader held an older "
@@ -131,20 +132,20 @@ class DashboardCollector:
                     "WAL size is the starvation case.",
                     labels=[],
                 )
-                ckpt.add_metric([], int(health["checkpoint_busy_total"]))
+                ckpt.add_metric([], int(sqlite["checkpoint_busy_total"]))
                 yield ckpt
 
             # 1 only when WAL actually engaged. It is requested at startup but the
             # filesystem can refuse it, and in rollback mode readers block on every write —
             # a latency cliff with no other symptom.
-            if "wal_enabled" in health:
+            if "wal_enabled" in sqlite:
                 journal = GaugeMetricFamily(
                     "gsd_sqlite_wal_enabled",
                     "1 if the database is in WAL mode. 0 means the filesystem refused it "
                     "and readers now block on writes.",
                     labels=[],
                 )
-                journal.add_metric([], 1 if health["wal_enabled"] else 0)
+                journal.add_metric([], 1 if sqlite["wal_enabled"] else 0)
                 yield journal
 
         # gsd_dashboard_active_users USED TO BE EXPOSED HERE AND WAS REMOVED.
@@ -297,7 +298,7 @@ class DashboardCollector:
         )
 
 
-def build_registry(store: Store, grace: timedelta, elector=None) -> CollectorRegistry:
+def build_registry(store: StorageBackend, grace: timedelta, elector=None) -> CollectorRegistry:
     """A dedicated registry — the default one carries process/GC collectors we do not want
     duplicated per app instance, and tests build several apps in one interpreter."""
     registry = CollectorRegistry()

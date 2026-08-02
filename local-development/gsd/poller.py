@@ -18,7 +18,7 @@ from datetime import UTC, datetime
 from .config import ClusterConfig, Settings
 from .kube import OK, ClusterClient, ClusterError, GroupSyncView, GroupView
 from .leader import LeaderElector
-from .store import Store
+from .storage import StorageBackend
 from .timeutil import now_iso
 
 log = logging.getLogger(__name__)
@@ -54,7 +54,7 @@ def provider_keys_for(cr: GroupSyncView, groups: list[GroupView]) -> list[str]:
     )
 
 
-def poll_once(store: Store, cluster: ClusterConfig, timeout: float = 15.0) -> str:
+def poll_once(store: StorageBackend, cluster: ClusterConfig, timeout: float = 15.0) -> str:
     """One poll of one cluster. Returns the outcome string (PLAN §12 step 7).
 
     Never raises for cluster-side failures: an unreachable or forbidden cluster is recorded
@@ -163,7 +163,7 @@ def poll_once(store: Store, cluster: ClusterConfig, timeout: float = 15.0) -> st
     return OK
 
 
-def refresh_bindings(store: Store, cluster: ClusterConfig, timeout: float) -> str:
+def refresh_bindings(store: StorageBackend, cluster: ClusterConfig, timeout: float) -> str:
     """Re-read RoleBindings/ClusterRoleBindings for one cluster.
 
     Deliberately does NOT record a poll outcome. A binding-list failure — most likely a
@@ -203,7 +203,7 @@ def refresh_bindings(store: Store, cluster: ClusterConfig, timeout: float) -> st
 class Poller:
     """Runs one polling thread per enabled cluster."""
 
-    def __init__(self, store: Store, settings: Settings, elector: LeaderElector | None = None):
+    def __init__(self, store: StorageBackend, settings: Settings, elector: LeaderElector | None = None):
         self.store = store
         self.settings = settings
         # BEST-EFFORT admission control, NOT a write fence. Read this before relying on it.
