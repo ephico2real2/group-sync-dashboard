@@ -198,6 +198,15 @@ body {
 }
 a { color: inherit; }
 h1, h2, h3 { font-weight: 600; margin: 0; }
+/* Card headings wear the section accent as a short leading rule. Cheap continuity: the
+   Groups tab is teal, so every heading under it is too, and a screenshot is placeable at
+   a glance. Decorative only, hence aria-hidden by construction (a ::before pseudo-element
+   is not in the accessibility tree). */
+.card > h2::before, .card > h3::before {
+  content: ""; display: inline-block; vertical-align: middle;
+  width: 3px; height: 0.95em; margin-right: 8px; border-radius: 2px;
+  background: var(--accent);
+}
 h1 { font-size: 18px; }
 h2 { font-size: 15px; }
 h3 { font-size: 13px; color: var(--text-secondary); }
@@ -241,6 +250,14 @@ button:hover, select:hover { border-color: var(--baseline); }
 /* Stat tiles: the number IS the chart. No one-bar bar charts. */
 .kpis { display: flex; gap: 22px; flex-wrap: wrap; margin-top: 12px; }
 .kpi .label { font-size: 11px; color: var(--text-muted); text-transform: none; }
+/* A coloured edge on the counts that represent a problem, and only when the count is not
+   zero. The number is still the signal — this just lets you find the one card with
+   something wrong without reading six figures on each. Non-text, so the 3:1 bar of WCAG
+   1.4.11 applies, which is what lets --status-warning appear here at all: it clears 3:1
+   but not the 4.5:1 it would need as text. */
+.kpi.flag-warning, .kpi.flag-critical { padding-left: 9px; border-left: 3px solid transparent; }
+.kpi.flag-warning  { border-left-color: var(--status-warning); }
+.kpi.flag-critical { border-left-color: var(--status-critical); }
 .kpi .value { font-size: 22px; font-weight: 600; line-height: 1.25; }
 .kpi .value.muted { color: var(--text-muted); font-weight: 500; }
 
@@ -279,7 +296,15 @@ tbody tr:nth-child(even) td { background: var(--zebra); }
 .rowlink { cursor: pointer; }
 .rowlink:hover td { background: var(--series-1-wash); }
 
-/* The owner is named, not colour-coded — see ownerCell. */
+/* Owner dot: identity for the CR that produced a group. The dot sits beside the CR's
+   NAME, never alone — hue is the fast channel, the text is the reliable one.
+   Every slot now clears 3:1 against the card (WCAG 1.4.11, graphical objects). Series 3, 4
+   and 5 used to sit at 2.74, 2.11 and 2.62 in the light theme, so a third of these dots
+   were below the threshold for conveying anything at all. */
+.cr-dot {
+  width: 9px; height: 9px; border-radius: 50%; flex: none;
+  display: inline-block; margin-right: 6px; vertical-align: baseline;
+}
 .owner { display: inline-flex; align-items: center; white-space: nowrap; }
 
 .chip {
@@ -332,7 +357,19 @@ svg .hit { fill: transparent; cursor: pointer; }
 .tooltip.on { opacity: 1; }
 .tooltip .t-label { color: var(--text-muted); }
 
-.alert-row { display: flex; gap: 10px; align-items: flex-start; padding: 7px 0; border-bottom: 1px solid var(--gridline); }
+/* The severity edge repeats what the badge already says in shape and words. That is the
+   point: it lets you find the critical rows by scanning a colour column instead of reading
+   every badge, while a reader who cannot separate red from amber loses nothing. Padding on
+   the left so the bar has somewhere to sit without shifting the text. */
+.alert-row {
+  display: flex; gap: 10px; align-items: flex-start;
+  padding: 7px 0 7px 10px; border-bottom: 1px solid var(--gridline);
+  border-left: 3px solid transparent; border-radius: 2px;
+  transition: background-color 160ms ease;
+}
+.alert-row.sev-critical { border-left-color: var(--status-critical); }
+.alert-row.sev-warning  { border-left-color: var(--status-warning); }
+.alert-row:hover { background: var(--zebra); }
 .alert-row:last-child { border-bottom: 0; }
 .alert-row .who { min-width: 190px; font-weight: 500; word-break: break-all; }
 .alert-row .what { color: var(--text-secondary); }
@@ -494,16 +531,30 @@ function esc(s) {
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
-/* The owner is named, not colour-coded. The per-CR dot that used to sit here was removed
-   deliberately: the CR name is already the reliable channel, and a hue per owner competed
-   with the status colours — which are the ones that actually mean something on this page —
-   for a distinction the text was already making. Dropping it also retires the 8-slot
-   palette, the "what about a 9th CR" edge case, and the re-sort on every render. */
+/* Colour follows the entity, not its rank. The slot is derived from the CR's position in
+   the full sorted CR list, so filtering the group table down to one owner never repaints
+   the survivors — a reader who learned "ldap-groupsync is blue" keeps that. */
+function crSlot(provider) {
+  if (!provider) return null;
+  // flatMap, because a CR with several providers owns several label values and each needs
+  // its own slot — colouring by CR would give two visibly different provider groupings the
+  // same dot and hide exactly the distinction the colour exists to draw.
+  const owners = data.groupsyncs.flatMap((g) => g.provider_keys || []).filter(Boolean).sort();
+  const i = owners.indexOf(provider);
+  if (i < 0) return null;
+  // Never generate a 9th hue: past the 8 slots, identity folds into the text alone.
+  return i < 8 ? i + 1 : null;
+}
+
 function ownerCell(provider) {
   if (!provider) return `<span class="err">unattributed</span>`;
+  const slot = crSlot(provider);
+  const dot = slot
+    ? `<span class="cr-dot" style="background:var(--series-${slot})" aria-hidden="true"></span>`
+    : "";
   // Strip the "_<provider>" suffix for display; the full value stays in the group detail.
   const label = provider.replace(/_[^_]+$/, "");
-  return `<span class="owner"><code>${esc(label)}</code></span>`;
+  return `<span class="owner">${dot}<code>${esc(label)}</code></span>`;
 }
 
 /* ---------- rendering ---------- */
@@ -592,11 +643,11 @@ function clusterCard(c) {
     <div class="kpis">
       <div class="kpi"><div class="label">GroupSync CRs</div><div class="value">${c.groupsync_count}</div></div>
       <div class="kpi"><div class="label">Groups</div><div class="value">${c.group_count}</div></div>
-      <div class="kpi"><div class="label">Empty</div>
+      <div class="kpi ${c.empty_groups ? "flag-warning" : ""}"><div class="label">Empty</div>
         <div class="value ${c.empty_groups ? "" : "muted"}">${c.empty_groups}</div></div>
-      <div class="kpi"><div class="label">Unattributed</div>
+      <div class="kpi ${c.unattributed_groups ? "flag-warning" : ""}"><div class="label">Unattributed</div>
         <div class="value ${c.unattributed_groups ? "" : "muted"}">${c.unattributed_groups}</div></div>
-      <div class="kpi"><div class="label">Bindings to review</div>
+      <div class="kpi ${(c.dangling_bindings + c.unresolved_bindings) ? "flag-critical" : ""}"><div class="label">Bindings to review</div>
         <div class="value ${(c.dangling_bindings + c.unresolved_bindings) ? "" : "muted"}">${
           (c.dangling_bindings || 0) + (c.unresolved_bindings || 0)}</div></div>
       <div class="kpi"><div class="label">Oldest last sync</div>
@@ -609,7 +660,7 @@ function alertsCard() {
   const a = data.alerts;
   const body = a.length === 0
     ? `<div class="empty-note">No alerts. Nothing overdue, empty, unattributed, stale, or failing.</div>`
-    : a.map((x) => `<div class="alert-row">
+    : a.map((x) => `<div class="alert-row sev-${x.severity === "critical" ? "critical" : "warning"}">
         ${sevBadge(x.severity)}
         <div class="who">${esc(x.subject)}<div class="muted" style="font-weight:400;font-size:11px">${esc(x.cluster)} · ${esc(x.kind)}</div></div>
         <div class="what">${esc(x.detail)}</div>
