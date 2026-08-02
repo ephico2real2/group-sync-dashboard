@@ -9,6 +9,14 @@ metadata:
   labels:
     {{- include "gsd.labels" . | nindent 4 }}
     {{- with .Values.monitoring.serviceMonitor.labels }}{{- toYaml . | nindent 4 }}{{- end }}
+  {{- if .Values.argocd.enabled }}
+  annotations:
+    # ServiceMonitor is a CRD from the Prometheus Operator. Argo dry-runs every resource
+    # before applying, and a dry-run against a CRD that is not installed FAILS THE WHOLE
+    # SYNC — not just this resource. That turns "monitoring is not installed yet" into
+    # "nothing deploys", which is a disproportionate failure for an optional extra.
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+  {{- end }}
 spec:
   selector:
     matchLabels: {{- include "gsd.selectorLabels" . | nindent 6 }}
@@ -28,6 +36,11 @@ metadata:
   labels:
     {{- include "gsd.labels" . | nindent 4 }}
     {{- with .Values.monitoring.prometheusRule.labels }}{{- toYaml . | nindent 4 }}{{- end }}
+  {{- if .Values.argocd.enabled }}
+  annotations:
+    # Same reasoning as the ServiceMonitor above.
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+  {{- end }}
 spec:
   groups:
     - name: {{ include "gsd.fullname" . }}
