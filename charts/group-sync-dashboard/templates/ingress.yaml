@@ -29,9 +29,9 @@ spec:
   tls: {{- toYaml . | nindent 4 }}
   {{- end }}
   rules:
-    - {{- with .Values.ingress.host }}
-      host: {{ . }}
-      {{- end }}
+    # Always emits a host. A hostless Ingress yields no Route on OpenShift, so the release
+    # would install cleanly and serve nothing.
+    - host: {{ include "gsd.externalHost" . }}
       http:
         paths:
           - path: /

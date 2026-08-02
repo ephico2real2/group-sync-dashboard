@@ -71,10 +71,27 @@ which points at a Route by name — cannot be used with an Ingress. Hence redire
 a host that must be stated.
 */}}
 {{- define "gsd.externalHost" -}}
-{{- if and .Values.oauthProxy.enabled (not .Values.ingress.host) -}}
-{{- fail "oauthProxy.enabled requires ingress.host: the OAuth callback URL cannot be derived, because ingress-to-route generates an unpredictable Route name" -}}
-{{- end -}}
+{{- if .Values.ingress.host -}}
 {{ .Values.ingress.host }}
+{{- else -}}
+{{- /*
+Derive it from the cluster's published apps domain.
+
+A Route auto-generates its host when spec.host is empty; an Ingress does NOT, and
+OpenShift's ingress-to-route controller silently creates no Route at all for a hostless
+Ingress. A default install was therefore unreachable with no error anywhere — the Ingress
+existed, the pod was healthy, and nothing was serving.
+
+`lookup` returns empty during `helm template` and dry-run, which is why the fallback below
+fails loudly rather than emitting a host that would be wrong.
+*/ -}}
+{{- $cfg := (lookup "config.openshift.io/v1" "Ingress" "" "cluster") -}}
+{{- if and $cfg $cfg.spec.domain -}}
+{{ printf "%s-%s.%s" (include "gsd.fullname" .) .Release.Namespace $cfg.spec.domain }}
+{{- else -}}
+{{- fail "ingress.host is not set and the cluster apps domain could not be read. Set it explicitly:\n  --set ingress.host=<name>.$(oc get ingresses.config/cluster -o jsonpath='{.spec.domain}')\nAn Ingress without a host produces NO Route on OpenShift, so the release would install cleanly and be unreachable." -}}
+{{- end -}}
+{{- end -}}
 {{- end -}}
 
 {{/* The port anything external should reach: the proxy when enabled, else the app. */}}

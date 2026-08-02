@@ -172,9 +172,13 @@ service:
 ingress:
   enabled: true
   className: openshift-default
-  # REQUIRED when oauthProxy.enabled — the OAuth callback URL cannot be derived, because
-  # ingress-to-route names the generated Route unpredictably. The render fails rather than
-  # emitting a callback that silently never matches.
+  # Leave empty and it is derived as <fullname>-<namespace>.<cluster apps domain>, read from
+  # the cluster's ingresses.config/cluster object.
+  #
+  # It cannot simply be omitted: a Route auto-generates its host, but an Ingress does not,
+  # and OpenShift's ingress-to-route controller silently creates NO Route for a hostless
+  # Ingress. That made a default install unreachable with nothing reporting an error — the
+  # Ingress existed, the pod was healthy, and no Route was ever created.
   host: ""
   annotations: {}
   tls: []
