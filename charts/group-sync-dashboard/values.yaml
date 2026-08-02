@@ -10,7 +10,7 @@ image:
   # tags <version>-<git-sha>. Editing them by hand works, but the script keeps them
   # consistent with an image that actually exists in the registry.
   repository: quay.io/ephico2real/group-sync-dashboard
-  tag: "0.6.0-f4ba268012"
+  tag: "0.6.0-ecdc187ed6"
   pullPolicy: Always
 
   # Only needed for a PRIVATE registry. Leave empty for a public repository: an empty
@@ -506,7 +506,7 @@ ingress:
 # shows nothing a user could not already read with `oc get groups`, so gating it behind an
 # access request would add friction without adding protection. Set `sar` to restrict.
 oauthProxy:
-  enabled: false
+  enabled: true
 
   # The version-matched image that ships WITH the cluster, already present as an
   # imagestream and served from the internal registry — so starting a pod needs no external
