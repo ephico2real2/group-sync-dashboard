@@ -211,3 +211,81 @@ spec:
   to: {kind: Service, name: group-sync-dashboard}
   port: {targetPort: http}
   tls: {termination: edge, insecureEdgeTerminationPolicy: Redirect}
+---
+# Scraped by OpenShift's built-in user-workload monitoring. That must be enabled first:
+#
+#   oc -n openshift-monitoring patch cm cluster-monitoring-config --type=merge \
+#     -p '{"data":{"config.yaml":"enableUserWorkload: true\n"}}'
+#
+# It is off by default and costs a Prometheus + Thanos Ruler pair (~1-2 GiB), which is
+# worth knowing before enabling it on a laptop CRC.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: group-sync-dashboard
+  namespace: group-sync-dashboard
+  labels: {app: group-sync-dashboard}
+spec:
+  selector:
+    matchLabels: {app: group-sync-dashboard}
+  endpoints:
+    # 30s: every series here is a gauge recomputed from SQLite on scrape, and each scrape
+    # takes the store's lock. Scraping faster would contend with the poller for no extra
+    # resolution, since the underlying data only changes once per poll interval.
+    - port: http
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s
+---
+# Alerting lives in Prometheus, not in the dashboard. The dashboard computes alerts for
+# display; these turn the same conditions into something that can page.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: group-sync-dashboard
+  namespace: group-sync-dashboard
+  labels: {app: group-sync-dashboard}
+spec:
+  groups:
+    - name: group-sync-dashboard
+      rules:
+        # Expressed against real time rather than a precomputed boolean, so the threshold
+        # is visible and tunable here instead of being baked into the exporter.
+        - alert: GroupSyncOverdue
+          expr: (time() - gsd_groupsync_last_sync_timestamp_seconds) > 7200
+          for: 10m
+          labels: {severity: warning}
+          annotations:
+            summary: "GroupSync {{ $labels.groupsync }} has not synced for over 2 hours"
+            description: >-
+              Last successful sync was
+              {{ $value | humanizeDuration }} ago on cluster {{ $labels.cluster }}.
+
+        # A binding whose group the operator used to manage and has now lost. It grants
+        # nobody while looking healthy to `oc get rolebinding`.
+        - alert: DanglingRoleBinding
+          expr: gsd_bindings_total{finding="dangling"} > 0
+          for: 15m
+          labels: {severity: critical}
+          annotations:
+            summary: "{{ $value }} RoleBinding(s) grant access to a group that no longer exists"
+
+        # Catches a dead poller thread, which the health endpoints cannot: /healthz is
+        # unconditional and /readyz only reads the store, so both stay green while the
+        # dashboard serves frozen data.
+        - alert: GroupSyncDashboardNotPolling
+          expr: (time() - gsd_cluster_last_poll_timestamp_seconds) > 600
+          for: 5m
+          labels: {severity: critical}
+          annotations:
+            summary: "Dashboard has not polled {{ $labels.cluster }} for 10 minutes"
+            description: >-
+              The data shown is stale. The pod may be running and reporting healthy while
+              its poll loop has stopped.
+
+        - alert: GroupSyncClusterUnreachable
+          expr: gsd_cluster_up == 0
+          for: 15m
+          labels: {severity: warning}
+          annotations:
+            summary: "Dashboard cannot poll cluster {{ $labels.cluster }}"

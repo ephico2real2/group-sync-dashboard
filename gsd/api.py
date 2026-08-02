@@ -13,11 +13,13 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
+from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 
 from . import __version__
 from . import state as st
 from .config import Settings, load_settings
+from .metrics import build_registry
 from .poller import Poller
 from .store import Store
 
@@ -319,6 +321,19 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
         severity_rank = {"critical": 0, "warning": 1}
         alerts.sort(key=lambda a: (severity_rank.get(a["severity"], 9), a["cluster"], a["kind"]))
         return alerts
+
+    metrics_registry = build_registry(store, grace)
+
+    @app.get("/metrics")
+    def metrics() -> Response:
+        """Prometheus exposition, collected from the store on each scrape.
+
+        Unauthenticated by design so a ServiceMonitor can scrape it, which is why the
+        collector emits counts and states only — never a group or user name.
+        """
+        from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+
+        return Response(generate_latest(metrics_registry), media_type=CONTENT_TYPE_LATEST)
 
     @app.get("/healthz")
     def healthz() -> dict:
