@@ -45,3 +45,10 @@ ideas-multipods.md
 # a second source of truth for RBAC and config, which is exactly how the hand-written
 # deploy/dashboard.yaml went 62 commits stale while still looking authoritative.
 local-development/deploy/
+
+# Agent skills installed with `npx skills add`. Third-party content, per-developer tooling,
+# and not part of what this repository ships — the same reasoning that keeps .env and the
+# rendered deploy/ folder out. Reinstall with:
+#   npx skills add mager/frontend-design
+.agents/
+skills-lock.json
