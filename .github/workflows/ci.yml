@@ -72,8 +72,75 @@ jobs:
       - name: Render guards must still refuse the unsafe combinations
         working-directory: local-development
         run: |
-          pip install pytest
+          # PyYAML because TestNoPatchVerbAtAnyAuditMode PARSES the rendered manifests rather
+          # than grepping them — rbac.yaml keeps the removed `patch` grant's history in its
+          # comments and Helm emits those verbatim, so a text search would trip on them.
+          #
+          # Named explicitly rather than installing the package: this job deliberately has no
+          # application dependencies, so it stays a chart-rendering job that a Python change
+          # cannot break. PyYAML being a runtime dependency of the app is NOT why it is
+          # available here, which is the assumption that made this job fail.
+          pip install pytest PyYAML
           pytest tests/test_chart_strategy.py -q
+
+  diagrams:
+    # The GROUND TRUTH for the mermaid blocks. tests/test_docs_diagrams.py checks the
+    # constructs known to break a render and runs in half a second; this actually renders
+    # them, which is the only way to be sure. One diagram shipped broken for an unknown
+    # length of time — `;` terminated a `Note over` statement — and was found by a human
+    # looking at the page, so a real render earns its minute.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Render every mermaid block
+        run: |
+          set -euo pipefail
+          python3 - <<'EXTRACT'
+          import pathlib, re
+          out = pathlib.Path("mmd"); out.mkdir(exist_ok=True)
+          n = 0
+          for md in sorted(pathlib.Path(".").rglob("*.md")):
+              if any(s in md.parts for s in (".venv", "node_modules", ".agents", ".claude")):
+                  continue
+              for body in re.findall(r"```mermaid\n(.*?)```", md.read_text(), re.S):
+                  n += 1
+                  (out / f"{md.stem}-{n:02d}.mmd").write_text(body)
+          print(f"extracted {n} diagrams")
+          assert n >= 9, f"only {n} diagrams found — the extractor is probably broken"
+          EXTRACT
+          # mermaid-cli renders through headless Chromium, and Chromium cannot start in its
+          # default sandbox on the ubuntu-latest runner: Ubuntu 23.10+ restricts unprivileged
+          # user namespaces through AppArmor, so every render died with "No usable sandbox!"
+          # before reading a single diagram. Every file reported FAIL for the same reason,
+          # which reads exactly like nine broken diagrams and is actually zero.
+          #
+          # --no-sandbox is safe HERE and would not be elsewhere: the input is this
+          # repository's own markdown, on a single-use runner, with no untrusted content.
+          cat > puppeteer.json <<'PUPPETEER'
+          { "args": ["--no-sandbox", "--disable-setuid-sandbox"] }
+          PUPPETEER
+          fail=0
+          rendered=0
+          for f in mmd/*.mmd; do
+            if npx --yes @mermaid-js/mermaid-cli@11 -p puppeteer.json \
+                 -i "$f" -o "${f%.mmd}.svg" >/dev/null 2>err.txt; then
+              echo "ok    $f"; rendered=$((rendered+1))
+            else
+              echo "FAIL  $f"; sed 's/^/        /' err.txt; fail=1
+            fi
+          done
+          # A renderer that cannot start makes every diagram "fail" and a `continue-on-error`
+          # away from making every diagram silently pass. Assert that something was actually
+          # produced, so a broken toolchain can never read as a clean run.
+          echo "rendered ${rendered} diagram(s)"
+          if [ "$rendered" -eq 0 ]; then
+            echo "::error::no diagram rendered at all — the toolchain failed, not the diagrams"
+            exit 1
+          fi
+          exit $fail
 
   image:
     runs-on: ubuntu-latest

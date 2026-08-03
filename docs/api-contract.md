@@ -52,8 +52,9 @@ about taking one at all.
 
 **R6 — New endpoints are `GET`.**
 The ServiceAccount is read-only by design. If a change needs a write, it needs the argument
-in `docs/unmanaged-audit-design.md` first — that write path is default-off and capped by
-Kubernetes privilege-escalation prevention, and the reasoning there applies to any successor.
+in `docs/unmanaged-audit-design.md` first. A write path was proposed there, built, measured
+against a live cluster and then removed, because Kubernetes privilege-escalation prevention
+caps what an RBAC reader can ever patch; that reasoning applies to any successor.
 
 **R7 — `include_in_schema=False` needs a comment saying why.**
 There is exactly one today: the `/api/docs` redirect, hidden because it is an alias rather

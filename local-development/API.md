@@ -209,6 +209,23 @@ auto-refresh.
 | `built_in` | `system:*` virtual group; no object expected | no |
 | `unmanaged` | the group IS operator-synced, but no policy CR templates this binding — somebody granted access by hand | no |
 
+**Suppressing an `unmanaged` finding is a cluster-admin task, performed on the object:**
+
+```bash
+oc annotate clusterrolebinding <name> \
+  rbac.ocp.io/unmanaged-exception="approved in TICKET-123, break-glass access"
+```
+
+The poller reads that annotation on its next binding refresh and stops classifying the binding
+as `unmanaged`, so it leaves this response, the RBAC policy tab and the log together. The
+dashboard cannot write it for you — it holds no write verb on any cluster — and that is the
+point: the justification ends up next to the object it excuses, where `oc describe` finds it,
+and the acknowledgement is made by somebody who holds the privileges.
+
+`audit_stamped` on a row reports whether the object carries `rbac.ocp.io/unmanaged=true`. The
+dashboard never applies that label either; an admin or a CI job may, to make findings
+selectable with `oc get ... -l`. Nothing here depends on it.
+
 `unresolved` deliberately does not alert: a group never observed cannot be distinguished
 from one that simply has not synced yet. It is still worth reading — those bindings grant
 nobody — which is why the UI shows them even though nothing pages.

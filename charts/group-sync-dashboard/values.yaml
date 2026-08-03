@@ -10,7 +10,7 @@ image:
   # tags <version>-<git-sha>. Editing them by hand works, but the script keeps them
   # consistent with an image that actually exists in the registry.
   repository: quay.io/ephico2real/group-sync-dashboard
-  tag: "0.6.0-38ae50f736"
+  tag: "0.6.0-902540acc5"
   pullPolicy: Always
 
   # Only needed for a PRIVATE registry. Leave empty for a public repository: an empty
@@ -234,29 +234,83 @@ config:
     intervalHours: 6
     keep: 4     # 4 x 6h = the last day, at roughly the size of the database each
 
-  # Audit stamping of unmanaged grants — THE DASHBOARD'S ONLY WRITE TO ANY CLUSTER.
-  # Design and invariants: docs/unmanaged-audit-design.md. When enabled, bindings the
-  # dashboard classifies `unmanaged` (hand-made grant on an operator-synced group, outside
-  # the policy system) are stamped ON THE OBJECT:
-  #   label       rbac.ocp.io/unmanaged=true            <- selectable:
-  #                 oc get rolebindings,clusterrolebindings -A -l rbac.ocp.io/unmanaged=true
-  #   annotation  rbac.ocp.io/unmanaged-detected-at     <- first detection, never rewritten
-  #   annotation  rbac.ocp.io/unmanaged-detected-by
-  # The label is REMOVED when the binding stops being unmanaged (adopted by the policy
-  # system, or acknowledged with rbac.ocp.io/unmanaged-exception); the annotations stay as
-  # the audit trail.
+  # Unmanaged-grant DISCOVERY. This feature writes nothing — and to be exact about the
+  # dashboard as a whole, the only object it writes on any cluster is its own
+  # leader-election Lease, which is its coordination and not anything it reports on.
   #
-  # THE COST, PLAINLY: Kubernetes has no annotations-only patch scope, so `annotate` mode
-  # grants the ServiceAccount `patch` on rolebindings/clusterrolebindings — a verb that
-  # could modify what a binding grants. The application only ever touches its own three
-  # metadata keys, but the GRANT is broader than the use, and a compromised pod could
-  # abuse it. Hence: default off; the RBAC grant is rendered ONLY in annotate mode; and
-  # `log` mode computes and logs the full plan with zero write access — run that first
-  # and read the plan before flipping to annotate.
+  # A binding is `unmanaged` when it names an operator-synced group but carries neither the
+  # policy operator's config-source label nor an `rbac.ocp.io/unmanaged-exception`
+  # annotation — somebody granted access by hand, outside the governance system, and nothing
+  # on the cluster reports it.
+  #
+  # `log` publishes each finding as a self-contained line a log pipeline can alert on:
+  #
+  #   UNMANAGED GRANT DISCOVERED — crc-local: ClusterRoleBinding demo-cluster-admin-crb
+  #   (cluster-wide) grants cluster-admin to group app-ocp-rbac-demo-cluster-admin, outside
+  #   the policy system (no config-source label, no exception annotation)
+  #
+  # The same findings are in the RBAC policy tab and at
+  # GET /api/clusters/{id}/bindings/findings. The discovery IS the deliverable.
+  #
+  # THERE WAS AN `annotate` MODE. IT WAS REMOVED, and this is the reason, so nobody
+  # reintroduces it: it labelled the objects themselves so they could be selected with
+  # `oc get ... -l rbac.ocp.io/unmanaged=true`, and Kubernetes will not allow it. Privilege
+  # escalation prevention requires the writer of an RBAC object to already hold every
+  # permission that object grants, even for a metadata-only patch. Measured on a live
+  # cluster: 4 findings planned, 0 landed, and the API server demanded 175 additional rule
+  # sets to label a binding granting nothing but `view` — a full wildcard for the
+  # cluster-admin one. Making it work means giving a read-only auditing tool the most
+  # privilege on precisely the most dangerous grants.
+  #
+  # SUPPRESSING A FINDING IS A CLUSTER-ADMIN TASK, performed on the object:
+  #
+  #   oc annotate clusterrolebinding <name> \
+  #     rbac.ocp.io/unmanaged-exception="approved in TICKET-123, break-glass access"
+  #
+  # The dashboard READS that annotation and stops classifying the binding as unmanaged, so it
+  # leaves the log, the RBAC policy tab and the API together. Two properties follow from doing
+  # it this way round rather than keeping a suppression list in the dashboard: the
+  # justification lives next to the object it excuses, where anyone running `oc describe` finds
+  # it, and the acknowledgement is made by somebody who holds the privileges — which the
+  # dashboard deliberately does not. Separation of duties, not a limitation.
+  #
+  # If you also want the objects LABELLED so they can be selected with
+  # `oc get ... -l rbac.ocp.io/unmanaged=true`, an admin or a privileged CI job can apply
+  # `rbac.ocp.io/unmanaged=true` the same way. The dashboard notices a label applied by anyone
+  # and reports `unmanaged grant RESOLVED` when that binding stops being unmanaged, telling
+  # whoever applied it that the label is now stale.
   unmanagedAudit:
-    mode: "off"        # off | log | annotate  (anything else is treated as off)
-    # At most this many stamps per 300s refresh; healing is never capped. Bounds a
-    # misclassification bug to one screenful of objects per cycle instead of the cluster.
+    # off | log   (anything unrecognised is treated as off; `annotate` runs as `log`
+     #              and says so, rather than failing to off and taking the findings away
+     #              from a cluster that had it set)
+    #
+    # `off` runs no discovery code at all. `log` needs no extra RBAC — the ServiceAccount
+    # stays read-only, which is checkable: the ClusterRole's binding verbs are get and list.
+    #
+    # DEFAULTS TO `log`, and the default moved from `off` deliberately. `off` was right while
+    # this feature could write: a default that patches cluster objects has to be opted into.
+    # It writes nothing now, so the only thing `off` buys is a governance tool that has found
+    # a hand-made cluster-admin grant and declines to mention it. A cluster with no unmanaged
+    # grants logs nothing at all, so the cost of the new default is zero where there is
+    # nothing to report.
+    #
+    # Set `off` if you have a reason — a noisy known-bad cluster mid-migration, or an alerting
+    # pipeline you have not tuned yet. Findings stay visible in the RBAC policy tab and the
+    # API either way; `off` only silences the log.
+    mode: "log"
+    # At most this many findings LISTED individually per 300s refresh, so a misclassification
+    # bug fills one screenful of log per cycle instead of the whole cluster at once.
+    #
+    # The cap does NOT shrink the headline number: the summary reports every finding awaiting
+    # acknowledgement and then says how many of those it listed, because the total is what an
+    # operator escalates on. It reported the capped count until 2026-08-03, so a cluster with
+    # 500 unmanaged grants announced 20.
+    #
+    # "Awaiting acknowledgement" is narrower than "on the cluster": an object already carrying
+    # the rbac.ocp.io/unmanaged label is a finding but is not re-announced. For the cluster-wide
+    # set, use GET /api/clusters/{id}/bindings/findings, which the summary line links.
+    #
+    # Resolutions are never capped — a closed finding must not queue behind new ones.
     maxPerCycle: 20
 
   # Who used the dashboard. Requires oauthProxy.enabled — with the proxy off there is no
@@ -479,7 +533,8 @@ serviceAccount:
 
 rbac:
   # Creates a ClusterRole + binding granting get/list on groupsyncs, groups, rolebindings
-  # and clusterrolebindings. No watch, no write verbs anywhere.
+  # and clusterrolebindings. No watch, and no write verb on any of them. The role's only
+  # write is get/create/update on the dashboard's own leader-election Lease.
   create: true
 
   # RoleBindings/ClusterRoleBindings power the "Access granted" view and dangling-binding

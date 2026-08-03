@@ -311,40 +311,78 @@ def refresh_bindings(
 
     log.info("refreshed %d group bindings for %s", len(bindings), cluster.name)
 
-    # The audit stamp — the dashboard's ONLY write path, and it runs LAST, after this
-    # cycle's rows are stored, so the plan is computed from exactly what was just observed.
+    # Unmanaged-grant discovery. Runs LAST, after this cycle's rows are stored, so the
+    # findings are computed from exactly what was just observed rather than from the previous
+    # cycle. Nothing here writes to the cluster.
     # docs/unmanaged-audit-design.md carries the invariants; gsd/audit.py the decisions.
-    if audit_mode in ("log", "annotate"):
+    if audit_mode == "log":
         plan = plan_audit_stamps(store.all_bindings(cluster.name), audit_max_per_cycle)
+
+        # THE DISCOVERY IS THE DELIVERABLE.
+        #
+        # These lines used to read "WOULD stamp ClusterRoleBinding -/demo-cluster-admin-crb",
+        # which framed the log as a rehearsal for a write and told a reader nothing about why
+        # the object mattered. The write could never land on a normal cluster — Kubernetes
+        # refuses a metadata patch unless the writer already holds everything the binding
+        # grants — so the finding IS the product, and it is published here as evidence that
+        # stands alone: which object, what it grants, to whom, and why that is a finding.
         if plan.stamp or plan.unstamp or plan.capped:
             log.info(
-                "%s: unmanaged audit plan — stamp %d, heal %d%s%s",
-                cluster.name, len(plan.stamp), len(plan.unstamp),
-                f", {plan.capped} deferred by the per-cycle cap" if plan.capped else "",
-                " (log mode: nothing will be written)" if audit_mode == "log" else "",
+                # The first number is every finding AWAITING ACKNOWLEDGEMENT, not the number
+                # of lines that follow. `plan.stamp` is truncated to maxPerCycle
+                # (audit.py:75-77) before this reads its length, so `len(plan.stamp)` alone
+                # understated a large finding set — a cluster with 500 unmanaged grants
+                # reported "20 outside the policy system", which is the one number an operator
+                # escalates on.
+                #
+                # Not the cluster's total: an object already carrying the unmanaged label is a
+                # finding but is not re-announced (audit.py:73). The findings API is the
+                # cluster-wide set, which is why this line links it.
+                "%s: unmanaged-grant discovery — %d outside the policy system%s, %d resolved "
+                "since the last cycle. Full detail: "
+                "GET /api/clusters/%s/bindings/findings",
+                cluster.name, len(plan.stamp) + plan.capped,
+                f" ({len(plan.stamp)} listed below, {plan.capped} held back by the "
+                f"per-cycle cap)" if plan.capped else "",
+                len(plan.unstamp),
+                cluster.name,
             )
-        for kind, ns, name in plan.stamp:
-            if audit_mode == "log":
-                log.info("%s: WOULD stamp %s %s/%s", cluster.name, kind, ns or "-", name)
-                continue
-            try:
-                client.stamp_unmanaged_binding(kind, ns, name, now_iso())
-                log.info("%s: stamped %s %s/%s as unmanaged", cluster.name, kind, ns or "-", name)
-            except ClusterError as exc:
-                # I8: one failed patch skips, loudly; it never stops the others or the refresh.
-                log.warning("%s: could not stamp %s %s/%s: %s",
-                            cluster.name, kind, ns or "-", name, exc.message)
-        for kind, ns, name in plan.unstamp:
-            if audit_mode == "log":
-                log.info("%s: WOULD heal (unstamp) %s %s/%s", cluster.name, kind, ns or "-", name)
-                continue
-            try:
-                client.unstamp_unmanaged_binding(kind, ns, name)
-                log.info("%s: healed %s %s/%s — no longer unmanaged; annotations kept",
-                         cluster.name, kind, ns or "-", name)
-            except ClusterError as exc:
-                log.warning("%s: could not heal %s %s/%s: %s",
-                            cluster.name, kind, ns or "-", name, exc.message)
+
+        for key in plan.stamp:
+            kind, ns, name = key
+            evidence = plan.evidence.get(key, {})
+            groups = evidence.get("groups") or []
+            # WARNING, not INFO. This needs a human, and the poller emits INFO for every
+            # routine HTTP call — a finding at INFO is buried by the traffic that surrounds
+            # it, and a log pipeline has no level to filter on. The fixed prefix is there to
+            # be alerted on.
+            log.warning(
+                "UNMANAGED GRANT DISCOVERED — %s: %s %s grants %s to group %s, "
+                "outside the policy system (no config-source label, no exception annotation)",
+                cluster.name, kind,
+                f"{ns}/{name}" if ns else f"{name} (cluster-wide)",
+                evidence.get("role") or "an unknown role",
+                ", ".join(groups) if groups else "an operator-synced group",
+            )
+
+        for key in plan.unstamp:
+            kind, ns, name = key
+            # The good-news direction, and it still works with nothing writing labels.
+            #
+            # An object reaches this branch because it CARRIES rbac.ocp.io/unmanaged=true and
+            # is no longer classified unmanaged. The dashboard never applies that label — an
+            # admin or a CI job does, with `oc annotate` — so this is the dashboard telling
+            # whoever labelled it that the finding is closed and the label is now stale.
+            # Without the line, the only visible signal is a count going down.
+            log.info(
+                "unmanaged grant RESOLVED — %s: %s %s is no longer outside the policy system "
+                "(adopted, annotated as an exception, or its group left management). Its "
+                "rbac.ocp.io/unmanaged label is now stale: oc label %s %s "
+                "rbac.ocp.io/unmanaged-",
+                cluster.name, kind, f"{ns}/{name}" if ns else f"{name} (cluster-wide)",
+                kind.lower(), f"-n {ns} {name}" if ns else name,
+            )
+
 
     return OK
 

@@ -393,7 +393,7 @@ that authorized the request.
 - Authz via `-pass-access-token` + per-namespace SSAR with the viewer's token; fail closed per
   §2.5; 403 without the proxy; hosting cluster only.
 - New chart value `oauthProxy.passAccessToken`, default `false`.
-- Read-only throughout. The SA is deliberately read-oriented (`rbac.yaml:1-3`), and the audit
+- Read-only throughout. The SA is deliberately read-oriented (`rbac.yaml:1-5`), and the audit
   write experiment (`docs/unmanaged-audit-design.md:59-107`) already demonstrated the cost of
   exceeding that boundary.
 

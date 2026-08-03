@@ -217,9 +217,11 @@ class Settings:
     backup_dir: str = ""
     backup_interval_hours: float = 6.0
     backup_keep: int = 4
-    # off | log | annotate. The dashboard's ONLY write path; see
-    # docs/unmanaged-audit-design.md. `log` computes and logs the plan without writing —
-    # the rehearsal mode the rollout goes through before annotate.
+    # off | log. Discovery only — nothing here writes to a cluster; see
+    # docs/unmanaged-audit-design.md. `log` publishes each finding to the pod log, `off`
+    # silences the log while the RBAC policy tab and the API still show them. There was an
+    # `annotate` mode that labelled findings; it is gone, and a config still asking for it
+    # is downgraded to `log` below rather than failing to start.
     unmanaged_audit_mode: str = "off"
     unmanaged_audit_max_per_cycle: int = 20
 
@@ -272,9 +274,26 @@ def _audit_mode_setting(raw: dict) -> str:
     if source is None:
         source = raw.get("unmanagedAuditMode", "off")
     word = str(source).strip().lower()
-    if word in ("off", "log", "annotate"):
+    if word in ("off", "log"):
         return word
-    log.warning("unmanagedAuditMode=%r is not off/log/annotate; using 'off'", source)
+    if word == "annotate":
+        # DOWNGRADE to log, deliberately not to `off`. `annotate` labelled the binding objects
+        # so they could be selected with `oc get ... -l rbac.ocp.io/unmanaged=true`, and it was
+        # removed along with the RBAC grant that enabled it, because Kubernetes refuses a
+        # metadata patch on an RBAC object unless the writer already holds everything that
+        # object grants — measured, 0 of 4 landed.
+        #
+        # Falling back to `off` would silently take the FINDINGS away from anyone upgrading
+        # with this set, and the findings were always the valuable half. `log` publishes them
+        # identically and needs no write access.
+        log.warning(
+            "unmanagedAuditMode=annotate has been removed — it could never write, because "
+            "Kubernetes privilege-escalation prevention refuses the patch. Running in 'log', "
+            "which publishes the same findings with no write access. Set mode: log to silence "
+            "this."
+        )
+        return "log"
+    log.warning("unmanagedAuditMode=%r is not off/log; using 'off'", source)
     return "off"
 
 
