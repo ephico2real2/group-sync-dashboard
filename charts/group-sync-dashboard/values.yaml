@@ -268,7 +268,14 @@ config:
   # deliberately not a page-view log. That bounds the table at users x days instead of
   # growing without limit, and it answers "who uses this and when" without accumulating a
   # record of which colleague read whose group membership. Read it at
-  # /api/dashboard/activity, or watch gsd_dashboard_active_users.
+  # /api/dashboard/activity, which is authenticated and self-scoped by default.
+  #
+  # NOT via /metrics. There is no gsd_dashboard_active_users gauge; this comment used to point
+  # at one and it was removed on purpose (metrics.py:170). /metrics is deliberately
+  # unauthenticated so Prometheus can scrape it without credentials, and even an unlabelled
+  # count of distinct users is personnel information — it tells anyone who can reach the
+  # Service how many people worked on a given day. Unlabelled is not anonymous enough to
+  # publish without authentication.
   #
   # NOTE this cannot see logins. The proxy owns the session; the app only ever observes
   # requests that are already authenticated, so there is no login or logout event to
@@ -281,8 +288,9 @@ config:
   # and false of who looked at it. It previously returned everyone to everyone.
   #
   # ABOVE ONE REPLICA it is per-pod, like the rest of the history: each pod counts only the
-  # requests it served, into its own database. gsd_dashboard_active_users is then a per-pod
-  # figure and summing it double-counts anyone who hit more than one pod.
+  # requests it served, into its own database. So /api/dashboard/activity answers for whichever
+  # pod served the request, and there is no cluster-wide total — adding the pods' figures would
+  # double-count anyone who hit more than one.
   userActivity:
     enabled: true
     # self | all.

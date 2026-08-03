@@ -237,7 +237,6 @@ class StorageBackend(Protocol):
         limit: int = 500,
         user_name: str | None = None,
     ) -> list[dict]: ...
-    def active_user_count(self, day: str) -> int: ...
 
 
 def open_backend(settings) -> StorageBackend:

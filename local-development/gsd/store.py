@@ -1573,12 +1573,6 @@ class Store:
         )
         return dict(rows[0])
 
-    def active_user_count(self, day: str) -> int:
-        rows = self._rows(
-            "SELECT COUNT(*) AS n FROM dashboard_user_activity WHERE day = ?", (day,)
-        )
-        return int(rows[0]["n"]) if rows else 0
-
     # -- queries -----------------------------------------------------------------------
 
     def groupsyncs(self, cluster_id: str) -> list[dict]:
