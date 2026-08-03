@@ -10,7 +10,7 @@ image:
   # tags <version>-<git-sha>. Editing them by hand works, but the script keeps them
   # consistent with an image that actually exists in the registry.
   repository: quay.io/ephico2real/group-sync-dashboard
-  tag: "0.6.0-69db8f5808-dirty"
+  tag: "0.6.0-902540acc5"
   pullPolicy: Always
 
   # Only needed for a PRIVATE registry. Leave empty for a public repository: an empty
@@ -234,7 +234,9 @@ config:
     intervalHours: 6
     keep: 4     # 4 x 6h = the last day, at roughly the size of the database each
 
-  # Unmanaged-grant DISCOVERY. Read-only; the dashboard writes nothing to any cluster.
+  # Unmanaged-grant DISCOVERY. This feature writes nothing — and to be exact about the
+  # dashboard as a whole, the only object it writes on any cluster is its own
+  # leader-election Lease, which is its coordination and not anything it reports on.
   #
   # A binding is `unmanaged` when it names an operator-synced group but carries neither the
   # policy operator's config-source label nor an `rbac.ocp.io/unmanaged-exception`

@@ -235,8 +235,9 @@ looks normal, and the first visible sign is a full volume or a latency cliff.
 
 ### Unmanaged-grant discovery
 
-Read-only, in every mode. This feature finds hand-made access grants and reports them; it
-writes nothing to any cluster.
+Read-only, in every mode. This feature finds hand-made access grants and reports them, and
+writes nothing at all. The dashboard's only write on any cluster is its own leader-election
+Lease (`templates/rbac.yaml:28-31`) — its coordination object, not anything it observes.
 
 A binding is `unmanaged` when it grants an operator-synced group access and carries neither
 the policy operator's `rbac.ocp.io/config-source` label nor an

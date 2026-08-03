@@ -1,7 +1,9 @@
 # Unmanaged-grant discovery — design and invariants
 
 The dashboard finds grants that bypass the policy system and publishes them to the pod log,
-the RBAC policy tab and the API. It writes nothing to any cluster. The rendered ClusterRole
+the RBAC policy tab and the API. This feature writes nothing, and the dashboard's only write
+anywhere is its own leader-election Lease — its coordination object, not anything it observes.
+The rendered ClusterRole
 holds `get` and `list` on `rolebindings`/`clusterrolebindings` and no verb that can change
 either (`charts/group-sync-dashboard/templates/rbac.yaml:55-57`), and the cluster client has no
 write method at all (`local-development/gsd/kube.py:226-237`).
