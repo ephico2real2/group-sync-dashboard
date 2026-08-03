@@ -374,14 +374,19 @@ class TestGroupExplorer:
         self._open_groups(dash)
         assert dash.locator("tbody tr").count() == 3
 
-    def test_empty_filter_excludes_the_unmanaged_group(self, dash):
-        """EMPTY is 'synced, zero members' — a hand-made empty group is UNATTRIBUTED."""
+    def test_empty_filter_includes_the_unmanaged_group(self, dash):
+        """EMPTY is 'zero members', whatever created the group.
+
+        Both seeded memberless groups appear: one operator-synced, one hand-made. The hand-made
+        one is also under `unattributed` — the two filters overlap by design, because on a
+        cluster with no operator a provider-scoped `empty` matched nothing at all.
+        """
         self._open_groups(dash)
         dash.select_option("#f-state", "empty")
-        dash.wait_for_function("document.querySelectorAll('tbody tr').length === 1")
+        dash.wait_for_function("document.querySelectorAll('tbody tr').length === 2")
         text = dash.locator("tbody").inner_text()
         assert "app-ocp-rbac-abcd-ns-superuser" in text
-        assert "gsd-test-unattributed" not in text
+        assert "gsd-test-unattributed" in text
 
     def test_unattributed_filter(self, dash):
         self._open_groups(dash)

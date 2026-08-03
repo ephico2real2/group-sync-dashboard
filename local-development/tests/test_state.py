@@ -155,7 +155,9 @@ class TestAlerts:
 
     def test_unattributed_group_is_not_also_reported_as_empty(self):
         """Caught on CRC: a hand-made `oc adm groups new` group has zero members, and was
-        being alerted as 'synced with zero members' — which it never was. EMPTY means an
+        being alerted as 'synced with zero members' — which it never was. NOTE the `empty`
+        FILTER does return such a group (see test_no_groupsync_operator.py); only the ALERT is
+        provenance-scoped, because the alert carries an LDAP-side remedy. EMPTY here means an
         operator-managed group whose members vanished (PLAN §7); this is a different fault
         with a different fix, and double-reporting it says the wrong thing twice.
         """

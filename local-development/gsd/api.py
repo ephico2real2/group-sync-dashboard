@@ -306,8 +306,9 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
         cluster_id: str,
         state: str = Query(
             default="all", pattern="^(all|empty|unattributed)$",
-            description="`all`; `empty` for groups that synced with zero members; "
-                        "`unattributed` for groups no GroupSync CR claims."),
+            description="`all`; `empty` for groups with zero members, whatever created them; "
+                        "`unattributed` for groups no GroupSync CR claims. The two overlap: a "
+                        "hand-made group with no members is both."),
     ) -> list[dict]:
         """Synced groups on one cluster, optionally narrowed to a problem state."""
         require_cluster(cluster_id)

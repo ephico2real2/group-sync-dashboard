@@ -1644,11 +1644,17 @@ class Store:
                    FROM group_state WHERE cluster_id=?"""
         params: list = [cluster_id]
         if state == "empty":
-            # PLAN §7 defines EMPTY as "synced, zero members" — an operator-managed group
-            # whose members vanished, which points at the LDAP side. A hand-made group with
-            # no members is not that; it is UNATTRIBUTED, and reporting it here would both
-            # double-count it and describe it wrongly.
-            sql += " AND member_count = 0 AND sync_provider IS NOT NULL"
+            # EVERY group with no members, whatever created it. This was scoped to
+            # `sync_provider IS NOT NULL` on PLAN §7's reading of EMPTY as "synced, then lost
+            # its members" — an LDAP-side fault. That reading made the filter USELESS on the
+            # cluster that most needs it: with no group-sync-operator installed, every group is
+            # unattributed, so `empty` matched nothing however many groups had zero members.
+            #
+            # `empty` and `unattributed` therefore OVERLAP now, and that is intended: they are
+            # two questions, not a partition. "Which groups grant nobody?" and "which groups is
+            # no CR managing?" have different answers and a group can be both. Nothing sums
+            # them — checked across store, api, metrics and the UI before the change.
+            sql += " AND member_count = 0"
         elif state == "unattributed":
             sql += " AND sync_provider IS NULL"
         elif state != "all":
@@ -1659,8 +1665,10 @@ class Store:
     def group_counts(self, cluster_id: str) -> dict:
         row = self._row(
             """SELECT COUNT(*) AS total,
-                      SUM(CASE WHEN member_count = 0 AND sync_provider IS NOT NULL
-                               THEN 1 ELSE 0 END) AS empty,
+                      -- Must stay identical to the `empty` predicate in groups() above. A
+                      -- count that disagrees with its own list is the defect class this
+                      -- project keeps rediscovering, so a test pins them together.
+                      SUM(CASE WHEN member_count = 0 THEN 1 ELSE 0 END) AS empty,
                       SUM(CASE WHEN sync_provider IS NULL THEN 1 ELSE 0 END) AS unattributed
                  FROM group_state WHERE cluster_id=?""",
             (cluster_id,),
