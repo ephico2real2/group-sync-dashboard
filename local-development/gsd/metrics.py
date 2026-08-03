@@ -304,6 +304,10 @@ class DashboardCollector:
                     operator_configs=self.store.operator_configs(cluster)["configs"],
                     user_bindings=self.store.direct_user_bindings(cluster),
                     groups=self.store.groups(cluster, "all"),
+                    # Kept in step with the /api/alerts call site: a kind that exists in one
+                    # and not the other makes gsd_alerts_total disagree with the UI, so a
+                    # Prometheus rule can never be written against it.
+                    groupsync_present=self.store.groupsync_present(cluster),
                     now=now,
                     grace=self.grace,
                 ):

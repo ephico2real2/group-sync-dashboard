@@ -77,7 +77,11 @@ class TestAMissingCRDIsNotAPollFailure:
         """The regression: a 404 on the CRD used to abort before Groups was ever listed."""
         client, _, _ = _client(_handler())
         groupsyncs, groups = client.fetch()
-        assert groupsyncs == [], "an absent CRD must read as zero CRs, not raise"
+        assert groupsyncs is None, (
+            "an absent CRD must read as None — NOT [] and not an exception. [] would render as "
+            "'GroupSync CRs: 0' on the Overview, identical to an installed operator with no CRs "
+            "defined, leaving a pod-log line as the only evidence the operator is missing."
+        )
         assert [g.name for g in groups] == ["placeholder-team", "platform-admins"] or \
                sorted(g.name for g in groups) == ["placeholder-team", "platform-admins"], \
                f"groups were not fetched: {[g.name for g in groups]}"
@@ -241,3 +245,116 @@ class TestTheDashboardsGroupStateSelector:
     def test_an_unknown_state_is_rejected_rather_than_silently_ignored(self, client):
         """Ignoring it would return every group under a label the caller did not ask for."""
         assert client.get("/api/clusters/c1/groups", params={"state": "bogus"}).status_code == 422
+
+
+class TestTheAbsenceStaysVISIBLE:
+    """Making the poll succeed must not make the missing operator quiet.
+
+    The first fix traded a LOUD WRONG signal for a QUIET RIGHT one. Before it, a CRD-less
+    cluster showed `unreachable` with an error — unmissable, but it blamed connectivity and hid
+    every group. After it, the cluster read `ok` with "GroupSync CRs: 0" and the only remaining
+    evidence was a line in the pod log, which nobody reads until they already suspect something.
+
+    Absence is now recorded (`groupsync_presence`), exposed on the cluster card, and raises an
+    alert. These tests exist because "correct" and "visible" are separate properties and the
+    second one regressed while the first was being fixed.
+    """
+
+    def _store(self, tmp_path):
+        store = Store(str(tmp_path / "t.db"))
+        store.upsert_cluster("c1", "https://x", True)
+        return store
+
+    def test_never_polled_is_none_not_absent(self, tmp_path):
+        """Three-valued, and the third value matters on upgrade.
+
+        The migration adds an empty table, so every existing cluster has no row until it next
+        polls. If that read as "absent" the alert would fire once for every cluster the moment
+        the new version starts, before it has looked at anything.
+        """
+        assert self._store(tmp_path).groupsync_present("c1") is None
+
+    def test_absent_and_present_are_distinguishable_with_zero_crs_either_way(self, tmp_path):
+        """The whole point: `[]` and `None` both store zero CR rows."""
+        store = self._store(tmp_path)
+        now = now_iso()
+
+        store.replace_groupsync_state("c1", None, now)
+        assert store.groupsync_present("c1") is False
+        assert store.groupsyncs("c1") == []
+
+        store.replace_groupsync_state("c1", [], now)
+        assert store.groupsync_present("c1") is True, (
+            "installed-with-no-CRs must not read as 'not installed'"
+        )
+        assert store.groupsyncs("c1") == []
+
+    def test_stale_cr_rows_are_cleared_when_the_crd_disappears(self, tmp_path):
+        """An uninstalled operator must not leave CRs on the page reporting healthy syncs."""
+        store = self._store(tmp_path)
+        now = now_iso()
+        store.replace_groupsync_state("c1", [{
+            "name": "corp", "namespace": "gs", "schedule": "0 * * * *", "ldap_filter": None,
+            "last_sync_at": now, "generation": 1, "provider_keys": ["corp_ldap"]}], now)
+        assert len(store.groupsyncs("c1")) == 1
+
+        store.replace_groupsync_state("c1", None, now)
+        assert store.groupsyncs("c1") == []
+        assert store.groupsync_present("c1") is False
+
+    def test_the_alert_fires_only_when_absence_was_actually_observed(self):
+        """`is False`, never falsy — None must not alert."""
+        import gsd.state as st
+        from datetime import UTC, datetime, timedelta
+
+        def kinds(present):
+            return [a.kind for a in st.compute_alerts(
+                cluster="c1", groupsyncs=[], groups=[], now=datetime.now(UTC),
+                grace=timedelta(minutes=10), groupsync_present=present)]
+
+        assert "groupsync_crd_absent" in kinds(False)
+        assert "groupsync_crd_absent" not in kinds(True)
+        assert "groupsync_crd_absent" not in kinds(None), (
+            "a cluster that has not polled since the upgrade must not alert"
+        )
+
+    def test_the_alert_explains_the_consequence_not_just_the_fact(self):
+        """"CRD missing" alone does not tell a reader why every group is unattributed."""
+        import gsd.state as st
+        from datetime import UTC, datetime, timedelta
+
+        alert = next(a for a in st.compute_alerts(
+            cluster="c1", groupsyncs=[], groups=[], now=datetime.now(UTC),
+            grace=timedelta(minutes=10), groupsync_present=False)
+            if a.kind == "groupsync_crd_absent")
+        assert "unattributed" in alert.detail
+        assert "still read" in alert.detail, (
+            "must say groups ARE shown, or a reader assumes the dashboard is broken"
+        )
+
+    def test_the_cluster_card_carries_the_flag(self, tmp_path):
+        """The card is what the Overview renders; a store-only flag changes nothing on screen."""
+        db = str(tmp_path / "t.db")
+        store = Store(db)
+        store.upsert_cluster("c1", "https://x", True)
+        store.replace_groupsync_state("c1", None, now_iso())
+        settings = Settings(clusters=[ClusterConfig("c1", "https://x", token_env="T")],
+                            db_path=db)
+        client = TestClient(build_app(settings, run_poller=False))
+        card = next(c for c in client.get("/api/clusters").json() if c["id"] == "c1")
+        assert card["groupsync_operator_present"] is False
+        assert card["groupsync_count"] == 0, "the count stays 0; the flag is what explains it"
+
+    def test_a_crdless_poll_records_absence_end_to_end(self, tmp_path, monkeypatch):
+        """The path that actually runs in production, not just the store API."""
+        import gsd.poller as poller_mod
+        store = Store(str(tmp_path / "t.db"))
+        store.upsert_cluster("no-operator", "https://x", True)
+        client, cluster, _ = _client(_handler())
+        monkeypatch.setattr(poller_mod, "ClusterClient", lambda *a, **kw: client)
+
+        assert poll_once(store, cluster, timeout=5) == "ok"
+        assert store.groupsync_present("no-operator") is False
+        assert store.group_counts("no-operator")["total"] == 2, (
+            "absence must be recorded WITHOUT costing the groups, which was the original bug"
+        )

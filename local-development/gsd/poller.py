@@ -102,7 +102,12 @@ def poll_once(store: StorageBackend, cluster: ClusterConfig, timeout: float = 15
     # Undecidable, so say so rather than attributing to whichever CR came first. Two CRs
     # with the same name in different namespaces produce byte-identical Group labels — the
     # operator writes <name>_<provider> and namespace appears nowhere in it.
-    for collision in ambiguous_attribution(groupsyncs):
+    # `None` means the CRD is absent; every loop below wants a list, and only
+    # replace_groupsync_state needs to know the difference. Normalised here so the tri-state
+    # cannot leak into the attribution logic, where `for cr in None` would raise mid-poll.
+    crs = groupsyncs if groupsyncs is not None else []
+
+    for collision in ambiguous_attribution(crs):
         log.warning(
             "%s: GroupSync %r exists in more than one namespace and the sync-provider "
             "label carries no namespace, so its groups cannot be attributed to one CR. "
@@ -115,7 +120,7 @@ def poll_once(store: StorageBackend, cluster: ClusterConfig, timeout: float = 15
     # Steps 3-4: attribute groups to CRs, then record any sync we had not seen before.
     cr_rows = []
     new_events = 0
-    for cr in groupsyncs:
+    for cr in crs:
         keys = provider_keys_for(cr, groups)
         owned = set(keys)
         group_count = sum(1 for g in groups if g.sync_provider in owned)
@@ -162,13 +167,16 @@ def poll_once(store: StorageBackend, cluster: ClusterConfig, timeout: float = 15
     # the operator's own lastSyncSuccessTime, so a rollback loses an observation for good
     # rather than re-deriving it next cycle.
     with store.poll_snapshot():
-        for cr in groupsyncs:
+        for cr in crs:
             # Step 5: the failure condition, stored whether or not it is current (PLAN §2.1).
             store.upsert_reconcile_error(
                 cluster.name, cr.name, cr.error_at, cr.error_generation, cr.error_message
             )
 
-        store.replace_groupsync_state(cluster.name, cr_rows, observed_at)
+        # None when the CRD is absent, so the store records "not installed" rather than
+        # "installed with zero CRs". cr_rows is [] in both cases and cannot carry that.
+        store.replace_groupsync_state(
+            cluster.name, None if groupsyncs is None else cr_rows, observed_at)
 
         # Step 6
         store.replace_group_state(
@@ -212,7 +220,7 @@ def poll_once(store: StorageBackend, cluster: ClusterConfig, timeout: float = 15
     log.info(
         "polled %s: %d CRs, %d groups, %d new sync event(s), %d membership change(s)",
         cluster.name,
-        len(groupsyncs),
+        len(crs),
         len(groups),
         new_events,
         member_changes,
