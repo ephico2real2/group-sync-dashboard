@@ -101,8 +101,33 @@ INTERNAL="image-registry.openshift-image-registry.svc:5000/${NAMESPACE}/${IMAGE}
 #
 # The tag no longer needs writing anywhere: --set carries it, and `helm get values` records
 # what is deployed. For plain YAML to read or diff, use ./render-manifests.sh.
+#
+# -f IS MANDATORY, and this script shipped without it. `helm upgrade` does NOT carry forward
+# the previous upgrade's --set values: it starts from the chart defaults and applies only what
+# this invocation passes. So an upgrade carrying just the image tag RESETS everything else.
+#
+# Measured, on this cluster, by this script: a deploy that passed only --set image.* reported
+# "successfully rolled out" and silently turned oauthProxy.apiTokenAccess off, removing
+# -openshift-delegate-urls from the proxy container. Bearer-token API access — curl and
+# Postman against the destination cluster — was gone, with nothing in the Helm output, the
+# rollout status or the pod events to say so. build-and-push-external.sh was fixed for this
+# exact defect and this script was missed.
+#
+# Passing -f every time makes the upgrade declarative: the file is the desired state and --set
+# carries only what genuinely varies per invocation (the tag just built).
+RELEASE_VALUES="${RELEASE_VALUES:-../environments/crc.yaml}"
+if [ ! -f "$RELEASE_VALUES" ]; then
+  echo "ERROR: no release values file at ${RELEASE_VALUES}" >&2
+  echo "       Deploying without one resets the release to chart defaults and silently" >&2
+  echo "       drops whatever a previous upgrade configured." >&2
+  echo "       Fix: RELEASE_VALUES=<path>, or restore ../environments/crc.yaml." >&2
+  exit 1
+fi
+echo "release : ${RELEASE_VALUES}"
+
 helm upgrade --install "${IMAGE}" ../charts/group-sync-dashboard \
   --namespace "${NAMESPACE}" --create-namespace \
+  -f "$RELEASE_VALUES" \
   --set image.repository="${INTERNAL%:*}" \
   --set image.tag="${TAG}"
 oc rollout status "deploy/${IMAGE}" -n "${NAMESPACE}" --timeout=300s
