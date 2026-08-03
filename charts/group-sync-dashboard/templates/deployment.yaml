@@ -217,7 +217,31 @@ spec:
             - -tls-key=/etc/tls/private/tls.key
             - -cookie-secret-file=/etc/proxy/secrets/session_secret
             - -openshift-service-account={{ include "gsd.serviceAccountName" . }}
+            # The ServiceAccount CA signs the INTERNAL API endpoint (https://172.31.0.1), which
+            # is all the proxy needs for OAuth discovery. It does NOT sign the PUBLIC OAuth
+            # route, and the proxy talks to both.
             - -openshift-ca=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+            #
+            # The OAuth ROUTE, which the SA CA above does not cover. On a cluster whose *.apps
+            # wildcard is signed by an internal CA, login returned 500 with a healthy pod:
+            #
+            #   oauthproxy.go:661 error redeeming code: Post ".../oauth/token":
+            #       x509: certificate signed by unknown authority
+            #
+            # Discovery succeeded and the code exchange failed, which locates it exactly:
+            # discovery goes to the in-cluster API address, then RETURNS the public issuer, so
+            # the exchange hits the ingress-served route and a CA the SA bundle lacks.
+            #
+            # -openshift-ca "may be given multiple times" (its own --help). Passing any value
+            # replaces the default, so the SA path above must stay explicit. Same bundles the
+            # dashboard trusts; they previously reached only GSD_TRUSTED_CA_FILE.
+            #
+            {{- if .Values.trustedCA.injected.enabled }}
+            - -openshift-ca={{ .Values.trustedCA.mountPath }}/injected/ca-bundle.crt
+            {{- end }}
+            {{- if .Values.trustedCA.existingConfigMap.enabled }}
+            - -openshift-ca={{ .Values.trustedCA.mountPath }}/enterprise/{{ .Values.trustedCA.existingConfigMap.key }}
+            {{- end }}
             - -skip-auth-regex={{ .Values.oauthProxy.skipAuthRegex }}
             {{- if .Values.oauthProxy.sar }}
             - -openshift-sar={{ .Values.oauthProxy.sar }}
@@ -241,6 +265,23 @@ spec:
             - name: oauth-cookie
               mountPath: /etc/proxy/secrets
               readOnly: true
+            #
+            # The same volumes the dashboard mounts. They already existed at pod level; only
+            # this container lacked them. Must stay paired with the -openshift-ca paths above:
+            # the proxy does NOT fail on a CA path it cannot read — verified by pointing it at
+            # a nonexistent file, which left the pod Running 2/2 and logged nothing — so a
+            # mount removed here goes unnoticed until a login fails on a real cluster.
+            #
+            {{- if .Values.trustedCA.injected.enabled }}
+            - name: trusted-ca-injected
+              mountPath: {{ .Values.trustedCA.mountPath }}/injected
+              readOnly: true
+            {{- end }}
+            {{- if .Values.trustedCA.existingConfigMap.enabled }}
+            - name: trusted-ca-enterprise
+              mountPath: {{ .Values.trustedCA.mountPath }}/enterprise
+              readOnly: true
+            {{- end }}
           resources: {{- toYaml .Values.oauthProxy.resources | nindent 12 }}
         {{- end }}
       volumes:
