@@ -1,0 +1,151 @@
+# Build the image on main, push it to Quay, and pin the tag in the chart.
+#
+# Until now the only way to publish was a laptop running local-development/build-and-push-external.sh,
+# which means the published image came from whatever was in one person's working tree and the
+# tag in values.yaml was pinned by hand. This runs the SAME script on merge to main, so the
+# published artefact is the merge commit and the chart says which one.
+#
+# WHY THE SCRIPT AND NOT INLINE STEPS. The tag scheme (<version>-<10-char sha>), the stamp
+# verification, and the values.yaml rewrite all live in that script and are already tested by
+# hand. Reimplementing them here would give two definitions of "what tag does this commit
+# produce" that drift silently. The script also refuses a dirty tree and refuses a placeholder
+# password, and both guards are worth having in CI.
+#
+# The manual path is unchanged: run the script locally and it still builds, pushes and rewrites
+# values.yaml exactly as before.
+name: publish
+
+on:
+  push:
+    branches: [main]
+
+# One publish at a time. Two concurrent runs would both rewrite values.yaml and the second
+# push would be rejected as non-fast-forward — or worse, land and pin the older image.
+# cancel-in-progress is deliberately FALSE: cancelling mid-run can leave an image pushed to
+# Quay with no matching commit in the chart, which is the one inconsistency this job exists to
+# prevent.
+concurrency:
+  group: publish-main
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    # THREE guards, each closing a different failure:
+    #
+    # [skip publish]  — this job pushes a commit to main, which triggers this workflow again.
+    #                   The pin commit carries that marker, so the loop terminates after one
+    #                   iteration. Checked on the message rather than the actor because a
+    #                   `github-actions[bot]` check would also skip legitimate bot merges.
+    # repository      — a fork has no access to these secrets, so every push to a fork's main
+    #                   would fail the run. Skipping is the honest outcome there.
+    # secrets present — configured per-repo, so a clone that has not set them gets a skipped
+    #                   job rather than a red X nobody can fix.
+    if: >-
+      !contains(github.event.head_commit.message, '[skip publish]')
+      && github.repository == 'ephico2real2/group-sync-dashboard'
+    runs-on: ubuntu-latest
+
+    permissions:
+      # Only to push the one-line values.yaml pin back to main. Nothing else here writes.
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The script derives the tag from `git rev-parse HEAD` and reads the branch name, so
+          # it needs real git history rather than a detached export.
+          fetch-depth: 0
+          # Persist the token so the pin commit can be pushed from the same checkout.
+          persist-credentials: true
+
+      # NAMED TO MATCH THE SCRIPT, not the registry. build-and-push-external.sh reads
+      # REGISTRY_USERNAME / REGISTRY_PASSWORD from .env locally, so the same name means the same
+      # thing in .env, in the script and in Actions — no mapping to remember and nothing to
+      # rename if the registry ever changes. This repo has already lost time to one variable
+      # name meaning two different files.
+      - name: Check the publish credentials are configured
+        id: creds
+        env:
+          REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+          REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
+        run: |
+          # Never echo the values. Presence only, so a missing secret is a legible message
+          # rather than a podman login failure 40 lines into a build log.
+          if [ -z "${REGISTRY_USERNAME}" ] || [ -z "${REGISTRY_PASSWORD}" ]; then
+            echo "::warning::REGISTRY_USERNAME / REGISTRY_PASSWORD are not set; skipping publish."
+            echo "  Set them under Settings > Secrets and variables > Actions > Secrets."
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Preflight — the tools the script needs
+        if: steps.creds.outputs.configured == 'true'
+        run: |
+          # Fails fast and legibly if the runner image ever drops podman, rather than midway
+          # through a build. The script is podman-only by design: it is daemonless, so it
+          # needs no privileged docker socket.
+          podman --version
+          python3 --version
+
+      - name: Build, push, and rewrite the chart's image tag
+        if: steps.creds.outputs.configured == 'true'
+        working-directory: local-development
+        env:
+          # Registry and namespace are repo VARIABLES, not secrets — they are not sensitive and
+          # putting them in secrets makes them invisible in logs when you most want to see which
+          # registry a run pushed to. Defaults match .env.example.
+          REGISTRY: ${{ vars.REGISTRY || 'quay.io' }}
+          REGISTRY_NAMESPACE: ${{ vars.REGISTRY_NAMESPACE || 'ephico2real' }}
+          REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+          REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
+        run: |
+          # --update-values rewrites ONLY image.repository and image.tag in the chart's
+          # values.yaml; the script asserts it matched exactly one of each and exits non-zero
+          # otherwise, so a values.yaml reshuffle cannot silently produce an unpinned chart.
+          #
+          # No --allow-dirty. A CI checkout is clean by definition, so a dirty tree here means
+          # something earlier in the job modified tracked files and the tag would no longer
+          # describe the commit.
+          ./build-and-push-external.sh --update-values
+
+      - name: Pin the published tag on main
+        if: steps.creds.outputs.configured == 'true'
+        env:
+          # Needed for the commit message only. Without it in scope the message would say
+          # quay.io however the run was actually configured — a small lie in the one record of
+          # where the image went.
+          REGISTRY: ${{ vars.REGISTRY || 'quay.io' }}
+          REGISTRY_NAMESPACE: ${{ vars.REGISTRY_NAMESPACE || 'ephico2real' }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- charts/group-sync-dashboard/values.yaml; then
+            # Re-running the same commit produces the same tag, so there is nothing to pin.
+            # Not an error: the tag embeds the commit sha, so an identical tag means an
+            # identical source, and the image just pushed is the one already recorded.
+            echo "values.yaml already pins this tag; nothing to commit."
+            exit 0
+          fi
+
+          TAG=$(python3 - <<'PY'
+          import pathlib, re
+          text = pathlib.Path("charts/group-sync-dashboard/values.yaml").read_text()
+          print(re.search(r'(?m)^  tag: "?([^"\n]+)"?$', text).group(1))
+          PY
+          )
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add charts/group-sync-dashboard/values.yaml
+
+          # [skip publish] is what stops this commit re-triggering the workflow. The marker is
+          # required, not cosmetic — see the `if` on this job.
+          git commit -m "chore(chart): pin image tag ${TAG} [skip publish]" \
+                     -m "Published ${REGISTRY}/${REGISTRY_NAMESPACE}/group-sync-dashboard:${TAG} for commit ${GITHUB_SHA}, so the chart deploys the image built from that commit rather than whatever was last pinned by hand." \
+                     -m "Automated by .github/workflows/publish.yml."
+
+          # Rebase rather than force: another merge may have landed while the image was
+          # building, and this commit touches one line nobody else edits.
+          git pull --rebase --autostash origin main
+          git push origin HEAD:main
+          echo "pinned ${TAG} on main"

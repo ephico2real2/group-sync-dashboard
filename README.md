@@ -210,6 +210,41 @@ and nothing revealed it.
 Full detail, including CRC-specific traps, in
 [`local-development/README.md`](local-development/README.md).
 
+### Publishing from `main`
+
+[`.github/workflows/publish.yml`](.github/workflows/publish.yml) runs **that same script** on
+every merge to `main`, then commits the resulting tag into the chart's `values.yaml`. So the
+published image is the merge commit, and the chart records which one — rather than whichever
+working tree last ran the script by hand. The local path is unchanged and still does both.
+
+Configure once, under **Settings → Secrets and variables → Actions**:
+
+| | Name | Value |
+|---|---|---|
+| **Secret** | `REGISTRY_USERNAME` | Quay robot account, e.g. `ephico2real+github_ci` |
+| **Secret** | `REGISTRY_PASSWORD` | that robot's token — not a personal password |
+| Variable (optional) | `REGISTRY` | defaults to `quay.io` |
+| Variable (optional) | `REGISTRY_NAMESPACE` | defaults to `ephico2real` |
+
+The names deliberately match what the script already reads from `.env`, so one name means one
+thing locally and in CI. Registry and namespace are **variables, not secrets** — they are not
+sensitive, and as secrets they would be masked in exactly the logs where you want to see which
+registry a run pushed to.
+
+Two properties worth knowing:
+
+- **The pin commit carries `[skip publish]`**, and the workflow skips on that marker. Without it
+  the commit would retrigger the workflow, which would publish, which would commit again.
+- **Re-running a commit is safe.** The tag embeds the commit sha, so the same tag can only ever
+  mean the same source; a re-run pushes an identical image and the pin step finds nothing to
+  change. There is no tag to accidentally overwrite with different content.
+
+Credentials are never put on a command line — `secrets` go to the step's `env` and the script
+pipes the password to `podman login --password-stdin`. That is also why the workflow checks for
+the secrets in a step rather than in a job `if:`: per
+[GitHub's docs](https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/use-secrets),
+"secrets cannot be directly referenced in `if:` conditionals".
+
 ## What it shows
 
 Six tabs.
