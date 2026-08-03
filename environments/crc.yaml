@@ -15,24 +15,9 @@ oauthProxy:
   apiTokenAccess:
     enabled: true
 
-# ---------------------------------------------------------------------------
-# Unmanaged-grant audit: log mode
-# ---------------------------------------------------------------------------
-# `log` computes the full stamp plan every binding refresh and writes it to the pod log,
-# patching nothing. It needs ZERO write access — the chart renders the `patch` RBAC grant only
-# in `annotate` mode — so the ServiceAccount stays read-only.
-#
-# WHY NOT `annotate`. Measured on this cluster: it planned 4 stamps and landed 0. Kubernetes
-# privilege-escalation prevention requires the writer of an RBAC object to already hold every
-# permission that object grants, even for a metadata-only patch, so the API server demanded
-# 175 extra rule sets to label a binding granting nothing but `view`, and a full wildcard for
-# the cluster-admin one. Making that work means giving a read-only auditing tool the most
-# privilege on exactly the most dangerous grants. See docs/unmanaged-audit-design.md.
-#
-# `log` therefore costs nothing and loses nothing that matters: the findings themselves are
-# already in the UI and at /api/clusters/{id}/bindings/findings. The only thing `annotate`
-# would add is the on-object label for `oc get -l rbac.ocp.io/unmanaged=true`, which a
-# privileged CI job or `oc annotate` can apply instead.
+# Unmanaged-grant discovery. `log` is the chart default now, so this is redundant — kept
+# explicit because a release file should state what it wants rather than inherit it, and
+# because that keeps the intent if the default ever moves again.
 config:
   unmanagedAudit:
     mode: "log"

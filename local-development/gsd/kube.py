@@ -223,6 +223,20 @@ class BindingView:
         return self.group_name.startswith(SYSTEM_GROUP_PREFIX)
 
 
+# NO WRITE METHOD ON THIS CLIENT, and that is the design rather than an omission.
+#
+# stamp_unmanaged_binding / unstamp_unmanaged_binding used to live here, patching a label and
+# two annotations onto bindings the dashboard classified `unmanaged`. Both are gone with the
+# RBAC grant that enabled them: Kubernetes privilege-escalation prevention refuses a patch on
+# an RBAC object unless the writer already holds every permission that object grants, even for
+# metadata. Measured on a live cluster — 4 planned, 0 landed, 175 extra rule sets demanded to
+# label a binding granting nothing but `view`.
+#
+# The findings are published to the log, the UI and the API. Acknowledging one is a
+# cluster-admin task on the object (`oc annotate ... rbac.ocp.io/unmanaged-exception=<why>`),
+# which this client READS. git history has the removed code if a cluster ever justifies it.
+
+
 class ClusterClient:
     """Talks to one cluster. One instance per cluster, reused across polls."""
 
@@ -351,92 +365,6 @@ class ClusterClient:
                 out.extend(_binding_views(obj, "ClusterRoleBinding"))
         log.debug("fetched %d group-subject binding rows from %s", len(out), self.cluster.name)
         return out
-
-    def stamp_unmanaged_binding(
-        self, binding_kind: str, namespace: str, name: str, detected_at: str
-    ) -> None:
-        """Stamp one binding as detected-unmanaged. THE DASHBOARD'S ONLY WRITE.
-
-        A strategic-merge of metadata only: the label makes the set selectable from the
-        CLI, the annotations carry when and by what. Raises ClusterError on failure —
-        the caller decides whether that stops anything (it must not).
-        """
-        if binding_kind == "ClusterRoleBinding":
-            path = f"{CLUSTERROLEBINDING_API}/{name}"
-        else:
-            path = f"/apis/rbac.authorization.k8s.io/v1/namespaces/{namespace}/rolebindings/{name}"
-        body = {"metadata": {
-            "labels": {UNMANAGED_LABEL: "true"},
-            "annotations": {
-                UNMANAGED_DETECTED_AT_ANNOTATION: detected_at,
-                UNMANAGED_DETECTED_BY_ANNOTATION: "group-sync-dashboard",
-            },
-        }}
-        with self._client() as client:
-            try:
-                response = client.patch(
-                    path, json=body,
-                    headers={"Content-Type": "application/merge-patch+json"},
-                )
-            except httpx.HTTPError as exc:
-                raise ClusterError(UNREACHABLE, f"{type(exc).__name__}: {exc}") from exc
-        if response.status_code == 403:
-            # TWO DIFFERENT 403s, and conflating them sends the operator to fix the wrong
-            # thing. Measured on a cluster where the patch grant was correctly in place:
-            # `oc auth can-i patch clusterrolebindings --as=<the SA>` answered YES and every
-            # stamp still failed, while this message told them the token lacked patch.
-            #
-            # The API server distinguishes them in its text, so we can too.
-            body = response.text
-            if "not currently held" in body or "attempting to grant RBAC permissions" in body:
-                raise ClusterError(
-                    FORBIDDEN,
-                    "403 stamping a binding — PRIVILEGE ESCALATION PREVENTION, not a missing "
-                    "grant. Kubernetes requires a writer of an RBAC object to already hold "
-                    "every permission that object grants, even for a metadata-only patch, so "
-                    "this cannot be fixed by adding `patch`: the dashboard would need the "
-                    "binding's own privileges. Expected and harmless — the finding is still "
-                    "reported by the API and the UI. See docs/unmanaged-audit-design.md.",
-                )
-            raise ClusterError(
-                FORBIDDEN,
-                "403 patching a binding — unmanagedAudit.annotate is enabled but the "
-                "token lacks patch on rolebindings/clusterrolebindings. Check with: "
-                "oc auth can-i patch clusterrolebindings --as=<the dashboard SA>",
-            )
-        if response.status_code >= 400:
-            raise ClusterError(
-                UNREACHABLE,
-                f"HTTP {response.status_code} stamping {path}: {response.text[:200]}",
-            )
-
-    def unstamp_unmanaged_binding(
-        self, binding_kind: str, namespace: str, name: str
-    ) -> None:
-        """Remove the audit LABEL from a binding no longer classified unmanaged (I4).
-
-        The label comes off so `-l rbac.ocp.io/unmanaged=true` always means *currently*
-        outside governance. The detected-at/by ANNOTATIONS deliberately stay: they are the
-        history — "detected on X, later acknowledged/adopted" is exactly what an auditor
-        wants to read on the object. Merge-patch null deletes the key.
-        """
-        if binding_kind == "ClusterRoleBinding":
-            path = f"{CLUSTERROLEBINDING_API}/{name}"
-        else:
-            path = f"/apis/rbac.authorization.k8s.io/v1/namespaces/{namespace}/rolebindings/{name}"
-        with self._client() as client:
-            try:
-                response = client.patch(
-                    path, json={"metadata": {"labels": {UNMANAGED_LABEL: None}}},
-                    headers={"Content-Type": "application/merge-patch+json"},
-                )
-            except httpx.HTTPError as exc:
-                raise ClusterError(UNREACHABLE, f"{type(exc).__name__}: {exc}") from exc
-        if response.status_code >= 400:
-            raise ClusterError(
-                UNREACHABLE,
-                f"HTTP {response.status_code} unstamping {path}: {response.text[:200]}",
-            )
 
     def fetch_operator_configs(self) -> list[OperatorConfigView] | None:
         """NamespaceConfig and GroupConfig health, or None when the operator is absent.

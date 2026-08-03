@@ -19,9 +19,10 @@ from gsd.kube import (
 
 
 def _row(name, finding="unmanaged", stamped=False, kind="RoleBinding", ns="ns-a",
-         group="app-ocp-rbac-team-ns-admin"):
+         group="app-ocp-rbac-team-ns-admin", role="admin"):
     return {"binding_kind": kind, "binding_namespace": ns, "binding_name": name,
-            "group_name": group, "finding": finding, "audit_stamped": stamped}
+            "group_name": group, "finding": finding, "audit_stamped": stamped,
+            "role_name": role}
 
 
 class TestI2TargetSet:
@@ -91,137 +92,85 @@ class TestI6BlastRadius:
 
 
 class TestI5ModeGating:
-    def test_the_mode_fails_safe_to_off(self, tmp_path, monkeypatch):
-        """A typo must never be the thing that turns on the write path."""
+    def test_an_unrecognised_mode_fails_safe_to_off(self, tmp_path, monkeypatch):
+        """A word that means something else, or nothing, must not enable discovery."""
         base = (tmp_path / "c.yaml")
         base.write_text("clusters:\n  - name: c\n    apiUrl: https://x\n    tokenEnv: T\n")
-        # "ANNOTATE"/" annotate " are unambiguous spellings, not typos, and parse as
-        # annotate. The fail-safe list is words that MEAN something else or nothing.
         for bad in ("on", "true", "yes", "enable", "anotate", "logg"):
             monkeypatch.setenv("GSD_UNMANAGED_AUDIT_MODE", bad)
             assert load_settings(str(base)).unmanaged_audit_mode == "off", bad
-        monkeypatch.setenv("GSD_UNMANAGED_AUDIT_MODE", "annotate")
-        assert load_settings(str(base)).unmanaged_audit_mode == "annotate"
+
+    def test_annotate_downgrades_to_log_rather_than_off(self, tmp_path, monkeypatch):
+        """The removed mode must not silently take the FINDINGS away on upgrade.
+
+        `annotate` used to label the binding objects. It went with the RBAC grant that enabled
+        it, because Kubernetes refuses a metadata patch on an RBAC object unless the writer
+        already holds everything that object grants — measured, 0 of 4 landed.
+
+        Treating it as unrecognised would land on `off`, and a cluster that had it set would
+        stop reporting findings entirely after an upgrade. The discovery was always the
+        valuable half and never needed the write, so it degrades to `log`, which publishes the
+        same findings with no write access. Both spellings, since neither is a typo.
+        """
+        base = (tmp_path / "c.yaml")
+        base.write_text("clusters:\n  - name: c\n    apiUrl: https://x\n    tokenEnv: T\n")
+        for spelling in ("annotate", "ANNOTATE", "  annotate  "):
+            monkeypatch.setenv("GSD_UNMANAGED_AUDIT_MODE", spelling)
+            assert load_settings(str(base)).unmanaged_audit_mode == "log", spelling
 
     def test_the_default_is_off(self):
         assert Settings().unmanaged_audit_mode == "off"
 
 
-class TestI1WriteSet:
-    def test_the_stamp_patch_touches_only_the_three_owned_keys(self):
-        """Captured from the real client method via a transport spy: metadata only, and
-        only the dashboard's own label and two annotations. Never subjects, never roleRef."""
-        import httpx
-        from gsd.config import ClusterConfig
-        from gsd.kube import ClusterClient
+class TestEvidenceIsSelfContained:
+    """A discovery line must stand alone as evidence.
 
-        captured = {}
-
-        def handler(request):
-            captured["path"] = str(request.url.path)
-            captured["body"] = request.read().decode()
-            captured["content_type"] = request.headers.get("content-type")
-            return httpx.Response(200, json={})
-
-        client = ClusterClient(ClusterConfig("c", "https://x", token_env="T"))
-        # Substitute the transport underneath the real client factory.
-        import gsd.kube as kube_mod
-        original = client._client
-        client._client = lambda: httpx.Client(
-            transport=httpx.MockTransport(handler), base_url="https://x"
-        )
-        client.stamp_unmanaged_binding("RoleBinding", "ns-a", "hand-made",
-                                       "2026-08-02T20:00:00Z")
-        import json
-        body = json.loads(captured["body"])
-        assert set(body) == {"metadata"}, "the patch reached outside metadata"
-        assert set(body["metadata"]) == {"labels", "annotations"}
-        assert body["metadata"]["labels"] == {UNMANAGED_LABEL: "true"}
-        assert set(body["metadata"]["annotations"]) == {
-            UNMANAGED_DETECTED_AT_ANNOTATION, UNMANAGED_DETECTED_BY_ANNOTATION,
-        }
-        assert captured["content_type"] == "application/merge-patch+json"
-        assert captured["path"].endswith("/namespaces/ns-a/rolebindings/hand-made")
-
-    def test_the_heal_patch_removes_only_the_label(self):
-        import httpx, json
-        from gsd.config import ClusterConfig
-        from gsd.kube import ClusterClient
-
-        captured = {}
-
-        def handler(request):
-            captured["body"] = request.read().decode()
-            captured["path"] = str(request.url.path)
-            return httpx.Response(200, json={})
-
-        client = ClusterClient(ClusterConfig("c", "https://x", token_env="T"))
-        client._client = lambda: httpx.Client(
-            transport=httpx.MockTransport(handler), base_url="https://x"
-        )
-        client.unstamp_unmanaged_binding("ClusterRoleBinding", "", "hand-made-crb")
-        body = json.loads(captured["body"])
-        assert body == {"metadata": {"labels": {UNMANAGED_LABEL: None}}}, (
-            "healing must delete the label and touch nothing else — the detected-at "
-            "annotations are the audit history and stay"
-        )
-        assert captured["path"].endswith("/clusterrolebindings/hand-made-crb")
-
-class TestForbiddenIsDiagnosable:
-    """The two 403s must not read alike, because they need opposite responses.
-
-    MEASURED on a live cluster with the patch grant correctly in place: every stamp failed and
-    the message said the token lacked patch, while `oc auth can-i patch clusterrolebindings
-    --as=<the SA>` answered **yes**. An operator following that message would add a grant they
-    already had and still see failures.
-
-    The real cause was privilege-escalation prevention — Kubernetes requires a writer of an
-    RBAC object to already hold every permission that object grants, even for a metadata-only
-    patch — which no amount of `patch` can satisfy.
+    The log used to read "WOULD stamp ClusterRoleBinding -/demo-cluster-admin-crb": it named
+    the object, said nothing about why it mattered, and framed the whole thing as a rehearsal
+    for a write that can never land on a normal cluster. The plan now carries what makes each
+    object a finding, so the line is actionable without opening the dashboard.
     """
 
-    @staticmethod
-    def _patch(monkeypatch, status: int, body: str):
-        import httpx
+    def test_evidence_names_the_role_and_the_group(self):
+        plan = plan_audit_stamps([
+            _row("demo-crb", kind="ClusterRoleBinding", ns="",
+                 role="cluster-admin", group="app-ocp-rbac-demo"),
+        ])
+        key = ("ClusterRoleBinding", "", "demo-crb")
+        assert plan.stamp == [key]
+        assert plan.evidence[key]["role"] == "cluster-admin"
+        assert plan.evidence[key]["groups"] == ["app-ocp-rbac-demo"]
 
-        from gsd import kube
+    def test_only_the_unmanaged_group_is_evidence(self):
+        """The subtle one. A binding can name two groups and be unmanaged for only one.
 
-        class _Resp:
-            status_code = status
-            text = body
-
-        class _Client:
-            def __enter__(self): return self
-            def __exit__(self, *a): return False
-            def patch(self, *a, **kw): return _Resp()
-
-        client = kube.ClusterClient.__new__(kube.ClusterClient)
-        monkeypatch.setattr(client, "_client", lambda: _Client(), raising=False)
-        return client
-
-    def test_escalation_prevention_says_so_and_does_not_blame_the_grant(self, monkeypatch):
-        from gsd.kube import ClusterError
-
-        body = ('clusterrolebindings.rbac.authorization.k8s.io "x" is forbidden: user "y" '
-                'is attempting to grant RBAC permissions not currently held: '
-                '{APIGroups:[""], Resources:["bindings"], Verbs:["get"]}')
-        client = self._patch(monkeypatch, 403, body)
-        with pytest.raises(ClusterError) as caught:
-            client.stamp_unmanaged_binding("ClusterRoleBinding", "", "x", "2026-01-01T00:00:00Z")
-        detail = str(caught.value)
-        assert "ESCALATION" in detail.upper(), detail
-        assert "lacks patch" not in detail, (
-            "still blaming the grant, which the operator already has"
+        Citing the managed group would send a reader to inspect a grant that is fine, and
+        leave the actual finding unnamed.
+        """
+        plan = plan_audit_stamps([
+            _row("two-groups", finding="unmanaged", group="hand-made-group"),
+            _row("two-groups", finding="ok", group="policy-managed-group"),
+        ])
+        key = ("RoleBinding", "ns-a", "two-groups")
+        assert plan.evidence[key]["groups"] == ["hand-made-group"], (
+            "a managed group must never be cited as evidence of being unmanaged"
         )
 
-    def test_a_genuinely_missing_grant_still_says_to_check_the_grant(self, monkeypatch):
-        from gsd.kube import ClusterError
+    def test_every_planned_object_has_evidence(self):
+        """The caller must never have to guess whether a key is present."""
+        plan = plan_audit_stamps([
+            _row("new", finding="unmanaged"),
+            _row("adopted", finding="ok", stamped=True, ns="ns-b"),
+        ])
+        assert plan.stamp and plan.unstamp
+        for key in plan.stamp + plan.unstamp:
+            assert key in plan.evidence, f"{key} planned with no evidence"
 
-        client = self._patch(monkeypatch, 403,
-                             'clusterrolebindings.rbac.authorization.k8s.io is forbidden: '
-                             'User cannot patch resource')
-        with pytest.raises(ClusterError) as caught:
-            client.stamp_unmanaged_binding("ClusterRoleBinding", "", "x", "2026-01-01T00:00:00Z")
-        detail = str(caught.value)
-        assert "lacks patch" in detail, detail
-        assert "oc auth can-i" in detail, "no way to check it is offered"
+    def test_evidence_survives_the_cap(self):
+        """A capped plan still explains the objects it did list."""
+        plan = plan_audit_stamps(
+            [_row("rb", ns=f"ns-{i:02d}", role="edit", group=f"g-{i}") for i in range(30)],
+            max_per_cycle=5,
+        )
+        assert len(plan.stamp) == 5 and plan.capped == 25
+        assert all(plan.evidence[k]["role"] == "edit" for k in plan.stamp)

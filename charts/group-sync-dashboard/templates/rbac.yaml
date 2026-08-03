@@ -30,16 +30,21 @@ rules:
     resources: ["leases"]
     verbs: ["get", "create", "update"]
   {{- end }}
-  {{- if eq (toString .Values.config.unmanagedAudit.mode) "annotate" }}
-  # RENDERED ONLY IN ANNOTATE MODE, deliberately: patch on bindings is a verb that could
-  # change what a binding grants, and the grant must not exist while the feature is off or
-  # rehearsing in log mode. The application confines itself to three metadata keys —
-  # docs/unmanaged-audit-design.md I1 — but the grant is broader than the use, and that
-  # asymmetry is the price of this feature. Kubernetes has no metadata-only patch scope.
-  - apiGroups: ["rbac.authorization.k8s.io"]
-    resources: ["rolebindings", "clusterrolebindings"]
-    verbs: ["patch"]
-  {{- end }}
+  # NO WRITE VERB ANYWHERE IN THIS ROLE, at any value, and it stays that way.
+  #
+  # A conditional `patch` on rolebindings/clusterrolebindings used to render here when
+  # config.unmanagedAudit.mode was "annotate", so the dashboard could label its own findings
+  # for `oc get ... -l`. It was removed because it could never work: Kubernetes
+  # privilege-escalation prevention refuses a patch on an RBAC object unless the writer
+  # already holds every permission that object grants, even for a metadata-only patch.
+  # Measured on a live cluster — 4 findings planned, 0 landed, 175 extra rule sets demanded
+  # to label a binding granting nothing but `view`. The grant bought nothing and cost a verb
+  # that can change what a binding grants.
+  #
+  # Findings are published to the log, the RBAC policy tab and
+  # /api/clusters/{id}/bindings/findings instead. Suppressing one is a cluster-admin task on
+  # the object: `oc annotate ... rbac.ocp.io/unmanaged-exception="<why>"`, which the dashboard
+  # reads. See values.yaml and docs/unmanaged-audit-design.md.
   {{- if .Values.rbac.bindings }}
   # Powers the "Access granted" view and dangling-binding detection.
   #

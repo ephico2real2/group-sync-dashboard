@@ -33,8 +33,11 @@ only** — the roles' `rules` are never fetched or expanded, and the API says so
 payload (`gsd/api.py:365`). An incomplete effective-permission calculation would show
 access as absent when it is not, and a false negative there closes an incident wrongly.
 
-It does not create, edit or delete a GroupSync CR, a Group, or a binding's subjects or
-`roleRef`. It has exactly one write path, described in §7.3, and it is off by default.
+It does not create, edit or delete anything it observes — not a GroupSync CR, not a Group, not
+a binding's subjects, its `roleRef` or its metadata. The ClusterRole carries no write verb at
+any value of any chart setting (`templates/rbac.yaml:33-47`), and the only object the dashboard
+writes anywhere is its own leader-election Lease. There was one write path, which labelled the
+unmanaged grants it discovered; §7.3 is the live-cluster measurement that removed it.
 
 ---
 
@@ -68,10 +71,11 @@ flowchart LR
   k8s["Cluster API<br/>GroupSync, Group,<br/>RoleBinding, ClusterRoleBinding,<br/>NamespaceConfig, GroupConfig"]
   poll -->|"list — read-only"| k8s
   lease -->|"Lease get/create/update"| k8s
-  poll -.->|"patch — annotate mode only"| k8s
 ```
 
-The dotted patch arrow is the whole of the system's write surface. §7.3.
+The Lease arrow is the whole of the system's write surface, and the Lease is the dashboard's own
+coordination object — not anything it reports on. Every arrow to the observed objects is a
+`list`. §7.1.
 
 ### The Python modules
 
@@ -84,15 +88,16 @@ The dotted patch arrow is the whole of the system's write surface. §7.3.
 | `gsd/store.py` | The only module containing SQL or the string `sqlite3` |
 | `gsd/storage.py` | `StorageBackend` Protocol, and `open_backend()` — the one place an engine is named |
 | `gsd/state.py` | Pure functions: cron maths, CR health, alert computation. No I/O |
-| `gsd/audit.py` | The stamping plan. Pure decisions; the poller executes them |
+| `gsd/audit.py` | The unmanaged-grant discovery plan: which bindings are findings, which are resolved, and the evidence for each. Pure decisions; the poller logs them |
 | `gsd/activity.py` | Who used the dashboard, buffered in memory, flushed on an interval |
 | `gsd/metrics.py` | Prometheus collector; reads the store at scrape time |
 | `gsd/api.py` | FastAPI routes, the `@consistent` decorator, app assembly |
 | `gsd/static/index.html` | The entire frontend — one file, no build step, strict CSP |
 
 `gsd/state.py` and `gsd/audit.py` are deliberately I/O-free so their invariants are plain
-unit tests. For the only write path, decision logic being trivially testable is the point
-(`gsd/audit.py:1-6`).
+unit tests (`gsd/audit.py:3-5`). That matters most for `audit.py`: nothing is written back to the
+cluster, so the classification and the evidence cited for it are the entire product, and both are
+testable without one (`gsd/audit.py:26-31`).
 
 ---
 
@@ -142,8 +147,9 @@ sequenceDiagram
       T->>K: list rolebindings + clusterrolebindings (paged)
       T->>K: list namespaceconfigs + groupconfigs
       T->>S: replace_bindings, replace_user_bindings, replace_operator_configs
-      opt unmanagedAudit.mode is log or annotate
-        T->>K: patch metadata on unmanaged bindings
+      opt unmanagedAudit.mode is log
+        T->>S: all_bindings — classify, then log each finding
+        Note over T,K: no call to K; nothing is written back
       end
     end
   end
@@ -553,8 +559,8 @@ credentials for object storage.
 
 ### 7.1 The ServiceAccount is read-only
 
-`templates/rbac.yaml` grants `get` and `list` and nothing else, except on the Lease it needs
-to elect a leader and — only in one mode — the one write verb of §7.3:
+`templates/rbac.yaml` grants `get` and `list` and nothing else, except on the Lease it needs to
+elect a leader:
 
 | API group | Resources | Verbs |
 |---|---|---|
@@ -563,12 +569,18 @@ to elect a leader and — only in one mode — the one write verb of §7.3:
 | `user.openshift.io` | `groups` | get, list |
 | `rbac.authorization.k8s.io` | `rolebindings`, `clusterrolebindings` | get, list — only when `rbac.bindings` |
 | `coordination.k8s.io` | `leases` | get, create, update — only when `leaderElection.enabled` |
-| `rbac.authorization.k8s.io` | `rolebindings`, `clusterrolebindings` | **patch** — only when `unmanagedAudit.mode: annotate` |
 
-No `watch`, and no write verb outside the last row.
+No `watch`, and no write verb on anything the dashboard reports on. The Lease is its own
+coordination object; it is the only thing in the cluster the ServiceAccount can change.
+
+This is checkable rather than asserted, and it holds at every setting: `helm template` with
+`config.unmanagedAudit.mode` set to `off`, `log`, `annotate`, an unrecognised word and empty
+renders zero occurrences of `"patch"`. A conditional `patch` on `rolebindings` and
+`clusterrolebindings` used to render here; `rbac.yaml:33-47` records why it is gone, so nobody
+adds it back. §7.3 is the measurement.
 
 `roles`/`clusterroles` are deliberately **not** requested, since role rules are never
-evaluated. `rbac.yaml:46-49` is careful to record that this is a statement of intent and not
+evaluated. `rbac.yaml:51-54` is careful to record that this is a statement of intent and not
 an isolation boundary: OpenShift binds `basic-user` to `system:authenticated`, which already
 grants `get`/`list` on clusterroles to every authenticated identity including this one.
 
@@ -641,47 +653,99 @@ data — who was present, on which days, between which times — and the argumen
 the rest of this dashboard ("you could read the groups with `oc` anyway") is true of group
 membership and false of who looked at it (`gsd/api.py:552-565`). `visibility: all` restores
 the older behaviour as an explicit choice. Anything unrecognised means `self`, never `all`
-(`gsd/config.py:281-295`).
+(`gsd/config.py:298-312`).
 
 There is deliberately no "admins only" tier: doing it properly means a SubjectAccessReview
 from the app on every read, which makes a personal-data query depend on API-server
 availability.
 
-### 7.3 The one write path, and its ceiling
+### 7.3 Unmanaged-grant discovery, and why nothing is written back
 
-`config.unmanagedAudit.mode` is `off` | `log` | `annotate`, default `off`, and anything
-unrecognised is treated as `off` (`gsd/config.py:265-278`) — a typo must not be the thing
-that turns on the only code path that patches cluster objects.
+`config.unmanagedAudit.mode` is `off` | `log`, default `off`. `off` runs no discovery code at
+all; `log` publishes every finding to the pod log. Neither needs a write verb, and anything
+unrecognised is treated as `off` (`gsd/config.py:265-295`).
 
-In `annotate` mode the dashboard stamps bindings it classified `unmanaged`:
+There was an `annotate` mode. It labelled the bindings it classified `unmanaged` — a
+`rbac.ocp.io/unmanaged: "true"` label to select on, plus detected-at and detected-by annotations
+for the audit detail — so an operator could run `oc get rolebindings,clusterrolebindings -A -l
+rbac.ocp.io/unmanaged=true`. Enabled on a live OpenShift cluster it logged `plan — stamp 4, heal
+0`, and then 0 of the 4 landed.
 
-| Key | Kind | Meaning |
-|---|---|---|
-| `rbac.ocp.io/unmanaged: "true"` | label | *currently* unmanaged — this is what `oc get -l` selects on |
-| `rbac.ocp.io/unmanaged-detected-at` | annotation | first detection, never overwritten |
-| `rbac.ocp.io/unmanaged-detected-by` | annotation | `group-sync-dashboard` |
+**Kubernetes refuses this, and not in a way more RBAC can fix.** Privilege-escalation prevention
+requires the writer of an RBAC object to already hold every permission that object grants, and a
+metadata-only patch is not exempt. The API server enumerated what it wanted: 175 additional rule
+sets to label a ClusterRoleBinding granting nothing but `view`, and a single wildcard rule
+(`{APIGroups:[*], Resources:[*], Verbs:[*]}`, i.e. cluster-admin) for the one granting
+`cluster-admin`. `oc auth can-i patch clusterrolebindings --as=<the ServiceAccount>` answered yes
+throughout — the RBAC grant was correct and irrelevant, because the escalation check runs after
+it.
 
-The patch body is built in exactly one function and contains nothing else — no subjects, no
-`roleRef`, no other key (`gsd/kube.py:355-393`). At most `maxPerCycle` stamps per refresh;
-healing is never capped, because removing a wrong stamp must not queue behind new detections
-(`gsd/audit.py:47-51`). A failed patch is logged and skipped: it never fails the refresh and
-never affects the read pipeline.
+So a "special role" for this is 175+ rules of Kubernetes internals per binding class, or
+`escalate` on `rbac.authorization.k8s.io` (the verb that switches the check off — cluster-admin
+under a smaller name), or cluster-admin outright. All three give a read-only auditing tool the
+most privilege on precisely the most dangerous grants it exists to report. The mode, the two
+client methods that patched (86 lines, `gsd/kube.py:226-237` records what and why) and the
+conditional `patch` grant (`templates/rbac.yaml:33-47`) were removed together. The full evidence,
+including the API server's own error text from the pod, is in `docs/unmanaged-audit-design.md`.
 
-**Kubernetes caps this, and not in a way more RBAC can fix.** Privilege-escalation prevention
-means that to patch an RBAC object — even a metadata-only merge patch — the writer must
-already hold every permission that object grants. `oc auth can-i` says yes; the escalation
-check runs afterwards and refuses anyway. So the dashboard cannot stamp a binding granting
-`cluster-admin` unless it *is* cluster-admin, which inverts what a read-only auditing tool
-should be. It fails safe, and the finding stays visible in the UI and the API regardless.
-The full evidence, including the API server's own error text from the pod, is in
-`docs/unmanaged-audit-design.md`.
+**The discovery is the deliverable.** In `log` mode the poller classifies from the rows the same
+cycle just stored, and emits one summary at INFO (`gsd/poller.py:331-339`):
 
-**The cost, stated plainly:** Kubernetes has no annotations-only patch scope. `annotate` mode
-grants `patch` on bindings, and a subject with that verb can technically modify what a
-binding grants. The application never does; the *grant* is nonetheless broader than the use.
-That is why the default is `off`, why the RBAC rule renders only in `annotate` mode
-(`templates/rbac.yaml:33-42`), and why `log` mode exists — it computes and logs the entire
-plan with zero write access.
+```
+crc-local: unmanaged-grant discovery — 4 outside the policy system, 0 resolved since the
+last cycle. Full detail: GET /api/clusters/crc-local/bindings/findings
+```
+
+then one line per finding at **WARNING** — the poller emits INFO for every routine `httpx` call,
+so a finding at INFO is buried by the traffic around it, and a level is the one thing every log
+pipeline can filter on (`gsd/poller.py:341-356`):
+
+```
+UNMANAGED GRANT DISCOVERED — crc-local: ClusterRoleBinding demo-cluster-admin-crb
+(cluster-wide) grants cluster-admin to group app-ocp-rbac-demo-cluster-admin, outside the
+policy system (no config-source label, no exception annotation)
+```
+
+The line names the role and the group because it has to stand alone as evidence. The old wording
+was `WOULD stamp ClusterRoleBinding -/demo-cluster-admin-crb`, which framed the log as a
+rehearsal for a write and told a reader nothing about why the object mattered. Only the groups
+whose rows were classified `unmanaged` are cited: a binding can name two groups and be unmanaged
+for one of them, and citing the managed one would send a reader to inspect a grant that is fine
+(`gsd/audit.py:62-68`).
+
+`maxPerCycle` (default 20) bounds how many findings are *listed* individually per 300s refresh.
+The summary always reports the true total and the remainder is counted as "not yet listed" rather
+than dropped, so a misclassification bug costs one screenful of log per cycle instead of the
+whole cluster at once. Resolutions are never capped — a closed finding must not queue behind new
+ones (`gsd/audit.py:70-74`).
+
+A resolution is reported at INFO when an object carrying `rbac.ocp.io/unmanaged=true` stops being
+classified `unmanaged`. The dashboard never applies that label; an admin or a CI job does. The
+line therefore exists to tell whoever applied it that the finding is closed and their label is
+now stale, and it names the `oc label` that removes it (`gsd/poller.py:358-374`).
+
+**Suppressing a finding is a cluster-admin action on the object.** This is the replacement for
+the write path, not a gap left by it:
+
+```bash
+oc annotate clusterrolebinding <name> \
+  rbac.ocp.io/unmanaged-exception="approved in TICKET-123, break-glass access"
+```
+
+The classifier reads that annotation and stops classifying the binding as `unmanaged`
+(`gsd/store.py:1188-1194`), so it leaves the log, the RBAC policy tab and the API together. The
+justification lives next to the object it describes, and the acknowledgement is performed by
+somebody who holds the privileges that object grants — which the dashboard deliberately does not.
+Separation of duties, not a limitation.
+
+**What the removal costs, stated plainly.** Nothing labels the objects, so `oc get -l
+rbac.ocp.io/unmanaged=true` selects nothing unless somebody privileged applies the label
+themselves, and there is no on-cluster record of when a hand-made grant was first seen — the
+first-detection timestamp went with the annotations. Both answers now come from the dashboard:
+the API, the RBAC policy tab, or the log history. An upgrade that still sets `mode: annotate` is
+accepted and runs as `log`, with a warning naming the removal; it deliberately does not fall back
+to `off`, which would take the findings away from the one cluster known to have asked for them
+(`gsd/config.py:277-293`).
 
 ### 7.4 Credentials and trust
 
@@ -716,7 +780,7 @@ leave every API request thread unprotected (`gsd/store.py:313-346`).
 flowchart TB
   subgraph ns["namespace: group-sync-dashboard"]
     sa["ServiceAccount<br/>+ oauth-redirecturi annotation"]
-    cr["ClusterRole + Binding<br/>read-only"]
+    cr["ClusterRole + Binding<br/>read-only + own Lease"]
     cm["ConfigMap -config<br/>clusters.yaml"]
     tca["ConfigMap -trusted-ca<br/>empty; OpenShift fills it"]
     sec["Secret -oauth-cookie<br/>generated once, reused"]
@@ -951,7 +1015,8 @@ the page says so rather than leaving it to look like a bug.
 | Metrics carry no group or user name | `/metrics` is unauthenticated so a ServiceMonitor can reach it, and names are membership data — plus 500 groups must not mean 500 series | `gsd/metrics.py:6-12` |
 | Activity aggregated per user-day | bounds the table at users × days, and avoids keeping a record of which colleague read whose membership | `gsd/store.py:234-245` |
 | Activity self-scoped by default | it is identifiable personnel data, and "you could read it with `oc` anyway" does not cover who looked | `gsd/api.py:552-565` |
-| The write path is default-off and mode-gated | Kubernetes has no annotations-only patch scope, so the grant is broader than the use | `docs/unmanaged-audit-design.md` |
+| No write verb on anything the dashboard reports on | privilege-escalation prevention refuses a metadata patch on an RBAC object unless the writer already holds everything it grants: 4 planned, 0 landed, 175 rule sets demanded to label a `view` binding | `templates/rbac.yaml:33-47` |
+| A finding is suppressed by an annotation on the object, not in the dashboard | the justification belongs next to the object, and the acknowledgement belongs to somebody who holds the privileges | `gsd/store.py:1188-1194` |
 | Role rules are never expanded | an incomplete effective-permission answer is a false negative that closes an incident wrongly | `gsd/api.py:291-293` |
 | `unresolved` and `built_in` never alert | built-ins are normal and `unresolved` cannot be told from a not-yet-synced group; alerting trains people to ignore the view | `gsd/api.py:487-489` |
 | Every unbounded list is capped and says so | a silently truncated audit list is worse than a slow one | `gsd/api.py:296-316`, `400-406` |
@@ -970,7 +1035,9 @@ the page says so rather than leaving it to look like a bug.
 | A cluster card says unreachable | usually TLS, not the token. An external cluster signed by a corporate CA absent from the trust store presents exactly as an outage. Check `trustedCA` |
 | Groups vanished and departures were recorded | a 200 without `items` used to cause this and is now refused (`gsd/kube.py:280`). If it recurs, the guard's error text names the path and the `kind` |
 | A CR's groups are attributed to the wrong CR | two GroupSyncs with the same name in different namespaces. The poller logs the collision; the label carries no namespace, so nothing can resolve it |
-| `annotate` mode stamps nothing important | expected. Privilege-escalation prevention refuses the patch on exactly the high-privilege bindings. §7.3 |
+| Unmanaged findings show in the UI but nothing reaches the log | `unmanagedAudit.mode` is `off`, which runs no discovery code. The classification is in SQL and always populates the tab and the API; only the log lines are mode-gated. §7.3 |
+| An approved exception keeps being reported | the annotation goes on the binding, not into the dashboard: `oc annotate <kind> <name> rbac.ocp.io/unmanaged-exception="<why>"`. Check the key spelling — the dashboard cannot write it for you. §7.3 |
+| `oc get -l rbac.ocp.io/unmanaged=true` returns nothing | expected. Nothing labels the objects; the label is only ever applied by an admin or a CI job. §7.3 |
 | A change was deployed and nothing changed | the browser cached the shell, or the image predates the fix. `GET /api/version` reports the commit, branch and whether the tree was dirty |
 
 ---
@@ -992,11 +1059,14 @@ this were unbounded until recently.
 per user is both a scale problem and a disclosure one — `/metrics` is unauthenticated.
 
 **Adding a value to the chart.** It must be threaded through `templates/configmap.yaml` into
-`clusters.yaml`, read in `load_settings` (`gsd/config.py:322`), and land on `Settings`. Use
+`clusters.yaml`, read in `load_settings` (`gsd/config.py:339`), and land on `Settings`. Use
 `_bool_setting` for booleans — `bool("false")` is `True`, so a plain cast turns every explicit
 disable into an enable, silently and in the direction that grants rather than withholds
-(`gsd/config.py:298-313`). Anything that widens access or enables a write should fail safe on
-an unrecognised value, following `_visibility_setting` and `_audit_mode_setting`.
+(`gsd/config.py:315-330`). Anything that widens access should fail safe on an unrecognised value,
+following `_visibility_setting` (`gsd/config.py:298-312`). `_audit_mode_setting` is the same
+pattern with one deliberate exception: the removed `annotate` downgrades to `log` rather than
+`off`, because failing to `off` would silently take the findings away from a cluster whose
+operator had asked for them (`gsd/config.py:277-293`).
 
 **Naming.** There is precedent for a collision doing real damage: a new method named
 `user_bindings` silently overrode the existing reverse-lookup one and broke two tests. The
@@ -1021,7 +1091,7 @@ cd local-development && .venv/bin/python -m pytest tests/ -q
 | Document | Covers |
 |---|---|
 | [`storage-coupling.md`](storage-coupling.md) | how the app talks to SQLite and what a real engine swap would cost |
-| [`unmanaged-audit-design.md`](unmanaged-audit-design.md) | the write path's invariants, and the live-cluster evidence for its ceiling |
+| [`unmanaged-audit-design.md`](unmanaged-audit-design.md) | the discovery's invariants, and the live-cluster evidence that removed the write path |
 | [`namespace-report-design.md`](namespace-report-design.md) | per-namespace PDF reports — **parked**, with the definitive answer on `--openshift-sar` |
 | [`api-access.md`](api-access.md) | calling `/api` from outside: the token exchange, curl and Postman, and what the caller must be allowed to do |
 | [`api-contract.md`](api-contract.md) | the rules a new endpoint must satisfy, each enforced by a test |

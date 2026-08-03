@@ -187,10 +187,16 @@ day. Above one replica it is per-pod, like the rest of the history.
 | `monitoring.prometheusRule.walMiB` | `256` | MiB. 25% of the default 1Gi PVC. Raise it with `persistence.size` |
 | `monitoring.prometheusRule.for.*` | see below | the `for:` duration on each alert |
 
-The RBAC grant is conditional in two places. `coordination.k8s.io/leases`
-(`get`, `create`, `update`) renders only when `leaderElection.enabled`, and `patch` on
-bindings renders only when `config.unmanagedAudit.mode: annotate`. Everything else is
-`get`/`list`.
+Two rules in the ClusterRole are conditional. `coordination.k8s.io/leases`
+(`get`, `create`, `update`) renders only when `leaderElection.enabled`, and
+`rolebindings`/`clusterrolebindings` (`get`, `list`) only when `rbac.bindings`. Everything
+else in it is `get`/`list`, and that Lease — the dashboard's own, which grants nobody
+access to anything — is the only object it writes on any cluster.
+
+A `patch` on rolebindings/clusterrolebindings used to render here when
+`config.unmanagedAudit.mode` was `annotate`. The mode and the grant are both gone; see
+[Unmanaged-grant discovery](#unmanaged-grant-discovery) for the measurement that removed
+them. `helm template` now emits no `"patch"` at any value of that mode, `annotate` included.
 
 `namespaceconfigs`/`groupconfigs` are granted unconditionally, **including on clusters that
 will never install the namespace-configuration-operator**. The dashboard auto-detects the
@@ -227,77 +233,121 @@ looks normal, and the first visible sign is a full volume or a latency cliff.
 | `argocd.preservePVC` | `true` | three sync-options on the PVC — see [Deploying with ArgoCD](#deploying-with-argocd) |
 | `argocd.serverSideApplyInjectedCA` | `true` | lets the CA operator keep ownership of the `data` it writes. **Not sufficient alone** — the Application also needs an `ignoreDifferences` entry |
 
-### Unmanaged-grant audit stamping
+### Unmanaged-grant discovery
+
+Read-only, in every mode. This feature finds hand-made access grants and reports them; it
+writes nothing to any cluster.
+
+A binding is `unmanaged` when it grants an operator-synced group access and carries neither
+the policy operator's `rbac.ocp.io/config-source` label nor an
+`rbac.ocp.io/unmanaged-exception` annotation — somebody granted access by hand, outside the
+governance system, and nothing on the cluster reports it. The classification also requires at
+least one *managed* binding to exist on that cluster, so a cluster that has never used
+config-source labels reports zero rather than flagging every binding on it
+(`local-development/gsd/store.py:1188-1194`).
+
+`config.unmanagedAudit.mode` defaults to `log`, so each finding is published as one
+self-contained line, at **WARNING** — the HTTP client logs a line per request at INFO, so a finding at INFO
+is buried by routine traffic and a log pipeline has no level to filter on:
+
+```
+UNMANAGED GRANT DISCOVERED — crc-local: ClusterRoleBinding demo-cluster-admin-crb
+(cluster-wide) grants cluster-admin to group app-ocp-rbac-demo-cluster-admin, outside the
+policy system (no config-source label, no exception annotation)
+```
+
+Which object, what it grants, to whom, and why that is a finding — the line is actionable
+without opening the dashboard, and the fixed `UNMANAGED GRANT DISCOVERED` prefix is there to
+be alerted on. Only the groups whose rows were classified unmanaged are named: a binding can
+name two groups and be unmanaged for only one, and citing the managed one would send a reader
+to inspect a grant that is fine.
+
+One INFO summary line precedes them each refresh:
+
+```
+crc-local: unmanaged-grant discovery — 4 outside the policy system, 0 resolved since the
+last cycle. Full detail: GET /api/clusters/crc-local/bindings/findings
+```
+
+The first number is how many were listed. When `maxPerCycle` holds some back the line gains
+`, K not yet listed (per-cycle cap)`, so the remainder is accounted for rather than dropped.
+
+The same findings are in the **RBAC policy** tab and at
+`GET /api/clusters/{id}/bindings/findings`, classified alongside the other tiers. The
+discovery is the deliverable.
 
 | Key | Default | Notes |
 |---|---|---|
-| `config.unmanagedAudit.mode` | `"off"` | `off` \| `log` \| `annotate`. **The chart renders the `patch` RBAC grant only in `annotate`.** Anything unrecognised is treated as `off` |
-| `config.unmanagedAudit.maxPerCycle` | `20` | stamps per 300s refresh. Healing (label removal) is never capped |
+| `config.unmanagedAudit.mode` | `"log"` | `off` \| `log`. `off` runs no discovery code at all. `log` needs **no extra RBAC** — the ServiceAccount stays read-only, which is checkable: its only binding verbs are `get` and `list`. Anything unrecognised is treated as `off`; `annotate` runs as `log` and logs a warning saying so. **The default moved from `off` to `log`** once the feature stopped writing — `off` was right while it patched cluster objects, but now the only thing it buys is a governance tool that found a hand-made `cluster-admin` grant and declined to mention it |
+| `config.unmanagedAudit.maxPerCycle` | `20` | at most this many findings **listed individually** per `config.bindingIntervalSeconds` refresh. Anything beyond the cap is counted in the summary as "not yet listed" rather than dropped, so a misclassification bug costs one screenful of log per cycle instead of the whole cluster at once. Resolutions are never capped — a closed finding must not queue behind new ones |
 
-This is the dashboard's **only write to any cluster**, and it is off by default. When enabled
-it stamps bindings it has classified `unmanaged` — a hand-made grant on an operator-synced
-group, outside the policy system — so they can be found from the objects themselves rather
-than only in this UI:
+The default is `off` so a fresh install is silent until somebody asks for the findings.
+
+#### Suppressing a finding
+
+A cluster admin annotates the object itself:
+
+```bash
+oc annotate clusterrolebinding <name> \
+  rbac.ocp.io/unmanaged-exception="approved in TICKET-123, break-glass access"
+```
+
+The dashboard reads that annotation (`local-development/gsd/kube.py:514`) and stops
+classifying the binding as unmanaged, so it leaves the log, the RBAC policy tab and the API
+together. Two things follow from doing it this way. The justification lives next to the object
+it describes, rather than in a dashboard-side allowlist that drifts from the cluster. And the
+acknowledgement is performed by somebody who holds the privileges the binding grants — which
+the dashboard deliberately does not. That is separation of duties, not a limitation.
+
+The dashboard also **reads** the `rbac.ocp.io/unmanaged=true` label, which it never applies.
+An admin or a privileged CI job that applies it by hand makes the findings selectable from the
+objects themselves:
 
 ```bash
 oc get rolebindings,clusterrolebindings -A -l rbac.ocp.io/unmanaged=true
 ```
 
-| Key written | Kind | Meaning |
-|---|---|---|
-| `rbac.ocp.io/unmanaged: "true"` | label | *currently* classified unmanaged — this is what the CLI selects on |
-| `rbac.ocp.io/unmanaged-detected-at` | annotation | first detection, **never overwritten** — "how long has this existed unacknowledged" |
-| `rbac.ocp.io/unmanaged-detected-by` | annotation | `group-sync-dashboard` |
+The dashboard then reports when one of those objects stops being a finding:
 
-Nothing else is ever written: not subjects, not `roleRef`, not any other key.
+```
+unmanaged grant RESOLVED — crc-local: ClusterRoleBinding demo-cluster-admin-crb
+(cluster-wide) is no longer outside the policy system (adopted, annotated as an exception, or
+its group left management). Its rbac.ocp.io/unmanaged label is now stale: oc label
+clusterrolebinding demo-cluster-admin-crb rbac.ocp.io/unmanaged-
+```
 
-#### The three modes
+Nothing else would report that. The label was applied by a human or a pipeline, and without
+this line the only signal that it has gone stale is a count going down.
 
-* **`off`** — no write-path code executes at all.
-* **`log`** — computes the full stamp plan every binding refresh and logs it, patching
-  nothing. Needs **zero write access**: the `patch` grant is rendered only in `annotate` mode,
-  so the ServiceAccount stays read-only. What it emits:
+#### There was an `annotate` mode, and this is why it is gone
 
-  ```
-  crc-local: unmanaged audit plan — stamp 4, heal 0 (log mode: nothing will be written)
-  crc-local: WOULD stamp ClusterRoleBinding -/demo-cluster-admin-crb
-  crc-local: WOULD stamp RoleBinding demo-prod/demo-prod-audit-rb
-  ```
+It labelled the binding objects itself, so findings were selectable with `oc get ... -l`
+without anyone having to run `oc annotate`. It was removed along with the `patch` grant
+`rbac.yaml` used to render for it, because it could never work.
 
-  It earns its place for three things. It is the **rehearsal** for `annotate` — you see exactly
-  which objects would be touched before granting any write. It puts the finding somewhere a
-  **log pipeline** can alert on, without anything scraping the API. And `heal` shows the
-  reverse direction: a binding that stopped being unmanaged, which is what an acknowledgement
-  or a migration into the policy system looks like.
+Measured on a live OpenShift cluster: enabling it produced `plan — stamp 4, heal 0`, and then
+0 of 4 landed. Kubernetes privilege-escalation prevention requires the writer of an RBAC
+object to already hold **every** permission that object grants, even for a metadata-only
+patch that touches no rule and no subject. The API server enumerated what it wanted: **175
+additional rule sets** to label a ClusterRoleBinding granting nothing but `view`, and a single
+wildcard rule (`{APIGroups:[*], Resources:[*], Verbs:[*]}`, i.e. cluster-admin) for the
+cluster-admin one. `oc auth can-i patch clusterrolebindings --as=<the SA>` answered **yes**
+throughout — the RBAC grant was correct and irrelevant, because the escalation check runs
+after it.
 
-  **This is the recommended mode.** `annotate` reaches nothing on a normal cluster — see below
-  — so `log` is not a lesser setting, it is the one that works.
-* **`annotate`** — actually patches, and `rbac.yaml` grants `patch` on
-  rolebindings/clusterrolebindings only in this mode.
+So making it work means carrying 175+ rules of Kubernetes internals per binding class, or
+`escalate` on `rbac.authorization.k8s.io` (the verb that switches the check off — cluster-admin
+under a smaller name), or cluster-admin outright. All three hand a read-only auditing tool the
+most privilege over precisely the most dangerous grants.
 
-Roll out in that order. Sit in `log` for at least one full refresh cycle and check the
-planned stamps against what you expect before enabling `annotate`.
+**The cost of removing it, plainly:** the findings are in the log, the RBAC policy tab and the
+API, and not on the objects. The label selector above returns nothing until an admin or a
+privileged CI job applies the label — they legitimately hold the permissions, and the
+dashboard still notices and reports `unmanaged grant RESOLVED` when such a label goes stale.
 
-#### Two things to know before enabling `annotate`
-
-**1. Kubernetes caps it, and not in a way more RBAC can fix.** Privilege-escalation
-prevention means that to patch an RBAC object — even a metadata-only merge patch touching
-no rule and no subject — the writer must already hold every permission that object grants.
-So the dashboard cannot stamp a binding granting `cluster-admin` unless it *is*
-cluster-admin, which inverts what a read-only auditing tool should be. It fails safe: each
-refusal is a logged warning, the refresh continues, and the finding stays visible in the UI
-and at `GET /api/clusters/{id}/bindings/findings`. In practice `annotate` stamps the
-low-privilege grants and skips exactly the ones you care about most.
-
-Note that `oc auth can-i` will tell you this works — `SelfSubjectAccessReview` returns
-`allowed: true` because the RBAC grant is genuinely correct. The escalation check runs
-afterwards and refuses anyway.
-
-**2. There is no annotations-only patch scope in Kubernetes RBAC.** `annotate` mode
-therefore grants `patch` on bindings, and a subject holding that verb can technically modify
-what a binding grants. The application never does — the patch body is built in one function
-and contains only the three keys above — but the *capability* is real, and an attacker who
-compromised the pod would inherit it. That is why the default is `off` and why `log` exists.
+Upgrading with `mode: annotate` still set runs as `log` and warns once at startup. It
+deliberately does not fall back to `off`, which would silently take the findings away from a
+cluster that had asked for them.
 
 Full design, invariants and the live-cluster evidence: [`docs/unmanaged-audit-design.md`](../../docs/unmanaged-audit-design.md).
 
