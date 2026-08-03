@@ -75,6 +75,44 @@ jobs:
           pip install pytest
           pytest tests/test_chart_strategy.py -q
 
+  diagrams:
+    # The GROUND TRUTH for the mermaid blocks. tests/test_docs_diagrams.py checks the
+    # constructs known to break a render and runs in half a second; this actually renders
+    # them, which is the only way to be sure. One diagram shipped broken for an unknown
+    # length of time — `;` terminated a `Note over` statement — and was found by a human
+    # looking at the page, so a real render earns its minute.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Render every mermaid block
+        run: |
+          set -euo pipefail
+          python3 - <<'EXTRACT'
+          import pathlib, re
+          out = pathlib.Path("mmd"); out.mkdir(exist_ok=True)
+          n = 0
+          for md in sorted(pathlib.Path(".").rglob("*.md")):
+              if any(s in md.parts for s in (".venv", "node_modules", ".agents", ".claude")):
+                  continue
+              for body in re.findall(r"```mermaid\n(.*?)```", md.read_text(), re.S):
+                  n += 1
+                  (out / f"{md.stem}-{n:02d}.mmd").write_text(body)
+          print(f"extracted {n} diagrams")
+          assert n >= 9, f"only {n} diagrams found — the extractor is probably broken"
+          EXTRACT
+          fail=0
+          for f in mmd/*.mmd; do
+            if npx --yes @mermaid-js/mermaid-cli@11 -i "$f" -o "${f%.mmd}.svg" >/dev/null 2>err.txt; then
+              echo "ok    $f"
+            else
+              echo "FAIL  $f"; sed 's/^/        /' err.txt; fail=1
+            fi
+          done
+          exit $fail
+
   image:
     runs-on: ubuntu-latest
     steps:

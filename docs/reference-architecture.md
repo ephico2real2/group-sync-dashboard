@@ -41,6 +41,114 @@ unmanaged grants it discovered; §7.3 is the live-cluster measurement that remov
 
 ---
 
+## 1a. The whole workflow, in one picture
+
+The eight diagrams that follow each take one slice — the pod's internals, a poll, a request,
+the schema. This is the loop they sit inside: how access is *supposed* to arrive, how it
+actually arrives, what the dashboard makes of the difference, and who closes it.
+
+Read it as a cycle, not a pipeline. The dashboard never fixes anything; it makes a silent
+condition legible enough that a human can.
+
+```mermaid
+flowchart TB
+  subgraph intended["The governed path — how access is supposed to arrive"]
+    direction LR
+    ldap[("Enterprise directory<br/>LDAP / AD")]
+    gs["group-sync-operator<br/>GroupSync CR, on a schedule"]
+    grp["Group objects<br/>user.openshift.io/v1<br/>+ sync-provider label"]
+    nc["namespace-configuration-operator<br/>NamespaceConfig / GroupConfig"]
+    rb["RoleBindings<br/>+ config-source label"]
+    ldap --> gs --> grp
+    grp --> nc --> rb
+  end
+
+  subgraph bypass["The ungoverned path — what the audit exists for"]
+    direction LR
+    human1["An engineer, once,<br/>during an incident"]
+    hand["oc create rolebinding<br/>oc adm policy add-role-to-user"]
+    hand2["Bindings with NO config-source label,<br/>or naming a PERSON not a group"]
+    human1 --> hand --> hand2
+  end
+
+  subgraph dash["The dashboard — read-only, one replica"]
+    direction TB
+    poll["Poll<br/>60s CRs and groups<br/>300s bindings"]
+    classify{"Classify every<br/>binding and grant"}
+    store[("SQLite on a PVC<br/>current state + accumulated history")]
+    poll --> store --> classify
+  end
+
+  subgraph findings["What it finds — each one silent on the cluster"]
+    direction TB
+    f1["dangling — the group was managed and is gone;<br/>this binding now grants NOBODY"]
+    f2["unmanaged — a synced group, granted by hand,<br/>outside the policy system"]
+    f3["direct user grant — access bound to a PERSON;<br/>survives their offboarding"]
+    f4["operator stopped reconciling —<br/>both conditions still report True"]
+    f5["group synced empty / CR overdue /<br/>schedule unparseable"]
+  end
+
+  subgraph publish["Published three ways, same data"]
+    direction LR
+    ui["UI — six tabs<br/>verdict, why, what to do"]
+    api["/api — JSON<br/>bearer token, per cluster"]
+    logs["Log — WARNING per finding<br/>UNMANAGED GRANT DISCOVERED"]
+  end
+
+  subgraph close["Closing the loop — a human, holding the privileges"]
+    direction TB
+    a1["Add the person to the LDAP group,<br/>wait one sync, delete the direct binding"]
+    a2["oc annotate the object with<br/>unmanaged-exception=the reason;<br/>the finding leaves all three outputs"]
+    a3["Fix the failing NamespaceConfig,<br/>RBAC starts templating again"]
+  end
+
+  agg["External aggregator<br/>one URL + one token per cluster<br/>hosts nothing, stores nothing"]
+
+  rb --> poll
+  grp --> poll
+  hand2 --> poll
+  classify --> findings
+  findings --> publish
+  publish --> close
+  close -.->|"the next poll sees it and the finding clears"| poll
+  api --> agg
+
+```
+
+### The cycle, in words
+
+1. **Access arrives governed.** LDAP membership becomes a `Group`, the policy operator
+   templates a `RoleBinding` for it, and both carry a label saying who made them. Nothing here
+   needs a dashboard.
+
+2. **Or it arrives by hand.** Someone grants access during an incident, or binds a role to a
+   person because that was faster than a directory request. The object is valid, `oc get
+   rolebinding` reports it healthy, and no operator will ever mention it.
+
+3. **The dashboard polls and classifies.** Reads only — CRs and groups every 60s, bindings
+   every 300s. Classification is where the value is: it compares what the bindings claim
+   against what the groups and the policy labels actually say.
+
+4. **Every finding is an absence.** Not a failure anything reports — a group that is gone, a
+   label that was never applied, a person named where a group should be, an operator whose
+   conditions say `True` while it has stopped working. That is why polling exists at all: no
+   event stream carries these.
+
+5. **Published three ways from one store.** The UI for a review meeting, the API for a fleet
+   aggregator, the log for a pipeline that alerts. Same data, no second copy.
+
+6. **A human closes it.** Migrate the grant to a group, or annotate the object with a
+   justification, or fix the operator. The dashboard holds no write verb and cannot do any of
+   these — the acknowledgement belongs with whoever holds the privileges, and the justification
+   belongs next to the object it excuses.
+
+7. **The next poll confirms it.** A closed finding disappears from all three outputs together,
+   and the log says `unmanaged grant RESOLVED`. The operational goal is zero findings, at which
+   point one directory change offboards a person from the whole cluster and an access review
+   that reads clean *is* clean.
+
+---
+
 ## 2. Component map
 
 ```mermaid
@@ -124,7 +232,7 @@ sequenceDiagram
     T->>L: is_leader?
     alt not leader
       L-->>T: false
-      Note over T: stand by; re-check in 5s,<br/>not one poll interval
+      Note over T: stand by — re-check in 5s,<br/>not one poll interval
     else leader
       L-->>T: true
       T->>K: list groupsyncs (paged)
@@ -149,7 +257,7 @@ sequenceDiagram
       T->>S: replace_bindings, replace_user_bindings, replace_operator_configs
       opt unmanagedAudit.mode is log
         T->>S: all_bindings — classify, then log each finding
-        Note over T,K: no call to K; nothing is written back
+        Note over T,K: no call to K — nothing is written back
       end
     end
   end

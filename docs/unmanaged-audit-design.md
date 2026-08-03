@@ -219,17 +219,16 @@ is gone. `maxPerCycle` (default 20) caps how many findings are listed individual
 the remainder is counted and reported as "not yet listed" in the summary rather than dropped, so
 the true total is recoverable from the line (`audit.py:72-74`, `poller.py:337`). The cap takes a
 sorted prefix, so deferred findings converge instead of being re-deferred forever. Resolutions
-are never capped: a
-closed finding must not queue behind new ones. A misclassification bug therefore costs one
+are never capped: a closed finding must not queue behind new ones. A misclassification bug costs one
 screenful of log per 300s cycle rather than a cluster's worth. Tests:
 `test_audit_stamp.py:79-91`, `test_audit_stamp.py:72-76`.
 
 **I7 — One announcer, in the default shape.** Was "Single writer", and it still constrains
 something real. The discovery runs on the binding-refresh path, reached only by the lease
 holder: a standby replica skips the cycle (`poller.py:442-455`) before it can get to
-`refresh_bindings` (`poller.py:486-492`). At the chart's defaults — one replica with election on
-(`values.yaml:51`, `values.yaml:81`) — that stops an overlapping old and new pod, from a
-`Recreate` rollout, a partitioned node or a `kubectl scale`, announcing the same grant twice.
+`refresh_bindings` (`poller.py:486-492`). At the chart's defaults — `replicaCount: 1` with
+`leaderElection.enabled: true` — that stops an overlapping old and new pod, from a `Recreate`
+rollout, a partitioned node or a `kubectl scale`, announcing the same grant twice.
 
 Above one replica it does not hold, and the cost is worth stating rather than omitting.
 `replicaCount > 1` requires `leaderElection.enabled=false` or the chart refuses to render
