@@ -72,7 +72,15 @@ jobs:
       - name: Render guards must still refuse the unsafe combinations
         working-directory: local-development
         run: |
-          pip install pytest
+          # PyYAML because TestNoPatchVerbAtAnyAuditMode PARSES the rendered manifests rather
+          # than grepping them — rbac.yaml keeps the removed `patch` grant's history in its
+          # comments and Helm emits those verbatim, so a text search would trip on them.
+          #
+          # Named explicitly rather than installing the package: this job deliberately has no
+          # application dependencies, so it stays a chart-rendering job that a Python change
+          # cannot break. PyYAML being a runtime dependency of the app is NOT why it is
+          # available here, which is the assumption that made this job fail.
+          pip install pytest PyYAML
           pytest tests/test_chart_strategy.py -q
 
   diagrams:
