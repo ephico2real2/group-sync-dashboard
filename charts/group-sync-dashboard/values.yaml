@@ -254,7 +254,20 @@ config:
   # `log` mode computes and logs the full plan with zero write access — run that first
   # and read the plan before flipping to annotate.
   unmanagedAudit:
-    mode: "off"        # off | log | annotate  (anything else is treated as off)
+    # off | log | annotate  (anything unrecognised is treated as off)
+    #
+    # RECOMMENDED: "log". It computes the full stamp plan each binding refresh and writes it to
+    # the pod log, patching nothing, and needs zero write access — the chart renders the
+    # `patch` RBAC grant only in `annotate` mode.
+    #
+    # `annotate` reaches NOTHING on a normal cluster and is kept only for the rare case where
+    # the dashboard already holds a binding's privileges. Measured here: 4 planned, 0 landed,
+    # because Kubernetes requires the writer of an RBAC object to already hold everything that
+    # object grants — 175 extra rule sets for a `view` binding, a full wildcard for
+    # cluster-admin. See docs/unmanaged-audit-design.md.
+    #
+    # Default stays "off" so an install writes nothing and grants nothing until asked.
+    mode: "off"
     # At most this many stamps per 300s refresh; healing is never capped. Bounds a
     # misclassification bug to one screenful of objects per cycle instead of the cluster.
     maxPerCycle: 20

@@ -254,8 +254,24 @@ Nothing else is ever written: not subjects, not `roleRef`, not any other key.
 #### The three modes
 
 * **`off`** — no write-path code executes at all.
-* **`log`** — computes the full stamp plan and logs it, patching nothing. This is the
-  rehearsal mode, and it needs **zero write access**. Useful on every cluster.
+* **`log`** — computes the full stamp plan every binding refresh and logs it, patching
+  nothing. Needs **zero write access**: the `patch` grant is rendered only in `annotate` mode,
+  so the ServiceAccount stays read-only. What it emits:
+
+  ```
+  crc-local: unmanaged audit plan — stamp 4, heal 0 (log mode: nothing will be written)
+  crc-local: WOULD stamp ClusterRoleBinding -/demo-cluster-admin-crb
+  crc-local: WOULD stamp RoleBinding demo-prod/demo-prod-audit-rb
+  ```
+
+  It earns its place for three things. It is the **rehearsal** for `annotate` — you see exactly
+  which objects would be touched before granting any write. It puts the finding somewhere a
+  **log pipeline** can alert on, without anything scraping the API. And `heal` shows the
+  reverse direction: a binding that stopped being unmanaged, which is what an acknowledgement
+  or a migration into the policy system looks like.
+
+  **This is the recommended mode.** `annotate` reaches nothing on a normal cluster — see below
+  — so `log` is not a lesser setting, it is the one that works.
 * **`annotate`** — actually patches, and `rbac.yaml` grants `patch` on
   rolebindings/clusterrolebindings only in this mode.
 
