@@ -28,13 +28,14 @@ groups that have never existed** — access reaching nobody, in three namespaces
 Captured from a running deployment, not a mockup — every number below is what the dashboard
 read off the cluster. [`## What it shows`](#what-it-shows) describes each tab in full.
 
-**Overview** — cluster health, the CRs, and the computed alerts. Here: one warning for 6 direct
-user grants across 3 namespaces.
+**Overview** — cluster health, the CRs, and the computed alerts. Here, three: 6 RoleBindings
+naming a person rather than a group, and two hand-made groups that no GroupSync CR manages.
 
 ![Overview tab](docs/screenshots/01-overview.png)
 
-**Access granted** — every group-subject binding, classified. 229 bindings, of which 9 name a
-group that has never existed and grant nobody, and 4 are hand-made on a synced group.
+**Access granted** — every group-subject binding, classified. 229 of them: 9 name a group that
+has never existed and therefore grant nobody, 4 are hand-made on an operator-synced group, and
+146 are Kubernetes' own virtual groups, which are expected and filtered out by default.
 
 ![Access granted tab](docs/screenshots/03-access-granted.png)
 
@@ -50,7 +51,9 @@ hand-made: nothing in the policy system produced it.
 
 ![RBAC policy tab](docs/screenshots/04-rbac-policy.png)
 
-**Groups** — every synced group with its owning CR, member count, refresh age and source DN.
+**Groups** — all 64, with the CR that owns each one, member count, refresh age and source DN.
+The two without an owner are hand-made, and the `empty` and `unattributed` filters both find
+them.
 
 ![Groups tab](docs/screenshots/02-groups.png)
 
