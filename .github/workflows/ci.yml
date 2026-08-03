@@ -24,20 +24,39 @@ jobs:
     defaults:
       run:
         working-directory: local-development
+    # BOTH ENDS, not one. This tested only 3.11, with the comment "matches ubi9/python-311",
+    # long after the image moved to python3.14 — so CI was exercising an interpreter that had
+    # not shipped for weeks while never running the one that had.
+    #
+    # It cost a real failure in both directions. Two tests used typing's private
+    # __protocol_attrs__, which exists only on 3.12+: they passed on a 3.13 developer machine
+    # and broke on 3.11 for a reason unrelated to the code they guard. Testing one version
+    # would have caught that in only one of the two possible orderings.
+    #
+    # 3.11 is the floor pyproject declares (requires-python = ">=3.11"); 3.14 is what the
+    # Containerfile ships. If either moves, move it here in the same commit.
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.14"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"   # matches ubi9/python-311 in the Containerfile
+          python-version: ${{ matrix.python }}
       - name: Install
         run: |
           python -m pip install --upgrade pip
           pip install -e '.[dev]' || pip install -e .
       - name: Unit and integration tests
-        # 285 of 340. test_ui.py needs a Playwright browser and test_live_smoke.py needs a
-        # real cluster, so both are deselected here — which is exactly why the count differs
-        # from a local run, and why a green CI is not a substitute for running the UI tests
-        # before shipping a front-end change.
+        # test_ui.py needs a Playwright browser and test_live_smoke.py needs a real cluster,
+        # so both are deselected — which is why the count here is lower than a local run, and
+        # why a green CI is NOT a substitute for running the UI tests before shipping a
+        # front-end change. A stray backtick once blanked the whole page while the suite was
+        # green, and only the browser tests could have caught it.
+        #
+        # No hardcoded count in this comment: the last one said "285 of 340" and was stale by
+        # a hundred and fifty tests, which makes it worse than no number at all.
         run: pytest tests/ -q --deselect tests/test_ui.py --deselect tests/test_live_smoke.py
 
   chart:
@@ -49,7 +68,7 @@ jobs:
         run: helm lint charts/group-sync-dashboard
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.14"   # keep in step with the tests job and the Containerfile
       - name: Render guards must still refuse the unsafe combinations
         working-directory: local-development
         run: |

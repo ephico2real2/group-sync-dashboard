@@ -130,6 +130,19 @@ def test_the_enforcement_documents_what_it_cannot_catch():
     assert True
 
 
+def _protocol_members(proto) -> set[str]:
+    """The method names a Protocol declares, on every supported Python.
+
+    NOT `proto.__protocol_attrs__`. That is a CPython private attribute added in 3.12, so the
+    two tests below passed on a 3.13 developer machine and failed CI on 3.11 with
+    AttributeError — a portability bug in the test, not in the code it guards. Reading the
+    class dict works everywhere and does not depend on an implementation detail that may move
+    again. Verified equivalent: both yield the same 43 names on 3.13.
+    """
+    return {name for name, value in vars(proto).items()
+            if callable(value) and not name.startswith("_")}
+
+
 class TestContract:
     def test_store_satisfies_the_backend_protocol(self):
         """Presence only. isinstance() on a runtime_checkable Protocol checks that the
@@ -144,7 +157,7 @@ class TestContract:
         from the contract. read_snapshot is the @consistent decorator's whole mechanism and
         poll_snapshot is the poll's atomicity, so a backend written to the contract as
         declared would have had neither."""
-        declared = set(StorageBackend.__protocol_attrs__)
+        declared = _protocol_members(StorageBackend)
         missing: dict[str, list[str]] = {}
         for name in ("api.py", "metrics.py", "poller.py", "activity.py"):
             tree = ast.parse((GSD / name).read_text(), filename=name)
@@ -185,7 +198,7 @@ class TestContract:
 
         drifted = {
             name: (params(getattr(StorageBackend, name)), params(getattr(Store, name)))
-            for name in sorted(StorageBackend.__protocol_attrs__)
+            for name in sorted(_protocol_members(StorageBackend))
             if params(getattr(StorageBackend, name)) != params(getattr(Store, name))
         }
         assert not drifted, f"Protocol and Store parameters disagree: {drifted}"
