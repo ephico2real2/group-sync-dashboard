@@ -6,12 +6,12 @@ Read-only observability for the redhat-cop group-sync-operator. See the
 ## Install
 
 ```bash
-helm install group-sync-dashboard . -n group-sync-dashboard --create-namespace \
-  --set oauthProxy.enabled=true
+helm install group-sync-dashboard . -n group-sync-dashboard --create-namespace
 ```
 
 Defaults reproduce the deployment that was verified on a live cluster, so an install with no
-overrides is a working one.
+overrides is a working one. That includes `oauthProxy.enabled=true` — the dashboard exposes
+group membership, so it ships authenticated and you turn the proxy *off* deliberately, not on.
 
 ## Prerequisites
 
@@ -37,14 +37,17 @@ overrides is a working one.
 
 | Key | Default | Notes |
 |---|---|---|
-| `oauthProxy.enabled` | `false` | **turn this on.** Without it the route is unauthenticated |
-| `oauthProxy.image` | the cluster's own oauth-proxy, via the internal registry | confirm with `oc adm release info --image-for=oauth-proxy` |
+| `oauthProxy.enabled` | `true` | **leave it on.** With it off the route is unauthenticated and exposes group membership |
+| `oauthProxy.image` | `registry.redhat.io/openshift4/ose-oauth-proxy-rhel9:v4.15` | needs registry.redhat.io credentials, which the cluster's global pull secret normally already carries. Override to the internal imagestream or a mirror if not — see `values.yaml` |
+| `oauthProxy.imagePullPolicy` | `IfNotPresent` | the image is already on the node as an imagestream |
 | `oauthProxy.port` | `8443` | |
 | `oauthProxy.cookieSecret` | `""` | generated once and reused across upgrades |
 | `oauthProxy.skipAuthRegex` | `^/(healthz\|readyz\|metrics)$` | the health paths **must** stay, or kubelet gets a 302 and kills a healthy pod |
 | `oauthProxy.sar` | `""` | empty = authentication only. Set a SubjectAccessReview to also require a permission |
-| `oauthProxy.skipProviderButton` | `true` | skips an interstitial offering exactly one choice |
+| `oauthProxy.skipProviderButton` | `false` | `false` shows an explicit **Log In** button. `true` skips straight to the OAuth server — one fewer click, but any mid-flow failure then lands on the proxy's own page headed "403 Permission Denied", which reads as *you are not allowed in* rather than *your session expired*. Observed here after a rollout landed between redirect and callback |
 | `oauthProxy.requestLogging` | `false` | |
+| `oauthProxy.resources` | 10m/64Mi → 200m/256Mi | |
+| `oauthProxy.redirectMode` | `redirectreference` | **currently inert.** No template reads it — `serviceaccount.yaml` always emits `serviceaccounts.openshift.io/oauth-redirecturi.primary`, because the reference form points at a Route by name and OpenShift's ingress-to-route controller generates the Route with a random suffix that cannot be known at template time |
 
 Enabling it also switches the Ingress to `reencrypt`, binds the app to `127.0.0.1`, and
 moves the probes behind the proxy. All automatic.
@@ -67,11 +70,65 @@ always wins.
 | Key | Default | Notes |
 |---|---|---|
 | `clusters` | the local cluster | add entries for multi-cluster |
-| `config.pollIntervalSeconds` | `60` | |
-| `config.scheduleGraceSeconds` | `120` | stops the state flapping `late` every cycle |
-| `config.bindingIntervalSeconds` | `300` | bindings are listed across every namespace, so deliberately slower |
-| `config.requestTimeoutSeconds` | `15` | |
-| `logLevel` | `INFO` | |
+| `config.pollIntervalSeconds` | `60` | also the error bar on "when did this person lose access?" — a membership change has no upstream timestamp, so `observed_at` is ours |
+| `config.scheduleGraceSeconds` | `120` | stops the state flapping `late` every cycle. Must stay **above** `pollIntervalSeconds` |
+| `config.bindingIntervalSeconds` | `300` | bindings are listed across every namespace, so deliberately slower. Must stay above the group poll |
+| `config.requestTimeoutSeconds` | `15` | per-request timeout against a cluster's API server |
+| `logLevel` | `INFO` | `DEBUG` adds per-poll timing, HTTP request lines, page counts and the binding-refresh countdown |
+| `nameOverride` / `fullnameOverride` | `""` / `""` | standard Helm naming overrides. Changing either after install renames every object, including the PVC — which orphans the accumulated history |
+
+Three values move together and two of them fail loudly if you move only one:
+`config.pollIntervalSeconds`, `config.scheduleGraceSeconds` and
+`monitoring.prometheusRule.notPollingSeconds`. Raising the poll interval without the grace
+makes every healthy CR flap to `late`; raising it without the alert threshold makes
+`GroupSyncDashboardNotPolling` fire forever on a healthy deployment.
+
+### Backups
+
+**This is the only existential risk in the system.** Everything else the dashboard stores is
+a cache the next poll rebuilds; the accumulated sync timeline and membership history exist
+only because this process observed them, and nothing upstream can replay them.
+
+| Key | Default | Notes |
+|---|---|---|
+| `config.backup.enabled` | `true` | leave on. Writes `backupDir`/`backupIntervalHours`/`backupKeep` into the ConfigMap; disabling omits them, and an empty `backupDir` disables backups in the app |
+| `config.backup.dir` | `/data/backup` | on the PVC, so it counts against `persistence.size` |
+| `config.backup.intervalHours` | `6` | taken from the poll thread, and once immediately at startup |
+| `config.backup.keep` | `4` | 4 × 6h = the last day, at roughly the size of the database each |
+
+`VACUUM INTO`, not a file copy: it holds a read transaction for the duration, so the output
+is consistent even while the poller writes. Copying `gsd.db` with a live WAL produces a torn
+file that opens without complaint and is missing the newest commits — a backup that restores,
+which is the worst kind.
+
+**Half an answer by design.** These land on the *same* volume they protect against, so they
+cover corruption, a bad migration and accidental deletion — not loss of the volume. Ship them
+off it with a CronJob mounting the same PVC read-only; the dashboard deliberately does not
+grow credentials for object storage.
+
+### Dashboard usage tracking
+
+Powers the **Usage** tab and `GET /api/dashboard/activity`.
+
+| Key | Default | Notes |
+|---|---|---|
+| `config.userActivity.enabled` | `true` | **requires `oauthProxy.enabled`.** With the proxy off nothing is recorded whatever this says — there is no authentication, so `X-Forwarded-User` would be whatever the caller typed, and recording it would manufacture an audit trail rather than keep one. The mismatch is logged at startup |
+| `config.userActivity.visibility` | `self` | `self` \| `all`. `self` means each authenticated user sees only their own rows. Anything unrecognised is treated as `self` — an unrecognised value must never be the one that widens access to a personnel dataset |
+| `config.userActivity.flushSeconds` | `60` | buffered in memory and written once per interval; a write per request would put every API call behind the SQLite writer lock. An ungraceful kill loses up to this many seconds of counts |
+| `config.userActivity.retentionDays` | `400` | `0` disables. A backstop for a long-lived deployment, not the growth control a request log would need — the table is aggregated to one row per user per UTC day |
+
+`self` is the default because the response is identifiable personnel data — who was present,
+on which days, between which times, how often. The argument that carries the rest of this
+dashboard, "you could read the groups with `oc` anyway", is true of group membership and
+false of who looked at it.
+
+There is deliberately no "admins only" tier: doing that properly means a SubjectAccessReview
+from the app on every read, which makes a personal-data query depend on API-server
+availability. If you need it, `oauthProxy.sar` already restricts the whole dashboard.
+
+Note it cannot see logins. The proxy owns the session; the app only ever observes requests
+that are already authenticated, so "session" here means the first-to-last-seen window on a
+day. Above one replica it is per-pod, like the rest of the history.
 
 ### Workload
 
@@ -79,8 +136,10 @@ always wins.
 |---|---|---|
 | `replicaCount` | `1` | **1 is the recommendation.** See [Scaling](#scaling) — above one, each pod keeps its own database and history diverges |
 | `strategy` | `""` | derived: `Recreate` at one replica, `RollingUpdate` above. Set explicitly to override |
-| `leaderElection.enabled` | `true` | only the lease holder polls. Must be `false` above one replica; the chart refuses to render otherwise |
+| `leaderElection.enabled` | `true` | only the lease holder polls. **Best-effort, not a write fence** — see [Leader election](#leader-election). Must be `false` above one replica; the chart refuses to render otherwise |
+| `leaderElection.leaseName` | `group-sync-dashboard` | the `coordination.k8s.io` Lease object's name, in the release namespace. Two releases in one namespace must not share it |
 | `podDisruptionBudget.enabled` | `false` | on one replica this governs **drains**, not availability — see below |
+| `podDisruptionBudget.maxUnavailable` / `.minAvailable` | `1` / `""` | set `minAvailable` **instead of** `maxUnavailable` to block drains. Only one is rendered; `minAvailable` wins when non-empty |
 | `config.sqlite.busyTimeoutMs` | `5000` | how long a write waits for a lock another connection holds. SQLite's own default is `0` — fail instantly, no retry |
 | `config.sqlite.readerBusyTimeoutMs` | `2000` | deliberately shorter: `/readyz` reads, and the probe gives up at 5s |
 | `config.sqlite.synchronous` | `NORMAL` | the documented companion to WAL. `FULL` fsyncs every commit |
@@ -89,7 +148,12 @@ always wins.
 | `persistence.size` / `.storageClass` / `.existingClaim` | `1Gi` / cluster default / `""` | |
 | `persistence.accessMode` | `ReadWriteMany` | scales without recreating the volume. `ReadWriteOncePod` gets an **enforced** single-pod guarantee at one replica; empty derives it. See [Storage](#storage) |
 | `resources` | 50m/128Mi → 500m/512Mi | |
+| `probes.*.enabled` | `true` | set `false` to omit the probe entirely |
+| `probes.liveness.path` / `probes.readiness.path` | `/healthz` / `/readyz` | both must stay inside `oauthProxy.skipAuthRegex`, or kubelet gets a 302 to the login page. Neither is gated on a reachable cluster — an unreachable cluster is a thing this dashboard exists to *display* |
+| `probes.*.initialDelaySeconds` | `10` / `5` | liveness / readiness |
 | `probes.*.timeoutSeconds` | `5` | not the 1s default — that killed a healthy process on host resume and cascaded into a ~4h outage |
+| `probes.liveness.periodSeconds` / `.failureThreshold` | `300` / `2` | **5 min**, because being wrong here restarts the container and destroys in-flight state. 10 min of sustained failure before a restart. Raising the period without lowering the threshold is how you get a half-hour wait on a wedged pod |
+| `probes.readiness.periodSeconds` / `.failureThreshold` | `15` / `3` | **15s**, because being wrong here only removes the pod from the Service and it comes straight back |
 | `podSecurityContext`, `securityContext` | non-root, read-only rootfs, all caps dropped | |
 | `nodeSelector`, `tolerations`, `affinity`, `podAnnotations`, `podLabels` | empty | |
 
@@ -100,20 +164,126 @@ always wins.
 | `ingress.enabled` | `true` | on OpenShift, `ingress-to-route` converts it |
 | `ingress.host` | derived | `<fullname>-<namespace>.<cluster apps domain>`. A **hostless Ingress produces no Route at all**, so this is always emitted |
 | `ingress.className` | `openshift-default` | |
-| `ingress.termination` | `edge` | forced to `reencrypt` when the proxy is on |
-| `service.type` / `service.port` | `ClusterIP` / `8080` | |
+| `ingress.termination` | `edge` | carried as `route.openshift.io/termination`, since Ingress has no field for it. Forced to `reencrypt` when the proxy is on |
+| `ingress.insecureEdgeTerminationPolicy` | `Redirect` | carried as `route.openshift.io/insecureEdgeTerminationPolicy`. Omitted from the Ingress when empty |
+| `ingress.annotations` | `{}` | merged after the two route annotations above, so it can override them |
+| `ingress.tls` | `[]` | a standard Ingress `spec.tls` block. On OpenShift the Route annotations above are what actually take effect |
+| `service.type` / `service.port` | `ClusterIP` / `8080` | the port stays 8080 in both modes; only `targetPort` moves to the proxy |
 
 ### RBAC and monitoring
 
 | Key | Default | Notes |
 |---|---|---|
-| `serviceAccount.create` / `.name` / `.annotations` | `true` / derived / `{}` | |
+| `serviceAccount.create` / `.name` / `.annotations` | `true` / derived / `{}` | with the proxy on, the SA also carries the `oauth-redirecturi` annotation that makes it an OAuth client — no `OAuthClient` object to register |
 | `rbac.create` | `true` | ClusterRole + binding, read-only, no `watch` |
-| `rbac.bindings` | `true` | adds rolebindings/clusterrolebindings, powering the Access-granted view |
+| `rbac.bindings` | `true` | adds `get`/`list` on rolebindings/clusterrolebindings, powering the Access-granted, RBAC-policy and Namespace-audit views. Disable and the dashboard degrades to group data only |
 | `monitoring.serviceMonitor.enabled` | `false` | needs the Prometheus Operator CRDs |
-| `monitoring.prometheusRule.enabled` | `false` | four alerts |
-| `monitoring.prometheusRule.overdueSeconds` | `7200` | |
-| `monitoring.prometheusRule.notPollingSeconds` | `600` | catches a dead poll loop, which the health endpoints cannot |
+| `monitoring.serviceMonitor.interval` / `.scrapeTimeout` | `30s` / `10s` | every series is recomputed from SQLite on scrape and each scrape takes a read snapshot. Faster buys no resolution — the data only changes once per poll |
+| `monitoring.serviceMonitor.labels` | `{}` | extra metadata labels. Usually how a cluster's Prometheus selects which ServiceMonitors it owns |
+| `monitoring.prometheusRule.enabled` | `false` | **eight** alerts — see below |
+| `monitoring.prometheusRule.labels` | `{}` | as above, for rule selection |
+| `monitoring.prometheusRule.overdueSeconds` | `7200` | a GroupSync has not synced for this long |
+| `monitoring.prometheusRule.notPollingSeconds` | `600` | catches a dead poll loop, which the health endpoints cannot. **Must stay above ~2× `config.pollIntervalSeconds`** or it fires continuously on a healthy deployment |
+| `monitoring.prometheusRule.walMiB` | `256` | MiB. 25% of the default 1Gi PVC. Raise it with `persistence.size` |
+| `monitoring.prometheusRule.for.*` | see below | the `for:` duration on each alert |
+
+The RBAC grant is conditional in two places. `coordination.k8s.io/leases`
+(`get`, `create`, `update`) renders only when `leaderElection.enabled`, and `patch` on
+bindings renders only when `config.unmanagedAudit.mode: annotate`. Everything else is
+`get`/`list`.
+
+`namespaceconfigs`/`groupconfigs` are granted unconditionally, **including on clusters that
+will never install the namespace-configuration-operator**. The dashboard auto-detects the
+CRDs: with the grant an absent CRD returns 404 and is quietly recorded as "absent"; without
+it the same call returns 403, which is treated as a refresh failure and logs a warning every
+cycle.
+
+`roles`/`clusterroles` are deliberately **not** requested, since role rules are never
+evaluated. That is a statement of intent, not an isolation boundary — OpenShift binds
+`basic-user` to `system:authenticated`, which already grants `get`/`list` on clusterroles to
+every authenticated identity including this one.
+
+#### The eight alerts
+
+| Alert | Fires on | `for` |
+|---|---|---|
+| `GroupSyncOverdue` | a CR has not synced for `overdueSeconds` | `for.overdue`, `10m` |
+| `DanglingRoleBinding` | a binding grants a group that was operator-managed and has vanished | `for.dangling`, `15m` |
+| `GroupSyncDashboardNotPolling` | the dashboard's own poll loop has stopped. `/healthz` is unconditional and `/readyz` only reads the store, so neither probe can see this | `for.notPolling`, `5m` |
+| `GroupSyncClusterUnreachable` | `gsd_cluster_up == 0` | `for.unreachable`, `15m` |
+| `GroupSyncDashboardDirectUserGrants` | bindings still name people rather than LDAP groups | `for.directUserGrants`, `1h` — long, because this is a migration backlog, not an incident |
+| `GroupSyncDashboardConfigReconcileError` | a `NamespaceConfig`/`GroupConfig` is failing, so RBAC has silently stopped reconciling | `for.configError`, `10m` |
+| `GroupSyncDashboardWalGrowing` | `gsd_sqlite_wal_bytes` above `walMiB` — checkpoint starvation | `for.walGrowing`, `30m` |
+| `GroupSyncDashboardWalDisabled` | `gsd_sqlite_wal_enabled == 0` — the filesystem refused WAL | `for.walDisabled`, `10m` |
+
+The last two are the ones with no other symptom: the pod stays Ready, every other metric
+looks normal, and the first visible sign is a full volume or a latency cliff.
+
+### ArgoCD
+
+| Key | Default | Notes |
+|---|---|---|
+| `argocd.enabled` | `false` | adds Argo-specific annotations. Inert noise when you are not running GitOps, and misleading metadata is worse than none |
+| `argocd.preservePVC` | `true` | three sync-options on the PVC — see [Deploying with ArgoCD](#deploying-with-argocd) |
+| `argocd.serverSideApplyInjectedCA` | `true` | lets the CA operator keep ownership of the `data` it writes. **Not sufficient alone** — the Application also needs an `ignoreDifferences` entry |
+
+### Unmanaged-grant audit stamping
+
+| Key | Default | Notes |
+|---|---|---|
+| `config.unmanagedAudit.mode` | `"off"` | `off` \| `log` \| `annotate`. **The chart renders the `patch` RBAC grant only in `annotate`.** Anything unrecognised is treated as `off` |
+| `config.unmanagedAudit.maxPerCycle` | `20` | stamps per 300s refresh. Healing (label removal) is never capped |
+
+This is the dashboard's **only write to any cluster**, and it is off by default. When enabled
+it stamps bindings it has classified `unmanaged` — a hand-made grant on an operator-synced
+group, outside the policy system — so they can be found from the objects themselves rather
+than only in this UI:
+
+```bash
+oc get rolebindings,clusterrolebindings -A -l rbac.ocp.io/unmanaged=true
+```
+
+| Key written | Kind | Meaning |
+|---|---|---|
+| `rbac.ocp.io/unmanaged: "true"` | label | *currently* classified unmanaged — this is what the CLI selects on |
+| `rbac.ocp.io/unmanaged-detected-at` | annotation | first detection, **never overwritten** — "how long has this existed unacknowledged" |
+| `rbac.ocp.io/unmanaged-detected-by` | annotation | `group-sync-dashboard` |
+
+Nothing else is ever written: not subjects, not `roleRef`, not any other key.
+
+#### The three modes
+
+* **`off`** — no write-path code executes at all.
+* **`log`** — computes the full stamp plan and logs it, patching nothing. This is the
+  rehearsal mode, and it needs **zero write access**. Useful on every cluster.
+* **`annotate`** — actually patches, and `rbac.yaml` grants `patch` on
+  rolebindings/clusterrolebindings only in this mode.
+
+Roll out in that order. Sit in `log` for at least one full refresh cycle and check the
+planned stamps against what you expect before enabling `annotate`.
+
+#### Two things to know before enabling `annotate`
+
+**1. Kubernetes caps it, and not in a way more RBAC can fix.** Privilege-escalation
+prevention means that to patch an RBAC object — even a metadata-only merge patch touching
+no rule and no subject — the writer must already hold every permission that object grants.
+So the dashboard cannot stamp a binding granting `cluster-admin` unless it *is*
+cluster-admin, which inverts what a read-only auditing tool should be. It fails safe: each
+refusal is a logged warning, the refresh continues, and the finding stays visible in the UI
+and at `GET /api/clusters/{id}/bindings/findings`. In practice `annotate` stamps the
+low-privilege grants and skips exactly the ones you care about most.
+
+Note that `oc auth can-i` will tell you this works — `SelfSubjectAccessReview` returns
+`allowed: true` because the RBAC grant is genuinely correct. The escalation check runs
+afterwards and refuses anyway.
+
+**2. There is no annotations-only patch scope in Kubernetes RBAC.** `annotate` mode
+therefore grants `patch` on bindings, and a subject holding that verb can technically modify
+what a binding grants. The application never does — the patch body is built in one function
+and contains only the three keys above — but the *capability* is real, and an attacker who
+compromised the pod would inherit it. That is why the default is `off` and why `log` exists.
+
+Full design, invariants and the live-cluster evidence: [`docs/unmanaged-audit-design.md`](../../docs/unmanaged-audit-design.md).
 
 ## Scaling
 
@@ -135,13 +305,43 @@ independently and derives its own copy. Current state converges within one poll;
 while running, so the Service answers "when did this user leave?" differently depending on
 which pod responds.
 
-Two combinations are refused at template time rather than deployed broken:
+Four combinations are refused at template time rather than deployed broken:
 
 | Set | Refused because |
 |---|---|
 | `replicaCount > 1` with `leaderElection.enabled=true` | pods losing the lease stop polling but keep serving reads from their own database, which then never updates again |
 | `replicaCount > 1` with a non-RWX volume | RWO binds one **node** and RWOP one **pod**, so under either the extra replicas stay Pending with no error on the Deployment |
 | `ReadWriteOncePod` with `strategy: RollingUpdate` | deadlock — the incoming pod cannot schedule until the outgoing releases the claim, and RollingUpdate will not terminate the outgoing until the incoming is Ready |
+| `replicaCount: 1` with persistence and `strategy: RollingUpdate` | RollingUpdate starts the incoming pod **before** terminating the outgoing one, and at one replica both use `/data/gsd.db`. The guard above catches only `ReadWriteOncePod`, where the scheduler refuses the second pod anyway — the **default** ReadWriteMany happily mounts twice and was therefore the dangerous case, not the protected one |
+
+### Leader election
+
+**Best-effort admission control, not a write fence.** Read this before relying on it.
+
+Leadership is checked once per cycle, before the poll is entered, and nothing re-checks it
+during the writes that follow. No fence token reaches the store. So a pod that passes the
+check and then pauses — CPU throttling, a stop-the-world GC, a partition — can lose the
+lease, have another pod take over, and still complete every one of its writes on resume. Two
+pods can also both believe they hold it for up to the renew interval, because expiry is
+judged against each pod's own clock.
+
+What it *does* buy: the ordinary cases — a scale-up, a slow `Recreate` rollover — do not
+produce two steady-state pollers. What it does **not** buy is a guarantee that only one
+process ever writes. That comes from the deployment shape: one replica, `Recreate`, one file.
+
+Making it a true fence would mean every store write comparing a monotonic token inside the
+same transaction, with a new leader advancing it first — a distributed-systems protocol
+layered over SQLite, and not proportionate for a single-writer application whose primary
+defence is that there is only one pod.
+
+It is still worth leaving on at one replica: `Recreate` is not instantaneous, `kubectl scale`
+is one keystroke, and a partitioned node can leave an old pod running while a new one starts.
+Outside a cluster (no ServiceAccount token) the elector assumes sole instance and polls,
+rather than refusing to poll and looking broken in local development.
+
+`oc get lease -n <namespace>` names the pod currently holding it, and `gsd_leader` is 1 on
+that replica. Use it to pick one replica's series — the counts are cluster facts, not per-pod
+facts, so `sum()` over them is wrong.
 
 ### PodDisruptionBudget
 
@@ -234,7 +434,31 @@ cycle means starvation, flat means the checkpoint is merely lagging a burst.
 
 ## Deploying with ArgoCD
 
-Set `argocd.enabled=true`. It adds annotations for two problems that each cost you
+**Set `ingress.host` explicitly. This is not optional under GitOps.**
+
+Everywhere else the host is auto-detected from the cluster's own `ingresses.config/cluster`
+object, so a plain `helm install` needs no flag. ArgoCD renders with `helm template`, which
+runs with **no cluster connection**, so the `lookup` returns nothing. The chart refuses to
+render rather than emit a hostless Ingress — which on OpenShift produces no Route at all,
+leaving a release that syncs green and is unreachable.
+
+```yaml
+# Application.spec.source.helm
+parameters:
+  - name: ingress.host
+    value: group-sync-dashboard.apps.<your-cluster-domain>
+```
+
+Get the domain once with:
+
+```bash
+oc get ingresses.config/cluster -o jsonpath='{.spec.domain}'
+```
+
+The same applies to Flux, `helm template` by hand, and any installer whose identity cannot
+read `ingresses.config/cluster` — it is cluster-scoped and an ordinary user cannot read it.
+
+Then set `argocd.enabled=true`. It adds annotations for two problems that each cost you
 something real if unhandled.
 
 **The PVC gets pruned.** Argo reconciles manifests; it does not run Helm's uninstall path,
@@ -242,7 +466,7 @@ so `helm.sh/resource-policy: keep` does not protect it. A prune, or deleting the
 Application, destroys the accumulated sync timeline and membership history — the only state
 the Kubernetes API cannot reproduce.
 
-`argocd.preservePVC` applies four protections, covering different moments:
+`argocd.preservePVC` applies three protections, covering different moments:
 
 | Annotation | Protects against |
 |---|---|
@@ -284,6 +508,10 @@ spec:
     path: charts/group-sync-dashboard
     helm:
       values: |
+        # REQUIRED under GitOps. Argo renders with `helm template`, which has no cluster
+        # connection, so the chart cannot auto-detect the apps domain and refuses to render.
+        ingress:
+          host: group-sync-dashboard.apps.<your-cluster-domain>
         argocd:
           enabled: true
         oauthProxy:
@@ -297,7 +525,6 @@ spec:
       selfHeal: true
     syncOptions:
       - CreateNamespace=true
-  # Without this, the injected CA bundle is reverted on every sync.
   ignoreDifferences:
     # Without this, the injected CA bundle is reverted on every sync.
     - group: ""
@@ -313,7 +540,36 @@ spec:
       jsonPointers:
         - /spec/volumeName
         - /spec/storageClassName
+    # OpenShift injects a dockercfg pull secret into every ServiceAccount. Measured on the
+    # reference cluster, `managedFields` shows
+    # openshift.io/image-registry-pull-secrets_service-account-controller owning `secrets`
+    # and `imagePullSecrets` via Apply, while Helm owns only metadata. None of it is in git,
+    # so a client-side diff reports the Application permanently OutOfSync.
+    #
+    # ~1 is a literal `/` inside a JSON Pointer key (RFC 6901). Without the escape the
+    # pointer is parsed as a path and silently matches nothing.
+    - group: ""
+      kind: ServiceAccount
+      name: group-sync-dashboard
+      jsonPointers:
+        - /secrets
+        - /imagePullSecrets
+        - /metadata/annotations/openshift.io~1internal-registry-pull-secret-ref
+    # The ingress-to-route controller writes status.loadBalancer once a Route exists.
+    - group: networking.k8s.io
+      kind: Ingress
+      name: group-sync-dashboard
+      jsonPointers:
+        - /status
 ```
+
+**Both mechanisms, deliberately.** `ServerSideApply=true` on the objects addresses the
+cause — the API server merges by field ownership, so fields the chart never claims are not
+compared. `ignoreDifferences` addresses the symptom. They are not redundant: the first
+depends on Argo computing its predicted-live state through an SSA dry-run, which is its
+documented behaviour but was **not** observed here, because this cluster has the Argo CRDs
+installed and no controller running. The second holds regardless of Argo's version or diff
+strategy. Keep both until you have watched a sync on your own cluster.
 
 > Verified as manifests, not at runtime: the reference cluster has the Argo CRDs installed
 > but no controller running, so the annotations were checked by rendering and applying, not

@@ -228,3 +228,209 @@ class TestAdversarialFindings:
         store.replace_group_state("crc", [], T1)
         store.replace_bindings("crc", [bind("system:authenticated")], T1)
         assert store.binding_findings("crc")[0]["finding"] == "built_in"
+
+
+class TestUnmanagedFinding:
+    """A hand-made grant on an operator-synced group, outside the policy system.
+
+    Live motivation: on the reference cluster 77 of 85 convention bindings carry the
+    policy operator's `rbac.ocp.io/config-source` label, and the handful that do not are
+    exactly the hand-made ones — including a ClusterRoleBinding granting cluster-admin
+    that nothing manages. The finding makes that class visible; the exception annotation
+    lets a deliberate one be acknowledged ON the binding, so the justification lives next
+    to the object instead of in a dashboard-side allowlist.
+    """
+
+    def _seed(self, store, bindings):
+        store.replace_group_state(
+            "crc",
+            [{"name": "app-ocp-rbac-team-ns-admin", "member_count": 1,
+              "sync_provider": "ldap-groupsync_ldap", "group_synced_at": None,
+              "ldap_uid": None}],
+            "2026-08-02T18:00:00Z",
+        )
+        store.record_managed_groups(
+            "crc", [{"name": "app-ocp-rbac-team-ns-admin",
+                     "sync_provider": "ldap-groupsync_ldap"}],
+            "2026-08-02T18:00:00Z",
+        )
+        store.replace_bindings("crc", bindings, "2026-08-02T18:00:00Z")
+
+    def _binding(self, name, **kw):
+        return {"binding_kind": "RoleBinding", "binding_namespace": "ns-a",
+                "binding_name": name, "role_kind": "ClusterRole", "role_name": "admin",
+                "group_name": "app-ocp-rbac-team-ns-admin",
+                "managed_source": None, "exception": None, **kw}
+
+    def test_a_hand_made_grant_on_a_managed_group_is_flagged(self, store):
+        self._seed(store, [
+            self._binding("managed", managed_source="prod-rbac"),
+            self._binding("hand-made"),
+        ])
+        findings = {r["binding_name"]: r["finding"] for r in store.all_bindings("crc")}
+        assert findings["managed"] == "ok"
+        assert findings["hand-made"] == "unmanaged"
+
+    def test_the_exception_annotation_acknowledges_it(self, store):
+        """The justification travels on the binding itself; the finding clears."""
+        self._seed(store, [
+            self._binding("managed", managed_source="prod-rbac"),
+            self._binding("deliberate", exception="test scaffolding — JIRA-123"),
+        ])
+        findings = {r["binding_name"]: r["finding"] for r in store.all_bindings("crc")}
+        assert findings["deliberate"] == "ok"
+
+    def test_silent_on_a_cluster_that_does_not_use_the_policy_operator(self, store):
+        """No binding anywhere carries a config-source label -> the concept does not
+        exist on this cluster, and flagging every binding would be 100% noise."""
+        self._seed(store, [self._binding("hand-made")])
+        findings = {r["binding_name"]: r["finding"] for r in store.all_bindings("crc")}
+        assert findings["hand-made"] == "ok"
+
+    def test_broken_resolution_outranks_provenance(self, store):
+        """A binding that grants NOBODY is worse than one that grants outside governance;
+        it must not be downgraded to `unmanaged` just because it is also unlabelled."""
+        store.record_managed_groups(
+            "crc", [{"name": "was-managed", "sync_provider": "ldap-groupsync_ldap"}],
+            "2026-08-01T00:00:00Z",
+        )
+        store.replace_bindings("crc", [
+            self._binding("managed-elsewhere", managed_source="prod-rbac"),
+            self._binding("grants-nobody", group_name="was-managed"),
+        ], "2026-08-02T18:00:00Z")
+        findings = {r["binding_name"]: r["finding"] for r in store.all_bindings("crc")}
+        assert findings["grants-nobody"] == "dangling"
+
+
+class TestOperatorConfigAlerts:
+    def test_a_current_config_error_alerts(self, store):
+        from datetime import UTC, datetime, timedelta as td
+        import gsd.state as st
+        alerts = st.compute_alerts(
+            "crc", [], [], datetime.now(UTC), td(minutes=2),
+            operator_configs=[{"kind": "NamespaceConfig", "name": "multitenant",
+                               "error_at": "2026-08-02T18:00:00Z",
+                               "error_message": "webhook refused",
+                               "success_at": "2026-08-02T17:00:00Z"}],
+        )
+        assert [a.kind for a in alerts] == ["config_reconcile_error"]
+        assert alerts[0].subject == "NamespaceConfig/multitenant"
+
+    def test_a_superseded_error_stays_quiet(self, store):
+        """The operator never clears ReconcileError — both conditions sit True forever —
+        so only the transition-time ordering decides. Same trap as GroupSync, verified
+        live: `multitenant` carried a day-old error under a fresh success."""
+        from datetime import UTC, datetime, timedelta as td
+        import gsd.state as st
+        alerts = st.compute_alerts(
+            "crc", [], [], datetime.now(UTC), td(minutes=2),
+            operator_configs=[{"kind": "NamespaceConfig", "name": "multitenant",
+                               "error_at": "2026-08-01T22:22:17Z",
+                               "error_message": "net/http: request canceled",
+                               "success_at": "2026-08-02T17:58:23Z"}],
+        )
+        assert alerts == []
+
+
+class TestDirectUserGrants:
+    """Namespace audit: roles bound to a PERSON rather than an LDAP-managed group.
+
+    The violation survives offboarding — removing someone from an LDAP group revokes their
+    access everywhere at once, while a binding that names them keeps granting to a name
+    nobody reviews — and no group-based audit, including the rest of this dashboard, can
+    see it.
+    """
+
+    def _seed(self, store, rows):
+        store.replace_user_bindings("crc", rows, "2026-08-02T20:00:00Z")
+
+    def _u(self, ns, name, user, role="edit", platform=0, kind="RoleBinding"):
+        return {"binding_kind": kind, "binding_namespace": ns, "binding_name": name,
+                "role_kind": "ClusterRole", "role_name": role, "user_name": user,
+                "is_platform": platform}
+
+    def test_platform_identities_are_excluded_by_default(self, store):
+        """22 of 36 direct-user bindings on the reference cluster are system components.
+        Including them would make the finding a platform-noise report."""
+        self._seed(store, [self._u("ns-a", "real", "jdoe"),
+                           self._u("", "sys", "system:admin", platform=1,
+                                   kind="ClusterRoleBinding")])
+        assert [r["user_name"] for r in store.direct_user_bindings("crc")] == ["jdoe"]
+        assert store.platform_user_binding_count("crc") == 1
+
+    def test_excluded_rows_are_counted_not_silently_dropped(self, store):
+        """A tool that quietly discards rows cannot be trusted about the ones it keeps."""
+        self._seed(store, [self._u("", "s", "system:x", platform=1,
+                                   kind="ClusterRoleBinding")])
+        assert store.direct_user_bindings("crc") == []
+        assert store.platform_user_binding_count("crc") == 1
+        assert len(store.direct_user_bindings("crc", include_platform=True)) == 1
+
+    def test_the_rollup_is_per_namespace_worst_first(self, store):
+        self._seed(store, [
+            self._u("quiet-ns", "one", "jdoe"),
+            self._u("busy-ns", "a", "jdoe"), self._u("busy-ns", "b", "asmith"),
+            self._u("busy-ns", "c", "bwilliams"),
+        ])
+        rollup = store.user_bindings_by_namespace("crc")
+        assert [r["namespace"] for r in rollup] == ["busy-ns", "quiet-ns"]
+        assert rollup[0]["bindings"] == 3 and rollup[0]["distinct_users"] == 3
+
+    def test_the_user_list_is_a_list_not_a_delimited_string(self, store):
+        """A user name can be an LDAP DN, which contains commas.
+
+        The rollup used to GROUP_CONCAT this, and the page counted distinct people by
+        splitting on a comma — so one `cn=jdoe,ou=people,dc=example,dc=com` became four
+        people. store.py already states the rule for `provider_keys`: building a list by
+        splitting a delimited string means picking a delimiter the value can never contain.
+        """
+        dn = "cn=jdoe,ou=people,dc=example,dc=com"
+        self._seed(store, [self._u("ns-dn", "rb", dn)])
+        row = store.user_bindings_by_namespace("crc")[0]
+        assert row["users"] == [dn]
+        assert row["distinct_users"] == len(row["users"]) == 1
+
+    def test_distinct_users_differs_from_binding_count(self, store):
+        """One person with three bindings is one offboarding risk; three people is three."""
+        self._seed(store, [self._u("ns-a", f"b{i}", "jdoe") for i in range(3)])
+        row = store.user_bindings_by_namespace("crc")[0]
+        assert row["bindings"] == 3 and row["distinct_users"] == 1
+
+    def test_cluster_scoped_bindings_are_labelled_not_blank(self, store):
+        self._seed(store, [self._u("", "crb", "jdoe", kind="ClusterRoleBinding")])
+        assert store.user_bindings_by_namespace("crc")[0]["namespace"] == "(cluster-scoped)"
+
+    def test_the_worklist_is_ordered_by_privilege(self, store):
+        """cluster-admin first, then cluster-scoped, then namespaced: migration order."""
+        self._seed(store, [
+            self._u("ns-a", "low", "jdoe", role="view"),
+            self._u("", "worst", "jdoe", role="cluster-admin", kind="ClusterRoleBinding"),
+        ])
+        assert [r["role_name"] for r in store.direct_user_bindings("crc")] == [
+            "cluster-admin", "view"]
+
+
+class TestDirectUserAlert:
+    def test_one_alert_summarises_all_of_them(self, store):
+        """One alert, not one per binding: 36 separate alerts would drown every other
+        finding, and the actionable unit is the migration, not each row."""
+        from datetime import UTC, datetime, timedelta as td
+        import gsd.state as st
+        alerts = st.compute_alerts(
+            "crc", [], [], datetime.now(UTC), td(minutes=2),
+            user_bindings=[
+                {"binding_namespace": "ns-a", "role_name": "admin", "is_platform": 0},
+                {"binding_namespace": "ns-b", "role_name": "view", "is_platform": 0},
+            ],
+        )
+        assert [a.kind for a in alerts] == ["direct_user_binding"]
+        assert "2 direct user grants" in alerts[0].subject
+        assert "2 namespaces" in alerts[0].detail
+
+    def test_platform_only_raises_nothing(self, store):
+        from datetime import UTC, datetime, timedelta as td
+        import gsd.state as st
+        assert st.compute_alerts(
+            "crc", [], [], datetime.now(UTC), td(minutes=2),
+            user_bindings=[{"binding_namespace": "", "role_name": "x", "is_platform": 1}],
+        ) == []

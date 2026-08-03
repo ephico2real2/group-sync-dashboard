@@ -24,6 +24,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Iterator
 
+from .storage import SqliteHealth, StorageHealth  # noqa: F401
+from .timeutil import now_iso
+
 log = logging.getLogger(__name__)
 
 SCHEMA = """
@@ -149,7 +152,68 @@ CREATE TABLE IF NOT EXISTS rbac_group_binding (
     role_name           TEXT NOT NULL,
     group_name          TEXT NOT NULL,
     observed_at         TEXT NOT NULL,
+    -- Provenance (migration 1). managed_source is the policy operator's config-source
+    -- label; NULL means hand-made. exception is the operator-acknowledged justification
+    -- for a deliberate hand-made binding, carried as an annotation on the object itself.
+    managed_source      TEXT,
+    exception           TEXT,
+    -- Migration 2: whether the object already carries the dashboard's own unmanaged
+    -- audit label — read back from the cluster each refresh, so it is the cluster's
+    -- truth, not a local counter that can drift from it.
+    audit_stamped       INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY(cluster_id, binding_kind, binding_namespace, binding_name, group_name)
+);
+
+-- Bindings that name a USER directly, rather than a group. Replaced each refresh.
+--
+-- The governance violation in its purest form: access tied to a person instead of to an
+-- enterprise-managed group. It survives offboarding — removing someone from an LDAP group
+-- revokes their access everywhere, while a direct binding keeps granting to a name nobody
+-- reviews — and it is invisible to every group-based audit, this dashboard's own included
+-- until now.
+--
+-- is_platform separates cluster-internal identities (system:*, kube-apiserver, the node
+-- identities) from people. Measured on the reference cluster: 36 direct-user bindings, 22
+-- of them platform. They are STORED rather than filtered at ingest so the UI can report
+-- what it excluded — a tool that silently drops rows cannot be trusted about the ones it
+-- keeps.
+CREATE TABLE IF NOT EXISTS user_binding (
+    cluster_id          TEXT NOT NULL,
+    binding_kind        TEXT NOT NULL,
+    binding_namespace   TEXT NOT NULL,   -- '' for ClusterRoleBinding
+    binding_name        TEXT NOT NULL,
+    role_kind           TEXT NOT NULL,
+    role_name           TEXT NOT NULL,
+    user_name           TEXT NOT NULL,
+    is_platform         INTEGER NOT NULL DEFAULT 0,
+    observed_at         TEXT NOT NULL,
+    PRIMARY KEY(cluster_id, binding_kind, binding_namespace, binding_name, user_name)
+);
+CREATE INDEX IF NOT EXISTS user_binding_by_namespace
+    ON user_binding(cluster_id, binding_namespace);
+
+-- Health of the namespace-configuration-operator's CRs, replaced on the binding cadence.
+-- Reconcile conditions ONLY: these CRs template the RoleBindings that give synced groups
+-- their access, so a failing one means RBAC silently stops reconciling — but they have no
+-- schedule, so there is no staleness to compute and no timeline worth accumulating.
+CREATE TABLE IF NOT EXISTS operator_config_state (
+    cluster_id          TEXT NOT NULL,
+    kind                TEXT NOT NULL,   -- NamespaceConfig | GroupConfig
+    name                TEXT NOT NULL,
+    error_at            TEXT,
+    error_message       TEXT,
+    success_at          TEXT,
+    observed_at         TEXT NOT NULL,
+    PRIMARY KEY(cluster_id, kind, name)
+);
+
+-- Whether the operator's CRDs even exist on the cluster, auto-detected each refresh.
+-- Absent (0) is a different truth from "present with zero CRs", and the UI must not
+-- render "all healthy" for a concept the cluster does not have.
+CREATE TABLE IF NOT EXISTS operator_config_presence (
+    cluster_id          TEXT PRIMARY KEY,
+    present             INTEGER NOT NULL,
+    observed_at         TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS rbac_binding_by_group
     ON rbac_group_binding(cluster_id, group_name);
@@ -193,7 +257,93 @@ CREATE INDEX IF NOT EXISTS dashboard_user_activity_by_day
 """
 
 
+# -- schema migrations ----------------------------------------------------------------
+#
+# THIS PROJECT'S FIRST REAL MIGRATION MECHANISM, built because the implicit one silently
+# does nothing: the schema is applied with CREATE TABLE IF NOT EXISTS, so on an EXISTING
+# database a column added to the SCHEMA string simply never appears — the table already
+# exists, the statement no-ops, and the first SELECT naming the new column crashes at
+# runtime on upgraded deployments while working perfectly on fresh ones. Measured before
+# this existed, not assumed.
+#
+# PRAGMA user_version is the cursor: 0 on any database created before this mechanism,
+# incremented once per applied step. Steps run in order, inside the writer's transaction,
+# at startup, before anything reads. They must be written to be safe on a database that
+# already has the change (fresh databases get the new SCHEMA and then replay migrations
+# against it), which for ALTER TABLE ADD COLUMN means tolerating "duplicate column name".
+_MIGRATIONS: list[tuple[int, str, list[str]]] = [
+    (
+        1,
+        "rbac_group_binding gains provenance: managed_source + exception",
+        [
+            "ALTER TABLE rbac_group_binding ADD COLUMN managed_source TEXT",
+            "ALTER TABLE rbac_group_binding ADD COLUMN exception TEXT",
+        ],
+    ),
+    (
+        2,
+        "rbac_group_binding records the audit stamp, for stamp idempotency + healing",
+        [
+            "ALTER TABLE rbac_group_binding ADD COLUMN audit_stamped INTEGER NOT NULL DEFAULT 0",
+        ],
+    ),
+]
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    version = int(conn.execute("PRAGMA user_version").fetchone()[0])
+    for target, title, statements in _MIGRATIONS:
+        if version >= target:
+            continue
+        for sql in statements:
+            try:
+                conn.execute(sql)
+            except sqlite3.OperationalError as exc:
+                # A fresh database already has the column from SCHEMA; replaying the
+                # migration against it must be a no-op, not a crash.
+                if "duplicate column name" not in str(exc):
+                    raise
+        conn.execute(f"PRAGMA user_version = {target}")
+        log.info("schema migration %d applied: %s", target, title)
+
+
 _PRAGMA_WORDS = {"OFF", "NORMAL", "FULL", "EXTRA"}
+
+
+def _harden(conn: sqlite3.Connection) -> None:
+    """Drop capabilities this application never uses, on every connection.
+
+    MITIGATES (partially): CVE-2025-70873 — SQLite information disclosure via a crafted
+    ZIP file, reachable only through the zipfile extension. Disabling extension loading
+    removes the mechanism it needs.
+
+    RELATED, NOT MITIGATED BY THIS: CVE-2024-0232 — use-after-free in
+    jsonParseAddNodeArray. It needs SQL JSON functions, which this store does not use
+    (zero `json_` / `->>` occurrences); nothing here changes its reachability either way.
+
+    NEITHER IS FIXABLE BY UPGRADING. UBI9 ships exactly one build,
+    sqlite-libs-3.34.1-10.el9_8: `microdnf repoquery sqlite-libs` offers no other, and
+    `microdnf update sqlite-libs` reports "Nothing to do". Since the version cannot move,
+    the surface it exposes is reduced instead.
+
+    Extension loading was ENABLED by default — verified in the shipped image, not assumed.
+    It lets SQL pull arbitrary shared objects into the process, which beyond CVE-2025-70873
+    is a general escalation primitive if a SQL string ever became attacker-influenced. The
+    store builds every statement itself and binds every parameter, so nothing legitimate
+    needed the capability and turning it off costs nothing.
+
+    Applied to the writer AND to every per-thread reader: this is connection state, so
+    hardening only the writer would leave every API request thread unprotected.
+
+    Guarded because sqlite3 may be compiled without the call, in which case the capability
+    already does not exist and there is nothing to disable.
+
+    See docs/image-vulnerability-scan.md for the full scan and reachability analysis.
+    """
+    try:
+        conn.enable_load_extension(False)
+    except AttributeError:
+        pass
 
 
 def _safe_pragma_word(value: str, default: str) -> str:
@@ -205,8 +355,11 @@ def _safe_pragma_word(value: str, default: str) -> str:
     return word
 
 
-def now_iso() -> str:
-    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+# `now_iso` is imported at the top and therefore still re-exported from this module for any
+# caller that has not moved. Its definition lives in gsd/timeutil.py: it was never a storage
+# concern, and keeping it here meant a service split would need the SQLite module just to
+# stamp a timestamp.
+__all__ = ["Store", "now_iso"]
 
 
 class Store:
@@ -239,11 +392,16 @@ class Store:
         # a moment of contention into a failed probe and a restarted pod.
         self.reader_busy_timeout_ms = reader_busy_timeout_ms
         self.wal_checkpoint_bytes = int(wal_checkpoint_mb * 1024 * 1024)
-        self.checkpoint_busy_total = 0
+        self._checkpoint_busy_total = 0
         self._lock = threading.RLock()
         self._local = threading.local()
+        # Transaction depth is PER THREAD, not per Store. A plain attribute here was a
+        # real bug: one poller thread opening a snapshot made every OTHER thread's write
+        # join a transaction it does not own, which sqlite3 reports as "bad parameter or
+        # other API misuse". A transaction belongs to the thread that opened it.
 
         self._conn = sqlite3.connect(path, check_same_thread=False)
+        _harden(self._conn)
         self._conn.row_factory = sqlite3.Row
 
         # PRAGMA journal_mode returns the mode actually in force, which is NOT always the one
@@ -254,15 +412,15 @@ class Store:
         # blocks for the whole duration of the writer's transaction, so every API request
         # queues behind the bulk poll. Read it back and say so, because the alternative is
         # diagnosing that from latency graphs.
-        self.journal_mode = str(
+        self._journal_mode = str(
             self._conn.execute("PRAGMA journal_mode=WAL").fetchone()[0]
         ).lower()
-        if path != ":memory:" and self.journal_mode != "wal":
+        if path != ":memory:" and self._journal_mode != "wal":
             log.error(
                 "SQLite is in %r mode, not WAL — the filesystem under %s does not support it. "
                 "Readers will now BLOCK on every write. This is expected on NFS/EFS/SMB and "
                 "is why network storage is not supported for the database file.",
-                self.journal_mode,
+                self._journal_mode,
                 path,
             )
 
@@ -274,6 +432,7 @@ class Store:
         self._conn.execute(f"PRAGMA synchronous={_safe_pragma_word(synchronous, 'NORMAL')}")
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._conn.executescript(SCHEMA)
+        _migrate(self._conn)
         self._conn.commit()
 
     def close(self) -> None:
@@ -281,6 +440,121 @@ class Store:
         # otherwise raise from inside that thread rather than here.
         with self._lock:
             self._conn.close()
+
+    def _depth(self) -> int:
+        """How many transactions THIS thread has open. Never another thread's."""
+        return getattr(self._local, "tx_depth", 0)
+
+    @contextmanager
+    def _write(self) -> Iterator[sqlite3.Connection]:
+        """Write inside the ambient transaction if one is open, else own a new one.
+
+        This is what lets `poll_snapshot()` turn nine transactions into one without every
+        store method growing a `conn` parameter. Inside a snapshot the method JOINS — it
+        does not commit, so the snapshot still owns the boundary. Outside one, behaviour is
+        exactly as before: its own transaction, committed on exit.
+
+        `_tx` stays strict and refuses nesting. The distinction matters: `_write` is a
+        deliberate join by a method designed for it, `_tx` nesting is an accident by code
+        that believes it owns the transaction and will be surprised when its rollback does
+        not roll back.
+        """
+        if self._depth():
+            yield self._conn      # the snapshot commits; we must not
+            return
+        with self._tx() as conn:
+            yield conn
+
+    @contextmanager
+    def poll_snapshot(self) -> Iterator[None]:
+        """One transaction for a whole poll cycle. All of it lands, or none of it.
+
+        The poll wrote in NINE separate transactions, so any read landing mid-cycle saw a
+        mixture — measured at 11,598 torn reads out of 19,208, a 60.38% failure rate, not
+        an edge case. A failed cycle could also stamp `record_poll(OK)` over half-written
+        state, which is worse than a visible failure because it looks healthy.
+
+        `record_sync_event` is deliberately NOT in here; poll_once commits it first. Its
+        uniqueness key is the operator's own lastSyncSuccessTime, so a rollback would lose
+        an observation permanently rather than re-deriving it next cycle, and it is
+        INSERT OR IGNORE, so committing early costs nothing and repeats harmlessly.
+
+        `membership_event` IS in here, because it self-heals: the next poll re-derives the
+        identical change with a later observed_at, degrading only the timestamp by one
+        poll interval — which values.yaml already documents as the error bar on "when did
+        this person lose access?".
+
+        Measured cost of the change: 26.79 -> 26.81 ms median, with p95 improving.
+        """
+        with self._lock:
+            if self._depth():
+                raise RuntimeError("poll_snapshot() is already open on this thread")
+            self._local.tx_depth = self._depth() + 1
+            try:
+                with self._conn:
+                    yield
+            finally:
+                self._local.tx_depth = self._depth() - 1
+
+    @contextmanager
+    def read_snapshot(self) -> Iterator[None]:
+        """One consistent view of the database for a whole multi-call handler.
+
+        Making the poll atomic (`poll_snapshot`) took torn reads from 60.38% to 3.00%, not
+        to zero, because a handler that calls the store SIX times issues six independent
+        statements and a poll can commit between any two of them. `groupsyncs()` alone is
+        two reads. WAL gives each statement a consistent snapshot; it does not give a
+        SEQUENCE of statements the same one. Only an explicit read transaction does.
+
+        Read-only by construction: it always rolls back, never commits. A rollback is not
+        an error path here, it is the only exit — the snapshot exists to be released.
+
+        HOLDING A READ SNAPSHOT HOLDS A WAL READ-MARK, and that has a cost worth knowing
+        before anyone widens the scope of one of these blocks: `wal_checkpoint(TRUNCATE)`
+        cannot reclaim past the oldest live reader, so a long-held snapshot stalls the
+        checkpoint and the WAL grows. Measured: a reader held across a checkpoint blocked
+        it for the full writer busy_timeout with zero pages reclaimed. At reference scale
+        these blocks are 3-13 ms against a 60 s poll, which is why this is safe today and
+        why `tests/test_read_snapshot_scope.py` exists to keep it that way — no generators,
+        no streaming, no awaits, no network calls inside one.
+        """
+        depth = getattr(self._local, "read_depth", 0)
+        if depth:
+            # Already inside one: join it. Nesting is fine for reads — the inner block
+            # wants exactly the snapshot the outer one already took.
+            self._local.read_depth = depth + 1
+            try:
+                yield
+            finally:
+                self._local.read_depth -= 1
+            return
+
+        if self.path == ":memory:":
+            # Reads share the writer connection here, so the write lock IS the snapshot.
+            with self._lock:
+                self._local.read_depth = 1
+                try:
+                    yield
+                finally:
+                    self._local.read_depth = 0
+            return
+
+        conn = self._reader()
+        if conn.in_transaction:
+            # A previous snapshot leaked. Left alone this thread would serve permanently
+            # stale data with no error at all — measured: a worker pinned to a 2,000-row
+            # view while the truth was 4,000. Fail loudly instead.
+            raise RuntimeError(
+                "this thread's reader is already in a transaction — a read_snapshot "
+                "leaked and the connection is pinned to a stale view"
+            )
+        conn.execute("BEGIN")
+        self._local.read_depth = 1
+        try:
+            yield
+        finally:
+            self._local.read_depth = 0
+            conn.rollback()
 
     @contextmanager
     def _tx(self) -> Iterator[sqlite3.Connection]:
@@ -295,12 +569,33 @@ class Store:
         Latent while only one cluster is configured (the default deployment), real the
         moment a second is added.
 
-        RLock avoids a self-deadlock if _tx is ever nested, but nesting would still be
-        WRONG: the inner ``with self._conn`` commits the shared transaction when it exits,
-        so the outer block's remaining work would land outside it. Do not nest _tx.
+        NESTING IS NOW REFUSED, not merely discouraged. The docstring used to say "do not
+        nest" and nothing enforced it, because RLock is reentrant: the inner
+        ``with self._conn`` COMMITS the shared transaction on exit, so the outer block's
+        work is committed early and survives the outer rollback. Measured — an outer
+        transaction wrote `phase-one`, called one ordinary store method, then raised, and
+        `phase-one` was still there afterwards. Eleven call sites could reach it.
+
+        Depth counting turns that into a loud error at the point of the mistake. The outer
+        block owns the transaction; an inner one raises rather than silently committing.
+        `poll_snapshot` makes a long outer transaction the normal shape, so nesting stops
+        being exotic and this stops being theoretical.
         """
-        with self._lock, self._conn:
-            yield self._conn
+        with self._lock:
+            if self._depth():
+                raise RuntimeError(
+                    "nested Store._tx(): the inner block would COMMIT the outer "
+                    "transaction on exit, so the outer block's remaining work would be "
+                    "committed early and survive its own rollback. Call the raw _-prefixed "
+                    "helper inside an existing transaction, or restructure so only one "
+                    "block owns it."
+                )
+            self._local.tx_depth = self._depth() + 1
+            try:
+                with self._conn:
+                    yield self._conn
+            finally:
+                self._local.tx_depth = self._depth() - 1
 
     def _reader(self) -> sqlite3.Connection:
         """A per-thread READ connection, separate from the writer's.
@@ -325,6 +620,7 @@ class Store:
         conn = getattr(self._local, "conn", None)
         if conn is None:
             conn = sqlite3.connect(self.path, check_same_thread=False)
+            _harden(conn)
             conn.row_factory = sqlite3.Row
             # Every connection needs its OWN busy_timeout — it is connection state, not a
             # property of the database, so the writer's setting does not reach these.
@@ -332,7 +628,7 @@ class Store:
             self._local.conn = conn
         return conn
 
-    def wal_bytes(self) -> int:
+    def _wal_bytes(self) -> int:
         """Size of the -wal sidecar, or 0 when there is none (`:memory:`, or rollback mode)."""
         if self.path == ":memory:":
             return 0
@@ -341,7 +637,7 @@ class Store:
         except OSError:
             return 0
 
-    def maybe_checkpoint(self) -> tuple[int, int, int] | None:
+    def _checkpoint(self) -> tuple[int, int, int] | None:
         """Truncate the WAL once it exceeds the threshold. Returns (busy, log, moved).
 
         SQLite auto-checkpoints when the WAL passes ~1000 pages, but that runs PASSIVE: it
@@ -357,24 +653,116 @@ class Store:
         retries. It IS worth counting, because a busy result EVERY cycle is the starvation
         case and the metric is how you would ever notice.
         """
-        if self.path == ":memory:" or self.journal_mode != "wal":
+        if self.path == ":memory:" or self._journal_mode != "wal":
             return None
-        if self.wal_bytes() < self.wal_checkpoint_bytes:
+        if self._wal_bytes() < self.wal_checkpoint_bytes:
             return None
         with self._lock:
             row = self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
         busy, log_frames, moved = int(row[0]), int(row[1]), int(row[2])
         if busy:
-            self.checkpoint_busy_total += 1
+            self._checkpoint_busy_total += 1
             log.warning(
                 "WAL checkpoint blocked by an open reader (%d frames, %.1f MiB); will retry "
                 "next cycle",
                 log_frames,
-                self.wal_bytes() / 1048576,
+                self._wal_bytes() / 1048576,
             )
         else:
             log.debug("WAL checkpointed: %d frames reclaimed", moved)
         return busy, log_frames, moved
+
+    # -- the engine-neutral half of the seam ---------------------------------------------
+    #
+    # These two are what the poller and the metrics collector are allowed to call. They
+    # used to call wal_bytes(), maybe_checkpoint() and read .journal_mode directly, which
+    # meant both of them knew the database was SQLite — the leak that made the "decoupled"
+    # claim untrue. See gsd/storage.py.
+
+    def backup(self, directory: str, keep: int = 3) -> str | None:
+        """Write a consistent copy of the database to `directory`. Returns its path.
+
+        THE ONLY EXISTENTIAL RISK IN THIS SYSTEM. The accumulated sync and membership
+        history cannot be re-fetched from the Kubernetes API — it exists because this
+        process observed it — and until now a corrupted or deleted PVC lost it outright.
+        Nothing else here is irreplaceable; this is.
+
+        VACUUM INTO rather than copying the file: it takes a read transaction for the
+        duration, so the output is a single consistent snapshot even while the poller
+        writes. Copying gsd.db with the WAL live produces a torn file that opens without
+        complaint and is missing the most recent commits, which is the worst kind of
+        backup — one that restores.
+
+        Called from the POLL THREAD only, the same rule as _checkpoint: it holds a read
+        transaction for the length of the copy, and doing that from a request handler
+        would put a user's page behind it.
+
+        `keep` bounds the directory. Backups live on the same PVC this protects against,
+        so they are the first half of the answer, not the whole one — a CronJob shipping
+        them off the volume is the other half.
+        """
+        if self.path == ":memory:":
+            return None
+        target_dir = Path(directory)
+        # Sub-second precision, unlike now_iso(). VACUUM INTO refuses to overwrite —
+        # "output file already exists" — so two backups inside the same second collide and
+        # the second one fails. now_iso() is deliberately second-resolution because the
+        # store relies on its fixed width for lexicographic ordering; a filename has no
+        # such constraint and needs the extra digits.
+        stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S.%fZ")
+        target = target_dir / f"gsd-{stamp}.db"
+        try:
+            # Inside the try: an unwritable or read-only backup directory must return None
+            # like every other failure here, not raise into the poll thread. The method
+            # promises "None on failure" and mkdir was the one path that broke that.
+            target_dir.mkdir(parents=True, exist_ok=True)
+            with self._lock:
+                # A bound parameter is not accepted for the VACUUM target, so the path is
+                # interpolated. It is built here from a timestamp and an operator-supplied
+                # directory, never from request input; the quote-doubling is belt to that
+                # brace rather than the only protection.
+                self._conn.execute(f"VACUUM INTO '{str(target).replace(chr(39), chr(39) * 2)}'")
+        except (sqlite3.Error, OSError):
+            log.exception("backup to %s failed; the history is still only on the PVC", target)
+            return None
+
+        existing = sorted(target_dir.glob("gsd-*.db"))
+        for stale in existing[:-keep] if keep > 0 else []:
+            try:
+                stale.unlink()
+            except OSError:
+                log.warning("could not remove old backup %s", stale)
+        log.info("backed up to %s (%d kept)", target, min(len(existing), keep or len(existing)))
+        return str(target)
+
+    def maintain(self) -> None:
+        """Periodic upkeep after a write cycle. For SQLite, a WAL checkpoint.
+
+        Returns nothing. It briefly returned a dict describing the checkpoint, which the
+        only caller discarded — a contract that implied a signal it did not deliver. The
+        durable signal is the starved-checkpoint count, which is cumulative and reported
+        through health() where a scrape can read it.
+        """
+        self._checkpoint()
+
+    def health(self) -> StorageHealth:
+        """Engine-reported operational facts, namespaced under the engine that produced them.
+
+        Not a flat dict. A flat one was described as engine-neutral and was not: the
+        collector still had to know `wal_bytes`, `wal_enabled` and `checkpoint_busy_total`
+        by name, so the coupling had moved from attributes to string literals. Worse, a
+        backend without a WAL would omit `wal_enabled` and a defaulting caller would read
+        False — which means "the filesystem refused WAL" and fires an alert on a healthy
+        database.
+        """
+        return {
+            "engine": "sqlite",
+            "sqlite": {
+                "wal_enabled": self._journal_mode == "wal",
+                "wal_bytes": self._wal_bytes(),
+                "checkpoint_busy_total": self._checkpoint_busy_total,
+            },
+        }
 
     def _rows(self, sql: str, params: tuple | list = ()) -> list[dict]:
         """Run a read on the per-thread reader (or under the lock for :memory:).
@@ -424,7 +812,7 @@ class Store:
     # -- poll results ------------------------------------------------------------------
 
     def record_poll(self, cluster_id: str, status: str, message: str | None) -> None:
-        with self._tx() as conn:
+        with self._write() as conn:
             conn.execute(
                 """INSERT INTO poll_outcome(cluster_id, observed_at, status, message)
                    VALUES(?,?,?,?)
@@ -450,7 +838,7 @@ class Store:
         costs nothing (PLAN §10) — re-observing the same lastSyncSuccessTime is a no-op
         rather than a duplicate timeline entry.
         """
-        with self._tx() as conn:
+        with self._write() as conn:
             cursor = conn.execute(
                 """INSERT OR IGNORE INTO sync_event(
                        cluster_id, groupsync_name, groupsync_namespace,
@@ -467,7 +855,7 @@ class Store:
         owns nothing for the duration, and every one of its groups would read as
         unattributed — a burst of phantom findings on each poll.
         """
-        with self._tx() as conn:
+        with self._write() as conn:
             conn.execute("DELETE FROM groupsync_state WHERE cluster_id=?", (cluster_id,))
             conn.executemany(
                 """INSERT INTO groupsync_state(cluster_id, name, namespace, schedule,
@@ -499,7 +887,7 @@ class Store:
         disappears here — an upsert would leave deleted groups behind forever and quietly
         inflate every count on the overview.
         """
-        with self._tx() as conn:
+        with self._write() as conn:
             conn.execute("DELETE FROM group_state WHERE cluster_id=?", (cluster_id,))
             conn.executemany(
                 """INSERT INTO group_state(cluster_id, name, member_count, sync_provider,
@@ -531,7 +919,7 @@ class Store:
         Returns the number of change events written.
         """
         changes = 0
-        with self._tx() as conn:
+        with self._write() as conn:
             existing: dict[str, set[str]] = {}
             for row in conn.execute(
                 "SELECT group_name, user_name FROM group_member WHERE cluster_id=?",
@@ -671,27 +1059,42 @@ class Store:
                 (cluster_id, user_name),
         )
 
-    def users(self, cluster_id: str) -> list[dict]:
+    def users(self, cluster_id: str, limit: int = 1000) -> list[dict]:
+        """Every user with a membership. BOUNDED.
+
+        Unbounded, this returned one row per distinct user across every group: 1,240 rows
+        and 102,921 bytes on a reference-shaped cluster with 62 groups, and it grows with
+        the DIRECTORY rather than with anything the dashboard controls. A real corporate
+        LDAP makes that a response big enough to hurt the browser and the pod.
+
+        `limit + 1` is fetched deliberately: the caller compares the length against the
+        limit to know it truncated, without a second COUNT query. A silently truncated
+        list is worse than a large one — the reader cannot tell a short directory from a
+        clipped answer.
+        """
         return self._rows(
                 """SELECT user_name, COUNT(*) AS group_count, MIN(first_seen_at) AS first_seen_at
                      FROM group_member WHERE cluster_id=?
-                    GROUP BY user_name ORDER BY user_name""",
-                (cluster_id,),
+                    GROUP BY user_name ORDER BY user_name LIMIT ?""",
+                (cluster_id, limit + 1),
         )
 
     # -- RBAC bindings -----------------------------------------------------------------
 
     def replace_bindings(self, cluster_id: str, rows: list[dict], observed_at: str) -> None:
         """Replace this cluster's binding rows wholesale, in one transaction."""
-        with self._tx() as conn:
+        with self._write() as conn:
             conn.execute("DELETE FROM rbac_group_binding WHERE cluster_id=?", (cluster_id,))
             conn.executemany(
                 """INSERT OR REPLACE INTO rbac_group_binding(
                        cluster_id, binding_kind, binding_namespace, binding_name,
-                       role_kind, role_name, group_name, observed_at)
+                       role_kind, role_name, group_name, observed_at,
+                       managed_source, exception, audit_stamped)
                    VALUES(:cluster_id,:binding_kind,:binding_namespace,:binding_name,
-                          :role_kind,:role_name,:group_name,:observed_at)""",
-                [{**r, "cluster_id": cluster_id, "observed_at": observed_at} for r in rows],
+                          :role_kind,:role_name,:group_name,:observed_at,
+                          :managed_source,:exception,:audit_stamped)""",
+                [{"managed_source": None, "exception": None, "audit_stamped": 0, **r,
+                  "cluster_id": cluster_id, "observed_at": observed_at} for r in rows],
             )
 
     def record_managed_groups(
@@ -705,7 +1108,7 @@ class Store:
         managed = [g for g in groups if g.get("sync_provider")]
         if not managed:
             return
-        with self._tx() as conn:
+        with self._write() as conn:
             conn.executemany(
                 """INSERT INTO managed_group_seen(
                        cluster_id, group_name, sync_provider, first_seen_at, last_seen_at)
@@ -763,38 +1166,281 @@ class Store:
         """
         return [r for r in self.all_bindings(cluster_id) if r["finding"] != "ok"]
 
-    def all_bindings(self, cluster_id: str) -> list[dict]:
-        """Every group-subject binding, each classified.
-
-        Includes the ones that resolve normally (`ok`). Those are the majority of a healthy
-        cluster — 74 of 228 here — and omitting them made a view labelled "Bindings" show
-        only the broken subset, which misrepresents what is on the cluster.
-        """
-        return self._rows(
-            """SELECT b.binding_kind, b.binding_namespace, b.binding_name,
-                      b.role_kind, b.role_name, b.group_name,
+    # The classification, written once. Both all_bindings and count_bindings_by_finding
+    # need it, and two copies of a five-branch CASE would drift the moment a tier changed —
+    # producing counts that disagree with the rows they are counting.
+    _FINDING_CASE = """
                       CASE
-                        -- A resolving group is the normal case and outranks everything.
-                        WHEN g.name IS NOT NULL            THEN 'ok'
-                        -- Provenance FIRST. We watched the operator manage this group, so
-                        -- its disappearance is evidence, and evidence outranks a naming
-                        -- heuristic. Testing `system:` first silently downgraded a real
-                        -- dangling binding to `built_in` whenever a managed group happened
-                        -- to carry that prefix — a grants-nobody binding with no alert,
-                        -- which is the worst failure this dashboard can have.
-                        WHEN s.group_name IS NOT NULL     THEN 'dangling'
-                        WHEN b.group_name LIKE 'system:%' THEN 'built_in'
-                        ELSE 'unresolved'
-                      END AS finding
+                        -- Broken-resolution tiers first: a binding that grants NOBODY is
+                        -- worse than one that grants outside governance, whoever made it.
+                        WHEN g.name IS NULL AND s.group_name IS NOT NULL
+                                                           THEN 'dangling'
+                        WHEN g.name IS NULL AND b.group_name LIKE 'system:%'
+                                                           THEN 'built_in'
+                        WHEN g.name IS NULL                THEN 'unresolved'
+                        -- The group resolves. Now provenance: an operator-SYNCED group
+                        -- granted access by a binding NO policy system manages is somebody
+                        -- bypassing governance by hand. Requires the policy operator to be
+                        -- in use at all (any managed binding on the cluster), or every
+                        -- binding on a cluster that has never heard of config-source
+                        -- labels would flag. An exception annotation on the binding
+                        -- acknowledges a deliberate one and suppresses the finding.
+                        WHEN b.managed_source IS NULL
+                             AND b.exception IS NULL
+                             AND s.group_name IS NOT NULL
+                             AND EXISTS (SELECT 1 FROM rbac_group_binding m
+                                          WHERE m.cluster_id = b.cluster_id
+                                            AND m.managed_source IS NOT NULL)
+                                                           THEN 'unmanaged'
+                        ELSE 'ok'
+                      END"""
+
+    _FINDING_FROM = """
                  FROM rbac_group_binding b
                  LEFT JOIN group_state g
                         ON g.cluster_id = b.cluster_id AND g.name = b.group_name
                  LEFT JOIN managed_group_seen s
                         ON s.cluster_id = b.cluster_id AND s.group_name = b.group_name
-                WHERE b.cluster_id = ?
-                ORDER BY b.group_name, b.binding_kind, b.binding_namespace, b.binding_name""",
+                WHERE b.cluster_id = ?"""
+
+    def count_bindings_by_finding(self, cluster_id: str) -> dict[str, int]:
+        """How many bindings fall in each tier, for the WHOLE cluster.
+
+        Exists so the counts stay true when the rows beside them are paged. Counting a
+        truncated page is the "showing 50 of 30" defect this codebase has now hit three
+        times; the fix each time is a scalar query over the same predicate.
+        """
+        rows = self._rows(
+            "SELECT" + self._FINDING_CASE + " AS finding, COUNT(*) AS n"
+            + self._FINDING_FROM + " GROUP BY finding",
             (cluster_id,),
         )
+        return {r["finding"]: r["n"] for r in rows}
+
+    def all_bindings(
+        self, cluster_id: str, limit: int | None = None, offset: int = 0
+    ) -> list[dict]:
+        """Every group-subject binding, each classified.
+
+        Includes the ones that resolve normally (`ok`). Those are the majority of a healthy
+        cluster — 74 of 228 here — and omitting them made a view labelled "Bindings" show
+        only the broken subset, which misrepresents what is on the cluster.
+
+        `limit` because this was unbounded and grows with the cluster: measured at 2,280
+        rows / 545,800 bytes at ten times the reference cluster, on a 30-second auto-refresh.
+        Pair it with `count_bindings_by_finding` — the counts must describe the cluster, not
+        the page.
+        """
+        sql = ("""SELECT b.binding_kind, b.binding_namespace, b.binding_name,
+                      b.role_kind, b.role_name, b.group_name,
+                      b.managed_source, b.exception, b.audit_stamped,"""
+               + self._FINDING_CASE + " AS finding" + self._FINDING_FROM
+               + """
+                ORDER BY b.group_name, b.binding_kind, b.binding_namespace, b.binding_name""")
+        params: list = [cluster_id]
+        if limit is not None:
+            sql += " LIMIT ? OFFSET ?"
+            params += [limit, offset]
+        return self._rows(sql, tuple(params))
+
+    def replace_user_bindings(
+        self, cluster_id: str, rows: list[dict], observed_at: str
+    ) -> None:
+        """Replace this cluster's direct-user binding rows wholesale."""
+        with self._write() as conn:
+            conn.execute("DELETE FROM user_binding WHERE cluster_id=?", (cluster_id,))
+            conn.executemany(
+                """INSERT OR REPLACE INTO user_binding(
+                       cluster_id, binding_kind, binding_namespace, binding_name,
+                       role_kind, role_name, user_name, is_platform, observed_at)
+                   VALUES(:cluster_id,:binding_kind,:binding_namespace,:binding_name,
+                          :role_kind,:role_name,:user_name,:is_platform,:observed_at)""",
+                [{**r, "cluster_id": cluster_id, "observed_at": observed_at} for r in rows],
+            )
+
+    def user_bindings_by_namespace(self, cluster_id: str) -> list[dict]:
+        """Direct-user grants rolled up per namespace — the migration worklist.
+
+        Ordered worst-first by PRIVILEGE, then cluster-scope, then count, then name — one
+        forgotten cluster-admin outranks twenty view grants, and ordering by count alone
+        put the twenty first and pushed the cluster-admin below the fold.
+
+        Platform identities are excluded from the rollup (they are not migratable and would
+        swamp it) but counted separately by `platform_user_binding_count`, so the page can
+        say what it left out rather than quietly shrinking the number.
+
+        `distinct_users` matters as much as the binding count: one person with five
+        bindings in a namespace is one offboarding risk, five people is five.
+
+        `users` is a LIST, stitched in from a second read, never a GROUP_CONCAT. Same
+        reason as `provider_keys` in `groupsyncs()` below: a delimited string means picking
+        a delimiter the value can never contain, and a user name can be an LDAP DN. The page
+        unions these lists to count distinct people, so with GROUP_CONCAT a single
+        `cn=jdoe,ou=people,dc=example,dc=com` split into four and the KPI read 4 people
+        beside a row whose own People column said 1.
+        """
+        with self.read_snapshot():
+            rows = self._rows(
+                """SELECT CASE WHEN binding_namespace = '' THEN '(cluster-scoped)'
+                               ELSE binding_namespace END AS namespace,
+                          COUNT(*) AS bindings,
+                          COUNT(DISTINCT user_name) AS distinct_users,
+                          -- The worst privilege granted here, and whether it is
+                          -- cluster-wide. Risk is ranked on PRIVILEGE, not on count: one
+                          -- forgotten cluster-admin outranks twenty view grants, and a
+                          -- list sorted by count puts the twenty first.
+                          MAX(CASE role_name WHEN 'cluster-admin' THEN 4 WHEN 'admin' THEN 3
+                                             WHEN 'edit' THEN 2 ELSE 1 END) AS worst_privilege,
+                          MAX(CASE WHEN binding_namespace = '' THEN 1 ELSE 0 END)
+                              AS cluster_scoped
+                     FROM user_binding
+                    WHERE cluster_id=? AND is_platform=0
+                    GROUP BY namespace
+                    ORDER BY worst_privilege DESC, cluster_scoped DESC,
+                             bindings DESC, namespace""",
+                (cluster_id,),
+            )
+            people: dict[str, list[str]] = {}
+            for row in self._rows(
+                """SELECT DISTINCT
+                          CASE WHEN binding_namespace = '' THEN '(cluster-scoped)'
+                               ELSE binding_namespace END AS namespace,
+                          user_name
+                     FROM user_binding
+                    WHERE cluster_id=? AND is_platform=0
+                    ORDER BY user_name""",
+                (cluster_id,),
+            ):
+                people.setdefault(row["namespace"], []).append(row["user_name"])
+            for row in rows:
+                row["users"] = people.get(row["namespace"], [])
+            return rows
+
+    # Namespace sentinel for the cluster-scoped rows. Their binding_namespace is '', which
+    # an HTTP query string cannot distinguish from "parameter absent", so the API and the
+    # UI both speak this token and it is translated here at the boundary.
+    CLUSTER_SCOPE = "(cluster-scoped)"
+
+    def _direct_user_binding_where(
+        self, cluster_id: str, include_platform: bool, namespace: str | None
+    ) -> tuple[str, list]:
+        """The WHERE shared by the row query and its COUNT, built once.
+
+        Built once on purpose: a count computed from a different predicate than the rows
+        it describes is how "showing 50 of 30" reaches a page, and the two drifting apart
+        during a later edit is the likeliest way for that to happen.
+        """
+        sql, params = " WHERE cluster_id=?", [cluster_id]
+        if not include_platform:
+            sql += " AND is_platform=0"
+        if namespace is not None:
+            sql += " AND binding_namespace=?"
+            params.append("" if namespace == self.CLUSTER_SCOPE else namespace)
+        return sql, params
+
+    def direct_user_bindings(
+        self,
+        cluster_id: str,
+        include_platform: bool = False,
+        namespace: str | None = None,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[dict]:
+        """Every binding naming a User subject, worst-first by privilege then namespace.
+
+        NOT to be confused with `user_bindings(cluster_id, user_name)` above, which answers
+        the opposite question: what a person reaches THROUGH their group memberships. This
+        one is the governance violation — a grant that names the person directly. The
+        original name for this collided with that method and silently overrode it, which
+        broke two reverse-lookup tests; the names now say which question each answers.
+
+        `namespace` and `limit` exist because this was previously unbounded at every layer:
+        the store returned every row, the API returned every row, and the page rendered
+        every row. On a cluster with thousands of direct grants that is a payload and a DOM
+        nobody asked for, to show a list nobody can read. Pair with
+        `count_direct_user_bindings` so the caller can say what it left out — a silently
+        truncated audit list is worse than a slow one.
+        """
+        where, params = self._direct_user_binding_where(
+            cluster_id, include_platform, namespace)
+        sql = ("""SELECT binding_kind, binding_namespace, binding_name, role_kind,
+                         role_name, user_name, is_platform
+                    FROM user_binding""" + where +
+               # cluster-admin first, then cluster-scoped, then namespaced: the order
+               # somebody migrating would work in. Ordering is applied BEFORE the limit, so
+               # a truncated page is the worst N rather than an arbitrary N.
+               """ ORDER BY CASE WHEN role_name='cluster-admin' THEN 0 ELSE 1 END,
+                            CASE WHEN binding_namespace='' THEN 0 ELSE 1 END,
+                            binding_namespace, user_name""")
+        if limit is not None:
+            sql += " LIMIT ? OFFSET ?"
+            params += [limit, offset]
+        return self._rows(sql, tuple(params))
+
+    def count_direct_user_bindings(
+        self, cluster_id: str, include_platform: bool = False,
+        namespace: str | None = None,
+    ) -> int:
+        """How many rows `direct_user_bindings` would return before its limit."""
+        where, params = self._direct_user_binding_where(
+            cluster_id, include_platform, namespace)
+        rows = self._rows(
+            "SELECT COUNT(*) AS n FROM user_binding" + where, tuple(params))
+        return rows[0]["n"] if rows else 0
+
+    def platform_user_binding_count(self, cluster_id: str) -> int:
+        rows = self._rows(
+            "SELECT COUNT(*) AS n FROM user_binding WHERE cluster_id=? AND is_platform=1",
+            (cluster_id,),
+        )
+        return int(rows[0]["n"]) if rows else 0
+
+    # -- namespace-configuration-operator health -----------------------------------------
+
+    def replace_operator_configs(
+        self, cluster_id: str, configs: list[dict] | None, observed_at: str
+    ) -> None:
+        """Replace this cluster's operator-config health rows. None means CRDs absent.
+
+        Presence is stored explicitly rather than inferred from row count, because
+        "operator not installed" and "operator installed with zero CRs" are different
+        truths: the first must render as nothing at all, the second as an empty-but-real
+        section. Conflating them shows 'all healthy' for a concept the cluster lacks.
+        """
+        with self._write() as conn:
+            conn.execute(
+                """INSERT INTO operator_config_presence(cluster_id, present, observed_at)
+                   VALUES(?,?,?)
+                   ON CONFLICT(cluster_id) DO UPDATE SET
+                       present=excluded.present, observed_at=excluded.observed_at""",
+                (cluster_id, 0 if configs is None else 1, observed_at),
+            )
+            conn.execute("DELETE FROM operator_config_state WHERE cluster_id=?", (cluster_id,))
+            if configs:
+                conn.executemany(
+                    """INSERT INTO operator_config_state(
+                           cluster_id, kind, name, error_at, error_message,
+                           success_at, observed_at)
+                       VALUES(:cluster_id,:kind,:name,:error_at,:error_message,
+                              :success_at,:observed_at)""",
+                    [{**c, "cluster_id": cluster_id, "observed_at": observed_at}
+                     for c in configs],
+                )
+
+    def operator_configs(self, cluster_id: str) -> dict:
+        """Health of the policy operator's CRs: {present: bool, configs: [...]}."""
+        presence = self._row(
+            "SELECT present FROM operator_config_presence WHERE cluster_id=?", (cluster_id,)
+        )
+        return {
+            "present": bool(presence and presence["present"]),
+            "configs": self._rows(
+                """SELECT kind, name, error_at, error_message, success_at, observed_at
+                     FROM operator_config_state WHERE cluster_id=?
+                    ORDER BY kind, name""",
+                (cluster_id,),
+            ),
+        }
 
     def upsert_reconcile_error(
         self,
@@ -804,7 +1450,7 @@ class Store:
         generation: int | None,
         message: str | None,
     ) -> None:
-        with self._tx() as conn:
+        with self._write() as conn:
             if failed_at is None:
                 conn.execute(
                     "DELETE FROM reconcile_error WHERE cluster_id=? AND groupsync_name=?",
@@ -861,22 +1507,71 @@ class Store:
             )
             return cursor.rowcount
 
-    def user_activity(self, since_day: str | None = None, limit: int = 500) -> list[dict]:
-        sql = """SELECT user_name, day, email, first_seen_at, last_seen_at, request_count
-                   FROM dashboard_user_activity"""
-        params: list = []
+    def _user_activity_where(
+        self, since_day: str | None, user_name: str | None
+    ) -> tuple[str, list]:
+        """The WHERE shared by the row query and its summary, built once.
+
+        Built once for the same reason as `_direct_user_binding_where`: a total computed
+        from a different predicate than the rows it describes is how "showing 50 of 30"
+        reaches a page.
+        """
+        where, params = [], []
         if since_day:
-            sql += " WHERE day >= ?"
+            where.append("day >= ?")
             params.append(since_day)
-        sql += " ORDER BY day DESC, user_name LIMIT ?"
+        if user_name:
+            where.append("user_name = ?")
+            params.append(user_name)
+        return (" WHERE " + " AND ".join(where)) if where else "", params
+
+    def user_activity(
+        self,
+        since_day: str | None = None,
+        limit: int = 500,
+        user_name: str | None = None,
+    ) -> list[dict]:
+        """Activity rows, optionally narrowed to one user.
+
+        `user_name` is the privacy scope, not a convenience filter: the API passes the
+        authenticated viewer's own name unless the deployment has opted into showing
+        everyone. Filtering in SQL rather than after the fetch matters — `limit` is applied
+        by the database, so filtering afterwards would silently return fewer than `limit`
+        of the caller's own rows whenever busier colleagues filled the page.
+
+        BOUNDED. Pair with `user_activity_summary` for any headline number: counting these
+        rows counts the page, not the record.
+        """
+        where, params = self._user_activity_where(since_day, user_name)
+        sql = ("""SELECT user_name, day, email, first_seen_at, last_seen_at, request_count
+                   FROM dashboard_user_activity""" + where +
+               " ORDER BY day DESC, user_name LIMIT ?")
         params.append(limit)
         return self._rows(sql, params)
 
-    def active_user_count(self, day: str) -> int:
+    def user_activity_summary(
+        self, since_day: str | None = None, user_name: str | None = None
+    ) -> dict:
+        """Totals over the WHOLE activity set the caller may see, ignoring any row limit.
+
+        The Usage tab used to compute its KPIs from the returned rows, which are capped:
+        measured at 1,092 stored rows it reported 167 days and 5,000 interactions where the
+        truth was 364 and 10,920.
+
+        Each `COUNT(DISTINCT ...)` here is one scalar over the whole filtered set, not a
+        per-group count that anything adds up — summing per-day distinct users would count
+        everybody again on every day they came back.
+        """
+        where, params = self._user_activity_where(since_day, user_name)
         rows = self._rows(
-            "SELECT COUNT(*) AS n FROM dashboard_user_activity WHERE day = ?", (day,)
+            """SELECT COUNT(*) AS rows_total,
+                      COUNT(DISTINCT user_name) AS distinct_users,
+                      COUNT(DISTINCT day) AS days,
+                      COALESCE(SUM(request_count), 0) AS interactions
+                 FROM dashboard_user_activity""" + where,
+            params,
         )
-        return int(rows[0]["n"]) if rows else 0
+        return dict(rows[0])
 
     # -- queries -----------------------------------------------------------------------
 
@@ -887,7 +1582,17 @@ class Store:
         callers need a list to test membership against, and building one by splitting a
         delimited string means picking a delimiter that a label value can never contain.
         Two reads of a handful of rows is the cheaper correctness.
+
+        THOSE TWO READS TAKE THEIR OWN SNAPSHOT. WAL gives each statement a consistent
+        view, not each pair of statements, so a poll committing between them stitched CR
+        rows to a different generation of provider rows — a CR listing providers whose
+        groups the same response says do not exist. Callers must not have to know this
+        method reads twice; nesting is free because read_snapshot joins an open one.
         """
+        with self.read_snapshot():
+            return self._groupsyncs(cluster_id)
+
+    def _groupsyncs(self, cluster_id: str) -> list[dict]:
         rows = self._rows(
             """SELECT g.name, g.namespace, g.schedule, g.ldap_filter, g.last_sync_at,
                       g.generation, g.observed_at,

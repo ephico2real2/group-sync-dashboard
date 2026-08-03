@@ -18,7 +18,9 @@ from datetime import UTC, datetime
 from .config import ClusterConfig, Settings
 from .kube import OK, ClusterClient, ClusterError, GroupSyncView, GroupView
 from .leader import LeaderElector
-from .store import Store, now_iso
+from .audit import plan_audit_stamps
+from .storage import StorageBackend
+from .timeutil import now_iso
 
 log = logging.getLogger(__name__)
 
@@ -46,14 +48,43 @@ def provider_keys_for(cr: GroupSyncView, groups: list[GroupView]) -> list[str]:
     Returns [] when no group carries a matching label — a CR that has produced nothing yet.
     That is deliberately distinct from [""], which would match every unlabelled group.
     Sorted, so attribution is stable across polls regardless of Group list order.
+
+    EXACT MATCH FIRST. When the CR declares its provider names, the label the operator
+    writes is exactly ``<cr.name>_<provider>``, so it is reconstructed and intersected with
+    what the Groups actually carry — reconstruction checked against observation, rather
+    than either alone. Prefix matching alone is ambiguous and the ambiguity is reachable:
+    a CR named ``corp`` and a CR named ``corp_extra`` BOTH match ``corp_extra_ldap``, so
+    that group gets two owners, is counted in both CRs' group_count, and raises two stale
+    alerts for one problem.
+
+    The prefix path remains for a CR whose spec declares no provider names, and it now
+    yields a label to the LONGEST matching CR name: between ``corp`` and ``corp_extra``,
+    ``corp_extra_ldap`` belongs to ``corp_extra``. That is a tie-break, not a fix — see
+    `ambiguous_attribution` for the case nothing can resolve.
     """
+    observed = {g.sync_provider for g in groups if g.sync_provider}
+    if cr.provider_names:
+        return sorted(observed & {f"{cr.name}_{p}" for p in cr.provider_names})
+
     prefix = f"{cr.name}_"
-    return sorted(
-        {g.sync_provider for g in groups if g.sync_provider and g.sync_provider.startswith(prefix)}
-    )
+    return sorted(label for label in observed if label.startswith(prefix))
 
 
-def poll_once(store: Store, cluster: ClusterConfig, timeout: float = 15.0) -> str:
+def ambiguous_attribution(groupsyncs: list[GroupSyncView]) -> list[str]:
+    """CR names that cannot be told apart from a Group label. Returns the colliding names.
+
+    Two CRs with the SAME NAME in different namespaces produce byte-identical labels: the
+    operator writes ``<name>_<provider>`` and namespace appears nowhere in it. No amount of
+    care here resolves that — the information is not in the data. The honest response is to
+    say so rather than silently attribute the groups to whichever CR was iterated first.
+    """
+    seen: dict[str, set[str]] = {}
+    for cr in groupsyncs:
+        seen.setdefault(cr.name, set()).add(cr.namespace)
+    return sorted(name for name, namespaces in seen.items() if len(namespaces) > 1)
+
+
+def poll_once(store: StorageBackend, cluster: ClusterConfig, timeout: float = 15.0) -> str:
     """One poll of one cluster. Returns the outcome string (PLAN §12 step 7).
 
     Never raises for cluster-side failures: an unreachable or forbidden cluster is recorded
@@ -67,6 +98,17 @@ def poll_once(store: Store, cluster: ClusterConfig, timeout: float = 15.0) -> st
         log.warning("poll %s failed: %s (%s)", cluster.name, exc.message, exc.outcome)
         store.record_poll(cluster.name, exc.outcome, exc.message)
         return exc.outcome
+
+    # Undecidable, so say so rather than attributing to whichever CR came first. Two CRs
+    # with the same name in different namespaces produce byte-identical Group labels — the
+    # operator writes <name>_<provider> and namespace appears nowhere in it.
+    for collision in ambiguous_attribution(groupsyncs):
+        log.warning(
+            "%s: GroupSync %r exists in more than one namespace and the sync-provider "
+            "label carries no namespace, so its groups cannot be attributed to one CR. "
+            "Ownership, group_count and stale-group alerts for those groups are ambiguous.",
+            cluster.name, collision,
+        )
 
     observed_at = now_iso()
 
@@ -110,47 +152,63 @@ def poll_once(store: Store, cluster: ClusterConfig, timeout: float = 15.0) -> st
                     group_count,
                 )
 
-        # Step 5: the failure condition, stored whether or not it is current (PLAN §2.1).
-        store.upsert_reconcile_error(
-            cluster.name, cr.name, cr.error_at, cr.error_generation, cr.error_message
+    # ONE TRANSACTION FROM HERE TO record_poll. Everything below lands together or not at
+    # all. It used to be seven separate commits, so any read arriving mid-cycle saw a
+    # mixture — measured at 11,598 torn reads in 19,208, a 60.38% failure rate — and a
+    # cycle that died halfway could still stamp record_poll(OK) over half-written state,
+    # which looks healthy and is the worse failure.
+    #
+    # record_sync_event is deliberately ABOVE this line and already committed: its key is
+    # the operator's own lastSyncSuccessTime, so a rollback loses an observation for good
+    # rather than re-deriving it next cycle.
+    with store.poll_snapshot():
+        for cr in groupsyncs:
+            # Step 5: the failure condition, stored whether or not it is current (PLAN §2.1).
+            store.upsert_reconcile_error(
+                cluster.name, cr.name, cr.error_at, cr.error_generation, cr.error_message
+            )
+
+        store.replace_groupsync_state(cluster.name, cr_rows, observed_at)
+
+        # Step 6
+        store.replace_group_state(
+            cluster.name,
+            [
+                {
+                    "name": g.name,
+                    "member_count": g.member_count,
+                    "sync_provider": g.sync_provider,
+                    "group_synced_at": g.group_synced_at,
+                    "ldap_uid": g.ldap_uid,
+                }
+                for g in groups
+            ],
+            observed_at,
         )
 
-    store.replace_groupsync_state(cluster.name, cr_rows, observed_at)
+        # Provenance for RBAC finding classification: remember which groups the operator
+        # manages, so that a binding naming one of them later becomes meaningful evidence
+        # rather than an unresolvable name.
+        store.record_managed_groups(
+            cluster.name,
+            [{"name": g.name, "sync_provider": g.sync_provider} for g in groups],
+            observed_at,
+        )
 
-    # Step 6
-    store.replace_group_state(
-        cluster.name,
-        [
-            {
-                "name": g.name,
-                "member_count": g.member_count,
-                "sync_provider": g.sync_provider,
-                "group_synced_at": g.group_synced_at,
-                "ldap_uid": g.ldap_uid,
-            }
-            for g in groups
-        ],
-        observed_at,
-    )
+        # Step 7: reconcile membership and record who joined or left since the last poll.
+        # Inside the transaction, and safe to be: a membership event self-heals. If this
+        # cycle rolls back, the next one re-derives the identical change with a later
+        # observed_at, degrading the timestamp by one poll interval — which values.yaml
+        # already documents as the error bar on "when did this person lose access?".
+        member_changes = store.sync_members(
+            cluster_id=cluster.name,
+            memberships={g.name: g.members for g in groups},
+            sync_times={g.name: g.group_synced_at for g in groups},
+            observed_at=observed_at,
+        )
 
-    # Provenance for RBAC finding classification: remember which groups the operator
-    # manages, so that a binding naming one of them later becomes meaningful evidence
-    # rather than an unresolvable name.
-    store.record_managed_groups(
-        cluster.name,
-        [{"name": g.name, "sync_provider": g.sync_provider} for g in groups],
-        observed_at,
-    )
-
-    # Step 7: reconcile membership and record who joined or left since the last poll.
-    member_changes = store.sync_members(
-        cluster_id=cluster.name,
-        memberships={g.name: g.members for g in groups},
-        sync_times={g.name: g.group_synced_at for g in groups},
-        observed_at=observed_at,
-    )
-
-    store.record_poll(cluster.name, OK, None)
+        # Last inside the transaction: OK is only true if everything above committed.
+        store.record_poll(cluster.name, OK, None)
     log.info(
         "polled %s: %d CRs, %d groups, %d new sync event(s), %d membership change(s)",
         cluster.name,
@@ -162,7 +220,13 @@ def poll_once(store: Store, cluster: ClusterConfig, timeout: float = 15.0) -> st
     return OK
 
 
-def refresh_bindings(store: Store, cluster: ClusterConfig, timeout: float) -> str:
+def refresh_bindings(
+    store: StorageBackend,
+    cluster: ClusterConfig,
+    timeout: float,
+    audit_mode: str = "off",
+    audit_max_per_cycle: int = 20,
+) -> str:
     """Re-read RoleBindings/ClusterRoleBindings for one cluster.
 
     Deliberately does NOT record a poll outcome. A binding-list failure — most likely a
@@ -190,28 +254,156 @@ def refresh_bindings(store: Store, cluster: ClusterConfig, timeout: float) -> st
                 "role_kind": b.role_kind,
                 "role_name": b.role_name,
                 "group_name": b.group_name,
+                "managed_source": b.managed_source,
+                "exception": b.exception,
             }
             for b in bindings
         ],
         now_iso(),
     )
+
+    # Direct-user bindings ride the same cadence and the same two list calls' worth of
+    # cluster data. Fetched separately rather than in one pass because the two questions
+    # are different — "does this group exist?" vs "why is a person named here?" — and
+    # conflating them made both harder to read.
+    try:
+        user_rows = client.fetch_user_bindings()
+    except ClusterError as exc:
+        log.warning("user-binding refresh for %s failed: %s — group data is unaffected",
+                    cluster.name, exc.message)
+    else:
+        store.replace_user_bindings(
+            cluster.name,
+            [{"binding_kind": u.binding_kind, "binding_namespace": u.binding_namespace,
+              "binding_name": u.binding_name, "role_kind": u.role_kind,
+              "role_name": u.role_name, "user_name": u.user_name,
+              "is_platform": 1 if u.is_platform else 0} for u in user_rows],
+            now_iso(),
+        )
+        people = sum(1 for u in user_rows if not u.is_platform)
+        log.info("%s: %d direct-user binding(s), %d naming a person",
+                 cluster.name, len(user_rows), people)
+
+    # The policy operator's CR health rides the SAME cadence, for the same reason: these
+    # CRs change on administrative action, not on a schedule, and they are the source of
+    # the very bindings fetched above. Auto-detected — a cluster without the
+    # namespace-configuration-operator records "absent" and the UI shows nothing, rather
+    # than an empty-but-healthy-looking section.
+    try:
+        configs = client.fetch_operator_configs()
+    except ClusterError as exc:
+        log.warning(
+            "operator-config refresh for %s failed: %s — binding data is unaffected",
+            cluster.name, exc.message,
+        )
+    else:
+        store.replace_operator_configs(
+            cluster.name,
+            None if configs is None else [
+                {"kind": c.kind, "name": c.name, "error_at": c.error_at,
+                 "error_message": c.error_message, "success_at": c.success_at}
+                for c in configs
+            ],
+            now_iso(),
+        )
+        if configs is not None:
+            log.info("refreshed %d operator config(s) for %s", len(configs), cluster.name)
+
     log.info("refreshed %d group bindings for %s", len(bindings), cluster.name)
+
+    # The audit stamp — the dashboard's ONLY write path, and it runs LAST, after this
+    # cycle's rows are stored, so the plan is computed from exactly what was just observed.
+    # docs/unmanaged-audit-design.md carries the invariants; gsd/audit.py the decisions.
+    if audit_mode in ("log", "annotate"):
+        plan = plan_audit_stamps(store.all_bindings(cluster.name), audit_max_per_cycle)
+        if plan.stamp or plan.unstamp or plan.capped:
+            log.info(
+                "%s: unmanaged audit plan — stamp %d, heal %d%s%s",
+                cluster.name, len(plan.stamp), len(plan.unstamp),
+                f", {plan.capped} deferred by the per-cycle cap" if plan.capped else "",
+                " (log mode: nothing will be written)" if audit_mode == "log" else "",
+            )
+        for kind, ns, name in plan.stamp:
+            if audit_mode == "log":
+                log.info("%s: WOULD stamp %s %s/%s", cluster.name, kind, ns or "-", name)
+                continue
+            try:
+                client.stamp_unmanaged_binding(kind, ns, name, now_iso())
+                log.info("%s: stamped %s %s/%s as unmanaged", cluster.name, kind, ns or "-", name)
+            except ClusterError as exc:
+                # I8: one failed patch skips, loudly; it never stops the others or the refresh.
+                log.warning("%s: could not stamp %s %s/%s: %s",
+                            cluster.name, kind, ns or "-", name, exc.message)
+        for kind, ns, name in plan.unstamp:
+            if audit_mode == "log":
+                log.info("%s: WOULD heal (unstamp) %s %s/%s", cluster.name, kind, ns or "-", name)
+                continue
+            try:
+                client.unstamp_unmanaged_binding(kind, ns, name)
+                log.info("%s: healed %s %s/%s — no longer unmanaged; annotations kept",
+                         cluster.name, kind, ns or "-", name)
+            except ClusterError as exc:
+                log.warning("%s: could not heal %s %s/%s: %s",
+                            cluster.name, kind, ns or "-", name, exc.message)
+
     return OK
 
 
 class Poller:
     """Runs one polling thread per enabled cluster."""
 
-    def __init__(self, store: Store, settings: Settings, elector: LeaderElector | None = None):
+    def __init__(self, store: StorageBackend, settings: Settings, elector: LeaderElector | None = None):
         self.store = store
         self.settings = settings
-        # Only the leader writes. Without this, a scale-up, a slow Recreate, or a partitioned
-        # node puts two pollers on one database — and the poll loop is not idempotent across
-        # writers, so racing sync_members calls emit membership events for changes that never
-        # happened.
+        # BEST-EFFORT admission control, NOT a write fence. Read this before relying on it.
+        #
+        # Leadership is checked once, in _run_cluster, before poll_once is entered. Nothing
+        # re-checks it during the seven writes that follow, and nothing carries a fence
+        # token the store could reject. So a pod that passes the check and then pauses —
+        # CPU throttling, a stop-the-world GC, a network partition — can lose the lease,
+        # have another pod take over, and still complete every one of its writes on resume.
+        # Two pods can also both believe they hold it for up to renew_seconds, because the
+        # loser does not clear its own flag until its next round, and expiry is judged
+        # against each pod's own clock.
+        #
+        # What it therefore DOES buy: it stops the ordinary cases — a scale-up, a slow
+        # Recreate rollover — from having two steady-state pollers. What it does NOT buy is
+        # a guarantee that only one process ever writes. The real protection against that
+        # is the deployment shape: one replica, Recreate, one database file.
+        #
+        # Making it a true fence would mean every store write comparing a monotonic token
+        # inside the same transaction, with the new leader advancing it first. That is a
+        # distributed-systems protocol layered over SQLite, and it is not proportionate for
+        # a single-writer application whose primary defence is that there is only one pod.
         self.elector = elector
         self._stop = threading.Event()
         self._threads: list[threading.Thread] = []
+        # 0 so the first cycle after start takes one immediately: a pod that
+        # has just come up is exactly when you want a copy on disk.
+        self._next_backup = 0.0
+
+    def _maybe_backup(self) -> None:
+        """Snapshot the irreplaceable history on its own slower schedule.
+
+        Leader-and-poll-thread only, the same rule as maintain(): VACUUM INTO holds a read
+        transaction for the length of the copy, and doing that from a request handler would
+        put a user's page behind it.
+
+        This is the ONLY protection for data that cannot be re-fetched from the Kubernetes
+        API. Everything else here is a cache. Note the honest limit: these land on the same
+        PVC they protect against, so they cover corruption and accidental deletion but not
+        loss of the volume — shipping them off it is a CronJob's job, not this process's.
+        """
+        if not self.settings.backup_dir:
+            return
+        now = time.monotonic()
+        if now < self._next_backup:
+            return
+        self._next_backup = now + self.settings.backup_interval_hours * 3600
+        try:
+            self.store.backup(self.settings.backup_dir, keep=self.settings.backup_keep)
+        except Exception:  # noqa: BLE001 - a failed backup must never stop the poll
+            log.exception("backup failed; the poll continues and the history is unprotected")
 
     def _run_cluster(self, cluster: ClusterConfig) -> None:
         # Poll immediately on start rather than sleeping first: a restarted dashboard that
@@ -235,10 +427,13 @@ class Poller:
                 continue
             try:
                 poll_once(self.store, cluster, self.settings.request_timeout_seconds)
-                # After the write, never during it, and never from a request handler: a
-                # TRUNCATE checkpoint waits for open readers, and that wait is free here and
-                # would be user-visible latency anywhere else.
-                self.store.maybe_checkpoint()
+                # After the write, never during it, and never from a request handler:
+                # whatever upkeep the engine needs may wait on open readers, and that wait
+                # is free here and would be user-visible latency anywhere else. The poller
+                # does not know or care what the engine actually does — for SQLite it is a
+                # WAL checkpoint; for another engine it may be nothing at all.
+                self.store.maintain()
+                self._maybe_backup()
             except Exception:  # noqa: BLE001 - a poll thread must never die silently
                 log.exception("unhandled error polling %s", cluster.name)
                 # The recovery write can fail for the SAME reason the poll did — a full or
@@ -263,7 +458,9 @@ class Poller:
             if now >= next_binding_refresh:
                 try:
                     refresh_bindings(
-                        self.store, cluster, self.settings.request_timeout_seconds
+                        self.store, cluster, self.settings.request_timeout_seconds,
+                        audit_mode=self.settings.unmanaged_audit_mode,
+                        audit_max_per_cycle=self.settings.unmanaged_audit_max_per_cycle,
                     )
                 except Exception:  # noqa: BLE001
                     log.exception("unhandled error refreshing bindings for %s", cluster.name)

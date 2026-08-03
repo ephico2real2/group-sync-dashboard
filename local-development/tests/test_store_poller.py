@@ -240,3 +240,53 @@ class TestProviderAttribution:
         assert provider_keys_for(self._cr("corp"), forward) == provider_keys_for(
             self._cr("corp"), list(reversed(forward))
         )
+
+
+class TestAttributionAmbiguity:
+    """Codex M1: prefix matching produced reachable cross-CR attribution.
+
+    The operator labels each Group `<groupsync-name>_<provider-name>`. Matching purely on
+    the `<name>_` prefix means a CR whose name is a prefix of another CR's name claims the
+    other's groups too — so one group gets two owners, is counted in both CRs' group_count,
+    and raises two stale alerts for one problem.
+    """
+
+    def _cr(self, name, namespace="ns", providers=("ldap",)):
+        return GroupSyncView(name, namespace, "0 * * * *", None, None, 1,
+                             None, None, None, None, tuple(providers))
+
+    def _group(self, name, provider):
+        return GroupView(name, 1, provider, None, None, ["alice"])
+
+    def test_a_prefix_named_cr_no_longer_steals_another_cr_s_group(self):
+        """`corp` and `corp_extra` both matched `corp_extra_ldap` before this."""
+        groups = [self._group("g", "corp_extra_ldap")]
+        assert provider_keys_for(self._cr("corp"), groups) == []
+        assert provider_keys_for(self._cr("corp_extra"), groups) == ["corp_extra_ldap"]
+
+    def test_declared_names_are_matched_exactly_not_by_prefix(self):
+        """A label whose suffix is not a declared provider belongs to nobody here."""
+        groups = [self._group("g", "corp_somethingelse")]
+        assert provider_keys_for(self._cr("corp", providers=("ldap",)), groups) == []
+
+    def test_a_multi_provider_cr_still_claims_all_of_its_own(self):
+        groups = [self._group("a", "corp_ldap-a"), self._group("b", "corp_ldap-b"),
+                  self._group("c", "other_ldap")]
+        keys = provider_keys_for(self._cr("corp", providers=("ldap-a", "ldap-b")), groups)
+        assert keys == ["corp_ldap-a", "corp_ldap-b"]
+
+    def test_a_spec_without_provider_names_falls_back_to_prefix(self):
+        """Older or hand-written CRs may omit names; attribution must not simply stop."""
+        groups = [self._group("g", "corp_ldap")]
+        assert provider_keys_for(self._cr("corp", providers=()), groups) == ["corp_ldap"]
+
+    def test_same_name_in_two_namespaces_is_reported_not_guessed(self):
+        """The label carries no namespace, so this is genuinely undecidable from the data.
+        Saying so beats attributing to whichever CR happened to be iterated first."""
+        from gsd.poller import ambiguous_attribution
+        crs = [self._cr("team", "ns-a"), self._cr("team", "ns-b"), self._cr("other", "ns-a")]
+        assert ambiguous_attribution(crs) == ["team"]
+
+    def test_no_ambiguity_reported_for_distinct_names(self):
+        from gsd.poller import ambiguous_attribution
+        assert ambiguous_attribution([self._cr("a"), self._cr("b")]) == []

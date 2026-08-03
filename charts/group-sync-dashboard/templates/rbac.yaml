@@ -10,6 +10,16 @@ rules:
   - apiGroups: ["redhatcop.redhat.io"]
     resources: ["groupsyncs"]
     verbs: ["get", "list"]
+  # The namespace-configuration-operator's CRs — the other half of the access pipeline:
+  # group-sync creates the groups, these template the RoleBindings that grant them access.
+  # The dashboard AUTO-DETECTS the CRDs: on a cluster without the operator the list 404s,
+  # which is recorded as "absent" and renders as nothing. WITHOUT this grant the same call
+  # 403s instead, which is treated as a refresh failure and logs a warning every cycle —
+  # so keep the grant even on clusters that may never install the operator; an authorised
+  # 404 is quiet and a forbidden 403 is not.
+  - apiGroups: ["redhatcop.redhat.io"]
+    resources: ["namespaceconfigs", "groupconfigs"]
+    verbs: ["get", "list"]
   - apiGroups: ["user.openshift.io"]
     resources: ["groups"]
     verbs: ["get", "list"]
@@ -19,6 +29,16 @@ rules:
   - apiGroups: ["coordination.k8s.io"]
     resources: ["leases"]
     verbs: ["get", "create", "update"]
+  {{- end }}
+  {{- if eq (toString .Values.config.unmanagedAudit.mode) "annotate" }}
+  # RENDERED ONLY IN ANNOTATE MODE, deliberately: patch on bindings is a verb that could
+  # change what a binding grants, and the grant must not exist while the feature is off or
+  # rehearsing in log mode. The application confines itself to three metadata keys —
+  # docs/unmanaged-audit-design.md I1 — but the grant is broader than the use, and that
+  # asymmetry is the price of this feature. Kubernetes has no metadata-only patch scope.
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["rolebindings", "clusterrolebindings"]
+    verbs: ["patch"]
   {{- end }}
   {{- if .Values.rbac.bindings }}
   # Powers the "Access granted" view and dangling-binding detection.
@@ -41,6 +61,42 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
   name: {{ include "gsd.fullname" . }}-reader
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "gsd.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
+
+{{- if and .Values.oauthProxy.enabled .Values.oauthProxy.apiTokenAccess.enabled }}
+---
+# Delegated authorization for the oauth-proxy, so `Authorization: Bearer <token>` works
+# against /api and the API can be curl'd without a browser.
+#
+# WHY A SEPARATE BINDING TO A STOCK ROLE rather than rules in the chart's own ClusterRole:
+# system:auth-delegator is the role the Kubernetes project defines for exactly this, it grants
+# exactly two verbs, and using it means an auditor recognises the grant instead of reading
+# ours. Bundling it into the reader role would also make it impossible to have API-token
+# access off while the dashboard works, which is the default.
+#
+# WHAT IT GRANTS, PLAINLY: create on tokenreviews and subjectaccessreviews. The proxy needs
+# both to answer "is this bearer token valid, and may that identity do the thing
+# -openshift-delegate-urls names". They are cluster-scoped and they are real privilege — a
+# compromised proxy container could validate any token presented to it and ask the API server
+# about any subject's permissions. It cannot mint tokens and it gains no read access to
+# workloads. That trade is why this is default-off and why the dashboard works without it.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "gsd.fullname" . }}-auth-delegator
+  labels: {{- include "gsd.labels" . | nindent 4 }}
+  {{- if .Values.argocd.enabled }}
+  annotations:
+    argocd.argoproj.io/sync-options: ServerSideApply=true
+  {{- end }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:auth-delegator
 subjects:
   - kind: ServiceAccount
     name: {{ include "gsd.serviceAccountName" . }}

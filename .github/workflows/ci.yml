@@ -1,0 +1,107 @@
+# Everything that was previously only ever run by hand.
+#
+# The suite, the chart guards, the WCAG contrast check and the image scan all existed and
+# all found real defects — a leader election that had never worked, a Helm guard that let
+# two pods open one SQLite file, nine contrast failures. None of them ran anywhere except a
+# terminal, which meant a green pull request proved nothing.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # Vulnerability data changes without the code changing. A weekly run is how an
+  # unfixable CVE becoming fixable gets noticed.
+  schedule:
+    - cron: "0 6 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: local-development
+    # BOTH ENDS, not one. This tested only 3.11, with the comment "matches ubi9/python-311",
+    # long after the image moved to python3.14 — so CI was exercising an interpreter that had
+    # not shipped for weeks while never running the one that had.
+    #
+    # It cost a real failure in both directions. Two tests used typing's private
+    # __protocol_attrs__, which exists only on 3.12+: they passed on a 3.13 developer machine
+    # and broke on 3.11 for a reason unrelated to the code they guard. Testing one version
+    # would have caught that in only one of the two possible orderings.
+    #
+    # 3.11 is the floor pyproject declares (requires-python = ">=3.11"); 3.14 is what the
+    # Containerfile ships. If either moves, move it here in the same commit.
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e '.[dev]' || pip install -e .
+      - name: Unit and integration tests
+        # test_ui.py needs a Playwright browser and test_live_smoke.py needs a real cluster,
+        # so both are deselected — which is why the count here is lower than a local run, and
+        # why a green CI is NOT a substitute for running the UI tests before shipping a
+        # front-end change. A stray backtick once blanked the whole page while the suite was
+        # green, and only the browser tests could have caught it.
+        #
+        # No hardcoded count in this comment: the last one said "285 of 340" and was stale by
+        # a hundred and fifty tests, which makes it worse than no number at all.
+        run: pytest tests/ -q --deselect tests/test_ui.py --deselect tests/test_live_smoke.py
+
+  chart:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - name: helm lint
+        run: helm lint charts/group-sync-dashboard
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"   # keep in step with the tests job and the Containerfile
+      - name: Render guards must still refuse the unsafe combinations
+        working-directory: local-development
+        run: |
+          pip install pytest
+          pytest tests/test_chart_strategy.py -q
+
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        working-directory: local-development
+        run: docker build -f Containerfile -t gsd:ci .
+
+      # --ignore-unfixed is load-bearing, not laziness. The base carries ten HIGH curl CVEs
+      # with no available patch; without this flag the gate is red on every run for
+      # something nobody can act on, and a permanently-red gate gets ignored — which is
+      # worse than no gate. This fails only on findings somebody can actually fix.
+      - name: Scan for FIXABLE vulnerabilities
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: gsd:ci
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+          scanners: vuln
+
+      # Separate, non-blocking, so the unfixable inventory is visible without gating.
+      - name: Full inventory (informational)
+        if: always()
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: gsd:ci
+          exit-code: "0"
+          severity: CRITICAL,HIGH
+          scanners: vuln

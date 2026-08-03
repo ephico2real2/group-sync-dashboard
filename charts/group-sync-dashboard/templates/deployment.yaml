@@ -4,8 +4,16 @@
 {{- if and (gt (int .Values.replicaCount) 1) .Values.persistence.enabled (ne (include "gsd.accessMode" .) "ReadWriteMany") }}
 {{- fail "replicaCount > 1 requires a ReadWriteMany volume. Leave persistence.accessMode empty to derive it, or set it explicitly. ReadWriteOnce binds to one NODE and ReadWriteOncePod to one POD, so under either the extra replicas stay Pending forever with no error on the Deployment itself." }}
 {{- end }}
-{{- if and (eq (include "gsd.accessMode" .) "ReadWriteOncePod") (eq (toString .Values.strategy) "RollingUpdate") }}
-{{- fail "strategy=RollingUpdate deadlocks against a ReadWriteOncePod volume: the incoming pod cannot be scheduled until the outgoing one releases the claim, and RollingUpdate will not terminate the outgoing pod until the incoming one is Ready. Use Recreate, or leave strategy empty to derive it." }}
+{{- /*
+ONE guard for RollingUpdate, not two. A second guard keyed on accessMode=ReadWriteOncePod
+was strictly worse than useless: every unsafe combination it caught is caught here too (at
+one replica this fires for EVERY access mode; above one replica the guard above already
+demands ReadWriteMany), while the only cases it uniquely caught were SAFE — persistence
+disabled, where each pod gets its own emptyDir and an overlapping rollout cannot collide.
+It refused those renders with a message about a volume that did not exist.
+*/}}
+{{- if and (eq (int .Values.replicaCount) 1) .Values.persistence.enabled (eq (toString .Values.strategy) "RollingUpdate") }}
+{{- fail "strategy=RollingUpdate is unsafe at replicaCount 1 with persistence enabled, whatever the access mode. RollingUpdate starts the incoming pod BEFORE terminating the outgoing one, and at one replica both use /data/gsd.db — two processes on one SQLite file, which corrupts rather than errors because WAL coordinates through an mmap'd -shm file that assumes a single host. The guard above catches only ReadWriteOncePod, where the scheduler refuses the second pod anyway; the DEFAULT ReadWriteMany happily mounts twice and was therefore the dangerous case, not the protected one. Use Recreate, or leave strategy empty to derive it. Above one replica RollingUpdate is correct and stays allowed, because each pod owns /data/$POD_NAME/gsd.db." }}
 {{- end }}
 apiVersion: apps/v1
 kind: Deployment
@@ -60,7 +68,7 @@ spec:
           # inside the cluster can skip the proxy entirely by addressing the pod directly,
           # which would make the authentication decorative.
           command:
-            - python3.11
+            - python3.14
             - -m
             - uvicorn
             - gsd.api:create_app
@@ -78,6 +86,21 @@ spec:
           env:
             - name: GSD_CONFIG
               value: /etc/gsd/clusters.yaml
+            # MUST STAY ABOVE GSD_DB_PATH. Kubernetes expands `$(VAR)` only against
+            # variables defined EARLIER in this list — "an environment variable is not
+            # considered defined if it is specified further down the list" — and an
+            # unresolved reference is left as the literal string without blocking startup.
+            # With POD_NAME below, the per-pod path above one replica resolved to the
+            # literal /data/$(POD_NAME)/gsd.db: the SAME directory in every replica, on the
+            # ReadWriteMany volume, which is exactly the shared SQLite file the per-pod path
+            # exists to prevent. It fails silently, because the container starts fine.
+            #
+            # Also makes the Lease name the actual pod holding it, which is the first thing
+            # you want when asking "which replica is writing?".
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
             - name: GSD_DB_PATH
               {{- if gt (int .Values.replicaCount) 1 }}
               # PER-POD database file. Multiple replicas must NOT share one SQLite file:
@@ -95,12 +118,12 @@ spec:
               {{- end }}
             - name: GSD_LOG_LEVEL
               value: {{ .Values.logLevel | quote }}
-            # So the Lease names the actual pod holding it, which is the first thing you
-            # want when asking "which replica is writing?".
-            - name: POD_NAME
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.name
+            {{- with .Values.timezone }}
+            # Log timestamps only — see values.yaml. Stored and served times stay UTC
+            # because every call in the app is datetime.now(UTC), so this cannot shift data.
+            - name: TZ
+              value: {{ . | quote }}
+            {{- end }}
             {{- $ca := list }}
             {{- if .Values.trustedCA.injected.enabled }}
             {{- $ca = append $ca (printf "%s/injected/ca-bundle.crt" .Values.trustedCA.mountPath) }}
@@ -198,6 +221,9 @@ spec:
             - -skip-auth-regex={{ .Values.oauthProxy.skipAuthRegex }}
             {{- if .Values.oauthProxy.sar }}
             - -openshift-sar={{ .Values.oauthProxy.sar }}
+            {{- end }}
+            {{- if .Values.oauthProxy.apiTokenAccess.enabled }}
+            - -openshift-delegate-urls={{ .Values.oauthProxy.apiTokenAccess.delegateUrls }}
             {{- end }}
             {{- if .Values.oauthProxy.skipProviderButton }}
             - -skip-provider-button

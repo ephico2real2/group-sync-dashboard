@@ -27,7 +27,7 @@ from prometheus_client import CollectorRegistry
 from prometheus_client.core import CounterMetricFamily, GaugeMetricFamily
 
 from . import __version__, state as st
-from .store import Store, now_iso
+from .storage import StorageBackend
 
 log = logging.getLogger(__name__)
 
@@ -43,12 +43,31 @@ def _epoch(value: str | None) -> float | None:
 class DashboardCollector:
     """Reads the store on each scrape and yields the current picture."""
 
-    def __init__(self, store: Store, grace: timedelta, elector=None):
+    def __init__(self, store: StorageBackend, grace: timedelta, elector=None):
         self.store = store
         self.grace = grace
         self.elector = elector
 
-    def collect(self):  # noqa: C901 - a flat list of metric definitions
+    def collect(self):
+        """Materialise the whole exposition inside ONE snapshot, then yield it.
+
+        collect() is a GENERATOR, and prometheus_client drives it lazily while writing the
+        response. Wrapping the generator itself in a read snapshot would therefore hold a
+        WAL read-mark for the entire duration of the HTTP response rather than the duration
+        of the queries — and a held read-mark blocks wal_checkpoint(TRUNCATE) from
+        reclaiming anything, so a slow scrape would stall the poller's checkpoint and let
+        the WAL grow. That is the precise failure this arrangement avoids: gather under the
+        snapshot, release it, then yield.
+
+        Consistency matters here for the same reason as the API: a scrape makes five store
+        calls per cluster, and a poll committing between them exports a group count from
+        one generation beside a CR state from the next.
+        """
+        with self.store.read_snapshot():
+            families = list(self._gather())
+        yield from families
+
+    def _gather(self):  # noqa: C901 - a flat list of metric definitions
         build = GaugeMetricFamily(
             "gsd_build_info",
             "Always 1; the running build is carried in the labels.",
@@ -81,58 +100,80 @@ class DashboardCollector:
             leader.add_metric([""], 1)
         yield leader
 
-        # The WAL is the one thing here that can fill the volume while every other signal
-        # stays green: checkpointing is best-effort and yields to open readers, so a steady
-        # read load can starve it indefinitely. The database file stops growing, the API
-        # keeps answering, and the pod dies on a full disk with nothing having warned.
-        wal = GaugeMetricFamily(
-            "gsd_sqlite_wal_bytes",
-            "Size of the SQLite write-ahead log. Sustained growth means checkpoints are "
-            "being starved by open readers; compare against the PVC size.",
-            labels=[],
-        )
-        wal.add_metric([], self.store.wal_bytes())
-        yield wal
-
-        ckpt = CounterMetricFamily(
-            "gsd_sqlite_checkpoint_busy_total",
-            "Checkpoints that could not complete because a reader held an older snapshot. "
-            "Occasional is normal; monotonic increase alongside rising WAL size is the "
-            "starvation case.",
-            labels=[],
-        )
-        ckpt.add_metric([], self.store.checkpoint_busy_total)
-        yield ckpt
-
-        # 1 only when WAL actually engaged. It is requested at startup but the filesystem
-        # can refuse it, and in rollback mode readers block on every write — a latency
-        # cliff with no other symptom.
-        journal = GaugeMetricFamily(
-            "gsd_sqlite_wal_enabled",
-            "1 if the database is in WAL mode. 0 means the filesystem refused it and "
-            "readers now block on writes.",
-            labels=[],
-        )
-        journal.add_metric([], 1 if self.store.journal_mode == "wal" else 0)
-        yield journal
-
-        # Unlabelled by user on purpose: a per-user series would grow Prometheus
-        # cardinality with the size of the organisation, and the per-user detail already
-        # lives in the database where it can be queried without that cost.
-        active = GaugeMetricFamily(
-            "gsd_dashboard_active_users",
-            "Distinct users who have used the dashboard today (UTC). 0 when the oauth "
-            "proxy is disabled, since there is then no identity to attribute requests to.",
-            labels=[],
-        )
-        # Guarded like the cluster listing below: this is a store query, and a usage
-        # statistic must never be the reason a scrape 500s and takes every other metric
-        # with it.
+        # One call, three metrics. The collector asks the backend how it is and exports
+        # what comes back; it does not read SQLite attributes off the store, which is what
+        # used to make this file engine-aware.
+        #
+        # The metric NAMES still say sqlite, deliberately. They are accurate today and they
+        # appear in shipped alert rules, so renaming them is an operator-visible breaking
+        # change that belongs with an actual engine change — at which point it is confined
+        # to these few lines. Guarded because a usage statistic must never be why a scrape
+        # 500s and takes every other metric with it.
         try:
-            active.add_metric([], self.store.active_user_count(now_iso()[:10]))
+            health = self.store.health()
         except Exception:  # noqa: BLE001
-            log.exception("metrics: active-user count failed; omitting it from this scrape")
-        yield active
+            # OMITTED, never zeroed. An earlier version of this guard fell back to an empty
+            # dict, which produced `gsd_sqlite_wal_enabled 0` on a successful scrape — and
+            # that value means "the filesystem refused WAL, readers now block on every
+            # write", so GroupSyncDashboardWalDisabled would fire while nothing was wrong.
+            # Reporting a failure to measure as a measurement of failure is the worst
+            # available answer. Omitting leaves Prometheus holding the last good value,
+            # which is what the pre-refactor code did by letting the scrape fail outright.
+            log.exception("metrics: storage health unavailable; omitting those three series")
+            health = None
+
+        sqlite = (health or {}).get("sqlite") or {}
+        if health is not None:
+            # The WAL is the one thing here that can fill the volume while every other
+            # signal stays green: checkpointing is best-effort and yields to open readers,
+            # so a steady read load can starve it indefinitely. The database file stops
+            # growing, the API keeps answering, and the pod dies on a full disk with nothing
+            # having warned.
+            #
+            # Emitted only for an engine that reports them. A backend without a WAL — any
+            # server-based engine — returns no such keys, and inventing a 0 for
+            # wal_enabled would fire the same false alarm as the failure case above.
+            if "wal_bytes" in sqlite:
+                wal = GaugeMetricFamily(
+                    "gsd_sqlite_wal_bytes",
+                    "Size of the SQLite write-ahead log. Sustained growth means checkpoints "
+                    "are being starved by open readers; compare against the PVC size.",
+                    labels=[],
+                )
+                wal.add_metric([], int(sqlite["wal_bytes"]))
+                yield wal
+
+            if "checkpoint_busy_total" in sqlite:
+                ckpt = CounterMetricFamily(
+                    "gsd_sqlite_checkpoint_busy_total",
+                    "Checkpoints that could not complete because a reader held an older "
+                    "snapshot. Occasional is normal; monotonic increase alongside rising "
+                    "WAL size is the starvation case.",
+                    labels=[],
+                )
+                ckpt.add_metric([], int(sqlite["checkpoint_busy_total"]))
+                yield ckpt
+
+            # 1 only when WAL actually engaged. It is requested at startup but the
+            # filesystem can refuse it, and in rollback mode readers block on every write —
+            # a latency cliff with no other symptom.
+            if "wal_enabled" in sqlite:
+                journal = GaugeMetricFamily(
+                    "gsd_sqlite_wal_enabled",
+                    "1 if the database is in WAL mode. 0 means the filesystem refused it "
+                    "and readers now block on writes.",
+                    labels=[],
+                )
+                journal.add_metric([], 1 if sqlite["wal_enabled"] else 0)
+                yield journal
+
+        # gsd_dashboard_active_users USED TO BE EXPOSED HERE AND WAS REMOVED.
+        # /metrics is deliberately unauthenticated so Prometheus can scrape it without
+        # credentials (oauthProxy.skipAuthRegex), and a distinct-user-count is still
+        # personnel information: it reports how many people worked on a given day to
+        # anyone who can reach the Service. Unlabelled is not anonymous enough to publish
+        # without authentication. The per-user detail remains in the database, behind
+        # /api/dashboard/activity, which is authenticated and self-scoped.
 
         up = GaugeMetricFamily(
             "gsd_cluster_up",
@@ -225,7 +266,11 @@ class DashboardCollector:
                     bindings.add_metric([cluster, finding], count)
 
                 by_kind: dict[tuple[str, str], int] = {}
-                for cr in self.store.groupsyncs(cluster):
+                # Read once and keep it: this list is needed again for compute_alerts below,
+                # and a second call is a second query per cluster on every scrape for rows
+                # that cannot have changed in between — the snapshot is already fixed.
+                cluster_groupsyncs = self.store.groupsyncs(cluster)
+                for cr in cluster_groupsyncs:
                     name, namespace = cr["name"], cr["namespace"]
                     labels = [cluster, name, namespace]
 
@@ -255,7 +300,9 @@ class DashboardCollector:
 
                 for alert in st.compute_alerts(
                     cluster=cluster,
-                    groupsyncs=self.store.groupsyncs(cluster),
+                    groupsyncs=cluster_groupsyncs,
+                    operator_configs=self.store.operator_configs(cluster)["configs"],
+                    user_bindings=self.store.direct_user_bindings(cluster),
                     groups=self.store.groups(cluster, "all"),
                     now=now,
                     grace=self.grace,
@@ -276,7 +323,7 @@ class DashboardCollector:
         )
 
 
-def build_registry(store: Store, grace: timedelta, elector=None) -> CollectorRegistry:
+def build_registry(store: StorageBackend, grace: timedelta, elector=None) -> CollectorRegistry:
     """A dedicated registry — the default one carries process/GC collectors we do not want
     duplicated per app instance, and tests build several apps in one interpreter."""
     registry = CollectorRegistry()

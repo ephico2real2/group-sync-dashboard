@@ -18,8 +18,11 @@ by polling and cannot be re-fetched from the API, so they reset on every restart
 {{- end }}
 {{- if gt (int .Values.replicaCount) 1 }}
 
-WARNING: replicaCount is {{ .Values.replicaCount }}. The poller owns a SQLite file and there
-is no leader election, so extra replicas mean concurrent writers on one database.
+NOTE: replicaCount is {{ .Values.replicaCount }}. Each pod polls for itself and owns its own
+database at /data/$POD_NAME/gsd.db — they do NOT share a file, so there are no concurrent
+writers. What they do not share is HISTORY: each pod holds only the timeline since its own
+database existed, so the Service answers "when did this user leave?" differently depending
+on which pod you reach. Current state self-heals within one poll; history does not.
 {{- end }}
 {{- if .Values.ingress.enabled }}
 {{- if .Values.oauthProxy.enabled }}

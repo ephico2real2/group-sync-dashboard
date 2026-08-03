@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img"
+     aria-label="GroupSync dashboard">
+  <!-- Three linked figures: a group, which is the unit this dashboard is about. Drawn in
+       the overview tab's accent so the browser tab matches the page it opens.
+       currentColor is not used — a favicon has no inherited colour — but the two tones are
+       the same #2873cd/#108172 pair the palette already solves for contrast. -->
+  <rect width="32" height="32" rx="7" fill="#2873cd"/>
+  <circle cx="16" cy="10.5" r="4" fill="#ffffff"/>
+  <path d="M8.5 24.5a7.5 7.5 0 0 1 15 0z" fill="#ffffff"/>
+  <circle cx="6.5" cy="14" r="3" fill="#ffffff" opacity="0.72"/>
+  <circle cx="25.5" cy="14" r="3" fill="#ffffff" opacity="0.72"/>
+</svg>

@@ -213,6 +213,15 @@ class Settings:
     sqlite_reader_busy_timeout_ms: int = 2000
     sqlite_synchronous: str = "NORMAL"
     sqlite_wal_checkpoint_mb: float = 8.0
+    # Backups of the ONLY data in this system that cannot be re-fetched. Empty disables.
+    backup_dir: str = ""
+    backup_interval_hours: float = 6.0
+    backup_keep: int = 4
+    # off | log | annotate. The dashboard's ONLY write path; see
+    # docs/unmanaged-audit-design.md. `log` computes and logs the plan without writing —
+    # the rehearsal mode the rollout goes through before annotate.
+    unmanaged_audit_mode: str = "off"
+    unmanaged_audit_max_per_cycle: int = 20
 
     # Whether the oauth-proxy sidecar is in front of us. The app cannot detect this for
     # itself, and it must not infer it from the presence of X-Forwarded-User — that header
@@ -220,6 +229,10 @@ class Settings:
     # its own oauthProxy.enabled; false means no identity is trustworthy.
     oauth_proxy_enabled: bool = False
     user_activity_enabled: bool = True
+    # "self" | "all". Who may read /api/dashboard/activity. Defaults to self, because the
+    # response is identifiable personnel data — who was present, when, and how much — and
+    # the dashboard's usual "you could read this with oc anyway" argument does not cover it.
+    user_activity_visibility: str = "self"
     user_activity_flush_seconds: int = 60
     user_activity_retention_days: int = 400
 
@@ -247,6 +260,39 @@ def _num_setting(raw: dict, env_name: str, yaml_key: str, default, cast):
     except (TypeError, ValueError):
         log.warning("%s=%r is not a number; using %r", env_name, source, default)
         return default
+
+
+def _audit_mode_setting(raw: dict) -> str:
+    """Fail SAFE: anything unrecognised means off, never a write mode.
+
+    Same reasoning as the visibility setting — a typo must not be the thing that turns on
+    the only code path that patches cluster objects.
+    """
+    source = os.environ.get("GSD_UNMANAGED_AUDIT_MODE")
+    if source is None:
+        source = raw.get("unmanagedAuditMode", "off")
+    word = str(source).strip().lower()
+    if word in ("off", "log", "annotate"):
+        return word
+    log.warning("unmanagedAuditMode=%r is not off/log/annotate; using 'off'", source)
+    return "off"
+
+
+def _visibility_setting(raw: dict) -> str:
+    """Fail SAFE on anything unrecognised: an unknown value means self, never all.
+
+    The failure direction is the whole point. A typo here — "All", "everyone", "ture" —
+    must not silently widen who can read a personnel dataset, so only the exact string
+    "all" opts in.
+    """
+    source = os.environ.get("GSD_USER_ACTIVITY_VISIBILITY")
+    if source is None:
+        source = raw.get("userActivityVisibility", "self")
+    word = str(source).strip().lower()
+    if word in ("self", "all"):
+        return word
+    log.warning("userActivityVisibility=%r is not 'self' or 'all'; using 'self'", source)
+    return "self"
 
 
 def _bool_setting(raw: dict, env_name: str, yaml_key: str, default: bool) -> bool:
@@ -366,6 +412,15 @@ def load_settings(path: str | Path) -> Settings:
         ),
         sqlite_synchronous=os.environ.get("GSD_SQLITE_SYNCHRONOUS")
         or str(raw.get("sqliteSynchronous", "NORMAL")),
+        backup_dir=os.environ.get("GSD_BACKUP_DIR") or str(raw.get("backupDir", "")),
+        backup_interval_hours=_num_setting(
+            raw, "GSD_BACKUP_INTERVAL_HOURS", "backupIntervalHours", 6.0, float
+        ),
+        backup_keep=_num_setting(raw, "GSD_BACKUP_KEEP", "backupKeep", 4, int),
+        unmanaged_audit_mode=_audit_mode_setting(raw),
+        unmanaged_audit_max_per_cycle=_num_setting(
+            raw, "GSD_UNMANAGED_AUDIT_MAX_PER_CYCLE", "unmanagedAuditMaxPerCycle", 20, int
+        ),
         sqlite_wal_checkpoint_mb=_num_setting(
             raw, "GSD_SQLITE_WAL_CHECKPOINT_MB", "sqliteWalCheckpointMb", 8.0, float
         ),
@@ -375,6 +430,7 @@ def load_settings(path: str | Path) -> Settings:
         user_activity_enabled=_bool_setting(
             raw, "GSD_USER_ACTIVITY_ENABLED", "userActivityEnabled", True
         ),
+        user_activity_visibility=_visibility_setting(raw),
         user_activity_flush_seconds=_num_setting(
             raw, "GSD_USER_ACTIVITY_FLUSH_SECONDS", "userActivityFlushSeconds", 60, int
         ),

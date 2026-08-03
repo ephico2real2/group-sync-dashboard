@@ -3,7 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>GroupSync dashboard</title>
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <title>OCP Access Control Dashboard</title>
 <style>
 /* Roles, not raw hex, throughout. Light/dark swap in one place.
    Status hues are reserved and never used for a series; the state badges pair every
@@ -63,8 +64,49 @@
   --tab-overview: #2873cd;
   --tab-groups: #108172;
   --tab-bindings: #6d4bc7;
+  --tab-policy: #9333ea;
+  --tab-nsaudit: #b3306e;
   --tab-usage: #c2410c;
   --accent: var(--tab-overview);
+
+  /* TYPEFACES, self-hosted from gsd/static/vendor (see local-development/vendor-assets.sh).
+     Two voices, and the split is meaningful rather than decorative:
+
+     Space Grotesk carries the chrome — headings, labels, the tab bar. Geometric and
+     approachable, so the page reads as an instrument rather than a developer tool someone
+     wandered into. This dashboard is shown in access reviews with engineers AND their
+     management in the room; the headline layer has to read across a table.
+
+     JetBrains Mono carries IDENTIFIERS ONLY — namespace and role and binding names, counts,
+     timestamps. Things a reader might copy, compare character by character, or match against
+     `oc` output. Mono for prose would make the whole page look like a terminal, which is the
+     opposite of the brief; mono for a namespace called `legacy-payments` next to one called
+     `legacy-reporting` is what makes the difference visible at a glance.
+
+     Latin subset, three weights each, 100KB total for all six faces. font-display: swap so
+     text is never invisible while they load — they are same-origin and small, so the swap is
+     imperceptible, but an unstyled flash beats a blank table. */
+  --font-ui: "Space Grotesk", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* TYPE SCALE. An audit counted ten distinct font-size values chosen per component, with
+     no ladder connecting them — which is what makes an interface read as assembled rather
+     than designed, and what lets an eleventh size arrive unnoticed. These are those ten
+     sizes named, at exactly their current values: nothing moves, but every step now has a
+     purpose, and tests/test_type_scale.py fails on any size that is not one of them. Add a
+     step deliberately or reuse one; do not invent a number at the call site.
+     Sizes are px, not rem, because this stylesheet ships inside one self-contained page
+     with no root-size assumptions to inherit. */
+  --text-micro: 10px;  /* chart axis labels — the one place below 11 is legible enough */
+  --text-xs: 11px;     /* table headers, KPI labels */
+  --text-sm: 12px;     /* metadata, captions, secondary copy */
+  --text-md: 13px;     /* table body, form controls, tabs */
+  --text-base: 14px;   /* body copy */
+  --text-lg: 15px;     /* card headings, emphasised table cells */
+  --text-xl: 18px;     /* page title */
+  --text-2xl: 22px;    /* KPI value */
+  --text-3xl: 30px;    /* KPI value on a lead card */
+  --text-hero: 48px;   /* the one number a page leads with */
 }
 @media (prefers-color-scheme: dark) {
   :root:where(:not([data-theme="light"])) {
@@ -99,6 +141,8 @@
     --tab-overview: #2d7ad7;
     --tab-groups: #12907f;
     --tab-bindings: #8468d0;
+    --tab-policy: #a855f7;
+    --tab-nsaudit: #e0559a;
     --tab-usage: #d9490d;
   }
 }
@@ -131,14 +175,63 @@
   --tab-overview: #2d7ad7;
   --tab-groups: #12907f;
   --tab-bindings: #8468d0;
+  --tab-policy: #a855f7;
+  --tab-nsaudit: #e0559a;
   --tab-usage: #d9490d;
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("/static/vendor/jetbrains-mono-400.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("/static/vendor/jetbrains-mono-500.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("/static/vendor/jetbrains-mono-700.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Space Grotesk";
+  src: url("/static/vendor/space-grotesk-400.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Space Grotesk";
+  src: url("/static/vendor/space-grotesk-500.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Space Grotesk";
+  src: url("/static/vendor/space-grotesk-700.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
 }
 
 * { box-sizing: border-box; }
 body {
   margin: 0;
   color: var(--text-primary);
-  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  /* Split rather than the `font:` shorthand so the size comes from the scale. The
+     shorthand would also reset line-height and family if either were ever omitted. */
+  font-family: var(--font-ui);
+  font-size: var(--text-base);
+  line-height: 1.5;
   /* Depth without cost: a fixed wash so the page reads as a surface rather than a flat
      fill, plus a wide accent bloom that carries the current section's colour. Both stops
      are measured tokens, so text contrast holds wherever it lands — a gradient that
@@ -207,9 +300,9 @@ h1, h2, h3 { font-weight: 600; margin: 0; }
   width: 3px; height: 0.95em; margin-right: 8px; border-radius: 2px;
   background: var(--accent);
 }
-h1 { font-size: 18px; }
-h2 { font-size: 15px; }
-h3 { font-size: 13px; color: var(--text-secondary); }
+h1 { font-size: var(--text-xl); }
+h2 { font-size: var(--text-lg); }
+h3 { font-size: var(--text-md); color: var(--text-secondary); }
 
 .wrap { max-width: 1180px; margin: 0 auto; padding: 20px 20px 64px; }
 
@@ -217,7 +310,7 @@ header.top {
   display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
   padding-bottom: 14px; border-bottom: 1px solid var(--border); margin-bottom: 18px;
 }
-header.top .sub { color: var(--text-muted); font-size: 12px; }
+header.top .sub { color: var(--text-muted); font-size: var(--text-sm); }
 header.top .spacer { flex: 1; }
 
 /* One filter row above everything it scopes — never a filter inside a card. */
@@ -225,9 +318,9 @@ header.top .spacer { flex: 1; }
   display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
   margin-bottom: 18px;
 }
-.filters label { color: var(--text-secondary); font-size: 12px; }
+.filters label { color: var(--text-secondary); font-size: var(--text-sm); }
 select, button {
-  font: inherit; font-size: 13px; color: var(--text-primary);
+  font: inherit; font-size: var(--text-md); color: var(--text-primary);
   background: var(--surface-1); border: 1px solid var(--border);
   border-radius: 6px; padding: 5px 9px; cursor: pointer;
 }
@@ -244,12 +337,12 @@ button:hover, select:hover { border-color: var(--baseline); }
 
 /* Hero: the one number the dashboard leads with. Proportional figures, system sans. */
 .hero { display: flex; align-items: baseline; gap: 12px; margin-bottom: 4px; }
-.hero .value { font-size: 48px; font-weight: 600; line-height: 1; letter-spacing: -0.02em; }
+.hero .value { font-size: var(--text-hero); font-weight: 600; line-height: 1; letter-spacing: -0.02em; }
 .hero .label { color: var(--text-secondary); }
 
 /* Stat tiles: the number IS the chart. No one-bar bar charts. */
 .kpis { display: flex; gap: 22px; flex-wrap: wrap; margin-top: 12px; }
-.kpi .label { font-size: 11px; color: var(--text-muted); text-transform: none; }
+.kpi .label { font-size: var(--text-xs); color: var(--text-muted); text-transform: none; }
 /* A coloured edge on the counts that represent a problem, and only when the count is not
    zero. The number is still the signal — this just lets you find the one card with
    something wrong without reading six figures on each. Non-text, so the 3:1 bar of WCAG
@@ -258,13 +351,13 @@ button:hover, select:hover { border-color: var(--baseline); }
 .kpi.flag-warning, .kpi.flag-critical { padding-left: 9px; border-left: 3px solid transparent; }
 .kpi.flag-warning  { border-left-color: var(--status-warning); }
 .kpi.flag-critical { border-left-color: var(--status-critical); }
-.kpi .value { font-size: 22px; font-weight: 600; line-height: 1.25; }
+.kpi .value { font-size: var(--text-2xl); font-weight: 600; line-height: 1.25; }
 .kpi .value.muted { color: var(--text-muted); font-weight: 500; }
 
 /* State badge: shape + colour + text. Colour is never the only channel. */
 .badge {
   display: inline-flex; align-items: center; gap: 6px;
-  font-size: 12px; font-weight: 500; color: var(--text-primary);
+  font-size: var(--text-sm); font-weight: 500; color: var(--text-primary);
   border: 1px solid var(--border); border-radius: 999px; padding: 2px 9px 2px 7px;
   white-space: nowrap;
 }
@@ -277,14 +370,19 @@ button:hover, select:hover { border-color: var(--baseline); }
 .badge.unknown  .glyph { border: 1.5px solid var(--status-unknown); border-radius: 50%; background: none; }
 
 .muted { color: var(--text-muted); }
-.mono { font-variant-numeric: tabular-nums; }
+.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 
-table { border-collapse: collapse; width: 100%; font-size: 13px; }
+table { border-collapse: collapse; width: 100%; font-size: var(--text-md); }
 th, td {
   text-align: left; padding: 6px 10px 6px 0;
   border-bottom: 1px solid var(--gridline); vertical-align: top;
+  /* Tabular figures everywhere, not just in .num columns. This dashboard repaints on a
+     poll: with proportional digits a count going 9 -> 10, or a timestamp ticking, changes
+     the cell's width and nudges the column, so a table the eye had settled on shifts
+     under it every refresh. Fixed-width digits hold the grid still. */
+  font-variant-numeric: tabular-nums;
 }
-th { color: var(--text-muted); font-weight: 500; font-size: 11px; }
+th { color: var(--text-muted); font-weight: 500; font-size: var(--text-xs); }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; padding-right: 16px; }
 .scroll-x { overflow-x: auto; }
 
@@ -310,7 +408,7 @@ tbody tr:nth-child(even) td { background: var(--zebra); }
 .chip {
   display: inline-block; padding: 1px 7px; margin: 0 4px 4px 0;
   border: 1px solid var(--border); border-radius: 999px;
-  font-size: 12px; background: var(--zebra);
+  font-size: var(--text-sm); background: var(--zebra);
 }
 
 /* A drillable name must LOOK drillable. Without this the usernames rendered as plain
@@ -340,7 +438,7 @@ tbody tr:nth-child(even) td { background: var(--zebra); }
 .chart-wrap { position: relative; }
 svg .grid-line { stroke: var(--gridline); stroke-width: 1; }
 svg .axis-line { stroke: var(--baseline); stroke-width: 1; }
-svg text { fill: var(--text-muted); font-size: 10px; font-variant-numeric: tabular-nums; }
+svg text { fill: var(--text-muted); font-size: var(--text-micro); font-variant-numeric: tabular-nums; }
 svg .series-line { fill: none; stroke: var(--series-1); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
 svg .series-area { fill: var(--series-1-wash); }
 /* 2px surface ring keeps dots legible where they overlap, and enlarges the hit area. */
@@ -351,7 +449,7 @@ svg .hit { fill: transparent; cursor: pointer; }
   position: absolute; pointer-events: none; z-index: 5;
   background: var(--surface-1); color: var(--text-primary);
   border: 1px solid var(--border); border-radius: 6px;
-  padding: 6px 9px; font-size: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.14);
+  padding: 6px 9px; font-size: var(--text-sm); box-shadow: 0 2px 10px rgba(0,0,0,0.14);
   white-space: nowrap; opacity: 0; transition: opacity 90ms ease;
 }
 .tooltip.on { opacity: 1; }
@@ -374,11 +472,130 @@ svg .hit { fill: transparent; cursor: pointer; }
 .alert-row .who { min-width: 190px; font-weight: 500; word-break: break-all; }
 .alert-row .what { color: var(--text-secondary); }
 
-.empty-note { color: var(--text-muted); font-size: 13px; padding: 10px 0; }
-.back { background: none; border: 0; padding: 0; color: var(--series-1); cursor: pointer; font-size: 13px; }
-.filterbar-note { font-size: 12px; color: var(--text-muted); }
-code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.empty-note { color: var(--text-muted); font-size: var(--text-md); padding: 10px 0; }
+.back { background: none; border: 0; padding: 0; color: var(--series-1); cursor: pointer; font-size: var(--text-md); }
+.filterbar-note { font-size: var(--text-sm); color: var(--text-muted); }
+code { font-family: var(--font-mono); font-size: var(--text-sm); }
 .err { color: var(--status-critical); }
+
+/* ---- Risk presentation (Namespace audit) --------------------------------------------
+   A severity has to be readable as a WORD first: the pill carries its label, so the hue
+   is reinforcement rather than the signal. That also keeps the text-contrast problem
+   trivial — the label is --text-primary on a 15%-tinted background, which cannot fail AA
+   whatever the hue, while the full-strength colour lives in the border where the 3:1
+   graphical bar applies. */
+.risk-pill {
+  display: inline-block; padding: 3px 10px; border-radius: 999px;
+  font-size: var(--text-sm); font-weight: 700; letter-spacing: 0.02em;
+  color: var(--text-primary); white-space: nowrap;
+  border-left: 3px solid var(--risk-colour, var(--text-muted));
+  background: color-mix(in srgb, var(--risk-colour, var(--text-muted)) 15%, var(--surface-1));
+}
+.risk-critical { --risk-colour: var(--status-critical); }
+.risk-high     { --risk-colour: var(--status-warning); }
+.risk-medium   { --risk-colour: var(--series-4); }
+.risk-low      { --risk-colour: var(--text-muted); }
+
+.risk-headline { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+.risk-headline .risk-pill { font-size: var(--text-lg); padding: 6px 14px; }
+
+/* The KPI row is the first thing read, so it gets real size. */
+.kpi.big .value { font-size: var(--text-3xl); letter-spacing: -0.02em; }
+.kpi.big .label { font-size: var(--text-sm); }
+
+/* Why-this-matters: three short arguments side by side rather than one dense paragraph
+   nobody finishes. */
+.risk-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+.risk-item { font-size: var(--text-md); color: var(--text-secondary); line-height: 1.55; }
+.risk-item-h {
+  font-weight: 700; font-size: var(--text-md); color: var(--text-primary); margin-bottom: 3px;
+}
+
+/* The table has to be scannable at a glance, so rows are taller and the identifying
+   column is bold. Zebra striping is dropped here — the risk tint IS the row signal, and
+   two competing backgrounds read as noise. */
+.audit-table th {
+  font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--text-muted); font-weight: 600; padding-bottom: 8px;
+}
+.audit-table td { padding: 10px 14px 10px 0; font-size: var(--text-base); vertical-align: middle; }
+.audit-table tbody tr:nth-child(even) td { background: none; }
+.audit-table .ns-cell strong { font-size: var(--text-lg); }
+.audit-table td.strong { font-weight: 700; }
+/* The names column is the one that can grow without bound, so it is the one that must be
+   told not to. max-width stops it dictating the table's width; overflow-wrap breaks an LDAP
+   DN, which has no spaces and would otherwise force a horizontal scrollbar on the whole
+   page. Names are inline-block so they wrap as units rather than mid-identifier. */
+.audit-table .who {
+  font-size: var(--text-sm);
+  max-width: 30ch;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+.audit-table .who-name { display: inline-block; margin-right: 6px; }
+.who-more { margin-left: 2px; white-space: nowrap; }
+.priv { font-weight: 600; }
+
+/* A tint the width of the row, so severity is visible without reading the pill. */
+.risk-row td:first-child { border-left: 4px solid var(--risk-colour); padding-left: 10px; }
+.risk-row.risk-critical td { background: color-mix(in srgb, var(--status-critical) 7%, transparent); }
+.risk-row.risk-high td { background: color-mix(in srgb, var(--status-warning) 7%, transparent); }
+
+/* ---- Namespace-audit controls -------------------------------------------------------- */
+.section-head { display: flex; align-items: center; gap: 12px; margin-bottom: 4px; }
+.section-head .flush { flex: 1; }
+
+/* Sortable column header. A real <button> inside the <th>: a bare th is neither focusable
+   nor announced as actionable, so a click handler on it makes sorting mouse-only. Inherits
+   the th's muted colour and size so the table header does not turn into a row of controls
+   competing with the data. */
+.th-sort {
+  background: none; border: 0; padding: 0; margin: 0; cursor: pointer;
+  font: inherit; color: inherit; text-align: inherit; letter-spacing: inherit;
+  text-transform: inherit; white-space: nowrap;
+}
+.th-sort:hover { color: var(--text-primary); text-decoration: underline; }
+/* The active column is marked by WEIGHT and an arrow, not colour alone (WCAG 1.4.1) — and
+   aria-sort on the th carries the same fact to a screen reader. */
+.th-sort.is-active { color: var(--text-primary); font-weight: 700; }
+
+/* Disclosure for the detail list. Not <details>/<summary>: this page re-renders on every
+   poll, and a native details element would snap shut each time unless its open state were
+   mirrored into `view` anyway — at which point the element buys nothing and costs the
+   styling control the arrow and count need. */
+.disclose {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: var(--text-md); font-weight: 500;
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 4px 10px; background: var(--surface-1); cursor: pointer;
+}
+.disclose:hover { border-color: var(--baseline); }
+.disclose-arrow { color: var(--accent); font-size: var(--text-xs); }
+
+.ns-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+.ns-controls label { font-size: var(--text-sm); color: var(--text-secondary); }
+.ns-controls select { max-width: 340px; }
+
+/* A button that reads as a link. Still a button, because it performs an action rather than
+   navigating — an <a> without an href is not focusable and not announced. */
+.linkish {
+  background: none; border: 0; padding: 0; cursor: pointer;
+  font: inherit; font-size: var(--text-sm); color: var(--series-1); text-decoration: underline;
+}
+.linkish:hover { color: var(--text-primary); }
+
+/* Truncation is stated, never implied. A capped list that looks complete is the failure
+   this whole change exists to avoid, so the note is a warning edge rather than a footnote. */
+.truncation-note {
+  margin-top: 10px; padding: 8px 12px;
+  border-left: 3px solid var(--status-warning);
+  background: color-mix(in srgb, var(--status-warning) 8%, transparent);
+  border-radius: 0 6px 6px 0;
+}
+
+.runbook { margin: 0; padding-left: 22px; font-size: var(--text-md); line-height: 1.7; color: var(--text-secondary); }
+.runbook li { margin-bottom: 5px; }
+.runbook strong { color: var(--text-primary); }
 
 /* ---- Section identity ---------------------------------------------------------------
    Each view owns an accent, which drives the tab, the page bloom, the card top edge and
@@ -387,13 +604,15 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 1
 body[data-page="overview"] { --accent: var(--tab-overview); }
 body[data-page="groups"]   { --accent: var(--tab-groups); }
 body[data-page="bindings"] { --accent: var(--tab-bindings); }
+body[data-page="policy"]   { --accent: var(--tab-policy); }
+body[data-page="nsaudit"]  { --accent: var(--tab-nsaudit); }
 body[data-page="usage"]    { --accent: var(--tab-usage); }
 
 .tabs { display: inline-flex; gap: 4px; }
 .tab {
   position: relative;
   background: none; border: 0; border-radius: 6px 6px 0 0;
-  padding: 7px 12px 9px; font-size: 13px; font-weight: 500;
+  padding: 7px 12px 9px; font-size: var(--text-md); font-weight: 500;
   color: var(--text-secondary); cursor: pointer;
   transition: color 160ms ease, background-color 160ms ease;
 }
@@ -413,21 +632,82 @@ body[data-page="usage"]    { --accent: var(--tab-usage); }
   .tab[aria-current="page"]::after { background: Highlight; forced-color-adjust: none; }
 }
 
-/* The card keeps its quiet surface and gains the section's colour as a hairline top edge —
-   enough to tie the page together, not enough to compete with the data inside it. */
-.card {
-  box-shadow: var(--elev-1);
+/* Elevation on every card; the accent rail on only the FIRST one.
+   Every card used to wear the accent top edge. With five or six stacked that reads as a
+   striped page rather than a hierarchy — everything equally loud is the same as nothing
+   emphasised, and the eye has nowhere to land first. The lead card is the page's verdict
+   (the hero count, the risk tier), so it keeps the rail and the rest go quiet.
+   Section identity does not depend on this: the tab, the page bloom, the h2 leading rule
+   and the hero numeral all still carry the accent. */
+.card { box-shadow: var(--elev-1); }
+
+/* ---- The headline layer -------------------------------------------------------------
+   This is read in access reviews with engineers and their management both present, so the
+   top of every page has to carry across a table while the detail stays one glance below.
+   Three moves, no new colours — the palette is solved against WCAG and stays put. */
+
+/* The hero numeral is the thing someone reads from the far side of a room. Space Grotesk
+   at a tighter track, and tabular so it cannot reflow when a poll lands mid-sentence. */
+.hero .value {
+  font-family: var(--font-ui);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.03em;
+}
+/* Section headings stay sentence case, deliberately.
+   Uppercase was tried and reverted: these are sentences — "Why this is a risk", "Observed
+   syncs", "Policy operator (NamespaceConfig / GroupConfig)" — and the design pattern that
+   calls for tracked-out caps is meant for short LABELS, not for prose. Shouting a sentence
+   costs exactly the legibility this layer exists to buy, and it grows worse the longer the
+   heading. Uppercase is kept for table column headers below, which really are labels. */
+.card > h3 { font-family: var(--font-ui); letter-spacing: -0.005em; }
+.card > h2 { font-family: var(--font-ui); letter-spacing: -0.01em; }
+
+/* Table headers get the same treatment, so a table and a section agree about what a label
+   looks like. Already muted and 11px; this adds the tracking that makes uppercase legible. */
+th { text-transform: uppercase; letter-spacing: 0.05em; }
+
+/* ---- Tactile ------------------------------------------------------------------------
+   Interactive things respond; non-interactive things do not. That distinction IS the
+   feedback — a hover state on a row you cannot click teaches the reader a lie about what
+   is clickable, which on an audit tool costs them a click and some trust.
+
+   All of this is inside the existing prefers-reduced-motion collapse, which drops every
+   transition to 0.01ms rather than removing it. */
+.rowlink { transition: background-color 160ms ease, box-shadow 160ms ease; }
+.rowlink:hover { cursor: pointer; }
+/* The accent rail on hover, matching the lead-card treatment: the section's colour is how
+   this page says "this one", and reusing it for hover keeps one vocabulary. */
+.rowlink:hover td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+
+/* Buttons and the disclosure lift very slightly. 1px, not the skill's 2px: these sit in
+   dense table headers where a 2px lift reads as the row jumping. */
+button, .disclose {
+  transition: background-color 160ms ease, border-color 160ms ease, transform 160ms ease;
+}
+button:not(.tab):not(.th-sort):not(.linkish):hover,
+.disclose:hover { transform: translateY(-1px); }
+button:not(.tab):not(.th-sort):not(.linkish):active,
+.disclose:active { transform: translateY(0); }
+
+/* The active tab's bar grows from the label rather than appearing, so switching sections
+   feels connected instead of instant-swapped. */
+.tab[aria-current="page"]::after { transition: left 160ms ease, right 160ms ease; }
+main > .card:first-child,
+main > .grid:first-child > .card {
   border-top: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
 }
 .hero .value { color: var(--accent); }
+
+/* The header rule picks up the section colour, so the chrome agrees with the body about
+   which page you are on. Decorative: the tab already carries this in three channels. */
+header.top { border-bottom-color: color-mix(in srgb, var(--accent) 30%, var(--border)); }
 </style>
 </head>
 <body data-page="overview">
 <a class="skip" href="#main">Skip to main content</a>
 <div class="wrap">
   <header class="top">
-    <h1>GroupSync dashboard</h1>
-    <span class="sub" id="scope-note"></span>
+    <h1>OCP Access Control Dashboard<span id="scope-note"></span></h1>
     <span class="spacer"></span>
     <span class="sub" id="build-info"></span>
     <span class="sub" id="last-refresh"></span>
@@ -449,7 +729,23 @@ const STATES = {
 };
 
 const view = { page: "overview", cluster: null, groupsync: null, groupFilter: "all", bindingFilter: "review",
-                group: null, user: null };
+                group: null, user: null,
+                /* Namespace-audit controls. They live HERE and not in the DOM because the
+                   page repaints on every poll: state held in the markup would silently
+                   reset a chosen sort or filter under the reader every 60 seconds, which
+                   reads as the page fighting them. */
+                nsNamespace: "all", nsSort: "risk", nsDir: "desc",
+                nsGrantSort: "risk", nsGrantDir: "desc",
+                /* Namespaces whose full exposed-user list is expanded. In `view` like every
+                   other control on this page, so a 60s poll repaint does not collapse a list
+                   the reader just opened. */
+                nsWhoOpen: new Set(),
+                /* Closed on arrival. The per-namespace rollup is the view that answers the
+                   question; the flat list is a detail nobody reads end to end, and on a
+                   cluster with thousands of grants rendering it unasked is time spent to
+                   produce a page the reader scrolls past. Opening it is one click, and
+                   choosing a namespace opens it automatically. */
+                nsGrantsOpen: false };
 /* Where the reader came FROM, so Back retraces the path instead of jumping to a fixed
    page. Drilling group -> user -> another group and pressing Back three times must walk
    back through exactly those, which a single hardcoded destination cannot do. */
@@ -491,15 +787,87 @@ async function api(path, mark) {
   const headers = { Accept: "application/json" };
   if (mark) headers["X-GSD-Interaction"] = "1";
   const res = await fetch(path, { headers });
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText} on ${path}`);
+  if (!res.ok) {
+    // The status rides on the error so a caller can tell a DESIGNED refusal from a fault.
+    const err = new Error(`${res.status} ${res.statusText} on ${path}`);
+    err.status = res.status;
+    throw err;
+  }
   return res.json();
 }
 
+/* The zone every absolute time on this page is rendered in.
+   The SERVER's zone, not the browser's. Two reasons. The logs are stamped in the container's
+   zone, so matching it means a log line and a dashboard row can be compared by reading them
+   rather than by doing arithmetic. And every viewer sees the same numbers, so "the sync
+   failed at 17:31" means one instant in a conversation between two people in two countries.
+   Falls back to UTC when the server reports no zone — an explicit UTC beats a guess. */
+let displayZone = null;   // IANA name, or null for UTC
+let displayAbbrev = "Z";  // what we print after the time
+
+function setDisplayZone(tz) {
+  if (!tz || !tz.name) { displayZone = null; displayAbbrev = "Z"; return; }
+  try {
+    // Prove the browser knows this zone before adopting it. An unknown IANA name makes
+    // Intl throw, and a page that throws on its first timestamp is worse than one showing
+    // UTC — this is exactly the tab-renderer blindness that hid two bugs before.
+    new Intl.DateTimeFormat("en-CA", { timeZone: tz.name }).format(new Date());
+    displayZone = tz.name;
+    displayAbbrev = tz.abbrev || tz.name;
+  } catch (e) {
+    displayZone = null;
+    displayAbbrev = "Z";
+  }
+}
+
+/* Absolute time, in the display zone, always carrying its zone label.
+   The label is not optional: the same wall-clock string means different instants in
+   different zones, and this page is read next to `oc` output and log lines that may be in
+   another. Unlabelled local time is the bug this replaced, not the fix. */
 function fmtTime(iso) {
   if (!iso) return "—";
   const d = new Date(iso);
   if (isNaN(d)) return iso;
-  return d.toISOString().replace("T", " ").replace(/\.\d+Z$/, "Z").replace("Z", "Z");
+  if (!displayZone) {
+    return d.toISOString().replace("T", " ").replace(/\.\d+Z$/, "Z");
+  }
+  // en-CA gives YYYY-MM-DD, which sorts and scans like the ISO form it replaces.
+  //
+  // timeZoneName comes from the FORMATTER, not from the server, and that is a correctness
+  // point rather than a style one. The abbreviation depends on the instant: 2026-01-15 in
+  // America/New_York is EST and 2026-07-15 is EDT. The server can only report the zone as
+  // it stands right now, so stamping that on every row would mislabel every timestamp on
+  // the other side of a DST boundary. The browser ships the full IANA database, so asking
+  // it per-timestamp is both correct and free.
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: displayZone, hour12: false,
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
+    timeZoneName: "short",
+  }).formatToParts(d).reduce((a, p) => (a[p.type] = p.value, a), {});
+  return `${parts.year}-${parts.month}-${parts.day} ` +
+         `${parts.hour}:${parts.minute}:${parts.second} ` +
+         `${parts.timeZoneName || displayAbbrev}`;
+}
+
+/* Just the clock, in the display zone. For tables where the date is already a column.
+   Shares displayZone with fmtTime rather than slicing the ISO string, which is what the
+   Usage panel used to do — `.slice(11, 19)` reads the raw UTC hour, so that one table stayed
+   on UTC while every other time on the page moved to the container's zone. */
+function fmtClock(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (isNaN(d)) return iso;
+  if (!displayZone) return iso.slice(11, 19) + "Z";
+  // timeZoneName per instant, like fmtTime — the abbreviation depends on the date being
+  // formatted, so January is EST where July is EDT and the server's current zone cannot
+  // speak for both.
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: displayZone, hour12: false,
+    hour: "2-digit", minute: "2-digit", second: "2-digit", timeZoneName: "short",
+  }).formatToParts(d).reduce((a, x) => (a[x.type] = x.value, a), {});
+  return `${parts.hour}:${parts.minute}:${parts.second} ` +
+         `${parts.timeZoneName || displayAbbrev}`;
 }
 
 function ago(iso) {
@@ -575,6 +943,7 @@ function renderFilters() {
         <option value="all"${view.bindingFilter === "all" ? " selected" : ""}>all bindings</option>
         <option value="ok"${view.bindingFilter === "ok" ? " selected" : ""}>granted (group exists)</option>
         <option value="built_in"${view.bindingFilter === "built_in" ? " selected" : ""}>built-in</option>
+        <option value="unmanaged"${view.bindingFilter === "unmanaged" ? " selected" : ""}>unmanaged</option>
       </select>`;
   }
   if (view.page === "groups") {
@@ -594,6 +963,8 @@ function renderFilters() {
       ${tab("overview", "Overview")}
       ${tab("groups", "Groups")}
       ${tab("bindings", "Access granted")}
+      ${tab("policy", "RBAC policy")}
+      ${tab("nsaudit", "Namespace audit")}
       ${tab("usage", "Usage")}
     </nav>`;
   $("filters").innerHTML = html;
@@ -650,6 +1021,11 @@ function clusterCard(c) {
       <div class="kpi ${(c.dangling_bindings + c.unresolved_bindings) ? "flag-critical" : ""}"><div class="label">Bindings to review</div>
         <div class="value ${(c.dangling_bindings + c.unresolved_bindings) ? "" : "muted"}">${
           (c.dangling_bindings || 0) + (c.unresolved_bindings || 0)}</div></div>
+      ${c.operator_configs ? `<div class="kpi ${c.operator_configs.failing ? "flag-critical" : ""}">
+        <div class="label">Policy configs</div>
+        <div class="value">${c.operator_configs.total}${c.operator_configs.failing
+          ? ` <span class="err" style="font-size:13px">(${c.operator_configs.failing} failing)</span>` : ""}</div>
+      </div>` : ""}
       <div class="kpi"><div class="label">Oldest last sync</div>
         <div class="value muted" style="font-size:15px">${esc(ago(c.oldest_last_sync))}</div></div>
     </div>
@@ -853,31 +1229,52 @@ function usagePage() {
     return `<section class="card">
       <h2>Dashboard usage</h2>
       <div class="empty-note">
-        Not being recorded. Identity comes from the OAuth proxy, so this needs
-        <code>oauthProxy.enabled=true</code>; with the proxy off there is no authentication
-        and the username header would be supplied by the caller.
+        Not being recorded. This needs <strong>both</strong>
+        <code>oauthProxy.enabled=true</code> — identity comes from the proxy, and with it
+        off there is no authentication and the username header would be whatever the caller
+        typed — and <code>config.userActivity.enabled=true</code>.
       </div>
     </section>`;
   }
 
   const rows = d.activity || [];
-  const days = new Set(rows.map((r) => r.day));
-  const users = new Set(rows.map((r) => r.user_name));
-  const requests = rows.reduce((n, r) => n + r.request_count, 0);
+  // The headline numbers come from the server's summary, which is computed over the whole
+  // set. `rows` is ONE PAGE of it: counting them reports the page, and at 1,092 stored rows
+  // that said 167 days and 5,000 interactions where the truth was 364 and 10,920. The
+  // fallbacks only fire against a build that predates the summary.
+  const s = d.summary || {};
+  const days = s.days != null ? s.days : new Set(rows.map((r) => r.day)).size;
+  const users = s.distinct_users != null
+    ? s.distinct_users : new Set(rows.map((r) => r.user_name)).size;
+  const requests = s.interactions != null
+    ? s.interactions : rows.reduce((n, r) => n + r.request_count, 0);
   const today = new Date().toISOString().slice(0, 10);
+  // Safe to take from `rows`: the API orders day DESC, so today is on the first page unless
+  // more people used the dashboard in one day than the limit.
   const activeToday = rows.filter((r) => r.day === today).length;
 
+  const selfOnly = d.scope !== "all";
   return `<section class="card">
     <h2>Dashboard usage</h2>
+    ${selfOnly
+      ? `<div class="filterbar-note" style="margin-bottom:8px">Showing
+          <strong>${esc(d.viewer || "your")}</strong> activity only. This is identifiable
+          personnel data, so each person sees their own by default — an administrator can
+          set <code>config.userActivity.visibility: all</code> to widen it.</div>`
+      : `<div class="filterbar-note" style="margin-bottom:8px">Showing
+          <strong>all users</strong>, because this deployment sets
+          <code>userActivity.visibility: all</code>.</div>`}
     <div class="hero">
       <span class="value mono">${activeToday}</span>
-      <span class="label">${activeToday === 1 ? "person" : "people"} used the dashboard today</span>
+      <span class="label">${selfOnly
+        ? (activeToday ? "active today" : "no activity today")
+        : `${activeToday === 1 ? "person" : "people"} used the dashboard today`}</span>
     </div>
     <div class="kpis">
-      <div class="kpi"><div class="label">Distinct users</div>
-        <div class="value mono">${users.size}</div></div>
+      ${selfOnly ? "" : `<div class="kpi"><div class="label">Distinct users</div>
+        <div class="value mono">${users}</div></div>`}
       <div class="kpi"><div class="label">Days recorded</div>
-        <div class="value mono">${days.size}</div></div>
+        <div class="value mono">${days}</div></div>
       <div class="kpi"><div class="label">Interactions</div>
         <div class="value mono">${requests.toLocaleString()}</div></div>
       <div class="kpi"><div class="label">Retention</div>
@@ -890,19 +1287,29 @@ function usagePage() {
       ? `<div class="empty-note">Nothing recorded yet. Rows appear after the first flush,
            which runs on the configured interval rather than per request.</div>`
       : `<div class="scroll-x"><table>
-          <thead><tr><th>User</th><th>Day</th><th>First seen</th><th>Last seen</th>
+          <thead><tr><th>User</th><th>Day (UTC)</th><th>First seen</th><th>Last seen</th>
             <th class="num">Interactions</th></tr></thead>
           <tbody>${rows.map((r) => `<tr>
             <td>${esc(r.user_name)}${r.email
               ? ` <span class="muted">· ${esc(r.email)}</span>` : ""}</td>
             <td class="mono">${esc(r.day)}</td>
-            <td class="mono">${esc((r.first_seen_at || "").slice(11, 19) || "—")}</td>
-            <td class="mono">${esc((r.last_seen_at || "").slice(11, 19) || "—")}</td>
+            <td class="mono">${esc(fmtClock(r.first_seen_at))}</td>
+            <td class="mono">${esc(fmtClock(r.last_seen_at))}</td>
             <td class="num">${r.request_count}</td>
           </tr>`).join("")}</tbody>
         </table></div>`}
+    ${d.truncated ? `<div class="filterbar-note truncation-note" style="margin-top:8px">
+      Showing the <strong>${rows.length}</strong> most recent of <strong>${d.total}</strong>
+      rows. The counts above cover all of them.
+    </div>` : ""}
     <div class="filterbar-note" style="margin-top:8px">
-      Times are UTC. An interaction is one deliberate action — opening the dashboard,
+      Times render in the server's timezone; the <strong>Day</strong> column is a
+      <strong>UTC</strong> date. That split is deliberate rather than an oversight: the day
+      is a stored bucket, computed server-side when the activity was recorded, so
+      re-labelling it local would misstate rows already written, and re-bucketing would make
+      the same column mean one thing before a deploy and another after. Near midnight a
+      session can therefore sit on the following UTC day.
+      An interaction is one deliberate action — opening the dashboard,
       switching tab, drilling in, changing a filter — not one HTTP request: the page
       refreshes itself every 30s and counting those measured how long a tab was left open
       rather than whether anyone used it. Reading time is invisible, so a long look at one
@@ -1090,24 +1497,6 @@ function bindingsPage() {
   const c = d.counts || {};
   const review = (c.dangling || 0) + (c.unresolved || 0);
 
-  const table = (rows) => `<div class="scroll-x"><table>
-      <thead><tr><th>Group named by the binding</th><th>Grants</th><th>Scope</th>
-        <th>Binding</th></tr></thead>
-      <tbody>${rows.map((r) => `<tr>
-        <td><button type="button" class="drill" data-group="${esc(r.group_name)}">${esc(r.group_name)}</button></td>
-        <td><code>${esc(r.role_name)}</code> <span class="muted">${esc(r.role_kind)}</span></td>
-        <td>${r.binding_namespace
-              ? esc(r.binding_namespace)
-              : `<span class="muted">cluster-wide</span>`}</td>
-        <td class="muted">${esc(r.binding_name)}</td>
-      </tr>`).join("")}</tbody></table></div>`;
-
-  const section = (title, note, rows, badge) => `<section class="card">
-    <h2>${badge || ""} ${esc(title)} <span class="muted" style="font-weight:400">· ${rows.length}</span></h2>
-    ${note ? `<div class="filterbar-note" style="margin:4px 0 8px">${note}</div>` : ""}
-    ${rows.length ? table(rows) : `<div class="empty-note">None.</div>`}
-  </section>`;
-
   const header = `<section class="card">
     <div class="kpis" style="margin-top:0">
       <div class="kpi"><div class="label">Group bindings on this cluster</div>
@@ -1126,13 +1515,26 @@ function bindingsPage() {
     </div>
   </section>`;
 
+  // The policy-operator strip is part of the page, not of a filter: these CRs template
+  // the bindings this page shows, so their health belongs beside them whichever tier is
+  // selected. It was originally rendered only on the default filter, where nobody found it.
+  if (view.bindingFilter === "unmanaged") {
+    return header + bindingSection("Unmanaged",
+      `The group is operator-synced, other bindings on this cluster carry the policy
+       operator's <code>config-source</code> label, and this one carries none — somebody
+       granted access by hand, outside the policy system. A deliberate one can be
+       acknowledged with the <code>rbac.ocp.io/unmanaged-exception</code> annotation on the
+       binding itself, which records the justification next to the object and clears it
+       from this list.`,
+      d.unmanaged || [], sevBadge("warning", "unmanaged"));
+  }
   if (view.bindingFilter === "ok") {
-    return header + section("Granted",
+    return header + bindingSection("Granted",
       "The group named by each of these exists, so the access reaches its members.",
       d.ok || []);
   }
   if (view.bindingFilter === "built_in") {
-    return header + section("Built-in",
+    return header + bindingSection("Built-in",
       `Kubernetes virtual groups such as <code>system:authenticated</code> and
        <code>system:serviceaccounts:*</code>. They authorise real access and no Group object
        exists for them by design, so their absence is expected and not a fault.`,
@@ -1140,12 +1542,14 @@ function bindingsPage() {
   }
   if (view.bindingFilter === "all") {
     return header
-      + section("Dangling", "The group was operator-managed and has disappeared — this "
+      + bindingSection("Dangling", "The group was operator-managed and has disappeared — this "
           + "binding now grants nobody.", d.dangling || [], sevBadge("critical", "dangling"))
-      + section("Unresolved", "Names a group that has never existed here.",
+      + bindingSection("Unresolved", "Names a group that has never existed here.",
           d.unresolved || [], sevBadge("warning", "unresolved"))
-      + section("Granted", "The group exists; access reaches its members.", d.ok || [])
-      + section("Built-in", "Virtual groups; no Group object is expected.", d.built_in || []);
+      + bindingSection("Unmanaged", "Hand-made grant on an operator-synced group, outside the "
+          + "policy system.", d.unmanaged || [], sevBadge("warning", "unmanaged"))
+      + bindingSection("Granted", "The group exists; access reaches its members.", d.ok || [])
+      + bindingSection("Built-in", "Virtual groups; no Group object is expected.", d.built_in || []);
   }
 
   // default: needs review. The header goes here too — without it this view would show a
@@ -1163,19 +1567,470 @@ function bindingsPage() {
       bindings.
     </div>
   </section>
-  ${section("Dangling", "The group was operator-managed and has disappeared.",
+  ${bindingSection("Dangling", "The group was operator-managed and has disappeared.",
       d.dangling || [], sevBadge("critical", "dangling"))}
-  ${section("Unresolved",
+  ${bindingSection("Unresolved",
       `These do not raise alerts: a group that has never been seen cannot be told apart
        from one that simply has not synced yet. They still grant nobody — typically a
        misspelled group name, or an onboarding that stopped halfway.`,
-      d.unresolved || [], sevBadge("warning", "unresolved"))}`;
+      d.unresolved || [], sevBadge("warning", "unresolved"))}
+  ${bindingSection("Unmanaged",
+      `Hand-made grants on operator-synced groups, outside the policy system. Acknowledge
+       a deliberate one with the <code>rbac.ocp.io/unmanaged-exception</code> annotation on
+       the binding; the justification then lives next to the object and clears it here.`,
+      d.unmanaged || [], sevBadge("warning", "unmanaged"))}`;
+}
+
+/* Binding table + section card, at module scope so both the Access-granted and the
+   RBAC-policy pages render bindings identically. These were local to bindingsPage(), and
+   calling them from the new page failed at runtime with "section is not defined" — caught
+   by a screenshot, not by the suite, because no test opened that tab. tests/test_ui.py
+   now does. */
+function bindingTable(rows) {
+  return `<div class="scroll-x"><table>
+      <thead><tr><th>Group named by the binding</th><th>Grants</th><th>Scope</th>
+        <th>Binding</th></tr></thead>
+      <tbody>${rows.map((r) => `<tr>
+        <td><button type="button" class="drill" data-group="${esc(r.group_name)}">${esc(r.group_name)}</button></td>
+        <td><code>${esc(r.role_name)}</code> <span class="muted">${esc(r.role_kind)}</span></td>
+        <td>${r.binding_namespace
+              ? esc(r.binding_namespace)
+              : `<span class="muted">cluster-wide</span>`}</td>
+        <td class="muted">${esc(r.binding_name)}</td>
+      </tr>`).join("")}</tbody></table></div>`;
+}
+
+function bindingSection(title, note, rows, badge) {
+  return `<section class="card">
+    <h2>${badge || ""} ${esc(title)} <span class="muted" style="font-weight:400">· ${rows.length}</span></h2>
+    ${note ? `<div class="filterbar-note" style="margin:4px 0 8px">${note}</div>` : ""}
+    ${rows.length ? bindingTable(rows) : `<div class="empty-note">None.</div>`}
+  </section>`;
+}
+
+/* RBAC policy: who governs the grants, rather than what the grants are.
+   Split out of the Access-granted tab because it answers a different question — that page
+   asks "who has access?", this one asks "is the system that decides access working, and is
+   anything bypassing it?". Two concerns that happen to share a data source. */
+function policyPage() {
+  const oc = data.operatorConfigs;
+  const f = data.findings || {};
+  const unmanaged = f.unmanaged || [];
+  const stamped = unmanaged.filter((r) => r.audit_stamped).length;
+
+  if (oc && !oc.present) {
+    return `<section class="card">
+      <h2>RBAC policy</h2>
+      <div class="empty-note">
+        The namespace-configuration-operator is not installed on <code>${esc(view.cluster)}</code>.
+        This page reports the health of its NamespaceConfig and GroupConfig CRs and finds
+        grants that bypass them; without the operator there is no policy system to report on.
+      </div>
+    </section>`;
+  }
+
+  return `<section class="card">
+    <h2>RBAC policy</h2>
+    <div class="hero">
+      <span class="value mono">${unmanaged.length}</span>
+      <span class="label">grant${unmanaged.length === 1 ? "" : "s"} outside the policy system</span>
+    </div>
+    <div class="kpis">
+      <div class="kpi"><div class="label">Policy CRs</div>
+        <div class="value mono">${(oc && oc.configs || []).length}</div></div>
+      <div class="kpi ${unmanaged.length ? "flag-warning" : ""}">
+        <div class="label">Unmanaged</div>
+        <div class="value mono ${unmanaged.length ? "" : "muted"}">${unmanaged.length}</div></div>
+      <div class="kpi"><div class="label">Audit-stamped</div>
+        <div class="value mono ${stamped ? "" : "muted"}">${stamped}</div></div>
+    </div>
+    <div class="filterbar-note" style="margin-top:10px">
+      A grant is <strong>unmanaged</strong> when it names an operator-synced group but
+      carries none of the policy operator's provenance — somebody granted access by hand.
+      Acknowledge a deliberate one with the
+      <code>rbac.ocp.io/unmanaged-exception</code> annotation on the binding; the
+      justification then lives next to the object and clears it here.
+      ${stamped ? `<br>Audit stamping is enabled, so the current set is also selectable
+        straight from the cluster:
+        <br><code>oc get rolebindings,clusterrolebindings -A -l rbac.ocp.io/unmanaged=true</code>`
+      : ""}
+    </div>
+  </section>
+  ${configHealth(oc)}
+  ${bindingSection("Grants outside the policy system",
+      `Each names a group the operator syncs, and nothing templates the grant itself.`,
+      unmanaged, sevBadge("warning", "unmanaged"))}`;
+}
+
+/* Roles granted directly to a person, rolled up per namespace: the migration worklist.
+   A direct user binding is the violation this whole dashboard is shaped around — it
+   survives offboarding, because revoking an LDAP group membership does nothing to a
+   binding that names the person. Presented per namespace because that is the unit the
+   migration is done in, and because "which namespaces still do this?" is the question an
+   owner actually asks. */
+function nsAuditPage() {
+  const ub = data.userBindings;
+  if (!ub) return `<section class="card"><div class="empty-note">Loading…</div></section>`;
+  return directUserGrants(ub);
+}
+
+/* Risk tier for one namespace's worst grant. Ranked on PRIVILEGE and SCOPE, never on
+   count: one forgotten cluster-admin outranks twenty view grants, and a page sorted by
+   volume puts the twenty first and buries the one. */
+function riskTier(row) {
+  const p = row.worst_privilege || 1;
+  const clusterWide = !!row.cluster_scoped;
+  if (clusterWide && p >= 3) return { key: "critical", label: "Critical", rank: 4 };
+  if (p >= 4) return { key: "critical", label: "Critical", rank: 4 };
+  if (p >= 3 || clusterWide) return { key: "high", label: "High", rank: 3 };
+  if (p >= 2) return { key: "medium", label: "Medium", rank: 2 };
+  return { key: "low", label: "Low", rank: 1 };
+}
+
+/* The exposed-user list for one namespace, bounded.
+   A namespace with forty direct grants would otherwise put forty names in one cell and the
+   column would decide the width of the whole table — on the view that is supposed to be the
+   scannable one. Show the first few, then an honest count and a way to see the rest.
+
+   WHO_PREVIEW is small on purpose. The question this table answers is "which namespaces are
+   exposed and how badly"; the names are corroboration, and the full roster lives one section
+   down in Every grant. */
+const WHO_PREVIEW = 4;
+
+function whoCell(row) {
+  const users = row.users || [];
+  if (!users.length) return '<span class="muted">—</span>';
+  const open = view.nsWhoOpen.has(row.namespace);
+  const shown = open ? users : users.slice(0, WHO_PREVIEW);
+  const hidden = users.length - shown.length;
+  const names = shown.map((u) => `<span class="who-name">${esc(u)}</span>`).join("");
+  if (!hidden && !open) return names;
+  return names + `<button type="button" class="linkish who-more" data-who="${esc(row.namespace)}">`
+    + (open ? "show fewer" : `+${hidden} more`) + "</button>";
+}
+
+const PRIVILEGE_NAME = { 4: "cluster-admin", 3: "admin", 2: "edit", 1: "view" };
+const PRIVILEGE_RANK = { "cluster-admin": 4, admin: 3, edit: 2, view: 1 };
+
+/* How many grants the detail list asks for. Not a display cap — the server applies it, so
+   the rows never cross the wire. 200 is well past what anyone reads in one sitting and
+   still small enough to render instantly; the server orders worst-first before limiting,
+   so a truncated page is the top of the list rather than a slice of the middle. */
+const NS_GRANT_PAGE = 200;
+
+/* Same idea for the binding tiers. Unbounded until now: measured at 2,280 rows / 545,800
+   bytes on a cluster ten times the reference size, re-fetched every 30 seconds by the
+   auto-refresh. The response's `counts` are computed server-side over the whole cluster, so
+   the tier totals the page displays stay correct while only the rows are a page. */
+const FINDINGS_PAGE = 500;
+
+/* Sort a copy, never the array the renderer was handed — sorting in place would reorder
+   `data.userBindings` itself, so the store's risk ranking would be lost after the first
+   click and could never be restored without a refetch. */
+function sortBy(rows, keyFn, dir) {
+  const sign = dir === "asc" ? 1 : -1;
+  return rows.slice().sort((a, b) => {
+    const x = keyFn(a), y = keyFn(b);
+    if (x === y) return 0;
+    // Numbers compare numerically, strings alphabetically. Comparing "10" < "9" as strings
+    // is the classic way a count column sorts wrongly and nobody notices.
+    return (typeof x === "number" ? x - y : String(x).localeCompare(String(y))) * sign;
+  });
+}
+
+/* A sortable column header.
+   A <button> inside the <th>, not a click handler on the <th> itself: a bare th is not
+   focusable and not announced as actionable, so header sorting becomes mouse-only. The
+   arrow is text rather than a glyph so it survives forced-colors, and aria-sort tells a
+   screen reader which column is ordering the table and in which direction. */
+function sortableTh(label, key, activeKey, dir, group, extraClass) {
+  const active = key === activeKey;
+  const next = active && dir === "desc" ? "asc" : "desc";
+  const aria = active ? (dir === "asc" ? "ascending" : "descending") : "none";
+  const arrow = active ? (dir === "asc" ? " ▲" : " ▼") : "";
+  return `<th class="${extraClass || ""}" aria-sort="${aria}">
+    <button type="button" class="th-sort${active ? " is-active" : ""}"
+            data-sort-group="${group}" data-sort-key="${key}" data-sort-dir="${next}"
+            title="Sort by ${esc(label)}">${esc(label)}${arrow}</button>
+  </th>`;
+}
+
+/* Roles granted directly to a person, ranked by risk. */
+function directUserGrants(ub) {
+  if (!ub) return "";
+  const rows = (ub.by_namespace || []).map((r) => ({ ...r, risk: riskTier(r) }));
+  const bindings = ub.bindings || [];
+  // `total` is the server's count BEFORE its limit. Falling back to the returned length
+  // would make a truncated page claim to be complete, which is the one failure this whole
+  // change exists to avoid.
+  const total = ub.total != null ? ub.total : bindings.length;
+  // Cluster-wide grant count, summed from the rollup because that is the one part of the
+  // response neither paged NOR filtered. `ub.total` is the total for the CURRENT filter,
+  // which is right for the detail list's own labelling and wrong for a headline KPI.
+  const totalAllNamespaces = rows.reduce((n, r) => n + (r.bindings || 0), 0);
+  const critical = rows.filter((r) => r.risk.key === "critical");
+  const high = rows.filter((r) => r.risk.key === "high");
+  // Distinct PEOPLE, unioned from the rollup rather than counted from `bindings`.
+  //
+  // Two wrong ways to get this number, both of which were briefly in this file. Counting
+  // `bindings` is correct only while nothing is paged — once the detail list is truncated
+  // or filtered to one namespace it silently reports the page, not the cluster. Summing
+  // `distinct_users` across namespaces double-counts anyone with grants in more than one:
+  // on the reference cluster jdoe holds grants in three, so the sum says 6 where the truth
+  // is 4. The rollup's `users` list is never paged, so the union of it is both complete and
+  // distinct.
+  const people = new Set(rows.flatMap((r) => r.users || [])).size;
+
+  const NS_SORT = {
+    risk: (r) => r.risk.rank * 10 + (r.cluster_scoped ? 1 : 0),
+    namespace: (r) => r.namespace,
+    priv: (r) => r.worst_privilege || 0,
+    people: (r) => r.distinct_users || 0,
+    grants: (r) => r.bindings || 0,
+  };
+  const GRANT_SORT = {
+    person: (b) => b.user_name,
+    // Sort the ROLE by privilege, not alphabetically: "admin" < "edit" < "view" as text
+    // puts the dangerous grants in the middle, which is the opposite of useful.
+    risk: (b) => (PRIVILEGE_RANK[b.role_name] || 0) * 10 + (b.binding_namespace ? 0 : 1),
+    scope: (b) => b.binding_namespace || "",
+    binding: (b) => b.binding_name,
+  };
+  const sorted = sortBy(rows, NS_SORT[view.nsSort] || NS_SORT.risk, view.nsDir);
+  const sortedGrants = sortBy(
+    bindings, GRANT_SORT[view.nsGrantSort] || GRANT_SORT.risk, view.nsGrantDir);
+
+  if (!rows.length) {
+    return `<section class="card">
+      <h2>Namespace audit</h2>
+      <div class="hero"><span class="value mono">0</span>
+        <span class="label">namespaces grant access to a person</span></div>
+      <div class="filterbar-note">
+        Every role on this cluster is granted to a group. That is what makes offboarding
+        a single action: removing someone from an LDAP group revokes their access
+        everywhere at once.
+        ${ub.excluded_platform ? `<br><span class="muted">${ub.excluded_platform} platform
+          identit${ub.excluded_platform === 1 ? "y" : "ies"} excluded — system components
+          and <code>kubeadmin</code> are break-glass, with nowhere to migrate to.</span>` : ""}
+      </div>
+    </section>`;
+  }
+
+  const worst = rows[0].risk;
+  return `<section class="card">
+    <h2>Namespace audit</h2>
+    <div class="risk-headline">
+      <span class="risk-pill risk-${worst.key}">${esc(worst.label)} exposure</span>
+      <span class="muted">highest risk on this cluster</span>
+    </div>
+    <div class="kpis" style="margin-top:14px">
+      <div class="kpi big ${critical.length ? "flag-critical" : ""}">
+        <div class="label">Namespaces at risk</div>
+        <div class="value mono">${rows.length}</div></div>
+      <div class="kpi big"><div class="label">People exposed</div>
+        <div class="value mono">${people}</div></div>
+      <div class="kpi big"><div class="label">Grants to migrate</div>
+        <!-- Cluster-wide, never bindings.length. The list below is paged and may be
+             filtered to one namespace; a headline count taken from it reports the page
+             rather than the cluster, and shrinks when the reader narrows the filter, which
+             reads as the problem getting smaller because they looked at it closely. -->
+        <div class="value mono">${totalAllNamespaces}</div></div>
+      <div class="kpi big ${critical.length ? "flag-critical" : ""}">
+        <div class="label">Critical</div>
+        <div class="value mono ${critical.length ? "err" : "muted"}">${critical.length}</div></div>
+      <div class="kpi big ${high.length ? "flag-warning" : ""}">
+        <div class="label">High</div>
+        <div class="value mono ${high.length ? "" : "muted"}">${high.length}</div></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h3>Why this is a risk</h3>
+    <div class="risk-grid">
+      <div class="risk-item">
+        <div class="risk-item-h">Offboarding does not revoke it</div>
+        Removing someone from an LDAP group revokes their access everywhere at once. A
+        binding that names the <strong>person</strong> keeps granting after they leave the
+        team, change role, or leave the company — until somebody remembers it exists.
+      </div>
+      <div class="risk-item">
+        <div class="risk-item-h">Invisible to access review</div>
+        Every group-based review — including the rest of this dashboard — answers
+        “who is in the group?”. These grants are attached to no group, so a clean review
+        can coexist with standing access nobody approved.
+      </div>
+      <div class="risk-item">
+        <div class="risk-item-h">No approval trail</div>
+        Group membership is granted in the enterprise directory, with a request and an
+        approver. A hand-made binding records only who ran <code>oc</code>, and only for as
+        long as the audit log is retained.
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h3>Exposure by namespace</h3>
+    <div class="filterbar-note" style="margin-bottom:8px">
+      Ranked by the <strong>worst privilege granted</strong>, not by count — one forgotten
+      <code>cluster-admin</code> matters more than twenty <code>view</code> grants.
+      ${view.nsSort !== "risk" || view.nsDir !== "desc"
+        ? `<button type="button" class="linkish" data-ns-reset>Restore risk order</button>`
+        : ""}
+    </div>
+    <div class="scroll-x"><table class="audit-table">
+      <thead><tr>
+        ${sortableTh("Risk", "risk", view.nsSort, view.nsDir, "ns")}
+        ${sortableTh("Namespace", "namespace", view.nsSort, view.nsDir, "ns")}
+        ${sortableTh("Highest privilege", "priv", view.nsSort, view.nsDir, "ns")}
+        ${sortableTh("People", "people", view.nsSort, view.nsDir, "ns", "num")}
+        ${sortableTh("Grants", "grants", view.nsSort, view.nsDir, "ns", "num")}
+        <th>Who is exposed</th>
+      </tr></thead>
+      <tbody>${sorted.map((r) => `<tr class="risk-row risk-${r.risk.key}">
+        <td><span class="risk-pill risk-${r.risk.key}">${esc(r.risk.label)}</span></td>
+        <td class="ns-cell">${r.namespace === "(cluster-scoped)"
+            ? `<strong class="err">CLUSTER-WIDE</strong>` : `<strong>${esc(r.namespace)}</strong>`}</td>
+        <td><code class="priv">${esc(PRIVILEGE_NAME[r.worst_privilege] || "view")}</code></td>
+        <td class="num strong">${r.distinct_users}</td>
+        <td class="num">${r.bindings}</td>
+        <td class="muted who">${whoCell(r)}</td>
+      </tr>`).join("")}</tbody>
+    </table></div>
+    ${ub.excluded_platform ? `<div class="filterbar-note" style="margin-top:8px">
+      ${ub.excluded_platform} platform identit${ub.excluded_platform === 1 ? "y" : "ies"}
+      excluded — system components and <code>kubeadmin</code> are break-glass and
+      cluster-internal, with nowhere to migrate to.</div>` : ""}
+  </section>
+
+  <section class="card">
+    <h3>How to close it</h3>
+    <div class="filterbar-note" style="margin-bottom:10px">
+      Work top-down: the table above is already in the order to do it in.
+    </div>
+    <ol class="runbook">
+      <li><strong>Identify the role.</strong> Match the grant to the LDAP group the
+        operator already syncs for that privilege — the naming convention encodes it
+        (<code>&lt;app&gt;-ns-admin</code>, <code>-ns-developer</code>,
+        <code>-ns-audit</code>).</li>
+      <li><strong>Add the person to that group</strong> in the enterprise directory, through
+        the normal request-and-approve path. Access now has an owner and an audit trail.</li>
+      <li><strong>Wait one sync</strong> and confirm on the Groups tab that they appear as a
+        member. Do not skip this — deleting first leaves them locked out.</li>
+      <li><strong>Delete the direct binding.</strong>
+        <code>oc delete rolebinding &lt;name&gt; -n &lt;namespace&gt;</code></li>
+      <li><strong>Confirm it is gone</strong> here on the next refresh.</li>
+    </ol>
+    <div class="filterbar-note" style="margin-top:10px">
+      <strong>Operational goal:</strong> zero rows on this page. At zero, one directory
+      change offboards a person from the entire cluster, and an access review that reads
+      clean <em>is</em> clean.
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="section-head">
+      <h3 class="flush">Every grant</h3>
+      <button type="button" class="disclose" data-ns-grants
+              aria-expanded="${view.nsGrantsOpen}" aria-controls="every-grant">
+        <span class="disclose-arrow" aria-hidden="true">${view.nsGrantsOpen ? "▾" : "▸"}</span>
+        ${view.nsGrantsOpen ? "Hide" : "Show"} ${total} grant${total === 1 ? "" : "s"}
+      </button>
+    </div>
+    <div class="filterbar-note" style="margin-bottom:10px">
+      The per-namespace table above is the view to work from. This is the flat detail
+      list — collapsed by default on purpose, because on a cluster with thousands of
+      direct grants rendering every row costs time nobody gets value from.
+    </div>
+    <div class="ns-controls">
+      <label for="ns-pick">Namespace</label>
+      <select id="ns-pick" data-ns-pick>
+        <option value="all"${view.nsNamespace === "all" ? " selected" : ""}>
+          All namespaces (${rows.length})</option>
+        ${rows.map((r) => `<option value="${esc(r.namespace)}"${
+          view.nsNamespace === r.namespace ? " selected" : ""}>${
+          r.namespace === "(cluster-scoped)" ? "cluster-wide" : esc(r.namespace)
+        } — ${r.bindings} grant${r.bindings === 1 ? "" : "s"}</option>`).join("")}
+      </select>
+      ${view.nsNamespace !== "all"
+        ? `<button type="button" class="linkish" data-ns-pick-clear>Clear filter</button>` : ""}
+    </div>
+    <div id="every-grant"${view.nsGrantsOpen ? "" : " hidden"}>
+      ${!bindings.length
+        ? `<div class="empty-note">No direct grants${
+             view.nsNamespace === "all" ? "" : ` in ${esc(view.nsNamespace)}`}.</div>`
+        : `<div class="scroll-x"><table class="audit-table">
+        <thead><tr>
+          ${sortableTh("Person", "person", view.nsGrantSort, view.nsGrantDir, "grant")}
+          ${sortableTh("Grants", "risk", view.nsGrantSort, view.nsGrantDir, "grant")}
+          ${sortableTh("Scope", "scope", view.nsGrantSort, view.nsGrantDir, "grant")}
+          ${sortableTh("Binding", "binding", view.nsGrantSort, view.nsGrantDir, "grant")}
+        </tr></thead>
+        <tbody>${sortedGrants.map((b) => {
+          const crit = ["cluster-admin", "admin"].includes(b.role_name) || !b.binding_namespace;
+          return `<tr class="${crit ? "risk-row risk-high" : ""}">
+            <td><strong>${esc(b.user_name)}</strong></td>
+            <td><code class="priv">${esc(b.role_name)}</code>
+              <span class="muted">${esc(b.role_kind)}</span></td>
+            <td>${b.binding_namespace ? esc(b.binding_namespace)
+                  : `<strong class="err">cluster-wide</strong>`}</td>
+            <td class="muted">${esc(b.binding_name)}</td>
+          </tr>`;
+        }).join("")}</tbody>
+      </table></div>`}
+      ${ub.truncated ? `<div class="filterbar-note truncation-note">
+        Showing the <strong>${bindings.length}</strong> highest-privilege of
+        <strong>${total}</strong> grants${view.nsNamespace === "all" ? ""
+          : ` in ${esc(view.nsNamespace)}`}. The rest are not hidden findings — they are
+        ranked below these. Narrow with the namespace selector to see them.
+      </div>` : ""}
+    </div>
+  </section>`;
+}
+
+/* The policy operator's CR health. Rendered only when the CRDs exist on the cluster —
+   absent is a different truth from "installed with zero CRs", and a section that says
+   "all healthy" about a concept the cluster lacks would be a lie of layout. */
+function configHealth(oc) {
+  if (!oc || !oc.present) return "";
+  const rows = oc.configs || [];
+  const failing = rows.filter((c) =>
+    c.error_at && (!c.success_at || c.error_at > c.success_at));
+  return `<section class="card">
+    <h3>Policy operator (NamespaceConfig / GroupConfig)</h3>
+    <div class="filterbar-note" style="margin-bottom:6px">
+      These CRs template the RoleBindings above. A currently-failing one means RBAC has
+      quietly stopped reconciling — new namespaces receive nothing and drift stops being
+      corrected, with no error anywhere else.
+    </div>
+    ${rows.length === 0
+      ? `<div class="empty-note">Operator installed; no NamespaceConfig or GroupConfig CRs yet.</div>`
+      : `<div class="scroll-x"><table>
+          <thead><tr><th>Kind</th><th>Name</th><th>State</th><th>Last success</th></tr></thead>
+          <tbody>${rows.map((c) => {
+            const bad = c.error_at && (!c.success_at || c.error_at > c.success_at);
+            return `<tr>
+              <td>${esc(c.kind)}</td>
+              <td><code>${esc(c.name)}</code></td>
+              <td>${bad ? sevBadge("critical", "reconcile error") : badge("ok")}</td>
+              <td class="mono">${esc(ago(c.success_at))}</td>
+            </tr>`;
+          }).join("")}</tbody>
+        </table></div>
+        ${failing.length ? `<div class="err" style="margin-top:8px;font-size:12px">
+          ${esc(failing[0].error_message || "")}</div>` : ""}`}
+  </section>`;
 }
 
 function render() {
   renderFilters();
   const main = $("main");
-  if (view.page === "usage") {
+  if (view.page === "nsaudit") {
+    main.innerHTML = nsAuditPage();
+    wireNsAudit();
+  } else if (view.page === "policy") {
+    main.innerHTML = policyPage();
+    wireDrilldown();
+  } else if (view.page === "usage") {
     main.innerHTML = usagePage();
   } else if (view.page === "bindings") {
     main.innerHTML = bindingsPage();
@@ -1197,16 +2052,30 @@ function render() {
   } else {
     main.innerHTML = alertsCard()
       + `<div class="grid">${data.clusters.map(clusterCard).join("")}</div>`
-      + groupsyncTable();
+      + groupsyncTable()
+      + configHealth(data.operatorConfigs);
     document.querySelectorAll("[data-cr]").forEach((tr) => {
       tr.onclick = () => { pushTrail(); view.groupsync = tr.dataset.cr; refresh(); };
     });
   }
   // Same reason the cluster selector is hidden on Usage: the scope note would claim a
   // cluster scope this page does not have.
+  // Part of the bold title, not a muted aside: on a screen shared in a review the cluster is
+  // half of what the title means, and " - prod-east" set in grey read as decoration.
+  //
+  // Still suppressed on Usage for the same reason the cluster selector is: that page is
+  // per-pod dashboard activity, not per-cluster, so naming a cluster would claim a scope the
+  // page does not have.
   $("scope-note").textContent =
-    view.cluster && view.page !== "usage" ? `· ${view.cluster}` : "";
-  $("last-refresh").textContent = "updated " + new Date().toTimeString().slice(0, 8);
+    view.cluster && view.page !== "usage" ? ` - ${view.cluster}` : "";
+  // UTC, like every other time on the page, and labelled so.
+  //
+  // This was `toTimeString()` — the browser's LOCAL zone — while fmtTime() renders UTC with
+  // a trailing Z and the Usage tab buckets by UTC day. An operator in CDT therefore read a
+  // header five hours adrift from the timestamps directly beneath it, with nothing on screen
+  // to say the two were measured differently. One clock per page, or the page is lying to
+  // somebody.
+  $("last-refresh").textContent = "updated " + fmtTime(new Date().toISOString()).slice(11);
   if (data.version) {
     const v = data.version;
     // Shown in the header so "is my change deployed?" is answerable by looking, rather
@@ -1216,6 +2085,47 @@ function render() {
     $("build-info").title = `branch ${v.branch}`;
   }
   main.classList.remove("stale");
+}
+
+/* Namespace-audit controls: sort, namespace selector, and the detail-list disclosure.
+   Re-bound after every render because render() replaces main's innerHTML wholesale, which
+   discards the previous elements and their handlers along with them. */
+function wireNsAudit() {
+  document.querySelectorAll("[data-sort-key]").forEach((el) => {
+    el.onclick = () => {
+      const grant = el.dataset.sortGroup === "grant";
+      if (grant) { view.nsGrantSort = el.dataset.sortKey; view.nsGrantDir = el.dataset.sortDir; }
+      else { view.nsSort = el.dataset.sortKey; view.nsDir = el.dataset.sortDir; }
+      render();  // Pure re-sort of data already held — no refetch, so it is instant.
+    };
+  });
+  const reset = document.querySelector("[data-ns-reset]");
+  if (reset) reset.onclick = () => { view.nsSort = "risk"; view.nsDir = "desc"; render(); };
+
+  const pick = document.querySelector("[data-ns-pick]");
+  // `onchange`, not `oninput`: a <select> fires input per keyboard arrow while the list is
+  // open, and each one would be a refetch for a namespace the reader is only passing over.
+  if (pick) pick.onchange = () => {
+    view.nsNamespace = pick.value;
+    // Choosing a namespace to inspect and then having to expand the list is a pointless
+    // second click; the selection IS the request to see it.
+    if (view.nsNamespace !== "all") view.nsGrantsOpen = true;
+    refresh();  // Server-side filter, so this one does need a round trip.
+  };
+  const clear = document.querySelector("[data-ns-pick-clear]");
+  if (clear) clear.onclick = () => { view.nsNamespace = "all"; refresh(); };
+
+  document.querySelectorAll("[data-who]").forEach((el) => {
+    el.onclick = () => {
+      const ns = el.dataset.who;
+      // Pure re-render of data already held — no refetch, so it is instant.
+      view.nsWhoOpen.has(ns) ? view.nsWhoOpen.delete(ns) : view.nsWhoOpen.add(ns);
+      render();
+    };
+  });
+
+  const disclose = document.querySelector("[data-ns-grants]");
+  if (disclose) disclose.onclick = () => { view.nsGrantsOpen = !view.nsGrantsOpen; render(); };
 }
 
 function wireDrilldown() {
@@ -1283,7 +2193,12 @@ async function refresh(opts = {}) {
   let mark = !opts.auto;
   const get = (path) => { const m = mark; mark = false; return api(path, m); };
   try {
-    if (!data.version) { try { data.version = await get("/api/version"); } catch (e) { /* older build */ } }
+    if (!data.version) {
+      try {
+        data.version = await get("/api/version");
+        setDisplayZone(data.version.timezone);
+      } catch (e) { /* older build */ }
+    }
     data.clusters = await get("/api/clusters");
     if (!view.cluster && data.clusters.length) view.cluster = data.clusters[0].id;
     data.alerts = await get("/api/alerts");
@@ -1291,7 +2206,7 @@ async function refresh(opts = {}) {
       data.groupsyncs = await get(`/api/clusters/${encodeURIComponent(view.cluster)}/groupsyncs`);
       if (view.page === "bindings") {
         data.findings = await get(
-          `/api/clusters/${encodeURIComponent(view.cluster)}/bindings/findings`);
+          `/api/clusters/${encodeURIComponent(view.cluster)}/bindings/findings?limit=${FINDINGS_PAGE}`);
       }
       if (view.page === "groups") {
         const base = `/api/clusters/${encodeURIComponent(view.cluster)}`;
@@ -1309,7 +2224,39 @@ async function refresh(opts = {}) {
     }
     // Not cluster-scoped: this is who used the DASHBOARD, which has no cluster dimension.
     // Fetched only on its own tab, so the other pages do not pay for it.
-    if (view.page === "usage") data.usage = await get("/api/dashboard/activity");
+    if (view.page === "usage") {
+      // 403 is the DESIGNED answer when the OAuth proxy is off: there is no authenticated
+      // identity to scope personnel data to. Letting it fall to the catch below replaced
+      // the whole tab with "Dashboard API error: 403 Forbidden" — and the panel written to
+      // explain exactly this could never render. Only 403 is absorbed; a 500 is still a
+      // fault and must still be shown as one.
+      try {
+        data.usage = await get("/api/dashboard/activity");
+      } catch (e) {
+        if (e.status !== 403) throw e;
+        data.usage = { enabled: false, activity: [] };
+      }
+    }
+    // The policy operator's health belongs on the landing page: these CRs template the
+    // RoleBindings that give every synced group its access, and a failing one is exactly
+    // the silent stoppage this dashboard exists to surface.
+    if (view.cluster && ((view.page === "overview" && !view.groupsync) || view.page === "policy")) {
+      data.operatorConfigs = await get(
+        `/api/clusters/${encodeURIComponent(view.cluster)}/operator-configs`);
+    }
+    if (view.page === "policy" && view.cluster) {
+      data.findings = await get(
+        `/api/clusters/${encodeURIComponent(view.cluster)}/bindings/findings?limit=${FINDINGS_PAGE}`);
+    }
+    if (view.page === "nsaudit" && view.cluster) {
+      // The namespace filter is applied SERVER-side, not by filtering a full response in
+      // the browser: the point is to stop shipping thousands of rows, and a client-side
+      // filter still pays for every one of them over the wire and in memory.
+      const q = new URLSearchParams({ limit: String(NS_GRANT_PAGE) });
+      if (view.nsNamespace !== "all") q.set("namespace", view.nsNamespace);
+      data.userBindings = await get(
+        `/api/clusters/${encodeURIComponent(view.cluster)}/user-bindings?${q}`);
+    }
     render();
   } catch (err) {
     // An error must never strand the reader: keep a working Back so a dead link is a

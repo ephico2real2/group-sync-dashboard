@@ -1,4 +1,9 @@
-"""SQLite locking and WAL behaviour.
+"""ENGINE-SPECIFIC BY DESIGN. This file tests SQLite's own behaviour — WAL, busy_timeout,
+checkpoint starvation — so it reaches past the storage seam and calls the private
+_wal_bytes()/_checkpoint() helpers directly. tests/test_storage_seam.py enforces that no
+APPLICATION module does the same; a backend's own test suite is the one place it is correct.
+
+SQLite locking and WAL behaviour.
 
 These assert against REAL contention rather than against the PRAGMA values, because reading
 back a pragma only proves it was accepted — not that it changes what happens when two
@@ -96,7 +101,7 @@ class TestWal:
     def test_wal_is_verified_not_assumed(self, tmp_path):
         store = Store(str(tmp_path / "gsd.db"))
         try:
-            assert store.journal_mode == "wal"
+            assert store._journal_mode == "wal"
         finally:
             store.close()
 
@@ -104,9 +109,9 @@ class TestWal:
         """`:memory:` cannot do WAL and that is not a misconfiguration."""
         store = Store(":memory:")
         try:
-            assert store.journal_mode == "memory"
-            assert store.wal_bytes() == 0
-            assert store.maybe_checkpoint() is None
+            assert store._journal_mode == "memory"
+            assert store._wal_bytes() == 0
+            assert store._checkpoint() is None
         finally:
             store.close()
 
@@ -114,7 +119,7 @@ class TestWal:
         store = Store(str(tmp_path / "gsd.db"), wal_checkpoint_mb=1024)
         try:
             store.record_poll("c", "ok", None)
-            assert store.maybe_checkpoint() is None
+            assert store._checkpoint() is None
         finally:
             store.close()
 
@@ -125,14 +130,14 @@ class TestWal:
         try:
             for i in range(400):
                 store.record_poll(f"cluster-{i}", "ok", "x" * 200)
-            grown = store.wal_bytes()
+            grown = store._wal_bytes()
             assert grown > store.wal_checkpoint_bytes, f"WAL only reached {grown} bytes"
 
-            result = store.maybe_checkpoint()
+            result = store._checkpoint()
             assert result is not None
             busy, _frames, _moved = result
             assert busy == 0, "no reader was open, so the checkpoint should not be blocked"
-            assert store.wal_bytes() < grown
+            assert store._wal_bytes() < grown
 
             # The data survived the truncation — a checkpoint moves pages into the database,
             # it does not discard them.
@@ -155,11 +160,11 @@ class TestWal:
             reader.execute("SELECT COUNT(*) FROM poll_outcome").fetchone()
             store.record_poll("after-snapshot", "ok", None)
             try:
-                result = store.maybe_checkpoint()
+                result = store._checkpoint()
                 assert result is not None
                 busy, _frames, _moved = result
                 assert busy == 1, "the open snapshot should have blocked the truncation"
-                assert store.checkpoint_busy_total == 1
+                assert store._checkpoint_busy_total == 1
             finally:
                 reader.rollback()
                 reader.close()
@@ -188,5 +193,49 @@ class TestSynchronous:
         try:
             assert store._conn.execute("PRAGMA synchronous").fetchone()[0] == 1
             store._rows("SELECT * FROM cluster")  # table still exists
+        finally:
+            store.close()
+
+
+class TestHardening:
+    """Capabilities dropped from every connection.
+
+    CVE-2025-70873 — SQLite information disclosure via a crafted ZIP file. Reachable only
+    through the zipfile extension, so disabling extension loading removes the mechanism.
+    CVE-2024-0232 — use-after-free in jsonParseAddNodeArray. Not addressed here and not
+    reachable: the store uses no SQL JSON functions.
+
+    Neither is fixable by upgrading — UBI9 ships only sqlite-libs-3.34.1-10.el9_8 and
+    `microdnf update sqlite-libs` reports "Nothing to do" — so the surface is reduced
+    instead of the version moved. docs/image-vulnerability-scan.md has the analysis.
+    """
+
+    def test_extensions_cannot_be_loaded_on_the_writer(self, tmp_path):
+        """Extension loading was ENABLED by default, verified in the shipped image. It
+        lets SQL pull arbitrary shared objects into the process — the mechanism
+        CVE-2025-70873 turns on, and a general escalation primitive besides."""
+        store = Store(str(tmp_path / "gsd.db"))
+        try:
+            with pytest.raises(sqlite3.OperationalError, match="not authorized"):
+                store._conn.execute("SELECT load_extension('/tmp/anything.so')")
+        finally:
+            store.close()
+
+    def test_extensions_cannot_be_loaded_on_a_reader_either(self, tmp_path):
+        """Readers are separate connections, and the setting is per-connection: hardening
+        only the writer would leave every API request thread unprotected."""
+        store = Store(str(tmp_path / "gsd.db"))
+        try:
+            reader = store._reader()
+            with pytest.raises(sqlite3.OperationalError, match="not authorized"):
+                reader.execute("SELECT load_extension('/tmp/anything.so')")
+        finally:
+            store.close()
+
+    def test_normal_queries_are_unaffected(self, tmp_path):
+        store = Store(str(tmp_path / "gsd.db"))
+        try:
+            store.upsert_cluster("crc", "https://x", True)
+            assert [c["id"] for c in store.clusters()] == ["crc"]
         finally:
             store.close()

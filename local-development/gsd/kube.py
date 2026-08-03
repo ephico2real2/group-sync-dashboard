@@ -23,10 +23,37 @@ labels and annotations the operator writes use `redhat-cop.io` (hyphenated). The
 one character apart and transposing them yields a 404 that looks like a missing CRD."""
 
 GROUP_API = "/apis/user.openshift.io/v1/groups"
+
+# The namespace-configuration-operator's CRs — SAME API group as GroupSync, different
+# CRDs. Cluster-scoped. These template out the RoleBindings that grant the synced groups
+# their access, so they are the other half of the pipeline this dashboard watches.
+NAMESPACECONFIG_API = "/apis/redhatcop.redhat.io/v1alpha1/namespaceconfigs"
+GROUPCONFIG_API = "/apis/redhatcop.redhat.io/v1alpha1/groupconfigs"
 ROLEBINDING_API = "/apis/rbac.authorization.k8s.io/v1/rolebindings"
 CLUSTERROLEBINDING_API = "/apis/rbac.authorization.k8s.io/v1/clusterrolebindings"
 
 SYSTEM_GROUP_PREFIX = "system:"
+
+# Platform identities that appear as `kind: User` on bindings the cluster ships with, and
+# which must never be reported as a governance violation. Measured on the reference
+# cluster: 36 direct-user bindings, of which 22 are these — kube-apiserver, kube-scheduler,
+# kube-controller-manager, the node identities, and SA-shaped users like
+# `system:serviceaccount:...`. Flagging them would bury the real findings under platform
+# noise, which is the same mistake the `system:` GROUP tiering exists to avoid.
+PLATFORM_USER_PREFIXES = ("system:",)
+PLATFORM_USER_NAMES = frozenset({
+    "kube-apiserver", "kubelet", "kube-controller-manager", "kube-scheduler", "kube-proxy",
+    # kubeadmin is OpenShift's break-glass cluster identity, not a person with an LDAP
+    # account. Flagging it as a migration violation is noise: there is nowhere to migrate
+    # it TO, and on the reference cluster it accounted for 12 of the 14 non-system rows —
+    # so leaving it in would have made the finding look like a kubeadmin report.
+    "kubeadmin",
+})
+
+
+def is_platform_user(name: str) -> bool:
+    """Whether a User subject is a cluster-internal identity rather than a person."""
+    return name.startswith(PLATFORM_USER_PREFIXES) or name in PLATFORM_USER_NAMES
 """Kubernetes reserves this prefix for built-in identities.
 
 Binding subjects like ``system:serviceaccounts:<ns>`` and ``system:authenticated`` are
@@ -37,6 +64,20 @@ positives. Reserved-by-convention rather than guaranteed, so these are classifie
 labelled, never silently dropped."""
 
 SYNC_PROVIDER_LABEL = "group-sync-operator.redhat-cop.io/sync-provider"
+CONFIG_SOURCE_LABEL = "rbac.ocp.io/config-source"
+UNMANAGED_EXCEPTION_ANNOTATION = "rbac.ocp.io/unmanaged-exception"
+
+# The audit stamp, written by the dashboard itself when config.unmanagedAudit.annotate is
+# enabled — its ONLY write to any cluster. A LABEL for the value that must be selectable:
+#
+#     oc get rolebindings,clusterrolebindings -A -l rbac.ocp.io/unmanaged=true
+#
+# and ANNOTATIONS for the audit detail, because annotations cannot be selected on:
+# detected-at is the FIRST detection and is never overwritten, so it stays meaningful as
+# "how long has this hand-made grant existed unacknowledged".
+UNMANAGED_LABEL = "rbac.ocp.io/unmanaged"
+UNMANAGED_DETECTED_AT_ANNOTATION = "rbac.ocp.io/unmanaged-detected-at"
+UNMANAGED_DETECTED_BY_ANNOTATION = "rbac.ocp.io/unmanaged-detected-by"
 SYNC_TIME_ANNOTATION = "group-sync-operator.redhat-cop.io/sync-time"
 LDAP_UID_ANNOTATION = "openshift.io/ldap.uid"
 
@@ -74,6 +115,19 @@ class GroupSyncView:
     error_message: str | None
     error_generation: int | None
     success_at: str | None
+    provider_names: tuple[str, ...] = ()
+    """The names the CR declares in spec.providers[].name.
+
+    These make attribution EXACT. The operator labels each Group it creates with
+    ``<groupsync-name>_<provider-name>``, so with the names in hand the expected label is
+    reconstructible rather than guessed at by prefix — and prefix guessing is genuinely
+    ambiguous: a CR named ``corp`` and a CR named ``corp_extra`` both match the label
+    ``corp_extra_ldap``, so one group ends up with two owners, counted twice and
+    staleness-checked twice.
+
+    Empty for a CR whose spec declares no names, in which case poller.provider_keys_for
+    falls back to prefix matching. See there.
+    """
 
 
 @dataclass
@@ -93,6 +147,50 @@ class GroupView:
 
 
 @dataclass
+class UserBindingView:
+    """A binding granting a role DIRECTLY to a User subject.
+
+    The governance violation this dashboard exists to make visible, in its purest form: a
+    grant tied to a person rather than to an enterprise-managed group. It survives
+    offboarding — LDAP removing someone from a group revokes their access everywhere, while
+    a direct binding keeps granting to a name nobody is watching — and it is invisible to
+    every group-based review, including the rest of this dashboard.
+
+    Kept separate from BindingView because the questions differ: that one asks "does this
+    group exist?", this one asks "why is a person named here at all?".
+    """
+
+    binding_kind: str
+    binding_namespace: str
+    binding_name: str
+    role_kind: str
+    role_name: str
+    user_name: str
+    is_platform: bool
+    """Cluster-internal identity (system:*, kube-apiserver, …) rather than a person.
+    Carried rather than filtered out, so the UI can report the whole picture and the count
+    of what it excluded — silently dropping rows is how a tool loses trust."""
+
+
+@dataclass
+class OperatorConfigView:
+    """A NamespaceConfig or GroupConfig CR — reconcile health only, per the design scope.
+
+    Deliberately NOT the spec templates: diffing "what bindings should exist" would mean
+    re-implementing the operator's templating engine. These CRs have no schedule either,
+    so unlike GroupSync there is no staleness to compute and no timeline worth keeping —
+    the only question is "is its latest reconcile an error?", answered by the same sticky
+    ReconcileError/ReconcileSuccess ordering trick GroupSync needs (the operator never
+    clears ReconcileError; both conditions sit True forever)."""
+
+    kind: str                # NamespaceConfig | GroupConfig
+    name: str
+    error_at: str | None
+    error_message: str | None
+    success_at: str | None
+
+
+@dataclass
 class BindingView:
     """One (binding, Group subject) pair.
 
@@ -108,6 +206,17 @@ class BindingView:
     role_kind: str             # Role | ClusterRole
     role_name: str
     group_name: str
+    managed_source: str | None = None
+    """The provenance label value the policy operator stamps on bindings it templates
+    (`rbac.ocp.io/config-source` by default). None means nothing manages this binding —
+    somebody created it by hand, which is the `unmanaged` finding."""
+    exception: str | None = None
+    """The operator-acknowledged justification for an unmanaged binding, carried as an
+    annotation ON the binding so the truth lives next to the object rather than in a
+    dashboard-side allowlist. Suppresses the `unmanaged` finding."""
+    audit_stamped: bool = False
+    """Whether this binding already carries the dashboard's unmanaged audit label —
+    the idempotency check, so a stamp is written once and never re-patched."""
 
     @property
     def is_system_group(self) -> bool:
@@ -212,6 +321,21 @@ class ClusterClient:
             groups = [_group_view(o) for o in self._list_all(client, GROUP_API)]
         return groupsyncs, groups
 
+    def fetch_user_bindings(self) -> list[UserBindingView]:
+        """Every RoleBinding and ClusterRoleBinding subject of kind User.
+
+        Rides the same cadence and the same two list calls' worth of data as
+        fetch_bindings — bindings change on administrative action, not on a schedule.
+        """
+        out: list[UserBindingView] = []
+        with self._client() as client:
+            for obj in self._list_all(client, ROLEBINDING_API):
+                out.extend(_user_binding_views(obj, "RoleBinding"))
+            for obj in self._list_all(client, CLUSTERROLEBINDING_API):
+                out.extend(_user_binding_views(obj, "ClusterRoleBinding"))
+        log.debug("fetched %d direct-user binding rows from %s", len(out), self.cluster.name)
+        return out
+
     def fetch_bindings(self) -> list[BindingView]:
         """Every RoleBinding and ClusterRoleBinding subject of kind Group.
 
@@ -227,6 +351,112 @@ class ClusterClient:
                 out.extend(_binding_views(obj, "ClusterRoleBinding"))
         log.debug("fetched %d group-subject binding rows from %s", len(out), self.cluster.name)
         return out
+
+    def stamp_unmanaged_binding(
+        self, binding_kind: str, namespace: str, name: str, detected_at: str
+    ) -> None:
+        """Stamp one binding as detected-unmanaged. THE DASHBOARD'S ONLY WRITE.
+
+        A strategic-merge of metadata only: the label makes the set selectable from the
+        CLI, the annotations carry when and by what. Raises ClusterError on failure —
+        the caller decides whether that stops anything (it must not).
+        """
+        if binding_kind == "ClusterRoleBinding":
+            path = f"{CLUSTERROLEBINDING_API}/{name}"
+        else:
+            path = f"/apis/rbac.authorization.k8s.io/v1/namespaces/{namespace}/rolebindings/{name}"
+        body = {"metadata": {
+            "labels": {UNMANAGED_LABEL: "true"},
+            "annotations": {
+                UNMANAGED_DETECTED_AT_ANNOTATION: detected_at,
+                UNMANAGED_DETECTED_BY_ANNOTATION: "group-sync-dashboard",
+            },
+        }}
+        with self._client() as client:
+            try:
+                response = client.patch(
+                    path, json=body,
+                    headers={"Content-Type": "application/merge-patch+json"},
+                )
+            except httpx.HTTPError as exc:
+                raise ClusterError(UNREACHABLE, f"{type(exc).__name__}: {exc}") from exc
+        if response.status_code == 403:
+            raise ClusterError(
+                FORBIDDEN,
+                "403 patching a binding — unmanagedAudit.annotate is enabled but the "
+                "token lacks patch on rolebindings/clusterrolebindings",
+            )
+        if response.status_code >= 400:
+            raise ClusterError(
+                UNREACHABLE,
+                f"HTTP {response.status_code} stamping {path}: {response.text[:200]}",
+            )
+
+    def unstamp_unmanaged_binding(
+        self, binding_kind: str, namespace: str, name: str
+    ) -> None:
+        """Remove the audit LABEL from a binding no longer classified unmanaged (I4).
+
+        The label comes off so `-l rbac.ocp.io/unmanaged=true` always means *currently*
+        outside governance. The detected-at/by ANNOTATIONS deliberately stay: they are the
+        history — "detected on X, later acknowledged/adopted" is exactly what an auditor
+        wants to read on the object. Merge-patch null deletes the key.
+        """
+        if binding_kind == "ClusterRoleBinding":
+            path = f"{CLUSTERROLEBINDING_API}/{name}"
+        else:
+            path = f"/apis/rbac.authorization.k8s.io/v1/namespaces/{namespace}/rolebindings/{name}"
+        with self._client() as client:
+            try:
+                response = client.patch(
+                    path, json={"metadata": {"labels": {UNMANAGED_LABEL: None}}},
+                    headers={"Content-Type": "application/merge-patch+json"},
+                )
+            except httpx.HTTPError as exc:
+                raise ClusterError(UNREACHABLE, f"{type(exc).__name__}: {exc}") from exc
+        if response.status_code >= 400:
+            raise ClusterError(
+                UNREACHABLE,
+                f"HTTP {response.status_code} unstamping {path}: {response.text[:200]}",
+            )
+
+    def fetch_operator_configs(self) -> list[OperatorConfigView] | None:
+        """NamespaceConfig and GroupConfig health, or None when the operator is absent.
+
+        AUTO-DETECTED, not configured: a 404 on the CRD path means the
+        namespace-configuration-operator is not installed on this cluster, and that is a
+        normal state rather than an error — most clusters running group-sync do not run
+        it. None (absent) is deliberately distinct from [] (installed, zero CRs), because
+        the UI must not render "0 configs, all healthy" on a cluster where the concept
+        does not exist.
+        """
+        out: list[OperatorConfigView] = []
+        any_crd_answered = False
+        with self._client() as client:
+            for path, kind in ((NAMESPACECONFIG_API, "NamespaceConfig"),
+                               (GROUPCONFIG_API, "GroupConfig")):
+                try:
+                    items = self._list_all(client, path)
+                except ClusterError as exc:
+                    if "404" in exc.message:
+                        # This CRD is not installed. Tracked per-CRD rather than assumed
+                        # pairwise: the operator ships both, but a cluster mid-install or
+                        # with a pruned CRD is not a reason to lose the other's health.
+                        log.debug("%s: %s CRD not present", self.cluster.name, kind)
+                        continue
+                    raise
+                any_crd_answered = True
+                for obj in items:
+                    error = _condition(obj, "ReconcileError")
+                    success = _condition(obj, "ReconcileSuccess")
+                    out.append(OperatorConfigView(
+                        kind=kind,
+                        name=(obj.get("metadata") or {}).get("name", ""),
+                        error_at=(error or {}).get("lastTransitionTime"),
+                        error_message=(error or {}).get("message"),
+                        success_at=(success or {}).get("lastTransitionTime"),
+                    ))
+        return out if any_crd_answered else None
 
 
 def _condition(obj: dict, wanted: str) -> dict | None:
@@ -249,6 +479,7 @@ def _groupsync_view(obj: dict) -> GroupSyncView:
         namespace=meta.get("namespace", ""),
         schedule=spec.get("schedule"),
         ldap_filter=_ldap_filter(spec),
+        provider_names=_provider_names(spec),
         last_sync_at=status.get("lastSyncSuccessTime"),
         generation=meta.get("generation"),
         # Kept even when stale: it is the only failure record the API retains, and it
@@ -258,6 +489,15 @@ def _groupsync_view(obj: dict) -> GroupSyncView:
         error_message=(error or {}).get("message"),
         error_generation=(error or {}).get("observedGeneration"),
         success_at=(success or {}).get("lastTransitionTime"),
+    )
+
+
+def _provider_names(spec: dict) -> tuple[str, ...]:
+    """The declared provider names, in order. Empty when the spec omits them."""
+    return tuple(
+        str(p["name"])
+        for p in (spec.get("providers") or [])
+        if isinstance(p, dict) and p.get("name")
     )
 
 
@@ -278,6 +518,28 @@ def _ldap_filter(spec: dict) -> str | None:
     return None
 
 
+def _user_binding_views(obj: dict, binding_kind: str) -> list[UserBindingView]:
+    """Flatten one binding into a row per User subject. Empty for the vast majority."""
+    meta = obj.get("metadata") or {}
+    role_ref = obj.get("roleRef") or {}
+    rows: list[UserBindingView] = []
+    for subject in obj.get("subjects") or []:
+        if subject.get("kind") != "User" or not subject.get("name"):
+            continue
+        rows.append(
+            UserBindingView(
+                binding_kind=binding_kind,
+                binding_namespace=meta.get("namespace", "") or "",
+                binding_name=meta.get("name", ""),
+                role_kind=role_ref.get("kind", ""),
+                role_name=role_ref.get("name", ""),
+                user_name=subject["name"],
+                is_platform=is_platform_user(subject["name"]),
+            )
+        )
+    return rows
+
+
 def _binding_views(obj: dict, binding_kind: str) -> list[BindingView]:
     """Flatten one binding into a row per Group subject.
 
@@ -286,6 +548,8 @@ def _binding_views(obj: dict, binding_kind: str) -> list[BindingView]:
     """
     meta = obj.get("metadata") or {}
     role_ref = obj.get("roleRef") or {}
+    labels = meta.get("labels") or {}
+    annotations = meta.get("annotations") or {}
     rows: list[BindingView] = []
     for subject in obj.get("subjects") or []:
         if subject.get("kind") != "Group" or not subject.get("name"):
@@ -300,6 +564,9 @@ def _binding_views(obj: dict, binding_kind: str) -> list[BindingView]:
                 role_kind=role_ref.get("kind", ""),
                 role_name=role_ref.get("name", ""),
                 group_name=subject["name"],
+                managed_source=labels.get(CONFIG_SOURCE_LABEL),
+                exception=annotations.get(UNMANAGED_EXCEPTION_ANNOTATION),
+                audit_stamped=labels.get(UNMANAGED_LABEL) == "true",
             )
         )
     return rows

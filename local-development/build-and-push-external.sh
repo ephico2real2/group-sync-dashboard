@@ -216,47 +216,55 @@ fi
 # ---------------------------------------------------------------------------
 # Optional deploy
 # ---------------------------------------------------------------------------
-# The manifest is updated in place with the released ref, then applied. Rendering to a temp
-# file instead would leave deploy/dashboard.yaml naming a different image than the cluster
-# runs, and a later routine `oc apply` would silently roll the deployment back — verified
-# with --dry-run=server on the CRC path, and very hard to attribute after the fact.
+# The chart is the deployment path — the same reasoning as --update-values above, applied to
+# the deploy step rather than only printed.
 #
-# The pull secret is still injected only into the rendered copy, since it is environment
-# specific and empty for a public repository.
-python3 - "$REF" <<'PIN'
-import pathlib, re, sys
-ref = sys.argv[1]
-path = pathlib.Path("deploy/dashboard.yaml")
-text = path.read_text()
-new, n = re.subn(r"(?m)^(\s+image: ).*$", lambda m: m.group(1) + ref, text)
-if n != 1:
-    sys.exit(f"expected exactly one image line, found {n}")
-path.write_text(new)
-PIN
-echo "manifest: deploy/dashboard.yaml now pins ${REF}"
+# This used to `oc apply -f deploy/dashboard.yaml`, a hand-maintained copy of the manifests.
+# It went 62 commits stale without anything noticing. It lacked the coordination.k8s.io/leases
+# grant the poller needs to poll at all, so a cluster deployed that way came up healthy on
+# both probes and silently never polled; and because every object name collides with the Helm
+# release, applying it over a live cluster stripped the oauth-proxy sidecar off a dashboard
+# that serves group membership. A second hand-written source of truth for RBAC and config
+# cannot be kept honest.
+#
+# For plain YAML — to read, to diff, or to hand to something that wants files — use
+# ./render-manifests.sh, which generates it FROM this chart into deploy/.
+#
+# ingress.host is deliberately not passed: the chart derives it from the cluster's apps
+# domain via `lookup`, which works here because this is a real upgrade, not a template render.
+# THE VALUES FILE IS NOT OPTIONAL, and omitting it was a real bug in this script.
+#
+# Helm's upgrade precedence: with no -f and no --set it reuses the previous release's
+# user-supplied values, but the moment EITHER is given it resets to chart defaults plus only
+# what this invocation passed. So `--set image.tag=...` alone silently discards every value a
+# previous upgrade set. Measured on this release — one `helm upgrade --set logLevel=DEBUG`
+# turned oauthProxy.apiTokenAccess off, reported STATUS: deployed, and removed the
+# delegate-urls flag from the pod, with no warning anywhere.
+#
+# Passing -f every time makes the upgrade declarative and idempotent: the file is the desired
+# state, --set carries only what genuinely varies per invocation (the tag just built), and
+# nothing depends on remembering a flag.
+# RELEASE_VALUES, not VALUES_FILE: that name is already taken above for the CHART's
+# values.yaml that --update-values rewrites. Reusing it would have made one variable mean two
+# different files depending on which flag you passed — the kind of collision this project has
+# been bitten by before.
+RELEASE_VALUES="${RELEASE_VALUES:-../environments/${GSD_ENV:-crc}.yaml}"
+if [ ! -f "$RELEASE_VALUES" ]; then
+  echo "ERROR: no release values file at ${RELEASE_VALUES}" >&2
+  echo "  Deploying without one resets the release to chart defaults and silently drops" >&2
+  echo "  whatever a previous upgrade configured." >&2
+  echo "  Fix: GSD_ENV=<name> for ../environments/<name>.yaml, or RELEASE_VALUES=<path>." >&2
+  echo "  Start from ../environments/example-production.yaml." >&2
+  exit 1
+fi
+echo "release : ${RELEASE_VALUES}"
 
-RENDERED=$(mktemp -t gsd-deploy).yaml
-python3 - "$REF" "$IMAGE_PULL_SECRET" "$RENDERED" <<'PY'
-import re, sys, pathlib
-ref, pull_secret, out = sys.argv[1], sys.argv[2], sys.argv[3]
-text = pathlib.Path("deploy/dashboard.yaml").read_text()
-
-# imagePullSecrets is added ONLY when one is configured. A public repository needs none,
-# and an empty/omitted secret reference makes the pod fail to schedule rather than fall
-# back to anonymous pull.
-if pull_secret:
-    text, n = re.subn(
-        r"(?m)^(      serviceAccountName: group-sync-dashboard)$",
-        lambda m: m.group(1) + f"\n      imagePullSecrets:\n        - name: {pull_secret}",
-        text,
-    )
-    if n != 1:
-        sys.exit("could not insert imagePullSecrets")
-pathlib.Path(out).write_text(text)
-PY
-
-oc apply -f "$RENDERED" >/dev/null
-rm -f "$RENDERED"
+helm upgrade --install group-sync-dashboard ../charts/group-sync-dashboard \
+  --namespace "${K8S_NAMESPACE}" --create-namespace \
+  -f "$RELEASE_VALUES" \
+  --set image.repository="${REGISTRY}/${REGISTRY_NAMESPACE}/${IMAGE_NAME}" \
+  --set image.tag="${TAG}" \
+  ${IMAGE_PULL_SECRET:+--set "image.pullSecrets[0].name=${IMAGE_PULL_SECRET}"}
 oc rollout status "deploy/${IMAGE_NAME}" -n "${K8S_NAMESPACE}" --timeout=300s
 
 RUNNING=$(oc exec -n "${K8S_NAMESPACE}" "deploy/${IMAGE_NAME}" -- sh -c 'echo "$GSD_GIT_COMMIT"' 2>/dev/null | tr -d '\r\n')

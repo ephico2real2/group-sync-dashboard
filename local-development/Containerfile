@@ -1,21 +1,43 @@
-# Two stages so the wheel-build toolchain never reaches the runtime image.
-FROM registry.access.redhat.com/ubi9/python-311:latest AS build
+# Two stages so build-time tooling never reaches the runtime image.
+#
+# Python 3.14 from the RHEL APPSTREAM, deliberately not from python.org. UBI9 ships
+# python3.14 (3.14.5 vs python.org's 3.14.6 — Red Hat backports security fixes into
+# theirs), and the RPM keeps interpreter CVEs on Red Hat's books: they patch it, a
+# rebuild picks it up, and Trivy sees it. A hand-compiled /usr/local python is invisible
+# to the rpm database, so every scanner reports a clean image while the interpreter
+# quietly ages — the worst of both worlds.
+#
+# ubi9-minimal for BOTH stages, replacing the old ubi9/python-311 s2i build image (no
+# python-314 s2i image exists yet, and none is needed): our own wheel is pure Python and
+# every compiled dependency — pydantic-core, uvloop, httptools — ships prebuilt cp314
+# wheels, so the "build" stage needs pip, not gcc.
+FROM registry.access.redhat.com/ubi9-minimal:latest AS build
 
 USER 0
 WORKDIR /build
+
+# update first: the base is rebuilt by Red Hat on their cadence, and this picks up any
+# fixes published since, on every one of OUR builds rather than only on theirs.
+RUN microdnf update -y \
+ && microdnf install -y python3.14 python3.14-pip \
+ && microdnf clean all
 
 COPY pyproject.toml README.md ./
 COPY gsd ./gsd
 
 # Build a wheel and resolve dependencies into a self-contained prefix, so the runtime
 # stage needs no compiler and no package index.
-RUN python -m pip install --no-cache-dir --upgrade pip build \
- && python -m build --wheel --outdir /wheels \
- && python -m pip install --no-cache-dir --prefix=/install /wheels/*.whl
+# The API-docs bundles (Swagger UI, ReDoc) ride along inside gsd/static/vendor, which is
+# committed to the repository and declared as package-data in pyproject.toml. They are NOT
+# downloaded here, and that is deliberate: a build-time fetch makes every release depend on
+# npm being up, on the version still being published, and on this host having a route out.
+# Any of those turns a release into an incident, at the moment you are least able to absorb
+# one. Refresh them with ./vendor-assets.sh --update; verify with ./vendor-assets.sh.
+RUN python3.14 -m pip install --no-cache-dir --upgrade pip build \
+ && python3.14 -m build --wheel --outdir /wheels \
+ && python3.14 -m pip install --no-cache-dir --prefix=/install /wheels/*.whl
 
 
-# ubi9-minimal + python3.11 rather than the s2i python image: no build toolchain, no
-# assemble scripts. (There is no ubi9/python-311-minimal — that tag does not exist.)
 FROM registry.access.redhat.com/ubi9-minimal:latest
 
 # Stamped at build time so a running pod can prove which source it was built from.
@@ -33,9 +55,18 @@ ARG BUILD_VERSION=unknown
 # Both lib AND lib64: RHEL splits purelib from platlib, so every compiled wheel
 # (pydantic_core, uvloop, httptools, _yaml) lands in lib64 while the pure-Python packages
 # land in lib. Listing only lib imports pydantic but not pydantic_core.
+# GSD_LOG_LEVEL is set explicitly rather than left to the code default, so it is
+# discoverable in `podman inspect` / `oc set env --list` — an env var nobody knows exists is
+# not a feature. DEBUG | INFO | WARNING | ERROR | CRITICAL. DEBUG adds per-poll timing, HTTP
+# request lines, page counts and the countdown to the next binding refresh; safe to leave on
+# briefly, chatty at a line or more per poll per cluster.
+#
+# TZ is deliberately NOT set here. The chart owns it (values.yaml `timezone`), because it is
+# a per-deployment choice about who reads the logs, not a property of the image. Unset means
+# UTC, which is the right default for an image that could run anywhere.
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONPATH=/install/lib/python3.11/site-packages:/install/lib64/python3.11/site-packages \
+    PYTHONPATH=/install/lib/python3.14/site-packages:/install/lib64/python3.14/site-packages \
     GSD_CONFIG=/etc/gsd/clusters.yaml \
     GSD_DB_PATH=/data/gsd.db \
     GSD_LOG_LEVEL=INFO \
@@ -49,15 +80,43 @@ LABEL org.opencontainers.image.revision="$GIT_COMMIT" \
       org.opencontainers.image.version="$BUILD_VERSION" \
       org.opencontainers.image.title="group-sync-dashboard" \
       org.opencontainers.image.source="https://github.com/ephico2real2/group-sync-dashboard"
-#   GSD_LOG_LEVEL: DEBUG | INFO | WARNING | ERROR | CRITICAL
-#   Set explicitly rather than left to the code default so it is discoverable in
-#   `podman inspect` / `oc set env --list` — an env var nobody knows exists is not a
-#   feature. DEBUG adds per-poll timing, HTTP request lines, page counts and the
-#   countdown to the next binding refresh; it is safe to leave on briefly but is chatty
-#   at one line or more per poll per cluster.
 
 USER 0
-RUN microdnf install -y python3.11 \
+# `update` cannot clear the known curl HIGHs today: CVE-2026-8286, CVE-2026-8925,
+# CVE-2026-8927, CVE-2026-9547, CVE-2026-11352 and CVE-2026-11586 against curl-minimal and
+# libcurl-minimal all report NO fixed version from Red Hat, and a dry run on a fresh base
+# says "Nothing to do". They are also unreachable here — every HTTP call goes through
+# Python httpx, nothing shells out to curl, and the HEALTHCHECK below uses urllib.
+#
+# Two sqlite advisories are in the same position (CVE-2024-0232, CVE-2025-70873): UBI9
+# ships only 3.34.1, so they cannot be patched out. sqlite IS used, so gsd/store.py
+# disables extension loading to cut the surface instead. See
+# docs/image-vulnerability-scan.md.
+#
+# The update still earns its place: every rebuild of THIS image picks up whatever HAS been
+# fixed since Red Hat last rebuilt the base, rather than waiting on their cadence.
+# Measured effect when python3.14 landed: MEDIUM 119 -> 113.
+#
+# TZDATA: REINSTALL, NOT INSTALL — and that is the whole trick.
+#
+# ubi9-minimal already lists tzdata in its rpm database (glibc pulls it in) but strips
+# /usr/share/zoneinfo to save space. `microdnf install -y tzdata` therefore sees the
+# dependency satisfied, does nothing, and exits 0. Measured on the shipped image: `rpm -q`
+# reported tzdata-2026b-1.el9 and `rpm -ql` listed 1,864 zoneinfo paths, while
+# /usr/share/zoneinfo did not exist. `reinstall` rewrites the files.
+#
+# The failure it prevents is silent and actively misleading rather than merely absent: with
+# TZ set and no zoneinfo, glibc and Python parse the value as a POSIX TZ spec, so
+# "America/New_York" yields zone name "America" with NO offset and logs get a New York
+# label over a UTC clock. Verified before and after:
+#   before:  tzname ('America','America')  offset +0000  local == utc
+#   after:   TZ=America/New_York date -> 17:29 EDT -0400  (utc 21:29)
+#
+# Stored data is unaffected either way: every timestamp in the app is datetime.now(UTC) and
+# every stored string ends in Z. TZ governs log lines and the rendered UI, nothing else.
+RUN microdnf update -y \
+ && microdnf install -y python3.14 \
+ && (microdnf reinstall -y tzdata || microdnf install -y tzdata) \
  && microdnf clean all \
  && rm -rf /var/cache/yum
 
@@ -74,15 +133,39 @@ USER 1001
 EXPOSE 8080
 VOLUME ["/data"]
 
+# For `podman run` / `docker run` ONLY, and it is worth knowing that before trusting it.
+#
+# TWO REASONS IT IS NOT PROTECTING THE DEPLOYMENT:
+#
+#   1. It is not in the shipped image. `podman build` defaults to the OCI manifest format,
+#      whose image config has no healthcheck field, so the instruction is dropped and the
+#      build logs "HEALTHCHECK is not supported for OCI image format and will be ignored".
+#      Verified on a built image: Config keys are Cmd, Env, ExposedPorts, Labels, User,
+#      Volumes, WorkingDir — no healthcheck of any kind. Keeping OCI is the right trade;
+#      switching to --format docker to preserve this would change the manifest format of a
+#      published image to rescue a check Kubernetes ignores anyway.
+#   2. Kubernetes never reads it. kubelet uses the probes in the chart, not the image's own
+#      healthcheck, so on the cluster this is inert twice over.
+#
+# INTERVAL 300s, matching probes.liveness.periodSeconds in the chart, deliberately. It was
+# 30s, which is both wasteful and inconsistent: it spawns a Python interpreter every half
+# minute for the lifetime of the container, and it implied a urgency the chart had already
+# decided against. The reasoning there applies here — being wrong about liveness is
+# expensive, because a restart destroys in-flight state and this process holds the only copy
+# of accumulated history between checkpoints — so one mental model, one number.
+#
+# retries=2 for the same reason: 2 x 300s is a 10-minute budget before the container is
+# called unhealthy, which is the same budget the chart's liveness probe gives it.
+#
 # Readiness is deliberately not gated on a reachable cluster: an unreachable cluster is a
-# thing this dashboard exists to display, so failing readiness for one would take the
-# dashboard down exactly when it has something to report.
-HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-    CMD ["python3.11", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=2).status==200 else 1)"]
+# thing this dashboard exists to display, so failing a check for one would take the
+# dashboard down exactly when it has something to report. /healthz is unconditional.
+HEALTHCHECK --interval=300s --timeout=5s --start-period=15s --retries=2 \
+    CMD ["python3.14", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=3).status==200 else 1)"]
 
-# `python3.11 -m uvicorn`, not the /install/bin/uvicorn console script: that script's
+# `python3.14 -m uvicorn`, not the /install/bin/uvicorn console script: that script's
 # shebang points at the *build* stage's interpreter path, which does not exist here.
 # Single worker on purpose — the poller runs in-process and owns the SQLite store, so a
 # second worker would mean two pollers racing on the same file and duplicate observations.
-CMD ["python3.11", "-m", "uvicorn", "gsd.api:create_app", "--factory", \
+CMD ["python3.14", "-m", "uvicorn", "gsd.api:create_app", "--factory", \
      "--host", "0.0.0.0", "--port", "8080", "--workers", "1"]

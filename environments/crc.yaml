@@ -1,0 +1,16 @@
+# CRC — local development cluster.
+#
+# Pass with every upgrade:
+#   helm upgrade --install group-sync-dashboard charts/group-sync-dashboard \
+#     -n group-sync-dashboard -f environments/crc.yaml
+#
+# ingress.host is deliberately absent: the chart derives it from the cluster's own apps
+# domain, which on CRC gives group-sync-dashboard.apps-crc.testing. Setting it here would
+# pin a value that the chart already gets right, and pinning it is what made a changed
+# default appear not to work.
+
+# Bearer-token access to /api, for cluster-report.py and any external aggregator.
+# The caller still needs cluster-wide RBAC read; see docs/api-access.md.
+oauthProxy:
+  apiTokenAccess:
+    enabled: true

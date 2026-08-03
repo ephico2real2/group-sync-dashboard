@@ -23,6 +23,22 @@ spec:
   endpoints:
     - port: http
       path: /metrics
+      {{- if .Values.oauthProxy.enabled }}
+      # HTTPS, because the Service port named `http` targets the PROXY container port when
+      # the proxy is on, and that port speaks TLS only. Prometheus scrapes the pod IP at
+      # that port, so the default `http` scheme fails the handshake on EVERY scrape —
+      # silently, while the Service and the ServiceMonitor both look correct.
+      #
+      # No credential is needed: /metrics is in oauthProxy.skipAuthRegex, so the proxy
+      # passes it through unauthenticated. That is also why the exporter emits counts and
+      # states only, never a group or user name.
+      scheme: https
+      tlsConfig:
+        # service-ca issues the certificate for the SERVICE DNS name and Prometheus connects
+        # to the POD IP, so the name cannot match however the CA is supplied. Verification
+        # would have to be off here regardless of how trust is configured.
+        insecureSkipVerify: true
+      {{- end }}
       interval: {{ .Values.monitoring.serviceMonitor.interval }}
       scrapeTimeout: {{ .Values.monitoring.serviceMonitor.scrapeTimeout }}
 {{- end }}
@@ -85,6 +101,33 @@ spec:
           labels: {severity: warning}
           annotations:
             summary: "Dashboard cannot poll cluster {{ `{{ $labels.cluster }}` }}"
+
+        - alert: GroupSyncDashboardDirectUserGrants
+          expr: gsd_alerts_total{kind="direct_user_binding"} > 0
+          for: {{ .Values.monitoring.prometheusRule.for.directUserGrants }}
+          labels: {severity: warning}
+          annotations:
+            summary: "Namespaces still grant access to people, not LDAP groups"
+            description: >-
+              One or more RoleBindings name a User subject directly. Those grants survive
+              offboarding — removing someone from an LDAP group revokes their access
+              everywhere at once, while a binding that names them keeps granting until
+              somebody remembers it exists — and no group-based access review can see
+              them. The dashboard's Namespace audit tab lists them per namespace with the
+              migration path. Platform identities and kubeadmin are excluded.
+
+        - alert: GroupSyncDashboardConfigReconcileError
+          expr: gsd_alerts_total{kind="config_reconcile_error"} > 0
+          for: {{ .Values.monitoring.prometheusRule.for.configError }}
+          labels: {severity: critical}
+          annotations:
+            summary: "A NamespaceConfig/GroupConfig is failing to reconcile"
+            description: >-
+              The namespace-configuration-operator CR named in the dashboard's alerts view
+              is currently failing. These CRs template the RoleBindings that give synced
+              groups their access, so while this persists RBAC has silently stopped
+              reconciling: new namespaces receive no bindings and drift stops being
+              corrected. Nothing else on the cluster reports this.
 
         # Both of the following are SILENT failures: the pod stays Ready, every other metric
         # looks normal, and the first visible symptom is a full volume or a latency cliff.
