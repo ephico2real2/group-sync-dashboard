@@ -74,7 +74,7 @@ always wins.
 | `config.scheduleGraceSeconds` | `120` | stops the state flapping `late` every cycle. Must stay **above** `pollIntervalSeconds` |
 | `config.bindingIntervalSeconds` | `300` | bindings are listed across every namespace, so deliberately slower. Must stay above the group poll |
 | `config.requestTimeoutSeconds` | `15` | per-request timeout against a cluster's API server |
-| `logLevel` | `INFO` | `DEBUG` adds per-poll timing, HTTP request lines, page counts and the binding-refresh countdown |
+| `logLevel` | `INFO` | `DEBUG` adds per-poll timing, page counts and the binding-refresh countdown. Not HTTP request lines — httpx logs those at `INFO` (`_client.py:1025`), so they are already present at the default |
 | `nameOverride` / `fullnameOverride` | `""` / `""` | standard Helm naming overrides. Changing either after install renames every object, including the PVC — which orphans the accumulated history |
 
 Three values move together and two of them fail loudly if you move only one:
@@ -237,7 +237,7 @@ looks normal, and the first visible sign is a full volume or a latency cliff.
 
 Read-only, in every mode. This feature finds hand-made access grants and reports them, and
 writes nothing at all. The dashboard's only write on any cluster is its own leader-election
-Lease (`templates/rbac.yaml:28-31`) — its coordination object, not anything it observes.
+Lease (`templates/rbac.yaml:31-33`) — its coordination object, not anything it observes.
 
 A binding is `unmanaged` when it grants an operator-synced group access and carries neither
 the policy operator's `rbac.ocp.io/config-source` label nor an

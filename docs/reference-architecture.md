@@ -34,9 +34,9 @@ payload (`gsd/api.py:365`). An incomplete effective-permission calculation would
 access as absent when it is not, and a false negative there closes an incident wrongly.
 
 It does not create, edit or delete anything it observes — not a GroupSync CR, not a Group, not
-a binding's subjects, its `roleRef` or its metadata. The ClusterRole carries no write verb at
-any value of any chart setting (`templates/rbac.yaml:33-47`), and the only object the dashboard
-writes anywhere is its own leader-election Lease. There was one write path, which labelled the
+a binding's subjects, its `roleRef` or its metadata. At no value of any chart setting does the
+ClusterRole carry a write verb on any of those (`templates/rbac.yaml:35-53`); the only object
+the dashboard writes anywhere is its own leader-election Lease. There was one write path, which labelled the
 unmanaged grants it discovered; §7.3 is the live-cluster measurement that removed it.
 
 ---
@@ -684,18 +684,18 @@ coordination object; it is the only thing in the cluster the ServiceAccount can 
 This is checkable rather than asserted, and it holds at every setting: `helm template` with
 `config.unmanagedAudit.mode` set to `off`, `log`, `annotate`, an unrecognised word and empty
 renders zero occurrences of `"patch"`. A conditional `patch` on `rolebindings` and
-`clusterrolebindings` used to render here; `rbac.yaml:33-47` records why it is gone, so nobody
+`clusterrolebindings` used to render here; `rbac.yaml:35-53` records why it is gone, so nobody
 adds it back. §7.3 is the measurement.
 
 `roles`/`clusterroles` are deliberately **not** requested, since role rules are never
-evaluated. `rbac.yaml:51-54` is careful to record that this is a statement of intent and not
+evaluated. `rbac.yaml:56-60` is careful to record that this is a statement of intent and not
 an isolation boundary: OpenShift binds `basic-user` to `system:authenticated`, which already
 grants `get`/`list` on clusterroles to every authenticated identity including this one.
 
 The `namespaceconfigs`/`groupconfigs` grant is kept **even on clusters that will never
 install the operator**. The dashboard auto-detects the CRDs; with the grant, an absent CRD
 returns 404 and is recorded as "absent" quietly. Without it the same call returns 403, which
-is treated as a refresh failure and logs a warning every cycle (`templates/rbac.yaml:15-19`).
+is treated as a refresh failure and logs a warning every cycle (`templates/rbac.yaml:15-21`).
 
 ### 7.2 Authentication is the sidecar's job, and the app knows it cannot tell
 
@@ -793,7 +793,7 @@ So a "special role" for this is 175+ rules of Kubernetes internals per binding c
 under a smaller name), or cluster-admin outright. All three give a read-only auditing tool the
 most privilege on precisely the most dangerous grants it exists to report. The mode, the two
 client methods that patched (86 lines, `gsd/kube.py:226-237` records what and why) and the
-conditional `patch` grant (`templates/rbac.yaml:33-47`) were removed together. The full evidence,
+conditional `patch` grant (`templates/rbac.yaml:35-53`) were removed together. The full evidence,
 including the API server's own error text from the pod, is in `docs/unmanaged-audit-design.md`.
 
 **The discovery is the deliverable.** In `log` mode the poller classifies from the rows the same
@@ -1123,7 +1123,7 @@ the page says so rather than leaving it to look like a bug.
 | Metrics carry no group or user name | `/metrics` is unauthenticated so a ServiceMonitor can reach it, and names are membership data — plus 500 groups must not mean 500 series | `gsd/metrics.py:6-12` |
 | Activity aggregated per user-day | bounds the table at users × days, and avoids keeping a record of which colleague read whose membership | `gsd/store.py:234-245` |
 | Activity self-scoped by default | it is identifiable personnel data, and "you could read it with `oc` anyway" does not cover who looked | `gsd/api.py:552-565` |
-| No write verb on anything the dashboard reports on | privilege-escalation prevention refuses a metadata patch on an RBAC object unless the writer already holds everything it grants: 4 planned, 0 landed, 175 rule sets demanded to label a `view` binding | `templates/rbac.yaml:33-47` |
+| No write verb on anything the dashboard reports on | privilege-escalation prevention refuses a metadata patch on an RBAC object unless the writer already holds everything it grants: 4 planned, 0 landed, 175 rule sets demanded to label a `view` binding | `templates/rbac.yaml:35-53` |
 | A finding is suppressed by an annotation on the object, not in the dashboard | the justification belongs next to the object, and the acknowledgement belongs to somebody who holds the privileges | `gsd/store.py:1188-1194` |
 | Role rules are never expanded | an incomplete effective-permission answer is a false negative that closes an incident wrongly | `gsd/api.py:291-293` |
 | `unresolved` and `built_in` never alert | built-ins are normal and `unresolved` cannot be told from a not-yet-synced group; alerting trains people to ignore the view | `gsd/api.py:487-489` |

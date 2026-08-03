@@ -217,9 +217,11 @@ class Settings:
     backup_dir: str = ""
     backup_interval_hours: float = 6.0
     backup_keep: int = 4
-    # off | log | annotate. The dashboard's ONLY write path; see
-    # docs/unmanaged-audit-design.md. `log` computes and logs the plan without writing —
-    # the rehearsal mode the rollout goes through before annotate.
+    # off | log. Discovery only — nothing here writes to a cluster; see
+    # docs/unmanaged-audit-design.md. `log` publishes each finding to the pod log, `off`
+    # silences the log while the RBAC policy tab and the API still show them. There was an
+    # `annotate` mode that labelled findings; it is gone, and a config still asking for it
+    # is downgraded to `log` below rather than failing to start.
     unmanaged_audit_mode: str = "off"
     unmanaged_audit_max_per_cycle: int = 20
 

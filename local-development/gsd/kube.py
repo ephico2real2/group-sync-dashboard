@@ -67,17 +67,19 @@ SYNC_PROVIDER_LABEL = "group-sync-operator.redhat-cop.io/sync-provider"
 CONFIG_SOURCE_LABEL = "rbac.ocp.io/config-source"
 UNMANAGED_EXCEPTION_ANNOTATION = "rbac.ocp.io/unmanaged-exception"
 
-# The audit stamp, written by the dashboard itself when config.unmanagedAudit.annotate is
-# enabled — its ONLY write to any cluster. A LABEL for the value that must be selectable:
+# READ, never written. The dashboard used to apply this label to its own findings; that
+# write path was removed (see the comment above `class ClusterClient`), so the label now
+# means "a human or a CI job acknowledged this finding" — a LABEL rather than an annotation
+# precisely because it has to be selectable:
 #
 #     oc get rolebindings,clusterrolebindings -A -l rbac.ocp.io/unmanaged=true
 #
-# and ANNOTATIONS for the audit detail, because annotations cannot be selected on:
-# detected-at is the FIRST detection and is never overwritten, so it stays meaningful as
-# "how long has this hand-made grant existed unacknowledged".
+# When a labelled object stops being a finding, the poller reports `unmanaged grant
+# RESOLVED` so the stale acknowledgement can be cleaned up.
+#
+# The two `unmanaged-detected-at` / `-detected-by` annotations that accompanied the write
+# were deleted with it: nothing wrote them and nothing read them.
 UNMANAGED_LABEL = "rbac.ocp.io/unmanaged"
-UNMANAGED_DETECTED_AT_ANNOTATION = "rbac.ocp.io/unmanaged-detected-at"
-UNMANAGED_DETECTED_BY_ANNOTATION = "rbac.ocp.io/unmanaged-detected-by"
 SYNC_TIME_ANNOTATION = "group-sync-operator.redhat-cop.io/sync-time"
 LDAP_UID_ANNOTATION = "openshift.io/ldap.uid"
 

@@ -45,7 +45,7 @@ Design notes, for the decisions that are not obvious from the code:
 | Document | What |
 |---|---|
 | [`docs/storage-coupling.md`](docs/storage-coupling.md) | why SQLite, the storage seam, and what a second backend would have to satisfy |
-| [`docs/unmanaged-audit-design.md`](docs/unmanaged-audit-design.md) | the one write path, its invariants, and the Kubernetes rule that caps it |
+| [`docs/unmanaged-audit-design.md`](docs/unmanaged-audit-design.md) | unmanaged-grant discovery, its invariants, and the live-cluster measurement that removed the write path |
 | [`docs/image-vulnerability-scan.md`](docs/image-vulnerability-scan.md) | the CVE position, what is reachable, and what a rebuild cannot fix |
 | [`docs/namespace-report-design.md`](docs/namespace-report-design.md) | **PARKED** — per-namespace PDF reports, and the definitive answer on `--openshift-sar` |
 
@@ -87,7 +87,7 @@ ones most likely to matter:
 | `persistence.enabled` | `true` | Leave on. The accumulated history cannot be re-fetched |
 | `config.backup.enabled` | `true` | Leave on. The only protection for that history, though it lands on the same volume |
 | `config.userActivity.visibility` | `self` | `all` lets everyone see everyone's dashboard usage. It is identifiable personnel data |
-| `config.unmanagedAudit.mode` | `off` | The only write path. `log` rehearses it with zero write access — see below |
+| `config.unmanagedAudit.mode` | `log` | `log` publishes each hand-made grant it finds to the pod log; `off` silences that log only. Writes nothing either way — see below |
 | `monitoring.serviceMonitor.enabled` | `false` | Needs the Prometheus Operator CRDs |
 | `replicaCount` | `1` | Leave at 1. Above one, each pod keeps its own database and history diverges — see the chart README's Scaling section |
 | `config.pollIntervalSeconds` | `60` | Poll cadence, and the error bar on "when did this person lose access?" |

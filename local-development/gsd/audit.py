@@ -1,8 +1,10 @@
-"""The unmanaged-audit stamping plan. Pure decisions; the poller executes them.
+"""Which grants a refresh cycle DISCOVERED, and which it discovered were resolved.
 
-Design and invariants: docs/unmanaged-audit-design.md. Everything here is deliberately
-free of I/O so every invariant is a plain unit test — for the dashboard's only write
-path, the decision logic being trivially testable is the point.
+Pure decisions; the poller publishes them. Design and invariants:
+docs/unmanaged-audit-design.md. Everything here is free of I/O so every invariant is a
+plain unit test. The name `StampPlan` and the `stamp`/`unstamp` fields are the residue of a
+removed write path that labelled these findings — they now mean "found" and "no longer
+found", and are kept because renaming them would touch every test for no behaviour change.
 """
 
 from __future__ import annotations
@@ -12,12 +14,13 @@ from dataclasses import dataclass, field
 
 @dataclass(frozen=True)
 class StampPlan:
-    """What one refresh cycle DISCOVERED, and what it would write about it.
+    """What one refresh cycle DISCOVERED, and what it discovered was resolved.
 
-    The discovery is the deliverable. `annotate` mode reaches nothing on a normal cluster —
-    Kubernetes privilege-escalation prevention refuses a metadata patch unless the writer
-    already holds everything the binding grants — so the plan's real product is the finding
-    itself, published to the log and to the API, not a label on an object.
+    The discovery IS the deliverable — there is no write. Labelling these objects was tried
+    and measured: Kubernetes privilege-escalation prevention refuses a metadata patch unless
+    the writer already holds everything the binding grants, so 0 of 4 planned labels landed
+    and the API server demanded 175 additional rule sets to place one. The finding, published
+    to the log and the API, is the product.
     """
 
     stamp: list[tuple[str, str, str]]     # (binding_kind, namespace, name)
@@ -33,7 +36,7 @@ class StampPlan:
 
 
 def plan_audit_stamps(rows: list[dict], max_per_cycle: int = 20) -> StampPlan:
-    """Decide which bindings to stamp and which to heal, from this cycle's findings.
+    """Classify this cycle's rows into findings and resolutions.
 
     `rows` is store.all_bindings() output: one row per (binding, Group subject), so a
     binding naming two groups appears twice — and its two rows can be classified
@@ -41,9 +44,9 @@ def plan_audit_stamps(rows: list[dict], max_per_cycle: int = 20) -> StampPlan:
     made per OBJECT, not per row:
 
       * stamp   if ANY of its rows is `unmanaged` and it is not already stamped (I2, I3)
-      * unstamp if it IS stamped and NONE of its rows is `unmanaged` (I4) — the label
-        comes off so the CLI selection means *currently* outside governance; the
-        detected-at annotations stay behind as history, which is the audit trail.
+      * unstamp if it IS stamped and NONE of its rows is `unmanaged` (I4) — reported as
+        RESOLVED, so a human knows the acknowledgement label they applied is now stale and
+        the CLI selection keeps meaning *currently* outside governance.
 
     The cap (I6) bounds a misclassification bug to one screenful of objects per cycle;
     deferred stamps are counted so the caller can log that convergence is pending.

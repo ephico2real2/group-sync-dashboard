@@ -298,11 +298,19 @@ config:
     # pipeline you have not tuned yet. Findings stay visible in the RBAC policy tab and the
     # API either way; `off` only silences the log.
     mode: "log"
-    # At most this many findings LISTED individually per 300s refresh. The summary line
-    # always reports the true total, and anything beyond the cap is counted as "not yet
-    # listed" rather than dropped, so a misclassification bug fills one screenful of log per
-    # cycle instead of the whole cluster at once. Resolutions are never capped — a closed
-    # finding must not queue behind new ones.
+    # At most this many findings LISTED individually per 300s refresh, so a misclassification
+    # bug fills one screenful of log per cycle instead of the whole cluster at once.
+    #
+    # The cap does NOT shrink the headline number: the summary reports every finding awaiting
+    # acknowledgement and then says how many of those it listed, because the total is what an
+    # operator escalates on. It reported the capped count until 2026-08-03, so a cluster with
+    # 500 unmanaged grants announced 20.
+    #
+    # "Awaiting acknowledgement" is narrower than "on the cluster": an object already carrying
+    # the rbac.ocp.io/unmanaged label is a finding but is not re-announced. For the cluster-wide
+    # set, use GET /api/clusters/{id}/bindings/findings, which the summary line links.
+    #
+    # Resolutions are never capped — a closed finding must not queue behind new ones.
     maxPerCycle: 20
 
   # Who used the dashboard. Requires oauthProxy.enabled — with the proxy off there is no
@@ -525,7 +533,8 @@ serviceAccount:
 
 rbac:
   # Creates a ClusterRole + binding granting get/list on groupsyncs, groups, rolebindings
-  # and clusterrolebindings. No watch, no write verbs anywhere.
+  # and clusterrolebindings. No watch, and no write verb on any of them. The role's only
+  # write is get/create/update on the dashboard's own leader-election Lease.
   create: true
 
   # RoleBindings/ClusterRoleBindings power the "Access granted" view and dangling-binding

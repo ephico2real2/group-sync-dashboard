@@ -1,8 +1,11 @@
-"""The unmanaged-audit stamping invariants, one test per design clause.
+"""The unmanaged-grant discovery invariants, one test per design clause.
 
-docs/unmanaged-audit-design.md is the spec; this file is its enforcement. This is the
-dashboard's only write path, which is why the decisions live in a pure module
-(gsd/audit.py) where every invariant is a plain assertion.
+docs/unmanaged-audit-design.md is the spec; this file is its enforcement. The decisions live
+in a pure module (gsd/audit.py) so every invariant is a plain assertion with no cluster and
+no I/O in the way.
+
+`StampPlan`/`stamp`/`unstamp` are the names of a removed write path — they mean "found" and
+"no longer found". Nothing here writes to a cluster.
 """
 
 from __future__ import annotations
@@ -11,11 +14,7 @@ import pytest
 
 from gsd.audit import plan_audit_stamps
 from gsd.config import Settings, load_settings
-from gsd.kube import (
-    UNMANAGED_DETECTED_AT_ANNOTATION,
-    UNMANAGED_DETECTED_BY_ANNOTATION,
-    UNMANAGED_LABEL,
-)
+from gsd.kube import UNMANAGED_LABEL
 
 
 def _row(name, finding="unmanaged", stamped=False, kind="RoleBinding", ns="ns-a",
@@ -174,3 +173,97 @@ class TestEvidenceIsSelfContained:
         )
         assert len(plan.stamp) == 5 and plan.capped == 25
         assert all(plan.evidence[k]["role"] == "edit" for k in plan.stamp)
+
+
+class TestTheSummaryLineReportsTheTrueTotal:
+    """The headline number is the size of the problem, not the size of the log burst.
+
+    `plan_audit_stamps` truncates `stamp` to `maxPerCycle` (audit.py:75-77) and the poller used
+    to log `len(plan.stamp)` as "N outside the policy system". So a cluster with 500 unmanaged
+    grants and the default cap of 20 reported twenty — understating a governance finding 25x in
+    the one line an operator reads first and escalates on. The remainder was present, but only
+    as an appended clause the reader had to add up.
+
+    `charts/group-sync-dashboard/values.yaml` promised "the summary line always reports the true
+    total" while the code did not, which is how this was found.
+
+    SCOPE: the number is every finding awaiting acknowledgement, which is not the cluster total —
+    an object already carrying the `rbac.ocp.io/unmanaged` label is a finding but is not
+    re-announced (`audit.py:73`). This fixture applies no labels, so here the two coincide.
+    """
+
+    CAP = 5
+    UNMANAGED = 12          # deliberately > CAP, so listed != total
+    EXPECTED_HELD = UNMANAGED - CAP
+
+    @pytest.fixture()
+    def caplog_summary(self, tmp_path, monkeypatch, caplog):
+        """Run one real refresh_bindings against a fake cluster and return the log text."""
+        import types
+
+        from gsd import poller
+        from gsd.config import ClusterConfig
+        from gsd.store import Store
+        from gsd.timeutil import now_iso
+
+        store = Store(str(tmp_path / "t.db"))
+        store.upsert_cluster("c1", "https://x", True)
+        now = now_iso()
+
+        names = [f"grp-{i}" for i in range(self.UNMANAGED)]
+        store.replace_group_state(
+            "c1",
+            [{"name": n, "member_count": 1, "sync_provider": "gs_ldap",
+              "group_synced_at": now, "ldap_uid": None} for n in names + ["managed-grp"]],
+            now,
+        )
+        # Operator-synced, which is half of what makes a hand-made binding a finding.
+        store.record_managed_groups(
+            "c1", [{"name": n, "sync_provider": "gs_ldap"} for n in names + ["managed-grp"]],
+            now,
+        )
+
+        def binding(name, group, managed_source=None):
+            return types.SimpleNamespace(
+                binding_kind="RoleBinding", binding_namespace="ns", binding_name=name,
+                role_kind="ClusterRole", role_name="admin", group_name=group,
+                managed_source=managed_source, exception=None,
+            )
+
+        # One managed binding is REQUIRED: `unmanaged` is gated on the policy operator being
+        # in use at all (store.py `EXISTS (... m.managed_source IS NOT NULL)`), so without
+        # this row every binding classifies `ok` and the test would pass vacuously at zero.
+        rows = [binding("managed", "managed-grp", managed_source="policy")]
+        rows += [binding(f"hand-made-{i}", n) for i, n in enumerate(names)]
+
+        class FakeClient:
+            def __init__(self, *a, **kw): pass
+            def fetch_bindings(self): return rows
+            def fetch_user_bindings(self): return []
+            def fetch_operator_configs(self): return None
+
+        monkeypatch.setattr(poller, "ClusterClient", FakeClient)
+        with caplog.at_level("INFO", logger="gsd.poller"):
+            poller.refresh_bindings(
+                store, ClusterConfig("c1", "https://x", token_env="T"), timeout=5,
+                audit_mode="log", audit_max_per_cycle=self.CAP,
+            )
+        return caplog.text
+
+    def test_the_headline_number_is_every_finding_not_just_the_listed_ones(
+            self, caplog_summary):
+        assert f"{self.UNMANAGED} outside the policy system" in caplog_summary, (
+            "the summary must report every finding on the cluster; got:\n" + caplog_summary
+        )
+        assert f"{self.CAP} outside the policy system" not in caplog_summary, (
+            "the headline is the capped count again — the defect is back"
+        )
+
+    def test_the_capped_remainder_is_still_declared(self, caplog_summary):
+        """A total the reader cannot reconcile against the lines below it invites distrust."""
+        assert f"{self.CAP} listed below" in caplog_summary
+        assert f"{self.EXPECTED_HELD} held back" in caplog_summary
+
+    def test_exactly_the_cap_is_listed_individually(self, caplog_summary):
+        listed = caplog_summary.count("UNMANAGED GRANT DISCOVERED")
+        assert listed == self.CAP, f"expected {self.CAP} individual findings, got {listed}"

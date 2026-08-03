@@ -3,10 +3,9 @@
 The dashboard finds grants that bypass the policy system and publishes them to the pod log,
 the RBAC policy tab and the API. This feature writes nothing, and the dashboard's only write
 anywhere is its own leader-election Lease — its coordination object, not anything it observes.
-The rendered ClusterRole
-holds `get` and `list` on `rolebindings`/`clusterrolebindings` and no verb that can change
-either (`charts/group-sync-dashboard/templates/rbac.yaml:55-57`), and the cluster client has no
-write method at all (`local-development/gsd/kube.py:226-237`).
+The rendered ClusterRole holds `get` and `list` on `rolebindings`/`clusterrolebindings` and no
+verb that can change either (`charts/group-sync-dashboard/templates/rbac.yaml:61-63`), and the cluster client has no
+write method at all (`local-development/gsd/kube.py:228-241`).
 
 A binding is `unmanaged` when it names an operator-synced group and carries neither the policy
 operator's `rbac.ocp.io/config-source` label nor an `rbac.ocp.io/unmanaged-exception`
@@ -62,32 +61,32 @@ privilege on precisely the most dangerous grants, so a compromise of this pod be
 compromise, in exchange for a convenience label. All three were refused.
 
 The write path was therefore removed rather than documented as a limitation: the two patch
-methods from the cluster client (`kube.py:226-237` records what they were), the conditional
-`patch` grant from the ClusterRole (`rbac.yaml:33-47`), and the `annotate` mode itself
+methods from the cluster client (`kube.py:228-241` records what they were), the conditional
+`patch` grant from the ClusterRole (`rbac.yaml:35-53`), and the `annotate` mode itself
 (`config.py:277-293`). What remains is the half that was always the deliverable — the finding.
 
 One artefact of the write is worth keeping in mind because it wasted an operator's time. The
 refusal was being reported as "the token lacks `patch` on rolebindings/clusterrolebindings"
 while `can-i` said yes, so the suggested remedy was a grant the ServiceAccount already had.
 There is now one 403 path left in the client and it names listing
-(`kube.py:257-261`), so that particular misreport cannot recur.
+(`kube.py:259-262`), so that particular misreport cannot recur.
 
 ## What is published
 
 `log` mode emits one line per object plus a summary, on a refresh that runs every 300s
 (`config.py:181`), on the lease holder, after the cycle's rows are stored
-(`poller.py:312-318`). A cycle with nothing to report emits nothing at all: the summary is
-guarded on the plan being non-empty (`poller.py:331`), so a clean cluster is silent rather than
+(`poller.py:314-318`). A cycle with nothing to report emits nothing at all: the summary is
+guarded on the plan being non-empty (`poller.py:329`), so a clean cluster is silent rather than
 producing a zero every five minutes.
 
-The summary, at INFO (`poller.py:331-339`):
+The summary, at INFO (`poller.py:330-345`):
 
 ```
 crc-local: unmanaged-grant discovery — 4 outside the policy system, 0 resolved since the
 last cycle. Full detail: GET /api/clusters/crc-local/bindings/findings
 ```
 
-Each finding, at **WARNING** (`poller.py:341-356`):
+Each finding, at **WARNING** (`poller.py:351-366`):
 
 ```
 UNMANAGED GRANT DISCOVERED — crc-local: ClusterRoleBinding demo-cluster-admin-crb
@@ -95,11 +94,11 @@ UNMANAGED GRANT DISCOVERED — crc-local: ClusterRoleBinding demo-cluster-admin-
 policy system (no config-source label, no exception annotation)
 ```
 
-WARNING rather than INFO for two reasons, both stated at `poller.py:345-348`: the poller emits
+WARNING rather than INFO for two reasons, both stated at `poller.py:355-358`: the poller emits
 INFO for every routine HTTP call, so a finding at INFO is buried by the traffic around it, and a
 log pipeline needs a level to filter on. The fixed prefix is there to be alerted on.
 
-Each resolution, at INFO (`poller.py:358-374`):
+Each resolution, at INFO (`poller.py:368-384`):
 
 ```
 unmanaged grant RESOLVED — crc-local: RoleBinding demo-prod/demo-prod-audit-rb is no longer
@@ -110,16 +109,27 @@ demo-prod-audit-rb rbac.ocp.io/unmanaged-
 
 The line names the object, what it grants, to whom, and why that is a finding, so it stands
 alone as evidence without opening the dashboard. That is what the `evidence` dict on the plan
-exists for (`audit.py:23-32`, `audit.py:77-81`); only the groups whose rows were classified
+exists for (`audit.py:29-35`, `audit.py:80-84`); only the groups whose rows were classified
 unmanaged are cited, because a binding can name two groups and be unmanaged for only one, and
 citing the managed one would send a reader to inspect a grant that is fine
-(`audit.py:62-68`, tested at `test_audit_stamp.py:144-157`).
+(`audit.py:65-71`, tested at `test_audit_stamp.py:144-157`).
 
-**The summary's first number is not the cluster's total.** It counts the objects listed this
-cycle, which excludes any already carrying the `rbac.ocp.io/unmanaged` label (I3 below) and any
-deferred by the per-cycle cap, which is reported separately in the same line. The cluster-wide
-set is `GET /api/clusters/{id}/bindings/findings` (`api.py:416`), which the summary points at
-for exactly this reason.
+**The summary's first number is every finding awaiting acknowledgement — not the number of
+lines beneath it, and not the cluster's total.** Until 2026-08-03 it was the count actually
+listed, so the per-cycle cap silently shrank it: a cluster with 500 unmanaged grants announced
+"20 outside the policy system", understating a governance finding 25x in the one line an operator
+escalates on. The remainder was present only as a clause the reader had to add up. The cap now
+appears as `(20 listed below, 480 held back by the per-cycle cap)` beside a headline of 500, and
+`test_chart_strategy.py` is not where that is enforced —
+`test_audit_stamp.py::TestTheSummaryLineReportsTheTrueTotal` is, including a case that fails if
+the headline reverts to the capped count.
+
+It is still narrower than the cluster's total, in one direction only: an object already carrying
+the `rbac.ocp.io/unmanaged` label is a finding but is not re-announced (I3 below), so it is in
+neither number. The label gates announcement, not classification — `audit_stamped` appears
+nowhere in the classifying `CASE` (`store.py:1188-1194`), only in the announcement filter
+(`audit.py:73`). The cluster-wide set is `GET /api/clusters/{id}/bindings/findings`
+(`api.py:416`), which the summary line points at for exactly this reason.
 
 ## How a finding is suppressed
 
@@ -130,7 +140,7 @@ oc annotate clusterrolebinding <name> \
   rbac.ocp.io/unmanaged-exception="approved in TICKET-123, break-glass access"
 ```
 
-The dashboard reads that annotation (`kube.py:68`, `kube.py:514`) and stops classifying the
+The dashboard reads that annotation (`kube.py:68`, `kube.py:516`) and stops classifying the
 binding as unmanaged (`store.py:1189`), so it leaves the log, the RBAC policy tab and the API.
 Tested at `test_rbac.py:274-281`.
 
@@ -154,12 +164,17 @@ of this feature needs to be able to find out what happened to it.
 
 **I1 — Write set. RETIRED: there is no write.** The clause used to bound the patch body to
 three metadata keys. What replaces it is not a bound on writing but its absence: no write verb
-in the ClusterRole (`rbac.yaml:55-57`), no write method on the client (`kube.py:226-237`), and
+in the ClusterRole (`rbac.yaml:61-63`), no write method on the client (`kube.py:228-241`), and
 a GET-only HTTP API enforced by `test_api_contract.py:229-240`. Measured by rendering the chart
 at `mode` = `off`, `log`, `annotate`, an unrecognised word and the empty string: **zero
 occurrences of `"patch"`** in each of the five renders, and the only write verbs anywhere in the
-chart are `get`/`create`/`update` on the leader-election Lease. No test asserts this today; the
-check is `helm template ... | grep '"patch"'`, and it belongs in the chart tests.
+chart are `get`/`create`/`update` on the leader-election Lease. Enforced by
+`test_chart_strategy.py::TestNoPatchVerbAtAnyAuditMode`, which renders the chart at each of
+`off`, `log`, `annotate`, `bogus` and `""` and asserts two things: no write verb on any RBAC
+object, and no write verb anywhere in the role except on `leases`. It parses the rendered YAML
+rather than grepping it — `rbac.yaml` keeps the history of the removed grant in its comments and
+Helm emits those verbatim, so three lines of rendered output contain the word `patch` today and a
+text search would either trip on them or be written loosely enough to miss a real regression.
 
 **I2 — Finding set.** Unchanged in substance, renamed from "Target set" because nothing is
 targeted now. An object is a finding only if its group resolves, its group is operator-synced,
@@ -185,7 +200,7 @@ first-detected timestamp, no longer applies).
 
 **I4 — Resolution is reported, not performed.** Was "Self-healing selection". An object that
 carries the label and is no longer classified unmanaged by any of its rows produces the RESOLVED
-line (`audit.py:71`, `poller.py:358-374`). The multi-subject rule is the one worth knowing: a
+line (`audit.py:71`, `poller.py:368-384`). The multi-subject rule is the one worth knowing: a
 binding naming two groups resolves only when *no* row is unmanaged, so one acknowledged group
 does not close a finding about the other. The dashboard cannot remove the label, so the line
 repeats each cycle while the stale label remains and carries the `oc label ...
@@ -201,7 +216,7 @@ What changed, twice over. The mode no longer affects RBAC — and the chart's de
 `off` to `log`. `off` was the right default while this could write, because a default that
 patches cluster objects has to be opted into; with nothing written, the only thing it buys is a
 governance tool that has found a hand-made `cluster-admin` grant and declines to mention it. A
-cluster with no unmanaged grants logs nothing (`poller.py:331`), so the new default costs nothing
+cluster with no unmanaged grants logs nothing (`poller.py:329`), so the new default costs nothing
 where there is nothing to report.
 
 Note that the two defaults differ, which matters when reading a running instance. The chart ships
@@ -242,7 +257,7 @@ elector; nothing tests this gate specifically.
 
 **I8 — Failure isolation. RETIRED as written**, because no patch can fail. Two weaker
 properties remain and they are not the same claim. The discovery runs last in the refresh, after
-the cycle's rows are committed (`poller.py:312-318`), so nothing it does can cost the refresh its
+the cycle's rows are committed (`poller.py:314-318`), so nothing it does can cost the refresh its
 data. And the call is wrapped, so an exception in the plan or the logging cannot kill the poll
 thread (`poller.py:487-494`).
 

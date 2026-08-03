@@ -311,30 +311,40 @@ def refresh_bindings(
 
     log.info("refreshed %d group bindings for %s", len(bindings), cluster.name)
 
-    # The audit stamp — the dashboard's ONLY write path, and it runs LAST, after this
-    # cycle's rows are stored, so the plan is computed from exactly what was just observed.
+    # Unmanaged-grant discovery. Runs LAST, after this cycle's rows are stored, so the
+    # findings are computed from exactly what was just observed rather than from the previous
+    # cycle. Nothing here writes to the cluster.
     # docs/unmanaged-audit-design.md carries the invariants; gsd/audit.py the decisions.
     if audit_mode == "log":
         plan = plan_audit_stamps(store.all_bindings(cluster.name), audit_max_per_cycle)
 
-        # THE DISCOVERY IS THE DELIVERABLE, in both modes.
+        # THE DISCOVERY IS THE DELIVERABLE.
         #
         # These lines used to read "WOULD stamp ClusterRoleBinding -/demo-cluster-admin-crb",
         # which framed the log as a rehearsal for a write and told a reader nothing about why
-        # the object mattered. The write can never land on a normal cluster — Kubernetes
+        # the object mattered. The write could never land on a normal cluster — Kubernetes
         # refuses a metadata patch unless the writer already holds everything the binding
         # grants — so the finding IS the product, and it is published here as evidence that
         # stands alone: which object, what it grants, to whom, and why that is a finding.
-        #
-        # Emitted identically whichever mode is on, because the discovery is the same fact.
-        # `annotate` only adds what happened when it tried to label the object.
         if plan.stamp or plan.unstamp or plan.capped:
             log.info(
-                "%s: unmanaged-grant discovery — %d outside the policy system, %d resolved "
-                "since the last cycle%s. Full detail: "
+                # The first number is every finding AWAITING ACKNOWLEDGEMENT, not the number
+                # of lines that follow. `plan.stamp` is truncated to maxPerCycle
+                # (audit.py:75-77) before this reads its length, so `len(plan.stamp)` alone
+                # understated a large finding set — a cluster with 500 unmanaged grants
+                # reported "20 outside the policy system", which is the one number an operator
+                # escalates on.
+                #
+                # Not the cluster's total: an object already carrying the unmanaged label is a
+                # finding but is not re-announced (audit.py:73). The findings API is the
+                # cluster-wide set, which is why this line links it.
+                "%s: unmanaged-grant discovery — %d outside the policy system%s, %d resolved "
+                "since the last cycle. Full detail: "
                 "GET /api/clusters/%s/bindings/findings",
-                cluster.name, len(plan.stamp), len(plan.unstamp),
-                f", {plan.capped} not yet listed (per-cycle cap)" if plan.capped else "",
+                cluster.name, len(plan.stamp) + plan.capped,
+                f" ({len(plan.stamp)} listed below, {plan.capped} held back by the "
+                f"per-cycle cap)" if plan.capped else "",
+                len(plan.unstamp),
                 cluster.name,
             )
 

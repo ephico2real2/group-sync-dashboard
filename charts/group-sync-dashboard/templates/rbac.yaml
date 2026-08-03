@@ -1,6 +1,8 @@
 {{- if .Values.rbac.create }}
-# Read-only throughout: no watch, no write verbs. Cluster-scoped because Groups are
-# cluster-scoped and GroupSync CRs may live in any namespace.
+# Read-only on everything it reports on: no watch, and no verb that can change a Group, a
+# GroupSync CR or a binding. The ONE exception is the dashboard's own leader-election Lease
+# below, which is its coordination and not an object it observes. Cluster-scoped because
+# Groups are cluster-scoped and GroupSync CRs may live in any namespace.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -30,7 +32,11 @@ rules:
     resources: ["leases"]
     verbs: ["get", "create", "update"]
   {{- end }}
-  # NO WRITE VERB ANYWHERE IN THIS ROLE, at any value, and it stays that way.
+  # NO WRITE VERB ON ANYTHING THE DASHBOARD REPORTS ON, at any value, and it stays that
+  # way. The `create`/`update` on leases directly above is the sole write in this role and it
+  # is scoped to one object the dashboard owns — say "reports on", not "anywhere", because an
+  # absolute claim sitting three lines below its own counter-example teaches a reader to stop
+  # trusting the comments.
   #
   # A conditional `patch` on rolebindings/clusterrolebindings used to render here when
   # config.unmanagedAudit.mode was "annotate", so the dashboard could label its own findings
