@@ -65,6 +65,37 @@ moves the probes behind the proxy. All automatic.
 Both may be on; they are loaded in turn. A cluster entry naming its own `caBundleFile`
 always wins.
 
+**These bundles go to the oauth-proxy as well as to the dashboard**, as extra `-openshift-ca`
+paths. That matters on any cluster whose `*.apps` wildcard is signed by an internal CA, and the
+symptom if it is missing is specific: login returns `500 Internal Error` while the pod is
+healthy, the Route is valid and RBAC is correct.
+
+```
+provider.go:671   200 GET https://172.31.0.1/.well-known/oauth-authorization-server
+oauthproxy.go:661 error redeeming code: Post
+    "https://oauth-openshift.apps.ocp4.company.net/oauth/token":
+    tls: failed to verify certificate: x509: certificate signed by unknown authority
+```
+
+Discovery succeeds and the code exchange fails, which locates the problem exactly. Discovery
+goes to the **in-cluster** API address, which the ServiceAccount CA covers; discovery then
+returns the **public** issuer, so the exchange goes to the ingress-served OAuth route, signed by
+a CA the ServiceAccount bundle does not carry.
+
+If the injected bundle does not contain your ingress CA — it carries only what the cluster has
+been told about, via `proxy/cluster.spec.trustedCA` or the install's `additionalTrustBundle` —
+supply it yourself and both containers pick it up:
+
+```bash
+oc create configmap enterprise-ca --from-file=ca-bundle.crt=/path/to/ingress-ca.pem \
+  -n group-sync-dashboard
+helm upgrade ... --set trustedCA.existingConfigMap.enabled=true
+```
+
+Enforced by `test_chart_strategy.py::TestTheProxyTrustsTheSameCAsTheApp`, which also checks
+every CA path handed to the proxy is actually mounted — a path it cannot read stops the
+container starting, which is a louder failure than the one above but still not an obvious one.
+
 ### Application
 
 | Key | Default | Notes |

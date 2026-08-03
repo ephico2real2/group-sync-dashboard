@@ -149,3 +149,115 @@ class TestNoPatchVerbAtAnyAuditMode:
                     f"rbac.yaml's header, values.yaml, the chart README and "
                     f"docs/reference-architecture.md in the same commit."
                 )
+
+
+class TestTheProxyTrustsTheSameCAsTheApp:
+    """The oauth-proxy needs the corporate CA too, and for a while only the app got it.
+
+    MEASURED on a corporate cluster whose *.apps wildcard is signed by an internal CA. Login
+    returned `500 Internal Error` with a healthy pod, a valid Route and correct RBAC:
+
+        provider.go:631   Performing OAuth discovery against https://172.31.0.1/...
+        provider.go:671   200 GET https://172.31.0.1/.well-known/oauth-authorization-server
+        oauthproxy.go:661 error redeeming code: Post
+            "https://oauth-openshift.apps.ocp4.company.net/oauth/token":
+            tls: failed to verify certificate: x509: certificate signed by unknown authority
+
+    Discovery SUCCEEDS and redemption FAILS, and that asymmetry is the whole bug. Discovery
+    goes to the in-cluster API address, which the ServiceAccount CA covers. Discovery then
+    returns the PUBLIC issuer, so the code exchange goes to the ingress-served OAuth route,
+    signed by a CA the ServiceAccount bundle knows nothing about.
+
+    The chart already had the bundles. They reached `GSD_TRUSTED_CA_FILE` and nothing else, so
+    the dashboard could poll a corporate-signed cluster while nobody could log in to read the
+    result — the failure was in the half nobody had wired up.
+
+    NOTE ON PLACEMENT: this lives here because `.github/workflows/ci.yml` points the `chart`
+    job at THIS FILE by name. A chart-rendering test in any other module is not run by that
+    job, and the `tests` job skips these for want of a helm binary.
+    """
+
+    CA_ARG = "-openshift-ca="
+    SA_CA = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+
+    def _proxy(self, **values):
+        import yaml
+        ok, out = render(**values)
+        assert ok, f"failed to render with {values}:\n{out}"
+        for doc in yaml.safe_load_all(out):
+            if doc and doc.get("kind") == "Deployment":
+                spec = doc["spec"]["template"]["spec"]
+                proxy = next((c for c in spec["containers"] if c["name"] == "oauth-proxy"), None)
+                assert proxy, "the oauth-proxy container did not render"
+                return proxy, spec
+        raise AssertionError("no Deployment in the rendered output")
+
+    def test_the_service_account_ca_is_still_passed_explicitly(self):
+        """Passing any -openshift-ca REPLACES the flag's default, so this cannot be dropped.
+
+        Its own help: "paths to CA roots for the OpenShift API (may be given multiple times,
+        defaults to /var/run/secrets/kubernetes.io/serviceaccount/ca.crt)". Losing it breaks
+        OAuth DISCOVERY against the in-cluster API address — the half that currently works.
+        """
+        proxy, _ = self._proxy()
+        cas = [a for a in proxy["args"] if a.startswith(self.CA_ARG)]
+        assert f"{self.CA_ARG}{self.SA_CA}" in cas, (
+            f"the ServiceAccount CA is no longer passed; got {cas}"
+        )
+
+    def test_an_enabled_bundle_reaches_the_proxy_and_not_only_the_app(self):
+        """The regression itself: bundles configured, app trusts them, proxy does not."""
+        for values, expect in (
+            ({}, "injected"),                                                  # default
+            ({"trustedCA__existingConfigMap__enabled": "true"}, "enterprise"),
+        ):
+            proxy, _ = self._proxy(**values)
+            cas = [a for a in proxy["args"] if a.startswith(self.CA_ARG)]
+            assert any(expect in a for a in cas), (
+                f"with {values or 'defaults'} the proxy gets {cas} — the {expect} bundle is "
+                f"mounted for the dashboard but never handed to the proxy, so login fails on "
+                f"any cluster whose OAuth route is signed by that CA"
+            )
+
+    def test_every_ca_path_the_proxy_is_given_is_actually_mounted(self):
+        """A path the proxy cannot read is worse than no flag: it fails to start.
+
+        Checks the pairing rather than the two halves separately, because they are edited in
+        different parts of the template and drift apart silently.
+        """
+        for values in ({},
+                       {"trustedCA__existingConfigMap__enabled": "true"},
+                       {"trustedCA__injected__enabled": "false",
+                        "trustedCA__existingConfigMap__enabled": "true"},
+                       {"trustedCA__injected__enabled": "false"}):
+            proxy, _ = self._proxy(**values)
+            mounts = [m["mountPath"].rstrip("/") for m in proxy.get("volumeMounts", [])]
+            for arg in proxy["args"]:
+                if not arg.startswith(self.CA_ARG):
+                    continue
+                path = arg[len(self.CA_ARG):]
+                if path == self.SA_CA:
+                    continue          # projected by the kubelet, not by a chart volume
+                assert any(path.startswith(m + "/") for m in mounts), (
+                    f"with {values or 'defaults'} the proxy is told to read {path} but only "
+                    f"mounts {mounts} — the container would fail to start"
+                )
+
+    def test_no_volume_mount_names_a_volume_that_does_not_exist(self):
+        """Guards the other direction: a mount with no matching volume makes the pod unschedulable.
+
+        Applies to BOTH containers, since the bundles are mounted twice now.
+        """
+        for values in ({},
+                       {"trustedCA__existingConfigMap__enabled": "true"},
+                       {"trustedCA__injected__enabled": "false"},
+                       {"trustedCA__injected__enabled": "false",
+                        "trustedCA__existingConfigMap__enabled": "false"}):
+            _, spec = self._proxy(**values)
+            volumes = {v["name"] for v in spec.get("volumes", [])}
+            for container in spec["containers"]:
+                for mount in container.get("volumeMounts", []):
+                    assert mount["name"] in volumes, (
+                        f"with {values or 'defaults'} container {container['name']} mounts "
+                        f"{mount['name']!r}, which is not in {sorted(volumes)}"
+                    )
