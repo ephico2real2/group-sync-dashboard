@@ -331,9 +331,44 @@ class ClusterClient:
         )
 
     def fetch(self) -> tuple[list[GroupSyncView], list[GroupView]]:
-        """One poll's worth of reads. Raises ClusterError with a classified outcome."""
+        """One poll's worth of reads. Raises ClusterError with a classified outcome.
+
+        A MISSING GroupSync CRD IS NOT A POLL FAILURE. Reported from a real cluster that does
+        not run the group-sync-operator: the dashboard warned that it could not detect the CRD
+        and then showed no groups at all, when the hand-made Groups on that cluster should have
+        appeared as `unattributed`.
+
+        The cause was ordering plus an unhandled status. GroupSync is listed FIRST here, a 404
+        on an absent CRD becomes `ClusterError(UNREACHABLE)` in `_get`, and `poll_once` catches
+        that, records the cluster unreachable and returns — so `GROUP_API` was never called on a
+        cluster without the operator. The dashboard's whole subject is groups; it must still
+        report them when the operator that usually creates them is absent.
+
+        Groups are therefore fetched even when the CRD is not installed, and with no CR to claim
+        them every group has a NULL sync_provider, which is exactly the `unattributed` state
+        (`store.py:1664`). Same treatment `fetch_operator_configs` already gives the
+        namespace-configuration-operator's CRDs.
+
+        401 and 403 still propagate. "The CRD does not exist" and "the ServiceAccount may not
+        read it" are different problems and only the first is a normal state.
+        """
         with self._client() as client:
-            groupsyncs = [_groupsync_view(o) for o in self._list_all(client, GROUPSYNC_API)]
+            try:
+                groupsyncs = [_groupsync_view(o) for o in self._list_all(client, GROUPSYNC_API)]
+            except ClusterError as exc:
+                # Anchored on the path, not a bare "404" substring. The message ends with 200
+                # characters of the response BODY, so a 500 whose body happens to mention 404
+                # would otherwise be misread as "CRD absent" — hiding a real outage behind a
+                # normal-looking state.
+                if not exc.message.startswith(f"HTTP 404 on {GROUPSYNC_API}"):
+                    raise
+                log.warning(
+                    "%s: no GroupSync CRD on this cluster, so the group-sync-operator is not "
+                    "installed. Groups are still read and reported; with no CR to attribute "
+                    "them to, every group shows as `unattributed`.",
+                    self.cluster.name,
+                )
+                groupsyncs = []
             groups = [_group_view(o) for o in self._list_all(client, GROUP_API)]
         return groupsyncs, groups
 
@@ -386,7 +421,11 @@ class ClusterClient:
                 try:
                     items = self._list_all(client, path)
                 except ClusterError as exc:
-                    if "404" in exc.message:
+                    # Anchored on the path rather than a bare "404" substring: the message ends
+                    # with 200 characters of the response BODY, so a 500 whose body mentions 404
+                    # would be misread as "CRD absent" and would silently hide the operator's
+                    # health instead of reporting it broken.
+                    if exc.message.startswith(f"HTTP 404 on {path}"):
                         # This CRD is not installed. Tracked per-CRD rather than assumed
                         # pairwise: the operator ships both, but a cluster mid-install or
                         # with a pruned CRD is not a reason to lose the other's health.

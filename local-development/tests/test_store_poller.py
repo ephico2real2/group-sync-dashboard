@@ -91,19 +91,26 @@ class TestGroupState:
         assert [g["name"] for g in store.groups("crc", "unattributed")] == ["orphan"]
         assert store.group_counts("crc") == {"total": 3, "empty": 1, "unattributed": 1}
 
-    def test_empty_filter_excludes_unmanaged_groups(self, store):
-        """EMPTY is 'synced, zero members' (PLAN §7). A hand-made group with no members
-        is UNATTRIBUTED — counting it as empty double-reports it and sends the reader
-        looking for an LDAP fault that does not exist."""
+    def test_empty_includes_unmanaged_groups_and_overlaps_unattributed(self, store):
+        """EMPTY is 'zero members', whatever created the group — and it OVERLAPS unattributed.
+
+        This asserted the opposite while `empty` required `sync_provider IS NOT NULL`, on
+        PLAN §7's reading of EMPTY as "synced, then lost its members". That made the filter
+        useless on a cluster with no group-sync-operator: every group is unattributed there, so
+        `empty` matched nothing however many groups granted nobody. Rescoped deliberately.
+
+        The overlap is the contract now, so the thing to protect is that nobody ADDS the two
+        counts together to describe a cluster.
+        """
         store.replace_group_state(
             "crc",
             [{"name": "handmade", "member_count": 0, "sync_provider": None,
               "group_synced_at": None, "ldap_uid": None}],
             "2026-08-01T07:00:00Z",
         )
-        assert store.groups("crc", "empty") == []
+        assert [g["name"] for g in store.groups("crc", "empty")] == ["handmade"]
         assert [g["name"] for g in store.groups("crc", "unattributed")] == ["handmade"]
-        assert store.group_counts("crc") == {"total": 1, "empty": 0, "unattributed": 1}
+        assert store.group_counts("crc") == {"total": 1, "empty": 1, "unattributed": 1}
 
     def test_unknown_filter_is_rejected(self, store):
         """A typo'd filter must not silently fall through to 'all' and misreport."""

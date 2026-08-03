@@ -1193,7 +1193,7 @@ function groupsyncDetail() {
 function groupsPage() {
   const rows = data.groups;
   const note = {
-    empty: "Synced with zero members — an LDAP-side problem, e.g. a member DN that does not resolve.",
+    empty: "Zero members, so the group grants nobody. On an operator-synced group that usually means an LDAP-side problem — a member DN that does not resolve. Includes hand-made groups, which also appear under unattributed.",
     unattributed: "No sync-provider label, so not managed by any GroupSync CR.",
     all: "",
   }[view.groupFilter];

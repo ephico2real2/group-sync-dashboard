@@ -115,10 +115,22 @@ started (§2). The response says so in a `note` field.
 
 Query: `state` = `all` (default) | `empty` | `unattributed`.
 
-The two filters are **mutually exclusive by design**. `empty` means *synced, zero members* —
-an operator-managed group whose members vanished, which points at LDAP. A hand-made group
-with no members is `unattributed`, a different fault with a different fix. Reporting it as
-both says the wrong thing twice.
+The two filters **overlap, deliberately**. `empty` means *zero members* for any group,
+whatever created it; `unattributed` means *no GroupSync CR claims it*. A hand-made group with no
+members is both, and is returned by both.
+
+`empty` was previously scoped to operator-synced groups only, on the reading that EMPTY means
+"synced, then lost its members" — an LDAP-side fault. That made the filter useless on the cluster
+that most needs it: with no group-sync-operator installed every group is unattributed, so `empty`
+matched nothing however many groups granted nobody.
+
+They are two questions rather than a partition — "which groups grant nobody?" and "which groups
+is no CR managing?" — so do not add them together. `empty_groups` and `unattributed_groups` on
+`/api/clusters` are counted with the same predicates and can likewise overlap.
+
+The ALERT stream is unchanged and still reports each group once: a hand-made empty group raises
+`unattributed`, not `empty_group`, because that alert's remedy names the LDAP side and there is no
+LDAP side for a group somebody created by hand.
 
 ### `GET /api/clusters/{cluster_id}/groups/{name}`
 

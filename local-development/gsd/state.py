@@ -186,9 +186,16 @@ def compute_alerts(
                     detail="no sync-provider label — not managed by any GroupSync CR",
                 )
             )
-            # An unattributed group is reported once, as unattributed. It is not also
-            # "empty": EMPTY means a group the operator syncs whose members vanished
-            # (PLAN §7), and a hand-made group with no members was never synced at all.
+            # An unattributed group raises ONE alert, as unattributed — deliberately NOT also
+            # `empty_group`. This differs from the `empty` FILTER on purpose, which does return
+            # it (store.py), and the difference is not an oversight:
+            #
+            #   the filter answers "which groups grant nobody?", so provenance is irrelevant
+            #   the alert carries a REMEDY — "check the LDAP-side member DNs resolve" — and
+            #   there is no LDAP side for a group somebody created by hand
+            #
+            # So the alert stream stays one row per group with the advice that fits it, while
+            # the Groups tab lists the group under both filters. Documented in API.md.
             continue
 
         by_provider.setdefault(provider, []).append(group)
