@@ -208,7 +208,11 @@ sequenceDiagram
   B->>P: GET /api/clusters/{id}/user-bindings
   alt path matches skipAuthRegex
     Note over P: /healthz, /readyz, /metrics<br/>pass through unauthenticated
-  else
+  else Authorization: Bearer present, path under /api
+    Note over P: only when apiTokenAccess.enabled
+    P->>P: TokenReview + SubjectAccessReview<br/>(delegate-urls: list clusterrolebindings)
+    P->>M: + X-Forwarded-User
+  else browser
     P->>P: session cookie → OpenShift OAuth
     P->>M: + X-Forwarded-User, X-Forwarded-Email
   end
@@ -603,10 +607,22 @@ unauthenticated caller would set (`gsd/config.py:226-230`). So the chart states 
 * activity recording is off whenever the flag is false, regardless of what
   `userActivity.enabled` says, and the mismatch is logged at startup (`gsd/api.py:48-59`).
 
-**Access model: authentication, not authorization.** Anyone who can log into the cluster can
-view. That is the OpenShift provider's documented default and it is deliberate — the
-dashboard shows nothing a user could not already read with `oc get groups`. Set
-`oauthProxy.sar` to a SubjectAccessReview to require a permission too.
+**Access model for the UI: authentication, not authorization.** Anyone who can log into the
+cluster can view — the OpenShift provider's documented default. Set `oauthProxy.sar` to a
+SubjectAccessReview to require a permission as well.
+
+**What that exposes, stated precisely**, because an earlier version of this section was wrong.
+It said the dashboard "shows nothing a user could not already read with `oc get groups`". That
+holds for the Groups tab alone. The dashboard reports the cluster's entire RBAC **binding**
+surface — every ClusterRoleBinding and RoleBinding, the role each grants, the subjects holding
+it — which `oc get groups` does not reveal. The identical error in the API's delegated review
+was a measured privilege escalation: an account with only `list groups` read all 229 bindings
+on the reference cluster, including a `cluster-admin` ClusterRoleBinding, while `oc list
+clusterrolebindings` told it *no*. Treat UI access as equivalent to cluster-wide RBAC read.
+
+**The API is gated to match.** `oauthProxy.apiTokenAccess.enabled` admits bearer tokens on the
+`/api` prefix, and its review demands `list clusterrolebindings` cluster-wide. See
+[`api-access.md`](api-access.md).
 
 **The multi-cluster caveat** is not solved: OAuth authenticates against the *hosting* cluster
 only, so one instance holding several clusters' data can show a user membership from a
@@ -828,6 +844,95 @@ per-pod facts, so aggregate with `max()` or filter on `gsd_leader`, never `sum()
 
 ---
 
+## 8a. Reading a fleet without hosting anything
+
+The dashboard is deployed **per cluster**, and each one publishes its own API at a predictable
+hostname. That makes an aggregator a *reader*, not a service: it holds no database, stores no
+copy, and has nothing to keep in sync.
+
+```
+https://group-sync-dashboard.apps.<cluster>.<company-domain>/api
+```
+
+```mermaid
+sequenceDiagram
+  participant R as reporting client
+  participant O as cluster OAuth server
+  participant P as oauth-proxy
+  participant A as dashboard API
+
+  Note over R: per cluster — a token from one<br/>is meaningless to another
+  R->>O: GET /oauth/authorize (Basic + X-Csrf-Token, PKCE challenge)
+  O-->>R: 302, Location carries ?code=
+  R->>O: POST /oauth/token (code + verifier)
+  O-->>R: access_token
+  R->>P: GET /api/... (Authorization: Bearer)
+  P->>P: delegated SubjectAccessReview
+  alt caller has cluster-wide RBAC read
+    P->>A: forward
+    A-->>R: JSON
+  else
+    P-->>R: 403
+  end
+```
+
+**The token exchange is PKCE authorization-code**, derived by capturing `oc login -u -p
+--loglevel=8` rather than from documentation alone. Two details are load-bearing and silent
+when wrong: `X-Csrf-Token` must be present for the server to issue a basic-auth challenge, and
+redirects must **not** be followed, because the authorization code arrives in the 302's
+`Location` header.
+
+**What gates it.** `oauthProxy.apiTokenAccess.enabled` adds `-openshift-delegate-urls` for the
+`/api` prefix — which upstream applies *only* to requests carrying a bearer token or client
+certificate, so the browser cookie flow is untouched — and binds `system:auth-delegator` to the
+**proxy's** ServiceAccount, because the proxy is the party calling TokenReview and
+SubjectAccessReview. Callers do not need that role.
+
+The review demands `list clusterrolebindings` cluster-wide. That is deliberately stricter than
+it first was: gating on `list groups` was a measured privilege escalation, since `/api` reports
+the whole binding surface rather than group membership. See §7.
+
+Granting a reporting account is deliberately **not** a chart value. With the correct review the
+required permission is cluster-wide RBAC read, so a Helm value that handed it out would let
+anyone who can edit a values file grant themselves that read. Use the stock role through the
+normal RBAC process, preferring a group so the directory can revoke it:
+
+```bash
+oc adm policy add-cluster-role-to-group cluster-reader <ldap-group-for-reporting>
+```
+
+`local-development/cluster-report.py` implements the whole sequence and renders a governance
+report. It tries the direct path first and falls back to `oc port-forward` for a cluster where
+`apiTokenAccess` is off, so the report is identical either way and the transport is not baked
+into the content.
+
+**Why this beats one instance watching many clusters.** A single instance authenticates against
+its *hosting* cluster's OAuth only, so it can show a user membership from a cluster they hold no
+rights on — the unsolved caveat in §7. Per-cluster deployment plus API aggregation removes it:
+each cluster authorises its own readers, and the aggregator never sees more than the caller is
+entitled to on that cluster.
+
+## 8b. Time
+
+**Stored and served times are UTC and end in `Z`.** Every write goes through
+`datetime.now(UTC)`, so nothing about a deployment's configuration can shift what lands in the
+database or what the API returns.
+
+**Displayed times are the container's timezone**, set by `timezone` in the chart (default
+`America/New_York`) and reported to the browser at `/api/version`. Conversion happens at the
+very edge, in `Intl.DateTimeFormat`, so the data means one thing regardless of where it is read.
+The zone label is resolved per instant rather than once, because the abbreviation depends on the
+date being formatted — January is EST where July is EDT.
+
+**Log lines carry the offset** (`%z`), so a line reading `17:31:31-0400` and a stored
+`21:31:31Z` are visibly the same moment.
+
+Two consequences worth knowing. `tzdata` must be installed for `TZ` to mean anything — UBI9
+minimal strips `/usr/share/zoneinfo`, and with it absent Python reads `America/New_York` as a
+POSIX spec with a zero offset, stamping a New York label on a UTC clock. And the Usage tab's
+**Day** column is a stored UTC bucket, so near midnight a session sits on the following UTC day;
+the page says so rather than leaving it to look like a bug.
+
 ## 9. The deliberate constraints, and the reason for each
 
 | Constraint | Reason | Where |
@@ -917,7 +1022,10 @@ cd local-development && .venv/bin/python -m pytest tests/ -q
 |---|---|
 | [`storage-coupling.md`](storage-coupling.md) | how the app talks to SQLite and what a real engine swap would cost |
 | [`unmanaged-audit-design.md`](unmanaged-audit-design.md) | the write path's invariants, and the live-cluster evidence for its ceiling |
-| [`namespace-report-design.md`](namespace-report-design.md) | the direct-user-grant report and its risk ranking |
+| [`namespace-report-design.md`](namespace-report-design.md) | per-namespace PDF reports — **parked**, with the definitive answer on `--openshift-sar` |
+| [`api-access.md`](api-access.md) | calling `/api` from outside: the token exchange, curl and Postman, and what the caller must be allowed to do |
+| [`api-contract.md`](api-contract.md) | the rules a new endpoint must satisfy, each enforced by a test |
+| [`updating-vendored-assets.md`](updating-vendored-assets.md) | refreshing the Swagger/ReDoc bundles and fonts, and why they are committed |
 | [`image-vulnerability-scan.md`](image-vulnerability-scan.md) | the image scan and per-CVE reachability analysis |
 | [`../charts/group-sync-dashboard/README.md`](../charts/group-sync-dashboard/README.md) | every chart value, scaling, storage, ArgoCD |
 | [`../local-development/API.md`](../local-development/API.md) | endpoint-by-endpoint field reference |

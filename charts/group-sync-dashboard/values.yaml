@@ -10,7 +10,7 @@ image:
   # tags <version>-<git-sha>. Editing them by hand works, but the script keeps them
   # consistent with an image that actually exists in the registry.
   repository: quay.io/ephico2real/group-sync-dashboard
-  tag: "0.6.0-2cbb6f1d34"
+  tag: "0.6.0-5a841b3c10"
   pullPolicy: Always
 
   # Only needed for a PRIVATE registry. Leave empty for a public repository: an empty
@@ -530,11 +530,20 @@ ingress:
 # domain — an unauthenticated default would be the wrong way round. Turn it off only for a
 # local single-user cluster, or where something in front already authenticates the route.
 #
-# ACCESS MODEL: authentication, not authorization. Anyone who can log into the cluster can
-# view. That is the documented default of the OpenShift provider ("defaults to allowing any
-# user that can log into the OpenShift cluster"), and it is deliberate here — the dashboard
-# shows nothing a user could not already read with `oc get groups`, so gating it behind an
-# access request would add friction without adding protection. Set `sar` to restrict.
+# ACCESS MODEL for the UI: authentication, not authorization. Anyone who can log into the
+# cluster can view. That is the documented default of the OpenShift provider ("defaults to
+# allowing any user that can log into the OpenShift cluster").
+#
+# BE PRECISE ABOUT WHAT THAT EXPOSES. This comment used to claim the dashboard "shows nothing
+# a user could not already read with `oc get groups`", and that is true of the Groups tab and
+# nothing else. The dashboard reports the cluster's whole RBAC BINDING surface — every
+# ClusterRoleBinding and RoleBinding, the role each grants, and which subjects hold it —
+# which reading Groups does not give you. The same mistake had been made in the /api review
+# and was a measured privilege escalation; see apiTokenAccess below.
+#
+# So treat UI access as equivalent to cluster-wide RBAC read. If that is not who should be
+# looking, set `sar` — e.g. to require `list clusterrolebindings`, matching what the API
+# review demands.
 oauthProxy:
   enabled: true
 

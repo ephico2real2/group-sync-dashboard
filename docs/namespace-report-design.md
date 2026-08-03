@@ -316,8 +316,13 @@ is justified; until then it is not.
 ## 6. What the report says — structure by default, people by explicit switch
 
 The framing that decides everything: today, PII exposure is bounded by authentication and a
-browser tab (`values.yaml:489-495` — *"shows nothing a user could not already read with
-`oc get groups`"*). **A file that gets emailed has neither bound** — no authentication on a
+browser tab.
+
+> **Correction, 2026-08-02.** This section originally leaned on `values.yaml`'s claim that the
+> dashboard *"shows nothing a user could not already read with `oc get groups`"*. That claim
+> was wrong and has been removed from the chart: the dashboard reports the whole RBAC binding
+> surface, not just group membership. The §5 conclusions do not change — if anything the case
+> for minimising the export is stronger — but the premise no longer reads as it did. **A file that gets emailed has neither bound** — no authentication on a
 forwarded attachment, no record of who read it. So the export defaults to access *structure*,
 and membership rosters require an explicit, recorded switch.
 

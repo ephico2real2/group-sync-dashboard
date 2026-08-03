@@ -1,4 +1,4 @@
-# GroupSync dashboard
+# OCP Access Control Dashboard
 
 Read-only observability for the
 [redhat-cop group-sync-operator](https://github.com/redhat-cop/group-sync-operator).
@@ -28,10 +28,26 @@ groups that have never existed** — access reaching nobody, in three namespaces
 | Where | What |
 |---|---|
 | [`docs/reference-architecture.md`](docs/reference-architecture.md) | **start here to operate or extend it** — components, poll and request flow, data model, concurrency, security, and the reason behind each deliberate constraint |
-| [`charts/group-sync-dashboard/`](charts/group-sync-dashboard/) | the Helm chart — how you deploy it, and every value |
-| [`local-development/`](local-development/README.md) | the application, tests, build tooling and raw manifests |
+| [`charts/group-sync-dashboard/`](charts/group-sync-dashboard/README.md) | the Helm chart — how you deploy it, and every value |
+| [`local-development/`](local-development/README.md) | the application, tests and build tooling |
 | [`local-development/API.md`](local-development/API.md) | every endpoint, what each field means, the ones routinely misread |
-| [`docs/`](docs/) | design notes: the storage seam, the audit write path, the namespace report, the image scan |
+
+Reading it from outside the cluster, and extending it:
+
+| Document | What |
+|---|---|
+| [`docs/api-access.md`](docs/api-access.md) | calling `/api` with `curl` or Postman — the token exchange, and the two Postman defaults that break it |
+| [`docs/api-contract.md`](docs/api-contract.md) | the seven rules a new endpoint must satisfy, each enforced by a test |
+| [`docs/updating-vendored-assets.md`](docs/updating-vendored-assets.md) | refreshing the Swagger/ReDoc bundles and the fonts, and why they live in git |
+
+Design notes, for the decisions that are not obvious from the code:
+
+| Document | What |
+|---|---|
+| [`docs/storage-coupling.md`](docs/storage-coupling.md) | why SQLite, the storage seam, and what a second backend would have to satisfy |
+| [`docs/unmanaged-audit-design.md`](docs/unmanaged-audit-design.md) | the one write path, its invariants, and the Kubernetes rule that caps it |
+| [`docs/image-vulnerability-scan.md`](docs/image-vulnerability-scan.md) | the CVE position, what is reachable, and what a rebuild cannot fix |
+| [`docs/namespace-report-design.md`](docs/namespace-report-design.md) | **PARKED** — per-namespace PDF reports, and the definitive answer on `--openshift-sar` |
 
 ## Install
 
@@ -68,19 +84,31 @@ ones most likely to matter:
 
 `oauthProxy.enabled=true` puts cluster login in front of the dashboard, as a sidecar.
 
-It is **authentication, not authorization**: anyone who can log into the cluster can view.
-That is the OpenShift provider's documented default and it is deliberate here — the
-dashboard shows nothing a user could not already read with `oc get groups`, so gating it
-behind an access request adds friction without adding protection. Set `oauthProxy.sar` to a
-SubjectAccessReview to restrict further.
+For the **UI**, it is authentication, not authorization: anyone who can log into the cluster
+can view. That is the OpenShift provider's documented default. Set `oauthProxy.sar` to a
+SubjectAccessReview if you need to restrict who may open it at all.
 
-Turning it on also switches the Ingress to `reencrypt`, binds the app to `127.0.0.1` so the
-proxy cannot be bypassed from inside the cluster, and moves the probes behind
+Be precise about what that exposes, because an earlier version of this paragraph was not.
+It said the dashboard "shows nothing a user could not already read with `oc get groups`".
+That is true of the Groups tab and of nothing else. The dashboard reports the cluster's whole
+RBAC **binding** surface — every ClusterRoleBinding and RoleBinding, the role each grants,
+and which subjects hold it — which reading Groups does not give you. Treat UI access as
+equivalent to cluster-wide RBAC read, and set `oauthProxy.sar` accordingly if that is not
+who you want looking.
+
+The **API** is gated properly. `oauthProxy.apiTokenAccess.enabled` lets a bearer token read
+`/api`, and the delegated review demands `list clusterrolebindings` cluster-wide — the honest
+floor for that data. Verified: an identity without it gets `403` where it would otherwise have
+read every binding on the cluster. See [`docs/api-access.md`](docs/api-access.md).
+
+Turning the proxy on also switches the Ingress to `reencrypt`, binds the app to `127.0.0.1`
+so the proxy cannot be bypassed from inside the cluster, and moves the probes behind
 `skip-auth-regex` — all handled by the chart.
 
-The proxy image defaults to the one that ships **with your cluster**, served from the
-internal registry, so starting a pod needs no external registry and no pull secret. Confirm
-the right image for any cluster with `oc adm release info --image-for=oauth-proxy`.
+The proxy image is `registry.redhat.io/openshift4/ose-oauth-proxy-rhel9:v4.15`, an explicit
+version rather than a tag whose digest tracks the cluster's release payload. It needs
+registry.redhat.io credentials, which a cluster's global pull secret normally already carries;
+`values.yaml` records how to check and how to fall back to the internal imagestream.
 
 ## Trusting corporate CAs
 
@@ -248,10 +276,32 @@ CR carries both `ReconcileSuccess` and `ReconcileError` at `status: True` indefi
 error counts as current only when its `lastTransitionTime` is newer than the success's;
 reading the condition's status alone would paint a healthy CR permanently red.
 
+## Reading it across a fleet
+
+The dashboard deploys **per cluster** and publishes its own API at a predictable hostname, so
+an aggregator does not have to host or store anything — it reads each cluster and composes:
+
+```bash
+read -rs GSD_PASSWORD && export GSD_PASSWORD
+local-development/cluster-report.py \
+  --clusters prod,staging,dev --domain example.com --ldap-user svc-reporter
+```
+
+Credentials are exchanged for a short-lived token against each cluster's own OAuth server —
+the same PKCE sequence `oc login -u -p` performs — so no `oc` and no kubeconfig are involved.
+One exchange per cluster, because an OpenShift token is issued by one cluster and meaningless
+to another. A cluster that cannot be reached appears in the report as `UNREACHABLE` rather
+than silently missing.
+
+Requires `oauthProxy.apiTokenAccess.enabled` and a calling account with cluster-wide RBAC
+read. Recipes for `curl` and Postman: [`docs/api-access.md`](docs/api-access.md).
+
 ## Not built yet
 
 Effective-permission expansion, log-scrape enrichment, the group-count cliff alert (needs a
-floor as well as a ratio), retention on the accumulated history, and per-cluster
-authorization for the multi-cluster case — OAuth authenticates against the hosting cluster
-only, so one instance holding several clusters' data can show a user membership from a
-cluster they have no rights on.
+floor as well as a ratio), retention on the accumulated history, per-namespace PDF reports
+(designed and **parked** — [`docs/namespace-report-design.md`](docs/namespace-report-design.md)),
+and per-cluster authorization for the multi-cluster case: OAuth authenticates against the
+hosting cluster only, so one instance holding several clusters' data can show a user
+membership from a cluster they have no rights on. Deploying per cluster and aggregating
+through the API, as above, avoids that entirely.
