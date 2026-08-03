@@ -65,12 +65,24 @@ jobs:
       # name meaning two different files.
       - name: Check the publish credentials are configured
         id: creds
+        # STEP-level env, not job-level. GitHub's docs suggest job-level env as the way to make
+        # secrets testable in an `if:`; this narrows it further so the credentials exist only in
+        # the two steps that actually need them, instead of in the environment of every step
+        # including the ones that run git. Same effect on the conditional, less exposure.
+        shell: bash
         env:
           REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
           REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
         run: |
           # Never echo the values. Presence only, so a missing secret is a legible message
           # rather than a podman login failure 40 lines into a build log.
+          #
+          # `-z` is exactly the right test, per the docs: "If a secret has not been set, the
+          # return value of an expression referencing the secret will be an empty string." So
+          # unset and empty are indistinguishable here, and both mean "cannot publish".
+          #
+          # Quoted, because a token can contain characters the shell would otherwise act on —
+          # the documented reason to quote secret expansions.
           if [ -z "${REGISTRY_USERNAME}" ] || [ -z "${REGISTRY_PASSWORD}" ]; then
             echo "::warning::REGISTRY_USERNAME / REGISTRY_PASSWORD are not set; skipping publish."
             echo "  Set them under Settings > Secrets and variables > Actions > Secrets."
@@ -81,6 +93,7 @@ jobs:
 
       - name: Preflight — the tools the script needs
         if: steps.creds.outputs.configured == 'true'
+        shell: bash
         run: |
           # Fails fast and legibly if the runner image ever drops podman, rather than midway
           # through a build. The script is podman-only by design: it is daemonless, so it
@@ -90,6 +103,7 @@ jobs:
 
       - name: Build, push, and rewrite the chart's image tag
         if: steps.creds.outputs.configured == 'true'
+        shell: bash
         working-directory: local-development
         env:
           # Registry and namespace are repo VARIABLES, not secrets — they are not sensitive and
@@ -111,6 +125,7 @@ jobs:
 
       - name: Pin the published tag on main
         if: steps.creds.outputs.configured == 'true'
+        shell: bash
         env:
           # Needed for the commit message only. Without it in scope the message would say
           # quay.io however the run was actually configured — a small lie in the one record of
