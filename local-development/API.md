@@ -241,7 +241,14 @@ selectable with `oc get ... -l`. Nothing here depends on it.
 
 `unresolved` deliberately does not alert: a group never observed cannot be distinguished
 from one that simply has not synced yet. It is still worth reading — those bindings grant
-nobody — which is why the UI shows them even though nothing pages.
+nobody — which is why the UI shows them even though nothing pages, and why the count sits on
+the cluster card: a reader who only looks at the UI must not see "No alerts" and conclude
+nothing is wrong.
+
+The three "group does not exist" tiers all share that symptom and are separated by what can be
+*proved* about the cause, which is why there are three rather than one.
+[`docs/reference-architecture.md`](../docs/reference-architecture.md) has the evaluation order,
+the reasoning, and a worked example from the reference cluster.
 
 Classification tests **provenance before the `system:` prefix**. The reverse order silently
 downgraded a genuinely dangling binding to `built_in` whenever a managed group carried that

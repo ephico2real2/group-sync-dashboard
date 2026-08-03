@@ -479,15 +479,59 @@ One SQL `CASE` decides all five tiers (`gsd/store.py:1180-1203`), in this order:
 Three tiers for broken resolution rather than one, because on the reference cluster 110 of
 149 distinct Group subjects are built-in virtual groups. Lumping those in gives 119 findings
 of which 9 matter, and a list that is 92% noise is one operators stop reading
-(`gsd/store.py:1156-1159`).
+(`gsd/store.py:1197-1200`).
 
 `unmanaged` additionally requires that the cluster demonstrably *uses* the policy operator —
 `EXISTS (… managed_source IS NOT NULL)`. Without that clause, every binding on a cluster
 that has never heard of `config-source` labels would flag.
 
-**Only `dangling` alerts** (`gsd/api.py:487-489`). `built_in` is normal, and `unresolved`
-cannot be told apart from a group that simply has not synced yet, so alerting on either
-produces noise that trains people to ignore the view.
+#### The three "group does not exist" tiers, and why they are three
+
+All three describe the same symptom — **the binding grants nobody** — and they are separated by
+what the dashboard can *prove* about the cause. Evaluated in this order, first match wins
+(`gsd/store.py:1213`, `_FINDING_CASE`):
+
+| Order | Tier | Condition | What it means |
+|---|---|---|---|
+| 1 | `dangling` | group absent **and** it has been seen carrying an operator sync-provider label | it existed, the operator synced it, and now it is gone — a regression |
+| 2 | `built_in` | group absent **and** the name matches `system:%` | a Kubernetes virtual group; no Group object is ever expected |
+| 3 | `unresolved` | group absent, and neither of the above | names a group that has never existed here |
+
+So `dangling` and `unresolved` **differ by evidence, not by symptom**. For `dangling` there is a
+positive record that the group was once managed, which makes its disappearance breakage. For
+`unresolved` there is no such record, which leaves three live possibilities and no way to choose
+between them from the cluster alone:
+
+1. a typo in the binding's group name,
+2. an onboarding that stopped halfway — the RoleBinding landed, the directory group never followed,
+3. a group that simply has not synced yet.
+
+**That ambiguity is why `unresolved` deliberately does not alert** (`gsd/api.py:615-617`):
+
+> Only the `dangling` tier alerts. `built_in` is normal, and `unresolved` cannot be
+> distinguished from a group that simply has not synced yet, so alerting on either would produce
+> noise that trains people to ignore this.
+
+It is not hidden either. The count sits on the cluster card precisely so that a reader who only
+ever looks at the UI does not see "No alerts" and conclude nothing is wrong. That is the
+compromise the tier exists to strike: **visible without crying wolf.**
+
+The reference cluster shows exactly what it is for — 9 bindings granting `admin`, `view` and
+`edit` across three namespaces, to groups that were never created:
+
+```
+app-ocp-rbac-klt-ns-{admin,audit,developer}       ns=klt-pass-mnemonic-3char
+app-ocp-rbac-klta-ns-{admin,audit,developer}      ns=klt-pass-both
+app-ocp-rbac-toolongx-ns-{admin,audit,developer}  ns=klt-fail-mnemonic-toolong
+```
+
+The namespace names suggest naming-convention tests where the bindings landed and the directory
+groups never followed. `oc get rolebinding` reports all nine as perfectly healthy objects, which
+is the failure this whole dashboard opens with.
+
+**Reading them operationally:** `dangling` means something broke — go fix it. `unresolved` means
+the grant is inert: finish the onboarding or delete the binding. If it is still there after a
+sync cycle or two, "not yet synced" has been ruled out.
 
 ### Bounded reads
 
