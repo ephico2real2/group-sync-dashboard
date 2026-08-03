@@ -83,8 +83,9 @@ read -rs GSD_PASSWORD && export GSD_PASSWORD
 ```
 
 Credentials are exchanged for a short-lived token against each cluster's own OAuth server, so
-no `oc` and no kubeconfig are involved. Needs `oauthProxy.apiTokenAccess.enabled` on the chart
-plus the calling account in `apiTokenAccess.readers`.
+no `oc` and no kubeconfig are involved. Needs `oauthProxy.apiTokenAccess.enabled` on the chart,
+and the calling account must hold cluster-wide RBAC read (`cluster-reader` or equivalent) —
+because `/api` reports the cluster's whole binding surface, not just group membership.
 
 curl and Postman recipes, and the two Postman defaults that break the flow:
 [`docs/api-access.md`](../docs/api-access.md).

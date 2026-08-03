@@ -16,38 +16,53 @@ Two things have to be true first.
 ```bash
 helm upgrade --install group-sync-dashboard charts/group-sync-dashboard \
   -n group-sync-dashboard \
-  --set oauthProxy.apiTokenAccess.enabled=true \
-  --set 'oauthProxy.apiTokenAccess.readers[0]=group:app-ocp-rbac-platform-ns-audit'
+  --set oauthProxy.apiTokenAccess.enabled=true
 ```
 
-`apiTokenAccess.enabled` adds `-openshift-delegate-urls` for the `/api` prefix and binds
-`system:auth-delegator` to the **proxy's** ServiceAccount. Without it, the proxy only
-understands browser cookies and a perfectly valid bearer token gets a `403` whose body is the
-login page.
+That adds `-openshift-delegate-urls` for the `/api` prefix and binds `system:auth-delegator` to
+the **proxy's** ServiceAccount — the proxy is the party that calls TokenReview and
+SubjectAccessReview. Callers do not need that role. Without this, the proxy only understands
+browser cookies and a perfectly valid bearer token gets a `403` whose body is the login page.
 
-`readers` grants the accounts that will call it. Name them exactly as the cluster does:
+### What the caller must be allowed to do, and why it is not `list groups`
 
-| Written as | Becomes |
-|---|---|
-| `system:serviceaccount:<namespace>:<name>` | ServiceAccount |
-| `group:<name>` | Group — **prefer this** |
-| anything without a colon | User |
-
-Prefer `group:`. It is the argument the Namespace audit tab makes about the cluster, applied
-to this chart: a binding that names a person survives their departure, one that names a group
-is revoked when the directory removes them from it.
-
-The caller needs **only** the permission the review names — `list groups` cluster-wide by
-default — and specifically **not** `system:auth-delegator`. Measured with `apiTokenAccess` on
-and neither identity holding that role:
+The review demands **cluster-wide RBAC read** (`list clusterrolebindings`). An earlier version
+demanded `list groups`, justified as "you could read this with `oc get groups` anyway". That was
+wrong, and measurably so. An account granted only `list groups`:
 
 ```
-system:serviceaccount:default:default   cannot list groups  ->  403
-developer, after readers[0]=developer   can list groups     ->  200
+oc list clusterrolebindings        ->  no
+oc list rolebindings -A           ->  no
+GET /api/.../bindings/findings    ->  229 bindings, including
+                                      app-ocp-rbac-alpha-cluster-admin-crb
 ```
 
-`grantAuthDelegator` exists for a caller that needs it for an unrelated reason. It defaults to
-`false`, because turning it on lets every listed account validate arbitrary bearer tokens.
+`/api` is not a group-membership API. It reports the cluster's whole RBAC binding surface —
+every ClusterRoleBinding and RoleBinding, the role each grants, and which subjects hold it.
+Gating that on `list groups` let an identity learn through the dashboard what it could not
+learn with `oc`. If you narrow the review, narrow what `/api` returns first.
+
+### Granting a reporting account
+
+Through your normal RBAC process, not through this chart. An earlier version had an
+`apiTokenAccess.readers` value that created the grant from the chart; it was removed, because
+with the correct review the required permission is cluster-wide RBAC read, and a Helm value
+that hands that out lets anyone who can edit a values file grant themselves that read. A chart
+value is the wrong control for a cluster-level privilege.
+
+The stock role already exists:
+
+```bash
+# prefer the group form — revoked by the directory when someone leaves
+oc adm policy add-cluster-role-to-group cluster-reader <ldap-group-for-reporting>
+
+# or a service account the aggregator runs as
+oc adm policy add-cluster-role-to-user cluster-reader \
+  system:serviceaccount:<namespace>:<name>
+```
+
+Verified after tightening: an identity that cannot list ClusterRoleBindings gets `403`, one
+that can gets `200`, and an unauthenticated request gets `403`.
 
 ## 2. Get a token
 

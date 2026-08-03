@@ -10,7 +10,7 @@ image:
   # tags <version>-<git-sha>. Editing them by hand works, but the script keeps them
   # consistent with an image that actually exists in the registry.
   repository: quay.io/ephico2real/group-sync-dashboard
-  tag: "0.6.0-8fc97a8022"
+  tag: "0.6.0-2cbb6f1d34"
   pullPolicy: Always
 
   # Only needed for a PRIVATE registry. Leave empty for a public repository: an empty
@@ -588,89 +588,62 @@ oauthProxy:
   # ---------------------------------------------------------------------------
   # Direct API access with a bearer token
   # ---------------------------------------------------------------------------
-  # Lets `curl -H "Authorization: Bearer $(oc whoami -t)" https://<host>/api/...` work.
+  # Lets `curl -H "Authorization: Bearer <token>" https://<host>/api/...` work, which is what
+  # an external aggregator needs — see docs/api-access.md.
   #
   # WHY IT IS OFF WITHOUT THIS. The proxy authenticates BROWSER sessions with a cookie. A
   # request carrying a bearer token and no cookie is simply unauthenticated as far as it is
-  # concerned, so /api returns 403 and the body is the login page — measured, and confusing,
-  # because the token is perfectly valid.
+  # concerned, so /api returns 403 with the login page as the body — confusing, because the
+  # token is perfectly valid.
   #
-  # -openshift-delegate-urls is the flag that changes it. Per the upstream README it applies
-  # ONLY to requests carrying `Authorization: Bearer` or a client certificate, which is
-  # exactly the machine case: browser sessions keep using the cookie flow untouched, and the
-  # token path is authorised by delegating to the API server.
+  # -openshift-delegate-urls is the flag that changes it. Per upstream it applies ONLY to
+  # requests carrying `Authorization: Bearer` or a client certificate, so browser sessions
+  # keep the cookie flow untouched and only the machine path is affected. It also needs
+  # system:auth-delegator on the PROXY's ServiceAccount, which the chart binds — the proxy is
+  # the party that calls TokenReview and SubjectAccessReview. Callers do NOT need that role.
   #
-  # THE FLAG IS NOT ENOUGH ON ITS OWN. Delegated authorization means the PROXY calls
-  # TokenReview and SubjectAccessReview, so its ServiceAccount needs system:auth-delegator.
-  # Enabling this therefore also renders a ClusterRoleBinding — see rbac.yaml for what that
-  # grants and what it does not.
+  # ---------------------------------------------------------------------------
+  # THE REVIEW MUST MATCH WHAT /api EXPOSES. Read this before changing it.
+  # ---------------------------------------------------------------------------
+  # This was `list groups` and that was WRONG — a privilege escalation, proven on the
+  # reference cluster. An account granted only `list groups`:
   #
-  # WHAT THE REVIEW REQUIRES. The default asks the caller to be able to `list groups`
-  # cluster-wide, which is the honest gate: the API returns group membership, so anyone who
-  # can read it here could already read it with `oc get groups`. Tighten it to a namespace or
-  # a different resource if your access model differs.
+  #     oc list clusterrolebindings        -> no
+  #     oc list rolebindings -A            -> no
+  #     GET /api/.../bindings/findings     -> 229 bindings, including
+  #                                           app-ocp-rbac-alpha-cluster-admin-crb
+  #
+  # /api is not a group-membership API. It reports the cluster's entire RBAC binding surface:
+  # every ClusterRoleBinding and RoleBinding, which role each grants, and which subjects hold
+  # it. Gating that on `list groups` let an identity learn through the dashboard what it could
+  # not learn with `oc`.
+  #
+  # So the review demands cluster-wide RBAC read, which is the honest floor for this data.
+  # If you narrow it, narrow what /api returns first.
   #
   # SCOPED TO /api DELIBERATELY. The prefix map does not cover "/", so the UI keeps its
-  # browser-only door and a token cannot be used to drive the HTML. Measured: with this on,
-  # `curl -H "Authorization: Bearer $(oc whoami -t)" .../api/clusters` returns 200 while the
-  # same token against "/" still returns 403.
+  # browser-only door and a token cannot be used to drive the HTML.
   #
-  # TWO SIDES, AND THEY NEED DIFFERENT THINGS. Worth being precise, because conflating them
-  # leads to over-granting:
+  # ---------------------------------------------------------------------------
+  # GRANTING A REPORTING ACCOUNT — deliberately NOT a chart value
+  # ---------------------------------------------------------------------------
+  # An earlier version had an `apiTokenAccess.readers` list that created the grant from here.
+  # It was removed, and the reason matters: with the correct review the required permission is
+  # cluster-wide RBAC read, so a chart value that hands it out makes anyone who can edit a
+  # values file able to grant themselves that read. A Helm value is the wrong control for a
+  # cluster-level privilege.
   #
-  #   THE PROXY'S ServiceAccount needs system:auth-delegator. It is the party that calls
-  #   TokenReview and SubjectAccessReview, so it needs create on both. The chart binds it
-  #   when this is enabled.
+  # Grant it through your normal RBAC process instead. The stock role already exists:
   #
-  #   THE CALLER — an LDAP account, or a service account an aggregator runs as — needs ONLY
-  #   the permission named in delegateUrls above. It does NOT need system:auth-delegator, and
-  #   granting it would let every caller validate arbitrary tokens for no benefit. Measured:
-  #   a ServiceAccount that cannot `list groups` gets 403; an identity that can gets 200, and
-  #   neither was given auth-delegator to achieve it.
+  #   oc adm policy add-cluster-role-to-group cluster-reader <ldap-group-for-reporting>
+  #   oc adm policy add-cluster-role-to-user  cluster-reader system:serviceaccount:<ns>:<sa>
   #
-  # So to let a reporting account through, grant it exactly the read the review names:
-  #   oc create clusterrole gsd-api-reader \
-  #     --verb=list --resource=groups.user.openshift.io
-  #   oc adm policy add-cluster-role-to-user gsd-api-reader <ldap-user-or-sa>
+  # Prefer the GROUP form. It is the argument the Namespace audit tab makes about the cluster,
+  # applied here: a grant naming a person survives their departure, one naming a group is
+  # revoked when the directory removes them from it.
   apiTokenAccess:
     enabled: false
-    delegateUrls: '{"/api":{"resource":"groups","group":"user.openshift.io","verb":"list"}}'
-
-    # Accounts allowed to call /api with a bearer token. Rendered by
-    # templates/api-readers.yaml into a ClusterRole matching delegateUrls above plus one
-    # binding. Empty means nobody is granted BY THIS CHART — existing cluster-admins and
-    # anyone who can already `list groups` still get in, because that is what the review asks.
-    #
-    # Name each account exactly as the cluster does; the kind is inferred:
-    #
-    #   system:serviceaccount:<namespace>:<name>   ServiceAccount
-    #   group:<name>                               Group   (preferred, see below)
-    #   <anything without a colon>                 User    (an LDAP username)
-    #
-    # A colon in any other shape fails the render rather than silently creating a User named
-    # "system:serviceaccount:foo" that matches nothing — a binding that grants nobody looks
-    # correct in `oc get` and is the same defect this dashboard reports as `dangling`.
-    #
-    # PREFER group:. It is the argument the Namespace audit tab makes about the cluster,
-    # applied to this chart: a binding naming a person survives their departure, one naming a
-    # group is revoked by the directory removing them from it.
-    readers: []
-    # readers:
-    #   - group:app-ocp-rbac-platform-ns-audit
-    #   - system:serviceaccount:rbac-reporting:aggregator
-    #   - svc-rbac-reporter
-
-    # Also give those accounts system:auth-delegator. ALMOST CERTAINLY UNNECESSARY.
-    #
-    # That role is for whoever CALLS TokenReview and SubjectAccessReview, which is the proxy,
-    # not the client. Measured with apiTokenAccess on and neither identity holding it:
-    #   system:serviceaccount:default:default  cannot list groups -> 403
-    #   kubeadmin                              can list groups    -> 200
-    #
-    # Turning this on lets every listed account validate arbitrary bearer tokens and query any
-    # subject's permissions, which buys nothing for reading this API. It exists for a caller
-    # that needs it for an unrelated reason.
-    grantAuthDelegator: false
+    delegateUrls: '{"/api":{"resource":"clusterrolebindings","group":"rbac.authorization.k8s.io","verb":"list"}}'
 
   # The interstitial page that offers exactly one login choice.
   #
