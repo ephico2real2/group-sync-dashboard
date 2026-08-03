@@ -1012,7 +1012,15 @@ function clusterCard(c) {
     <div class="muted" style="font-size:12px;margin-top:3px"><code>${esc(c.api_url)}</code></div>
     ${degraded ? `<div class="err" style="margin-top:8px;font-size:12px">${esc(c.error || "")}</div>` : ""}
     <div class="kpis">
-      <div class="kpi"><div class="label">GroupSync CRs</div><div class="value">${c.groupsync_count}</div></div>
+      <!-- "not installed" instead of a count when the CRD is absent. A bare 0 here is
+           indistinguishable from an installed operator with no CRs defined, and it is the
+           first number a reader looks at to explain why every group is unattributed.
+           Explicitly === false: null means never polled, which must stay a plain count. -->
+      <div class="kpi ${c.groupsync_operator_present === false ? "flag-warning" : ""}">
+        <div class="label">GroupSync CRs</div>
+        <div class="value">${c.groupsync_operator_present === false
+          ? `<span class="err" style="font-size:14px">operator not installed</span>`
+          : c.groupsync_count}</div></div>
       <div class="kpi"><div class="label">Groups</div><div class="value">${c.group_count}</div></div>
       <div class="kpi ${c.empty_groups ? "flag-warning" : ""}"><div class="label">Empty</div>
         <div class="value ${c.empty_groups ? "" : "muted"}">${c.empty_groups}</div></div>

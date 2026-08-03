@@ -330,7 +330,7 @@ class ClusterClient:
             timeout=self._timeout,
         )
 
-    def fetch(self) -> tuple[list[GroupSyncView], list[GroupView]]:
+    def fetch(self) -> tuple[list[GroupSyncView] | None, list[GroupView]]:
         """One poll's worth of reads. Raises ClusterError with a classified outcome.
 
         A MISSING GroupSync CRD IS NOT A POLL FAILURE. Reported from a real cluster that does
@@ -345,9 +345,15 @@ class ClusterClient:
         report them when the operator that usually creates them is absent.
 
         Groups are therefore fetched even when the CRD is not installed, and with no CR to claim
-        them every group has a NULL sync_provider, which is exactly the `unattributed` state
-        (`store.py:1664`). Same treatment `fetch_operator_configs` already gives the
+        them every group has a NULL sync_provider, which is exactly the `unattributed` state.
+        Same treatment `fetch_operator_configs` already gives the
         namespace-configuration-operator's CRDs.
+
+        RETURNS None FOR THE CRs, NOT []. The absence must stay visible: `[]` would render as
+        "GroupSync CRs: 0" on the Overview, indistinguishable from an installed operator with no
+        CRs defined, and the only remaining signal would be a line in the pod log. None is
+        carried to `replace_groupsync_state`, which records it, and `state.py` raises a
+        `groupsync_crd_absent` alert from it.
 
         401 and 403 still propagate. "The CRD does not exist" and "the ServiceAccount may not
         read it" are different problems and only the first is a normal state.
@@ -368,7 +374,7 @@ class ClusterClient:
                     "them to, every group shows as `unattributed`.",
                     self.cluster.name,
                 )
-                groupsyncs = []
+                groupsyncs = None
             groups = [_group_view(o) for o in self._list_all(client, GROUP_API)]
         return groupsyncs, groups
 

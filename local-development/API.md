@@ -31,6 +31,7 @@ One entry per configured cluster.
   "last_poll": "2026-08-02T00:14:32Z",
   "error": null,
   "groupsync_count": 2,
+  "groupsync_operator_present": true,
   "group_count": 62,
   "empty_groups": 0,
   "unattributed_groups": 0,
@@ -385,8 +386,20 @@ no authentication, so nothing is recorded whatever the setting says, and the end
 Computed on read across all clusters, sorted critical first.
 
 Kinds: `overdue`, `invalid_schedule`, `sync_stopped`, `empty_group`, `unattributed`,
-`stale_group`, `reconcile_error`, `dangling_binding`, plus the poll outcome for a degraded
-cluster.
+`stale_group`, `reconcile_error`, `dangling_binding`, `groupsync_crd_absent`, plus the poll
+outcome for a degraded cluster.
+
+`groupsync_crd_absent` fires when the group-sync-operator's CRD is not installed. It is raised
+FIRST because it explains every other finding on the page: with no CR to attribute anything to,
+every group is `unattributed` and every provider-based check has nothing to work with. Groups
+themselves are still read and shown, which the detail text says explicitly so a reader does not
+conclude the dashboard is broken.
+
+It requires absence to have been OBSERVED. `groupsync_operator_present` on the cluster card is
+three-valued — `true` / `false` / `null` (never polled) — and only `false` alerts. `null` must
+not, or upgrading would fire this for every cluster before it had looked at any of them. The
+field also disambiguates `groupsync_count: 0`, which otherwise reads identically for "operator
+not installed" and "installed, no CRs defined".
 
 A degraded cluster's group-level alerts are **skipped entirely**, because its cached rows are
 stale by definition and would report yesterday's state as today's.

@@ -166,6 +166,7 @@ def compute_alerts(
     no_schedule_stale_after: timedelta = timedelta(hours=24),
     operator_configs: list[dict] | None = None,
     user_bindings: list[dict] | None = None,
+    groupsync_present: bool | None = None,
 ) -> list[Alert]:
     """Compute the PLAN §8 conditions the first slice has data for.
 
@@ -174,6 +175,25 @@ def compute_alerts(
     """
     alerts: list[Alert] = []
     by_provider: dict[str, list[dict]] = {}
+
+    # THE CRD IS NOT INSTALLED. Raised first because it explains every other finding on the
+    # page: with no CR to attribute anything to, every group is `unattributed` and every
+    # provider-based check has nothing to work with.
+    #
+    # Explicitly `is False`, never falsy. None means "not observed yet" — a cluster that has
+    # not polled since the migration added the presence table — and treating that as absent
+    # would fire this for every existing cluster the moment it upgrades.
+    if groupsync_present is False:
+        alerts.append(
+            Alert(
+                cluster=cluster,
+                kind="groupsync_crd_absent",
+                subject="GroupSync CRD",
+                detail="the group-sync-operator is not installed on this cluster, so no group "
+                       "is managed by a CR and every group reports as unattributed. Groups "
+                       "themselves are still read and shown.",
+            )
+        )
 
     for group in groups:
         provider = group.get("sync_provider")

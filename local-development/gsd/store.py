@@ -215,6 +215,17 @@ CREATE TABLE IF NOT EXISTS operator_config_presence (
     present             INTEGER NOT NULL,
     observed_at         TEXT NOT NULL
 );
+
+-- Same question for the group-sync-operator's own CRD. Tracked for the same reason and one
+-- more: a cluster with no GroupSync CRD still HAS groups, and the dashboard reports them, so
+-- "0 CRs" on the Overview is indistinguishable from "the operator is not installed" unless
+-- absence is recorded. It used to be unmissable for the wrong reason — the poll failed and the
+-- cluster showed `unreachable` — which hid every group on the cluster.
+CREATE TABLE IF NOT EXISTS groupsync_presence (
+    cluster_id          TEXT PRIMARY KEY,
+    present             INTEGER NOT NULL,
+    observed_at         TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS rbac_binding_by_group
     ON rbac_group_binding(cluster_id, group_name);
 
@@ -285,6 +296,21 @@ _MIGRATIONS: list[tuple[int, str, list[str]]] = [
         "rbac_group_binding records the audit stamp, for stamp idempotency + healing",
         [
             "ALTER TABLE rbac_group_binding ADD COLUMN audit_stamped INTEGER NOT NULL DEFAULT 0",
+        ],
+    ),
+    (
+        3,
+        "groupsync_presence: is the group-sync-operator's CRD installed at all",
+        [
+            """CREATE TABLE IF NOT EXISTS groupsync_presence (
+                   cluster_id          TEXT PRIMARY KEY,
+                   present             INTEGER NOT NULL,
+                   observed_at         TEXT NOT NULL
+               )""",
+            # No backfill row. Absence of a row reads as "not yet observed", which the first
+            # poll after upgrade replaces with the truth. Defaulting every existing cluster to
+            # present=1 would be a guess, and defaulting to 0 would alert every cluster that
+            # upgrades before it next polls.
         ],
     ),
 ]
@@ -848,14 +874,29 @@ class Store:
             )
             return cursor.rowcount > 0
 
-    def replace_groupsync_state(self, cluster_id: str, rows: list[dict], observed_at: str) -> None:
+    def replace_groupsync_state(
+        self, cluster_id: str, rows: list[dict] | None, observed_at: str
+    ) -> None:
         """Replace this cluster's CR rows and their provider attributions together.
 
         Both in ONE transaction: a CR whose state is visible while its providers are not
         owns nothing for the duration, and every one of its groups would read as
         unattributed — a burst of phantom findings on each poll.
+
+        `rows=None` means the GroupSync CRD is NOT INSTALLED, which is distinct from `[]`
+        ("installed, no CRs defined") for the same reason it is for the policy operator: the
+        first is a fact about the cluster's shape, the second about its configuration. Both
+        store zero CR rows, so only the presence flag can tell them apart — and the Overview
+        needs to, or "GroupSync CRs: 0" silently describes two different clusters.
         """
         with self._write() as conn:
+            conn.execute(
+                """INSERT INTO groupsync_presence(cluster_id, present, observed_at)
+                   VALUES(?,?,?)
+                   ON CONFLICT(cluster_id) DO UPDATE SET
+                       present=excluded.present, observed_at=excluded.observed_at""",
+                (cluster_id, 0 if rows is None else 1, observed_at),
+            )
             conn.execute("DELETE FROM groupsync_state WHERE cluster_id=?", (cluster_id,))
             conn.executemany(
                 """INSERT INTO groupsync_state(cluster_id, name, namespace, schedule,
@@ -865,7 +906,7 @@ class Store:
                 [
                     {k: v for k, v in r.items() if k != "provider_keys"}
                     | {"cluster_id": cluster_id, "observed_at": observed_at}
-                    for r in rows
+                    for r in rows or []
                 ],
             )
             conn.execute("DELETE FROM groupsync_provider WHERE cluster_id=?", (cluster_id,))
@@ -875,7 +916,7 @@ class Store:
                    VALUES(?,?,?,?)""",
                 [
                     (cluster_id, r["name"], r["namespace"], key)
-                    for r in rows
+                    for r in rows or []
                     for key in r.get("provider_keys") or []
                 ],
             )
@@ -1426,6 +1467,19 @@ class Store:
                     [{**c, "cluster_id": cluster_id, "observed_at": observed_at}
                      for c in configs],
                 )
+
+    def groupsync_present(self, cluster_id: str) -> bool | None:
+        """Is the GroupSync CRD installed? None = never observed (no poll since upgrade).
+
+        Three-valued on purpose. False must mean "we looked and it is not there", so it can
+        raise an alert; a cluster that has not polled since the migration added this table has
+        not been looked at, and alerting on that would fire once for every existing cluster on
+        upgrade.
+        """
+        row = self._row(
+            "SELECT present FROM groupsync_presence WHERE cluster_id=?", (cluster_id,)
+        )
+        return None if row is None else bool(row["present"])
 
     def operator_configs(self, cluster_id: str) -> dict:
         """Health of the policy operator's CRs: {present: bool, configs: [...]}."""

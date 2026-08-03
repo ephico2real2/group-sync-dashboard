@@ -234,6 +234,10 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
                     "last_poll": row["last_poll"],
                     "error": row["message"],
                     "groupsync_count": len(crs),
+                    # Disambiguates the count above: 0 CRs with the operator installed is a
+                    # configuration to fix, 0 with no CRD is a different cluster shape. None
+                    # when never polled. Same three-valued contract as `reachable`.
+                    "groupsync_operator_present": store.groupsync_present(row["id"]),
                     "group_count": counts["total"],
                     "empty_groups": counts["empty"],
                     "unattributed_groups": counts["unattributed"],
@@ -602,6 +606,7 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
                 operator_configs=store.operator_configs(cluster_id)["configs"],
                 user_bindings=store.direct_user_bindings(cluster_id),
                 groups=store.groups(cluster_id, "all"),
+                groupsync_present=store.groupsync_present(cluster_id),
                 now=now,
                 grace=grace,
             )
