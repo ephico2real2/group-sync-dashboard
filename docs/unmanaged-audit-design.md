@@ -4,8 +4,8 @@ The dashboard finds grants that bypass the policy system and publishes them to t
 the RBAC policy tab and the API. This feature writes nothing, and the dashboard's only write
 anywhere is its own leader-election Lease — its coordination object, not anything it observes.
 The rendered ClusterRole holds `get` and `list` on `rolebindings`/`clusterrolebindings` and no
-verb that can change either (`charts/group-sync-dashboard/templates/rbac.yaml:61-63`), and the cluster client has no
-write method at all (`local-development/gsd/kube.py:228-241`).
+verb that can change either (`charts/group-sync-dashboard/templates/rbac.yaml#clusterrolebindings`), and the cluster client has no
+write method at all (`local-development/gsd/kube.py#UNREACHABLE`).
 
 A binding is `unmanaged` when it names an operator-synced group and carries neither the policy
 operator's `rbac.ocp.io/config-source` label nor an `rbac.ocp.io/unmanaged-exception`
@@ -13,7 +13,7 @@ annotation — somebody granted access by hand, outside the governance system, a
 on the cluster reports it. On the reference cluster 77 of 85 convention bindings carry the
 label, and the handful that do not are exactly the hand-made ones, including a
 ClusterRoleBinding granting `cluster-admin` that nothing manages
-(`local-development/tests/test_rbac.py:236-241`).
+(`local-development/tests/test_rbac.py#TestUnmanagedFinding`).
 
 **Until 2026-08-03 this document described a write path.** The feature stamped the objects it
 classified `unmanaged` with a label and two annotations, so an auditor could select them with
@@ -61,32 +61,32 @@ privilege on precisely the most dangerous grants, so a compromise of this pod be
 compromise, in exchange for a convenience label. All three were refused.
 
 The write path was therefore removed rather than documented as a limitation: the two patch
-methods from the cluster client (`kube.py:228-241` records what they were), the conditional
-`patch` grant from the ClusterRole (`rbac.yaml:35-53`), and the `annotate` mode itself
-(`config.py:277-293`). What remains is the half that was always the deliverable — the finding.
+methods from the cluster client (`kube.py#UNREACHABLE` records what they were), the conditional
+`patch` grant from the ClusterRole (`rbac.yaml#NO WRITE VERB`), and the `annotate` mode itself
+(`config.py#_audit_mode_setting`). What remains is the half that was always the deliverable — the finding.
 
 One artefact of the write is worth keeping in mind because it wasted an operator's time. The
 refusal was being reported as "the token lacks `patch` on rolebindings/clusterrolebindings"
 while `can-i` said yes, so the suggested remedy was a grant the ServiceAccount already had.
 There is now one 403 path left in the client and it names listing
-(`kube.py:259-262`), so that particular misreport cannot recur.
+(`kube.py#ClusterClient._get`), so that particular misreport cannot recur.
 
 ## What is published
 
 `log` mode emits one line per object plus a summary, on a refresh that runs every 300s
-(`config.py:181`), on the lease holder, after the cycle's rows are stored
-(`poller.py:314-318`). A cycle with nothing to report emits nothing at all: the summary is
-guarded on the plan being non-empty (`poller.py:329`), so a clean cluster is silent rather than
+(`config.py#Settings`), on the lease holder, after the cycle's rows are stored
+(`poller.py#refresh_bindings`). A cycle with nothing to report emits nothing at all: the summary is
+guarded on the plan being non-empty (`poller.py#refresh_bindings`), so a clean cluster is silent rather than
 producing a zero every five minutes.
 
-The summary, at INFO (`poller.py:330-345`):
+The summary, at INFO (`poller.py#refresh_bindings`):
 
 ```
 crc-local: unmanaged-grant discovery — 4 outside the policy system, 0 resolved since the
 last cycle. Full detail: GET /api/clusters/crc-local/bindings/findings
 ```
 
-Each finding, at **WARNING** (`poller.py:351-366`):
+Each finding, at **WARNING** (`poller.py#refresh_bindings`):
 
 ```
 UNMANAGED GRANT DISCOVERED — crc-local: ClusterRoleBinding demo-cluster-admin-crb
@@ -94,11 +94,11 @@ UNMANAGED GRANT DISCOVERED — crc-local: ClusterRoleBinding demo-cluster-admin-
 policy system (no config-source label, no exception annotation)
 ```
 
-WARNING rather than INFO for two reasons, both stated at `poller.py:355-358`: the poller emits
+WARNING rather than INFO for two reasons, both stated at `poller.py#refresh_bindings`: the poller emits
 INFO for every routine HTTP call, so a finding at INFO is buried by the traffic around it, and a
 log pipeline needs a level to filter on. The fixed prefix is there to be alerted on.
 
-Each resolution, at INFO (`poller.py:368-384`):
+Each resolution, at INFO (`poller.py#refresh_bindings`):
 
 ```
 unmanaged grant RESOLVED — crc-local: RoleBinding demo-prod/demo-prod-audit-rb is no longer
@@ -109,10 +109,10 @@ demo-prod-audit-rb rbac.ocp.io/unmanaged-
 
 The line names the object, what it grants, to whom, and why that is a finding, so it stands
 alone as evidence without opening the dashboard. That is what the `evidence` dict on the plan
-exists for (`audit.py:29-35`, `audit.py:80-84`); only the groups whose rows were classified
+exists for (`audit.py#StampPlan`, `audit.py#plan_audit_stamps`); only the groups whose rows were classified
 unmanaged are cited, because a binding can name two groups and be unmanaged for only one, and
 citing the managed one would send a reader to inspect a grant that is fine
-(`audit.py:65-71`, tested at `test_audit_stamp.py:144-157`).
+(`audit.py#plan_audit_stamps`, tested at `test_audit_stamp.py#TestEvidenceIsSelfContained.test_only_the_unmanaged_group_is_evidence`).
 
 **The summary's first number is every finding awaiting acknowledgement — not the number of
 lines beneath it, and not the cluster's total.** Until 2026-08-03 it was the count actually
@@ -127,9 +127,9 @@ the headline reverts to the capped count.
 It is still narrower than the cluster's total, in one direction only: an object already carrying
 the `rbac.ocp.io/unmanaged` label is a finding but is not re-announced (I3 below), so it is in
 neither number. The label gates announcement, not classification — `audit_stamped` appears
-nowhere in the classifying `CASE` (`store.py:1188-1194`), only in the announcement filter
-(`audit.py:73`). The cluster-wide set is `GET /api/clusters/{id}/bindings/findings`
-(`api.py:416`), which the summary line points at for exactly this reason.
+nowhere in the classifying `CASE` (`store.py#Store.user_bindings`), only in the announcement filter
+(`audit.py#plan_audit_stamps`). The cluster-wide set is `GET /api/clusters/{id}/bindings/findings`
+(`api.py#user_detail`), which the summary line points at for exactly this reason.
 
 ## How a finding is suppressed
 
@@ -140,9 +140,9 @@ oc annotate clusterrolebinding <name> \
   rbac.ocp.io/unmanaged-exception="approved in TICKET-123, break-glass access"
 ```
 
-The dashboard reads that annotation (`kube.py:68`, `kube.py:516`) and stops classifying the
-binding as unmanaged (`store.py:1189`), so it leaves the log, the RBAC policy tab and the API.
-Tested at `test_rbac.py:274-281`.
+The dashboard reads that annotation (`kube.py#UNMANAGED_EXCEPTION_ANNOTATION`, `kube.py#_user_binding_views`) and stops classifying the
+binding as unmanaged (`store.py#Store.user_bindings`), so it leaves the log, the RBAC policy tab and the API.
+Tested at `test_rbac.py#TestUnmanagedFinding.test_the_exception_annotation_acknowledges_it`.
 
 This is separation of duties rather than a limitation. The justification lives next to the
 object it describes, where the next person to read that binding will find it, and the
@@ -150,8 +150,8 @@ acknowledgement is performed by somebody who holds the privileges — which the 
 deliberately does not. There is no dashboard-side allowlist, so a finding cannot be silenced by
 whoever happens to run the dashboard.
 
-The `rbac.ocp.io/unmanaged` label is still **read** and never written (`kube.py:78`,
-`kube.py:515`), and served per row as `audit_stamped` (`store.py:1236`). If an admin or a CI job
+The `rbac.ocp.io/unmanaged` label is still **read** and never written (`kube.py#UNMANAGED_EXCEPTION_ANNOTATION`,
+`kube.py#_binding_views`), and served per row as `audit_stamped` (`store.py#Store`). If an admin or a CI job
 applies it, the dashboard notices, and when the binding stops being unmanaged it reports
 `unmanaged grant RESOLVED` with the command that removes the now-stale label. The label is an
 input to this system now, not an output of it.
@@ -164,8 +164,8 @@ of this feature needs to be able to find out what happened to it.
 
 **I1 — Write set. RETIRED: there is no write.** The clause used to bound the patch body to
 three metadata keys. What replaces it is not a bound on writing but its absence: no write verb
-in the ClusterRole (`rbac.yaml:61-63`), no write method on the client (`kube.py:228-241`), and
-a GET-only HTTP API enforced by `test_api_contract.py:229-240`. Measured by rendering the chart
+in the ClusterRole (`rbac.yaml#clusterrolebindings`), no write method on the client (`kube.py#UNREACHABLE`), and
+a GET-only HTTP API enforced by `test_api_contract.py#test_r6_the_api_is_read_only`. Measured by rendering the chart
 at `mode` = `off`, `log`, `annotate`, an unrecognised word and the empty string: **zero
 occurrences of `"patch"`** in each of the five renders, and the only write verbs anywhere in the
 chart are `get`/`create`/`update` on the leader-election Lease. Enforced by
@@ -181,13 +181,13 @@ targeted now. An object is a finding only if its group resolves, its group is op
 the binding carries no `config-source` label, the binding carries no exception annotation, and
 the cluster demonstrably uses the policy operator — some managed binding exists, so a cluster
 that has never heard of `config-source` labels reports zero findings rather than sixty. All five
-conditions are one SQL `CASE` (`store.py:1188-1194`), which is also what the API and the counts
+conditions are one SQL `CASE` (`store.py#Store.user_bindings`), which is also what the API and the counts
 read, so the log and the UI cannot disagree about what a finding is. Tests:
-`test_audit_stamp.py:28-50` and `test_rbac.py:233-302`.
+`test_audit_stamp.py#TestI2TargetSet.test_only_unmanaged_rows_are_stamped` and `test_rbac.py#TestUnmanagedFinding`.
 
 **I3 — Announced once while the label is absent.** Was "Idempotent", and the reason changed
 completely. An object already carrying `rbac.ocp.io/unmanaged=true` is left out of the discovery
-list (`audit.py:70`). There is no longer a patch to be idempotent about; what this now governs
+list (`audit.py#plan_audit_stamps`). There is no longer a patch to be idempotent about; what this now governs
 is the log — a hand-applied or CI-applied label stops the per-cycle WARNING for that object
 while leaving the finding in the API and the UI, and the RESOLVED line still fires when it stops
 being unmanaged. The immutable `detected-at` annotation died with the write, so nothing records
@@ -195,61 +195,61 @@ how long a grant has existed unacknowledged; the first-seen time is now whatever
 retains. Stated plainly as a cost: an unlabelled finding is re-announced every 300s, because the
 plan is computed fresh each cycle and has no memory of the last one. That is what makes the line
 alertable, and it also means the log repeats until the grant is adopted, annotated or labelled.
-Test: `test_audit_stamp.py:53-56` (its assertion holds; its stated reason, protecting the
+Test: `test_audit_stamp.py#TestI3Idempotency.test_an_already_stamped_binding_is_never_patched_again` (its assertion holds; its stated reason, protecting the
 first-detected timestamp, no longer applies).
 
 **I4 — Resolution is reported, not performed.** Was "Self-healing selection". An object that
 carries the label and is no longer classified unmanaged by any of its rows produces the RESOLVED
-line (`audit.py:71`, `poller.py:368-384`). The multi-subject rule is the one worth knowing: a
+line (`audit.py#plan_audit_stamps`, `poller.py#refresh_bindings`). The multi-subject rule is the one worth knowing: a
 binding naming two groups resolves only when *no* row is unmanaged, so one acknowledged group
 does not close a finding about the other. The dashboard cannot remove the label, so the line
 repeats each cycle while the stale label remains and carries the `oc label ...
-rbac.ocp.io/unmanaged-` command that ends it. Tests: `test_audit_stamp.py:59-76`.
+rbac.ocp.io/unmanaged-` command that ends it. Tests: `test_audit_stamp.py#TestI4SelfHealing.test_a_stamped_binding_no_longer_unmanaged_is_healed`.
 
 **I5 — Mode-gated, and an unrecognised value fails to `off`.** `config.unmanagedAudit.mode` is
-`off` or `log` (`config.py:265-295`). `off` runs no discovery code at all (`poller.py:317`).
+`off` or `log` (`config.py#_ca_cache_lock`). `off` runs no discovery code at all (`poller.py#refresh_bindings`).
 `annotate` downgrades to `log` with a warning at settings load, deliberately not to `off`, which
-would silently take the findings away from a cluster that had it set (`config.py:277-293`).
-Anything else is `off`, because a typo must not enable a mode (`config.py:294-295`).
+would silently take the findings away from a cluster that had it set (`config.py#_audit_mode_setting`).
+Anything else is `off`, because a typo must not enable a mode (`config.py#_audit_mode_setting`).
 
 What changed, twice over. The mode no longer affects RBAC — and the chart's default moved from
 `off` to `log`. `off` was the right default while this could write, because a default that
 patches cluster objects has to be opted into; with nothing written, the only thing it buys is a
 governance tool that has found a hand-made `cluster-admin` grant and declines to mention it. A
-cluster with no unmanaged grants logs nothing (`poller.py:329`), so the new default costs nothing
+cluster with no unmanaged grants logs nothing (`poller.py#refresh_bindings`), so the new default costs nothing
 where there is nothing to report.
 
 Note that the two defaults differ, which matters when reading a running instance. The chart ships
 `config.unmanagedAudit.mode: log`, so a Helm install discovers by default. The **application**
 still defaults to `off` when the setting is absent altogether — a bare `Settings()`, or a
-ConfigMap without the key (`config.py:223`, `config.py:273`, asserted by
-`test_audit_stamp.py:121-122`) — which is what a hand-rolled deployment or a local run gets. To
+ConfigMap without the key (`config.py#Settings`, `config.py#_audit_mode_setting`, asserted by
+`test_audit_stamp.py#TestI5ModeGating.test_the_default_is_off`) — which is what a hand-rolled deployment or a local run gets. To
 know which one an instance is in, read the rendered `unmanagedAuditMode`
-(`templates/configmap.yaml:27`), not either default.
+(`templates/configmap.yaml#unmanagedAuditMode`), not either default.
 
 Measured — the only difference between the `off`, `log`, `annotate` and unrecognised-word renders
 is the one string in the ConfigMap and the checksum annotation that follows from it; every RBAC
-object is identical. Tests: `test_audit_stamp.py:94-122`.
+object is identical. Tests: `test_audit_stamp.py#TestI5ModeGating.test_an_unrecognised_mode_fails_safe_to_off`.
 
 **I6 — Bounded log volume.** Was "Bounded blast radius", and the blast radius it was named for
 is gone. `maxPerCycle` (default 20) caps how many findings are listed individually per refresh;
 the remainder is counted and reported as "not yet listed" in the summary rather than dropped, so
-the true total is recoverable from the line (`audit.py:72-74`, `poller.py:337`). The cap takes a
+the true total is recoverable from the line (`audit.py#plan_audit_stamps`, `poller.py#refresh_bindings`). The cap takes a
 sorted prefix, so deferred findings converge instead of being re-deferred forever. Resolutions
 are never capped: a closed finding must not queue behind new ones. A misclassification bug costs one
 screenful of log per 300s cycle rather than a cluster's worth. Tests:
-`test_audit_stamp.py:79-91`, `test_audit_stamp.py:72-76`.
+`test_audit_stamp.py#TestI6BlastRadius.test_stamps_are_capped_and_the_deferral_is_counted`, `test_audit_stamp.py#TestI4SelfHealing.test_healing_is_never_capped`.
 
 **I7 — One announcer, in the default shape.** Was "Single writer", and it still constrains
 something real. The discovery runs on the binding-refresh path, reached only by the lease
-holder: a standby replica skips the cycle (`poller.py:442-455`) before it can get to
-`refresh_bindings` (`poller.py:486-492`). At the chart's defaults — `replicaCount: 1` with
+holder: a standby replica skips the cycle (`poller.py#Poller._maybe_backup`) before it can get to
+`refresh_bindings` (`poller.py#Poller._run_cluster`). At the chart's defaults — `replicaCount: 1` with
 `leaderElection.enabled: true` — that stops an overlapping old and new pod, from a `Recreate`
 rollout, a partitioned node or a `kubectl scale`, announcing the same grant twice.
 
 Above one replica it does not hold, and the cost is worth stating rather than omitting.
 `replicaCount > 1` requires `leaderElection.enabled=false` or the chart refuses to render
-(`templates/deployment.yaml:1-2`), because each pod then keeps its own database and must poll
+(`templates/deployment.yaml#requires leaderElection.enabled=false`), because each pod then keeps its own database and must poll
 for itself. Every pod runs the discovery, so a log pipeline alerting on the
 `UNMANAGED GRANT DISCOVERED` prefix sees one copy per replica. That is a property of the
 multi-pod shape, not something the discovery can fix from its side. `test_leader.py` covers the
@@ -257,9 +257,9 @@ elector; nothing tests this gate specifically.
 
 **I8 — Failure isolation. RETIRED as written**, because no patch can fail. Two weaker
 properties remain and they are not the same claim. The discovery runs last in the refresh, after
-the cycle's rows are committed (`poller.py:314-318`), so nothing it does can cost the refresh its
+the cycle's rows are committed (`poller.py#refresh_bindings`), so nothing it does can cost the refresh its
 data. And the call is wrapped, so an exception in the plan or the logging cannot kill the poll
-thread (`poller.py:487-494`).
+thread (`poller.py#Poller._run_cluster`).
 
 ## Races considered
 
@@ -269,17 +269,17 @@ the annotations recorded that the window existed. That answer is gone, because a
 be withdrawn. So the honest position is that a migration produces a false-positive WARNING for
 each 300s cycle the window spans, and nothing retracts them. The finding stops being reported the
 cycle after the label lands, with no RESOLVED line unless somebody had labelled the object, since
-resolution requires the label to be present (`audit.py:71`). The mitigation is in the line
+resolution requires the label to be present (`audit.py#plan_audit_stamps`). The mitigation is in the line
 itself: it names the role and the group, so a human reading it during a known migration can see
 what it is.
 
 **Stale classification after a failed group poll** — unchanged, and the reasoning survives
 because it was never about writing. A failed poll returns before it touches `group_state`
-(`poller.py:97-100`), so findings are computed against the last successful poll's
-`group_state`/`managed_group_seen` (`store.py:1198-1204`) and a transient failure changes no
+(`poller.py#poll_once`), so findings are computed against the last successful poll's
+`group_state`/`managed_group_seen` (`store.py#Store.binding_findings`) and a transient failure changes no
 classification at all. When a group genuinely disappears, the binding becomes `dangling`, which
-outranks `unmanaged` in the same `CASE` (`store.py:1176-1177`), so a vanished group can never
-manufacture an unmanaged finding. Tested at `test_rbac.py:290-302`.
+outranks `unmanaged` in the same `CASE` (`store.py#_FINDING_CASE`), so a vanished group can never
+manufacture an unmanaged finding. Tested at `test_rbac.py#TestUnmanagedFinding.test_broken_resolution_outranks_provenance`.
 
 **A grant created and removed between refreshes is never reported.** This is a sampler, not a
 watch: the ClusterRole holds no `watch` verb and the interval is 300s. A hand-made binding that
@@ -292,11 +292,11 @@ cluster to catch grants that have already stopped existing before anyone could a
 There is no staged rollout left. It used to exist because the last step took a write grant, and
 `log` was the rehearsal for it; now `log` is the feature and it needs no RBAC change — the
 ClusterRole is the same object in both modes, so the switch is a ConfigMap change and nothing
-else. The deployment's `checksum/config` annotation (`templates/deployment.yaml:45`) rolls the pod
-so the new value is read, since settings load once at process start (`api.py:872`).
+else. The deployment's `checksum/config` annotation (`templates/deployment.yaml#checksum/config`) rolls the pod
+so the new value is read, since settings load once at process start (`api.py#_factory`).
 
 What to check on first enabling it, in order. Read the rendered `unmanagedAuditMode`
-(`templates/configmap.yaml:27`) so you know which mode the pod is actually in. Wait one binding
+(`templates/configmap.yaml#unmanagedAuditMode`) so you know which mode the pod is actually in. Wait one binding
 refresh (300s) and compare the summary line against
 `GET /api/clusters/{id}/bindings/findings` — remembering that the summary's count excludes
 already-labelled objects and the capped remainder. Confirm each WARNING names a binding you can

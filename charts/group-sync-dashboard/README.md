@@ -105,7 +105,7 @@ container starting, which is a louder failure than the one above but still not a
 | `config.scheduleGraceSeconds` | `120` | stops the state flapping `late` every cycle. Must stay **above** `pollIntervalSeconds` |
 | `config.bindingIntervalSeconds` | `300` | bindings are listed across every namespace, so deliberately slower. Must stay above the group poll |
 | `config.requestTimeoutSeconds` | `15` | per-request timeout against a cluster's API server |
-| `logLevel` | `INFO` | `DEBUG` adds per-poll timing, page counts and the binding-refresh countdown. Not HTTP request lines — httpx logs those at `INFO` (`_client.py:1025`), so they are already present at the default |
+| `logLevel` | `INFO` | `DEBUG` adds per-poll timing, page counts and the binding-refresh countdown. Not HTTP request lines — httpx logs those at `INFO` itself (its `Client.send` calls `logger.info`, verified in 0.28.1), so they are already present at the default |
 | `nameOverride` / `fullnameOverride` | `""` / `""` | standard Helm naming overrides. Changing either after install renames every object, including the PVC — which orphans the accumulated history |
 
 Three values move together and two of them fail loudly if you move only one:
@@ -268,7 +268,7 @@ looks normal, and the first visible sign is a full volume or a latency cliff.
 
 Read-only, in every mode. This feature finds hand-made access grants and reports them, and
 writes nothing at all. The dashboard's only write on any cluster is its own leader-election
-Lease (`templates/rbac.yaml:31-33`) — its coordination object, not anything it observes.
+Lease (`templates/rbac.yaml#leases`) — its coordination object, not anything it observes.
 
 A binding is `unmanaged` when it grants an operator-synced group access and carries neither
 the policy operator's `rbac.ocp.io/config-source` label nor an
@@ -276,7 +276,7 @@ the policy operator's `rbac.ocp.io/config-source` label nor an
 governance system, and nothing on the cluster reports it. The classification also requires at
 least one *managed* binding to exist on that cluster, so a cluster that has never used
 config-source labels reports zero rather than flagging every binding on it
-(`local-development/gsd/store.py:1188-1194`).
+(`local-development/gsd/store.py#Store.user_bindings`).
 
 `config.unmanagedAudit.mode` defaults to `log`, so each finding is published as one
 self-contained line, at **WARNING** — the HTTP client logs a line per request at INFO, so a finding at INFO
@@ -324,7 +324,7 @@ oc annotate clusterrolebinding <name> \
   rbac.ocp.io/unmanaged-exception="approved in TICKET-123, break-glass access"
 ```
 
-The dashboard reads that annotation (`local-development/gsd/kube.py:514`) and stops
+The dashboard reads that annotation (`local-development/gsd/kube.py#_user_binding_views`) and stops
 classifying the binding as unmanaged, so it leaves the log, the RBAC policy tab and the API
 together. Two things follow from doing it this way. The justification lives next to the object
 it describes, rather than in a dashboard-side allowlist that drifts from the cluster. And the

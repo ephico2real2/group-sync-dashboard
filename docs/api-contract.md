@@ -61,6 +61,30 @@ There is exactly one today: the `/api/docs` redirect, hidden because it is an al
 than an endpoint. Anything else hidden from the schema is invisible to every reader who
 trusts it, so the exemption is deliberate and explained or it is not taken.
 
+## Citing code from a document
+
+Cite a **name**, never a line number: `` `gsd/store.py#Store.groups` ``. The anchor is a def, a
+class, a `Class.method`, a module-level constant, or — in a Helm template, where there are no
+symbols — any distinctive substring, usually the key the surrounding comment documents
+(`` `templates/rbac.yaml#leases` ``). A citation with no anchor means the whole file is the
+subject.
+
+`test_docs_citations.py` resolves every anchor: Python through the AST, so `Store.groups` works
+even though that exact string never appears in the file, and everything else by content. It also
+**fails the build on any `path:123` citation**, because that format is the reason this rule
+exists.
+
+Line numbers were the convention until 2026-08-03 and rotted continuously — any edit above the
+line invalidates it, which is most edits. The check that replaced them can only prove a line
+exists, not that it still says the same thing, and two citations in one paragraph of
+`reference-architecture.md` were found pointing at unrelated code while the suite was green
+(`gsd/api.py` 487-489 → 615-617, `gsd/store.py` 1156-1159 → 1197-1200). Converting all 219 of
+them surfaced eight more that were already wrong, including one off by 42 lines.
+
+The remaining limitation, stated because it is not obvious: an anchor proves the citation points
+at something real, not that the prose describes it correctly. Renaming a function and forgetting
+the docs is now caught. Changing what a function does and leaving the prose stale is not.
+
 ## When you add an endpoint
 
 1. Write the docstring first. If the first sentence is hard, the endpoint is doing two things.

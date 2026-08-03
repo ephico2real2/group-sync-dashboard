@@ -52,12 +52,12 @@ like the answer. It maps path prefixes to authorization checks, so a per-namespa
 is superficially tempting. It fails twice: the `ResourceAttributes` namespace is still static
 per entry, and — decisively — per the upstream README it applies **only to requests carrying
 `Authorization: Bearer` or a client certificate**. Our report request is a browser `fetch`
-with a session cookie (`index.html:498-504`), so it would never be evaluated against the map
+with a session cookie (`index.html#.risk-headline`), so it would never be evaluated against the map
 at all. A 100-entry generated prefix map would gate nothing. Do not build it.
 
 **What `--openshift-sar` remains good for:** a coarse front door — e.g. "you must be able to
 `list groups` cluster-wide to enter this dashboard at all". That is already plumbed
-(`values.yaml:530-533`, `deployment.yaml:202-204`) and stays as an optional operator knob. It
+(`values.yaml#serviceAccount`, `templates/deployment.yaml#probes.readiness.failureThreshold`) and stays as an optional operator knob. It
 is a gate, not a scoping mechanism.
 
 ## 2. What actually works: the viewer's own token
@@ -115,7 +115,7 @@ yes          # SSAR is available to every authenticated identity (system:basic-u
 
 1. **Proxy** adds `-pass-access-token` (verified present in the shipped v4.4 build). The app
    receives `X-Forwarded-Access-Token` on the upstream leg only. The browser never sees it, so
-   the PLAN §9 principle at `api.py:1-5` — *the frontend never holds a cluster credential* —
+   the PLAN §9 principle at `api.py` — *the frontend never holds a cluster credential* —
    survives intact.
    **New invariant, to be written down and tested:** the token is used per-request for
    authorization calls only. Never stored, never logged, never included in any error path that
@@ -138,9 +138,9 @@ yes          # SSAR is available to every authenticated identity (system:basic-u
    every namespace at generation time. **Any single failed check rejects the whole
    multi-namespace report** rather than silently omitting a section — a report missing a
    namespace it should have covered is worse than no report.
-6. **Proxy disabled → 403**, mirroring the existing pattern at `api.py:537-542`.
+6. **Proxy disabled → 403**, mirroring the existing pattern at `api.py#build_app`.
 7. **Hosting cluster only in v1.** OAuth authenticates against the hosting cluster
-   (`values.yaml:304-308`), so the viewer's token cannot answer entitlement questions about a
+   (`values.yaml#maxPerCycle`), so the viewer's token cannot answer entitlement questions about a
    remote cluster. Refuse reports for non-local clusters rather than mis-scope silently.
 
 ### The costs, stated plainly
@@ -150,7 +150,7 @@ yes          # SSAR is available to every authenticated identity (system:basic-u
 * **The app becomes a transit point for user credentials.** That is a genuine threat-model
   change, not a footnote, and it belongs in the PR description.
 * Report generation now depends on API-server availability. Acceptable: the existing argument
-  against per-read SARs (`values.yaml:283-285`) is about coupling *routine reads* to the API
+  against per-read SARs (`values.yaml#unmanagedAudit`) is about coupling *routine reads* to the API
   server. Report generation is an explicit, rare, user-initiated action.
 
 Gating it: a new chart value **`oauthProxy.passAccessToken`, default `false`**, and the feature
@@ -167,7 +167,7 @@ endpoint would not be RBAC. It would be one guarded door in a building with no w
 ### What exists today, measured
 
 **One endpoint out of nineteen performs any authorization**, and it does it inline:
-`dashboard_activity` (`api.py:515-555`) reads the identity header itself, checks
+`dashboard_activity` (`api.py#dashboard_activity`) reads the identity header itself, checks
 `oauth_proxy_enabled` itself, and applies the `self|all` policy itself. Every other endpoint is
 *authenticated-therefore-authorized* — if you got past the proxy, you see everything.
 
@@ -207,7 +207,7 @@ The layer gets built; the *policies* stay conservative. Three exist in v1:
 | `can_read_bindings(ns)` | SSAR: `list rolebindings` in that namespace, with the viewer's token | The report endpoint only |
 
 **Why most endpoints stay `authenticated` rather than SSAR-gated:** the chart already argues
-against coupling routine reads to API-server availability (`values.yaml:283-285`), and that
+against coupling routine reads to API-server availability (`values.yaml#unmanagedAudit`), and that
 argument is sound — an SSAR on every dashboard refresh would make the whole UI fail when the API
 server is briefly slow, and would add latency to the hot path. Report generation is an explicit,
 rare, user-initiated action, so it can afford the round trip.
@@ -222,7 +222,7 @@ endpoint later becomes a one-line policy change with a test**, instead of anothe
 headers only. `X-Forwarded-User` is never read anywhere else. With the proxy disabled the
 principal is `None` and any policy above `authenticated` returns 403 — the app binds `0.0.0.0`
 with no authentication in that mode, so an identity header is caller-supplied and worthless
-(`api.py:535-542` already reasons this way; the layer generalizes it).
+(`api.py#direct_user_bindings` already reasons this way; the layer generalizes it).
 
 **A2 — The credential never escapes.** The access token lives on the request-scoped principal,
 is passed only to authorization calls, and is never stored, logged, serialized into a response,
@@ -257,11 +257,11 @@ today**, and that is a property worth defending.
 | Candidate | Why not |
 |---|---|
 | **reportlab** | CVE-2023-33733 — CVSS 7.8 RCE via an `rl_safe_eval` sandbox bypass, public exploit released; CVE-2019-17626 before it. Not a currently-vulnerable tree, but a historically-exploited surface class. Also a low-level canvas API: every table, page break and footer becomes hand-maintained layout code |
-| **WeasyPrint** | Pulls pango, cairo, gdk-pixbuf, fontconfig — C libraries absent from ubi9-minimal. The image grows an **OS-level** CVE surface no Python audit will ever see, making "zero CVEs in the Python tree" technically true and practically misleading. Worse: layout on a large report can spike past the **512Mi limit** (`values.yaml:96`), and an OOM kill takes down the poller — whose accumulated history is the only irreplaceable state in this system. The report feature must never be able to kill that process |
+| **WeasyPrint** | Pulls pango, cairo, gdk-pixbuf, fontconfig — C libraries absent from ubi9-minimal. The image grows an **OS-level** CVE surface no Python audit will ever see, making "zero CVEs in the Python tree" technically true and practically misleading. Worse: layout on a large report can spike past the **512Mi limit** (`values.yaml#resources`), and an OOM kill takes down the poller — whose accumulated history is the only irreplaceable state in this system. The report feature must never be able to kill that process |
 | **Headless Chromium** | Hundreds of MB, sandbox friction under an arbitrary high UID, memory far beyond budget. Not serious |
 
 There is also a structural argument: whatever gathers the data must do it inside one
-`@consistent` snapshot with no yield/await/streaming (`api.py:111-131`, enforced by
+`@consistent` snapshot with no yield/await/streaming (`api.py#build_app`, enforced by
 `tests/test_read_snapshot_scope.py`). A streaming PDF writer fights that rule head-on; a
 fully-materialized JSON/HTML response fits it naturally.
 
@@ -298,12 +298,12 @@ The want — *one, several, or all of the namespaces I care about* — survives 
 * **the entitlement intersection doing most of the UX work**: the list is
   (user's projects ∩ namespaces the store has observed). The user entitled to 2 of 400 sees two
   rows. The scale problem exists only for the admin — who is exactly who the filter box serves;
-* `(cluster-scoped)` as one visually distinct pseudo-entry (the `''` rows, `store.py:1241`),
+* `(cluster-scoped)` as one visually distinct pseudo-entry (the `''` rows, `store.py#Store`),
   shown only to a viewer who passed the cluster-scope check;
 * Generate disabled at zero selected. Nothing preselected.
 
 **Universe = the store, not a new RBAC grant.** `DISTINCT binding_namespace` over
-`rbac_group_binding` + `user_binding` (index already exists, `store.py:192-193`). The report can
+`rbac_group_binding` + `user_binding` (index already exists, `store.py#SCHEMA`). The report can
 only speak about what the poller observed; adding a `namespaces: [get, list]` grant would add
 names the report has nothing to say about.
 
@@ -328,20 +328,20 @@ and membership rosters require an explicit, recorded switch.
 
 ### Provenance block, page one — without this it is a screenshot, not evidence
 
-* Classification/handling marking; cluster id + API URL (`store.py:33`).
+* Classification/handling marking; cluster id + API URL (`store.py#SCHEMA`).
 * **Generated at** (UTC) and **generated by** (`X-Forwarded-User`, noted as proxy-verified) —
   the requester is part of the evidence chain.
-* Dashboard version + git commit, **including the `dirty` flag** (`api.py:558-573`) — a
+* Dashboard version + git commit, **including the `dirty` flag** (`api.py#version`) — a
   compliance artifact from an unreproducible build should say so.
 * **Data freshness, split by kind** — the part a screenshot can never carry:
   * *snapshot* data (bindings, groups, member counts): "as observed at last poll `<ts>`;
-    bindings refresh every 300s" (`values.yaml:179`) — current as of the poll, not live;
+    bindings refresh every 300s" (`values.yaml#scheduleGraceSeconds`) — current as of the poll, not live;
   * *accumulated* data (membership/sync timeline): "covers only the period since this dashboard
-    began observing — earliest event `<ts>`" (already stamped at `api.py:240`, `api.py:420`).
+    began observing — earliest event `<ts>`" (already stamped at `api.py#list_clusters`, `api.py#build_app`).
     Without this an empty timeline reads as "nothing ever changed".
   * A **poll-failure banner** if the last poll failed.
-* **The direct-bindings-only caveat, verbatim from the code's own discipline** (`api.py:291-293`,
-  `store.py:1126`): role rules are never expanded — **this is not an effective-permissions
+* **The direct-bindings-only caveat, verbatim from the code's own discipline** (`api.py#list_events`,
+  `store.py#Store.replace_bindings`): role rules are never expanded — **this is not an effective-permissions
   calculation**. On an artifact titled "who has access", omitting that line converts an honest
   report into misleading evidence.
 * Scope, methodology and exclusions; sha256 of the canonical payload; "Page X of Y".
@@ -350,13 +350,13 @@ and membership rosters require an explicit, recorded switch.
 
 Sort by namespace, then severity, then subject, then binding — so two runs diff cleanly.
 
-1. **Findings first**: `dangling` (grants nobody, `store.py:1184`); `unmanaged` (governance
-   bypassed by hand, `store.py:1195-1201`, showing `exception` acknowledgements); and **direct
-   user bindings** (`store.py:1256`+) — the usernames here *are* the finding and the migration
+1. **Findings first**: `dangling` (grants nobody, `store.py#Store.binding_findings`); `unmanaged` (governance
+   bypassed by hand, `store.py#Store.binding_findings`, showing `exception` acknowledgements); and **direct
+   user bindings** (`store.py#Store.count_bindings_by_finding`+) — the usernames here *are* the finding and the migration
    worklist, and they belong in the export.
 2. **Operator reconcile health** per namespace (`operator_config_state`).
 3. **Group-based grants**: binding, role, group, `managed_source` provenance, and the member
-   **count** (`store.py:88`) — count, not roster.
+   **count** (`store.py#SCHEMA`) — count, not roster.
 4. **Cluster-scoped grants that also apply**: the full list only for a viewer who passed the
    cluster-scope check; for everyone else a **count plus a note**. Silently omitting them makes
    the access review false — cluster-admins genuinely do have access to the namespace — while
@@ -373,7 +373,7 @@ membership-change timeline, with its coverage disclaimer.
 ### Never in the export
 
 Dashboard usage/activity data (personnel data the code already treats differently —
-`api.py:524-533`, `store.py:234-241`); user emails (the report needs identities, not contact
+`api.py#direct_user_bindings`, `store.py#SCHEMA`); user emails (the report needs identities, not contact
 details); raw error text that could carry secrets; any data for a cluster other than the one
 that authorized the request.
 
@@ -393,8 +393,8 @@ that authorized the request.
 - Authz via `-pass-access-token` + per-namespace SSAR with the viewer's token; fail closed per
   §2.5; 403 without the proxy; hosting cluster only.
 - New chart value `oauthProxy.passAccessToken`, default `false`.
-- Read-only throughout. The SA is deliberately read-oriented (`rbac.yaml:1-5`), and the audit
-  write experiment (`docs/unmanaged-audit-design.md:59-107`) already demonstrated the cost of
+- Read-only throughout. The SA is deliberately read-oriented (`rbac.yaml`), and the audit
+  write experiment (`docs/unmanaged-audit-design.md#What the cluster measured`) already demonstrated the cost of
   exceeding that boundary.
 
 **Defer** — rosters default-on; server-side PDF; the Namespace-list grant; external-cluster

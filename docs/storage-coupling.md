@@ -27,7 +27,7 @@ Everything below is measured, not asserted.
 One class, `gsd/store.py::Store`, constructed in exactly one place:
 
 ```
-gsd/api.py:34    store = Store(settings.db_path, busy_timeout_ms=…, …)
+gsd/api.py#STATIC_DIR    store = Store(settings.db_path, busy_timeout_ms=…, …)
 ```
 
 That single construction site is the whole dependency-injection story. `Poller`,
@@ -35,7 +35,7 @@ That single construction site is the whole dependency-injection story. `Poller`,
 one. Replacing the implementation means changing one line plus whatever the constructor
 signature becomes.
 
-Inside, the connection model is deliberate and is documented at `store.py:212`:
+Inside, the connection model is deliberate and is documented at `store.py#SCHEMA`:
 
 | | |
 |---|---|

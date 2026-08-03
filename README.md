@@ -80,7 +80,7 @@ Reading it from outside the cluster, and extending it:
 | Document | What |
 |---|---|
 | [`docs/api-access.md`](docs/api-access.md) | calling `/api` with `curl` or Postman — the token exchange, and the two Postman defaults that break it |
-| [`docs/api-contract.md`](docs/api-contract.md) | the seven rules a new endpoint must satisfy, each enforced by a test |
+| [`docs/api-contract.md`](docs/api-contract.md) | the seven rules a new endpoint must satisfy, each enforced by a test — and how to cite code from a document |
 | [`docs/updating-vendored-assets.md`](docs/updating-vendored-assets.md) | refreshing the Swagger/ReDoc bundles and the fonts, and why they live in git |
 
 Design notes, for the decisions that are not obvious from the code:
