@@ -86,7 +86,21 @@ exist and both are refused here:
   which is the same thing wearing a smaller word.
 
 **Therefore `annotate` mode can only ever stamp bindings whose grants the dashboard already
-holds** — in practice the narrow, low-privilege ones. It fails safe: each refusal is a
+holds** — in practice the narrow, low-privilege ones.
+
+> **Measured 2026-08-03, and the sentence above is optimistic.** Enabling `annotate` on the
+> reference cluster produced `plan — stamp 4, heal 0` and then **0 of 4 succeeded**, including
+> a ClusterRoleBinding granting nothing but `view` and a namespaced RoleBinding granting
+> `view`. On OpenShift `view` alone covers dozens of resources the read-only SA does not hold
+> — the refusal named `appliedclusterresourcequotas`, `bindings`, `buildconfigs` and more —
+> so even the low-privilege end is out of reach. Treat `annotate` as reaching **nothing** on a
+> cluster of this shape, rather than "the narrow ones", and use `log` mode plus the API for
+> the audit trail.
+>
+> The refusal was also being reported as "the token lacks patch on
+> rolebindings/clusterrolebindings" while `oc auth can-i patch clusterrolebindings --as=<the
+> SA>` answered **yes** — an operator following that would add a grant they already had. The
+> two 403s are now distinguished, with a test for each. It fails safe: each refusal is a
 logged warning, the refresh continues, and the finding remains visible in the UI and the
 API. The dashboard reports the grant either way; only the on-object convenience label is
 lost. Enabling annotate mode remains reasonable for clusters where the unmanaged set is

@@ -381,10 +381,28 @@ class ClusterClient:
             except httpx.HTTPError as exc:
                 raise ClusterError(UNREACHABLE, f"{type(exc).__name__}: {exc}") from exc
         if response.status_code == 403:
+            # TWO DIFFERENT 403s, and conflating them sends the operator to fix the wrong
+            # thing. Measured on a cluster where the patch grant was correctly in place:
+            # `oc auth can-i patch clusterrolebindings --as=<the SA>` answered YES and every
+            # stamp still failed, while this message told them the token lacked patch.
+            #
+            # The API server distinguishes them in its text, so we can too.
+            body = response.text
+            if "not currently held" in body or "attempting to grant RBAC permissions" in body:
+                raise ClusterError(
+                    FORBIDDEN,
+                    "403 stamping a binding — PRIVILEGE ESCALATION PREVENTION, not a missing "
+                    "grant. Kubernetes requires a writer of an RBAC object to already hold "
+                    "every permission that object grants, even for a metadata-only patch, so "
+                    "this cannot be fixed by adding `patch`: the dashboard would need the "
+                    "binding's own privileges. Expected and harmless — the finding is still "
+                    "reported by the API and the UI. See docs/unmanaged-audit-design.md.",
+                )
             raise ClusterError(
                 FORBIDDEN,
                 "403 patching a binding — unmanagedAudit.annotate is enabled but the "
-                "token lacks patch on rolebindings/clusterrolebindings",
+                "token lacks patch on rolebindings/clusterrolebindings. Check with: "
+                "oc auth can-i patch clusterrolebindings --as=<the dashboard SA>",
             )
         if response.status_code >= 400:
             raise ClusterError(

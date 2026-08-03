@@ -166,3 +166,62 @@ class TestI1WriteSet:
             "annotations are the audit history and stay"
         )
         assert captured["path"].endswith("/clusterrolebindings/hand-made-crb")
+
+class TestForbiddenIsDiagnosable:
+    """The two 403s must not read alike, because they need opposite responses.
+
+    MEASURED on a live cluster with the patch grant correctly in place: every stamp failed and
+    the message said the token lacked patch, while `oc auth can-i patch clusterrolebindings
+    --as=<the SA>` answered **yes**. An operator following that message would add a grant they
+    already had and still see failures.
+
+    The real cause was privilege-escalation prevention — Kubernetes requires a writer of an
+    RBAC object to already hold every permission that object grants, even for a metadata-only
+    patch — which no amount of `patch` can satisfy.
+    """
+
+    @staticmethod
+    def _patch(monkeypatch, status: int, body: str):
+        import httpx
+
+        from gsd import kube
+
+        class _Resp:
+            status_code = status
+            text = body
+
+        class _Client:
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def patch(self, *a, **kw): return _Resp()
+
+        client = kube.ClusterClient.__new__(kube.ClusterClient)
+        monkeypatch.setattr(client, "_client", lambda: _Client(), raising=False)
+        return client
+
+    def test_escalation_prevention_says_so_and_does_not_blame_the_grant(self, monkeypatch):
+        from gsd.kube import ClusterError
+
+        body = ('clusterrolebindings.rbac.authorization.k8s.io "x" is forbidden: user "y" '
+                'is attempting to grant RBAC permissions not currently held: '
+                '{APIGroups:[""], Resources:["bindings"], Verbs:["get"]}')
+        client = self._patch(monkeypatch, 403, body)
+        with pytest.raises(ClusterError) as caught:
+            client.stamp_unmanaged_binding("ClusterRoleBinding", "", "x", "2026-01-01T00:00:00Z")
+        detail = str(caught.value)
+        assert "ESCALATION" in detail.upper(), detail
+        assert "lacks patch" not in detail, (
+            "still blaming the grant, which the operator already has"
+        )
+
+    def test_a_genuinely_missing_grant_still_says_to_check_the_grant(self, monkeypatch):
+        from gsd.kube import ClusterError
+
+        client = self._patch(monkeypatch, 403,
+                             'clusterrolebindings.rbac.authorization.k8s.io is forbidden: '
+                             'User cannot patch resource')
+        with pytest.raises(ClusterError) as caught:
+            client.stamp_unmanaged_binding("ClusterRoleBinding", "", "x", "2026-01-01T00:00:00Z")
+        detail = str(caught.value)
+        assert "lacks patch" in detail, detail
+        assert "oc auth can-i" in detail, "no way to check it is offered"
