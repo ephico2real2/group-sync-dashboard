@@ -181,11 +181,25 @@ including healthy ones — the caller filters.
 
 ```json
 {
-  "total": 228,
-  "counts": {"ok": 74, "dangling": 0, "unresolved": 9, "built_in": 145},
-  "ok": [], "dangling": [], "unresolved": [], "built_in": []
+  "total": 229, "limit": 500, "offset": 0, "truncated": false,
+  "counts": {"ok": 70, "dangling": 0, "unresolved": 9, "built_in": 146, "unmanaged": 4},
+  "ok": [], "dangling": [], "unresolved": [], "built_in": [], "unmanaged": [],
+  "operator_configs": {}
 }
 ```
+
+| Parameter | Default | |
+|---|---|---|
+| `limit` | `500` (max 5000) | rows across **all** tiers combined, not per tier |
+| `offset` | `0` | for paging through `total` |
+
+**`counts` and `total` always describe the whole cluster, never the page.** They come from a
+separate scalar query, because counting the rows you just limited is how "showing 50 of 30"
+reaches a report. `truncated` says whether rows were dropped.
+
+This was unbounded at the store, the API and the renderer simultaneously — measured at 2,280
+rows and 545,800 bytes on a cluster ten times the reference size, fetched on a 30-second
+auto-refresh.
 
 | Tier | Meaning | Alerts? |
 |---|---|---|
@@ -193,6 +207,7 @@ including healthy ones — the caller filters.
 | `dangling` | the group **was** operator-managed and has disappeared | **yes, critical** |
 | `unresolved` | names a group that has never existed here | no |
 | `built_in` | `system:*` virtual group; no object expected | no |
+| `unmanaged` | the group IS operator-synced, but no policy CR templates this binding — somebody granted access by hand | no |
 
 `unresolved` deliberately does not alert: a group never observed cannot be distinguished
 from one that simply has not synced yet. It is still worth reading — those bindings grant
@@ -204,6 +219,135 @@ prefix — a grants-nobody binding with no alert.
 
 Direct bindings only. Role rules are never fetched or expanded, so this is not an
 effective-permission calculation and must not be presented as one.
+
+### `GET /api/clusters/{cluster_id}/user-bindings`
+
+Roles granted **directly to a person** rather than to a group. The governance finding in its
+purest form: it survives offboarding, because removing someone from an LDAP group revokes
+nothing here, and it is invisible to every group-based review including the rest of this API.
+
+```json
+{
+  "cluster": "crc-local",
+  "note": "direct user grants; migrate these to LDAP-managed groups",
+  "by_namespace": [
+    {"namespace": "legacy-payments", "bindings": 3, "distinct_users": 3,
+     "worst_privilege": 3, "cluster_scoped": 0,
+     "users": ["asmith", "bwilliams", "jdoe"]}
+  ],
+  "excluded_platform": 36,
+  "namespace": null, "total": 6, "limit": 200, "offset": 0, "truncated": false,
+  "bindings": []
+}
+```
+
+| Parameter | Default | |
+|---|---|---|
+| `namespace` | none | restrict to one namespace. **See the sentinel below** |
+| `limit` | `200` (max 5000) | applies to `bindings` only |
+| `offset` | `0` | |
+| `include_platform` | `false` | see below |
+
+**`namespace=(cluster-scoped)` is the only way to ask for the cluster-wide rows, and nobody
+would guess it.** Those bindings have `binding_namespace: ""`, and an empty query parameter is
+indistinguishable from an absent one — which means "everything". So the literal string
+`(cluster-scoped)` is the sentinel, translated at the store boundary:
+
+```bash
+curl -sk -H "Authorization: Bearer $TOKEN" \
+  "https://$ROUTE/api/clusters/crc-local/user-bindings?namespace=(cluster-scoped)"
+# -> total 1, binding_namespace ""
+```
+
+**`by_namespace` is NOT paged**, and the asymmetry is deliberate. It is one row per namespace,
+bounded by a number the cluster already keeps small, and it is what the UI ranks risk from —
+truncating it would make the ranking a ranking of an arbitrary subset. `bindings` is the flat
+list that grows with people × grants, so that is what `limit` applies to.
+
+`worst_privilege` is `4` cluster-admin, `3` admin, `2` edit, `1` anything else. Rows are
+ordered worst-privilege first, then cluster-scoped, then count — **not** by count, because one
+forgotten `cluster-admin` matters more than twenty `view` grants.
+
+`users` is a **list**, not a comma-joined string. It was a string once and the UI rebuilt the
+set by splitting on `,` — which breaks the moment an IdP maps LDAP DNs to usernames, since
+`cn=jdoe,ou=People,dc=example,dc=com` becomes four people.
+
+`excluded_platform` counts what was left out: `system:*` identities and `kubeadmin` are
+break-glass with nowhere to migrate to, and on the reference cluster they were 34 of 36 rows.
+`include_platform=true` shows them.
+
+### `GET /api/clusters/{cluster_id}/operator-configs`
+
+Reconcile health of the namespace-configuration-operator's CRs (`NamespaceConfig`,
+`GroupConfig`) — the CRs that *template* the bindings above.
+
+```json
+{
+  "cluster": "crc-local",
+  "present": true,
+  "configs": [
+    {"kind": "GroupConfig", "name": "cluster-admin-groupconfig-rbac",
+     "error_at": null, "error_message": null,
+     "success_at": "2026-08-02T23:00:19Z", "observed_at": "2026-08-02T23:32:38Z"}
+  ]
+}
+```
+
+**`present` distinguishes "the CRDs are not installed" from "installed with zero CRs".** They
+are different truths and conflating them would let the UI report all-healthy about a concept
+the cluster does not have.
+
+A CR is currently failing when `error_at` is set and is *later* than `success_at`. A
+`NamespaceConfig` that stops reconciling raises nothing on the cluster — both its conditions
+stay `True` — so new namespaces silently receive no RBAC and drift stops being corrected.
+
+### `GET /api/whoami`
+
+```json
+{"user": "developer", "email": "developer@cluster.local", "authenticated": true}
+```
+
+Reflects the identity the **proxy** asserted, from `X-Forwarded-User`. With the proxy disabled
+the app binds `0.0.0.0` with no authentication, so those headers are whatever the caller typed
+— `authenticated` is `false` in that mode and nothing should trust the values.
+
+### `GET /api/dashboard/activity`
+
+Who used the dashboard: one row per user per UTC day, with first seen, last seen and an
+interaction count.
+
+```json
+{
+  "enabled": true, "retention_days": 400,
+  "scope": "self", "viewer": "developer",
+  "total": 1, "limit": 500, "truncated": false,
+  "summary": {"distinct_users": 1, "days": 1, "interactions": 250},
+  "activity": [{"user_name": "developer", "day": "2026-08-02",
+                "first_seen_at": "2026-08-02T12:46:04Z",
+                "last_seen_at": "2026-08-02T23:18:41Z", "request_count": 250}]
+}
+```
+
+**`scope` is `self` by default** — each person sees only their own row. This is identifiable
+personnel data (who was present, on which days, between which times), and the argument that
+carries the rest of this API, "you could read the groups with `oc` anyway", is true of group
+membership and false of who looked at it. `config.userActivity.visibility: all` widens it as a
+deliberate, documented choice.
+
+**`summary` describes the whole set, not the page.** It used to be computed in the browser from
+`activity`, which the API caps — measured against 1,092 stored rows, the UI reported 167 days
+and 5,000 interactions where the truth was 364 and 10,920.
+
+An **interaction** is one deliberate action, not one HTTP request: the page refreshes itself
+every 30s, and counting those measured how long a tab was left open rather than whether anyone
+used the dashboard. One real session read 722.
+
+**These are not logins.** The proxy owns the session, so the app never sees a sign-in or
+sign-out; `first_seen_at`/`last_seen_at` are the first and last request on that UTC day.
+
+Requires `oauthProxy.enabled` **and** `config.userActivity.enabled`. Without the proxy there is
+no authentication, so nothing is recorded whatever the setting says, and the endpoint returns
+`403` rather than trusting a caller-supplied name.
 
 ## Alerts
 
@@ -224,8 +368,28 @@ stale by definition and would report yesterday's state as today's.
 |---|---|
 | `GET /healthz` | liveness. Unconditional |
 | `GET /readyz` | readiness. **Not** gated on a reachable cluster — an unreachable cluster is a thing this dashboard exists to display, so failing readiness for one would take it down exactly when it has something to report |
-| `GET /api/version` | `{version, commit, branch, dirty}` from the build stamp. `dirty: true` means no commit reproduces the running image |
+| `GET /api/version` | `{version, commit, branch, dirty, timezone}` from the build stamp. `dirty: true` means no commit reproduces the running image. `timezone` is `{name, abbrev, utc_offset}` for the **container**, which the browser needs because it can only discover its own |
 | `GET /metrics` | Prometheus exposition. Unauthenticated so a ServiceMonitor can scrape it, which is why it emits counts and states only — never a group or user name |
+
+## The schema, served
+
+| Endpoint | |
+|---|---|
+| `GET /api` | Swagger UI |
+| `GET /api/docs` | `308` redirect to `/api` — one canonical URL, so the two cannot render different schemas after a FastAPI upgrade |
+| `GET /api/redoc` | ReDoc reference |
+| `GET /api/openapi.json` | the OpenAPI document, for codegen |
+
+Under `/api` rather than FastAPI's default `/docs` deliberately: `oauthProxy.skipAuthRegex`
+admits only `/healthz`, `/readyz` and `/metrics`, so everything under `/api` is authenticated
+exactly like the data it describes. A document naming every endpoint and field is a map of the
+cluster's RBAC surface.
+
+Both renderers are served from bundles committed to this repository, so they work on a cluster
+with no route to the internet — see [`../docs/updating-vendored-assets.md`](../docs/updating-vendored-assets.md).
+
+Rules a new endpoint must satisfy, each enforced by a test:
+[`../docs/api-contract.md`](../docs/api-contract.md).
 
 ## Trying it
 

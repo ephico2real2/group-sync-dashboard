@@ -56,6 +56,19 @@ helm install group-sync-dashboard charts/group-sync-dashboard \
   --namespace group-sync-dashboard --create-namespace
 ```
 
+For anything you will upgrade later, put the release's configuration in a file and pass it
+every time — see [`environments/`](environments/README.md):
+
+```bash
+helm upgrade --install group-sync-dashboard charts/group-sync-dashboard \
+  -n group-sync-dashboard -f environments/crc.yaml
+```
+
+Helm resets to chart defaults the moment `-f` or `--set` is given, keeping only what that
+invocation passed, so `--set` is **not** additive across upgrades. Measured on this chart: a
+later `helm upgrade --set logLevel=DEBUG` silently dropped an unrelated feature switch and
+reported success.
+
 That is enough. The host is derived from the cluster's own apps domain, the image comes from
 a public registry, the OAuth proxy is on by default, and the dashboard observes the cluster
 it runs on using the pod's projected ServiceAccount token — which kubelet rotates and the app

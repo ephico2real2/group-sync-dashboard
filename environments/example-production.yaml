@@ -1,0 +1,32 @@
+# Template for a real cluster. Copy to environments/<cluster>.yaml and edit.
+#
+#   helm upgrade --install group-sync-dashboard charts/group-sync-dashboard \
+#     -n group-sync-dashboard -f environments/<cluster>.yaml
+
+# Usually omit this. The chart reads the cluster's apps domain and derives
+# group-sync-dashboard.apps.<cluster>.<domain>. Set it ONLY when the chart cannot look it up
+# — under ArgoCD or any GitOps tool, because `helm template` has no cluster connection.
+# ingress:
+#   host: group-sync-dashboard.apps.prod.example.com
+
+oauthProxy:
+  enabled: true
+  # Bearer tokens on /api. Off unless an aggregator needs it. The review demands cluster-wide
+  # RBAC read, which is the honest floor for what /api reports — see docs/api-access.md.
+  apiTokenAccess:
+    enabled: false
+  # Restrict who may open the UI at all. Worth setting: UI access is equivalent to
+  # cluster-wide RBAC read, because the dashboard reports the whole binding surface.
+  # sar: '{"resource":"clusterrolebindings","resourceAPIGroup":"rbac.authorization.k8s.io","verb":"list"}'
+
+# Timezone for log lines and the rendered UI. Stored and served times stay UTC regardless.
+timezone: "America/New_York"
+
+# The dashboard's only write to a cluster. off | log | annotate — see
+# docs/unmanaged-audit-design.md before enabling annotate; Kubernetes caps it.
+config:
+  unmanagedAudit:
+    mode: "off"
+
+argocd:
+  enabled: false

@@ -262,3 +262,23 @@ def test_the_alias_redirects_rather_than_duplicating(tmp_path):
         assert alias.status_code == 308
         assert alias.headers["location"] == "/api"
         assert client.get("/api").status_code == 200
+
+def test_every_endpoint_appears_in_api_md(spec):
+    """API.md must name every route, or it quietly becomes a partial map.
+
+    It had drifted by six: /user-bindings, /operator-configs, /whoami,
+    /dashboard/activity and the two docs-UI routes. The first is the one that mattered — its
+    `(cluster-scoped)` namespace sentinel is the only way to reach the cluster-wide rows and
+    is not guessable, so an undocumented endpoint there is an unusable one.
+
+    Checked against the generated spec rather than the source, so a route that exists only in
+    a comment does not count, and matched on the literal path so a rename fails loudly.
+    """
+    api_md = pathlib.Path(__file__).resolve().parents[1] / "API.md"
+    assert api_md.exists(), f"{api_md} is missing"
+    text = api_md.read_text()
+    missing = [p for p in sorted(spec["paths"]) if p not in text]
+    assert not missing, (
+        "endpoints absent from API.md: " + ", ".join(missing)
+        + ". Document them, or a reader trusts an incomplete reference."
+    )

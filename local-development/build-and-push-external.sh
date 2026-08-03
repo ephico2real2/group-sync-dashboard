@@ -232,8 +232,36 @@ fi
 #
 # ingress.host is deliberately not passed: the chart derives it from the cluster's apps
 # domain via `lookup`, which works here because this is a real upgrade, not a template render.
+# THE VALUES FILE IS NOT OPTIONAL, and omitting it was a real bug in this script.
+#
+# Helm's upgrade precedence: with no -f and no --set it reuses the previous release's
+# user-supplied values, but the moment EITHER is given it resets to chart defaults plus only
+# what this invocation passed. So `--set image.tag=...` alone silently discards every value a
+# previous upgrade set. Measured on this release — one `helm upgrade --set logLevel=DEBUG`
+# turned oauthProxy.apiTokenAccess off, reported STATUS: deployed, and removed the
+# delegate-urls flag from the pod, with no warning anywhere.
+#
+# Passing -f every time makes the upgrade declarative and idempotent: the file is the desired
+# state, --set carries only what genuinely varies per invocation (the tag just built), and
+# nothing depends on remembering a flag.
+# RELEASE_VALUES, not VALUES_FILE: that name is already taken above for the CHART's
+# values.yaml that --update-values rewrites. Reusing it would have made one variable mean two
+# different files depending on which flag you passed — the kind of collision this project has
+# been bitten by before.
+RELEASE_VALUES="${RELEASE_VALUES:-../environments/${GSD_ENV:-crc}.yaml}"
+if [ ! -f "$RELEASE_VALUES" ]; then
+  echo "ERROR: no release values file at ${RELEASE_VALUES}" >&2
+  echo "  Deploying without one resets the release to chart defaults and silently drops" >&2
+  echo "  whatever a previous upgrade configured." >&2
+  echo "  Fix: GSD_ENV=<name> for ../environments/<name>.yaml, or RELEASE_VALUES=<path>." >&2
+  echo "  Start from ../environments/example-production.yaml." >&2
+  exit 1
+fi
+echo "release : ${RELEASE_VALUES}"
+
 helm upgrade --install group-sync-dashboard ../charts/group-sync-dashboard \
   --namespace "${K8S_NAMESPACE}" --create-namespace \
+  -f "$RELEASE_VALUES" \
   --set image.repository="${REGISTRY}/${REGISTRY_NAMESPACE}/${IMAGE_NAME}" \
   --set image.tag="${TAG}" \
   ${IMAGE_PULL_SECRET:+--set "image.pullSecrets[0].name=${IMAGE_PULL_SECRET}"}

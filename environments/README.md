@@ -1,0 +1,43 @@
+# Release values
+
+One file per deployment target, committed. **Always pass the right one with `-f`, on every
+`helm upgrade`, including upgrades that only change the image tag.**
+
+```bash
+helm upgrade --install group-sync-dashboard charts/group-sync-dashboard \
+  -n group-sync-dashboard -f environments/crc.yaml
+```
+
+## Why not `--set`
+
+Helm's value precedence on upgrade is a trap, and it is silent. From the docs: if no `--set`
+or `-f` is given, Helm reuses the previous release's user-supplied values; **if either is
+given, it resets to chart defaults plus only what this invocation passed.**
+
+So `--set` is not additive across upgrades. Measured on this release:
+
+```
+before:  helm get values -> oauthProxy.apiTokenAccess.enabled: true
+run:     helm upgrade --set logLevel=DEBUG
+after:   helm get values -> logLevel: DEBUG          # apiTokenAccess GONE
+         delegate-urls on the pod -> absent          # the feature silently off
+```
+
+`STATUS: deployed`, no warning, a working feature switched off by a flag about logging. That
+is the whole argument for these files: state the desired state declaratively, keep it in git
+where a diff is reviewable, and pass it every time so there is nothing to remember and no
+implicit reuse to reason about.
+
+`--set` remains correct for something that genuinely varies per invocation — the image tag a
+build just produced — but only **alongside** `-f`, never instead of it.
+
+## Files
+
+| File | For |
+|---|---|
+| `crc.yaml` | the local CRC cluster used for development |
+| `example-production.yaml` | a template to copy — not deployed by anything |
+
+A new environment is a new file, reviewed like code. Nothing here holds a secret: the OAuth
+cookie secret is generated and reused by the chart, and image pull credentials come from the
+cluster's global pull secret.
