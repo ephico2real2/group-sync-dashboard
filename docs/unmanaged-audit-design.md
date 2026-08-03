@@ -100,7 +100,19 @@ holds** — in practice the narrow, low-privilege ones.
 > The refusal was also being reported as "the token lacks patch on
 > rolebindings/clusterrolebindings" while `oc auth can-i patch clusterrolebindings --as=<the
 > SA>` answered **yes** — an operator following that would add a grant they already had. The
-> two 403s are now distinguished, with a test for each. It fails safe: each refusal is a
+> two 403s are now distinguished, with a test for each.
+>
+> **How big a "special role" would have to be, since it is the obvious next question.** The API
+> server enumerates what it wants. To stamp the single most harmless binding on the cluster —
+> a ClusterRoleBinding granting nothing but `view` — it demands **175 additional rule sets**,
+> because the writer must hold everything `view` grants. For the `cluster-admin` binding it
+> demands one rule: `{APIGroups:[*], Resources:[*], Verbs:[*]}`.
+>
+> So the three available shapes are 175+ rules of Kubernetes internals per binding class,
+> `escalate` on `rbac.authorization.k8s.io` (the verb that disables the check — cluster-admin
+> under a smaller name), or cluster-admin outright. Each gives a read-only auditing tool the
+> most privilege on precisely the most dangerous grants, so a compromise of this pod becomes a
+> cluster compromise, in exchange for a convenience label. Do not build it. It fails safe: each refusal is a
 logged warning, the refresh continues, and the finding remains visible in the UI and the
 API. The dashboard reports the grant either way; only the on-object convenience label is
 lost. Enabling annotate mode remains reasonable for clusters where the unmanaged set is
