@@ -131,6 +131,60 @@ upgrade, node drain, or a toggle of this very setting — starts the window agai
 accumulates a durable record *going forward*; the past cannot be reconstructed. This is inherent to the
 source and is not a problem to be solved, only surfaced honestly.
 
+
+## 1.9 The oauth-server AUDIT LOG — a documented alternative source, deliberately not used
+
+Found after the design was written, measured on the live cluster, and **parked rather than adopted**. It is
+recorded here because it is a better source in most respects and somebody will find it again; the reason it
+was not chosen is a security trade-off, not an oversight.
+
+`oc adm node-logs <node> --path=oauth-server/audit.log` returns structured JSON with authentication
+annotations. Measured on this cluster: **36,568 events, 369 carrying
+`authentication.openshift.io/decision`, 201 carrying `authentication.openshift.io/username`.** The five
+deliberate test logins appear exactly as made:
+
+```
+2026-08-07T16:56:28.251  user=john.doe     decision=allow
+2026-08-07T16:56:29.439  user=jane.smith   decision=deny
+2026-08-07T16:56:29.701  user=bob.wilson   decision=deny
+2026-08-07T16:56:30.009  user=nosuchuser   decision=deny
+2026-08-07T16:56:30.321  user=developer    decision=allow
+```
+
+### Where it is better
+
+| | pod logs (chosen) | audit log |
+|---|---|---|
+| needs `logLevel: Debug` | **yes** — a cluster-wide write, and a login outage on every toggle at one replica | **no** |
+| format | klog text; provider-order noise; multi-line actions | structured JSON, **one event per attempt** |
+| outcome | inferred by correlating several lines per username | explicit `allow` / `deny` annotation |
+| history | dies with the pod; nothing before Debug was enabled | **~16 months here** — 187 of 201 username events predate Debug, earliest 2025-04-19 |
+
+That fourth row is the striking one: it largely dissolves the "cannot travel back in time" limitation in
+§1.8, which is the accepted weakness of the chosen design.
+
+### Why it was not chosen
+
+**The grant.** `oc adm node-logs` is `GET /api/v1/nodes/<node>/proxy/logs/<path>`, so it needs
+**`nodes/proxy`** — and that path reads *any* file in the node's log directory. Verified reachable through
+the same grant: `kube-apiserver/` audit logs (every API request on the cluster) and the kubelet journal.
+That is categorically wider than `pods/log` in one namespace, and unlike the Debug toggle it is a
+**standing** capability rather than a one-off write. For an application whose defining invariant is that it
+reads narrowly and writes nothing, that is the wrong trade.
+
+**It carries no cause.** `allow`/`deny` only. The `password_expired`, `account_locked`,
+`must_change_password` and wrong-password distinctions exist only in the pod log's LDAP result codes and
+AD sub-codes — which is what `loginlog.py` already implements and validates. So the two sources are
+**complementary, not substitutes**.
+
+### If it is ever revisited
+
+The dedup key changes. `pod_name` is pod-log-specific; an audit event carries `auditID`, unique per
+request, which makes deduplication trivial and removes the cross-replica same-instant reasoning entirely.
+The parser is unaffected — it would gain a second front end, not a rewrite. The most likely shape is
+**both**: the audit log as the authoritative who/when/allow-deny with real history, and the pod log
+consulted for the LDAP cause when Debug happens to be on, enriching rows rather than being required.
+
 ---
 
 # Part 2 — Still to build
@@ -216,6 +270,15 @@ today; where I measured something new, the measurement is stated at the point of
 
 ### Q1 — Where does the capture loop live?
 
+> **Codex:** **FIX-INADEQUATE** — Keeping capture in the existing per-cluster poller thread is the
+> smallest correct ownership boundary, but the stated leader guarantee is stronger than the code.
+> `poller.py#Poller` explicitly calls the lease check “BEST-EFFORT admission control, NOT a write
+> fence”; `poller.py#Poller._run_cluster` checks once. A process that loses leadership while
+> `fetch_pod_log()` is in flight can still return and execute A's writes. The standby-from-the-start
+> test proves only admission, not loss of leadership during a read. Recheck immediately before the
+> write transaction and add the flip-during-read test; document that this narrows, but cannot turn
+> the current lease into, a fencing token.
+
 **On the per-cluster poll thread, called by `Poller._run_cluster` immediately after `poll_once`,
 every cycle. Its own module (`gsd/logincapture.py`), not inside `poll_once`. No second thread.**
 
@@ -243,6 +306,16 @@ delays the next group poll by at most `pods × request_timeout` (worst case ~45s
 requests at 100× reference scale), and log reads are bounded (see Q-bounds below).
 
 ### Q2 — Deduplication key
+
+> **Codex:** CONFIRMED — A's pod-inclusive key is the correct one. A scratch-SQLite run inserting
+> `(oauth-a, alice, T, success)`, rereading that same row, then inserting the independent
+> `(oauth-b, alice, T, success)` produced insert counts `[1, 0, 1]` and two rows with A's key. With
+> B's pod-less key it produced `[1, 0, 0]` and one row. Name the failing sequence the
+> **cross-replica same-instant pair**: two requests for the same username with the same outcome and
+> parsed microsecond `T`, one served by each replica. B's key drops the second genuine attempt.
+> The overlapping-window duplicate is the first two operations and is suppressed by A's key,
+> because a particular log line remains a line of the same pod; it is not copied into its peer's
+> log. Including `pod_name` therefore does not duplicate the ordinary reread.
 
 **`UNIQUE(cluster_id, pod_name, user_name, at, outcome)` with `INSERT OR IGNORE`. The pod name IS in
 the key. `at` carries microseconds.**
@@ -272,6 +345,15 @@ the key. `at` carries microseconds.**
 
 ### Q3 — Where does the read watermark live?
 
+> **Codex:** CONFIRMED — for event capture, but it is not B's proposed product-history boundary.
+> On a process restart the persisted per-pod watermark causes both `sinceSeconds` and `tailLines`
+> to be sent. On a new database or first sight of a pod there is no watermark, so only
+> `tailLines=10_000` bounds the read. The `newest - ATTEMPT_WINDOW` horizon intentionally withholds
+> a straddling attempt; the next 30-second overlap completes it, while the unique key absorbs a
+> replay after a crash between event insert and watermark update. A separate stable capture-start
+> value is still required for B's “Watching since” claim: pruning pod watermarks destroys the
+> evidence from which B proposes to derive it.
+
 **Per pod, in the database (`login_capture_watermark`, PK `(cluster_id, pod_name)`) — AND
 `sinceSeconds` overlap. They are not alternatives; each covers what the other cannot.**
 
@@ -299,6 +381,17 @@ the key. `at` carries microseconds.**
 
 ### Q4 — Retention
 
+> **Codex:** **FIX-INADEQUATE** — The indexed age predicate and 400-day default are reasonable, but
+> an unbounded delete inside every capture cycle is not. Against the proposed schema, a scratch
+> SQLite/WAL database with 300,000 rows took 1.551 s to delete a 200,000-row backlog; a subsequent
+> zero-row prune took 0.000 s. `store.py#Store._write`, `store.py#Store._tx`, and
+> `store.py#Store._reader` show that readers continue under
+> WAL but all writers serialize. Normal steady-state pruning will be cheap; first enablement after
+> a retention decrease or a long backlog can delay sync-event, membership, and capture writes.
+> Delete in bounded chunks (and no more than once per day/cycle interval), with a test for backlog
+> progress. Retention also means the UI must distinguish stable capture start from the oldest event
+> still retained.
+
 **Yes: pruned, per cluster, on the capture cadence. Default 400 days, `0` disables.
 (`loginCaptureRetentionDays` / `GSD_LOGIN_CAPTURE_RETENTION_DAYS`.)**
 
@@ -315,6 +408,14 @@ most) and NOT disabled by default (an append-only table of usernames with no lif
 data-protection finding waiting to be written up).
 
 ### The bounds question (from the task): what bounds the log read?
+
+> **Codex:** **FIX-INADEQUATE** — The parameter matrix is accurate: first sight is `tailLines` only;
+> ordinary reads use both `sinceSeconds` and `tailLines`; neither parameter is ever intentionally
+> absent. But `tailLines` is a line-count bound, not a byte or memory bound. The supplied
+> `real.log` is 73,371 bytes for 300 lines (244.57 bytes/line, about 2.45 MB at that measured shape
+> for 10,000 lines), while Kubernetes log lines have no equivalent fixed byte ceiling. Because the
+> proposed code buffers `response.text`, the design needs a streamed byte ceiling or must retract
+> its memory-bound claim.
 
 **Both knobs, each against a different failure — and on the first read after a restart, `tailLines`
 alone, because nothing else has a sensible value.**
@@ -344,6 +445,13 @@ Q5 (UI) is Designer B's; the one hook my area supplies for it is `login_event_su
 All paths are repo-relative to `/Users/olasumbo/gitRepos/group-sync-dashboard`.
 
 ### 1. `login_event` + `login_capture_watermark` tables (SCHEMA)
+
+> **Codex:** **FIX-INADEQUATE** — The event columns persist every field of the committed
+> `LoginAttempt`, and the pod-inclusive unique constraint is correct. The schema cannot, however,
+> implement B's status contract: a per-pod settled-through row has neither stable cluster
+> `started_at` nor a last-successful-read value, and dead-pod pruning removes old evidence. Add the
+> minimal cluster capture-status state (stable first successful read plus last successful read),
+> separate from the replay watermark and retained-event boundary.
 
 - **File**: `local-development/gsd/store.py`
 - **Anchor**: inside the `SCHEMA` string, immediately after
@@ -439,6 +547,13 @@ CREATE TABLE IF NOT EXISTS login_capture_watermark (
 
 ### 2. Migration 5
 
+> **Codex:** CONFIRMED — A numbered migration is supplied, introduces no foreign keys, and uses
+> the same SQL shape as `SCHEMA`, satisfying Part 2.1's migration-shape rule. The proposed migration
+> test does not isolate that fact, though: `Store.__init__` executes `SCHEMA` before `_migrate`
+> (`store.py#Store.__init__`), so the test can pass even if migration 5 no longer creates these new tables.
+> The test must exercise the migration SQL against a v4 fixture before the full current schema is
+> applied, or otherwise prove migration 5 itself creates the objects.
+
 - **File**: `local-development/gsd/store.py`
 - **Anchor**: appended to `_MIGRATIONS`, immediately after the closing `),` of migration 4 (the
   tuple ending with the comment `# ... the same thing the UI already renders for a user who has
@@ -506,6 +621,12 @@ CREATE TABLE IF NOT EXISTS login_capture_watermark (
   live-cluster run.
 
 ### 3. Store methods (write + the reads the API needs)
+
+> **Codex:** **FIX-INADEQUATE** — The writes correctly use `_write()` and the event timestamp is fixed
+> UTC microseconds. These methods do not match Designer B's named surface: names, inputs, result
+> rows, summaries, ungoverned query, and status are all different. `prune_login_events()` is also
+> an unbounded single-writer transaction. Reconcile one store contract before either API or tests
+> land; the exact break list is in “Codex — additional findings.”
 
 - **File**: `local-development/gsd/store.py`
 - **Anchor**: new section inserted after the final line of `user_activity_summary`
@@ -717,6 +838,11 @@ CREATE TABLE IF NOT EXISTS login_capture_watermark (
 
 ### 4. `StorageBackend` Protocol additions
 
+> **Codex:** CONFIRMED — for A's proposed Store surface. Declaring every A method preserves the
+> SQL seam enforced by `tests/test_storage_seam.py`. It does not make B's six differently named
+> calls legal; the final, reconciled reader methods and capture-status method must also be declared
+> here in the same change that implements them.
+
 - **File**: `local-development/gsd/storage.py`
 - **Anchor**: inside `class StorageBackend`, immediately after the `user_activity` declaration (the
   last method of the `# -- dashboard usage` section), before the class ends.
@@ -766,6 +892,17 @@ CREATE TABLE IF NOT EXISTS login_capture_watermark (
   green with these additions.
 
 ### 5. The reader: `fetch_oauth_pods()` / `fetch_pod_log()` (+ the label constants)
+
+> **Codex:** **FIX-INADEQUATE** — Bypassing `_get()` is mandatory and using `_client()` is safe:
+> `kube.py#ClusterClient._client` only supplies TLS/token client setup, whereas
+> `kube.py#ClusterClient._get` always calls `response.json()` and therefore cannot carry the text
+> log response.
+> The proposed direct `client.get()` plus `response.text` buffers the complete response, so the
+> line cap is not a byte-memory cap. Error handling is also too broad: every 400 and 403 becomes an
+> indistinguishable debug-only `None`. A normal terminating/not-ready 400 should leave the
+> watermark unchanged and retry next cycle, but an unexpected 400 (including a future ambiguous
+> container request) and a pods/log 403 must be visible at warning/info level with the Kubernetes
+> Status reason. Keep 404/expected-not-ready roll noise benign; do not hide permanent failures.
 
 - **File**: `local-development/gsd/kube.py`
 - **Anchor (constants)**: immediately after the line
@@ -937,6 +1074,12 @@ OAUTH_POD_LABEL_VALUE = "oauth-openshift"
 
 ### 6. Namespace/flag wiring: `gsd/config.py`
 
+> **Codex:** **FIX-INADEQUATE** — A's three fields are coherent, but the combined design also reads
+> B's `login_capture_htpasswd_providers`, which this Settings change neither declares nor wires.
+> The chart proposal below also exposes only enabled/namespace, so retention is not actually
+> configurable from the chart despite being described as a setting. Choose the minimal final
+> settings surface and carry every field end-to-end in one change.
+
 - **File**: `local-development/gsd/config.py`
 - **Anchor (fields)**: in `class Settings`, immediately after
   `user_activity_retention_days: int = 400`.
@@ -1000,6 +1143,12 @@ OAUTH_POD_LABEL_VALUE = "oauth-openshift"
 
 ### 7. Chart ConfigMap wiring — INTEGRATION OUTSIDE MY AREA (2 keys + comment)
 
+> **Codex:** CONFIRMED — for these two keys. `helm template review charts/group-sync-dashboard
+> --set ingress.host=review.example.test` rendered no login-capture ConfigMap keys before this
+> edit, while the existing enabled/custom-namespace Role and RoleBinding rendered as expected.
+> These additions close the enabled/namespace application-config gap. They do not wire A's
+> retention setting or B's HTPasswd-provider setting, which still must be reconciled.
+
 - **File**: `charts/group-sync-dashboard/templates/configmap.yaml`
 - **Anchor**: immediately after
   `userActivityRetentionDays: {{ .Values.config.userActivity.retentionDays }}` and before
@@ -1058,6 +1207,17 @@ OAUTH_POD_LABEL_VALUE = "oauth-openshift"
   `loginCaptureEnabled: false`; enabled render carries `true` + the namespace + the RBAC objects).
 
 ### 8. The capture loop: `gsd/logincapture.py` (NEW module, complete)
+
+> **Codex:** **FIX-INADEQUATE** — The settle horizon, strict `at > old_watermark` replay filter, and
+> pod-keyed insert correctly handle lines split across two reads and overlap rereads. The complete
+> production path is still unsafe as written: it has no leadership recheck after network I/O,
+> inherits the unbounded text buffering and overbroad error suppression, and performs an
+> unbounded retention delete in the poller's single-writer process. The capped-first-read
+> quarantine is defensible, but its “at most one attempt” claim is false: the strict
+> `at > oldest + ATTEMPT_WINDOW` filter discards every attempt beginning in that second. A scratch
+> run with starts at +100, +400, +900, and +1100 ms discarded the first three. Warn/count this as
+> bounded first-read loss and test multiple concurrent attempts. Fix these issues before calling
+> the module complete.
 
 - **File**: `local-development/gsd/logincapture.py` (new)
 - **Anchor**: n/a — whole file.
@@ -1378,6 +1538,14 @@ def _oldest_timestamp(lines: list[str]) -> datetime | None:
 
 ### 9. Poller integration — the call site
 
+> **Codex:** **FIX-INADEQUATE** — A standby that observes `is_leader() == False` at
+> `poller.py#Poller._run_cluster` genuinely reaches none of this call site and writes nothing. A
+> leadership change after that check is different: `poller.py#Poller` expressly says the lease is not a
+> write fence, and this placement lets the old leader write after `fetch_pod_log()` returns. The
+> proposed test misses the failing sequence: leader check true → log GET blocks → lease lost/new
+> leader starts → old GET returns → old leader records events/watermark. Recheck immediately before
+> the transaction and test that sequence; retain the documented best-effort limitation.
+
 - **File**: `local-development/gsd/poller.py`
 - **Anchor (import)**: in the import block, after `from .audit import plan_audit_stamps` (keeping
   the existing grouping), i.e.:
@@ -1436,6 +1604,10 @@ from .timeutil import now_iso
 
 ### 10. Seam-test coverage of the new module — INTEGRATION OUTSIDE MY AREA (2 one-line edits)
 
+> **Codex:** CONFIRMED — Adding `logincapture.py` to both fixed scanner lists is required by the
+> existing seam test and keeps SQL confined to Store/storage. This piece agrees with A's module
+> name and contains no SQL escape hatch.
+
 - **File**: `local-development/tests/test_storage_seam.py`
 - **Why touched**: the seam suite scans a *fixed list* of consumer files for `store.X` calls and
   concrete-`Store` annotations; a new module is invisible to it unless listed. Without these edits
@@ -1459,6 +1631,14 @@ from .timeutil import now_iso
   `StorageBackend`, constructs no `Store`, and calls only declared methods).
 
 ### 11. The test suite for this area (NEW file, complete)
+
+> **Codex:** **FIX-INADEQUATE** — The parser fixtures and steady-state dedup cases are useful, but the
+> suite omits the production failures above: first read versus persisted restart request params,
+> a split attempt completed in the next read, leadership lost during GET, expected versus
+> unexpected 400 and visible 403, response byte ceiling, and bounded retention backlog. Its
+> migration test is masked by `SCHEMA` running first. The supplied fixtures were independently run
+> through the committed parser: both `fixture.log` (12 lines) and `real.log` (300 lines) yield the
+> same five attempts, so that research result is confirmed.
 
 - **File**: `local-development/tests/test_login_capture_backend.py` (new)
 - **Anchor**: n/a — whole file. Named `_backend` so Designer B's API/UI suite can own
@@ -2055,6 +2235,18 @@ provider `developer`); `real.log` (300 lines, httplog noise) → the **same 5 at
 
 ## Assumed store surface (Designer A) — NAMED, for the arbiter to reconcile
 
+> **Codex:** REFUTED — This is not A's surface. B calls `record_login_attempts`,
+> `record_login_read`, `login_attempts`, `login_summary`, `ungoverned_login_users`, and
+> `login_capture_status`; A implements none of those names. A instead supplies
+> `record_login_events`, `login_watermarks`, `set_login_watermark`,
+> `prune_login_watermarks`, `prune_login_events`, `login_events`, and
+> `login_event_summary`. The discrepancies are deeper than renaming: B seeds parser objects with no
+> pod identity, expects joined `full_name`/`known_user`, different aggregate fields, provider
+> exclusion, stable start/last-read status, and an ungoverned-account query. A accepts event dicts
+> containing `pod_name`/`observed_at` and returns none of B's joined/status shapes. The Settings
+> assumption is also false: A has no `login_capture_htpasswd_providers`. The combined code is a
+> build-time break until one contract is selected; the complete matrix appears at the end.
+
 My API and tests call exactly these. If A's names or shapes differ, the reconciliation happens in
 `gsd/api.py#list_logins` and `tests/test_login_capture.py` only — the UI never sees store names.
 
@@ -2121,6 +2313,13 @@ login_capture_htpasswd_providers: list[str] = field(default_factory=lambda: ["de
 
 ### Q5 (Part 2.2): a new tab — **`Logins`**, not a section on Usage. Reasons, in order of force:
 
+> **Codex:** CONFIRMED — A cluster-scoped Logins tab fits the existing navigation model better
+> than the deliberately dashboard-wide Usage page. The dedicated ungoverned-accounts card above
+> the chronological table answers the production-critical discoverability question: after the
+> store/API seam is fixed, a username belonging to no synced group is explicitly findable rather
+> than buried in time order. This review used the repository's frontend-design guidance: the
+> information hierarchy and separate review workflow justify the new view.
+
 1. **Usage is deliberately not cluster-scoped and login capture deliberately is.** The Usage page
    *hides the cluster selector* (`index.html#renderFilters`: `view.page === "usage" ? "" : ...`,
    with the comment "Usage is a property of the DASHBOARD, not of a cluster") and suppresses the
@@ -2147,6 +2346,15 @@ login_capture_htpasswd_providers: list[str] = field(default_factory=lambda: ["de
    tab's position, label and weight are co-channels (WCAG 1.4.1 handling is unchanged).
 
 ### The other decisions in my area (each visible in the code below)
+
+> **Codex:** **FIX-INADEQUATE** — The hierarchy, outcome words, and break-glass treatment are sound,
+> but three dependencies are wrong. First, B's pod-less dedup key drops the cross-replica
+> same-instant pair demonstrated under Q2. Second, a pruned per-pod watermark cannot truthfully
+> mean stable “record begins”; expose capture-start and retained-since separately. Third, an
+> ungoverned username is not guaranteed to 404: `api.py#user_detail` serves a user with membership
+> history even when it has no current group. That “access removed, still trying” case is especially
+> valuable and should retain drill-down; use a separate `has_history`/detail-available flag rather
+> than equating current membership with route existence.
 
 - **The "observed since" boundary is rendered as data, not as an apology.** A "Watching since"
   KPI in the lead card plus one reusable sentence (`loginWindowNote`) stating *when the record
@@ -2193,6 +2401,10 @@ login_capture_htpasswd_providers: list[str] = field(default_factory=lambda: ["de
 ## Implementation
 
 ### 1. API — module imports and the outcome vocabulary (`gsd/api.py`)
+
+> **Codex:** CONFIRMED — Importing the committed parser module and deriving the filter vocabulary
+> from its constants avoids a second outcome definition. This piece does not perform SQL or I/O and
+> introduces no invariant conflict.
 
 - **File**: `local-development/gsd/api.py`
 - **Anchor 1 (import)**: the module imports at the top — insert between these two existing lines:
@@ -2249,6 +2461,18 @@ LOGIN_OUTCOMES = (
   `?outcome=bogus` return an empty 200 that reads as "no such failures", which the test forbids.
 
 ### 2. API — the endpoint (`gsd/api.py`)
+
+> **Codex:** **FIX-INADEQUATE** — `@consistent` correctly holds one read snapshot across the multiple
+> store calls and the synchronous handler introduces no `await`. As written it cannot run against
+> A's Store because all four called read methods and their result fields differ. It also exposes a
+> sensitive username/authentication-result dataset through the application's existing broad auth
+> surface without an explicit authorization decision. `values.yaml#ACCESS MODEL for the UI` says
+> the default UI gate is authentication-only, and
+> `values.yaml#THE REVIEW MUST MATCH WHAT /api EXPOSES.` delegates
+> direct API access using permission to list clusterrolebindings. Neither permission implies the
+> right to read OAuth pod logs. Before enabling this endpoint, bind it to an existing appropriately
+> scoped authorization mechanism or explicitly require the chart's existing SAR configuration;
+> do not silently widen what those principals can learn.
 
 - **File**: `local-development/gsd/api.py`
 - **Anchor**: inside `build_app`, insert the whole block **immediately before** this existing
@@ -2388,6 +2612,11 @@ LOGIN_OUTCOMES = (
 
 ### 3. API.md — the documented contract
 
+> **Codex:** **FIX-INADEQUATE** — The response example is a useful contract, but A's proposed Store
+> cannot produce its `known_user`, names, ungoverned rows, aggregate shape, or capture status. The
+> “observed since” prose also conflates stable capture start with oldest retained data. Document
+> both timestamps and the authorization requirement after the reconciled endpoint exists.
+
 - **File**: `local-development/API.md` (integration: `tests/test_api_contract.py::`
   `test_every_endpoint_appears_in_api_md` fails the suite the moment the route exists and this
   file does not name the literal path).
@@ -2435,6 +2664,11 @@ log lines and separating them would require a directory read this application do
 - **Test**: `test_every_endpoint_appears_in_api_md` (existing) fails on omission; no new test.
 
 ### 4. UI — CSS: the seventh accent, in all three theme blocks + the page mapping
+
+> **Codex:** CONFIRMED — An independent WCAG-formula run reproduced the stated ratios:
+> `#0e7490` is 5.083:1 on the light page and 5.219:1 on its surface; `#21a1bd` is 6.384:1 on the
+> dark page and 5.721:1 on its card. The tokenized theme additions comply with the existing
+> literal-colour/type-scale checks.
 
 - **File**: `local-development/gsd/static/index.html` (`<style>` block)
 - **Anchor 1** — in the **first `:root {` block** (light theme), these exact lines (2-space indent):
@@ -2527,6 +2761,10 @@ body[data-page="usage"]    { --accent: var(--tab-usage); }
   writing: both values pass with margin.
 
 ### 5. UI — state, filter row, tab (`index.html` script, small edits)
+
+> **Codex:** CONFIRMED — Cluster, username, and outcome are URL-backed positional state, the
+> controls use the existing filter idiom, and the new tab stays out of the display-timezone slice
+> protected by `tests/test_display_timezone.py`. No build step or new framework is introduced.
 
 - **File**: `local-development/gsd/static/index.html`
 
@@ -2636,6 +2874,9 @@ let data = { clusters: [], alerts: [], groupsyncs: [], groups: [], events: null,
 
 ### 6. UI — `backLabel` learns the new page (edit to an existing function)
 
+> **Codex:** CONFIRMED — This is the necessary minimal navigation-label update and agrees with
+> the `logins` position key used by the rest of B's UI.
+
 - **File**: `local-development/gsd/static/index.html`
 - **Anchor** (the last line of `backLabel`):
 
@@ -2664,6 +2905,14 @@ let data = { clusters: [], alerts: [], groupsyncs: [], groups: [], events: null,
   the label is asserted in the same test (mutation: reverting this edit mislabels the button).
 
 ### 7. UI — the page: `LOGIN_OUTCOMES`, `outcomeBadge`, `loginWindowNote`, `loginsPage`, `wireLogins`
+
+> **Codex:** **FIX-INADEQUATE** — The dedicated ungoverned card makes the no-group username prominent
+> and the glyph-plus-word badges do not rely on colour alone. The page nevertheless consumes fields
+> A never returns and tells users that `observed_since` is the beginning of the record even though
+> A prunes the per-pod rows proposed as its source. It also disables every ungoverned drill-down,
+> incorrectly hiding valid historical user detail. Render stable capture-start and retained-since
+> honestly, and make drillability depend on history/detail availability rather than current group
+> membership.
 
 - **File**: `local-development/gsd/static/index.html`
 - **Anchor**: insert the whole block **immediately before** this existing comment (i.e. after the
@@ -2899,6 +3148,10 @@ function wireLogins() {
 
 ### 8. UI — dispatch and fetch (`render()` / `refresh()`)
 
+> **Codex:** CONFIRMED — The page dispatch, stale-request guard, encoded query parameters, and
+> existing `api()`/`render()` flow are consistent with the single-file application. This block is
+> mechanically usable once the endpoint contract is reconciled.
+
 - **File**: `local-development/gsd/static/index.html`
 
 **8a. `render()` branch.** Anchor:
@@ -2955,6 +3208,14 @@ function wireLogins() {
   the existing interaction-counting tests, untouched.
 
 ### 9. The test suite — `tests/test_login_capture.py` (complete file)
+
+> **Codex:** REFUTED — as a test file for the combined design. Its seeds and assertions call B's
+> nonexistent Store methods and construct attempts without A's required `pod_name`; its Settings
+> use a field A never defines. It therefore fails before it can validate the endpoint. Rewrite it
+> against the selected contract, preserve the pod-inclusive collision test, add stable-start versus
+> retained-since coverage, and test endpoint authorization. Also note that the current repository's
+> docs-citation test already rejects this design's forward reference to the proposed login handler
+> until that symbol lands; that is an expected application-order dependency, not a green baseline.
 
 - **File**: `local-development/tests/test_login_capture.py` (new)
 - **Fixtures**: the two real logs get committed as test fixtures (integration step — I cannot
@@ -3328,6 +3589,13 @@ def test_the_ui_outcome_vocabulary_matches_the_parser():
 
 ### 10. The UI tests — additions to `tests/test_ui.py`
 
+> **Codex:** **FIX-INADEQUATE** — These tests inherit B's nonexistent seed/settings API and cannot run
+> until the storage seam is reconciled. The proposed “server-side aggregation” assertion proves the
+> ungoverned card survives an attempt filter, but does not by itself prove the aggregate was computed
+> over the full set; assert the HTTP response/card count with an ungoverned event outside the first
+> page. Local execution could not start Chromium or bind the test server under this sandbox, so no
+> browser result is claimed; the non-browser suite ran independently (569 passed, 4 skipped).
+
 - **File**: `local-development/tests/test_ui.py`
 
 **10a. Imports.** Anchor — the existing import block ends:
@@ -3609,3 +3877,147 @@ the browser-history machinery (used through `navigate()`, edited only in `backLa
    shipped-and-reviewed territory; the value addition belongs with A's config plumbing and needs
    the operator's naming sign-off.
 
+## Codex — additional findings
+
+### Evidence ledger and limits
+
+- I read this document and the complete committed implementations of `loginlog.py`, `store.py`,
+  `storage.py`, `kube.py`, `poller.py`, `api.py`, and `static/index.html` before marking the design.
+- Running the committed parser over the supplied files reproduced Part 1: `fixture.log` is 12
+  lines/1,846 bytes and produced five attempts; `real.log` is 300 lines/73,371 bytes and produced
+  the same five attempts. The records were `john.doe/success`, `jane.smith/bad_password/49`,
+  `bob.wilson/rejected`, `nosuchuser/rejected`, and `developer/success`. Nothing I ran refuted
+  Part 1.
+- The scratch-SQLite dedup sequence and retention timings are recorded under Q2 and Q4. They used
+  the proposed table and index definitions with WAL enabled, not an in-memory approximation.
+- `helm template review charts/group-sync-dashboard --set ingress.host=review.example.test`
+  succeeded, as did the render with capture enabled and a custom auth namespace. The latter
+  rendered the Role/RoleBinding in that namespace. Before the proposed ConfigMap edit, neither
+  render contained `loginCaptureEnabled` or `loginCaptureNamespace`. A render without the required
+  ingress host failed at the chart's existing guard, as expected; no Helm mutation was run.
+- The non-browser suite ran with the repository's Python 3.13 environment: **569 passed, 4
+  skipped**. A full collection reached **790 passed, 5 skipped, 1 failed, 81 errors**: the one
+  ordinary failure is `tests/test_docs_citations.py` rejecting this document's forward reference
+  to the not-yet-implemented login handler; all 81 errors were sandbox failures to
+  launch Chromium or bind the UI server. No product-code failure is inferred from those sandbox
+  errors, and no browser pass is claimed.
+- I attempted only the permitted read-only cluster commands: `oc whoami`, `oc auth can-i list
+  pods`, `oc auth can-i get pods/log`, and `oc get pods`. This environment denied the connection
+  to `127.0.0.1:6443` with “operation not permitted,” so I produced no new live-cluster evidence
+  and made no cluster change. Part 1's measured cluster facts therefore remain given.
+
+### A/B build-time seam reconciliation
+
+The designers do not currently agree where they must. These are compile/runtime contract breaks,
+not naming preferences:
+
+| Concern | Designer A | Designer B | Required resolution |
+|---|---|---|---|
+| Insert method | `record_login_events(cluster_id, events: list[dict])` | `record_login_attempts(cluster_id, attempts: list[LoginAttempt])` | Keep pod identity and choose one name/input type. A's dict also carries `pod_name` and `observed_at`, which B's parser object cannot supply alone. |
+| Replay state write | `set_login_watermark(cluster_id, pod_name, settled_through)` | `record_login_read(cluster_id, pod_name, started_at, read_at)` | These timestamps have different meanings. Preserve per-pod `settled_through`; add stable cluster start/last-success state rather than overloading it. |
+| Replay state read | `login_watermarks(cluster_id) -> dict[pod_name, settled_through]` | `login_capture_status(cluster_id) -> {observed_since,last_read_at}` | Both are needed for different jobs; B's status cannot be derived reliably from pruned A rows. |
+| Event read | `login_events(cluster_id, user_name=None, outcome=None, since=None, limit=200)` | `login_attempts(cluster_id, *, user_name=None, outcome=None, limit=200)` | Select one name/signature. B additionally requires `full_name` and booleans describing current membership/detail availability; A returns `pod_name` and `observed_at` instead. |
+| Summary read | `login_event_summary(cluster_id, user_name=None, since=None)` returning `attempts`, `distinct_users`, `successes`, `failures`, `first_at`, `last_at` | `login_summary(cluster_id, exclude_providers=())` returning `total`, `by_outcome`, `distinct_users`, `ungoverned_users`, `first_at`, `last_at` | Implement the endpoint's whole-set aggregates in Store with one agreed result shape and the same ungoverned predicate as its rows. |
+| Ungoverned rows | No A method | `ungoverned_login_users(cluster_id, exclude_providers=(), limit=50)` | Add a Store/Protocol query; do not reconstruct it from the 200-row event page. Return detail availability separately from current membership. |
+| Pruning | `prune_login_watermarks`, `prune_login_events` | No corresponding assumption; UI assumes stable history boundary | Keep dead-pod cleanup, bound event pruning, and expose `capture_started_at` separately from `retained_since`. |
+| Event unique key | `(cluster_id,pod_name,user_name,at,outcome)` | `(cluster_id,user_name,at,outcome)` | Use A's pod-inclusive key; B's key drops the named cross-replica same-instant pair. |
+| Event timestamp | Fixed UTC microseconds | Fixed UTC microseconds | Agreement: keep `%Y-%m-%dT%H:%M:%S.%fZ`. |
+| Other timestamps | A's `settled_through` is microseconds; `observed_at`/watermark `updated_at` use `now_iso()` second precision | `started_at`/`read_at` are second-precision UTC | Precision itself is harmless, but names and semantics must not be interchanged. Document each field. |
+| Settings | `login_capture_enabled`, `login_capture_namespace`, `login_capture_retention_days` | `login_capture_enabled`, `login_capture_htpasswd_providers` | Enabled is the only agreement. Decide whether provider names and retention are operator inputs, then wire every retained field through Settings and the existing ConfigMap path. |
+| Protocol | Declares A's seven methods | Says B's six methods are declared | Declare exactly the final Store surface. Otherwise `StorageBackend` conformance and the seam test fail. |
+
+The minimal coherent surface is A's pod-keyed event/replay writer plus Store queries that directly
+produce B's endpoint contract. Do not discard pod identity at the API-test seed boundary. Capture
+status is distinct state: `capture_started_at` is set on the first successful log read and never
+rewritten; `last_read_at` advances on successful reads; `retained_since` is the oldest surviving
+event (or null). That makes restart, dead-pod pruning, and 400-day retention truthful without a new
+database or framework.
+
+### Part 2.1 invariant audit
+
+Counting the compound UI bullet as its three independently tested rules gives the eleven invariants
+named by the task:
+
+1. **StorageBackend/SQL seam — violated by the combined A/B text.** A's implementation and
+   Protocol agree with each other and the new module is added to the scanner, but B calls six
+   undeclared, unimplemented methods. The design cannot merge verbatim.
+2. **Numbered/idempotent migration shape — implementation complies; test is inadequate.** Migration
+   5 and `SCHEMA` match, but the proposed test lets current `SCHEMA` create the tables before it
+   assesses the migration itself.
+3. **No foreign keys — complies.** Neither proposed table declares one.
+4. **Ambient write discipline — complies**, subject to bounding the prune. Store writes use
+   `_write()` and no proposed SQL appears in kube, poller, API, or UI.
+5. **One store call or `@consistent` per multi-call handler — complies.** B uses `@consistent`.
+6. **No cluster call, await, or yield in a read snapshot — complies.** The synchronous handler does
+   Store reads and Python shaping only.
+7. **No literal CSS `font-size` — complies.** New UI sizing uses existing classes/tokens.
+8. **Both-theme colour contrast — complies.** The independently measured ratios pass.
+9. **Display-timezone source slices — complies.** The proposed insertions are outside the protected
+   source gaps.
+10. **No username in unauthenticated metrics — complies.** No metric or skipped-auth mutation is
+    added. This does not resolve the separate authenticated/delegated API authorization issue.
+11. **Leader-only writes — violated.** Admission works for a process already in standby, but the
+    mid-read loss sequence can write after lease loss. The proposed standby test does not enforce
+    the stated invariant. A pre-transaction recheck is the minimal mitigation available in the
+    current best-effort lease design; it must be tested explicitly.
+
+Thus the actual Part 2.1 merge blockers are leader-only writes and the unresolved storage seam.
+The migration test should also be repaired before relying on it, even though the proposed migration
+SQL itself follows the invariant.
+
+### Production findings not fully owned by either design
+
+1. **Authorization is a release decision, not inherited safely.** The default UI policy is merely
+   “authenticated,” and the direct API delegation example is keyed to listing clusterrolebindings
+   (`values.yaml#ACCESS MODEL for the UI` and
+   `values.yaml#THE REVIEW MUST MATCH WHAT /api EXPOSES.`). The new endpoint reveals attempted
+   usernames, provider names, and failure reasons originally obtained through `pods/log`; those
+   existing permissions are not equivalent. Use the chart's existing SAR/auth mechanisms to gate
+   deployments that enable login capture, and ensure the direct-token path cannot bypass that
+   decision. This needs no new framework, chart subsystem, or RBAC redesign, but it must be stated
+   and tested before exposing the route.
+2. **A successful HTTP log read is not necessarily a useful capture read.** A normal rolling pod
+   can return 400/404 and should be retried without advancing state. A 403, unexpected 400, or
+   repeated container-selection error must remain observable; returning the same `None` for all of
+   them makes “no logins” indistinguishable from “capture has been broken for weeks.” Record
+   `last_read_at` only after a successful response and emit rate-limited warning/info evidence for
+   persistent failures.
+3. **The most valuable historical account can be both ungoverned and drillable.** Existing
+   `api.py#user_detail` returns history even without a current group. The endpoint row
+   needs separate facts for “currently in a synced group” and “has dashboard membership history.”
+   The first drives the ungoverned card; the second drives the drill button.
+4. **The response needs a real byte bound.** `_get()` must not be used for logs because it forces
+   JSON, but `_client()` can and should be reused for credentials/TLS. Stream the direct text
+   response and abort at a documented byte ceiling while preserving the tail-line warning. A line
+   cap alone cannot justify the design's bounded-memory claim.
+5. **The first-read quarantine can drop more than one attempt.** On a capped first read the proposed
+   strict lower bound removes every parsed start in the first `ATTEMPT_WINDOW`, not “at most one.”
+   The scratch sequence at +100, +400, +900, and +1100 ms retained only +1100 ms. The quarantine is
+   still safer than parsing a cut head as a false outcome, but the loss must be logged honestly and
+   the test must include concurrent starts; do not size or describe it as a single-row loss.
+
+### Application order
+
+1. **Settle and pin the contract first:** accept A's pod-inclusive key; define the final Store and
+   `StorageBackend` signatures/row shapes; define stable capture status versus retained history;
+   decide the existing authorization gate and final Settings fields. Update the design tests to
+   name that one contract.
+2. **Land storage before consumers:** schema plus migration 5, isolated migration test, Store
+   event/replay/status/query methods, bounded pruning, and matching Protocol declarations. The
+   store/query layer must land before B's endpoint or either designer's seed tests.
+3. **Land the reader and capture mechanics:** text-stream byte bound, expected roll-error
+   classification, visible 403/unexpected 400 behavior, per-pod horizon/overlap logic, and tests for
+   first sight, persisted restart, split attempts, overlap, and the cross-replica same-instant pair.
+4. **Integrate with poller/config/chart:** add the module to both seam scanners; wire only the final
+   Settings through the ConfigMap; call capture behind leader admission and recheck leadership
+   immediately before its write transaction. The flip-during-read test must land with this step.
+5. **Land the API and documentation:** implement the reconciled Store calls under `@consistent`,
+   enforce the chosen existing authorization policy, then add the route and API.md together. This
+   ordering also makes the existing docs-citation forward reference valid.
+6. **Land the UI and browser tests last:** add the tab, truthful capture/retention copy,
+   ungoverned card, history-aware drill behavior, filters, and browser coverage against the final
+   response. UI hierarchy must not be used to paper over missing server-side whole-set aggregates.
+7. **Run the complete merge gates and renders:** all pytest suites including Playwright in an
+   environment allowed to launch Chromium/bind localhost, the docs-citation and seam tests, default
+   and enabled/custom-namespace Helm renders, plus a permitted read-only cluster smoke check. No
+   implementation piece should claim completion until this final environment-backed pass is green.
