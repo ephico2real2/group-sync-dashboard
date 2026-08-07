@@ -65,15 +65,6 @@ LINE_NUMBER_CITATION = re.compile(
 # would falsify the record of what was reviewed. These files are historical once written.
 REVIEW_ARTIFACTS = (
     "OAUTH_LOGLEVEL_REVIEW.md",
-    # A DESIGN document, and the only file here that cites code which does not exist YET rather than
-    # code that has moved. It names the symbols the implementation will add (gsd/api.py#list_logins and
-    # the rest), so the citation check fails on it until they land — which is the opposite of the drift
-    # this test exists to catch.
-    #
-    # REMOVE THIS LINE when login capture is implemented. At that point every symbol it cites is real,
-    # the check becomes meaningful for it, and leaving the exemption in place would be a blind spot in
-    # the document most likely to accumulate stale references.
-    "DESIGN_login_capture.md",
 )
 
 

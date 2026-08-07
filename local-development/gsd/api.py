@@ -503,6 +503,12 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
             # rather than null, which the UI would have to render as "unknown".
             "capture_started_at": (status or {}).get("started_at") or summary["first_at"],
             "last_read_at": (status or {}).get("last_read_at"),
+            # How often `last_read_at` is EXPECTED to advance — capture runs on the poll thread, so
+            # the poll interval is its cadence. Sent because the browser is the only place that can
+            # decide whether a read is overdue and the only place that knows what a reader is
+            # looking at, but it has no way to learn the cadence: a hardcoded threshold in the page
+            # would call a 900s poll "stalled" every single cycle.
+            "read_interval_seconds": settings.poll_interval_seconds,
             "retained_since": summary["first_at"],
             "total": summary["total"],
             "limit": limit,

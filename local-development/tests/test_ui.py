@@ -21,8 +21,11 @@ import urllib.parse
 import pytest
 import uvicorn
 
+from gsd import loginlog
 from gsd.api import build_app
 from gsd.config import ClusterConfig, Settings
+from gsd.logincapture import event_dict
+from gsd.loginlog import LoginAttempt
 from gsd.store import Store
 
 
@@ -214,6 +217,51 @@ def _seed(db_path: str) -> None:
         _iso(now),
     )
 
+    # ── Login attempts, one row per state the Logins tab must render distinctly ────────────
+    # Built through logincapture.event_dict() from real LoginAttempt objects rather than
+    # hand-written dicts, so the seed cannot drift from what the capture loop actually writes —
+    # a UI test passing against a row shape the poller does not produce is worse than no test.
+    #
+    # The four accounts are chosen for what the PAGE has to distinguish:
+    #   alice    — a current member of a synced group. Governed; must NOT appear as a finding.
+    #   bob      — removed from every group and still trying. known_user 0, has_history 1: the
+    #              offboarding that did not finish, which is the whole point of the feature.
+    #   mallory  — a name this cluster has never governed. known_user 0, has_history 0, and so
+    #              NOT drillable: /users/{name} 404s for her, and a link into an error card is
+    #              worse than plain text.
+    #   developer — a success on the HTPasswd provider. Labelled break-glass and excluded from
+    #              the ungoverned list, because there is nowhere to migrate it to.
+    # bob twice, so `attempts` is a count rather than always 1, and from two different pods so
+    # the dedup key's pod_name component is exercised by a rendered row.
+    attempts = [
+        (LoginAttempt("alice", loginlog.OUTCOME_SUCCESS,
+                      now - timedelta(minutes=12), provider="ldap-local"), "oauth-openshift-aaa"),
+        (LoginAttempt("bob", loginlog.OUTCOME_BAD_PASSWORD,
+                      now - timedelta(minutes=9), provider="ldap-local",
+                      ldap_result_code=49), "oauth-openshift-aaa"),
+        (LoginAttempt("bob", loginlog.OUTCOME_ACCOUNT_LOCKED,
+                      now - timedelta(minutes=8), provider="ldap-local",
+                      ldap_result_code=49, detail="AD sub-code 775: account locked"),
+         "oauth-openshift-bbb"),
+        (LoginAttempt("mallory", loginlog.OUTCOME_REJECTED,
+                      now - timedelta(minutes=6), provider="ldap-local",
+                      detail="no entries matching the provider's filter"), "oauth-openshift-aaa"),
+        (LoginAttempt("developer", loginlog.OUTCOME_SUCCESS,
+                      now - timedelta(minutes=3), provider="developer"), "oauth-openshift-bbb"),
+    ]
+    store.record_login_events(
+        "crc-local",
+        [event_dict(a, pod, _iso(now)) for a, pod in attempts],
+    )
+    # Set once by the first read, and LATER than the oldest attempt on purpose: the first read
+    # looks back an hour, so the record legitimately reaches BEHIND the moment watching began.
+    # That makes capture_started_at later than retained_since, which looks like a bug and is not
+    # — the page explains it, and this is the state that proves the explanation appears.
+    store.record_login_read("crc-local", _iso(now - timedelta(minutes=10)))
+    store.record_login_read("crc-local", _iso(now - timedelta(seconds=30)))
+    # alice's display name is already seeded above via replace_users, so the Logins table gets
+    # `alice · Alice Cooper` from the same ocp_user row every other member surface reads.
+
     # Enough events for the timeline to draw a line, with a count cliff in the middle.
     for i, count in enumerate([40, 41, 41, 28, 41]):
         ts = _iso(now - timedelta(minutes=30 * (5 - i)))
@@ -233,6 +281,10 @@ def server(tmp_path_factory):
             ClusterConfig("prod-east", "https://api.prod-east.example.com:6443", token_env="Y"),
         ],
         db_path=db,
+        # The Logins tab renders a "not being captured" card when this is off, which is a
+        # different state from on-and-quiet. On, so the seeded attempts are what gets tested;
+        # the off state has its own test that overrides it.
+        login_capture_enabled=True,
     )
     port = _free_port()
     app = build_app(settings, run_poller=False)
@@ -1134,3 +1186,254 @@ class TestRbacPolicyPage:
         self._open(dash)
         current = dash.locator('button.tab[aria-current="page"]').inner_text()
         assert current.strip() == "RBAC policy"
+
+
+class TestLoginsPage:
+    """The Logins tab: who tried to sign in to the cluster, and what happened.
+
+    Every assertion here is about a way the page could MISLEAD rather than about how it looks.
+    The record is a window — login lines exist only while the authentication operator is at
+    Debug, and a pod's log dies with the pod — so the one failure mode that matters is a page
+    that lets an empty or partial record read as "nobody signed in".
+    """
+
+    def _open(self, dash):
+        dash.click('button.tab:text-is("Logins")')
+        dash.wait_for_selector("h2:text-is('Login attempts')")
+
+    def test_the_page_renders_without_a_javascript_error(self, dash):
+        errors = []
+        dash.on("pageerror", lambda e: errors.append(str(e)))
+        self._open(dash)
+        body = dash.locator("body").inner_text()
+        assert "Dashboard API error" not in body, body[:300]
+        assert not errors, errors
+
+    def test_the_tab_is_marked_current_and_owns_its_accent(self, dash):
+        self._open(dash)
+        assert dash.locator('button.tab[aria-current="page"]').inner_text().strip() == "Logins"
+        # The accent drives the tab bar, the card edge and the hero numeral. If the token were
+        # missing the whole page would silently fall back to the previous section's colour.
+        assert dash.locator("body").get_attribute("data-page") == "logins"
+        accent = dash.evaluate(
+            "() => getComputedStyle(document.body).getPropertyValue('--accent').trim()")
+        logins = dash.evaluate(
+            "() => getComputedStyle(document.body).getPropertyValue('--tab-logins').trim()")
+        assert accent and accent == logins, f"accent {accent!r} != --tab-logins {logins!r}"
+
+    def test_every_attempt_is_listed_with_its_outcome(self, dash):
+        self._open(dash)
+        body = dash.locator("body").inner_text()
+        for who in ("alice", "bob", "mallory", "developer"):
+            assert who in body, f"{who} is missing from the attempt list"
+        # The parser's outcome, restated for a reader. "LDAP Result Code 49" is what the log
+        # carries and it explains nothing, so the page must not be showing only that.
+        assert "wrong password" in body
+        assert "account locked" in body
+        assert "signed in" in body
+
+    def test_the_window_is_stated_on_screen_in_both_directions(self, dash):
+        """The load-bearing one. An empty or partial record must never read as a clean bill.
+
+        Both edges are data: `capture_started_at` is when watching began, `retained_since` is
+        the oldest attempt still kept. The page has to say both, and has to say that nothing
+        before the first was ever written down.
+        """
+        self._open(dash)
+        body = dash.locator("body").inner_text()
+        assert "Watching since" in body
+        assert "oldest attempt still retained" in body
+        assert "last read" in body
+        assert "nothing was" in body and "observed" in body, (
+            "the page does not say that an empty list means nothing was OBSERVED — without "
+            "that sentence a reader takes silence for proof that nobody signed in"
+        )
+
+    def test_it_explains_a_record_that_reaches_behind_its_own_start(self, dash):
+        """capture_started_at can be LATER than retained_since, and it looks like a bug.
+
+        The first read looks back an hour, so it returns attempts older than the moment
+        watching began. The seed puts the first read 20 minutes ago with attempts before it.
+        """
+        self._open(dash)
+        assert "predates the first read" in dash.locator("body").inner_text()
+
+    def test_the_ungoverned_accounts_come_before_the_chronology(self, dash):
+        """A finding buried in 200 time-ordered rows is a finding nobody reads."""
+        self._open(dash)
+        headings = dash.locator("section.card h2, section.card h3").all_inner_texts()
+        headings = [h.strip() for h in headings]
+        assert "Accounts in no synced group" in headings, headings
+        assert headings.index("Accounts in no synced group") < headings.index("Every attempt"), (
+            f"the finding is below the chronology: {headings}"
+        )
+
+    def test_it_separates_a_removed_account_from_one_never_governed(self, dash):
+        """The two reasons a name is ungoverned are different problems with different owners.
+
+        bob was removed from every group and is still trying — an offboarding that did not
+        finish. mallory has never been in one. Both are `known_user: false`; only the timeline
+        tells them apart, and the page has to show which.
+        """
+        self._open(dash)
+        card = dash.locator("section.card", has=dash.locator(
+            "h3:text-is('Accounts in no synced group')"))
+        bob = card.locator("tbody tr").filter(has_text="bob").inner_text()
+        assert "was, and no longer is" in bob, bob
+        mallory = card.locator("tbody tr").filter(has_text="mallory").inner_text()
+        assert "never" in mallory, mallory
+        assert "was, and no longer is" not in mallory, (
+            "a name nobody ever governed is being reported as an unfinished offboarding"
+        )
+
+    def test_a_governed_member_is_not_reported_as_a_finding(self, dash):
+        """alice is in a synced group. Reporting her would make the list noise."""
+        self._open(dash)
+        card = dash.locator("section.card", has=dash.locator(
+            "h3:text-is('Accounts in no synced group')"))
+        assert "alice" not in card.inner_text()
+
+    def test_a_break_glass_success_is_labelled_and_excluded(self, dash):
+        """`developer` is a local HTPasswd account, not a person to offboard.
+
+        It has to be visible in the chronology — a break-glass login is worth seeing — and out
+        of the finding list, because there is nowhere to migrate it to.
+        """
+        self._open(dash)
+        chronology = dash.locator("section.card", has=dash.locator(
+            "h3:text-is('Every attempt')"))
+        row = chronology.locator("tbody tr").filter(has_text="developer").first
+        assert "break-glass" in row.inner_text()
+        card = dash.locator("section.card", has=dash.locator(
+            "h3:text-is('Accounts in no synced group')"))
+        assert "developer" not in card.inner_text()
+        # And the count beside the list agrees with the list: bob and mallory, not developer.
+        hero = dash.locator(".hero .value").first.inner_text().strip()
+        assert hero == "2", f"hero says {hero}, expected the 2 ungoverned accounts"
+
+    def test_a_name_with_no_history_is_not_a_link_into_an_error(self, dash):
+        """/users/{name} 404s for a name with no groups AND no history — which is mallory.
+
+        Making every username a link would send the reader from the most interesting row on the
+        page straight into an error card, so the affordance is offered only where it leads
+        somewhere. bob has a timeline, so bob IS a link.
+        """
+        self._open(dash)
+        assert dash.locator('button.drill[data-user="mallory"]').count() == 0, (
+            "mallory is drillable, and her user page 404s"
+        )
+        assert dash.locator('button.drill[data-user="bob"]').count() >= 1, (
+            "bob has membership history, so his removal is worth drilling into"
+        )
+
+    def test_drilling_a_user_opens_the_user_page_and_back_returns_here(self, dash):
+        """The drill goes through navigate(), so one history stack serves both buttons.
+
+        This is also the regression test for a drill that set the URL and rendered nothing:
+        every drill-down renders under page=groups, so the handler has to name that page.
+        """
+        self._open(dash)
+        dash.locator('button.drill[data-user="bob"]').first.click()
+        dash.wait_for_selector("#back-groups")
+        assert dash.evaluate("() => view.page") == "groups"
+        assert dash.evaluate("() => view.user") == "bob"
+        assert "page=groups" in dash.url and "user=bob" in dash.url
+        # The label has to name the page the button actually opens.
+        assert dash.locator("#back-groups").inner_text().strip() == "← logins"
+        dash.locator("#back-groups").click()
+        dash.wait_for_selector("h2:text-is('Login attempts')")
+        assert dash.evaluate("() => view.page") == "logins"
+
+    def test_the_outcome_filter_narrows_the_list_without_moving_the_totals(self, dash):
+        """`summary` describes the whole record; the table is one filtered page of it.
+
+        A header that moved with the filter would make every number on the page mean
+        "whatever is currently selected", which is not a number anyone can act on.
+        """
+        self._open(dash)
+        before = dash.locator(".kpi", has_text="Attempts").inner_text()
+        dash.select_option("#f-outcome", "success")
+        dash.wait_for_function("() => view.loginOutcome === 'success'")
+        dash.wait_for_selector(".chip:text-is('filtered to signed in')")
+        rows = dash.locator("section.card", has=dash.locator(
+            "h3:text-is('Every attempt')")).locator("tbody tr")
+        assert rows.count() == 2, rows.all_inner_texts()
+        assert dash.locator(".kpi", has_text="Attempts").inner_text() == before, (
+            "the whole-record counts moved with the filter"
+        )
+
+    def test_the_filter_offers_only_outcomes_that_exist(self, dash):
+        """A cluster on OpenLDAP can never produce the AD sub-code outcomes.
+
+        Offering all ten would invite the reader to filter to a guaranteed-empty table and draw
+        a conclusion from it.
+        """
+        self._open(dash)
+        values = dash.locator("#f-outcome option").evaluate_all(
+            "els => els.map(e => e.value)")
+        assert values[0] == "all"
+        assert set(values[1:]) == {"success", "bad_password", "rejected", "account_locked"}, values
+
+    def test_the_detail_column_carries_the_directory_diagnostic(self, dash):
+        """The result code is not the cause: AD returns 49 for expired, locked and disabled
+        alike, and only the `data <hex>` sub-code in the diagnostic separates them."""
+        self._open(dash)
+        body = dash.locator("body").inner_text()
+        assert "775" in body, "the AD sub-code that explains the lock is not shown"
+        assert "LDAP 49" in body
+
+    def test_the_cluster_selector_stays_because_this_page_is_cluster_scoped(self, dash):
+        """Unlike Usage. These are logins to a CLUSTER, so hiding the selector would claim a
+        scope the page does not have — and the title has to name the cluster too."""
+        self._open(dash)
+        assert dash.locator("#f-cluster").count() == 1
+        assert "crc-local" in dash.locator("#scope-note").inner_text()
+
+
+@pytest.fixture(scope="module")
+def quiet_server(tmp_path_factory):
+    db = str(tmp_path_factory.mktemp("gsd-off") / "off.db")
+    _seed(db)
+    settings = Settings(
+        clusters=[ClusterConfig("crc-local", "https://api.crc.testing:6443", token_env="X")],
+        db_path=db,
+        login_capture_enabled=False,
+    )
+    port = _free_port()
+    srv = uvicorn.Server(uvicorn.Config(
+        build_app(settings, run_poller=False), host="127.0.0.1", port=port,
+        log_level="warning"))
+    thread = threading.Thread(target=srv.run, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{port}"
+    for _ in range(100):
+        try:
+            if httpx.get(f"{base}/healthz", timeout=1).status_code == 200:
+                break
+        except httpx.HTTPError:
+            time.sleep(0.1)
+    else:
+        raise RuntimeError("dashboard server did not start")
+    yield base
+    srv.should_exit = True
+    thread.join(timeout=5)
+
+
+class TestLoginsDisabled:
+    """Capture off is a DIFFERENT state from capture on and quiet.
+
+    Its own server, because `login_capture_enabled` is settings rather than data: conflating
+    the two states sends a reader hunting for logins that were never going to be recorded.
+    """
+
+    def test_it_says_capture_is_off_and_names_both_halves(self, page, quiet_server):
+        page.goto(quiet_server + "#page=logins&cluster=crc-local")
+        page.wait_for_selector("h2:text-is('Login attempts')")
+        body = page.locator("body").inner_text()
+        assert "Not being captured" in body
+        # BOTH halves, because either one alone records nothing: the module has to run, and the
+        # operand has to be verbose enough to write a username at all.
+        assert "loginCapture.enabled=true" in body
+        assert "Debug" in body
+        # And it must not show the seeded rows as though they were live.
+        assert "mallory" not in body

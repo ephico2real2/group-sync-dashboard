@@ -189,7 +189,7 @@ oauth-server pod log, which names the person only at `spec.logLevel: Debug` on t
 | `user` | all | the username as **typed**, which may match no `User` object and no group member — that mismatch is a finding, not an error |
 | `limit` | `200` | attempts returned, newest first. `truncated` reports whether older ones were dropped; `total` and `summary` always describe the whole retained record, never the page |
 
-**`rejected` covers two different things and cannot separate them.** The identity provider's search
+**`rejected` — shown as "no match" — covers two different things and cannot separate them.** The identity provider's search
 filter carries the login-gate group, so a real person who is not in that group and a username that does
 not exist produce the same `no entries matching` line. Telling them apart would need a directory read
 this application does not have.
@@ -201,6 +201,7 @@ this application does not have.
 | `capture_started_at` | when watching began. Stable — set once by the first successful read. May be *later* than `retained_since`, because the first read looks back an hour |
 | `retained_since` | the oldest attempt still kept. Moves as retention ages rows out |
 | `last_read_at` | liveness. If this stops advancing, capture has stopped |
+| `read_interval_seconds` | how often `last_read_at` is *expected* to advance — capture rides the poll thread, so this is the poll interval. Sent because the browser is the only place that can judge whether a read is overdue and the only place that knows what a reader is looking at, but it has no way to learn the cadence: a threshold hardcoded in the page would call a 900s poll stalled every cycle |
 
 Nothing before capture began exists to fetch — the log dies with its pod — so **an empty `attempts` is a
 statement about the window, never proof that nobody logged in.**
