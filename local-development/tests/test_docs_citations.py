@@ -57,9 +57,19 @@ LINE_NUMBER_CITATION = re.compile(
 )
 
 
+# Point-in-time REVIEW ARTIFACTS, exempt from the citation rules on purpose.
+#
+# The rest of the docs describe the code as it IS, so a line-number citation there rots and the rule
+# that forbids them is right. A review document describes the code as it WAS at review time, and its
+# findings quote the exact lines they are about — rewriting those to symbol names as the code changes
+# would falsify the record of what was reviewed. These files are historical once written.
+REVIEW_ARTIFACTS = ("OAUTH_LOGLEVEL_REVIEW.md",)
+
+
 def _markdown() -> list[pathlib.Path]:
     return [p for p in sorted(REPO.rglob("*.md"))
-            if not any(s in p.parts for s in SKIP)]
+            if not any(s in p.parts for s in SKIP)
+            and p.name not in REVIEW_ARTIFACTS]
 
 
 def _index() -> dict[str, list[pathlib.Path]]:

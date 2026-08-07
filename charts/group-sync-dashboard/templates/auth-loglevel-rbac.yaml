@@ -1,0 +1,70 @@
+{{- if .Values.authLogLevel.manage }}
+{{- if eq (include "gsd.serviceAccountName" .) (printf "%s-auth-loglevel" (include "gsd.fullname" .)) }}
+{{- fail (printf "serviceAccount.name is %q, which collides with the log-level Job's own ServiceAccount.\n  That would render two same-named ServiceAccounts, run the DASHBOARD as that identity, and hand it\n  the `patch` grant on authentications.operator.openshift.io — defeating the separation this whole\n  feature is shaped around. Choose a different serviceAccount.name." (include "gsd.serviceAccountName" .)) }}
+{{- end }}
+# The ONLY write grant this chart creates, and it is deliberately not on the dashboard.
+#
+# `rbac.yaml` states "NO WRITE VERB ON ANYTHING THE DASHBOARD REPORTS ON" and five documents cite
+# that line. Putting `patch` on the dashboard's ServiceAccount to enable a logging prerequisite
+# would falsify all of them for a cosmetic feature. This ServiceAccount exists only for the
+# hook Jobs beside it, is used by nothing at runtime, and disappears entirely with
+# `authLogLevel.manage=false`.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "gsd.fullname" . }}-auth-loglevel
+  labels:
+    {{- include "gsd.labels" . | nindent 4 }}
+    app.kubernetes.io/component: auth-loglevel
+  # NO resource-policy: keep, deliberately. Helm runs pre-delete hooks BEFORE it deletes the
+  # release's resources, so this ServiceAccount is still present when the revert Job authenticates
+  # with it. `keep` would orphan a cluster-scoped RBAC pair on every uninstall, forever — which is
+  # a worse outcome than the problem it looks like it solves.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "gsd.fullname" . }}-auth-loglevel
+  labels:
+    {{- include "gsd.labels" . | nindent 4 }}
+rules:
+  # `get` and `patch` on ONE named object. resourceNames is honoured for both — unlike `create` and
+  # `list`, where a request carries its name in the body or not at all, so a name-pinned rule never
+  # authorises them. That distinction matters here: without the pin this would be patch on every
+  # object in the group, which includes the cluster's whole authentication configuration.
+  #
+  # No `update`: --type=merge is a PATCH. No `list`, no `watch`, and no other resource.
+  - apiGroups: ["operator.openshift.io"]
+    resources: ["authentications"]
+    resourceNames: ["cluster"]
+    verbs: ["get", "patch"]
+  # Read-only, and only to answer "has the rollout finished?" — see the wait loop in the Job, and
+  # why `oc rollout status` cannot be trusted for it.
+  # PINNED to the one Deployment the wait loop reads. Unpinned this was `get deployments` on every
+  # namespace on the cluster — verified with `oc auth can-i --as=` the Job's own ServiceAccount: yes
+  # in kube-system, openshift-console and everywhere else. resourceNames is honoured for `get`.
+  #
+  # A ClusterRole rather than a Role in openshift-authentication, deliberately: a Role would have the
+  # chart creating an object in a namespace it does not own, which breaks ArgoCD pruning and leaves
+  # something behind that no release manifest accounts for.
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    resourceNames: ["oauth-openshift"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "gsd.fullname" . }}-auth-loglevel
+  labels:
+    {{- include "gsd.labels" . | nindent 4 }}
+  # No `keep` here either — same reason as the ServiceAccount above.
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "gsd.fullname" . }}-auth-loglevel
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "gsd.fullname" . }}-auth-loglevel
+    namespace: {{ .Release.Namespace }}
+{{- end }}

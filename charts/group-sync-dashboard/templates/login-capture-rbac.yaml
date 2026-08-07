@@ -1,0 +1,67 @@
+{{- if .Values.loginCapture.enabled }}
+# Lets the DASHBOARD read the oauth-server's logs, so it can record who logged in and when.
+#
+# This is a READ, and it is the dashboard's own ServiceAccount — unlike the log-level Jobs beside it,
+# which write and therefore run under their own identity. `rbac.yaml`'s "NO WRITE VERB" invariant is
+# untouched: nothing here grants one.
+#
+# ── WHY A Role IN openshift-authentication, AND NOT A ClusterRole ─────────────────────────────────
+# Because `pods/log` in a ClusterRole means EVERY POD ON THE CLUSTER. Pod logs routinely carry tokens,
+# connection strings and customer data, so a cluster-wide log read is one of the widest grants a
+# read-only application can hold — far wider than the group and binding reads this dashboard exists
+# for. Scoping it to the one namespace whose logs it actually parses is the difference between "can
+# read the OAuth server's logs" and "can read anything anyone logs".
+#
+# The cost is real and stated rather than hidden: this creates two objects in a namespace the chart
+# does not own. They carry the release's labels so they can be found, and `helm uninstall` removes
+# them like any other release resource — but an ArgoCD Application syncing this chart will show them
+# as living outside its destination namespace, and a cluster policy that forbids writing to
+# `openshift-*` namespaces will reject them. Both are better problems than a cluster-wide log grant.
+#
+# ── WHY BOTH pods AND pods/log ────────────────────────────────────────────────────────────────────
+# There is no Deployment log subresource — verified:
+#   GET /apis/apps/v1/namespaces/openshift-authentication/deployments/oauth-openshift/log
+#     -> "the server could not find the requested resource"
+# `oc logs deploy/x` only LOOKS like combined logs: the client resolves the Deployment to its
+# ReplicaSet to its Pods and reads each one. So the dashboard must do the same — `list` pods to
+# discover them (production runs 2-3 oauth replicas, and every roll replaces them), then `get`
+# pods/log per pod. Neither verb alone is enough.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "gsd.fullname" . }}-login-capture
+  namespace: {{ .Values.loginCapture.namespace }}
+  labels:
+    {{- include "gsd.labels" . | nindent 4 }}
+    app.kubernetes.io/component: login-capture
+rules:
+  # Discovery. `list` only — no watch, and no get on a named pod, because pod names are generated and
+  # change on every roll.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["list"]
+  # The logs themselves. A subresource, so it cannot be pinned by resourceName in any useful way:
+  # the names are generated. The namespace scope IS the boundary here.
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "gsd.fullname" . }}-login-capture
+  namespace: {{ .Values.loginCapture.namespace }}
+  labels:
+    {{- include "gsd.labels" . | nindent 4 }}
+    app.kubernetes.io/component: login-capture
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "gsd.fullname" . }}-login-capture
+subjects:
+  # The dashboard's own ServiceAccount. This is the ONE grant it holds outside its own namespace, and
+  # it is read-only.
+  - kind: ServiceAccount
+    name: {{ include "gsd.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

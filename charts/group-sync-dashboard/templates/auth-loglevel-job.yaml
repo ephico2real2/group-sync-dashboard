@@ -1,0 +1,215 @@
+{{- if .Values.authLogLevel.manage }}
+{{- if ge (int .Values.authLogLevel.waitSeconds) (int .Values.authLogLevel.activeDeadlineSeconds) }}
+{{- fail (printf "authLogLevel.waitSeconds (%v) must be LESS than activeDeadlineSeconds (%v).\n  As set, the deadline kills the Job mid-wait and FAILS `helm upgrade` — which contradicts the\n  promise in values.yaml that a wait timeout is not a failure. The wait must be able to finish\n  and print its own guidance before the deadline fires." .Values.authLogLevel.waitSeconds .Values.authLogLevel.activeDeadlineSeconds) }}
+{{- end }}
+# Turns the oauth-server operand's log verbosity up, and back down again, via the cluster's
+# authentication OPERATOR CR.
+#
+# ── THREE SIMILARLY-NAMED RESOURCES. THIS ONE IS THE OPERATOR CR. ─────────────────────────────────
+# Verified on a live cluster, because two of these are one word apart and hold entirely different
+# things:
+#
+#   authentications.operator.openshift.io/cluster   kind Authentication (operator.openshift.io/v1)
+#                                                   spec: logLevel, operatorLogLevel,
+#                                                         managementState, ...        <- THIS FILE
+#   authentications.config.openshift.io/cluster     kind Authentication (config.openshift.io/v1)
+#                                                   spec: type, serviceAccountIssuer, oauthMetadata
+#   oauth.config.openshift.io/cluster               kind OAuth
+#                                                   spec: identityProviders, tokenConfig, templates
+#
+# The last of those is what people mean by "the OAuth CR" — it holds the LDAP identity provider, and
+# the group-sync-operator chart reads it. This feature does NOT touch it. Saying "the OAuth CR" here
+# would point a reader at the wrong object, and the RBAC below would look wrong to them.
+#
+# AND WITHIN the operator CR, `logLevel` is not `operatorLogLevel`: logLevel is the OPERAND's
+# verbosity — the oauth-server process, which is what emits the login lines — while
+# operatorLogLevel is the cluster-authentication-operator's own. Patching the wrong one changes
+# nothing that this feature needs. Confirmed by reading the operand's args after a patch: the
+# Deployment renders `exec oauth-server osinserver ... --v=2`, and Normal=2 / Debug=4.
+#
+# WHY THIS EXISTS: the oauth-openshift server only names the person logging in when
+# `authentications.operator.openshift.io/cluster` has `spec.logLevel: Debug`. At `Normal` the line
+# the dashboard's login capture reads does not exist at all — measured on the reference cluster:
+# zero occurrences of "succeeded for login" until this Job runs. So this is the prerequisite for
+# that feature, and nothing more.
+#
+# ── WHY A SEPARATE ServiceAccount, AND WHY IT MATTERS ────────────────────────────────────────────
+# This Job WRITES to a core platform object. The dashboard must not be able to: `rbac.yaml` states
+# "NO WRITE VERB ON ANYTHING THE DASHBOARD REPORTS ON" and five documents cite that line. So the
+# grant lives on this Job's own ServiceAccount and the dashboard's stays read-only — the same split
+# the group-sync-operator chart uses for its hook Jobs. The dashboard, separately, is granted only
+# `get` on pods/log in openshift-authentication, which is a read.
+#
+# ── WHY IT RENDERS WHEN THE FEATURE IS OFF ───────────────────────────────────────────────────────
+# `manage` and `enabled` are two switches on purpose, and the Job runs for BOTH values of `enabled`:
+#
+#   manage: false (default)   nothing renders, no RBAC, the chart never touches logLevel
+#   manage: true, enabled: t  the Job sets Debug
+#   manage: true, enabled: f  the Job sets Normal  <- this is what makes "turn it off" work
+#
+# Helm does not run a Job you merely stopped rendering, so a one-way "enable" Job would leave the
+# cluster in Debug forever after somebody flipped the flag back and saw nothing happen. Applying the
+# REQUESTED level rather than a fixed one converges either way, which is also what makes the Job
+# safe to re-run.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "gsd.fullname" . }}-auth-loglevel
+  labels:
+    {{- include "gsd.labels" . | nindent 4 }}
+    app.kubernetes.io/component: auth-loglevel
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    # before-hook-creation, so an upgrade replaces the previous run rather than failing on a name
+    # that already exists. NOT hook-succeeded: the log of what this changed on the cluster is worth
+    # keeping until the next upgrade.
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  backoffLimit: {{ .Values.authLogLevel.backoffLimit }}
+  # A wall clock on the whole attempt. The wait loop below is bounded too, but a Job that cannot
+  # reach the API server would otherwise sit in Pending indefinitely and hold up `helm upgrade`.
+  activeDeadlineSeconds: {{ .Values.authLogLevel.activeDeadlineSeconds }}
+  template:
+    metadata:
+      labels:
+        {{- include "gsd.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: auth-loglevel
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ include "gsd.fullname" . }}-auth-loglevel
+      containers:
+      - name: set-loglevel
+        image: {{ .Values.authLogLevel.image.repository }}:{{ .Values.authLogLevel.image.tag }}
+        imagePullPolicy: {{ .Values.authLogLevel.image.pullPolicy }}
+        command:
+        - /bin/bash
+        - -c
+        - |
+          set -euo pipefail
+
+          WANT={{ if .Values.authLogLevel.enabled }}Debug{{ else }}Normal{{ end }}
+
+          # A3: an `oc get` FAILURE must not read as "already Normal". `|| true` on the old form
+          # made a 403, a network blip and a genuinely-unset field indistinguishable — and the unset
+          # case is the one that means "default, i.e. Normal", so an error silently claimed the work
+          # was done. Status and value are captured separately.
+          if ! CURRENT=$(oc get authentications.operator.openshift.io cluster \
+                           -o jsonpath='{.spec.logLevel}' 2>&1); then
+            echo "❌ cannot read authentications.operator.openshift.io/cluster:"
+            echo "   ${CURRENT}"
+            echo "   Nothing was changed. The ServiceAccount needs get+patch on that named object."
+            exit 1
+          fi
+          echo "requested logLevel: ${WANT}"
+          echo "current logLevel:   ${CURRENT:-<unset, i.e. Normal>}"
+
+          # The operand's verbosity flag, which is what we actually wait for below. Verified on a live
+          # cluster: the authentication operator renders `exec oauth-server osinserver ... --v=2` into
+          # the Deployment's container args, and the OpenShift API types define Normal=2, Debug=4.
+          case "$WANT" in
+            Debug)  WANT_V=4 ;;
+            Normal) WANT_V=2 ;;
+          esac
+
+          # An unset logLevel means the operator default, which IS Normal.
+          if [ "${CURRENT:-Normal}" = "$WANT" ]; then
+            echo "already ${WANT} — nothing to do"
+            exit 0
+          fi
+
+          # C1: this is a LOGIN OUTAGE on a single-replica cluster, not a rolling update. Said here,
+          # at the moment of acting, because a warning in values.yaml is read once and this is read
+          # every time. Measured: `authentication` reported "no oauth-openshift pods available on any
+          # node" and a second application watching the cluster logged
+          # "HTTP 503 on /apis/user.openshift.io/v1/groups" while the roll happened.
+          REPLICAS=$(oc get deploy oauth-openshift -n openshift-authentication \
+                       -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "?")
+          if [ "$REPLICAS" = "1" ]; then
+            echo
+            echo "⚠️  oauth-openshift runs ONE replica: this roll is a LOGIN OUTAGE, not a rolling"
+            echo "    update. In-flight logins fail and new ones are refused until the replacement"
+            echo "    pod is Ready. Same on the way back off — both directions are a logLevel change."
+            echo
+          fi
+
+          echo "patching authentications.operator.openshift.io/cluster -> ${WANT}"
+          oc patch authentications.operator.openshift.io cluster --type=merge \
+            -p "{\"spec\":{\"logLevel\":\"${WANT}\"}}"
+
+          # A1: WAIT ON THE OPERAND'S OWN FLAG, not on the Deployment's generation.
+          #
+          # `oc rollout status` is useless here — measured: it returned "successfully rolled out"
+          # about THIRTY SECONDS BEFORE the rollout began, because the old ReplicaSet was still
+          # current and complete. The first fix for that polled generation/observedGeneration and
+          # available/updated replicas, and it had the SAME defect for the same reason: every one of
+          # those is a steady-state invariant that is equally true in the window before the operator
+          # reconciles. It logged "rollout complete: generation 26" while the deployment went on to
+          # generation 27 — the new pod started 29 seconds after the Job exited.
+          #
+          # `--v=<n>` in the Deployment's container args IS causal: it can only appear once the
+          # operator has rendered the requested level into the workload. So the gate is "the template
+          # carries the level we asked for" AND THEN Kubernetes' ordinary completion predicate.
+          DEADLINE=$(( $(date +%s) + {{ .Values.authLogLevel.waitSeconds }} ))
+          echo "waiting up to {{ .Values.authLogLevel.waitSeconds }}s for --v=${WANT_V} to be live"
+          while :; do
+            if [ "$(date +%s)" -ge "$DEADLINE" ]; then
+              echo "⚠️  timed out waiting for the rollout. The level IS set — confirm with:"
+              echo "    oc get pods -n openshift-authentication"
+              echo "    oc get deploy oauth-openshift -n openshift-authentication -o yaml | grep -- --v="
+              # NOT a failure. The patch landed, which is this Job's work; finishing the rollout is
+              # the operator's. Failing here would fail `helm upgrade` over somebody else's slow
+              # reconcile — see waitSeconds in values.yaml.
+              exit 0
+            fi
+            tmpl=$(oc get deploy oauth-openshift -n openshift-authentication \
+                     -o jsonpath='{.spec.template.spec.containers[*].args}' 2>/dev/null || true)
+            gen=$(oc get deploy oauth-openshift -n openshift-authentication \
+                    -o jsonpath='{.metadata.generation}' 2>/dev/null || true)
+            obs=$(oc get deploy oauth-openshift -n openshift-authentication \
+                    -o jsonpath='{.status.observedGeneration}' 2>/dev/null || true)
+            want=$(oc get deploy oauth-openshift -n openshift-authentication \
+                     -o jsonpath='{.spec.replicas}' 2>/dev/null || true)
+            avail=$(oc get deploy oauth-openshift -n openshift-authentication \
+                      -o jsonpath='{.status.availableReplicas}' 2>/dev/null || true)
+            upd=$(oc get deploy oauth-openshift -n openshift-authentication \
+                    -o jsonpath='{.status.updatedReplicas}' 2>/dev/null || true)
+            # Every default is EMPTY, not 0/-1: an empty jsonpath means "could not read", and
+            # substituting a number would make a comparison accidentally true. `-eq` on an empty
+            # string is a syntax error under set -e, so each is tested for content first.
+            case "$tmpl" in
+              *"--v=${WANT_V}"*)
+                if [ -n "$gen" ] && [ -n "$obs" ] && [ "$obs" = "$gen" ] \
+                   && [ -n "$want" ] && [ -n "$avail" ] && [ -n "$upd" ] \
+                   && [ "$avail" -ge "$want" ] && [ "$upd" -ge "$want" ]; then
+                  echo "rollout complete: --v=${WANT_V} live, ${avail}/${want} available and updated"
+                  break
+                fi
+                ;;
+            esac
+            sleep 5
+          done
+
+          echo
+          echo "✅ OAuth server logLevel is now ${WANT}"
+          {{- if .Values.authLogLevel.enabled }}
+          echo
+          echo "NOTE: Debug logging names every person who authenticates, and their LDAP DN and the"
+          echo "      bind filter used. Those lines are readable by anyone who can read pod logs in"
+          echo "      openshift-authentication. Turn it back off with authLogLevel.enabled=false when"
+          echo "      you no longer need the capture."
+          {{- end }}
+        env:
+        - name: HOME
+          value: /tmp
+        resources:
+          {{- toYaml .Values.authLogLevel.resources | nindent 10 }}
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: ["ALL"]
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+{{- end }}
