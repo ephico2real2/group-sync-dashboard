@@ -10,7 +10,7 @@ image:
   # tags <version>-<git-sha>. Editing them by hand works, but the script keeps them
   # consistent with an image that actually exists in the registry.
   repository: quay.io/ephico2real/group-sync-dashboard
-  tag: "0.6.0-4c2ae05a59"
+  tag: "0.6.0-3e8742df2f"
   pullPolicy: Always
 
   # Only needed for a PRIVATE registry. Leave empty for a public repository: an empty
