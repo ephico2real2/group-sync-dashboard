@@ -25,6 +25,24 @@ rules:
   - apiGroups: ["user.openshift.io"]
     resources: ["groups"]
     verbs: ["get", "list"]
+  {{- if .Values.rbac.users }}
+  # Display names, and nothing else off the User object. A User exists only once that person has
+  # logged in, and its fullName is filled by the identity provider's `attributes.name` mapping —
+  # so this grant buys a name for the subset who have authenticated, and nothing for the rest.
+  # Measured on the reference cluster: 10 distinct group members, 7 named, 3 with no User object.
+  #
+  # OPTIONAL BY CONSTRUCTION, and the code proves it rather than assuming it: without this rule the
+  # list call 403s, `ClusterClient.fetch_users` returns None, and the poller keeps whatever names it
+  # already had instead of writing an empty set. So an install that upgrades the image without
+  # re-applying RBAC loses new names, not correctness and not the tab. Set this false to decline the
+  # grant deliberately; the dashboard then shows bare user ids exactly as it did before the feature.
+  #
+  # A User carries identities and group membership too, and neither is read — the dashboard derives
+  # membership from Group objects, which it already lists above.
+  - apiGroups: ["user.openshift.io"]
+    resources: ["users"]
+    verbs: ["get", "list"]
+  {{- end }}
   {{- if .Values.leaderElection.enabled }}
   # Leader election. Namespaced, so this belongs in a Role rather than the ClusterRole —
   # but keeping one object is simpler and the grant is confined to one named Lease anyway.

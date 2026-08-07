@@ -411,6 +411,11 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
         return {
             "user": name,
             "cluster": cluster_id,
+            # None whenever OpenShift has no name for them — no User object because they have
+            # never logged in, or a User with fullName unset because their identity provider
+            # supplies no name attribute. A separate store call rather than a join because this
+            # handler is @consistent and already makes several inside one snapshot.
+            "full_name": store.user_full_name(cluster_id, name),
             "groups": groups,
             "changes": changes,
             # Reachable through their group memberships. Each row carries via_group, so

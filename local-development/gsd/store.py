@@ -124,6 +124,27 @@ CREATE TABLE IF NOT EXISTS group_member (
 CREATE INDEX IF NOT EXISTS group_member_by_user
     ON group_member(cluster_id, user_name);
 
+-- Display names for users who have logged in. ONE row per person, joined onto the tables that
+-- name them — deliberately not a column on group_member or user_binding, both of which are
+-- per-membership and per-binding, so a name there would duplicate N times per person. On
+-- group_member it would also outlive its truth: that table is diff-and-append so first_seen_at
+-- survives, meaning a name removed upstream would never be cleared.
+--
+-- Only names that are SET are stored. A User with an empty fullName is downstream-identical to
+-- no User at all, so the absent row is the single representation of "no name to show" and every
+-- read is an outer join that yields NULL.
+--
+-- Wholly replaced each poll, like group_state and user_binding: an upsert would leave a name
+-- behind after the User object is deleted. The poller skips the replace entirely when the fetch
+-- was forbidden, so a missing RBAC grant costs nothing already known.
+CREATE TABLE IF NOT EXISTS ocp_user (
+    cluster_id          TEXT NOT NULL,
+    user_name           TEXT NOT NULL,
+    full_name           TEXT NOT NULL,
+    observed_at         TEXT NOT NULL,
+    PRIMARY KEY(cluster_id, user_name)
+);
+
 -- Membership changes, append-only. The API has no history (PLAN §2), and a user quietly
 -- dropping out of a group is exactly the invisible absence this dashboard exists for:
 -- nothing logs it, no event fires, and the group still looks healthy afterwards.
@@ -311,6 +332,26 @@ _MIGRATIONS: list[tuple[int, str, list[str]]] = [
             # poll after upgrade replaces with the truth. Defaulting every existing cluster to
             # present=1 would be a guess, and defaulting to 0 would alert every cluster that
             # upgrades before it next polls.
+        ],
+    ),
+    (
+        4,
+        "ocp_user: display names for users who have logged in",
+        [
+            """CREATE TABLE IF NOT EXISTS ocp_user (
+                   cluster_id          TEXT NOT NULL,
+                   user_name           TEXT NOT NULL,
+                   full_name           TEXT NOT NULL,
+                   observed_at         TEXT NOT NULL,
+                   PRIMARY KEY(cluster_id, user_name)
+               )""",
+            # IF NOT EXISTS is required, not decorative: _migrate tolerates exactly one error,
+            # "duplicate column name", so a bare CREATE TABLE would raise "table already
+            # exists" when this replays against a database that got it from SCHEMA.
+            #
+            # No backfill, and none is possible — the names live on the cluster, not in here.
+            # Until the next poll every read outer-joins to NULL, which is the same thing the
+            # UI already renders for a user who has never logged in.
         ],
     ),
 ]
@@ -1046,14 +1087,24 @@ class Store:
         The original is recovered from membership_event, which is append-only and keeps
         every join even across removals — so no schema change is needed to answer both.
         """
+        # LEFT JOIN, not a second query: the handler that calls this is asserted to make exactly
+        # one store call (tests/test_api_contract.py, the take-a-snapshot rule), and a name is
+        # missing far more often than not — 3 of 10 members on the reference cluster — so NULL is
+        # the ordinary result rather than a case to special-case.
+        #
+        # Ordering stays on user_name. Sorting by display name would reorder the list for the 70%
+        # that have one and scatter the rest, and the id is what an operator matches against `oc`.
         return self._rows(
-                """SELECT m.user_name, m.first_seen_at, m.last_seen_at,
+                """SELECT m.user_name, m.first_seen_at, m.last_seen_at, u.full_name,
                           (SELECT MIN(e.observed_at) FROM membership_event e
                             WHERE e.cluster_id = m.cluster_id
                               AND e.group_name = m.group_name
                               AND e.user_name  = m.user_name
                               AND e.change = 'added') AS original_first_seen_at
                      FROM group_member m
+                     LEFT JOIN ocp_user u
+                            ON u.cluster_id = m.cluster_id
+                           AND u.user_name  = m.user_name
                     WHERE m.cluster_id=? AND m.group_name=?
                     ORDER BY m.user_name""",
                 (cluster_id, group_name),
@@ -1298,6 +1349,37 @@ class Store:
                           :role_kind,:role_name,:user_name,:is_platform,:observed_at)""",
                 [{**r, "cluster_id": cluster_id, "observed_at": observed_at} for r in rows],
             )
+
+    def replace_users(self, cluster_id: str, names: dict[str, str], observed_at: str) -> None:
+        """Replace this cluster's display names wholesale.
+
+        Delete-then-insert rather than upsert, for the same reason replace_group_state gives:
+        an upsert would leave a name behind after its User object is deleted, and a stale name
+        on a departed account is worse than no name at all.
+
+        The caller must not reach here when the fetch was FORBIDDEN — passing {} would wipe
+        every known name, which is exactly what tolerating the 403 exists to prevent.
+        """
+        with self._write() as conn:
+            conn.execute("DELETE FROM ocp_user WHERE cluster_id=?", (cluster_id,))
+            conn.executemany(
+                """INSERT OR REPLACE INTO ocp_user(
+                       cluster_id, user_name, full_name, observed_at)
+                   VALUES(:cluster_id,:user_name,:full_name,:observed_at)""",
+                [
+                    {"cluster_id": cluster_id, "user_name": name,
+                     "full_name": full, "observed_at": observed_at}
+                    for name, full in names.items()
+                ],
+            )
+
+    def user_full_name(self, cluster_id: str, user_name: str) -> str | None:
+        """One display name, or None when that person has no User object or no name on it."""
+        rows = self._rows(
+            "SELECT full_name FROM ocp_user WHERE cluster_id=? AND user_name=?",
+            (cluster_id, user_name),
+        )
+        return rows[0]["full_name"] if rows else None
 
     def user_bindings_by_namespace(self, cluster_id: str) -> list[dict]:
         """Direct-user grants rolled up per namespace — the migration worklist.

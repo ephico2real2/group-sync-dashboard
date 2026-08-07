@@ -151,6 +151,63 @@ class TestNoPatchVerbAtAnyAuditMode:
                 )
 
 
+class TestTheUsersGrantIsReadOnlyAndOptional:
+    """The `users` grant exists for one field, `fullName`, and must stay the smallest thing that
+    buys it.
+
+    A User object carries identities and group membership as well as a display name, and the read
+    is cluster-wide — every account on the cluster, not just group members. So `get`/`list` and
+    nothing else, and it has to remain switchable off: an operator who will not grant a read over
+    every identity on the cluster should lose display names and keep the dashboard.
+
+    NOTE ON PLACEMENT: like the class below, this lives here because `.github/workflows/ci.yml`
+    points the `chart` job at THIS FILE by name. A chart-rendering test in any other module is not
+    run by that job.
+    """
+
+    def _users_rules(self, out):
+        import yaml
+        found = []
+        for doc in yaml.safe_load_all(out):
+            if doc and doc.get("kind") in ("ClusterRole", "Role"):
+                for rule in doc.get("rules") or []:
+                    if "users" in (rule.get("resources") or []):
+                        found.append(rule)
+        return found
+
+    def test_granted_by_default_and_read_only(self):
+        ok, out = render()
+        assert ok, out
+        rules = self._users_rules(out)
+        assert len(rules) == 1, f"expected exactly one users rule, got {len(rules)}"
+        rule = rules[0]
+        assert rule["apiGroups"] == ["user.openshift.io"]
+        assert sorted(rule["verbs"]) == ["get", "list"], (
+            f"the users grant must be read-only and must not add watch: {rule['verbs']}. "
+            f"If that changed deliberately, update rbac.yaml's header, values.yaml, the chart "
+            f"README and docs/reference-architecture.md in the same commit."
+        )
+
+    def test_declining_the_grant_drops_the_rule_and_keeps_the_rest(self):
+        """rbac.users=false must cost display names only — the group data must survive."""
+        ok, out = render(rbac__users="false")
+        assert ok, out
+        assert self._users_rules(out) == [], "rbac.users=false still grants users"
+        import yaml
+        groups_granted = any(
+            "groups" in (rule.get("resources") or [])
+            for doc in yaml.safe_load_all(out)
+            if doc and doc.get("kind") == "ClusterRole"
+            for rule in doc.get("rules") or []
+        )
+        assert groups_granted, "declining the users grant must not disturb the groups grant"
+
+    def test_users_is_never_granted_when_rbac_is_off_entirely(self):
+        ok, out = render(rbac__create="false")
+        assert ok, out
+        assert self._users_rules(out) == []
+
+
 class TestTheProxyTrustsTheSameCAsTheApp:
     """The oauth-proxy needs the corporate CA too, and for a while only the app got it.
 

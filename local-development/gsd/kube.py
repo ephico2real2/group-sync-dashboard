@@ -24,6 +24,17 @@ one character apart and transposing them yields a 404 that looks like a missing 
 
 GROUP_API = "/apis/user.openshift.io/v1/groups"
 
+# The User objects themselves, read for ONE field: fullName.
+#
+# A User exists only once that person has authenticated — OpenShift creates it on first login and the
+# identity provider fills fullName from its `attributes.name` mapping. Group membership does NOT create
+# one: the group-sync operator writes LDAP uids into a Group's `users` array, and nothing about that
+# implies the person has ever logged in. Measured on the reference cluster: 10 distinct group members,
+# 7 with a User carrying a fullName, 3 with no User object at all — one of which (`hello1`) has no
+# directory entry either, so it can never acquire one. Absence is therefore the normal case, not an
+# error, and every consumer of this data has to render the bare id unchanged.
+USER_API = "/apis/user.openshift.io/v1/users"
+
 # The namespace-configuration-operator's CRs — SAME API group as GroupSync, different
 # CRDs. Cluster-scoped. These template out the RoleBindings that grant the synced groups
 # their access, so they are the other half of the pipeline this dashboard watches.
@@ -392,6 +403,51 @@ class ClusterClient:
                 out.extend(_user_binding_views(obj, "ClusterRoleBinding"))
         log.debug("fetched %d direct-user binding rows from %s", len(out), self.cluster.name)
         return out
+
+    def fetch_users(self) -> dict[str, str] | None:
+        """Display names for users who have logged in, or None when we may not read them.
+
+        One list call for one field. Keyed by username, and only names that are actually set:
+        a User with no fullName is indistinguishable from no User at all as far as anything
+        downstream is concerned, so it is left out rather than stored as an empty string.
+
+        None means FORBIDDEN, and it is deliberately distinct from {} (allowed, nobody has a
+        name yet). The grant is new: an install that upgrades the image without re-applying the
+        chart's RBAC gets a 403 here, and that must not fail the poll or blank the names already
+        known — so the caller skips its write and last cycle's names survive.
+
+        Note the asymmetry with fetch(): there, swallowing a 403 would report a missing grant as
+        a healthy operator-less cluster, which is the failure this dashboard exists to prevent
+        applied to itself. Here the grant is optional by construction and the whole feature is
+        cosmetic — a 403 costs display names, never correctness — so tolerating it is right in
+        this one place and wrong in that one. Every other status still raises.
+        """
+        with self._client() as client:
+            try:
+                items = self._list_all(client, USER_API)
+            except ClusterError as exc:
+                # Anchored on the outcome AND the path. The outcome alone would be enough today
+                # because this method calls exactly one path, but the pairing survives someone
+                # adding a second call here later and not noticing that a 403 on it would be
+                # read as "no permission on users".
+                if exc.outcome == FORBIDDEN and USER_API in exc.message:
+                    log.debug(
+                        "%s: not permitted to list users — display names unavailable",
+                        self.cluster.name,
+                    )
+                    return None
+                raise
+        names = {
+            name: full
+            for obj in items
+            if (name := (obj.get("metadata") or {}).get("name"))
+            and (full := (obj.get("fullName") or "").strip())
+        }
+        log.debug(
+            "fetched %d users from %s, %d with a display name",
+            len(items), self.cluster.name, len(names),
+        )
+        return names
 
     def fetch_bindings(self) -> list[BindingView]:
         """Every RoleBinding and ClusterRoleBinding subject of kind Group.

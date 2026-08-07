@@ -117,6 +117,34 @@ def poll_once(store: StorageBackend, cluster: ClusterConfig, timeout: float = 15
 
     observed_at = now_iso()
 
+    # Display names, in the SAME cycle as the members they annotate. Deliberately here and not on
+    # the slower refresh_bindings cadence: these names are rendered beside group members, which
+    # this function writes, and a name arriving a cadence later than the member it labels would
+    # show a fresh member with a stale-or-absent name.
+    #
+    # The most forgiving call in the cycle, because the data is cosmetic. `None` means FORBIDDEN —
+    # the chart's `users` grant is not applied here — and any other failure is logged and skipped.
+    # In BOTH cases the previous cycle's names stay in the database: writing {} would blank every
+    # name currently on screen, which is worse than a stale name and much worse than doing nothing.
+    #
+    # getattr, not a direct call: tests stub this client with only the methods they exercise, and a
+    # cosmetic field must not turn an old stub into an AttributeError mid-poll.
+    fetch_users = getattr(client, "fetch_users", None)
+    if fetch_users is not None:
+        try:
+            names = fetch_users()
+        except ClusterError as exc:
+            log.warning("display-name refresh for %s failed: %s — names are unaffected",
+                        cluster.name, exc.message)
+        else:
+            if names is None:
+                log.info("%s: not permitted to list users — display names left as they were. "
+                         "Grant user.openshift.io/users [get,list] (chart: rbac.users) to enable.",
+                         cluster.name)
+            else:
+                store.replace_users(cluster.name, names, observed_at)
+                log.info("%s: %d display name(s) recorded", cluster.name, len(names))
+
     # Steps 3-4: attribute groups to CRs, then record any sync we had not seen before.
     cr_rows = []
     new_events = 0
