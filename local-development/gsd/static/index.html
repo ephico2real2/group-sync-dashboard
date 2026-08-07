@@ -1344,7 +1344,8 @@ function groupDetail() {
           const rejoined = m.original_first_seen_at
             && m.original_first_seen_at !== m.first_seen_at;
           return `<tr class="rowlink" data-user="${esc(m.user_name)}">
-          <td><button type="button" class="drill">${esc(m.user_name)}</button></td>
+          <td><button type="button" class="drill">${esc(m.user_name)}</button>${m.full_name
+            ? ` <span class="muted">· ${esc(m.full_name)}</span>` : ""}</td>
           <td class="mono">${esc(fmtTime(m.first_seen_at))} <span class="muted">(${esc(ago(m.first_seen_at))})</span></td>
           <td class="mono ${rejoined ? "" : "muted"}">${esc(fmtTime(m.original_first_seen_at))}${
             rejoined ? ` <span class="badge warning" style="margin-left:4px"><span class="glyph" aria-hidden="true"></span>rejoined</span>` : ""}</td>
@@ -1453,7 +1454,8 @@ function userDetail() {
   const groups = d.groups || [];
   return `<section class="card">
     <button class="back" id="back-groups">${backLabel()}</button>
-    <h2 style="margin-top:10px">${esc(d.user)}</h2>
+    <h2 style="margin-top:10px">${esc(d.user)}${d.full_name
+      ? ` <span class="muted">· ${esc(d.full_name)}</span>` : ""}</h2>
     <div class="kpis">
       <div class="kpi"><div class="label">Groups</div><div class="value">${groups.length}</div></div>
     </div>

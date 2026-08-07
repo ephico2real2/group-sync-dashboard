@@ -208,6 +208,7 @@ day. Above one replica it is per-pod, like the rest of the history.
 | `serviceAccount.create` / `.name` / `.annotations` | `true` / derived / `{}` | with the proxy on, the SA also carries the `oauth-redirecturi` annotation that makes it an OAuth client — no `OAuthClient` object to register |
 | `rbac.create` | `true` | ClusterRole + binding, read-only, no `watch` |
 | `rbac.bindings` | `true` | adds `get`/`list` on rolebindings/clusterrolebindings, powering the Access-granted, RBAC-policy and Namespace-audit views. Disable and the dashboard degrades to group data only |
+| `rbac.users` | `true` | adds `get`/`list` on `users`, read for one field — `fullName` — so members show as `alice.cooper · Alice Cooper`. A name exists only for people who have logged in; unnamed members render exactly as before. Safe to disable, and safe to upgrade without re-applying: the call 403s and the poller keeps the names it already had |
 | `monitoring.serviceMonitor.enabled` | `false` | needs the Prometheus Operator CRDs |
 | `monitoring.serviceMonitor.interval` / `.scrapeTimeout` | `30s` / `10s` | every series is recomputed from SQLite on scrape and each scrape takes a read snapshot. Faster buys no resolution — the data only changes once per poll |
 | `monitoring.serviceMonitor.labels` | `{}` | extra metadata labels. Usually how a cluster's Prometheus selects which ServiceMonitors it owns |
@@ -218,9 +219,10 @@ day. Above one replica it is per-pod, like the rest of the history.
 | `monitoring.prometheusRule.walMiB` | `256` | MiB. 25% of the default 1Gi PVC. Raise it with `persistence.size` |
 | `monitoring.prometheusRule.for.*` | see below | the `for:` duration on each alert |
 
-Two rules in the ClusterRole are conditional. `coordination.k8s.io/leases`
-(`get`, `create`, `update`) renders only when `leaderElection.enabled`, and
-`rolebindings`/`clusterrolebindings` (`get`, `list`) only when `rbac.bindings`. Everything
+Three rules in the ClusterRole are conditional. `coordination.k8s.io/leases`
+(`get`, `create`, `update`) renders only when `leaderElection.enabled`,
+`rolebindings`/`clusterrolebindings` (`get`, `list`) only when `rbac.bindings`, and
+`users` (`get`, `list`) only when `rbac.users`. Everything
 else in it is `get`/`list`, and that Lease — the dashboard's own, which grants nobody
 access to anything — is the only object it writes on any cluster.
 

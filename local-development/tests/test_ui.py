@@ -126,6 +126,12 @@ def _seed(db_path: str) -> None:
         _iso(now - timedelta(minutes=4)),
     )
 
+    # Display names for SOME members only, which is the real shape: a name exists only once that
+    # person has logged in. alice has one, dave does not — so every member surface renders both
+    # states in the same table, and "no name" is covered by the fixture rather than only by unit
+    # tests. Measured on the reference cluster: 7 of 10 members named, 3 not.
+    store.replace_users("crc-local", {"alice": "Alice Cooper"}, _iso(now))
+
     # Bindings covering all three finding tiers: one genuinely broken, one that names a
     # group which never existed, and the built-in noise that must not drown them.
     store.record_managed_groups(
@@ -472,6 +478,50 @@ class TestGroupDrilldown:
     def test_members_table_says_the_names_are_clickable(self, dash):
         self._open_group(dash, "app-ocp-rbac-alpha-ns-admin")
         assert "Select a user" in dash.locator("body").inner_text()
+
+    def test_a_member_who_has_logged_in_shows_their_display_name(self, dash):
+        """The id stays the primary text; the name is secondary.
+
+        That order is deliberate rather than cosmetic: this page is read next to `oc` output, and
+        the id is what you type. It is also what keeps `data-user` and the drill button matching
+        the id, which several other tests here rely on.
+        """
+        self._open_group(dash, "app-ocp-rbac-alpha-ns-admin")
+        row = dash.locator("tr[data-user='alice']").first.inner_text()
+        assert "alice" in row, "the user id must remain the primary text"
+        assert "Alice Cooper" in row, "a known display name is not shown"
+        assert row.index("alice") < row.index("Alice Cooper"), (
+            "the id must come first — the name is the subordinate text, not the heading"
+        )
+
+    def test_a_member_who_has_never_logged_in_renders_exactly_as_before(self, dash):
+        """The ordinary case: no User object, so no name, and no separator or empty span.
+
+        3 of 10 members on the reference cluster are in this state, one of whom has no directory
+        entry at all and can never leave it. A stray "·" on every one of those rows would be a
+        permanent visual defect on the majority of some clusters' member lists.
+        """
+        self._open_group(dash, "app-ocp-rbac-alpha-ns-admin")
+        row = dash.locator("tr[data-user='dave']").first.inner_text()
+        assert "dave" in row
+        assert "·" not in row, (
+            "an unnamed member must render the bare id, with no leftover separator"
+        )
+
+    def test_the_user_page_heading_carries_both_id_and_name(self, dash):
+        self._open_group(dash, "app-ocp-rbac-alpha-ns-admin")
+        dash.locator("tr[data-user='alice'] .drill").first.click()
+        dash.wait_for_selector("text=Group memberships")
+        heading = dash.locator("h2").first.inner_text()
+        assert "alice" in heading and "Alice Cooper" in heading
+
+    def test_the_user_page_heading_of_an_unnamed_user_is_unchanged(self, dash):
+        """bob never logged in, so his page must look exactly as it did before this feature."""
+        self._open_group(dash, "app-ocp-rbac-alpha-ns-admin")
+        dash.locator(".drill[data-user='bob']").first.click()
+        dash.wait_for_selector("text=Group memberships")
+        heading = dash.locator("h2").first.inner_text()
+        assert "bob" in heading and "·" not in heading
 
     def test_departed_user_is_drillable_from_the_change_log(self, dash):
         """A user who left appears ONLY in the change log — which is precisely when you

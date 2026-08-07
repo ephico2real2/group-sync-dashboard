@@ -719,6 +719,7 @@ elect a leader:
 | `redhatcop.redhat.io` | `groupsyncs` | get, list |
 | `redhatcop.redhat.io` | `namespaceconfigs`, `groupconfigs` | get, list |
 | `user.openshift.io` | `groups` | get, list |
+| `user.openshift.io` | `users` | get, list — only when `rbac.users` |
 | `rbac.authorization.k8s.io` | `rolebindings`, `clusterrolebindings` | get, list — only when `rbac.bindings` |
 | `coordination.k8s.io` | `leases` | get, create, update — only when `leaderElection.enabled` |
 
@@ -730,6 +731,24 @@ This is checkable rather than asserted, and it holds at every setting: `helm tem
 renders zero occurrences of `"patch"`. A conditional `patch` on `rolebindings` and
 `clusterrolebindings` used to render here; `rbac.yaml#NO WRITE VERB` records why it is gone, so nobody
 adds it back. §7.3 is the measurement.
+
+`users` is read for exactly one field, `fullName`, so a member list can show
+`alice.cooper · Alice Cooper` rather than the bare id. Nothing else on the object is read — not
+`identities`, and not group membership, which is derived from the Group objects above.
+
+That grant is **optional by construction, and the code proves it rather than documenting it**: with
+`rbac.users=false`, or on an install that upgraded the image without re-applying RBAC, the list call
+403s, `ClusterClient.fetch_users` returns `None`, and the poller keeps the names it already had
+instead of writing an empty set. A missing grant costs new display names — never correctness, and
+never a view. It is also the one place a 403 is tolerated: everywhere else swallowing one would
+report a missing grant as a healthy cluster, which is the failure this dashboard exists to prevent
+applied to itself.
+
+A name exists only for people who have **logged in**. OpenShift creates the User object on first
+authentication and the identity provider fills `fullName` from its `attributes.name` mapping;
+group membership creates nothing. Measured on the reference cluster: 10 distinct group members, 7
+named, 3 with no User object at all — one of which has no directory entry either, so it never will.
+Absence is the ordinary case, and an unnamed member renders exactly as it did before the feature.
 
 `roles`/`clusterroles` are deliberately **not** requested, since role rules are never
 evaluated. `rbac.yaml#statement of intent` is careful to record that this is a statement of intent and not
