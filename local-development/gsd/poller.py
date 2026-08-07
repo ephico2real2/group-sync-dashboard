@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 from .config import ClusterConfig, Settings
 from .kube import OK, ClusterClient, ClusterError, GroupSyncView, GroupView
 from .leader import LeaderElector
+from .logincapture import capture_once
 from .audit import plan_audit_stamps
 from .storage import StorageBackend
 from .timeutil import now_iso
@@ -501,6 +502,19 @@ class Poller:
                 continue
             try:
                 poll_once(self.store, cluster, self.settings.request_timeout_seconds)
+                # Login capture rides this thread rather than owning one, which is the smallest correct
+                # ownership boundary: it inherits the leader gate above and the never-die discipline
+                # below without a second lease to reason about. It is AFTER poll_once on purpose —
+                # group data is what this dashboard is for, and capture must never delay it.
+                #
+                # The elector is passed through so capture can RECHECK leadership immediately before
+                # its write. The check above is once per cycle, and capture reads logs over the
+                # network, so the lease can pass to another replica while a read is in flight.
+                try:
+                    capture_once(self.store, cluster, self.settings, self.elector,
+                                 self.settings.request_timeout_seconds)
+                except Exception:  # noqa: BLE001 - capture must never stop the poll loop
+                    log.exception("%s: login capture raised; group polling continues", cluster.name)
                 # After the write, never during it, and never from a request handler:
                 # whatever upkeep the engine needs may wait on open readers, and that wait
                 # is free here and would be user-visible latency anywhere else. The poller

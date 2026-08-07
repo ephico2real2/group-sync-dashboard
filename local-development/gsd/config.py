@@ -179,6 +179,22 @@ class Settings:
     """
 
     binding_interval_seconds: int = 300
+
+    # Login capture. OFF by default: it needs a read grant the chart only creates when asked, and it
+    # records nothing at all unless the authentication operator's logLevel is Debug — so enabling it
+    # here alone is inert rather than broken.
+    login_capture_enabled: bool = False
+    # Where the oauth-server runs. A value rather than a constant only because the chart's Role is
+    # created in this namespace and the two must agree; it is fixed on any normal OpenShift cluster.
+    login_capture_namespace: str = "openshift-authentication"
+    # Providers whose SUCCESSES are break-glass rather than people — kubeadmin and developer arrive on
+    # the HTPasswd provider. Passed to the store so ungoverned-user counts exclude them; the store
+    # cannot know which of a cluster's providers are local.
+    login_capture_htpasswd_providers: tuple[str, ...] = ("developer",)
+    # 0 disables pruning. These rows are the only record that survives the pods, so the default is
+    # generous — over a year — and the prune is bounded per cycle so a long backlog cannot hold the
+    # single writer.
+    login_retention_days: int = 400
     """How often to re-read RoleBindings/ClusterRoleBindings — deliberately slower than
     the group poll.
 
@@ -417,6 +433,13 @@ def load_settings(path: str | Path) -> Settings:
         poll_interval_seconds=int(raw.get("pollIntervalSeconds", 60)),
         schedule_grace_seconds=int(raw.get("scheduleGraceSeconds", 120)),
         binding_interval_seconds=int(raw.get("bindingIntervalSeconds", 300)),
+        login_capture_enabled=str(raw.get("loginCaptureEnabled", "false")).lower() == "true",
+        login_capture_namespace=raw.get("loginCaptureNamespace") or "openshift-authentication",
+        login_capture_htpasswd_providers=tuple(
+            p.strip() for p in str(raw.get("loginCaptureHtpasswdProviders", "developer")).split(",")
+            if p.strip()
+        ),
+        login_retention_days=int(raw.get("loginRetentionDays", 400)),
         request_timeout_seconds=float(raw.get("requestTimeoutSeconds", 15.0)),
         # GSD_DB_PATH wins over the file so the config can ship as a ConfigMap that does
         # not need to know where the writable volume is mounted.
