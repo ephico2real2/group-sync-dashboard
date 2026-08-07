@@ -556,6 +556,132 @@ rbac:
   users: true
 
 # ---------------------------------------------------------------------------
+# Login capture  (reads the oauth-server's logs)
+# ---------------------------------------------------------------------------
+# Grants the DASHBOARD read access to the oauth-server's pod logs, which is where the "who logged in"
+# lines appear. Read-only, on the dashboard's own ServiceAccount — the write that ENABLES those lines
+# lives on a separate identity, see authLogLevel below.
+#
+# NEEDS authLogLevel.enabled=true TO SEE ANYTHING. At the default verbosity the lines do not exist —
+# measured: zero occurrences of "succeeded for login" until the level is Debug. So this grant on its
+# own is inert, which is deliberate: the read and the cluster-wide write are separate decisions.
+#
+# A Role in ONE namespace, not a ClusterRole, and that matters: `pods/log` cluster-wide would let the
+# dashboard read EVERY pod's logs on the cluster — tokens, connection strings, customer data. Scoped
+# here it can read the OAuth server's logs and nothing else.
+#
+# The cost, stated rather than hidden: this creates a Role and RoleBinding in a namespace the chart
+# does not own. An ArgoCD Application will show them outside its destination namespace, and a policy
+# forbidding writes to `openshift-*` namespaces will reject them.
+loginCapture:
+  enabled: false
+
+  # Where the oauth-server runs. Only change this if your cluster is unusual; it is the fixed
+  # namespace OpenShift installs the OAuth server into.
+  namespace: openshift-authentication
+
+# ---------------------------------------------------------------------------
+# oauth-server log verbosity  (prerequisite for login capture)
+# ---------------------------------------------------------------------------
+# The oauth-openshift server only names the person logging in when the AUTHENTICATION OPERATOR
+# CR — `authentications.operator.openshift.io/cluster` — has `spec.logLevel: Debug`.
+#
+# NOT the OAuth CR. `oauth.config.openshift.io/cluster` is the object that holds the identity
+# providers, and this feature never touches it; there is also a THIRD, one word apart:
+# `authentications.config.openshift.io/cluster`, which holds `type`/`serviceAccountIssuer`.
+# And within the operator CR, `logLevel` (the operand's verbosity) is not `operatorLogLevel`
+# (the operator's own) — patching the latter would change nothing this needs. At `Normal` the line
+# is not emitted at all — measured: zero occurrences of "succeeded for login" until this is on. So
+# this section is the prerequisite for capturing login activity, and nothing more.
+#
+# TWO SWITCHES, ON PURPOSE:
+#
+#   manage: false            nothing renders, no RBAC, this chart never touches the cluster's setting
+#   manage: true  enabled: t a hook Job sets Debug
+#   manage: true  enabled: f the same Job sets Normal  <- this is what makes "turn it off" work
+#
+# Helm does not run a Job you merely stopped rendering, so a one-way enable Job would strand the
+# cluster in Debug the moment somebody flipped the flag back and saw nothing happen.
+#
+# `manage: true` is the operator DECLARING THAT THIS CHART OWNS the cluster's log level. That is why
+# it defaults to false: opting in is what transfers ownership, and the uninstall revert below then
+# has the standing to put it back.
+authLogLevel:
+  manage: false
+  enabled: false
+
+  # ⚠️  CHANGING THIS ROLLS THE OAUTH SERVER, WHICH IS A LOGIN OUTAGE ON A SINGLE-REPLICA CLUSTER.
+  # The authentication operator replaces deploy/oauth-openshift when logLevel changes; until the new
+  # pod is Ready, `authentication` reports "OAuthServerDeploymentAvailable: no oauth-openshift pods
+  # available on any node" and logins fail. Measured on a 1-replica CRC cluster: the replacement pod
+  # sat Pending (node at 91% CPU requests) and a second application watching the same cluster logged
+  # `HTTP 503 on /apis/user.openshift.io/v1/groups` while it happened.
+  #
+  # Check the blast radius first, and use a maintenance window if the answer is 1:
+  #   oc get deploy oauth-openshift -n openshift-authentication -o jsonpath='{.spec.replicas}{"\n"}'
+  #
+  # This applies to turning it OFF as much as ON — both directions are a logLevel change.
+
+  # Puts the level back to Normal on `helm uninstall`, via a pre-delete Job.
+  #
+  # LEAVE THIS ON. Without it, removing the dashboard leaves the OAuth server naming every person
+  # who authenticates — along with their LDAP DN and the bind filter — with nothing left watching
+  # the logs and nobody aware it is happening. The one thing that would have told you is the thing
+  # you just uninstalled.
+  revertOnUninstall: true
+
+  # WHAT DEBUG ACTUALLY EXPOSES, so this is a decision and not a shrug: the lines carry the username
+  # of everyone who authenticates, their resolved LDAP DN, and the bind filter used. Anyone who can
+  # read pod logs in openshift-authentication can read them. Turn it off when the capture is not
+  # needed; that is what the toggle is for.
+
+  # `oc` is all the Jobs need, and this is the IN-CLUSTER imagestream every OpenShift cluster ships
+  # — not registry.redhat.io.
+  #
+  # MEASURED: `registry.redhat.io/openshift4/ose-cli:latest` was the first choice and it failed here
+  # with ErrImagePull ("copying config: context canceled") after 40s. It needs registry.redhat.io
+  # credentials, it is a large image, and `:latest` is unpinned — three ways for a prerequisite Job
+  # to fail on somebody else's cluster. The internal imagestream is already mirrored by the release
+  # payload, so there is nothing to authenticate and usually nothing to pull.
+  #
+  # OpenShift-specific, deliberately: this whole section patches an OpenShift operator CR, so it has
+  # no meaning on plain Kubernetes. Override it if your cluster mirrors elsewhere.
+  image:
+    repository: image-registry.openshift-image-registry.svc:5000/openshift/cli
+    tag: latest
+    pullPolicy: IfNotPresent
+
+  # How long to wait for the operator to roll the oauth pods after the patch.
+  #
+  # The Job does NOT use `oc rollout status` for this, and that is measured rather than cautious: on
+  # the reference cluster it returned "successfully rolled out" about THIRTY SECONDS BEFORE the
+  # rollout began, because the old ReplicaSet was still current and complete at that moment. The Job
+  # polls the Deployment's observedGeneration and available/updated replicas instead.
+  #
+  # A timeout here is NOT a failure — the patch has landed, which is the Job's actual work, and the
+  # rollout is the operator's to finish. Failing would fail `helm upgrade` over somebody else's slow
+  # reconcile.
+  waitSeconds: 180
+
+  # Wall clock on the whole attempt, so a Job that cannot reach the API server cannot hold up an
+  # upgrade indefinitely. Must stay above waitSeconds.
+  activeDeadlineSeconds: 300
+
+  # Deliberately short. An uninstall must not hang: a cluster left in Debug is fixable by hand, a
+  # wedged `helm uninstall` is not.
+  revertDeadlineSeconds: 120
+
+  backoffLimit: 2
+
+  resources:
+    requests:
+      cpu: 10m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+# ---------------------------------------------------------------------------
 # Networking
 # ---------------------------------------------------------------------------
 service:

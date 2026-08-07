@@ -1,0 +1,88 @@
+{{- if and .Values.authLogLevel.manage .Values.authLogLevel.revertOnUninstall }}
+# Puts the oauth-server operand's log verbosity back on uninstall, via the authentication
+# OPERATOR CR — `authentications.operator.openshift.io/cluster`, NOT the OAuth CR
+# (`oauth.config.openshift.io/cluster`), which holds the identity providers and is untouched.
+#
+# WITHOUT THIS, `helm uninstall` leaves the cluster in Debug — the dashboard is gone, nothing is
+# reading the logs any more, and the OAuth server carries on naming every person who authenticates
+# along with their LDAP DN. Nobody would notice, because the thing that would have told you is the
+# thing you just removed.
+#
+# pre-delete, so it runs while its ServiceAccount and ClusterRoleBinding still exist. Helm deletes
+# release resources AFTER pre-delete hooks complete, which is why neither carries
+# `helm.sh/resource-policy: keep` — see auth-loglevel-rbac.yaml.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "gsd.fullname" . }}-auth-loglevel-revert
+  labels:
+    {{- include "gsd.labels" . | nindent 4 }}
+    app.kubernetes.io/component: auth-loglevel-revert
+  annotations:
+    helm.sh/hook: pre-delete
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 0
+  # Short and hard. An uninstall must not hang on this: the alternative to a timeout is a `helm
+  # uninstall` that never returns, and a cluster left in Debug is recoverable by hand while a wedged
+  # uninstall is not.
+  activeDeadlineSeconds: {{ .Values.authLogLevel.revertDeadlineSeconds }}
+  template:
+    metadata:
+      labels:
+        {{- include "gsd.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: auth-loglevel-revert
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ include "gsd.fullname" . }}-auth-loglevel
+      containers:
+      - name: revert-loglevel
+        image: {{ .Values.authLogLevel.image.repository }}:{{ .Values.authLogLevel.image.tag }}
+        imagePullPolicy: {{ .Values.authLogLevel.image.pullPolicy }}
+        command:
+        - /bin/bash
+        - -c
+        - |
+          # NOT `set -e`. A pre-delete hook that fails BLOCKS the uninstall, and an operator trying
+          # to remove this chart must never be held hostage by a best-effort tidy-up. Every failure
+          # below is reported and then forgiven.
+          set -uo pipefail
+
+          CURRENT=$(oc get authentications.operator.openshift.io cluster \
+                      -o jsonpath='{.spec.logLevel}' 2>/dev/null || true)
+          echo "current logLevel: ${CURRENT:-<unset, i.e. Normal>}"
+
+          if [ "${CURRENT:-Normal}" = "Normal" ]; then
+            echo "already Normal — nothing to revert"
+            exit 0
+          fi
+
+          # Reverts only what this chart is responsible for. If somebody set Debug for their own
+          # reasons and separately installed this chart, we still put it back — because `manage:
+          # true` is the operator declaring that this chart owns the setting. That is why `manage`
+          # defaults to false: opting in is what transfers ownership.
+          echo "reverting authentications.operator.openshift.io/cluster -> Normal"
+          if oc patch authentications.operator.openshift.io cluster --type=merge \
+               -p '{"spec":{"logLevel":"Normal"}}'; then
+            echo "✅ reverted. The oauth-openshift pods will roll shortly."
+          else
+            echo "⚠️  could not revert the log level. The uninstall CONTINUES — put it back by hand:"
+            echo "    oc patch authentications.operator.openshift.io cluster --type=merge \\"
+            echo "      -p '{\"spec\":{\"logLevel\":\"Normal\"}}'"
+          fi
+          exit 0
+        env:
+        - name: HOME
+          value: /tmp
+        resources:
+          {{- toYaml .Values.authLogLevel.resources | nindent 10 }}
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: ["ALL"]
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+{{- end }}

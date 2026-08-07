@@ -208,6 +208,10 @@ day. Above one replica it is per-pod, like the rest of the history.
 | `serviceAccount.create` / `.name` / `.annotations` | `true` / derived / `{}` | with the proxy on, the SA also carries the `oauth-redirecturi` annotation that makes it an OAuth client — no `OAuthClient` object to register |
 | `rbac.create` | `true` | ClusterRole + binding, read-only, no `watch` |
 | `rbac.bindings` | `true` | adds `get`/`list` on rolebindings/clusterrolebindings, powering the Access-granted, RBAC-policy and Namespace-audit views. Disable and the dashboard degrades to group data only |
+| `authLogLevel.manage` | `false` | lets this chart own `spec.logLevel` on the authentication **operator** CR (`authentications.operator.openshift.io/cluster`) — not the OAuth CR, and not `operatorLogLevel`. Off by default — turning it on is what transfers ownership |
+| `authLogLevel.enabled` | `false` | with `manage`, sets `Debug` (login lines appear) or `Normal`. The Job runs for **both** values: Helm does not run a Job you merely stopped rendering, so a one-way enable would strand the cluster in Debug |
+| `authLogLevel.revertOnUninstall` | `true` | **leave on.** A pre-delete Job puts the level back, or removing the dashboard leaves the OAuth server naming every person who authenticates with nothing left watching |
+| `authLogLevel.waitSeconds` / `.activeDeadlineSeconds` / `.revertDeadlineSeconds` | `180` / `300` / `120` | the Job polls the Deployment's `observedGeneration` rather than using `oc rollout status`, which returned success ~30s **before** the rollout began. A wait timeout is not a failure — the patch has landed |
 | `rbac.users` | `true` | adds `get`/`list` on `users`, read for one field — `fullName` — so members show as `alice.cooper · Alice Cooper`. A name exists only for people who have logged in; unnamed members render exactly as before. Safe to disable, and safe to upgrade without re-applying: the call 403s and the poller keeps the names it already had |
 | `monitoring.serviceMonitor.enabled` | `false` | needs the Prometheus Operator CRDs |
 | `monitoring.serviceMonitor.interval` / `.scrapeTimeout` | `30s` / `10s` | every series is recomputed from SQLite on scrape and each scrape takes a read snapshot. Faster buys no resolution — the data only changes once per poll |
@@ -218,6 +222,71 @@ day. Above one replica it is per-pod, like the rest of the history.
 | `monitoring.prometheusRule.notPollingSeconds` | `600` | catches a dead poll loop, which the health endpoints cannot. **Must stay above ~2× `config.pollIntervalSeconds`** or it fires continuously on a healthy deployment |
 | `monitoring.prometheusRule.walMiB` | `256` | MiB. 25% of the default 1Gi PVC. Raise it with `persistence.size` |
 | `monitoring.prometheusRule.for.*` | see below | the `for:` duration on each alert |
+
+### oauth-server log verbosity
+
+The oauth-openshift server only names the person logging in when the authentication **operator**
+CR — `authentications.operator.openshift.io/cluster` — has `spec.logLevel: Debug`. Three
+cluster-scoped objects have confusingly similar names, and this feature touches only the first:
+
+| object | kind | holds |
+|---|---|---|
+| `authentications.operator.openshift.io/cluster` | `Authentication` (operator) | `logLevel`, `operatorLogLevel`, `managementState` |
+| `authentications.config.openshift.io/cluster` | `Authentication` (config) | `type`, `serviceAccountIssuer`, `oauthMetadata` |
+| `oauth.config.openshift.io/cluster` | `OAuth` | `identityProviders` — "the OAuth CR" |
+
+`logLevel` is the **operand's** verbosity (the `oauth-server` process, which emits the login
+lines); `operatorLogLevel` is the operator's own and would change nothing here. At `Normal` that line is
+not emitted at all — measured: **zero** occurrences of `succeeded for login` until it is on. So
+`authLogLevel.*` is the prerequisite for capturing login activity, and nothing more.
+
+**The write does not go on the dashboard.** Patching that object is a write to a core platform
+object, and `rbac.yaml` states *"NO WRITE VERB ON ANYTHING THE DASHBOARD REPORTS ON"* — a line
+`test_docs_citations.py` pins from five places across two documents. So the grant lives on a
+ServiceAccount used only by the two hook Jobs. It is two rules and nothing else:
+
+| API group | Resources | resourceNames | Verbs |
+|---|---|---|---|
+| `operator.openshift.io` | `authentications` | `cluster` | get, patch |
+| `apps` | `deployments` | `oauth-openshift` | get |
+
+Both are pinned by name. That is narrowing, not isolation: `resourceNames` stops this identity
+touching *other* objects in those groups, and the object it can patch is the cluster's authentication
+configuration — so the grant is small but not harmless, which is why it is opt-in.
+
+The dashboard's own role stays read-only, and `test_chart_strategy.py` fails if that stops being
+true — including if the *binding* is repointed at the dashboard's ServiceAccount, or if
+`serviceAccount.name` is set to collide with the Job's. Both were possible until they were tested;
+the second rendered cleanly and handed the dashboard the write.
+
+**Pass your whole value set when you enable this on an existing release.** `helm upgrade` with only
+`--set authLogLevel.*` discards every other user-supplied value and reverts it to the chart default —
+measured here: a release carrying `oauthProxy.apiTokenAccess.enabled=true` lost it, and API token
+access broke three commands later with no obvious connection to the cause. Re-pass your values file,
+or use `--reuse-values` deliberately, then confirm with `helm get values`.
+
+**Turning it off is two steps, in this order.** `manage: false` removes the Jobs *and* the revert Job
+along with them, so going straight there while `Debug` is live strands the cluster in Debug with
+nothing left to put it back:
+
+```bash
+# 1. converge the cluster to Normal, with the machinery still present
+helm upgrade ... -f my-values.yaml --set authLogLevel.manage=true --set authLogLevel.enabled=false
+# 2. then, once the rollout has finished, stop managing it
+helm upgrade ... -f my-values.yaml --set authLogLevel.manage=false
+```
+
+`helm uninstall` needs no such care — the pre-delete Job reverts first. But `helm rollback` does not
+run hooks at all, so rolling back past an enable does **not** put the level back; do step 1 by hand.
+
+**To verify it end to end**, follow `docs/LOGIN_CAPTURE_QUICKCHECK.md` — five commands that turn the
+verbosity up, cause a login, and read that login back using the dashboard's own ServiceAccount token,
+with the real output of each recorded. It is also the place to start when the dashboard shows no login
+activity and you need to find which link is missing.
+
+**What Debug exposes**, so this is a decision and not a shrug: the lines carry the username of
+everyone who authenticates, their resolved LDAP DN, and the bind filter used. Anyone who can read pod
+logs in `openshift-authentication` can read them.
 
 Three rules in the ClusterRole are conditional. `coordination.k8s.io/leases`
 (`get`, `create`, `update`) renders only when `leaderElection.enabled`,

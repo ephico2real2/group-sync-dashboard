@@ -723,6 +723,22 @@ elect a leader:
 | `rbac.authorization.k8s.io` | `rolebindings`, `clusterrolebindings` | get, list — only when `rbac.bindings` |
 | `coordination.k8s.io` | `leases` | get, create, update — only when `leaderElection.enabled` |
 
+A **separate** ClusterRole, on a ServiceAccount the dashboard never uses, is created only when
+`authLogLevel.manage=true`:
+
+| API group | Resources | Verbs |
+|---|---|---|
+| `operator.openshift.io` | `authentications`, `resourceNames: [cluster]` | get, **patch** |
+| `apps` | `deployments` | get |
+
+That is the chart's only *write* outside its own namespace — the oauth-proxy's
+`system:auth-delegator` binding is a read-path grant, not a write — and it is deliberately not
+reachable by the dashboard process: the two hook Jobs that enable and revert the OAuth server's
+`spec.logLevel` are its only consumers. Pinning `resourceNames` matters — unpinned it would be patch
+on every object in the group, which includes the cluster's whole authentication configuration.
+`resourceNames` IS honoured for `patch`, unlike `create` and `list` where the name is not in the
+request path.
+
 No `watch`, and no write verb on anything the dashboard reports on. The Lease is its own
 coordination object; it is the only thing in the cluster the ServiceAccount can change.
 
