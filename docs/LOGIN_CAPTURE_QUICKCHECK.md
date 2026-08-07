@@ -232,6 +232,22 @@ Measured on 2026-08-07 across **four deliberate cases** on one cluster with two 
 one login is not enough to see it — three of the five rules below are invisible if you only test a
 successful LDAP login.
 
+### What to capture: every username that appears
+
+These logs are already user-scoped — the oauth-server writes a line per *login attempt*, naming the
+account that attempted it. There is nothing to filter *in*: the enhancement is to capture and process
+**any** user that appears, successful or not, rather than matching against a list of people the
+dashboard already knows about.
+
+That matters for the thing this exists to see. A username that appears here and is in **no** synced
+group is more interesting than one that is: it is either somebody whose access was removed but who is
+still trying, or an account nobody is governing. An allowlist built from group membership would filter
+out exactly those.
+
+Only two kinds of line are *not* a person: a success whose provider is the HTPasswd one (`developer`,
+`kubeadmin` — break-glass, see Rule 3), and the internal bootstrap identity. Everything else is an
+attempt by a named account and gets recorded.
+
 ### One login attempt writes SEVERAL lines, across two files
 
 | case | lines written, in order |
@@ -285,11 +301,10 @@ bob.wilson   ldap.go:139] no entries matching (&(&(uid=*)(memberOf=cn=app-ssb-au
 nosuchuser   ldap.go:139] no entries matching (&(&(uid=*)(memberOf=cn=app-ssb-autobahnusers,...))(uid=nosuchuser))
 ```
 
-**This is the missing discriminator, and it is a limitation of the source, not of the parser.** It
-matters because the two mean different things operationally — one is "this employee is not entitled to
-log in", the other is "somebody is trying usernames". Distinguishing them requires a second LDAP lookup
-*without* the gate clause, which is a directory read the dashboard does not have and should not acquire.
-The honest presentation is one bucket: **"rejected — user not found or not permitted"**.
+This does **not** limit what to capture — it limits how precisely one failure can be *labelled*.
+Distinguishing the two would need a second LDAP search without the gate clause, which is a directory read
+the dashboard does not have and should not acquire, so they share one bucket: **"rejected — user not
+found or not permitted"**. Both are still captured, against the username that was attempted.
 
 So the outcomes a parser can honestly report are:
 
