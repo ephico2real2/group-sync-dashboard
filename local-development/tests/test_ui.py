@@ -953,6 +953,74 @@ class TestBrowserHistory:
         dash.wait_for_selector("text=Group memberships")
         assert dash.locator("#back-groups").inner_text() == label
 
+    def test_a_superseded_fetch_does_not_paint_the_wrong_page(self, dash):
+        """Back is instant; a fetch is not. That gap is new — before this feature there was no
+        instant way to leave a page mid-request.
+
+        A group fetch that lands after the reader has moved on used to write `data.group` and call
+        render(), which derives from the CURRENT view — so the first group's data appeared under the
+        second group's position. The response is now DISCARDED rather than merely un-rendered:
+        leaving it in `data` would surface on the next render that does not refetch, which is a
+        sort click or the 30s poll.
+
+        The fetch is HELD rather than delayed by a timer, and that is what makes this deterministic.
+        Two earlier attempts were not: a Playwright route glob that never matched, and a version
+        that pressed Back 10ms after the click — too early, because refresh() reads `view` at each
+        await, so the drill's own refresh saw the position already reset and fetched the LIST. The
+        request has to be in flight before the reader leaves, which is the only ordering that can
+        strand a response.
+        """
+        SLOW = "/groups/app-ocp-rbac-alpha-ns-admin"
+        dash.locator("button[data-nav='groups']").click()
+        dash.wait_for_selector("#f-state")
+        dash.evaluate("""(slow) => {
+            const orig = window.fetch;
+            window.__release = null;
+            window.__origFetch = orig;
+            window.fetch = (u, o) => String(u).includes(slow)
+              ? new Promise((res) => { window.__release = () => res(orig(u, o)); })
+              : orig(u, o);
+        }""", SLOW)
+        try:
+            dash.locator("tr[data-group='app-ocp-rbac-alpha-ns-admin']").click()
+            # The held request is now in flight — this is the state the reader leaves from.
+            dash.wait_for_function("() => window.__release !== null")
+
+            dash.go_back()
+            dash.wait_for_selector("#f-state")
+            dash.locator("tr[data-group='app-ocp-rbac-abcd-ns-superuser']").click()
+            dash.wait_for_selector("#back-groups")
+            assert dash.evaluate("() => view.group") == "app-ocp-rbac-abcd-ns-superuser"
+
+            dash.evaluate("() => window.__release()")   # the abandoned response lands
+            dash.wait_for_timeout(600)
+
+            assert dash.evaluate("() => view.group") == "app-ocp-rbac-abcd-ns-superuser"
+            assert dash.evaluate("() => data.group && data.group.name") == \
+                "app-ocp-rbac-abcd-ns-superuser", (
+                "the abandoned fetch overwrote data.group — it would surface on the next repaint"
+            )
+            assert "app-ocp-rbac-alpha-ns-admin" not in dash.locator("body").inner_text(), (
+                "the superseded group was painted over the position the reader is on"
+            )
+        finally:
+            dash.evaluate("() => { if (window.__origFetch) window.fetch = window.__origFetch; }")
+
+    def test_a_pasted_groupsync_link_labels_where_the_button_actually_goes(self, dash):
+        """With no back target, goBack() rises to the PARENT of where we are. The label used to say
+        "all groups" regardless — naming a page the button does not open, on a GroupSync detail."""
+        dash.goto(dash.url.split("#")[0] + "#page=overview&cluster=crc-local"
+                  + "&groupsync=ldap-groupsync")
+        dash.reload()
+        dash.wait_for_selector("#back")
+        assert dash.evaluate("() => history.state.from") is None, "expected no back target"
+        assert dash.locator("#back").inner_text().strip() == "← overview", (
+            "the label must describe where goBack() rises to, not a fixed string"
+        )
+        dash.locator("#back").click()
+        dash.wait_for_function("() => !document.querySelector('#back')")
+        assert dash.evaluate("() => view.page") == "overview"
+
     def test_back_after_a_cluster_switch_restores_that_cluster(self, dash):
         """Cluster is part of the position, not context around it — group names repeat."""
         self._drill(dash)
