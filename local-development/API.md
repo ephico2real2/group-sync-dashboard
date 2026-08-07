@@ -177,6 +177,41 @@ is the next question after "do they have it".
 **A user with no current groups returns 200, not 404**, if any history exists. "They are in
 nothing now" is the answer, not an error. 404 only when the user has never been seen.
 
+### `GET /api/clusters/{cluster_id}/logins`
+
+Login attempts against this cluster's oauth-server: who, when, and why a failure failed. Read from the
+oauth-server pod log, which names the person only at `spec.logLevel: Debug` on the authentication
+**operator** CR (`authentications.operator.openshift.io/cluster` — not the OAuth CR).
+
+| parameter | default | meaning |
+|---|---|---|
+| `outcome` | all | one of the parser's outcomes: `success`, `bad_password`, `rejected`, `password_expired`, `must_change_password`, `account_locked`, `account_disabled`, `account_expired`, `logon_not_permitted`, `failed` |
+| `user` | all | the username as **typed**, which may match no `User` object and no group member — that mismatch is a finding, not an error |
+| `limit` | `200` | attempts returned, newest first. `truncated` reports whether older ones were dropped; `total` and `summary` always describe the whole retained record, never the page |
+
+**`rejected` covers two different things and cannot separate them.** The identity provider's search
+filter carries the login-gate group, so a real person who is not in that group and a username that does
+not exist produce the same `no entries matching` line. Telling them apart would need a directory read
+this application does not have.
+
+**The record is a WINDOW, and both edges are carried as data:**
+
+| field | meaning |
+|---|---|
+| `capture_started_at` | when watching began. Stable — set once by the first successful read. May be *later* than `retained_since`, because the first read looks back an hour |
+| `retained_since` | the oldest attempt still kept. Moves as retention ages rows out |
+| `last_read_at` | liveness. If this stops advancing, capture has stopped |
+
+Nothing before capture began exists to fetch — the log dies with its pod — so **an empty `attempts` is a
+statement about the window, never proof that nobody logged in.**
+
+Every username is recorded, successful or not, member or not. Per attempt: `known_user` false marks an
+account in **no synced group**, which is the most valuable row here; `has_history` true separates
+"access removed and still trying" from "nobody ever governed this name"; `break_glass` marks a success
+on an HTPasswd provider (`kubeadmin`, `developer`), which is not a person to offboard. `ungoverned`
+lists the no-synced-group accounts separately, bounded at 50, so a paged chronology cannot bury them —
+with `summary.ungoverned_users` beside it as the whole-set count from the same store predicate.
+
 ### `GET /api/clusters/{cluster_id}/membership-changes`
 
 Query: `limit` (1–1000, default 100). Joins and departures cluster-wide.

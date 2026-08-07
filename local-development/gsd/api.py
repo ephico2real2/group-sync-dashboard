@@ -27,6 +27,7 @@ from .leader import LeaderElector
 from .metrics import build_registry
 from .poller import Poller
 from .storage import StorageBackend, open_backend
+from . import loginlog
 
 log = logging.getLogger(__name__)
 
@@ -35,6 +36,14 @@ STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 # Mirrors oauthProxy.skipAuthRegex. Requests here reach the app WITHOUT authentication, so
 # nothing they claim about identity can be believed or recorded.
 SKIP_AUTH_PATHS = frozenset({"/healthz", "/readyz", "/metrics"})
+
+
+# The outcome vocabulary, read OFF THE PARSER rather than restated here. loginlog.py is where an
+# outcome is decided, so a new one (a new AD sub-code, say) must not require editing a second list that
+# then silently rejects it in a query parameter.
+LOGIN_OUTCOMES = tuple(
+    v for k, v in vars(loginlog).items() if k.startswith("OUTCOME_") and isinstance(v, str)
+)
 
 
 def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
@@ -421,6 +430,97 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
             # Reachable through their group memberships. Each row carries via_group, so
             # "why do they have this?" is answerable without a second lookup.
             "bindings": store.user_bindings(cluster_id, name),
+        }
+
+    @app.get("/api/clusters/{cluster_id}/logins")
+    @consistent
+    def list_logins(
+        cluster_id: str,
+        outcome: str | None = Query(
+            default=None,
+            description="Return only attempts with this outcome. The vocabulary is the parser's: "
+                        "success, bad_password, rejected (not found OR not permitted — the log "
+                        "cannot tell those apart), password_expired, must_change_password, "
+                        "account_locked, account_disabled, account_expired, logon_not_permitted, "
+                        "and failed (a cause the parser does not recognise)."),
+        user: str | None = Query(
+            default=None,
+            description="Only attempts for this exact username — the login that was TYPED, which "
+                        "may match no User object and no group member. That mismatch is a finding, "
+                        "not an error."),
+        limit: int = Query(
+            default=200, ge=1, le=2000,
+            description="Maximum attempts returned, newest first. `truncated` says whether older "
+                        "ones were dropped; `total` and `summary` always describe the whole "
+                        "retained record, never this page."),
+    ) -> dict:
+        """Login attempts against this cluster's oauth-server: who, when, and why it failed.
+
+        THE RECORD IS A WINDOW, and both of its edges are carried as data rather than implied.
+        `capture_started_at` is when watching began and is stable; `retained_since` is the oldest
+        attempt still kept and moves under retention. Nothing before capture began exists to fetch —
+        the log dies with its pod — so an empty list is a statement about the window and never proof
+        that nobody logged in. The UI has to say that, which is why it is here and not a footnote.
+
+        EVERY username is recorded, successful or not, member or not. `known_user: false` marks an
+        account in NO synced group, which is the most valuable row this produces; `has_history: true`
+        separates "access was removed and they are still trying" from "nobody ever governed this
+        name". `ungoverned` lists those accounts separately so a paged chronology cannot bury them.
+        """
+        require_cluster(cluster_id)
+        # Which provider NAMES are HTPasswd is deployment configuration — the log carries only the
+        # name. Passed to the ungoverned queries so their rows and their count share ONE predicate in
+        # the store, and applied per row below for the break_glass label.
+        htpasswd = tuple(settings.login_capture_htpasswd_providers)
+        status = store.login_capture_status(cluster_id)
+        summary = store.login_event_summary(cluster_id, exclude_providers=htpasswd)
+        ungoverned = store.ungoverned_login_users(cluster_id, exclude_providers=htpasswd, limit=50)
+        # limit + 1 to learn whether more exist — the list_users idiom. `summary` carries the exact
+        # whole-record numbers, so no headline figure is ever computed from this page.
+        rows = store.login_events(cluster_id, user_name=user, outcome=outcome, limit=limit + 1)
+        truncated = len(rows) > limit
+        attempts = rows[:limit]
+
+        by_outcome = summary["by_outcome"]
+        successes = by_outcome.get(loginlog.OUTCOME_SUCCESS, 0)
+        for row in attempts:
+            # Normalised here so the UI never re-derives a flag from raw fields, and so the wire
+            # carries real booleans whatever 0/1 shape SQLite returned.
+            row["break_glass"] = row.get("provider") in htpasswd
+            row["known_user"] = bool(row.get("known_user"))
+            row["has_history"] = bool(row.get("has_history"))
+        for row in ungoverned:
+            row["has_history"] = bool(row.get("has_history"))
+
+        return {
+            "cluster": cluster_id,
+            "enabled": settings.login_capture_enabled,
+            "note": "read from the oauth-server log at Debug verbosity; covers only the period "
+                    "since capture began — earlier logins were never recorded and cannot be "
+                    "fetched, and rows older than the configured retention age out",
+            # Set once by the capture loop's first successful read. Falls back to the oldest retained
+            # attempt for the one-cycle window after a crash before that row exists — an honest floor
+            # rather than null, which the UI would have to render as "unknown".
+            "capture_started_at": (status or {}).get("started_at") or summary["first_at"],
+            "last_read_at": (status or {}).get("last_read_at"),
+            "retained_since": summary["first_at"],
+            "total": summary["total"],
+            "limit": limit,
+            "truncated": truncated,
+            "summary": {
+                "distinct_users": summary["distinct_users"],
+                "successes": successes,
+                "failures": summary["total"] - successes,
+                "by_outcome": by_outcome,
+                "ungoverned_users": summary["ungoverned_users"],
+                "first_at": summary["first_at"],
+                "last_at": summary["last_at"],
+            },
+            # One row per account in no synced group, most recent first. Bounded at 50 and honest
+            # about it: summary.ungoverned_users beside it is the whole-set count, from the SAME
+            # store predicate, so the two cannot disagree.
+            "ungoverned": ungoverned,
+            "attempts": attempts,
         }
 
     @app.get("/api/clusters/{cluster_id}/bindings/findings")
