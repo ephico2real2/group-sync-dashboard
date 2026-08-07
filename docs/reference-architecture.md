@@ -369,7 +369,7 @@ decides what headers they carry (`gsd/api.py#build_app`).
 ### The UI
 
 One self-contained file, `gsd/static/index.html`, vanilla JS, no build step, strict CSP.
-Six tabs (`index.html#popTrail`):
+Six tabs (`index.html#const tab = (id, label)`):
 
 | Tab | Reads | Shows |
 |---|---|---|

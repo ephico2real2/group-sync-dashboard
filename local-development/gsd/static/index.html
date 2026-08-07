@@ -746,34 +746,156 @@ const view = { page: "overview", cluster: null, groupsync: null, groupFilter: "a
                    produce a page the reader scrolls past. Opening it is one click, and
                    choosing a namespace opens it automatically. */
                 nsGrantsOpen: false };
-/* Where the reader came FROM, so Back retraces the path instead of jumping to a fixed
-   page. Drilling group -> user -> another group and pressing Back three times must walk
-   back through exactly those, which a single hardcoded destination cannot do. */
-const trail = [];
-function pushTrail() {
-  // `cluster` is part of the position, not context around it. Without it, Back after a
-  // cluster switch restores a group name against whichever cluster is now selected — and
-  // group names repeat across clusters, so it silently shows a DIFFERENT object under the
-  // name you expected, or 404s.
-  trail.push({ page: view.page, cluster: view.cluster, groupsync: view.groupsync,
-               group: view.group, user: view.user });
-  if (trail.length > 50) trail.shift();
+/* ── Navigation: the browser's history IS the trail ──────────────────────────────────────
+   This used to be a private `trail` array with its own push/pop, which meant the in-page Back
+   button worked and the browser's Back button left the dashboard entirely — losing the reader's
+   whole position, because none of it was in the URL.
+   ONE STACK, not two. The in-page button now calls history.back(), so both buttons walk the
+   same list and cannot disagree. A second private stack alongside the browser's would diverge
+   the moment someone mixed the two (browser-back twice, then in-page-back), and the label would
+   then describe a position the click does not go to.
+   POSITION ONLY, not every control. page/cluster/groupsync/group/user are a location — worth a
+   URL, worth sharing, worth a history entry. The filters and the namespace-audit sort/expand
+   state are not: they live in `view` precisely because the page repaints on a timer (30s), one of them
+   is a Set, and pushing an entry per sort click would bury the positions a reader wants Back to
+   reach under a pile of them. */
+const POSITION_KEYS = ["page", "cluster", "groupsync", "group", "user"];
+
+function currentPosition() {
+  const pos = {};
+  for (const k of POSITION_KEYS) if (view[k]) pos[k] = view[k];
+  return pos;
 }
-function popTrail() {
-  const prev = trail.pop();
-  if (!prev) { view.group = null; view.user = null; view.groupsync = null; return; }
-  view.page = prev.page; view.groupsync = prev.groupsync;
-  view.group = prev.group; view.user = prev.user;
-  if (prev.cluster) view.cluster = prev.cluster;
+
+/* A HASH, deliberately, not a path. Only `/` serves this page — there is no catch-all route —
+   so `/groups/x` would 404 on a refresh or a pasted link. A hash needs no server change and
+   survives both. */
+function hashFor(pos) {
+  const p = new URLSearchParams();
+  for (const k of POSITION_KEYS) if (pos[k]) p.set(k, pos[k]);
+  const s = p.toString();
+  return s ? `#${s}` : "";
 }
+
+function positionFromHash() {
+  const p = new URLSearchParams(location.hash.replace(/^#/, ""));
+  const pos = {};
+  for (const k of POSITION_KEYS) {
+    const v = p.get(k);
+    if (v) pos[k] = v;
+  }
+  return pos;
+}
+
+function applyPosition(pos) {
+  // Assigned rather than merged: an absent key means "not at that position", so leaving the
+  // old value would strand a drill-down open after Back returned to the list behind it.
+  view.page = pos.page || "overview";
+  view.groupsync = pos.groupsync || null;
+  view.group = pos.group || null;
+  view.user = pos.user || null;
+  // `cluster` is part of the position, not context around it. Without it, Back after a cluster
+  // switch restores a group name against whichever cluster is now selected — and group names
+  // repeat across clusters, so it silently shows a DIFFERENT object under the name you
+  // expected, or 404s. Only overwritten when the entry carries one, so an entry predating
+  // cluster selection does not blank it.
+  if (pos.cluster) view.cluster = pos.cluster;
+}
+
+/* Every position change goes through here, so the URL, the history entry and `view` can never
+   disagree — the previous design let a caller mutate `view` and forget the trail push, and the
+   two tab/cluster handlers did exactly that, which is why browser-Back had nothing to retrace.
+   `from` is stored WITH the entry because push time is the only moment we reliably know where
+   the reader came from: the History API exposes no entry but the current one. Storing it also
+   keeps the label right after a Forward, which a stack-based label never was. */
+function navigate(changes, { replace = false } = {}) {
+  const from = currentPosition();
+  applyPosition({ ...from, ...changes });
+  const pos = currentPosition();
+  // An unchanged position REPLACES rather than pushes. Re-selecting the tab you are already on,
+  // or the cluster already chosen, otherwise stacked an identical entry: Back then appeared to do
+  // nothing, and with two such entries the button oscillated instead of leaving.
+  const unchanged = hashFor(pos) === hashFor(from);
+  const keepFrom = replace || unchanged;
+  const state = { pos, from: keepFrom ? (history.state && history.state.from) || null : from };
+  const url = hashFor(pos) || location.pathname + location.search;
+  if (keepFrom) history.replaceState(state, "", url);
+  else history.pushState(state, "", url);
+}
+
+function backTarget() {
+  return (history.state && history.state.from) || null;
+}
+
+function goBack() {
+  // A pasted link straight to a drill-down has no `from`: there is nowhere in THIS app to go
+  // back to, and history.back() would leave the dashboard. Rise to the natural parent instead,
+  // which is a position the reader can then Back out of normally.
+  if (backTarget()) { history.back(); return; }
+  navigate({ group: null, user: null, groupsync: null });
+  refresh();
+}
+
 function backLabel() {
-  const prev = trail[trail.length - 1];
-  if (!prev) return "← all groups";
-  if (prev.user) return `← ${prev.user}`;
-  if (prev.group) return `← ${prev.group}`;
-  if (prev.groupsync) return `← ${prev.groupsync}`;
+  const prev = backTarget();
+  if (!prev) {
+    // Nothing to return to — a pasted link. goBack() rises to the PARENT of where we are, so the
+    // label has to describe that rather than a fixed string: on a GroupSync detail reached by
+    // link, "all groups" named a page the button does not open.
+    return view.page === "groups" ? "← all groups" : "← overview";
+  }
+  // esc() on every one of these. They now arrive from the URL as well as from the cluster, and
+  // this string is written into innerHTML by four callers — so a crafted hash plus one ordinary
+  // click ran script in the reader's session. Reproduced with
+  // `#groupsync=<img src=x onerror=...>`; the sink is old, the URL as a source is what this
+  // branch added.
+  if (prev.user) return `← ${esc(prev.user)}`;
+  if (prev.group) return `← ${esc(prev.group)}`;
+  if (prev.groupsync) return `← ${esc(prev.groupsync)}`;
   return prev.page === "groups" ? "← all groups" : "← overview";
 }
+
+/* Restores the position the reader navigated to. `event.state` is absent when the hash was
+   edited by hand or the entry predates this feature, so the hash is the fallback — it holds
+   the same position, just without the `from` that labels the in-page button. */
+window.addEventListener("popstate", (event) => {
+  if (event.state && event.state.pos) {           // ordinary Back/Forward
+    applyPosition(event.state.pos);
+    refresh();
+    return;
+  }
+  // No state: either an entry predating this feature, or an IN-PAGE ANCHOR. Setting location.hash
+  // is a same-document navigation and fires popstate as well as hashchange — so "Skip to main
+  // content" (#main) arrived here first and applyPosition({}) reset the reader to Overview. The
+  // guard has to be in BOTH handlers; putting it only in hashchange left the regression intact,
+  // which is how the test caught it.
+  const pos = positionFromHash();
+  if (location.hash && Object.keys(pos).length === 0) return;
+  applyPosition(pos);
+  refresh();
+});
+
+/* A hash typed or pasted into the URL bar of a tab already showing this page is a SAME-DOCUMENT
+   navigation: the browser creates a history entry and fires this, but does not reload, so the
+   boot code below never re-runs and that new entry carries no state. Without this the page would
+   sit on the old position while the URL claimed a new one.
+   The guard is for ordering, not paranoia: back/forward across two hash entries fires popstate
+   FIRST — with state — and hashchange after it, so bailing out when the entry already has a
+   position avoids doing the work twice and re-rendering on top of a correct render. */
+window.addEventListener("hashchange", () => {
+  if (history.state && history.state.pos) return;
+  const pos = positionFromHash();
+  // An IN-PAGE ANCHOR is not a position. "Skip to main content" navigates to `#main`, which
+  // parses to zero keys — and applying that reset page to overview and nulled the drill-down,
+  // so the keyboard affordance threw the reader back to Overview. A hash with no recognised key
+  // is somebody else's anchor; leave it alone.
+  if (location.hash && Object.keys(pos).length === 0) return;
+  applyPosition(pos);
+  // `from: null` is the truth here, and it is what makes goBack() rise to the parent instead of
+  // calling history.back() into whatever preceded the dashboard.
+  history.replaceState({ pos: currentPosition(), from: null }, "", location.hash);
+  refresh();
+});
 let data = { clusters: [], alerts: [], groupsyncs: [], groups: [], events: null,
              group: null, user: null };
 
@@ -975,10 +1097,14 @@ function renderFilters() {
   if (cl) cl.onchange = (e) => {
     // A drill-down is scoped to its cluster. Carrying `group` or `user` across a cluster
     // switch would re-request that name against the new cluster — a different object with
-    // the same name, or a 404 — so the position is abandoned and the trail with it.
-    view.cluster = e.target.value;
-    view.groupsync = null; view.group = null; view.user = null;
-    trail.length = 0;
+    // the same name, or a 404 — so the drill-down is dropped from the new position.
+    //
+    // A history ENTRY, and the trail is no longer wiped. It used to be (`trail.length = 0`),
+    // which was right when the trail was private: it stopped a later Back offering a
+    // pre-switch position that no longer made sense. With the browser's stack that erasure is
+    // both impossible and wrong — the reader pressed Back expecting the cluster they were
+    // reading, and every entry carries its own cluster, so returning to one is well defined.
+    navigate({ cluster: e.target.value, groupsync: null, group: null, user: null });
     refresh();
   };
   const st = $("f-state");
@@ -987,9 +1113,11 @@ function renderFilters() {
   if (bf) bf.onchange = (e) => { view.bindingFilter = e.target.value; refresh(); };
   document.querySelectorAll("[data-nav]").forEach((b) => {
     b.onclick = () => {
-      view.page = b.dataset.nav;
-      view.groupsync = null; view.group = null; view.user = null;
-      trail.length = 0;
+      // Tabs are navigation. They pushed nothing before — and actively CLEARED the trail —
+      // which is the single biggest reason browser-Back used to leave the dashboard: every
+      // page but the one you were on was unreachable backwards. A drill-down is dropped
+      // because it belongs to the page being left, not to the one being opened.
+      navigate({ page: b.dataset.nav, groupsync: null, group: null, user: null });
       refresh();
     };
   });
@@ -2055,7 +2183,7 @@ function render() {
   } else if (view.groupsync) {
     main.innerHTML = groupsyncDetail();
     const back = $("back");
-    if (back) back.onclick = () => { popTrail(); refresh(); };
+    if (back) back.onclick = () => { goBack(); };
     wireTooltip();
   } else {
     main.innerHTML = alertsCard()
@@ -2063,7 +2191,7 @@ function render() {
       + groupsyncTable()
       + configHealth(data.operatorConfigs);
     document.querySelectorAll("[data-cr]").forEach((tr) => {
-      tr.onclick = () => { pushTrail(); view.groupsync = tr.dataset.cr; refresh(); };
+      tr.onclick = () => { navigate({ groupsync: tr.dataset.cr }); refresh(); };
     });
   }
   // Same reason the cluster selector is hidden on Usage: the scope note would claim a
@@ -2139,15 +2267,15 @@ function wireNsAudit() {
 function wireDrilldown() {
   document.querySelectorAll("[data-group]").forEach((el) => {
     el.onclick = () => {
-      pushTrail();
-      view.group = el.dataset.group; view.user = null; refresh();
+      navigate({ group: el.dataset.group, user: null });
+      refresh();
     };
   });
   document.querySelectorAll("[data-user]").forEach((el) => {
     const go = (e) => {
       e.stopPropagation();
-      pushTrail();
-      view.user = el.dataset.user; view.group = null; refresh();
+      navigate({ user: el.dataset.user, group: null });
+      refresh();
     };
     el.onclick = go;
   });
@@ -2159,12 +2287,12 @@ function wireDrilldown() {
       e.preventDefault();
       const target = el.dataset.user || el.closest("[data-user]")?.dataset.user;
       if (!target) return;
-      pushTrail();
-      view.user = target; view.group = null; refresh();
+      navigate({ user: target, group: null });
+      refresh();
     };
   });
   const back = $("back-groups");
-  if (back) back.onclick = () => { popTrail(); refresh(); };
+  if (back) back.onclick = () => { goBack(); };
 }
 
 /* Hover enhances; it never gates a value — the same numbers are in the table below. */
@@ -2192,7 +2320,16 @@ function wireTooltip() {
 
 /* ---------- data ---------- */
 
+/* Bumped by every refresh(). A drill-down that is still in flight when the reader navigates away
+   is SUPERSEDED, and its response must not paint: it writes data.group/data.user and calls
+   render(), which re-derives from the current `view` — so a slow group fetch, a browser Back, and
+   a second drill-down left the first group's data on the second group's page. Browser Back made
+   this easy to hit, because Back is instant while a fetch is not. */
+let navSeq = 0;
+
 async function refresh(opts = {}) {
+  const seq = ++navSeq;
+  const superseded = () => seq !== navSeq;
   $("main").classList.add("stale");
   // Count ONE interaction per user-initiated refresh, not one per HTTP request. `get`
   // stamps the first call and then stops, so a click is a click no matter how many
@@ -2208,7 +2345,15 @@ async function refresh(opts = {}) {
       } catch (e) { /* older build */ }
     }
     data.clusters = await get("/api/clusters");
-    if (!view.cluster && data.clusters.length) view.cluster = data.clusters[0].id;
+    if (!view.cluster && data.clusters.length) {
+      view.cluster = data.clusters[0].id;
+      // The ONLY position mutation outside navigate(), and it has to be: the default is not known
+      // until the cluster list arrives, which is after boot stamped the entry. So the entry is
+      // amended in place rather than a new one pushed — otherwise the first entry has no cluster
+      // and Back from the reader's first switch restores a drill-down against the wrong one.
+      // `applyPosition` is a no-op here (nothing changes), and `replace` preserves `from`.
+      navigate({}, { replace: true });
+    }
     data.alerts = await get("/api/alerts");
     if (view.cluster) {
       data.groupsyncs = await get(`/api/clusters/${encodeURIComponent(view.cluster)}/groupsyncs`);
@@ -2219,11 +2364,19 @@ async function refresh(opts = {}) {
       if (view.page === "groups") {
         const base = `/api/clusters/${encodeURIComponent(view.cluster)}`;
         if (view.user) {
-          data.user = await get(`${base}/users/${encodeURIComponent(view.user)}`);
+          const got = await get(`${base}/users/${encodeURIComponent(view.user)}`);
+          // DISCARDED, not merely un-rendered: writing it would leave the wrong person in `data`
+          // for the next render that does not refetch — a sort click, or the 30s poll.
+          if (superseded()) return;
+          data.user = got;
         } else if (view.group) {
-          data.group = await get(`${base}/groups/${encodeURIComponent(view.group)}`);
+          const got = await get(`${base}/groups/${encodeURIComponent(view.group)}`);
+          if (superseded()) return;
+          data.group = got;
         } else {
-          data.groups = await get(`${base}/groups?state=${view.groupFilter}`);
+          const got = await get(`${base}/groups?state=${view.groupFilter}`);
+          if (superseded()) return;
+          data.groups = got;
         }
       }
       data.events = view.groupsync
@@ -2265,6 +2418,9 @@ async function refresh(opts = {}) {
       data.userBindings = await get(
         `/api/clusters/${encodeURIComponent(view.cluster)}/user-bindings?${q}`);
     }
+    // A superseded refresh must not paint: the reader has navigated on, and render() derives from
+    // the CURRENT view, so this would draw the new position with the old position's data.
+    if (superseded()) return;
     render();
   } catch (err) {
     // An error must never strand the reader: keep a working Back so a dead link is a
@@ -2278,11 +2434,29 @@ async function refresh(opts = {}) {
         The object may have been deleted since this page was rendered.</div>
     </section>`;
     const eb = $("back-groups");
-    if (eb) eb.onclick = () => { popTrail(); refresh(); };
+    if (eb) eb.onclick = () => { goBack(); };
   }
 }
 
 $("refresh").onclick = refresh;
+
+/* Boot from the URL, so a pasted or bookmarked link opens where it points instead of always at
+   Overview. replaceState rather than push: the reader has not navigated yet, and pushing here
+   would leave a spare entry that swallows their first Back press.
+   Unconditional, even with no hash — it stamps state on the entry the browser created for the
+   bare page load, so `history.state` is never null and the popstate handler has a position to
+   restore when Back returns to the start. `cluster` is left alone when the hash omits it:
+   refresh() picks the first cluster, and forcing null here would fight that. */
+applyPosition(positionFromHash());
+// `from` is CARRIED, not reset. Chromium preserves history.state across a reload, and clobbering
+// it here destroyed the back target of the entry the reader was on — after which the in-page
+// button rose to the parent while the browser's Back went one entry further, the two disagreeing
+// in exactly the way one shared stack is supposed to prevent. F5 is what a reader presses when a
+// page looks stale, so this is an ordinary path, not an exotic one.
+history.replaceState(
+  { pos: currentPosition(), from: (history.state && history.state.from) || null },
+  "", location.hash || location.pathname);
+
 refresh();
 // {auto: true}: background polling must not register as somebody using the page.
 setInterval(() => refresh({ auto: true }), 30000);
