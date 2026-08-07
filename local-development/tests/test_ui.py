@@ -16,6 +16,8 @@ import time
 from datetime import UTC, datetime, timedelta
 
 import httpx
+import urllib.parse
+
 import pytest
 import uvicorn
 
@@ -627,8 +629,7 @@ class TestNavigationTrail:
         """The reported dead end: a 404 replaced the page, back button included."""
         self._open_group(dash, "app-ocp-rbac-alpha-ns-admin")
         dash.evaluate("""() => {
-            pushTrail();                       // what a real click does
-            view.group = 'definitely-not-a-real-group-xyz';
+            navigate({ group: 'definitely-not-a-real-group-xyz' });  // what a real click does
             refresh();
         }""")
         dash.wait_for_selector("text=Dashboard API error")
@@ -646,8 +647,7 @@ class TestDeletedGroup:
         dash.locator("button[data-nav='groups']").click()
         dash.wait_for_selector("#f-state")
         dash.evaluate("""() => {
-            pushTrail();
-            view.group = 'app-ocp-rbac-gone-ns-viewer';
+            navigate({ group: 'app-ocp-rbac-gone-ns-viewer' });
             refresh();
         }""")
         dash.wait_for_selector("text=Membership changes")
@@ -660,8 +660,7 @@ class TestDeletedGroup:
         dash.locator("button[data-nav='groups']").click()
         dash.wait_for_selector("#f-state")
         dash.evaluate("""() => {
-            pushTrail();
-            view.group = 'app-ocp-rbac-gone-ns-viewer';
+            navigate({ group: 'app-ocp-rbac-gone-ns-viewer' });
             refresh();
         }""")
         dash.wait_for_selector("#back-groups")
@@ -772,10 +771,196 @@ class TestClusterScopedNavigation:
         dash.locator("tr[data-user='alice']").click()
         dash.wait_for_selector("text=Group memberships")
 
-        assert dash.evaluate("() => trail[trail.length - 1].cluster") == "crc-local"
+        # The position we would go BACK to now lives on the history entry itself, which is
+        # what makes the label correct after a Forward too. Same guarantee, real mechanism.
+        assert dash.evaluate("() => history.state.from.cluster") == "crc-local"
         dash.locator("#back-groups").click()
         dash.wait_for_selector("text=Membership changes")
         assert dash.evaluate("() => view.cluster") == "crc-local"
+
+
+class TestBrowserHistory:
+    """The browser's own Back and Forward, which used to leave the dashboard entirely.
+
+    Navigation lived in a private `trail` array and nothing was in the URL, so Back went to
+    whatever page preceded the dashboard and the reader lost their position — worst on the
+    drill-downs, which are exactly where somebody has spent effort getting to.
+
+    ONE STACK is the property under test here. The in-page button now calls history.back(),
+    so both buttons walk the same list; two stacks would diverge the moment anyone mixed them.
+    """
+
+    def _drill(self, dash):
+        dash.locator("button[data-nav='groups']").click()
+        dash.wait_for_selector("#f-state")
+        dash.locator("tr[data-group='app-ocp-rbac-alpha-ns-admin']").click()
+        dash.wait_for_selector("#back-groups")
+
+    def test_the_url_carries_the_position(self, dash):
+        """Without this nothing else is possible: Back needs somewhere to go back TO."""
+        self._drill(dash)
+        assert "page=groups" in dash.url
+        assert "group=app-ocp-rbac-alpha-ns-admin" in dash.url
+
+    def test_browser_back_leaves_a_drilldown_without_leaving_the_dashboard(self, dash):
+        self._drill(dash)
+        dash.go_back()
+        dash.wait_for_function("() => !document.querySelector('#back-groups')")
+        assert "group=" not in dash.url
+        assert dash.locator("tbody tr").count() == 3, "did not return to the group list"
+
+    def test_browser_back_retraces_tab_switches(self, dash):
+        """The biggest gap in the old design: tab clicks pushed nothing and CLEARED the trail,
+        so every page but the current one was unreachable backwards."""
+        dash.locator("button[data-nav='groups']").click()
+        dash.wait_for_selector("#f-state")
+        dash.locator("button[data-nav='usage']").click()
+        dash.wait_for_function("() => document.body.dataset.page === 'usage'")
+        dash.go_back()
+        dash.wait_for_function("() => document.body.dataset.page === 'groups'")
+        assert "page=groups" in dash.url
+
+    def test_browser_forward_returns_to_where_back_came_from(self, dash):
+        self._drill(dash)
+        dash.go_back()
+        dash.wait_for_function("() => !document.querySelector('#back-groups')")
+        dash.go_forward()
+        dash.wait_for_selector("#back-groups")
+        assert "group=app-ocp-rbac-alpha-ns-admin" in dash.url
+
+    def test_the_in_page_button_and_the_browser_button_share_one_stack(self, dash):
+        """Mixed use is the case two stacks get wrong: in-page Back, then browser Back."""
+        self._drill(dash)
+        dash.locator("tr[data-user='alice']").click()
+        dash.wait_for_selector("text=Group memberships")
+
+        dash.locator("#back-groups").click()          # in-page: user -> group
+        dash.wait_for_selector("text=Membership changes")
+        assert "group=app-ocp-rbac-alpha-ns-admin" in dash.url
+
+        dash.go_back()                                 # browser: group -> list
+        dash.wait_for_function("() => !document.querySelector('#back-groups')")
+        assert dash.locator("tbody tr").count() == 3
+
+    def test_a_pasted_link_opens_at_that_position(self, dash):
+        """The other half of putting position in the URL: it has to be shareable."""
+        dash.goto(dash.url.split("#")[0] + "#page=groups&cluster=crc-local"
+                  + "&group=app-ocp-rbac-alpha-ns-admin")
+        dash.wait_for_selector("text=Membership changes")
+        assert "app-ocp-rbac-alpha-ns-admin" in dash.locator("h2").first.inner_text()
+
+    def test_arriving_by_link_still_offers_a_way_out(self, dash):
+        """A pasted drill-down has no `from`, so history.back() would leave the dashboard.
+
+        The button rises to the natural parent instead — a position the reader can then Back
+        out of normally. Verified by asserting we are still ON the dashboard afterwards.
+        """
+        dash.goto(dash.url.split("#")[0] + "#page=groups&cluster=crc-local"
+                  + "&group=app-ocp-rbac-alpha-ns-admin")
+        dash.wait_for_selector("#back-groups")
+        assert dash.evaluate("() => history.state.from") is None, "expected no back target"
+        dash.locator("#back-groups").click()
+        dash.wait_for_function("() => !document.querySelector('#back-groups')")
+        assert dash.locator("tbody tr").count() == 3, "left the dashboard instead of rising"
+
+    def test_a_crafted_hash_cannot_execute_script(self, dash):
+        """The one security regression this feature introduced, and its guard.
+
+        The sink is old — backLabel() is written into innerHTML by four callers — but before this
+        branch no URL text could reach `view`, so those names were always cluster data. Putting
+        position in the URL made them attacker-chosen: one emailed link plus one ordinary click
+        ran script in the reader's session, behind the oauth-proxy, with access to every endpoint.
+        """
+        payload = "<img src=x onerror=window.__pwned=1>"
+        dash.goto(dash.url.split("#")[0] + "#page=groups&cluster=crc-local&groupsync="
+                  + urllib.parse.quote(payload))
+        dash.reload()
+        dash.wait_for_selector("#f-state")
+        dash.locator("tr[data-group='app-ocp-rbac-alpha-ns-admin']").click()
+        dash.wait_for_selector("#back-groups")
+        assert dash.evaluate("() => window.__pwned || 0") == 0, "crafted hash executed script"
+        assert dash.locator(".back img").count() == 0, "hash markup was parsed as HTML"
+        assert payload in dash.locator("#back-groups").inner_text(), (
+            "the payload should still be VISIBLE as text — escaped, not silently dropped"
+        )
+
+    def test_a_link_opened_in_a_fresh_tab_boots_at_that_position(self, dash):
+        """Distinct from the pasted-into-this-tab test, and the distinction is the whole point.
+
+        `page.goto(url + '#hash')` on an already-loaded page is a SAME-DOCUMENT navigation — the
+        document survives, so boot never re-runs and only the hashchange path is exercised. A
+        genuinely shared link opens in a new tab and goes through boot. reload() forces that, and
+        without it this behaviour could regress with a fully green suite.
+        """
+        dash.goto(dash.url.split("#")[0] + "#page=groups&cluster=crc-local"
+                  + "&group=app-ocp-rbac-alpha-ns-admin")
+        dash.reload()
+        dash.wait_for_selector("text=Membership changes")
+        assert dash.evaluate("() => view.page") == "groups"
+        assert "app-ocp-rbac-alpha-ns-admin" in dash.locator("h2").first.inner_text()
+
+    def test_the_boot_entry_carries_the_default_cluster(self, dash):
+        """The default cluster is not known until the cluster list arrives — after boot stamped
+        the entry — so the first entry used to carry no cluster at all, and Back from the reader's
+        FIRST cluster switch restored a drill-down against the wrong one."""
+        dash.wait_for_function("() => view.cluster")
+        assert dash.evaluate("() => history.state.pos.cluster") == "crc-local"
+
+    def test_the_skip_link_does_not_navigate(self, dash):
+        """"Skip to main content" is `#main`: a hash carrying none of the position keys. Treating
+        it as a position reset the reader to Overview — the accessibility affordance throwing them
+        off the page they were reading."""
+        self._drill(dash)
+        dash.evaluate("() => { location.hash = 'main'; }")
+        dash.wait_for_timeout(400)
+        assert dash.evaluate("() => view.page") == "groups"
+        assert dash.evaluate("() => view.group") == "app-ocp-rbac-alpha-ns-admin"
+
+    def test_a_reload_keeps_the_back_target(self, dash):
+        """F5 is what a reader presses when a page looks stale. Chromium preserves history.state
+        across it, and boot used to clobber `from` with null — after which the in-page button rose
+        to the parent while the browser's Back went one entry further."""
+        self._drill(dash)
+        dash.locator("tr[data-user='alice']").click()
+        dash.wait_for_selector("text=Group memberships")
+        dash.reload()
+        dash.wait_for_selector("#back-groups")
+        assert dash.evaluate("() => history.state.from && history.state.from.group") == \
+            "app-ocp-rbac-alpha-ns-admin"
+        assert "app-ocp-rbac-alpha-ns-admin" in dash.locator("#back-groups").inner_text()
+
+    def test_reselecting_the_same_tab_does_not_stack_an_entry(self, dash):
+        """An identical position replaced rather than pushed: two duplicate entries made Back
+        appear to do nothing, and could leave it oscillating instead of leaving."""
+        dash.locator("button[data-nav='groups']").click()
+        dash.wait_for_selector("#f-state")
+        before = dash.evaluate("() => history.length")
+        dash.locator("button[data-nav='groups']").click()
+        dash.locator("button[data-nav='groups']").click()
+        dash.wait_for_timeout(300)
+        assert dash.evaluate("() => history.length") == before, "re-selecting a tab stacked entries"
+
+    def test_the_label_is_still_right_after_a_forward(self, dash):
+        """Claimed as the improvement over the old private stack, and previously asserted nowhere.
+        `from` lives ON the entry, so Forward restores the label with it."""
+        self._drill(dash)
+        dash.locator("tr[data-user='alice']").click()
+        dash.wait_for_selector("text=Group memberships")
+        label = dash.locator("#back-groups").inner_text()
+        dash.go_back()
+        dash.wait_for_selector("text=Membership changes")
+        dash.go_forward()
+        dash.wait_for_selector("text=Group memberships")
+        assert dash.locator("#back-groups").inner_text() == label
+
+    def test_back_after_a_cluster_switch_restores_that_cluster(self, dash):
+        """Cluster is part of the position, not context around it — group names repeat."""
+        self._drill(dash)
+        dash.select_option("#f-cluster", "prod-east")
+        dash.wait_for_function("() => view.cluster === 'prod-east'")
+        dash.go_back()
+        dash.wait_for_function("() => view.cluster === 'crc-local'")
+        assert "cluster=crc-local" in dash.url
 
 
 class TestNamespaceAuditPage:
