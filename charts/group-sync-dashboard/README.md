@@ -279,6 +279,11 @@ helm upgrade ... -f my-values.yaml --set authLogLevel.manage=false
 `helm uninstall` needs no such care — the pre-delete Job reverts first. But `helm rollback` does not
 run hooks at all, so rolling back past an enable does **not** put the level back; do step 1 by hand.
 
+**To verify it end to end**, follow `docs/LOGIN_CAPTURE_QUICKCHECK.md` — five commands that turn the
+verbosity up, cause a login, and read that login back using the dashboard's own ServiceAccount token,
+with the real output of each recorded. It is also the place to start when the dashboard shows no login
+activity and you need to find which link is missing.
+
 **What Debug exposes**, so this is a decision and not a shrug: the lines carry the username of
 everyone who authenticates, their resolved LDAP DN, and the bind filter used. Anyone who can read pod
 logs in `openshift-authentication` can read them.
