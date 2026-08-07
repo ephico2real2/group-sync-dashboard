@@ -286,6 +286,62 @@ CREATE TABLE IF NOT EXISTS dashboard_user_activity (
 );
 CREATE INDEX IF NOT EXISTS dashboard_user_activity_by_day
     ON dashboard_user_activity(day DESC);
+
+-- Login attempts read off the oauth-server's logs. One row per ATTEMPT, not per log line: a single
+-- attempt writes several lines across two source files, and gsd/loginlog.py correlates them.
+--
+-- pod_name IS IN THE UNIQUE KEY, and that is the whole point of it. Reads overlap deliberately (a
+-- sinceSeconds window plus a settle horizon), so the same line is seen more than once and must not
+-- insert twice — the key suppresses that, because a line stays in its own pod's log and is never
+-- copied to a peer. Without pod_name the key ALSO collapses the cross-replica same-instant pair: two
+-- requests for the same username, same outcome and same microsecond, one served by each replica.
+-- Measured in scratch SQLite: (pod-a,alice,T,success), a re-read of it, then the independent
+-- (pod-b,alice,T,success) gives [1,0,1] and two rows with pod_name in the key; [1,0,0] and one row
+-- without it — a genuine second attempt silently dropped.
+--
+-- `at` is the kubelet RFC3339 stamp with microseconds, stored UTC and rendered in the configured
+-- zone. klog's own stamp on the same line carries no year and no timezone, so it cannot be resolved
+-- to an instant without guessing both. `observed_at` is when WE read it — not the same thing, and
+-- worth keeping when a pod's clock and ours disagree.
+CREATE TABLE IF NOT EXISTS login_event (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    cluster_id          TEXT NOT NULL,
+    pod_name            TEXT NOT NULL,
+    user_name           TEXT NOT NULL,
+    outcome             TEXT NOT NULL,
+    at                  TEXT NOT NULL,
+    provider            TEXT,
+    ldap_result_code    INTEGER,
+    detail              TEXT,
+    observed_at         TEXT NOT NULL,
+    UNIQUE(cluster_id, pod_name, user_name, at, outcome)
+);
+CREATE INDEX IF NOT EXISTS login_event_lookup ON login_event(cluster_id, at DESC);
+CREATE INDEX IF NOT EXISTS login_event_by_user ON login_event(cluster_id, user_name, at DESC);
+
+-- How far each POD's log has been settled. Per pod because pods are read independently and every roll
+-- replaces them; one cluster-wide value would let a lagging pod hold back the others, or a fast pod
+-- advance past lines a slow one has not written yet.
+CREATE TABLE IF NOT EXISTS login_capture_watermark (
+    cluster_id          TEXT NOT NULL,
+    pod_name            TEXT NOT NULL,
+    settled_through     TEXT NOT NULL,
+    updated_at          TEXT NOT NULL,
+    PRIMARY KEY(cluster_id, pod_name)
+);
+
+-- The PRODUCT-level boundary, deliberately NOT the watermark above.
+--
+-- `started_at` is the first successful read ever, set once and never moved, because it is what the UI
+-- means by "watching since" — a sparse table must read as "nothing happened since then" rather than
+-- as "this feature is broken". The per-pod watermark cannot answer that: it is per pod, it moves
+-- constantly, and dead-pod rows get pruned, which would erase the evidence of when watching began.
+-- `last_read_at` is liveness: if it stops advancing, capture has stopped.
+CREATE TABLE IF NOT EXISTS login_capture_status (
+    cluster_id          TEXT PRIMARY KEY,
+    started_at          TEXT NOT NULL,
+    last_read_at        TEXT NOT NULL
+);
 """
 
 
@@ -352,6 +408,48 @@ _MIGRATIONS: list[tuple[int, str, list[str]]] = [
             # No backfill, and none is possible — the names live on the cluster, not in here.
             # Until the next poll every read outer-joins to NULL, which is the same thing the
             # UI already renders for a user who has never logged in.
+        ],
+    ),
+    (
+        5,
+        "login_event + capture watermark and status: who logged in, and since when we were watching",
+        [
+            """CREATE TABLE IF NOT EXISTS login_event (
+                   id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                   cluster_id          TEXT NOT NULL,
+                   pod_name            TEXT NOT NULL,
+                   user_name           TEXT NOT NULL,
+                   outcome             TEXT NOT NULL,
+                   at                  TEXT NOT NULL,
+                   provider            TEXT,
+                   ldap_result_code    INTEGER,
+                   detail              TEXT,
+                   observed_at         TEXT NOT NULL,
+                   UNIQUE(cluster_id, pod_name, user_name, at, outcome)
+               )""",
+            "CREATE INDEX IF NOT EXISTS login_event_lookup ON login_event(cluster_id, at DESC)",
+            """CREATE INDEX IF NOT EXISTS login_event_by_user
+                   ON login_event(cluster_id, user_name, at DESC)""",
+            """CREATE TABLE IF NOT EXISTS login_capture_watermark (
+                   cluster_id          TEXT NOT NULL,
+                   pod_name            TEXT NOT NULL,
+                   settled_through     TEXT NOT NULL,
+                   updated_at          TEXT NOT NULL,
+                   PRIMARY KEY(cluster_id, pod_name)
+               )""",
+            """CREATE TABLE IF NOT EXISTS login_capture_status (
+                   cluster_id          TEXT PRIMARY KEY,
+                   started_at          TEXT NOT NULL,
+                   last_read_at        TEXT NOT NULL
+               )""",
+            # IF NOT EXISTS on every statement is required, not decorative: _migrate tolerates exactly
+            # one error, "duplicate column name", so a bare CREATE would raise "table already exists"
+            # on the replay against a database that got these from SCHEMA.
+            #
+            # No backfill, and none is possible — these logs exist only while the pod that wrote them
+            # does, and nothing before capture was enabled was ever recorded anywhere. An empty table
+            # on an upgraded cluster is the truth, which is exactly why login_capture_status exists:
+            # so the UI can say WHEN watching began rather than implying nobody logged in.
         ],
     ),
 ]
