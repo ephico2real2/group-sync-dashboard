@@ -103,6 +103,31 @@ developer
 > Do not pipe `oc login` into `head` or `grep`. It writes the kubeconfig *after* printing, so a closed
 > pipe kills it and the login appears to fail while actually having succeeded partially.
 
+**Do all four cases, not just a success.** Three of the five parsing rules below cannot be seen from a
+successful login alone, and two failure causes turn out to be indistinguishable — which you only
+discover by producing both:
+
+```bash
+login() { KC=$(mktemp); touch "$KC"
+  KUBECONFIG=$KC oc login "$API" -u "$1" -p "$2" --insecure-skip-tls-verify=true; rm -f "$KC"; }
+
+login john.doe   'Ldap123!'        # LDAP, correct password
+login jane.smith 'WRONG-PASS'      # LDAP, wrong password
+login bob.wilson 'GateTest123!'    # a real user NOT in the login-gate group
+login nosuchuser 'whatever'        # a username that does not exist
+login developer  'developer'       # HTPasswd, correct password
+```
+
+```
+LDAP good password  (john.doe)   → ✅ success
+LDAP BAD password   (jane.smith) → ❌ Login failed (401 Unauthorized)
+LDAP gate-DENIED    (bob.wilson) → ❌ Login failed (401 Unauthorized)
+unknown user        (nosuchuser) → ❌ Login failed (401 Unauthorized)
+```
+
+**All three failures are the same 401 to the client.** The difference — where there is one — exists only
+in the pod log.
+
 ## 4. Read it back as the dashboard's ServiceAccount
 
 This is the step that proves the grant, not the cluster. Use the **SA token**, not your admin token —
@@ -202,27 +227,91 @@ at all**, so rolling back past an enable leaves the level where it was; do step 
 
 ## Reading the lines correctly
 
-Two things measured on both authentication paths, which a parser has to respect.
+Measured on 2026-08-07 across **four deliberate cases** on one cluster with two identity providers
+(`developer` = HTPasswd, `ldap-local` = LDAP). This is the ground truth a parser has to be built on, and
+one login is not enough to see it — three of the five rules below are invisible if you only test a
+successful LDAP login.
 
-**The provider name is the discriminator.**
+### One login attempt writes SEVERAL lines, across two files
 
-| login | line |
+| case | lines written, in order |
 |---|---|
-| LDAP user | `Login with provider "ldap-local" succeeded for login "john.doe"` |
-| htpasswd / break-glass | `Login with provider "developer" succeeded for login "developer"` |
+| **LDAP success** (`john.doe`, correct password) | `basicauth.go:48` failed for provider `"developer"` → `ldap.go:131` searching → `ldap.go:148` found dn= → `basicauth.go:51` **succeeded** for `"ldap-local"` |
+| **LDAP bad password** (`jane.smith`) | `basicauth.go:48` failed `"developer"` → `ldap.go:131` searching → `ldap.go:148` found dn= → `ldap.go:152` **error binding password … LDAP Result Code 49 "Invalid Credentials"** → `basicauth.go:48` failed `"ldap-local"` |
+| **LDAP gate-denied** (`bob.wilson` — a real user, not in the login-gate group) | `basicauth.go:48` failed `"developer"` → `ldap.go:131` searching → `ldap.go:139` **no entries matching** → `basicauth.go:48` failed `"ldap-local"` |
+| **unknown user** (`nosuchuser`) | `basicauth.go:48` failed `"developer"` → `ldap.go:131` searching → `ldap.go:139` **no entries matching** → `basicauth.go:48` failed `"ldap-local"` |
+| **HTPasswd success** (`developer`) | `basicauth.go:51` **succeeded** for `"developer"` — and **nothing else** |
 
-So `developer` and `kubeadmin` are distinguishable from real directory users, which matters because
-neither belongs in a governance view.
+### Rule 1 — a `failed` line is not a failed login
 
-**`failed for login` is not a failed login.** Provider order decides whether one appears:
+Every provider tried *before* the matching one logs a failure. A **successful** LDAP login therefore
+contains `Login with provider "developer" failed for login "john.doe"`. Counting `failed` lines counts
+provider-order noise:
 
-- An **LDAP** login logs `failed for login` **first** — htpasswd is tried before ldap and rejects it —
-  then `succeeded`. Measured 1 failed : 1 succeeded for a *single successful* login.
-- An **htpasswd** login matches the first provider and logs **no** failure line at all.
+```
+16:15:27.435 basicauth.go:48] Login with provider "developer" failed for login "john.doe"
+16:15:27.535 basicauth.go:51] Login with provider "ldap-local" succeeded for login "john.doe"
+```
 
-A parser keying on `failed` therefore reports a phantom failure for every LDAP user and none for local
-users. Key on `succeeded for login`, and treat `failed` as unreliable unless you also track which
-provider emitted it.
+**The outcome of an attempt is a property of the whole group of lines for that username, not of any one
+line.** Group by `login "<user>"` within a short window (the four cases above spanned ~30 ms each) and
+the attempt succeeded if *any* provider succeeded.
+
+### Rule 2 — an HTPasswd login writes no failure line at all
+
+`developer` matches the first provider, so there is no preceding failure. Whether the noise exists is
+**provider-order dependent**, which means a parser cannot assume a fixed shape per attempt.
+
+### Rule 3 — the provider name separates real users from break-glass accounts
+
+`provider "ldap-local"` is a directory identity; `provider "developer"` on a *success* is HTPasswd —
+`developer`, `kubeadmin`. Neither belongs in a governance view, and this is the field that excludes them.
+
+### Rule 4 — a wrong password IS distinguishable; a denial IS NOT
+
+Only the bad-password path writes a reason, and it carries an LDAP result code:
+
+```
+ldap.go:152] error binding password for "uid=jane.smith,ou=People,dc=ephico2real,dc=com":
+             LDAP Result Code 49 "Invalid Credentials"
+```
+
+But **gate-denied and unknown-user are byte-identical.** Both produce only `ldap.go:139] no entries
+matching (<filter>)`, because the identity provider's filter includes the group gate — so a real person
+refused by policy and a username that does not exist are the same event as far as the log is concerned:
+
+```
+bob.wilson   ldap.go:139] no entries matching (&(&(uid=*)(memberOf=cn=app-ssb-autobahnusers,...))(uid=bob.wilson))
+nosuchuser   ldap.go:139] no entries matching (&(&(uid=*)(memberOf=cn=app-ssb-autobahnusers,...))(uid=nosuchuser))
+```
+
+**This is the missing discriminator, and it is a limitation of the source, not of the parser.** It
+matters because the two mean different things operationally — one is "this employee is not entitled to
+log in", the other is "somebody is trying usernames". Distinguishing them requires a second LDAP lookup
+*without* the gate clause, which is a directory read the dashboard does not have and should not acquire.
+The honest presentation is one bucket: **"rejected — user not found or not permitted"**.
+
+So the outcomes a parser can honestly report are:
+
+| outcome | how it is identified |
+|---|---|
+| success | `basicauth.go:51 … succeeded` for any provider |
+| wrong password | `ldap.go:152` with `LDAP Result Code 49` |
+| rejected — not found **or** not permitted | `ldap.go:139 … no entries matching`, and no success for that user in the window |
+
+### Rule 5 — the `ldap.go` lines carry the directory's shape
+
+`ldap.go:131/139/148` embed the **full bind filter** and `ldap.go:148/152` the **user's full DN**. That is
+more sensitive than the username alone: the filter discloses the gate group's DN and the directory
+layout. Anything parsed out of these lines should store the username and the outcome, **not** the raw
+line, and the raw line must never reach a log the dashboard itself writes.
+
+### Timestamps
+
+Two stamps per line, and only one is usable: the kubelet's RFC3339 prefix (`2026-08-07T16:15:27.435Z`,
+present because of `?timestamps=true`) and klog's own (`I0807 16:15:27.435262`), which carries **no year
+and no timezone**. Use the kubelet prefix. It is UTC and it is what makes cluster-wide correlation valid
+when the nodes are NTP-synced (`chrony` via MachineConfig).
 
 ## Checking the grants directly
 
