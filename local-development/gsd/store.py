@@ -1479,6 +1479,293 @@ class Store:
         )
         return rows[0]["full_name"] if rows else None
 
+    # ── Login capture ─────────────────────────────────────────────────────────────────────────────
+    #
+    # Every SQL shape below was run against a scratch WAL database with the real captured log fed
+    # through gsd/loginlog.py before being written here; the verification output is quoted in
+    # docs/DESIGN_login_capture.md. Two of them encode decisions that are easy to undo by accident:
+    # the watermark upsert refuses to rewind, and the status upsert deliberately does NOT touch
+    # started_at.
+
+    def record_login_events(self, cluster_id: str, events: list[dict]) -> int:
+        """Insert login attempts, ignoring ones already recorded. Returns rows actually inserted.
+
+        INSERT OR IGNORE against UNIQUE(cluster_id, pod_name, user_name, at, outcome), because reads
+        overlap ON PURPOSE — a sinceSeconds window plus a settle horizon — so the same line is seen
+        more than once and must not insert twice.
+
+        A dict rather than the parser's LoginAttempt, and that is not laziness: an attempt needs the
+        POD it was read from to be deduplicated, and LoginAttempt cannot carry that without making the
+        parser know where its input came from. gsd/logincapture.event_dict() builds these, so callers
+        and tests do not hand-assemble them.
+        """
+        with self._write() as conn:
+            before = conn.total_changes
+            conn.executemany(
+                """INSERT OR IGNORE INTO login_event(
+                       cluster_id, pod_name, user_name, outcome, at,
+                       provider, ldap_result_code, detail, observed_at)
+                   VALUES(:cluster_id,:pod_name,:user_name,:outcome,:at,
+                          :provider,:ldap_result_code,:detail,:observed_at)""",
+                [{**e, "cluster_id": cluster_id} for e in events],
+            )
+            return conn.total_changes - before
+
+    def set_login_watermark(
+        self, cluster_id: str, pod_name: str, settled_through: str, updated_at: str
+    ) -> None:
+        """Advance how far one pod's log is settled. REFUSES TO REWIND.
+
+        `max(settled_through, excluded.settled_through)` rather than a plain assignment: a read that
+        returns fewer lines than the last one — a truncated response, a partial failure, a retry with
+        a shorter window — would otherwise move the watermark BACKWARDS and cause every attempt after
+        it to be re-read and re-inserted. Verified: a second write with an earlier value leaves the
+        later one in place.
+        """
+        with self._write() as conn:
+            conn.execute(
+                """INSERT INTO login_capture_watermark(
+                       cluster_id, pod_name, settled_through, updated_at)
+                   VALUES(?,?,?,?)
+                   ON CONFLICT(cluster_id, pod_name) DO UPDATE SET
+                       settled_through = max(settled_through, excluded.settled_through),
+                       updated_at      = excluded.updated_at""",
+                (cluster_id, pod_name, settled_through, updated_at),
+            )
+
+    def login_watermarks(self, cluster_id: str) -> dict[str, str]:
+        """{pod_name: settled_through} for this cluster. Read by the capture loop only."""
+        return {
+            r["pod_name"]: r["settled_through"]
+            for r in self._rows(
+                "SELECT pod_name, settled_through FROM login_capture_watermark WHERE cluster_id=?",
+                (cluster_id,),
+            )
+        }
+
+    def prune_login_watermarks(self, cluster_id: str, live_pods: list[str]) -> int:
+        """Forget watermarks for pods that no longer exist. Returns rows removed.
+
+        Every oauth roll replaces the pods, so without this the table grows by one row per pod
+        forever. The EVENTS those pods produced are kept — only the read position is dropped, and a
+        pod that is gone will never produce another line to position against.
+
+        An empty `live_pods` removes nothing rather than everything: a list call that returned no pods
+        is far more likely to be a transient failure than a cluster with no oauth server, and treating
+        it as authoritative would discard every read position on the cluster.
+        """
+        if not live_pods:
+            return 0
+        with self._write() as conn:
+            before = conn.total_changes
+            conn.execute(
+                "DELETE FROM login_capture_watermark WHERE cluster_id=? AND pod_name NOT IN (%s)"
+                % ",".join("?" * len(live_pods)),
+                (cluster_id, *live_pods),
+            )
+            return conn.total_changes - before
+
+    def prune_login_events(self, cluster_id: str, before_at: str, max_rows: int = 5000) -> int:
+        """Delete events older than `before_at`, at most `max_rows` per call. Returns rows deleted.
+
+        BOUNDED, because this runs on the poll thread against a single-writer database: an unbounded
+        DELETE across a long retention backlog holds the write lock for as long as it takes, and
+        every reader and the next poll wait behind it. The caller treats a return of `max_rows` as
+        "backlog remains, continue next cycle".
+
+        `DELETE ... LIMIT` is NOT used — that syntax needs SQLITE_ENABLE_UPDATE_DELETE_LIMIT and is
+        not compiled into this build (verified: `near "LIMIT": syntax error`). The id-IN-subselect
+        form is core SQL and its inner select is index-served (verified: SEARCH login_event USING
+        COVERING INDEX login_event_lookup).
+        """
+        with self._write() as conn:
+            before = conn.total_changes
+            conn.execute(
+                """DELETE FROM login_event WHERE id IN (
+                       SELECT id FROM login_event
+                        WHERE cluster_id=? AND at < ?
+                        ORDER BY at LIMIT ?)""",
+                (cluster_id, before_at, max_rows),
+            )
+            return conn.total_changes - before
+
+    def record_login_read(self, cluster_id: str, read_at: str) -> None:
+        """Record a SUCCESSFUL read. `started_at` is set once; `last_read_at` advances every time.
+
+        This is the PRODUCT boundary, deliberately separate from the per-pod watermark. `started_at`
+        answers "watching since", which is what stops a sparse table reading as "nobody logged in" —
+        and the watermark cannot answer it, because it is per pod, it moves constantly, and
+        prune_login_watermarks removes the rows that would have carried the evidence.
+
+        The upsert omits started_at from its SET clause ON PURPOSE. Adding it there would silently
+        turn a stable boundary into "the most recent read", and the UI would then claim it had only
+        been watching since a moment ago after months of history.
+        """
+        with self._write() as conn:
+            conn.execute(
+                """INSERT INTO login_capture_status(cluster_id, started_at, last_read_at)
+                   VALUES(?,?,?)
+                   ON CONFLICT(cluster_id) DO UPDATE SET last_read_at = excluded.last_read_at""",
+                (cluster_id, read_at, read_at),
+            )
+
+    def login_capture_status(self, cluster_id: str) -> dict | None:
+        """{started_at, last_read_at}, or None when capture has never succeeded here.
+
+        None is meaningful and must not be flattened into zeros: it means the UI should say capture is
+        not running rather than showing an empty result as though it were an answer.
+        """
+        rows = self._rows(
+            "SELECT started_at, last_read_at FROM login_capture_status WHERE cluster_id=?",
+            (cluster_id,),
+        )
+        return rows[0] if rows else None
+
+    def login_events(
+        self,
+        cluster_id: str,
+        user_name: str | None = None,
+        outcome: str | None = None,
+        since: str | None = None,
+        limit: int = 200,
+    ) -> list[dict]:
+        """Login attempts, newest first, enriched with what the dashboard already knows about the user.
+
+        `full_name` comes from ocp_user, which exists only for people who have logged in — the same
+        source the member lists use, so one person reads the same way on both pages.
+
+        `known_user` and `has_history` are the two that make this worth building. A username here that
+        is in NO synced group (`known_user = 0`) is the most interesting row this feature produces, and
+        `has_history = 1` separates the two reasons for it: somebody whose access was REMOVED and is
+        still trying, versus a name nobody has ever governed. Both are EXISTS subqueries against
+        indexed columns rather than joins, so neither multiplies rows.
+
+        `since` is here although Designer A's contract dropped it: the index is (cluster_id, at DESC),
+        so `at >= ?` is served by it, and the alternative is the API over-fetching and filtering in
+        Python. If it ever costs anything, EXPLAIN QUERY PLAN is the check.
+        """
+        where = ["e.cluster_id = ?"]
+        params: list = [cluster_id]
+        if user_name:
+            where.append("e.user_name = ?")
+            params.append(user_name)
+        if outcome:
+            where.append("e.outcome = ?")
+            params.append(outcome)
+        if since:
+            where.append("e.at >= ?")
+            params.append(since)
+        params.append(limit)
+        return self._rows(
+            """SELECT e.user_name, e.outcome, e.at, e.provider, e.ldap_result_code, e.detail,
+                      e.pod_name, e.observed_at,
+                      u.full_name,
+                      EXISTS(SELECT 1 FROM group_member m
+                              WHERE m.cluster_id = e.cluster_id
+                                AND m.user_name  = e.user_name) AS known_user,
+                      EXISTS(SELECT 1 FROM membership_event h
+                              WHERE h.cluster_id = e.cluster_id
+                                AND h.user_name  = e.user_name) AS has_history
+                 FROM login_event e
+                 LEFT JOIN ocp_user u
+                        ON u.cluster_id = e.cluster_id AND u.user_name = e.user_name
+                WHERE """ + " AND ".join(where) +
+            " ORDER BY e.at DESC, e.id DESC LIMIT ?",
+            tuple(params),
+        )
+
+    def _ungoverned_where(self, exclude_providers: tuple[str, ...]) -> tuple[str, list]:
+        """The shared "appears in the logs but is in no synced group" predicate.
+
+        One definition used by both the count and the rows, because two copies of a predicate this
+        load-bearing WILL drift — and a count that disagrees with its own list is worse than either.
+
+        `e.provider IS NULL OR NOT IN (...)`: a row whose provider was never determined must still
+        count. Excluding NULL would quietly drop the failures whose provider could not be identified,
+        which are exactly the ones worth looking at.
+        """
+        where = """ WHERE e.cluster_id = ?
+                      AND NOT EXISTS(SELECT 1 FROM group_member m
+                                      WHERE m.cluster_id = e.cluster_id
+                                        AND m.user_name  = e.user_name)"""
+        params: list = []
+        if exclude_providers:
+            where += (" AND (e.provider IS NULL OR e.provider NOT IN (%s))"
+                      % ",".join("?" * len(exclude_providers)))
+            params = list(exclude_providers)
+        return where, params
+
+    def ungoverned_login_users(
+        self, cluster_id: str, exclude_providers: tuple[str, ...] = (), limit: int = 50
+    ) -> list[dict]:
+        """Usernames in the logs that belong to no synced group, aggregated per person.
+
+        `exclude_providers` is how break-glass accounts are kept out: a success on the HTPasswd
+        provider is kubeadmin or developer, which are not people to offboard. Passed in rather than
+        read here, because which providers are local is a cluster fact the store has no way to know.
+        """
+        where, params = self._ungoverned_where(exclude_providers)
+        return self._rows(
+            """SELECT e.user_name,
+                      COUNT(*) AS attempts,
+                      MIN(e.at) AS first_at,
+                      MAX(e.at) AS last_at,
+                      (SELECT e2.outcome FROM login_event e2
+                        WHERE e2.cluster_id = e.cluster_id AND e2.user_name = e.user_name
+                        ORDER BY e2.at DESC, e2.id DESC LIMIT 1) AS last_outcome,
+                      EXISTS(SELECT 1 FROM membership_event h
+                              WHERE h.cluster_id = e.cluster_id
+                                AND h.user_name  = e.user_name) AS has_history
+                 FROM login_event e""" + where +
+            " GROUP BY e.user_name ORDER BY last_at DESC LIMIT ?",
+            (cluster_id, *params, limit),
+        )
+
+    def count_ungoverned_login_users(
+        self, cluster_id: str, exclude_providers: tuple[str, ...] = ()
+    ) -> int:
+        """How many there are in total, so a limited list can say what it truncated.
+
+        Same predicate as the rows above, from the same helper. docs/api-contract.md requires any
+        handler taking `limit` to report `total` or `truncated`, and a list that silently stops at 50
+        reads as "there are 50".
+        """
+        where, params = self._ungoverned_where(exclude_providers)
+        rows = self._rows(
+            "SELECT COUNT(DISTINCT e.user_name) AS n FROM login_event e" + where,
+            (cluster_id, *params),
+        )
+        return rows[0]["n"] if rows else 0
+
+    def login_event_summary(
+        self, cluster_id: str, exclude_providers: tuple[str, ...] = ()
+    ) -> dict:
+        """Cluster-level totals for the page header.
+
+        Designer A's signature, not B's: B also wanted user_name/since here, but a summary filtered to
+        one user is that user's row in login_events, and a summary over a window is a different
+        question from "what does this cluster look like". Keeping it cluster-level means the header
+        cannot disagree with itself depending on which filter is active.
+        """
+        per_outcome = self._rows(
+            """SELECT outcome, COUNT(*) AS n, MIN(at) AS first_at, MAX(at) AS last_at
+                 FROM login_event WHERE cluster_id=? GROUP BY outcome""",
+            (cluster_id,),
+        )
+        by_outcome = {r["outcome"]: r["n"] for r in per_outcome}
+        distinct = self._rows(
+            "SELECT COUNT(DISTINCT user_name) AS n FROM login_event WHERE cluster_id=?",
+            (cluster_id,),
+        )
+        return {
+            "total": sum(by_outcome.values()),
+            "by_outcome": by_outcome,
+            "distinct_users": distinct[0]["n"] if distinct else 0,
+            "ungoverned_users": self.count_ungoverned_login_users(cluster_id, exclude_providers),
+            "first_at": min((r["first_at"] for r in per_outcome), default=None),
+            "last_at": max((r["last_at"] for r in per_outcome), default=None),
+        }
+
     def user_bindings_by_namespace(self, cluster_id: str) -> list[dict]:
         """Direct-user grants rolled up per namespace — the migration worklist.
 
