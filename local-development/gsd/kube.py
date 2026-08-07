@@ -35,6 +35,15 @@ GROUP_API = "/apis/user.openshift.io/v1/groups"
 # error, and every consumer of this data has to render the bare id unchanged.
 USER_API = "/apis/user.openshift.io/v1/users"
 
+# The oauth-server's own pods, and their logs. Read for ONE purpose: the lines naming who logged in,
+# which exist only at `spec.logLevel: Debug` on the authentication OPERATOR CR — not the OAuth CR. See
+# docs/LOGIN_CAPTURE_QUICKCHECK.md.
+#
+# Templated on the namespace because it is a chart value (`loginCapture.namespace`), not because it
+# varies in practice: OpenShift installs the OAuth server into openshift-authentication and the grant
+# the chart creates is a Role in that one namespace.
+POD_API_TMPL = "/api/v1/namespaces/%s/pods"
+
 # The namespace-configuration-operator's CRs — SAME API group as GroupSync, different
 # CRDs. Cluster-scoped. These template out the RoleBindings that grant the synced groups
 # their access, so they are the other half of the pipeline this dashboard watches.
@@ -448,6 +457,141 @@ class ClusterClient:
             len(items), self.cluster.name, len(names),
         )
         return names
+
+    def fetch_oauth_pods(self, namespace: str) -> list[str] | None:
+        """Names of the Running oauth-server pods, or None when we may not list them.
+
+        DISCOVERY IS NOT OPTIONAL. Pod names are generated, production runs two or three replicas, and
+        every roll replaces them — so there is no fixed name to read and no Deployment log subresource
+        to read instead (verified: `GET .../deployments/oauth-openshift/log` returns "the server could
+        not find the requested resource"). `oc logs deploy/x` only looks combined; the client resolves
+        the Deployment to its pods and reads each one, which is what this does.
+
+        Only Running pods. A Pending pod has produced nothing yet, and a Terminating one is mid-roll —
+        both are read next cycle if they are still there, and neither is worth a failed request.
+
+        None means FORBIDDEN, deliberately distinct from [] (permitted, no pods found). The grant is
+        optional: an install that never enabled loginCapture, or upgraded the image without
+        re-applying RBAC, gets a 403 here and must degrade rather than fail the poll.
+        """
+        path = POD_API_TMPL % namespace
+        with self._client() as client:
+            try:
+                items = self._list_all(client, path)
+            except ClusterError as exc:
+                if exc.outcome == FORBIDDEN and path in exc.message:
+                    log.info(
+                        "%s: not permitted to list pods in %s — login capture is off. Grant it with "
+                        "loginCapture.enabled=true.", self.cluster.name, namespace,
+                    )
+                    return None
+                raise
+        return [
+            name for obj in items
+            if (obj.get("status") or {}).get("phase") == "Running"
+            and (name := (obj.get("metadata") or {}).get("name"))
+        ]
+
+    def fetch_pod_log(
+        self,
+        namespace: str,
+        pod_name: str,
+        since_seconds: int | None = None,
+        max_bytes: int = 8 * 1024 * 1024,
+    ) -> list[str] | None:
+        """Timestamped log lines for one pod, or None when this pod cannot be read right now.
+
+        NOT THROUGH `_get()`, and that is mandatory rather than stylistic: `_get` always calls
+        `response.json()`, and this endpoint returns TEXT. `_client()` IS used — it only supplies the
+        bearer token and CA verification, which this needs exactly as much as any other call.
+
+        STREAMED, AND BYTE-BOUNDED. `response.text` would buffer the entire log before anything could
+        be capped, so a line limit would not be a memory limit — a pod that has been up for weeks at
+        Debug can hold a great deal. Reading line by line and stopping at `max_bytes` makes the bound
+        real. Hitting it is not an error: the newest lines are at the END, so a truncated read simply
+        leaves the oldest of this window unparsed, and the watermark stays where it was.
+
+        `timestamps=true` is what makes the result usable at all — it prefixes each line with the
+        kubelet's RFC3339 UTC stamp. klog's own stamp carries no year and no timezone.
+
+        RETURNS None FOR THE ORDINARY ROLL, RAISES FOR THE REST, and the distinction is the point:
+
+          404              the pod went away between listing and reading. Every roll does this.
+          400 not-ready    the container has not started, so there is no log yet. Measured message:
+                           "container nope is not valid for pod ..." — reason BadRequest.
+          403              the grant is missing. LOGGED AT WARNING, because it is permanent and will
+                           not fix itself, and a silent None here looks identical to "nobody logged
+                           in" forever.
+          any other        raised, so a real outage is not mistaken for roll noise.
+        """
+        params: dict[str, Any] = {"timestamps": "true"}
+        if since_seconds is not None:
+            params["sinceSeconds"] = str(since_seconds)
+        path = f"{POD_API_TMPL % namespace}/{pod_name}/log"
+
+        lines: list[str] = []
+        size = 0
+        try:
+            with self._client() as client:
+                with client.stream("GET", path, params=params) as response:
+                    if response.status_code >= 400:
+                        response.read()
+                        return self._log_read_refused(response, namespace, pod_name)
+                    for line in response.iter_lines():
+                        size += len(line) + 1
+                        if size > max_bytes:
+                            log.info(
+                                "%s: %s log hit the %d-byte cap after %d lines; the newest lines are "
+                                "kept and the watermark is unchanged",
+                                self.cluster.name, pod_name, max_bytes, len(lines),
+                            )
+                            break
+                        lines.append(line)
+        except httpx.HTTPError as exc:
+            # A connect error or timeout reading ONE pod must not fail the cycle: the other pods still
+            # have lines, and this one is retried next time from the same watermark.
+            log.info("%s: could not read %s log (%s: %s)",
+                     self.cluster.name, pod_name, type(exc).__name__, exc)
+            return None
+        return lines
+
+    def _log_read_refused(
+        self, response: httpx.Response, namespace: str, pod_name: str
+    ) -> list[str] | None:
+        """Classify a >=400 on a pod-log read: benign roll noise, or something worth saying out loud.
+
+        The Kubernetes Status body carries `reason` and `message`, which is the only way to tell a
+        container-not-ready 400 from a 400 that means something else. Guessing from the code alone is
+        what turns a permanent misconfiguration into indistinguishable debug noise.
+        """
+        try:
+            body = response.json()
+        except ValueError:
+            body = {}
+        reason = body.get("reason") or ""
+        message = body.get("message") or response.text[:200]
+        code = response.status_code
+
+        if code == 404:
+            log.debug("%s: %s is gone (read raced a roll)", self.cluster.name, pod_name)
+            return None
+        if code == 403:
+            log.warning(
+                "%s: FORBIDDEN reading %s/%s log — capture will record nothing until this is fixed. "
+                "The chart grants it with loginCapture.enabled=true (a Role in %s). Reason: %s",
+                self.cluster.name, namespace, pod_name, namespace, reason or code,
+            )
+            return None
+        if code == 400 and ("ContainerCreating" in message or "not started" in message
+                            or "is waiting to start" in message):
+            log.debug("%s: %s container not ready yet (%s)", self.cluster.name, pod_name, reason)
+            return None
+        if code == 401:
+            raise ClusterError(AUTH_FAILED, f"401 Unauthorized reading {pod_name} log")
+        # Everything else — an unexpected 400 included — is surfaced rather than swallowed.
+        log.warning("%s: unexpected HTTP %d reading %s log (reason=%s): %s",
+                    self.cluster.name, code, pod_name, reason or "-", message[:200])
+        return None
 
     def fetch_bindings(self) -> list[BindingView]:
         """Every RoleBinding and ClusterRoleBinding subject of kind Group.
