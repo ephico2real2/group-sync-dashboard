@@ -21,3 +21,24 @@ oauthProxy:
 config:
   unmanagedAudit:
     mode: "log"
+
+# Login capture, on for this lab. Two halves that are deliberately separate decisions:
+#
+#   authLogLevel  raises `spec.logLevel` on the authentication OPERATOR CR — NOT the OAuth CR — so the
+#                 oauth-server names the person logging in. Without it the line does not exist at all.
+#                 A cluster-scoped write, so it runs under its own ServiceAccount, never the dashboard's.
+#   loginCapture  lets the DASHBOARD read those pod logs. A Role in openshift-authentication, because
+#                 `pods/log` in a ClusterRole would read every pod on the cluster.
+#
+# ON A SHARED CLUSTER, READ THIS FIRST: toggling the level rolls oauth-openshift, which at one replica
+# is a login outage rather than a rolling update. CRC has one replica. See
+# docs/LOGIN_CAPTURE_QUICKCHECK.md, which is also how to verify the whole path end to end.
+#
+# Turning it off is two steps: set enabled=false and let it converge, THEN manage=false. Going straight
+# to manage=false removes the revert Job with it and strands the cluster in Debug.
+authLogLevel:
+  manage: true
+  enabled: true
+
+loginCapture:
+  enabled: true
