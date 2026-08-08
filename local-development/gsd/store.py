@@ -1674,6 +1674,27 @@ class Store:
             tuple(params),
         )
 
+    @staticmethod
+    def _not_local_provider(alias: str, exclude_providers: tuple[str, ...]) -> tuple[str, list]:
+        """"This row is not an attempt on a local HTPasswd provider", for one table alias.
+
+        Extracted so the ungoverned WHERE and the `last_outcome` subquery nested inside it cannot
+        disagree about what "excluded" means — which they did. The subquery looked at ALL of a user's
+        rows, so kubeadmin rendered on the live cluster as `1 attempt, last seen 19:55:58, last
+        outcome signed in`, where that outcome came from a 20:10:59 break-glass row the same line
+        claimed not to count. Every column of a row has to describe the same set of attempts, or the
+        row is not a fact about anything.
+
+        `provider IS NULL OR NOT IN (...)`: a row whose provider was never determined must still
+        count. Excluding NULL would quietly drop the failures whose provider could not be identified,
+        which are exactly the ones worth looking at.
+        """
+        if not exclude_providers:
+            return "", []
+        placeholders = ",".join("?" * len(exclude_providers))
+        return (f" AND ({alias}.provider IS NULL OR {alias}.provider NOT IN ({placeholders}))",
+                list(exclude_providers))
+
     def _ungoverned_where(self, exclude_providers: tuple[str, ...]) -> tuple[str, list]:
         """The shared "appears in the logs but is in no synced group" predicate.
 
@@ -1688,12 +1709,8 @@ class Store:
                       AND NOT EXISTS(SELECT 1 FROM group_member m
                                       WHERE m.cluster_id = e.cluster_id
                                         AND m.user_name  = e.user_name)"""
-        params: list = []
-        if exclude_providers:
-            where += (" AND (e.provider IS NULL OR e.provider NOT IN (%s))"
-                      % ",".join("?" * len(exclude_providers)))
-            params = list(exclude_providers)
-        return where, params
+        clause, params = self._not_local_provider("e", exclude_providers)
+        return where + clause, params
 
     def ungoverned_login_users(
         self, cluster_id: str, exclude_providers: tuple[str, ...] = (), limit: int = 50
@@ -1705,20 +1722,26 @@ class Store:
         read here, because which providers are local is a cluster fact the store has no way to know.
         """
         where, params = self._ungoverned_where(exclude_providers)
+        # The SAME exclusion inside the subquery, from the same helper. Without it `last_outcome`
+        # reported an attempt that this row's own count, first_at and last_at excluded.
+        sub_clause, sub_params = self._not_local_provider("e2", exclude_providers)
         return self._rows(
             """SELECT e.user_name,
                       COUNT(*) AS attempts,
                       MIN(e.at) AS first_at,
                       MAX(e.at) AS last_at,
                       (SELECT e2.outcome FROM login_event e2
-                        WHERE e2.cluster_id = e.cluster_id AND e2.user_name = e.user_name
-                        ORDER BY e2.at DESC, e2.id DESC LIMIT 1) AS last_outcome,
+                        WHERE e2.cluster_id = e.cluster_id AND e2.user_name = e.user_name"""
+            + sub_clause +
+            """ ORDER BY e2.at DESC, e2.id DESC LIMIT 1) AS last_outcome,
                       EXISTS(SELECT 1 FROM membership_event h
                               WHERE h.cluster_id = e.cluster_id
                                 AND h.user_name  = e.user_name) AS has_history
                  FROM login_event e""" + where +
             " GROUP BY e.user_name ORDER BY last_at DESC LIMIT ?",
-            (cluster_id, *params, limit),
+            # Placeholder order follows the SQL TEXT, not the logical order: the subquery sits in the
+            # SELECT list, so its parameters bind BEFORE the WHERE clause's cluster_id.
+            (*sub_params, cluster_id, *params, limit),
         )
 
     def count_ungoverned_login_users(
