@@ -900,8 +900,20 @@ def _group_view(obj: dict) -> GroupView:
     # `users` is a top-level field on Group, not under spec, and is null rather than []
     # when the group is empty — which is precisely the EMPTY state of PLAN §7.
     users = obj.get("users") or []
-    # Sorted so a membership diff between polls reflects real change, not API ordering.
-    members = sorted(str(u) for u in users)
+    # DISTINCT, sorted. Sorted so a membership diff between polls reflects real change rather than API
+    # ordering — and distinct because the array CAN repeat a name.
+    #
+    # Measured, not defensive. A group carrying both membership attributes (one structural objectClass
+    # plus AUXILIARY extensibleObject, which is the only schema-valid way to hold both — OpenLDAP
+    # rejects groupOfNames + groupOfUniqueNames on one entry as an incompatible structural chain)
+    # synced as ["john.doe","jane.smith","john.doe","bob.wilson"]. The operator's ExtractMembers
+    # APPENDS the values of each configured membership attribute and does not deduplicate, and nothing
+    # downstream of it does either — the Group object itself carries the repeat.
+    #
+    # Without this the dashboard reported `member_count: 4` above a list of THREE people, because the
+    # count came from this array while the list came from group_member, whose primary key had already
+    # collapsed the duplicate. One of those two numbers had to be wrong; three is the true one.
+    members = sorted({str(u) for u in users})
     return GroupView(
         name=meta.get("name", ""),
         member_count=len(members),
