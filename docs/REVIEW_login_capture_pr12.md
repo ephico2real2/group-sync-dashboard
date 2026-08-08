@@ -51,10 +51,73 @@ Every finding must carry:
 - **a concrete trigger** — the input, state or sequence that produces it. "Could race" is not a trigger;
   "two replicas, A reads at T, B commits at T+2ms" is.
 - **the consequence** — what a reader of the dashboard would believe that is false, or what breaks.
-- **a code solution**, as a diff or a complete replacement of the function. Not a description.
+- **THE FULL CODE, IN THIS FILE.** See below. This is the requirement most often skipped and the one
+  that makes the difference between a review and a to-do list.
+- **a test that fails before and passes after**, as a complete test function, not a sentence describing
+  one.
 
 Severity: `high` = wrong data shown as fact, data loss, or a security consequence. `medium` = a real
 defect with a bounded blast radius. `low` = correctness of documentation or comments.
+
+### Full code snippets, in this document
+
+Write the **complete replacement** — the whole function, the whole template block, the whole SQL
+statement — inside a fenced code block in this file, ready to apply. Not a diff fragment, not
+"add a check here", not "the method should also do X".
+
+```
+> **Codex:** CONFIRMED — high — gsd/store.py#login_events
+>
+> <the defect, its trigger, its consequence>
+>
+> ```python
+> def login_events(self, cluster_id: str, ...) -> list[dict]:
+>     """<the whole function, complete and runnable>"""
+>     ...
+> ```
+>
+> and the test:
+>
+> ```python
+> def test_<name>(store):
+>     """<why this test exists — what a reader would otherwise believe>"""
+>     ...
+> ```
+```
+
+Why this is mandatory: the arbiter applies what survives both passes, and a finding described in prose
+has to be re-derived before it can be applied — which is where the meaning drifts. A finding written as
+code either applies or is visibly wrong. If a fix touches three functions, write all three.
+
+Preserve the surrounding style: comments in this codebase say WHY, not WHAT, and a replacement that
+strips the reasoning out of a function is a regression even when its logic is right.
+
+### Technical debt — assess it explicitly
+
+Every finding, and the PR as a whole, gets a debt judgement. Three buckets, and say which:
+
+- **DEBT-INTRODUCED** — this PR adds a maintenance cost that will be paid later. Name the cost, name who
+  pays it, and say what it should be instead. Duplicated logic, a second source of truth for one fact, a
+  predicate copied rather than shared, a constant restated, an invariant enforced by comment rather than
+  by test, a shape that only works because of something elsewhere that nothing checks.
+- **DEBT-ACCEPTED** — a shortcut that is *correct to take*, with the reason. Say what would make it worth
+  paying down and roughly when. A deliberate limitation with a comment explaining it is not debt.
+- **DEBT-AVOIDED** — where the PR paid a cost up front that it did not have to. Worth recording: it stops
+  a later reviewer "simplifying" it back.
+
+Be concrete about this area in particular, because it is where debt hides in this PR:
+
+- the **outcome vocabulary** exists in `loginlog.py`, is derived in `api.py`, and is restated in
+  `index.html`'s `OUTCOME_LABEL`/`OUTCOME_BADGE`. Two of those three are derived; one is hand-written.
+  Is that debt, and if so what closes it without shipping the parser's constants to the browser?
+- the **`_not_local_provider` predicate** is now shared between two SQL sites after being duplicated.
+  Are there other predicates in `store.py` still duplicated the same way?
+- the **login-gate DN** is resolved in `poller.py`, stored in `store.py`, read in `api.py` and matched in
+  `kube.dn_equal`. Four files for one fact. Justified, or debt?
+- **`docs/examples/clusteraccess-groupsync.yaml`** duplicates configuration that the platform chart also
+  renders. Nothing tests that the two agree.
+- the three test files carry **fixture-building helpers that overlap** (`_lines`, `_record`, `_iso`,
+  `event_dict` wrappers). Is that acceptable test-local duplication or a shared fixture waiting to exist?
 
 ---
 
@@ -175,11 +238,16 @@ actually checking, and say what you checked.
 
 Write below. Nothing yet.
 
+Finish with a **debt summary** for the PR as a whole: what it introduces, what it accepts and why, what
+it avoids — and one sentence on whether the debt is worth the feature.
+
 ---
 
 ## Fable — pass 2
 
-Write below. Nothing yet.
+Write below. Nothing yet. Same requirements: full code in this file, a test per finding, and an explicit
+debt judgement. Additionally, mark each of Codex's findings AGREE / DISAGREE with evidence — a second
+pass that only adds findings has not reviewed the first pass.
 
 ---
 
