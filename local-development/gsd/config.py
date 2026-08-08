@@ -195,6 +195,20 @@ class Settings:
     # generous — over a year — and the prune is bounded per cycle so a long backlog cannot hold the
     # single writer.
     login_retention_days: int = 400
+    # ── THE LOGIN-GATE GROUP ───────────────────────────────────────────────────────────────────────
+    # The FULL DN of the group whose membership is required to authenticate at all — the clause the
+    # identity provider's search filter carries. Set it, and the dashboard can answer the question the
+    # oauth log cannot: whether a person who was refused is a real person outside that group.
+    #
+    # A DN, not a name, because that is what identifies the group unambiguously and what a synced
+    # Group already carries in `openshift.io/ldap.uid`. Matching on the cn would break the moment two
+    # branches of a directory both had a `cluster-access` group.
+    #
+    # EMPTY MEANS DISCOVER IT from the OAuth CR's LDAP identity provider, whose filter names the group.
+    # Set it explicitly when the gate lives somewhere that filter does not show, or when the dashboard
+    # is not permitted to read the OAuth CR. Discovery is best-effort by design: it is the convenience,
+    # and this value is the contract.
+    cluster_access_group: str = ""
     """How often to re-read RoleBindings/ClusterRoleBindings — deliberately slower than
     the group poll.
 
@@ -440,6 +454,9 @@ def load_settings(path: str | Path) -> Settings:
             if p.strip()
         ),
         login_retention_days=int(raw.get("loginRetentionDays", 400)),
+        # Stripped, because a DN pasted out of `ldapsearch` output arrives with trailing whitespace
+        # often enough to matter, and it is compared for exact equality against a Group's ldap.uid.
+        cluster_access_group=str(raw.get("clusterAccessGroup", "") or "").strip(),
         request_timeout_seconds=float(raw.get("requestTimeoutSeconds", 15.0)),
         # GSD_DB_PATH wins over the file so the config can ship as a ConfigMap that does
         # not need to know where the writable volume is mounted.

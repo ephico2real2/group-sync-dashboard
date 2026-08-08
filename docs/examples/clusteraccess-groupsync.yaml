@@ -1,0 +1,98 @@
+# Sync the LOGIN-GATE group into OpenShift, so the dashboard can tell who is allowed to
+# authenticate at all — separately from who holds RBAC access.
+#
+# ITS OWN CR, not a widened filter on ldap-groupsync, for three reasons:
+#   * this group grants LOGIN, not access. Sharing an owning CR with the RBAC groups would make
+#     it indistinguishable from them in every view that groups by owner.
+#   * it can be enabled, disabled or pruned without touching the RBAC sync.
+#   * the sync-provider label is <cr-name>_<provider-name>, so a separate CR gets its own
+#     label and `prune: true` stays scoped to the one group it manages.
+apiVersion: redhatcop.redhat.io/v1alpha1
+kind: GroupSync
+metadata:
+  name: ldap-clusteraccess-groupsync
+  namespace: group-sync-operator
+spec:
+  schedule: "*/30 * * * *"
+  providers:
+    - name: ldap
+      ldap:
+        url: ldaps://openldap-service.ldap-testing.svc.cluster.local:636
+        insecure: false
+        prune: true
+        caSecret:
+          kind: ConfigMap
+          name: ca-config-map-copy
+          namespace: group-sync-operator
+          key: ca.crt
+        credentialsSecret:
+          kind: Secret
+          name: ldap-group-sync
+          namespace: group-sync-operator
+        rfc2307:
+          groupUIDAttribute: dn
+          groupNameAttributes: ["cn"]
+          # BOTH ATTRIBUTES, so this works whichever schema the gate group uses.
+          #
+          # groupMembershipAttributes is a list, and the operator reads every attribute in it — so
+          # naming both costs nothing on a directory that has one of them and saves this example
+          # being wrong on the other. Verified on the reference directory, which uses uniqueMember:
+          # listing both still syncs all 8 members.
+          #
+          # WHY THE GATE GROUP IS groupOfUniqueNames HERE, AND WHY THAT IS NOT ARBITRARY. The
+          # directory's memberof overlay is configured for `uniqueMember` only, so `groupOfNames`
+          # groups generate no `memberOf` attribute at all. Measured: jane.smith is a `member` of
+          # SEVENTEEN groupOfNames groups and carries exactly ONE memberOf value — the gate group.
+          #
+          # So the identity provider's filter `(memberOf=cn=app-ssb-autobahnusers,...)` works only
+          # because the gate group uses uniqueMember. Rewriting that group as groupOfNames "for
+          # consistency" would produce no memberOf, match nobody, and REFUSE EVERY LDAP LOGIN — the
+          # gate would deny everyone. It is also useful as it stands: memberOf holds exactly the gate
+          # membership and nothing else, so the filter is cheap and unambiguous.
+          #
+          # The constraint is on the DIRECTORY, not on this CR. That is why the CR accepts both
+          # attributes and the directory keeps the one its overlay tracks.
+          #
+          # This is not a stylistic choice. The gate group here is objectClass groupOfUniqueNames
+          # (uniqueMember) while the app-ocp-rbac-* groups are groupOfNames (member), so a CR that
+          # names only `member` syncs the group with ZERO members and looks like a working sync —
+          # and a FILTER that names only groupOfNames matches nothing and creates no Group at all,
+          # which at least fails visibly. Check your own gate group before trusting either:
+          #   ldapsearch -x -H ldap://... -b "<gate group DN>" objectClass
+          groupMembershipAttributes: ["member", "uniqueMember"]
+          userUIDAttribute: dn
+          userNameAttributes: ["uid"]
+          groupsQuery:
+            baseDN: ou=Groups,dc=ephico2real,dc=com
+            scope: sub
+            derefAliases: never
+            # Either objectClass, for the same reason as the membership attributes above. An
+            # objectClass-less filter — just `(cn=...)` — would also work and is less safe: it can
+            # match a non-group entry that happens to share the cn.
+            filter: "(&(|(objectClass=groupOfNames)(objectClass=groupOfUniqueNames))(cn=app-ssb-autobahnusers))"
+            pageSize: 0
+            timeout: 0
+          usersQuery:
+            baseDN: dc=ephico2real,dc=com
+            scope: sub
+            derefAliases: never
+            pageSize: 0
+            timeout: 0
+          # Expect EIGHT members on the reference directory, not seven. I predicted seven on
+          # the assumption that the bind service account
+          # (cn=ocp-oauth-bind-serviceid,ou=TrustedApplications,...) could not map to an
+          # OpenShift user — it is `cn=`, not `uid=`. It maps: the entry is
+          # objectClass extensibleObject and carries `uid: ocp-oauth-bind-serviceid`, so
+          # userNameAttributes: ["uid"] finds it like any person.
+          #
+          # That is worth knowing rather than filtering out. A service identity inside the
+          # login-gate group is a real finding: it holds no RBAC access, and if the directory's
+          # memberOf overlay covers uniqueMember — it does, which is why jane.smith can log in —
+          # then that account can AUTHENTICATE TO OPENSHIFT with its bind password. The
+          # dashboard surfaces it under "in the access group, holds no access" rather than
+          # hiding it here.
+          #
+          # These two flags stay on regardless: a member entry that cannot be resolved must not
+          # fail the whole sync.
+          tolerateMemberNotFoundErrors: true
+          tolerateMemberOutOfScopeErrors: true

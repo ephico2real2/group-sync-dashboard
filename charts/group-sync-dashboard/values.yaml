@@ -602,6 +602,58 @@ loginCapture:
   retentionDays: 400
 
 # ---------------------------------------------------------------------------
+# Cluster access — the login-gate group
+# ---------------------------------------------------------------------------
+# WHAT THIS ANSWERS. Holding RBAC access and being able to LOG IN are two different things, and a
+# cluster that gates authentication on group membership can grant somebody a role they can never use.
+# Measured on the reference cluster: 10 people held access through synced groups, 7 were in the gate
+# group, so 3 held access they physically could not exercise. Nothing else in this dashboard sees that,
+# because every other view starts from RBAC.
+#
+# It also settles the one thing the oauth log cannot. A refused login logs `no entries matching
+# (<filter>)` whether the account is outside the gate group or does not exist — the filter carries the
+# group, so the two are byte-identical. With the gate group's membership known, a refusal for somebody
+# who IS in a synced group is definitively "a real person, not gated".
+#
+# ── PREREQUISITE, AND IT IS NOT THIS CHART'S JOB ──────────────────────────────────────────────────
+# The gate group has to be synced into OpenShift as a Group object, by the group-sync-operator, with
+# its OWN GroupSync CR. This chart does NOT create that CR and should not: GroupSync CRs are the
+# platform team's, and a dashboard that starts writing them is the same overreach as managing
+# proxy/cluster's trustedCA. A worked example is in docs/examples/clusteraccess-groupsync.yaml.
+#
+# Its own CR rather than a widened filter on the existing one, because the sync-provider label is
+# <cr-name>_<provider-name>: a separate CR gets its own label, so the group is distinguishable from
+# the RBAC groups everywhere the dashboard groups by owner, and `prune: true` stays scoped to it.
+#
+# WATCH THE MEMBERSHIP ATTRIBUTE. A gate group is often objectClass groupOfUniqueNames with
+# `uniqueMember`, while RBAC groups are groupOfNames with `member`. Copying the RBAC CR's rfc2307
+# block verbatim syncs the group with ZERO members and looks like a working sync.
+clusterAccess:
+  # The FULL DN of the gate group. A DN, not a name: it is what a synced Group carries in its
+  # `openshift.io/ldap.uid` annotation, so the match is exact, and matching on `cn` would break the
+  # moment two branches of a directory both had a `cluster-access` group.
+  #
+  #   group: "cn=app-ssb-autobahnusers,ou=Groups,dc=ephico2real,dc=com"
+  #
+  # EMPTY DISCOVERS IT from the OAuth CR's LDAP identity provider, whose search filter names the
+  # group. Both spellings are read — `memberOf` (OpenLDAP, Active Directory) and `isMemberOf`
+  # (389-ds, Oracle/Sun DSEE) — because neither is standardised and a parser that knows one would
+  # report "no gate configured" on half the directories in the world.
+  #
+  # Set it explicitly when the gate is not in that filter, or when this chart may not read the OAuth
+  # CR. Discovery is the convenience; this value is the contract.
+  group: ""
+
+  # Grant `get` on oauths.config.openshift.io/cluster, which is what makes discovery possible.
+  #
+  # Narrowed with resourceNames to the single object `cluster` — honoured by Kubernetes for `get`,
+  # unlike `list`. Declining it is a supported choice: without the grant the read 403s, the discovery
+  # returns nothing, and the feature reports that it needs `clusterAccess.group` set rather than
+  # failing. Pointless to grant when `group` is set, and the chart does not force the pairing because
+  # an operator may want discovery available as a fallback.
+  discoverFromOAuth: true
+
+# ---------------------------------------------------------------------------
 # oauth-server log verbosity  (prerequisite for login capture)
 # ---------------------------------------------------------------------------
 # The oauth-openshift server only names the person logging in when the AUTHENTICATION OPERATOR

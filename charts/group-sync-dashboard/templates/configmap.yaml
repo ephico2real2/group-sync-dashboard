@@ -42,6 +42,9 @@ data:
     # login without this list — and these are break-glass accounts, not people to offboard.
     loginCaptureHtpasswdProviders: {{ .Values.loginCapture.htpasswdProviders | join "," | quote }}
     loginRetentionDays: {{ .Values.loginCapture.retentionDays }}
+    # The login-gate group's DN. Empty means "discover it from the OAuth CR" — see values.yaml.
+    # Quoted unconditionally: a DN contains commas and colons, both of which YAML reads as structure.
+    clusterAccessGroup: {{ .Values.clusterAccess.group | quote }}
     leaderElection: {{ .Values.leaderElection.enabled }}
     leaderLeaseName: {{ .Values.leaderElection.leaseName | quote }}
     clusters:

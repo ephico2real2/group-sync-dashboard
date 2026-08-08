@@ -342,6 +342,24 @@ CREATE TABLE IF NOT EXISTS login_capture_status (
     started_at          TEXT NOT NULL,
     last_read_at        TEXT NOT NULL
 );
+
+-- WHICH GROUP GATES AUTHENTICATION, and where we learned it from.
+--
+-- One row per cluster because one cluster has one login gate. `source` is stored rather than
+-- inferred so the UI can say whether the DN was configured or discovered — an operator debugging
+-- 'why is this the wrong group?' needs to know which of the two to change.
+--
+-- `group_name` is the synced OpenShift Group whose openshift.io/ldap.uid equals `dn`, resolved at
+-- poll time. NULL means the DN is known and the group is NOT synced — which is not an error but a
+-- prerequisite that has not been met, and the difference matters: without the Group object there
+-- is no membership to compare against, and the panel has to say so rather than report zero.
+CREATE TABLE IF NOT EXISTS cluster_access_group (
+    cluster_id          TEXT PRIMARY KEY,
+    dn                  TEXT NOT NULL,          -- the gate group's full DN, as configured or discovered
+    source              TEXT NOT NULL,          -- 'config' or 'oauth': which of the two produced it
+    group_name          TEXT,                   -- the synced Group whose ldap_uid matches, if any
+    observed_at         TEXT NOT NULL
+);
 """
 
 
@@ -408,6 +426,24 @@ _MIGRATIONS: list[tuple[int, str, list[str]]] = [
             # No backfill, and none is possible — the names live on the cluster, not in here.
             # Until the next poll every read outer-joins to NULL, which is the same thing the
             # UI already renders for a user who has never logged in.
+        ],
+    ),
+    (
+        6,
+        "cluster_access_group: which group gates authentication, and how we learned it",
+        [
+            """CREATE TABLE IF NOT EXISTS cluster_access_group (
+                   cluster_id          TEXT PRIMARY KEY,
+                   dn                  TEXT NOT NULL,
+                   source              TEXT NOT NULL,
+                   group_name          TEXT,
+                   observed_at         TEXT NOT NULL
+               )""",
+            # One table, no index: it is at most one row per cluster and every read is by primary key.
+            #
+            # Nothing to backfill. The DN comes from configuration or from the OAuth CR, and both are
+            # read on the next poll — so an upgraded cluster is correct within one cycle without a
+            # migration that would have to talk to a cluster to fill this in.
         ],
     ),
     (
@@ -1673,6 +1709,185 @@ class Store:
             " ORDER BY e.at DESC, e.id DESC LIMIT ?",
             tuple(params),
         )
+
+    # ── The login gate ────────────────────────────────────────────────────────────────────────────
+    #
+    # Holding RBAC access and being able to LOG IN are different things, and this is the only place the
+    # dashboard can see the second. Measured on the reference cluster: 10 people held access through
+    # synced groups, 7 were in the gate group, so 3 held access they could not exercise.
+
+    def set_cluster_access_group(
+        self, cluster_id: str, dn: str, source: str, group_name: str | None, observed_at: str
+    ) -> None:
+        """Record which group gates authentication, and which of the two ways we learned it.
+
+        `group_name` is resolved by the CALLER from group_state, not joined here, because the answer
+        must be a snapshot taken with the same poll that wrote the groups — resolving it at read time
+        would let a group deleted between poll and read turn a known gate into an unknown one.
+        """
+        with self._write() as conn:
+            conn.execute(
+                """INSERT INTO cluster_access_group(cluster_id, dn, source, group_name, observed_at)
+                   VALUES(?,?,?,?,?)
+                   ON CONFLICT(cluster_id) DO UPDATE SET
+                       dn=excluded.dn, source=excluded.source,
+                       group_name=excluded.group_name, observed_at=excluded.observed_at""",
+                (cluster_id, dn, source, group_name, observed_at),
+            )
+
+    def clear_cluster_access_group(self, cluster_id: str) -> None:
+        """Forget the gate group entirely.
+
+        Called when neither configuration nor discovery produces a DN. DELETE rather than leaving the
+        last known value: a gate that has been REMOVED from the identity provider means every account
+        in the search base can now sign in, and a stale row would keep reporting findings against a
+        group that no longer gates anything — the page would show a shrinking list of "cannot log in"
+        people who can all log in perfectly well.
+        """
+        with self._write() as conn:
+            conn.execute("DELETE FROM cluster_access_group WHERE cluster_id=?", (cluster_id,))
+
+    def cluster_access_group(self, cluster_id: str) -> dict | None:
+        """The gate group row, or None when no gate is known."""
+        rows = self._rows(
+            "SELECT dn, source, group_name, observed_at FROM cluster_access_group WHERE cluster_id=?",
+            (cluster_id,),
+        )
+        return rows[0] if rows else None
+
+    def access_without_login(self, cluster_id: str, limit: int = 200) -> list[dict]:
+        """People who hold access through a synced group but are NOT in the login-gate group.
+
+        THE FINDING THIS WHOLE FEATURE EXISTS FOR: a role granted to somebody who cannot authenticate
+        is access that can never be used, and it is invisible to every other view in this dashboard
+        because they all start from RBAC and stop there.
+
+        The gate group is EXCLUDED from "holds access", which is the subtlety that makes the query
+        mean anything: it is a synced group like any other, so counting it would make every gate
+        member 'someone with access' and the finding would be empty on every cluster.
+
+        A LEFT JOIN for the display name and an aggregate for the group list, so one row per person
+        rather than one per membership — a person in four groups is one finding, not four.
+        """
+        access = self.cluster_access_group(cluster_id)
+        if not access or not access["group_name"]:
+            return []
+        return self._rows(
+            """SELECT m.user_name,
+                      COUNT(DISTINCT m.group_name) AS group_count,
+                      GROUP_CONCAT(DISTINCT m.group_name) AS groups,
+                      MIN(m.first_seen_at) AS first_seen_at,
+                      u.full_name,
+                      EXISTS(SELECT 1 FROM login_event e
+                              WHERE e.cluster_id = m.cluster_id
+                                AND e.user_name  = m.user_name) AS has_tried
+                 FROM group_member m
+                 LEFT JOIN ocp_user u
+                        ON u.cluster_id = m.cluster_id AND u.user_name = m.user_name
+                WHERE m.cluster_id = ?
+                  AND m.group_name <> ?
+                  AND NOT EXISTS(SELECT 1 FROM group_member g
+                                  WHERE g.cluster_id = m.cluster_id
+                                    AND g.group_name = ?
+                                    AND g.user_name  = m.user_name)
+                GROUP BY m.user_name
+                ORDER BY group_count DESC, m.user_name
+                LIMIT ?""",
+            (cluster_id, access["group_name"], access["group_name"], limit),
+        )
+
+    def count_access_without_login(self, cluster_id: str) -> int:
+        """How many there are in total, so a limited list can say what it truncated."""
+        access = self.cluster_access_group(cluster_id)
+        if not access or not access["group_name"]:
+            return 0
+        rows = self._rows(
+            """SELECT COUNT(DISTINCT m.user_name) AS n
+                 FROM group_member m
+                WHERE m.cluster_id = ?
+                  AND m.group_name <> ?
+                  AND NOT EXISTS(SELECT 1 FROM group_member g
+                                  WHERE g.cluster_id = m.cluster_id
+                                    AND g.group_name = ?
+                                    AND g.user_name  = m.user_name)""",
+            (cluster_id, access["group_name"], access["group_name"]),
+        )
+        return rows[0]["n"] if rows else 0
+
+    def login_without_access(self, cluster_id: str, limit: int = 200) -> list[dict]:
+        """People in the login-gate group who hold no access through any other synced group.
+
+        The quieter half, and not automatically a problem: somebody newly onboarded, or an account
+        that only ever needs to read something granted to `system:authenticated`. It is worth showing
+        because it is also how a service identity inside the gate group surfaces — on the reference
+        directory the group's eighth member is the oauth BIND account, which carries a `uid` and so
+        syncs like a person.
+        """
+        access = self.cluster_access_group(cluster_id)
+        if not access or not access["group_name"]:
+            return []
+        return self._rows(
+            """SELECT m.user_name, m.first_seen_at, u.full_name,
+                      EXISTS(SELECT 1 FROM login_event e
+                              WHERE e.cluster_id = m.cluster_id
+                                AND e.user_name  = m.user_name) AS has_tried
+                 FROM group_member m
+                 LEFT JOIN ocp_user u
+                        ON u.cluster_id = m.cluster_id AND u.user_name = m.user_name
+                WHERE m.cluster_id = ?
+                  AND m.group_name = ?
+                  AND NOT EXISTS(SELECT 1 FROM group_member g
+                                  WHERE g.cluster_id = m.cluster_id
+                                    AND g.user_name  = m.user_name
+                                    AND g.group_name <> ?)
+                ORDER BY m.user_name
+                LIMIT ?""",
+            (cluster_id, access["group_name"], access["group_name"], limit),
+        )
+
+    def cluster_access_summary(self, cluster_id: str) -> dict:
+        """The counts the panel leads with, over the WHOLE cluster rather than any page."""
+        access = self.cluster_access_group(cluster_id)
+        if not access or not access["group_name"]:
+            return {"gated_members": 0, "with_access": 0, "access_without_login": 0,
+                    "login_without_access": 0}
+        gate = access["group_name"]
+        rows = self._rows(
+            """SELECT
+                 (SELECT COUNT(*) FROM group_member
+                   WHERE cluster_id=? AND group_name=?) AS gated_members,
+                 (SELECT COUNT(DISTINCT user_name) FROM group_member
+                   WHERE cluster_id=? AND group_name<>?) AS with_access""",
+            (cluster_id, gate, cluster_id, gate),
+        )
+        base = rows[0] if rows else {"gated_members": 0, "with_access": 0}
+        return {
+            "gated_members": base["gated_members"],
+            "with_access": base["with_access"],
+            "access_without_login": self.count_access_without_login(cluster_id),
+            "login_without_access": len(self.login_without_access(cluster_id, limit=10_000)),
+        }
+
+    def is_in_access_group(self, cluster_id: str, user_names: list[str]) -> dict[str, bool]:
+        """Which of these usernames are in the login-gate group.
+
+        A batch lookup rather than one call per row: the logins page asks about up to 200 attempts at
+        once, and 200 round trips through _rows would be 200 statements inside one snapshot.
+
+        An empty dict when no gate is known, which the caller must treat as "unknown" rather than
+        "nobody is a member" — the difference between those two is the whole point of the panel.
+        """
+        access = self.cluster_access_group(cluster_id)
+        if not access or not access["group_name"] or not user_names:
+            return {}
+        names = sorted(set(user_names))
+        rows = self._rows(
+            "SELECT user_name FROM group_member WHERE cluster_id=? AND group_name=? "
+            "AND user_name IN (%s)" % ",".join("?" * len(names)),
+            (cluster_id, access["group_name"], *names),
+        )
+        member = {r["user_name"] for r in rows}
+        return {name: name in member for name in names}
 
     @staticmethod
     def _not_local_provider(alias: str, exclude_providers: tuple[str, ...]) -> tuple[str, list]:

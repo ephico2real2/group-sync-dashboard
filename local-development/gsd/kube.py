@@ -8,8 +8,10 @@ are a CRD and an OpenShift type, and both are simple to read directly.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import unquote
 
 import httpx
 
@@ -35,6 +37,14 @@ GROUP_API = "/apis/user.openshift.io/v1/groups"
 # error, and every consumer of this data has to render the bare id unchanged.
 USER_API = "/apis/user.openshift.io/v1/users"
 
+# The cluster's OAuth configuration — the object that holds the identity providers, and the ONLY
+# place the login-gate group is written down. Three similarly named resources exist and only this one
+# has identityProviders: `authentications.operator.openshift.io/cluster` carries logLevel (see
+# docs/LOGIN_CAPTURE_QUICKCHECK.md) and `authentications.config.openshift.io/cluster` carries `type`.
+# A single object, so this is a get rather than a list, and the grant can be narrowed with
+# resourceNames — which Kubernetes honours for get, unlike list.
+OAUTH_API = "/apis/config.openshift.io/v1/oauths/cluster"
+
 # The oauth-server's own pods, and their logs. Read for ONE purpose: the lines naming who logged in,
 # which exist only at `spec.logLevel: Debug` on the authentication OPERATOR CR — not the OAuth CR. See
 # docs/LOGIN_CAPTURE_QUICKCHECK.md.
@@ -53,6 +63,14 @@ ROLEBINDING_API = "/apis/rbac.authorization.k8s.io/v1/rolebindings"
 CLUSTERROLEBINDING_API = "/apis/rbac.authorization.k8s.io/v1/clusterrolebindings"
 
 SYSTEM_GROUP_PREFIX = "system:"
+"""Kubernetes reserves this prefix for built-in identities.
+
+Binding subjects like ``system:serviceaccounts:<ns>`` and ``system:authenticated`` are
+VIRTUAL groups: they authorise real access but no Group object exists or ever will. On the
+target cluster 110 of 149 distinct Group subjects are of this form, so treating "absent
+from the Group API" as broken would bury the 9 genuinely broken ones in 110 false
+positives. Reserved-by-convention rather than guaranteed, so these are classified and
+labelled, never silently dropped."""
 
 # Platform identities that appear as `kind: User` on bindings the cluster ships with, and
 # which must never be reported as a governance violation. Measured on the reference
@@ -74,14 +92,72 @@ PLATFORM_USER_NAMES = frozenset({
 def is_platform_user(name: str) -> bool:
     """Whether a User subject is a cluster-internal identity rather than a person."""
     return name.startswith(PLATFORM_USER_PREFIXES) or name in PLATFORM_USER_NAMES
-"""Kubernetes reserves this prefix for built-in identities.
 
-Binding subjects like ``system:serviceaccounts:<ns>`` and ``system:authenticated`` are
-VIRTUAL groups: they authorise real access but no Group object exists or ever will. On the
-target cluster 110 of 149 distinct Group subjects are of this form, so treating "absent
-from the Group API" as broken would bury the 9 genuinely broken ones in 110 false
-positives. Reserved-by-convention rather than guaranteed, so these are classified and
-labelled, never silently dropped."""
+
+# The membership clause of an LDAP search filter, in either of the two spellings that exist.
+#
+# NEITHER IS STANDARDISED. `memberOf` is what OpenLDAP's memberof overlay writes and what Active
+# Directory uses; `isMemberOf` is what 389-ds and Oracle/Sun DSEE write. No RFC defines either, so a
+# filter may legitimately use one or the other and a parser that knows only one finds nothing on half
+# the directories in the world — while reporting "no login gate is configured", which is a false
+# statement about the cluster rather than a visible failure.
+#
+# Case-insensitive because LDAP attribute descriptions are (RFC 4512 §2.5), and filters in the wild
+# are written `memberOf`, `memberof` and `MemberOf`.
+#
+# `[^)]+` for the value: a DN contains commas and equals signs, which is why a comma-delimited parse
+# would truncate it at `cn=x`, but it does not contain a parenthesis unless escaped as `\28`/`\29` —
+# and an escaped paren survives this unharmed because the escape is not a literal `)`.
+_ACCESS_GROUP_CLAUSE = re.compile(r"\(\s*(?:is)?memberof\s*=\s*([^)]+?)\s*\)", re.I)
+
+
+def dn_equal(a: str | None, b: str | None) -> bool:
+    """Whether two DNs name the same directory object, for our purposes.
+
+    CASEFOLDED, because LDAP DNs are not case-sensitive in their attribute names and, for the
+    directory-string syntax that cn/ou/dc use, not in their values either. The group-sync operator
+    writes a group's DN into `openshift.io/ldap.uid` exactly as the directory returned it, while a DN
+    typed into values.yaml or copied out of an Active Directory console is conventionally written
+    `CN=...,OU=...,DC=...`. An exact comparison would then report "the gate group is not synced" on a
+    cluster where it is synced perfectly well — a false negative that reads as a missing prerequisite.
+
+    DELIBERATELY NOT a full RFC 4514 comparison: that would need to normalise escaping, optional
+    spaces around the commas, and attribute aliases (`cn` vs `commonName`). Both strings here come
+    from a machine — one from the operator's annotation, one from the OAuth CR's filter or a value
+    the operator pasted from the same directory — so casefold plus strip covers what actually differs
+    and adds no parser to get wrong. If a directory ever needs more, this is the one place to change.
+    """
+    if not a or not b:
+        return False
+    return a.strip().casefold() == b.strip().casefold()
+
+
+def _access_group_from_ldap_url(url: str) -> str | None:
+    """The gated group's DN from an RFC 2255 LDAP URL, or None if the filter names no group.
+
+    The URL is `scheme://host[:port]/basedn?attributes?scope?filter`, and only the fourth field is of
+    interest. Split on the LITERAL `?` after the scheme's `//`, because a DN can contain neither.
+
+    Percent-decoded first: `(` and `)` are legal in a URL but OpenShift's own documentation shows the
+    filter percent-encoded in some examples, and an encoded filter would otherwise match nothing.
+    """
+    try:
+        _, _, rest = url.partition("://")
+        parts = rest.split("?")
+    except ValueError:                                       # pragma: no cover - partition never raises
+        return None
+    if len(parts) < 4:
+        return None                                          # no filter field at all
+    filt = unquote(parts[3]).strip()
+    if not filt:
+        return None
+    match = _ACCESS_GROUP_CLAUSE.search(filt)
+    if not match:
+        return None
+    dn = match.group(1).strip()
+    # A DN has at least one attribute=value pair. Guarding this stops a filter like
+    # `(memberOf=*)` — "is a member of anything" — being recorded as a group whose DN is `*`.
+    return dn if "=" in dn else None
 
 SYNC_PROVIDER_LABEL = "group-sync-operator.redhat-cop.io/sync-provider"
 CONFIG_SOURCE_LABEL = "rbac.ocp.io/config-source"
@@ -457,6 +533,58 @@ class ClusterClient:
             len(items), self.cluster.name, len(names),
         )
         return names
+
+    def fetch_access_group_dn(self) -> str | None:
+        """The login-gate group's DN, read out of the OAuth CR, or None if there is none to read.
+
+        WHY THE OAUTH CR AND NOT A GUESS. An LDAP identity provider's `url` is an RFC 2255 LDAP URL
+        whose fourth field is the search filter, and a cluster that gates authentication on group
+        membership puts that group in the filter. Measured on the reference cluster:
+
+          ldaps://openldap-service.ldap-testing.svc.cluster.local:636/dc=ephico2real,dc=com
+              ?uid?sub?(&(uid=*)(memberOf=cn=app-ssb-autobahnusers,ou=Groups,dc=ephico2real,dc=com))
+                               ^^^^^^^^ ^-------------------- the group -------------------^
+
+        BOTH SPELLINGS, because the attribute is not standardised. OpenLDAP's memberof overlay writes
+        `memberOf`; 389-ds and Oracle/Sun DSEE write `isMemberOf`; and neither is defined by an RFC, so
+        a filter may use either. Matching only one would silently find nothing on half of the
+        directories this runs against, and "no gate configured" and "we looked for the wrong attribute"
+        would be indistinguishable. Case-insensitive too — LDAP attribute names are.
+
+        None covers three different situations on purpose, and none of them is an error:
+          * FORBIDDEN — the optional grant on oauths/cluster was declined. Set the DN explicitly.
+          * no LDAP identity provider at all — nothing to discover.
+          * an LDAP provider whose filter carries no membership clause — there IS no gate, and every
+            account in the search base can sign in. That is a finding, and the caller reports it as
+            one rather than rendering an empty panel.
+        """
+        with self._client() as client:
+            try:
+                oauth = self._get(client, OAUTH_API, {})
+            except ClusterError as exc:
+                if exc.outcome == FORBIDDEN and OAUTH_API in exc.message:
+                    log.debug("%s: not permitted to read the OAuth CR — the login-gate group "
+                              "cannot be discovered; set clusterAccessGroup explicitly",
+                              self.cluster.name)
+                    return None
+                # Anchored on the path, following fetch()'s reasoning: the message carries 200
+                # characters of the response BODY, so a 500 whose body happens to mention 404 must
+                # not be read as "no OAuth CR here".
+                if exc.message.startswith(f"HTTP 404 on {OAUTH_API}"):
+                    log.debug("%s: no OAuth CR — not an OpenShift cluster, or none configured",
+                              self.cluster.name)
+                    return None
+                raise
+        for idp in (oauth.get("spec") or {}).get("identityProviders") or []:
+            url = ((idp.get("ldap") or {}).get("url") or "").strip()
+            if not url:
+                continue
+            dn = _access_group_from_ldap_url(url)
+            if dn:
+                log.debug("%s: login-gate group discovered from identity provider %r: %s",
+                          self.cluster.name, idp.get("name"), dn)
+                return dn
+        return None
 
     def fetch_oauth_pods(self, namespace: str) -> list[str] | None:
         """Names of the Running oauth-server pods, or None when we may not list them.
