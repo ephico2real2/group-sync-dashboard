@@ -66,6 +66,17 @@
   --tab-bindings: #6d4bc7;
   --tab-policy: #9333ea;
   --tab-nsaudit: #b3306e;
+  /* Olive, hue 78 — the last hue on the wheel this palette had not spent. Every other band
+     was either taken by a tab (blue 213, teal 172, violet 256, purple 271, pink 332, orange
+     17) or reserved by the status vocabulary: green would sit on --status-good, red on
+     --status-critical, and amber on --status-warning, which would make the accent behind a
+     table of FAILED logins read as a verdict on them. Olive means nothing here, which is
+     what a section identity should mean.
+     4.67:1 on --page (light) and 5.04:1 (dark), so it clears the text bar as an active tab
+     label. Olive and the usage orange both collapse toward yellow-brown for a deuteranope;
+     they stay apart on lightness (L 26% vs 40%), and the tab's own word is the channel that
+     never fails. */
+  --tab-logins: #597b0a;
   --tab-usage: #c2410c;
   --accent: var(--tab-overview);
 
@@ -143,6 +154,7 @@
     --tab-bindings: #8468d0;
     --tab-policy: #a855f7;
     --tab-nsaudit: #e0559a;
+    --tab-logins: #678e0b;
     --tab-usage: #d9490d;
   }
 }
@@ -177,6 +189,7 @@
   --tab-bindings: #8468d0;
   --tab-policy: #a855f7;
   --tab-nsaudit: #e0559a;
+  --tab-logins: #678e0b;
   --tab-usage: #d9490d;
 }
 
@@ -606,6 +619,7 @@ body[data-page="groups"]   { --accent: var(--tab-groups); }
 body[data-page="bindings"] { --accent: var(--tab-bindings); }
 body[data-page="policy"]   { --accent: var(--tab-policy); }
 body[data-page="nsaudit"]  { --accent: var(--tab-nsaudit); }
+body[data-page="logins"]   { --accent: var(--tab-logins); }
 body[data-page="usage"]    { --accent: var(--tab-usage); }
 
 .tabs { display: inline-flex; gap: 4px; }
@@ -745,6 +759,11 @@ const view = { page: "overview", cluster: null, groupsync: null, groupFilter: "a
                    cluster with thousands of grants rendering it unasked is time spent to
                    produce a page the reader scrolls past. Opening it is one click, and
                    choosing a namespace opens it automatically. */
+                /* Logins outcome filter. A FILTER, so it lives here rather than in
+                   POSITION_KEYS: the same reasoning as groupFilter and the namespace picker —
+                   it narrows what a page shows, it is not a place, and an entry per change
+                   would bury the positions Back exists to reach. */
+                loginOutcome: "all",
                 nsGrantsOpen: false };
 /* ── Navigation: the browser's history IS the trail ──────────────────────────────────────
    This used to be a private `trail` array with its own push/pop, which meant the in-page Back
@@ -836,13 +855,24 @@ function goBack() {
   refresh();
 }
 
+/* What each section is CALLED, for the back button. A map rather than a chain of ternaries
+   because the label has to name the page the button actually opens: with drill-downs now
+   reachable from Access granted, RBAC policy and Logins, "← overview" was about to start
+   appearing on a button that returns to one of those three. The tab bar's own wording, lower-cased
+   — a reader matches the label to a tab, so a second vocabulary for the same six places would be
+   its own small lie. */
+const PAGE_LABEL = {
+  overview: "overview", groups: "all groups", bindings: "access granted",
+  policy: "RBAC policy", nsaudit: "namespace audit", logins: "logins", usage: "usage",
+};
+
 function backLabel() {
   const prev = backTarget();
   if (!prev) {
     // Nothing to return to — a pasted link. goBack() rises to the PARENT of where we are, so the
     // label has to describe that rather than a fixed string: on a GroupSync detail reached by
     // link, "all groups" named a page the button does not open.
-    return view.page === "groups" ? "← all groups" : "← overview";
+    return `← ${PAGE_LABEL[view.page] || "overview"}`;
   }
   // esc() on every one of these. They now arrive from the URL as well as from the cluster, and
   // this string is written into innerHTML by four callers — so a crafted hash plus one ordinary
@@ -852,7 +882,7 @@ function backLabel() {
   if (prev.user) return `← ${esc(prev.user)}`;
   if (prev.group) return `← ${esc(prev.group)}`;
   if (prev.groupsync) return `← ${esc(prev.groupsync)}`;
-  return prev.page === "groups" ? "← all groups" : "← overview";
+  return `← ${PAGE_LABEL[prev.page] || "overview"}`;
 }
 
 /* Restores the position the reader navigated to. `event.state` is absent when the hash was
@@ -897,7 +927,7 @@ window.addEventListener("hashchange", () => {
   refresh();
 });
 let data = { clusters: [], alerts: [], groupsyncs: [], groups: [], events: null,
-             group: null, user: null };
+             group: null, user: null, logins: null, access: null };
 
 const $ = (id) => document.getElementById(id);
 
@@ -1068,6 +1098,23 @@ function renderFilters() {
         <option value="unmanaged"${view.bindingFilter === "unmanaged" ? " selected" : ""}>unmanaged</option>
       </select>`;
   }
+  if (view.page === "logins") {
+    // Built from the outcomes actually PRESENT plus the current selection, not from a fixed
+    // list of all ten. A cluster on OpenLDAP can never produce the four AD sub-code outcomes,
+    // and offering them would invite the reader to filter to a guaranteed-empty table and
+    // conclude something from it. The current selection is always included so a filter that
+    // has just emptied its own bucket still shows what it is filtering to.
+    const present = Object.keys((data.logins && data.logins.summary
+      && data.logins.summary.by_outcome) || {});
+    const choices = ["all", ...present.filter((o) => o !== "all").sort()];
+    if (view.loginOutcome !== "all" && !choices.includes(view.loginOutcome)) {
+      choices.push(view.loginOutcome);
+    }
+    html += `<label for="f-outcome">Outcome</label>
+      <select id="f-outcome">${choices.map((o) =>
+        `<option value="${esc(o)}"${o === view.loginOutcome ? " selected" : ""}>${
+          o === "all" ? "all outcomes" : esc(OUTCOME_LABEL[o] || o)}</option>`).join("")}</select>`;
+  }
   if (view.page === "groups") {
     html += `<label for="f-state">Group state</label>
       <select id="f-state">
@@ -1087,6 +1134,7 @@ function renderFilters() {
       ${tab("bindings", "Access granted")}
       ${tab("policy", "RBAC policy")}
       ${tab("nsaudit", "Namespace audit")}
+      ${tab("logins", "Logins")}
       ${tab("usage", "Usage")}
     </nav>`;
   $("filters").innerHTML = html;
@@ -1111,6 +1159,11 @@ function renderFilters() {
   if (st) st.onchange = (e) => { view.groupFilter = e.target.value; refresh(); };
   const bf = $("f-binding");
   if (bf) bf.onchange = (e) => { view.bindingFilter = e.target.value; refresh(); };
+  // refresh(), not render(): the outcome filter is applied SERVER-side so the page is one
+  // bounded slice of the record rather than the whole of it filtered in the browser — the same
+  // reason the namespace picker refetches.
+  const of = $("f-outcome");
+  if (of) of.onchange = (e) => { view.loginOutcome = e.target.value; refresh(); };
   document.querySelectorAll("[data-nav]").forEach((b) => {
     b.onclick = () => {
       // Tabs are navigation. They pushed nothing before — and actively CLEARED the trail —
@@ -1449,8 +1502,525 @@ function usagePage() {
       switching tab, drilling in, changing a filter — not one HTTP request: the page
       refreshes itself every 30s and counting those measured how long a tab was left open
       rather than whether anyone used it. Reading time is invisible, so a long look at one
-      page counts once. These are not logins either: the proxy owns the session, so the
-      dashboard never sees a sign-in or sign-out.
+      page counts once. These are not logins either: the proxy owns this dashboard's session, so
+      nothing here records a sign-in to it. Logins to the <strong>cluster</strong> are a separate
+      record with a separate source — the oauth-server's own log — and they are on the
+      <strong>Logins</strong> tab.
+    </div>
+  </section>`;
+}
+
+/* ── Logins ───────────────────────────────────────────────────────────────────────────────
+   Names are the PARSER's vocabulary, restated for a reader. Each string says what happened to
+   the person, not what the directory returned: "LDAP Result Code 49" is what the log carries
+   and it is not an explanation of anything. `rejected` deliberately covers two cases that the
+   log cannot separate — the identity provider's search filter carries the login-gate group, so
+   a real person outside that group and a username that does not exist produce byte-identical
+   lines. Splitting them here would be an invention. */
+const OUTCOME_LABEL = {
+  success: "signed in",
+  bad_password: "wrong password",
+  rejected: "no match",
+  password_expired: "password expired",
+  must_change_password: "must change password",
+  account_locked: "account locked",
+  account_disabled: "account disabled",
+  account_expired: "account expired",
+  logon_not_permitted: "logon not permitted",
+  failed: "failed — no reason given",
+};
+
+/* Badge severity answers ONE question: who has to act? `critical` is the set an administrator
+   must clear — locked, disabled, expired, not permitted — because the person cannot get in
+   until somebody does something, and those are the rows worth a help-desk ticket before it is
+   raised. A wrong password or a name the directory does not match is the system working as
+   designed, however often it happens, so it is `warning`. `failed` is `unknown`: the parser saw
+   a failure it could not attribute, and claiming a severity for it would be a guess.
+   Shape and text carry this as well as colour — see .badge. */
+const OUTCOME_BADGE = {
+  success: "ok",
+  bad_password: "warning",
+  rejected: "warning",
+  password_expired: "critical",
+  must_change_password: "critical",
+  account_locked: "critical",
+  account_disabled: "critical",
+  account_expired: "critical",
+  logon_not_permitted: "critical",
+  failed: "unknown",
+};
+
+/* Attempts requested per page. The server orders newest-first and applies it, so a truncated
+   page is the top of the chronology rather than a slice of its middle. */
+const LOGIN_PAGE = 200;
+
+/* What a `no match` refusal actually was, once the gate group's membership is known.
+
+   THE ONE THING THE LOG CANNOT SAY, answered from data we already hold. A refused directory login
+   writes `no entries matching (<filter>)`, and because the filter carries the login-gate group, a real
+   person outside that group and a username that does not exist produce byte-identical lines. The
+   parser records `rejected` for both and refuses to choose — correctly. With the gate group synced,
+   there is something to choose with.
+
+   Wording matters here. `no_record` says what WE lack, not that the account does not exist: this
+   dashboard reads OpenShift, not the directory, so "unknown account" would be a claim it cannot make.
+   `membership_disagrees` is the one that is a fault in our own data rather than in somebody's access,
+   so it reads as a warning and names the likely cause. */
+const REFUSAL = {
+  not_gated: {
+    text: "a real person, not in the gate group",
+    why: "This account is in at least one synced group, so the directory knows them and this cluster "
+       + "governs them \u2014 and they are not in the login-gate group. The refusal is the gate working "
+       + "as configured; the finding is that they hold access they cannot use.",
+    cls: "warning",
+  },
+  no_record: {
+    text: "no record of this name",
+    why: "No synced group and no membership history for this username. Consistent with a typo, a "
+       + "probe, or somebody from a directory branch this cluster does not sync. It is NOT proof the "
+       + "account does not exist \u2014 this dashboard reads OpenShift, not the directory.",
+    cls: "unknown",
+  },
+  membership_disagrees: {
+    text: "our membership data disagrees",
+    why: "The synced group says this person IS in the gate group, and the directory search found "
+       + "nothing. Most often a sync that has not caught up with a removal \u2014 worth knowing, "
+       + "because every other view on this dashboard trusts that same data.",
+    cls: "critical",
+  },
+};
+
+function refusalBadge(reason) {
+  const r = REFUSAL[reason];
+  if (!r) return "";
+  return ` <span class="badge ${r.cls}" title="${esc(r.why)}"><span class="glyph" aria-hidden="true"></span>${esc(r.text)}</span>`;
+}
+
+function outcomeBadge(outcome) {
+  const cls = OUTCOME_BADGE[outcome] || "unknown";
+  return `<span class="badge ${cls}"><span class="glyph" aria-hidden="true"></span>${
+    esc(OUTCOME_LABEL[outcome] || outcome)}</span>`;
+}
+
+/* A username is drillable only when the user page has something to show.
+   /api/clusters/{c}/users/{name} 404s for a name with no current groups AND no membership
+   history — which is precisely the most interesting row here, an account nobody has ever
+   governed. Making every name a link would send the reader from the most valuable finding on
+   the page straight into an error card, so the affordance is offered only where it leads
+   somewhere. `has_history` is what makes it lead somewhere: the removal is in the timeline. */
+function loginUser(row) {
+  const name = row.user_name;
+  const full = row.full_name ? ` <span class="muted">· ${esc(row.full_name)}</span>` : "";
+  if (!row.known_user && !row.has_history) {
+    return `<span class="mono">${esc(name)}</span>${full}`;
+  }
+  return `<button type="button" class="drill mono" data-user="${esc(name)}">${esc(name)}</button>${full}`;
+}
+
+/* Login attempts read from the oauth-server's log: who tried, when, and what happened.
+
+   THE WHOLE PAGE IS ABOUT A WINDOW, and both of its edges are on screen at all times. Login
+   lines naming a person exist only while the authentication operator is at Debug, and a pod's
+   log dies with the pod, so nothing before capture began was ever written down anywhere and no
+   amount of asking will produce it. An empty table therefore means NOTHING WAS OBSERVED — it
+   is not a statement that nobody signed in, and a page that let it read as one would be worse
+   than no page. That is why the window banner is unconditional rather than an empty-state note.
+
+   Accounts in no synced group come FIRST, above the chronology. They are the finding this
+   feature exists to produce, and the chronology is where a finding goes to hide: 200 rows
+   ordered by time bury the one name that matters among the 199 that are fine. */
+function loginsPage() {
+  const d = data.logins;
+  if (!d) return `<section class="card"><div class="empty-note">Loading…</div></section>`;
+  // The access panel comes from a DIFFERENT endpoint and needs no logs — it is derived from synced
+  // group membership, so it is just as true on a cluster that has never enabled Debug logging. It is
+  // therefore rendered in every branch below, including the capture-disabled one.
+  return captureSection(d, accessCard(data.access));
+}
+
+function captureSection(d, access) {
+  // Off is a DIFFERENT state from on-and-quiet, and conflating them sends the reader hunting
+  // for logins that were never going to be recorded. Both halves are named because either one
+  // alone records nothing: the module has to be running, and the operand has to be verbose.
+  if (!d.enabled) {
+    return `<section class="card">
+      <h2>Login attempts</h2>
+      <div class="empty-note">
+        Not being captured. This needs <strong>both</strong>
+        <code>config.loginCapture.enabled=true</code> — the module that reads the log — and the
+        authentication <em>operator</em> at <code>spec.logLevel: Debug</code>, which is what
+        makes the oauth-server write a username at all. At the default verbosity the lines this
+        page parses do not exist, so capture would run and find nothing.
+      </div>
+      <div class="filterbar-note">Both are one <code>helm upgrade</code>:
+        <code>loginCapture.enabled</code> and <code>authLogLevel.manage</code>. See
+        <code>docs/LOGIN_CAPTURE_QUICKCHECK.md</code> for the five commands that prove the path
+        end to end.</div>
+    </section>` + access;
+  }
+
+  const s = d.summary || {};
+  const rows = d.attempts || [];
+  const ungoverned = d.ungoverned || [];
+
+  // Overdue is measured against the cadence the SERVER reports, not a number invented here:
+  // capture rides the poll thread, so `last_read_at` should advance every poll interval. Five
+  // intervals is late beyond argument, with a 5-minute floor so a fast poll does not raise this
+  // on one slow cycle. The threshold is stated on screen rather than implied by a red badge.
+  const interval = d.read_interval_seconds || 60;
+  const staleAfter = Math.max(300, interval * 5);
+  const readAge = d.last_read_at
+    ? Math.floor((Date.now() - new Date(d.last_read_at).getTime()) / 1000) : null;
+  const stalled = readAge !== null && readAge > staleAfter;
+
+  // Compared as INSTANTS, not as strings, and with a second of tolerance. The two fields do not
+  // share a format: `capture_started_at` is stamped by now_iso() to whole seconds, while
+  // `retained_since` is an attempt's `at` and carries microseconds. Lexicographically "…:00.5Z"
+  // sorts BEFORE "…:00Z" ('.' < 'Z'), so a string compare would announce that the record
+  // predates capture whenever the first attempt landed in the same second the watch began.
+  const startedMs = d.capture_started_at ? new Date(d.capture_started_at).getTime() : NaN;
+  const retainedMs = d.retained_since ? new Date(d.retained_since).getTime() : NaN;
+  const predatesStart = retainedMs < startedMs - 1000;
+
+  // Each edge is stated only when it HAS a value. Before the first successful read all three are
+  // null, and "Watching since —. Oldest attempt still retained —. Last read —." is three em-dashes
+  // of noise in front of the one sentence that state actually needs. The caveat below them is
+  // unconditional, because it is true in every state and is the whole point of the banner.
+  const edges = [
+    d.capture_started_at
+      && `Watching since <strong>${esc(fmtTime(d.capture_started_at))}</strong> (${
+           esc(ago(d.capture_started_at))})`,
+    d.retained_since
+      && `oldest attempt still retained <strong>${esc(fmtTime(d.retained_since))}</strong>`,
+    d.last_read_at
+      && `last read <strong>${esc(fmtTime(d.last_read_at))}</strong> (${
+           esc(ago(d.last_read_at))})`,
+  ].filter(Boolean);
+  const window_ = `<div class="filterbar-note" style="margin-top:8px">
+    ${edges.length ? edges.join("; ") + "." : ""}
+    Nothing before capture began was ever recorded — the oauth-server's log dies with its pod and
+    cannot be read backwards — so an empty list here means nothing was <em>observed</em>, never
+    that nobody signed in.
+    ${predatesStart
+      ? `The oldest attempt predates the first read because that read looked back an hour, which
+         is expected rather than a fault.` : ""}
+  </div>`;
+
+  const stalledNote = stalled
+    ? `<div class="truncation-note">
+        <strong>Capture has stopped.</strong> The last successful read was
+        ${esc(ago(d.last_read_at))}, and reads are expected every ${interval}s — anything past
+        ${Math.round(staleAfter / 60)} minutes is overdue. Attempts made since then are being
+        lost, and they cannot be recovered later. Check the dashboard pod's log for a refused
+        <code>pods/log</code> read, and that an oauth-server pod is Running.
+      </div>` : "";
+
+  // Nothing recorded yet is the state most likely to be MISREAD, so it gets the whole card and
+  // says which of the three reasons applies rather than leaving the reader to guess. The
+  // distinction is carried by last_read_at: no read at all is a permissions or pod problem,
+  // whereas reads that succeed and match nothing is either genuine quiet or the operand still
+  // at Normal verbosity — and only the cluster can tell those two apart, so both are offered
+  // with the command that decides it.
+  if (!d.total) {
+    return `<section class="card">
+      <h2>Login attempts</h2>
+      ${d.last_read_at ? `<div class="empty-note">
+          Reads are working — the log was last read ${esc(ago(d.last_read_at))} — and
+          <strong>no login lines matched</strong>. Either nobody has signed in since watching
+          began, or the authentication operator is not at Debug, in which case the oauth-server
+          never writes a username. One command decides which:
+          <code>oc get authentications.operator.openshift.io cluster -o jsonpath='{.spec.logLevel}'</code>
+          must print <code>Debug</code>.
+        </div>`
+        : `<div class="empty-note">
+          <strong>No successful read yet.</strong> Capture is enabled but has not managed to
+          read a log, so this is a cluster-access problem rather than a quiet one. The
+          dashboard's ServiceAccount needs <code>pods</code> list and the
+          <code>pods/log</code> subresource in the oauth-server's namespace
+          (<code>openshift-authentication</code> unless configured otherwise), and at least one
+          oauth-server pod has to be Running. Note that
+          <code>oc auth can-i get pods/log</code> answers <code>no</code> even on a correct
+          grant — it reads <code>pods/log</code> as a resource <em>name</em>. Use
+          <code>--subresource=log</code>.
+        </div>`}
+      ${stalledNote}
+      ${window_}
+    </section>` + access;
+  }
+
+  const failures = s.failures || 0;
+  const ungovernedCount = s.ungoverned_users || 0;
+  // The hero is the finding, not the volume. Attempt counts measure how busy the cluster is;
+  // "these accounts got as far as the login page and belong to no synced group" is the sentence
+  // an access review is held to produce.
+  return `<section class="card">
+    <h2>Login attempts</h2>
+    <div class="hero">
+      <span class="value mono">${ungovernedCount}</span>
+      <span class="label">${ungovernedCount
+        ? `${ungovernedCount === 1 ? "account" : "accounts"} in no synced group`
+        : "every account seen is in a synced group"}</span>
+    </div>
+    <div class="kpis">
+      <div class="kpi"><div class="label">Attempts</div>
+        <div class="value mono">${(d.total || 0).toLocaleString()}</div></div>
+      <div class="kpi"><div class="label">Distinct users</div>
+        <div class="value mono">${s.distinct_users || 0}</div></div>
+      <div class="kpi"><div class="label">Signed in</div>
+        <div class="value mono">${(s.successes || 0).toLocaleString()}</div></div>
+      <div class="kpi ${failures ? "flag-warning" : ""}"><div class="label">Failed</div>
+        <div class="value mono ${failures ? "" : "muted"}">${failures.toLocaleString()}</div></div>
+      <div class="kpi"><div class="label">Most recent</div>
+        <div class="value mono muted" style="font-size:var(--text-lg)">${esc(ago(s.last_at))}</div></div>
+    </div>
+    ${stalledNote}
+    ${window_}
+  </section>
+  ${access}
+  ${ungovernedCard(d, ungoverned)}
+  <section class="card">
+    <div class="section-head"><h3>Every attempt</h3><span class="flush"></span>
+      ${view.loginOutcome !== "all"
+        ? `<span class="chip">filtered to ${esc(OUTCOME_LABEL[view.loginOutcome]
+            || view.loginOutcome)}</span>` : ""}
+    </div>
+    ${rows.length === 0
+      ? `<div class="empty-note">No attempt matches this filter. The counts above cover the
+           whole record, not this view.</div>`
+      : `<div class="scroll-x"><table>
+          <thead><tr><th>When</th><th>User</th><th>Outcome</th><th>Provider</th>
+            <th>Detail</th><th>Replica</th></tr></thead>
+          <tbody>${rows.map((r) => `<tr>
+            <td class="mono" style="white-space:nowrap">${esc(fmtTime(r.at))}</td>
+            <td>${loginUser(r)}${r.in_access_group === false && !r.break_glass
+              ? ` <span class="chip" title="Not a member of the login-gate group, so this account cannot authenticate at all. With that known, a `+"`"+`no match`+"`"+` here is a real person outside the group rather than a username that does not exist.">not in access group</span>`
+              : ""}${r.break_glass
+              ? ` <span class="chip" title="${r.outcome === "success"
+                  ? "A break-glass sign-in: a local HTPasswd account, not a directory identity, so there is no synced group to govern it and nobody to offboard."
+                  : "An attempt against the local HTPasswd provider. The name may not exist — HTPasswd reports no reason — so this says which provider was tried and nothing about the account."}">${
+                  r.outcome === "success" ? "break-glass" : "local provider"}</span>`
+              : (r.known_user ? "" : ` <span class="chip">${r.has_history
+                  ? "removed from every group" : "no synced group"}</span>`)}</td>
+            <td>${outcomeBadge(r.outcome)}${refusalBadge(r.refusal_reason)}</td>
+            <td class="mono muted">${esc(r.provider || "—")}</td>
+            <td class="muted">${esc(r.detail || "")}${r.ldap_result_code != null
+              ? ` <span class="mono">(LDAP ${r.ldap_result_code})</span>` : ""}</td>
+            <td class="mono muted" style="white-space:nowrap">${
+              esc((r.pod_name || "").replace(/^oauth-openshift-/, ""))}</td>
+          </tr>`).join("")}</tbody>
+        </table></div>`}
+    ${d.truncated ? `<div class="truncation-note">
+      Showing the <strong>${rows.length}</strong> most recent of <strong>${d.total}</strong>
+      retained attempts. Every number above covers all of them.
+    </div>` : ""}
+    <div class="filterbar-note" style="margin-top:8px">
+      <strong>No match</strong> covers two cases this log cannot separate: a real person who is
+      not in the login-gate group, and a username that does not exist. The identity provider's
+      search filter carries the gate group, so both produce the same
+      <code>no entries matching</code> line — telling them apart from the log alone would need a
+      directory read this dashboard does not make. Where a <strong>second badge</strong> appears
+      beside it, that ambiguity HAS been resolved, from synced group membership rather than from any
+      new read: hover it for the reasoning. Where no second badge appears, no login gate is known and
+      the honest answer is still that we cannot tell.
+      <strong>Detail</strong> is the directory's own diagnostic, passed through rather than
+      interpreted. On Active Directory it carries a <code>data &lt;hex&gt;</code> sub-code, which
+      is what distinguishes an expired password from a locked account — the LDAP result code
+      alone does not: <code>49</code> is returned for all of them. OpenLDAP leaves the field
+      empty and signals expiry with code <code>53</code> instead.
+      <strong>Replica</strong> is which oauth-server pod saw it, with the common prefix trimmed;
+      the two replicas serve different attempts, so a name here is the pod whose log to read.
+    </div>
+  </section>`;
+}
+
+/* Who can actually LOG IN, against who holds access.
+
+   THE ONE VIEW IN THIS DASHBOARD THAT DOES NOT START FROM RBAC, which is exactly why it sees something
+   none of the others can: a role granted to somebody who cannot authenticate is access that can never
+   be used. Measured on the reference cluster — 10 people held access through synced groups, 7 were in
+   the login-gate group, so 3 held access they could not exercise, one of them through 26 groups.
+
+   IT NEEDS NO LOGS. Membership comes from synced Group objects, so this panel is as true on a cluster
+   that has never enabled Debug logging as on one that has — which is why loginsPage renders it in every
+   branch, including the capture-disabled one.
+
+   `synced: false` IS NOT ZERO FINDINGS. The gate group has to be pulled into OpenShift by the
+   group-sync-operator before there is any membership to compare against, and a panel that rendered
+   "0 people affected" when the answer is "we have no data" would be the worst thing on this page. */
+function accessCard(d) {
+  if (!d) return `<section class="card"><div class="empty-note">Loading…</div></section>`;
+
+  // No gate at all. A finding in itself rather than an absence, and stated as one: with no membership
+  // clause in any identity provider's filter, everyone in its search base can sign in.
+  if (!d.gated) {
+    return `<section class="card">
+      <h2>Cluster access</h2>
+      <div class="empty-note"><strong>No login gate is configured.</strong> No identity provider's
+        search filter carries a <code>memberOf</code> or <code>isMemberOf</code> clause, so any
+        account in its search base can sign in — there is no group whose membership to check against.
+      </div>
+      <div class="filterbar-note">That is a finding, not a gap in this page. If the gate lives
+        somewhere this cannot see — or the dashboard may not read the OAuth CR — name it explicitly
+        with <code>clusterAccess.group</code>, set to the group's full DN.</div>
+    </section>`;
+  }
+
+  // The DN is known and the Group is not synced: no membership to compare against. Say what is
+  // missing and what to do, and do NOT render a zero.
+  if (!d.synced) {
+    return `<section class="card">
+      <h2>Cluster access</h2>
+      <div class="empty-note">
+        The login gate is <code>${esc(d.dn)}</code>${d.source === "oauth"
+          ? ", discovered from the identity provider's filter" : ", from configuration"},
+        and <strong>no synced group matches it</strong> — so there is no membership to compare
+        against. This is missing data, not a clean result.
+      </div>
+      <div class="filterbar-note">${esc(d.note)}</div>
+    </section>`;
+  }
+
+  const s = d.summary || {};
+  const rows = d.access_without_login || [];
+  const gatedOnly = d.login_without_access || [];
+  const stranded = s.access_without_login || 0;
+  return `<section class="card">
+    <div class="section-head"><h2>Cluster access</h2><span class="flush"></span>
+      <span class="chip" title="${d.source === "oauth"
+        ? "Discovered from the identity provider's search filter. Set clusterAccess.group to state it explicitly instead."
+        : "From clusterAccess.group."}">${d.source === "oauth" ? "discovered" : "configured"}</span>
+    </div>
+    <div class="hero">
+      <span class="value mono">${stranded}</span>
+      <span class="label">${stranded
+        ? `${stranded === 1 ? "person holds" : "people hold"} access they cannot use`
+        : "everyone with access can log in"}</span>
+    </div>
+    <div class="kpis">
+      <div class="kpi"><div class="label">Gate group</div>
+        <div class="value mono" style="font-size:var(--text-lg)">${esc(d.group_name)}</div></div>
+      <div class="kpi"><div class="label">Allowed to log in</div>
+        <div class="value mono">${s.gated_members || 0}</div></div>
+      <div class="kpi"><div class="label">Hold access</div>
+        <div class="value mono">${s.with_access || 0}</div></div>
+      <div class="kpi ${stranded ? "flag-critical" : ""}"><div class="label">Cannot log in</div>
+        <div class="value mono ${stranded ? "" : "muted"}">${stranded}</div></div>
+      <div class="kpi"><div class="label">Gated, no access</div>
+        <div class="value mono ${s.login_without_access ? "" : "muted"}">${
+          s.login_without_access || 0}</div></div>
+    </div>
+    <div class="filterbar-note" style="margin-top:8px">
+      Membership of <code>${esc(d.dn)}</code> is required to authenticate, so anybody outside it
+      cannot use access they hold. Both spellings of the membership attribute are read when the DN is
+      discovered — <code>memberOf</code> on OpenLDAP and Active Directory,
+      <code>isMemberOf</code> on 389-ds and Oracle DSEE — because neither is standardised.
+    </div>
+  </section>
+  ${stranded ? `<section class="card">
+    <h3>Access that cannot be used</h3>
+    <div class="scroll-x"><table>
+      <thead><tr><th>User</th><th class="num">Groups</th><th>Through</th>
+        <th>Member since</th><th>Tried to log in</th></tr></thead>
+      <tbody>${rows.map((r) => `<tr>
+        <td><button type="button" class="drill mono" data-user="${esc(r.user_name)}">${
+          esc(r.user_name)}</button>${r.full_name
+            ? ` <span class="muted">· ${esc(r.full_name)}</span>` : ""}</td>
+        <td class="num">${r.group_count}</td>
+        <td class="muted">${(r.groups || []).slice(0, 2).map((g) =>
+          `<code>${esc(g)}</code>`).join(" ")}${(r.groups || []).length > 2
+            ? ` <span class="muted">+${r.groups.length - 2} more</span>` : ""}</td>
+        <td class="mono" style="white-space:nowrap">${esc(fmtTime(r.first_seen_at))}</td>
+        <td>${r.has_tried
+          ? `<span class="badge warning"><span class="glyph" aria-hidden="true"></span>yes, and was refused</span>`
+          : `<span class="muted">not since capture began</span>`}</td>
+      </tr>`).join("")}</tbody>
+    </table></div>
+    ${d.truncated ? `<div class="truncation-note">
+      Showing <strong>${rows.length}</strong> of <strong>${stranded}</strong>. The counts above cover
+      all of them.</div>` : ""}
+    <div class="filterbar-note" style="margin-top:8px">
+      Every one of these holds access through a synced group and is not in the gate group, so the
+      access is unusable until either the person is added to the gate group or the grant is removed —
+      <strong>which of those is right is the access review's decision, not this page's</strong>.
+      <strong>Tried to log in</strong> reads the login record, so it only sees attempts since capture
+      began; <em>not since capture began</em> is not evidence that nobody tried.
+      A name here that is <em>also</em> in the login record with <code>no match</code> is the case the
+      oauth log cannot resolve on its own: a real person, outside the gate group, rather than a
+      username that does not exist.
+    </div>
+  </section>` : ""}
+  ${gatedOnly.length ? `<section class="card">
+    <h3>Allowed to log in, holds no access</h3>
+    <div class="scroll-x"><table>
+      <thead><tr><th>User</th><th>In the gate group since</th><th>Tried to log in</th></tr></thead>
+      <tbody>${gatedOnly.map((r) => `<tr>
+        <td class="mono">${esc(r.user_name)}${r.full_name
+          ? ` <span class="muted">· ${esc(r.full_name)}</span>` : ""}</td>
+        <td class="mono" style="white-space:nowrap">${esc(fmtTime(r.first_seen_at))}</td>
+        <td>${r.has_tried ? `<span class="badge ok"><span class="glyph" aria-hidden="true"></span>yes</span>`
+          : `<span class="muted">not since capture began</span>`}</td>
+      </tr>`).join("")}</tbody>
+    </table></div>
+    <div class="filterbar-note" style="margin-top:8px">
+      Not automatically a problem — a new joiner looks exactly like this, and so does somebody who
+      only needs what <code>system:authenticated</code> already grants. It is worth reading because it
+      is also where a SERVICE identity inside the gate group shows up: on the reference directory the
+      group's own LDAP bind account carries a <code>uid</code>, so it syncs like a person and can
+      authenticate with its bind password.
+    </div>
+  </section>` : ""}`;
+}
+
+/* Accounts that reached the login page and belong to no synced group.
+
+   The one table on this page that is a FINDING rather than a record, which is why it sits above
+   the chronology and not inside it. Two columns turn it from a curiosity into something
+   actionable: `last_outcome` separates "still getting in" from "trying and failing", and
+   `has_history` separates an account whose access was REMOVED and is still being used from a
+   name this cluster has never governed at all. Those are different problems with different
+   owners — the first is an offboarding that did not finish, the second is usually a person
+   pointed at the wrong cluster, or someone who should not be there. */
+function ungovernedCard(d, rows) {
+  const total = (d.summary || {}).ungoverned_users || 0;
+  if (!total) {
+    return `<section class="card">
+      <h3>Accounts in no synced group</h3>
+      <div class="empty-note">None. Every account seen signing in — successfully or not — is a
+        member of at least one synced group. Attempts on a local HTPasswd provider are excluded by
+        configuration (<code>loginCapture.htpasswdProviders</code>), because a break-glass account has
+        no synced group to belong to and nowhere to migrate to.</div>
+    </section>`;
+  }
+  return `<section class="card">
+    <h3>Accounts in no synced group</h3>
+    <div class="scroll-x"><table>
+      <thead><tr><th>User</th><th class="num">Attempts</th><th>First seen</th><th>Last seen</th>
+        <th>Last outcome</th><th>Ever governed</th></tr></thead>
+      <tbody>${rows.map((r) => `<tr>
+        <td>${loginUser({ user_name: r.user_name, has_history: r.has_history, known_user: false })}</td>
+        <td class="num">${r.attempts}</td>
+        <td class="mono" style="white-space:nowrap">${esc(fmtTime(r.first_at))}</td>
+        <td class="mono" style="white-space:nowrap">${esc(fmtTime(r.last_at))}</td>
+        <td>${outcomeBadge(r.last_outcome)}</td>
+        <td>${r.has_history
+          ? `<span class="err">was, and no longer is</span>`
+          : `<span class="muted">never</span>`}</td>
+      </tr>`).join("")}</tbody>
+    </table></div>
+    ${rows.length < total ? `<div class="truncation-note">
+      Showing <strong>${rows.length}</strong> of <strong>${total}</strong>. The rest are in the
+      chronology below, marked the same way.
+    </div>` : ""}
+    <div class="filterbar-note" style="margin-top:8px">
+      Membership is checked against what this dashboard has SYNCED, so an account here is in no
+      group the operator manages — it may still hold access granted by a binding made by hand,
+      which the <strong>Access granted</strong> tab is where to look. <strong>Ever governed</strong>
+      reads the membership timeline: <em>was, and no longer is</em> means the removal is recorded
+      and the account is still being used, which is an offboarding that did not finish.
+      Attempts on a local HTPasswd provider are excluded, so an account that only ever signs in that
+      way — <code>kubeadmin</code>, <code>developer</code> — never appears here. The exclusion is per
+      ATTEMPT, not per name: if somebody types a break-glass name at the <em>directory</em> provider
+      it does appear, on the strength of that attempt, which is worth seeing rather than hiding.
     </div>
   </section>`;
 }
@@ -2168,6 +2738,12 @@ function render() {
   } else if (view.page === "policy") {
     main.innerHTML = policyPage();
     wireDrilldown();
+  } else if (view.page === "logins") {
+    main.innerHTML = loginsPage();
+    // wireDrilldown, not a handler of its own: a username here goes to the SAME user page the
+    // group tables drill into, through the same navigate() call, so Back behaves identically
+    // whichever table the reader arrived from.
+    wireDrilldown();
   } else if (view.page === "usage") {
     main.innerHTML = usagePage();
   } else if (view.page === "bindings") {
@@ -2267,16 +2843,24 @@ function wireNsAudit() {
 }
 
 function wireDrilldown() {
+  // `page: "groups"` on every one of these, and it is a FIX rather than tidying. A group or user
+  // detail renders only under that page — render() dispatches on view.page first — so a drill
+  // from Access granted, RBAC policy or Logins used to set view.group in the URL and then repaint
+  // the page the reader was already on. Proved before changing it: clicking a group name on
+  // Access granted gave `#page=bindings&group=was-managed` with the binding tiers still on
+  // screen. The affordance looked like a link, was focusable, announced as a button, and went
+  // nowhere. Naming the destination page here is what makes one drill handler correct from every
+  // table that emits one, instead of each page needing its own.
   document.querySelectorAll("[data-group]").forEach((el) => {
     el.onclick = () => {
-      navigate({ group: el.dataset.group, user: null });
+      navigate({ page: "groups", group: el.dataset.group, user: null });
       refresh();
     };
   });
   document.querySelectorAll("[data-user]").forEach((el) => {
     const go = (e) => {
       e.stopPropagation();
-      navigate({ user: el.dataset.user, group: null });
+      navigate({ page: "groups", user: el.dataset.user, group: null });
       refresh();
     };
     el.onclick = go;
@@ -2289,7 +2873,7 @@ function wireDrilldown() {
       e.preventDefault();
       const target = el.dataset.user || el.closest("[data-user]")?.dataset.user;
       if (!target) return;
-      navigate({ user: target, group: null });
+      navigate({ page: "groups", user: target, group: null });
       refresh();
     };
   });
@@ -2384,6 +2968,19 @@ async function refresh(opts = {}) {
       data.events = view.groupsync
         ? await get(`/api/clusters/${encodeURIComponent(view.cluster)}/groupsyncs/${encodeURIComponent(view.groupsync)}/events`)
         : null;
+    }
+    // Cluster-scoped, unlike Usage: these are logins to the CLUSTER, read from its own
+    // oauth-server. Fetched only on its own tab so the other pages do not pay for it.
+    if (view.page === "logins" && view.cluster) {
+      const q = new URLSearchParams({ limit: String(LOGIN_PAGE) });
+      if (view.loginOutcome !== "all") q.set("outcome", view.loginOutcome);
+      data.logins = await get(
+        `/api/clusters/${encodeURIComponent(view.cluster)}/logins?${q}`);
+      // A SECOND endpoint on the same tab, deliberately not folded into the first: it answers a
+      // different question from different data — synced group membership, no logs involved — so it
+      // renders even when capture is off, and a failure of one must not blank the other.
+      data.access = await get(
+        `/api/clusters/${encodeURIComponent(view.cluster)}/cluster-access`);
     }
     // Not cluster-scoped: this is who used the DASHBOARD, which has no cluster dimension.
     // Fetched only on its own tab, so the other pages do not pay for it.

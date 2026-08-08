@@ -21,8 +21,11 @@ import urllib.parse
 import pytest
 import uvicorn
 
+from gsd import loginlog
 from gsd.api import build_app
 from gsd.config import ClusterConfig, Settings
+from gsd.logincapture import event_dict
+from gsd.loginlog import LoginAttempt
 from gsd.store import Store
 
 
@@ -34,6 +37,17 @@ def _free_port() -> int:
 
 def _iso(dt: datetime) -> str:
     return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+#: Rows the Groups tab lists for the seeded cluster. Named because eight tests use it as their proxy
+#: for "we are back on the group list", and a bare 3 gave no clue what the fourth row was when the
+#: login-gate group arrived.
+#:
+#: FOUR, and the fourth is the gate group. It is a synced Group like any other — pulled by its own CR,
+#: carrying its DN in ldap_uid — so listing it is correct: omitting a real object because it happens to
+#: grant login rather than access would be a lie by omission. It produces no false finding either; it
+#: has a sync_provider (so not "unattributed") and members (so not "empty").
+SYNCED_GROUPS = 4
 
 
 def _seed(db_path: str) -> None:
@@ -214,6 +228,100 @@ def _seed(db_path: str) -> None:
         _iso(now),
     )
 
+    # ── The login-gate group ───────────────────────────────────────────────────────────────
+    # A synced group like any other, carrying its DN in ldap_uid — which is how the dashboard
+    # identifies it. Membership is deliberately NOT the same set as the RBAC groups above:
+    #   alice   in the gate group AND in a synced RBAC group  -> healthy, no finding
+    #   dave    in a synced RBAC group, NOT in the gate group -> holds access he cannot use
+    #   gatekeeper  in the gate group only                    -> can log in, holds no access
+    # bob is in neither now (removed from the RBAC group earlier), so he is not a finding here.
+    GATE_DN = "cn=app-ssb-autobahnusers,ou=Groups,dc=ephico2real,dc=com"
+    store.replace_group_state(
+        "crc-local",
+        [
+            {"name": "app-ocp-rbac-alpha-ns-admin", "member_count": 2,
+             "sync_provider": "ldap-groupsync_ldap",
+             "group_synced_at": _iso(now - timedelta(minutes=4)),
+             "ldap_uid": "cn=app-ocp-rbac-alpha-ns-admin,ou=Groups,dc=ephico2real,dc=com"},
+            {"name": "app-ocp-rbac-abcd-ns-superuser", "member_count": 0,
+             "sync_provider": "ldap-groupsync_ldap",
+             "group_synced_at": _iso(now - timedelta(minutes=4)),
+             "ldap_uid": "cn=app-ocp-rbac-abcd-ns-superuser,ou=Groups,dc=ephico2real,dc=com"},
+            {"name": "gsd-test-unattributed", "member_count": 0,
+             "sync_provider": None, "group_synced_at": None, "ldap_uid": None},
+            {"name": "app-ssb-autobahnusers", "member_count": 2,
+             "sync_provider": "ldap-clusteraccess-groupsync_ldap",
+             "group_synced_at": _iso(now - timedelta(minutes=4)), "ldap_uid": GATE_DN},
+        ],
+        _iso(now),
+    )
+    store.sync_members(
+        "crc-local",
+        {
+            "app-ocp-rbac-alpha-ns-admin": ["alice", "dave"],
+            "app-ocp-rbac-abcd-ns-superuser": [],
+            "gsd-test-unattributed": [],
+            "app-ssb-autobahnusers": ["alice", "gatekeeper"],
+        },
+        {"app-ocp-rbac-alpha-ns-admin": _iso(now - timedelta(minutes=4))},
+        _iso(now - timedelta(minutes=3)),
+    )
+    # Discovered rather than configured, so the panel's provenance chip is exercised. The DN is
+    # matched against ldap_uid case-INSENSITIVELY, and the case here differs deliberately.
+    store.set_cluster_access_group(
+        "crc-local", "CN=app-ssb-autobahnusers,OU=Groups,DC=ephico2real,DC=com", "oauth",
+        "app-ssb-autobahnusers", _iso(now))
+
+    # ── Login attempts, one row per state the Logins tab must render distinctly ────────────
+    # Built through logincapture.event_dict() from real LoginAttempt objects rather than
+    # hand-written dicts, so the seed cannot drift from what the capture loop actually writes —
+    # a UI test passing against a row shape the poller does not produce is worse than no test.
+    #
+    # The four accounts are chosen for what the PAGE has to distinguish:
+    #   alice    — a current member of a synced group. Governed; must NOT appear as a finding.
+    #   bob      — removed from every group and still trying. known_user 0, has_history 1: the
+    #              offboarding that did not finish, which is the whole point of the feature.
+    #   mallory  — a name this cluster has never governed. known_user 0, has_history 0, and so
+    #              NOT drillable: /users/{name} 404s for her, and a link into an error card is
+    #              worse than plain text.
+    #   developer — a success on the HTPasswd provider. Labelled break-glass and excluded from
+    #              the ungoverned list, because there is nowhere to migrate it to.
+    # bob twice, so `attempts` is a count rather than always 1, and from two different pods so
+    # the dedup key's pod_name component is exercised by a rendered row.
+    attempts = [
+        (LoginAttempt("alice", loginlog.OUTCOME_SUCCESS,
+                      now - timedelta(minutes=12), provider="ldap-local"), "oauth-openshift-aaa"),
+        (LoginAttempt("bob", loginlog.OUTCOME_BAD_PASSWORD,
+                      now - timedelta(minutes=9), provider="ldap-local",
+                      ldap_result_code=49), "oauth-openshift-aaa"),
+        (LoginAttempt("bob", loginlog.OUTCOME_ACCOUNT_LOCKED,
+                      now - timedelta(minutes=8), provider="ldap-local",
+                      ldap_result_code=49, detail="AD sub-code 775: account locked"),
+         "oauth-openshift-bbb"),
+        # bob has membership history (he was removed from the admin group above), so the directory
+        # knows him: a refusal for him resolves to `not_gated` rather than `no_record`.
+        (LoginAttempt("bob", loginlog.OUTCOME_REJECTED,
+                      now - timedelta(minutes=7), provider="ldap-local",
+                      detail="no entries matching the provider's filter"), "oauth-openshift-aaa"),
+        (LoginAttempt("mallory", loginlog.OUTCOME_REJECTED,
+                      now - timedelta(minutes=6), provider="ldap-local",
+                      detail="no entries matching the provider's filter"), "oauth-openshift-aaa"),
+        (LoginAttempt("developer", loginlog.OUTCOME_SUCCESS,
+                      now - timedelta(minutes=3), provider="developer"), "oauth-openshift-bbb"),
+    ]
+    store.record_login_events(
+        "crc-local",
+        [event_dict(a, pod, _iso(now)) for a, pod in attempts],
+    )
+    # Set once by the first read, and LATER than the oldest attempt on purpose: the first read
+    # looks back an hour, so the record legitimately reaches BEHIND the moment watching began.
+    # That makes capture_started_at later than retained_since, which looks like a bug and is not
+    # — the page explains it, and this is the state that proves the explanation appears.
+    store.record_login_read("crc-local", _iso(now - timedelta(minutes=10)))
+    store.record_login_read("crc-local", _iso(now - timedelta(seconds=30)))
+    # alice's display name is already seeded above via replace_users, so the Logins table gets
+    # `alice · Alice Cooper` from the same ocp_user row every other member surface reads.
+
     # Enough events for the timeline to draw a line, with a count cliff in the middle.
     for i, count in enumerate([40, 41, 41, 28, 41]):
         ts = _iso(now - timedelta(minutes=30 * (5 - i)))
@@ -233,6 +341,10 @@ def server(tmp_path_factory):
             ClusterConfig("prod-east", "https://api.prod-east.example.com:6443", token_env="Y"),
         ],
         db_path=db,
+        # The Logins tab renders a "not being captured" card when this is off, which is a
+        # different state from on-and-quiet. On, so the seeded attempts are what gets tested;
+        # the off state has its own test that overrides it.
+        login_capture_enabled=True,
     )
     port = _free_port()
     app = build_app(settings, run_poller=False)
@@ -380,7 +492,7 @@ class TestGroupExplorer:
 
     def test_all_groups_listed(self, dash):
         self._open_groups(dash)
-        assert dash.locator("tbody tr").count() == 3
+        assert dash.locator("tbody tr").count() == SYNCED_GROUPS
 
     def test_empty_filter_includes_the_unmanaged_group(self, dash):
         """EMPTY is 'zero members', whatever created the group.
@@ -462,7 +574,7 @@ class TestGroupDrilldown:
         # Wait on something unique to the list view: #f-state is present in both, so
         # waiting on it returns instantly and reads the pre-render DOM.
         dash.wait_for_function("() => !document.querySelector('#back-groups')")
-        assert dash.locator("tbody tr").count() == 3
+        assert dash.locator("tbody tr").count() == SYNCED_GROUPS
 
     def test_member_names_look_drillable(self, dash):
         """Regression: the click handler worked but the names rendered as plain black text
@@ -614,7 +726,7 @@ class TestNavigationTrail:
         dash.wait_for_selector("text=Membership changes")
         dash.locator("#back-groups").click()
         dash.wait_for_function("() => !document.querySelector('#back-groups')")
-        assert dash.locator("tbody tr").count() == 3
+        assert dash.locator("tbody tr").count() == SYNCED_GROUPS
 
     def test_nav_button_clears_the_trail(self, dash):
         """Jumping to a section is a fresh start, not a continuation of the old path."""
@@ -623,7 +735,7 @@ class TestNavigationTrail:
         dash.wait_for_selector("text=Group memberships")
         dash.locator("button[data-nav='groups']").click()
         dash.wait_for_function("() => !document.querySelector('#back-groups')")
-        assert dash.locator("tbody tr").count() == 3
+        assert dash.locator("tbody tr").count() == SYNCED_GROUPS
 
     def test_error_page_still_offers_a_way_back(self, dash):
         """The reported dead end: a 404 replaced the page, back button included."""
@@ -666,7 +778,7 @@ class TestDeletedGroup:
         dash.wait_for_selector("#back-groups")
         dash.locator("#back-groups").click()
         dash.wait_for_function("() => !document.querySelector('#back-groups')")
-        assert dash.locator("tbody tr").count() == 3
+        assert dash.locator("tbody tr").count() == SYNCED_GROUPS
 
 
 class TestBindingFindingsVisible:
@@ -807,7 +919,7 @@ class TestBrowserHistory:
         dash.go_back()
         dash.wait_for_function("() => !document.querySelector('#back-groups')")
         assert "group=" not in dash.url
-        assert dash.locator("tbody tr").count() == 3, "did not return to the group list"
+        assert dash.locator("tbody tr").count() == SYNCED_GROUPS, "did not return to the group list"
 
     def test_browser_back_retraces_tab_switches(self, dash):
         """The biggest gap in the old design: tab clicks pushed nothing and CLEARED the trail,
@@ -840,7 +952,7 @@ class TestBrowserHistory:
 
         dash.go_back()                                 # browser: group -> list
         dash.wait_for_function("() => !document.querySelector('#back-groups')")
-        assert dash.locator("tbody tr").count() == 3
+        assert dash.locator("tbody tr").count() == SYNCED_GROUPS
 
     def test_a_pasted_link_opens_at_that_position(self, dash):
         """The other half of putting position in the URL: it has to be shareable."""
@@ -861,7 +973,7 @@ class TestBrowserHistory:
         assert dash.evaluate("() => history.state.from") is None, "expected no back target"
         dash.locator("#back-groups").click()
         dash.wait_for_function("() => !document.querySelector('#back-groups')")
-        assert dash.locator("tbody tr").count() == 3, "left the dashboard instead of rising"
+        assert dash.locator("tbody tr").count() == SYNCED_GROUPS, "left the dashboard instead of rising"
 
     def test_a_crafted_hash_cannot_execute_script(self, dash):
         """The one security regression this feature introduced, and its guard.
@@ -1134,3 +1246,432 @@ class TestRbacPolicyPage:
         self._open(dash)
         current = dash.locator('button.tab[aria-current="page"]').inner_text()
         assert current.strip() == "RBAC policy"
+
+
+class TestLoginsPage:
+    """The Logins tab: who tried to sign in to the cluster, and what happened.
+
+    Every assertion here is about a way the page could MISLEAD rather than about how it looks.
+    The record is a window — login lines exist only while the authentication operator is at
+    Debug, and a pod's log dies with the pod — so the one failure mode that matters is a page
+    that lets an empty or partial record read as "nobody signed in".
+    """
+
+    def _open(self, dash):
+        dash.click('button.tab:text-is("Logins")')
+        dash.wait_for_selector("h2:text-is('Login attempts')")
+
+    def test_the_page_renders_without_a_javascript_error(self, dash):
+        errors = []
+        dash.on("pageerror", lambda e: errors.append(str(e)))
+        self._open(dash)
+        body = dash.locator("body").inner_text()
+        assert "Dashboard API error" not in body, body[:300]
+        assert not errors, errors
+
+    def test_the_tab_is_marked_current_and_owns_its_accent(self, dash):
+        self._open(dash)
+        assert dash.locator('button.tab[aria-current="page"]').inner_text().strip() == "Logins"
+        # The accent drives the tab bar, the card edge and the hero numeral. If the token were
+        # missing the whole page would silently fall back to the previous section's colour.
+        assert dash.locator("body").get_attribute("data-page") == "logins"
+        accent = dash.evaluate(
+            "() => getComputedStyle(document.body).getPropertyValue('--accent').trim()")
+        logins = dash.evaluate(
+            "() => getComputedStyle(document.body).getPropertyValue('--tab-logins').trim()")
+        assert accent and accent == logins, f"accent {accent!r} != --tab-logins {logins!r}"
+
+    def test_every_attempt_is_listed_with_its_outcome(self, dash):
+        self._open(dash)
+        body = dash.locator("body").inner_text()
+        for who in ("alice", "bob", "mallory", "developer"):
+            assert who in body, f"{who} is missing from the attempt list"
+        # The parser's outcome, restated for a reader. "LDAP Result Code 49" is what the log
+        # carries and it explains nothing, so the page must not be showing only that.
+        assert "wrong password" in body
+        assert "account locked" in body
+        assert "signed in" in body
+
+    def test_the_window_is_stated_on_screen_in_both_directions(self, dash):
+        """The load-bearing one. An empty or partial record must never read as a clean bill.
+
+        Both edges are data: `capture_started_at` is when watching began, `retained_since` is
+        the oldest attempt still kept. The page has to say both, and has to say that nothing
+        before the first was ever written down.
+        """
+        self._open(dash)
+        body = dash.locator("body").inner_text()
+        assert "Watching since" in body
+        assert "oldest attempt still retained" in body
+        assert "last read" in body
+        assert "nothing was" in body and "observed" in body, (
+            "the page does not say that an empty list means nothing was OBSERVED — without "
+            "that sentence a reader takes silence for proof that nobody signed in"
+        )
+
+    def test_it_explains_a_record_that_reaches_behind_its_own_start(self, dash):
+        """capture_started_at can be LATER than retained_since, and it looks like a bug.
+
+        The first read looks back an hour, so it returns attempts older than the moment
+        watching began. The seed puts the first read 20 minutes ago with attempts before it.
+        """
+        self._open(dash)
+        assert "predates the first read" in dash.locator("body").inner_text()
+
+    def test_the_ungoverned_accounts_come_before_the_chronology(self, dash):
+        """A finding buried in 200 time-ordered rows is a finding nobody reads."""
+        self._open(dash)
+        headings = dash.locator("section.card h2, section.card h3").all_inner_texts()
+        headings = [h.strip() for h in headings]
+        assert "Accounts in no synced group" in headings, headings
+        assert headings.index("Accounts in no synced group") < headings.index("Every attempt"), (
+            f"the finding is below the chronology: {headings}"
+        )
+
+    def test_it_separates_a_removed_account_from_one_never_governed(self, dash):
+        """The two reasons a name is ungoverned are different problems with different owners.
+
+        bob was removed from every group and is still trying — an offboarding that did not
+        finish. mallory has never been in one. Both are `known_user: false`; only the timeline
+        tells them apart, and the page has to show which.
+        """
+        self._open(dash)
+        card = dash.locator("section.card", has=dash.locator(
+            "h3:text-is('Accounts in no synced group')"))
+        bob = card.locator("tbody tr").filter(has_text="bob").inner_text()
+        assert "was, and no longer is" in bob, bob
+        mallory = card.locator("tbody tr").filter(has_text="mallory").inner_text()
+        assert "never" in mallory, mallory
+        assert "was, and no longer is" not in mallory, (
+            "a name nobody ever governed is being reported as an unfinished offboarding"
+        )
+
+    def test_a_governed_member_is_not_reported_as_a_finding(self, dash):
+        """alice is in a synced group. Reporting her would make the list noise."""
+        self._open(dash)
+        rows = dash.locator("section.card", has=dash.locator(
+            "h3:text-is('Accounts in no synced group')")).locator("tbody tr")
+        assert "alice" not in str(rows.all_inner_texts()), rows.all_inner_texts()
+
+    def test_a_break_glass_success_is_labelled_and_excluded(self, dash):
+        """`developer` is a local HTPasswd account, not a person to offboard.
+
+        It has to be visible in the chronology — a break-glass login is worth seeing — and out
+        of the finding list, because there is nowhere to migrate it to.
+        """
+        self._open(dash)
+        chronology = dash.locator("section.card", has=dash.locator(
+            "h3:text-is('Every attempt')"))
+        row = chronology.locator("tbody tr").filter(has_text="developer").first
+        assert "break-glass" in row.inner_text(), (
+            "a SUCCESS on a local provider is a break-glass sign-in and must say so"
+        )
+        rows = dash.locator("section.card", has=dash.locator(
+            "h3:text-is('Accounts in no synced group')")).locator("tbody tr")
+        assert "developer" not in rows.all_inner_texts().__str__(), rows.all_inner_texts()
+        # And the count beside the list agrees with the list: bob and mallory, not developer.
+        hero = dash.locator(".hero .value").first.inner_text().strip()
+        assert hero == "2", f"hero says {hero}, expected the 2 ungoverned accounts"
+
+    def test_a_failed_local_provider_attempt_is_not_called_break_glass(self, dash):
+        """Seen on the live cluster as `testuser break-glass`, which asserted something false.
+
+        A failed attempt against the HTPasswd provider says WHICH PROVIDER was tried and nothing
+        about the account — HTPasswd reports no reason, so the name may not exist at all. Calling that
+        row break-glass claims it is a break-glass account.
+        """
+        self._open(dash)
+        chronology = dash.locator("section.card", has=dash.locator(
+            "h3:text-is('Every attempt')"))
+        # Seed a failure on the local provider by filtering to it is not possible — the fixture's
+        # break-glass row is a success — so assert the RULE instead: no failed row wears the label.
+        for i in range(chronology.locator("tbody tr").count()):
+            row = chronology.locator("tbody tr").nth(i).inner_text()
+            if "break-glass" in row:
+                assert "signed in" in row, (
+                    f"a non-success row is labelled break-glass: {row!r}"
+                )
+
+    def test_a_name_with_no_history_is_not_a_link_into_an_error(self, dash):
+        """/users/{name} 404s for a name with no groups AND no history — which is mallory.
+
+        Making every username a link would send the reader from the most interesting row on the
+        page straight into an error card, so the affordance is offered only where it leads
+        somewhere. bob has a timeline, so bob IS a link.
+        """
+        self._open(dash)
+        assert dash.locator('button.drill[data-user="mallory"]').count() == 0, (
+            "mallory is drillable, and her user page 404s"
+        )
+        assert dash.locator('button.drill[data-user="bob"]').count() >= 1, (
+            "bob has membership history, so his removal is worth drilling into"
+        )
+
+    def test_drilling_a_user_opens_the_user_page_and_back_returns_here(self, dash):
+        """The drill goes through navigate(), so one history stack serves both buttons.
+
+        This is also the regression test for a drill that set the URL and rendered nothing:
+        every drill-down renders under page=groups, so the handler has to name that page.
+        """
+        self._open(dash)
+        dash.locator('button.drill[data-user="bob"]').first.click()
+        dash.wait_for_selector("#back-groups")
+        assert dash.evaluate("() => view.page") == "groups"
+        assert dash.evaluate("() => view.user") == "bob"
+        assert "page=groups" in dash.url and "user=bob" in dash.url
+        # The label has to name the page the button actually opens.
+        assert dash.locator("#back-groups").inner_text().strip() == "← logins"
+        dash.locator("#back-groups").click()
+        dash.wait_for_selector("h2:text-is('Login attempts')")
+        assert dash.evaluate("() => view.page") == "logins"
+
+    def test_the_outcome_filter_narrows_the_list_without_moving_the_totals(self, dash):
+        """`summary` describes the whole record; the table is one filtered page of it.
+
+        A header that moved with the filter would make every number on the page mean
+        "whatever is currently selected", which is not a number anyone can act on.
+        """
+        self._open(dash)
+        before = dash.locator(".kpi", has_text="Attempts").inner_text()
+        dash.select_option("#f-outcome", "success")
+        dash.wait_for_function("() => view.loginOutcome === 'success'")
+        dash.wait_for_selector(".chip:text-is('filtered to signed in')")
+        rows = dash.locator("section.card", has=dash.locator(
+            "h3:text-is('Every attempt')")).locator("tbody tr")
+        assert rows.count() == 2, rows.all_inner_texts()
+        assert dash.locator(".kpi", has_text="Attempts").inner_text() == before, (
+            "the whole-record counts moved with the filter"
+        )
+
+    def test_the_filter_offers_only_outcomes_that_exist(self, dash):
+        """A cluster on OpenLDAP can never produce the AD sub-code outcomes.
+
+        Offering all ten would invite the reader to filter to a guaranteed-empty table and draw
+        a conclusion from it.
+        """
+        self._open(dash)
+        values = dash.locator("#f-outcome option").evaluate_all(
+            "els => els.map(e => e.value)")
+        assert values[0] == "all"
+        assert set(values[1:]) == {"success", "bad_password", "rejected", "account_locked"}, values
+
+    def test_the_detail_column_carries_the_directory_diagnostic(self, dash):
+        """The result code is not the cause: AD returns 49 for expired, locked and disabled
+        alike, and only the `data <hex>` sub-code in the diagnostic separates them."""
+        self._open(dash)
+        body = dash.locator("body").inner_text()
+        assert "775" in body, "the AD sub-code that explains the lock is not shown"
+        assert "LDAP 49" in body
+
+    def test_the_cluster_selector_stays_because_this_page_is_cluster_scoped(self, dash):
+        """Unlike Usage. These are logins to a CLUSTER, so hiding the selector would claim a
+        scope the page does not have — and the title has to name the cluster too."""
+        self._open(dash)
+        assert dash.locator("#f-cluster").count() == 1
+        assert "crc-local" in dash.locator("#scope-note").inner_text()
+
+
+@pytest.fixture(scope="module")
+def quiet_server(tmp_path_factory):
+    db = str(tmp_path_factory.mktemp("gsd-off") / "off.db")
+    _seed(db)
+    settings = Settings(
+        clusters=[ClusterConfig("crc-local", "https://api.crc.testing:6443", token_env="X")],
+        db_path=db,
+        login_capture_enabled=False,
+    )
+    port = _free_port()
+    srv = uvicorn.Server(uvicorn.Config(
+        build_app(settings, run_poller=False), host="127.0.0.1", port=port,
+        log_level="warning"))
+    thread = threading.Thread(target=srv.run, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{port}"
+    for _ in range(100):
+        try:
+            if httpx.get(f"{base}/healthz", timeout=1).status_code == 200:
+                break
+        except httpx.HTTPError:
+            time.sleep(0.1)
+    else:
+        raise RuntimeError("dashboard server did not start")
+    yield base
+    srv.should_exit = True
+    thread.join(timeout=5)
+
+
+class TestLoginsDisabled:
+    """Capture off is a DIFFERENT state from capture on and quiet.
+
+    Its own server, because `login_capture_enabled` is settings rather than data: conflating
+    the two states sends a reader hunting for logins that were never going to be recorded.
+    """
+
+    def test_it_says_capture_is_off_and_names_both_halves(self, page, quiet_server):
+        page.goto(quiet_server + "#page=logins&cluster=crc-local")
+        page.wait_for_selector("h2:text-is('Login attempts')")
+        body = page.locator("body").inner_text()
+        assert "Not being captured" in body
+        # BOTH halves, because either one alone records nothing: the module has to run, and the
+        # operand has to be verbose enough to write a username at all.
+        assert "loginCapture.enabled=true" in body
+        assert "Debug" in body
+        # And it must not show the seeded rows as though they were live.
+        assert "mallory" not in body
+
+
+class TestClusterAccessPanel:
+    """Who can actually LOG IN, set against who holds access.
+
+    The one view here that does not start from RBAC, so it sees what none of the others can: a role
+    granted to somebody who cannot authenticate. Every assertion is about a way this could mislead.
+    """
+
+    def _open(self, dash):
+        dash.click('button.tab:text-is("Logins")')
+        dash.wait_for_selector("h2:text-is('Cluster access')")
+
+    def _card(self, dash, heading):
+        return dash.locator("section.card", has=dash.locator(f"h3:text-is('{heading}')"))
+
+    def test_the_panel_renders_and_names_the_gate_group(self, dash):
+        errors = []
+        dash.on("pageerror", lambda e: errors.append(str(e)))
+        self._open(dash)
+        body = dash.locator("body").inner_text()
+        assert "app-ssb-autobahnusers" in body
+        assert "Dashboard API error" not in body, body[:300]
+        assert not errors, errors
+
+    def test_the_dn_is_matched_case_insensitively(self, dash):
+        """The seed stores `CN=...,OU=...,DC=...` while the Group carries `cn=...,ou=...,dc=...`.
+
+        An exact comparison would report the gate group as not synced on a cluster where it is synced
+        perfectly well — a false "prerequisite not met", which is the worst kind of wrong here because
+        it looks like an instruction.
+        """
+        self._open(dash)
+        body = dash.locator("body").inner_text()
+        assert "no synced group matches it" not in body, (
+            "the DN failed to match its own Group because of letter case"
+        )
+        assert self._card(dash, "Access that cannot be used").count() == 1
+
+    def test_it_leads_with_the_finding_not_the_volume(self, dash):
+        """`dave` holds access through a synced group and is not in the gate group."""
+        self._open(dash)
+        card = dash.locator("section.card", has=dash.locator("h2:text-is('Cluster access')"))
+        assert card.locator(".hero .value").inner_text().strip() == "1"
+        assert "cannot use" in card.locator(".hero .label").inner_text()
+
+    def test_the_stranded_person_is_named_with_the_groups_that_grant_it(self, dash):
+        self._open(dash)
+        row = self._card(dash, "Access that cannot be used").locator("tbody tr").first.inner_text()
+        assert "dave" in row, row
+        assert "app-ocp-rbac-alpha-ns-admin" in row, (
+            f"the grant is not shown, so the reader cannot act on the finding: {row}"
+        )
+
+    def test_a_gated_member_who_also_holds_access_is_not_a_finding(self, dash):
+        """alice is in both. Reporting her would make the list noise."""
+        self._open(dash)
+        rows = self._card(dash, "Access that cannot be used").locator("tbody tr").all_inner_texts()
+        assert not any("alice" in r for r in rows), rows
+
+    def test_the_quieter_half_is_shown_separately(self, dash):
+        """In the gate group, holds no access. Not automatically a problem — so its own section."""
+        self._open(dash)
+        rows = self._card(dash, "Allowed to log in, holds no access") \
+            .locator("tbody tr").all_inner_texts()
+        assert any("gatekeeper" in r for r in rows), rows
+        assert not any("dave" in r for r in rows), "the two findings are being mixed"
+
+    def test_provenance_is_stated(self, dash):
+        """Configured or discovered. An operator asking "why is this the wrong group?" needs to know
+        which of the two to change."""
+        self._open(dash)
+        card = dash.locator("section.card", has=dash.locator("h2:text-is('Cluster access')"))
+        assert "discovered" in card.locator(".chip").first.inner_text()
+
+    def test_the_stranded_person_drills_to_their_user_page(self, dash):
+        """Through the same navigate() machinery as every other drill, so Back behaves identically."""
+        self._open(dash)
+        self._card(dash, "Access that cannot be used") \
+            .locator('button.drill[data-user="dave"]').first.click()
+        dash.wait_for_selector("#back-groups")
+        assert dash.evaluate("() => view.page") == "groups"
+        assert dash.evaluate("() => view.user") == "dave"
+        assert dash.locator("#back-groups").inner_text().strip() == "← logins"
+
+
+class TestTheRefusalVerdict:
+    """The ambiguity the log cannot resolve, resolved.
+
+    A refused directory login writes `no entries matching (<filter>)`, and because the filter carries
+    the gate group, a real person outside it and a username that does not exist produce byte-identical
+    lines. With gate membership known there is something to choose with.
+    """
+
+    def _rows(self, dash):
+        dash.click('button.tab:text-is("Logins")')
+        dash.wait_for_selector("h3:text-is('Every attempt')")
+        card = dash.locator("section.card", has=dash.locator("h3:text-is('Every attempt')"))
+        return {r.split("\n")[1] if "\n" in r else r: r
+                for r in card.locator("tbody tr").all_inner_texts()}
+
+    def test_a_known_person_outside_the_gate_group_is_named_as_one(self, dash):
+        """bob is in no group NOW but has membership history, so the directory knows him."""
+        self._open_and(dash)
+        text = dash.locator("section.card", has=dash.locator(
+            "h3:text-is('Every attempt')")).inner_text()
+        assert "a real person, not in the gate group" in text, text[:400]
+
+    def test_a_name_with_no_record_says_only_that(self, dash):
+        """NOT "unknown account": this dashboard reads OpenShift, not the directory, so it cannot
+        claim the account does not exist."""
+        self._open_and(dash)
+        text = dash.locator("section.card", has=dash.locator(
+            "h3:text-is('Every attempt')")).inner_text()
+        assert "no record of this name" in text, text[:400]
+        assert "unknown account" not in text
+
+    def test_an_outcome_that_already_has_a_cause_gets_no_second_one(self, dash):
+        """A wrong password is not ambiguous, and must not acquire a competing explanation."""
+        self._open_and(dash)
+        card = dash.locator("section.card", has=dash.locator("h3:text-is('Every attempt')"))
+        for row in card.locator("tbody tr").all_inner_texts():
+            if "wrong password" in row:
+                for verdict in ("a real person, not in the gate group", "no record of this name",
+                                "our membership data disagrees"):
+                    assert verdict not in row, f"bad_password acquired a refusal verdict: {row}"
+
+    def _open_and(self, dash):
+        dash.click('button.tab:text-is("Logins")')
+        dash.wait_for_selector("h3:text-is('Every attempt')")
+
+
+class TestTheGateChipAppliesOnlyWhereTheGateApplies:
+    """The login gate governs the DIRECTORY provider. A local HTPasswd login never passes through it.
+
+    Seen on the fixture as `developer  not in access group  break-glass`: a true statement about group
+    membership that reads as a finding about an account the gate has no bearing on, sitting next to the
+    chip that says so. Suppressed on those rows.
+    """
+
+    def test_a_break_glass_row_does_not_claim_a_gate_finding(self, dash):
+        dash.click('button.tab:text-is("Logins")')
+        dash.wait_for_selector("h3:text-is('Every attempt')")
+        card = dash.locator("section.card", has=dash.locator("h3:text-is('Every attempt')"))
+        for row in card.locator("tbody tr").all_inner_texts():
+            if "break-glass" in row or "local provider" in row:
+                assert "not in access group" not in row, (
+                    f"the gate does not govern this provider, so the row must not imply it: {row}"
+                )
+
+    def test_a_directory_row_outside_the_gate_group_still_says_so(self, dash):
+        """The suppression must be narrow: it applies to local providers, not to every row."""
+        dash.click('button.tab:text-is("Logins")')
+        dash.wait_for_selector("h3:text-is('Every attempt')")
+        card = dash.locator("section.card", has=dash.locator("h3:text-is('Every attempt')"))
+        rows = card.locator("tbody tr").all_inner_texts()
+        assert any("not in access group" in r and "ldap-local" in r for r in rows), rows

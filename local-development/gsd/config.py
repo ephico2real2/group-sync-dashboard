@@ -179,6 +179,36 @@ class Settings:
     """
 
     binding_interval_seconds: int = 300
+
+    # Login capture. OFF by default: it needs a read grant the chart only creates when asked, and it
+    # records nothing at all unless the authentication operator's logLevel is Debug — so enabling it
+    # here alone is inert rather than broken.
+    login_capture_enabled: bool = False
+    # Where the oauth-server runs. A value rather than a constant only because the chart's Role is
+    # created in this namespace and the two must agree; it is fixed on any normal OpenShift cluster.
+    login_capture_namespace: str = "openshift-authentication"
+    # Providers whose SUCCESSES are break-glass rather than people — kubeadmin and developer arrive on
+    # the HTPasswd provider. Passed to the store so ungoverned-user counts exclude them; the store
+    # cannot know which of a cluster's providers are local.
+    login_capture_htpasswd_providers: tuple[str, ...] = ("developer",)
+    # 0 disables pruning. These rows are the only record that survives the pods, so the default is
+    # generous — over a year — and the prune is bounded per cycle so a long backlog cannot hold the
+    # single writer.
+    login_retention_days: int = 400
+    # ── THE LOGIN-GATE GROUP ───────────────────────────────────────────────────────────────────────
+    # The FULL DN of the group whose membership is required to authenticate at all — the clause the
+    # identity provider's search filter carries. Set it, and the dashboard can answer the question the
+    # oauth log cannot: whether a person who was refused is a real person outside that group.
+    #
+    # A DN, not a name, because that is what identifies the group unambiguously and what a synced
+    # Group already carries in `openshift.io/ldap.uid`. Matching on the cn would break the moment two
+    # branches of a directory both had a `cluster-access` group.
+    #
+    # EMPTY MEANS DISCOVER IT from the OAuth CR's LDAP identity provider, whose filter names the group.
+    # Set it explicitly when the gate lives somewhere that filter does not show, or when the dashboard
+    # is not permitted to read the OAuth CR. Discovery is best-effort by design: it is the convenience,
+    # and this value is the contract.
+    cluster_access_group: str = ""
     """How often to re-read RoleBindings/ClusterRoleBindings — deliberately slower than
     the group poll.
 
@@ -417,6 +447,16 @@ def load_settings(path: str | Path) -> Settings:
         poll_interval_seconds=int(raw.get("pollIntervalSeconds", 60)),
         schedule_grace_seconds=int(raw.get("scheduleGraceSeconds", 120)),
         binding_interval_seconds=int(raw.get("bindingIntervalSeconds", 300)),
+        login_capture_enabled=str(raw.get("loginCaptureEnabled", "false")).lower() == "true",
+        login_capture_namespace=raw.get("loginCaptureNamespace") or "openshift-authentication",
+        login_capture_htpasswd_providers=tuple(
+            p.strip() for p in str(raw.get("loginCaptureHtpasswdProviders", "developer")).split(",")
+            if p.strip()
+        ),
+        login_retention_days=int(raw.get("loginRetentionDays", 400)),
+        # Stripped, because a DN pasted out of `ldapsearch` output arrives with trailing whitespace
+        # often enough to matter, and it is compared for exact equality against a Group's ldap.uid.
+        cluster_access_group=str(raw.get("clusterAccessGroup", "") or "").strip(),
         request_timeout_seconds=float(raw.get("requestTimeoutSeconds", 15.0)),
         # GSD_DB_PATH wins over the file so the config can ship as a ConfigMap that does
         # not need to know where the writable volume is mounted.

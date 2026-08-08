@@ -16,8 +16,9 @@ import time
 from datetime import UTC, datetime
 
 from .config import ClusterConfig, Settings
-from .kube import OK, ClusterClient, ClusterError, GroupSyncView, GroupView
+from .kube import OK, ClusterClient, ClusterError, GroupSyncView, GroupView, dn_equal
 from .leader import LeaderElector
+from .logincapture import capture_once
 from .audit import plan_audit_stamps
 from .storage import StorageBackend
 from .timeutil import now_iso
@@ -84,12 +85,22 @@ def ambiguous_attribution(groupsyncs: list[GroupSyncView]) -> list[str]:
     return sorted(name for name, namespaces in seen.items() if len(namespaces) > 1)
 
 
-def poll_once(store: StorageBackend, cluster: ClusterConfig, timeout: float = 15.0) -> str:
+def poll_once(
+    store: StorageBackend,
+    cluster: ClusterConfig,
+    timeout: float = 15.0,
+    access_group_dn: str = "",
+) -> str:
     """One poll of one cluster. Returns the outcome string (PLAN §12 step 7).
 
     Never raises for cluster-side failures: an unreachable or forbidden cluster is recorded
     as a degraded outcome so it renders as a degraded card rather than blanking the
     dashboard (PLAN §5).
+
+    `access_group_dn` is the configured login-gate group. Empty means discover it from the OAuth CR.
+    A parameter rather than a Settings argument because this function takes one cluster and a timeout
+    and nothing else — threading the whole Settings through it to read one string would make every
+    test that calls it build one.
     """
     client = ClusterClient(cluster, timeout=timeout)
     try:
@@ -221,6 +232,42 @@ def poll_once(store: StorageBackend, cluster: ClusterConfig, timeout: float = 15
             ],
             observed_at,
         )
+
+        # ── WHICH GROUP GATES AUTHENTICATION ─────────────────────────────────────────────────────
+        # Resolved HERE, inside the snapshot that just wrote the groups, so the DN and the Group it
+        # names are one consistent observation. Doing it at read time would let a group deleted
+        # between poll and read turn a known gate into an unknown one.
+        #
+        # Configuration wins over discovery, and `source` records which answered, because an operator
+        # asking "why is this the wrong group?" needs to know which of the two to change.
+        dn = (access_group_dn or "").strip()
+        source = "config"
+        if not dn:
+            # One extra GET per cluster per poll, and only when the DN is not configured. A
+            # ClusterError here must not fail the poll: the gate is an enrichment, and groups are
+            # the reason this function exists.
+            source = "oauth"
+            try:
+                dn = client.fetch_access_group_dn() or ""
+            except ClusterError as exc:
+                log.warning("%s: could not read the OAuth CR to discover the login-gate group: "
+                            "%s — set clusterAccess.group to state it explicitly",
+                            cluster.name, exc.message)
+                dn = ""
+        if dn:
+            # Case-insensitively, because DNs are. The operator writes the group's DN into
+            # openshift.io/ldap.uid exactly as the directory returns it, while a DN typed into
+            # values.yaml or copied out of an AD console is conventionally `CN=...,OU=...,DC=...`.
+            # An exact match would report "the gate group is not synced" on a cluster where it is.
+            group_name = next(
+                (g.name for g in groups if dn_equal(g.ldap_uid, dn)), None)
+            store.set_cluster_access_group(cluster.name, dn, source, group_name, observed_at)
+        else:
+            # No gate at all: no clusterAccess.group, and no membership clause in any identity
+            # provider's filter. DELETED rather than left stale — a gate REMOVED from the provider
+            # means everyone in the search base can sign in now, and keeping the last known value
+            # would go on reporting findings against a group that gates nothing.
+            store.clear_cluster_access_group(cluster.name)
 
         # Provenance for RBAC finding classification: remember which groups the operator
         # manages, so that a binding naming one of them later becomes meaningful evidence
@@ -500,7 +547,21 @@ class Poller:
                 self._stop.wait(min(self.settings.poll_interval_seconds, STANDBY_RECHECK_SECONDS))
                 continue
             try:
-                poll_once(self.store, cluster, self.settings.request_timeout_seconds)
+                poll_once(self.store, cluster, self.settings.request_timeout_seconds,
+                          access_group_dn=self.settings.cluster_access_group)
+                # Login capture rides this thread rather than owning one, which is the smallest correct
+                # ownership boundary: it inherits the leader gate above and the never-die discipline
+                # below without a second lease to reason about. It is AFTER poll_once on purpose —
+                # group data is what this dashboard is for, and capture must never delay it.
+                #
+                # The elector is passed through so capture can RECHECK leadership immediately before
+                # its write. The check above is once per cycle, and capture reads logs over the
+                # network, so the lease can pass to another replica while a read is in flight.
+                try:
+                    capture_once(self.store, cluster, self.settings, self.elector,
+                                 self.settings.request_timeout_seconds)
+                except Exception:  # noqa: BLE001 - capture must never stop the poll loop
+                    log.exception("%s: login capture raised; group polling continues", cluster.name)
                 # After the write, never during it, and never from a request handler:
                 # whatever upkeep the engine needs may wait on open readers, and that wait
                 # is free here and would be user-visible latency anywhere else. The poller

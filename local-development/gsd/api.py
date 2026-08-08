@@ -27,6 +27,7 @@ from .leader import LeaderElector
 from .metrics import build_registry
 from .poller import Poller
 from .storage import StorageBackend, open_backend
+from . import loginlog
 
 log = logging.getLogger(__name__)
 
@@ -35,6 +36,58 @@ STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 # Mirrors oauthProxy.skipAuthRegex. Requests here reach the app WITHOUT authentication, so
 # nothing they claim about identity can be believed or recorded.
 SKIP_AUTH_PATHS = frozenset({"/healthz", "/readyz", "/metrics"})
+
+
+# The outcome vocabulary, read OFF THE PARSER rather than restated here. loginlog.py is where an
+# outcome is decided, so a new one (a new AD sub-code, say) must not require editing a second list that
+# then silently rejects it in a query parameter.
+LOGIN_OUTCOMES = tuple(
+    v for k, v in vars(loginlog).items() if k.startswith("OUTCOME_") and isinstance(v, str)
+)
+
+
+#: What a `no match` refusal actually was, once gate membership is known.
+#:
+#: THE ONE THING THE LOG CANNOT SAY. A refused directory login writes `no entries matching
+#: (<filter>)`, and because the filter carries the login-gate group, a real person outside that group
+#: and a username that does not exist produce byte-identical lines. The parser records `rejected` for
+#: both and refuses to guess — correctly, because from the log alone there is nothing to choose
+#: between them.
+#:
+#: With the gate group synced into OpenShift there IS something to choose between them, and it comes
+#: from data the dashboard already holds rather than from any new directory read.
+REFUSAL_NOT_GATED = "not_gated"
+"""A REAL PERSON, outside the gate group. They are a member of at least one synced group — so the
+directory knows them and this cluster governs them — and they are not in the gate group. The refusal
+is the gate doing its job, and the finding is that they hold access they cannot use."""
+REFUSAL_NO_RECORD = "no_record"
+"""No record of this name anywhere: no synced group, no membership history. Consistent with a typo, a
+probe, or somebody from a directory branch this cluster does not sync. NOT proof the account does not
+exist — the dashboard reads OpenShift, not the directory — and the name is deliberately weaker than
+"unknown account" for that reason."""
+REFUSAL_MEMBERSHIP_DISAGREES = "membership_disagrees"
+"""They ARE in the gate group according to the synced Group, and the directory search still found
+nothing. Our membership data and the live directory disagree: most often a sync that has not caught up
+with a removal, which is worth knowing because every other view on this dashboard trusts that data."""
+
+
+def _refusal_reason(row: dict) -> str | None:
+    """Resolve a `rejected` attempt against what we know about the account, or None.
+
+    None whenever the question cannot be answered — no gate known, or an outcome that was never
+    ambiguous in the first place. An outcome like `bad_password` already carries its own cause and must
+    not acquire a second, competing one.
+    """
+    if row.get("outcome") != loginlog.OUTCOME_REJECTED:
+        return None
+    gated = row.get("in_access_group")
+    if gated is None:
+        return None                                  # no gate group known: nothing to resolve with
+    if gated:
+        return REFUSAL_MEMBERSHIP_DISAGREES
+    if row.get("known_user") or row.get("has_history"):
+        return REFUSAL_NOT_GATED
+    return REFUSAL_NO_RECORD
 
 
 def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
@@ -421,6 +474,197 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
             # Reachable through their group memberships. Each row carries via_group, so
             # "why do they have this?" is answerable without a second lookup.
             "bindings": store.user_bindings(cluster_id, name),
+        }
+
+    @app.get("/api/clusters/{cluster_id}/logins")
+    @consistent
+    def list_logins(
+        cluster_id: str,
+        outcome: str | None = Query(
+            default=None,
+            description="Return only attempts with this outcome. The vocabulary is the parser's: "
+                        "success, bad_password, rejected (not found OR not permitted — the log "
+                        "cannot tell those apart), password_expired, must_change_password, "
+                        "account_locked, account_disabled, account_expired, logon_not_permitted, "
+                        "and failed (the provider gave no reason — the normal shape on an "
+                        "HTPasswd provider, which logs a verdict and nothing else)."),
+        user: str | None = Query(
+            default=None,
+            description="Only attempts for this exact username — the login that was TYPED, which "
+                        "may match no User object and no group member. That mismatch is a finding, "
+                        "not an error."),
+        limit: int = Query(
+            default=200, ge=1, le=2000,
+            description="Maximum attempts returned, newest first. `truncated` says whether older "
+                        "ones were dropped; `total` and `summary` always describe the whole "
+                        "retained record, never this page."),
+    ) -> dict:
+        """Login attempts against this cluster's oauth-server: who, when, and why it failed.
+
+        THE RECORD IS A WINDOW, and both of its edges are carried as data rather than implied.
+        `capture_started_at` is when watching began and is stable; `retained_since` is the oldest
+        attempt still kept and moves under retention. Nothing before capture began exists to fetch —
+        the log dies with its pod — so an empty list is a statement about the window and never proof
+        that nobody logged in. The UI has to say that, which is why it is here and not a footnote.
+
+        EVERY username is recorded, successful or not, member or not. `known_user: false` marks an
+        account in NO synced group, which is the most valuable row this produces; `has_history: true`
+        separates "access was removed and they are still trying" from "nobody ever governed this
+        name". `ungoverned` lists those accounts separately so a paged chronology cannot bury them.
+        """
+        require_cluster(cluster_id)
+        # Which provider NAMES are HTPasswd is deployment configuration — the log carries only the
+        # name. Passed to the ungoverned queries so their rows and their count share ONE predicate in
+        # the store, and applied per row below for the break_glass label.
+        htpasswd = tuple(settings.login_capture_htpasswd_providers)
+        status = store.login_capture_status(cluster_id)
+        summary = store.login_event_summary(cluster_id, exclude_providers=htpasswd)
+        ungoverned = store.ungoverned_login_users(cluster_id, exclude_providers=htpasswd, limit=50)
+        # limit + 1 to learn whether more exist — the list_users idiom. `summary` carries the exact
+        # whole-record numbers, so no headline figure is ever computed from this page.
+        rows = store.login_events(cluster_id, user_name=user, outcome=outcome, limit=limit + 1)
+        truncated = len(rows) > limit
+        attempts = rows[:limit]
+
+        by_outcome = summary["by_outcome"]
+        successes = by_outcome.get(loginlog.OUTCOME_SUCCESS, 0)
+        # Gate membership for the names on this page, in ONE batch lookup rather than a call per row.
+        # An empty dict means no gate is known, and the rows then carry None — "unknown", which is a
+        # different statement from False and the reason a `rejected` row can only sometimes be
+        # explained. With a gate known, `in_access_group: false` on a person who IS in a synced group
+        # turns "not found OR not permitted" into "a real person, not gated".
+        gate = store.is_in_access_group(cluster_id, [r["user_name"] for r in attempts])
+        for row in attempts:
+            # Normalised here so the UI never re-derives a flag from raw fields, and so the wire
+            # carries real booleans whatever 0/1 shape SQLite returned.
+            row["break_glass"] = row.get("provider") in htpasswd
+            row["known_user"] = bool(row.get("known_user"))
+            row["has_history"] = bool(row.get("has_history"))
+            # None, not False, when no gate is known. The UI must be able to say "we cannot tell"
+            # rather than asserting a non-membership it has no basis for.
+            row["in_access_group"] = gate.get(row["user_name"])
+            row["refusal_reason"] = _refusal_reason(row)
+        for row in ungoverned:
+            row["has_history"] = bool(row.get("has_history"))
+
+        return {
+            "cluster": cluster_id,
+            "enabled": settings.login_capture_enabled,
+            "note": "read from the oauth-server log at Debug verbosity; covers only the period "
+                    "since capture began — earlier logins were never recorded and cannot be "
+                    "fetched, and rows older than the configured retention age out",
+            # Set once by the capture loop's first successful read. Falls back to the oldest retained
+            # attempt for the one-cycle window after a crash before that row exists — an honest floor
+            # rather than null, which the UI would have to render as "unknown".
+            "capture_started_at": (status or {}).get("started_at") or summary["first_at"],
+            "last_read_at": (status or {}).get("last_read_at"),
+            # How often `last_read_at` is EXPECTED to advance — capture runs on the poll thread, so
+            # the poll interval is its cadence. Sent because the browser is the only place that can
+            # decide whether a read is overdue and the only place that knows what a reader is
+            # looking at, but it has no way to learn the cadence: a hardcoded threshold in the page
+            # would call a 900s poll "stalled" every single cycle.
+            "read_interval_seconds": settings.poll_interval_seconds,
+            "retained_since": summary["first_at"],
+            "total": summary["total"],
+            "limit": limit,
+            "truncated": truncated,
+            "summary": {
+                "distinct_users": summary["distinct_users"],
+                "successes": successes,
+                "failures": summary["total"] - successes,
+                "by_outcome": by_outcome,
+                "ungoverned_users": summary["ungoverned_users"],
+                "first_at": summary["first_at"],
+                "last_at": summary["last_at"],
+            },
+            # One row per account in no synced group, most recent first. Bounded at 50 and honest
+            # about it: summary.ungoverned_users beside it is the whole-set count, from the SAME
+            # store predicate, so the two cannot disagree.
+            "ungoverned": ungoverned,
+            "attempts": attempts,
+        }
+
+    @app.get("/api/clusters/{cluster_id}/cluster-access")
+    @consistent
+    def cluster_access(
+        cluster_id: str,
+        limit: int = Query(
+            default=200, ge=1, le=2000,
+            description="Maximum rows per list. `summary` always describes the whole cluster."),
+    ) -> dict:
+        """Who can actually LOG IN, against who holds access — two different questions.
+
+        Every other view in this dashboard starts from RBAC and stops there, so a role granted to
+        somebody who cannot authenticate is invisible: access that can never be used. On the reference
+        cluster 10 people held access through synced groups and 7 were in the gate group, so 3 held
+        access they could not exercise.
+
+        THE ANSWER DEPENDS ON A PREREQUISITE THIS DASHBOARD CANNOT MEET ITSELF. The gate group has to
+        be synced into OpenShift by the group-sync-operator before there is any membership to compare
+        against, and `synced: false` says the DN is known and the Group is not there. That is not zero
+        findings — it is no data, and the two must never look alike.
+        """
+        require_cluster(cluster_id)
+        access = store.cluster_access_group(cluster_id)
+        if not access:
+            # NO GATE, which is itself a finding rather than an absence: with no membership clause in
+            # any identity provider's filter, every account in the search base can sign in.
+            return {
+                "cluster": cluster_id,
+                "gated": False,
+                "dn": None,
+                "source": None,
+                "group_name": None,
+                "synced": False,
+                "note": "no login gate is known. Either no identity provider's filter carries a "
+                        "memberOf/isMemberOf clause — in which case any account in its search base "
+                        "can sign in — or the OAuth CR could not be read. Set clusterAccess.group to "
+                        "state the group explicitly.",
+                "summary": {"gated_members": 0, "with_access": 0,
+                            "access_without_login": 0, "login_without_access": 0},
+                "access_without_login": [],
+                "login_without_access": [],
+                "limit": limit,
+                "truncated": False,
+            }
+
+        synced = bool(access["group_name"])
+        # limit + 1 to learn whether more exist — the list_users idiom used throughout.
+        without_login = store.access_without_login(cluster_id, limit=limit + 1)
+        truncated = len(without_login) > limit
+        for row in without_login:
+            row["has_tried"] = bool(row.get("has_tried"))
+            # GROUP_CONCAT hands back one comma-joined string; the wire carries a list, so the UI
+            # never splits a delimited field. A group name cannot contain a comma (RFC 1123 label
+            # rules apply to a Group's metadata.name), so the split is safe here and would not be on
+            # an LDAP DN — which is exactly why user_name is never packed this way.
+            row["groups"] = [g for g in (row.get("groups") or "").split(",") if g]
+        gated_only = store.login_without_access(cluster_id, limit=limit)
+        for row in gated_only:
+            row["has_tried"] = bool(row.get("has_tried"))
+
+        return {
+            "cluster": cluster_id,
+            "gated": True,
+            "dn": access["dn"],
+            # Which of the two produced it. An operator asking "why is this the wrong group?" needs to
+            # know whether to change values.yaml or the identity provider.
+            "source": access["source"],
+            "group_name": access["group_name"],
+            "synced": synced,
+            "note": ("membership of this group is required to authenticate, so somebody outside it "
+                     "cannot use any access they hold")
+                    if synced else
+                    ("the gate group's DN is known but no synced Group matches it, so there is no "
+                     "membership to compare against. The group-sync-operator has to pull it — see "
+                     "docs/examples/clusteraccess-groupsync.yaml. Note a gate group is often "
+                     "objectClass groupOfUniqueNames with `uniqueMember`, unlike RBAC groups: "
+                     "copying an existing CR's rfc2307 block verbatim syncs it with zero members."),
+            "summary": store.cluster_access_summary(cluster_id),
+            "access_without_login": without_login[:limit],
+            "login_without_access": gated_only,
+            "limit": limit,
+            "truncated": truncated,
         }
 
     @app.get("/api/clusters/{cluster_id}/bindings/findings")

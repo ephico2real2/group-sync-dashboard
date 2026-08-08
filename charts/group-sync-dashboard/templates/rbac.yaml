@@ -43,6 +43,21 @@ rules:
     resources: ["users"]
     verbs: ["get", "list"]
   {{- end }}
+  {{- if .Values.clusterAccess.discoverFromOAuth }}
+  # Discover the login-gate group from the identity provider's search filter. ONE object, and
+  # resourceNames confines the grant to it — Kubernetes honours resourceNames for `get`, which is why
+  # there is no `list` here: a `list` cannot be name-scoped, and listing oauths would return the same
+  # object with no narrowing to show an auditor.
+  #
+  # OPTIONAL BY CONSTRUCTION, like the users grant above. Declined, the read 403s,
+  # ClusterClient.fetch_access_group_dn returns None, and the tab says it needs clusterAccess.group
+  # set. The OAuth CR names identity providers and their bind-secret REFERENCES; it holds no
+  # credential itself, and nothing here reads a Secret.
+  - apiGroups: ["config.openshift.io"]
+    resources: ["oauths"]
+    resourceNames: ["cluster"]
+    verbs: ["get"]
+  {{- end }}
   {{- if .Values.leaderElection.enabled }}
   # Leader election. Namespaced, so this belongs in a Role rather than the ClusterRole —
   # but keeping one object is simpler and the grant is confined to one named Lease anyway.

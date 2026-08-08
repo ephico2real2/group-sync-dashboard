@@ -177,6 +177,89 @@ is the next question after "do they have it".
 **A user with no current groups returns 200, not 404**, if any history exists. "They are in
 nothing now" is the answer, not an error. 404 only when the user has never been seen.
 
+### `GET /api/clusters/{cluster_id}/logins`
+
+Login attempts against this cluster's oauth-server: who, when, and why a failure failed. Read from the
+oauth-server pod log, which names the person only at `spec.logLevel: Debug` on the authentication
+**operator** CR (`authentications.operator.openshift.io/cluster` — not the OAuth CR).
+
+| parameter | default | meaning |
+|---|---|---|
+| `outcome` | all | one of the parser's outcomes: `success`, `bad_password`, `rejected`, `password_expired`, `must_change_password`, `account_locked`, `account_disabled`, `account_expired`, `logon_not_permitted`, `failed` |
+| `user` | all | the username as **typed**, which may match no `User` object and no group member — that mismatch is a finding, not an error |
+| `limit` | `200` | attempts returned, newest first. `truncated` reports whether older ones were dropped; `total` and `summary` always describe the whole retained record, never the page |
+
+**`rejected` — shown as "no match" — covers two different things and cannot separate them.** The identity provider's search
+filter carries the login-gate group, so a real person who is not in that group and a username that does
+not exist produce the same `no entries matching` line. Telling them apart would need a directory read
+this application does not have.
+
+**The record is a WINDOW, and both edges are carried as data:**
+
+| field | meaning |
+|---|---|
+| `capture_started_at` | when watching began. Stable — set once by the first successful read. May be *later* than `retained_since`, because the first read looks back an hour |
+| `retained_since` | the oldest attempt still kept. Moves as retention ages rows out |
+| `last_read_at` | liveness. If this stops advancing, capture has stopped |
+| `read_interval_seconds` | how often `last_read_at` is *expected* to advance — capture rides the poll thread, so this is the poll interval. Sent because the browser is the only place that can judge whether a read is overdue and the only place that knows what a reader is looking at, but it has no way to learn the cadence: a threshold hardcoded in the page would call a 900s poll stalled every cycle |
+
+Nothing before capture began exists to fetch — the log dies with its pod — so **an empty `attempts` is a
+statement about the window, never proof that nobody logged in.**
+
+Every username is recorded, successful or not, member or not. Per attempt: `known_user` false marks an
+account in **no synced group**, which is the most valuable row here; `has_history` true separates
+"access removed and still trying" from "nobody ever governed this name"; `break_glass` marks a success
+on an HTPasswd provider (`kubeadmin`, `developer`), which is not a person to offboard. `ungoverned`
+lists the no-synced-group accounts separately, bounded at 50, so a paged chronology cannot bury them —
+with `summary.ungoverned_users` beside it as the whole-set count from the same store predicate.
+
+Each attempt also carries **`in_access_group`**: `true`/`false` when a login gate is known, and
+**`null` when it is not** — "we cannot tell", which is a different statement from "not a member". With
+a gate known, `in_access_group: false` on somebody who *is* in a synced group turns `no match` from
+"not found **or** not permitted" into **a real person, not gated**.
+
+That conclusion is served as **`refusal_reason`**, so every consumer draws it the same way rather than
+each reimplementing the rule. It is set only on `rejected` — an outcome that already carries its own
+cause must not acquire a competing one — and is `null` whenever the question cannot be answered:
+
+| `refusal_reason` | meaning |
+|---|---|
+| `not_gated` | **a real person, outside the gate group.** In at least one synced group, so the directory knows them and this cluster governs them, and not in the gate group. The refusal is the gate working; the finding is the access they cannot use |
+| `no_record` | no synced group and no membership history for this name. Consistent with a typo, a probe, or a directory branch this cluster does not sync. Deliberately **not** called "unknown account": this dashboard reads OpenShift, not the directory, so it cannot claim the account does not exist |
+| `membership_disagrees` | the synced group says they **are** in the gate group and the directory search still found nothing — our membership data and the live directory disagree, usually a sync that has not caught up with a removal. The only one of the three that is a fault in our own data |
+| `null` | no login gate is known, or the outcome was never ambiguous |
+
+### `GET /api/clusters/{cluster_id}/cluster-access`
+
+Who can actually **log in**, set against who holds access. Two different questions, and every other
+view here answers only the second.
+
+A cluster whose identity provider gates authentication on group membership can grant somebody a role
+they can never use. Measured on the reference cluster: 10 people held access through synced groups, 7
+were in the login-gate group, so **3 held access they could not exercise**. Nothing else in this
+dashboard sees that, because everything else starts from RBAC.
+
+| field | meaning |
+|---|---|
+| `gated` | whether a login gate is known at all. `false` means no identity provider filter carries a `memberOf`/`isMemberOf` clause — so any account in its search base can sign in — or the OAuth CR could not be read |
+| `dn` | the gate group's full DN |
+| `source` | `config` if it came from `clusterAccess.group`, `oauth` if discovered from the identity provider's filter. Stored so "why is this the wrong group?" has an answer |
+| `group_name` / `synced` | the synced OpenShift Group whose `openshift.io/ldap.uid` matches the DN. **`synced: false` is no data, not zero findings** — without the Group object there is no membership to compare against |
+| `summary` | `gated_members`, `with_access`, `access_without_login`, `login_without_access`, over the whole cluster |
+| `access_without_login` | the finding: holds access through a synced group, is not in the gate group. `groups` is a list, `has_tried` says whether they have ever appeared in a login attempt |
+| `login_without_access` | the quieter half: in the gate group, holds no other synced-group access. Not automatically a problem — a new joiner looks like this, and so does a service identity that happens to sit in the group |
+
+**The gate group must be synced by the group-sync-operator first**, with its own GroupSync CR — this
+chart does not create one, because GroupSync CRs belong to the platform team. A worked example is in
+`docs/examples/clusteraccess-groupsync.yaml`. Watch the membership attribute: a gate group is often
+`objectClass: groupOfUniqueNames` with `uniqueMember`, while RBAC groups are `groupOfNames` with
+`member` — copying an existing CR's `rfc2307` block verbatim syncs the group with **zero members** and
+looks like a working sync.
+
+Both attribute spellings are read when discovering the DN: `memberOf` (OpenLDAP, Active Directory) and
+`isMemberOf` (389-ds, Oracle/Sun DSEE). Neither is standardised, and a parser that knew only one would
+report "no gate configured" on half the directories in the world.
+
 ### `GET /api/clusters/{cluster_id}/membership-changes`
 
 Query: `limit` (1–1000, default 100). Joins and departures cluster-wide.

@@ -8,8 +8,10 @@ are a CRD and an OpenShift type, and both are simple to read directly.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import unquote
 
 import httpx
 
@@ -35,6 +37,23 @@ GROUP_API = "/apis/user.openshift.io/v1/groups"
 # error, and every consumer of this data has to render the bare id unchanged.
 USER_API = "/apis/user.openshift.io/v1/users"
 
+# The cluster's OAuth configuration — the object that holds the identity providers, and the ONLY
+# place the login-gate group is written down. Three similarly named resources exist and only this one
+# has identityProviders: `authentications.operator.openshift.io/cluster` carries logLevel (see
+# docs/LOGIN_CAPTURE_QUICKCHECK.md) and `authentications.config.openshift.io/cluster` carries `type`.
+# A single object, so this is a get rather than a list, and the grant can be narrowed with
+# resourceNames — which Kubernetes honours for get, unlike list.
+OAUTH_API = "/apis/config.openshift.io/v1/oauths/cluster"
+
+# The oauth-server's own pods, and their logs. Read for ONE purpose: the lines naming who logged in,
+# which exist only at `spec.logLevel: Debug` on the authentication OPERATOR CR — not the OAuth CR. See
+# docs/LOGIN_CAPTURE_QUICKCHECK.md.
+#
+# Templated on the namespace because it is a chart value (`loginCapture.namespace`), not because it
+# varies in practice: OpenShift installs the OAuth server into openshift-authentication and the grant
+# the chart creates is a Role in that one namespace.
+POD_API_TMPL = "/api/v1/namespaces/%s/pods"
+
 # The namespace-configuration-operator's CRs — SAME API group as GroupSync, different
 # CRDs. Cluster-scoped. These template out the RoleBindings that grant the synced groups
 # their access, so they are the other half of the pipeline this dashboard watches.
@@ -44,6 +63,14 @@ ROLEBINDING_API = "/apis/rbac.authorization.k8s.io/v1/rolebindings"
 CLUSTERROLEBINDING_API = "/apis/rbac.authorization.k8s.io/v1/clusterrolebindings"
 
 SYSTEM_GROUP_PREFIX = "system:"
+"""Kubernetes reserves this prefix for built-in identities.
+
+Binding subjects like ``system:serviceaccounts:<ns>`` and ``system:authenticated`` are
+VIRTUAL groups: they authorise real access but no Group object exists or ever will. On the
+target cluster 110 of 149 distinct Group subjects are of this form, so treating "absent
+from the Group API" as broken would bury the 9 genuinely broken ones in 110 false
+positives. Reserved-by-convention rather than guaranteed, so these are classified and
+labelled, never silently dropped."""
 
 # Platform identities that appear as `kind: User` on bindings the cluster ships with, and
 # which must never be reported as a governance violation. Measured on the reference
@@ -65,14 +92,127 @@ PLATFORM_USER_NAMES = frozenset({
 def is_platform_user(name: str) -> bool:
     """Whether a User subject is a cluster-internal identity rather than a person."""
     return name.startswith(PLATFORM_USER_PREFIXES) or name in PLATFORM_USER_NAMES
-"""Kubernetes reserves this prefix for built-in identities.
 
-Binding subjects like ``system:serviceaccounts:<ns>`` and ``system:authenticated`` are
-VIRTUAL groups: they authorise real access but no Group object exists or ever will. On the
-target cluster 110 of 149 distinct Group subjects are of this form, so treating "absent
-from the Group API" as broken would bury the 9 genuinely broken ones in 110 false
-positives. Reserved-by-convention rather than guaranteed, so these are classified and
-labelled, never silently dropped."""
+
+# The membership clause of an LDAP search filter, in either of the two spellings that exist.
+#
+# NEITHER IS STANDARDISED. `memberOf` is what OpenLDAP's memberof overlay writes and what Active
+# Directory uses; `isMemberOf` is what 389-ds and Oracle/Sun DSEE write. No RFC defines either, so a
+# filter may legitimately use one or the other and a parser that knows only one finds nothing on half
+# the directories in the world — while reporting "no login gate is configured", which is a false
+# statement about the cluster rather than a visible failure.
+#
+# Case-insensitive because LDAP attribute descriptions are (RFC 4512 §2.5), and filters in the wild
+# are written `memberOf`, `memberof` and `MemberOf`.
+#
+# `[^)]+` for the value: a DN contains commas and equals signs, which is why a comma-delimited parse
+# would truncate it at `cn=x`, but it does not contain a parenthesis unless escaped as `\28`/`\29` —
+# and an escaped paren survives this unharmed because the escape is not a literal `)`.
+_ACCESS_GROUP_CLAUSE = re.compile(r"\(\s*(?:is)?memberof\s*=\s*([^)]+?)\s*\)", re.I)
+
+
+_DN_ATTRIBUTE = re.compile(r"(?:[A-Za-z][A-Za-z0-9-]*|[0-9]+(?:\.[0-9]+)+)\Z")
+
+
+def _split_unescaped(value: str, delimiter: str) -> list[str] | None:
+    """Split RFC 4514 separators while preserving escaped punctuation."""
+    parts, current, escaped = [], [], False
+    for char in value:
+        if escaped:
+            current.extend(("\\", char))
+            escaped = False
+        elif char == "\\":
+            escaped = True
+        elif char == delimiter:
+            parts.append("".join(current))
+            current = []
+        else:
+            current.append(char)
+    if escaped:
+        return None
+    parts.append("".join(current))
+    return parts
+
+
+def _looks_like_dn(value: str) -> bool:
+    """Validate the RFC 4514 structure needed before a filter value is treated as a group DN."""
+    def valid_attribute_value(raw: str) -> bool:
+        if not raw:
+            return False
+        if raw.startswith("#"):
+            encoded = raw[1:]
+            return bool(encoded) and len(encoded) % 2 == 0 and bool(
+                re.fullmatch(r"[0-9A-Fa-f]+", encoded))
+        if raw[0] in {" ", "#"} or raw[-1] == " ":
+            return False
+        index = 0
+        while index < len(raw):
+            char = raw[index]
+            if char == "\\":
+                if index + 1 >= len(raw):
+                    return False
+                if (index + 2 < len(raw)
+                        and re.fullmatch(r"[0-9A-Fa-f]{2}", raw[index + 1:index + 3])):
+                    index += 3
+                else:
+                    index += 2
+                continue
+            if char in {'"', ";", "<", ">"}:
+                return False
+            index += 1
+        return True
+
+    rdns = _split_unescaped(value, ",")
+    if not rdns or any(not rdn for rdn in rdns):
+        return False
+    for rdn in rdns:
+        avas = _split_unescaped(rdn, "+")
+        if not avas:
+            return False
+        for ava in avas:
+            attribute, separator, attr_value = ava.partition("=")
+            if (not separator or not _DN_ATTRIBUTE.fullmatch(attribute.strip())
+                    or not valid_attribute_value(attr_value)):
+                return False
+    return True
+
+
+def _access_group_from_ldap_url(url: str) -> str | None:
+    """A syntactically valid gated-group DN from an RFC 2255 URL, or None."""
+    _, separator, rest = url.partition("://")
+    if not separator:
+        return None
+    parts = rest.split("?")
+    if len(parts) < 4:
+        return None
+    filt = unquote(parts[3]).strip()
+    match = _ACCESS_GROUP_CLAUSE.search(filt) if filt else None
+    if not match:
+        return None
+    dn = match.group(1).strip()
+    return dn if _looks_like_dn(dn) else None
+
+
+def dn_equal(a: str | None, b: str | None) -> bool:
+    """Whether two DNs name the same directory object, for our purposes.
+
+    CASEFOLDED, because LDAP DNs are not case-sensitive in their attribute names and, for the
+    directory-string syntax that cn/ou/dc use, not in their values either. The group-sync operator
+    writes a group's DN into `openshift.io/ldap.uid` exactly as the directory returned it, while a DN
+    typed into values.yaml or copied out of an Active Directory console is conventionally written
+    `CN=...,OU=...,DC=...`. An exact comparison would then report "the gate group is not synced" on a
+    cluster where it is synced perfectly well — a false negative that reads as a missing prerequisite.
+
+    DELIBERATELY NOT a full RFC 4514 comparison: that would need to normalise escaping, optional
+    spaces around the commas, and attribute aliases (`cn` vs `commonName`). Both strings here come
+    from a machine — one from the operator's annotation, one from the OAuth CR's filter or a value
+    the operator pasted from the same directory — so casefold plus strip covers what actually differs
+    and adds no parser to get wrong. If a directory ever needs more, this is the one place to change.
+    """
+    if not a or not b:
+        return False
+    return a.strip().casefold() == b.strip().casefold()
+
 
 SYNC_PROVIDER_LABEL = "group-sync-operator.redhat-cop.io/sync-provider"
 CONFIG_SOURCE_LABEL = "rbac.ocp.io/config-source"
@@ -449,6 +589,217 @@ class ClusterClient:
         )
         return names
 
+    def fetch_access_group_dn(self) -> str | None:
+        """The login-gate group's DN, read out of the OAuth CR, or None if there is none to read.
+
+        WHY THE OAUTH CR AND NOT A GUESS. An LDAP identity provider's `url` is an RFC 2255 LDAP URL
+        whose fourth field is the search filter, and a cluster that gates authentication on group
+        membership puts that group in the filter. Measured on the reference cluster:
+
+          ldaps://openldap-service.ldap-testing.svc.cluster.local:636/dc=ephico2real,dc=com
+              ?uid?sub?(&(uid=*)(memberOf=cn=app-ssb-autobahnusers,ou=Groups,dc=ephico2real,dc=com))
+                               ^^^^^^^^ ^-------------------- the group -------------------^
+
+        BOTH SPELLINGS, because the attribute is not standardised. OpenLDAP's memberof overlay writes
+        `memberOf`; 389-ds and Oracle/Sun DSEE write `isMemberOf`; and neither is defined by an RFC, so
+        a filter may use either. Matching only one would silently find nothing on half of the
+        directories this runs against, and "no gate configured" and "we looked for the wrong attribute"
+        would be indistinguishable. Case-insensitive too — LDAP attribute names are.
+
+        None covers three different situations on purpose, and none of them is an error:
+          * FORBIDDEN — the optional grant on oauths/cluster was declined. Set the DN explicitly.
+          * no LDAP identity provider at all — nothing to discover.
+          * an LDAP provider whose filter carries no membership clause — there IS no gate, and every
+            account in the search base can sign in. That is a finding, and the caller reports it as
+            one rather than rendering an empty panel.
+        """
+        with self._client() as client:
+            try:
+                oauth = self._get(client, OAUTH_API, {})
+            except ClusterError as exc:
+                if exc.outcome == FORBIDDEN and OAUTH_API in exc.message:
+                    log.debug("%s: not permitted to read the OAuth CR — the login-gate group "
+                              "cannot be discovered; set clusterAccessGroup explicitly",
+                              self.cluster.name)
+                    return None
+                # Anchored on the path, following fetch()'s reasoning: the message carries 200
+                # characters of the response BODY, so a 500 whose body happens to mention 404 must
+                # not be read as "no OAuth CR here".
+                if exc.message.startswith(f"HTTP 404 on {OAUTH_API}"):
+                    log.debug("%s: no OAuth CR — not an OpenShift cluster, or none configured",
+                              self.cluster.name)
+                    return None
+                raise
+        for idp in (oauth.get("spec") or {}).get("identityProviders") or []:
+            url = ((idp.get("ldap") or {}).get("url") or "").strip()
+            if not url:
+                continue
+            dn = _access_group_from_ldap_url(url)
+            if dn:
+                log.debug("%s: login-gate group discovered from identity provider %r: %s",
+                          self.cluster.name, idp.get("name"), dn)
+                return dn
+        return None
+
+    def fetch_oauth_pods(self, namespace: str) -> list[str] | None:
+        """Names of the Running oauth-server pods, or None when we may not list them.
+
+        DISCOVERY IS NOT OPTIONAL. Pod names are generated, production runs two or three replicas, and
+        every roll replaces them — so there is no fixed name to read and no Deployment log subresource
+        to read instead (verified: `GET .../deployments/oauth-openshift/log` returns "the server could
+        not find the requested resource"). `oc logs deploy/x` only looks combined; the client resolves
+        the Deployment to its pods and reads each one, which is what this does.
+
+        Only Running pods. A Pending pod has produced nothing yet, and a Terminating one is mid-roll —
+        both are read next cycle if they are still there, and neither is worth a failed request.
+
+        None means FORBIDDEN, deliberately distinct from [] (permitted, no pods found). The grant is
+        optional: an install that never enabled loginCapture, or upgraded the image without
+        re-applying RBAC, gets a 403 here and must degrade rather than fail the poll.
+        """
+        path = POD_API_TMPL % namespace
+        with self._client() as client:
+            try:
+                items = self._list_all(client, path)
+            except ClusterError as exc:
+                if exc.outcome == FORBIDDEN and path in exc.message:
+                    log.info(
+                        "%s: not permitted to list pods in %s — login capture is off. Grant it with "
+                        "loginCapture.enabled=true.", self.cluster.name, namespace,
+                    )
+                    return None
+                raise
+        return [
+            name for obj in items
+            if (obj.get("status") or {}).get("phase") == "Running"
+            and (name := (obj.get("metadata") or {}).get("name"))
+        ]
+
+    def fetch_pod_log(
+        self,
+        namespace: str,
+        pod_name: str,
+        since_seconds: int | None = None,
+        max_bytes: int = 8 * 1024 * 1024,
+    ) -> list[str] | None:
+        """Timestamped log lines for one pod, or None when this pod cannot be read right now.
+
+        NOT THROUGH `_get()`, and that is mandatory rather than stylistic: `_get` always calls
+        `response.json()`, and this endpoint returns TEXT. `_client()` IS used — it only supplies the
+        bearer token and CA verification, which this needs exactly as much as any other call.
+
+        STREAMED, AND BYTE-BOUNDED — in BYTES, counted before any line is assembled. The previous
+        draft counted characters of lines `iter_lines()` had already buffered whole, so a single
+        line larger than the cap was held in memory before it could be measured, and a multi-byte
+        log undercounted. Stopping at the cap also ends the transfer instead of paying for lines
+        that would be discarded.
+
+        A CAP HIT KEEPS THE OLDEST LINES OF THE WINDOW, deliberately. The kubelet streams oldest
+        first, and oldest-first is the direction the watermark machinery REQUIRES: the cursor only
+        advances through lines actually returned, so the deferred newest lines fall inside the next
+        cycle's window and nothing is lost — only late. Keeping the newest instead would let the
+        cursor advance past everything the cap displaced and silently drop it forever; recency is
+        what the next cycle gets back anyway, completeness is not. (An earlier comment here claimed
+        the newest lines were kept; it described the opposite of what the code did.) The line the
+        cap cuts in half is dropped for the same reason: a truncated diagnostic can mis-parse — a
+        bind error losing its `data` sub-code reads as a plain wrong password — and the whole line
+        is inside the next cycle's overlap.
+
+        `timestamps=true` is what makes the result usable at all — it prefixes each line with the
+        kubelet's RFC3339 UTC stamp. klog's own stamp carries no year and no timezone.
+
+        RETURNS None FOR THE ORDINARY ROLL, RAISES FOR THE REST, and the distinction is the point:
+
+          404              the pod went away between listing and reading. Every roll does this.
+          400 not-ready    the container has not started, so there is no log yet. Measured message:
+                           "container nope is not valid for pod ..." — reason BadRequest.
+          403              the grant is missing. LOGGED AT WARNING, because it is permanent and will
+                           not fix itself, and a silent None here looks identical to "nobody logged
+                           in" forever.
+          any other        raised, so a real outage is not mistaken for roll noise.
+        """
+        params: dict[str, Any] = {"timestamps": "true"}
+        if since_seconds is not None:
+            params["sinceSeconds"] = str(since_seconds)
+        path = f"{POD_API_TMPL % namespace}/{pod_name}/log"
+
+        chunks: list[bytes] = []
+        size = 0
+        truncated = False
+        try:
+            with self._client() as client:
+                with client.stream("GET", path, params=params) as response:
+                    if response.status_code >= 400:
+                        response.read()
+                        return self._log_read_refused(response, namespace, pod_name)
+                    for chunk in response.iter_bytes(chunk_size=min(64 * 1024, max(1, max_bytes))):
+                        room = max_bytes - size
+                        if len(chunk) >= room:
+                            chunks.append(chunk[:room])
+                            size = max_bytes
+                            truncated = True
+                            break
+                        chunks.append(chunk)
+                        size += len(chunk)
+        except httpx.HTTPError as exc:
+            # A connect error or timeout reading ONE pod must not fail the cycle: the other pods still
+            # have lines, and this one is retried next time from the same watermark.
+            log.info("%s: could not read %s log (%s: %s)",
+                     self.cluster.name, pod_name, type(exc).__name__, exc)
+            return None
+
+        # errors="replace" cannot corrupt a kept line: the only place a multi-byte character can be
+        # split is the cap boundary, and the line holding it is popped below.
+        lines = b"".join(chunks).decode("utf-8", errors="replace").splitlines()
+        if truncated:
+            if lines:
+                lines.pop()
+            log.info(
+                "%s: %s log hit the %d-byte cap after %d lines; the OLDEST lines of this window "
+                "are kept, and the rest fall inside the next cycle's window once the watermark "
+                "has advanced",
+                self.cluster.name, pod_name, max_bytes, len(lines),
+            )
+        return lines
+
+    def _log_read_refused(
+        self, response: httpx.Response, namespace: str, pod_name: str
+    ) -> list[str] | None:
+        """Classify a >=400 on a pod-log read: benign roll noise, or something worth saying out loud.
+
+        The Kubernetes Status body carries `reason` and `message`, which is the only way to tell a
+        container-not-ready 400 from a 400 that means something else. Guessing from the code alone is
+        what turns a permanent misconfiguration into indistinguishable debug noise.
+        """
+        try:
+            body = response.json()
+        except ValueError:
+            body = {}
+        reason = body.get("reason") or ""
+        message = body.get("message") or response.text[:200]
+        code = response.status_code
+
+        if code == 404:
+            log.debug("%s: %s is gone (read raced a roll)", self.cluster.name, pod_name)
+            return None
+        if code == 403:
+            log.warning(
+                "%s: FORBIDDEN reading %s/%s log — capture will record nothing until this is fixed. "
+                "The chart grants it with loginCapture.enabled=true (a Role in %s). Reason: %s",
+                self.cluster.name, namespace, pod_name, namespace, reason or code,
+            )
+            return None
+        if code == 400 and ("ContainerCreating" in message or "not started" in message
+                            or "is waiting to start" in message):
+            log.debug("%s: %s container not ready yet (%s)", self.cluster.name, pod_name, reason)
+            return None
+        if code == 401:
+            raise ClusterError(AUTH_FAILED, f"401 Unauthorized reading {pod_name} log")
+        # Everything else — an unexpected 400 included — is surfaced rather than swallowed.
+        log.warning("%s: unexpected HTTP %d reading %s log (reason=%s): %s",
+                    self.cluster.name, code, pod_name, reason or "-", message[:200])
+        return None
+
     def fetch_bindings(self) -> list[BindingView]:
         """Every RoleBinding and ClusterRoleBinding subject of kind Group.
 
@@ -628,8 +979,20 @@ def _group_view(obj: dict) -> GroupView:
     # `users` is a top-level field on Group, not under spec, and is null rather than []
     # when the group is empty — which is precisely the EMPTY state of PLAN §7.
     users = obj.get("users") or []
-    # Sorted so a membership diff between polls reflects real change, not API ordering.
-    members = sorted(str(u) for u in users)
+    # DISTINCT, sorted. Sorted so a membership diff between polls reflects real change rather than API
+    # ordering — and distinct because the array CAN repeat a name.
+    #
+    # Measured, not defensive. A group carrying both membership attributes (one structural objectClass
+    # plus AUXILIARY extensibleObject, which is the only schema-valid way to hold both — OpenLDAP
+    # rejects groupOfNames + groupOfUniqueNames on one entry as an incompatible structural chain)
+    # synced as ["john.doe","jane.smith","john.doe","bob.wilson"]. The operator's ExtractMembers
+    # APPENDS the values of each configured membership attribute and does not deduplicate, and nothing
+    # downstream of it does either — the Group object itself carries the repeat.
+    #
+    # Without this the dashboard reported `member_count: 4` above a list of THREE people, because the
+    # count came from this array while the list came from group_member, whose primary key had already
+    # collapsed the duplicate. One of those two numbers had to be wrong; three is the true one.
+    members = sorted({str(u) for u in users})
     return GroupView(
         name=meta.get("name", ""),
         member_count=len(members),

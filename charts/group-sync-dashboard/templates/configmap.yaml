@@ -30,6 +30,21 @@ data:
     userActivityVisibility: {{ .Values.config.userActivity.visibility | quote }}
     userActivityFlushSeconds: {{ .Values.config.userActivity.flushSeconds }}
     userActivityRetentionDays: {{ .Values.config.userActivity.retentionDays }}
+    # THE GRANT AND THE MODULE ARE TWO DIFFERENT THINGS, and until now only the grant was wired.
+    # `loginCapture.enabled` rendered the Role that lets the pod read oauth-server logs, and nothing
+    # told the application to read them: the setting the code looks for is this ConfigMap key, so
+    # capture stayed off with the flag on and the permission in place. Caught on the cluster, where
+    # /api/.../logins answered `enabled: false` on a release built from `enabled: true`.
+    loginCaptureEnabled: {{ .Values.loginCapture.enabled }}
+    loginCaptureNamespace: {{ .Values.loginCapture.namespace | quote }}
+    # Which provider NAMES are local HTPasswd accounts. The log carries the provider name and
+    # nothing about its type, so a success on `developer` is indistinguishable from a directory
+    # login without this list — and these are break-glass accounts, not people to offboard.
+    loginCaptureHtpasswdProviders: {{ .Values.loginCapture.htpasswdProviders | join "," | quote }}
+    loginRetentionDays: {{ .Values.loginCapture.retentionDays }}
+    # The login-gate group's DN. Empty means "discover it from the OAuth CR" — see values.yaml.
+    # Quoted unconditionally: a DN contains commas and colons, both of which YAML reads as structure.
+    clusterAccessGroup: {{ .Values.clusterAccess.group | quote }}
     leaderElection: {{ .Values.leaderElection.enabled }}
     leaderLeaseName: {{ .Values.leaderElection.leaseName | quote }}
     clusters:
