@@ -29,6 +29,25 @@ on which pod you reach. Current state self-heals within one poll; history does n
 
 Authentication: OpenShift OAuth. Anyone who can log into this cluster can view the
 dashboard{{ if .Values.oauthProxy.sar }}, subject to the SubjectAccessReview in oauthProxy.sar{{ end }}.
+
+{{- $expire := include "gsd.cookieExpire" . }}
+Sessions: the proxy cookie lives {{ $expire }} from login, and it is ABSOLUTE — there is
+no cookie refresh and no mid-session revalidation, so an active reader is signed out at
+that mark too, and a revoked user keeps access until it. Change it with
+oauthProxy.cookie.expire. Signing out revokes the OAuth token itself, so it does not
+merely forget the session.
+{{- $oauthCR := lookup "config.openshift.io/v1" "OAuth" "" "cluster" }}
+{{- if $oauthCR }}
+{{- $tc := (($oauthCR.spec) | default dict).tokenConfig | default dict }}
+{{- $maxAge := $tc.accessTokenMaxAgeSeconds | default 86400 }}
+{{- if gt (float64 (include "gsd.durationSeconds" $expire)) (float64 $maxAge) }}
+
+WARNING: the cookie lifetime ({{ $expire }}) exceeds this cluster's
+accessTokenMaxAgeSeconds ({{ $maxAge }}s). Nothing rechecks the token mid-session, so the
+cookie would outlive the token it represents and API calls fail before sign-out does.
+Lower oauthProxy.cookie.expire.
+{{- end }}
+{{- end }}
 {{- else }}
 
 WARNING: the Ingress has NO authentication and the dashboard exposes group membership.

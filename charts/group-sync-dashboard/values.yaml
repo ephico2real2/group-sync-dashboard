@@ -859,11 +859,55 @@ oauthProxy:
   # every user out.
   cookieSecret: ""
 
+  # Session lifetime: ONE absolute number, measured from login, deliberately NOT sliding.
+  #
+  # There is no `refresh` key and no -cookie-refresh flag, and that is a MEASUREMENT rather
+  # than a preference. With provider=openshift the proxy's refresh-time revalidation sends
+  # the token as a QUERY PARAMETER to /apis/user.openshift.io/v1/users/~, which the API
+  # server ignores — it answered 403 naming the caller system:anonymous — so every refresh
+  # interval would CLEAR the session instead of extending it: a forced-logout timer wearing
+  # a keep-alive's name. The cluster-logging operator ships Kibana's oauth-proxy the same
+  # way on this same provider, -cookie-expire with no -cookie-refresh. Setting `refresh`
+  # here fails the render rather than quietly logging everyone out at the interval.
+  #
+  # Because it cannot slide, this cap applies to an ACTIVE reader too: at 4h everyone
+  # re-authenticates, mid-task or not. Measured on the reference cluster, re-entry asks for
+  # credentials — the OAuth server keeps no reusable session for this client — so the cap is
+  # a real forced re-login rather than a redirect flicker. Raise it if that bites during a
+  # long incident; the lever is this number, not the design.
+  #
+  # Go duration: "4h", "90m", "1h30m". A bare number has no unit and is refused at render.
+  cookie:
+    expire: 4h
+
+  # The proxy's own URL prefix. Everything it serves lives under it — /sign_in, /sign_out,
+  # /callback, /auth — and the app composes its sign-out link from this rather than
+  # hardcoding "/oauth", so the two cannot drift. Changing it also changes the callback
+  # path, which must keep matching the ServiceAccount's redirect-uri annotation.
+  proxyPrefix: /oauth
+
+  # Where the proxy sends the browser after clearing its cookie. The default is this
+  # dashboard's own unauthenticated /signed-out page, RELATIVE on purpose: the browser
+  # resolves it against whichever host served the redirect, so rendering needs no cluster
+  # lookup and a changed route cannot strand it.
+  #
+  # It must land OUTSIDE the proxy, or sign-out is a no-op that returns the reader signed
+  # in — which is why /signed-out is in skipAuthRegex below, and why a render guard refuses
+  # to let it be dropped from there while this stays empty.
+  logoutUrl: ""
+
   # Paths served without authentication. The health endpoints MUST be here or kubelet
   # probes receive a 302 to the login page and the pod is killed as unhealthy. /metrics is
   # included so a ServiceMonitor can scrape it; the exporter emits counts and states only,
   # never a group or user name, precisely because it is reachable unauthenticated.
-  skipAuthRegex: "^/(healthz|readyz|metrics)$"
+  #
+  # /signed-out is the logout landing page and must be here: behind the proxy it would start
+  # a fresh OAuth flow and return the reader signed in, the opposite of what they clicked. It
+  # links app.css and favicon.svg, so those are admitted too — the page carries no <style>
+  # block by contract, so without the stylesheet it renders unstyled. The vendored FONTS stay
+  # authenticated, so it deliberately falls back to system fonts rather than widening the
+  # unauthenticated surface further.
+  skipAuthRegex: '^/(healthz|readyz|metrics|signed-out|static/(app\.css|favicon\.svg))$'
 
   # Empty means authentication only. To also require a permission, put a SubjectAccessReview
   # here, e.g. to admit only those who could read the underlying data anyway:
