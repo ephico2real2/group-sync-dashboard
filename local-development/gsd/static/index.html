@@ -1744,7 +1744,10 @@ function loginsPage() {
           <tbody>${rows.map((r) => `<tr>
             <td class="mono" style="white-space:nowrap">${esc(fmtTime(r.at))}</td>
             <td>${loginUser(r)}${r.break_glass
-              ? ` <span class="chip" title="A local HTPasswd account — kubeadmin or developer. Not a person to offboard, and deliberately excluded from the list above.">break-glass</span>`
+              ? ` <span class="chip" title="${r.outcome === "success"
+                  ? "A break-glass sign-in: a local HTPasswd account, not a directory identity, so there is no synced group to govern it and nobody to offboard."
+                  : "An attempt against the local HTPasswd provider. The name may not exist — HTPasswd reports no reason — so this says which provider was tried and nothing about the account."}">${
+                  r.outcome === "success" ? "break-glass" : "local provider"}</span>`
               : (r.known_user ? "" : ` <span class="chip">${r.has_history
                   ? "removed from every group" : "no synced group"}</span>`)}</td>
             <td>${outcomeBadge(r.outcome)}</td>
@@ -1790,9 +1793,9 @@ function ungovernedCard(d, rows) {
     return `<section class="card">
       <h3>Accounts in no synced group</h3>
       <div class="empty-note">None. Every account seen signing in — successfully or not — is a
-        member of at least one synced group. Local break-glass accounts
-        (<code>kubeadmin</code>, <code>developer</code>) are excluded by configuration, because
-        there is nowhere to migrate them to.</div>
+        member of at least one synced group. Attempts on a local HTPasswd provider are excluded by
+        configuration (<code>loginCapture.htpasswdProviders</code>), because a break-glass account has
+        no synced group to belong to and nowhere to migrate to.</div>
     </section>`;
   }
   return `<section class="card">
@@ -1821,7 +1824,10 @@ function ungovernedCard(d, rows) {
       which the <strong>Access granted</strong> tab is where to look. <strong>Ever governed</strong>
       reads the membership timeline: <em>was, and no longer is</em> means the removal is recorded
       and the account is still being used, which is an offboarding that did not finish.
-      Break-glass accounts are excluded — they are not people to offboard.
+      Attempts on a local HTPasswd provider are excluded, so an account that only ever signs in that
+      way — <code>kubeadmin</code>, <code>developer</code> — never appears here. The exclusion is per
+      ATTEMPT, not per name: if somebody types a break-glass name at the <em>directory</em> provider
+      it does appear, on the strength of that attempt, which is worth seeing rather than hiding.
     </div>
   </section>`;
 }

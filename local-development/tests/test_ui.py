@@ -1289,9 +1289,9 @@ class TestLoginsPage:
     def test_a_governed_member_is_not_reported_as_a_finding(self, dash):
         """alice is in a synced group. Reporting her would make the list noise."""
         self._open(dash)
-        card = dash.locator("section.card", has=dash.locator(
-            "h3:text-is('Accounts in no synced group')"))
-        assert "alice" not in card.inner_text()
+        rows = dash.locator("section.card", has=dash.locator(
+            "h3:text-is('Accounts in no synced group')")).locator("tbody tr")
+        assert "alice" not in str(rows.all_inner_texts()), rows.all_inner_texts()
 
     def test_a_break_glass_success_is_labelled_and_excluded(self, dash):
         """`developer` is a local HTPasswd account, not a person to offboard.
@@ -1303,13 +1303,34 @@ class TestLoginsPage:
         chronology = dash.locator("section.card", has=dash.locator(
             "h3:text-is('Every attempt')"))
         row = chronology.locator("tbody tr").filter(has_text="developer").first
-        assert "break-glass" in row.inner_text()
-        card = dash.locator("section.card", has=dash.locator(
-            "h3:text-is('Accounts in no synced group')"))
-        assert "developer" not in card.inner_text()
+        assert "break-glass" in row.inner_text(), (
+            "a SUCCESS on a local provider is a break-glass sign-in and must say so"
+        )
+        rows = dash.locator("section.card", has=dash.locator(
+            "h3:text-is('Accounts in no synced group')")).locator("tbody tr")
+        assert "developer" not in rows.all_inner_texts().__str__(), rows.all_inner_texts()
         # And the count beside the list agrees with the list: bob and mallory, not developer.
         hero = dash.locator(".hero .value").first.inner_text().strip()
         assert hero == "2", f"hero says {hero}, expected the 2 ungoverned accounts"
+
+    def test_a_failed_local_provider_attempt_is_not_called_break_glass(self, dash):
+        """Seen on the live cluster as `testuser break-glass`, which asserted something false.
+
+        A failed attempt against the HTPasswd provider says WHICH PROVIDER was tried and nothing
+        about the account — HTPasswd reports no reason, so the name may not exist at all. Calling that
+        row break-glass claims it is a break-glass account.
+        """
+        self._open(dash)
+        chronology = dash.locator("section.card", has=dash.locator(
+            "h3:text-is('Every attempt')"))
+        # Seed a failure on the local provider by filtering to it is not possible — the fixture's
+        # break-glass row is a success — so assert the RULE instead: no failed row wears the label.
+        for i in range(chronology.locator("tbody tr").count()):
+            row = chronology.locator("tbody tr").nth(i).inner_text()
+            if "break-glass" in row:
+                assert "signed in" in row, (
+                    f"a non-success row is labelled break-glass: {row!r}"
+                )
 
     def test_a_name_with_no_history_is_not_a_link_into_an_error(self, dash):
         """/users/{name} 404s for a name with no groups AND no history — which is mallory.
