@@ -291,6 +291,21 @@ body {
 }
 .skip:focus { top: 8px; }
 
+/* Visible to a screen reader, not to the eye. NOT `display: none` or `visibility: hidden` — both remove
+   the node from the accessibility tree, so nothing would read it and the element would be pointless.
+   The 1px box plus clip is the long-standing pattern that survives every engine.
+   Used for supplementary help that would clutter the filter bar if shown, and referenced with
+   aria-describedby so a screen reader announces it AFTER the field's own label. */
+.sr-only {
+  position: absolute;
+  width: 1px; height: 1px;
+  margin: -1px; padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 @media (prefers-reduced-motion: reduce) {
   /* Not `animation: none` — some transitions carry meaning (the stale-refetch fade). They
      are collapsed to effectively instant instead of removed, so nothing depends on an
@@ -743,6 +758,10 @@ const STATES = {
 };
 
 const view = { page: "overview", cluster: null, groupsync: null, groupFilter: "all", bindingFilter: "review",
+                /* Free-text group search. A FILTER, so it lives here rather than in POSITION_KEYS —
+                   same reasoning as groupFilter: it narrows what a page shows, it is not a place, and
+                   a history entry per keystroke would bury every position Back exists to reach. */
+                groupSearch: "",
                 group: null, user: null,
                 /* Namespace-audit controls. They live HERE and not in the DOM because the
                    page repaints on every poll: state held in the markup would silently
@@ -1116,6 +1135,17 @@ function renderFilters() {
           o === "all" ? "all outcomes" : esc(OUTCOME_LABEL[o] || o)}</option>`).join("")}</select>`;
   }
   if (view.page === "groups") {
+    // type=search rather than text: it gets the platform's clear affordance and, on iOS, a keyboard
+    // with no autocorrect — which would otherwise "fix" a group name like `ns-admin` while it is typed.
+    // The value is esc()'d into an attribute like every other interpolation on this page.
+    html += `<label for="f-group-search">Find</label>
+      <input id="f-group-search" type="search" inputmode="search" autocomplete="off"
+             spellcheck="false" placeholder="filter by name"
+             aria-describedby="f-group-search-help"
+             title="Filters by name as you type. Several words are ANDed — &quot;alpha admin&quot; finds app-ocp-rbac-alpha-ns-admin. Escape clears."
+             value="${esc(view.groupSearch)}">
+      <span id="f-group-search-help" class="sr-only">Filters the group list by name as you type.
+        Several words are combined with AND, so every word must appear. Press Escape to clear.</span>`;
     html += `<label for="f-state">Group state</label>
       <select id="f-state">
         <option value="all"${view.groupFilter === "all" ? " selected" : ""}>all</option>
@@ -1137,6 +1167,24 @@ function renderFilters() {
       ${tab("logins", "Logins")}
       ${tab("usage", "Usage")}
     </nav>`;
+  // FOCUS AND CARET SURVIVE THE REBUILD, and this is load-bearing rather than polish. This function
+  // replaces the whole bar's innerHTML, render() calls it before every repaint, and the page repaints
+  // itself every 30 SECONDS. Without this a text field in here is unusable: the element the reader is
+  // typing into is destroyed and replaced, so focus goes to the body and the caret is lost — after one
+  // character when the input re-renders on its own event, and mid-word when the poll fires.
+  //
+  // Captured by id, because the new element is a different object. selectionStart is read defensively:
+  // it is null on an <input> that does not support selection and throws on some element types, and
+  // losing the caret position is a far smaller failure than throwing inside a render.
+  const active = document.activeElement;
+  let restore = null;
+  if (active && active.id && $("filters").contains(active)) {
+    restore = { id: active.id, start: null, end: null };
+    try {
+      restore.start = active.selectionStart;
+      restore.end = active.selectionEnd;
+    } catch (e) { /* not a selectable input; focus alone is enough */ }
+  }
   $("filters").innerHTML = html;
   // Drives the accent for the whole page — tab, bloom, card edge, focus ring.
   document.body.dataset.page = view.page;
@@ -1155,6 +1203,22 @@ function renderFilters() {
     navigate({ cluster: e.target.value, groupsync: null, group: null, user: null });
     refresh();
   };
+  const gs = $("f-group-search");
+  if (gs) {
+    // `input`, not `change`: it has to filter as the reader types. render() rather than refresh()
+    // because the groups endpoint applies no limit, so the whole list is already here — filtering is a
+    // repaint and costs no round trip, and a request per keystroke would be both slower and wrong.
+    gs.oninput = (e) => { view.groupSearch = e.target.value; render(); };
+    gs.onkeydown = (e) => {
+      // Escape clears rather than blurring, which is what a reader expects of a filter box and what
+      // type=search does natively on the platforms that render its clear button.
+      if (e.key === "Escape" && view.groupSearch) {
+        e.preventDefault();
+        view.groupSearch = "";
+        render();
+      }
+    };
+  }
   const st = $("f-state");
   if (st) st.onchange = (e) => { view.groupFilter = e.target.value; refresh(); };
   const bf = $("f-binding");
@@ -1164,6 +1228,17 @@ function renderFilters() {
   // reason the namespace picker refetches.
   const of = $("f-outcome");
   if (of) of.onchange = (e) => { view.loginOutcome = e.target.value; refresh(); };
+  if (restore) {
+    const el = $(restore.id);
+    if (el) {
+      el.focus();
+      // Put the caret back where it was, rather than at the end: a reader correcting a typo in the
+      // middle of a term would otherwise have every subsequent keystroke jump to the end of the field.
+      if (restore.start !== null && el.setSelectionRange) {
+        try { el.setSelectionRange(restore.start, restore.end); } catch (e) { /* not selectable */ }
+      }
+    }
+  }
   document.querySelectorAll("[data-nav]").forEach((b) => {
     b.onclick = () => {
       // Tabs are navigation. They pushed nothing before — and actively CLEARED the trail —
@@ -1379,18 +1454,52 @@ function groupsyncDetail() {
   </section>`;
 }
 
+/* Does this name match a free-text query? Every whitespace-separated term must appear.
+
+   AND, NOT a substring of the whole query, and that is the difference that makes it useful. Group names
+   are long and structured — app-ocp-rbac-alpha-ns-admin — so the two halves a reader remembers are
+   rarely adjacent: "alpha admin" finds it, and the same string as one substring finds nothing.
+
+   Order-independent for the same reason, so "admin alpha" is the same query. A single term degenerates
+   to an ordinary case-insensitive substring match, which is what a one-word search should do.
+
+   No regex and no globbing: a reader typing `app-ocp-rbac-*` means those characters, and treating the
+   input as a pattern would make `*` and `(` either magic or an error. Matching runs against the DATA;
+   the row is still rendered through esc(), so nothing here changes what reaches innerHTML. */
+function matchesGroupSearch(name, query) {
+  const terms = (query || "").toLowerCase().split(/\s+/).filter(Boolean);
+  if (terms.length === 0) return true;
+  const haystack = (name || "").toLowerCase();
+  return terms.every((t) => haystack.includes(t));
+}
+
 function groupsPage() {
-  const rows = data.groups;
+  // The whole list before the search narrows it, so the header can report what was hidden. A filtered
+  // view that cannot state its own denominator has the same defect as a truncated page that cannot:
+  // the reader cannot tell "there is one" from "there is one THAT MATCHES".
+  const all = data.groups;
+  const rows = all.filter((g) => matchesGroupSearch(g.name, view.groupSearch));
+  const searching = (view.groupSearch || "").trim().length > 0;
   const note = {
     empty: "Zero members, so the group grants nobody. On an operator-synced group that usually means an LDAP-side problem — a member DN that does not resolve. Includes hand-made groups, which also appear under unattributed.",
     unattributed: "No sync-provider label, so not managed by any GroupSync CR.",
     all: "",
   }[view.groupFilter];
   return `<section class="card">
-    <h2>Groups <span class="muted" style="font-weight:400">· ${rows.length} shown</span></h2>
+    <h2>Groups <span class="muted" style="font-weight:400">· ${searching
+      ? `${rows.length} of ${all.length} shown`
+      : `${rows.length} shown`}</span></h2>
     ${note ? `<div class="filterbar-note" style="margin-top:4px">${esc(note)}</div>` : ""}
+    ${searching ? `<div class="filterbar-note" style="margin-top:4px">Filtered by
+      <strong>${esc(view.groupSearch.trim())}</strong> — every word must appear in the name. Clear the
+      box, or press Escape in it, to see all ${all.length}.</div>` : ""}
     ${rows.length === 0
-      ? `<div class="empty-note">No groups match this filter.</div>`
+      ? (searching
+          ? `<div class="empty-note">No group name contains
+              <strong>${esc(view.groupSearch.trim())}</strong>. ${all.length} group${
+              all.length === 1 ? "" : "s"} match the state filter, so it is the search hiding them
+              rather than the data being empty.</div>`
+          : `<div class="empty-note">No groups match this filter.</div>`)
       : `<div class="scroll-x"><table>
           <thead><tr><th>Name</th><th class="num">Members</th><th>Owner</th>
             <th>Last refreshed</th><th>Source DN</th></tr></thead>

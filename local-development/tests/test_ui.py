@@ -1675,3 +1675,131 @@ class TestTheGateChipAppliesOnlyWhereTheGateApplies:
         card = dash.locator("section.card", has=dash.locator("h3:text-is('Every attempt')"))
         rows = card.locator("tbody tr").all_inner_texts()
         assert any("not in access group" in r and "ldap-local" in r for r in rows), rows
+
+
+class TestGroupSearch:
+    """Free-text filter on the Groups tab. 64 groups on the reference cluster is too many to scan.
+
+    The behaviour that matters is AND-of-terms, not substring-of-the-whole-query. Group names are long
+    and structured — app-ocp-rbac-alpha-ns-admin — so the two halves a reader remembers are rarely
+    adjacent: "alpha admin" has to find it, and as one substring it finds nothing.
+    """
+
+    def _open(self, dash):
+        dash.locator("button[data-nav='groups']").click()
+        dash.wait_for_selector("#f-group-search")
+
+    def _names(self, dash):
+        return [r.split("\t")[0].strip() for r in dash.locator("tbody tr").all_inner_texts()]
+
+    def test_a_single_term_is_a_substring_match(self, dash):
+        self._open(dash)
+        dash.fill("#f-group-search", "abcd")
+        dash.wait_for_function("() => view.groupSearch === 'abcd'")
+        names = self._names(dash)
+        assert names == ["app-ocp-rbac-abcd-ns-superuser"], names
+
+    def test_two_terms_are_ANDed_and_order_does_not_matter(self, dash):
+        """The whole point. Neither ordering appears as a contiguous substring of the name."""
+        self._open(dash)
+        for query in ("alpha admin", "admin alpha"):
+            dash.fill("#f-group-search", query)
+            dash.wait_for_function(f"() => view.groupSearch === {query!r}")
+            assert self._names(dash) == ["app-ocp-rbac-alpha-ns-admin"], (query, self._names(dash))
+        # And prove the premise: as one substring it matches nothing.
+        assert "alpha admin" not in "app-ocp-rbac-alpha-ns-admin"
+
+    def test_it_is_case_insensitive(self, dash):
+        self._open(dash)
+        dash.fill("#f-group-search", "ALPHA Admin")
+        dash.wait_for_function("() => view.groupSearch === 'ALPHA Admin'")
+        assert self._names(dash) == ["app-ocp-rbac-alpha-ns-admin"]
+
+    def test_a_term_matching_nothing_says_the_search_is_hiding_them(self, dash):
+        """An empty table must not read as "there are no groups"."""
+        self._open(dash)
+        dash.fill("#f-group-search", "zzzznope")
+        dash.wait_for_function("() => view.groupSearch === 'zzzznope'")
+        body = dash.locator("section.card").first.inner_text()
+        assert "No group name contains" in body, body[:200]
+        assert "the search hiding them" in body or "search hiding them" in body, body[:300]
+
+    def test_the_header_reports_the_denominator_while_filtering(self, dash):
+        """A filtered view that cannot report what it hid is the same failure as a truncated page."""
+        self._open(dash)
+        whole = dash.locator("section.card h2").first.inner_text()
+        assert "of" not in whole, whole
+        dash.fill("#f-group-search", "abcd")
+        dash.wait_for_function("() => view.groupSearch === 'abcd'")
+        assert "1 of " in dash.locator("section.card h2").first.inner_text()
+
+    def test_escape_clears_it(self, dash):
+        self._open(dash)
+        dash.fill("#f-group-search", "abcd")
+        dash.wait_for_function("() => view.groupSearch === 'abcd'")
+        dash.locator("#f-group-search").press("Escape")
+        dash.wait_for_function("() => view.groupSearch === ''")
+        assert len(self._names(dash)) == SYNCED_GROUPS
+
+    def test_the_caret_and_focus_survive_a_repaint(self, dash):
+        """THE ONE THAT MAKES IT USABLE. renderFilters replaces the whole bar's innerHTML and the page
+        repaints every 30s, so without preservation the field loses focus after one character and the
+        caret jumps to the end mid-word."""
+        self._open(dash)
+        dash.fill("#f-group-search", "alpha-admin")
+        # Put the caret in the middle, then force the repaint the poll would cause.
+        dash.locator("#f-group-search").evaluate("el => el.setSelectionRange(5, 5)")
+        dash.evaluate("() => render()")
+        state = dash.evaluate("""() => {
+            const el = document.getElementById('f-group-search');
+            return { focused: document.activeElement === el, start: el.selectionStart, value: el.value };
+        }""")
+        assert state["focused"], "focus was lost when the filter bar re-rendered"
+        assert state["start"] == 5, f"the caret moved to {state['start']}"
+        assert state["value"] == "alpha-admin"
+
+    def test_searching_does_not_refetch(self, dash):
+        """The endpoint applies no limit, so the whole list is already here. A request per keystroke
+        would be slower and would also search only whatever came back."""
+        dash.evaluate("() => { window.__calls = 0; const f = window.fetch;"
+                      " window.fetch = (...a) => { window.__calls++; return f(...a); }; }")
+        self._open(dash)
+        before = dash.evaluate("() => window.__calls")
+        dash.fill("#f-group-search", "alpha")
+        dash.wait_for_function("() => view.groupSearch === 'alpha'")
+        dash.wait_for_timeout(400)
+        assert dash.evaluate("() => window.__calls") == before, "filtering issued a network request"
+
+    def test_a_filtered_row_still_drills_in(self, dash):
+        """Filtering must not break the affordance it exists to reach."""
+        self._open(dash)
+        dash.fill("#f-group-search", "alpha admin")
+        dash.wait_for_function("() => view.groupSearch === 'alpha admin'")
+        dash.locator("tr[data-group='app-ocp-rbac-alpha-ns-admin']").click()
+        dash.wait_for_selector("#back-groups")
+        assert dash.evaluate("() => view.group") == "app-ocp-rbac-alpha-ns-admin"
+
+    def test_the_box_only_exists_on_the_groups_tab(self, dash):
+        self._open(dash)
+        assert dash.locator("#f-group-search").count() == 1
+        dash.click('button.tab:text-is("Overview")')
+        dash.wait_for_timeout(300)
+        assert dash.locator("#f-group-search").count() == 0
+
+    def test_the_visible_label_is_the_accessible_name(self, dash):
+        """aria-label REPLACES the accessible name. A sentence there means a screen reader announces a
+        paragraph where the visible label says "Find", and that mismatch breaks WCAG 2.5.3 Label in
+        Name for anyone driving the page by voice: they say "click Find" and hit nothing.
+
+        The help text is a DESCRIPTION, so it belongs behind aria-describedby.
+        """
+        self._open(dash)
+        el = dash.locator("#f-group-search")
+        assert el.get_attribute("aria-label") is None, "aria-label is overriding the visible label"
+        assert el.get_attribute("aria-describedby") == "f-group-search-help"
+        assert dash.locator("label[for='f-group-search']").inner_text().strip() == "Find"
+        help_text = dash.locator("#f-group-search-help")
+        assert "AND" in help_text.inner_text()
+        # Present in the accessibility tree, and not on screen: a 1px clipped box, never display:none.
+        assert help_text.evaluate("el => getComputedStyle(el).display") != "none"
+        assert help_text.evaluate("el => el.getBoundingClientRect().width") <= 2
