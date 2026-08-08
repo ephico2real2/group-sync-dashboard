@@ -20,14 +20,42 @@ import re
 
 import pytest
 
-INDEX = pathlib.Path(__file__).resolve().parents[1] / "gsd" / "static" / "index.html"
+STATIC = pathlib.Path(__file__).resolve().parents[1] / "gsd" / "static"
+INDEX = STATIC / "index.html"
+CSS = STATIC / "app.css"
 
 
 @pytest.fixture(scope="module")
 def css() -> str:
-    match = re.search(r"<style>(.*?)</style>", INDEX.read_text(), re.S)
-    assert match, "no <style> block — did the stylesheet move out of index.html?"
-    return match.group(1)
+    """The stylesheet, read as a FILE.
+
+    It used to be sliced out of index.html with a `<style>(.*?)</style>` regex, and that assert's
+    message asked "did the stylesheet move out of index.html?" — it since has. Reading the file is both
+    simpler and stricter: a regex over the page would silently check only the FIRST block if a second
+    one were ever added, whereas test_the_stylesheet_stays_out_of_the_page below fails if any inline
+    block appears at all.
+    """
+    assert CSS.exists(), f"{CSS} is missing — the stylesheet is served from /static/app.css"
+    return CSS.read_text()
+
+
+def test_the_stylesheet_stays_out_of_the_page():
+    """No inline <style> in index.html, so nothing can escape the two checks that read app.css.
+
+    The failure this prevents is quiet: a rule added inline still renders, so the page looks right while
+    its font-size skips the scale and its colours skip the contrast check.
+
+    A regex on the open tag, not a literal "<style>": any attribute — <style media="print"> is the
+    plausible one — would make the literal miss a block the browser still applies.
+    """
+    page = INDEX.read_text()
+    assert not re.search(r"<style\b", page, re.I), (
+        "index.html has an inline <style> block again. The type scale and the WCAG contrast checks read "
+        "gsd/static/app.css, so anything inline is invisible to both. Move it to app.css."
+    )
+    assert '<link rel="stylesheet" href="/static/app.css">' in page, (
+        "index.html no longer links the stylesheet — the page would render unstyled"
+    )
 
 
 @pytest.fixture(scope="module")

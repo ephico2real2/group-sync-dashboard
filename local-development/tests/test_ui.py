@@ -1675,3 +1675,255 @@ class TestTheGateChipAppliesOnlyWhereTheGateApplies:
         card = dash.locator("section.card", has=dash.locator("h3:text-is('Every attempt')"))
         rows = card.locator("tbody tr").all_inner_texts()
         assert any("not in access group" in r and "ldap-local" in r for r in rows), rows
+
+
+class TestGroupSearch:
+    """Free-text filter on the Groups tab. 64 groups on the reference cluster is too many to scan.
+
+    The behaviour that matters is AND-of-terms, not substring-of-the-whole-query. Group names are long
+    and structured — app-ocp-rbac-alpha-ns-admin — so the two halves a reader remembers are rarely
+    adjacent: "alpha admin" has to find it, and as one substring it finds nothing.
+    """
+
+    def _open(self, dash):
+        dash.locator("button[data-nav='groups']").click()
+        dash.wait_for_selector("#f-group-search")
+
+    def _names(self, dash):
+        return [r.split("\t")[0].strip() for r in dash.locator("tbody tr").all_inner_texts()]
+
+    def test_a_single_term_is_a_substring_match(self, dash):
+        self._open(dash)
+        dash.fill("#f-group-search", "abcd")
+        dash.wait_for_function("() => view.groupSearch === 'abcd'")
+        names = self._names(dash)
+        assert names == ["app-ocp-rbac-abcd-ns-superuser"], names
+
+    def test_two_terms_are_ANDed_and_order_does_not_matter(self, dash):
+        """The whole point. Neither ordering appears as a contiguous substring of the name."""
+        self._open(dash)
+        for query in ("alpha admin", "admin alpha"):
+            dash.fill("#f-group-search", query)
+            dash.wait_for_function(f"() => view.groupSearch === {query!r}")
+            assert self._names(dash) == ["app-ocp-rbac-alpha-ns-admin"], (query, self._names(dash))
+        # And prove the premise: as one substring it matches nothing.
+        assert "alpha admin" not in "app-ocp-rbac-alpha-ns-admin"
+
+    def test_it_is_case_insensitive(self, dash):
+        self._open(dash)
+        dash.fill("#f-group-search", "ALPHA Admin")
+        dash.wait_for_function("() => view.groupSearch === 'ALPHA Admin'")
+        assert self._names(dash) == ["app-ocp-rbac-alpha-ns-admin"]
+
+    def test_a_term_matching_nothing_says_the_search_is_hiding_them(self, dash):
+        """An empty table must not read as "there are no groups"."""
+        self._open(dash)
+        dash.fill("#f-group-search", "zzzznope")
+        dash.wait_for_function("() => view.groupSearch === 'zzzznope'")
+        body = dash.locator("section.card").first.inner_text()
+        assert "No group name contains" in body, body[:200]
+        assert "the search hiding them" in body or "search hiding them" in body, body[:300]
+
+    def test_the_header_reports_the_denominator_while_filtering(self, dash):
+        """A filtered view that cannot report what it hid is the same failure as a truncated page."""
+        self._open(dash)
+        whole = dash.locator("section.card h2").first.inner_text()
+        assert "of" not in whole, whole
+        dash.fill("#f-group-search", "abcd")
+        dash.wait_for_function("() => view.groupSearch === 'abcd'")
+        assert "1 of " in dash.locator("section.card h2").first.inner_text()
+
+    def test_escape_clears_it(self, dash):
+        self._open(dash)
+        dash.fill("#f-group-search", "abcd")
+        dash.wait_for_function("() => view.groupSearch === 'abcd'")
+        dash.locator("#f-group-search").press("Escape")
+        dash.wait_for_function("() => view.groupSearch === ''")
+        assert len(self._names(dash)) == SYNCED_GROUPS
+
+    def test_the_caret_and_focus_survive_a_repaint(self, dash):
+        """THE ONE THAT MAKES IT USABLE. renderFilters replaces the whole bar's innerHTML and the page
+        repaints every 30s, so without preservation the field loses focus after one character and the
+        caret jumps to the end mid-word."""
+        self._open(dash)
+        dash.fill("#f-group-search", "alpha-admin")
+        # Put the caret in the middle, then force the repaint the poll would cause.
+        dash.locator("#f-group-search").evaluate("el => el.setSelectionRange(5, 5)")
+        dash.evaluate("() => render()")
+        state = dash.evaluate("""() => {
+            const el = document.getElementById('f-group-search');
+            return { focused: document.activeElement === el, start: el.selectionStart, value: el.value };
+        }""")
+        assert state["focused"], "focus was lost when the filter bar re-rendered"
+        assert state["start"] == 5, f"the caret moved to {state['start']}"
+        assert state["value"] == "alpha-admin"
+
+    def test_searching_does_not_refetch(self, dash):
+        """The endpoint applies no limit, so the whole list is already here. A request per keystroke
+        would be slower and would also search only whatever came back."""
+        dash.evaluate("() => { window.__calls = 0; const f = window.fetch;"
+                      " window.fetch = (...a) => { window.__calls++; return f(...a); }; }")
+        self._open(dash)
+        before = dash.evaluate("() => window.__calls")
+        dash.fill("#f-group-search", "alpha")
+        dash.wait_for_function("() => view.groupSearch === 'alpha'")
+        dash.wait_for_timeout(400)
+        assert dash.evaluate("() => window.__calls") == before, "filtering issued a network request"
+
+    def test_a_filtered_row_still_drills_in(self, dash):
+        """Filtering must not break the affordance it exists to reach."""
+        self._open(dash)
+        dash.fill("#f-group-search", "alpha admin")
+        dash.wait_for_function("() => view.groupSearch === 'alpha admin'")
+        dash.locator("tr[data-group='app-ocp-rbac-alpha-ns-admin']").click()
+        dash.wait_for_selector("#back-groups")
+        assert dash.evaluate("() => view.group") == "app-ocp-rbac-alpha-ns-admin"
+
+    def test_the_box_only_exists_on_the_groups_tab(self, dash):
+        self._open(dash)
+        assert dash.locator("#f-group-search").count() == 1
+        dash.click('button.tab:text-is("Overview")')
+        dash.wait_for_timeout(300)
+        assert dash.locator("#f-group-search").count() == 0
+
+    def test_the_visible_label_is_the_accessible_name(self, dash):
+        """aria-label REPLACES the accessible name. A sentence there means a screen reader announces a
+        paragraph where the visible label says "Find", and that mismatch breaks WCAG 2.5.3 Label in
+        Name for anyone driving the page by voice: they say "click Find" and hit nothing.
+
+        The help text is a DESCRIPTION, so it belongs behind aria-describedby.
+        """
+        self._open(dash)
+        el = dash.locator("#f-group-search")
+        assert el.get_attribute("aria-label") is None, "aria-label is overriding the visible label"
+        assert el.get_attribute("aria-describedby") == "f-group-search-help"
+        assert dash.locator("label[for='f-group-search']").inner_text().strip() == "Find"
+        help_text = dash.locator("#f-group-search-help")
+        assert "AND" in help_text.inner_text()
+        # Present in the accessibility tree, and not on screen: a 1px clipped box, never display:none.
+        assert help_text.evaluate("el => getComputedStyle(el).display") != "none"
+        assert help_text.evaluate("el => el.getBoundingClientRect().width") <= 2
+
+
+class TestGroupSearchIme:
+    """CJK, and every other composed input, goes through an IME whose composition session is bound to
+    the NODE it is composing into. renderFilters replaces that node, so a repaint mid-composition
+    commits half-composed kana as literal text and the IME's next update opens a second session:
+    typing かんり lands as かかんかんり. CDP's Input.imeSetComposition is a real composition as far as
+    Blink is concerned — the same code path a macOS or Windows IME drives."""
+
+    def _open(self, dash):
+        dash.locator("button[data-nav='groups']").click()
+        dash.wait_for_selector("#f-group-search")
+        dash.focus("#f-group-search")
+        return dash.context.new_cdp_session(dash)
+
+    def test_an_ime_composition_survives_its_own_input_events(self, dash):
+        cdp = self._open(dash)
+        cdp.send("Input.imeSetComposition", {"text": "か", "selectionStart": 1, "selectionEnd": 1})
+        dash.wait_for_timeout(100)
+        cdp.send("Input.imeSetComposition", {"text": "かん", "selectionStart": 2, "selectionEnd": 2})
+        dash.wait_for_timeout(100)
+        cdp.send("Input.insertText", {"text": "かんり"})
+        dash.wait_for_timeout(100)
+        got = dash.evaluate("() => document.getElementById('f-group-search').value")
+        assert got == "かんり", f"the composition was aborted by a repaint: {got!r}"
+        assert dash.evaluate("() => view.groupSearch") == "かんり"
+
+    def test_the_poll_firing_mid_composition_does_not_abort_it(self, dash):
+        """The 30s timer cannot be asked to wait for the reader's IME."""
+        cdp = self._open(dash)
+        cdp.send("Input.imeSetComposition", {"text": "か", "selectionStart": 1, "selectionEnd": 1})
+        dash.wait_for_timeout(100)
+        dash.evaluate("() => render()")  # exactly what the poll does
+        dash.wait_for_timeout(100)
+        cdp.send("Input.imeSetComposition", {"text": "かん", "selectionStart": 2, "selectionEnd": 2})
+        dash.wait_for_timeout(100)
+        cdp.send("Input.insertText", {"text": "かんり"})
+        dash.wait_for_timeout(100)
+        got = dash.evaluate("() => document.getElementById('f-group-search').value")
+        assert got == "かんり", f"the poll's repaint aborted the composition: {got!r}"
+
+
+class TestGroupSearchEmptyStateHonesty:
+    def _open(self, dash):
+        dash.locator("button[data-nav='groups']").click()
+        dash.wait_for_selector("#f-group-search")
+
+    def test_a_zero_denominator_does_not_blame_the_search(self, dash):
+        """With no groups matching the STATE filter the search hides nothing, so "it is the search
+        hiding them" is false — the reader would clear a query that was never the cause and still
+        see an empty table."""
+        self._open(dash)
+        # The shape the server returns for a state filter with no matches, plus an active search.
+        dash.evaluate(
+            "() => { view.groupFilter = 'empty'; data.groups = []; view.groupSearch = 'admin'; render(); }")
+        note = dash.locator(".empty-note").inner_text()
+        assert "search hiding" not in note, note
+        assert "No groups match this filter" in note, note
+
+    def test_a_denominator_of_one_reads_as_one(self, dash):
+        self._open(dash)
+        dash.select_option("#f-state", "unattributed")
+        dash.wait_for_function("() => data.groups.length === 1")
+        dash.fill("#f-group-search", "zzz")
+        dash.wait_for_function("() => view.groupSearch === 'zzz'")
+        note = " ".join(dash.locator(".empty-note").inner_text().split())
+        assert "1 group matches the state filter" in note, note
+        assert "the search hiding it rather" in note, note
+
+
+    def test_the_banner_does_not_promise_rows_that_do_not_exist(self, dash):
+        """A zero denominator must not invite the reader to clear a search that is hiding nothing.
+
+        The empty state below the table was fixed for this; the banner ABOVE it made the same false
+        claim six lines earlier — "Clear the box ... to see all 0" — and clearing it shows the same
+        empty table. Both sites state the same fact, so both have to be honest about it.
+        """
+        self._open(dash)
+        dash.evaluate(
+            "() => { view.groupFilter = 'empty'; data.groups = []; view.groupSearch = 'admin'; render(); }")
+        card = " ".join(dash.locator("section.card").first.inner_text().split())
+        assert "to see all 0" not in card, (
+            f"the banner offers to show all 0 groups; clearing the box shows the same empty table: {card}"
+        )
+        assert "Filtered by admin" in card, f"the banner should still say a filter is applied: {card}"
+
+    def test_the_banner_still_offers_the_count_when_there_is_one(self, dash):
+        """The guard above must not silence the offer in the case it was written for."""
+        self._open(dash)
+        dash.select_option("#f-state", "unattributed")
+        dash.wait_for_function("() => data.groups.length === 1")
+        dash.fill("#f-group-search", "zzz")
+        dash.wait_for_function("() => view.groupSearch === 'zzz'")
+        card = " ".join(dash.locator("section.card").first.inner_text().split())
+        assert "to see all 1" in card, card
+
+
+class TestGroupSearchScroll:
+    def test_the_poll_does_not_yank_the_viewport_while_the_box_is_focused(self, dash):
+        """focus() scrolls its target into view, and the restored box sits at the top of the page —
+        so with focus parked in the search box, every poll would jump a reader who had scrolled
+        into the table back to the top."""
+        dash.locator("button[data-nav='groups']").click()
+        dash.wait_for_selector("#f-group-search")
+        dash.set_viewport_size({"width": 900, "height": 400})
+        dash.focus("#f-group-search")
+        dash.evaluate("() => window.scrollTo(0, document.body.scrollHeight)")
+        before = dash.evaluate("() => window.scrollY")
+        assert before > 0, "page too short to scroll — shrink the viewport further"
+        dash.evaluate("() => render()")  # the 30s poll
+        after = dash.evaluate("() => window.scrollY")
+        assert after == before, f"the repaint scrolled the page from {before} to {after}"
+        assert dash.evaluate(
+            "() => document.activeElement === document.getElementById('f-group-search')")
+
+
+class TestTabFocusSurvivesTheRepaint:
+    def test_a_keyboard_user_resting_on_a_tab_keeps_it_across_the_poll(self, dash):
+        """The restore machinery finds elements by id, and the nav tabs had none — so the reader who
+        tabbed to "Groups" and paused was silently dropped to <body> by the next poll."""
+        dash.focus("button[data-nav='groups']")
+        dash.evaluate("() => render()")  # the 30s poll
+        got = dash.evaluate("() => document.activeElement.dataset && document.activeElement.dataset.nav")
+        assert got == "groups", f"focus fell to {got!r} when the filter bar re-rendered"
