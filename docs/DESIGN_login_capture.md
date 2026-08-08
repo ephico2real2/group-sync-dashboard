@@ -4021,3 +4021,35 @@ SQL itself follows the invariant.
    environment allowed to launch Chromium/bind localhost, the docs-citation and seam tests, default
    and enabled/custom-namespace Helm renders, plus a permitted read-only cluster smoke check. No
    implementation piece should claim completion until this final environment-backed pass is green.
+
+---
+
+# Addendum — the read seams, 2026-08-08
+
+Four defects were found in the seams between `parse`, the capture window and the store's UNIQUE key,
+after this design shipped. All four produced the same shape: **one login becoming two stored rows, one
+of them stating something false about a named person.** Full detail, with the reviewer's own text and
+the arbitration, is in `REVIEW_login_capture_seams.md`.
+
+| seam | was | now |
+|---|---|---|
+| trailing edge of the read | guarded by `_recordable` | unchanged |
+| leading edge of the read | **unguarded** — a window opening mid-attempt re-recorded it worse-informed | `_not_clipped`, plus a 20s wall-clock budget on the fetch, because the guard's overshoot equals the read's latency |
+| the byte cap | keeps the oldest lines and defers the rest | unchanged, and now also the landing path for a read that outruns its budget |
+| `parse`'s own expiry | measured age since the attempt's FIRST line, so anything spanning >1s concluded mid-flight | measures **silence since the last line** |
+| `adopt` | took the first orphan in list order | evidence outranks adjacency; adjacency applies only to a lone unidentified cause; never into a success |
+| `found` | one entry per DN, so two logins behind one AD entry traded sub-codes | a list per DN, and an ambiguous DN is dropped rather than guessed |
+
+**Still open, and the reason this addendum exists rather than a claim of completeness.** The expiry fix
+closes the case where the intervening lines are verdicts or causes — three providers 600ms apart went
+from two rows to one. It does not close the measured production shape, because `last_at` advances only
+on verdict and cause lines:
+
+```
+htpasswd failed 12:00:00.0 -> searching .4 -> found dn= .8 -> identitymapper 1.2 -> succeeded 1.6
+  => still 2 rows: (jane.smith, failed, 12:00:00) and (jane.smith, success, 12:00:01.6)
+```
+
+Closing it means advancing `last_at` from progress lines that name a pending login — the `searching`
+filter and the `found dn=` line both embed it. That is new design in the most delicate function in the
+module, and it is deliberately not taken alongside a set of fixes.

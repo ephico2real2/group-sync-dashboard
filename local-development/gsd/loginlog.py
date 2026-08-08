@@ -193,9 +193,18 @@ _BIND_ERROR = re.compile(
     r"LDAP Result Code (?P<code>\d+) \"(?P<text>[^\"]*)\":(?P<diagnostic>.*)$"
 )
 
-# How long one attempt's lines may span. Measured at ~30-125ms per attempt across the five cases; a
-# second is three orders of magnitude of headroom and still far below the gap between two humans logging
-# in as the same account, which is what this must not merge.
+# How long one attempt may go QUIET before it is concluded — silence since its last line, not age
+# since its first, which is the distinction `parse` turns on. Measured at ~30-125ms per attempt across
+# the five cases, so a second is roughly 8x the widest measured attempt. An earlier version of this
+# comment called that "three orders of magnitude of headroom", which was arithmetic against the wrong
+# unit; 8x is the true figure and it is thinner than it sounds, because a directory under ppolicy
+# delay or plain load stretches an attempt without changing anything else about it. It remains far
+# below the gap between two humans logging in as the same account, which is what this must not merge.
+#
+# Because the measure is silence, a chain whose lines keep arriving may span longer than this. The
+# lines that count are verdicts and causes: the progress lines (`searching`, `found dn=`,
+# `identitymapper`) never touch a pending, so a login whose only intervening lines are progress still
+# splits at this boundary. That is a known and documented gap — see docs/REVIEW_login_capture_seams.md.
 ATTEMPT_WINDOW = timedelta(seconds=1)
 
 
