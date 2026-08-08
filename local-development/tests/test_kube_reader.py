@@ -69,3 +69,46 @@ def test_the_line_the_cap_cuts_in_half_is_dropped_not_parsed(monkeypatch):
     client = _client_for(monkeypatch, stream)
     got = client.fetch_pod_log("ns", "pod", max_bytes=30)
     assert got == ["whole-line"], got
+
+
+def test_a_read_that_outlives_its_budget_is_cut_like_a_cap_hit(monkeypatch, caplog):
+    """The httpx timeout caps the gap BETWEEN chunks, not the transfer, so a stream dripping just
+    under it can run for minutes — measured: a timeout=1.0 client consumed a 4.2s dribble without
+    raising. The capture loop stamps the clock behind its leading-edge guard AFTER this returns, so
+    past ~58.5s of read latency that guard permanently drops logins nothing ever recorded. A read the
+    budget interrupts must land on the cap-hit path: oldest lines kept, the tail deferred, said out
+    loud.
+
+    THE PAYLOAD HAS TO EXCEED chunk_size, not merely arrive in several pieces. `iter_bytes` re-chunks
+    whatever the transport yields — two small source chunks are coalesced into one, the loop body runs
+    once, and a budget that is only checked per iteration is never reached. A first draft of this test
+    asserted against 33 bytes in two pieces and failed against working code for that reason.
+    """
+    import types
+
+    from gsd import kube
+
+    # Fixed-width lines so the boundary arithmetic is inspectable: 64 KiB of them is 1560 whole
+    # lines plus a fragment, and one iteration of the loop consumes exactly that.
+    lines = [f"2026-08-08T00:00:00.{i:09d}Z line-{i:05d}" for i in range(1600)]
+    payload = ("\n".join(lines) + "\n").encode()
+    assert len(payload) > 64 * 1024, "the payload must span more than one chunk_size"
+
+    # One tick for the start stamp, then one per iteration; the second iteration lands past the
+    # budget. The last value repeats so an extra clock read cannot exhaust the fake.
+    ticks = [0.0, 5.0, kube.LOG_READ_BUDGET_SECONDS + 30.0]
+    monkeypatch.setattr(
+        kube, "time",
+        types.SimpleNamespace(monotonic=lambda: ticks.pop(0) if len(ticks) > 1 else ticks[0]))
+
+    stream = Chunks([payload])
+    client = _client_for(monkeypatch, stream)
+    with caplog.at_level(logging.INFO):
+        got = client.fetch_pod_log("ns", "pod")
+
+    assert got is not None
+    assert 0 < len(got) < len(lines), f"kept {len(got)} of {len(lines)}"
+    assert got == lines[:len(got)], "the OLDEST lines must be the ones kept"
+    assert lines[-1] not in got, "the tail should be deferred to the next cycle, not returned"
+    assert "budget" in caplog.text, caplog.text
+    assert "byte cap" not in caplog.text, "a budget stop must not report itself as a cap hit"
