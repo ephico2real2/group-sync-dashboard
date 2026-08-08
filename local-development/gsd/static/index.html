@@ -1635,10 +1635,10 @@ function loginsPage() {
   // The access panel comes from a DIFFERENT endpoint and needs no logs — it is derived from synced
   // group membership, so it is just as true on a cluster that has never enabled Debug logging. It is
   // therefore rendered in every branch below, including the capture-disabled one.
-  return captureSection(d) + accessCard(data.access);
+  return captureSection(d, accessCard(data.access));
 }
 
-function captureSection(d) {
+function captureSection(d, access) {
   // Off is a DIFFERENT state from on-and-quiet, and conflating them sends the reader hunting
   // for logins that were never going to be recorded. Both halves are named because either one
   // alone records nothing: the module has to be running, and the operand has to be verbose.
@@ -1656,7 +1656,7 @@ function captureSection(d) {
         <code>loginCapture.enabled</code> and <code>authLogLevel.manage</code>. See
         <code>docs/LOGIN_CAPTURE_QUICKCHECK.md</code> for the five commands that prove the path
         end to end.</div>
-    </section>`;
+    </section>` + access;
   }
 
   const s = d.summary || {};
@@ -1745,7 +1745,7 @@ function captureSection(d) {
         </div>`}
       ${stalledNote}
       ${window_}
-    </section>`;
+    </section>` + access;
   }
 
   const failures = s.failures || 0;
@@ -1776,6 +1776,7 @@ function captureSection(d) {
     ${stalledNote}
     ${window_}
   </section>
+  ${access}
   ${ungovernedCard(d, ungoverned)}
   <section class="card">
     <div class="section-head"><h3>Every attempt</h3><span class="flush"></span>
@@ -1804,7 +1805,8 @@ function captureSection(d) {
             <td class="mono muted">${esc(r.provider || "—")}</td>
             <td class="muted">${esc(r.detail || "")}${r.ldap_result_code != null
               ? ` <span class="mono">(LDAP ${r.ldap_result_code})</span>` : ""}</td>
-            <td class="mono muted">${esc((r.pod_name || "").replace(/^oauth-openshift-/, ""))}</td>
+            <td class="mono muted" style="white-space:nowrap">${
+              esc((r.pod_name || "").replace(/^oauth-openshift-/, ""))}</td>
           </tr>`).join("")}</tbody>
         </table></div>`}
     ${d.truncated ? `<div class="truncation-note">
