@@ -193,9 +193,18 @@ _BIND_ERROR = re.compile(
     r"LDAP Result Code (?P<code>\d+) \"(?P<text>[^\"]*)\":(?P<diagnostic>.*)$"
 )
 
-# How long one attempt's lines may span. Measured at ~30-125ms per attempt across the five cases; a
-# second is three orders of magnitude of headroom and still far below the gap between two humans logging
-# in as the same account, which is what this must not merge.
+# How long one attempt may go QUIET before it is concluded — silence since its last line, not age
+# since its first, which is the distinction `parse` turns on. Measured at ~30-125ms per attempt across
+# the five cases, so a second is roughly 8x the widest measured attempt. An earlier version of this
+# comment called that "three orders of magnitude of headroom", which was arithmetic against the wrong
+# unit; 8x is the true figure and it is thinner than it sounds, because a directory under ppolicy
+# delay or plain load stretches an attempt without changing anything else about it. It remains far
+# below the gap between two humans logging in as the same account, which is what this must not merge.
+#
+# Because the measure is silence, a chain whose lines keep arriving may span longer than this. The
+# lines that count are verdicts and causes: the progress lines (`searching`, `found dn=`,
+# `identitymapper`) never touch a pending, so a login whose only intervening lines are progress still
+# splits at this boundary. That is a known and documented gap — see docs/REVIEW_login_capture_seams.md.
 ATTEMPT_WINDOW = timedelta(seconds=1)
 
 
@@ -245,6 +254,12 @@ class _Pending:
 
     first_at: datetime
     last_at: datetime
+    named_at: datetime
+    """The instant of the first line that NAMED this user, which cannot move.
+
+    `first_at` can be pulled BACK onto an adopted cause, and that is right for a failure — the attempt
+    began when the directory refused it. It is wrong for a success, whose cause was never its own: see
+    conclude(), which stamps a success from here instead."""
     provider: str | None = None
     succeeded: bool = False
     saw_no_entries: bool = False
@@ -322,8 +337,11 @@ def parse(lines: list[str] | str) -> list[LoginAttempt]:
     # stranger's verdict must be able to pass it by without destroying it.
     orphans: list[dict] = []
     # Recent `found dn=` lines by DN, kept one window: the bind error that follows quotes the DN, and
-    # this is what lets it be attributed on a directory whose DNs do not contain the login.
-    found: dict[str, dict] = {}
+    # this is what lets it be attributed on a directory whose DNs do not contain the login. A LIST
+    # per DN, not a slot: two logins can resolve the SAME entry inside one window (sAMAccountName and
+    # userPrincipalName both name it on AD), and a slot silently rewrote the first login's tie to the
+    # DN with the second's — every bind error for that DN then read as the second person's.
+    found: dict[str, list[dict]] = {}
 
     def conclude(user: str) -> None:
         p = pending.pop(user, None)
@@ -340,49 +358,86 @@ def parse(lines: list[str] | str) -> list[LoginAttempt]:
         else:
             # Progress lines only, no verdict — nothing happened worth recording.
             return
+        # A BIND FAILURE CANNOT EXPLAIN A LOGIN THAT SUCCEEDED. `adopt` now refuses to hand an
+        # unidentified cause to a succeeding verdict, so the foreign-cause route is closed where it
+        # starts; this remains as the second line of defence, because a cause can also reach a pending
+        # by NAMING it and then be overtaken by a success in the same window — the multi-directory
+        # provider chain does exactly that, and its bind code belongs to the IdP that rejected her,
+        # not to the one that let her in. Measured before either guard: `jane.smith / success` carrying
+        # `ldap_result_code=49, detail="LDAP result code 49"`, three false claims on the row a reader
+        # trusts most, about somebody who typed the right password. The stamp comes from the line that
+        # named her rather than from a cause, so the same success read with and without that cause in
+        # window is one row and not two — `at` is in the dedup key.
+        succeeded = outcome == OUTCOME_SUCCESS
         out.append(LoginAttempt(
             user_name=user,
             outcome=outcome,
-            at=p.first_at,
+            at=p.named_at if succeeded else p.first_at,
             provider=p.provider,
-            ldap_result_code=p.bind_code,
-            detail=_detail(p, outcome),
+            ldap_result_code=None if succeeded else p.bind_code,
+            detail=None if succeeded else _detail(p, outcome),
         ))
 
-    def adopt(p: _Pending, user: str, ts: datetime) -> None:
+    def adopt(p: _Pending, user: str, ts: datetime, succeeded: bool) -> None:
         """Give a fresh pending attempt the orphan cause that belongs to it, if one is waiting.
 
         An IDENTIFIED orphan (its evidence names a login) is taken only by that login's verdict —
         adopting by arrival order is how one person's diagnosis reached another. An UNIDENTIFIED
         orphan (a bind whose `found dn=` fell outside this read, so nothing ties its DN to a login)
-        goes to the first verdict inside the window: refusing it would discard every cause on a
-        directory whose DNs do not carry the login, which is a systematic loss, where the adjacency
-        guess is only wrong in a sliced read that also interleaves two people inside one second.
+        goes to the first verdict inside the window ONLY WHEN IT IS ALONE: refusing the lone one
+        would discard every cause on a directory whose DNs do not carry the login, which is a
+        systematic loss, and adjacency to a single cause is only wrong when a stranger's verdict
+        beats the owner's to it. With TWO unidentified causes waiting, arrival order is the only
+        tiebreak left, and it is exactly wrong whenever the directory answers out of order —
+        measured as two strangers' bind codes swapped, an expired password recorded as somebody
+        else's wrong one. Two waiting causes with no evidence have no honest owner; both verdicts
+        degrade to the provider's own result, which is true.
+
+        AND NEVER INTO A SUCCESS, for the unidentified case. The verdict IS known here, because the
+        pending is created by the verdict line itself. A bind failure cannot explain a login that
+        succeeded, and conclude() suppresses whatever a success adopted, so taking the orphan would
+        have exactly one effect: it is destroyed, and the failure it genuinely belonged to concludes
+        with no reason. Passed by, it is still in the list when its owner's verdict arrives inside the
+        window. The identified path needs no such guard — it already refuses every verdict its own
+        evidence does not name, and a cause that names the person who succeeded is hers.
         """
-        for i, o in enumerate(orphans):
-            if not timedelta(0) <= ts - o["at"] <= ATTEMPT_WINDOW:
-                continue
-            if o["identified"] and not _cause_mentions_user(o["evidence"], user):
-                continue
+        def take(i: int) -> None:
+            o = orphans.pop(i)
             p.first_at = o["at"]
             p.saw_no_entries = o["no_entries"]
             p.bind_code = o["code"]
             p.bind_diagnostic = o["diagnostic"]
-            del orphans[i]
-            return
+
+        in_window = [(i, o) for i, o in enumerate(orphans)
+                     if timedelta(0) <= ts - o["at"] <= ATTEMPT_WINDOW]
+        # Evidence outranks adjacency: a cause that NAMES this login wins even when an
+        # unidentified one arrived first.
+        for i, o in in_window:
+            if o["identified"] and _cause_mentions_user(o["evidence"], user):
+                take(i)
+                return
+        unidentified = [i for i, o in in_window if not o["identified"]]
+        if len(unidentified) == 1 and not succeeded:
+            take(unidentified[0])
 
     for raw in lines:
         ts = parse_timestamp(raw)
         if ts is None:
             continue
 
-        # Expire anything whose window has passed, so a long-running read does not merge two attempts
-        # by the same person minutes apart — and so stale correlation state cannot leak forward.
-        for user in [u for u, p in pending.items() if ts - p.first_at > ATTEMPT_WINDOW]:
+        # Expire anything that has gone QUIET for a window, so a long-running read does not merge two
+        # attempts by the same person minutes apart — and so stale correlation state cannot leak
+        # forward. Quiet since the LAST line, not old since the first: two attempts are separated by
+        # silence, while one slow attempt is separated by nothing — a provider chain whose directory
+        # answers slowly can stretch a single login past any fixed span, and expiring it mid-flight
+        # concluded the chain noise as its own `failed` row beside the real outcome.
+        for user in [u for u, p in pending.items() if ts - p.last_at > ATTEMPT_WINDOW]:
             conclude(user)
         orphans[:] = [o for o in orphans if ts - o["at"] <= ATTEMPT_WINDOW]
-        for dn in [d for d, f in found.items() if ts - f["at"] > ATTEMPT_WINDOW]:
-            del found[dn]
+        for dn in list(found):
+            found[dn] = [f for f in found[dn] if ts - f["at"] <= ATTEMPT_WINDOW]
+            if not found[dn]:
+                del found[dn]
 
         v = _VERDICT.search(raw)
         if v:
@@ -390,8 +445,8 @@ def parse(lines: list[str] | str) -> list[LoginAttempt]:
             provider = v.group("provider")
             p = pending.get(user)
             if p is None:
-                p = pending[user] = _Pending(first_at=ts, last_at=ts)
-                adopt(p, user, ts)
+                p = pending[user] = _Pending(first_at=ts, last_at=ts, named_at=ts)
+                adopt(p, user, ts, succeeded=v.group("verdict") == "succeeded")
             p.last_at = ts
             if v.group("verdict") == "succeeded":
                 p.succeeded = True
@@ -406,7 +461,7 @@ def parse(lines: list[str] | str) -> list[LoginAttempt]:
 
         f = _FOUND.search(raw)
         if f:
-            found[f.group("dn")] = {"at": ts, "raw": raw}
+            found.setdefault(f.group("dn"), []).append({"at": ts, "raw": raw})
             continue
 
         no_entries = bool(_NO_ENTRIES.search(raw))
@@ -416,13 +471,18 @@ def parse(lines: list[str] | str) -> list[LoginAttempt]:
 
         # What this cause can prove about WHO it belongs to. `no entries matching` quotes the search
         # filter, which embeds the typed login on every directory. A bind error only quotes the DN, so
-        # it is identifying evidence only together with the `found dn=` line that resolved it.
+        # it is identifying evidence only together with the `found dn=` line that resolved it — and
+        # only when that line is UNIQUE: two logins resolving this DN inside one window mean the bind
+        # errors that follow cannot be told apart by their own text, and attributing either is a coin
+        # flip between named humans. Dropped, the same trade as everywhere else here.
         evidence = raw
         identified = no_entries
         if b is not None:
-            ctx = found.get(b.group("dn"))
-            if ctx is not None:
-                evidence = f'{raw} {ctx["raw"]}'
+            ctxs = found.get(b.group("dn"), [])
+            if len(ctxs) > 1:
+                continue
+            if ctxs:
+                evidence = f'{raw} {ctxs[0]["raw"]}'
                 identified = True
 
         mentioned = [u for u in pending if _cause_mentions_user(evidence, u)]

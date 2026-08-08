@@ -116,6 +116,39 @@ def _recordable(attempts: list[LoginAttempt]) -> list[LoginAttempt]:
     return [a for a in attempts if a.at <= cutoff]
 
 
+def _not_clipped(attempts: list[LoginAttempt], window_start: datetime) -> list[LoginAttempt]:
+    """Only the attempts that cannot have had earlier lines cut off by the window's leading edge.
+
+    THE MIRROR OF `_recordable`, FOR THE OTHER END OF THE READ. That one distrusts the newest lines
+    because the rest of an attempt may not have been written yet; this distrusts the oldest, because
+    the rest of it may lie behind the window. Both failures look the same from here — a parse that
+    concludes on part of an attempt — and only one of them had a guard.
+
+    What it prevents, measured: a window opening in the 1.167 ms between a bind error and its verdict
+    parses the verdict alone, so the login the previous cycle recorded as `bad_password` stamped at the
+    cause is recorded AGAIN as `failed` stamped at the verdict. `at` and `outcome` are both in
+    UNIQUE(cluster_id, pod_name, user_name, at, outcome), so nothing collapses them and the page
+    reports one person's single login twice — once with a reason and once without. The boundary is
+    reachable by this module's own arithmetic: it sits at `watermark - OVERLAP_SECONDS` and sweeps
+    forward a cycle at a time, so it crosses every instant in the log eventually.
+
+    An attempt's lines span at most ATTEMPT_WINDOW, so once `at` is further than that from the edge no
+    unseen line can belong to it — anything earlier would have been inside the window and parsed.
+
+    WHAT THIS DELIBERATELY GIVES UP. A withheld attempt is normally safe because the overlap re-reads
+    it, but the watermark advances to `now - SETTLE_SECONDS` regardless, which is ahead of this edge —
+    so an attempt dropped here is dropped for good, not deferred. In the ordinary case that costs
+    nothing: the edge sits OVERLAP_SECONDS behind the watermark, so anything near it was fully inside
+    an earlier cycle's window and is already recorded. It costs a row in two cases — a first sight,
+    where the edge is FIRST_SIGHT_SECONDS back and the hour boundary is already declared lost, and a
+    restart that lands the new edge within one second of an attempt the previous process had withheld.
+    Losing a row there is the trade this module makes everywhere else: an absent record beats a false
+    one, and the false one here is a second row contradicting the first about a named person.
+    """
+    edge = window_start + ATTEMPT_WINDOW
+    return [a for a in attempts if a.at > edge]
+
+
 def capture_once(
     store: StorageBackend,
     cluster: ClusterConfig,
@@ -177,6 +210,7 @@ def capture_once(
             since = max(OVERLAP_SECONDS, int(age) + OVERLAP_SECONDS) if age is not None \
                 else FIRST_SIGHT_SECONDS
 
+        from datetime import UTC, datetime, timedelta
         try:
             lines = client.fetch_pod_log(ns, pod, since_seconds=since)
         except ClusterError as exc:
@@ -187,7 +221,15 @@ def capture_once(
             continue                      # roll noise or a missing grant; both already logged
         read_ok = True
 
-        attempts = _recordable(parse(lines))
+        # Stamped AFTER the response, and that direction is load-bearing. The kubelet resolves
+        # sinceSeconds against its own RECEIVE time, so the true boundary is `receive - since`, which
+        # this bounds from above: taking the stamp before the request would put the derived edge up to
+        # one request-latency too EARLY, and the leading-edge guard would then miss exactly the attempts
+        # a slow read clipped. An 8 MiB read can take longer than ATTEMPT_WINDOW, so that is not
+        # hypothetical. Erring late costs at most a row near the edge, which in steady state was
+        # already recorded a cycle ago.
+        window_start = datetime.now(UTC) - timedelta(seconds=since)
+        attempts = _not_clipped(_recordable(parse(lines)), window_start)
         horizon = _settle_horizon(lines)
         if not attempts and horizon is None:
             continue

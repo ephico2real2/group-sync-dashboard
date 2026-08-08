@@ -349,6 +349,71 @@ class TestCauses:
         assert got[0].at == _at("2026-08-07T23:49:02.136205645Z")
 
 
+class TestASuccessNeverBorrowsAnotherAttemptsCause:
+    """A bind FAILURE cannot explain a login that SUCCEEDED.
+
+    `adopt` attaches an UNIDENTIFIED cause on adjacency alone — necessarily before any outcome is
+    known, because the verdict is what ends the attempt. So a stranger's wrong password inside the
+    correlation window could reach somebody else's success. Measured before the fix: `jane.smith`,
+    outcome `success`, carrying `ldap_result_code=49` and `detail="LDAP result code 49"` — three
+    false claims on the row a reader trusts most, about a person who typed the right password.
+
+    It also moved her stamp onto that foreign cause, and `at` is part of the store's dedup key, so
+    the same success read with and without the stranger's line in window did not collapse into one
+    row. That half is covered end to end in test_login_capture_cross_seam.py.
+    """
+
+    #: A bind failure for a DN that names nobody in this test, and with NO `found dn=` line to
+    #: resolve it — which is what makes it unidentified, and therefore adoptable by adjacency.
+    STRANGER_BIND = _restamp(
+        WEB_LDAP_BADPW_BIND.replace("uid=jane.smith,ou=People", "cn=Someone Else,ou=People"),
+        "2026-08-08T00:01:51.000000000Z")
+
+    def test_a_strangers_bind_failure_does_not_annotate_a_success(self):
+        got = parse([self.STRANGER_BIND, WEB_LDAP_OK_VERDICT])
+        assert len(got) == 1, got
+        assert (got[0].user_name, got[0].outcome) == ("jane.smith", loginlog.OUTCOME_SUCCESS)
+        assert got[0].ldap_result_code is None, (
+            f"a successful login was given a bind failure's result code: {got[0]}"
+        )
+        assert got[0].detail is None, (
+            f"a successful login was given a bind failure's diagnosis: {got[0]}"
+        )
+
+    def test_the_success_is_stamped_where_it_was_named_not_at_the_foreign_cause(self):
+        got = parse([self.STRANGER_BIND, WEB_LDAP_OK_VERDICT])
+        assert got[0].at == _at("2026-08-08T00:01:51.189132247Z"), (
+            "the stamp was pulled back onto a cause that belonged to another attempt, which changes "
+            "the row's identity in the store"
+        )
+
+    def test_a_success_does_not_destroy_the_orphan_a_later_failure_owns(self):
+        """Suppressing the cause on the success row is half the guard: the adoption also DELETED the
+        orphan, so the failure it belonged to concluded with no reason at the wrong instant."""
+        # sam's bind error is unidentified (foreign DN, no `found dn=` in the read); jane's success
+        # lands between it and sam's own verdict, all inside ATTEMPT_WINDOW.
+        sam_bind = _restamp(
+            WEB_LDAP_BADPW_BIND.replace("uid=jane.smith,ou=People", "cn=Sam Other,ou=People"),
+            "2026-08-08T00:01:51.000000000Z")
+        sam_verdict = _restamp(
+            WEB_LDAP_BADPW_VERDICT.replace('"jane.smith"', '"sam.other"'),
+            "2026-08-08T00:01:51.500000000Z")
+        got = {a.user_name: a for a in parse([sam_bind, WEB_LDAP_OK_VERDICT, sam_verdict])}
+        assert got["jane.smith"].outcome == loginlog.OUTCOME_SUCCESS
+        assert got["jane.smith"].ldap_result_code is None
+        assert got["sam.other"].outcome == loginlog.OUTCOME_BAD_PASSWORD, got["sam.other"]
+        assert got["sam.other"].ldap_result_code == 49
+        assert got["sam.other"].at == _at("2026-08-08T00:01:51.000000000Z")
+
+    def test_a_failure_still_keeps_the_cause_it_adopts(self):
+        """The guard above must not be implemented as "never adopt": the orphan path is the only way a
+        single-provider cluster gets any reason at all."""
+        got = parse([WEB_LDAP_OK_SEARCH, WEB_LDAP_OK_FOUND,
+                     WEB_LDAP_BADPW_BIND, WEB_LDAP_BADPW_VERDICT])
+        assert got[0].outcome == loginlog.OUTCOME_BAD_PASSWORD
+        assert got[0].ldap_result_code == 49
+
+
 class TestActiveDirectorySubCodes:
     """AD returns a bare 49 for expired, locked and disabled alike; only `data <hex>` separates them.
 
@@ -623,3 +688,81 @@ def test_two_people_in_flight_on_active_directory_attach_by_the_found_dn():
     assert by_user["jsmith"].outcome == loginlog.OUTCOME_PASSWORD_EXPIRED
     assert by_user["tbrown"].outcome == loginlog.OUTCOME_FAILED
     assert by_user["tbrown"].ldap_result_code is None
+
+
+class TestASlowProviderChainStaysOneAttempt:
+    """Expiring on age-since-FIRST-line split any attempt spanning over ATTEMPT_WINDOW in two rows."""
+
+    def test_a_chain_of_slow_providers_is_one_failure_not_two(self):
+        # Three providers at 600ms each: no single gap beats the window, but the span does.
+        lines = [
+            '2026-08-08T11:00:00.000000Z E0808 11:00:00.000000       1 basicauth.go:48] Login with provider "developer" failed for login "jane.smith"',
+            '2026-08-08T11:00:00.600000Z E0808 11:00:00.600000       1 basicauth.go:48] Login with provider "ldap-a" failed for login "jane.smith"',
+            '2026-08-08T11:00:01.200000Z E0808 11:00:01.200000       1 basicauth.go:48] Login with provider "ldap-b" failed for login "jane.smith"',
+        ]
+        got = parse(lines)
+        assert len(got) == 1, f"one login's provider chain became {len(got)} rows: {got}"
+        # The provider that decided it is the LAST one tried, same as the fast-chain rule.
+        assert got[0].provider == "ldap-b"
+
+    def test_two_attempts_separated_by_silence_stay_two(self):
+        # The guarantee the expiry exists for: same account, minutes apart, never merged.
+        lines = [
+            '2026-08-08T11:00:00.000000Z E0808 11:00:00.000000       1 login.go:183] Login with provider "developer" failed for "jane.smith"',
+            '2026-08-08T11:02:00.000000Z E0808 11:02:00.000000       1 login.go:191] Login with provider "developer" succeeded for "jane.smith": &groupmapper...',
+        ]
+        got = parse(lines)
+        assert [a.outcome for a in got] == [loginlog.OUTCOME_FAILED, loginlog.OUTCOME_SUCCESS], got
+
+
+class TestTwoUnidentifiedOrphansDoNotSwap:
+    """adopt() by arrival order crossed two strangers' bind codes when verdicts returned out of order."""
+
+    LINES = [
+        # Two bind errors whose `found dn=` lines fell outside this read: both orphans, neither
+        # DN carries the login. alice's code is 49 (wrong password), bob's 53 (ppolicy expiry).
+        '2026-08-08T10:00:00.100000Z E0808 10:00:00.100000       1 ldap.go:152] error binding password for "CN=Alice Adams,OU=People,DC=example,DC=com": LDAP Result Code 49 "Invalid Credentials":',
+        '2026-08-08T10:00:00.200000Z E0808 10:00:00.200000       1 ldap.go:152] error binding password for "CN=Bob Brown,OU=People,DC=example,DC=com": LDAP Result Code 53 "Unwilling To Perform":',
+        # The verdicts return in the OTHER order — bob's first.
+        '2026-08-08T10:00:00.300000Z E0808 10:00:00.300000       1 basicauth.go:48] Login with provider "ldap-local" failed for login "bob"',
+        '2026-08-08T10:00:00.400000Z E0808 10:00:00.400000       1 basicauth.go:48] Login with provider "ldap-local" failed for login "alice"',
+    ]
+
+    def test_neither_verdict_takes_the_other_persons_cause(self):
+        got = {a.user_name: a for a in parse(self.LINES)}
+        assert set(got) == {"alice", "bob"}
+        # First-orphan-in-list-order gave bob alice's 49 and alice bob's 53: bob was told his
+        # password was wrong (it was expired) and alice that hers was expired (it was wrong).
+        # With two unidentified causes waiting there is no honest owner; both must degrade.
+        assert got["bob"].ldap_result_code is None, got["bob"]
+        assert got["alice"].ldap_result_code is None, got["alice"]
+        assert got["bob"].outcome == loginlog.OUTCOME_FAILED
+        assert got["alice"].outcome == loginlog.OUTCOME_FAILED
+
+
+class TestTwoLoginsBehindOneDnDoNotTradeCauses:
+    """found{} held ONE entry per DN, so the second login's found line rewrote the first's tie."""
+
+    LINES = [
+        # jsmith (sAMAccountName) and jane.smith@corp... (UPN) resolve to the SAME entry. jsmith's
+        # password is wrong (data 52e); the UPN login's is right but expired (data 532).
+        '2026-08-08T10:00:00.000000Z E0808 10:00:00.000000       1 basicauth.go:48] Login with provider "developer" failed for login "jsmith"',
+        '2026-08-08T10:00:00.020000Z E0808 10:00:00.020000       1 ldap.go:148] found dn="CN=Jane Smith,OU=People,DC=corp,DC=example,DC=com" for (&(objectClass=person)(sAMAccountName=jsmith))',
+        '2026-08-08T10:00:00.050000Z E0808 10:00:00.050000       1 basicauth.go:48] Login with provider "developer" failed for login "jane.smith@corp.example.com"',
+        '2026-08-08T10:00:00.070000Z E0808 10:00:00.070000       1 ldap.go:148] found dn="CN=Jane Smith,OU=People,DC=corp,DC=example,DC=com" for (&(objectClass=person)(userPrincipalName=jane.smith@corp.example.com))',
+        # The binds complete out of order: the UPN login's expiry first, jsmith's wrong password second.
+        '2026-08-08T10:00:00.150000Z E0808 10:00:00.150000       1 ldap.go:152] error binding password for "CN=Jane Smith,OU=People,DC=corp,DC=example,DC=com": LDAP Result Code 49 "Invalid Credentials": 80090308: LdapErr: DSID-0C0903A9, comment: AcceptSecurityContext error, data 532, v4563',
+        '2026-08-08T10:00:00.180000Z E0808 10:00:00.180000       1 ldap.go:152] error binding password for "CN=Jane Smith,OU=People,DC=corp,DC=example,DC=com": LDAP Result Code 49 "Invalid Credentials": 80090308: LdapErr: DSID-0C0903A9, comment: AcceptSecurityContext error, data 52e, v4563',
+        '2026-08-08T10:00:00.200000Z E0808 10:00:00.200000       1 basicauth.go:48] Login with provider "ldap-ad" failed for login "jane.smith@corp.example.com"',
+        '2026-08-08T10:00:00.210000Z E0808 10:00:00.210000       1 basicauth.go:48] Login with provider "ldap-ad" failed for login "jsmith"',
+    ]
+
+    def test_an_expired_password_is_not_recorded_as_somebody_elses_wrong_one(self):
+        got = {a.user_name: a for a in parse(self.LINES)}
+        # Both bind errors read as the UPN login's (the slot kept only its found line), and the
+        # second OVERWROTE the first on her pending: she was recorded bad_password/52e when her
+        # bind actually said 532 — a correct password she is told was wrong. Neither error can be
+        # honestly owned once the DN is shared, so both rows degrade to the provider's verdict.
+        her = got["jane.smith@corp.example.com"]
+        assert her.outcome != loginlog.OUTCOME_BAD_PASSWORD, her
+        assert (her.detail or "").find("52e") == -1, her

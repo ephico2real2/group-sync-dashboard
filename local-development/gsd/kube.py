@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import unquote
@@ -60,6 +61,16 @@ POD_API_TMPL = "/api/v1/namespaces/%s/pods"
 NAMESPACECONFIG_API = "/apis/redhatcop.redhat.io/v1alpha1/namespaceconfigs"
 GROUPCONFIG_API = "/apis/redhatcop.redhat.io/v1alpha1/groupconfigs"
 ROLEBINDING_API = "/apis/rbac.authorization.k8s.io/v1/rolebindings"
+
+# One pod-log read's wall-clock budget. The httpx timeout on _client caps the SILENCE between
+# chunks, not the transfer, so a stream dripping just under it can run for minutes (measured:
+# a timeout=1.0 client consumed a 3.1s dribble without raising). logincapture stamps the clock
+# behind its leading-edge guard AFTER this returns, and its no-loss accounting holds only while
+# that stamp lags the kubelet's window resolution by less than OVERLAP_SECONDS minus the settle
+# margin — loss measured from ~58.5s of latency with the shipped constants. Twenty seconds keeps
+# the overshoot far inside that, and a read this interrupts is deferred, not lost: the truncation
+# path keeps the oldest lines and the watermark machinery re-reads the rest next cycle.
+LOG_READ_BUDGET_SECONDS = 20.0
 CLUSTERROLEBINDING_API = "/apis/rbac.authorization.k8s.io/v1/clusterrolebindings"
 
 SYSTEM_GROUP_PREFIX = "system:"
@@ -705,6 +716,13 @@ class ClusterClient:
         bind error losing its `data` sub-code reads as a plain wrong password — and the whole line
         is inside the next cycle's overlap.
 
+        BOUNDED IN WALL-CLOCK TIME as well, and on the same path as the cap. The client's timeout
+        only caps the gap between chunks, so it bounds nothing about the whole transfer — and the
+        capture loop derives its leading-edge guard from a clock stamped AFTER this returns, so
+        every second spent here widens the band of attempts that guard throws away for good. See
+        LOG_READ_BUDGET_SECONDS for the measured threshold where that band reaches rows no cycle
+        ever recorded.
+
         `timestamps=true` is what makes the result usable at all — it prefixes each line with the
         kubelet's RFC3339 UTC stamp. klog's own stamp carries no year and no timezone.
 
@@ -726,6 +744,8 @@ class ClusterClient:
         chunks: list[bytes] = []
         size = 0
         truncated = False
+        over_budget = False
+        started = time.monotonic()
         try:
             with self._client() as client:
                 with client.stream("GET", path, params=params) as response:
@@ -733,6 +753,12 @@ class ClusterClient:
                         response.read()
                         return self._log_read_refused(response, namespace, pod_name)
                     for chunk in response.iter_bytes(chunk_size=min(64 * 1024, max(1, max_bytes))):
+                        if time.monotonic() - started > LOG_READ_BUDGET_SECONDS:
+                            # Checked before the chunk is kept: a chunk that arrived past the budget
+                            # proves the transfer is the slow kind, and keeping it would end the
+                            # batch mid-line anyway — the pop below drops the tail either way.
+                            truncated = over_budget = True
+                            break
                         room = max_bytes - size
                         if len(chunk) >= room:
                             chunks.append(chunk[:room])
@@ -754,12 +780,20 @@ class ClusterClient:
         if truncated:
             if lines:
                 lines.pop()
-            log.info(
-                "%s: %s log hit the %d-byte cap after %d lines; the OLDEST lines of this window "
-                "are kept, and the rest fall inside the next cycle's window once the watermark "
-                "has advanced",
-                self.cluster.name, pod_name, max_bytes, len(lines),
-            )
+            if over_budget:
+                log.info(
+                    "%s: %s log read exceeded its %.0fs budget after %d lines; the OLDEST lines of "
+                    "this window are kept, and the rest fall inside the next cycle's window once "
+                    "the watermark has advanced",
+                    self.cluster.name, pod_name, LOG_READ_BUDGET_SECONDS, len(lines),
+                )
+            else:
+                log.info(
+                    "%s: %s log hit the %d-byte cap after %d lines; the OLDEST lines of this window "
+                    "are kept, and the rest fall inside the next cycle's window once the watermark "
+                    "has advanced",
+                    self.cluster.name, pod_name, max_bytes, len(lines),
+                )
         return lines
 
     def _log_read_refused(
