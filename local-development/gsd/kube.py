@@ -111,6 +111,88 @@ def is_platform_user(name: str) -> bool:
 _ACCESS_GROUP_CLAUSE = re.compile(r"\(\s*(?:is)?memberof\s*=\s*([^)]+?)\s*\)", re.I)
 
 
+_DN_ATTRIBUTE = re.compile(r"(?:[A-Za-z][A-Za-z0-9-]*|[0-9]+(?:\.[0-9]+)+)\Z")
+
+
+def _split_unescaped(value: str, delimiter: str) -> list[str] | None:
+    """Split RFC 4514 separators while preserving escaped punctuation."""
+    parts, current, escaped = [], [], False
+    for char in value:
+        if escaped:
+            current.extend(("\\", char))
+            escaped = False
+        elif char == "\\":
+            escaped = True
+        elif char == delimiter:
+            parts.append("".join(current))
+            current = []
+        else:
+            current.append(char)
+    if escaped:
+        return None
+    parts.append("".join(current))
+    return parts
+
+
+def _looks_like_dn(value: str) -> bool:
+    """Validate the RFC 4514 structure needed before a filter value is treated as a group DN."""
+    def valid_attribute_value(raw: str) -> bool:
+        if not raw:
+            return False
+        if raw.startswith("#"):
+            encoded = raw[1:]
+            return bool(encoded) and len(encoded) % 2 == 0 and bool(
+                re.fullmatch(r"[0-9A-Fa-f]+", encoded))
+        if raw[0] in {" ", "#"} or raw[-1] == " ":
+            return False
+        index = 0
+        while index < len(raw):
+            char = raw[index]
+            if char == "\\":
+                if index + 1 >= len(raw):
+                    return False
+                if (index + 2 < len(raw)
+                        and re.fullmatch(r"[0-9A-Fa-f]{2}", raw[index + 1:index + 3])):
+                    index += 3
+                else:
+                    index += 2
+                continue
+            if char in {'"', ";", "<", ">"}:
+                return False
+            index += 1
+        return True
+
+    rdns = _split_unescaped(value, ",")
+    if not rdns or any(not rdn for rdn in rdns):
+        return False
+    for rdn in rdns:
+        avas = _split_unescaped(rdn, "+")
+        if not avas:
+            return False
+        for ava in avas:
+            attribute, separator, attr_value = ava.partition("=")
+            if (not separator or not _DN_ATTRIBUTE.fullmatch(attribute.strip())
+                    or not valid_attribute_value(attr_value)):
+                return False
+    return True
+
+
+def _access_group_from_ldap_url(url: str) -> str | None:
+    """A syntactically valid gated-group DN from an RFC 2255 URL, or None."""
+    _, separator, rest = url.partition("://")
+    if not separator:
+        return None
+    parts = rest.split("?")
+    if len(parts) < 4:
+        return None
+    filt = unquote(parts[3]).strip()
+    match = _ACCESS_GROUP_CLAUSE.search(filt) if filt else None
+    if not match:
+        return None
+    dn = match.group(1).strip()
+    return dn if _looks_like_dn(dn) else None
+
+
 def dn_equal(a: str | None, b: str | None) -> bool:
     """Whether two DNs name the same directory object, for our purposes.
 
@@ -131,33 +213,6 @@ def dn_equal(a: str | None, b: str | None) -> bool:
         return False
     return a.strip().casefold() == b.strip().casefold()
 
-
-def _access_group_from_ldap_url(url: str) -> str | None:
-    """The gated group's DN from an RFC 2255 LDAP URL, or None if the filter names no group.
-
-    The URL is `scheme://host[:port]/basedn?attributes?scope?filter`, and only the fourth field is of
-    interest. Split on the LITERAL `?` after the scheme's `//`, because a DN can contain neither.
-
-    Percent-decoded first: `(` and `)` are legal in a URL but OpenShift's own documentation shows the
-    filter percent-encoded in some examples, and an encoded filter would otherwise match nothing.
-    """
-    try:
-        _, _, rest = url.partition("://")
-        parts = rest.split("?")
-    except ValueError:                                       # pragma: no cover - partition never raises
-        return None
-    if len(parts) < 4:
-        return None                                          # no filter field at all
-    filt = unquote(parts[3]).strip()
-    if not filt:
-        return None
-    match = _ACCESS_GROUP_CLAUSE.search(filt)
-    if not match:
-        return None
-    dn = match.group(1).strip()
-    # A DN has at least one attribute=value pair. Guarding this stops a filter like
-    # `(memberOf=*)` — "is a member of anything" — being recorded as a group whose DN is `*`.
-    return dn if "=" in dn else None
 
 SYNC_PROVIDER_LABEL = "group-sync-operator.redhat-cop.io/sync-provider"
 CONFIG_SOURCE_LABEL = "rbac.ocp.io/config-source"
@@ -633,11 +688,22 @@ class ClusterClient:
         `response.json()`, and this endpoint returns TEXT. `_client()` IS used — it only supplies the
         bearer token and CA verification, which this needs exactly as much as any other call.
 
-        STREAMED, AND BYTE-BOUNDED. `response.text` would buffer the entire log before anything could
-        be capped, so a line limit would not be a memory limit — a pod that has been up for weeks at
-        Debug can hold a great deal. Reading line by line and stopping at `max_bytes` makes the bound
-        real. Hitting it is not an error: the newest lines are at the END, so a truncated read simply
-        leaves the oldest of this window unparsed, and the watermark stays where it was.
+        STREAMED, AND BYTE-BOUNDED — in BYTES, counted before any line is assembled. The previous
+        draft counted characters of lines `iter_lines()` had already buffered whole, so a single
+        line larger than the cap was held in memory before it could be measured, and a multi-byte
+        log undercounted. Stopping at the cap also ends the transfer instead of paying for lines
+        that would be discarded.
+
+        A CAP HIT KEEPS THE OLDEST LINES OF THE WINDOW, deliberately. The kubelet streams oldest
+        first, and oldest-first is the direction the watermark machinery REQUIRES: the cursor only
+        advances through lines actually returned, so the deferred newest lines fall inside the next
+        cycle's window and nothing is lost — only late. Keeping the newest instead would let the
+        cursor advance past everything the cap displaced and silently drop it forever; recency is
+        what the next cycle gets back anyway, completeness is not. (An earlier comment here claimed
+        the newest lines were kept; it described the opposite of what the code did.) The line the
+        cap cuts in half is dropped for the same reason: a truncated diagnostic can mis-parse — a
+        bind error losing its `data` sub-code reads as a plain wrong password — and the whole line
+        is inside the next cycle's overlap.
 
         `timestamps=true` is what makes the result usable at all — it prefixes each line with the
         kubelet's RFC3339 UTC stamp. klog's own stamp carries no year and no timezone.
@@ -657,30 +723,43 @@ class ClusterClient:
             params["sinceSeconds"] = str(since_seconds)
         path = f"{POD_API_TMPL % namespace}/{pod_name}/log"
 
-        lines: list[str] = []
+        chunks: list[bytes] = []
         size = 0
+        truncated = False
         try:
             with self._client() as client:
                 with client.stream("GET", path, params=params) as response:
                     if response.status_code >= 400:
                         response.read()
                         return self._log_read_refused(response, namespace, pod_name)
-                    for line in response.iter_lines():
-                        size += len(line) + 1
-                        if size > max_bytes:
-                            log.info(
-                                "%s: %s log hit the %d-byte cap after %d lines; the newest lines are "
-                                "kept and the watermark is unchanged",
-                                self.cluster.name, pod_name, max_bytes, len(lines),
-                            )
+                    for chunk in response.iter_bytes(chunk_size=min(64 * 1024, max(1, max_bytes))):
+                        room = max_bytes - size
+                        if len(chunk) >= room:
+                            chunks.append(chunk[:room])
+                            size = max_bytes
+                            truncated = True
                             break
-                        lines.append(line)
+                        chunks.append(chunk)
+                        size += len(chunk)
         except httpx.HTTPError as exc:
             # A connect error or timeout reading ONE pod must not fail the cycle: the other pods still
             # have lines, and this one is retried next time from the same watermark.
             log.info("%s: could not read %s log (%s: %s)",
                      self.cluster.name, pod_name, type(exc).__name__, exc)
             return None
+
+        # errors="replace" cannot corrupt a kept line: the only place a multi-byte character can be
+        # split is the cap boundary, and the line holding it is popped below.
+        lines = b"".join(chunks).decode("utf-8", errors="replace").splitlines()
+        if truncated:
+            if lines:
+                lines.pop()
+            log.info(
+                "%s: %s log hit the %d-byte cap after %d lines; the OLDEST lines of this window "
+                "are kept, and the rest fall inside the next cycle's window once the watermark "
+                "has advanced",
+                self.cluster.name, pod_name, max_bytes, len(lines),
+            )
         return lines
 
     def _log_read_refused(

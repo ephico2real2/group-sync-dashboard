@@ -87,3 +87,14 @@ class TestUpgradeFromV0:
             assert store._conn.execute("PRAGMA user_version").fetchone()[0] >= 1
         finally:
             store.close()
+
+
+def test_a_fresh_database_lands_on_the_latest_migration(tmp_path):
+    """Tuple placement must not make a fresh database report an older schema version."""
+    from gsd.store import _MIGRATIONS
+    store = Store(str(tmp_path / "fresh.db"))
+    try:
+        got = store._conn.execute("PRAGMA user_version").fetchone()[0]
+        assert got == max(target for target, _, _ in _MIGRATIONS)
+    finally:
+        store.close()

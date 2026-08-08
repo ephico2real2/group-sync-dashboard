@@ -22,7 +22,7 @@ import logging
 
 from .config import ClusterConfig, Settings
 from .kube import ClusterClient, ClusterError
-from .loginlog import LoginAttempt, parse
+from .loginlog import ATTEMPT_WINDOW, LoginAttempt, parse, parse_timestamp
 from .storage import StorageBackend
 from .timeutil import now_iso
 
@@ -72,29 +72,48 @@ def event_dict(attempt: LoginAttempt, pod_name: str, observed_at: str) -> dict:
     }
 
 
-def _settle_horizon(attempts: list[LoginAttempt]) -> str | None:
-    """The newest attempt old enough to be called settled, or None if none is yet.
+def _settle_horizon(lines: list[str]) -> str | None:
+    """The newest log instant old enough to be called settled, or None if none is yet.
 
-    RELATIVE TO NOW, not to the newest attempt in the batch — and that distinction is a bug I shipped
-    into the first draft. Measuring from the newest attempt means a BURST of logins inside
-    SETTLE_SECONDS makes every one of them "unsettled" relative to its own peers, so the watermark
-    never advances at all: the same window is re-read forever, sinceSeconds stays at first-sight, and
-    the read grows without bound. Caught by the healthy-path test writing zero watermarks.
+    A READ CURSOR OVER LOG TIME, NOT OVER ATTEMPTS. The first shipped version took only parsed
+    attempts, which stalls on a pod that logs plenty and authenticates nobody: the watermark never
+    moves, sinceSeconds grows by the full poll interval every cycle for the life of the pod, and
+    once the window outgrows the byte cap the newest lines are deferred every cycle while capture
+    still stamps itself live. Any timestamped line proves the log was read through that instant,
+    so any timestamped line may advance the cursor — without inventing a login record.
 
-    Measuring from now is what the horizon is actually for: an attempt stops being at risk of having
-    more lines arrive once wall-clock has moved past it, regardless of what else was in the batch.
+    RELATIVE TO NOW, not to the newest line in the batch — and that distinction is a bug I shipped
+    into the first draft. Measuring from the newest meant a BURST of logins inside SETTLE_SECONDS
+    made every one of them "unsettled" relative to its own peers, so the watermark never advanced
+    at all: the same window was re-read forever. Caught by the healthy-path test writing zero
+    watermarks. Measuring from now is what the horizon is actually for: a line stops being at risk
+    of belonging to a still-arriving attempt once wall-clock has moved past it.
     """
-    if not attempts:
-        return None
     from datetime import UTC, datetime
     cutoff = datetime.now(UTC).timestamp() - SETTLE_SECONDS
-    settled = [a.at for a in attempts if a.at.timestamp() <= cutoff]
-    if not settled:
-        # Everything here is newer than the horizon, so nothing is confirmed finished. The events are
-        # still RECORDED — only the watermark waits, and the next cycle re-reads them harmlessly
-        # because of the dedup key. Recording early and advancing late is the safe order.
+    stamps = [ts for raw in lines if (ts := parse_timestamp(raw)) is not None
+              and ts.timestamp() <= cutoff]
+    if not stamps:
         return None
-    return max(settled).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    return max(stamps).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
+def _recordable(attempts: list[LoginAttempt]) -> list[LoginAttempt]:
+    """Only the attempts old enough that every one of their lines must already have arrived.
+
+    An attempt read MID-FLIGHT concludes on partial evidence: the provider-chain `failed` line is
+    in the read, the success that follows it is not yet written, and the parse honestly returns a
+    failure that never happened. The dedup key cannot collapse that with the finished attempt —
+    the outcome differs — so the sliced row would sit beside the real one forever, and the page
+    would show a failed login that is provider-order noise. Withholding an attempt until
+    wall-clock has passed its whole window costs at most one cycle of latency, and nothing is
+    lost: the watermark (same cutoff, minus the window) never advances past a withheld attempt,
+    and OVERLAP_SECONDS exceeds SETTLE_SECONDS plus the attempt window, so the next read has the
+    whole attempt again.
+    """
+    from datetime import UTC, datetime, timedelta
+    cutoff = datetime.now(UTC) - timedelta(seconds=SETTLE_SECONDS) - ATTEMPT_WINDOW
+    return [a for a in attempts if a.at <= cutoff]
 
 
 def capture_once(
@@ -168,13 +187,13 @@ def capture_once(
             continue                      # roll noise or a missing grant; both already logged
         read_ok = True
 
-        attempts = parse(lines)
-        if not attempts:
+        attempts = _recordable(parse(lines))
+        horizon = _settle_horizon(lines)
+        if not attempts and horizon is None:
             continue
 
         observed_at = now_iso()
         events = [event_dict(a, pod, observed_at) for a in attempts]
-        horizon = _settle_horizon(attempts)
 
         # THE RECHECK. Everything above is reads; everything below writes.
         if elector is not None and not elector.is_leader:
@@ -182,7 +201,7 @@ def capture_once(
                      cluster.name, pod, len(events))
             return recorded
 
-        n = store.record_login_events(cluster.name, events)
+        n = store.record_login_events(cluster.name, events) if events else 0
         recorded += n
         if horizon is not None:
             store.set_login_watermark(cluster.name, pod, horizon, observed_at)

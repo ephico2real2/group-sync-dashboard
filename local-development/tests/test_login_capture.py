@@ -333,3 +333,22 @@ class TestEnrichment:
     def test_a_username_with_no_user_object_has_no_name_rather_than_a_blank(self, store):
         _record(store, [("ghost", loginlog.OUTCOME_REJECTED, 60, "ldap-local")])
         assert store.login_events("crc-local")[0]["full_name"] is None
+
+def test_a_negative_retention_limit_cannot_become_unbounded(store):
+    """SQLite LIMIT -1 means every row, the opposite of this method's contract."""
+    _record(store, [(f"old{i}", loginlog.OUTCOME_FAILED, 60 * 60 * 24 * 500 + i,
+                     "ldap-local") for i in range(10)])
+    before = _iso(datetime.now(UTC) - timedelta(days=400))
+    assert store.prune_login_events("crc-local", before, max_rows=-1) == 0
+    assert len(store.login_events("crc-local", limit=100)) == 10
+
+def test_gate_only_summary_is_not_capped_at_ten_thousand(store):
+    """A whole-cluster KPI must not secretly be the length of a capped page."""
+    with store._write() as conn:
+        conn.executemany(
+            """INSERT INTO group_member(cluster_id,group_name,user_name,
+                                          first_seen_at,last_seen_at) VALUES(?,?,?,?,?)""",
+            [("crc-local", "gate", f"user{i}", "t", "t") for i in range(10_001)],
+        )
+    store.set_cluster_access_group("crc-local", "cn=gate,dc=x", "config", "gate", "t")
+    assert store.cluster_access_summary("crc-local")["login_without_access"] == 10_001

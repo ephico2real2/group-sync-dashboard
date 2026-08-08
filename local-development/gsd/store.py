@@ -429,24 +429,6 @@ _MIGRATIONS: list[tuple[int, str, list[str]]] = [
         ],
     ),
     (
-        6,
-        "cluster_access_group: which group gates authentication, and how we learned it",
-        [
-            """CREATE TABLE IF NOT EXISTS cluster_access_group (
-                   cluster_id          TEXT PRIMARY KEY,
-                   dn                  TEXT NOT NULL,
-                   source              TEXT NOT NULL,
-                   group_name          TEXT,
-                   observed_at         TEXT NOT NULL
-               )""",
-            # One table, no index: it is at most one row per cluster and every read is by primary key.
-            #
-            # Nothing to backfill. The DN comes from configuration or from the OAuth CR, and both are
-            # read on the next poll — so an upgraded cluster is correct within one cycle without a
-            # migration that would have to talk to a cluster to fill this in.
-        ],
-    ),
-    (
         5,
         "login_event + capture watermark and status: who logged in, and since when we were watching",
         [
@@ -488,23 +470,43 @@ _MIGRATIONS: list[tuple[int, str, list[str]]] = [
             # so the UI can say WHEN watching began rather than implying nobody logged in.
         ],
     ),
+    (
+        6,
+        "cluster_access_group: which group gates authentication, and how we learned it",
+        [
+            """CREATE TABLE IF NOT EXISTS cluster_access_group (
+                   cluster_id          TEXT PRIMARY KEY,
+                   dn                  TEXT NOT NULL,
+                   source              TEXT NOT NULL,
+                   group_name          TEXT,
+                   observed_at         TEXT NOT NULL
+               )""",
+            # One table, no index: it is at most one row per cluster and every read is by primary key.
+            #
+            # Nothing to backfill. The DN comes from configuration or from the OAuth CR, and both are
+            # read on the next poll — so an upgraded cluster is correct within one cycle without a
+            # migration that would have to talk to a cluster to fill this in.
+        ],
+    ),
 ]
 
 
 def _migrate(conn: sqlite3.Connection) -> None:
+    """Apply every unapplied migration in numeric order, independent of source layout."""
     version = int(conn.execute("PRAGMA user_version").fetchone()[0])
-    for target, title, statements in _MIGRATIONS:
+    for target, title, statements in sorted(_MIGRATIONS, key=lambda migration: migration[0]):
         if version >= target:
             continue
         for sql in statements:
             try:
                 conn.execute(sql)
             except sqlite3.OperationalError as exc:
-                # A fresh database already has the column from SCHEMA; replaying the
-                # migration against it must be a no-op, not a crash.
+                # Fresh databases already carry additive columns from SCHEMA; only that exact replay
+                # is harmless. Every other DDL error must still abort startup.
                 if "duplicate column name" not in str(exc):
                     raise
         conn.execute(f"PRAGMA user_version = {target}")
+        version = target
         log.info("schema migration %d applied: %s", target, title)
 
 
@@ -1607,13 +1609,17 @@ class Store:
         BOUNDED, because this runs on the poll thread against a single-writer database: an unbounded
         DELETE across a long retention backlog holds the write lock for as long as it takes, and
         every reader and the next poll wait behind it. The caller treats a return of `max_rows` as
-        "backlog remains, continue next cycle".
+        "backlog remains, continue next cycle". A non-positive limit deletes NOTHING rather than
+        everything: SQLite defines `LIMIT -1` as unlimited — the exact opposite of this method's
+        promise — so the bound is enforced here instead of trusted to every future caller.
 
         `DELETE ... LIMIT` is NOT used — that syntax needs SQLITE_ENABLE_UPDATE_DELETE_LIMIT and is
         not compiled into this build (verified: `near "LIMIT": syntax error`). The id-IN-subselect
         form is core SQL and its inner select is index-served (verified: SEARCH login_event USING
         COVERING INDEX login_event_lookup).
         """
+        if max_rows <= 0:
+            return 0
         with self._write() as conn:
             before = conn.total_changes
             conn.execute(
@@ -1822,31 +1828,65 @@ class Store:
         because it is also how a service identity inside the gate group surfaces — on the reference
         directory the group's eighth member is the oauth BIND account, which carries a `uid` and so
         syncs like a person.
+
+        The WHERE comes from _login_without_access_where, shared with count_login_without_access so
+        the page and its whole-set count cannot disagree — the S3 lesson, applied before it recurs.
         """
         access = self.cluster_access_group(cluster_id)
         if not access or not access["group_name"]:
             return []
+        where = self._login_without_access_where()
         return self._rows(
             """SELECT m.user_name, m.first_seen_at, u.full_name,
                       EXISTS(SELECT 1 FROM login_event e
-                              WHERE e.cluster_id = m.cluster_id
-                                AND e.user_name  = m.user_name) AS has_tried
+                              WHERE e.cluster_id=m.cluster_id AND e.user_name=m.user_name) AS has_tried
                  FROM group_member m
                  LEFT JOIN ocp_user u
-                        ON u.cluster_id = m.cluster_id AND u.user_name = m.user_name
-                WHERE m.cluster_id = ?
-                  AND m.group_name = ?
-                  AND NOT EXISTS(SELECT 1 FROM group_member g
-                                  WHERE g.cluster_id = m.cluster_id
-                                    AND g.user_name  = m.user_name
-                                    AND g.group_name <> ?)
-                ORDER BY m.user_name
-                LIMIT ?""",
+                        ON u.cluster_id=m.cluster_id AND u.user_name=m.user_name"""
+            + where + " ORDER BY m.user_name LIMIT ?",
             (cluster_id, access["group_name"], access["group_name"], limit),
         )
 
+    @staticmethod
+    def _login_without_access_where() -> str:
+        """One predicate for both the page and its whole-set count."""
+        return """ WHERE m.cluster_id = ?
+                     AND m.group_name = ?
+                     AND NOT EXISTS(SELECT 1 FROM group_member g
+                                     WHERE g.cluster_id = m.cluster_id
+                                       AND g.user_name  = m.user_name
+                                       AND g.group_name <> ?)"""
+
+    def login_without_access(self, cluster_id: str, limit: int = 200) -> list[dict]:
+        """People in the gate group who hold no access through another synced group."""
+        access = self.cluster_access_group(cluster_id)
+        if not access or not access["group_name"]:
+            return []
+        where = self._login_without_access_where()
+        return self._rows(
+            """SELECT m.user_name, m.first_seen_at, u.full_name,
+                      EXISTS(SELECT 1 FROM login_event e
+                              WHERE e.cluster_id=m.cluster_id AND e.user_name=m.user_name) AS has_tried
+                 FROM group_member m
+                 LEFT JOIN ocp_user u
+                        ON u.cluster_id=m.cluster_id AND u.user_name=m.user_name"""
+            + where + " ORDER BY m.user_name LIMIT ?",
+            (cluster_id, access["group_name"], access["group_name"], limit),
+        )
+
+    def count_login_without_access(self, cluster_id: str) -> int:
+        """Whole-set count for a list that is deliberately paged."""
+        access = self.cluster_access_group(cluster_id)
+        if not access or not access["group_name"]:
+            return 0
+        rows = self._rows(
+            "SELECT COUNT(*) AS n FROM group_member m" + self._login_without_access_where(),
+            (cluster_id, access["group_name"], access["group_name"]),
+        )
+        return rows[0]["n"] if rows else 0
+
     def cluster_access_summary(self, cluster_id: str) -> dict:
-        """The counts the panel leads with, over the WHOLE cluster rather than any page."""
+        """Whole-cluster counts, never counts inferred from a page."""
         access = self.cluster_access_group(cluster_id)
         if not access or not access["group_name"]:
             return {"gated_members": 0, "with_access": 0, "access_without_login": 0,
@@ -1865,7 +1905,7 @@ class Store:
             "gated_members": base["gated_members"],
             "with_access": base["with_access"],
             "access_without_login": self.count_access_without_login(cluster_id),
-            "login_without_access": len(self.login_without_access(cluster_id, limit=10_000)),
+            "login_without_access": self.count_login_without_access(cluster_id),
         }
 
     def is_in_access_group(self, cluster_id: str, user_names: list[str]) -> dict[str, bool]:

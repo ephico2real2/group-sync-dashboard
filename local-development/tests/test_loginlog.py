@@ -495,3 +495,131 @@ class TestTheWholeMeasuredSession:
         assert got[-1].provider == "developer", (
             "the provider must be the HTPasswd one, or the row cannot be labelled break-glass"
         )
+
+
+def test_a_verdict_phrase_inside_an_unrelated_message_is_not_an_attempt():
+    """Quoted or relayed message text is not an oauth-server verdict."""
+    line = (
+        '2026-08-07T00:00:00.000000Z I0807 00:00:00.000000 1 audit.go:1] '
+        'request rejected; submitted text: Login with provider "ldap-local" '
+        'succeeded for login "alice"'
+    )
+    assert parse([line]) == []
+
+
+def test_interleaved_people_do_not_swap_directory_causes():
+    def line(ms, message):
+        return f'2026-08-07T00:00:00.{ms:06d}Z I0807 00:00:00.0 1 x.go:1] {message}'
+    got = parse([
+        line(0, 'Login with provider "first" failed for login "alice"'),
+        line(100000, 'Login with provider "first" failed for login "bob"'),
+        line(200000, 'error binding password for "uid=alice,dc=example": '
+                     'LDAP Result Code 49 "Invalid Credentials": '),
+        line(300000, 'Login with provider "ldap" failed for login "alice"'),
+        line(400000, 'Login with provider "ldap" failed for login "bob"'),
+    ])
+    assert {a.user_name: a.outcome for a in got} == {
+        "alice": loginlog.OUTCOME_BAD_PASSWORD,
+        "bob": loginlog.OUTCOME_FAILED,
+    }
+
+
+AD_DIAG = ('LDAP Result Code 49 "Invalid Credentials": 80090308: LdapErr: DSID-0C0903A9, '
+           'comment: AcceptSecurityContext error, data 532, v4563')
+
+
+def _line(iso: str, message: str) -> str:
+    return f"{iso} I0807 00:00:00.000000       1 x.go:1] {message}"
+
+
+def test_an_active_directory_cause_survives_without_the_login_in_the_dn():
+    """FAILS ON PASS 1'S TREE — the finding that rejects its parse replacement.
+
+    On AD the verdict says `jsmith` while the DN says `CN=Jane Smith`. The sub-code map exists FOR
+    this directory, so a correlation rule that requires the cause text to repeat the login deletes
+    the feature exactly where it matters, and no OpenLDAP fixture can notice."""
+    cli = parse([
+        _line('2026-08-07T10:00:00.000000000Z',
+              'Login with provider "developer" failed for login "jsmith"'),
+        _line('2026-08-07T10:00:00.100000000Z',
+              f'error binding password for "CN=Jane Smith,OU=People,DC=corp,DC=example": {AD_DIAG}'),
+        _line('2026-08-07T10:00:00.200000000Z',
+              'Login with provider "ad" failed for login "jsmith"'),
+    ])
+    assert cli[0].outcome == loginlog.OUTCOME_PASSWORD_EXPIRED, cli
+
+    orphaned = parse([
+        _line('2026-08-07T11:00:00.000000000Z',
+              f'error binding password for "CN=Jane Smith,OU=People,DC=corp,DC=example": {AD_DIAG}'),
+        _line('2026-08-07T11:00:00.001000000Z',
+              'Login with provider "ad" failed for "jsmith"'),
+    ])
+    assert orphaned[0].outcome == loginlog.OUTCOME_PASSWORD_EXPIRED, orphaned
+
+
+def test_an_identified_orphan_waits_for_the_verdict_that_names_it():
+    """P3 done right: alice's cause (tied to her by the found line) must not attach to bob's
+    verdict even when his lands first — and must still be there when hers lands. FAILS on the repo
+    tree (bob steals the cause) AND on pass 1's tree (the orphan is destroyed at bob's verdict)."""
+    got = parse([
+        _line('2026-08-07T12:00:00.000000000Z',
+              'found dn="uid=alice,dc=example" for (&(&(uid=*))(uid=alice))'),
+        _line('2026-08-07T12:00:00.050000000Z',
+              'error binding password for "uid=alice,dc=example": '
+              'LDAP Result Code 49 "Invalid Credentials": '),
+        _line('2026-08-07T12:00:00.900000000Z',
+              'Login with provider "ldap" failed for "bob"'),
+        _line('2026-08-07T12:00:00.950000000Z',
+              'Login with provider "ldap" failed for "alice"'),
+    ])
+    by_user = {a.user_name: a for a in got}
+    assert by_user["bob"].outcome == loginlog.OUTCOME_FAILED
+    assert by_user["bob"].ldap_result_code is None
+    assert by_user["alice"].outcome == loginlog.OUTCOME_BAD_PASSWORD
+    assert by_user["alice"].ldap_result_code == 49
+
+
+def test_the_mention_check_is_exact_not_substring():
+    """`uid=bob` must reach bob even when bobby's attempt is the more recent one — a substring
+    match reintroduces P3 one keystroke at a time."""
+    got = parse([
+        _line('2026-08-07T13:00:00.000000000Z',
+              'Login with provider "developer" failed for login "bob"'),
+        _line('2026-08-07T13:00:00.100000000Z',
+              'Login with provider "developer" failed for login "bobby"'),
+        _line('2026-08-07T13:00:00.200000000Z',
+              'no entries matching (&(&(uid=*)(memberOf=cn=gate,dc=example))(uid=bob))'),
+        _line('2026-08-07T13:00:00.300000000Z',
+              'Login with provider "ldap" failed for login "bob"'),
+        _line('2026-08-07T13:00:00.400000000Z',
+              'Login with provider "ldap" failed for login "bobby"'),
+    ])
+    by_user = {a.user_name: a for a in got}
+    assert by_user["bob"].outcome == loginlog.OUTCOME_REJECTED
+    assert by_user["bobby"].outcome == loginlog.OUTCOME_FAILED
+
+
+def test_two_people_in_flight_on_active_directory_attach_by_the_found_dn():
+    """The found line's filter carries `sAMAccountName=jsmith`, so the bind that follows belongs
+    to jsmith even though tbrown's attempt is more recent. FAILS on the repo tree (tbrown is
+    newest and takes the cause) and on pass 1's tree (the cause is dropped)."""
+    got = parse([
+        _line('2026-08-07T14:00:00.000000000Z',
+              'Login with provider "developer" failed for login "jsmith"'),
+        _line('2026-08-07T14:00:00.100000000Z',
+              'Login with provider "developer" failed for login "tbrown"'),
+        _line('2026-08-07T14:00:00.150000000Z',
+              'found dn="CN=Jane Smith,OU=People,DC=corp,DC=example" for '
+              '(&(&(objectClass=person)(memberOf=CN=gate,OU=Groups,DC=corp,DC=example))'
+              '(sAMAccountName=jsmith))'),
+        _line('2026-08-07T14:00:00.200000000Z',
+              f'error binding password for "CN=Jane Smith,OU=People,DC=corp,DC=example": {AD_DIAG}'),
+        _line('2026-08-07T14:00:00.300000000Z',
+              'Login with provider "ad" failed for login "jsmith"'),
+        _line('2026-08-07T14:00:00.400000000Z',
+              'Login with provider "ad" failed for login "tbrown"'),
+    ])
+    by_user = {a.user_name: a for a in got}
+    assert by_user["jsmith"].outcome == loginlog.OUTCOME_PASSWORD_EXPIRED
+    assert by_user["tbrown"].outcome == loginlog.OUTCOME_FAILED
+    assert by_user["tbrown"].ldap_result_code is None

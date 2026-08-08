@@ -65,6 +65,9 @@ LINE_NUMBER_CITATION = re.compile(
 # would falsify the record of what was reviewed. These files are historical once written.
 REVIEW_ARTIFACTS = (
     "OAUTH_LOGLEVEL_REVIEW.md",
+    # The PR #12 adversarial review. Its findings quote the exact lines they are about, which is
+    # the point of a review record and precisely what the line-number rule forbids elsewhere.
+    "REVIEW_login_capture_pr12.md",
 )
 
 

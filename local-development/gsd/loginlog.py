@@ -124,15 +124,20 @@ _TS = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)\s")
 # would be two places to keep in step.
 #
 # Anchored on the phrase rather than the file:line, because those line numbers move between
-# OpenShift releases while the message has been stable.
+# OpenShift releases while the message has been stable — and anchored to the START of the klog
+# message (the `]` that closes the header, then whitespace) because the phrase alone also matched
+# itself QUOTED INSIDE another message: a line relaying text that contains the sentence produced a
+# login attempt for somebody who never logged in. The oauth-server writes its verdicts as the
+# message's first words; relayed copies sit mid-message. A relayed copy of a WHOLE klog line,
+# header included, would still match — only a request id could reject that, and the log has none.
 #
 # The correlation below needs no change for the new shape — it keys on username and window, not on
 # provider or call site. A browser login picks ONE provider (`idp=developer`), so there is no
 # provider chain and a lone `failed` is a real failure rather than the ordinary CLI noise; retries
 # arrive seconds apart, well outside ATTEMPT_WINDOW, so fail-fail-succeed stays three attempts.
 _VERDICT = re.compile(
-    r'Login with provider "(?P<provider>[^"]*)" (?P<verdict>succeeded|failed) '
-    r'for (?:login )?"(?P<user>[^"]*)"'
+    r'\]\s+Login with provider "(?P<provider>[^"]*)" '
+    r'(?P<verdict>succeeded|failed) for (?:login )?"(?P<user>[^"]*)"'
 )
 
 # ── WHY code 49 ALONE IS NOT THE ANSWER ───────────────────────────────────────────────────────────
@@ -260,6 +265,31 @@ def parse_timestamp(line: str) -> datetime | None:
     return datetime.fromisoformat(m.group(1).replace("Z", "+00:00"))
 
 
+# The DN the directory search RESOLVED for one login — `found dn="<dn>" for (<filter>)` — logged
+# between `searching` and the bind. Progress, not a cause, but it is the ONLY line that ties a bind
+# DN back to the login that produced it: the filter it quotes embeds the typed login on every
+# directory, while the DN itself does so only on directories that happen to name entries by their
+# login attribute. OpenLDAP here writes `uid=jane.smith,...`; Active Directory writes
+# `CN=Jane Smith,...` for a login of `jsmith`, and without this line an AD bind error could not be
+# attributed to anybody by its own text.
+_FOUND = re.compile(r'found dn="(?P<dn>[^"]*)" for ')
+
+
+def _cause_mentions_user(text: str, user: str) -> bool:
+    """Whether an `attribute=value` assertion in this cause text names exactly this login.
+
+    The assertion forms are what the cause grammars actually carry: a bind error quotes the entry's
+    DN, `no entries matching` quotes the search filter (whose last clause embeds the typed login on
+    every directory), and a `found dn=` line quotes both. EXACT boundaries, not a substring test —
+    `uid=bob` must not be credited to `bobby` — which is the wrong-person bug this check exists to
+    prevent. Correlation only: nothing this reads is ever persisted (see _detail).
+    """
+    value = re.escape(user)
+    return re.search(
+        rf'(?i)["(,]\s*[a-z0-9.-]+\s*=\s*{value}\s*(?:[,)"]|$)', text
+    ) is not None
+
+
 def parse(lines: list[str] | str) -> list[LoginAttempt]:
     """Every login attempt in these lines, oldest first.
 
@@ -267,6 +297,13 @@ def parse(lines: list[str] | str) -> list[LoginAttempt]:
     several lines, and a `failed` for the same person can be part of a SUCCESS. An attempt is concluded
     when a verdict arrives for a provider after the deciding one, when the window expires, or at the end
     of the input.
+
+    CAUSE LINES NAME NO USER, so attribution is by evidence with a narrow adjacency fallback, never by
+    recency between two people: under interleaving, "the most recent attempt" assigned one person's
+    directory diagnosis to another, and a false cause is worse than the provider's honest no-reason
+    result. The evidence is the cause's own text plus the `found dn=` line that resolved its bind DN —
+    the latter because an Active Directory DN (`CN=Jane Smith,...`) never repeats the login (`jsmith`),
+    and requiring the cause itself to name the user would silently discard every AD cause.
 
     Lines with no kubelet timestamp are skipped rather than guessed at — a record whose instant is
     invented is worse than one that is absent.
@@ -276,12 +313,17 @@ def parse(lines: list[str] | str) -> list[LoginAttempt]:
 
     pending: dict[str, _Pending] = {}
     out: list[LoginAttempt] = []
-    # A cause line names NO user, and on a cluster whose only identity provider is LDAP it arrives
-    # BEFORE any verdict — the attempt starts with `ldap.go:131 searching`, so nothing has created a
+    # A cause can arrive BEFORE any line names its user, and on a cluster whose only identity provider
+    # is LDAP it always does — the attempt starts at `ldap.go:131 searching`, so nothing has created a
     # pending entry yet. That is the ordinary production shape, not an edge case: this cluster only
     # gets a username first because htpasswd is tried before ldap and logs a failure. Dropping these
-    # would lose every cause on a single-provider cluster, including expired passwords.
-    orphan: dict | None = None
+    # would lose every cause on a single-provider cluster, including expired passwords. A LIST, not a
+    # slot: an identified orphan waits for the verdict that names its person, so an interleaved
+    # stranger's verdict must be able to pass it by without destroying it.
+    orphans: list[dict] = []
+    # Recent `found dn=` lines by DN, kept one window: the bind error that follows quotes the DN, and
+    # this is what lets it be attributed on a directory whose DNs do not contain the login.
+    found: dict[str, dict] = {}
 
     def conclude(user: str) -> None:
         p = pending.pop(user, None)
@@ -307,15 +349,40 @@ def parse(lines: list[str] | str) -> list[LoginAttempt]:
             detail=_detail(p, outcome),
         ))
 
+    def adopt(p: _Pending, user: str, ts: datetime) -> None:
+        """Give a fresh pending attempt the orphan cause that belongs to it, if one is waiting.
+
+        An IDENTIFIED orphan (its evidence names a login) is taken only by that login's verdict —
+        adopting by arrival order is how one person's diagnosis reached another. An UNIDENTIFIED
+        orphan (a bind whose `found dn=` fell outside this read, so nothing ties its DN to a login)
+        goes to the first verdict inside the window: refusing it would discard every cause on a
+        directory whose DNs do not carry the login, which is a systematic loss, where the adjacency
+        guess is only wrong in a sliced read that also interleaves two people inside one second.
+        """
+        for i, o in enumerate(orphans):
+            if not timedelta(0) <= ts - o["at"] <= ATTEMPT_WINDOW:
+                continue
+            if o["identified"] and not _cause_mentions_user(o["evidence"], user):
+                continue
+            p.first_at = o["at"]
+            p.saw_no_entries = o["no_entries"]
+            p.bind_code = o["code"]
+            p.bind_diagnostic = o["diagnostic"]
+            del orphans[i]
+            return
+
     for raw in lines:
         ts = parse_timestamp(raw)
         if ts is None:
             continue
 
         # Expire anything whose window has passed, so a long-running read does not merge two attempts
-        # by the same person minutes apart.
+        # by the same person minutes apart — and so stale correlation state cannot leak forward.
         for user in [u for u, p in pending.items() if ts - p.first_at > ATTEMPT_WINDOW]:
             conclude(user)
+        orphans[:] = [o for o in orphans if ts - o["at"] <= ATTEMPT_WINDOW]
+        for dn in [d for d, f in found.items() if ts - f["at"] > ATTEMPT_WINDOW]:
+            del found[dn]
 
         v = _VERDICT.search(raw)
         if v:
@@ -324,15 +391,7 @@ def parse(lines: list[str] | str) -> list[LoginAttempt]:
             p = pending.get(user)
             if p is None:
                 p = pending[user] = _Pending(first_at=ts, last_at=ts)
-                # Adopt a cause seen just before this verdict — same attempt, and the verdict is the
-                # first line that names who it was about. Windowed, so an unrelated earlier cause
-                # cannot attach to a later person.
-                if orphan is not None and ts - orphan["at"] <= ATTEMPT_WINDOW:
-                    p.first_at = orphan["at"]
-                    p.saw_no_entries = orphan["no_entries"]
-                    p.bind_code = orphan["code"]
-                    p.bind_diagnostic = orphan["diagnostic"]
-                orphan = None
+                adopt(p, user, ts)
             p.last_at = ts
             if v.group("verdict") == "succeeded":
                 p.succeeded = True
@@ -345,31 +404,60 @@ def parse(lines: list[str] | str) -> list[LoginAttempt]:
                 p.provider = provider
             continue
 
-        # Cause lines carry no username, so they attach to the attempt in flight. With one oauth pod
-        # serving one request at a time per connection this is the same attempt; where two interleave,
-        # the cause attaches to the most recent unconcluded username, which is the closest the log
-        # allows — it names no user on these lines at all.
+        f = _FOUND.search(raw)
+        if f:
+            found[f.group("dn")] = {"at": ts, "raw": raw}
+            continue
+
         no_entries = bool(_NO_ENTRIES.search(raw))
         b = None if no_entries else _BIND_ERROR.search(raw)
         if not no_entries and b is None:
             continue
 
-        if pending:
-            newest = max(pending, key=lambda u: pending[u].last_at)
-            if no_entries:
-                pending[newest].saw_no_entries = True
-            else:
-                pending[newest].bind_code = int(b.group("code"))
-                pending[newest].bind_diagnostic = b.group("diagnostic") or ""
-            pending[newest].last_at = ts
+        # What this cause can prove about WHO it belongs to. `no entries matching` quotes the search
+        # filter, which embeds the typed login on every directory. A bind error only quotes the DN, so
+        # it is identifying evidence only together with the `found dn=` line that resolved it.
+        evidence = raw
+        identified = no_entries
+        if b is not None:
+            ctx = found.get(b.group("dn"))
+            if ctx is not None:
+                evidence = f'{raw} {ctx["raw"]}'
+                identified = True
+
+        mentioned = [u for u in pending if _cause_mentions_user(evidence, u)]
+        if len(mentioned) == 1:
+            target = mentioned[0]
+        elif not mentioned and not identified and len(pending) == 1:
+            # A bind whose found line fell outside this read window: adjacency is the only evidence
+            # left, and with exactly one attempt in flight it is sound.
+            target = next(iter(pending))
         else:
-            # Held for the verdict that follows — see `orphan` above.
-            orphan = {
+            target = None
+
+        if target is not None:
+            if no_entries:
+                pending[target].saw_no_entries = True
+            else:
+                pending[target].bind_code = int(b.group("code"))
+                pending[target].bind_diagnostic = b.group("diagnostic") or ""
+            pending[target].last_at = ts
+        elif len(mentioned) > 1:
+            # One cause naming two in-flight logins has no honest owner. Dropping it degrades both
+            # to the provider's own verdict, which is true; guessing would make one of them false.
+            pass
+        elif identified or not pending:
+            # Held for the verdict that names this person — see `orphans` above.
+            orphans.append({
                 "at": ts,
+                "evidence": evidence,
+                "identified": identified,
                 "no_entries": no_entries,
                 "code": None if b is None else int(b.group("code")),
                 "diagnostic": "" if b is None else (b.group("diagnostic") or ""),
-            }
+            })
+        # An unidentified cause with SEVERAL people in flight is dropped: any attachment would be a
+        # guess between named humans, and the guess is exactly the defect this branch replaced.
 
     for user in list(pending):
         conclude(user)

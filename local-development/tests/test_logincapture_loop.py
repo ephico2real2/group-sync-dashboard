@@ -242,33 +242,69 @@ class TestTheSettleHorizon:
         assert capture_once(store, CLUSTER, settings) == 10
         assert POD in store.login_watermarks(CLUSTER.name)
 
-    def test_attempts_newer_than_the_horizon_are_recorded_but_not_settled(
+    def test_attempts_newer_than_the_horizon_are_withheld_not_written(
             self, store, settings, install):
-        """Recording early and advancing late is the safe order.
-
-        The newest lines of a live log are the ones most likely to be mid-attempt — the failure lines
-        written, the success line not yet. So the events are stored (the dedup key makes the re-read
-        harmless) while the position waits.
-        """
+        """A read can slice a live attempt mid-flight: the chain `failed` line has arrived, the
+        success that follows it has not. Concluded from partial lines it records a failure that
+        never happened, and the dedup key cannot collapse that with the finished attempt because
+        the outcome differs. So nothing inside the settle window is written yet — the watermark
+        holds behind it, and OVERLAP_SECONDS > SETTLE_SECONDS + ATTEMPT_WINDOW guarantees the next
+        cycle re-reads the whole attempt."""
         install(FakeClient(logs={POD: _lines(datetime.now(UTC))}))
-        assert capture_once(store, CLUSTER, settings) == 1
+        assert capture_once(store, CLUSTER, settings) == 0
+        assert store.login_events(CLUSTER.name) == []
         assert store.login_watermarks(CLUSTER.name) == {}, (
             "the position advanced past an attempt whose lines may still be arriving"
         )
-
-    def test_the_horizon_is_the_newest_settled_attempt(self):
+    def test_the_horizon_is_the_newest_settled_line(self):
+        """Any timestamped line proves the log was read through that instant, so any timestamped
+        line may advance the cursor — attempts are not required (the quiet-pod case), and a line
+        newer than the horizon may not (its attempt can still be arriving)."""
         now = datetime.now(UTC)
-        attempts = [
-            LoginAttempt("a", loginlog.OUTCOME_SUCCESS, now - timedelta(seconds=SETTLE_SECONDS + 90)),
-            LoginAttempt("b", loginlog.OUTCOME_SUCCESS, now - timedelta(seconds=SETTLE_SECONDS + 30)),
-            LoginAttempt("c", loginlog.OUTCOME_SUCCESS, now),          # newer than the horizon
-        ]
-        horizon = logincapture._settle_horizon(attempts)
-        assert horizon == attempts[1].at.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        def line(when):
+            return f"{when.strftime('%Y-%m-%dT%H:%M:%S.%fZ')} I0807 0:0:0.0 1 httplog.go:1] request"
+        settled = now - timedelta(seconds=SETTLE_SECONDS + 30)
+        horizon = logincapture._settle_horizon([
+            line(now - timedelta(seconds=SETTLE_SECONDS + 90)),
+            line(settled),
+            line(now),                                   # newer than the horizon
+        ])
+        assert horizon == settled.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    def test_a_sliced_read_cannot_record_a_failure_that_never_happened(
+            self, store, settings, install, monkeypatch):
+        """The regression the withholding exists for, end to end: first read ends between the
+        provider-chain `failed` line and the success; the next read has the whole attempt. One
+        person, one login, one row — never a failed row beside the success it belonged to."""
+        whole = _lines(datetime.now(UTC) - timedelta(seconds=2))
+        client = install(FakeClient(logs={POD: whole[:1]}))
+        capture_once(store, CLUSTER, settings)          # sliced: chain-failure line only
+        client._logs = {POD: whole}
+        monkeypatch.setattr(logincapture, "SETTLE_SECONDS", 0)   # the attempt ages past the window
+        capture_once(store, CLUSTER, settings)
+        rows = store.login_events(CLUSTER.name)
+        assert [(r["user_name"], r["outcome"]) for r in rows] == [
+            ("jane.smith", loginlog.OUTCOME_SUCCESS)
+        ], rows
+    def test_non_login_lines_advance_a_quiet_pods_watermark(self, store, settings, install):
+        """The cursor follows successfully read log time, not only business events.
 
-    def test_no_attempts_means_no_horizon(self):
+        A pod that logs plenty and authenticates nobody otherwise pins its watermark forever:
+        sinceSeconds grows by a poll interval per cycle for the life of the pod, and once the
+        window outgrows the byte cap the newest lines are deferred every cycle while capture
+        still stamps itself live."""
+        old = (datetime.now(UTC) - timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        recent = datetime.now(UTC) - timedelta(seconds=SETTLE_SECONDS + 10)
+        stamp = recent.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        progress = f"{stamp} I0807 00:00:00.0 1 httplog.go:1] ordinary request"
+        store.set_login_watermark(CLUSTER.name, POD, old, "x")
+        install(FakeClient(logs={POD: [progress]}))
+        capture_once(store, CLUSTER, settings)
+        assert store.login_watermarks(CLUSTER.name)[POD] == stamp
+    def test_no_settled_lines_means_no_horizon(self):
         assert logincapture._settle_horizon([]) is None
-
+        now_line = (f"{datetime.now(UTC).strftime('%Y-%m-%dT%H:%M:%S.%fZ')} "
+                    "I0807 0:0:0.0 1 httplog.go:1] request")
+        assert logincapture._settle_horizon([now_line]) is None
 
 class TestLeadership:
     """`poller.py` calls its own lease "BEST-EFFORT admission control, NOT a write fence".
