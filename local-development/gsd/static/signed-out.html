@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <title>Signed out — OCP Access Control Dashboard</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body data-page="signed-out">
+<div class="wrap">
+  <main id="main">
+    <h1>Signed out of the dashboard</h1>
+    <p>Your dashboard session has ended.</p>
+    <!-- Two claims, and both must be true on EVERY arrival here — after a sign-out whose
+         revocation succeeded, after one whose revocation failed, and after the
+         expired-session path that never attempts one. So the first paragraph describes
+         what signing out DOES (asks for revocation) rather than asserting what happened,
+         and the second says plainly what no revocation can do: end the reader's other
+         sessions. A page with no scripts cannot know its own history, and guessing would
+         be lying to somebody mid-audit. -->
+    <p>Signing out asks the cluster to revoke the access token this dashboard was using,
+       the same way the OpenShift web console does. If that request could not be made —
+       the session had already expired, or the cluster did not answer — the token is not
+       revoked early and instead expires on the cluster's own schedule.</p>
+    <p>Only this dashboard is signed out. Your sessions in the OpenShift web console and
+       the <code>oc</code> command line are separate and still active, and depending on
+       the cluster's identity provider you may or may not be asked for your password the
+       next time you sign in here.</p>
+    <p><a href="/">Sign in again</a></p>
+  </main>
+</div>
+</body>
+</html>
+

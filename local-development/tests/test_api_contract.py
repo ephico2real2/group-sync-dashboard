@@ -28,7 +28,10 @@ CONTRACT = pathlib.Path(__file__).resolve().parents[2] / "docs" / "api-contract.
 # Not every path is an endpoint a reader consumes: the SPA shell and the three
 # unauthenticated probe paths are infrastructure. They are listed rather than pattern-matched
 # so that adding one is a visible decision.
-INFRASTRUCTURE = {"/", "/healthz", "/readyz", "/metrics"}
+# Not every path is an endpoint a reader consumes: the SPA shell, the three unauthenticated
+# probe paths, the logout landing page and the sign-out action route are infrastructure.
+# They are listed rather than pattern-matched so that adding one is a visible decision.
+INFRASTRUCTURE = {"/", "/healthz", "/readyz", "/metrics", "/signed-out", "/sign-out"}
 
 
 @pytest.fixture(scope="module")

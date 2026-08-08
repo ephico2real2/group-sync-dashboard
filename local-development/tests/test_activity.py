@@ -145,7 +145,8 @@ class TestTrustBoundary:
         X-Forwarded-User is caller-supplied. Recording it would fabricate an audit trail."""
         with _client(tmp_path, oauth_proxy_enabled=False) as c:
             body = c.get("/api/whoami", headers={"X-Forwarded-User": "impostor"}).json()
-            assert body == {"user": None, "email": None, "authenticated": False}
+            assert body == {"user": None, "email": None, "authenticated": False,
+                            "logout_url": None, "proxy_logout_url": None, "session": None}
             # Refused, not merely empty. This used to return an empty list, which is the
             # same answer a legitimately-unused dashboard gives — so it could not be told
             # apart from "there is nothing to see". 403 says why.
@@ -157,8 +158,11 @@ class TestTrustBoundary:
                 "/api/whoami",
                 headers={"X-Forwarded-User": "alice", "X-Forwarded-Email": "a@x.com"},
             ).json()
-            assert body == {"user": "alice", "email": "a@x.com", "authenticated": True}
-
+            assert body == {
+                "user": "alice", "email": "a@x.com", "authenticated": True,
+                "logout_url": "/sign-out", "proxy_logout_url": "/oauth/sign_out",
+                "session": {"cookie_expire_seconds": 14400, "cookie_refresh_seconds": 0},
+            }
     def test_interactions_are_captured_and_survive_shutdown(self, tmp_path):
         """The buffer is memory-only, so a graceful shutdown must flush it."""
         db = str(tmp_path / "gsd.db")

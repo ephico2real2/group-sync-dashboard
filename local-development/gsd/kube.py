@@ -7,10 +7,14 @@ are a CRD and an OpenShift type, and both are simple to read directly.
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import logging
 import re
+import ssl
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 from urllib.parse import unquote
 
@@ -103,6 +107,113 @@ PLATFORM_USER_NAMES = frozenset({
 def is_platform_user(name: str) -> bool:
     """Whether a User subject is a cluster-internal identity rather than a person."""
     return name.startswith(PLATFORM_USER_PREFIXES) or name in PLATFORM_USER_NAMES
+
+
+
+# The OAuthAccessToken objects the OAuth server mints, one per login. DELETE on one is how the
+# OpenShift console signs out: it is the only way to END a token early rather than waiting out
+# its server-side lifetime (365 days on the reference cluster). The plain resource, not
+# useroauthaccesstokens — SARs on the lab answered yes for delete on this one and no on the
+# other, and the console uses this one.
+OAUTHACCESSTOKEN_API = "/apis/oauth.openshift.io/v1/oauthaccesstokens"
+
+SHA256_TOKEN_PREFIX = "sha256~"
+"""OpenShift 4.6+ tokens and the API objects behind them share this prefix; the object NAME
+carries a hash where the token carries the secret, which is why one is derivable from the
+other and never the reverse."""
+
+# The HOSTING cluster's API server, by its in-cluster service DNS name, verified with the CA
+# kubelet mounts into every pod. Deliberately NOT taken from the `clusters:` config list: a
+# revocation must go to the cluster whose OAuth server minted the session — the one this pod
+# runs on, always — and deriving that from an operator-editable, reorderable list would let a
+# config change silently aim a credentialed DELETE at the wrong API server.
+SELF_API_URL = "https://kubernetes.default.svc"
+SELF_CA_FILE = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+
+
+def oauth_token_object_name(token: str) -> str:
+    """The OAuthAccessToken object name for a raw bearer token.
+
+    The console's logout derives it exactly this way (openshift/console PR #6445,
+    `tokenToObjectName`): strip the `sha256~` prefix if present, SHA-256 the remainder,
+    base64-encode the digest, re-attach the prefix. The encoding is Go's RawURLEncoding —
+    the URL-safe RFC 4648 §5 alphabet (`-`/`_`), no padding — because the result must be a
+    valid Kubernetes object name, and `+`, `/` and `=` are not legal in one. Python's
+    urlsafe_b64encode uses the same alphabet but PADS, hence the explicit strip; a 32-byte
+    digest always encodes to 43 characters plus one pad. This exact form resolved a real
+    object on the lab (docs/design-drafts/05-upstream-reference.md §2).
+    """
+    raw = token.removeprefix(SHA256_TOKEN_PREFIX)
+    digest = hashlib.sha256(raw.encode("utf-8")).digest()
+    return SHA256_TOKEN_PREFIX + base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+
+
+def self_cluster_client(token: str, timeout: float) -> httpx.Client:
+    """A client for the hosting cluster's API server, authenticated as the CALLER's token.
+
+    The sign-out revocation acts as the USER, never as the ServiceAccount, and the
+    distinction is a security boundary rather than a convenience: `delete
+    oauthaccesstokens` is granted to authenticated users themselves (measured by SAR, yes
+    even for a plain LDAP user — it is how the console's logout works for everybody), so
+    acting as the user needs NO new chart grant, and the standing rule that this chart
+    holds no write verb on anything it reports on stays true. Granting the SA that delete
+    instead would hand a read-only dashboard the power to kill arbitrary sessions.
+
+    The SA's CA file is loaded when present, which in-cluster is always; without it (local
+    development) the system trust store applies and a mismatch fails TLS loudly rather
+    than silently skipping verification.
+    """
+    verify: bool | ssl.SSLContext = True
+    if Path(SELF_CA_FILE).is_file():
+        verify = ssl.create_default_context(cafile=SELF_CA_FILE)
+    return httpx.Client(
+        base_url=SELF_API_URL,
+        headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+        verify=verify,
+        timeout=timeout,
+    )
+
+
+def revoke_oauth_access_token(client: httpx.Client, token: str) -> tuple[bool, str]:
+    """Best-effort DELETE of the OAuthAccessToken behind `token`. Returns (revoked, why).
+
+    Self-scoped by construction: the object name is derived from the token the caller
+    presented, so this call can only ever revoke the credential that authenticates it —
+    no input can name anybody else's token, which is what makes it safe to trigger from a
+    browser navigation.
+
+    NEVER RAISES, and the token reaches no return value and no log line: a logout that
+    cannot revoke must still end the session, so every failure collapses to (False, why)
+    and the caller redirects into the proxy's sign_out regardless. The `why` strings are
+    built from status codes and exception TYPE NAMES only — httpx exception messages can
+    embed the request URL, which here is derived from the token (a hash, not the secret,
+    but the rule is simpler as "nothing token-derived is logged").
+    """
+    name = oauth_token_object_name(token)
+    try:
+        response = client.delete(f"{OAUTHACCESSTOKEN_API}/{name}")
+    except httpx.HTTPError as exc:
+        return False, f"cluster did not answer ({type(exc).__name__})"
+    if response.status_code in (200, 202):
+        return True, "revoked"
+    if response.status_code == 404:
+        # Already gone — another tab's sign-out won the race, or the server aged it out.
+        # The end state is the one this call exists to reach, so it counts as revoked.
+        #
+        # It is also what a WRONG DERIVATION looks like, which is why this returns a
+        # different `why` string rather than reusing "revoked": the object name is computed
+        # from the token, and a name that never matches would 404 every single time while
+        # reporting success. Occasional "already gone" is a race; universal "already gone"
+        # means oauth_token_object_name is broken. The trap is real — the reference sample's
+        # Go strips "Bearer sha256~", and Go's TrimPrefix leaves the string UNCHANGED when
+        # that prefix is absent, so copying it literally onto our bare header value hashes
+        # the wrong string. Measured both ways; only the bare-token form resolved an object.
+        return True, "already gone (HTTP 404)"
+    if response.status_code == 401:
+        return False, "the token is already invalid (HTTP 401)"
+    if response.status_code == 403:
+        return False, "not permitted to revoke own token (HTTP 403)"
+    return False, f"HTTP {response.status_code}"
 
 
 # The membership clause of an LDAP search filter, in either of the two spellings that exist.

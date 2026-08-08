@@ -20,6 +20,7 @@ from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 
 from . import __version__
+from . import kube
 from . import state as st
 from .activity import EMAIL_HEADER, INTERACTION_HEADER, USER_HEADER, ActivityRecorder
 from .config import Settings, load_settings
@@ -35,7 +36,21 @@ STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 
 # Mirrors oauthProxy.skipAuthRegex. Requests here reach the app WITHOUT authentication, so
 # nothing they claim about identity can be believed or recorded.
-SKIP_AUTH_PATHS = frozenset({"/healthz", "/readyz", "/metrics"})
+# Mirrors oauthProxy.skipAuthRegex. Requests here reach the app WITHOUT authentication, so
+# nothing they claim about identity can be believed or recorded. /signed-out is the proxy's
+# -logout-url landing page: it exists precisely for the moment the session cookie has just
+# been cleared, so it is unauthenticated by design rather than by oversight.
+SKIP_AUTH_PATHS = frozenset({"/healthz", "/readyz", "/metrics", "/signed-out"})
+
+# What the proxy's -pass-access-token flag forwards: the user's own bearer token for the
+# hosting cluster. Read by exactly one endpoint (/sign-out) for exactly one purpose
+# (revoking that same token), and never logged, stored or echoed — it is a live credential.
+ACCESS_TOKEN_HEADER = "X-Forwarded-Access-Token"
+
+# Wall-clock bound on the revocation DELETE. Tight, because it sits inside a user-facing
+# navigation: a slow API server may cost the person signing out a few seconds, never a hung
+# tab — the redirect that actually ends the session happens whatever this call does.
+REVOKE_TIMEOUT_SECONDS = 5.0
 
 
 # The outcome vocabulary, read OFF THE PARSER rather than restated here. loginlog.py is where an
@@ -911,13 +926,52 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
         """Who the proxy says this request is. Reflected, never stored by this endpoint.
 
         `authenticated` is false when the proxy is disabled even if a username is present,
-        because in that mode the caller supplied it themselves.
+        because in that mode the caller supplied it themselves. Every other field is gated
+        on the same judgement, for the same reason: without the proxy there is no session
+        to end and no idle timeout anyone enforces, so offering any of them would be the
+        page claiming a security control that does not exist.
+
+        TWO logout URLs, because the page has two different exits and only one of them can
+        revoke. `logout_url` is the app's own /sign-out, which revokes the OpenShift token
+        console-style and then falls through to the proxy's sign_out — the manual link and
+        the idle-expiry path both use it, and a link aimed straight at the proxy would
+        silently skip the revocation. `proxy_logout_url` is the proxy's bare cookie-clear,
+        for the one exit that must NOT route through the app: a session the failover has
+        already proven dead cannot reach /sign-out (the proxy would bounce the request into
+        a fresh login instead of out of the old one), and it has no live token to revoke.
+
+        `session` carries the CONFIGURED durations, never a deadline. The session cookie is
+        HttpOnly and the proxy forwards no session-age header, so the true expiry is not
+        observable from here; these numbers are trustworthy only because the ConfigMap
+        renders them from the same chart values as the proxy's own flags. The browser owns
+        the countdown model built on them — see static/index.html.
+
+        NEVER POLL THIS ON A TIMER. Requesting it through the proxy re-stamps the session
+        cookie like any other request, so a page calling it periodically would hold every
+        session open forever — the exact defect the durations exist to fix. It is called
+        once, at page load; the page's "Stay signed in" control re-proves the session with
+        an ordinary interaction-marked data refresh instead of calling this again.
         """
         user = request.headers.get(USER_HEADER)
+        authenticated = bool(user) and settings.oauth_proxy_enabled
         return {
             "user": user if settings.oauth_proxy_enabled else None,
             "email": request.headers.get(EMAIL_HEADER) if settings.oauth_proxy_enabled else None,
-            "authenticated": bool(user) and settings.oauth_proxy_enabled,
+            "authenticated": authenticated,
+            "logout_url": "/sign-out" if authenticated else None,
+            # Composed, not hardcoded: tracks a --proxy-prefix override through
+            # Settings.oauth_proxy_prefix so the link and the proxy cannot drift apart.
+            "proxy_logout_url": (
+                f"{settings.oauth_proxy_prefix}/sign_out" if authenticated else None
+            ),
+            "session": (
+                {
+                    "cookie_expire_seconds": settings.session_cookie_expire_seconds,
+                    "cookie_refresh_seconds": settings.session_cookie_refresh_seconds,
+                }
+                if authenticated
+                else None
+            ),
         }
 
     @app.get("/api/dashboard/activity")
@@ -1091,6 +1145,83 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
         return FileResponse(
             os.path.join(STATIC_DIR, "index.html"),
             headers={"Cache-Control": "no-cache, must-revalidate"},
+        )
+
+    @app.get("/signed-out")
+    def signed_out() -> FileResponse:
+        # The proxy's -logout-url target, listed in oauthProxy.skipAuthRegex. It renders at
+        # the exact moment the session cookie has just been cleared, so it reads no headers
+        # and claims nothing about who signed out — anything it said would be
+        # caller-supplied. Same Cache-Control reasoning as index(): a stale cached copy
+        # after a redeploy would misdescribe what logout actually does, and what it does
+        # NOT do (end the reader's other cluster sessions) is its entire purpose.
+        return FileResponse(
+            os.path.join(STATIC_DIR, "signed-out.html"),
+            headers={"Cache-Control": "no-cache, must-revalidate"},
+        )
+
+    @app.get("/sign-out")
+    def sign_out(request: Request) -> RedirectResponse:
+        """End this session the way the console does: revoke the token, then clear the cookie.
+
+        The console's logout DELETEs the OAuthAccessToken object whose name is derived from
+        the bearer token, with the USER's own credentials — the permission is granted to
+        authenticated users themselves, so the dashboard's ServiceAccount needs (and gets)
+        no write grant. The token arrives on X-Forwarded-Access-Token, which the proxy's
+        -pass-access-token flag forwards on every proxied request.
+
+        A GET, deliberately: the control is a plain link and the idle path is a location
+        navigation, and both must keep working when the page's scripts are gone. The
+        mutation is idempotent and self-scoped — the only token this can revoke is the one
+        the request itself presented — so a cross-site drive-by GET costs its victim a
+        sign-out and nothing more, the same accepted trade as the proxy's own GET sign_out.
+
+        ORDER IS THE DESIGN. Revoke FIRST, redirect into <prefix>/sign_out SECOND: once the
+        proxy clears its cookie the token can never be seen again, so the reverse order
+        strands the token alive for its full server-side lifetime (365 days measured on the
+        reference cluster). And with -cookie-refresh unset the proxy never revalidates
+        mid-session, so revoking under a still-live cookie cannot race the redirect.
+
+        A failed revocation NEVER blocks the exit — a logout that cannot revoke must still
+        end the session — so every failure is logged (status only, the token appears in no
+        log line) and the redirect happens regardless. /signed-out's wording is written to
+        be true in both worlds.
+        """
+        if not settings.oauth_proxy_enabled:
+            # Same refusal, same reasoning as /api/dashboard/activity: without the proxy
+            # the token header is whatever the caller typed, and acting on it would let an
+            # unauthenticated caller aim a credentialed DELETE at the API server.
+            raise HTTPException(
+                status_code=403,
+                detail="sign-out requires the OAuth proxy; without it there is no session "
+                       "to end and a forwarded token would be caller-supplied",
+            )
+        token = request.headers.get(ACCESS_TOKEN_HEADER)
+        if token:
+            with kube.self_cluster_client(token, timeout=REVOKE_TIMEOUT_SECONDS) as client:
+                revoked, why = kube.revoke_oauth_access_token(client, token)
+            if revoked:
+                log.info("sign-out: access token %s", why)
+            else:
+                log.warning(
+                    "sign-out: could not revoke the access token — %s. The session still "
+                    "ends now; the unrevoked token expires on the cluster's own schedule.",
+                    why,
+                )
+        else:
+            log.warning(
+                "sign-out request carried no %s header — is the proxy running without "
+                "-pass-access-token? The session still ends; the token outlives it.",
+                ACCESS_TOKEN_HEADER,
+            )
+        # 303 rather than the RedirectResponse default 307: the target must be fetched with
+        # GET whatever this request was, and 303 is never cached — a cached redirect would
+        # skip this handler, and the revocation with it, on the next sign-out. no-store
+        # states the same intent explicitly.
+        return RedirectResponse(
+            url=f"{settings.oauth_proxy_prefix}/sign_out",
+            status_code=303,
+            headers={"Cache-Control": "no-store"},
         )
 
     if os.path.isdir(STATIC_DIR):
