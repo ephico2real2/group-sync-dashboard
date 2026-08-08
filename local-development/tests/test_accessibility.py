@@ -23,7 +23,9 @@ import re
 
 import pytest
 
-INDEX = pathlib.Path(__file__).resolve().parents[1] / "gsd" / "static" / "index.html"
+# The stylesheet is its own file now, not a <style> block in the page. Reading it directly means this
+# check cannot be fooled by a second inline block; tests/test_type_scale.py asserts there is none.
+CSS = pathlib.Path(__file__).resolve().parents[1] / "gsd" / "static" / "app.css"
 
 AA_TEXT = 4.5
 AA_LARGE_OR_GRAPHIC = 3.0
@@ -57,7 +59,7 @@ def _block(css: str, pattern: str) -> dict[str, str]:
 
 @pytest.fixture(scope="module")
 def themes():
-    css = INDEX.read_text()
+    css = CSS.read_text()
     light = _block(css, r":root\s*\{(.*?)\n\}")
     # The dark block only overrides what changes; the rest cascades from :root.
     dark = {**light, **_block(css, r':root\[data-theme="dark"\]\s*\{(.*?)\n\}')}
@@ -91,7 +93,7 @@ def _tab_tokens(css: str) -> list[str]:
     return sorted(set(re.findall(r"--(tab-[a-z]+):", css)))
 
 
-TAB_NAMES = _tab_tokens(INDEX.read_text())
+TAB_NAMES = _tab_tokens(CSS.read_text())
 TABS = [(token, "page", AA_TEXT, f"active {token} label") for token in TAB_NAMES]
 
 

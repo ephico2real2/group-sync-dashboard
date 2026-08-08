@@ -52,7 +52,7 @@ like the answer. It maps path prefixes to authorization checks, so a per-namespa
 is superficially tempting. It fails twice: the `ResourceAttributes` namespace is still static
 per entry, and — decisively — per the upstream README it applies **only to requests carrying
 `Authorization: Bearer` or a client certificate**. Our report request is a browser `fetch`
-with a session cookie (`index.html#.risk-headline`), so it would never be evaluated against the map
+with a session cookie (`app.css#.risk-headline`), so it would never be evaluated against the map
 at all. A 100-entry generated prefix map would gate nothing. Do not build it.
 
 **What `--openshift-sar` remains good for:** a coarse front door — e.g. "you must be able to
