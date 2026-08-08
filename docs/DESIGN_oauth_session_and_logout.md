@@ -1,5 +1,51 @@
 # Session lifetime and a logout button
 
+## DECIDED POLICY (operator, this session)
+
+| control | value | enforced by |
+|---|---|---|
+| idle sign-out | **30m** of no user activity | the page: activity tracking → countdown → `/oauth/sign_out` |
+| warning before either deadline | **2m** | modal with a countdown |
+| absolute session cap | **4h**, then a FORCED re-login | the page at 4h, plus `-cookie-expire=4h` as the server-side backstop |
+| `-cookie-refresh` | unset | unusable with `provider=openshift` — see Finding 3 |
+
+Two modal modes, because the deadlines differ in kind: the idle warning offers **"Stay signed in"**, and
+the 4-hour warning does not — an absolute cap cannot be extended, so offering a button that cannot work
+would be a lie. It says re-authentication is coming and gives the reader two minutes to finish reading.
+
+### What makes the 4-hour logout an actual re-login
+
+`-cookie-expire=4h` alone does NOT force anybody to re-authenticate. It ends the *proxy* session; the
+browser then restarts the OAuth flow, the OpenShift OAuth server still holds its own session cookie,
+and it re-issues a token with no prompt. On this cluster the token itself is no help either —
+`accessTokenMaxAgeSeconds` is **31536000 (365 days)** and `accessTokenInactivityTimeout` is unset, so
+nothing above the proxy will ever cut a session short.
+
+The OAuth server does expose a logout endpoint, measured on the lab:
+
+```
+GET  https://oauth-openshift.apps-crc.testing/logout   ->  405 Method Not Allowed   (the handler exists)
+POST https://oauth-openshift.apps-crc.testing/logout   ->  200                      (no CSRF token needed)
+```
+
+`POST`, not `GET` — which rules out reaching it by redirect, because a 302 is followed with GET. So the
+full sign-out path is:
+
+1. the page navigates to `/oauth/sign_out` (proxy clears its cookie), which redirects to
+2. `/signed-out`, our own unauthenticated page, which carries
+3. a **form** that POSTs to the OAuth server's `/logout`, ending the SSO session so the next sign-in
+   really does ask for credentials.
+
+Open item for implementation, not yet verified: whether anything blocks that cross-origin form POST.
+A `form-action` CSP directive would; a grep of `gsd/` found no CSP header set by the app at all, which
+needs confirming properly rather than inferring from an empty grep — if a CSP is added later it must
+allow the OAuth host in `form-action`.
+
+Whether step 3 is automatic or a second click is a UX call: auto-submitting makes "sign out" mean what
+it says, at the cost of a cross-origin POST the reader did not visibly trigger. Recommendation is a
+visible **"Also sign out of OpenShift"** button on the signed-out page for a manual logout, and an
+automatic POST when the 4-hour cap fires, because that one is policy rather than preference.
+
 Branch `feat/oauth-session-and-logout`. Two features against the oauth-proxy sidecar:
 
 1. `-cookie-refresh` / `-cookie-expire`, parameterised through `values.yaml`.
