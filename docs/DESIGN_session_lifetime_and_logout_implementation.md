@@ -1,183 +1,265 @@
 # Session lifetime and logout — the implementation design
 
-> ## RECONCILIATION — read this before applying anything below
+> ## RECONCILIATION — revision two. Read this before applying anything below.
 >
-> The body of this document was drafted against a brief that has since been overtaken. Where the two
-> disagree, **this section wins.** Nothing below it has been edited: the reasoning is worth keeping
+> The body of this document was drafted against a brief that has since been overtaken; where the two
+> disagree, **this section wins.** Nothing below it has been edited — the reasoning is worth keeping
 > intact, and rewriting somebody else's analysis to match a later decision destroys the record of why
 > the earlier one looked right.
+>
+> **Revision one of this section was itself reviewed and was wrong in three places.** All seventeen
+> findings were reproduced before being folded in; two of them carry corrections to the reviewer's own
+> reasoning, and one forces a design neither of us proposed. The per-finding audit trail — what was
+> verified, how, and which corrections were made to the review itself — is
+> `docs/design-drafts/04-revision-two-ledger.md`.
 
 ## R1. The authoritative policy
 
-| control | value | enforced by | kind of guarantee |
+| control | value | enforced by | guarantee |
 |---|---|---|---|
-| idle sign-out | **30m** of no user activity | the page: activity tracking → countdown → full sign-out | client-decided, server-effected |
-| warning before either deadline | **2m** | modal; "Stay signed in" on the idle path only | — |
-| absolute session cap | **4h**, then a FORCED re-login | `-cookie-expire=4h`, plus a page-initiated full sign-out at its own modelled 4h | server-enforced (the cap), client-initiated (the credential prompt) |
-| `-cookie-refresh` | **unset** | — | n/a, see R2 |
+| idle sign-out | **30m** of no user activity | the page: activity tracking → warning → navigate to `sign_out` | client-decided, server-effected |
+| warning before either deadline | **2m** | modal; "Stay signed in" on the **idle** path only | advisory |
+| absolute session cap | **4h** | `-cookie-expire=4h`; **detection** of the dead cookie drives the sign-out, not a client timer | server-enforced |
+| credential prompt after the cap | best-effort | ending the OAuth server session | **conditional — see R4/D4** |
+| `-cookie-refresh` | unset | — | n/a, see R2 |
 
-## R2. Why the body says 30m/5m, and why that is now wrong
+The fourth row is the change revision one got wrong by omission: the prompt is guaranteed only for
+identity providers the OAuth server checks itself.
 
-Two independent reasons, one of them mine.
+## R2. Why the body says 30m/5m, and why that is wrong
 
-**The briefing error.** The workflow that produced the body was launched with "Operator decisions,
-fixed: cookie-expire 30m / cookie-refresh 5m". The operator changed the policy while it ran and the
-brief was never updated, so it was handed two contradictory sources. It read the newer policy — the
-4-hour cap and the POST-logout — and concluded, reasonably, that the brief superseded it. Its section 6
-therefore states it does *not* implement "the research doc's earlier auto-POST-to-`/logout` sketch or a
-4-hour absolute cap". That inversion is a briefing failure, not a reasoning failure, and it is the
-reason this section exists rather than a set of scattered edits.
+**A briefing failure of mine.** The workflow that produced the body was launched with "Operator
+decisions, fixed: cookie-expire 30m / cookie-refresh 5m". The policy changed while it ran and the brief
+was never updated, so it was handed two contradictory sources, read the newer policy, and concluded —
+reasonably — that the brief superseded it. Its section 6 therefore states it does *not* implement "the
+research doc's earlier auto-POST-to-`/logout` sketch or a 4-hour absolute cap". That inversion is the
+reason this section exists rather than edits scattered through the body.
 
-**`cookie-refresh` is unusable, not merely at risk.** The body treats this as a contingency (its
-section 5). It is now measured. `ValidateSessionState` → `validateToken` sends the token as a **query
-parameter** and accepts only HTTP 200:
+**`cookie-refresh` is unusable, measured, not merely at risk.** `ValidateSessionState` →
+`validateToken` sends the token as a query parameter and accepts only HTTP 200:
 
 ```
-GET  <api>/apis/user.openshift.io/v1/users/~   with Authorization header   ->  200, user "kubeadmin"
-GET  <api>/apis/user.openshift.io/v1/users/~?access_token=<token>          ->  403
-     "users.user.openshift.io \"~\" is forbidden: User \"system:anonymous\" cannot get resource users"
+GET  <api>/apis/user.openshift.io/v1/users/~   with Authorization header  ->  200, user "kubeadmin"
+GET  <api>/apis/user.openshift.io/v1/users/~?access_token=<token>         ->  403 "system:anonymous"
 ```
 
-The API server ignored the parameter entirely and treated the caller as anonymous. The provider does
-not override `RefreshSessionIfNeeded`, so the default returns `(false, nil)`, `revalidated` stays
-false, and `session.AccessToken` is non-empty for any browser login (`Redeem` sets it) — so the
-validation runs and fails on every refresh interval, clearing the cookie. **`-cookie-refresh` is a
-forced-logout timer on `provider=openshift`, not a sliding window.**
+The API server ignored the parameter and treated the caller as anonymous. The provider does not
+override `RefreshSessionIfNeeded`, so the default returns `(false, nil)`, `revalidated` stays false, and
+`Redeem` populates `session.AccessToken` for every browser login — so the validation runs and fails at
+every interval, clearing the cookie. **`-cookie-refresh` is a forced-logout timer on
+`provider=openshift`, not a sliding window.**
 
-Consequence for the design: the sliding window is gone, and with it the derivation the body's countdown
-rests on.
+## R3. Three independent policies, not two derived ones
 
-## R3. The structural delta — three policies, not two derived ones
+With refresh off, `-cookie-expire` is an absolute cap measured from login and says nothing about
+idleness. The idle timeout becomes a **policy the page owns**, with its own keys.
 
-This is the change that goes beyond renumbering, and the one place the body's architecture must move.
+### The duration contract
 
-The body derives the countdown from `(expire, refresh)`: with a sliding cookie, idle timeout *is*
-`expire - refresh .. expire`, so no separate knob is needed. With refresh off, `-cookie-expire` becomes
-an absolute cap measured from login and says nothing about idleness. The idle timeout is therefore a
-**new, independent policy the page owns**, and it needs its own configuration rather than being computed
-from the cookie pair.
-
-### The corrected duration contract
-
-| layer | keys | type | value at defaults |
+| layer | keys | type | at defaults |
 |---|---|---|---|
-| `values.yaml` | `oauthProxy.cookie.expire` | Go duration string | `4h` |
-| | `oauthProxy.cookie.refresh` | Go duration string, empty = omitted | `""` |
-| | `session.idleTimeout` | Go duration string | `30m` |
-| | `session.warnBefore` | Go duration string | `2m` |
-| ConfigMap | `sessionCookieExpire`, `sessionIdleTimeout`, `sessionWarnBefore` | quoted strings, same helpers | `"4h"`, `"30m"`, `"2m"` |
-| `Settings` | `session_cookie_expire_seconds`, `session_idle_seconds`, `session_warn_seconds` | `int` seconds; malformed raises `ConfigError` | `14400`, `1800`, `120` |
-| `/api/whoami` | `session.cookie_expire_seconds`, `session.idle_seconds`, `session.warn_seconds` | JSON ints; `session` is `null` unauthenticated | `14400`, `1800`, `120` |
-| page JS | `expireMs`, `idleMs`, `warnMs` | ms numbers | `14_400_000`, `1_800_000`, `120_000` |
+| `values.yaml` | `oauthProxy.cookie.expire` | Go duration | `4h` |
+| | `oauthProxy.cookie.refresh` | Go duration, empty = flag omitted | `""` |
+| | `session.idleTimeout` | Go duration, empty/`"0"` = idle sign-out disabled | `30m` |
+| | `session.warnBefore` | Go duration | `2m` |
+| Helm helpers | `gsd.cookieExpire`, `gsd.cookieRefresh`, `gsd.sessionIdleTimeout`, `gsd.sessionWarnBefore` | `dig`-based, so `cookie: null` / `session: null` fall back to the shipped defaults | `4h`, `""`, `30m`, `2m` |
+| ConfigMap | `sessionCookieExpire`, **`sessionCookieRefresh`**, `sessionIdleTimeout`, `sessionWarnBefore` | quoted strings, same helpers | `"4h"`, `""`, `"30m"`, `"2m"` |
+| `Settings` | `session_cookie_expire_seconds`, `session_cookie_refresh_seconds`, `session_idle_seconds`, `session_warn_seconds` | `int` seconds; malformed raises `ConfigError` naming the key | `14400`, `0`, `1800`, `120` |
+| env overrides | `GSD_SESSION_COOKIE_EXPIRE`, `_REFRESH`, **`GSD_SESSION_IDLE_TIMEOUT`**, **`GSD_SESSION_WARN_BEFORE`** | Go duration strings, validated identically | — |
+| `/api/whoami` | `session.{cookie_expire_seconds, cookie_refresh_seconds, idle_seconds, warn_seconds}` | JSON ints; `session` is `null` unauthenticated | `14400`, `0`, `1800`, `120` |
+| page JS | `sessionModel = { idleMs, warnMs, expireMs, originMs, lastActivityAt }` | ms numbers | — |
 
-`session_cookie_refresh_seconds` is retained at `0` rather than deleted: the body's guards and the
-secret-length check remain correct for an operator who enables refresh deliberately, and deleting the
-field would make the two documents disagree about a key that still exists in the chart.
+`sessionCookieRefresh` stays in the ConfigMap row. Revision one dropped it there while the prose
+retained it, which would have had the app report refresh off while the sidecar was told otherwise — the
+exact drift the body's one-helper-feeds-both architecture exists to prevent. The env rows are likewise
+restored: the body names `GSD_SESSION_COOKIE_EXPIRE` in seven places and revision one named none of them.
 
-Validation the chart must enforce, all relational: `warnBefore < idleTimeout`, `idleTimeout < expire`,
-`idleTimeout >= 5m` (OpenShift's own floor for an inactivity timeout is 300s), `warnBefore >= 30s`.
+### Validation, at BOTH layers
 
-## R4. The four deltas, itemised
+Render time inside the `oauthProxy.enabled` block (the operator is watching, and `ingress.host` already
+sets the fail-the-render precedent) **and** in `load_settings` as `ConfigError` (env overrides and
+hand-written local configs never meet the chart):
 
-**D1 — `values.yaml`.** `refresh: 5m` → `refresh: ""`, carrying the measurement above as its comment
-so the next reader does not re-enable it hopefully. `expire: 30m` → `4h`. Add the `session` stanza from
-R3. Everything else in the body's section A2 stands.
+- `warnBefore < idleTimeout`
+- `idleTimeout + warnBefore <= expire` — otherwise a hair-under-expire idle opens an **extendable**
+  warning inside the absolute cap's own death window, offering a stay button that cannot work
+- `warnBefore <= idleTimeout / 2` — an open warning suspends the poll, so a long warn stales the page
+  for its whole length
+- `idleTimeout >= 5m`, `warnBefore >= 30s` — policy floors; the 5m figure is borrowed from OpenShift's
+  own `accessTokenInactivityTimeout` minimum as a sanity line, not a platform constraint
+- `refresh < expire` when refresh is set, which the proxy itself enforces at startup
+- `idleTimeout` empty or `"0"` disables idle sign-out (the kiosk case) and stands the idle-side checks
+  down; the absolute cap still applies
 
-**D2 — the app.** `Settings` gains `session_idle_seconds` and `session_warn_seconds`, threaded exactly
-as the body threads the cookie durations — same helper, same `ConfigError` on malformed input. The
-refresh default flips to `0`, which the body's parser already reads from `""` with no code change.
+Every guard compares the **resolved** helper values, not the raw keys.
 
-**D3 — the page.** Two timers, not one derived one:
+## R4. The deltas
 
-- *Idle*, 30m from the last real user activity, warning at 28m, "Stay signed in" resets it. This is the
-  body's design essentially unchanged — its activity model, poll suspension, drift handling and modal
-  all apply; only the source of the numbers changes.
-- *Absolute*, 4h. **The page cannot observe when the session began** — the cookie is HttpOnly and the
-  proxy forwards no session-age header — so it records an origin in `localStorage` at the first
-  authenticated load and counts from there. That model can only ever be *late*, never early: a tab
-  opened an hour into a session will fire its 4h an hour after the cookie already died, and the cookie
-  dying is caught by the body's dead-session failover. `-cookie-expire=4h` is the hard backstop; the
-  page's timer exists to convert the cap into a *credential prompt* rather than a silent re-issue.
-- The 4h modal has **no** "Stay signed in" button. An absolute cap cannot be extended and a button that
-  cannot work is a lie told to somebody mid-review.
+### D1 — `values.yaml`
+`refresh: 5m` → `refresh: ""`, carrying the R2 measurement as its comment so the next reader does not
+re-enable it hopefully. `expire: 30m` → `4h`. Add the `session` stanza. Everything else in the body's
+A2 stands.
 
-**D4 — the sign-out path, and the one genuinely new piece.** `-cookie-expire` alone does not force
-anybody to re-authenticate: the proxy clears its own cookie, the browser restarts the OAuth flow, and
-the OAuth server re-issues from its own session cookie without prompting. On this cluster nothing above
-the proxy helps either — `accessTokenMaxAgeSeconds` is **31536000 (365 days)** and
+### D2 — the app
+`Settings` gains `session_idle_seconds` and `session_warn_seconds`, threaded exactly as the body threads
+the cookie durations, with the same `ConfigError` behaviour and the env overrides named above. The
+refresh default flips to `0`, which the body's parser already reads from `""`.
+
+### D3 — the page
+
+**The idle path is REWRITTEN, not renumbered.** The body derives both its *arming* and its deadline
+from the `(expire, refresh)` stamp pair: `initSession` returns early on `!s.cookie_refresh_seconds`, so
+at `refresh: 0` nothing arms and the release would ship with no idle warning and no idle sign-out at
+all. Revision one's claim that the idle path was "essentially unchanged" was false.
+
+Carried over unchanged: activity tracking (`recordActivity`, the `pointerdown`/`keydown`/`wheel`
+choice), poll gating (`pollTick` and its reason-strings), `visibilitychange` handling, the dialog markup
+and its a11y machinery. **Superseded outright:** `initSession`'s refresh gate — arm on
+`authenticated && session.idle_seconds > 0`; the `{expireMs, refreshMs, lo, hi}` model;
+`noteAuthedResponse` and `api()`'s `sentAt` plumbing; `mergeSharedStamp`'s stamp payload;
+`SESSION_WARN_MS` as a constant; `staySignedIn`'s re-stamp rationale; and `sessionEnded`'s passive
+over-state.
+
+Replacement model: `{ idleMs, warnMs, expireMs, originMs, lastActivityAt }`. The idle deadline is
+`lastActivityAt + idleMs`, with `lastActivityAt` shared across tabs through `localStorage` so a
+foreground tab's activity moots a background tab's warning. On idle expiry the page **effects** the
+sign-out — navigate to `<prefix>/sign_out` — which is what R1 means by client-decided, server-effected.
+`staySignedIn` resets `lastActivityAt` only; its `refresh()` remains a data repaint, and with refresh
+unset no request extends anything, so the body's keepalive rationale no longer applies.
+
+**The absolute cap is enforced by DETECTION, and modelled only for the warning.** Revision one keyed a
+destructive action to `localStorage` and claimed the model "can only ever be late, never early". That is
+inverted: `localStorage` persists **across** sessions, so a recorded origin is routinely *older* than
+the current session — sign out and back in, or a next-morning silent re-issue — and a timer counting
+from it fires **early**, up to and including instantly at load, in a loop. The degeneration is
+unavoidable rather than sloppy: telling "first load of this session" from "first load ever" requires
+observing a session boundary, which is precisely what the premise says cannot be observed. A forward
+clock jump fires it early too. So:
+
+- `-cookie-expire=4h` ends the cookie and the body's dead-session failover detects it. **That detection
+  submits the sign-out, not a timer.** With refresh unset the cookie dies only at the cap or a
+  deliberate sign-out, and the idle path always leaves through `sign_out`, so anyone still there at 4h
+  is active.
+- Lateness, stated correctly: `pollTick` suppresses for four reasons in order — `"over"`, `"warned"`,
+  `"hidden"`, `"idle"` — so detection waits for the reader's next activity or tab focus, both of which
+  force a tick. The bound is **the idle timeout**, not the poll interval as the reviewer's fix claimed,
+  because a tab quiet longer than that has its idle timer fire first and leave through `sign_out`
+  anyway. Lateness costs nothing: the cookie is already dead throughout that window, so no access is
+  granted — only the credential prompt is delayed.
+- A `gsd:signed-out` marker, written by every page-initiated sign-out and cleared on the next
+  authenticated load, suppresses the automatic SSO step so another tab's deliberate "don't sign out of
+  OpenShift" choice is respected. Losing the marker costs one redundant prompt, never a missed cap.
+- The origin model survives **only** as the 2-minute advisory warning: write `gsd:session-origin` at
+  authenticated load *only if absent*; discard as stale when `now - origin >= expireMs` or
+  `origin > now`; clear wherever the marker is written and on `/signed-out`. A wrong warning is a
+  bounded annoyance; a wrong forced logout is not, which is why the two are decoupled.
+- The absolute warning has **no** "Stay signed in" button. An absolute cap cannot be extended, and a
+  button that cannot work is a lie told to somebody mid-review.
+
+### D4 — the sign-out sequence
+
+`-cookie-expire` alone forces nobody to re-authenticate: the proxy clears its own cookie, the browser
+restarts the OAuth flow, and the OAuth server re-issues from its own session without prompting. Nothing
+above the proxy helps on this cluster either — `accessTokenMaxAgeSeconds` is **31536000 (365 days)** and
 `accessTokenInactivityTimeout` is unset.
 
-The OAuth server does expose a logout endpoint, measured on the lab:
+The OAuth server's logout endpoint, measured and then read in `oauth-server`
+`pkg/server/logout/logout.go`:
 
 ```
-GET  https://oauth-openshift.<domain>/logout   ->  405 Method Not Allowed   (the handler exists)
-POST https://oauth-openshift.<domain>/logout   ->  200                      (no CSRF token required)
+GET  https://oauth-openshift.<domain>/logout   ->  405 Method Not Allowed
+POST https://oauth-openshift.<domain>/logout   ->  200, EMPTY BODY, no Location
 ```
 
-`POST`, which rules out reaching it by redirect, because a 302 is followed with GET. So the full path is:
+Source facts that shape the design: it is POST-only with **no CSRF validation** (an explicit `TODO`
+concedes "this endpoint is invokable via JS"); it calls `InvalidateAuthentication(w,
+&user.DefaultInfo{})`, so it never reads the incoming session and overwrites unconditionally; and
+without a valid `then` — validated against server-relative URLs or `osin.ValidateUri` — it emits no body
+and no redirect.
 
-1. the page navigates to `<prefix>/sign_out` — the proxy clears its cookie and redirects to
-2. `/signed-out`, our own unauthenticated page, which carries
-3. a **form POSTing to the OAuth server's `/logout`**, ending the SSO session so the next sign-in
-   actually asks for credentials.
+**Both earlier designs are therefore wrong.** Revision one auto-submitted the form from `/signed-out`;
+the reviewer's fix routed its chain through the same page. But B3's contract for that page is "no
+`<style>` block, **no scripts**, no external assets", served as a static `FileResponse` — it cannot
+submit anything. And navigating to the OAuth host lands the reader on that empty-body blank page,
+unread wording and all.
 
-Manual logout offers this as a visible **"Also sign out of OpenShift"** button; the 4-hour cap submits
-it automatically, because that one is policy rather than preference. The form's action comes from a new
-`oauthProxy.oauthServerLogoutUrl` value — empty by default, in which case step 3 is omitted entirely and
-the page says only that the dashboard session ended. No CSP blocks the cross-origin POST: the app sets
-none and the proxy adds none (measured — zero `Content-Security-Policy` headers on the route). If one is
-ever added it must allow the OAuth host in `form-action`.
+**The POST moves to the main page, before the navigation:**
 
-**D5 — tests.** The five assertions the body's section 5 names by name flip as it describes. Beyond
-those: the whoami shape tests gain `idle_seconds` and `warn_seconds`, the chart tests assert `4h` and
-the `session` stanza plus the four relational guards, and the UI tests split into an idle path (warning
-extendable) and an absolute path (warning not extendable, no stay button).
+```
+1. idle expiry | absolute detection | manual click   — on the main page, where the context is known
+2. if oauthServerLogoutUrl is set and the marker is unset:
+     POST it, same-site, credentials included, response unread, failures caught
+3. navigate to <prefix>/sign_out                     — proxy clears its cookie, redirects onward
+4. /signed-out renders, script-free, and says honestly what ended
+```
+
+Every problem dissolves together: the reader never visits the OAuth host, so the blank page cannot
+happen; `/signed-out` keeps its no-scripts contract; the "which arrival is this" channel problem
+disappears, because `-logout-url` is a single fixed value and the decision no longer needs to be
+inferred from it; and the manual-versus-policy asymmetry becomes an ordinary UI choice on our own page.
+Step 2 is **same-site** in the normal topology — both hosts are `*.apps.<cluster-domain>`; measured here
+as a shared `apps-crc.testing` — so it is form-encoded, CORS-safelisted, needs no preflight, and the
+`Set-Cookie` that clears `ssn` is a first-party write. (The reviewer reasoned this as cross-site and
+Lax-withheld; that premise is wrong, in the direction that makes the mechanism more reliable, and it
+does not matter anyway because the handler never reads the request session.)
+
+**The idle path gets the same treatment as the cap**, and the reasoning points that way rather than the
+other: the idle timeout's threat is an unattended unlocked workstation, which is exactly where leaving
+the SSO session alive is worst. Revision one named only the manual and 4-hour arrivals.
+
+**Conditionality, which must reach the wording.** Ending the OAuth server session forces a credential
+prompt only for providers the OAuth server checks itself — htpasswd, LDAP, kubeadmin. Behind an external
+OIDC or request-header IdP the next authorize re-authenticates silently from the upstream session: the
+cap then guarantees a fresh token, not a fresh prompt. Chaining an IdP logout is out of scope. So the
+modal and `/signed-out` say **"you may be asked to sign in again"**, never "you will be".
+
+`oauthServerLogoutUrl` defaults to **the cluster's own OAuth route**, derived like `gsd.externalHost`
+rather than hand-typed — revision one defaulted it empty, which meant R1's headline policy did not exist
+at the chart's own defaults, and a hand-typed URL rots silently when a cluster customises the route.
+Empty remains a valid explicit choice: step 2 is skipped and the page claims only that the dashboard
+session ended.
+
+### D5 — tests
+
+Revision one said the body's five named assertions "flip as §5 describes". Wrong: §5 computed its list
+for a world where expire **stayed** 30m, so moving to 4h touches assertions it never names.
+
+**Delete** (behaviour inverted or machinery removed): `test_refresh_disabled_disarms_the_countdown_but_not_the_link`;
+`TestSessionModelSoundness` entirely; `test_a_modeled_end_unlatches_when_another_tab_kept_the_session`;
+and the `sessionModel.lo` reset assertions inside `test_stay_signed_in_closes_and_resets_the_model` and
+`test_escape_counts_as_staying_not_as_dismiss_and_die`, replaced by `lastActivityAt` ones. All five
+verified to exist in the body.
+
+**New**, roughly 25 functions across `test_chart_strategy.py` (the session stanza, each relational guard
+refused at render, the nulled stanza falling back, the disable semantics, a proxyless render unaffected),
+`test_config.py` (`TestSessionPolicySettings`: defaults, duration parsing, malformed naming its key, env
+overrides winning and validated, the relational failures, disabled skipping them), `test_session_api.py`
+(idle and warn restated unclamped, `/signed-out` with and without the form), and `test_ui.py` (activity
+pushing the deadline back, the extendable idle warning, idle expiry effecting a navigation to
+`sign_out`, cross-tab activity mooting a warning, the configured warn window, the origin recorded once
+and reused across a reload, the absolute warning having no stay button, stay never extending the
+absolute deadline, the absolute path forcing the full sign-out, and the manual "Also sign out of
+OpenShift" affordance).
+
+**Adjust**: the two whoami exact-shape tests, the three `TestWhoamiSession` duration tests,
+`test_defaults_mirror_the_chart`, and the renamed chart defaults test.
 
 ## R5. Premises, and their status
 
 | premise | status |
 |---|---|
-| `cookie-refresh` clears the session on `provider=openshift` | **measured** — 403 `system:anonymous` against this cluster's API server |
-| the httpx timeout does not bound total transfer | **measured** — a 4.17s dribble completed under `timeout=1.0` |
-| no CSP blocks a cross-origin form POST | **measured** — zero CSP headers from app or proxy |
-| `POST /logout` exists and answers 200 without a CSRF token | **measured** — by curl |
-| `POST /logout` actually ends the OAuth server's browser session, so the next authorize re-prompts | **NOT YET VERIFIED** — curl proves the endpoint answers, not that it invalidates a real browser session. D4 rests on this. A browser test needs a lab login, which is the operator's call. |
+| `cookie-refresh` clears the session on `provider=openshift` | **measured** — 403 `system:anonymous` |
+| the httpx timeout bounds only the inter-chunk gap | **measured** — 4.17s dribble under `timeout=1.0` |
+| no CSP blocks the POST | **measured** — zero CSP headers from app or proxy |
+| `POST /logout` answers 200 with no CSRF token; GET is 405 | **measured** by curl, and confirmed in source |
+| the logout never reads the request session, so SameSite cannot defeat it | **read in source** — `InvalidateAuthentication(w, &user.DefaultInfo{})` |
+| the dashboard and OAuth hosts are same-site | **measured** — shared registrable domain |
+| a cleared OAuth-server session forces a credential prompt | **FALSE behind external SSO — by construction, not pending measurement.** True only for oauth-server-owned IdPs |
+| the POST's `Set-Cookie` lands, and the next authorize then prompts | **NOT VERIFIED** — needs one browser login. D4's credential-prompt claim rests on it |
+| a dead proxy cookie produces a silent re-issue in a real browser | **INFERRED**, not measured — well-supported but not established here |
 
-Everything in D4 downstream of that last row is provisional. If `POST /logout` turns out not to end the
-SSO session, the 4-hour cap remains enforceable as "the dashboard session ends" and the honest wording
-is that re-authentication may not prompt — the page must not claim otherwise.
-
-
-
-This document assembles the three lens drafts (`docs/design-drafts/01-chart-oauth.md`,
-`02-api.md`, `03-ui.md`) into one ordered, applicable design. It **replaces the drafts**: every
-snippet needed is inline here, complete, with its file and a unique nearby anchor. It builds on
-`docs/DESIGN_oauth_session_and_logout.md` (verified against the oauth-proxy source; its findings
-are taken as given, not re-litigated).
-
-Operator decisions, fixed: cookie-expire **30m** / cookie-refresh **5m** defaults, overridable per
-cluster; logout is a **GET link**; an optional `-logout-url` override for clusters with a real SSO
-logout endpoint; a **countdown warning** before the session ends with a stay-signed-in action;
-Helm best practices; and the two smaller research findings fixed (cookie-secret length guard, the
-`accessTokenMaxAgeSeconds` relationship).
-
-The two constraints everything answers to:
-
-1. **The unconditional 30-second poll defeats the idle timeout.** `index.html`'s
-   `setInterval(() => refresh({ auto: true }), 30000)` sends real requests through the proxy
-   forever; the proxy re-stamps the session cookie on any request older than `cookie-refresh`, so
-   an open tab — including on an unattended, unlocked workstation — slides the cookie
-   indefinitely and the 30-minute idle timeout can never fire. Phase C gates that poll on
-   demonstrated human presence. **Without Phase C the flags are a security control that does
-   nothing**; the phases below are one feature, not three.
-2. **The session deadline is unobservable.** The cookie is HttpOnly and the proxy forwards no
-   session-age header, so neither the browser nor the FastAPI app can read the true expiry. The
-   countdown is therefore a client-side **model**: a provable *floor* on the deadline
-   (`[lo, hi]` interval arithmetic, §C5), early by at most `cookie-refresh`, late never while the
-   page's clock runs — with named handling for sleep/clock-jump drift and for both wrong
-   directions (§C5, §F).
-
----
+Nothing in this section builds machinery on either unverified row: if both fail, the cap still ends the
+session on time and the wording is already conditional.
 
 ## 1. Contradictions between the drafts, resolved
 
