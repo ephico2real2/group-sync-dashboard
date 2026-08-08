@@ -189,6 +189,20 @@ def capture_once(
         if n:
             log.info("%s: recorded %d login attempt(s) from %s", cluster.name, n, pod)
 
+    # Forget read positions for pods that are gone. Every oauth roll replaces them, so without this
+    # the table grows by one row per pod name the cluster has ever had.
+    #
+    # Done on the strength of the POD LIST — which succeeded above, or we would have returned — and
+    # NOT gated on whether any read worked: a cluster whose log reads are all refused would otherwise
+    # keep every dead pod's position forever, which is the case most likely to accumulate them. It is
+    # also independent of `login_retention_days`, because this is a leak rather than a policy about
+    # how long to keep data; _prune's docstring claimed to do it and never did.
+    if elector is None or elector.is_leader:
+        dropped = store.prune_login_watermarks(cluster.name, pods)
+        if dropped:
+            log.info("%s: forgot %d stale read position(s) for pods that no longer exist",
+                     cluster.name, dropped)
+
     if not read_ok:
         # Not a single pod answered. Do NOT stamp a successful read: `started_at` would then claim we
         # have been watching since a cycle that saw nothing, and `last_read_at` is the liveness signal
@@ -204,7 +218,11 @@ def capture_once(
 
 
 def _prune(store: StorageBackend, cluster: ClusterConfig, settings: Settings, elector=None) -> None:
-    """Drop events past the retention window, and watermarks for pods that are gone.
+    """Drop events past the retention window.
+
+    Watermarks are NOT pruned here — that happens in capture_once, where the live pod list is in
+    scope and where it is correctly independent of this retention setting. This docstring used to
+    claim both and deliver one.
 
     Bounded per call by store.prune_login_events' own max_rows, because this runs on the poll thread
     against a single writer — an unbounded DELETE over a long backlog holds the write lock while every
