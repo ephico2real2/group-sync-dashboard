@@ -1803,3 +1803,127 @@ class TestGroupSearch:
         # Present in the accessibility tree, and not on screen: a 1px clipped box, never display:none.
         assert help_text.evaluate("el => getComputedStyle(el).display") != "none"
         assert help_text.evaluate("el => el.getBoundingClientRect().width") <= 2
+
+
+class TestGroupSearchIme:
+    """CJK, and every other composed input, goes through an IME whose composition session is bound to
+    the NODE it is composing into. renderFilters replaces that node, so a repaint mid-composition
+    commits half-composed kana as literal text and the IME's next update opens a second session:
+    typing かんり lands as かかんかんり. CDP's Input.imeSetComposition is a real composition as far as
+    Blink is concerned — the same code path a macOS or Windows IME drives."""
+
+    def _open(self, dash):
+        dash.locator("button[data-nav='groups']").click()
+        dash.wait_for_selector("#f-group-search")
+        dash.focus("#f-group-search")
+        return dash.context.new_cdp_session(dash)
+
+    def test_an_ime_composition_survives_its_own_input_events(self, dash):
+        cdp = self._open(dash)
+        cdp.send("Input.imeSetComposition", {"text": "か", "selectionStart": 1, "selectionEnd": 1})
+        dash.wait_for_timeout(100)
+        cdp.send("Input.imeSetComposition", {"text": "かん", "selectionStart": 2, "selectionEnd": 2})
+        dash.wait_for_timeout(100)
+        cdp.send("Input.insertText", {"text": "かんり"})
+        dash.wait_for_timeout(100)
+        got = dash.evaluate("() => document.getElementById('f-group-search').value")
+        assert got == "かんり", f"the composition was aborted by a repaint: {got!r}"
+        assert dash.evaluate("() => view.groupSearch") == "かんり"
+
+    def test_the_poll_firing_mid_composition_does_not_abort_it(self, dash):
+        """The 30s timer cannot be asked to wait for the reader's IME."""
+        cdp = self._open(dash)
+        cdp.send("Input.imeSetComposition", {"text": "か", "selectionStart": 1, "selectionEnd": 1})
+        dash.wait_for_timeout(100)
+        dash.evaluate("() => render()")  # exactly what the poll does
+        dash.wait_for_timeout(100)
+        cdp.send("Input.imeSetComposition", {"text": "かん", "selectionStart": 2, "selectionEnd": 2})
+        dash.wait_for_timeout(100)
+        cdp.send("Input.insertText", {"text": "かんり"})
+        dash.wait_for_timeout(100)
+        got = dash.evaluate("() => document.getElementById('f-group-search').value")
+        assert got == "かんり", f"the poll's repaint aborted the composition: {got!r}"
+
+
+class TestGroupSearchEmptyStateHonesty:
+    def _open(self, dash):
+        dash.locator("button[data-nav='groups']").click()
+        dash.wait_for_selector("#f-group-search")
+
+    def test_a_zero_denominator_does_not_blame_the_search(self, dash):
+        """With no groups matching the STATE filter the search hides nothing, so "it is the search
+        hiding them" is false — the reader would clear a query that was never the cause and still
+        see an empty table."""
+        self._open(dash)
+        # The shape the server returns for a state filter with no matches, plus an active search.
+        dash.evaluate(
+            "() => { view.groupFilter = 'empty'; data.groups = []; view.groupSearch = 'admin'; render(); }")
+        note = dash.locator(".empty-note").inner_text()
+        assert "search hiding" not in note, note
+        assert "No groups match this filter" in note, note
+
+    def test_a_denominator_of_one_reads_as_one(self, dash):
+        self._open(dash)
+        dash.select_option("#f-state", "unattributed")
+        dash.wait_for_function("() => data.groups.length === 1")
+        dash.fill("#f-group-search", "zzz")
+        dash.wait_for_function("() => view.groupSearch === 'zzz'")
+        note = " ".join(dash.locator(".empty-note").inner_text().split())
+        assert "1 group matches the state filter" in note, note
+        assert "the search hiding it rather" in note, note
+
+
+    def test_the_banner_does_not_promise_rows_that_do_not_exist(self, dash):
+        """A zero denominator must not invite the reader to clear a search that is hiding nothing.
+
+        The empty state below the table was fixed for this; the banner ABOVE it made the same false
+        claim six lines earlier — "Clear the box ... to see all 0" — and clearing it shows the same
+        empty table. Both sites state the same fact, so both have to be honest about it.
+        """
+        self._open(dash)
+        dash.evaluate(
+            "() => { view.groupFilter = 'empty'; data.groups = []; view.groupSearch = 'admin'; render(); }")
+        card = " ".join(dash.locator("section.card").first.inner_text().split())
+        assert "to see all 0" not in card, (
+            f"the banner offers to show all 0 groups; clearing the box shows the same empty table: {card}"
+        )
+        assert "Filtered by admin" in card, f"the banner should still say a filter is applied: {card}"
+
+    def test_the_banner_still_offers_the_count_when_there_is_one(self, dash):
+        """The guard above must not silence the offer in the case it was written for."""
+        self._open(dash)
+        dash.select_option("#f-state", "unattributed")
+        dash.wait_for_function("() => data.groups.length === 1")
+        dash.fill("#f-group-search", "zzz")
+        dash.wait_for_function("() => view.groupSearch === 'zzz'")
+        card = " ".join(dash.locator("section.card").first.inner_text().split())
+        assert "to see all 1" in card, card
+
+
+class TestGroupSearchScroll:
+    def test_the_poll_does_not_yank_the_viewport_while_the_box_is_focused(self, dash):
+        """focus() scrolls its target into view, and the restored box sits at the top of the page —
+        so with focus parked in the search box, every poll would jump a reader who had scrolled
+        into the table back to the top."""
+        dash.locator("button[data-nav='groups']").click()
+        dash.wait_for_selector("#f-group-search")
+        dash.set_viewport_size({"width": 900, "height": 400})
+        dash.focus("#f-group-search")
+        dash.evaluate("() => window.scrollTo(0, document.body.scrollHeight)")
+        before = dash.evaluate("() => window.scrollY")
+        assert before > 0, "page too short to scroll — shrink the viewport further"
+        dash.evaluate("() => render()")  # the 30s poll
+        after = dash.evaluate("() => window.scrollY")
+        assert after == before, f"the repaint scrolled the page from {before} to {after}"
+        assert dash.evaluate(
+            "() => document.activeElement === document.getElementById('f-group-search')")
+
+
+class TestTabFocusSurvivesTheRepaint:
+    def test_a_keyboard_user_resting_on_a_tab_keeps_it_across_the_poll(self, dash):
+        """The restore machinery finds elements by id, and the nav tabs had none — so the reader who
+        tabbed to "Groups" and paused was silently dropped to <body> by the next poll."""
+        dash.focus("button[data-nav='groups']")
+        dash.evaluate("() => render()")  # the 30s poll
+        got = dash.evaluate("() => document.activeElement.dataset && document.activeElement.dataset.nav")
+        assert got == "groups", f"focus fell to {got!r} when the filter bar re-rendered"

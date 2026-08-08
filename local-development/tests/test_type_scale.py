@@ -44,9 +44,12 @@ def test_the_stylesheet_stays_out_of_the_page():
 
     The failure this prevents is quiet: a rule added inline still renders, so the page looks right while
     its font-size skips the scale and its colours skip the contrast check.
+
+    A regex on the open tag, not a literal "<style>": any attribute — <style media="print"> is the
+    plausible one — would make the literal miss a block the browser still applies.
     """
     page = INDEX.read_text()
-    assert "<style>" not in page, (
+    assert not re.search(r"<style\b", page, re.I), (
         "index.html has an inline <style> block again. The type scale and the WCAG contrast checks read "
         "gsd/static/app.css, so anything inline is invisible to both. Move it to app.css."
     )
