@@ -580,6 +580,27 @@ loginCapture:
   # namespace OpenShift installs the OAuth server into.
   namespace: openshift-authentication
 
+  # Provider NAMES that are local HTPasswd accounts rather than directory identities.
+  #
+  # The log line carries the provider's name and nothing about its type, so without this list a
+  # success on `developer` looks exactly like a directory login. These are break-glass accounts —
+  # `kubeadmin` and whatever your HTPasswd IdP is called — and the point of naming them is that they
+  # are excluded from "accounts in no synced group": there is nowhere to migrate them to, so leaving
+  # them in that list is permanent noise on the one finding worth reading.
+  #
+  # Match the `name:` of the identity provider in `oauth.config.openshift.io/cluster`, not the
+  # username. `kubeadmin` is a special case OpenShift does not serve through a named provider, so it
+  # does not need to be listed here.
+  htpasswdProviders:
+    - developer
+
+  # How long a login attempt is kept. 400 days rather than 365 so a year-over-year access review can
+  # still see the previous cycle; 0 disables pruning entirely and lets the table grow without bound.
+  #
+  # Pruned a bounded chunk per poll on the writer thread, so a long backlog shortens over several
+  # cycles instead of holding the write lock through one enormous DELETE.
+  retentionDays: 400
+
 # ---------------------------------------------------------------------------
 # oauth-server log verbosity  (prerequisite for login capture)
 # ---------------------------------------------------------------------------

@@ -442,7 +442,8 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
                         "success, bad_password, rejected (not found OR not permitted — the log "
                         "cannot tell those apart), password_expired, must_change_password, "
                         "account_locked, account_disabled, account_expired, logon_not_permitted, "
-                        "and failed (a cause the parser does not recognise)."),
+                        "and failed (the provider gave no reason — the normal shape on an "
+                        "HTPasswd provider, which logs a verdict and nothing else)."),
         user: str | None = Query(
             default=None,
             description="Only attempts for this exact username — the login that was TYPED, which "

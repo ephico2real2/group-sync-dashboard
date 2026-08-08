@@ -37,6 +37,21 @@ LDAP). One attempt writes SEVERAL lines across two source files, so a line is no
 
   HTPasswd success    basicauth.go:51 SUCCEEDED "developer"   — and nothing else
 
+THE BROWSER IS A SECOND CODE PATH, and it says the same things one word differently. The four cases
+above are `oc login` (HTTP basic auth -> basicauth.go). The console's HTML form is served by
+login.go, which omits the word `login` from the phrase and, because the reader picks ONE provider,
+writes no chain of failures ahead of the deciding one:
+
+  browser HTPasswd    login.go:191    SUCCEEDED "developer"    — no `login` in the phrase
+  browser HTPasswd    login.go:183    failed "testuser"        — a REAL failure, not chain noise,
+                                                                 and HTPasswd logs no cause at all
+  browser LDAP        ldap.go:131     searching for (filter)   — the attempt STARTS here: no
+                      ldap.go:139     no entries matching      verdict has named anybody yet
+                      login.go:183    failed "bob.wilson"
+
+Measured on the reference cluster: all three of those browser lines can share ONE kubelet timestamp,
+because they land in the same read chunk. The correlation window absorbs that.
+
 So: a `failed` line is NOT a failed login (every provider tried before the matching one logs one, which
 means a SUCCESSFUL LDAP login contains `failed for login "john.doe"`), and whether that noise exists is
 provider-ORDER dependent — an HTPasswd login has none. The outcome is a property of the GROUP of lines
@@ -73,11 +88,16 @@ OUTCOME_ACCOUNT_EXPIRED = "account_expired"
 OUTCOME_LOGON_NOT_PERMITTED = "logon_not_permitted"
 
 OUTCOME_FAILED = "failed"
-"""A failure whose cause this parser does not recognise.
+"""A failure the log gives no cause for.
+
+Usually because the provider writes none: on HTPasswd the server logs a verdict and nothing else, so
+a wrong password and a username that does not exist are identical to it. That is the NORMAL shape for
+a local account, not a gap in this parser — 3 of the 12 attempts measured on the reference cluster
+arrive this way, all of them browser logins against `developer`.
 
 Kept as a distinct outcome rather than folded into `rejected`, because those two would then be
-indistinguishable in the data as well as in the log — and an unrecognised cause is a signal that the
-grammar has grown a case worth adding, not that the login was merely refused.
+indistinguishable in the data as well as in the log. It also stays the place a genuinely unrecognised
+cause would surface, which is a signal that the grammar has grown a case worth adding.
 """
 
 # The kubelet's RFC3339 prefix, present because the reader passes `?timestamps=true`. THIS is the
@@ -85,11 +105,34 @@ grammar has grown a case worth adding, not that the login was merely refused.
 # timezone, so it cannot be resolved to an instant without guessing both.
 _TS = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)\s")
 
-# `Login with provider "<provider>" (succeeded|failed) for login "<user>"`. Anchored on the whole phrase
-# rather than the file:line, because basicauth.go's line numbers move between OpenShift releases while
-# the message has been stable.
+# THE VERDICT LINE COMES IN TWO GRAMMARS, and the difference is one word. Measured on the live
+# cluster, all four shapes the oauth-server actually emits:
+#
+#   basicauth.go:48]  Login with provider "developer" failed for login "jane.smith"
+#   basicauth.go:51]  Login with provider "ldap-local" succeeded for login "jane.smith"
+#   login.go:183]     Login with provider "developer" failed for "developer"
+#   login.go:191]     Login with provider "developer" succeeded for "developer": &groupmapper...
+#
+# basicauth.go serves the CLI (`oc login -u -p`, HTTP basic auth) and says `for login "<user>"`.
+# login.go serves the HTML FORM — the console, which is how people actually sign in — and says
+# `for "<user>"` with no `login`. So requiring the word dropped every browser login on the cluster
+# while capturing every CLI one, and the failure was silent: the tab simply showed fewer rows than
+# had happened. Found by signing in through the console and finding nothing recorded; counted in the
+# pod's whole log at the time, 29 CLI verdicts captured and 3 browser verdicts missed.
+#
+# `(?:login )?` rather than two patterns: it is one message with an optional word, and two regexes
+# would be two places to keep in step.
+#
+# Anchored on the phrase rather than the file:line, because those line numbers move between
+# OpenShift releases while the message has been stable.
+#
+# The correlation below needs no change for the new shape — it keys on username and window, not on
+# provider or call site. A browser login picks ONE provider (`idp=developer`), so there is no
+# provider chain and a lone `failed` is a real failure rather than the ordinary CLI noise; retries
+# arrive seconds apart, well outside ATTEMPT_WINDOW, so fail-fail-succeed stays three attempts.
 _VERDICT = re.compile(
-    r'Login with provider "(?P<provider>[^"]*)" (?P<verdict>succeeded|failed) for login "(?P<user>[^"]*)"'
+    r'Login with provider "(?P<provider>[^"]*)" (?P<verdict>succeeded|failed) '
+    r'for (?:login )?"(?P<user>[^"]*)"'
 )
 
 # ── WHY code 49 ALONE IS NOT THE ANSWER ───────────────────────────────────────────────────────────
@@ -112,7 +155,9 @@ _VERDICT = re.compile(
 # to reset a credential that is already correct.
 #
 # Sub-codes per the AD convention. Only the ones that mean something operationally different are
-# mapped; anything else stays `bad_password`, which is what 52e actually is.
+# mapped. An UNMAPPED sub-code becomes `failed`, not `bad_password` — see _classify_bind, which is
+# where that decision lives and why. (This comment used to claim `bad_password`, contradicting the
+# code eleven lines below it; the code is right, and a test now pins the behaviour.)
 _AD_SUBCODE = {
     "525": OUTCOME_REJECTED,                 # user not found — same bucket as our no-entries case
     "52e": OUTCOME_BAD_PASSWORD,             # invalid credentials, i.e. genuinely the wrong password
@@ -341,7 +386,13 @@ def _detail(p: _Pending, outcome: str) -> str | None:
     nothing from the line itself is carried through.
     """
     if p.bind_code is None:
-        return None if outcome != OUTCOME_FAILED else f"unrecognised failure from provider {p.provider!r}"
+        # "reported no reason", not "unrecognised failure" — the distinction matters to whoever reads
+        # it. On an HTPasswd provider this is the NORMAL shape, not a gap in our parsing: the server
+        # logs a verdict and nothing else, so a wrong password and a username that does not exist are
+        # identical to it. Saying "unrecognised" invited the reader to treat their own browser login as
+        # a parser bug. Measured: 3 of the 12 attempts on the reference cluster arrive this way.
+        return (None if outcome != OUTCOME_FAILED
+                else f"provider {p.provider!r} reported no reason")
     sub = _AD_DATA.search(p.bind_diagnostic or "")
     if sub:
         return f"LDAP result code {p.bind_code}, sub-code {sub.group(1).lower()}"
