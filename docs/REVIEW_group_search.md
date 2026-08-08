@@ -624,8 +624,8 @@ one live.
 The lesson is the reusable part: **a finding names a symptom, not its blast radius.** Before calling a
 finding closed, grep for every site that states the same fact. Two tests now cover it — one that the
 banner drops the offer at a zero denominator, one that it still makes the offer when there is exactly
-one group, so the guard cannot over-suppress. The first fails on the pre-fix file (`tests/test_ui.py:1887`),
-which is how I know it tests something.
+one group, so the guard cannot over-suppress. The first — `test_the_banner_does_not_promise_rows_that_do_not_exist`
+— fails on the pre-fix file, which is how I know it tests something.
 
 ### Structural audit of my own splices
 
