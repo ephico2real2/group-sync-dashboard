@@ -114,6 +114,28 @@ is the single most important fact for the spec: the expensive-looking part is al
 and therefore needs the caller's token — which the application deliberately does not hold (§5). So
 the app's route is `SubjectAccessReview` naming the user, as its own ServiceAccount.
 
+**The `admin` / `edit` / `view` roles do NOT discriminate — measured.** The suggestion assumes the
+dashboard can lean on OpenShift's `admin`, `edit` and `view` roles, with `view` as everyone's default
+and `admin` seeing all. It cannot, and the reason is structural: those three are **namespace** roles,
+and none of them grants the cluster-scoped reads this dashboard reports on. Bound cluster-wide with
+`oc adm policy add-cluster-role-to-user`, they still answer `no`:
+
+| role bound to a probe user | `list groups` | `list users` | `get users/~` | tier under a verb rule |
+|---|---|---|---|---|
+| *(plain authenticated user)* | no | no | **yes** | self |
+| `view` | no | no | yes | self |
+| `admin` | no | no | yes | self |
+| `cluster-reader` | **yes** | **yes** | yes | **all** |
+
+Two consequences the spec must carry. **`cluster-reader` is the natural administrator tier**, not
+`admin` — it reads everything and changes nothing, which is exactly the governance reader this
+dashboard serves; `cluster-admin` also qualifies, by holding everything. And **`get users/~` is
+universal, so it is a floor rather than a discriminator** — every authenticated reader has it. The
+discriminating verb is `list`.
+
+(Fable was asked to verify this independently rather than inherit it, so the spec should either
+corroborate the table or contradict it with evidence.)
+
 **OpenShift already expresses "you may read yourself".** `basic-user`, bound to
 `system:authenticated`, grants `get users` restricted to `resourceNames: ["~"]`. Every authenticated
 reader therefore already holds a cluster permission that means precisely *"may read own identity, may
