@@ -15,6 +15,9 @@ It refused those renders with a message about a volume that did not exist.
 {{- if and (eq (int .Values.replicaCount) 1) .Values.persistence.enabled (eq (toString .Values.strategy) "RollingUpdate") }}
 {{- fail "strategy=RollingUpdate is unsafe at replicaCount 1 with persistence enabled, whatever the access mode. RollingUpdate starts the incoming pod BEFORE terminating the outgoing one, and at one replica both use /data/gsd.db — two processes on one SQLite file, which corrupts rather than errors because WAL coordinates through an mmap'd -shm file that assumes a single host. The guard above catches only ReadWriteOncePod, where the scheduler refuses the second pod anyway; the DEFAULT ReadWriteMany happily mounts twice and was therefore the dangerous case, not the protected one. Use Recreate, or leave strategy empty to derive it. Above one replica RollingUpdate is correct and stays allowed, because each pod owns /data/$POD_NAME/gsd.db." }}
 {{- end }}
+{{- if and (eq (include "gsd.visibilityEnabled" .) "true") (not .Values.oauthProxy.enabled) }}
+{{- fail "visibility.enabled=true requires oauthProxy.enabled=true. The per-user tiers scope data to X-Forwarded-User, which is trustworthy only when the oauth-proxy sets it; with the proxy off the header is whatever the caller typed, so the control cannot work. Turn the proxy on, or set visibility.enabled=false to accept — deliberately and on the record — that every reader of an unauthenticated route sees everything." }}
+{{- end }}
 {{- if .Values.oauthProxy.enabled }}
 {{- $cookie := (.Values.oauthProxy | default dict).cookie | default dict }}
 {{- /*
@@ -145,6 +148,13 @@ spec:
               {{- end }}
             - name: GSD_LOG_LEVEL
               value: {{ .Values.logLevel | quote }}
+            # The view-restrictions switch rides the Deployment rather than the ConfigMap:
+            # one wire from one values key, visible in `oc describe deploy` where an
+            # auditor looks for a security control. The NAME is load-bearing — the app
+            # reads exactly GSD_ENABLE_VIEW_RESTRICTIONS and defaults to restricted, so a
+            # misspelling anywhere is simply never read and cannot turn the control off.
+            - name: GSD_ENABLE_VIEW_RESTRICTIONS
+              value: {{ include "gsd.visibilityEnabled" . | quote }}
             {{- with .Values.timezone }}
             # Log timestamps only — see values.yaml. Stored and served times stay UTC
             # because every call in the app is datetime.now(UTC), so this cannot shift data.

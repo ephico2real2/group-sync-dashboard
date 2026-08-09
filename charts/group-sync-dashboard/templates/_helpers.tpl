@@ -202,3 +202,75 @@ ReadWriteOncePod
 {{- end -}}
 {{- $n -}}
 {{- end -}}
+# ── Per-user visibility ──────────────────────────────────────────────────────────────
+# Every read below is nil-safe on purpose: commenting out the sub-keys in a values file
+# leaves `visibility:` (or `adminSar:`) present-but-nil, which a bare field access — and
+# sprig's dig — panics on. Intermediates are defaulted to a dict and a nil leaf is
+# treated as "not set", which falls back to the shipped default, never to "off".
+
+# Returns the word true or false. Only the exact word false — bool or string — disables:
+# the switch guards personal data, so anything unrecognised must fail toward restricted.
+{{- define "gsd.visibilityEnabled" -}}
+{{- if eq (toString ((.Values.visibility | default dict).enabled)) "false" -}}
+false
+{{- else -}}
+true
+{{- end -}}
+{{- end -}}
+
+# The four adminSar fields, each validated where it is resolved so a nonsensical shape
+# refuses to render anywhere it would be used. RBAC matching is exact and lowercase, so a
+# miscased or misspelt field would not error — it would answer allowed=false for every
+# viewer and silently demote every administrator, which is why these fail the render
+# instead of passing the string through.
+
+{{- define "gsd.visibilitySarApiGroup" -}}
+{{- $sar := ((.Values.visibility | default dict).adminSar) | default dict -}}
+{{- if or (not (hasKey $sar "apiGroup")) (kindIs "invalid" $sar.apiGroup) -}}
+user.openshift.io
+{{- else -}}
+{{- $g := trim (toString $sar.apiGroup) -}}
+{{- if not (regexMatch "^[a-z0-9.-]*$" $g) -}}
+{{- fail (printf "visibility.adminSar.apiGroup %q is not an API group. Give the group alone (e.g. user.openshift.io, rbac.authorization.k8s.io), no version suffix, or \"\" for the core group." $g) -}}
+{{- end -}}
+{{- $g -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "gsd.visibilitySarResource" -}}
+{{- $sar := ((.Values.visibility | default dict).adminSar) | default dict -}}
+{{- if or (not (hasKey $sar "resource")) (kindIs "invalid" $sar.resource) -}}
+groups
+{{- else -}}
+{{- $r := trim (toString $sar.resource) -}}
+{{- if not (regexMatch "^[a-z0-9-]+(/[a-z0-9-]+)?$" $r) -}}
+{{- fail (printf "visibility.adminSar.resource %q is not a resource. Use the lowercase plural (e.g. groups, rolebindings), optionally resource/subresource (e.g. pods/log). RBAC matching is exact, so anything else would silently answer no for every viewer and demote every administrator." $r) -}}
+{{- end -}}
+{{- $r -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "gsd.visibilitySarVerb" -}}
+{{- $sar := ((.Values.visibility | default dict).adminSar) | default dict -}}
+{{- if or (not (hasKey $sar "verb")) (kindIs "invalid" $sar.verb) -}}
+list
+{{- else -}}
+{{- $v := trim (toString $sar.verb) -}}
+{{- if not (regexMatch "^[a-z]+$" $v) -}}
+{{- fail (printf "visibility.adminSar.verb %q is not a verb. Kubernetes verbs are lowercase words (list, get, watch, ...). RBAC matching is exact, so anything else would silently answer no for every viewer and demote every administrator." $v) -}}
+{{- end -}}
+{{- $v -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "gsd.visibilitySarNamespace" -}}
+{{- $sar := ((.Values.visibility | default dict).adminSar) | default dict -}}
+{{- if or (not (hasKey $sar "namespace")) (kindIs "invalid" $sar.namespace) -}}
+{{- else -}}
+{{- $n := trim (toString $sar.namespace) -}}
+{{- if not (regexMatch "^[a-z0-9-]*$" $n) -}}
+{{- fail (printf "visibility.adminSar.namespace %q is not a namespace name. Leave it empty for a cluster-scoped check." $n) -}}
+{{- end -}}
+{{- $n -}}
+{{- end -}}
+{{- end -}}

@@ -45,6 +45,16 @@ data:
     userActivityVisibility: {{ .Values.config.userActivity.visibility | quote }}
     userActivityFlushSeconds: {{ .Values.config.userActivity.flushSeconds }}
     userActivityRetentionDays: {{ .Values.config.userActivity.retentionDays }}
+    # Per-user visibility: the SubjectAccessReview that separates the wide tier from the
+    # self tier. The ON/OFF switch itself travels as GSD_ENABLE_VIEW_RESTRICTIONS on the
+    # Deployment — one wire, visible where an auditor reads the pod spec — so it is
+    # deliberately not repeated here, where a second copy could disagree with the first.
+    # Quoted unconditionally: the apiGroup may legitimately be the empty string (the core
+    # API group), which unquoted YAML would read as null.
+    visibilityAdminSarApiGroup: {{ include "gsd.visibilitySarApiGroup" . | quote }}
+    visibilityAdminSarResource: {{ include "gsd.visibilitySarResource" . | quote }}
+    visibilityAdminSarVerb: {{ include "gsd.visibilitySarVerb" . | quote }}
+    visibilityAdminSarNamespace: {{ include "gsd.visibilitySarNamespace" . | quote }}
     # THE GRANT AND THE MODULE ARE TWO DIFFERENT THINGS, and until now only the grant was wired.
     # `loginCapture.enabled` rendered the Role that lets the pod read oauth-server logs, and nothing
     # told the application to read them: the setting the code looks for is this ConfigMap key, so

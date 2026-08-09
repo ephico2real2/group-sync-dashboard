@@ -353,10 +353,13 @@ config:
     # Anything else is treated as `self`: an unrecognised value must never be the one that
     # widens access to a personnel dataset.
     #
-    # There is deliberately no "admins only" tier. Doing that properly means a
-    # SubjectAccessReview from the app against the Kubernetes API on every read, which
-    # makes a personal-data query depend on API-server availability. If you need it,
-    # oauthProxy.sar already restricts the WHOLE dashboard to a group you choose.
+    # DELIBERATELY INDEPENDENT of the `visibility` block below, which governs CLUSTER data.
+    # This knob governs data the dashboard GENERATED about its own readers, and the two must
+    # not merge: handing this dataset to the visibility tier would let every cluster-reader
+    # see colleagues' presence records — a personnel dataset widened as a side effect of a
+    # refactor. Passing the visibility.adminSar check therefore does NOT widen this view;
+    # only the exact string `all` here does. If you need an admins-only door for the whole
+    # dashboard, that is oauthProxy.sar.
     visibility: self
     # Requests are buffered in memory and written once per interval. A write per request
     # would put every API call behind the SQLite writer lock, contending with the poll's
@@ -1002,6 +1005,61 @@ oauthProxy:
   # A `redirectMode: redirectreference` key used to sit here. It was read by nothing, and
   # its default named the one mode the chart CANNOT use — so it documented the opposite of
   # the behaviour, in a place an operator would reasonably believe.
+
+# ---------------------------------------------------------------------------
+# Per-user visibility
+# ---------------------------------------------------------------------------
+# WHO SEES WHAT, once the proxy has admitted a reader. ON by default, because it fixes an
+# exposure rather than adding a feature: the dashboard reads the cluster with its own
+# ServiceAccount, so with restrictions off EVERY authenticated reader sees the full RBAC
+# binding surface, every group's membership and every person's login failures — data a
+# plain user cannot read with `oc` (measured: eight `oc auth can-i list` checks, all no).
+#
+# With restrictions on, a reader sees only what belongs to them — their profile, their
+# groups, their grants, their own login attempts — unless a SubjectAccessReview, asked by
+# the app as its own ServiceAccount and naming the reader AND their groups, allows the
+# check in `adminSar` below. An INDETERMINATE answer (SAR error, timeout) always yields
+# the narrow view, never the wide one. Requires oauthProxy.enabled — with the proxy off
+# there is no trusted identity to scope to, and the chart refuses to render rather than
+# ship a control that cannot work.
+#
+# A REVOKED administrator keeps the wide view for at most the tier cache TTL (60s) plus
+# one in-flight page; a newly granted one waits the same. The SAR itself evaluates live
+# RBAC — only the cached verdict and the group list age.
+visibility:
+  # true -> the env var GSD_ENABLE_VIEW_RESTRICTIONS on the Deployment. The spelling is
+  # load-bearing: the app reads exactly that name, defaults to restricted, and never sees a
+  # misspelling — so a typo cannot silently disable the control.
+  #
+  # false restores today's everyone-sees-everything view. Make that a deliberate, recorded
+  # choice: it re-opens the exposure above for every authenticated account.
+  enabled: true
+
+  # THE ADMINISTRATOR THRESHOLD — the SubjectAccessReview a reader must pass to see
+  # everything. Expressed as the check itself rather than a list of role names, because a
+  # name list would miss cluster-reader and every custom role that grants the same read.
+  #
+  # Measured on the reference cluster, per role bound CLUSTER-WIDE:
+  #
+  #   check                                        admits
+  #   list groups.user.openshift.io (default)      cluster-admin, cluster-reader
+  #   list rolebindings.rbac.authorization.k8s.io  those two PLUS cluster-wide `admin`
+  #   anything your own ClusterRole grants         whoever holds that role
+  #
+  # `edit` and `view` pass NO cluster-scoped list at all — bound cluster-wide they are
+  # indistinguishable from a plain user here — and `cluster-edit`/`cluster-view` do not
+  # exist as roles. If people holding edit/view must see everything, bind them a role that
+  # grants the check above, or set enabled: false.
+  adminSar:
+    # "" means the core API group. No version suffix.
+    apiGroup: user.openshift.io
+    # Lowercase plural; resource/subresource (e.g. pods/log) is accepted.
+    resource: groups
+    verb: list
+    # Empty means a cluster-scoped check — the normal case. Set a namespace only for a
+    # threshold that is deliberately namespaced, e.g. get pods/log in
+    # openshift-authentication, which cluster-wide admin/edit/view also pass.
+    namespace: ""
 
 # ---------------------------------------------------------------------------
 # Monitoring

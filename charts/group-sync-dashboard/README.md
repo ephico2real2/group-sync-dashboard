@@ -147,7 +147,7 @@ Powers the **Usage** tab and `GET /api/dashboard/activity`.
 | Key | Default | Notes |
 |---|---|---|
 | `config.userActivity.enabled` | `true` | **requires `oauthProxy.enabled`.** With the proxy off nothing is recorded whatever this says — there is no authentication, so `X-Forwarded-User` would be whatever the caller typed, and recording it would manufacture an audit trail rather than keep one. The mismatch is logged at startup |
-| `config.userActivity.visibility` | `self` | `self` \| `all`. `self` means each authenticated user sees only their own rows. Anything unrecognised is treated as `self` — an unrecognised value must never be the one that widens access to a personnel dataset |
+| `config.userActivity.visibility` | `self` | `self` \| `all`. `self` means each authenticated user sees only their own rows. Anything unrecognised is treated as `self` — an unrecognised value must never be the one that widens access to a personnel dataset. Deliberately independent of `visibility.enabled` below: passing the admin check does **not** widen this view |s `self` — an unrecognised value must never be the one that widens access to a personnel dataset |
 | `config.userActivity.flushSeconds` | `60` | buffered in memory and written once per interval; a write per request would put every API call behind the SQLite writer lock. An ungraceful kill loses up to this many seconds of counts |
 | `config.userActivity.retentionDays` | `400` | `0` disables. A backstop for a long-lived deployment, not the growth control a request log would need — the table is aggregated to one row per user per UTC day |
 
@@ -156,13 +156,33 @@ on which days, between which times, how often. The argument that carries the res
 dashboard, "you could read the groups with `oc` anyway", is true of group membership and
 false of who looked at it.
 
-There is deliberately no "admins only" tier: doing that properly means a SubjectAccessReview
-from the app on every read, which makes a personal-data query depend on API-server
-availability. If you need it, `oauthProxy.sar` already restricts the whole dashboard.
+There is deliberately no "admins only" tier here, even though the visibility control below
+now performs exactly that SubjectAccessReview for cluster data: this dataset is about the
+dashboard's own *readers*, not the cluster, and handing it to the tier would let every
+`cluster-reader` browse colleagues' presence records — a personnel dataset widened as a side
+effect of a refactor. Only the exact string `all` here widens it. If you need an admins-only
+door for the whole dashboard, that is `oauthProxy.sar`.
 
 Note it cannot see logins. The proxy owns the session; the app only ever observes requests
 that are already authenticated, so "session" here means the first-to-last-seen window on a
 day. Above one replica it is per-pod, like the rest of the history.
+
+### Per-user visibility
+
+Restricted by default: an admitted reader sees only what belongs to them — their own
+profile, groups, grants and login attempts — unless a SubjectAccessReview, asked by the app
+as its own ServiceAccount and naming the reader and their groups, passes the check below.
+An indeterminate review (API error, timeout) always yields the narrow view, never the wide
+one, and a revoked administrator keeps the wide view for at most the tier cache TTL (60s)
+plus one in-flight page.
+
+| Key | Default | Notes |
+|---|---|---|
+| `visibility.enabled` | `true` | reaches the app as `GSD_ENABLE_VIEW_RESTRICTIONS` on the Deployment — one wire, and the spelling is load-bearing. **`false` restores everyone-sees-everything**: a deliberate, recorded choice, since it re-exposes the full RBAC binding surface and every person's login failures to any account that can log in. Requires `oauthProxy.enabled` — the chart refuses to render a per-user control with no trusted identity |
+| `visibility.adminSar.apiGroup` / `.resource` / `.verb` | `user.openshift.io` / `groups` / `list` | the check a reader must pass to see everything. The default admits `cluster-admin` and `cluster-reader`; `list` `rolebindings.rbac.authorization.k8s.io` also admits cluster-wide `admin`; `edit`/`view` pass no cluster-scoped list at all, and `cluster-edit`/`cluster-view` do not exist as roles. A miscased or versioned shape fails the render — RBAC matching is exact and lowercase, so it would not error at runtime, it would silently demote every administrator |
+| `visibility.adminSar.namespace` | `""` | empty = a cluster-scoped check, the normal case. Set it only for a deliberately namespaced threshold such as `get` `pods/log` in `openshift-authentication` |
+
+Grant the wide view through your normal RBAC process, never a chart value:
 
 ### Workload
 

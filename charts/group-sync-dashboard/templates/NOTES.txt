@@ -48,6 +48,41 @@ cookie would outlive the token it represents and API calls fail before sign-out 
 Lower oauthProxy.cookie.expire.
 {{- end }}
 {{- end }}
+{{- if eq (include "gsd.visibilityEnabled" .) "true" }}
+{{- $sarGroup := include "gsd.visibilitySarApiGroup" . }}
+{{- $sarResource := include "gsd.visibilitySarResource" . }}
+{{- $sarVerb := include "gsd.visibilitySarVerb" . }}
+{{- $sarNamespace := include "gsd.visibilitySarNamespace" . }}
+
+Visibility: RESTRICTED (visibility.enabled=true, the default). Each reader sees only their
+own profile, groups, grants and login attempts. A reader sees everything only if a
+SubjectAccessReview allows:
+
+  {{ $sarVerb }} {{ $sarResource }}{{ with $sarGroup }}.{{ . }}{{ end }}{{ with $sarNamespace }} in namespace {{ . }}{{ end }}
+{{- if and (eq $sarGroup "user.openshift.io") (eq $sarResource "groups") (eq $sarVerb "list") (eq $sarNamespace "") }}
+
+That default check admits cluster-admin and cluster-reader, and nobody else.
+{{- else }}
+
+This is a custom check (visibility.adminSar): whoever holds a role granting it gets the
+wide view. Stock cluster-reader passes every threshold measured for this feature.
+{{- end }}
+Grant the wide view through normal RBAC, never a chart value:
+
+  oc adm policy add-cluster-role-to-user cluster-reader <username>
+
+  (prefer the group form — a grant naming a person survives their departure:
+   oc adm policy add-cluster-role-to-group cluster-reader <ldap-group>)
+
+An indeterminate review (API error, timeout) yields the narrow view, never the wide one.
+Restore the old everyone-sees-everything behaviour only as a deliberate choice:
+  --set visibility.enabled=false
+{{- else }}
+
+Visibility: WIDE (visibility.enabled=false). Every admitted reader sees the full RBAC
+binding surface, every group's membership and every person's login attempts. You chose
+this; the default is restricted.
+{{- end }}
 {{- else }}
 
 WARNING: the Ingress has NO authentication and the dashboard exposes group membership.
