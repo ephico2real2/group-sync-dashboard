@@ -358,12 +358,13 @@ header.top .spacer { flex: 1; }
   margin-bottom: 18px;
 }
 .filters label { color: var(--text-secondary); font-size: var(--text-sm); }
-select, button {
+select, button, a.btn {
   font: inherit; font-size: var(--text-md); color: var(--text-primary);
   background: var(--surface-1); border: 1px solid var(--border);
   border-radius: 6px; padding: 5px 9px; cursor: pointer;
 }
-button:hover, select:hover { border-color: var(--baseline); }
+a.btn { text-decoration: none; }
+button:hover, select:hover, a.btn:hover { border-color: var(--baseline); }
 
 /* Refetch holds the previous render at reduced opacity — no skeleton flash, no jump. */
 .stale { opacity: 0.55; transition: opacity 120ms ease; }

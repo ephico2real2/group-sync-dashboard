@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import ssl
 import threading
 from dataclasses import dataclass, field
@@ -260,6 +261,27 @@ class Settings:
     # is exactly what an unauthenticated caller would supply. Reported by the chart from
     # its own oauthProxy.enabled; false means no identity is trustworthy.
     oauth_proxy_enabled: bool = False
+
+    # The proxy's own URL prefix, reported by the chart from oauthProxy.proxyPrefix. Everything
+    # the proxy serves lives under it, and /api/whoami composes the sign-out link from it rather
+    # than hardcoding "/oauth" — so a --proxy-prefix override reaches the page instead of leaving
+    # it pointing at a path the proxy no longer answers.
+    oauth_proxy_prefix: str = "/oauth"
+
+    # The proxy's session cap in seconds, restated from the SAME chart value that renders the
+    # sidecar's -cookie-expire flag. RESTATED, never enforced here: the session cookie is
+    # HttpOnly and the proxy forwards no session-age header, so the app cannot observe the real
+    # expiry and must not pretend to. It exists so a page can warn before the cap rather than
+    # discovering it as a failed request.
+    session_cookie_expire_seconds: int = 14400
+
+    # Zero, and it stays zero unless somebody deliberately re-enables a flag the chart refuses.
+    # Measured on provider=openshift: the proxy's refresh-time revalidation sends the token as a
+    # query parameter, the API server answers 403 as system:anonymous, and the session is CLEARED
+    # at every interval instead of extended. Reported so a page can tell a sliding session from
+    # an absolute one without guessing.
+    session_cookie_refresh_seconds: int = 0
+
     user_activity_enabled: bool = True
     # "self" | "all". Who may read /api/dashboard/activity. Defaults to self, because the
     # response is identifiable personnel data — who was present, when, and how much — and
@@ -342,6 +364,55 @@ def _visibility_setting(raw: dict) -> str:
         return word
     log.warning("userActivityVisibility=%r is not 'self' or 'all'; using 'self'", source)
     return "self"
+
+
+def _path_setting(raw: dict, env_name: str, yaml_key: str, default: str) -> str:
+    """An absolute URL path, trailing slash stripped. Env wins over the ConfigMap.
+
+    Normalised because the value is CONCATENATED — whoami builds "<prefix>/sign_out" — and a
+    trailing slash would produce "//sign_out", which the proxy does not serve. A value that is
+    not an absolute path falls back rather than emitting a link that cannot work.
+    """
+    source = os.environ.get(env_name)
+    if source is None:
+        source = raw.get(yaml_key, default)
+    text = str(source).strip().rstrip("/")
+    if not text.startswith("/"):
+        log.warning("%s=%r is not an absolute path; using %r", env_name, source, default)
+        return default
+    return text
+
+
+def _duration_setting(raw: dict, env_name: str, yaml_key: str, default: int) -> int:
+    """A Go duration string ("4h", "90m", "1h30m") as whole seconds. Env wins over the ConfigMap.
+
+    Same grammar the proxy's own flag parser accepts, because the chart renders both from one
+    value — if this disagreed with the sidecar the page would count against a different number
+    than the proxy enforces.
+
+    A malformed value FALLS BACK with a warning rather than raising, matching _num_setting's
+    reasoning and for a stronger version of it: the chart already refuses a malformed duration at
+    render time, so a bad value here can only come from a hand-written config or an env override,
+    and this number is merely RESTATED to the UI rather than enforced. A dashboard that starts and
+    reports a slightly wrong cap beats a dashboard that will not start at all.
+    """
+    source = os.environ.get(env_name)
+    if source is None:
+        if yaml_key not in raw:
+            return default
+        source = raw[yaml_key]
+    total = 0.0
+    text = str(source).strip()
+    units = {"ns": 1e-9, "us": 1e-6, "µs": 1e-6, "ms": 1e-3, "s": 1.0, "m": 60.0, "h": 3600.0}
+    for value, unit in re.findall(r"([0-9]+(?:\.[0-9]+)?)(ns|us|µs|ms|s|m|h)", text):
+        total += float(value) * units[unit]
+    # A non-empty string that matched nothing — "4 hours", "14400", "PT4H" — is malformed. The
+    # rebuild check catches a partial match too, where a stray unit would be silently dropped.
+    rebuilt = "".join(v + u for v, u in re.findall(r"([0-9]+(?:\.[0-9]+)?)(ns|us|µs|ms|s|m|h)", text))
+    if not text or rebuilt != text:
+        log.warning("%s=%r is not a Go duration; using %r seconds", env_name, source, default)
+        return default
+    return int(total)
 
 
 def _bool_setting(raw: dict, env_name: str, yaml_key: str, default: bool) -> bool:
@@ -485,6 +556,15 @@ def load_settings(path: str | Path) -> Settings:
         ),
         oauth_proxy_enabled=_bool_setting(
             raw, "GSD_OAUTH_PROXY_ENABLED", "oauthProxyEnabled", False
+        ),
+        oauth_proxy_prefix=_path_setting(
+            raw, "GSD_OAUTH_PROXY_PREFIX", "oauthProxyPrefix", "/oauth"
+        ),
+        session_cookie_expire_seconds=_duration_setting(
+            raw, "GSD_SESSION_COOKIE_EXPIRE", "sessionCookieExpire", 14400
+        ),
+        session_cookie_refresh_seconds=_duration_setting(
+            raw, "GSD_SESSION_COOKIE_REFRESH", "sessionCookieRefresh", 0
         ),
         user_activity_enabled=_bool_setting(
             raw, "GSD_USER_ACTIVITY_ENABLED", "userActivityEnabled", True

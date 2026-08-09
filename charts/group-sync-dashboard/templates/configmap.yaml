@@ -24,6 +24,21 @@ data:
     # caller would set. So the chart states it, and the app records identity only when
     # this is true.
     oauthProxyEnabled: {{ .Values.oauthProxy.enabled }}
+    {{- if .Values.oauthProxy.enabled }}
+    # The proxy's route prefix and session cap, restated for /api/whoami. The cap comes
+    # from the SAME helper that builds the sidecar's -cookie-expire flag, and both render
+    # in one helm invocation, so the number the app can report is the number the proxy
+    # enforces — by construction rather than by convention. The session cookie is HttpOnly,
+    # so the page can NEVER observe its own lifetime; it can only be told, from the one
+    # place that also set it.
+    #
+    # No refresh key: refresh is retired (values.yaml carries the measurement) and the app
+    # reads its absence as disabled. Both keys are absent when the proxy is off — there is
+    # no session to restate then, and an unguarded value would reach the app's parser with
+    # no render guard standing in front of it.
+    oauthProxyPrefix: {{ .Values.oauthProxy.proxyPrefix | quote }}
+    sessionCookieExpire: {{ include "gsd.cookieExpire" . | quote }}
+    {{- end }}
     unmanagedAuditMode: {{ .Values.config.unmanagedAudit.mode | quote }}
     unmanagedAuditMaxPerCycle: {{ .Values.config.unmanagedAudit.maxPerCycle }}
     userActivityEnabled: {{ .Values.config.userActivity.enabled }}

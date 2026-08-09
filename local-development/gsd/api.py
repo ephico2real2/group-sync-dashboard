@@ -35,7 +35,11 @@ STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 
 # Mirrors oauthProxy.skipAuthRegex. Requests here reach the app WITHOUT authentication, so
 # nothing they claim about identity can be believed or recorded.
-SKIP_AUTH_PATHS = frozenset({"/healthz", "/readyz", "/metrics"})
+# Mirrors oauthProxy.skipAuthRegex. Requests here reach the app WITHOUT authentication, so
+# nothing they claim about identity can be believed or recorded. /signed-out is the proxy's
+# -logout-url landing page: it exists precisely for the moment the session cookie has just
+# been cleared, so it is unauthenticated by design rather than by oversight.
+SKIP_AUTH_PATHS = frozenset({"/healthz", "/readyz", "/metrics", "/signed-out"})
 
 
 # The outcome vocabulary, read OFF THE PARSER rather than restated here. loginlog.py is where an
@@ -911,13 +915,54 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
         """Who the proxy says this request is. Reflected, never stored by this endpoint.
 
         `authenticated` is false when the proxy is disabled even if a username is present,
-        because in that mode the caller supplied it themselves.
+        because in that mode the caller supplied it themselves. Every other field is gated
+        on the same judgement, for the same reason: without the proxy there is no session
+        to end and no idle timeout anyone enforces, so offering any of them would be the
+        page claiming a security control that does not exist.
+
+        ONE logout URL, the proxy's own sign_out, and it is composed from the configured
+        prefix rather than hardcoded so a --proxy-prefix override cannot leave the page's
+        control pointing at a path the proxy no longer answers.
+
+        There was briefly a second, app-side URL that revoked the OAuth token first, the way
+        the console's logout does. It was removed after MEASURING it fail: the console can
+        revoke because its tokens carry scope `user:full`, while this chart authenticates
+        through a ServiceAccount whose tokens carry `user:info` and `user:check-access` —
+        neither of which permits a delete, so the API answered 403 regardless of RBAC. What
+        remains is enough: the proxy clears its own cookie and re-entry demands credentials,
+        measured on the reference cluster.
+
+        `session` carries the CONFIGURED durations, never a deadline. The session cookie is
+        HttpOnly and the proxy forwards no session-age header, so the true expiry is not
+        observable from here; these numbers are trustworthy only because the ConfigMap
+        renders them from the same chart values as the proxy's own flags. The browser owns
+        the countdown model built on them — see static/index.html.
+
+        NEVER POLL THIS ON A TIMER. Requesting it through the proxy re-stamps the session
+        cookie like any other request, so a page calling it periodically would hold every
+        session open forever — the exact defect the durations exist to fix. It is called
+        once, at page load; the page's "Stay signed in" control re-proves the session with
+        an ordinary interaction-marked data refresh instead of calling this again.
         """
         user = request.headers.get(USER_HEADER)
+        authenticated = bool(user) and settings.oauth_proxy_enabled
         return {
             "user": user if settings.oauth_proxy_enabled else None,
             "email": request.headers.get(EMAIL_HEADER) if settings.oauth_proxy_enabled else None,
-            "authenticated": bool(user) and settings.oauth_proxy_enabled,
+            "authenticated": authenticated,
+            # Composed, not hardcoded: tracks a --proxy-prefix override through
+            # Settings.oauth_proxy_prefix so the link and the proxy cannot drift apart.
+            "logout_url": (
+                f"{settings.oauth_proxy_prefix}/sign_out" if authenticated else None
+            ),
+            "session": (
+                {
+                    "cookie_expire_seconds": settings.session_cookie_expire_seconds,
+                    "cookie_refresh_seconds": settings.session_cookie_refresh_seconds,
+                }
+                if authenticated
+                else None
+            ),
         }
 
     @app.get("/api/dashboard/activity")
@@ -1090,6 +1135,19 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
         # stale shell silently disables every fix behind it.
         return FileResponse(
             os.path.join(STATIC_DIR, "index.html"),
+            headers={"Cache-Control": "no-cache, must-revalidate"},
+        )
+
+    @app.get("/signed-out")
+    def signed_out() -> FileResponse:
+        # The proxy's -logout-url target, listed in oauthProxy.skipAuthRegex. It renders at
+        # the exact moment the session cookie has just been cleared, so it reads no headers
+        # and claims nothing about who signed out — anything it said would be
+        # caller-supplied. Same Cache-Control reasoning as index(): a stale cached copy
+        # after a redeploy would misdescribe what logout actually does, and what it does
+        # NOT do (end the reader's other cluster sessions) is its entire purpose.
+        return FileResponse(
+            os.path.join(STATIC_DIR, "signed-out.html"),
             headers={"Cache-Control": "no-cache, must-revalidate"},
         )
 

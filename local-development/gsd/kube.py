@@ -105,20 +105,6 @@ def is_platform_user(name: str) -> bool:
     return name.startswith(PLATFORM_USER_PREFIXES) or name in PLATFORM_USER_NAMES
 
 
-# The membership clause of an LDAP search filter, in either of the two spellings that exist.
-#
-# NEITHER IS STANDARDISED. `memberOf` is what OpenLDAP's memberof overlay writes and what Active
-# Directory uses; `isMemberOf` is what 389-ds and Oracle/Sun DSEE write. No RFC defines either, so a
-# filter may legitimately use one or the other and a parser that knows only one finds nothing on half
-# the directories in the world — while reporting "no login gate is configured", which is a false
-# statement about the cluster rather than a visible failure.
-#
-# Case-insensitive because LDAP attribute descriptions are (RFC 4512 §2.5), and filters in the wild
-# are written `memberOf`, `memberof` and `MemberOf`.
-#
-# `[^)]+` for the value: a DN contains commas and equals signs, which is why a comma-delimited parse
-# would truncate it at `cn=x`, but it does not contain a parenthesis unless escaped as `\28`/`\29` —
-# and an escaped paren survives this unharmed because the escape is not a literal `)`.
 _ACCESS_GROUP_CLAUSE = re.compile(r"\(\s*(?:is)?memberof\s*=\s*([^)]+?)\s*\)", re.I)
 
 

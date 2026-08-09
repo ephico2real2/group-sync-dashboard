@@ -17,6 +17,8 @@ import pathlib
 import shutil
 import subprocess
 
+import yaml
+
 import pytest
 
 CHART = pathlib.Path(__file__).resolve().parents[2] / "charts" / "group-sync-dashboard"
@@ -31,6 +33,46 @@ def render(**values):
         args += ["--set", f"{key.replace('__', '.')}={value}"]
     done = subprocess.run(args, capture_output=True, text=True)
     return done.returncode == 0, done.stdout + done.stderr
+
+
+def _proxy_args(out: str) -> list[str]:
+    """The oauth-proxy container's args, as a list of flag strings.
+
+    ARG LINES ONLY, never a substring search of the manifest — and that distinction has already
+    caught one wrong assertion. Comments in a Helm template are YAML comments, so they are
+    EMITTED into the rendered output; a grep for "cookie-refresh" matches the comment that
+    explains its absence and reports the opposite of the truth.
+    """
+    args, seen_proxy = [], False
+    for line in out.splitlines():
+        stripped = line.strip()
+        if stripped == "- name: oauth-proxy":
+            seen_proxy = True
+        elif seen_proxy and stripped.startswith("- name: "):
+            break                      # a later container; the proxy's args are done
+        elif seen_proxy and stripped.startswith("- -"):
+            args.append(stripped[2:])
+    return args
+
+
+def _config_data(out: str) -> dict:
+    """The ConfigMap's clusters.yaml body, parsed.
+
+    Parsed rather than grepped so an assertion about a VALUE reads the value, and an assertion
+    about a key being absent cannot be satisfied by the key appearing in a comment — the
+    rendered manifest carries this chart's explanatory comments, so a substring search over it
+    answers the wrong question.
+    """
+    lines, inside = [], False
+    for line in out.splitlines():
+        if line.strip().startswith("clusters.yaml:"):
+            inside = True
+            continue
+        if inside:
+            if line and not line.startswith("    "):
+                break
+            lines.append(line[4:] if line.startswith("    ") else line)
+    return yaml.safe_load("\n".join(lines)) or {}
 
 
 class TestSingleReplicaRollingUpdate:
@@ -660,3 +702,98 @@ class TestTheProxyTrustsTheSameCAsTheApp:
                         f"with {values or 'defaults'} container {container['name']} mounts "
                         f"{mount['name']!r}, which is not in {sorted(volumes)}"
                     )
+
+
+class TestSessionCookieLifetime:
+    """-cookie-expire and where its number comes from: Kibana's rule, adapted.
+
+    The cluster's spec.tokenConfig.accessTokenInactivityTimeout WINS when it is set and
+    readable at render time; the shipped 4h fallback applies otherwise. `helm template`
+    runs with lookup EMPTY by construction, so what CI pins is the degrade branch — the
+    fallback, and the flag and the ConfigMap restating one string — plus the guards. The
+    CR-wins branch cannot be reached from here (there is no cluster); it was verified by
+    server dry-run against the reference cluster and by exercising the helper's branch
+    arithmetic on constructed objects, both recorded in the design doc.
+    """
+
+    def test_defaults_render_the_absolute_cap_and_no_refresh(self):
+        """4h absolute, no -cookie-refresh. Measured on provider=openshift: the proxy's
+        refresh-time revalidation sends the token as a query parameter, the API server
+        ignores it and answers 403 as system:anonymous, so refresh force-clears the
+        session at every interval — a sliding window is not something this provider can
+        have. Kibana ships the same shape: expire set, refresh absent."""
+        ok, out = render()
+        assert ok, out
+        args = _proxy_args(out)
+        assert "-cookie-expire=4h" in args
+        assert not any(a.startswith("-cookie-refresh") for a in args), args
+
+    def test_the_access_token_is_never_forwarded_to_the_app(self):
+        """-pass-access-token is absent even with the proxy ON, and its absence is the design.
+
+        It was added so sign-out could revoke the user's token the way the console's does, and
+        removed after that was measured failing: the console can revoke because its tokens
+        carry scope user:full, while this chart authenticates through a ServiceAccount whose
+        tokens carry user:info and user:check-access, so the API answered 403 whatever the RBAC
+        said. Re-adding the flag would hand the app a credential able to act as the user
+        anywhere on the cluster, buying nothing the proxy's own sign_out does not already do.
+        """
+        ok, out = render()
+        assert ok
+        assert "-pass-access-token" not in _proxy_args(out), (
+            "the app is being handed a live user credential it has no use for")
+
+    def test_setting_the_retired_refresh_key_is_refused_with_the_measurement(self):
+        """An old values file carrying refresh must fail loudly with the reason, or its
+        owner believes they have a sliding window while the proxy force-logs-everyone-
+        out at that interval."""
+        ok, out = render(oauthProxy__cookie__refresh="5m")
+        assert not ok, "the retired refresh knob rendered silently as a no-op"
+        assert "force-clears" in out and "system:anonymous" in out
+
+    def test_the_off_spelling_of_refresh_is_tolerated(self):
+        """refresh: "" in an old values file already matches shipped behaviour, so it is
+        not worth failing an upgrade over."""
+        ok, out = render(oauthProxy__cookie__refresh="")
+        assert ok, out
+        assert not any(a.startswith("-cookie-refresh") for a in _proxy_args(out))
+
+    def test_a_nulled_cookie_block_still_renders_the_shipped_fallback(self):
+        """A values file with `oauthProxy.cookie: null` must fall back to 4h, not to the
+        proxy's built-in 7-day cookie."""
+        ok, out = render(oauthProxy__cookie="null")
+        assert ok, out
+        assert "-cookie-expire=4h" in _proxy_args(out)
+
+    def test_the_configmap_restates_the_flag_string_and_carries_no_refresh_key(self):
+        """The session cookie is HttpOnly, so the page can never observe its lifetime —
+        the app restates it from this key, rendered by the SAME helper that builds the
+        flag, cluster lookup included. sessionCookieRefresh left with the knob; the app
+        reads absence as disabled."""
+        ok, out = render(oauthProxy__cookie__expire="90m")
+        assert ok, out
+        assert "-cookie-expire=90m" in _proxy_args(out)
+        cfg = _config_data(out)
+        assert cfg["sessionCookieExpire"] == "90m"
+        assert "sessionCookieRefresh" not in cfg
+
+    def test_a_non_duration_fallback_is_refused_at_render(self):
+        """The proxy validates its flag at startup and crash-loops; the render is where
+        the operator is still watching. Only the values-supplied fallback needs this —
+        the CR field is validated as a duration by the API server itself."""
+        for bad in ("4hr", "240", "four hours"):
+            ok, out = render(oauthProxy__cookie__expire=bad)
+            assert not ok, f"cookie.expire={bad!r} rendered happily and would crash-loop the proxy"
+            assert "not a Go duration" in out
+
+    def test_no_proxy_means_no_flags_no_guards_no_session_keys(self):
+        """With the sidecar off there is nothing to crash-loop and no session to
+        restate: a bad duration must not block a render that never uses it, and the
+        ConfigMap must not carry session keys the app would then parse with no render
+        guard standing in front of them."""
+        ok, out = render(oauthProxy__enabled="false", oauthProxy__cookie__expire="4hr")
+        assert ok, out
+        assert "-cookie-expire" not in out
+        assert "-pass-access-token" not in out
+        assert "sessionCookieExpire" not in _config_data(out)
+

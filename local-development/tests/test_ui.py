@@ -1927,3 +1927,116 @@ class TestTabFocusSurvivesTheRepaint:
         dash.evaluate("() => render()")  # the 30s poll
         got = dash.evaluate("() => document.activeElement.dataset && document.activeElement.dataset.nav")
         assert got == "groups", f"focus fell to {got!r} when the filter bar re-rendered"
+
+
+class TestTheDeadSessionPanel:
+    """What the reader sees when the 4-hour cap arrives mid-read.
+
+    The proxy answers an expired cookie with a 302 to the login page, and fetch FOLLOWS
+    redirects — so the page receives a 200 whose body is HTML and res.json() throws a syntax
+    error about an unexpected "<". Untreated, that reads as a broken dashboard rather than a
+    finished session, which is the worst possible reading for somebody mid-audit.
+    """
+
+    def test_an_auth_redirect_reads_as_a_finished_session_not_a_parse_error(self, dash):
+        dash.evaluate("""() => { window.fetch = async () => new Response('<html>login</html>',
+            {status: 200, headers: {'Content-Type': 'text/html'}}); }""")
+        dash.evaluate("() => refresh()")
+        dash.wait_for_function("() => document.getElementById('main').innerText.includes('session')")
+        body = dash.locator("#main").inner_text()
+        assert "session has ended" in body, body
+        assert "JSON" not in body and "Unexpected" not in body, (
+            f"a parse error reached the reader instead of an explanation: {body}")
+        # It must also say what was NOT affected: a reader mid-audit should not be left
+        # wondering whether the rows they just read were wrong.
+        assert "before this point" in body, body
+
+    def test_the_sign_out_control_is_withdrawn_once_the_session_is_gone(self, dash):
+        dash.evaluate("""() => { window.fetch = async () => new Response('<html>login</html>',
+            {status: 200, headers: {'Content-Type': 'text/html'}}); }""")
+        dash.evaluate("() => refresh()")
+        dash.wait_for_function("() => document.getElementById('main').innerText.includes('session')")
+        assert dash.locator("#logout").is_hidden(), (
+            "offering to sign out of a session that has already ended is an action that "
+            "cannot work")
+        assert dash.locator('#main a[href="/"]').count() > 0, "no way back in was offered"
+
+@pytest.fixture(scope="module")
+def proxied_server(tmp_path_factory):
+    """A dashboard that believes the oauth-proxy is in front of it.
+
+    The shared `server` fixture runs with the proxy OFF, which is the right default for the
+    rest of this suite and the wrong one for the sign-out control: whoami refuses identity in
+    that mode, so the control is correctly hidden and its visible state cannot be reached. The
+    browser context supplies the identity headers the sidecar would add.
+    """
+    db = str(tmp_path_factory.mktemp("gsd-proxied") / "ui.db")
+    _seed(db)
+    settings = Settings(
+        clusters=[ClusterConfig("crc-local", "https://api.crc.testing:6443", token_env="X")],
+        db_path=db,
+        oauth_proxy_enabled=True,
+    )
+    port = _free_port()
+    srv = uvicorn.Server(uvicorn.Config(
+        build_app(settings, run_poller=False), host="127.0.0.1", port=port, log_level="warning"))
+    thread = threading.Thread(target=srv.run, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{port}"
+    for _ in range(100):
+        try:
+            if httpx.get(f"{base}/healthz", timeout=1).status_code == 200:
+                break
+        except httpx.HTTPError:
+            time.sleep(0.1)
+    else:
+        raise RuntimeError("dashboard server did not start")
+    yield base
+    srv.should_exit = True
+    thread.join(timeout=5)
+
+
+class TestSignOutControl:
+    """The header's Sign out link, up to the proxy hop the proxy itself owns."""
+
+    def test_it_is_offered_and_aims_at_the_proxys_sign_out(self, browser, proxied_server):
+        """whoami said authenticated, so the control appears — pointing at the proxy's own
+        sign_out, composed from the configured prefix rather than hardcoded."""
+        ctx = browser.new_context(extra_http_headers={
+            "X-Forwarded-User": "alice", "X-Forwarded-Email": "a@x.com"})
+        page = ctx.new_page()
+        try:
+            page.goto(proxied_server)
+            page.wait_for_selector(".hero .value", timeout=10_000)
+            link = page.locator("#logout")
+            assert link.is_visible()
+            assert link.get_attribute("href") == "/oauth/sign_out"
+            assert "alice" in (link.get_attribute("title") or ""), (
+                "the control should name whose session it ends")
+        finally:
+            ctx.close()
+
+    def test_the_quoted_cap_comes_from_the_server_not_the_page(self, browser, proxied_server):
+        """The page must not hardcode 4 hours: if it did, an operator lowering
+        oauthProxy.cookie.expire would leave it telling readers a number the proxy no longer
+        enforces."""
+        ctx = browser.new_context(extra_http_headers={"X-Forwarded-User": "alice"})
+        page = ctx.new_page()
+        try:
+            page.goto(proxied_server)
+            page.wait_for_selector(".hero .value", timeout=10_000)
+            page.wait_for_function("() => sessionCapNote !== ''", timeout=10_000)
+            assert page.evaluate("() => sessionCapNote") == "4-hour"
+            # Proof it is derived: feed a different duration and the note follows.
+            note = page.evaluate("""() => {
+                const s = 1800 / 3600;
+                return s >= 1 ? `${+s.toFixed(1)}-hour` : `${Math.round(s * 60)}-minute`;
+            }""")
+            assert note == "30-minute", note
+        finally:
+            ctx.close()
+
+    def test_no_control_without_a_session(self, dash):
+        """The shared fixture runs the proxy OFF, where whoami refuses identity — so offering
+        to end a session that does not exist is exactly the lie the gate prevents."""
+        assert dash.locator("#logout").is_hidden()

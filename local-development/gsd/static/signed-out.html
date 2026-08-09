@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <title>Signed out — OCP Access Control Dashboard</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body data-page="signed-out">
+<div class="wrap">
+  <main id="main">
+    <h1>Signed out of the dashboard</h1>
+    <p>Your dashboard session has ended.</p>
+    <!-- Every claim here must be true on EVERY arrival — a deliberate sign-out, an idle
+         expiry, and the 4-hour cap — because a page with no scripts cannot know which one
+         brought the reader, and guessing would be lying to somebody mid-audit. So it states
+         what ENDED and, just as carefully, what did not.
+
+         It deliberately does NOT claim the OAuth token was revoked. An earlier version did,
+         reproducing the OpenShift console's logout, and it was removed after being measured
+         failing: the console can revoke because its tokens carry scope user:full, while this
+         dashboard authenticates through a ServiceAccount whose tokens carry user:info and
+         user:check-access, so the API refuses the delete whatever the RBAC says. Widening the
+         scope would buy revocation by handing this app a credential that can act as the user
+         anywhere, which is a worse trade than not revoking. -->
+    <p>The dashboard cleared its session cookie, so this browser is no longer signed in here.
+       Signing in again asks the cluster to authenticate you — measured on this platform, it
+       does prompt for credentials rather than resuming silently, though a cluster fronted by
+       an external single-sign-on provider may not.</p>
+    <p>Only this dashboard is signed out. Your sessions in the OpenShift web console and the
+       <code>oc</code> command line are separate and still active, and the access token this
+       dashboard was using stays valid until the cluster expires it on its own schedule.</p>
+    <p><a href="/">Sign in again</a></p>
+  </main>
+</div>
+</body>
+</html>
+

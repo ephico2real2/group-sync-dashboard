@@ -133,3 +133,72 @@ ReadWriteMany
 ReadWriteOncePod
 {{- end -}}
 {{- end -}}
+
+# ---------------------------------------------------------------------------
+# Session cookie lifetime
+# ---------------------------------------------------------------------------
+# ONE absolute number, measured from login, deliberately NOT sliding. There is no
+# `refresh` key and no -cookie-refresh flag, and that is a measurement rather than a
+# preference: with provider=openshift the proxy's refresh-time revalidation sends the
+# token as a QUERY PARAMETER, which the API server ignores — it answered 403 naming the
+# caller system:anonymous — so every refresh interval would CLEAR the session instead of
+# extending it. A forced-logout timer wearing a keep-alive's name. The cluster-logging
+# operator ships Kibana's oauth-proxy the same way on this same provider: -cookie-expire
+# with no -cookie-refresh.
+#
+# The value is OURS, not the cluster's. Kibana derives its cookie lifetime from
+# spec.tokenConfig.accessTokenInactivityTimeout because a ServiceAccount-as-OAuth-client
+# cannot own a token policy and must defer to whatever the cluster declares. That
+# derivation was built and then dropped here: it freezes at render time, it is unreadable
+# for a namespace-scoped installer, and it makes the session length depend on a field an
+# operator of THIS chart does not control. A plain value they can see and set is better.
+#
+# `dig` is NOT used here, and that is a measured choice: it panics on an intermediate that
+# EXISTS AND IS NIL — `interface conversion: interface {} is nil, not map[string]interface{}`
+# — which is what a values file produces the moment somebody comments out the sub-keys under
+# `cookie:`. A trailing `| default` cannot rescue it, because the error happens inside dig
+# before any value comes back. `default dict` on each hop tolerates both absent and null.
+{{- define "gsd.cookieExpire" -}}
+{{- $cookie := (.Values.oauthProxy | default dict).cookie | default dict -}}
+{{- $cookie.expire | default "4h" -}}
+{{- end -}}
+
+# Go duration string -> seconds (a float for sub-second units), or -1 when it is not a
+# duration the proxy could parse. Exists so the render guard can refuse a malformed value
+# before the sidecar refuses it at startup, where the reason would be buried in `oc logs`
+# while `helm upgrade` reported success.
+{{- define "gsd.durationSeconds" -}}
+{{- $s := toString . -}}
+{{- if eq $s "0" -}}
+0
+{{- else if not (regexMatch "^([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$" $s) -}}
+-1
+{{- else -}}
+{{- $total := 0.0 -}}
+{{- $mult := dict "ns" 0.000000001 "us" 0.000001 "µs" 0.000001 "ms" 0.001 "s" 1.0 "m" 60.0 "h" 3600.0 -}}
+{{- range $tok := regexFindAll "[0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h)" $s -1 -}}
+{{- $unit := regexFind "[a-zµ]+$" $tok -}}
+{{- $total = addf $total (mulf (float64 (trimSuffix $unit $tok)) (get $mult $unit)) -}}
+{{- end -}}
+{{- if eq (floor $total) $total -}}{{ int64 $total }}{{- else -}}{{ $total }}{{- end -}}
+{{- end -}}
+{{- end -}}
+
+# How many key bytes the proxy would actually derive from a cookie secret. Mirrors its
+# secretBytes(): a value that reads as URL-safe base64 (padding tolerated) is decoded and
+# the DECODED length padded up to a multiple of four; anything else counts raw. The mirror
+# matters in BOTH directions — a naive `len` would reject secrets the proxy accepts (32 hex
+# characters decode to 24 bytes) and accept ones it refuses.
+{{- define "gsd.cookieSecretBytes" -}}
+{{- $s := . -}}
+{{- $n := len $s -}}
+{{- if not (or (contains "+" $s) (contains "/" $s)) -}}
+{{- $t := $s | replace "-" "+" | replace "_" "/" -}}
+{{- $t = print $t (repeat (int (mod (sub 4 (mod (len $t) 4)) 4)) "=") -}}
+{{- $d := b64dec $t -}}
+{{- if not (contains "illegal base64" $d) -}}
+{{- $n = add (len $d) (mod (sub 4 (mod (len $d) 4)) 4) -}}
+{{- end -}}
+{{- end -}}
+{{- $n -}}
+{{- end -}}

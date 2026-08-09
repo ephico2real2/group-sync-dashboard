@@ -16,6 +16,11 @@
     <span class="sub" id="build-info"></span>
     <span class="sub" id="last-refresh"></span>
     <button id="refresh">Refresh</button>
+    <!-- Hidden until /api/whoami confirms there is a session to end. A LINK, not a button:
+         it is an ordinary navigation, so middle-click and "open in new tab" behave, and it
+         needs no script once rendered. The href comes from whoami rather than being
+         hardcoded, so a changed --proxy-prefix cannot leave it pointing at nothing. -->
+    <a id="logout" class="btn" hidden>Sign out</a>
   </header>
 
   <div class="filters" id="filters"></div>
@@ -238,6 +243,16 @@ async function api(path, mark) {
   const headers = { Accept: "application/json" };
   if (mark) headers["X-GSD-Interaction"] = "1";
   const res = await fetch(path, { headers });
+  /* A DEAD SESSION DOES NOT LOOK LIKE AN ERROR. When the proxy cookie expires the proxy answers
+     302 to the login page, and fetch FOLLOWS that by default — so this arrives as a perfectly
+     good 200 whose body is HTML. res.json() then fails with a syntax error about an unexpected
+     "<", which reads as a bug in the dashboard rather than the end of a session. Recognised
+     here, once, so every caller inherits it. */
+  if (res.redirected || !(res.headers.get("Content-Type") || "").includes("json")) {
+    const err = new Error("the dashboard session has ended");
+    err.sessionEnded = true;
+    throw err;
+  }
   if (!res.ok) {
     // The status rides on the error so a caller can tell a DESIGNED refusal from a fault.
     const err = new Error(`${res.status} ${res.statusText} on ${path}`);
@@ -2451,6 +2466,8 @@ async function refresh(opts = {}) {
     if (superseded()) return;
     render();
   } catch (err) {
+    // A dead session is not a fault to report as one — it gets its own honest panel.
+    if (err && err.sessionEnded) { showSessionEnded(); return; }
     // An error must never strand the reader: keep a working Back so a dead link is a
     // detour, not a dead end. This was reported from the field — a 404 on a deleted group
     // replaced the whole page, back button included.
@@ -2485,6 +2502,57 @@ history.replaceState(
   { pos: currentPosition(), from: (history.state && history.state.from) || null },
   "", location.hash || location.pathname);
 
+/* The session cap this page quotes when it ends. From /api/whoami rather than hardcoded, so
+   it cannot contradict the proxy's own -cookie-expire. */
+let sessionCapNote = "";
+
+/* ── The session, asked about ONCE ──────────────────────────────────────────────────────
+   Fetched at load and never polled. Every request through the proxy re-stamps the session
+   cookie, so a page that asked about its own session on a timer would hold that session open
+   forever — the exact thing an absolute cap exists to prevent.
+
+   `logout_url` is the app's own /sign-out, which revokes the OpenShift access token the way
+   the console does and then falls through to the proxy's cookie-clear. Aiming the link
+   straight at the proxy would skip the revocation, so the href always comes from here. */
+async function initSession() {
+  try {
+    const who = await api("/api/whoami");
+    if (who && who.session && who.session.cookie_expire_seconds) {
+      const hours = who.session.cookie_expire_seconds / 3600;
+      sessionCapNote = hours >= 1
+        ? `${+hours.toFixed(1)}-hour`
+        : `${Math.round(hours * 60)}-minute`;
+    }
+    if (who && who.logout_url) {
+      const link = $("logout");
+      link.href = who.logout_url;
+      link.hidden = false;
+      link.title = who.user ? `Sign out ${who.user}` : "Sign out";
+    }
+  } catch (e) {
+    // No session control is a strictly better failure than a broken one, and with the proxy
+    // disabled this is the expected answer rather than a fault.
+  }
+}
+
+/* Shown when a request proves the session is gone. It says what ended AND what did not,
+   because the reader may be mid-audit: a bare "error" invites them to distrust the data they
+   were just reading rather than the session that expired underneath it. */
+function showSessionEnded() {
+  $("logout").hidden = true;
+  $("filters").innerHTML = "";
+  $("main").classList.remove("stale");
+  $("main").innerHTML = `<section class="card">
+    <h2>Your session has ended</h2>
+    <div class="empty-note">${sessionCapNote
+      ? `The dashboard session reached its ${sessionCapNote} limit, or it`
+      : "The dashboard session expired, or it"} was signed out in another tab. Nothing you read
+      before this point was affected — it was accurate when it loaded.</div>
+    <p><a class="btn" href="/">Sign in again</a></p>
+  </section>`;
+}
+
+initSession();
 refresh();
 // {auto: true}: background polling must not register as somebody using the page.
 setInterval(() => refresh({ auto: true }), 30000);

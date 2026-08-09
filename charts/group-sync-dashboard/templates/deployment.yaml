@@ -15,6 +15,33 @@ It refused those renders with a message about a volume that did not exist.
 {{- if and (eq (int .Values.replicaCount) 1) .Values.persistence.enabled (eq (toString .Values.strategy) "RollingUpdate") }}
 {{- fail "strategy=RollingUpdate is unsafe at replicaCount 1 with persistence enabled, whatever the access mode. RollingUpdate starts the incoming pod BEFORE terminating the outgoing one, and at one replica both use /data/gsd.db — two processes on one SQLite file, which corrupts rather than errors because WAL coordinates through an mmap'd -shm file that assumes a single host. The guard above catches only ReadWriteOncePod, where the scheduler refuses the second pod anyway; the DEFAULT ReadWriteMany happily mounts twice and was therefore the dangerous case, not the protected one. Use Recreate, or leave strategy empty to derive it. Above one replica RollingUpdate is correct and stays allowed, because each pod owns /data/$POD_NAME/gsd.db." }}
 {{- end }}
+{{- if .Values.oauthProxy.enabled }}
+{{- $cookie := (.Values.oauthProxy | default dict).cookie | default dict }}
+{{- /*
+Refuse at render time what the proxy would refuse at startup. Its refusal is a crash-looping
+sidecar with the reason buried in `oc logs` while `helm upgrade` reports success, which is the
+worst of both worlds: the release says deployed and nobody can log in.
+
+`dig` is avoided on purpose throughout — it panics on an intermediate that EXISTS AND IS NIL,
+which is exactly what a values file produces when somebody comments out the keys under
+`cookie:`. Measured: "interface conversion: interface {} is nil, not map[string]interface {}".
+*/}}
+{{- $expire := $cookie.expire | default "4h" }}
+{{- if eq (include "gsd.durationSeconds" $expire) "-1" }}
+{{- /*
+toString before %q, because a values file may carry an unquoted number and Helm types it as an
+integer — %q on an int64 renders it as a Unicode RUNE, so `expire: 14400` produced a message
+about the character 㡀 and told the operator nothing about what they typed.
+*/}}
+{{- fail (printf "oauthProxy.cookie.expire %q is not a Go duration the proxy can parse. Use forms like 4h, 90m or 1h30m. A bare number has no unit and is refused, and so is a spelled-out one. The proxy would reject this at startup and crash-loop, with helm reporting a successful upgrade." (toString $expire)) }}
+{{- end }}
+{{- if $cookie.refresh }}
+{{- fail "oauthProxy.cookie.refresh has been removed and must not be set. Measured on provider=openshift: the proxy's refresh-time revalidation sends the token as a QUERY PARAMETER to /apis/user.openshift.io/v1/users/~, the API server ignores it and answers 403 naming the caller system:anonymous, so -cookie-refresh force-clears every session at the interval instead of sliding it. Kibana, the shipped precedent for this sidecar on this provider, sets -cookie-expire and no -cookie-refresh. Remove the key: the absolute cap is oauthProxy.cookie.expire." }}
+{{- end }}
+{{- if and (not .Values.oauthProxy.logoutUrl) (not (contains "signed-out" .Values.oauthProxy.skipAuthRegex)) }}
+{{- fail (printf "oauthProxy.skipAuthRegex (%s) no longer covers /signed-out while oauthProxy.logoutUrl is empty, so the logout landing page sits BEHIND the proxy it is supposed to land outside of: the redirect from sign_out starts a fresh OAuth flow and the reader who clicked Sign out arrives back signed in. Either keep signed-out in the regex, or point oauthProxy.logoutUrl somewhere outside the proxy." .Values.oauthProxy.skipAuthRegex) }}
+{{- end }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -216,6 +243,34 @@ spec:
             - -tls-cert=/etc/tls/private/tls.crt
             - -tls-key=/etc/tls/private/tls.key
             - -cookie-secret-file=/etc/proxy/secrets/session_secret
+            # The absolute session cap, from oauthProxy.cookie.expire. The SAME helper feeds
+            # the ConfigMap the app reads, so the number the page can report is the number
+            # the proxy enforces, by construction. Deliberately NO -cookie-refresh: measured
+            # on this provider it force-clears the session at every interval rather than
+            # sliding it (values.yaml carries the measurement), and the shipped Kibana proxy
+            # omits it on this same provider too.
+            - -cookie-expire={{ include "gsd.cookieExpire" . }}
+            # NO -pass-access-token, and the reason is worth keeping. It was added so
+            # sign-out could revoke the user's token the way the OpenShift console does, and
+            # that was MEASURED FAILING on the lab: the console's logout works because the
+            # console's tokens carry scope ["user:full"], while this chart's client is a
+            # ServiceAccount and its tokens carry ["user:info","user:check-access"] — neither
+            # of which permits deleting anything, so the DELETE returned 403 however the RBAC
+            # was set. (`oc auth can-i delete oauthaccesstokens` answers yes and is misleading
+            # here: a SubjectAccessReview never sees the token's SCOPE, which is a separate and
+            # narrower gate applied at request time.) Widening -scope to user:full would make
+            # revocation work by handing this app a credential that can act as the user
+            # anywhere on the cluster — a strictly worse trade than not revoking, since the
+            # session already ends without it: measured on the lab, the proxy's own sign_out
+            # clears the cookie and re-entry demands credentials.
+            #
+            # The prefix everything the proxy serves lives under. Passed explicitly so the
+            # app can compose its sign-out link from the same value instead of hardcoding
+            # "/oauth" and drifting from it.
+            - -proxy-prefix={{ .Values.oauthProxy.proxyPrefix }}
+            # Where the browser lands after the proxy clears its cookie. Relative by default,
+            # so it resolves against whichever host served the redirect.
+            - -logout-url={{ .Values.oauthProxy.logoutUrl | default "/signed-out" }}
             - -openshift-service-account={{ include "gsd.serviceAccountName" . }}
             # The ServiceAccount CA signs the INTERNAL API endpoint (https://172.31.0.1), which
             # is all the proxy needs for OAuth discovery. It does NOT sign the PUBLIC OAuth
