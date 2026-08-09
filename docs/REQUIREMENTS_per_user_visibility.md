@@ -97,10 +97,32 @@ oc auth can-i create subjectaccessreviews --as=system:serviceaccount:group-sync-
   -> yes
 ```
 
-It comes from `system:auth-delegator`, which the chart already binds for the oauth-proxy's
-`-openshift-delegate-urls` feature and which grants exactly `create tokenreviews` and
-`create subjectaccessreviews`. **So asking "may this user see everything?" needs no new grant.** This
-is the single most important fact for the spec: the expensive-looking part is already paid for.
+It comes from `system:auth-delegator`, which grants exactly `create tokenreviews` and
+`create subjectaccessreviews`.
+
+**CORRECTION, 2026-08-09 — this was measured on the wrong thing and the conclusion was wrong.** An
+earlier revision of this document said "asking *may this user see everything?* needs no new grant" and
+called it the most important fact for the spec. It is true of **this deployment** and false of a
+**default install**: `rbac.yaml` renders the auth-delegator binding only under
+`{{- if and .Values.oauthProxy.enabled .Values.oauthProxy.apiTokenAccess.enabled }}`, and
+`apiTokenAccess.enabled` defaults to **false**. Rendered:
+
+```
+helm template … (defaults)                              -> 0 occurrences of auth-delegator
+helm template … --set oauthProxy.apiTokenAccess.enabled=true -> 3
+```
+
+The live release happens to carry `apiTokenAccess.enabled: true`, which is the only reason
+`oc auth can-i --as=<the ServiceAccount>` answered yes. **So the chart must render the grant whenever
+visibility is enabled**, not only when API token access is — otherwise a default install decides every
+reader is self-tier, permanently and silently. It fails closed, so it is not a hole; it is a feature
+that looks broken with nothing in any log to say why.
+
+Found by the code pass, not by this document. It is the second time in this project that "measured on
+the reference cluster" turned out to mean "measured on a deployment with a non-default option set" —
+the first was `accessTokenMaxAgeSeconds` at 365 days, which is a CRC choice rather than the platform
+default. A measurement of a live deployment establishes what that deployment does, and a claim about
+the chart needs `helm template` at defaults.
 
 **A plain user can ask about themselves, but the app cannot ask on their behalf.**
 
@@ -133,8 +155,22 @@ dashboard serves; `cluster-admin` also qualifies, by holding everything. And **`
 universal, so it is a floor rather than a discriminator** — every authenticated reader has it. The
 discriminating verb is `list`.
 
-(Fable was asked to verify this independently rather than inherit it, so the spec should either
-corroborate the table or contradict it with evidence.)
+**INSTRUMENT CAVEAT, added after verification.** The table above was produced with
+`oc auth can-i --as=<user>`, and that command is **not** equivalent to the SubjectAccessReview the
+application will make. Measured:
+
+| instrument | injects `system:authenticated` | resolves the user's real group memberships |
+|---|---|---|
+| `oc auth can-i --as=U` | **yes** | **no** |
+| raw SAR, `spec.user` only | no | no |
+| raw SAR with `spec.groups` | as supplied | as supplied |
+
+Two consequences. The four `list` columns are unaffected — `system:authenticated` grants none of them,
+and the probe users were bound directly — so the thresholds and the `cluster-edit`/`cluster-view`
+findings stand. But the `get users/~` column read `yes` only because the instrument injected the
+virtual group: a raw user-only SAR answers **false**, and **true** once `system:authenticated` is
+supplied. That is why the implementation must send both the virtual groups and the user's real groups,
+and why each half has its own measurement (§Arbitration in the spec).
 
 **OpenShift already expresses "you may read yourself".** `basic-user`, bound to
 `system:authenticated`, grants `get users` restricted to `resourceNames: ["~"]`. Every authenticated
