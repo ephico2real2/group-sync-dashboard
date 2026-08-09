@@ -34,8 +34,9 @@ dashboard{{ if .Values.oauthProxy.sar }}, subject to the SubjectAccessReview in 
 Sessions: the proxy cookie lives {{ $expire }} from login, and it is ABSOLUTE — there is
 no cookie refresh and no mid-session revalidation, so an active reader is signed out at
 that mark too, and a revoked user keeps access until it. Change it with
-oauthProxy.cookie.expire. Signing out revokes the OAuth token itself, so it does not
-merely forget the session.
+oauthProxy.cookie.expire. Signing out ends the proxy session; it does NOT revoke the OAuth
+token, because this chart authenticates as a ServiceAccount whose tokens carry only
+user:info and user:check-access — the DELETE was built, measured returning 403, and dropped.
 {{- $oauthCR := lookup "config.openshift.io/v1" "OAuth" "" "cluster" }}
 {{- if $oauthCR }}
 {{- $tc := (($oauthCR.spec) | default dict).tokenConfig | default dict }}
