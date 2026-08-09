@@ -1520,10 +1520,11 @@ class Store:
     # ── Login capture ─────────────────────────────────────────────────────────────────────────────
     #
     # Every SQL shape below was run against a scratch WAL database with the real captured log fed
-    # through gsd/loginlog.py before being written here; the verification output is quoted in
-    # docs/DESIGN_login_capture.md. Two of them encode decisions that are easy to undo by accident:
-    # the watermark upsert refuses to rewind, and the status upsert deliberately does NOT touch
-    # started_at.
+    # through gsd/loginlog.py before being written here. Two of them encode decisions that are easy
+    # to undo by accident: the watermark upsert refuses to rewind, and the status upsert
+    # deliberately does NOT touch started_at — docs/DESIGN_login_capture.md explains why the
+    # watermark and the status are two different things, which is why the second looks redundant
+    # and is not.
 
     def record_login_events(self, cluster_id: str, events: list[dict]) -> int:
         """Insert login attempts, ignoring ones already recorded. Returns rows actually inserted.
