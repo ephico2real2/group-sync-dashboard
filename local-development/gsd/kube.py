@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -72,6 +73,59 @@ ROLEBINDING_API = "/apis/rbac.authorization.k8s.io/v1/rolebindings"
 # path keeps the oldest lines and the watermark machinery re-reads the rest next cycle.
 LOG_READ_BUDGET_SECONDS = 20.0
 CLUSTERROLEBINDING_API = "/apis/rbac.authorization.k8s.io/v1/clusterrolebindings"
+
+# ── Per-user visibility: the tier decision (docs/SPEC_per_user_visibility.md) ──────────────────
+
+SAR_API = "/apis/authorization.k8s.io/v1/subjectaccessreviews"
+
+# The two visibility tiers. Plain strings rather than an enum so they can sit directly in the
+# `scope` field the API's responses already carry (/api/dashboard/activity's shipped contract).
+TIER_SELF = "self"
+TIER_ALL = "all"
+
+# Virtual groups every real oauth token carries, ALWAYS added to the review's spec.groups.
+#
+# Measured with the ServiceAccount's own bearer token, 2026-08-09. The DEFAULT threshold does not
+# strictly need them — `list groups` for john.doe was allowed on the strength of his admin group
+# alone (spec.groups=["app-ocp-rbac-demo-cluster-admin"], reason naming CRB demo-cluster-admin-crb)
+# — but the threshold is operator-CHOOSABLE, and any choice whose grant flows through
+# system:authenticated fails without them: `get users/~` answered allowed=false user-only and
+# allowed=true only once system:authenticated was supplied (reason: CRB basic-users of ClusterRole
+# basic-user). This code cannot know which kind of threshold the operator picked, and every real
+# login's token carries both, so supplying both keeps the review's input equal to the viewer's
+# true token identity rather than a subset of it.
+VIRTUAL_AUTH_GROUPS = ("system:authenticated", "system:authenticated:oauth")
+
+TIER_TTL_SECONDS = 60.0
+"""How long one viewer's decided tier is believed before it is re-derived from the cluster.
+
+THE WORST-CASE STALE-VISIBILITY WINDOW — how long a user REMOVED from an admin group can retain
+the wide view — is this TTL, measured from the moment the cluster itself reflects the removal
+(plus the last wide response the browser already holds, ≤30s at the UI's poll cadence). The
+window equals the TTL because BOTH inputs are re-derived at every refresh: the viewer's groups
+come from a fresh Group list at decision time, not the poller's snapshot — the snapshot would
+add pollIntervalSeconds on top — and the SubjectAccessReview evaluates live RBAC, so revocation
+by deleting a ClusterRoleBinding is caught within the same bound. What the window deliberately
+does NOT cover is upstream propagation: an LDAP removal reaches the OpenShift Group object only
+when the group-sync operator next syncs, on that operator's schedule, not ours.
+
+Sixty seconds because this failure direction is OPEN — a revoked administrator keeps seeing
+everything until the refresh — so the window is bought as small as the refresh cost allows:
+one Group list (97ms measured at the 65-group reference scale) plus one review (25-75ms
+measured) per viewer per minute, against an API server the poller already asks far more of
+every cycle. It also keeps "how stale can this dashboard be" a single number: the poll
+interval and this TTL are the same figure.
+"""
+
+TIER_CHECK_TIMEOUT_SECONDS = 5.0
+"""The tier decision's cluster timeout, deliberately tighter than the poller's default 15s.
+
+The decision sits on the REQUEST path — a viewer's first page load blocks on it — so this is a
+user-facing bound, not a bulk-list one. Five seconds is two orders of magnitude above the
+measured answer time and small enough that an API-server outage degrades to a slow dashboard
+failing closed to the self view rather than a hung one. Failures are never cached (see
+TierResolver.tier_for), so recovery costs nothing beyond the next request.
+"""
 
 SYSTEM_GROUP_PREFIX = "system:"
 """Kubernetes reserves this prefix for built-in identities.
@@ -877,6 +931,197 @@ class ClusterClient:
                         success_at=(success or {}).get("lastTransitionTime"),
                     ))
         return out if any_crd_answered else None
+
+    def fetch_groups_of_user(self, user_name: str) -> list[str]:
+        """Names of the OpenShift Groups this user belongs to, read FRESH from the cluster.
+
+        Fresh rather than from the poll snapshot, deliberately: this feeds spec.groups of the
+        visibility SubjectAccessReview, and a snapshot input would stretch a revoked admin's
+        retained wide view from the verdict TTL to pollIntervalSeconds + the TTL — in the
+        direction that fails OPEN. Read at decision time, the window is the TTL alone (see
+        TIER_TTL_SECONDS). Cost measured 2026-08-09: 97ms for the 65-group reference cluster,
+        paid once per viewer per TTL. Paged like every other list here, so a cluster with more
+        groups than one page holds resolves complete memberships rather than a silent subset.
+
+        MEMBERSHIP IS MATCHED BYTE-EXACT. OpenShift User names are case-sensitive — two Users
+        differing only in case are two identities — so a casefolded match would hand one of
+        them the other's groups, and with them possibly the other's tier.
+        """
+        with self._client() as client:
+            items = self._list_all(client, GROUP_API)
+        return sorted(
+            name
+            for obj in items
+            if (name := (obj.get("metadata") or {}).get("name"))
+            and any(str(member) == user_name for member in obj.get("users") or [])
+        )
+
+    def create_subject_access_review(
+        self, user: str, groups: list[str], resource_attributes: dict[str, str]
+    ) -> bool:
+        """One authorization.k8s.io/v1 SubjectAccessReview, created as our own ServiceAccount.
+
+        spec.groups IS NOT OPTIONAL. A SubjectAccessReview resolves no group membership on its
+        own: asked user-only about john.doe — cluster-admin via Group
+        app-ocp-rbac-demo-cluster-admin — the API server answered allowed=false, and answered
+        allowed=true only once that group was supplied in spec.groups (measured twice with the
+        ServiceAccount's own bearer token; reason names CRB demo-cluster-admin-crb). Every real
+        administrator on the reference cluster is group-granted, so omitting the groups would
+        not weaken the check — it would invert the feature.
+
+        An authorization QUERY, not a write: it creates no persistent object, so the
+        ServiceAccount's no-write-verb rule holds. The permission is the `create
+        subjectaccessreviews` half of system:auth-delegator, verified sufficient at runtime —
+        this exact POST answered 201 under a token minted for the ServiceAccount.
+
+        Returns True ONLY for a well-formed boolean status.allowed=true. Everything that is not
+        a clean answer — connect error, timeout, 401, 403, any other >=400, a non-JSON body, a
+        missing or non-boolean allowed — raises ClusterError, which the caller collapses to the
+        self tier: the absence of an answer must never read as "allowed".
+        """
+        body = {
+            "apiVersion": "authorization.k8s.io/v1",
+            "kind": "SubjectAccessReview",
+            "spec": {"user": user, "groups": groups, "resourceAttributes": resource_attributes},
+        }
+        with self._client() as client:
+            try:
+                response = client.post(SAR_API, json=body)
+            except httpx.HTTPError as exc:
+                raise ClusterError(UNREACHABLE, f"{type(exc).__name__}: {exc}") from exc
+        if response.status_code == 401:
+            raise ClusterError(AUTH_FAILED, "401 Unauthorized creating a SubjectAccessReview")
+        if response.status_code == 403:
+            raise ClusterError(
+                FORBIDDEN,
+                f"403 Forbidden on {SAR_API} — the ServiceAccount lacks `create "
+                f"subjectaccessreviews` (the system:auth-delegator grant)",
+            )
+        if response.status_code >= 400:
+            raise ClusterError(
+                UNREACHABLE, f"HTTP {response.status_code} on {SAR_API}: {response.text[:200]}"
+            )
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise ClusterError(UNREACHABLE, f"non-JSON response from {SAR_API}: {exc}") from exc
+        allowed = (payload.get("status") or {}).get("allowed")
+        if not isinstance(allowed, bool):
+            raise ClusterError(
+                UNREACHABLE,
+                f"{SAR_API} answered without a boolean status.allowed "
+                f"(kind={payload.get('kind')!r}) — refusing to treat this as a decision",
+            )
+        return allowed
+
+
+class TierResolver:
+    """Decides, per viewer, self view or all view — by asking the cluster, failing closed.
+
+    THE DECISION. One SubjectAccessReview, created as the dashboard's own ServiceAccount,
+    naming the viewer AND the viewer's OpenShift Group memberships plus the virtual groups
+    every token carries (VIRTUAL_AUTH_GROUPS). allowed=true is the all tier; a clean
+    allowed=false, a missing identity, and EVERY failure are the self tier. The shape of the
+    review — verb, resource, apiGroup, optional namespace — is the operator's choice
+    (Settings.visibility_admin_sar_*), defaulting to `list groups.user.openshift.io`, which
+    admits cluster-admin and cluster-reader and nobody else among the stock roles (measured;
+    `edit` and `view` pass no cluster-scoped list at all).
+
+    WHY THE GROUPS COME FROM THE CLUSTER AND NOT FROM THE REQUEST. Nothing upstream has them:
+    openshift/oauth-proxy forwards only X-Forwarded-User/-Email (its SessionState has no
+    Groups field — read in source, not inferred), and SelfSubjectRulesReview answers as the
+    caller, needing a token this app deliberately does not hold. The Group objects read here
+    are the same objects RBAC itself evaluates, so the review's input mirrors what the
+    viewer's real token would carry, staleness aside — and the staleness bound is
+    TIER_TTL_SECONDS, where the worst-case window is stated.
+
+    Thread-safe: handlers run in FastAPI's threadpool, so the cache is guarded. Concurrent
+    cold-cache requests for one viewer may race into duplicate reviews; that costs one spare
+    ~150ms round-trip, and both arrive at the same verdict, so it is left unserialised.
+    """
+
+    def __init__(
+        self,
+        cluster: ClusterConfig,
+        *,
+        verb: str,
+        resource: str,
+        api_group: str = "",
+        namespace: str = "",
+        ttl_seconds: float = TIER_TTL_SECONDS,
+    ):
+        self._kube = ClusterClient(cluster, timeout=TIER_CHECK_TIMEOUT_SECONDS)
+        # resourceAttributes calls the API group `group`; an empty string is the CORE group
+        # (pods, namespaces), so it is passed through rather than treated as unset.
+        self._attributes = {"verb": verb, "resource": resource, "group": api_group}
+        if namespace:
+            self._attributes["namespace"] = namespace
+        self._ttl = ttl_seconds
+        self._cache: dict[str, tuple[float, str]] = {}
+        self._lock = threading.Lock()
+        if not verb.strip() or not resource.strip():
+            # Said once at startup rather than once per refused review. The API server will
+            # reject the malformed SubjectAccessReview and every reader will fail closed to
+            # the self view — safe, but it would otherwise present as "the feature broke",
+            # diagnosed from one warning per request instead of one plain sentence.
+            log.warning(
+                "visibility admin threshold is malformed (verb=%r resource=%r) — every "
+                "review it produces will be refused, so every reader gets the self view "
+                "until the threshold is fixed",
+                verb, resource,
+            )
+
+    def tier_for(self, viewer: str | None) -> str:
+        """The tier for one viewer. Never raises; everything indeterminate is the self tier."""
+        if not viewer:
+            # No identity, no wide view. Whether ANY identity is trustworthy is the caller's
+            # oauth-proxy guard; this is the belt to that brace.
+            return TIER_SELF
+        now = time.monotonic()
+        with self._lock:
+            cached = self._cache.get(viewer)
+            if cached is not None and cached[0] > now:
+                return cached[1]
+        try:
+            groups = self._kube.fetch_groups_of_user(viewer)
+            allowed = self._kube.create_subject_access_review(
+                viewer, [*groups, *VIRTUAL_AUTH_GROUPS], self._attributes
+            )
+        except ClusterError as exc:
+            # EVERY failure — unreachable, timeout, 401, 403, malformed — is the self tier,
+            # and it is NOT cached: a failure is not a decision, and caching one would pin an
+            # administrator to the narrow view for a full TTL over a transient blip. The
+            # reader still gets a page (their own data), never an error, so this warning is
+            # the only place the cause is visible.
+            log.warning(
+                "%s: visibility tier for %r is indeterminate (%s: %s) — failing closed to "
+                "the self view for this request",
+                self._kube.cluster.name, viewer, exc.outcome, exc.message,
+            )
+            return TIER_SELF
+        except Exception:
+            # A bug in this path must degrade the same way a cluster failure does: the tier
+            # is a security decision, and an exception escaping into the handler would turn
+            # a fail-closed control into a 500 page.
+            log.exception(
+                "%s: visibility tier for %r is indeterminate — failing closed to the self "
+                "view for this request",
+                self._kube.cluster.name, viewer,
+            )
+            return TIER_SELF
+        tier = TIER_ALL if allowed else TIER_SELF
+        with self._lock:
+            if len(self._cache) > 512:
+                # Viewers are real authenticated people, so this stays small; the sweep only
+                # exists so years of one-off names cannot grow the dict without bound.
+                self._cache = {k: v for k, v in self._cache.items() if v[0] > now}
+            self._cache[viewer] = (now + self._ttl, tier)
+        return tier
+
+    # `resolve` is the seam name the API publishes (app.state.tier_resolver, whose contract
+    # the visibility tests substitute); `tier_for` is this class's own vocabulary. One
+    # implementation under both names, so neither caller can drift from the other.
+    resolve = tier_for
 
 
 def _condition(obj: dict, wanted: str) -> dict | None:

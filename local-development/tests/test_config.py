@@ -252,3 +252,90 @@ class TestBothCASources:
     def test_neither_source_falls_back_to_system_trust(self, monkeypatch):
         monkeypatch.delenv("GSD_TRUSTED_CA_FILE", raising=False)
         assert ClusterConfig("c", "https://x").verify() is True
+
+
+class TestViewRestrictions:
+    """The per-user visibility switch and the admin-threshold SubjectAccessReview.
+
+    The switch guards personal data, so every failure here must land on the restricted
+    side: unknown values, misspelt variables and unusable SAR shapes all leave the
+    control ON with the default check, never off and never half-custom.
+    """
+
+    def test_restrictions_default_on(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("GSD_ENABLE_VIEW_RESTRICTIONS", raising=False)
+        assert load_settings(write(tmp_path, BASE)).view_restrictions_enabled is True
+
+    def test_the_env_var_spelled_exactly_disables(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("GSD_ENABLE_VIEW_RESTRICTIONS", "false")
+        assert load_settings(write(tmp_path, BASE)).view_restrictions_enabled is False
+
+    def test_the_operators_original_typo_changes_nothing(self, tmp_path, monkeypatch):
+        """GSD_ENABLE_VIEW_RESCRICTIONS — the misspelling that motivated the warning in
+        the requirements. A misspelt variable is never read, and the default is ON, so
+        the typo cannot silently disable a security control."""
+        monkeypatch.delenv("GSD_ENABLE_VIEW_RESTRICTIONS", raising=False)
+        monkeypatch.setenv("GSD_ENABLE_VIEW_RESCRICTIONS", "false")
+        assert load_settings(write(tmp_path, BASE)).view_restrictions_enabled is True
+
+    def test_a_nonsense_value_stays_restricted(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("GSD_ENABLE_VIEW_RESTRICTIONS", "maybe")
+        assert load_settings(write(tmp_path, BASE)).view_restrictions_enabled is True
+
+    def test_the_configmap_spelling_works_too(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("GSD_ENABLE_VIEW_RESTRICTIONS", raising=False)
+        s = load_settings(write(tmp_path, BASE + "visibilityEnabled: false\n"))
+        assert s.view_restrictions_enabled is False
+
+    def test_admin_sar_defaults_to_list_groups(self, tmp_path):
+        s = load_settings(write(tmp_path, BASE))
+        assert s.visibility_admin_sar_api_group == "user.openshift.io"
+        assert s.visibility_admin_sar_resource == "groups"
+        assert s.visibility_admin_sar_subresource == ""
+        assert s.visibility_admin_sar_verb == "list"
+        assert s.visibility_admin_sar_namespace == ""
+
+    def test_admin_sar_is_read_from_the_configmap_keys(self, tmp_path):
+        cfg = BASE + (
+            'visibilityAdminSarApiGroup: "rbac.authorization.k8s.io"\n'
+            'visibilityAdminSarResource: "rolebindings"\n'
+            'visibilityAdminSarVerb: "list"\n'
+        )
+        s = load_settings(write(tmp_path, cfg))
+        assert s.visibility_admin_sar_api_group == "rbac.authorization.k8s.io"
+        assert s.visibility_admin_sar_resource == "rolebindings"
+
+    def test_a_subresource_spelling_is_split_for_the_sar_builder(self, tmp_path):
+        cfg = BASE + (
+            'visibilityAdminSarApiGroup: ""\n'
+            'visibilityAdminSarResource: "pods/log"\n'
+            'visibilityAdminSarVerb: "get"\n'
+            'visibilityAdminSarNamespace: "openshift-authentication"\n'
+        )
+        s = load_settings(write(tmp_path, cfg))
+        assert s.visibility_admin_sar_api_group == ""       # the core group is expressible
+        assert s.visibility_admin_sar_resource == "pods"
+        assert s.visibility_admin_sar_subresource == "log"
+        assert s.visibility_admin_sar_verb == "get"
+        assert s.visibility_admin_sar_namespace == "openshift-authentication"
+
+    def test_an_unusable_field_falls_back_to_the_whole_default_check(self, tmp_path):
+        """Whole, not per-field: the operator's resource under the default verb would be
+        a question nobody chose to ask. And never toward 'everyone passes'."""
+        cfg = BASE + (
+            'visibilityAdminSarResource: "rolebindings"\n'
+            'visibilityAdminSarVerb: "List"\n'   # miscased: RBAC matching is exact
+        )
+        s = load_settings(write(tmp_path, cfg))
+        assert s.visibility_admin_sar_verb == "list"
+        assert s.visibility_admin_sar_resource == "groups"  # not rolebindings
+        assert s.visibility_admin_sar_api_group == "user.openshift.io"
+
+    def test_a_nil_key_means_not_set_not_empty(self, tmp_path):
+        """A hand-written `visibilityAdminSarVerb:` with no value must take the default,
+        matching the chart's treatment of a commented-out sub-key."""
+        s = load_settings(write(tmp_path, BASE + "visibilityAdminSarVerb:\n"))
+        assert s.visibility_admin_sar_verb == "list"
+
+    def test_the_tier_ttl_defaults_to_the_documented_window(self, tmp_path):
+        assert load_settings(write(tmp_path, BASE)).visibility_tier_ttl_seconds == 60

@@ -135,3 +135,17 @@ def test_the_known_regressions_stay_fixed(themes):
             f"{theme} --{token} is back at {now:.2f}:1, at or below the {previously}:1 "
             f"it shipped at before the accessibility pass"
         )
+
+
+def test_visibility_labels_use_only_vetted_tokens():
+    """The scope pill, banner and refusal ship NO colour of their own: every colour they
+    use must be a var(--token) already covered by the contrast tables above, in both
+    themes. A literal hex in that block would be the first colour on the page outside
+    this file's checks — which is exactly how the nine original failures happened."""
+    css = CSS.read_text()
+    m = re.search(r"/\* ---- Visibility tier(.*?)\.runbook", css, re.S)
+    assert m, "the visibility-tier style block is missing from app.css"
+    block = re.sub(r"/\*.*?\*/", "", m.group(1), flags=re.S)
+    assert "#" not in block, "a literal colour crept into the visibility styles; use a token"
+    for cls in (".scope-pill", ".scope-banner", ".scope-refusal"):
+        assert cls in block, f"{cls} is not styled in the visibility block"
