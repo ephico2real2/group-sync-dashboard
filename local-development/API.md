@@ -16,6 +16,53 @@ than from this file, so they cannot drift:
 This document adds the part a schema cannot express: what each field *means*, and which ones
 are routinely misread.
 
+## Who sees what
+
+Responses are **scoped to the reader**. Every collection endpoint carries two fields saying whose
+view you are looking at:
+
+| field | values | meaning |
+|---|---|---|
+| `scope` | `"all"` \| `"self"` | whether these rows are the whole cluster or only the reader's own |
+| `viewer` | the username, or `null` | who the server decided you are |
+
+`self` means the rows are filtered to the reader's own groups, memberships and access. `all` means
+nothing was filtered. There is no third value.
+
+**Read `scope` before you read a count.** An empty list under `scope: "self"` means *nothing here
+belongs to you*; the same empty list under `scope: "all"` means *nothing here exists*. Those are
+different facts and the dashboard states them differently. A client that ignores `scope` will
+report a clean cluster to a reader who simply is not an administrator.
+
+**Aggregates that cannot honestly be computed are `null`, never `0`.** At `self` scope the
+cluster-wide rollups — `summary`, `ungoverned`, `access_without_login`, `login_without_access`,
+`in_access_group` — are withheld as `null`. A fabricated zero would read as "no problems found"
+when the truth is "not counted for you".
+
+How the scope is chosen:
+
+- With the oauth-proxy **off** there is no trusted identity to scope to, so `scope` is `"all"`,
+  `viewer` is `null`, and the app says so loudly at startup. This is the pre-existing behaviour of
+  a proxy-less install and is preserved deliberately.
+- With the proxy **on**, a SubjectAccessReview decides. It is posted with both `spec.user` and
+  `spec.groups`, because a reader granted cluster-admin through a Group rather than a direct
+  binding is refused when `spec.groups` is absent.
+- The decision is cached per viewer for 60 seconds. A **failure is never cached**, so an API-server
+  outage does not pin every reader to the narrow view until a TTL expires.
+- Anything indeterminate serves `self`. The log line names the reader, the cause and the decision:
+  `visibility tier for 'alice' is indeterminate (auth_failed: …) — failing closed to the self view
+  for this request`.
+
+`GET /api/whoami` reports the same decision as a nested object rather than top-level fields:
+`"visibility": {"scope": "self", "enabled": true}`. `enabled` is the operator's switch
+(`GSD_ENABLE_VIEW_RESTRICTIONS`), not the outcome for this reader.
+
+**Three endpoints do not vary by tier at all**: `groupsyncs` (and its events),
+`operator-configs`, and `bindings/findings`. Those describe *objects* — CR health, operator
+configuration, unmanaged grants — not people. This is a ruling, not an oversight, and it is
+asserted as an equality: an administrator's response with restrictions on is byte-identical to the
+same request with them off, across nine endpoints.
+
 ## Clusters
 
 ### `GET /api/clusters`
@@ -114,6 +161,25 @@ started (§2). The response says so in a `note` field.
 ## Groups
 
 ### `GET /api/clusters/{cluster_id}/groups`
+
+Returns an **object**, not a bare array — the rows plus the scope they were selected under:
+
+```json
+{"cluster": "crc-local", "count": 41, "scope": "all", "viewer": null, "groups": [...]}
+```
+
+This changed when per-user visibility landed; it used to return the array alone. Read
+`response.json()["groups"]`. Two ways an old client breaks, and the quiet one is worse:
+
+```python
+body = r.json()
+len(body)                    # 5 — the number of KEYS, not rows. Silently plausible.
+for g in body: g["name"]     # TypeError: string indices must be integers, not 'str'
+```
+
+The `TypeError` announces itself. `len()` does not: it returns 5 on a cluster with 41 groups and 5
+on a cluster with none, so a caller that only counts reports a number that is never right and never
+obviously wrong. Use `count`, which is the row count under the current scope.
 
 Query: `state` = `all` (default) | `empty` | `unattributed`.
 
