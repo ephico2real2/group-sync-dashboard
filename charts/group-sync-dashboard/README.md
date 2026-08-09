@@ -41,7 +41,7 @@ group membership, so it ships authenticated and you turn the proxy *off* deliber
 | `oauthProxy.image` | `registry.redhat.io/openshift4/ose-oauth-proxy-rhel9:v4.15` | needs registry.redhat.io credentials, which the cluster's global pull secret normally already carries. Override to the internal imagestream or a mirror if not — see `values.yaml` |
 | `oauthProxy.imagePullPolicy` | `IfNotPresent` | the image is already on the node as an imagestream |
 | `oauthProxy.port` | `8443` | |
-| `oauthProxy.cookieSecret` | `""` | generated once and reused across upgrades. If supplied it must yield 16, 24 or 32 key bytes **measured the way the proxy measures them** — a value that parses as base64 is decoded first, so 32 hex characters are 24 bytes, not 32. Enforced at render time, because `-pass-access-token` makes the AES requirement unconditional |
+| `oauthProxy.cookieSecret` | `""` | generated once and reused across upgrades |
 | `oauthProxy.cookie.expire` | `4h` | absolute session cap, a Go duration. There is deliberately no `refresh` key: measured on `provider=openshift`, `-cookie-refresh` force-clears the session at every interval instead of sliding it, so the chart refuses a values file that sets it |
 | `oauthProxy.proxyPrefix` | `/oauth` | the prefix everything the proxy serves lives under; the app composes its sign-out link from it |
 | `oauthProxy.logoutUrl` | `""` | where the browser lands after sign-out; empty means this dashboard's own unauthenticated `/signed-out` page |

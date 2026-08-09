@@ -250,19 +250,20 @@ spec:
             # sliding it (values.yaml carries the measurement), and the shipped Kibana proxy
             # omits it on this same provider too.
             - -cookie-expire={{ include "gsd.cookieExpire" . }}
-            # Forward the signed-in user's access token to the app, as Kibana's shipped
-            # sidecar does.
+            # NO -pass-access-token, and the reason is worth keeping. It was added so
+            # sign-out could revoke the user's token the way the OpenShift console does, and
+            # that was MEASURED FAILING on the lab: the console's logout works because the
+            # console's tokens carry scope ["user:full"], while this chart's client is a
+            # ServiceAccount and its tokens carry ["user:info","user:check-access"] — neither
+            # of which permits deleting anything, so the DELETE returned 403 however the RBAC
+            # was set. (`oc auth can-i delete oauthaccesstokens` answers yes and is misleading
+            # here: a SubjectAccessReview never sees the token's SCOPE, which is a separate and
+            # narrower gate applied at request time.) Widening -scope to user:full would make
+            # revocation work by handing this app a credential that can act as the user
+            # anywhere on the cluster — a strictly worse trade than not revoking, since the
+            # session already ends without it: measured on the lab, the proxy's own sign_out
+            # clears the cookie and re-entry demands credentials.
             #
-            # WIDENING, stated plainly: with this header the app can act against the API AS
-            # THE USER, not merely read their name from a header. It is accepted for exactly
-            # one use — the console-style sign-out, which DELETEs the token's own
-            # oauthaccesstoken object so signing out invalidates the credential instead of
-            # only forgetting it. The app never logs it and never stores it.
-            #
-            # It also places the token inside the session cookie, which is why the proxy
-            # then requires an AES-sized cookie secret unconditionally; oauth-secret.yaml
-            # guards that at render time rather than letting the sidecar crash-loop.
-            - -pass-access-token
             # The prefix everything the proxy serves lives under. Passed explicitly so the
             # app can compose its sign-out link from the same value instead of hardcoding
             # "/oauth" and drifting from it.

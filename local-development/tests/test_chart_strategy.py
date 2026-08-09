@@ -728,12 +728,20 @@ class TestSessionCookieLifetime:
         assert "-cookie-expire=4h" in args
         assert not any(a.startswith("-cookie-refresh") for a in args), args
 
-    def test_pass_access_token_ships_whenever_the_proxy_does(self):
-        """The console-style sign-out revokes the user's own token, which the app can
-        only see if the proxy forwards it — Kibana ships this same flag."""
+    def test_the_access_token_is_never_forwarded_to_the_app(self):
+        """-pass-access-token is absent even with the proxy ON, and its absence is the design.
+
+        It was added so sign-out could revoke the user's token the way the console's does, and
+        removed after that was measured failing: the console can revoke because its tokens
+        carry scope user:full, while this chart authenticates through a ServiceAccount whose
+        tokens carry user:info and user:check-access, so the API answered 403 whatever the RBAC
+        said. Re-adding the flag would hand the app a credential able to act as the user
+        anywhere on the cluster, buying nothing the proxy's own sign_out does not already do.
+        """
         ok, out = render()
-        assert ok, out
-        assert "-pass-access-token" in _proxy_args(out)
+        assert ok
+        assert "-pass-access-token" not in _proxy_args(out), (
+            "the app is being handed a live user credential it has no use for")
 
     def test_setting_the_retired_refresh_key_is_refused_with_the_measurement(self):
         """An old values file carrying refresh must fail loudly with the reason, or its
@@ -789,58 +797,3 @@ class TestSessionCookieLifetime:
         assert "-pass-access-token" not in out
         assert "sessionCookieExpire" not in _config_data(out)
 
-
-class TestCookieSecretLengthGuard:
-    """The proxy derives an AES key from the cookie secret whenever -cookie-refresh or
-    -pass-access-token is set, and refuses to start on any other length. This chart
-    always sets -pass-access-token (the forwarded token rides encrypted inside the
-    session cookie), so the requirement is UNCONDITIONAL — no configuration stands it
-    down. The guard reproduces the proxy's OWN arithmetic — secretBytes()
-    base64-decodes a value that decodes and pads the DECODED length up to a multiple
-    of four — because a naive len() disagrees with it in both directions, and each
-    disagreement is a defect: rejecting a working config, or passing one that
-    crash-loops."""
-
-    # 20 bytes, and the '?'s keep it from parsing as base64 — the proxy counts it raw
-    # and refuses to start. See the parity test below for why an obvious-looking
-    # invalid vector is not actually invalid.
-    INVALID = "not-a-valid-secret??"
-
-    def test_an_invalid_supplied_secret_fails_the_render(self):
-        ok, out = render(oauthProxy__cookieSecret=self.INVALID)
-        assert not ok, "a secret the proxy would refuse rendered happily"
-        assert "16, 24, or 32" in out, "the three valid lengths belong in the message"
-        assert "pass-access-token" in out, "the message must say why the cipher is required"
-
-    def test_a_32_byte_secret_passes(self):
-        ok, out = render(oauthProxy__cookieSecret="0123456789abcdef0123456789abcdef")
-        assert ok, out
-
-    def test_a_base64_encoded_secret_is_measured_after_decoding(self):
-        """44 chars of base64 decoding to 32 bytes: the proxy decodes it, so raw length
-        must not be what the guard measures."""
-        ok, out = render(
-            oauthProxy__cookieSecret="MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=")
-        assert ok, out
-
-    def test_the_guard_matches_the_proxys_arithmetic_not_a_naive_len(self):
-        """'twentybytesexactly1' is 19 bytes and LOOKS invalid — but the proxy pads it
-        to 20 chars, base64-decodes those to 14 bytes, and pads THOSE to 16: a valid
-        AES key length, so it starts fine. A guard that rejects what the proxy accepts
-        is a spurious install failure, which is its own defect."""
-        ok, out = render(oauthProxy__cookieSecret="twentybytesexactly1")
-        assert ok, out
-
-    def test_a_standard_base64_value_the_proxy_cannot_decode_counts_raw(self):
-        """The proxy tries URL-SAFE base64 only, so a '+' makes the decode fail and the
-        44 raw bytes are the length that counts — invalid, and the guard must agree."""
-        ok, out = render(
-            oauthProxy__cookieSecret="+DEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=")
-        assert not ok, "the proxy would count 44 raw bytes and refuse; the guard passed it"
-        assert "16, 24, or 32" in out
-
-    def test_the_generated_secret_path_is_untouched(self):
-        """Empty cookieSecret generates randAlpha 32, which is always valid — the guard
-        must never fire on the path the chart itself controls."""
-        ok, out = render()
-        assert ok, out

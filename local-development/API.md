@@ -1,10 +1,8 @@
 # API reference
 
-Every endpoint is **read-only**, with one named exception. None returns a token, none accepts
-one from the browser, and none mutates cluster state the dashboard reports on (§9, §11). The
-exception is `GET /sign-out`, which revokes the caller's **own** session token with the
-caller's **own** credentials — the console's logout, reproduced — and touches nothing else;
-the ServiceAccount still holds no write verb on anything.
+Every endpoint is **read-only**. None returns a token, none accepts one from the browser, and
+none mutates cluster state the dashboard reports on (§9, §11) — the ServiceAccount holds no
+write verb on anything.
 
 FastAPI serves interactive docs from the running instance, generated from the code rather
 than from this file, so they cannot drift:
@@ -428,7 +426,7 @@ stay `True` — so new namespaces silently receive no RBAC and drift stops being
 
 ```json
 {"user": "developer", "email": "developer@cluster.local", "authenticated": true,
- "logout_url": "/sign-out", "proxy_logout_url": "/oauth/sign_out",
+ "logout_url": "/oauth/sign_out",
  "session": {"cookie_expire_seconds": 14400, "cookie_refresh_seconds": 0}}
 ```
 
@@ -437,9 +435,12 @@ the app binds `0.0.0.0` with no authentication, so those headers are whatever th
 — `authenticated` is `false` in that mode, every other field is `null`, and nothing should
 trust the values.
 
-`logout_url` is the app's revoking sign-out (see Operational); `proxy_logout_url` is the
-proxy's bare cookie-clear, used by the page only when the session is already dead and a
-round-trip through the app would bounce into a fresh login. `session` restates the
+`logout_url` is the proxy's own `sign_out`, composed from the configured `--proxy-prefix` so a
+changed prefix cannot leave the page's control pointing at a path the proxy no longer answers.
+The dashboard does **not** revoke the OAuth token on the way out: that was built, measured
+failing, and removed — the console can revoke because its tokens carry scope `user:full`, while
+this chart authenticates through a ServiceAccount whose tokens carry `user:info` and
+`user:check-access`, so the API refuses the delete whatever the RBAC says. `session` restates the
 **configured** cookie lifetimes in seconds — never a live deadline, which an HttpOnly cookie
 makes unobservable. Fetched once at page load; never poll it, because the request itself
 would re-stamp the session cookie.
@@ -515,7 +516,6 @@ stale by definition and would report yesterday's state as today's.
 | `GET /readyz` | readiness. **Not** gated on a reachable cluster — an unreachable cluster is a thing this dashboard exists to display, so failing readiness for one would take it down exactly when it has something to report |
 | `GET /api/version` | `{version, commit, branch, dirty, timezone}` from the build stamp. `dirty: true` means no commit reproduces the running image. `timezone` is `{name, abbrev, utc_offset}` for the **container**, which the browser needs because it can only discover its own |
 | `GET /metrics` | Prometheus exposition. Unauthenticated so a ServiceMonitor can scrape it, which is why it emits counts and states only — never a group or user name |
-| `GET /sign-out` | ends the session the way the console does: `DELETE` on the `oauthaccesstokens` object derived from the caller's `X-Forwarded-Access-Token`, **as the caller**, then `303` into the proxy's `sign_out`. Self-scoped by construction — the only token it can revoke is the one the request presented. A failed revocation is logged (status only, never the token) and the redirect happens regardless: a logout that cannot revoke must still end the session. `403` with the proxy disabled, where the header would be caller-supplied |
 | `GET /signed-out` | the proxy's `-logout-url` landing page. Static, script-free, unauthenticated (it renders at the exact moment the cookie died), and worded to be true whether or not the revocation above happened |
 
 ## The schema, served

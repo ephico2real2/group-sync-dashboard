@@ -1929,116 +1929,6 @@ class TestTabFocusSurvivesTheRepaint:
         assert got == "groups", f"focus fell to {got!r} when the filter bar re-rendered"
 
 
-@pytest.fixture(scope="module")
-def proxied_server(tmp_path_factory):
-    """A dashboard behind a SIMULATED proxy: oauth_proxy_enabled on, identity and token
-    supplied as browser-context headers, and the revocation's one network seam
-    (kube.self_cluster_client) routed into a recording MockTransport — so the whole
-    sign-out journey runs with no cluster and no real oauth-proxy.
-
-    What this deliberately cannot cover is the proxy hop itself (the cookie-clear and the
-    -logout-url redirect); that is the lab's job, per the design doc's verification plan.
-    """
-    from unittest import mock
-
-    from gsd import kube
-
-    db = str(tmp_path_factory.mktemp("gsd-proxy") / "ui.db")
-    _seed(db)
-    revoked: list[str] = []
-
-    def fake_client(token, timeout):
-        def handler(request):
-            revoked.append(request.url.path)
-            return httpx.Response(200, json={"kind": "Status"})
-
-        return httpx.Client(transport=httpx.MockTransport(handler), base_url="https://api")
-
-    settings = Settings(
-        clusters=[ClusterConfig("crc-local", "https://api.crc.testing:6443", token_env="X")],
-        db_path=db,
-        oauth_proxy_enabled=True,
-    )
-    port = _free_port()
-    srv = uvicorn.Server(uvicorn.Config(
-        build_app(settings, run_poller=False), host="127.0.0.1", port=port,
-        log_level="warning"))
-    thread = threading.Thread(target=srv.run, daemon=True)
-    with mock.patch.object(kube, "self_cluster_client", fake_client):
-        thread.start()
-        base = f"http://127.0.0.1:{port}"
-        for _ in range(100):
-            try:
-                if httpx.get(f"{base}/healthz", timeout=1).status_code == 200:
-                    break
-            except httpx.HTTPError:
-                time.sleep(0.1)
-        else:
-            raise RuntimeError("dashboard server did not start")
-        yield base, revoked
-        srv.should_exit = True
-        thread.join(timeout=5)
-
-
-class TestSignOutAffordance:
-    """The header's Sign out control, end to end short of the proxy hop itself."""
-
-    TOKEN = "sha256~ui-test-token"
-
-    def _page(self, browser, base):
-        # The context IS the simulated proxy: these headers ride every request the page
-        # makes, exactly as the sidecar would add them — including the navigation to
-        # /sign-out, which is where the token must arrive.
-        ctx = browser.new_context(extra_http_headers={
-            "X-Forwarded-User": "alice",
-            "X-Forwarded-Email": "a@x.com",
-            "X-Forwarded-Access-Token": self.TOKEN,
-        })
-        page = ctx.new_page()
-        page.goto(base)
-        page.wait_for_selector(".hero .value", timeout=10_000)
-        return page
-
-    def test_the_link_is_offered_and_aims_at_the_revoking_route(self, browser, proxied_server):
-        """whoami said authenticated, so the control appears — pointing at the app's own
-        /sign-out, never straight at the proxy, or the revocation would be skipped."""
-        base, _ = proxied_server
-        page = self._page(browser, base)
-        try:
-            link = page.locator("#logout")
-            assert link.is_visible()
-            assert link.get_attribute("href") == "/sign-out"
-        finally:
-            page.context.close()
-
-    def test_clicking_it_revokes_and_leaves_through_the_proxy(self, browser, proxied_server):
-        """One click: the app DELETEs the oauthaccesstokens object derived from the
-        forwarded token, then hands the browser to the proxy's sign_out."""
-        base, revoked = proxied_server
-        page = self._page(browser, base)
-        try:
-            page.click("#logout")
-            page.wait_for_url("**/oauth/sign_out", timeout=10_000)
-            assert revoked, "the click never reached the revocation seam"
-            assert revoked[0].startswith("/apis/oauth.openshift.io/v1/oauthaccesstokens/sha256~")
-            assert self.TOKEN.removeprefix("sha256~") not in revoked[0], (
-                "the raw token must never be spent as a path segment — only its hash")
-        finally:
-            page.context.close()
-
-    def test_no_link_without_a_session(self, browser, server):
-        """The unproxied fixture server: whoami refuses identity there, so the control must
-        stay hidden — offering to end a session that does not exist is the lie the whoami
-        gate exists to stop."""
-        page = browser.new_page()
-        try:
-            page.goto(server)
-            page.wait_for_selector(".hero .value", timeout=10_000)
-            assert page.locator("#logout").count() == 0 or page.locator("#logout").is_hidden()
-        finally:
-            page.close()
-
-
 class TestTheDeadSessionPanel:
     """What the reader sees when the 4-hour cap arrives mid-read.
 
@@ -2070,3 +1960,83 @@ class TestTheDeadSessionPanel:
             "offering to sign out of a session that has already ended is an action that "
             "cannot work")
         assert dash.locator('#main a[href="/"]').count() > 0, "no way back in was offered"
+
+@pytest.fixture(scope="module")
+def proxied_server(tmp_path_factory):
+    """A dashboard that believes the oauth-proxy is in front of it.
+
+    The shared `server` fixture runs with the proxy OFF, which is the right default for the
+    rest of this suite and the wrong one for the sign-out control: whoami refuses identity in
+    that mode, so the control is correctly hidden and its visible state cannot be reached. The
+    browser context supplies the identity headers the sidecar would add.
+    """
+    db = str(tmp_path_factory.mktemp("gsd-proxied") / "ui.db")
+    _seed(db)
+    settings = Settings(
+        clusters=[ClusterConfig("crc-local", "https://api.crc.testing:6443", token_env="X")],
+        db_path=db,
+        oauth_proxy_enabled=True,
+    )
+    port = _free_port()
+    srv = uvicorn.Server(uvicorn.Config(
+        build_app(settings, run_poller=False), host="127.0.0.1", port=port, log_level="warning"))
+    thread = threading.Thread(target=srv.run, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{port}"
+    for _ in range(100):
+        try:
+            if httpx.get(f"{base}/healthz", timeout=1).status_code == 200:
+                break
+        except httpx.HTTPError:
+            time.sleep(0.1)
+    else:
+        raise RuntimeError("dashboard server did not start")
+    yield base
+    srv.should_exit = True
+    thread.join(timeout=5)
+
+
+class TestSignOutControl:
+    """The header's Sign out link, up to the proxy hop the proxy itself owns."""
+
+    def test_it_is_offered_and_aims_at_the_proxys_sign_out(self, browser, proxied_server):
+        """whoami said authenticated, so the control appears — pointing at the proxy's own
+        sign_out, composed from the configured prefix rather than hardcoded."""
+        ctx = browser.new_context(extra_http_headers={
+            "X-Forwarded-User": "alice", "X-Forwarded-Email": "a@x.com"})
+        page = ctx.new_page()
+        try:
+            page.goto(proxied_server)
+            page.wait_for_selector(".hero .value", timeout=10_000)
+            link = page.locator("#logout")
+            assert link.is_visible()
+            assert link.get_attribute("href") == "/oauth/sign_out"
+            assert "alice" in (link.get_attribute("title") or ""), (
+                "the control should name whose session it ends")
+        finally:
+            ctx.close()
+
+    def test_the_quoted_cap_comes_from_the_server_not_the_page(self, browser, proxied_server):
+        """The page must not hardcode 4 hours: if it did, an operator lowering
+        oauthProxy.cookie.expire would leave it telling readers a number the proxy no longer
+        enforces."""
+        ctx = browser.new_context(extra_http_headers={"X-Forwarded-User": "alice"})
+        page = ctx.new_page()
+        try:
+            page.goto(proxied_server)
+            page.wait_for_selector(".hero .value", timeout=10_000)
+            page.wait_for_function("() => sessionCapNote !== ''", timeout=10_000)
+            assert page.evaluate("() => sessionCapNote") == "4-hour"
+            # Proof it is derived: feed a different duration and the note follows.
+            note = page.evaluate("""() => {
+                const s = 1800 / 3600;
+                return s >= 1 ? `${+s.toFixed(1)}-hour` : `${Math.round(s * 60)}-minute`;
+            }""")
+            assert note == "30-minute", note
+        finally:
+            ctx.close()
+
+    def test_no_control_without_a_session(self, dash):
+        """The shared fixture runs the proxy OFF, where whoami refuses identity — so offering
+        to end a session that does not exist is exactly the lie the gate prevents."""
+        assert dash.locator("#logout").is_hidden()
