@@ -480,6 +480,19 @@ function scopeBanner(kind, d) {
    healthy cluster, which is a lie of layout. Says what exists, why it is not shown, and
    what changes that. `withBack` for drill-downs, so a refusal is a detour rather than a
    dead end — the same rule the error card follows. */
+/* Is this reader on the narrowed tier? Read from whoami's server-computed `visibility`,
+   the same source renderScopePill uses — the page still never DECIDES a tier, it only
+   reports the one the wire declared. Absent declaration (older build, no authenticated
+   identity) is treated as NOT narrowed, because the endpoints are the actual control: a
+   reader who is narrowed gets a 403 from the server regardless of what this returns, and
+   guessing "narrowed" from silence would hide the Overview on a deployment that never
+   restricted anything. */
+function narrowedReader() {
+  const w = data.whoami;
+  const vis = w && w.authenticated && w.visibility;
+  return !!vis && vis.scope === "self";
+}
+
 function refusalCard(title, what, withBack) {
   return `<section class="card">
     ${withBack ? `<button class="back" id="back-groups">${backLabel()}</button>` : ""}
@@ -1872,7 +1885,7 @@ function bindingsPage() {
   if (d && d.forbidden) {
     return refusalCard("Access granted",
       `Every group-subject binding on this cluster — who has been granted what — is the
-       cluster's RBAC surface.`);
+       cluster's RBAC surface. <strong>For administrators only.</strong>`);
   }
   if (!d) return `<section class="card"><div class="empty-note">Loading…</div></section>`;
   const c = d.counts || {};
@@ -2000,7 +2013,8 @@ function policyPage() {
   // bypasses the policy system", which at the narrowed tier is not knowledge anyone has.
   if (data.findings && data.findings.forbidden) {
     return refusalCard("RBAC policy",
-      `The grants that bypass the policy system name other people's access.`)
+      `The grants that bypass the policy system name other people's access.
+       <strong>For administrators only.</strong>`)
       + configHealth(oc);
   }
   const f = data.findings || {};
@@ -2450,6 +2464,15 @@ function render() {
     const back = $("back");
     if (back) back.onclick = () => { goBack(); };
     wireTooltip();
+  } else if (narrowedReader()) {
+    // Overview is the cluster's OWN health — sync CRs, the operator that templates access,
+    // cluster-wide counts. None of it answers anything a reader can ask about themselves, so
+    // it is the administrator tier. A named refusal rather than a hidden tab: a tab that
+    // vanishes reads as a broken build, and the reader cannot tell which of the two it is.
+    main.innerHTML = refusalCard("Overview",
+      `This page reports the cluster's own health — its GroupSync CRs, the policy operator
+       that templates every synced group's access, and cluster-wide totals.
+       <strong>For administrators only.</strong>`);
   } else {
     main.innerHTML = alertsCard()
       + `<div class="grid">${data.clusters.map(clusterCard).join("")}</div>`
@@ -2704,8 +2727,13 @@ async function refresh(opts = {}) {
     // RoleBindings that give every synced group its access, and a failing one is exactly
     // the silent stoppage this dashboard exists to surface.
     if (view.cluster && ((view.page === "overview" && !view.groupsync) || view.page === "policy")) {
-      data.operatorConfigs = await get(
-        `/api/clusters/${encodeURIComponent(view.cluster)}/operator-configs`);
+      // guard403: this is the administrator tier now, and a narrowed reader's 403 is the
+      // DESIGNED answer. Unguarded it fell to the catch below and replaced the whole tab with
+      // "Dashboard API error: 403 Forbidden" — the same defect the Usage tab already fixed.
+      // configHealth() renders "" for a payload with no `present`, so a refused one simply
+      // omits the panel and the refusal card above carries the explanation.
+      data.operatorConfigs = await guard403(get(
+        `/api/clusters/${encodeURIComponent(view.cluster)}/operator-configs`));
     }
     if (view.page === "policy" && view.cluster) {
       data.findings = await guard403(get(

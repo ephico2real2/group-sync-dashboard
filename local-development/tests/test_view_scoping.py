@@ -292,17 +292,46 @@ def test_dangling_binding_alert_does_not_break_the_self_filter(tmp_path):
     assert body["scope"] == "self", "the declared scope must survive the alert loop"
 
 
-def test_governance_endpoints_stay_full_view_at_self(tmp_path):
-    """Ruled in the spec (Q3): data about OBJECTS — CRs, operator configs, group-subject
-    binding findings — is served whole to every admitted reader; the person-named rows
-    live on /user-bindings and are scoped there."""
+def test_the_rbac_surface_is_refused_at_self_not_served(tmp_path):
+    """REVERSES spec Q3, which called binding findings "data about objects" and served them
+    whole. A binding row names which GROUP holds which ROLE, and measured on the reference
+    cluster an ordinary reader — no `list clusterrolebindings`, no `list rolebindings`, no
+    `list groups`, all three answered no by `oc auth can-i` — was handed 236 rows, 21 naming
+    an admin role. That is which-group-to-join-for-admin, obtainable through the dashboard
+    and not with `oc`.
+
+    A 403, not a filtered list: a binding names whoever it names, so there is no honest
+    per-reader subset. The UI turns this into a named refusal card, never a blank tab.
+    """
+    c = _client(tmp_path)
+    for path in ("/api/clusters/c1/bindings/findings", "/api/clusters/c1/operator-configs"):
+        r = c.get(path, headers=AS_VIEWER)
+        assert r.status_code == 403, f"{path} served the cluster's RBAC surface to a self-tier reader"
+        assert "administrator tier" in r.json()["detail"], (
+            "the refusal must say what it is, so the UI can phrase it and the reader can act")
+
+
+def test_the_admin_still_gets_the_whole_rbac_surface(tmp_path):
+    """The other half: gating must not cost the administrator the view they are for."""
+    c = _client(tmp_path, tier_resolver=_admin)
+    findings = c.get("/api/clusters/c1/bindings/findings", headers=AS_VIEWER)
+    assert findings.status_code == 200
+    assert findings.json()["scope"] == "all" and findings.json()["viewer"] == VIEWER
+    assert c.get("/api/clusters/c1/operator-configs", headers=AS_VIEWER).status_code == 200
+
+
+def test_cr_health_stays_full_view_because_metrics_already_publishes_it(tmp_path):
+    """groupsyncs and their events are NOT gated, and that is a measurement rather than an
+    oversight: /metrics is in the chart's skipAuthRegex and serves, to a credential-less
+    curl, `gsd_groupsync_state{groupsync="ldap-groupsync",namespace=...}`,
+    `gsd_groupsync_last_sync_timestamp_seconds` and `gsd_groupsync_groups_total` — the same
+    per-CR identity and state this endpoint returns. Refusing it here would be theatre while
+    that holds, and it would cost the Groups tab its per-provider colour slots, which read
+    `data.groupsyncs`. Gate /metrics first if this should change.
+    """
     c = _client(tmp_path)
     syncs = c.get("/api/clusters/c1/groupsyncs", headers=AS_VIEWER)
     assert syncs.status_code == 200 and isinstance(syncs.json(), list)
-    findings = c.get("/api/clusters/c1/bindings/findings", headers=AS_VIEWER).json()
-    assert findings["scope"] == "all" and findings["viewer"] == VIEWER
-    configs = c.get("/api/clusters/c1/operator-configs", headers=AS_VIEWER).json()
-    assert configs["scope"] == "all"
     events = c.get("/api/clusters/c1/groupsyncs/x/events", headers=AS_VIEWER).json()
     assert events["scope"] == "all"
 

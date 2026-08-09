@@ -267,6 +267,39 @@ def build_app(
             )
         return viewer
 
+    def require_admin_tier(request: Request) -> str:
+        """The administrator tier, or a refusal that names itself as one.
+
+        For the views that are ABOUT THE CLUSTER rather than about the reader: its whole RBAC
+        binding surface, the operator's configuration, the sync CRs. These cannot be scoped
+        the way a membership list can — a binding names whoever it names, so the honest
+        choice is the whole thing or none of it, and none of it is what a non-administrator
+        gets.
+
+        WHY A REFUSAL AND NOT A FILTER, measured on the reference cluster. An ordinary reader
+        (`lateef.o`) holds none of `list clusterrolebindings`, `list rolebindings` or `list
+        groups` — `oc auth can-i` answers no to all three — and /bindings/findings handed him
+        236 rows anyway, 21 of them naming an admin role, including which group holds
+        cluster-admin. That is a target list obtainable through the dashboard and not with
+        `oc`: a privilege escalation.
+
+        The chart already records this exact finding for the BEARER-token path, where gating
+        /api on `list groups` was called "WRONG — a privilege escalation, proven on the
+        reference cluster" and the floor was raised to cluster-wide RBAC read. That floor was
+        never applied to the browser path, because -openshift-delegate-urls governs bearer
+        tokens only and cookie sessions bypass it entirely. This is the same floor, applied
+        where it was missing.
+        """
+        _, scope = viewer_scope(request)
+        if scope != "all":
+            raise HTTPException(
+                status_code=403,
+                detail="this view reports the cluster's own RBAC binding surface and operator "
+                       "configuration rather than anything belonging to the reader, so it is "
+                       "reserved to the administrator tier",
+            )
+        return scope
+
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         if run_poller:
@@ -987,8 +1020,20 @@ def build_app(
         unresolvable Group subjects are built-in virtual groups
         (`system:serviceaccounts:*`, `system:authenticated`), which authorise real access
         and have no object by design. Reporting those as broken buries the few that are.
+
+        ADMINISTRATOR TIER ONLY, and this REVERSES an earlier ruling of ours. Spec Q3 called
+        these rows "governance data about objects, not people" and served them at both tiers.
+        That reasoning does not survive measurement: a binding row names which GROUP holds
+        which ROLE, and on the reference cluster an ordinary reader who could not run any of
+        `list clusterrolebindings`, `list rolebindings` or `list groups` was handed 236 rows,
+        21 naming an admin role — a list of which groups to join to gain admin, obtainable
+        here and not with `oc`. See require_admin_tier for the full measurement.
+
+        The COUNTS remain public on /metrics (`gsd_bindings_total{finding=...}`) and that is
+        unchanged and fine: an aggregate is not a target list. It is the rows that escalate.
         """
         require_cluster(cluster_id)
+        require_admin_tier(request)
         # Every binding, including the ones that resolve normally. A view labelled
         # "bindings" that omitted the healthy majority (74 of 228 here) misrepresented the
         # cluster; the caller filters, rather than the API deciding what is worth seeing.
@@ -1007,13 +1052,11 @@ def build_app(
             by_tier.setdefault(row["finding"], []).append(row)
         return {
             "cluster": cluster_id,
-            # FULL VIEW AT BOTH TIERS, by ruling (spec Q3): these rows classify BINDINGS —
-            # governance data about objects, whose subjects are Group names, not people —
-            # and their counts are already public on the unauthenticated /metrics
-            # (gsd_bindings_total{finding=...}, measured with a credential-less curl).
-            # The person-named analogue, bindings that name a User directly, lives on
-            # /user-bindings and is self-scoped there. `scope` declares what this payload
-            # covers, which is always everything.
+            # Always "all", and now only ever REACHED at that tier — require_admin_tier
+            # refuses above, so there is no narrowed variant of this payload to declare. The
+            # person-named analogue, bindings that name a User directly, lives on
+            # /user-bindings and is self-scoped there rather than refused, because a reader's
+            # own grants are theirs to see.
             "scope": "all",
             "viewer": trusted_viewer(request),
             "note": "direct bindings only; role rules are not evaluated",
@@ -1119,11 +1162,15 @@ def build_app(
         different truth from "installed with zero CRs". Reconcile conditions only, by
         design: the templates are the operator's business.
 
-        FULL VIEW AT BOTH TIERS, by ruling (spec Q3): operator configuration is
-        governance data about objects, names no person, and its present/failing summary
-        already rides the overview cards.
+        ADMINISTRATOR TIER ONLY. Spec Q3 served this at both tiers as "governance data about
+        objects", and unlike the GroupSync CRs there is no /metrics analogue — nothing here is
+        public, so the earlier reasoning left a genuinely private view open. It describes how
+        this cluster's access is templated, which is administrator business and answers nothing
+        a reader can ask about themselves. It renders on the Overview and RBAC policy tabs,
+        both of which are the administrator tier now.
         """
         require_cluster(cluster_id)
+        require_admin_tier(request)
         return {
             "cluster": cluster_id,
             "scope": "all",

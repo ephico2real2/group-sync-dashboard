@@ -2068,7 +2068,9 @@ class TestSignOutControl:
         page = ctx.new_page()
         try:
             page.goto(proxied_server)
-            page.wait_for_selector(".hero .value", timeout=10_000)
+            # Not `.hero .value`: alice is a narrowed reader, and the landing page is the
+            # administrator tier now, so she lands on a refusal card with no cluster hero.
+            page.wait_for_selector("#main .card", timeout=10_000)
             link = page.locator("#logout")
             assert link.is_visible()
             assert link.get_attribute("href") == "/oauth/sign_out"
@@ -2085,7 +2087,9 @@ class TestSignOutControl:
         page = ctx.new_page()
         try:
             page.goto(proxied_server)
-            page.wait_for_selector(".hero .value", timeout=10_000)
+            # Not `.hero .value`: alice is a narrowed reader, and the landing page is the
+            # administrator tier now, so she lands on a refusal card with no cluster hero.
+            page.wait_for_selector("#main .card", timeout=10_000)
             page.wait_for_function("() => sessionCapNote !== ''", timeout=10_000)
             assert page.evaluate("() => sessionCapNote") == "4-hour"
             # Proof it is derived: feed a different duration and the note follows.
@@ -2109,7 +2113,10 @@ def _open_as(page, base, user):
     page.set_extra_http_headers({"X-Forwarded-User": user})
     page.goto(base)
     try:
-        page.wait_for_selector(".hero .value", timeout=10_000)
+        # `#main .card`, not `.hero .value`: the landing page is the administrator tier, so a
+        # narrowed reader lands on a refusal card that carries no cluster hero. Both render a
+        # section.card, which is what this wait actually wants to know — that the page painted.
+        page.wait_for_selector("#main .card", timeout=10_000)
     except Exception:
         if errors:
             pytest.fail("the page raised and never rendered:\n  " + "\n  ".join(errors))
