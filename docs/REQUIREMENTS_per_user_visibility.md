@@ -255,3 +255,79 @@ deployments show on upgrade. The spec must state whether the default is `self` (
 7. `/metrics` is unchanged and still carries no username.
 8. The decision's caching window is documented, and so is the worst-case interval during which a
    revoked administrator retains the wider view.
+
+---
+
+# Decisions taken, 2026-08-09
+
+These are settled. The spec implements them rather than re-opening them.
+
+## D1 — On by default, with one switch
+
+Restrictions are **ON** by default. This is a fix for an exposure (§1), and shipping a fix off by
+default leaves the exposure in place on exactly the installs that never read release notes.
+
+One values key, one environment variable, wired into the core logic rather than the UI:
+
+```
+visibility.enabled: true        # values.yaml
+  → GSD_ENABLE_VIEW_RESTRICTIONS=true
+```
+
+(The operator wrote `GSD_ENABLE_VIEW_RESCRICTIONS`; the correct spelling is **RESTRICTIONS** and is
+used throughout. An environment variable name is load-bearing — a typo here is a silently disabled
+security control, which is the worst failure this feature can have.)
+
+`false` restores today's behaviour for a deployment that needs it, and must be a deliberate,
+documented choice — not a fallback the code reaches for when something else fails. Requirement §5.4
+still governs: an *indeterminate* answer means the self tier, never the wide one.
+
+## D2 — The administrator threshold is CHOOSABLE, and here is what each choice buys
+
+The operator grants people different cluster-wide roles and must be able to pick which of them counts
+as a dashboard administrator. Measured with probe users bound cluster-wide via `ClusterRoleBinding`,
+against every capability that could serve as the threshold:
+
+| role bound cluster-wide | `list groups` | `list users` | `list clusterrolebindings` | `list rolebindings` | `get pods/log` in `openshift-authentication` |
+|---|---|---|---|---|---|
+| `cluster-admin` | yes | yes | yes | yes | yes |
+| `cluster-reader` | yes | yes | yes | yes | yes |
+| `admin` | no | no | no | **yes** | yes |
+| `edit` | no | no | no | no | yes |
+| `view` | no | no | no | no | yes |
+| *(plain user)* | no | no | no | no | no |
+
+**First: `cluster-edit` and `cluster-view` do not exist.** Verified — the cluster ships `cluster-admin`
+and `cluster-reader`, and `admin`/`edit`/`view`. What is colloquially called "cluster-view" is `view`
+bound cluster-wide, and the table shows what that is worth here.
+
+Three thresholds are therefore meaningful, and the operator chooses:
+
+| threshold | admits | use when |
+|---|---|---|
+| `list groups.user.openshift.io` **(default)** | `cluster-admin`, `cluster-reader` | the wide view should mean "can already read this with `oc`" |
+| `list rolebindings.rbac.authorization.k8s.io` | the above **plus** cluster-wide `admin` | project administrators should see everything |
+| a custom SubjectAccessReview | whatever the operator's own role grants | an app-defined or site-specific role |
+
+**`edit` and `view` cannot be a threshold** using anything this dashboard reports on: they grant
+nothing cluster-scoped, and they are indistinguishable from a plain user across all four `list`
+capabilities. If people holding those roles must see everything, the only honest routes are an
+app-defined ClusterRole the operator binds, or `visibility.enabled: false`.
+
+So the values surface must express the check itself — API group, resource, verb, and optional namespace
+— with the default above, rather than hardcoding one question. A named-role list is rejected: it would
+miss `cluster-reader` unless spelled out, and miss every custom route entirely (spec §Q4).
+
+## D3 — One measured finding that bears on `/logins` specifically
+
+`get pods/log` in `openshift-authentication` is **yes** for `admin`, `edit` and `view` bound
+cluster-wide. Those readers can therefore read the oauth-server's logs directly with `oc` — which is
+the *source* of every row on the Logins tab. So for that endpoint, and only that endpoint, the "you
+could read this with `oc` anyway" argument is true for a wider population than the four `list`
+capabilities suggest.
+
+The spec must rule on whether that changes the scoping of `/logins`. It does not change the default:
+the raw log is not the parsed, searchable, retained record, and the requirement in §2 stands that
+`/logins` is the most sensitive endpoint in the application. But an operator arguing for a looser
+threshold on that tab has a real measurement behind them, and the spec should say so rather than
+leaving it to be rediscovered.
