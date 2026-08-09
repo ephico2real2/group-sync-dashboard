@@ -89,6 +89,7 @@ Design notes, for the decisions that are not obvious from the code:
 |---|---|
 | [`docs/storage-coupling.md`](docs/storage-coupling.md) | why SQLite, the storage seam, and what a second backend would have to satisfy |
 | [`docs/unmanaged-audit-design.md`](docs/unmanaged-audit-design.md) | unmanaged-grant discovery, its invariants, and the live-cluster measurement that removed the write path |
+| [`docs/DESIGN_session_and_signout.md`](docs/DESIGN_session_and_signout.md) | the 4-hour session cap and the sign-out button — and the four measurements that made the design this small, including why there is no `-cookie-refresh` and why sign-out cannot revoke the token |
 | [`docs/image-vulnerability-scan.md`](docs/image-vulnerability-scan.md) | the CVE position, what is reachable, and what a rebuild cannot fix |
 | [`docs/namespace-report-design.md`](docs/namespace-report-design.md) | **PARKED** — per-namespace PDF reports, and the definitive answer on `--openshift-sar` |
 
