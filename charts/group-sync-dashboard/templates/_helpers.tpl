@@ -208,8 +208,12 @@ ReadWriteOncePod
 # sprig's dig — panics on. Intermediates are defaulted to a dict and a nil leaf is
 # treated as "not set", which falls back to the shipped default, never to "off".
 
-# Returns the word true or false. Only the exact word false — bool or string — disables:
-# the switch guards personal data, so anything unrecognised must fail toward restricted.
+# Returns the word true or false. The switch guards personal data, so the asymmetry is
+# deliberate: the conventional false spellings disable it — false, FALSE, 0, no, all of
+# which Helm and the app's own _bool_setting already read as false, and honouring them
+# keeps this flag consistent with every other boolean in the chart — while anything
+# UNRECOGNISED (a typo like "flase", or "nonsense") resolves to true. Measured both ways.
+# A misspelling must never be the thing that quietly switches a safeguard off.
 {{- define "gsd.visibilityEnabled" -}}
 {{- if eq (toString ((.Values.visibility | default dict).enabled)) "false" -}}
 false
