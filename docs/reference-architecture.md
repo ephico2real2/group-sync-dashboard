@@ -197,7 +197,10 @@ coordination object — not anything it reports on. Every arrow to the observed 
 | `gsd/storage.py` | `StorageBackend` Protocol, and `open_backend()` — the one place an engine is named |
 | `gsd/state.py` | Pure functions: cron maths, CR health, alert computation. No I/O |
 | `gsd/audit.py` | The unmanaged-grant discovery plan: which bindings are findings, which are resolved, and the evidence for each. Pure decisions; the poller logs them |
+| `gsd/loginlog.py` | Parses oauth-server log text into login attempts. Pure functions, no I/O and no cluster, so every rule is testable against the real line that produced it |
+| `gsd/logincapture.py` | Reads the oauth-server's logs and records who logged in. Its own module because the failure mode is separable: capture can be off, forbidden or broken while group polling is perfectly healthy, and nothing here may take the poll down with it |
 | `gsd/activity.py` | Who used the dashboard, buffered in memory, flushed on an interval |
+| `gsd/timeutil.py` | `now_iso()`, and nothing else. Split out of `store.py` because four modules importing it from there quietly made "what time is it" part of the storage contract |
 | `gsd/metrics.py` | Prometheus collector; reads the store at scrape time |
 | `gsd/api.py` | FastAPI routes, the `@consistent` decorator, app assembly |
 | `gsd/static/index.html` | The entire frontend — one file, no build step, strict CSP |
@@ -987,17 +990,51 @@ flowchart TB
   dep -.->|renews| lease
 ```
 
-### The four `fail` guards
+### The `fail` guards
 
-`templates/deployment.yaml#requires leaderElection.enabled=false` refuses to render four combinations rather than deploying
-something broken:
+No count in this heading, deliberately. It said "four" while the chart had grown to seven in
+`deployment.yaml` alone, which makes a number worse than no number — the same reason
+`.github/workflows/ci.yml` stopped putting a test count in its comment.
+
+`templates/deployment.yaml` refuses to render a broken combination rather than deploying it:
 
 | Combination | Refused because |
 |---|---|
 | `replicaCount > 1` with `leaderElection.enabled=true` | above one replica each pod owns its own database, so a pod that loses the lease stops polling but keeps serving reads from a copy that never updates again — worse than no election |
 | `replicaCount > 1` with a non-RWX volume | RWO binds one **node** and RWOP one **pod**, so the extra replicas stay Pending with no error on the Deployment |
-| `ReadWriteOncePod` with `strategy: RollingUpdate` | deadlock — the incoming pod cannot schedule until the outgoing releases the claim, and RollingUpdate will not terminate the outgoing until the incoming is Ready |
-| `replicaCount == 1` with persistence and `strategy: RollingUpdate` | at one replica both pods use `/data/gsd.db`, and two processes on one SQLite file corrupt rather than error. The guard above catches only RWOP, where the scheduler refuses the second pod anyway; the **default** RWX happily mounts twice and was therefore the dangerous case |
+| `strategy: RollingUpdate` at `replicaCount == 1` with persistence, **whatever the access mode** | at one replica both pods use `/data/gsd.db`, and two processes on one SQLite file corrupt rather than error. This guard was two: one for RWOP (a scheduling deadlock — the incoming pod cannot schedule until the outgoing releases the claim, and RollingUpdate will not terminate the outgoing until the incoming is Ready) and one for the **default** RWX, which happily mounts twice and was therefore the dangerous case. They were generalised into one because the access mode never made the combination safe |
+| `visibility.enabled=true` with `oauthProxy.enabled=false` | the per-user tiers scope every read to `X-Forwarded-User`, and that header is trustworthy only because the proxy sets it and the app binds `127.0.0.1`. With the proxy off it is whatever the caller typed, so the access control cannot work — §7.5. Turn the proxy on, or set `visibility.enabled=false` to accept on the record that every reader sees everything |
+| `oauthProxy.cookie.expire` not a Go duration | the proxy parses it at startup and exits, so a typo is a crash-looping pod rather than a rejected value |
+| `oauthProxy.cookie.refresh` set at all | removed, not renamed. Measured on `provider=openshift`: it made the proxy re-issue the cookie on a cadence that logged readers out mid-session |
+| `oauthProxy.skipAuthRegex` no longer covering `/signed-out` while `logoutUrl` is set | sign-out would redirect to a path the proxy then demands a login for, so the reader lands back on the login page and the flow appears broken |
+
+`_helpers.tpl` carries ten more, and they are validation rather than combination: `ingress.host`
+(below), and nine that check the two SAR definitions and the tier TTL are *well-formed* — an API
+group that is not a group, a resource that is not a lowercase plural, a verb that is not a verb, a
+namespace that is not a namespace name, a TTL that is not a whole number.
+
+They exist because **a malformed `SubjectAccessReview` does not fail loudly.** Measured against the
+reference cluster, using `dana.lee`, who holds `cluster-reader` — a grant naming `groups`
+explicitly rather than by wildcard, so the test can actually distinguish:
+
+| `resourceAttributes` | answer |
+|---|---|
+| `user.openshift.io` / `groups` / `list` | `allowed: true`, `reason: RBAC: allowed by ClusterRoleBinding "cluster-reader"` |
+| `…` / `Groups` / `list` — miscased | `allowed: false`, no reason |
+| `…` / `group` / `list` — singular | `allowed: false`, no reason |
+| `…` / `groups` / `LIST` — miscased verb | `allowed: false`, no reason |
+| `USER.openshift.io` / `groups` / `list` | `allowed: false`, no reason |
+
+Every malformed variant returned **201 with `allowed: false`**, not an error — and with no `reason`,
+which makes it indistinguishable from a legitimate deny. This code correctly reads `allowed: false`
+as "not an administrator", so a single miscased character in a chart value would silently demote
+every administrator to the narrow view, with nothing anywhere reporting a fault. Render time is the
+only place that is cheap to catch.
+
+The same measurement is why the guards check *form* and cannot check *correctness*: only the cluster
+can answer whether a well-formed attribute set actually separates the readers you intend, and it
+answers `false` either way. `docs/ACCESS_CONTROL.md` gives the `oc auth can-i` commands to check a
+real grant against a real persona.
 
 ### The derived values
 
@@ -1052,6 +1089,51 @@ That leaves a real gap, and it is covered in Prometheus rather than by kubelet: 
 unconditional and `/readyz` only reads the store, so both stay green while the poll loop is
 dead and the dashboard serves frozen data. `GroupSyncDashboardNotPolling` is the alert that
 catches it.
+
+### How the scrape reaches `/metrics`, and how it verifies TLS
+
+Prometheus dials the **pod IP** at the Service's `http` port. With the proxy on, that port targets
+the proxy's container port (`templates/service.yaml`, so the proxy cannot be bypassed from inside
+the cluster by talking to the pod directly), and that port speaks TLS only. So the ServiceMonitor
+must ask for `https`, or the default `http` scheme fails the handshake on **every** scrape.
+
+That much was always true. What changed is the verification: the endpoint used
+`insecureSkipVerify: true`, on the stated grounds that verification had to be off "regardless of how
+trust is configured". That was false, and it is now:
+
+```yaml
+scheme: https
+tlsConfig:
+  ca:
+    configMap:
+      name: openshift-service-ca.crt   # injected into every namespace by service-ca
+      key: service-ca.crt
+  serverName: <fullname>.<namespace>.svc
+```
+
+The two pieces that make it work:
+
+- **`serverName` verifies against a name independent of the address dialled.** service-ca issues the
+  certificate for the *Service* DNS name while Prometheus connects to a pod IP, so without it the
+  handshake fails on a name mismatch. Verified by hand: `curl --cacert …/service-ca.crt --resolve`
+  against the pod IP under the Service name returned HTTP 200 with `ssl_verify_result=0`; the same
+  request without `--cacert` was refused.
+- **The configMap reference resolves in the ServiceMonitor's own namespace.** The Prometheus
+  Operator looks it up there, not in Prometheus's namespace, which is why naming the injected
+  `openshift-service-ca.crt` works with no copying. That also makes this block OpenShift-specific,
+  deliberately — the ServiceMonitor is already an optional extra.
+
+With `oauthProxy.enabled=false` the whole block is omitted and the Service port targets the app
+directly, so the scrape is plain HTTP against a plain-HTTP port. Rendered both ways to confirm they
+stay consistent:
+
+| `oauthProxy.enabled` | Service `targetPort` | endpoint `scheme` | `tlsConfig` |
+|---|---|---|---|
+| `true` | `oauth-proxy` | `https` | present, with `serverName` |
+| `false` | `http` | unset → `http` | none |
+
+`/metrics` is reachable without credentials in both cases (`oauthProxy.skipAuthRegex`), which is why
+the collector emits counts and states only and never a group or user name — §7.2.
 
 ### Leader election is best-effort, not a write fence
 
@@ -1184,6 +1266,70 @@ POSIX spec with a zero offset, stamping a New York label on a UTC clock. And the
 **Day** column is a stored UTC bucket, so near midnight a session sits on the following UTC day;
 the page says so rather than leaving it to look like a bug.
 
+## 8c. How a release is produced
+
+Two artefacts ship, they are versioned independently, and they are published by two different
+workflows. Both fire on push to `main`.
+
+```mermaid
+flowchart TB
+  merge["merge to main"]
+
+  subgraph img["publish.yml — the image"]
+    direction TB
+    build["build-and-push-external.sh --update-values<br/>tag = &lt;pyproject version&gt;-&lt;10-char sha&gt;"]
+    quay[("quay.io/…/group-sync-dashboard:TAG")]
+    pin["commit: pin image tag TAG [skip publish]<br/>pushed to main"]
+    build --> quay --> pin
+  end
+
+  subgraph chart["helm.yaml — the chart"]
+    direction TB
+    ci["ci.yml must pass first"]
+    cr["chart-releaser<br/>skips an already-released version"]
+    gh[("gh-pages branch<br/>index.yaml + .tgz")]
+    ci --> cr --> gh
+  end
+
+  merge --> build
+  merge --> ci
+  pin -.->|"[skip publish] stops the loop"| merge
+```
+
+**The image.** `publish.yml` runs the same script a laptop would, so the published artefact is the
+merge commit and the chart records which one. The tag is `<version>-<sha>`, derived from
+`local-development/pyproject.toml` — the single source of truth — and written into
+`values.yaml`'s `image.tag`. `appVersion` sits *outside* that chain, which is exactly how it rotted
+to `0.5.2` while the app was `0.6.0`; `tests/test_chart_versions.py` now holds the two together and
+holds `appVersion` against the pinned tag's prefix.
+
+**Why the pin is written onto the fetched tip rather than rebased.** `actions/checkout` takes
+`github.sha`, the triggering commit, not the branch tip. So when two merges land close together the
+second run is checked out at a commit that predates the first run's pin, and the two runs edit the
+same single line. The step used to commit its pin and `git pull --rebase` onto that — which failed
+twice, 2026-08-09 and 2026-08-10, with `CONFLICT (content)` on `values.yaml`. The
+`concurrency: publish-main` group does **not** prevent it: it serialises correctly, and serialising
+*guarantees* the earlier pin is already on `main` by the time the later run reaches the step. The
+step now fetches, hard-resets onto the tip, rewrites the tag there, and pushes — no divergent commit,
+so nothing to reconcile. `tests/test_publish_pin_step.py` reads the step out of the YAML and replays
+the collision, so editing the workflow re-tests it.
+
+The failure mode is worth knowing because it is quiet: the image is pushed to the registry **before**
+the pin step runs, so a failure there loses only the pin and `main` keeps pointing at the previous
+image. `0.6.0-6f88f2a9aa` was built on 2026-08-09 and is referenced by no commit in this repository.
+
+**The chart.** `helm.yaml` gates on `ci.yml` and then runs chart-releaser, which publishes to the
+`gh-pages` branch as a Helm repository. It **skips a version it has already released**, so a template
+change without a `Chart.yaml` `version` bump publishes nothing and still reports success — the one
+failure mode of this path, and `helm.yaml` warns when a run is about to hit it.
+
+```console
+$ helm repo add gsd https://ephico2real2.github.io/group-sync-dashboard
+$ helm install gsd gsd/group-sync-dashboard --set ingress.host=…
+```
+
+---
+
 ## 9. The deliberate constraints, and the reason for each
 
 | Constraint | Reason | Where |
@@ -1277,6 +1423,16 @@ cd local-development && .venv/bin/python -m pytest tests/ -q
 
 | Document | Covers |
 |---|---|
+| [`ACCESS_CONTROL.md`](ACCESS_CONTROL.md) | **who sees what, in tables** — the two tiers side by side, the personas, and the `oc auth can-i` commands to check a real grant against a real reader |
+| [`SPEC_per_user_visibility.md`](SPEC_per_user_visibility.md) | the cluster-data tier: every decision, the refutations that reshaped it, and the code pass that corrected its own requirements |
+| [`REQUIREMENTS_per_user_visibility.md`](REQUIREMENTS_per_user_visibility.md) | what that tier had to achieve, before any design existed |
+| [`SPEC_usage_admin_tier.md`](SPEC_usage_admin_tier.md) | the second, stricter tier, and why the Usage dataset does not fall to the wide one |
+| [`DESIGN_login_capture.md`](DESIGN_login_capture.md) | reading login attempts out of the oauth-server's logs, and every rule the parser applies |
+| [`LOGIN_CAPTURE_QUICKCHECK.md`](LOGIN_CAPTURE_QUICKCHECK.md) | the short version: is capture working on this cluster, and how to tell |
+| [`DESIGN_session_and_signout.md`](DESIGN_session_and_signout.md) | cookie lifetime, sign-out, and the `/signed-out` path the chart guards |
+| [`DESIGN_metrics_refresh.md`](DESIGN_metrics_refresh.md) | what `/metrics` emits now, what was added, and the dedicated-listener design that is deliberately **not** applied |
+| [`BENCHMARK_browser_rendering.md`](BENCHMARK_browser_rendering.md) | the rendering measurements behind the paint-first change, with the commands to reproduce them |
+| [`AUDIT_visibility_premise_and_assumptions.md`](AUDIT_visibility_premise_and_assumptions.md) | the assumptions the visibility work rests on, each checked against the cluster rather than assumed |
 | [`storage-coupling.md`](storage-coupling.md) | how the app talks to SQLite and what a real engine swap would cost |
 | [`unmanaged-audit-design.md`](unmanaged-audit-design.md) | the discovery's invariants, and the live-cluster evidence that removed the write path |
 | [`namespace-report-design.md`](namespace-report-design.md) | per-namespace PDF reports — **parked**, with the definitive answer on `--openshift-sar` |
@@ -1286,3 +1442,9 @@ cd local-development && .venv/bin/python -m pytest tests/ -q
 | [`image-vulnerability-scan.md`](image-vulnerability-scan.md) | the image scan and per-CVE reachability analysis |
 | [`../charts/group-sync-dashboard/README.md`](../charts/group-sync-dashboard/README.md) | every chart value, scaling, storage, ArgoCD |
 | [`../local-development/API.md`](../local-development/API.md) | endpoint-by-endpoint field reference |
+
+Also in `docs/`, and deliberately not listed above: `REVIEW_*.md` and `OAUTH_LOGLEVEL_REVIEW.md`.
+Those are **point-in-time adversarial-review records** — the claims a reviewer was asked to refute,
+their verdicts, and the evidence. They are kept because the evidence is expensive to reproduce and
+the reasoning is often the only record of why an approach was rejected, but they describe the code as
+it stood on their date and are not maintained against it. This document is.
