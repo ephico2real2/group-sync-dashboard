@@ -180,4 +180,63 @@ spec:
               and SMB. Without it a reader blocks for the whole duration of the poll's bulk
               write, so API latency tracks the write rather than being independent of it.
               Move the database to block storage.
+
+        # The fail-closed visibility control. Every outcome here except allowed/denied is a
+        # check that FAILED and served the self view fail-closed — safe, and completely
+        # silent: the reader sees their own data, not an error, so nothing else reports
+        # this. A fail-closed control with no alert is indistinguishable from a broken one.
+        - alert: GroupSyncDashboardVisibilityChecksFailing
+          expr: >-
+            sum(increase(gsd_visibility_tier_checks_total{
+              outcome=~"unreachable|auth_failed|forbidden|error"}[15m])) > 0
+          for: {{ .Values.monitoring.prometheusRule.for.visibilityFailing }}
+          labels: {severity: critical}
+          annotations:
+            summary: "Visibility tier checks are failing; readers are being served the self view fail-closed"
+            description: >-
+              The SubjectAccessReview behind per-user visibility is erroring rather than
+              answering, so every affected reader silently receives only their own data.
+              outcome=forbidden usually means the ServiceAccount lost `create
+              subjectaccessreviews` (the system:auth-delegator grant);
+              unreachable/auth_failed point at the API server or the ServiceAccount token.
+              The pod log names the affected viewers.
+
+        # Capture rides the poll thread, so its cadence is pollIntervalSeconds; stale by
+        # this much means it stopped (grant revoked, oauth pods unreadable, thread dead)
+        # while the Logins page silently freezes and the pod stays Ready.
+        #
+        # `and on()`, not a bare `and`: the enabled gauge is unlabelled while the staleness
+        # side carries {cluster} (plus target labels), so default matching would never pair
+        # them and the alert could never fire.
+        - alert: GroupSyncDashboardLoginCaptureStalled
+          expr: >-
+            (time() - gsd_login_capture_last_read_timestamp_seconds)
+              > {{ .Values.monitoring.prometheusRule.captureStalledSeconds }}
+            and on() (gsd_login_capture_enabled == 1)
+          for: {{ .Values.monitoring.prometheusRule.for.captureStalled }}
+          labels: {severity: warning}
+          annotations:
+            summary: "Login capture has stopped reading the oauth-server log on {{ `{{ $labels.cluster }}` }}"
+            description: >-
+              No successful oauth-log read for {{ `{{ $value | humanizeDuration }}` }}.
+              Attempts made in this window are recorded only as far back as the log's
+              retention reaches, so the gap becomes permanent if it outlives the pod log.
+
+        # The only copy of the data that cannot be re-fetched from the cluster. The metric
+        # reads the newest file in backupDir, so this fires on every failure shape —
+        # including a wrong directory and rotation deleting everything. No series while
+        # backups are disabled, so a deployment without backupDir never alerts.
+        - alert: GroupSyncDashboardBackupStale
+          expr: >-
+            (time() - gsd_backup_last_success_timestamp_seconds)
+              > {{ .Values.monitoring.prometheusRule.backupStaleSeconds }}
+          for: {{ .Values.monitoring.prometheusRule.for.backupStale }}
+          labels: {severity: critical}
+          annotations:
+            summary: "No successful database backup within the expected window"
+            description: >-
+              The newest file in backupDir is {{ `{{ $value | humanizeDuration }}` }} old —
+              at least two backup intervals. The sync and membership history exists only in
+              this database; check gsd_backup_failures_total for active failures and the
+              pod log for the cause.
 {{- end }}

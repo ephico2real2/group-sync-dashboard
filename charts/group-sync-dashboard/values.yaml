@@ -1158,11 +1158,29 @@ monitoring:
     # MiB. 25% of the default 1Gi PVC — high enough that normal churn never fires it, low
     # enough to leave room to act before the volume fills. Raise it with persistence.size.
     walMiB: 256
+    # Seconds without a successful oauth-log read before login capture counts as stalled.
+    # Capture rides the poll thread, so this MUST stay well above config.pollIntervalSeconds
+    # for the same reason notPollingSeconds must — below it, a healthy deployment alerts
+    # forever. 1800 covers a 900s interval with one missed cycle of slack.
+    captureStalledSeconds: 1800
+    # Seconds since the newest backup file before the copy counts as stale. Two intervals
+    # (config.backupIntervalHours, default 6h): one missed backup is a blip, two is a
+    # broken mechanism — and this is the only protection for the data that cannot be
+    # re-fetched from the cluster.
+    backupStaleSeconds: 43200
     for:
       overdue: 10m
       dangling: 15m
       notPolling: 5m
       unreachable: 15m
+      # Sustained, not a blip: one failed SubjectAccessReview round-trip self-heals on the
+      # next request, and every failure already serves the (safe) self view. Fifteen
+      # minutes of failures is every reader silently narrowed — that pages.
+      visibilityFailing: 15m
+      captureStalled: 15m
+      # The staleness threshold above is already two backup intervals, so the for: only
+      # needs to outlast a scrape gap.
+      backupStale: 30m
       # Long, because a checkpoint legitimately lags behind a burst of reads. Only sustained
       # growth is the starvation case.
       walGrowing: 30m

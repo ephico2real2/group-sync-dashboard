@@ -155,6 +155,7 @@ def capture_once(
     settings: Settings,
     elector=None,
     timeout: float = 15.0,
+    signals=None,
 ) -> int:
     """One capture pass over one cluster. Returns events recorded. NEVER raises for cluster problems.
 
@@ -274,11 +275,12 @@ def capture_once(
         return recorded
     store.record_login_read(cluster.name, now_iso())
 
-    _prune(store, cluster, settings, elector)
+    _prune(store, cluster, settings, elector, signals)
     return recorded
 
 
-def _prune(store: StorageBackend, cluster: ClusterConfig, settings: Settings, elector=None) -> None:
+def _prune(store: StorageBackend, cluster: ClusterConfig, settings: Settings, elector=None,
+           signals=None) -> None:
     """Drop events past the retention window.
 
     Watermarks are NOT pruned here — that happens in capture_once, where the live pod list is in
@@ -300,6 +302,11 @@ def _prune(store: StorageBackend, cluster: ClusterConfig, settings: Settings, el
         return
     removed = store.prune_login_events(cluster.name, before)
     if removed:
+        if signals is not None:
+            # Duck-typed metrics seam (gsd/metrics.py RuntimeSignals), same count as the
+            # log line below and from the same call, so the two cannot disagree. A rate
+            # pinned at the 5000-row bound is the backlog-not-draining signal.
+            signals.note_retention("login_event", removed)
         log.info("%s: pruned %d login event(s) older than %s", cluster.name, removed, before)
 
 

@@ -1017,3 +1017,65 @@ class TestVisibilityThreading:
         assert not any(d.get("kind") == "ClusterRoleBinding"
                        and d["roleRef"]["name"] == "system:auth-delegator"
                        for d in self._docs(out)), "no tier -> no SAR grant, usage included"
+
+
+class TestTheServiceMonitorVerifiesTLS:
+    """The scrape must VERIFY the certificate, and the posture must be hard to lose.
+
+    This block shipped as `insecureSkipVerify: true`, justified by a comment claiming
+    verification was impossible: service-ca issues the certificate for the SERVICE DNS name
+    while Prometheus dials the POD IP, so the name cannot match. The premise is true; the
+    conclusion was not — `serverName` verifies against a name independent of the address
+    dialled. Measured on the reference cluster before the fix: connecting to the pod IP while
+    verifying against the service name returned HTTP 200 with ssl_verify_result=0, and the same
+    call with no CA was refused, so that verification is real rather than a handshake that
+    would have passed anyway.
+
+    Nothing tested the posture, which is how it could be reverted green — and a revert would
+    look like a simplification, because the wrong comment argued for it.
+    """
+
+    def _endpoint(self, out: str) -> dict:
+        import yaml
+        for doc in yaml.safe_load_all(out):
+            if doc and doc.get("kind") == "ServiceMonitor":
+                return doc["spec"]["endpoints"][0]
+        raise AssertionError("no ServiceMonitor in the rendered output")
+
+    def test_verification_is_on_and_anchored_on_the_service_name(self):
+        ok, out = render(monitoring__serviceMonitor__enabled=True)
+        assert ok, out
+        ep = self._endpoint(out)
+        assert ep["scheme"] == "https", (
+            "the Service port targets the proxy container, which speaks TLS only — plain http "
+            "fails the handshake on every scrape, silently"
+        )
+        tls = ep["tlsConfig"]
+        assert not tls.get("insecureSkipVerify"), (
+            "verification is achievable here; skipping it is a regression the old comment "
+            "wrongly argued was unavoidable"
+        )
+        # The name must be the SERVICE, because the certificate carries no IP SAN.
+        assert tls["serverName"].endswith(".svc")
+        assert tls["ca"]["configMap"]["name"] == "openshift-service-ca.crt"
+        assert tls["ca"]["configMap"]["key"] == "service-ca.crt"
+
+    def test_the_verified_name_follows_the_release_and_namespace(self):
+        """A hardcoded serverName would verify against the wrong name on any release whose
+        fullname or namespace differs from the one it was written for — which fails closed
+        (no metrics) rather than open, but fails silently either way."""
+        ok, out = render(monitoring__serviceMonitor__enabled=True)
+        assert ok, out
+        import yaml
+        name = next(d["metadata"]["name"] for d in yaml.safe_load_all(out)
+                    if d and d.get("kind") == "ServiceMonitor")
+        assert self._endpoint(out)["tlsConfig"]["serverName"].startswith(name + ".")
+
+    def test_no_tls_block_at_all_when_the_proxy_is_off(self):
+        """With no proxy the Service port targets the app, which speaks plain http — a scheme
+        or tlsConfig here would fail every scrape on a deployment that never had TLS."""
+        ok, out = render(monitoring__serviceMonitor__enabled=True,
+                         oauthProxy__enabled=False, visibility__enabled=False)
+        assert ok, out
+        ep = self._endpoint(out)
+        assert "scheme" not in ep and "tlsConfig" not in ep

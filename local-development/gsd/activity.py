@@ -85,11 +85,16 @@ class ActivityRecorder:
         enabled: bool = True,
         flush_interval_seconds: int = 60,
         retention_days: int = 400,
+        signals=None,
     ):
         self.store = store
         self.enabled = enabled
         self.flush_interval_seconds = flush_interval_seconds
         self.retention_days = retention_days
+        # The process-event metrics seam (gsd/metrics.py RuntimeSignals), duck-typed and
+        # optional: prune() reports what it deleted, so retention is observable without
+        # this module importing the metrics module.
+        self.signals = signals
         self._buckets: dict[tuple[str, str], dict] = {}
         self._lock = threading.Lock()
         self._stop = threading.Event()
@@ -208,6 +213,9 @@ class ActivityRecorder:
         before = (date.fromisoformat(today) - timedelta(days=self.retention_days)).isoformat()
         removed = self.store.prune_user_activity(before)
         if removed:
+            if self.signals is not None:
+                # Same count as the log line, from the same call — the two cannot disagree.
+                self.signals.note_retention("dashboard_user_activity", removed)
             log.info("pruned %d dashboard-activity row(s) older than %s", removed, before)
         return removed
 

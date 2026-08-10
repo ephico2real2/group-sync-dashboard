@@ -236,3 +236,325 @@ class TestSqliteMetrics:
         # configured, so presence of the HELP line is the right assertion.
         declared = {line.split()[2] for line in text.splitlines() if line.startswith("# HELP")}
         assert not (referenced - declared), f"alerts reference undeclared metrics: {referenced - declared}"
+
+    def test_every_alert_kind_a_rule_references_is_one_the_collector_can_emit(self):
+        """The dangling_binding lesson, closed (docs/DESIGN_metrics_refresh.md §5.2).
+
+        The declaration test above holds rules to declared FAMILIES — and still missed the
+        gap where gsd_alerts_total was declared while kind="dangling_binding" was a label
+        VALUE it never emitted, so a rule on it could never fire. This holds every kind
+        matcher in the rules to ALERT_KINDS, the collector's own emittable vocabulary, and
+        holds that vocabulary to its two upstream sources so it cannot rot.
+        """
+        import re
+        import subprocess
+        from pathlib import Path
+
+        import gsd.metrics as metrics
+        import gsd.state
+
+        kinds = getattr(metrics, "ALERT_KINDS", None)
+        assert kinds, "gsd.metrics.ALERT_KINDS must enumerate the emittable kind vocabulary"
+
+        # Source one: everything compute_alerts can produce. Read from state.py's own
+        # source, because the kinds are string literals at their construction sites and a
+        # hand-maintained mirror here would drift exactly like the metric did.
+        state_kinds = set(re.findall(r'kind="([a-z_]+)"', Path(gsd.state.__file__).read_text()))
+        assert state_kinds, "no kind literals found in state.py; the probe itself is broken"
+        assert state_kinds <= set(kinds), f"compute_alerts kinds missing: {state_kinds - set(kinds)}"
+
+        # Source two: the poll outcomes a failing cluster reports as its alert kind.
+        from gsd.kube import AUTH_FAILED, FORBIDDEN, UNREACHABLE
+        assert {AUTH_FAILED, FORBIDDEN, UNREACHABLE} <= set(kinds)
+
+        chart = Path(__file__).resolve().parents[2] / "charts" / "group-sync-dashboard"
+        try:
+            rendered = subprocess.run(
+                ["helm", "template", "t", str(chart), "-n", "x",
+                 "--set", "ingress.host=h",
+                 "--set", "monitoring.prometheusRule.enabled=true"],
+                capture_output=True, text=True, timeout=120,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pytest.skip("helm not available")
+        if rendered.returncode != 0:
+            pytest.skip(f"helm template failed: {rendered.stderr[:200]}")
+        referenced = set(re.findall(r'gsd_alerts_total\{kind="([a-z_]+)"\}', rendered.stdout))
+        assert referenced, "no kind matcher found in the rules; the probe itself is broken"
+        assert referenced <= set(kinds), f"rules reference unemittable kinds: {referenced - set(kinds)}"
+
+
+# ── docs/DESIGN_metrics_refresh.md, applied test-first ─────────────────────────────────────
+# Every class below was run against the collector AS IT WAS and failed, before the change it
+# tests existed — the fail-before/pass-after discipline the parity gap above showed we need.
+
+
+class TestAlertsFeedParity:
+    """§5.2: gsd_alerts_total's own comment promises parity with /api/alerts. Three ways it
+    was broken, three assertions that now hold it."""
+
+    def test_a_degraded_cluster_reports_its_poll_outcome_and_nothing_stale(self, scrape):
+        """/api/alerts reports ONE critical alert carrying the poll outcome as its kind and
+        suppresses every computed kind — those would be recomputed from cache that stopped
+        updating when the poll did. Measured before the fix: the metric did the opposite on
+        both counts."""
+        text, store = scrape
+        assert 'kind="unattributed"' in text, "healthy fixture should alert unattributed"
+        store.record_poll("crc", "auth_failed", "401")
+        degraded = generate_latest(build_registry(store, GRACE)).decode()
+        found = series(degraded, "gsd_alerts_total")
+        assert found[
+            'gsd_alerts_total{cluster="crc",kind="auth_failed",severity="critical"}'] == 1
+        assert 'kind="unattributed"' not in degraded, "stale cache must not alert"
+
+    def test_dangling_bindings_reach_the_alert_metric(self):
+        """One dangling row -> kind=dangling_binding, the same count the bindings gauge
+        carries. Managed-then-gone is what makes a binding dangling (store._FINDING_CASE)."""
+        now = datetime.now(UTC)
+        store = Store(":memory:")
+        try:
+            store.upsert_cluster("crc", "https://x", True)
+            store.record_poll("crc", "ok", None)
+            store.record_managed_groups(
+                "crc", [{"name": "gone-group", "sync_provider": "p"}], _iso(now))
+            store.replace_group_state("crc", [], _iso(now))     # the group is gone
+            store.replace_bindings(
+                "crc",
+                [{"binding_kind": "RoleBinding", "binding_namespace": "ns",
+                  "binding_name": "rb", "role_kind": "ClusterRole", "role_name": "edit",
+                  "group_name": "gone-group"}],
+                _iso(now),
+            )
+            text = generate_latest(build_registry(store, GRACE)).decode()
+        finally:
+            store.close()
+        found = series(text, "gsd_alerts_total")
+        assert found[
+            'gsd_alerts_total{cluster="crc",kind="dangling_binding",severity="critical"}'] == 1
+
+
+class TestLeaderLabel:
+    def test_gsd_leader_carries_no_vestigial_cluster_label(self, scrape):
+        """§5.1: leadership is per-process — one Lease, one flag — and the label was always
+        the empty string, asserting a per-cluster fact that does not exist. In PromQL an
+        empty label value is indistinguishable from an absent label, so dropping it changes
+        no selector."""
+        text, _ = scrape
+        found = series(text, "gsd_leader")
+        assert list(found) == ["gsd_leader"], f"vestigial labels: {list(found)}"
+
+
+class TestClusterUpHelp:
+    def test_the_help_names_the_never_polled_case(self, scrape):
+        """§5.3: a never-polled cluster also reads 0, and the HELP must say so — a fresh
+        install's 0 read as an outage is the misdiagnosis this line prevents."""
+        text, _ = scrape
+        help_line = next(
+            line for line in text.splitlines() if line.startswith("# HELP gsd_cluster_up "))
+        assert "never" in help_line
+
+
+class TestVisibilitySignals:
+    """§3.1/§3.2/§3.3: the process-event counters behind the fail-closed visibility control."""
+
+    def test_tier_check_outcomes_are_counted_and_pre_seeded(self):
+        """A counter that first appears at 1 gives increase() no baseline; the whole point
+        is catching the FIRST failure, so every enum combination exists at 0."""
+        from gsd.metrics import RuntimeSignals
+        signals = RuntimeSignals()
+        signals.note_tier_check("admin", "forbidden")
+        store = Store(":memory:")
+        try:
+            text = generate_latest(build_registry(store, GRACE, signals=signals)).decode()
+        finally:
+            store.close()
+        found = series(text, "gsd_visibility_tier_checks_total")
+        assert found[
+            'gsd_visibility_tier_checks_total{outcome="forbidden",threshold="admin"}'] == 1
+        assert found[
+            'gsd_visibility_tier_checks_total{outcome="unreachable",threshold="usage"}'] == 0
+        assert len(found) == 12, "2 thresholds x 6 outcomes, nothing else"
+
+    def test_decisions_count_what_was_served(self):
+        from gsd.metrics import RuntimeSignals
+        signals = RuntimeSignals()
+        signals.note_decision("admin", "self")
+        signals.note_decision("admin", "self")
+        signals.note_decision("usage", "all")
+        store = Store(":memory:")
+        try:
+            text = generate_latest(build_registry(store, GRACE, signals=signals)).decode()
+        finally:
+            store.close()
+        found = series(text, "gsd_visibility_decisions_total")
+        assert found['gsd_visibility_decisions_total{threshold="admin",tier="self"}'] == 2
+        assert found['gsd_visibility_decisions_total{threshold="usage",tier="all"}'] == 1
+        assert found['gsd_visibility_decisions_total{threshold="usage",tier="self"}'] == 0
+
+    def test_admin_refusals_are_a_plain_counter(self):
+        from gsd.metrics import RuntimeSignals
+        signals = RuntimeSignals()
+        signals.note_admin_refusal()
+        signals.note_admin_refusal()
+        store = Store(":memory:")
+        try:
+            text = generate_latest(build_registry(store, GRACE, signals=signals)).decode()
+        finally:
+            store.close()
+        assert series(text, "gsd_visibility_admin_refusals_total") == {
+            "gsd_visibility_admin_refusals_total": 2}
+
+    def test_event_families_are_declared_even_unwired(self):
+        """The alert-rule tests above resolve rule references against HELP lines, so every
+        family must exist on a bare collector — declared empty, claiming no measurements."""
+        store = Store(":memory:")
+        try:
+            text = generate_latest(build_registry(store, GRACE)).decode()
+        finally:
+            store.close()
+        for family in (
+            "gsd_visibility_tier_checks_total", "gsd_visibility_decisions_total",
+            "gsd_visibility_admin_refusals_total", "gsd_retention_rows_deleted_total",
+            "gsd_backup_failures_total", "gsd_cluster_poll_duration_seconds",
+            "gsd_login_capture_enabled", "gsd_backup_last_success_timestamp_seconds",
+            "gsd_login_capture_last_read_timestamp_seconds",
+        ):
+            assert f"# HELP {family} " in text, f"{family} not declared"
+            assert series(text, family) == {}, f"{family} claims samples while unwired"
+
+
+class TestRuntimeCounters:
+    """§3.6/§3.7/§3.8: the machinery counters, emission and increment sites."""
+
+    def test_retention_deletions_are_counted_by_table(self):
+        from gsd.metrics import RuntimeSignals
+        signals = RuntimeSignals()
+        signals.note_retention("login_event", 5000)
+        signals.note_retention("login_event", 137)
+        store = Store(":memory:")
+        try:
+            text = generate_latest(build_registry(store, GRACE, signals=signals)).decode()
+        finally:
+            store.close()
+        found = series(text, "gsd_retention_rows_deleted_total")
+        assert found['gsd_retention_rows_deleted_total{table="login_event"}'] == 5137
+        assert found['gsd_retention_rows_deleted_total{table="dashboard_user_activity"}'] == 0
+
+    def test_poll_duration_is_exported_per_cluster(self):
+        from gsd.metrics import RuntimeSignals
+        signals = RuntimeSignals()
+        signals.note_poll_duration("crc", 1.42)
+        store = Store(":memory:")
+        try:
+            text = generate_latest(build_registry(store, GRACE, signals=signals)).decode()
+        finally:
+            store.close()
+        assert series(text, "gsd_cluster_poll_duration_seconds")[
+            'gsd_cluster_poll_duration_seconds{cluster="crc"}'] == pytest.approx(1.42)
+
+    def test_the_poller_notes_a_failed_backup(self, tmp_path):
+        """§3.6's increment site: store.backup returning None IS the failure contract."""
+        from gsd.config import Settings
+        from gsd.metrics import RuntimeSignals
+        from gsd.poller import Poller
+
+        class FailingStore:
+            def backup(self, directory, keep=3):
+                return None
+
+        signals = RuntimeSignals()
+        settings = Settings(clusters=[], db_path=":memory:", backup_dir=str(tmp_path))
+        Poller(FailingStore(), settings, None, signals=signals)._maybe_backup()
+        assert signals.snapshot()["backup_failures"] == 1
+
+    def test_a_poll_thread_reports_its_duration(self, monkeypatch):
+        """§3.7's increment site, end to end: a real poll thread against an unreachable
+        endpoint still times its poll — the poll that takes the whole timeout to fail is
+        precisely the one worth seeing."""
+        import time as _time
+
+        from gsd.config import ClusterConfig, Settings
+        from gsd.metrics import RuntimeSignals
+        from gsd.poller import Poller
+
+        monkeypatch.setenv("GSD_TEST_POLL_TOKEN", "token")
+        signals = RuntimeSignals()
+        settings = Settings(
+            clusters=[ClusterConfig("nowhere", "https://127.0.0.1:1",
+                                    token_env="GSD_TEST_POLL_TOKEN")],
+            db_path=":memory:", poll_interval_seconds=3600,
+            request_timeout_seconds=0.2, binding_interval_seconds=3600)
+        store = Store(":memory:")
+        poller = Poller(store, settings, None, signals=signals)
+        poller.start()
+        try:
+            deadline = _time.monotonic() + 10
+            while _time.monotonic() < deadline:
+                if "nowhere" in signals.snapshot()["poll_seconds"]:
+                    break
+                _time.sleep(0.05)
+        finally:
+            poller.stop()
+            store.close()
+        assert "nowhere" in signals.snapshot()["poll_seconds"]
+
+
+class TestCaptureAndBackupGauges:
+    """§3.4/§3.5/§3.9: machinery-liveness gauges. Absent means never — never zeroed."""
+
+    def test_capture_last_read_is_absent_until_recorded_then_a_timestamp(self):
+        store = Store(":memory:")
+        try:
+            store.upsert_cluster("crc", "https://x", True)
+            store.record_poll("crc", "ok", None)
+            text = generate_latest(build_registry(store, GRACE)).decode()
+            assert "gsd_login_capture_last_read_timestamp_seconds{" not in text
+            store.record_login_read("crc", "2026-08-10T12:00:00Z")
+            text = generate_latest(build_registry(store, GRACE)).decode()
+            assert series(text, "gsd_login_capture_last_read_timestamp_seconds")[
+                'gsd_login_capture_last_read_timestamp_seconds{cluster="crc"}'
+            ] > 1_700_000_000
+        finally:
+            store.close()
+
+    def test_backup_timestamp_reads_the_newest_file(self, tmp_path):
+        """From the files, not from memory of the last attempt: it survives restarts and
+        measures the artifact a restore would actually use."""
+        from types import SimpleNamespace
+        (tmp_path / "gsd-20260810T000000.000000Z.db").write_bytes(b"x")
+        settings = SimpleNamespace(backup_dir=str(tmp_path), login_capture_enabled=False)
+        store = Store(":memory:")
+        try:
+            text = generate_latest(
+                build_registry(store, GRACE, settings=settings)).decode()
+        finally:
+            store.close()
+        value = series(text, "gsd_backup_last_success_timestamp_seconds")[
+            "gsd_backup_last_success_timestamp_seconds"]
+        expected = (tmp_path / "gsd-20260810T000000.000000Z.db").stat().st_mtime
+        assert value == pytest.approx(expected, abs=1)
+
+    def test_backup_timestamp_is_absent_when_backups_are_off_or_none_exist(self, tmp_path):
+        from types import SimpleNamespace
+        store = Store(":memory:")
+        try:
+            for backup_dir in ("", str(tmp_path)):
+                settings = SimpleNamespace(backup_dir=backup_dir, login_capture_enabled=False)
+                text = generate_latest(
+                    build_registry(store, GRACE, settings=settings)).decode()
+                assert series(text, "gsd_backup_last_success_timestamp_seconds") == {}
+        finally:
+            store.close()
+
+    def test_capture_enabled_reflects_the_setting(self):
+        from types import SimpleNamespace
+        store = Store(":memory:")
+        try:
+            for enabled in (True, False):
+                settings = SimpleNamespace(backup_dir="", login_capture_enabled=enabled)
+                text = generate_latest(
+                    build_registry(store, GRACE, settings=settings)).decode()
+                assert series(text, "gsd_login_capture_enabled") == {
+                    "gsd_login_capture_enabled": 1 if enabled else 0}
+        finally:
+            store.close()

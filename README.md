@@ -204,7 +204,7 @@ about what it trusts, and silently widening it would be the wrong kind of helpfu
 
 ## Monitoring
 
-`/metrics` serves Prometheus exposition; the chart ships a ServiceMonitor and eight alerting
+`/metrics` serves Prometheus exposition; the chart ships a ServiceMonitor and eleven alerting
 rules, both off by default because they need the Prometheus Operator CRDs.
 
 Cardinality is bounded deliberately: series are per cluster and per GroupSync CR only, never

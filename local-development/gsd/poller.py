@@ -473,9 +473,15 @@ def refresh_bindings(
 class Poller:
     """Runs one polling thread per enabled cluster."""
 
-    def __init__(self, store: StorageBackend, settings: Settings, elector: LeaderElector | None = None):
+    def __init__(self, store: StorageBackend, settings: Settings,
+                 elector: LeaderElector | None = None, signals=None):
         self.store = store
         self.settings = settings
+        # The process-event metrics seam (gsd/metrics.py RuntimeSignals), duck-typed and
+        # optional so this module never imports the metrics module and every existing
+        # caller keeps working. Reports poll durations, backup failures and — passed
+        # through capture_once — retention deletions.
+        self.signals = signals
         # BEST-EFFORT admission control, NOT a write fence. Read this before relying on it.
         #
         # Leadership is checked once, in _run_cluster, before poll_once is entered. Nothing
@@ -522,8 +528,17 @@ class Poller:
             return
         self._next_backup = now + self.settings.backup_interval_hours * 3600
         try:
-            self.store.backup(self.settings.backup_dir, keep=self.settings.backup_keep)
+            if (self.store.backup(self.settings.backup_dir, keep=self.settings.backup_keep)
+                    is None):
+                # None is the method's own failure contract (VACUUM error, unwritable
+                # directory) — already logged with the trace in the store; counted here,
+                # where the schedule lives, so the exposition can say backups are breaking
+                # hours before the last-success timestamp goes stale.
+                if self.signals is not None:
+                    self.signals.note_backup_failure()
         except Exception:  # noqa: BLE001 - a failed backup must never stop the poll
+            if self.signals is not None:
+                self.signals.note_backup_failure()
             log.exception("backup failed; the poll continues and the history is unprotected")
 
     def _run_cluster(self, cluster: ClusterConfig) -> None:
@@ -547,8 +562,15 @@ class Poller:
                 self._stop.wait(min(self.settings.poll_interval_seconds, STANDBY_RECHECK_SECONDS))
                 continue
             try:
+                poll_started = time.monotonic()
                 poll_once(self.store, cluster, self.settings.request_timeout_seconds,
                           access_group_dn=self.settings.cluster_access_group)
+                if self.signals is not None:
+                    # The whole poll, success or degraded — a poll that needs the full
+                    # timeout to fail is the one worth seeing. Set only by the replica
+                    # that polls, so standbys emit no series.
+                    self.signals.note_poll_duration(
+                        cluster.name, time.monotonic() - poll_started)
                 # Login capture rides this thread rather than owning one, which is the smallest correct
                 # ownership boundary: it inherits the leader gate above and the never-die discipline
                 # below without a second lease to reason about. It is AFTER poll_once on purpose —
@@ -559,7 +581,8 @@ class Poller:
                 # network, so the lease can pass to another replica while a read is in flight.
                 try:
                     capture_once(self.store, cluster, self.settings, self.elector,
-                                 self.settings.request_timeout_seconds)
+                                 self.settings.request_timeout_seconds,
+                                 signals=self.signals)
                 except Exception:  # noqa: BLE001 - capture must never stop the poll loop
                     log.exception("%s: login capture raised; group polling continues", cluster.name)
                 # After the write, never during it, and never from a request handler:

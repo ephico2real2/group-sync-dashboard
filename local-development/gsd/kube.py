@@ -11,6 +11,7 @@ import logging
 import re
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import unquote
@@ -1059,6 +1060,7 @@ class TierResolver:
         namespace: str = "",
         subresource: str,
         ttl_seconds: float,
+        observe: Callable[[str], None] | None = None,
     ):
         # ttl_seconds is REQUIRED and deliberately has no default. It used to default to
         # TIER_TTL_SECONDS, and that default is precisely what hid the wiring bug: nothing
@@ -1085,6 +1087,11 @@ class TierResolver:
         if subresource:
             self._attributes["subresource"] = subresource
         self._ttl = ttl_seconds
+        # The metrics seam (docs/DESIGN_metrics_refresh.md §3.1): called with one enum
+        # outcome per FRESH resolution. A callback and not a metrics import, so this module
+        # stays cluster I/O, buildable and testable without the metrics module — the app
+        # wires the two at build time.
+        self._observe = observe
         self._cache: dict[str, tuple[float, str]] = {}
         self._lock = threading.Lock()
         # One resolution in flight per viewer. Created under _lock by the leader, waited on
@@ -1141,6 +1148,17 @@ class TierResolver:
             if event is not None:
                 event.set()
 
+    def _note(self, outcome: str) -> None:
+        """Report one fresh check's outcome to the observe seam. Best-effort by contract:
+        the tier is already decided by the time this runs, and a metrics bug must never
+        break a security decision or un-fail-closed anything."""
+        if self._observe is None:
+            return
+        try:
+            self._observe(outcome)
+        except Exception:  # noqa: BLE001
+            log.exception("visibility tier metrics callback failed; the tier is unaffected")
+
     def _resolve_and_cache(self, viewer: str, now: float) -> str:
         """The leader's half of tier_for: one review, cached on success only."""
         try:
@@ -1159,6 +1177,9 @@ class TierResolver:
                 "the self view for this request",
                 self._kube.cluster.name, viewer, exc.outcome, exc.message,
             )
+            # exc.outcome is the bounded kube vocabulary (unreachable/auth_failed/
+            # forbidden), which is exactly the metric's failure enum.
+            self._note(exc.outcome)
             return TIER_SELF
         except Exception:
             # A bug in this path must degrade the same way a cluster failure does: the tier
@@ -1169,8 +1190,10 @@ class TierResolver:
                 "view for this request",
                 self._kube.cluster.name, viewer,
             )
+            self._note("error")
             return TIER_SELF
         tier = TIER_ALL if allowed else TIER_SELF
+        self._note("allowed" if allowed else "denied")
         with self._lock:
             if len(self._cache) > 512:
                 # Viewers are real authenticated people, so this stays small; the sweep only

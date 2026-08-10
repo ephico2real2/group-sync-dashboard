@@ -157,9 +157,16 @@ class TestTheReviewCarriesTheGroups:
         }
 
     def test_no_subresource_omits_the_key_rather_than_sending_empty(self, monkeypatch):
-        """An empty subresource must be ABSENT, not `""`. The API server treats the empty
-        string as a distinct value in resourceAttributes, so sending it would change the
-        question for every deployment that does not use one — which is nearly all of them."""
+        """An empty subresource is OMITTED rather than sent as `""`.
+
+        The reason first written here was wrong and is corrected: it claimed the API server
+        treats `""` as a value distinct from an absent key. Measured against the live cluster,
+        `subresource: ""` and an omitted subresource produce the SAME verdict — they are
+        equivalent, not different. So this test pins a wire-format convention, not a
+        behavioural difference: the review we send should say only what the operator
+        configured, and a key present-but-empty invites the next reader to wonder whether it
+        meant something.
+        """
         fake = FakeCluster(groups=[])
         _resolver(monkeypatch, fake, subresource="").tier_for("someone")
         assert "subresource" not in fake.sar_bodies[0]["spec"]["resourceAttributes"]
@@ -449,3 +456,78 @@ class TestSettings:
         core-group threshold into one that refuses every administrator."""
         cfg = BASE_CONFIG + 'visibilityAdminSarApiGroup: ""\n'
         assert load_settings(self._write(tmp_path, cfg)).visibility_admin_sar_api_group == ""
+
+
+class TestObservedOutcomes:
+    """The §3.1 observe seam (docs/DESIGN_metrics_refresh.md): one enum outcome per FRESH
+    check, reported through a callback so kube.py never imports the metrics module.
+
+    The vocabulary is load-bearing: allowed/denied are verdicts, everything else is a check
+    that FAILED and served the self view fail-closed — the signal that makes a broken
+    SubjectAccessReview distinguishable from a healthy quiet one.
+    """
+
+    @pytest.mark.parametrize(
+        "mutate,expected",
+        [
+            pytest.param(lambda f: None, "allowed", id="allowed"),
+            pytest.param(lambda f: setattr(f, "allowed", False), "denied", id="denied"),
+            pytest.param(lambda f: setattr(f, "sar_status", 401), "auth_failed", id="401"),
+            pytest.param(lambda f: setattr(f, "sar_status", 403), "forbidden", id="403"),
+            pytest.param(
+                lambda f: setattr(f, "raise_exc", httpx.ConnectTimeout("simulated timeout")),
+                "unreachable", id="timeout"),
+        ],
+    )
+    def test_verdicts_and_failures_map_to_the_outcome_enum(self, monkeypatch, mutate, expected):
+        fake = FakeCluster(groups=[])
+        mutate(fake)
+        seen: list[str] = []
+        _resolver(monkeypatch, fake, observe=seen.append).tier_for("someone")
+        assert seen == [expected]
+
+    def test_a_cache_hit_is_not_a_second_check(self, monkeypatch):
+        """The counter counts decisions, not requests: a hit re-decides nothing."""
+        fake = FakeCluster(groups=[])
+        seen: list[str] = []
+        resolver = _resolver(monkeypatch, fake, observe=seen.append)
+        resolver.tier_for("someone")
+        resolver.tier_for("someone")
+        assert seen == ["allowed"] and fake.group_lists == 1
+
+    def test_a_parallel_burst_produces_one_observation(self, monkeypatch):
+        """The browser dispatches its refresh in one burst; single-flight makes that ONE
+        fresh check, and the counter must agree — six failures for one outage would make
+        every rate threshold wrong. Deterministic by gating, the TestSingleFlight idiom."""
+        entered, release = threading.Event(), threading.Event()
+
+        class Gated(FakeCluster):
+            def handler(self, request: httpx.Request) -> httpx.Response:
+                if request.url.path == GROUPS_PATH:
+                    entered.set()
+                    release.wait(5)
+                return super().handler(request)
+
+        fake = Gated(groups=[])
+        seen: list[str] = []
+        resolver = _resolver(monkeypatch, fake, observe=seen.append)
+        leader = threading.Thread(target=lambda: resolver.tier_for("someone"))
+        leader.start()
+        assert entered.wait(5), "the leader never reached the cluster"
+        followers = [threading.Thread(target=lambda: resolver.tier_for("someone"))
+                     for _ in range(5)]
+        for t in followers:
+            t.start()
+        time.sleep(0.05)          # let the followers reach the in-flight wait
+        release.set()
+        for t in (leader, *followers):
+            t.join(5)
+        assert seen == ["allowed"], f"six parallel requests, one check — saw {seen}"
+
+    def test_a_broken_callback_never_breaks_the_decision(self, monkeypatch):
+        """Best-effort by contract: a metrics bug must not become a security bug."""
+        def boom(outcome: str) -> None:
+            raise RuntimeError("observer bug")
+
+        fake = FakeCluster(groups=[])
+        assert _resolver(monkeypatch, fake, observe=boom).tier_for("someone") == TIER_ALL

@@ -26,7 +26,7 @@ from .activity import EMAIL_HEADER, INTERACTION_HEADER, USER_HEADER, ActivityRec
 from .config import Settings, load_settings
 from .kube import TierResolver
 from .leader import LeaderElector
-from .metrics import build_registry
+from .metrics import RuntimeSignals, build_registry
 from .poller import Poller
 from .storage import StorageBackend, open_backend
 from . import loginlog
@@ -147,7 +147,12 @@ def build_app(
     # tuning knobs. open_backend() owns that; see gsd/storage.py.
     store: StorageBackend = open_backend(settings)
     elector = LeaderElector(name=settings.leader_lease_name) if settings.leader_election else None
-    poller = Poller(store, settings, elector)
+    # The process-event metrics seam (docs/DESIGN_metrics_refresh.md §2), one per app:
+    # the resolvers, the poller, the activity recorder and the admin gate all report into
+    # this instance, and the collector reads a snapshot of it at scrape time. Created here,
+    # before anything that carries it.
+    signals = RuntimeSignals()
+    poller = Poller(store, settings, elector, signals=signals)
     grace = timedelta(seconds=settings.schedule_grace_seconds)
 
     # Both conditions, not either: the setting is the operator's choice, the proxy flag is
@@ -157,6 +162,7 @@ def build_app(
         enabled=settings.user_activity_enabled and settings.oauth_proxy_enabled,
         flush_interval_seconds=settings.user_activity_flush_seconds,
         retention_days=settings.user_activity_retention_days,
+        signals=signals,
     )
     if settings.user_activity_enabled and not settings.oauth_proxy_enabled:
         log.info(
@@ -187,6 +193,9 @@ def build_app(
             namespace=settings.visibility_admin_sar_namespace,
             subresource=settings.visibility_admin_sar_subresource,
             ttl_seconds=float(settings.visibility_tier_ttl_seconds),
+            # One enum outcome per fresh check, into the exposition — the only signal
+            # that separates a broken SubjectAccessReview from a quiet healthy one.
+            observe=functools.partial(signals.note_tier_check, "admin"),
         )
     # A SEPARATE instance for the Usage tab (docs/SPEC_usage_admin_tier.md), never the same one:
     # it asks a stricter question (a write verb the auditor cluster-reader fails) about the same
@@ -203,6 +212,9 @@ def build_app(
             namespace=settings.visibility_usage_admin_sar_namespace,
             subresource=settings.visibility_usage_admin_sar_subresource,
             ttl_seconds=float(settings.visibility_tier_ttl_seconds),
+            # Its own threshold label, because it is its own decision — a usage-check
+            # failure must not be read as the wide tier breaking, or vice versa.
+            observe=functools.partial(signals.note_tier_check, "usage"),
         )
     if not settings.view_restrictions_enabled:
         # WARNING rather than INFO: this is the one switch that restores the measured exposure
@@ -270,6 +282,10 @@ def build_app(
         # injected decision and nothing published.
         state_resolver = getattr(app.state, "tier_resolver", None)
         if not viewer or (state_resolver is None and tier_resolver is None):
+            # Counted like every decision below; only the restrictions-off return above is
+            # not a decision. gsd_visibility_decisions_total is what makes the served
+            # all:self mix visible — the everyone-silently-narrowed signature.
+            signals.note_decision("admin", "self")
             return viewer, "self"
         try:
             tier = (state_resolver.resolve(viewer) if state_resolver is not None
@@ -278,10 +294,13 @@ def build_app(
             # Logged with the trace, served as self: an API-server blip degrades the VIEW,
             # never the availability — the reader sees their own data, not an error page.
             log.exception("tier resolution failed for %r; serving the self view", viewer)
+            signals.note_decision("admin", "self")
             return viewer, "self"
         # Only the exact string "all" widens — the _visibility_setting discipline applied
         # to the resolver's answer, so a buggy resolver cannot widen by returning junk.
-        return viewer, ("all" if tier == "all" else "self")
+        scope = "all" if tier == "all" else "self"
+        signals.note_decision("admin", scope)
+        return viewer, scope
 
     def usage_scope(request: Request) -> tuple[str | None, str]:
         """Resolve this request to (viewer, scope) for the USAGE tab specifically.
@@ -303,6 +322,9 @@ def build_app(
         # Precedence 1: the blunt operator override, independent of any tier. Preserved verbatim
         # from the pre-tier behaviour so a deployment that set it keeps working.
         if settings.user_activity_visibility == "all":
+            # A served wide decision, counted as one: a deployment that set the blunt
+            # override should see that fact on the graph rather than a mysterious all-tier.
+            signals.note_decision("usage", "all")
             return viewer, "all"
         # Restrictions off (or proxy off) runs no tier machinery — but Usage is NOT the wide
         # view, so it stays self here rather than widening. This mirrors the pre-tier behaviour,
@@ -313,6 +335,7 @@ def build_app(
             return viewer, "self"
         state_resolver = getattr(app.state, "usage_tier_resolver", None)
         if not viewer or (state_resolver is None and usage_tier_resolver is None):
+            signals.note_decision("usage", "self")
             return viewer, "self"
         try:
             tier = (state_resolver.resolve(viewer) if state_resolver is not None
@@ -321,8 +344,11 @@ def build_app(
             # An API-server blip degrades the Usage VIEW to the reader's own rows, never the
             # availability and never the wide set — the same discipline viewer_scope follows.
             log.exception("usage tier resolution failed for %r; serving the self view", viewer)
+            signals.note_decision("usage", "self")
             return viewer, "self"
-        return viewer, ("all" if tier == "all" else "self")
+        scope = "all" if tier == "all" else "self"
+        signals.note_decision("usage", scope)
+        return viewer, scope
 
     def require_viewer(viewer: str | None) -> str:
         """Self-scoped data needs a name to scope to; without one it is refused.
@@ -364,6 +390,9 @@ def build_app(
         """
         _, scope = viewer_scope(request)
         if scope != "all":
+            # Counted before the raise: a refusal that leaves no trace anywhere is how a
+            # gate that broke for everyone stays indistinguishable from one nobody hit.
+            signals.note_admin_refusal()
             raise HTTPException(
                 status_code=403,
                 detail="this view reports the cluster's own RBAC binding surface and operator "
@@ -842,6 +871,17 @@ def build_app(
         cluster_id: str,
         outcome: str | None = Query(
             default=None,
+            # VALIDATED against the parser's own vocabulary, and this is what LOGIN_OUTCOMES is
+            # for — it was computed and then read by nothing, so the guarantee its comment
+            # promised did not exist. An unknown value used to return HTTP 200 with zero
+            # attempts, which is byte-identical to a valid filter that genuinely matches
+            # nothing: `outcome=bad_pasword` read as "no failed logins" in a tool whose whole
+            # job is telling you when there ARE some. 422 now, matching /groups' `state`.
+            #
+            # Derived rather than restated so a new outcome in loginlog.py becomes queryable
+            # the moment it can be parsed, instead of being rejected by a second list nobody
+            # remembered to extend.
+            pattern=f"^({'|'.join(LOGIN_OUTCOMES)})$",
             description="Return only attempts with this outcome. The vocabulary is the parser's: "
                         "success, bad_password, rejected (not found OR not permitted — the log "
                         "cannot tell those apart), password_expired, must_change_password, "
@@ -1401,7 +1441,8 @@ def build_app(
             "alerts": alerts,
         }
 
-    metrics_registry = build_registry(store, grace, elector)
+    metrics_registry = build_registry(store, grace, elector,
+                                      signals=signals, settings=settings)
 
     @app.get("/metrics")
     def metrics() -> Response:
