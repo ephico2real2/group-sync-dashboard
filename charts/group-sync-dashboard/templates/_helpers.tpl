@@ -278,3 +278,62 @@ list
 {{- $n -}}
 {{- end -}}
 {{- end -}}
+
+# The four usageAdminSar fields — the Usage tab's SEPARATE, STRICTER threshold. Same nil-safe
+# style and same render-time validation as adminSar above, because the operator meets one pattern
+# twice: a nonsensical shape fails the render here rather than silently answering allowed=false for
+# every viewer (RBAC matching is exact and lowercase). The DEFAULT differs — a write verb, `update
+# clusterrolebindings`, because no read check separates cluster-admin from cluster-reader, and the
+# Usage dataset is the one thing on the cluster that cannot be reproduced with oc. See
+# docs/SPEC_usage_admin_tier.md. The dashboard never writes; a SubjectAccessReview only asks.
+
+{{- define "gsd.usageVisibilitySarApiGroup" -}}
+{{- $sar := ((.Values.visibility | default dict).usageAdminSar) | default dict -}}
+{{- if or (not (hasKey $sar "apiGroup")) (kindIs "invalid" $sar.apiGroup) -}}
+rbac.authorization.k8s.io
+{{- else -}}
+{{- $g := trim (toString $sar.apiGroup) -}}
+{{- if not (regexMatch "^[a-z0-9.-]*$" $g) -}}
+{{- fail (printf "visibility.usageAdminSar.apiGroup %q is not an API group. Give the group alone (e.g. rbac.authorization.k8s.io, user.openshift.io), no version suffix, or \"\" for the core group." $g) -}}
+{{- end -}}
+{{- $g -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "gsd.usageVisibilitySarResource" -}}
+{{- $sar := ((.Values.visibility | default dict).usageAdminSar) | default dict -}}
+{{- if or (not (hasKey $sar "resource")) (kindIs "invalid" $sar.resource) -}}
+clusterrolebindings
+{{- else -}}
+{{- $r := trim (toString $sar.resource) -}}
+{{- if not (regexMatch "^[a-z0-9-]+(/[a-z0-9-]+)?$" $r) -}}
+{{- fail (printf "visibility.usageAdminSar.resource %q is not a resource. Use the lowercase plural (e.g. clusterrolebindings, secrets), optionally resource/subresource (e.g. pods/log). RBAC matching is exact, so anything else would silently answer no for every viewer and demote every administrator." $r) -}}
+{{- end -}}
+{{- $r -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "gsd.usageVisibilitySarVerb" -}}
+{{- $sar := ((.Values.visibility | default dict).usageAdminSar) | default dict -}}
+{{- if or (not (hasKey $sar "verb")) (kindIs "invalid" $sar.verb) -}}
+update
+{{- else -}}
+{{- $v := trim (toString $sar.verb) -}}
+{{- if not (regexMatch "^[a-z]+$" $v) -}}
+{{- fail (printf "visibility.usageAdminSar.verb %q is not a verb. Kubernetes verbs are lowercase words (update, create, get, ...). RBAC matching is exact, so anything else would silently answer no for every viewer and demote every administrator." $v) -}}
+{{- end -}}
+{{- $v -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "gsd.usageVisibilitySarNamespace" -}}
+{{- $sar := ((.Values.visibility | default dict).usageAdminSar) | default dict -}}
+{{- if or (not (hasKey $sar "namespace")) (kindIs "invalid" $sar.namespace) -}}
+{{- else -}}
+{{- $n := trim (toString $sar.namespace) -}}
+{{- if not (regexMatch "^[a-z0-9-]*$" $n) -}}
+{{- fail (printf "visibility.usageAdminSar.namespace %q is not a namespace name. Leave it empty for a cluster-scoped check." $n) -}}
+{{- end -}}
+{{- $n -}}
+{{- end -}}
+{{- end -}}

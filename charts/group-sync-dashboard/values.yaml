@@ -353,13 +353,28 @@ config:
     # Anything else is treated as `self`: an unrecognised value must never be the one that
     # widens access to a personnel dataset.
     #
-    # DELIBERATELY INDEPENDENT of the `visibility` block below, which governs CLUSTER data.
-    # This knob governs data the dashboard GENERATED about its own readers, and the two must
-    # not merge: handing this dataset to the visibility tier would let every cluster-reader
-    # see colleagues' presence records — a personnel dataset widened as a side effect of a
-    # refactor. Passing the visibility.adminSar check therefore does NOT widen this view;
-    # only the exact string `all` here does. If you need an admins-only door for the whole
-    # dashboard, that is oauthProxy.sar.
+    # THE BLUNT OVERRIDE, and it still wins. `all` here means every admitted reader sees every
+    # row, and it takes precedence over the usage tier below — the pre-existing escape hatch,
+    # unchanged, for a deployment that genuinely wants the old everyone-sees-everyone view.
+    #
+    # DELIBERATELY INDEPENDENT of the wide `visibility.adminSar` tier. This knob governs data
+    # the dashboard GENERATED about its own readers, and it must NOT merge with the tier that
+    # gates CLUSTER data: handing this dataset to `adminSar` would let every cluster-reader see
+    # colleagues' presence records. Passing `adminSar` therefore does NOT widen this view.
+    #
+    # What DOES widen it, when this is left at `self`, is the separate, stricter
+    # `visibility.usageAdminSar` check below — a write verb cluster-reader fails and
+    # cluster-admin passes — so a full administrator is ungated on Usage while the auditor is
+    # not. If you want an admins-only door for the whole dashboard instead, that is
+    # oauthProxy.sar.
+    #
+    # ONE EDGE WORTH KNOWING, measured: with `visibility.enabled=false` the usage tier is not
+    # consulted at all, so this view stays per-person for EVERY reader including a
+    # cluster-admin, and `all` here becomes the only thing that widens it. That is deliberate
+    # and it is the safe direction — switching off scoping for CLUSTER data must not, as a side
+    # effect, publish presence records. It also means no SubjectAccessReview is attempted in
+    # that state, which is why the auth-delegator grant may be absent there without breaking
+    # anything.
     visibility: self
     # Requests are buffered in memory and written once per interval. A write per request
     # would put every API call behind the SQLite writer lock, contending with the poll's
@@ -1059,6 +1074,39 @@ visibility:
     # Empty means a cluster-scoped check — the normal case. Set a namespace only for a
     # threshold that is deliberately namespaced, e.g. get pods/log in
     # openshift-authentication, which cluster-wide admin/edit/view also pass.
+    namespace: ""
+
+  # THE USAGE TAB'S SECOND, STRICTER THRESHOLD — a SubjectAccessReview asked INDEPENDENTLY of
+  # adminSar above, for the Usage tab alone. Everything else the wide tier serves can be
+  # reproduced with `oc` by anyone holding the roles that pass adminSar (groups, bindings,
+  # even the oauth-server logs behind Logins — cluster-reader holds get on pods/log). The
+  # Usage tab cannot: it is who-opened-this-dashboard data, living only in the dashboard's own
+  # SQLite. So it must not fall to the wide tier that cluster-reader — the deliberate AUDITOR
+  # persona — also passes.
+  #
+  # Measured on the reference cluster, per role bound cluster-wide:
+  #
+  #   check                                              cluster-admin  cluster-reader  separates?
+  #   list groups.user.openshift.io (adminSar default)   yes            yes             no
+  #   list/read anything                                 yes            yes             no
+  #   update clusterrolebindings (this default)          yes            NO              YES
+  #   get secrets                                        yes            NO              YES
+  #
+  # No READ check can separate them, because cluster-reader is by construction "may read
+  # everything". Only a write verb (or get secrets) does. `update clusterrolebindings` is
+  # chosen over `get secrets` because it means "this person administers who has access", the
+  # question actually being asked, and because secret-read is granted to non-admins in plenty
+  # of organisations. THE DASHBOARD STILL NEVER WRITES: a SubjectAccessReview only ASKS whether
+  # a subject could perform a verb; the app holds no write grant and this does not add one.
+  #
+  # If you want the Usage tab wide for everyone (the pre-existing behaviour), that is the blunt
+  # override config.userActivity.visibility: all — it wins over this check. Same nil-safe and
+  # exact-lowercase render guards as adminSar: a miscased field fails the render rather than
+  # silently demoting every administrator.
+  usageAdminSar:
+    apiGroup: rbac.authorization.k8s.io
+    resource: clusterrolebindings
+    verb: update
     namespace: ""
 
 # ---------------------------------------------------------------------------

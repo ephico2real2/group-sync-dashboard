@@ -1110,9 +1110,12 @@ function usagePage() {
       ? `<div class="filterbar-note" style="margin-bottom:8px">Showing
           <strong>${esc(d.viewer || "your")}</strong> activity only. This is identifiable
           personnel data, so each person sees their own.</div>`
+      // Two DIFFERENT causes now reach the wide view — the deployment recording usage for
+      // everyone, or this reader passing the Usage tab's own administrator check — and the
+      // page cannot tell which from `scope` alone. So it states the fact and asserts neither
+      // cause, rather than naming one and being wrong half the time.
       : `<div class="filterbar-note" style="margin-bottom:8px">Showing
-          <strong>all users</strong>, because this deployment records dashboard usage for
-          everyone.</div>`}
+          <strong>all users</strong>, not only your own activity.</div>`}
     <div class="hero">
       <span class="value mono">${activeToday}</span>
       <span class="label">${selfOnly

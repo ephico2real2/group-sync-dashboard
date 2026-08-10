@@ -421,3 +421,162 @@ class TestAdminSeesExactlyToday:
                 assert _strip(x.json()) == _strip(y.json()), (
                     f"the admin view drifted from today's behaviour on {path}"
                 )
+
+
+# ── The Usage tab's second, stricter tier (docs/SPEC_usage_admin_tier.md) ─────────────────
+
+
+def _seed_usage(db: str) -> None:
+    """Three people's activity rows, so `scope: all` is visibly different from `scope: self`."""
+    store = Store(db)
+    store.record_user_activity([
+        {"user_name": u, "day": "2026-08-08", "email": f"{u}@x.com",
+         "first_seen_at": "2026-08-08T09:00:00Z", "last_seen_at": "2026-08-08T17:00:00Z",
+         "request_count": n}
+        for u, n in (("alice", 5), ("bob", 9), ("carol", 3))
+    ])
+    store.close()
+
+
+def _usage_app(db: str, *, wide: dict, usage, **kw):
+    """An app with the two tier seams stubbed INDEPENDENTLY — the whole point of the design.
+
+    `wide` maps viewer -> wide tier; `usage` is a stub object (so a test can pass an exploding
+    or junk resolver) or a dict, which is wrapped. The real resolvers build_app makes against
+    the configured cluster are overwritten here and never called.
+    """
+    app = build_app(_settings(db, **kw), run_poller=False)
+    app.state.tier_resolver = _MapResolver(wide)
+    app.state.usage_tier_resolver = _MapResolver(usage) if isinstance(usage, dict) else usage
+    return app
+
+
+class TestUsageAdminTier:
+    """Usage is the one dataset with no `oc` equivalent — it lives only in the dashboard's own
+    database — so it gets a stricter threshold than the wide audit views the auditor persona
+    (cluster-reader) keeps. The two tiers are decided by separate resolvers with separate
+    caches and must never share a verdict."""
+
+    def test_the_usage_admin_tier_sees_every_row_and_the_aggregates(self, tmp_path):
+        """Spec test 1: a reader who passes the usage tier gets scope=all, all rows, summary."""
+        db = str(tmp_path / "gsd.db")
+        _seed_usage(db)
+        with TestClient(_usage_app(db, wide={"admin": "all"}, usage={"admin": "all"})) as c:
+            body = c.get("/api/dashboard/activity", headers=H("admin")).json()
+        assert body["scope"] == "all"
+        assert {r["user_name"] for r in body["activity"]} == {"alice", "bob", "carol"}
+        assert body["summary"]["distinct_users"] == 3
+        assert body["summary"]["interactions"] == 17
+
+    def test_the_usage_tier_is_independent_of_the_wide_tier(self, tmp_path):
+        """Spec test 2 — THE test: cluster-reader passes the WIDE check and FAILS the usage
+        check, so it stays scope=all on /groups (the audit view it is meant to keep) and
+        scope=self on Usage (colleagues' presence records it must not see) — same app, same
+        request cycle. cluster-admin passes both and is scope=all on Usage. A decided wide tier
+        must never widen Usage, and vice versa."""
+        db = str(tmp_path / "gsd.db")
+        _seed_usage(db)
+        # wide admits both personas; usage admits only the full admin.
+        app = _usage_app(db, wide={"reader": "all", "admin": "all"}, usage={"admin": "all"})
+        with TestClient(app) as c:
+            reader_groups = c.get("/api/clusters/c1/groups", headers=H("reader")).json()
+            reader_usage = c.get("/api/dashboard/activity", headers=H("reader")).json()
+            admin_usage = c.get("/api/dashboard/activity", headers=H("admin")).json()
+        assert reader_groups["scope"] == "all", "the auditor keeps every wide audit view"
+        assert reader_usage["scope"] == "self", "but NOT colleagues' presence records"
+        assert {r["user_name"] for r in reader_usage["activity"]} <= {"reader"}
+        assert admin_usage["scope"] == "all", "a full administrator is ungated on Usage"
+        assert {r["user_name"] for r in admin_usage["activity"]} == {"alice", "bob", "carol"}
+
+    def test_a_self_tier_reader_sees_only_their_own_usage(self, tmp_path):
+        """Spec test 3: a reader the usage tier denies sees their own rows only — and the self
+        verdict must come from CONSULTING the usage tier, not from ignoring it (the pre-tier
+        default was also self, so the call-count is what proves the new path runs)."""
+        db = str(tmp_path / "gsd.db")
+        _seed_usage(db)
+        usage_stub = _MapResolver({})            # denies everyone, counts calls
+        app = _usage_app(db, wide={"alice": "all"}, usage=usage_stub)
+        with TestClient(app) as c:
+            body = c.get("/api/dashboard/activity", headers=H("alice")).json()
+        assert body["scope"] == "self"
+        assert {r["user_name"] for r in body["activity"]} == {"alice"}
+        assert usage_stub.calls >= 1, (
+            "the self verdict must be a DECISION by the usage tier, not the wide tier leaking "
+            "in or the endpoint ignoring the tier entirely")
+
+    def test_the_usage_tier_fails_closed(self, tmp_path):
+        """Spec test 4: a raised exception, a junk tier string, and no resolver at all each
+        serve the reader's own rows — never the wide set — exactly as viewer_scope does. The
+        wide tier says `all` for this reader throughout, to prove it cannot leak into Usage."""
+        db = str(tmp_path / "gsd.db")
+        _seed_usage(db)
+
+        class Exploding:
+            def __init__(self):
+                self.calls = 0
+
+            def resolve(self, viewer):
+                self.calls += 1
+                raise RuntimeError("SAR path down")
+
+        class Junk:
+            def __init__(self):
+                self.calls = 0
+
+            def resolve(self, viewer):
+                self.calls += 1
+                return "administrator"           # not the exact string "all"
+
+        for stub in (Exploding(), Junk()):
+            app = _usage_app(db, wide={"alice": "all"}, usage=stub)
+            with TestClient(app) as c:
+                body = c.get("/api/dashboard/activity", headers=H("alice")).json()
+            assert body["scope"] == "self", f"{type(stub).__name__} must fail closed to self"
+            assert stub.calls >= 1, "fail-closed still means the tier was consulted"
+
+        # No resolver at all — neither published nor injected — is the third indeterminate case.
+        app = build_app(_settings(db), run_poller=False)
+        app.state.tier_resolver = _MapResolver({"alice": "all"})
+        app.state.usage_tier_resolver = None
+        with TestClient(app) as c:
+            body = c.get("/api/dashboard/activity", headers=H("alice")).json()
+        assert body["scope"] == "self", "no usage resolver must serve self, not the wide set"
+
+    def test_user_activity_visibility_all_wins_over_the_usage_tier(self, tmp_path):
+        """Spec test 5: the blunt escape hatch is unchanged and takes precedence — everyone
+        sees all rows, and the usage tier is never even consulted."""
+        db = str(tmp_path / "gsd.db")
+        _seed_usage(db)
+        usage_stub = _MapResolver({})            # would deny everyone if asked
+        app = build_app(_settings(db, user_activity_visibility="all"), run_poller=False)
+        app.state.tier_resolver = _MapResolver({})
+        app.state.usage_tier_resolver = usage_stub
+        with TestClient(app) as c:
+            body = c.get("/api/dashboard/activity", headers=H("alice")).json()
+        assert body["scope"] == "all"
+        assert {r["user_name"] for r in body["activity"]} == {"alice", "bob", "carol"}
+        assert usage_stub.calls == 0, "the override wins before the usage tier is consulted"
+
+    def test_no_identity_is_refused(self, tmp_path):
+        """Spec test 6: no authenticated identity -> 403, precedence 3, unchanged."""
+        db = str(tmp_path / "gsd.db")
+        _seed_usage(db)
+        with TestClient(_usage_app(db, wide={}, usage={})) as c:
+            assert c.get("/api/dashboard/activity").status_code == 403
+
+    def test_the_two_sar_caches_are_independent(self, db):
+        """Spec test 8: build_app must construct TWO resolvers with TWO caches, asking two
+        different questions, so a verdict decided by one is never served by the other. Reaches
+        into the resolver internals deliberately: separate `_cache` objects is the property the
+        independence rests on, and it cannot be observed from the wire."""
+        app = build_app(_settings(db), run_poller=False)
+        wide = app.state.tier_resolver
+        usage = app.state.usage_tier_resolver
+        assert wide is not None and usage is not None, "both tiers must be built"
+        assert wide is not usage, "one resolver for both tiers would share a cache across two questions"
+        assert wide._cache is not usage._cache, "the caches must be distinct objects"
+        # The questions themselves differ — the reason a shared verdict would be wrong.
+        assert wide._attributes["resource"] == "groups"
+        assert usage._attributes["resource"] == "clusterrolebindings"
+        assert usage._attributes["verb"] == "update"
+        assert wide._attributes != usage._attributes

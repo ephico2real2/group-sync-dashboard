@@ -58,7 +58,7 @@ self-scoped reader legitimately wants:
 | `/api/clusters/{c}/membership-changes` | who joined and left which group, when | changes **affecting them** |
 | `/api/clusters/{c}/groupsyncs` (+events) | operator CR health | not personal data; see §6 Q3 |
 | `/api/clusters/{c}/operator-configs` | operator configuration | **administrator tier** (403 at self); see §6 Q3 |
-| `/api/dashboard/activity` | who used the dashboard, when | **already self-scoped by default** |
+| `/api/dashboard/activity` | who used the dashboard, when | self by default; widened only by its **own stricter tier** (`visibility.usageAdminSar`) or the `userActivity.visibility: all` override — see docs/SPEC_usage_admin_tier.md |
 | `/api/alerts` | derived counts | depends on the above |
 | `/api/whoami` | the caller's own identity | unchanged |
 
@@ -68,6 +68,10 @@ Two observations that shape the requirement:
   precisely because "the response is identifiable personnel data — who was present, when, and how
   much — and the dashboard's usual *you could read this with oc anyway* argument does not cover it."
   The reasoning generalises; the setting does not. That is the inconsistency to resolve.
+  *(RESOLVED, docs/SPEC_usage_admin_tier.md: Usage now also has a per-reader ADMIN tier — a full
+  cluster-admin sees everyone's usage — but a STRICTER one than the wide view, because Usage is the
+  one dataset with no `oc` equivalent and the auditor `cluster-reader` must not read colleagues'
+  presence. The `userActivity.visibility: all` override still wins over it, unchanged.)*
 - **`/logins` is the most sensitive endpoint in the application.** It names a person and states that
   their password was wrong, expired, or that their account is locked. It has no self-scoping today.
 

@@ -129,6 +129,7 @@ def build_app(
     settings: Settings,
     run_poller: bool = True,
     tier_resolver: Callable[[str], str] | None = None,
+    usage_tier_resolver: Callable[[str], str] | None = None,
 ) -> FastAPI:
     """`tier_resolver` answers "which tier is this viewer?" — "all" or "self".
 
@@ -136,6 +137,11 @@ def build_app(
     visibility module) stays independently testable and this app stays buildable without a
     cluster. None is a valid production state and it FAILS CLOSED: with restrictions on
     and no resolver, every reader gets the self view — never the wide one (decision D1).
+
+    `usage_tier_resolver` is the SECOND, INDEPENDENT decider for the Usage tab alone
+    (docs/SPEC_usage_admin_tier.md): a stricter threshold, its own instance and its own cache,
+    because it asks a different question about the same person and a decided usage tier must
+    never answer for the wide tier. Same fail-closed contract.
     """
     # The application asks for "the configured backend" and does not name an engine or its
     # tuning knobs. open_backend() owns that; see gsd/storage.py.
@@ -179,6 +185,21 @@ def build_app(
             resource=settings.visibility_admin_sar_resource,
             api_group=settings.visibility_admin_sar_api_group,
             namespace=settings.visibility_admin_sar_namespace,
+            ttl_seconds=float(settings.visibility_tier_ttl_seconds),
+        )
+    # A SEPARATE instance for the Usage tab (docs/SPEC_usage_admin_tier.md), never the same one:
+    # it asks a stricter question (a write verb the auditor cluster-reader fails) about the same
+    # person, so sharing the wide tier's cache would let one verdict answer for the other. Same
+    # 60s TTL, its own dict.
+    usage_resolver: TierResolver | None = None
+    if (usage_tier_resolver is None and settings.view_restrictions_enabled
+            and local_cluster is not None):
+        usage_resolver = TierResolver(
+            local_cluster,
+            verb=settings.visibility_usage_admin_sar_verb,
+            resource=settings.visibility_usage_admin_sar_resource,
+            api_group=settings.visibility_usage_admin_sar_api_group,
+            namespace=settings.visibility_usage_admin_sar_namespace,
             ttl_seconds=float(settings.visibility_tier_ttl_seconds),
         )
     if not settings.view_restrictions_enabled:
@@ -258,6 +279,47 @@ def build_app(
             return viewer, "self"
         # Only the exact string "all" widens — the _visibility_setting discipline applied
         # to the resolver's answer, so a buggy resolver cannot widen by returning junk.
+        return viewer, ("all" if tier == "all" else "self")
+
+    def usage_scope(request: Request) -> tuple[str | None, str]:
+        """Resolve this request to (viewer, scope) for the USAGE tab specifically.
+
+        A SECOND, STRICTER threshold than viewer_scope, and INDEPENDENT of it
+        (docs/SPEC_usage_admin_tier.md). The Usage tab is the one dataset that lives only in the
+        dashboard's own database and cannot be reproduced with `oc`, so it must not fall to the
+        wide tier that cluster-reader — the deliberate auditor persona — also passes. Precedence:
+
+          1. userActivity.visibility == "all" -> every admitted reader sees all rows. The
+             existing blunt escape hatch, kept unchanged.
+          2. otherwise the USAGE resolver decides: its exact "all" widens; everything else — no
+             resolver, an error, a junk string, no identity — is the reader's own rows.
+
+        Fail closed like viewer_scope: only the exact string "all" ever widens. Reads the usage
+        resolver off its OWN app.state seam, never the wide tier's.
+        """
+        viewer = trusted_viewer(request)
+        # Precedence 1: the blunt operator override, independent of any tier. Preserved verbatim
+        # from the pre-tier behaviour so a deployment that set it keeps working.
+        if settings.user_activity_visibility == "all":
+            return viewer, "all"
+        # Restrictions off (or proxy off) runs no tier machinery — but Usage is NOT the wide
+        # view, so it stays self here rather than widening. This mirrors the pre-tier behaviour,
+        # where /api/dashboard/activity was governed by userActivity.visibility alone and never
+        # by the visibility tier: turning cluster-data restrictions off must not, as a side
+        # effect, expose colleagues' presence records.
+        if not restrict:
+            return viewer, "self"
+        state_resolver = getattr(app.state, "usage_tier_resolver", None)
+        if not viewer or (state_resolver is None and usage_tier_resolver is None):
+            return viewer, "self"
+        try:
+            tier = (state_resolver.resolve(viewer) if state_resolver is not None
+                    else usage_tier_resolver(viewer))
+        except Exception:  # noqa: BLE001
+            # An API-server blip degrades the Usage VIEW to the reader's own rows, never the
+            # availability and never the wide set — the same discipline viewer_scope follows.
+            log.exception("usage tier resolution failed for %r; serving the self view", viewer)
+            return viewer, "self"
         return viewer, ("all" if tier == "all" else "self")
 
     def require_viewer(viewer: str | None) -> str:
@@ -1432,14 +1494,24 @@ def build_app(
     ) -> dict:
         """Who used the dashboard, one row per user per UTC day.
 
-        SELF-ONLY by default. This returns identifiable personnel data — username, email,
-        the dates somebody was present and the window they worked in — and it used to hand
-        all of it to every authenticated user. The dashboard's usual justification does not
-        stretch this far: "you could read the groups with oc anyway" is true of group
-        membership and false of who looked at it.
+        SELF-ONLY by default, and gated by its OWN threshold. This returns identifiable
+        personnel data — username, email, the dates somebody was present and the window they
+        worked in — and it used to hand all of it to every authenticated user. The dashboard's
+        usual justification does not stretch this far: "you could read the groups with oc
+        anyway" is true of group membership and false of who looked at it — and unlike every
+        other view, Usage lives ONLY in this dashboard's database, reproducible with no `oc`
+        command at all.
 
-        `userActivity.visibility: all` restores the old behaviour for a deployment that
-        genuinely wants it, as a deliberate, documented choice rather than a default.
+        THAT IS WHY IT HAS A SECOND, STRICTER TIER (docs/SPEC_usage_admin_tier.md), decided by
+        usage_scope rather than viewer_scope. cluster-reader — the auditor persona that keeps
+        every wide audit view — must NOT browse colleagues' presence records, and no read check
+        separates it from cluster-admin, so the usage threshold asks a write verb. The wide tier
+        and the usage tier are independent: a cluster-reader comes out scope=all on /groups and
+        scope=self here, same request cycle, same app.
+
+        `userActivity.visibility: all` still restores the old everyone-sees-everyone behaviour
+        for a deployment that genuinely wants it — the blunt override, unchanged, and it wins
+        over the tier (usage_scope precedence 1).
 
         Deliberately not a page-view log — see the dashboard_user_activity comment in
         store.py for why this is aggregated rather than per-request.
@@ -1457,8 +1529,10 @@ def build_app(
         if not viewer:
             raise HTTPException(status_code=403, detail="no authenticated identity")
 
-        everyone = settings.user_activity_visibility == "all"
-        scope_to = None if everyone else viewer
+        # The usage tier, not the wide tier: scope is "all" only via the blunt override or a
+        # positive usage-SAR verdict, and everything indeterminate serves the reader's own rows.
+        _, scope = usage_scope(request)
+        scope_to = None if scope == "all" else viewer
         # The summary is computed over the whole visible set, the rows are one page of it.
         # Without the summary the page counted the rows it was handed and called that the
         # total, which is the same silent-truncation defect the user-bindings endpoint was
@@ -1470,7 +1544,7 @@ def build_app(
         return {
             "enabled": activity.enabled,
             "retention_days": settings.user_activity_retention_days,
-            "scope": "all" if everyone else "self",
+            "scope": scope,
             "viewer": viewer,
             "total": summary["rows_total"],
             "limit": limit,
@@ -1617,6 +1691,10 @@ def build_app(
     # None whenever the decision was injected into build_app instead — viewer_scope then
     # falls back to that injected callable.
     app.state.tier_resolver = resolver
+    # The Usage tab's OWN seam, deliberately a distinct attribute and a distinct resolver
+    # instance: usage_scope reads only this one, so a test (and the live app) can hold a
+    # cluster-reader at scope=all on the wide tier and scope=self on Usage in the same request.
+    app.state.usage_tier_resolver = usage_resolver
     return app
 
 

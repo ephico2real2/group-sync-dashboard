@@ -131,12 +131,15 @@ subjects:
 #
 # TWO CONSUMERS, one grant, and only the second is on by default. The proxy uses it for
 # -openshift-delegate-urls (apiTokenAccess, default off). The DASHBOARD uses
-# `create subjectaccessreviews` for the per-user visibility tier: it asks "may this reader
-# pass visibility.adminSar?" as its own ServiceAccount, which is why this binding renders
-# whenever visibility.enabled is true. A SubjectAccessReview creates no persistent object
-# and reads nothing, so the reader role's rule — no write verb on anything the dashboard
-# reports on — still holds. Without this grant every review errors and every reader,
-# administrators included, fails closed to the self tier permanently.
+# `create subjectaccessreviews` for the per-user visibility tiers: it asks "may this reader
+# pass visibility.adminSar?" (the wide view) and "may this reader pass visibility.usageAdminSar?"
+# (the stricter Usage-tab tier) as its own ServiceAccount, which is why this binding renders
+# whenever visibility.enabled is true. Both are the same grant — a SubjectAccessReview creates
+# no persistent object and reads nothing, so the reader role's rule (no write verb on anything
+# the dashboard reports on) still holds even though usageAdminSar's default question names a
+# write verb: it only ASKS whether the reader could, it never performs it. Without this grant
+# every review errors and every reader, administrators included, fails closed to the self tier
+# permanently.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:

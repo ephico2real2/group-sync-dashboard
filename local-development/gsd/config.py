@@ -312,6 +312,20 @@ class Settings:
     visibility_admin_sar_verb: str = "list"
     # Empty means a cluster-scoped check.
     visibility_admin_sar_namespace: str = ""
+
+    # The SECOND, STRICTER threshold, for the Usage tab alone (chart: visibility.usageAdminSar).
+    # Usage is dashboard-usage data — who opened this dashboard, on which days — and it lives
+    # only in the dashboard's own SQLite, so unlike every other wide view it cannot be reproduced
+    # with `oc`. That is why it gets a HIGHER bar than the audit views: cluster-reader (the
+    # auditor persona) keeps every wide audit view but must NOT see colleagues' presence records.
+    # Measured: no read check separates cluster-admin from cluster-reader, so the default asks a
+    # write verb — `update clusterrolebindings` — which the dashboard never performs; a SAR only
+    # asks. See docs/SPEC_usage_admin_tier.md.
+    visibility_usage_admin_sar_api_group: str = "rbac.authorization.k8s.io"
+    visibility_usage_admin_sar_resource: str = "clusterrolebindings"
+    visibility_usage_admin_sar_subresource: str = ""
+    visibility_usage_admin_sar_verb: str = "update"
+    visibility_usage_admin_sar_namespace: str = ""
     # How long a viewer's tier verdict may be reused before it is re-decided.
     #
     # THE WORST-CASE STALENESS WINDOW, stated where the number lives: the SAR evaluates live RBAC,
@@ -446,62 +460,87 @@ def _duration_setting(raw: dict, env_name: str, yaml_key: str, default: int) -> 
         log.warning("%s=%r is not a Go duration; using %r seconds", env_name, source, default)
         return default
     return int(total)
-# What each field of visibility.adminSar may contain. RBAC matching is exact and lowercase, so a
-# miscased or misspelt field would not error — it would answer allowed=false for every viewer and
-# silently demote every administrator. The chart refuses these shapes at render time; this guards
-# the same line for a hand-written config file.
+# What each field of a visibility SubjectAccessReview may contain. RBAC matching is exact and
+# lowercase, so a miscased or misspelt field would not error — it would answer allowed=false for
+# every viewer and silently demote every administrator. The chart refuses these shapes at render
+# time; this guards the same line for a hand-written config file. Keyed by the ConfigMap-key
+# SUFFIX, so one rule set serves BOTH thresholds (visibilityAdminSar* and visibilityUsageAdminSar*)
+# — the operator meets one convention twice rather than two conventions once.
 _SAR_FIELD_PATTERNS = {
-    "visibilityAdminSarApiGroup": re.compile(r"[a-z0-9.\-]*"),
-    "visibilityAdminSarResource": re.compile(r"[a-z0-9\-]+(/[a-z0-9\-]+)?"),
-    "visibilityAdminSarVerb": re.compile(r"[a-z]+"),
-    "visibilityAdminSarNamespace": re.compile(r"[a-z0-9\-]*"),
+    "ApiGroup": re.compile(r"[a-z0-9.\-]*"),
+    "Resource": re.compile(r"[a-z0-9\-]+(/[a-z0-9\-]+)?"),
+    "Verb": re.compile(r"[a-z]+"),
+    "Namespace": re.compile(r"[a-z0-9\-]*"),
 }
 
-_SAR_DEFAULTS = {
-    "visibilityAdminSarApiGroup": "user.openshift.io",
-    "visibilityAdminSarResource": "groups",
-    "visibilityAdminSarVerb": "list",
-    "visibilityAdminSarNamespace": "",
+# The wide tier's default: list groups.user.openshift.io, the narrowest measured threshold that
+# admits cluster-admin and cluster-reader and nobody else among the stock roles.
+_ADMIN_SAR_DEFAULTS = {
+    "ApiGroup": "user.openshift.io",
+    "Resource": "groups",
+    "Verb": "list",
+    "Namespace": "",
+}
+
+# The Usage tab's HIGHER default. Measured on the reference cluster: NO read check separates
+# cluster-admin from cluster-reader, because cluster-reader may read everything — so the default
+# asks about a WRITE verb, `update clusterrolebindings`, which cluster-admin holds and
+# cluster-reader does not. The dashboard still never writes; a SubjectAccessReview only asks
+# whether a subject could. See docs/SPEC_usage_admin_tier.md.
+_USAGE_ADMIN_SAR_DEFAULTS = {
+    "ApiGroup": "rbac.authorization.k8s.io",
+    "Resource": "clusterrolebindings",
+    "Verb": "update",
+    "Namespace": "",
 }
 
 
-def _visibility_sar_setting(raw: dict) -> tuple[str, str, str, str, str]:
-    """The admin-threshold SubjectAccessReview, taken whole or not at all.
+def _sar_setting(raw: dict, key_prefix: str, defaults: dict[str, str], default_label: str
+                 ) -> tuple[str, str, str, str, str]:
+    """One visibility-threshold SubjectAccessReview, taken whole or not at all.
 
     Fail SAFE, in the right direction: any unusable field falls back to the ENTIRE default check —
-    list groups.user.openshift.io, the narrowest measured threshold — never to "everyone passes"
-    and never to disabling the control. Whole, because half a custom check (the operator's
-    resource under the default verb) is a question nobody chose to ask.
+    never to "everyone passes" and never to disabling the control. Whole, because half a custom
+    check (the operator's resource under the default verb) is a question nobody chose to ask.
 
-    Returns (api_group, resource, subresource, verb, namespace); a resource/subresource spelling
-    is split here so the SAR builder never re-parses.
+    `key_prefix` is the ConfigMap-key stem (visibilityAdminSar / visibilityUsageAdminSar); one
+    parser serves both thresholds so they cannot drift. `default_label` names the fallback check in
+    the warning. Returns (api_group, resource, subresource, verb, namespace); a resource/subresource
+    spelling is split here so the SAR builder never re-parses.
     """
     fields: dict[str, str] = {}
-    for key, pattern in _SAR_FIELD_PATTERNS.items():
+    for suffix, pattern in _SAR_FIELD_PATTERNS.items():
+        key = key_prefix + suffix
         value = raw.get(key)
         if value is None:
             # Absent or nil means "not set", which takes the default — matching the chart, where a
             # commented-out sub-key must not change the question.
-            fields[key] = _SAR_DEFAULTS[key]
+            fields[suffix] = defaults[suffix]
             continue
         word = str(value).strip()
         if not pattern.fullmatch(word):
             log.warning(
-                "%s=%r is not usable in a SubjectAccessReview; using the default check "
-                "(list groups.user.openshift.io)",
-                key, value,
+                "%s=%r is not usable in a SubjectAccessReview; using the default check (%s)",
+                key, value, default_label,
             )
-            fields = dict(_SAR_DEFAULTS)
+            fields = dict(defaults)
             break
-        fields[key] = word
-    resource, _, subresource = fields["visibilityAdminSarResource"].partition("/")
-    return (
-        fields["visibilityAdminSarApiGroup"],
-        resource,
-        subresource,
-        fields["visibilityAdminSarVerb"],
-        fields["visibilityAdminSarNamespace"],
-    )
+        fields[suffix] = word
+    resource, _, subresource = fields["Resource"].partition("/")
+    return (fields["ApiGroup"], resource, subresource, fields["Verb"], fields["Namespace"])
+
+
+def _visibility_sar_setting(raw: dict) -> tuple[str, str, str, str, str]:
+    """The WIDE-view admin threshold (chart: visibility.adminSar)."""
+    return _sar_setting(raw, "visibilityAdminSar", _ADMIN_SAR_DEFAULTS,
+                        "list groups.user.openshift.io")
+
+
+def _usage_visibility_sar_setting(raw: dict) -> tuple[str, str, str, str, str]:
+    """The stricter USAGE-tab threshold (chart: visibility.usageAdminSar). Separate default, same
+    fail-safe discipline — see _USAGE_ADMIN_SAR_DEFAULTS for why it is a write verb."""
+    return _sar_setting(raw, "visibilityUsageAdminSar", _USAGE_ADMIN_SAR_DEFAULTS,
+                        "update clusterrolebindings.rbac.authorization.k8s.io")
 
 
 def _bool_setting(raw: dict, env_name: str, yaml_key: str, default: bool) -> bool:
@@ -603,6 +642,7 @@ def load_settings(path: str | Path) -> Settings:
         )
 
     admin_sar = _visibility_sar_setting(raw)
+    usage_admin_sar = _usage_visibility_sar_setting(raw)
     return Settings(
         clusters=clusters,
         poll_interval_seconds=int(raw.get("pollIntervalSeconds", 60)),
@@ -667,6 +707,11 @@ def load_settings(path: str | Path) -> Settings:
         visibility_admin_sar_subresource=admin_sar[2],
         visibility_admin_sar_verb=admin_sar[3],
         visibility_admin_sar_namespace=admin_sar[4],
+        visibility_usage_admin_sar_api_group=usage_admin_sar[0],
+        visibility_usage_admin_sar_resource=usage_admin_sar[1],
+        visibility_usage_admin_sar_subresource=usage_admin_sar[2],
+        visibility_usage_admin_sar_verb=usage_admin_sar[3],
+        visibility_usage_admin_sar_namespace=usage_admin_sar[4],
         visibility_tier_ttl_seconds=_num_setting(
             raw, "GSD_VISIBILITY_TIER_TTL_SECONDS", "visibilityTierTtlSeconds", 60, int
         ),

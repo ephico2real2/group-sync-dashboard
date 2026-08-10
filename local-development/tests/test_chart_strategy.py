@@ -918,3 +918,63 @@ class TestVisibilityThreading:
         notes = (CHART / "templates" / "NOTES.txt").read_text()
         assert "oc adm policy add-cluster-role-to-user cluster-reader" in notes
         assert "visibility.enabled=false" in notes
+
+    # ── The Usage tab's second, stricter threshold (docs/SPEC_usage_admin_tier.md) ──────
+
+    def test_the_usage_sar_default_is_a_write_verb_in_the_configmap(self):
+        """Spec test 7: usageAdminSar threads into the ConfigMap, defaulting to the write verb
+        that separates cluster-admin from cluster-reader (no read check does)."""
+        ok, out = render()
+        assert ok, out
+        cm = self._configmap(out)
+        assert cm["visibilityUsageAdminSarApiGroup"] == "rbac.authorization.k8s.io"
+        assert cm["visibilityUsageAdminSarResource"] == "clusterrolebindings"
+        assert cm["visibilityUsageAdminSarVerb"] == "update"
+        assert cm["visibilityUsageAdminSarNamespace"] == ""
+
+    def test_a_custom_usage_sar_shape_reaches_the_configmap(self):
+        ok, out = render(**{
+            "visibility.usageAdminSar.apiGroup": "",
+            "visibility.usageAdminSar.resource": "secrets",
+            "visibility.usageAdminSar.verb": "get",
+        })
+        assert ok, out
+        cm = self._configmap(out)
+        assert cm["visibilityUsageAdminSarApiGroup"] == ""      # the core group is expressible
+        assert cm["visibilityUsageAdminSarResource"] == "secrets"
+        assert cm["visibilityUsageAdminSarVerb"] == "get"
+
+    def test_a_nilled_usage_block_keeps_the_default_write_check(self):
+        """Commenting the sub-keys out leaves usageAdminSar present-but-nil; the nil-safe
+        helpers must fall back to the default, never to an empty (allowed=false) check."""
+        ok, out = render(**{"visibility.usageAdminSar": "null"})
+        assert ok, out
+        cm = self._configmap(out)
+        assert cm["visibilityUsageAdminSarResource"] == "clusterrolebindings"
+        assert cm["visibilityUsageAdminSarVerb"] == "update"
+
+    def test_a_nonsensical_usage_sar_shape_is_refused(self):
+        """Same exact-lowercase guard as adminSar: a miscased or versioned field would answer
+        no for every viewer and silently demote every administrator, so it fails the render."""
+        for key, bad in (("verb", "Update"), ("resource", "ClusterRoleBindings"),
+                         ("apiGroup", "rbac.authorization.k8s.io/v1"), ("namespace", "Bad_NS")):
+            ok, out = render(**{f"visibility.usageAdminSar.{key}": bad})
+            assert not ok, f"usageAdminSar.{key}={bad!r} rendered happily"
+            assert "visibility.usageAdminSar" in out
+
+    def test_the_usage_tier_reuses_the_one_sar_grant(self):
+        """The usage tier needs no new RBAC: it is the SAME `create subjectaccessreviews`
+        (system:auth-delegator) the wide tier uses. So the default install still carries
+        exactly one such binding, and it still disappears when visibility is off — one grant,
+        two questions."""
+        ok, out = render()
+        assert ok, out
+        bindings = [d for d in self._docs(out)
+                    if d.get("kind") == "ClusterRoleBinding"
+                    and d["roleRef"]["name"] == "system:auth-delegator"]
+        assert len(bindings) == 1, "the usage tier must not add a second SAR grant"
+        ok, out = render(visibility__enabled="false")
+        assert ok, out
+        assert not any(d.get("kind") == "ClusterRoleBinding"
+                       and d["roleRef"]["name"] == "system:auth-delegator"
+                       for d in self._docs(out)), "no tier -> no SAR grant, usage included"

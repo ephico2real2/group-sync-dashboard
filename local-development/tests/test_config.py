@@ -339,3 +339,39 @@ class TestViewRestrictions:
 
     def test_the_tier_ttl_defaults_to_the_documented_window(self, tmp_path):
         assert load_settings(write(tmp_path, BASE)).visibility_tier_ttl_seconds == 60
+
+    def test_usage_sar_defaults_to_update_clusterrolebindings(self, tmp_path):
+        """The Usage tab's stricter default: a WRITE verb, the one thing that separates
+        cluster-admin from the read-everything cluster-reader. Its OWN default, not adminSar's."""
+        s = load_settings(write(tmp_path, BASE))
+        assert s.visibility_usage_admin_sar_api_group == "rbac.authorization.k8s.io"
+        assert s.visibility_usage_admin_sar_resource == "clusterrolebindings"
+        assert s.visibility_usage_admin_sar_subresource == ""
+        assert s.visibility_usage_admin_sar_verb == "update"
+        assert s.visibility_usage_admin_sar_namespace == ""
+
+    def test_usage_sar_is_read_from_its_own_configmap_keys(self, tmp_path):
+        """Its own key prefix, independent of adminSar — one parser, two thresholds."""
+        cfg = BASE + (
+            'visibilityUsageAdminSarApiGroup: ""\n'
+            'visibilityUsageAdminSarResource: "secrets"\n'
+            'visibilityUsageAdminSarVerb: "get"\n'
+        )
+        s = load_settings(write(tmp_path, cfg))
+        assert s.visibility_usage_admin_sar_api_group == ""      # the core group is expressible
+        assert s.visibility_usage_admin_sar_resource == "secrets"
+        assert s.visibility_usage_admin_sar_verb == "get"
+        # adminSar is untouched by usageAdminSar keys — the two are parsed separately.
+        assert s.visibility_admin_sar_resource == "groups"
+
+    def test_usage_sar_falls_back_whole_to_its_own_default(self, tmp_path):
+        """An unusable field takes the ENTIRE usage default (not adminSar's, and never
+        'everyone passes') — the same whole-or-nothing discipline as adminSar."""
+        cfg = BASE + (
+            'visibilityUsageAdminSarResource: "secrets"\n'
+            'visibilityUsageAdminSarVerb: "Get"\n'   # miscased: RBAC matching is exact
+        )
+        s = load_settings(write(tmp_path, cfg))
+        assert s.visibility_usage_admin_sar_verb == "update"
+        assert s.visibility_usage_admin_sar_resource == "clusterrolebindings"
+        assert s.visibility_usage_admin_sar_api_group == "rbac.authorization.k8s.io"

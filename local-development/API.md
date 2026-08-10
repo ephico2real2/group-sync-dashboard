@@ -53,6 +53,18 @@ How the scope is chosen:
   `visibility tier for 'alice' is indeterminate (auth_failed: …) — failing closed to the self view
   for this request`.
 
+**One endpoint has a SECOND, STRICTER threshold: `/api/dashboard/activity` (the Usage tab).** Every
+other view above can be reproduced with `oc` by anyone holding the roles that pass the wide check —
+groups, bindings, even the oauth-server logs behind Logins. Usage cannot: it is who-opened-this-
+dashboard data, living only in the dashboard's own database. So it does NOT follow the wide tier that
+`cluster-reader` (the auditor persona) also passes. Its `scope` is `all` only when
+`config.userActivity.visibility: all` is set (the blunt override, which always wins) OR a SEPARATE
+SubjectAccessReview — `visibility.usageAdminSar`, default `update clusterrolebindings`, a write verb
+`cluster-reader` fails and `cluster-admin` passes — allows this reader. The two tiers are independent
+and cached separately: a client will see `cluster-reader` come back `scope: all` on `/groups` and
+`scope: self` on `/api/dashboard/activity` in the same session. The dashboard still writes nothing; a
+SubjectAccessReview only asks whether a subject could. See docs/SPEC_usage_admin_tier.md.
+
 `GET /api/whoami` reports the same decision as a nested object rather than top-level fields:
 `"visibility": {"scope": "self", "enabled": true}`. `enabled` is the operator's switch
 (`GSD_ENABLE_VIEW_RESTRICTIONS`), not the outcome for this reader.
@@ -548,8 +560,15 @@ interaction count.
 **`scope` is `self` by default** — each person sees only their own row. This is identifiable
 personnel data (who was present, on which days, between which times), and the argument that
 carries the rest of this API, "you could read the groups with `oc` anyway", is true of group
-membership and false of who looked at it. `config.userActivity.visibility: all` widens it as a
-deliberate, documented choice.
+membership and false of who looked at it — and Usage is the one dataset with no `oc` equivalent at
+all, living only in this dashboard's database.
+
+**It is widened by its OWN, stricter tier, not the wide one.** `scope` is `all` here only when
+`config.userActivity.visibility: all` is set (the blunt override, which always wins) OR when this
+reader passes `visibility.usageAdminSar` — a separate SubjectAccessReview, default
+`update clusterrolebindings`, that `cluster-admin` passes and the auditor `cluster-reader` does not.
+Passing the wide `visibility.adminSar` does NOT widen this view; the two tiers are independent and
+cached separately. See docs/SPEC_usage_admin_tier.md.
 
 **`summary` describes the whole set, not the page.** It used to be computed in the browser from
 `activity`, which the API caps — measured against 1,092 stored rows, the UI reported 167 days
