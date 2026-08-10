@@ -1,0 +1,91 @@
+# Package the chart and publish it to the gh-pages Helm repository.
+#
+# The same shape as group-sync-operator-helm-chart's helm.yaml, deliberately: one pattern to
+# learn, and chart-releaser is the tool the Helm project itself ships for this.
+#
+# What this gives a consumer:
+#   helm repo add group-sync-dashboard https://ephico2real2.github.io/group-sync-dashboard
+#   helm install gsd group-sync-dashboard/group-sync-dashboard
+#
+# It does NOT replace publish.yml, which builds the container image. That runs on every push to
+# main; this runs only when the chart changes, because a code-only change produces an identical
+# chart and republishing it would be noise.
+name: Release Charts
+
+on:
+  push:
+    branches:
+      - main
+    # Only when the chart itself changes. chart-releaser skips a version it has already
+    # published, so this filter is about not running at all rather than about correctness — it
+    # keeps the Actions history readable and means a green run corresponds to a chart change.
+    #
+    # Anything not matched here is still validated: ci.yml has its own push-to-main trigger with
+    # no path filter.
+    paths:
+      - 'charts/**'
+
+  # So a release can be forced without an empty commit — after bumping only Chart.yaml's
+  # version, or to retry a run that failed on something transient.
+  workflow_dispatch:
+
+jobs:
+  # The same checks that run on every pull request, CALLED rather than copied. A chart that
+  # cannot render must not become a published release.
+  validate:
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    needs: validate
+    permissions:
+      # chart-releaser pushes the packaged chart and the index to gh-pages, and creates a
+      # GitHub release per chart version. Both need write.
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # chart-releaser needs the full history: it decides what to publish by looking for a
+          # tag matching each chart version, and a shallow clone has no tags.
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config user.name "$GITHUB_ACTOR"
+          git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      # SAY SO WHEN THERE IS NOTHING TO DO. chart-releaser's skip_existing means a chart change
+      # WITHOUT a Chart.yaml version bump publishes nothing and still succeeds — a green run
+      # that shipped no chart, which is the silent no-op this repo keeps finding elsewhere. This
+      # cannot fail the build (the version legitimately stays put when only a README changes)
+      # but it puts the answer in the run summary instead of leaving it to be inferred.
+      - name: Report what this run will publish
+        run: |
+          set -uo pipefail
+          version=$(grep -E '^version:' charts/group-sync-dashboard/Chart.yaml | awk '{print $2}')
+          echo "Chart.yaml version: $version"
+          if git rev-parse --verify --quiet "refs/tags/group-sync-dashboard-${version}" >/dev/null; then
+            # No backticks anywhere in this block: inside a run: script bash reads them as
+            # command substitution, so a prose backtick around a field name becomes an attempt
+            # to execute it.
+            echo "::warning::group-sync-dashboard-${version} is already released, so this run will"
+            echo "::warning::publish NOTHING. Bump the version field in"
+            echo "::warning::charts/group-sync-dashboard/Chart.yaml to release the current chart."
+          else
+            echo "will publish a new release: group-sync-dashboard-${version}"
+          fi
+
+      # charts_dir defaults to `charts`, which is where this chart lives, so no configuration is
+      # needed. packages_with_index keeps the .tgz next to index.yaml on gh-pages, which is what
+      # `helm repo add` against a Pages site expects.
+      - name: Run chart-releaser
+        uses: helm/chart-releaser-action@v1.6.0
+        with:
+          skip_existing: true
+          packages_with_index: true
+        env:
+          CR_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
