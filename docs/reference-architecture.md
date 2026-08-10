@@ -43,9 +43,9 @@ unmanaged grants it discovered; §7.3 is the live-cluster measurement that remov
 
 ## 1a. The whole workflow, in one picture
 
-The eight diagrams that follow each take one slice — the pod's internals, a poll, a request,
-the schema. This is the loop they sit inside: how access is *supposed* to arrive, how it
-actually arrives, what the dashboard makes of the difference, and who closes it.
+The nine diagrams that follow each take one slice — the pod's internals, a poll, a request, the
+schema, how a release is built. This is the loop they sit inside: how access is *supposed* to
+arrive, how it actually arrives, what the dashboard makes of the difference, and who closes it.
 
 Read it as a cycle, not a pipeline. The dashboard never fixes anything; it makes a silent
 condition legible enough that a human can.
@@ -320,6 +320,8 @@ sequenceDiagram
   participant P as oauth-proxy
   participant M as middleware
   participant H as handler
+  participant T as TierResolver
+  participant K as Cluster API
   participant S as Store (reader conn)
 
   B->>P: GET /api/clusters/{id}/user-bindings
@@ -331,10 +333,24 @@ sequenceDiagram
     P->>M: + X-Forwarded-User
   else browser
     P->>P: session cookie → OpenShift OAuth
+    Note over P: delegate-urls does NOT apply here —<br/>it gates bearer tokens and client certs only
     P->>M: + X-Forwarded-User, X-Forwarded-Email
   end
   M->>M: record use, only if X-Gsd-Interaction is set
   M->>H: call_next
+  H->>T: which tier is this viewer? (§7.5)
+  alt cached and unexpired
+    T-->>H: all | self
+  else
+    T->>K: list the viewer's groups (fresh)
+    T->>K: SubjectAccessReview (spec.groups included)
+    K-->>T: allowed true | false
+    Note over T: failure of ANY kind -> self,<br/>and not cached
+    T-->>H: all | self
+  end
+  opt administrator-tier view, viewer is self
+    H-->>B: 403, a named refusal
+  end
   rect rgb(238, 238, 238)
     Note over H,S: @consistent → store.read_snapshot()
     H->>S: count_direct_user_bindings
@@ -342,8 +358,14 @@ sequenceDiagram
     H->>S: user_bindings_by_namespace
     H->>S: platform_user_binding_count
   end
-  H-->>B: JSON
+  H-->>B: JSON + scope, viewer
 ```
+
+**The tier hop is per request and usually free** — one cached lookup, no cluster call. It is drawn
+because leaving it out was how §7.2 came to claim there was no administrator tier at all. Note where
+it sits: *after* the proxy, in the app, on the browser path. `-openshift-delegate-urls` gates bearer
+tokens and client certs only, so a cookie session reaches `/api` without any authorization check
+from the proxy — which is precisely why the app makes its own.
 
 **`@consistent` is applied to multi-call handlers only** (`gsd/api.py#build_app`). Making the
 poll atomic took torn reads from 60.38% to 3.00%, not to zero, because a handler that calls
@@ -841,13 +863,17 @@ removed for the same reason: unlabelled is not anonymous enough to publish unaut
 `/api/dashboard/activity` defaults to **self-only**. The response is identifiable personnel
 data — who was present, on which days, between which times — and the argument that carries
 the rest of this dashboard ("you could read the groups with `oc` anyway") is true of group
-membership and false of who looked at it (`gsd/api.py#membership_changes`). `visibility: all` restores
-the older behaviour as an explicit choice. Anything unrecognised means `self`, never `all`
-(`gsd/config.py#_ca_cache_lock`).
+membership and false of who looked at it (`gsd/api.py#membership_changes`). `userActivity.visibility: all`
+restores the older behaviour as an explicit choice. Anything unrecognised means `self`, never
+`all` (`gsd/config.py#_ca_cache_lock`). It is now the first of two ways that view can widen —
+§7.5 has the second.
 
-There is deliberately no "admins only" tier: doing it properly means a SubjectAccessReview
-from the app on every read, which makes a personal-data query depend on API-server
-availability.
+There IS an administrator tier, and §7.5 describes it. This paragraph used to say the
+opposite — "there is deliberately no 'admins only' tier: doing it properly means a
+SubjectAccessReview from the app on every read, which makes a personal-data query depend on
+API-server availability" — and both halves are now false. It is kept here, quoted, because the
+objection it raised is real and §7.5 answers it rather than ignoring it: the review is cached,
+so a read does not depend on the API server being up.
 
 ### 7.3 Unmanaged-grant discovery, and why nothing is written back
 
@@ -961,6 +987,85 @@ The container runs non-root, with a read-only root filesystem, all capabilities 
 `RuntimeDefault` seccomp. Every SQLite connection — writer *and* every per-thread reader —
 has extension loading disabled, which is connection state, so hardening only the writer would
 leave every API request thread unprotected (`gsd/store.py#_MIGRATIONS`).
+
+### 7.5 Who sees what: two tiers, decided by the cluster
+
+Authentication (§7.2) answers *may you in*. This answers *how much*, and the cluster answers it —
+the dashboard holds no roles, groups or allowlists of its own. `docs/ACCESS_CONTROL.md` is the
+tabular reference; this is the shape and the reasoning.
+
+**Two tiers, independent of each other.**
+
+| | decides | resolver | default |
+|---|---|---|---|
+| cluster data | every group's membership, or only the reader's own | `gsd/api.py#viewer_scope` | `self` |
+| usage data | everyone's presence records, or only the reader's own | `gsd/api.py#usage_scope` | `self` |
+
+The second is stricter and deliberately not derived from the first. The Usage tab is the one
+dataset that exists *only* in this database and cannot be reproduced with `oc`, so it must not
+fall to the wide tier that `cluster-reader` — the intended auditor persona — also passes. The
+older `userActivity.visibility: all` override still wins ahead of it, unchanged, so a deployment
+that set it keeps working (`docs/SPEC_usage_admin_tier.md`).
+
+**THE GOVERNING PRINCIPLE: gate what a reader cannot already obtain with `oc`.** Anything else is
+theatre that costs a feature. Measured on the reference cluster, and it cuts both ways:
+
+- GroupSync CRs are **not** gated. `/metrics` is in `skipAuthRegex` and already serves
+  `gsd_groupsync_state{groupsync=…}` to a request with no credential at all, so refusing the API
+  while the metric is public would withhold nothing and cost the Groups tab its per-provider
+  colours. Gate `/metrics` first if that should change.
+- RBAC binding findings **are** gated. An ordinary reader holds none of `list
+  clusterrolebindings`, `list rolebindings` or `list groups` — `oc auth can-i` answers no to all
+  three — and `/bindings/findings` handed one 236 rows anyway, 21 naming an admin role, including
+  which group holds `cluster-admin`. A target list obtainable through the dashboard and not with
+  `oc` is a privilege escalation, so it is the administrator tier (`gsd/api.py#require_admin_tier`),
+  along with the operator's configuration.
+
+**What the administrator tier withholds is the CLUSTER's binding surface, never a reader's own.**
+Worth stating because the gate invites the opposite reading. `/groups/{name}` and `/users/{name}`
+embed the bindings on the reader's own access path, so a reader in a group holding `cluster-admin`
+sees that fact and the binding's name while `/bindings/findings` refuses them. That is the point
+of the narrowed tier — it answers *"what access do I have, and how did I get it"*, unanswerable
+without naming the binding that granted it. The bound is membership, and the membership check runs
+**before** any existence lookup, so a non-member's 403 is byte-identical for a real group and an
+absent one; otherwise the endpoint would be a group-name oracle.
+
+**The decision is a `SubjectAccessReview` the app makes, cached per viewer**
+(`gsd/kube.py#TierResolver`). Three measured facts shape it:
+
+- **`spec.groups` is not optional.** A review resolves no group membership of its own, so a
+  cluster-admin whose grant arrives through a Group — which is every real administrator here — is
+  refused with `spec.user` alone. `allowed: true` came back only once the groups were supplied.
+- **The groups are fetched fresh per resolution**, not read from the poll snapshot, because a
+  stale membership list would decide a live access question.
+- **A malformed review does not fail loudly.** It answers `allowed: false` with no reason,
+  indistinguishable from a real deny, which is why the chart validates the threshold's *form* at
+  render time (§8) rather than discovering it as a silent demotion.
+
+**Everything indeterminate is the narrow tier, and nothing indeterminate is cached.** No identity,
+no resolver, a resolver that raises, a 401, a 403, an unreachable API server, a junk tier string:
+all `self`. Only the exact string `all` widens. Failures are deliberately *not* cached, so a blip
+degrades one request rather than pinning an administrator for a whole TTL — the reader still gets a
+page of their own data, never an error, so the pod log is the only place the cause appears.
+
+**The cache is what answers the objection §7.2 used to raise.** The TTL is a single constant
+(`gsd/config.py#VISIBILITY_TIER_TTL_DEFAULT`, 60s), so a read does not depend on the API server
+being reachable, and the window it buys is stated rather than implied: a reader whose grant is
+revoked keeps the wider view for at most one TTL. One resolution per viewer is in flight at a time;
+a follower whose wait expires while that slot is still held takes it over, because releasing it
+only on the leader's return meant one stuck resolution pinned that viewer to the narrow tier
+indefinitely — silently, since failing closed is the designed behaviour.
+
+**A refusal names itself and nothing else** (`gsd/static/index.html#refusalCard`). It says what the
+view contains and that it is reserved, and deliberately not the role, grant, chart value or route
+that would widen it: the card renders for the person being refused, and naming the way in turns a
+refusal into a shopping list. It is a named refusal rather than a hidden tab, because a tab that
+vanishes reads as a broken build and the reader cannot tell which of the two happened.
+
+**The whole tier rests on `X-Forwarded-User`**, which is trustworthy only because the proxy sets it
+and the app binds `127.0.0.1`. With the proxy off it is whatever the caller typed, so the chart
+refuses that combination outright rather than shipping a control that cannot work
+(`templates/deployment.yaml#visibility.enabled=true requires oauthProxy.enabled=true`).
 
 ---
 
