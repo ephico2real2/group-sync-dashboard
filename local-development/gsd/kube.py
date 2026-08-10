@@ -1094,9 +1094,15 @@ class TierResolver:
         self._observe = observe
         self._cache: dict[str, tuple[float, str]] = {}
         self._lock = threading.Lock()
-        # One resolution in flight per viewer. Created under _lock by the leader, waited on
-        # by followers, and always popped-and-set in the leader's finally — a leader that
-        # raises must still wake its followers or they block for the full wait timeout.
+        # One resolution in flight per viewer. Created under _lock by the leader, waited on by
+        # followers, and released in the leader's finally — a leader that raises must still
+        # wake its followers or they block for the full wait timeout.
+        #
+        # The Event is also the GENERATION TOKEN. A follower whose wait expires while the entry
+        # is still the one it waited on replaces it and resolves the viewer itself, because the
+        # release used to be the leader's alone and a leader that never returned pinned that
+        # viewer to the self tier forever. Both the release and the cache write therefore check
+        # that the slot is still their own before acting on it.
         self._inflight: dict[str, threading.Event] = {}
         if not verb.strip() or not resource.strip():
             # Said once at startup rather than once per refused review. The API server will
@@ -1121,32 +1127,58 @@ class TierResolver:
             cached = self._cache.get(viewer)
             if cached is not None and cached[0] > now:
                 return cached[1]
-            waiter = self._inflight.get(viewer)
-            if waiter is None:
-                self._inflight[viewer] = threading.Event()
-        if waiter is not None:
+            mine = self._inflight.get(viewer)
+            leading = mine is None
+            if leading:
+                mine = self._inflight[viewer] = threading.Event()
+        if not leading:
             # A resolution for this viewer is already out; ride it instead of duplicating
             # it. The wait is bounded by the leader's own worst case (two cluster calls,
             # each capped at TIER_CHECK_TIMEOUT_SECONDS) plus margin — a wedged leader must
             # not wedge its followers past that.
-            waiter.wait(TIER_CHECK_TIMEOUT_SECONDS * 2 + 1)
+            mine.wait(TIER_CHECK_TIMEOUT_SECONDS * 2 + 1)
             with self._lock:
                 cached = self._cache.get(viewer)
-            if cached is not None and cached[0] > time.monotonic():
-                return cached[1]
-            # The leader failed (failures are deliberately not cached) or timed out: fail
-            # closed for THIS request, cache nothing — a failure is not a decision.
-            return TIER_SELF
+                if cached is not None and cached[0] > time.monotonic():
+                    return cached[1]
+                if mine.is_set() or self._inflight.get(viewer) is not mine:
+                    # The leader finished and failed (failures are deliberately not cached),
+                    # or a newer attempt already owns the slot. Fail closed for THIS request,
+                    # cache nothing — a failure is not a decision.
+                    return TIER_SELF
+                # STEAL THE SLOT, and this is the fix for a real wedge rather than caution.
+                #
+                # Reaching here means the leader is past its OWN worst case and still holding
+                # the slot: it is not slow, it is stuck — blocked in the observe callback,
+                # or on I/O that outlived the client timeout. The release used to live only in
+                # the leader's `finally`, so a leader that never returned kept the entry
+                # forever, and every later request for this viewer became a follower that
+                # waited the full budget and fell back to the self tier. One stuck resolution
+                # therefore pinned an administrator to the narrowed view INDEFINITELY, at
+                # TIER_CHECK_TIMEOUT_SECONDS * 2 + 1 seconds added to each of their requests —
+                # and nothing anywhere reported a fault, because failing closed is the
+                # designed behaviour for a single indeterminate check.
+                #
+                # So this follower installs a fresh Event and resolves the viewer itself. The
+                # generation is the Event's identity: the stuck leader compares before it
+                # releases, so its late return cannot evict this attempt's slot.
+                mine = self._inflight[viewer] = threading.Event()
+            now = time.monotonic()
         try:
-            return self._resolve_and_cache(viewer, now)
+            return self._resolve_and_cache(viewer, now, mine)
         finally:
-            # ALWAYS wake the followers — success, failure and bug alike. A leader that
-            # returned without setting the event would hold every follower for the full
+            # ALWAYS wake anyone waiting on OUR event — success, failure and bug alike. A
+            # leader that returned without setting it would hold every follower for the full
             # wait timeout, turning one slow review into a page-wide stall.
+            #
+            # Pop only if the slot is still ours. A leader that was stolen from must not
+            # delete the stealer's entry: doing so would drop the single-flight guarantee for
+            # a viewer who currently has a resolution in progress, so a burst of requests
+            # would each issue their own review.
             with self._lock:
-                event = self._inflight.pop(viewer, None)
-            if event is not None:
-                event.set()
+                if self._inflight.get(viewer) is mine:
+                    del self._inflight[viewer]
+            mine.set()
 
     def _note(self, outcome: str) -> None:
         """Report one fresh check's outcome to the observe seam. Best-effort by contract:
@@ -1159,8 +1191,12 @@ class TierResolver:
         except Exception:  # noqa: BLE001
             log.exception("visibility tier metrics callback failed; the tier is unaffected")
 
-    def _resolve_and_cache(self, viewer: str, now: float) -> str:
-        """The leader's half of tier_for: one review, cached on success only."""
+    def _resolve_and_cache(self, viewer: str, now: float, mine: threading.Event) -> str:
+        """The leader's half of tier_for: one review, cached on success only.
+
+        `mine` is this attempt's generation token, and it gates the cache write only — the
+        answer is always returned to this attempt's own caller, who waited for it.
+        """
         try:
             groups = self._kube.fetch_groups_of_user(viewer)
             allowed = self._kube.create_subject_access_review(
@@ -1193,13 +1229,24 @@ class TierResolver:
             self._note("error")
             return TIER_SELF
         tier = TIER_ALL if allowed else TIER_SELF
-        self._note("allowed" if allowed else "denied")
         with self._lock:
-            if len(self._cache) > 512:
-                # Viewers are real authenticated people, so this stays small; the sweep only
-                # exists so years of one-off names cannot grow the dict without bound.
-                self._cache = {k: v for k, v in self._cache.items() if v[0] > now}
-            self._cache[viewer] = (now + self._ttl, tier)
+            # CACHE FIRST, REPORT SECOND. `_note` calls out to the observe seam, and while it
+            # is best-effort by contract it is not bounded — a callback that blocks used to
+            # stop the answer being cached at all, on top of holding the in-flight slot, so a
+            # metrics stall presented as "the tier check is broken". Nothing here needs the
+            # metric to have been recorded, and the tier is already decided.
+            #
+            # Written only if this attempt still owns the slot. If a follower gave up on us
+            # and resolved the viewer itself, ITS answer is the newer measurement, and letting
+            # a late one land on top could restore a stale wide tier over a fresh narrow one.
+            if self._inflight.get(viewer) is mine:
+                if len(self._cache) > 512:
+                    # Viewers are real authenticated people, so this stays small; the sweep
+                    # only exists so years of one-off names cannot grow the dict without
+                    # bound.
+                    self._cache = {k: v for k, v in self._cache.items() if v[0] > now}
+                self._cache[viewer] = (now + self._ttl, tier)
+        self._note("allowed" if allowed else "denied")
         return tier
 
     # `resolve` is the seam name the API publishes (app.state.tier_resolver, whose contract

@@ -531,3 +531,253 @@ class TestObservedOutcomes:
 
         fake = FakeCluster(groups=[])
         assert _resolver(monkeypatch, fake, observe=boom).tier_for("someone") == TIER_ALL
+
+
+class TestAWedgedLeaderDoesNotPinTheViewer:
+    """A resolution that never returns must not pin its viewer to the self tier forever.
+
+    THE DEFECT. The in-flight slot was released only in the leader's `finally`, so a leader
+    stuck past its own worst case — blocked in the observe callback, or on I/O outliving the
+    client timeout — kept the entry indefinitely. Every later request for that viewer became a
+    follower, waited the full `TIER_CHECK_TIMEOUT_SECONDS * 2 + 1` budget, found no cache entry
+    and fell back to the self tier. One stuck resolution therefore demoted an administrator
+    permanently and added ~11s to each of their requests, and nothing reported a fault, because
+    failing closed on an indeterminate check is the designed behaviour.
+
+    A follower whose wait expires now steals the slot and resolves the viewer itself.
+    """
+
+    @staticmethod
+    def _fast_budget(monkeypatch) -> float:
+        """Shrink the follower wait so the wedge is testable in about a second.
+
+        `tier_for` reads TIER_CHECK_TIMEOUT_SECONDS at call time, so patching the module global
+        works; the mocked transport means the client's own timeout is never consulted.
+        """
+        monkeypatch.setattr("gsd.kube.TIER_CHECK_TIMEOUT_SECONDS", 0.05)
+        return 0.05 * 2 + 1
+
+    def test_a_follower_steals_the_slot_and_resolves(self, monkeypatch) -> None:
+        budget = self._fast_budget(monkeypatch)
+        entered = threading.Event()
+        release = threading.Event()
+
+        class WedgedOnce(FakeCluster):
+            """Blocks the FIRST group list; later calls answer normally."""
+
+            def __init__(self) -> None:
+                super().__init__([_group("admins", ["admin"])], allowed=True)
+                self.blocked = False
+
+            def handler(self, request: httpx.Request) -> httpx.Response:
+                if request.url.path == GROUPS_PATH and not self.blocked:
+                    self.blocked = True
+                    entered.set()
+                    # Bounded so a regression is a failure, not a hung suite.
+                    release.wait(30)
+                return super().handler(request)
+
+        fake = WedgedOnce()
+        resolver = _resolver(monkeypatch, fake)
+        leader_result: list[str] = []
+        leader = threading.Thread(
+            target=lambda: leader_result.append(resolver.tier_for("admin")), daemon=True
+        )
+        leader.start()
+        try:
+            assert entered.wait(5), "the leader never reached the wedged call"
+            started = time.monotonic()
+            stolen = resolver.tier_for("admin")
+            waited = time.monotonic() - started
+        finally:
+            release.set()
+            leader.join(timeout=10)
+
+        assert stolen == TIER_ALL, (
+            "the follower gave up on the wedged leader and returned the self tier without "
+            "resolving; before the fix this recurred for every later request, so an "
+            "administrator stayed narrowed for as long as the leader stayed stuck"
+        )
+        assert waited >= budget, "the follower should have ridden the leader before stealing"
+        assert leader_result == [TIER_ALL], "the wedged leader's own answer changed"
+
+    def test_the_steal_is_cached_so_later_requests_do_not_wait(self, monkeypatch) -> None:
+        """The point of stealing is that the NEXT request is fast, not merely correct."""
+        self._fast_budget(monkeypatch)
+        entered = threading.Event()
+        release = threading.Event()
+
+        class WedgedOnce(FakeCluster):
+            def __init__(self) -> None:
+                super().__init__([_group("admins", ["admin"])], allowed=True)
+                self.blocked = False
+
+            def handler(self, request: httpx.Request) -> httpx.Response:
+                if request.url.path == GROUPS_PATH and not self.blocked:
+                    self.blocked = True
+                    entered.set()
+                    release.wait(30)
+                return super().handler(request)
+
+        fake = WedgedOnce()
+        resolver = _resolver(monkeypatch, fake)
+        leader = threading.Thread(target=lambda: resolver.tier_for("admin"), daemon=True)
+        leader.start()
+        try:
+            assert entered.wait(5)
+            assert resolver.tier_for("admin") == TIER_ALL      # steals and caches
+            started = time.monotonic()
+            third = resolver.tier_for("admin")
+            elapsed = time.monotonic() - started
+        finally:
+            release.set()
+            leader.join(timeout=10)
+
+        assert third == TIER_ALL
+        assert elapsed < 0.5, (
+            f"the third request took {elapsed:.2f}s, so the steal did not cache its answer and "
+            f"every request keeps paying the follower wait"
+        )
+
+    def test_the_stolen_from_leader_leaves_the_slot_clean(self, monkeypatch) -> None:
+        """Its late return must not evict the stealer's entry, and must not leak its own.
+
+        Deleting an entry it no longer owns would drop the single-flight guarantee for a viewer
+        who has a resolution in progress, so a burst would issue one review each.
+        """
+        self._fast_budget(monkeypatch)
+        entered = threading.Event()
+        release = threading.Event()
+
+        class WedgedOnce(FakeCluster):
+            def __init__(self) -> None:
+                super().__init__([_group("admins", ["admin"])], allowed=True)
+                self.blocked = False
+
+            def handler(self, request: httpx.Request) -> httpx.Response:
+                if request.url.path == GROUPS_PATH and not self.blocked:
+                    self.blocked = True
+                    entered.set()
+                    release.wait(30)
+                return super().handler(request)
+
+        fake = WedgedOnce()
+        resolver = _resolver(monkeypatch, fake)
+        leader = threading.Thread(target=lambda: resolver.tier_for("admin"), daemon=True)
+        leader.start()
+        try:
+            assert entered.wait(5)
+            resolver.tier_for("admin")
+        finally:
+            release.set()
+            leader.join(timeout=10)
+
+        assert resolver._inflight == {}, (
+            f"in-flight slots left behind: {resolver._inflight!r}. A leaked entry is the defect "
+            f"this class exists for; an evicted one costs the single-flight guarantee"
+        )
+
+
+class TestABlockingObserveCallbackCannotStopTheCacheWrite:
+    """`_note` reports the outcome; it must not stand between the answer and the cache.
+
+    It calls out to the metrics seam and is best-effort by contract, but it is not bounded. It
+    used to run BEFORE the cache write, so a callback that blocked prevented the decided tier
+    from ever being cached while also holding the in-flight slot — a metrics stall presenting as
+    a broken tier check. Nothing in the caching needs the metric to have been recorded.
+    """
+
+    def test_the_tier_is_cached_before_the_outcome_is_reported(self, monkeypatch) -> None:
+        monkeypatch.setattr("gsd.kube.TIER_CHECK_TIMEOUT_SECONDS", 0.05)
+        blocking = threading.Event()
+        noted = threading.Event()
+
+        def observe(outcome: str) -> None:
+            noted.set()
+            blocking.wait(30)
+
+        fake = FakeCluster([_group("admins", ["admin"])], allowed=True)
+        resolver = _resolver(monkeypatch, fake, observe=observe)
+        leader = threading.Thread(target=lambda: resolver.tier_for("admin"), daemon=True)
+        leader.start()
+        try:
+            assert noted.wait(5), "the observe callback was never reached"
+            started = time.monotonic()
+            second = resolver.tier_for("admin")
+            elapsed = time.monotonic() - started
+        finally:
+            blocking.set()
+            leader.join(timeout=10)
+
+        assert second == TIER_ALL, (
+            "a blocked metrics callback denied a second reader the tier that had already been "
+            "decided and returned to the first"
+        )
+        assert elapsed < 0.5, (
+            f"the second request took {elapsed:.2f}s: it rode the in-flight slot instead of "
+            f"reading a cache entry that should already have been written"
+        )
+        assert fake.group_lists == 1, "the cached answer should have served the second request"
+
+
+class TestStealingDoesNotTurnAnOutageIntoAStampede:
+    """A leader that FAILED is a decision, not a wedge, and its followers must not retry it.
+
+    Behaviour-preservation for the steal above. A failure wakes the followers by setting the
+    event, and a woken follower fails closed for its own request without resolving again. If it
+    stole instead, an unreachable API server would turn every burst of requests into a burst of
+    reviews against the thing that is already down — each one waiting out its own timeout.
+
+    The retry still happens, just per later request rather than per queued follower: failures are
+    deliberately not cached, so the next arrival finds no slot and leads.
+    """
+
+    def test_followers_of_a_failed_leader_do_not_resolve_again(self, monkeypatch) -> None:
+        monkeypatch.setattr("gsd.kube.TIER_CHECK_TIMEOUT_SECONDS", 0.05)
+        in_call = threading.Event()
+        let_fail = threading.Event()
+
+        class FailsSlowly(FakeCluster):
+            """Holds the first group list open, then fails it — a leader that loses, slowly."""
+
+            def __init__(self) -> None:
+                super().__init__([_group("admins", ["admin"])], allowed=True)
+                self.attempts = 0
+
+            def handler(self, request: httpx.Request) -> httpx.Response:
+                if request.url.path == GROUPS_PATH:
+                    self.attempts += 1
+                    if self.attempts == 1:
+                        in_call.set()
+                        let_fail.wait(30)
+                        return httpx.Response(503, json={"message": "down"})
+                return super().handler(request)
+
+        fake = FailsSlowly()
+        resolver = _resolver(monkeypatch, fake)
+        leader_result: list[str] = []
+        leader = threading.Thread(
+            target=lambda: leader_result.append(resolver.tier_for("admin")), daemon=True
+        )
+        leader.start()
+        assert in_call.wait(5)
+
+        follower: list[str] = []
+        rider = threading.Thread(
+            target=lambda: follower.append(resolver.tier_for("admin")), daemon=True
+        )
+        rider.start()
+        # Let the leader fail while the follower is still riding it, so the follower is woken by
+        # the failure rather than by its own timeout expiring.
+        time.sleep(0.2)
+        let_fail.set()
+        leader.join(timeout=10)
+        rider.join(timeout=10)
+
+        assert leader_result == [TIER_SELF], "a 503 must fail closed"
+        assert follower == [TIER_SELF], "the follower must inherit the failure, closed"
+        assert fake.attempts == 1, (
+            f"the cluster was asked {fake.attempts} times for one decision: a woken follower "
+            f"retried instead of failing closed, so an outage now costs a review per follower"
+        )
+        assert resolver._inflight == {}

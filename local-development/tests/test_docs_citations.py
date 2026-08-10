@@ -76,6 +76,13 @@ REVIEW_ARTIFACTS = (
     # location, and the mutation that proves each one names the line it changed. Rewriting those
     # to symbol names would erase the evidence rather than keep it fresh.
     "AUDIT_visibility_premise_and_assumptions.md",
+    # The post-merge pass over the visibility tier, admin gating, metrics and the publish pin
+    # (two reviewers, one brief). The brief's claim table cites the ranges each claim was ABOUT,
+    # which is what made the verdicts checkable — "V2: is gating these two endpoints the complete
+    # surface?" is a question about a span of code at a moment. The pair is listed separately
+    # because the verdicts live in the brief and the second reviewer's findings in its own file.
+    "REVIEW_post_merge_visibility_metrics.md",
+    "REVIEW_post_merge_cursor.md",
 )
 
 

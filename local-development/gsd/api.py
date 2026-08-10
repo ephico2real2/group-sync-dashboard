@@ -370,9 +370,22 @@ def build_app(
 
         For the views that are ABOUT THE CLUSTER rather than about the reader: its whole RBAC
         binding surface, the operator's configuration, the sync CRs. These cannot be scoped
-        the way a membership list can — a binding names whoever it names, so the honest
-        choice is the whole thing or none of it, and none of it is what a non-administrator
-        gets.
+        the way a membership list can — a CLUSTER-WIDE binding list names whoever it names, so
+        the honest choice is the whole thing or none of it, and none of it is what a
+        non-administrator gets.
+
+        WHAT THIS DOES NOT WITHHOLD, stated because the sentence above used to imply it did.
+        A non-administrator still sees the bindings on their OWN access path: `/groups/{name}`
+        and `/users/{name}` embed `bindings` for a group the reader belongs to, so a reader in
+        a group that holds cluster-admin can read that fact and the binding's name. That is
+        deliberate — the narrowed tier exists to answer "what access do I have, and how did I
+        get it", which is unanswerable without naming the binding that granted it — and it is
+        bounded by membership, not by this gate: `/groups/{name}` refuses a non-member and
+        `/users/{name}` refuses anyone but the reader, both BEFORE any existence lookup, so
+        neither can be used to enumerate.
+
+        The distinction is scope, not category: this gate withholds the cluster's binding
+        surface, and never a reader's own. `docs/ACCESS_CONTROL.md` tabulates both.
 
         WHY A REFUSAL AND NOT A FILTER, measured on the reference cluster. An ordinary reader
         (`lateef.o`) holds none of `list clusterrolebindings`, `list rolebindings` or `list

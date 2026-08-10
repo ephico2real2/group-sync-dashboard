@@ -510,3 +510,65 @@ def test_operator_config_summary_is_withheld_at_self_on_the_cluster_list(tmp_pat
     assert self_row["status"] == admin_row["status"]
     assert self_row["group_count"] == admin_row["group_count"]
     assert self_row["dangling_bindings"] == admin_row["dangling_bindings"]
+
+
+# ── The self tier withholds the CLUSTER's bindings, not the reader's own ───────────────
+#
+# `require_admin_tier` used to say the binding surface was withheld and "none of it is what a
+# non-administrator gets". That reads as "a narrowed reader sees no binding at all", which is
+# false and was never true: `/groups/{name}` and `/users/{name}` embed the bindings on the
+# reader's OWN access path, because the narrowed tier exists to answer "what access do I have and
+# how did I get it" — unanswerable without naming the binding that granted it.
+#
+# The distinction is scope, and these tests hold both halves of it, so neither a future change
+# that quietly widens this nor one that quietly removes it can land unnoticed.
+
+
+def _binding_on(store, group: str, role: str, name: str) -> None:
+    """One ClusterRoleBinding granting `role` to `group`, replacing the seed's set."""
+    store.replace_bindings("c1", [
+        {"binding_kind": "ClusterRoleBinding", "binding_namespace": "",
+         "binding_name": name, "role_kind": "ClusterRole", "role_name": role,
+         "group_name": group},
+    ], now_iso())
+
+
+def test_a_self_tier_member_sees_the_bindings_on_their_own_group(tmp_path):
+    """Deliberate: they can read that their group holds cluster-admin, and which binding does it.
+
+    This is the honest reading of the tier — it answers the reader's own access path in full.
+    `/bindings/findings` still refuses them, because that is everyone's access, cluster-wide.
+    """
+    db = str(tmp_path / "t.db")
+    c = _client(tmp_path)
+    _binding_on(Store(db), "team-a", "cluster-admin", "admin-crb")
+
+    body = c.get("/api/clusters/c1/groups/team-a", headers=AS_VIEWER).json()
+    assert body["scope"] == "self"
+    assert [(b["role_name"], b["binding_name"]) for b in body["bindings"]] == [
+        ("cluster-admin", "admin-crb")
+    ], "a member must still see how their own group's access was granted"
+
+    # …while the cluster-wide surface stays refused for the same reader in the same breath.
+    assert c.get("/api/clusters/c1/bindings/findings", headers=AS_VIEWER).status_code == 403
+
+
+def test_that_visibility_is_bounded_by_membership_and_cannot_enumerate(tmp_path):
+    """The other half: a non-member learns nothing, and cannot tell absent from forbidden.
+
+    If a real group answered 403 and an absent one 404, the endpoint would be a group-name
+    oracle for a reader who belongs to none of them — so the membership check runs before any
+    existence lookup and both answers are byte-identical.
+    """
+    db = str(tmp_path / "t.db")
+    c = _client(tmp_path)
+    _binding_on(Store(db), "secret-group", "cluster-admin", "secret-crb")
+
+    forbidden = c.get("/api/clusters/c1/groups/secret-group", headers=AS_VIEWER)
+    absent = c.get("/api/clusters/c1/groups/no-such-group-anywhere", headers=AS_VIEWER)
+
+    assert forbidden.status_code == 403 and absent.status_code == 403
+    assert forbidden.json() == absent.json(), (
+        "the two refusals differ, so a reader can tell which group names exist"
+    )
+    assert "cluster-admin" not in forbidden.text and "secret-crb" not in forbidden.text
