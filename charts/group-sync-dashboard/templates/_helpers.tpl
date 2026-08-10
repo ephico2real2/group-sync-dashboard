@@ -337,3 +337,32 @@ update
 {{- $n -}}
 {{- end -}}
 {{- end -}}
+
+# How long a decided tier is cached, per viewer. Whole seconds, and 0 disables caching.
+#
+# This is the ONE knob whose wrong value is a security consequence rather than a broken render, so
+# it is worth saying what each direction costs. Larger: a reader REMOVED from an admin group keeps
+# the wide view for up to this long — the fail-open direction, and the reason the default is a
+# minute rather than an hour. Smaller: a SubjectAccessReview plus a group read per reader per
+# request, measured at 97ms for the 65-group reference cluster (gsd/kube.py, TierResolver).
+#
+# A decided answer is cached; an ERROR never is, so this number does not extend an outage.
+#
+# Nil-safe for the same reason the adminSar helpers are: commenting out the sub-keys leaves
+# `visibility:` present-but-nil, which a bare field access panics on.
+{{- define "gsd.visibilityTierTtl" -}}
+{{- $v := .Values.visibility | default dict -}}
+{{- if or (not (hasKey $v "tierTtlSeconds")) (kindIs "invalid" $v.tierTtlSeconds) -}}
+60
+{{- else -}}
+{{- $t := trim (toString $v.tierTtlSeconds) -}}
+{{- /* Whole non-negative seconds only. A float would reach the app's int() cast and fall back to
+       the default with only a log line to say so; a negative would make every entry instantly
+       stale, turning the cache off while the values file claims it is on. Both are quieter
+       failures than a refused render, which is why this refuses. */ -}}
+{{- if not (regexMatch "^[0-9]+$" $t) -}}
+{{- fail (printf "visibility.tierTtlSeconds %q is not a whole number of seconds. Use an integer >= 0 (0 disables caching, at the cost of a SubjectAccessReview per reader per request). A fractional or negative value would be silently discarded by the app and leave this file describing a cache that is not running." $t) -}}
+{{- end -}}
+{{- $t -}}
+{{- end -}}
+{{- end -}}

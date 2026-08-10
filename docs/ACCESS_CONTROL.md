@@ -348,7 +348,7 @@ this document deliberately carries no passwords.
 | use a different bar for the wide tier | `visibility.adminSar.{apiGroup,resource,verb,namespace}` |
 | use a different bar for Usage | `visibility.usageAdminSar.{...}` |
 | let everyone see all dashboard usage | `config.userActivity.visibility: all` (wins over the usage tier) |
-| shorten the fail-open window after a revocation | `GSD_VISIBILITY_TIER_TTL_SECONDS`, or the ConfigMap key `visibilityTierTtlSeconds` (default 60). **The chart exposes no values key for this** — the app reads it (`config.py:716`) but nothing renders it, so today it needs an env override or a hand-edited ConfigMap. Worth adding a values key. |
+| shorten the fail-open window after a revocation | `visibility.tierTtlSeconds` (default 60; `0` disables caching). Env `GSD_VISIBILITY_TIER_TTL_SECONDS` still overrides it. A fractional or negative value fails the render rather than being silently discarded |
 | put an admins-only door on the whole dashboard | `oauthProxy.sar` — a different mechanism, at the proxy |
 
 Narrow the threshold and you narrow who is an administrator; you do not narrow what the wide view

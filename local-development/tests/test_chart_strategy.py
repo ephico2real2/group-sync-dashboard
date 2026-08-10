@@ -919,6 +919,45 @@ class TestVisibilityThreading:
         assert "oc adm policy add-cluster-role-to-user cluster-reader" in notes
         assert "visibility.enabled=false" in notes
 
+    # ── The tier cache lifetime ─────────────────────────────────────────────────────────
+
+    def test_the_tier_ttl_threads_from_values_to_the_configmap(self):
+        """The app has always read `visibilityTierTtlSeconds`, but for a while NOTHING rendered
+        it — so the documented way to shorten the fail-open window after a revocation was an
+        env override or a hand-edited ConfigMap. This is the values key that closes that."""
+        ok, out = render()
+        assert ok, out
+        assert _config_data(out)["visibilityTierTtlSeconds"] == 60, "the shipped default"
+        ok, out = render(visibility__tierTtlSeconds=15)
+        assert ok, out
+        assert _config_data(out)["visibilityTierTtlSeconds"] == 15
+
+    def test_zero_is_a_legal_ttl_and_means_no_caching(self):
+        """0 is not a malformed number — it disables caching, which an operator may genuinely
+        want at the cost of a SubjectAccessReview per reader per request. Rejecting it would
+        confuse "I chose immediate revocation" with "I typo'd"."""
+        ok, out = render(visibility__tierTtlSeconds=0)
+        assert ok, out
+        assert _config_data(out)["visibilityTierTtlSeconds"] == 0
+
+    def test_a_nilled_visibility_block_keeps_the_default_ttl(self):
+        """Commenting the sub-keys out leaves `visibility:` present-but-nil, which a bare field
+        access panics on — the same trap the adminSar helpers avoid."""
+        ok, out = render(visibility="null")
+        assert ok, out
+        assert _config_data(out)["visibilityTierTtlSeconds"] == 60
+
+    def test_a_fractional_or_negative_ttl_is_refused_at_render(self):
+        """Both would reach the app's int() cast, fall back to 60, and leave the values file
+        describing a cache that is not running — a quieter failure than a refused render. A
+        negative would additionally make every entry instantly stale, turning the cache off
+        while the file claims it is on."""
+        for bad in ("1.5", "-5", "abc", "60s"):
+            ok, out = render(visibility__tierTtlSeconds=bad)
+            assert not ok, f"tierTtlSeconds={bad!r} rendered happily"
+            assert "visibility.tierTtlSeconds" in out
+            assert "whole number of seconds" in out
+
     # ── The Usage tab's second, stricter threshold (docs/SPEC_usage_admin_tier.md) ──────
 
     def test_the_usage_sar_default_is_a_write_verb_in_the_configmap(self):

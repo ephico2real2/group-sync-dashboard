@@ -1050,6 +1050,26 @@ visibility:
   # choice: it re-opens the exposure above for every authenticated account.
   enabled: true
 
+  # How long a DECIDED tier is cached, per viewer, in whole seconds. Serves both thresholds
+  # below; each keeps its own cache, so this is the lifetime of an entry, not a shared budget.
+  #
+  # This is the one number here whose wrong value is a security consequence rather than a
+  # broken render, so both directions are stated:
+  #
+  #   LARGER   a reader removed from an admin group keeps the wide view for up to this long.
+  #            That is the fail-open direction, and it is why the default is a minute rather
+  #            than an hour. Verified live by granting cluster-reader and revoking it: the
+  #            wide view arrived, and was gone again, each within one interval.
+  #   SMALLER  a SubjectAccessReview plus a group read per reader per request. Measured at
+  #            97ms for the 65-group reference cluster. 0 disables caching entirely.
+  #
+  # An ERROR is never cached — only a decided answer is — so this does not extend an API-server
+  # outage, and an indeterminate tier is always the narrow view.
+  #
+  # A fractional or negative value FAILS THE RENDER. The app would cast it with int() and fall
+  # back to 60 with only a log line, leaving this file describing a cache that is not running.
+  tierTtlSeconds: 60
+
   # THE ADMINISTRATOR THRESHOLD — the SubjectAccessReview a reader must pass to see
   # everything. Expressed as the check itself rather than a list of role names, because a
   # name list would miss cluster-reader and every custom role that grants the same read.
