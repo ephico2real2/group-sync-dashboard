@@ -790,10 +790,230 @@ class TestSessionCookieLifetime:
         """With the sidecar off there is nothing to crash-loop and no session to
         restate: a bad duration must not block a render that never uses it, and the
         ConfigMap must not carry session keys the app would then parse with no render
-        guard standing in front of them."""
-        ok, out = render(oauthProxy__enabled="false", oauthProxy__cookie__expire="4hr")
+        guard standing in front of them.
+
+        visibility.enabled=false is required to reach a proxy-off render AT ALL now, and
+        that is the point of the guard rather than a concession to this test: a per-user
+        control keyed on X-Forwarded-User cannot work when nothing sets that header, so
+        declining it is the only renderable way to run without the proxy. Asserted from the
+        other side by TestVisibilityThreading.test_visibility_without_the_proxy_is_refused.
+        """
+        ok, out = render(oauthProxy__enabled="false", visibility__enabled="false",
+                         oauthProxy__cookie__expire="4hr")
         assert ok, out
         assert "-cookie-expire" not in out
         assert "-pass-access-token" not in out
         assert "sessionCookieExpire" not in _config_data(out)
 
+
+class TestVisibilityThreading:
+    """visibility.enabled -> GSD_ENABLE_VIEW_RESTRICTIONS, and the adminSar shape.
+
+    The switch is a security control, so the chart must refuse the states in which it
+    silently cannot work: a proxy-less deployment (no trusted identity) and a SAR shape
+    RBAC would answer `no` to for every viewer (exact, lowercase matching).
+
+    NOTE ON PLACEMENT: `.github/workflows/ci.yml` points the `chart` job at THIS FILE.
+    """
+
+    def _docs(self, out):
+        import yaml
+        return [d for d in yaml.safe_load_all(out) if d]
+
+    def _env(self, out, name):
+        for d in self._docs(out):
+            if d.get("kind") == "Deployment":
+                for c in d["spec"]["template"]["spec"]["containers"]:
+                    for e in c.get("env") or []:
+                        if e["name"] == name:
+                            return e["value"]
+        return None
+
+    def _configmap(self, out):
+        import yaml
+        for d in self._docs(out):
+            if d.get("kind") == "ConfigMap" and d["metadata"]["name"].endswith("-config"):
+                return yaml.safe_load(d["data"]["clusters.yaml"])
+        raise AssertionError("no app ConfigMap in the rendered output")
+
+    def test_restrictions_are_on_by_default_and_spelled_exactly(self):
+        ok, out = render()
+        assert ok, out
+        assert self._env(out, "GSD_ENABLE_VIEW_RESTRICTIONS") == "true"
+        # The requirements' typo must not propagate: a misspelt env var here is a
+        # silently disabled security control.
+        assert "RESCRICTIONS" not in out
+
+    def test_disabling_is_expressible_and_explicit(self):
+        ok, out = render(visibility__enabled="false")
+        assert ok, out
+        assert self._env(out, "GSD_ENABLE_VIEW_RESTRICTIONS") == "false"
+
+    def test_a_nilled_block_keeps_restrictions_on(self):
+        """Commenting out the stanza leaves `visibility:` present-but-nil; a bare field
+        access panics and a naive `default` flips the control off. Neither may happen."""
+        ok, out = render(visibility="null")
+        assert ok, out
+        assert self._env(out, "GSD_ENABLE_VIEW_RESTRICTIONS") == "true"
+        cm = self._configmap(out)
+        assert cm["visibilityAdminSarResource"] == "groups"
+        assert cm["visibilityAdminSarVerb"] == "list"
+
+    def test_the_sar_shape_reaches_the_configmap(self):
+        ok, out = render(**{
+            "visibility.adminSar.apiGroup": "rbac.authorization.k8s.io",
+            "visibility.adminSar.resource": "rolebindings",
+        })
+        assert ok, out
+        cm = self._configmap(out)
+        assert cm["visibilityAdminSarApiGroup"] == "rbac.authorization.k8s.io"
+        assert cm["visibilityAdminSarResource"] == "rolebindings"
+        assert cm["visibilityAdminSarVerb"] == "list"
+
+    def test_a_nonsensical_sar_shape_is_refused(self):
+        """RBAC matching is exact and lowercase, so `List` would not error — it would
+        answer no for every viewer and silently demote every administrator."""
+        for key, bad in (("verb", "List"), ("resource", "Groups"),
+                         ("apiGroup", "user.openshift.io/v1"), ("namespace", "Bad_NS")):
+            ok, out = render(**{f"visibility.adminSar.{key}": bad})
+            assert not ok, f"adminSar.{key}={bad!r} rendered happily"
+            assert "visibility.adminSar" in out
+
+    def test_visibility_without_the_proxy_is_refused(self):
+        """No proxy means no trusted identity: X-Forwarded-User is whatever the caller
+        typed, so the control cannot work and must not pretend to."""
+        ok, out = render(oauthProxy__enabled="false")
+        assert not ok, "a per-user control rendered with no authenticated identity"
+        assert "requires oauthProxy.enabled=true" in out
+
+    def test_declining_both_is_a_renderable_deliberate_choice(self):
+        ok, out = render(oauthProxy__enabled="false", visibility__enabled="false")
+        assert ok, out
+
+    def test_the_sar_grant_is_present_on_a_default_install(self):
+        """The tier check needs `create subjectaccessreviews`. It arrives via the stock
+        system:auth-delegator binding, which used to render only for apiTokenAccess
+        (default off) — so a default install would have failed every viewer closed to
+        the self tier, permanently and invisibly."""
+        ok, out = render()
+        assert ok, out
+        bindings = [d for d in self._docs(out)
+                    if d.get("kind") == "ClusterRoleBinding"
+                    and d["roleRef"]["name"] == "system:auth-delegator"]
+        assert len(bindings) == 1, "the auth-delegator binding must render for the tier check"
+        subject = bindings[0]["subjects"][0]
+        assert subject["kind"] == "ServiceAccount"
+        assert subject["name"] == "t-group-sync-dashboard"
+
+    def test_the_sar_grant_disappears_when_nothing_needs_it(self):
+        ok, out = render(visibility__enabled="false")
+        assert ok, out
+        assert not any(d.get("kind") == "ClusterRoleBinding"
+                       and d["roleRef"]["name"] == "system:auth-delegator"
+                       for d in self._docs(out)), (
+            "with visibility off and apiTokenAccess off, nothing uses the SAR grant"
+        )
+
+    def test_notes_carry_the_grant_command_and_the_rollback_flag(self):
+        notes = (CHART / "templates" / "NOTES.txt").read_text()
+        assert "oc adm policy add-cluster-role-to-user cluster-reader" in notes
+        assert "visibility.enabled=false" in notes
+
+    # ── The tier cache lifetime ─────────────────────────────────────────────────────────
+
+    def test_the_tier_ttl_threads_from_values_to_the_configmap(self):
+        """The app has always read `visibilityTierTtlSeconds`, but for a while NOTHING rendered
+        it — so the documented way to shorten the fail-open window after a revocation was an
+        env override or a hand-edited ConfigMap. This is the values key that closes that."""
+        ok, out = render()
+        assert ok, out
+        assert _config_data(out)["visibilityTierTtlSeconds"] == 60, "the shipped default"
+        ok, out = render(visibility__tierTtlSeconds=15)
+        assert ok, out
+        assert _config_data(out)["visibilityTierTtlSeconds"] == 15
+
+    def test_zero_is_a_legal_ttl_and_means_no_caching(self):
+        """0 is not a malformed number — it disables caching, which an operator may genuinely
+        want at the cost of a SubjectAccessReview per reader per request. Rejecting it would
+        confuse "I chose immediate revocation" with "I typo'd"."""
+        ok, out = render(visibility__tierTtlSeconds=0)
+        assert ok, out
+        assert _config_data(out)["visibilityTierTtlSeconds"] == 0
+
+    def test_a_nilled_visibility_block_keeps_the_default_ttl(self):
+        """Commenting the sub-keys out leaves `visibility:` present-but-nil, which a bare field
+        access panics on — the same trap the adminSar helpers avoid."""
+        ok, out = render(visibility="null")
+        assert ok, out
+        assert _config_data(out)["visibilityTierTtlSeconds"] == 60
+
+    def test_a_fractional_or_negative_ttl_is_refused_at_render(self):
+        """Both would reach the app's int() cast, fall back to 60, and leave the values file
+        describing a cache that is not running — a quieter failure than a refused render. A
+        negative would additionally make every entry instantly stale, turning the cache off
+        while the file claims it is on."""
+        for bad in ("1.5", "-5", "abc", "60s"):
+            ok, out = render(visibility__tierTtlSeconds=bad)
+            assert not ok, f"tierTtlSeconds={bad!r} rendered happily"
+            assert "visibility.tierTtlSeconds" in out
+            assert "whole number of seconds" in out
+
+    # ── The Usage tab's second, stricter threshold (docs/SPEC_usage_admin_tier.md) ──────
+
+    def test_the_usage_sar_default_is_a_write_verb_in_the_configmap(self):
+        """Spec test 7: usageAdminSar threads into the ConfigMap, defaulting to the write verb
+        that separates cluster-admin from cluster-reader (no read check does)."""
+        ok, out = render()
+        assert ok, out
+        cm = self._configmap(out)
+        assert cm["visibilityUsageAdminSarApiGroup"] == "rbac.authorization.k8s.io"
+        assert cm["visibilityUsageAdminSarResource"] == "clusterrolebindings"
+        assert cm["visibilityUsageAdminSarVerb"] == "update"
+        assert cm["visibilityUsageAdminSarNamespace"] == ""
+
+    def test_a_custom_usage_sar_shape_reaches_the_configmap(self):
+        ok, out = render(**{
+            "visibility.usageAdminSar.apiGroup": "",
+            "visibility.usageAdminSar.resource": "secrets",
+            "visibility.usageAdminSar.verb": "get",
+        })
+        assert ok, out
+        cm = self._configmap(out)
+        assert cm["visibilityUsageAdminSarApiGroup"] == ""      # the core group is expressible
+        assert cm["visibilityUsageAdminSarResource"] == "secrets"
+        assert cm["visibilityUsageAdminSarVerb"] == "get"
+
+    def test_a_nilled_usage_block_keeps_the_default_write_check(self):
+        """Commenting the sub-keys out leaves usageAdminSar present-but-nil; the nil-safe
+        helpers must fall back to the default, never to an empty (allowed=false) check."""
+        ok, out = render(**{"visibility.usageAdminSar": "null"})
+        assert ok, out
+        cm = self._configmap(out)
+        assert cm["visibilityUsageAdminSarResource"] == "clusterrolebindings"
+        assert cm["visibilityUsageAdminSarVerb"] == "update"
+
+    def test_a_nonsensical_usage_sar_shape_is_refused(self):
+        """Same exact-lowercase guard as adminSar: a miscased or versioned field would answer
+        no for every viewer and silently demote every administrator, so it fails the render."""
+        for key, bad in (("verb", "Update"), ("resource", "ClusterRoleBindings"),
+                         ("apiGroup", "rbac.authorization.k8s.io/v1"), ("namespace", "Bad_NS")):
+            ok, out = render(**{f"visibility.usageAdminSar.{key}": bad})
+            assert not ok, f"usageAdminSar.{key}={bad!r} rendered happily"
+            assert "visibility.usageAdminSar" in out
+
+    def test_the_usage_tier_reuses_the_one_sar_grant(self):
+        """The usage tier needs no new RBAC: it is the SAME `create subjectaccessreviews`
+        (system:auth-delegator) the wide tier uses. So the default install still carries
+        exactly one such binding, and it still disappears when visibility is off — one grant,
+        two questions."""
+        ok, out = render()
+        assert ok, out
+        bindings = [d for d in self._docs(out)
+                    if d.get("kind") == "ClusterRoleBinding"
+                    and d["roleRef"]["name"] == "system:auth-delegator"]
+        assert len(bindings) == 1, "the usage tier must not add a second SAR grant"
+        ok, out = render(visibility__enabled="false")
+        assert ok, out
+        assert not any(d.get("kind") == "ClusterRoleBinding"
+                       and d["roleRef"]["name"] == "system:auth-delegator"
+                       for d in self._docs(out)), "no tier -> no SAR grant, usage included"

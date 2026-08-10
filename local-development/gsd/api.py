@@ -10,6 +10,7 @@ import functools
 import logging
 import os
 import time
+from collections.abc import Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 
@@ -23,6 +24,7 @@ from . import __version__
 from . import state as st
 from .activity import EMAIL_HEADER, INTERACTION_HEADER, USER_HEADER, ActivityRecorder
 from .config import Settings, load_settings
+from .kube import TierResolver
 from .leader import LeaderElector
 from .metrics import build_registry
 from .poller import Poller
@@ -48,6 +50,35 @@ SKIP_AUTH_PATHS = frozenset({"/healthz", "/readyz", "/metrics", "/signed-out"})
 LOGIN_OUTCOMES = tuple(
     v for k, v in vars(loginlog).items() if k.startswith("OUTCOME_") and isinstance(v, str)
 )
+
+
+# Alert kinds the SELF tier receives — an ALLOW-list, so a kind added later is hidden from
+# the narrow view until someone rules on it, which is the fail-closed direction.
+#
+# Membership is the feed's own invariant, "an alert here always has a page behind it":
+# every kind here is backed by a page the self tier sees IN FULL — the cluster cards, and
+# the GroupSync CRs and their events (CR health, whose per-CR identity and state is already
+# public on the unauthenticated /metrics). The excluded kinds are backed by pages the self
+# tier does NOT see whole:
+#   * `empty_group`, `unattributed`, `stale_group` name groups from the self-scoped Groups
+#     tab (and an empty group can never contain the viewer);
+#   * `direct_user_binding` aggregates other people's grants from the self-scoped
+#     user-bindings view;
+#   * `dangling_binding` and `config_reconcile_error` are backed by /bindings/findings and
+#     /operator-configs, which require_admin_tier now REFUSES at self (the spec-Q3 reversal).
+#     A dangling_binding alert carries a group->role binding row and config_reconcile_error
+#     carries an operator-config object plus its error message — the very rows those two
+#     endpoints withhold — so leaving them here made the alert feed the alternate path around
+#     the gate. Measured: with one dangling finding and one failing config, a self reader
+#     whom BOTH endpoints 403'd still received BOTH alerts. Administrator-tier now; a dangling
+#     binding grants nobody, so a self reader loses no signal they could act on.
+SELF_ALERT_KINDS = frozenset({
+    # Poll failures — kind carries poll_outcome.status verbatim; backed by the cluster cards
+    # and gsd_cluster_up on /metrics.
+    "auth_failed", "forbidden", "unreachable",
+    # GroupSync CR health — per-CR state is public on /metrics, so full-view at both tiers.
+    "groupsync_crd_absent", "invalid_schedule", "sync_stopped", "overdue", "reconcile_error",
+})
 
 
 #: What a `no match` refusal actually was, once gate membership is known.
@@ -94,7 +125,24 @@ def _refusal_reason(row: dict) -> str | None:
     return REFUSAL_NO_RECORD
 
 
-def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
+def build_app(
+    settings: Settings,
+    run_poller: bool = True,
+    tier_resolver: Callable[[str], str] | None = None,
+    usage_tier_resolver: Callable[[str], str] | None = None,
+) -> FastAPI:
+    """`tier_resolver` answers "which tier is this viewer?" — "all" or "self".
+
+    Injected rather than constructed here so the SubjectAccessReview-backed resolver (the
+    visibility module) stays independently testable and this app stays buildable without a
+    cluster. None is a valid production state and it FAILS CLOSED: with restrictions on
+    and no resolver, every reader gets the self view — never the wide one (decision D1).
+
+    `usage_tier_resolver` is the SECOND, INDEPENDENT decider for the Usage tab alone
+    (docs/SPEC_usage_admin_tier.md): a stricter threshold, its own instance and its own cache,
+    because it asks a different question about the same person and a decided usage tier must
+    never answer for the wide tier. Same fail-closed contract.
+    """
     # The application asks for "the configured backend" and does not name an engine or its
     # tuning knobs. open_backend() owns that; see gsd/storage.py.
     store: StorageBackend = open_backend(settings)
@@ -116,6 +164,213 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
             "nothing will be recorded, because without the proxy there is no authentication "
             "and X-Forwarded-User would be caller-supplied"
         )
+
+    # ── Per-user visibility: the tier decision (docs/SPEC_per_user_visibility.md) ──────────
+    # Decided against the FIRST enabled cluster, deliberately: the oauth-proxy authenticates
+    # viewers against the cluster this pod runs on, and that is the entry the chart writes
+    # (kubernetes.default.svc with the pod's own projected ServiceAccount token). The tier it
+    # yields gates everything this instance SHOWS — rows about other observed clusters
+    # included — because the viewer's identity only means something here; remote clusters
+    # never see this review.
+    #
+    # Constructed only when no `tier_resolver` was injected: an injected callable IS the
+    # decision, and building a second decider beside it would leave two answers to one
+    # question. The instance is published on app.state below (the seam tests substitute).
+    resolver: TierResolver | None = None
+    local_cluster = next((c for c in settings.clusters if c.enabled), None)
+    if tier_resolver is None and settings.view_restrictions_enabled and local_cluster is not None:
+        resolver = TierResolver(
+            local_cluster,
+            verb=settings.visibility_admin_sar_verb,
+            resource=settings.visibility_admin_sar_resource,
+            api_group=settings.visibility_admin_sar_api_group,
+            namespace=settings.visibility_admin_sar_namespace,
+            subresource=settings.visibility_admin_sar_subresource,
+            ttl_seconds=float(settings.visibility_tier_ttl_seconds),
+        )
+    # A SEPARATE instance for the Usage tab (docs/SPEC_usage_admin_tier.md), never the same one:
+    # it asks a stricter question (a write verb the auditor cluster-reader fails) about the same
+    # person, so sharing the wide tier's cache would let one verdict answer for the other. Same
+    # 60s TTL, its own dict.
+    usage_resolver: TierResolver | None = None
+    if (usage_tier_resolver is None and settings.view_restrictions_enabled
+            and local_cluster is not None):
+        usage_resolver = TierResolver(
+            local_cluster,
+            verb=settings.visibility_usage_admin_sar_verb,
+            resource=settings.visibility_usage_admin_sar_resource,
+            api_group=settings.visibility_usage_admin_sar_api_group,
+            namespace=settings.visibility_usage_admin_sar_namespace,
+            subresource=settings.visibility_usage_admin_sar_subresource,
+            ttl_seconds=float(settings.visibility_tier_ttl_seconds),
+        )
+    if not settings.view_restrictions_enabled:
+        # WARNING rather than INFO: this is the one switch that restores the measured exposure
+        # (every authenticated reader sees the full RBAC surface and the login record), and the
+        # pod log is where "why can everyone see everything" gets answered.
+        log.warning(
+            "view restrictions are OFF (visibilityEnabled=false / "
+            "GSD_ENABLE_VIEW_RESTRICTIONS=false): every authenticated reader gets the full "
+            "cluster view, as a deliberate operator choice"
+        )
+    elif resolver is None and tier_resolver is None:
+        log.warning(
+            "view restrictions are on but no enabled cluster is configured to answer the "
+            "SubjectAccessReview — every reader will get the self view"
+        )
+
+    # ── Per-user visibility ─────────────────────────────────────────────────────────────
+    # The scope decision is made in the handler and passed into the store as a bound SQL
+    # parameter — the /api/dashboard/activity pattern, generalised. The store never sees
+    # request identity; the UI only reflects the `scope` and `viewer` fields each scoped
+    # response declares, because a UI-only narrowing is a leak with a cosmetic fix.
+    # Endpoint rulings: docs/SPEC_per_user_visibility.md.
+    #
+    # Both conditions, not either — the ActivityRecorder composition above, for the same
+    # reason: the setting is the operator's choice, the proxy flag is whether any identity
+    # we see is worth believing. Without the proxy there are no authenticated readers to
+    # tier — the app is an open port serving today's wide view to whoever reaches it, and
+    # scoping by a header the caller typed would be theatre. The chart refuses to render
+    # restrictions-on/proxy-off at template time; this warning covers hand-built
+    # deployments that bypass it.
+    restrict = settings.view_restrictions_enabled and settings.oauth_proxy_enabled
+    if settings.view_restrictions_enabled and not settings.oauth_proxy_enabled:
+        log.warning(
+            "view restrictions are configured on but the oauth proxy is not enabled, so "
+            "there is no trusted identity to scope views to and every reader sees "
+            "everything — exactly today's proxy-less behaviour. Enable the oauth proxy to "
+            "make the restriction real, or set GSD_ENABLE_VIEW_RESTRICTIONS=false to "
+            "record that the wide view is a deliberate choice."
+        )
+
+    def trusted_viewer(request: Request) -> str | None:
+        """X-Forwarded-User, believed only behind the proxy — the whoami rule.
+
+        Separate from viewer_scope so full-view endpoints can stamp `viewer` on their
+        response without consulting the tier resolver they do not need.
+        """
+        if not settings.oauth_proxy_enabled:
+            return None
+        return request.headers.get(USER_HEADER) or None
+
+    def viewer_scope(request: Request) -> tuple[str | None, str]:
+        """Resolve this request to (viewer, scope). The failure direction IS the control.
+
+        `scope` is "all" only when restrictions are off, or when the tier resolver
+        POSITIVELY answers "all" for this viewer. Everything else — no viewer, no
+        resolver wired, a resolver error or timeout, an unrecognised answer — lands on
+        "self", never on the wide view (requirements §5.4, decision D1).
+        """
+        viewer = trusted_viewer(request)
+        if not restrict:
+            return viewer, "all"
+        # Read off app.state PER REQUEST — the published seam (see app.state.tier_resolver
+        # below), so a test-substituted resolver is honoured by every handler. The
+        # build-time `tier_resolver` callable is the fallback for an app built with an
+        # injected decision and nothing published.
+        state_resolver = getattr(app.state, "tier_resolver", None)
+        if not viewer or (state_resolver is None and tier_resolver is None):
+            return viewer, "self"
+        try:
+            tier = (state_resolver.resolve(viewer) if state_resolver is not None
+                    else tier_resolver(viewer))
+        except Exception:  # noqa: BLE001
+            # Logged with the trace, served as self: an API-server blip degrades the VIEW,
+            # never the availability — the reader sees their own data, not an error page.
+            log.exception("tier resolution failed for %r; serving the self view", viewer)
+            return viewer, "self"
+        # Only the exact string "all" widens — the _visibility_setting discipline applied
+        # to the resolver's answer, so a buggy resolver cannot widen by returning junk.
+        return viewer, ("all" if tier == "all" else "self")
+
+    def usage_scope(request: Request) -> tuple[str | None, str]:
+        """Resolve this request to (viewer, scope) for the USAGE tab specifically.
+
+        A SECOND, STRICTER threshold than viewer_scope, and INDEPENDENT of it
+        (docs/SPEC_usage_admin_tier.md). The Usage tab is the one dataset that lives only in the
+        dashboard's own database and cannot be reproduced with `oc`, so it must not fall to the
+        wide tier that cluster-reader — the deliberate auditor persona — also passes. Precedence:
+
+          1. userActivity.visibility == "all" -> every admitted reader sees all rows. The
+             existing blunt escape hatch, kept unchanged.
+          2. otherwise the USAGE resolver decides: its exact "all" widens; everything else — no
+             resolver, an error, a junk string, no identity — is the reader's own rows.
+
+        Fail closed like viewer_scope: only the exact string "all" ever widens. Reads the usage
+        resolver off its OWN app.state seam, never the wide tier's.
+        """
+        viewer = trusted_viewer(request)
+        # Precedence 1: the blunt operator override, independent of any tier. Preserved verbatim
+        # from the pre-tier behaviour so a deployment that set it keeps working.
+        if settings.user_activity_visibility == "all":
+            return viewer, "all"
+        # Restrictions off (or proxy off) runs no tier machinery — but Usage is NOT the wide
+        # view, so it stays self here rather than widening. This mirrors the pre-tier behaviour,
+        # where /api/dashboard/activity was governed by userActivity.visibility alone and never
+        # by the visibility tier: turning cluster-data restrictions off must not, as a side
+        # effect, expose colleagues' presence records.
+        if not restrict:
+            return viewer, "self"
+        state_resolver = getattr(app.state, "usage_tier_resolver", None)
+        if not viewer or (state_resolver is None and usage_tier_resolver is None):
+            return viewer, "self"
+        try:
+            tier = (state_resolver.resolve(viewer) if state_resolver is not None
+                    else usage_tier_resolver(viewer))
+        except Exception:  # noqa: BLE001
+            # An API-server blip degrades the Usage VIEW to the reader's own rows, never the
+            # availability and never the wide set — the same discipline viewer_scope follows.
+            log.exception("usage tier resolution failed for %r; serving the self view", viewer)
+            return viewer, "self"
+        return viewer, ("all" if tier == "all" else "self")
+
+    def require_viewer(viewer: str | None) -> str:
+        """Self-scoped data needs a name to scope to; without one it is refused.
+
+        The /api/dashboard/activity rule: when no proxy fronts the app (or the proxy sent
+        no identity header), X-Forwarded-User is whatever the caller typed, and honouring
+        it would let anyone read anyone by asserting a name.
+        """
+        if not viewer:
+            raise HTTPException(
+                status_code=403,
+                detail="this data is scoped to the authenticated viewer, and there is no "
+                       "authenticated identity to scope it to",
+            )
+        return viewer
+
+    def require_admin_tier(request: Request) -> str:
+        """The administrator tier, or a refusal that names itself as one.
+
+        For the views that are ABOUT THE CLUSTER rather than about the reader: its whole RBAC
+        binding surface, the operator's configuration, the sync CRs. These cannot be scoped
+        the way a membership list can — a binding names whoever it names, so the honest
+        choice is the whole thing or none of it, and none of it is what a non-administrator
+        gets.
+
+        WHY A REFUSAL AND NOT A FILTER, measured on the reference cluster. An ordinary reader
+        (`lateef.o`) holds none of `list clusterrolebindings`, `list rolebindings` or `list
+        groups` — `oc auth can-i` answers no to all three — and /bindings/findings handed him
+        236 rows anyway, 21 of them naming an admin role, including which group holds
+        cluster-admin. That is a target list obtainable through the dashboard and not with
+        `oc`: a privilege escalation.
+
+        The chart already records this exact finding for the BEARER-token path, where gating
+        /api on `list groups` was called "WRONG — a privilege escalation, proven on the
+        reference cluster" and the floor was raised to cluster-wide RBAC read. That floor was
+        never applied to the browser path, because -openshift-delegate-urls governs bearer
+        tokens only and cookie sessions bypass it entirely. This is the same floor, applied
+        where it was missing.
+        """
+        _, scope = viewer_scope(request)
+        if scope != "all":
+            raise HTTPException(
+                status_code=403,
+                detail="this view reports the cluster's own RBAC binding surface and operator "
+                       "configuration rather than anything belonging to the reader, so it is "
+                       "reserved to the administrator tier",
+            )
+        return scope
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -268,13 +523,26 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
 
     @app.get("/api/clusters")
     @consistent
-    def list_clusters() -> list[dict]:
+    def list_clusters(request: Request) -> list[dict]:
         """Every observed cluster with its poll status and headline counts.
 
         The overview reads this. An unreachable cluster still appears, carrying its error —
         a cluster this dashboard cannot poll is a thing it exists to report, not a reason to
         omit the row.
+
+        REACHABLE AT EVERY TIER, deliberately: the cluster selector reads this on every tab,
+        and reachable/status/error is how an ordinary reader tells a broken dashboard from an
+        empty one. Almost every count here is already world-readable on the unauthenticated
+        /metrics (gsd_groups_total, gsd_bindings_total{finding=...}), so withholding those
+        behind login would be theatre. The ONE exception is `operator_configs` below: it has
+        no /metrics analogue (there is no gsd_operator_configs_total; only the failing count
+        is inferable from gsd_alerts_total{kind="config_reconcile_error"}), so it is a
+        genuinely private aggregate that would otherwise reach a self reader through the one
+        endpoint that cannot be refused. It is withheld at self — the withheld-aggregate
+        pattern /logins and /cluster-access already use — while everything with a public
+        analogue stays full.
         """
+        _, scope = viewer_scope(request)
         out = []
         for row in store.clusters():
             counts = store.group_counts(row["id"])
@@ -300,8 +568,12 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
                     "unattributed_groups": counts["unattributed"],
                     "oldest_last_sync": store.oldest_last_sync(row["id"]),
                     # Compact policy-operator summary for the card. None when the CRDs are
-                    # absent, so the UI can render nothing rather than a healthy-looking 0.
-                    "operator_configs": _config_summary(row["id"]),
+                    # absent, so the UI can render nothing rather than a healthy-looking 0 —
+                    # AND None at the self tier, where it is withheld (see the docstring): it
+                    # is the one card figure with no /metrics analogue. Both cases render as
+                    # nothing on the card, which is the right outcome for each.
+                    "operator_configs": (
+                        _config_summary(row["id"]) if scope == "all" else None),
                     # Surfaced on the landing page so binding problems are discoverable
                     # without knowing to navigate anywhere. `unresolved` does not alert
                     # (it cannot be told from a not-yet-synced group), so without a count
@@ -319,6 +591,20 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
         `state`, `next_expected` and `error_is_current` are computed per request from the
         schedule and the last sync, never stored — a stored state would be wrong the moment
         the clock moved past it.
+
+        FULL VIEW AT BOTH TIERS — the surviving half of spec Q3, and the ONLY half. Q3
+        originally served CR health, operator configuration AND the binding findings whole at
+        both tiers as "governance data about objects"; 03ad446 reversed that for the RBAC
+        binding surface (/bindings/findings) and the operator's private configuration
+        (/operator-configs), which are the administrator tier now. THIS endpoint survives on a
+        measurement the other two do not share: /metrics is in the chart's skipAuthRegex and
+        serves, to a credential-less curl, gsd_groupsync_state,
+        gsd_groupsync_last_sync_timestamp_seconds and gsd_groupsync_groups_total per CR — the
+        same per-CR identity and state this returns. Refusing it here would be theatre while
+        that holds, and it would cost the Groups tab its per-provider colour slots (crSlot
+        reads data.groupsyncs) for nothing. Gate /metrics first if this should ever change.
+        The payload never varies by tier, which is why this stays a bare list with no scope
+        field — there is no narrowing to declare.
         """
         require_cluster(cluster_id)
         now = datetime.now(UTC)
@@ -326,6 +612,7 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
 
     @app.get("/api/clusters/{cluster_id}/groupsyncs/{name}/events")
     def list_events(
+        request: Request,
         cluster_id: str,
         name: str,
         since: str | None = Query(
@@ -351,6 +638,10 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
         events = rows[:limit]
         return {
             "cluster": cluster_id,
+            # FULL VIEW AT BOTH TIERS, by ruling (spec Q3): a sync timeline names CRs and
+            # counts, never a person, and per-CR state is public on /metrics already.
+            "scope": "all",
+            "viewer": trusted_viewer(request),
             "groupsync": name,
             "count": len(events),
             "limit": limit,
@@ -364,26 +655,63 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
 
     @app.get("/api/clusters/{cluster_id}/groups")
     def list_groups(
+        request: Request,
         cluster_id: str,
         state: str = Query(
             default="all", pattern="^(all|empty|unattributed)$",
             description="`all`; `empty` for groups with zero members, whatever created them; "
                         "`unattributed` for groups no GroupSync CR claims. The two overlap: a "
                         "hand-made group with no members is both."),
-    ) -> list[dict]:
-        """Synced groups on one cluster, optionally narrowed to a problem state."""
+    ) -> dict:
+        """Synced groups on one cluster, optionally narrowed to a problem state.
+
+        SELF-SCOPED under view restrictions: a plain reader sees only the groups they are
+        a member of, because `list groups.user.openshift.io` is a permission they do not
+        hold (measured: eight-for-eight `no` for the lab's plain user). An object rather
+        than the bare list this used to be, so `scope` and `viewer` ride the response and
+        the UI never has to derive the tier — the activity-endpoint contract.
+        """
         require_cluster(cluster_id)
-        return store.groups(cluster_id, state)
+        viewer, scope = viewer_scope(request)
+        rows = store.groups(
+            cluster_id, state,
+            user_name=None if scope == "all" else require_viewer(viewer),
+        )
+        return {
+            "cluster": cluster_id,
+            "scope": scope,
+            "viewer": viewer,
+            "count": len(rows),
+            "groups": rows,
+        }
 
     @app.get("/api/clusters/{cluster_id}/groups/{name}")
     @consistent
-    def group_detail(cluster_id: str, name: str) -> dict:
+    def group_detail(request: Request, cluster_id: str, name: str) -> dict:
         """One group: its members, the CR that syncs it, and what it grants.
 
         A group with history but no current state is reported as DELETED rather than 404 —
         it is still named by every membership-change row that mentions it.
+
+        SELF-SCOPED under view restrictions: only groups the viewer belongs to. The
+        member check runs BEFORE any existence lookup, so a non-member's 403 is constant
+        for a real group and a nonexistent one alike — answering differently would be a
+        per-name existence oracle over the very list the self tier withholds. A member
+        sees the full detail: membership is the entitlement, and their group's roster is
+        exactly what they can see about themselves in the directory. Deleted groups are
+        unreachable at self by the same rule — no membership row, no view — which fails
+        closed rather than resurrecting history for an ex-member.
         """
         require_cluster(cluster_id)
+        viewer, scope = viewer_scope(request)
+        if scope == "self" and not store.is_group_member(
+            cluster_id, name, require_viewer(viewer)
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail="this group is outside your view; group detail beyond your own "
+                       "memberships needs the wide tier",
+            )
         detail = store.group_detail(cluster_id, name)
         if detail is None:
             # A group we have history for but no current state is DELETED, not unknown.
@@ -395,6 +723,8 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
                 raise HTTPException(status_code=404, detail=f"unknown group {name!r}")
             return {
                 "name": name,
+                "scope": scope,
+                "viewer": viewer,
                 "deleted": True,
                 "member_count": 0,
                 "sync_provider": None,
@@ -416,6 +746,8 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
                     break
         return {
             **detail,
+            "scope": scope,
+            "viewer": viewer,
             "owner": owner,
             "members": store.group_members(cluster_id, name),
             "changes": store.membership_events(cluster_id, group_name=name, limit=100),
@@ -426,6 +758,7 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
 
     @app.get("/api/clusters/{cluster_id}/users")
     def list_users(
+        request: Request,
         cluster_id: str,
         limit: int = Query(
             default=1000, ge=1, le=10000,
@@ -437,12 +770,22 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
         it grows with the size of the directory rather than with anything the dashboard
         controls. The response is now an object so `truncated` can be reported: a clipped
         list that looks like a complete one is the failure worth avoiding.
+
+        SELF-SCOPED under view restrictions: a plain reader gets their own row or an
+        empty list, because `list users.user.openshift.io` is a permission they do not
+        hold — the only self-read OpenShift grants everyone is `get users/~`.
         """
         require_cluster(cluster_id)
-        rows = store.users(cluster_id, limit=limit)
+        viewer, scope = viewer_scope(request)
+        rows = store.users(
+            cluster_id, limit=limit,
+            user_name=None if scope == "all" else require_viewer(viewer),
+        )
         truncated = len(rows) > limit
         return {
             "cluster": cluster_id,
+            "scope": scope,
+            "viewer": viewer,
             "count": min(len(rows), limit),
             "truncated": truncated,
             "limit": limit,
@@ -451,13 +794,23 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
 
     @app.get("/api/clusters/{cluster_id}/users/{name}")
     @consistent
-    def user_detail(cluster_id: str, name: str) -> dict:
+    def user_detail(request: Request, cluster_id: str, name: str) -> dict:
         """Reverse lookup: every group this user is in.
 
         The cluster cannot answer this directly — it means scanning every Group object — yet
         it is the question behind most "why does this person have access?" investigations.
+
+        SELF-SCOPED under view restrictions: their own profile only, refused BEFORE any
+        store lookup so the 403 for a colleague and for a name that does not exist are
+        byte-identical — otherwise this endpoint is a username oracle.
         """
         require_cluster(cluster_id)
+        viewer, scope = viewer_scope(request)
+        if scope == "self" and name != require_viewer(viewer):
+            raise HTTPException(
+                status_code=403,
+                detail="user profiles other than your own need the wide tier",
+            )
         groups = store.user_groups(cluster_id, name)
         changes = store.membership_events(cluster_id, user_name=name, limit=100)
         # A user with no CURRENT groups is not unknown — they may have just been removed
@@ -468,6 +821,8 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
         return {
             "user": name,
             "cluster": cluster_id,
+            "scope": scope,
+            "viewer": viewer,
             # None whenever OpenShift has no name for them — no User object because they have
             # never logged in, or a User with fullName unset because their identity provider
             # supplies no name attribute. A separate store call rather than a join because this
@@ -483,6 +838,7 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
     @app.get("/api/clusters/{cluster_id}/logins")
     @consistent
     def list_logins(
+        request: Request,
         cluster_id: str,
         outcome: str | None = Query(
             default=None,
@@ -517,13 +873,36 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
         name". `ungoverned` lists those accounts separately so a paged chronology cannot bury them.
         """
         require_cluster(cluster_id)
+        # THE MOST SENSITIVE ENDPOINT IN THE APPLICATION (requirements §2): it names people
+        # and states that their password was wrong or their account locked. SELF-SCOPED
+        # under view restrictions, and byte-exact on purpose: the capture stores the name
+        # AS TYPED (measured live: rows for both `lateef.o` and `LATEEF.O`), while the
+        # viewer arrives in the directory form, so a case-variant attempt stays visible to
+        # the wide tier only. A COLLATE NOCASE match was measured to degrade the query to
+        # the cluster-wide index scan AND would cross-leak between two OpenShift Users
+        # differing only by case — User names are case-sensitive.
+        viewer, scope = viewer_scope(request)
+        if scope == "self":
+            me = require_viewer(viewer)
+            if user is not None and user != me:
+                raise HTTPException(
+                    status_code=403,
+                    detail="login attempts other than your own need the wide tier",
+                )
+            user = me
         # Which provider NAMES are HTPasswd is deployment configuration — the log carries only the
         # name. Passed to the ungoverned queries so their rows and their count share ONE predicate in
         # the store, and applied per row below for the break_glass label.
         htpasswd = tuple(settings.login_capture_htpasswd_providers)
         status = store.login_capture_status(cluster_id)
+        # Computed at BOTH tiers: the self view keeps the window edges (capture_started_at,
+        # retained_since — facts about the record, not about a person) and withholds the
+        # personnel aggregates below.
         summary = store.login_event_summary(cluster_id, exclude_providers=htpasswd)
-        ungoverned = store.ungoverned_login_users(cluster_id, exclude_providers=htpasswd, limit=50)
+        ungoverned = (
+            store.ungoverned_login_users(cluster_id, exclude_providers=htpasswd, limit=50)
+            if scope == "all" else None
+        )
         # limit + 1 to learn whether more exist — the list_users idiom. `summary` carries the exact
         # whole-record numbers, so no headline figure is ever computed from this page.
         rows = store.login_events(cluster_id, user_name=user, outcome=outcome, limit=limit + 1)
@@ -548,11 +927,13 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
             # rather than asserting a non-membership it has no basis for.
             row["in_access_group"] = gate.get(row["user_name"])
             row["refusal_reason"] = _refusal_reason(row)
-        for row in ungoverned:
+        for row in ungoverned or []:
             row["has_history"] = bool(row.get("has_history"))
 
         return {
             "cluster": cluster_id,
+            "scope": scope,
+            "viewer": viewer,
             "enabled": settings.login_capture_enabled,
             "note": "read from the oauth-server log at Debug verbosity; covers only the period "
                     "since capture began — earlier logins were never recorded and cannot be "
@@ -569,9 +950,19 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
             # would call a 900s poll "stalled" every single cycle.
             "read_interval_seconds": settings.poll_interval_seconds,
             "retained_since": summary["first_at"],
-            "total": summary["total"],
+            # At self, the whole-record count OF THE VIEWER (one indexed scalar), never the
+            # cluster-wide total — a number computed over rows the response withholds would
+            # be the count-versus-page defect reintroduced deliberately.
+            "total": summary["total"] if scope == "all" else
+                     store.count_login_events(cluster_id, user),
             "limit": limit,
             "truncated": truncated,
+            # The personnel aggregates are WITHHELD at self, as None rather than zeros:
+            # failure counts, distinct users and the ungoverned list are personnel data
+            # even without names (the gsd_dashboard_active_users removal is the precedent),
+            # and a fabricated 0 would read as "nothing happened". Never recomputed over
+            # the visible subset either — "distinct users among yourself" is 1 by
+            # construction, a number whose label would lie.
             "summary": {
                 "distinct_users": summary["distinct_users"],
                 "successes": successes,
@@ -580,7 +971,7 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
                 "ungoverned_users": summary["ungoverned_users"],
                 "first_at": summary["first_at"],
                 "last_at": summary["last_at"],
-            },
+            } if scope == "all" else None,
             # One row per account in no synced group, most recent first. Bounded at 50 and honest
             # about it: summary.ungoverned_users beside it is the whole-set count, from the SAME
             # store predicate, so the two cannot disagree.
@@ -591,6 +982,7 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
     @app.get("/api/clusters/{cluster_id}/cluster-access")
     @consistent
     def cluster_access(
+        request: Request,
         cluster_id: str,
         limit: int = Query(
             default=200, ge=1, le=2000,
@@ -609,12 +1001,48 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
         findings — it is no data, and the two must never look alike.
         """
         require_cluster(cluster_id)
+        viewer, scope = viewer_scope(request)
         access = store.cluster_access_group(cluster_id)
+        if scope == "self":
+            # THE VIEWER'S OWN GATE STATUS and nothing about anyone else. The DN, the
+            # discovery source and both people-lists are withheld — the lists are other
+            # people's findings, and the DN maps the directory. Withheld values are None,
+            # never fabricated zeros: a summary of zeros would read as "no findings" to a
+            # reader who cannot know it was narrowed. `in_access_group` is None when no
+            # synced gate group exists to compare against — "we cannot tell" is a
+            # different statement from "not a member", same contract as the logins rows.
+            me = require_viewer(viewer)
+            gated = bool(access)
+            synced = bool(access and access["group_name"])
+            membership = store.is_in_access_group(cluster_id, [me])
+            return {
+                "cluster": cluster_id,
+                "scope": "self",
+                "viewer": viewer,
+                "gated": gated,
+                "dn": None,
+                "source": None,
+                "group_name": None,
+                "synced": synced,
+                "in_access_group": membership.get(me) if synced else None,
+                "note": ("membership of the login-gate group is required to authenticate; "
+                         "in_access_group is your own status against it"
+                         if synced else
+                         "no synced login-gate group is known on this cluster, so your "
+                         "gate status cannot be determined"),
+                "summary": None,
+                "access_without_login": None,
+                "login_without_access": None,
+                "limit": limit,
+                "truncated": False,
+            }
         if not access:
             # NO GATE, which is itself a finding rather than an absence: with no membership clause in
             # any identity provider's filter, every account in the search base can sign in.
             return {
                 "cluster": cluster_id,
+                "scope": scope,
+                "viewer": viewer,
                 "gated": False,
                 "dn": None,
                 "source": None,
@@ -649,6 +1077,8 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
 
         return {
             "cluster": cluster_id,
+            "scope": scope,
+            "viewer": viewer,
             "gated": True,
             "dn": access["dn"],
             # Which of the two produced it. An operator asking "why is this the wrong group?" needs to
@@ -674,6 +1104,7 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
     @app.get("/api/clusters/{cluster_id}/bindings/findings")
     @consistent
     def binding_findings(
+        request: Request,
         cluster_id: str,
         limit: int = Query(
             default=500, ge=1, le=5000,
@@ -687,8 +1118,20 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
         unresolvable Group subjects are built-in virtual groups
         (`system:serviceaccounts:*`, `system:authenticated`), which authorise real access
         and have no object by design. Reporting those as broken buries the few that are.
+
+        ADMINISTRATOR TIER ONLY, and this REVERSES an earlier ruling of ours. Spec Q3 called
+        these rows "governance data about objects, not people" and served them at both tiers.
+        That reasoning does not survive measurement: a binding row names which GROUP holds
+        which ROLE, and on the reference cluster an ordinary reader who could not run any of
+        `list clusterrolebindings`, `list rolebindings` or `list groups` was handed 236 rows,
+        21 naming an admin role — a list of which groups to join to gain admin, obtainable
+        here and not with `oc`. See require_admin_tier for the full measurement.
+
+        The COUNTS remain public on /metrics (`gsd_bindings_total{finding=...}`) and that is
+        unchanged and fine: an aggregate is not a target list. It is the rows that escalate.
         """
         require_cluster(cluster_id)
+        require_admin_tier(request)
         # Every binding, including the ones that resolve normally. A view labelled
         # "bindings" that omitted the healthy majority (74 of 228 here) misrepresented the
         # cluster; the caller filters, rather than the API deciding what is worth seeing.
@@ -707,6 +1150,13 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
             by_tier.setdefault(row["finding"], []).append(row)
         return {
             "cluster": cluster_id,
+            # Always "all", and now only ever REACHED at that tier — require_admin_tier
+            # refuses above, so there is no narrowed variant of this payload to declare. The
+            # person-named analogue, bindings that name a User directly, lives on
+            # /user-bindings and is self-scoped there rather than refused, because a reader's
+            # own grants are theirs to see.
+            "scope": "all",
+            "viewer": trusted_viewer(request),
             "note": "direct bindings only; role rules are not evaluated",
             "total": total,
             "limit": limit,
@@ -725,6 +1175,7 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
     @app.get("/api/clusters/{cluster_id}/user-bindings")
     @consistent
     def direct_user_bindings(
+        request: Request,
         cluster_id: str,
         include_platform: bool = Query(
             default=False,
@@ -769,16 +1220,30 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
         table.
         """
         require_cluster(cluster_id)
+        # SELF-SCOPED under view restrictions: only bindings that name the viewer — their
+        # own grants (requirements §2). Byte-exact against the subject name as the
+        # administrator typed it, so a binding naming `jdoe` is invisible to `john.doe`:
+        # fail-closed, because nothing proves those are one person. The rollup and the
+        # platform count aggregate OTHER people's grants, so at self they are withheld as
+        # None — never recomputed over one person (a one-row "worklist" would relabel the
+        # migration effort as the viewer's) and never fabricated zeros.
+        viewer, scope = viewer_scope(request)
+        me = None if scope == "all" else require_viewer(viewer)
         total = store.count_direct_user_bindings(
-            cluster_id, include_platform=include_platform, namespace=namespace)
+            cluster_id, include_platform=include_platform, namespace=namespace,
+            user_name=me)
         rows = store.direct_user_bindings(
             cluster_id, include_platform=include_platform, namespace=namespace,
-            limit=limit, offset=offset)
+            limit=limit, offset=offset, user_name=me)
         return {
             "cluster": cluster_id,
+            "scope": scope,
+            "viewer": viewer,
             "note": "direct user grants; migrate these to LDAP-managed groups",
-            "by_namespace": store.user_bindings_by_namespace(cluster_id),
-            "excluded_platform": store.platform_user_binding_count(cluster_id),
+            "by_namespace":
+                store.user_bindings_by_namespace(cluster_id) if scope == "all" else None,
+            "excluded_platform":
+                store.platform_user_binding_count(cluster_id) if scope == "all" else None,
             "namespace": namespace,
             "total": total,
             "limit": limit,
@@ -788,18 +1253,32 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
         }
 
     @app.get("/api/clusters/{cluster_id}/operator-configs")
-    def operator_configs(cluster_id: str) -> dict:
+    def operator_configs(request: Request, cluster_id: str) -> dict:
         """Health of the namespace-configuration-operator's CRs on this cluster.
 
         `present: false` means the CRDs do not exist there — auto-detected, and a
         different truth from "installed with zero CRs". Reconcile conditions only, by
         design: the templates are the operator's business.
+
+        ADMINISTRATOR TIER ONLY. Spec Q3 served this at both tiers as "governance data about
+        objects", and unlike the GroupSync CRs there is no /metrics analogue — nothing here is
+        public, so the earlier reasoning left a genuinely private view open. It describes how
+        this cluster's access is templated, which is administrator business and answers nothing
+        a reader can ask about themselves. It renders on the Overview and RBAC policy tabs,
+        both of which are the administrator tier now.
         """
         require_cluster(cluster_id)
-        return {"cluster": cluster_id, **store.operator_configs(cluster_id)}
+        require_admin_tier(request)
+        return {
+            "cluster": cluster_id,
+            "scope": "all",
+            "viewer": trusted_viewer(request),
+            **store.operator_configs(cluster_id),
+        }
 
     @app.get("/api/clusters/{cluster_id}/membership-changes")
     def membership_changes(
+        request: Request,
         cluster_id: str,
         limit: int = Query(
             default=100, ge=1, le=1000,
@@ -811,16 +1290,27 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
         The only record of a departure: the cluster shows current membership, so once
         somebody is removed nothing on it says they were ever there. Accumulated from
         polling, so the window starts when this dashboard did.
+
+        SELF-SCOPED under view restrictions: only the changes affecting the viewer
+        (requirements §2) — the rows are person-by-person history, and the store already
+        takes user_name as the privacy scope (membership_event_by_user serves it).
         """
         require_cluster(cluster_id)
+        viewer, scope = viewer_scope(request)
         # limit + 1, as in list_events — see docs/api-contract.md R3. This log previously
         # cut off at 100 with nothing saying so, which on an audit trail reads as "no
         # further changes" rather than "not shown".
-        rows = store.membership_events(cluster_id, limit=limit + 1)
+        rows = store.membership_events(
+            cluster_id,
+            user_name=None if scope == "all" else require_viewer(viewer),
+            limit=limit + 1,
+        )
         truncated = len(rows) > limit
         events = rows[:limit]
         return {
             "cluster": cluster_id,
+            "scope": scope,
+            "viewer": viewer,
             "count": len(events),
             "limit": limit,
             "truncated": truncated,
@@ -830,12 +1320,20 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
 
     @app.get("/api/alerts")
     @consistent
-    def list_alerts() -> list[dict]:
+    def list_alerts(request: Request) -> dict:
         """Everything currently worth a human's attention, across all clusters.
 
         Ordered by severity. Derived per request from the same stored observations the rest
         of the API serves, so an alert here always has a page behind it.
+
+        THAT INVARIANT IS WHAT SCOPES THIS FEED. Under view restrictions the self tier
+        receives only the kinds in SELF_ALERT_KINDS — the ones whose backing pages it
+        sees in full — filtered by kind rather than recomputed, and the response says so:
+        an alert feed that quietly dropped rows would train readers that green means
+        healthy when it means hidden. An object rather than the bare list this used to
+        be, so `scope` and `viewer` ride the wire (the activity contract).
         """
+        viewer, scope = viewer_scope(request)
         now = datetime.now(UTC)
         alerts: list[dict] = []
         for row in store.clusters():
@@ -871,7 +1369,10 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
             for row in store.binding_findings(cluster_id):
                 if row["finding"] != "dangling":
                     continue
-                scope = (
+                # `where`, not `scope`: this handler's `scope` is the visibility tier, and
+                # a loop-local rebinding here once disabled the self filter below — the
+                # feed failed OPEN on exactly the clusters that had a dangling finding.
+                where = (
                     f"namespace {row['binding_namespace']}"
                     if row["binding_namespace"]
                     else "cluster-wide"
@@ -882,16 +1383,23 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
                         "kind": "dangling_binding",
                         "subject": row["binding_name"],
                         "detail": (
-                            f"{row['binding_kind']} grants {row['role_name']} {scope} to "
+                            f"{row['binding_kind']} grants {row['role_name']} {where} to "
                             f"group {row['group_name']!r}, which the operator used to "
                             f"manage and no longer exists — this binding now grants nobody"
                         ),
                         "severity": "critical",
                     }
                 )
+        if scope == "self":
+            alerts = [a for a in alerts if a["kind"] in SELF_ALERT_KINDS]
         severity_rank = {"critical": 0, "warning": 1}
         alerts.sort(key=lambda a: (severity_rank.get(a["severity"], 9), a["cluster"], a["kind"]))
-        return alerts
+        return {
+            "scope": scope,
+            "viewer": viewer,
+            "count": len(alerts),
+            "alerts": alerts,
+        }
 
     metrics_registry = build_registry(store, grace, elector)
 
@@ -943,10 +1451,14 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
         session open forever — the exact defect the durations exist to fix. It is called
         once, at page load; the page's "Stay signed in" control re-proves the session with
         an ordinary interaction-marked data refresh instead of calling this again.
+        `visibility` rides here so the page can LABEL its tier from the wire instead of
+        deriving one — the UI never decides (tests/test_ui.py). Absent entirely when there
+        is no authenticated identity: reporting a tier for a name nobody verified would
+        lend that name credibility.
         """
         user = request.headers.get(USER_HEADER)
         authenticated = bool(user) and settings.oauth_proxy_enabled
-        return {
+        out = {
             "user": user if settings.oauth_proxy_enabled else None,
             "email": request.headers.get(EMAIL_HEADER) if settings.oauth_proxy_enabled else None,
             "authenticated": authenticated,
@@ -964,6 +1476,13 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
                 else None
             ),
         }
+        if authenticated:
+            # The tier from the SAME decision path the data handlers use — viewer_scope
+            # reads the app.state seam per request and never raises — so the pill can
+            # never disagree with the pages it sits above. An indeterminate tier is SELF.
+            _, scope = viewer_scope(request)
+            out["visibility"] = {"scope": scope, "enabled": settings.view_restrictions_enabled}
+        return out
 
     @app.get("/api/dashboard/activity")
     @consistent
@@ -977,14 +1496,24 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
     ) -> dict:
         """Who used the dashboard, one row per user per UTC day.
 
-        SELF-ONLY by default. This returns identifiable personnel data — username, email,
-        the dates somebody was present and the window they worked in — and it used to hand
-        all of it to every authenticated user. The dashboard's usual justification does not
-        stretch this far: "you could read the groups with oc anyway" is true of group
-        membership and false of who looked at it.
+        SELF-ONLY by default, and gated by its OWN threshold. This returns identifiable
+        personnel data — username, email, the dates somebody was present and the window they
+        worked in — and it used to hand all of it to every authenticated user. The dashboard's
+        usual justification does not stretch this far: "you could read the groups with oc
+        anyway" is true of group membership and false of who looked at it — and unlike every
+        other view, Usage lives ONLY in this dashboard's database, reproducible with no `oc`
+        command at all.
 
-        `userActivity.visibility: all` restores the old behaviour for a deployment that
-        genuinely wants it, as a deliberate, documented choice rather than a default.
+        THAT IS WHY IT HAS A SECOND, STRICTER TIER (docs/SPEC_usage_admin_tier.md), decided by
+        usage_scope rather than viewer_scope. cluster-reader — the auditor persona that keeps
+        every wide audit view — must NOT browse colleagues' presence records, and no read check
+        separates it from cluster-admin, so the usage threshold asks a write verb. The wide tier
+        and the usage tier are independent: a cluster-reader comes out scope=all on /groups and
+        scope=self here, same request cycle, same app.
+
+        `userActivity.visibility: all` still restores the old everyone-sees-everyone behaviour
+        for a deployment that genuinely wants it — the blunt override, unchanged, and it wins
+        over the tier (usage_scope precedence 1).
 
         Deliberately not a page-view log — see the dashboard_user_activity comment in
         store.py for why this is aggregated rather than per-request.
@@ -1002,8 +1531,10 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
         if not viewer:
             raise HTTPException(status_code=403, detail="no authenticated identity")
 
-        everyone = settings.user_activity_visibility == "all"
-        scope_to = None if everyone else viewer
+        # The usage tier, not the wide tier: scope is "all" only via the blunt override or a
+        # positive usage-SAR verdict, and everything indeterminate serves the reader's own rows.
+        _, scope = usage_scope(request)
+        scope_to = None if scope == "all" else viewer
         # The summary is computed over the whole visible set, the rows are one page of it.
         # Without the summary the page counted the rows it was handed and called that the
         # total, which is the same silent-truncation defect the user-bindings endpoint was
@@ -1015,7 +1546,7 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
         return {
             "enabled": activity.enabled,
             "retention_days": settings.user_activity_retention_days,
-            "scope": "all" if everyone else "self",
+            "scope": scope,
             "viewer": viewer,
             "total": summary["rows_total"],
             "limit": limit,
@@ -1156,6 +1687,16 @@ def build_app(settings: Settings, run_poller: bool = True) -> FastAPI:
 
     app.state.store = store
     app.state.settings = settings
+    # The visibility seam, published for the handlers and for tests to substitute: a fake
+    # resolver here (any object with resolve(viewer) -> "all" | "self") is how a test
+    # forces the all tier, the self tier, or an indeterminate answer without a cluster.
+    # None whenever the decision was injected into build_app instead — viewer_scope then
+    # falls back to that injected callable.
+    app.state.tier_resolver = resolver
+    # The Usage tab's OWN seam, deliberately a distinct attribute and a distinct resolver
+    # instance: usage_scope reads only this one, so a test (and the live app) can hold a
+    # cluster-reader at scope=all on the wide tier and scope=self on Usage in the same request.
+    app.state.usage_tier_resolver = usage_resolver
     return app
 
 

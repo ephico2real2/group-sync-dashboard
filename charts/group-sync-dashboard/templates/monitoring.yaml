@@ -34,10 +34,36 @@ spec:
       # states only, never a group or user name.
       scheme: https
       tlsConfig:
-        # service-ca issues the certificate for the SERVICE DNS name and Prometheus connects
-        # to the POD IP, so the name cannot match however the CA is supplied. Verification
-        # would have to be off here regardless of how trust is configured.
-        insecureSkipVerify: true
+        # VERIFIED — and this block used to say it could not be. The old comment reasoned that
+        # service-ca issues the certificate for the SERVICE DNS name while Prometheus dials the
+        # POD IP, so the name can never match (true), and concluded that verification therefore
+        # had to be off "regardless of how trust is configured" (false). `serverName` sets the
+        # name that is VERIFIED independently of the address dialled, which is what it is for.
+        #
+        # Measured on the reference cluster — connecting to the pod IP while verifying against
+        # the service name, which is exactly what these two fields ask Prometheus to do:
+        #   curl --cacert .../service-ca.crt \
+        #        --resolve 'group-sync-dashboard.<ns>.svc:8443:10.217.0.157' \
+        #        https://group-sync-dashboard.<ns>.svc:8443/metrics
+        #     -> HTTP 200, ssl_verify_result=0
+        # The same call with no --cacert is REFUSED, so that success is real verification and
+        # not a handshake that would have passed anyway.
+        #
+        # The certificate carries the service DNS names and nothing else, which is why
+        # `serverName` must name the Service rather than the pod:
+        #   DNS:<name>.<ns>.svc, DNS:<name>.<ns>.svc.cluster.local
+        #
+        # OPENSHIFT-ONLY, deliberately. `openshift-service-ca.crt` is injected into every
+        # namespace by the service-ca operator, and the Prometheus Operator resolves a
+        # configMap reference against the ServiceMonitor's OWN namespace, so it resolves here
+        # with nothing copied in. Vanilla Kubernetes has neither that ConfigMap nor the serving
+        # certificate — but it also has no Route, no oauth-proxy sidecar and no
+        # user.openshift.io, so this chart is already OpenShift-shaped.
+        ca:
+          configMap:
+            name: openshift-service-ca.crt
+            key: service-ca.crt
+        serverName: {{ include "gsd.fullname" . }}.{{ .Release.Namespace }}.svc
       {{- end }}
       interval: {{ .Values.monitoring.serviceMonitor.interval }}
       scrapeTimeout: {{ .Values.monitoring.serviceMonitor.scrapeTimeout }}

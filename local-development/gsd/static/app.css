@@ -366,8 +366,14 @@ select, button, a.btn {
 a.btn { text-decoration: none; }
 button:hover, select:hover, a.btn:hover { border-color: var(--baseline); }
 
-/* Refetch holds the previous render at reduced opacity — no skeleton flash, no jump. */
-.stale { opacity: 0.55; transition: opacity 120ms ease; }
+/* Refetch holds the previous render at reduced opacity — no skeleton flash, no jump.
+   The 150ms delay keeps the dim invisible for any fetch that beats it: the tab handler
+   paints the destination BEFORE fetching (index.html [data-nav]), so an instant dim was
+   re-dimming a page that had only just appeared — measured, warm loopback fetches finish
+   in 70-100ms and never earn a dim, while a slow round trip still gets its feedback.
+   Removal is immediate: the transition lives only on .stale, so dropping the class
+   snaps opacity back with neither delay nor fade. */
+.stale { opacity: 0.55; transition: opacity 120ms ease 150ms; }
 
 .card {
   background: var(--surface-1); border: 1px solid var(--border);
@@ -632,6 +638,50 @@ code { font-family: var(--font-mono); font-size: var(--text-sm); }
   background: color-mix(in srgb, var(--status-warning) 8%, transparent);
   border-radius: 0 6px 6px 0;
 }
+
+/* ---- Visibility tier ------------------------------------------------------------------
+   Labels for per-user visibility. Everything here renders what the RESPONSE declared
+   (scope/viewer fields, or a designed 403) — the page never computes a tier. Colours are
+   existing tokens only, so the WCAG tables in tests/test_accessibility.py already cover
+   both themes: the text is --text-primary/--text-secondary on the surfaces it is checked
+   on, and --status-warning appears only as a 3px edge — a graphical object under WCAG
+   1.4.11, never text. */
+.scope-pill {
+  display: inline-flex; align-items: center;
+  font-size: var(--text-sm); font-weight: 500; color: var(--text-primary);
+  background: var(--zebra); border: 1px solid var(--border);
+  border-left-width: 3px; border-radius: 999px; padding: 2px 10px;
+  white-space: nowrap;
+}
+/* The narrowed state carries the attention edge; the full state a neutral one. The WORDS
+   ("Your view" / "Full view") are the reliable channel — the edge is a scanning aid, so
+   a colourblind reader loses nothing. */
+.scope-pill.self { border-left-color: var(--status-warning); }
+.scope-pill.full { border-left-color: var(--baseline); }
+/* display on the class beats the UA's [hidden] rule — author styles always win over the
+   UA sheet — so without this the pill would render while claiming to be hidden. */
+.scope-pill[hidden] { display: none; }
+
+/* Same shape as .truncation-note, for the same reason: a narrowed list that looks
+   complete is the silent-truncation defect wearing a security hat, so the banner is an
+   edge-marked notice above the data it qualifies, never a footnote below it. */
+.scope-banner {
+  margin: 4px 0 10px; padding: 6px 10px;
+  border-left: 3px solid var(--status-warning);
+  background: color-mix(in srgb, var(--status-warning) 8%, transparent);
+  border-radius: 0 6px 6px 0;
+}
+
+/* A withheld view is a statement, not an absence — it must not wear .empty-note's quiet
+   grey, which is this page's vocabulary for "nothing exists". */
+.scope-refusal {
+  margin-top: 6px; padding: 10px 12px;
+  border-left: 3px solid var(--status-warning);
+  background: color-mix(in srgb, var(--status-warning) 8%, transparent);
+  border-radius: 0 6px 6px 0;
+  font-size: var(--text-md); color: var(--text-secondary);
+}
+.scope-refusal strong, .scope-banner strong { color: var(--text-primary); }
 
 .runbook { margin: 0; padding-left: 22px; font-size: var(--text-md); line-height: 1.7; color: var(--text-secondary); }
 .runbook li { margin-bottom: 5px; }

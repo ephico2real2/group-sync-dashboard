@@ -345,6 +345,13 @@ def server(tmp_path_factory):
         # different state from on-and-quiet. On, so the seeded attempts are what gets tested;
         # the off state has its own test that overrides it.
         login_capture_enabled=True,
+        # This fixture predates per-user visibility and its tests assert the WIDE view
+        # with the proxy off. Proxy-off already serves wide (there is no trusted identity
+        # to scope to), so turning restrictions off here records the same deliberate,
+        # documented choice a proxyless deployment must make — instead of leaning on the
+        # inert combination and its startup warning. The visibility labelling has its own
+        # scoped_server fixture below, where restrictions stay on.
+        view_restrictions_enabled=False,
     )
     port = _free_port()
     app = build_app(settings, run_poller=False)
@@ -488,7 +495,10 @@ class TestGroupSyncDetail:
 class TestGroupExplorer:
     def _open_groups(self, dash):
         dash.locator("button[data-nav='groups']").click()
-        dash.wait_for_selector("#f-state")
+        # A DATA row, not the filter chrome: the tab handler paints the destination before
+        # it fetches (2026-08-10), so #f-state now appears immediately and no longer means
+        # "the fetch landed". Only a fetched render produces tr[data-group].
+        dash.wait_for_selector("tr[data-group]")
 
     def test_all_groups_listed(self, dash):
         self._open_groups(dash)
@@ -541,7 +551,7 @@ class TestGroupExplorer:
 class TestGroupDrilldown:
     def _open_group(self, dash, name):
         dash.locator("button[data-nav='groups']").click()
-        dash.wait_for_selector("#f-state")
+        dash.wait_for_selector("tr[data-group]")
         dash.locator(f"tr[data-group='{name}']").click()
         dash.wait_for_selector("#back-groups")
 
@@ -696,7 +706,7 @@ class TestNavigationTrail:
 
     def _open_group(self, dash, name):
         dash.locator("button[data-nav='groups']").click()
-        dash.wait_for_selector("#f-state")
+        dash.wait_for_selector("tr[data-group]")
         dash.locator(f"tr[data-group='{name}']").click()
         dash.wait_for_selector("#back-groups")
 
@@ -757,7 +767,7 @@ class TestDeletedGroup:
         had been deleted, returned 404 and replaced the page. "This group is gone, here is
         who was in it" is the answer to that click."""
         dash.locator("button[data-nav='groups']").click()
-        dash.wait_for_selector("#f-state")
+        dash.wait_for_selector("tr[data-group]")
         dash.evaluate("""() => {
             navigate({ group: 'app-ocp-rbac-gone-ns-viewer' });
             refresh();
@@ -770,7 +780,7 @@ class TestDeletedGroup:
 
     def test_back_works_from_a_deleted_group(self, dash):
         dash.locator("button[data-nav='groups']").click()
-        dash.wait_for_selector("#f-state")
+        dash.wait_for_selector("tr[data-group]")
         dash.evaluate("""() => {
             navigate({ group: 'app-ocp-rbac-gone-ns-viewer' });
             refresh();
@@ -866,7 +876,7 @@ class TestClusterScopedNavigation:
         re-requests that name against the new cluster — a different object under the same
         name, or a 404 error page."""
         dash.locator("button[data-nav='groups']").click()
-        dash.wait_for_selector("#f-state")
+        dash.wait_for_selector("tr[data-group]")
         dash.locator("tr[data-group='app-ocp-rbac-alpha-ns-admin']").click()
         dash.wait_for_selector("#back-groups")
 
@@ -877,7 +887,7 @@ class TestClusterScopedNavigation:
 
     def test_back_restores_the_cluster_it_was_captured_with(self, dash):
         dash.locator("button[data-nav='groups']").click()
-        dash.wait_for_selector("#f-state")
+        dash.wait_for_selector("tr[data-group]")
         dash.locator("tr[data-group='app-ocp-rbac-alpha-ns-admin']").click()
         dash.wait_for_selector("#back-groups")
         dash.locator("tr[data-user='alice']").click()
@@ -904,7 +914,7 @@ class TestBrowserHistory:
 
     def _drill(self, dash):
         dash.locator("button[data-nav='groups']").click()
-        dash.wait_for_selector("#f-state")
+        dash.wait_for_selector("tr[data-group]")
         dash.locator("tr[data-group='app-ocp-rbac-alpha-ns-admin']").click()
         dash.wait_for_selector("#back-groups")
 
@@ -925,7 +935,7 @@ class TestBrowserHistory:
         """The biggest gap in the old design: tab clicks pushed nothing and CLEARED the trail,
         so every page but the current one was unreachable backwards."""
         dash.locator("button[data-nav='groups']").click()
-        dash.wait_for_selector("#f-state")
+        dash.wait_for_selector("tr[data-group]")
         dash.locator("button[data-nav='usage']").click()
         dash.wait_for_function("() => document.body.dataset.page === 'usage'")
         dash.go_back()
@@ -1045,7 +1055,7 @@ class TestBrowserHistory:
         """An identical position replaced rather than pushed: two duplicate entries made Back
         appear to do nothing, and could leave it oscillating instead of leaving."""
         dash.locator("button[data-nav='groups']").click()
-        dash.wait_for_selector("#f-state")
+        dash.wait_for_selector("tr[data-group]")
         before = dash.evaluate("() => history.length")
         dash.locator("button[data-nav='groups']").click()
         dash.locator("button[data-nav='groups']").click()
@@ -1084,7 +1094,7 @@ class TestBrowserHistory:
         """
         SLOW = "/groups/app-ocp-rbac-alpha-ns-admin"
         dash.locator("button[data-nav='groups']").click()
-        dash.wait_for_selector("#f-state")
+        dash.wait_for_selector("tr[data-group]")
         dash.evaluate("""(slow) => {
             const orig = window.fetch;
             window.__release = null;
@@ -1687,7 +1697,11 @@ class TestGroupSearch:
 
     def _open(self, dash):
         dash.locator("button[data-nav='groups']").click()
-        dash.wait_for_selector("#f-group-search")
+        # A DATA row, not #f-group-search: the tab handler paints the destination before it
+        # fetches (2026-08-10), so the box appears immediately and no longer means "the
+        # fetch landed". Only a fetched render produces tr[data-group]. Same reason in
+        # every helper that clicks a tab and then reads its rows.
+        dash.wait_for_selector("tr[data-group]")
 
     def _names(self, dash):
         return [r.split("\t")[0].strip() for r in dash.locator("tbody tr").all_inner_texts()]
@@ -1814,7 +1828,7 @@ class TestGroupSearchIme:
 
     def _open(self, dash):
         dash.locator("button[data-nav='groups']").click()
-        dash.wait_for_selector("#f-group-search")
+        dash.wait_for_selector("tr[data-group]")
         dash.focus("#f-group-search")
         return dash.context.new_cdp_session(dash)
 
@@ -1848,7 +1862,7 @@ class TestGroupSearchIme:
 class TestGroupSearchEmptyStateHonesty:
     def _open(self, dash):
         dash.locator("button[data-nav='groups']").click()
-        dash.wait_for_selector("#f-group-search")
+        dash.wait_for_selector("tr[data-group]")
 
     def test_a_zero_denominator_does_not_blame_the_search(self, dash):
         """With no groups matching the STATE filter the search hides nothing, so "it is the search
@@ -1906,7 +1920,7 @@ class TestGroupSearchScroll:
         so with focus parked in the search box, every poll would jump a reader who had scrolled
         into the table back to the top."""
         dash.locator("button[data-nav='groups']").click()
-        dash.wait_for_selector("#f-group-search")
+        dash.wait_for_selector("tr[data-group]")
         dash.set_viewport_size({"width": 900, "height": 400})
         dash.focus("#f-group-search")
         dash.evaluate("() => window.scrollTo(0, document.body.scrollHeight)")
@@ -1996,6 +2010,60 @@ def proxied_server(tmp_path_factory):
     thread.join(timeout=5)
 
 
+# ── Per-user visibility: how a narrowed view is LABELLED ─────────────────────────────────
+# The server decides the tier; the page renders `scope`/`viewer` off the wire and a
+# designed 403 as a named refusal. These tests hold the page to exactly that — including
+# the negative: no declaration on the wire, no label on the page.
+
+
+class _TierByName:
+    """The seam the visibility feature publishes for tests: build_app leaves its resolver
+    at app.state.tier_resolver and every handler reads it per request, so swapping it here
+    controls the tier without a cluster. `root` is the administrator persona; everyone
+    else is self."""
+
+    def resolve(self, viewer):
+        return "all" if viewer == "root" else "self"
+
+
+@pytest.fixture(scope="module")
+def scoped_server(tmp_path_factory):
+    """The seeded app behind a simulated oauth proxy, restrictions ON (the D1 default)."""
+    db = str(tmp_path_factory.mktemp("gsd-vis") / "ui.db")
+    _seed(db)
+    settings = Settings(
+        clusters=[
+            ClusterConfig("crc-local", "https://api.crc.testing:6443", token_env="X"),
+            ClusterConfig("prod-east", "https://api.prod-east.example.com:6443", token_env="Y"),
+        ],
+        db_path=db,
+        login_capture_enabled=True,
+        # Identity is believable here, unlike in the plain `server` fixture: the tier is
+        # keyed off X-Forwarded-User, which is exactly what the proxy would set.
+        oauth_proxy_enabled=True,
+    )
+    port = _free_port()
+    app = build_app(settings, run_poller=False)
+    app.state.tier_resolver = _TierByName()
+    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
+    srv = uvicorn.Server(config)
+    thread = threading.Thread(target=srv.run, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{port}"
+    for _ in range(100):
+        try:
+            if httpx.get(f"{base}/healthz", timeout=1).status_code == 200:
+                break
+        except httpx.HTTPError:
+            time.sleep(0.1)
+    else:
+        raise RuntimeError("dashboard server did not start")
+        raise RuntimeError("scoped dashboard server did not start")
+    yield base
+    srv.should_exit = True
+    thread.join(timeout=5)
+
+
 class TestSignOutControl:
     """The header's Sign out link, up to the proxy hop the proxy itself owns."""
 
@@ -2007,7 +2075,9 @@ class TestSignOutControl:
         page = ctx.new_page()
         try:
             page.goto(proxied_server)
-            page.wait_for_selector(".hero .value", timeout=10_000)
+            # Not `.hero .value`: alice is a narrowed reader, and the landing page is the
+            # administrator tier now, so she lands on a refusal card with no cluster hero.
+            page.wait_for_selector("#main .card", timeout=10_000)
             link = page.locator("#logout")
             assert link.is_visible()
             assert link.get_attribute("href") == "/oauth/sign_out"
@@ -2024,7 +2094,9 @@ class TestSignOutControl:
         page = ctx.new_page()
         try:
             page.goto(proxied_server)
-            page.wait_for_selector(".hero .value", timeout=10_000)
+            # Not `.hero .value`: alice is a narrowed reader, and the landing page is the
+            # administrator tier now, so she lands on a refusal card with no cluster hero.
+            page.wait_for_selector("#main .card", timeout=10_000)
             page.wait_for_function("() => sessionCapNote !== ''", timeout=10_000)
             assert page.evaluate("() => sessionCapNote") == "4-hour"
             # Proof it is derived: feed a different duration and the note follows.
@@ -2040,3 +2112,159 @@ class TestSignOutControl:
         """The shared fixture runs the proxy OFF, where whoami refuses identity — so offering
         to end a session that does not exist is exactly the lie the gate prevents."""
         assert dash.locator("#logout").is_hidden()
+def _open_as(page, base, user):
+    """Load the dashboard as `user`, with an uncaught JS error an immediate failure —
+    the same discipline as the `dash` fixture, for the same reason."""
+    errors: list[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.set_extra_http_headers({"X-Forwarded-User": user})
+    page.goto(base)
+    try:
+        # `#main .card`, not `.hero .value`: the landing page is the administrator tier, so a
+        # narrowed reader lands on a refusal card that carries no cluster hero. Both render a
+        # section.card, which is what this wait actually wants to know — that the page painted.
+        page.wait_for_selector("#main .card", timeout=10_000)
+    except Exception:
+        if errors:
+            pytest.fail("the page raised and never rendered:\n  " + "\n  ".join(errors))
+        raise
+    assert not errors, "uncaught JS error on load:\n  " + "\n  ".join(errors)
+    return page
+
+
+class TestVisibilityLabels:
+    def test_the_pill_names_the_narrowed_view(self, page, scoped_server):
+        """Q6/DoD 5: the reader can tell 'this is your view' from 'this is everything',
+        on every tab, starting with the landing page."""
+        p = _open_as(page, scoped_server, "alice")
+        p.wait_for_selector("#scope-pill:not([hidden])")
+        text = p.locator("#scope-pill").inner_text()
+        assert text.startswith("Your view"), text
+        assert "alice" in text, "the pill must name the viewer it is scoped to"
+
+    def test_the_administrator_is_told_they_see_everything(self, page, scoped_server):
+        """The admin marker. 'Nothing looks different' and 'you are seeing everything'
+        are different statements, and only the second is checkable from the screen."""
+        p = _open_as(page, scoped_server, "root")
+        p.wait_for_selector("#scope-pill:not([hidden])")
+        assert p.locator("#scope-pill").inner_text().startswith("Full view")
+
+    def test_groups_tab_banner_and_scoped_count(self, page, scoped_server):
+        p = _open_as(page, scoped_server, "alice")
+        p.locator("button[data-nav='groups']").click()
+        p.wait_for_selector(".scope-banner")
+        banner = p.locator(".scope-banner").inner_text()
+        assert "alice" in banner and "belongs to" in banner
+        # alice is in the RBAC group and the gate group — 2 of the 4 seeded groups.
+        assert p.locator("tbody tr").count() == 2
+
+    def test_admin_groups_tab_is_complete_and_carries_no_self_banner(self, page, scoped_server):
+        p = _open_as(page, scoped_server, "root")
+        p.locator("button[data-nav='groups']").click()
+        p.wait_for_selector("tr[data-group]")
+        assert p.locator("tbody tr").count() == SYNCED_GROUPS
+        assert p.locator(".scope-banner").count() == 0
+
+    def test_scoped_empty_is_not_mistaken_for_an_empty_cluster(self, page, scoped_server):
+        """Q6's founding example: one row where an administrator sees two hundred must
+        not read as a nearly-empty cluster — and a scoped ZERO rows must not read as an
+        empty one. The wording also surfaces the viewer's name, which is the on-screen
+        diagnostic for an IdP-vs-synced-name mismatch."""
+        p = _open_as(page, scoped_server, "nomember")
+        p.locator("button[data-nav='groups']").click()
+        p.wait_for_selector(".scope-banner")
+        body = p.locator("#main").inner_text()
+        assert "not a member of any synced group" in body
+        assert "nomember" in body
+        assert "No groups match this filter" not in body
+
+    def test_nsaudit_self_view_names_the_viewer_and_drops_cluster_kpis(self, page, scoped_server):
+        """Q5: 'People exposed' recomputed over one person is a lying label, so the
+        narrowed tab renders the viewer's own grants and none of the cluster KPIs."""
+        p = _open_as(page, scoped_server, "alice")
+        p.locator("button[data-nav='nsaudit']").click()
+        p.wait_for_selector(".scope-banner")
+        body = p.locator("#main").inner_text()
+        assert "No role is granted directly to" in body and "alice" in body
+        assert "People exposed" not in body
+        assert "Namespaces at risk" not in body
+
+    def test_logins_tab_banner_carries_the_as_typed_caveat(self, page, scoped_server):
+        """Byte-exact matching means a caps-lock attempt is invisible to its own author;
+        the banner says so instead of letting the absence read as 'never happened'."""
+        p = _open_as(page, scoped_server, "alice")
+        p.locator("button[data-nav='logins']").click()
+        p.wait_for_selector(".scope-banner")
+        banner = p.locator(".scope-banner").first.inner_text()
+        assert "alice" in banner and "as typed" in banner
+        main = p.locator("#main").inner_text()
+        assert "Accounts in no synced group" not in main, (
+            "the ungoverned-accounts finding is whole-cluster data and must not render "
+            "at the narrowed tier"
+        )
+        assert "bob" not in main, "another person's attempts leaked into the scoped view"
+
+    def test_admin_logins_page_is_unchanged(self, page, scoped_server):
+        p = _open_as(page, scoped_server, "root")
+        p.locator("button[data-nav='logins']").click()
+        # A logins-page element, not a bare "table": the overview's tables are still
+        # painted while the logins fetch is in flight, so waiting on "table" races.
+        p.wait_for_selector("h3:has-text('Every attempt')")
+        body = p.locator("#main").inner_text()
+        assert "Accounts in no synced group" in body
+        assert p.locator(".scope-banner").count() == 0
+
+    def test_group_drilldown_refusal_is_a_detour_not_a_dead_end(self, page, scoped_server):
+        """The constant 403 must render as a named refusal WITH a working back affordance
+        — and must not claim to know whether the group exists, because the server
+        deliberately answers nonexistent and forbidden identically."""
+        errors: list[str] = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.set_extra_http_headers({"X-Forwarded-User": "alice"})
+        page.goto(scoped_server + "#page=groups&group=app-ocp-rbac-abcd-ns-superuser")
+        page.wait_for_selector(".scope-refusal")
+        assert not errors
+        assert "indistinguishable" in page.locator(".scope-refusal").inner_text()
+        assert page.locator(".back").count() == 1
+
+    def test_the_admin_only_tabs_say_so_exactly_once_and_offer_no_route_in(self, page, scoped_server):
+        """The three administrator-tier tabs, as the operator specified them: each says "For
+        administrators only" and each says it ONCE.
+
+        Cardinality is pinned because it broke: the phrase was added to refusalCard's body AND
+        left on all three call sites, so every refusal printed it twice. refusalCard owns the
+        sentence now — a new refusal gets it for free and cannot double it.
+
+        The second half is the operator's other instruction: the card must not name the grant,
+        the role, the check or the chart. This text is read by the person being refused, who
+        cannot act on any of it, and naming the permission that would lift the restriction
+        turns a refusal into a shopping list.
+        """
+        for tab in ("overview", "bindings", "policy"):
+            p = _open_as(page, scoped_server + f"#page={tab}&cluster=crc-local", "alice")
+            p.wait_for_selector(".scope-refusal")
+            text = p.locator(".scope-refusal").inner_text()
+            assert text.count("For administrators only") == 1, (
+                f"{tab}: expected the phrase exactly once, got {text.count('For administrators only')}"
+            )
+            for leak in ("cluster-reader", "chart README", "adminSar", "visibility.enabled",
+                         "SubjectAccessReview", "ClusterRole"):
+                assert leak not in text, (
+                    f"{tab}: the refusal names {leak!r} — a reader who cannot reach it, and "
+                    f"should not be handed the route in"
+                )
+
+    def test_no_declaration_on_the_wire_means_no_labels(self, page, server):
+        """The search-box scar as a regression test: the page must not claim a narrowing
+        the response never declared. The plain `server` fixture runs restrictions-off
+        with the proxy off — its responses carry scope 'all' or nothing — so the pill
+        must exist (it is part of the header) and stay hidden, and no self banner may
+        render anywhere."""
+        page.goto(server)
+        page.wait_for_selector(".hero .value", timeout=10_000)
+        assert page.locator("#scope-pill").count() == 1, "the pill mount is missing from the header"
+        assert page.locator("#scope-pill").is_hidden()
+        page.locator("button[data-nav='groups']").click()
+        page.wait_for_selector("tr[data-group]")
+        assert page.locator(".scope-banner").count() == 0
+        assert page.locator(".scope-refusal").count() == 0

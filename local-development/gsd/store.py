@@ -1287,7 +1287,9 @@ class Store:
                 (cluster_id, user_name),
         )
 
-    def users(self, cluster_id: str, limit: int = 1000) -> list[dict]:
+    def users(
+        self, cluster_id: str, limit: int = 1000, user_name: str | None = None
+    ) -> list[dict]:
         """Every user with a membership. BOUNDED.
 
         Unbounded, this returned one row per distinct user across every group: 1,240 rows
@@ -1299,13 +1301,19 @@ class Store:
         limit to know it truncated, without a second COUNT query. A silently truncated
         list is worse than a large one — the reader cannot tell a short directory from a
         clipped answer.
+
+        `user_name` is the privacy scope — the user_activity() contract. Byte-exact,
+        served by group_member_by_user (plan measured on the live database).
         """
-        return self._rows(
-                """SELECT user_name, COUNT(*) AS group_count, MIN(first_seen_at) AS first_seen_at
-                     FROM group_member WHERE cluster_id=?
-                    GROUP BY user_name ORDER BY user_name LIMIT ?""",
-                (cluster_id, limit + 1),
-        )
+        sql = """SELECT user_name, COUNT(*) AS group_count, MIN(first_seen_at) AS first_seen_at
+                     FROM group_member WHERE cluster_id=?"""
+        params: list = [cluster_id]
+        if user_name:
+            sql += " AND user_name=?"
+            params.append(user_name)
+        sql += " GROUP BY user_name ORDER BY user_name LIMIT ?"
+        params.append(limit + 1)
+        return self._rows(sql, params)
 
     # -- RBAC bindings -----------------------------------------------------------------
 
@@ -1717,6 +1725,20 @@ class Store:
             tuple(params),
         )
 
+    def count_login_events(self, cluster_id: str, user_name: str) -> int:
+        """This user's whole-record attempt count, for the self tier's `total`.
+
+        The self-scoped logins page must not inherit the cluster-wide total — a number
+        computed over rows the viewer cannot see — and must not count its own page (the
+        "showing 50 of 30" defect class). One scalar over login_event_by_user, a covering
+        index (plan measured on the live database).
+        """
+        rows = self._rows(
+            "SELECT COUNT(*) AS n FROM login_event WHERE cluster_id=? AND user_name=?",
+            (cluster_id, user_name),
+        )
+        return rows[0]["n"] if rows else 0
+
     # ── The login gate ────────────────────────────────────────────────────────────────────────────
     #
     # Holding RBAC access and being able to LOG IN are different things, and this is the only place the
@@ -2109,13 +2131,22 @@ class Store:
     CLUSTER_SCOPE = "(cluster-scoped)"
 
     def _direct_user_binding_where(
-        self, cluster_id: str, include_platform: bool, namespace: str | None
+        self, cluster_id: str, include_platform: bool, namespace: str | None,
+        user_name: str | None = None,
     ) -> tuple[str, list]:
         """The WHERE shared by the row query and its COUNT, built once.
 
         Built once on purpose: a count computed from a different predicate than the rows
         it describes is how "showing 50 of 30" reaches a page, and the two drifting apart
         during a later edit is the likeliest way for that to happen.
+
+        `user_name` is the privacy scope (the user_activity() contract): the self tier
+        sees only bindings that name the viewer. Byte-exact — a direct binding names the
+        subject in whatever form the administrator typed, so a binding naming `jdoe`
+        stays invisible to `john.doe`, which is fail-closed and correct: the dashboard
+        cannot prove those are the same person. Bounded scan of the cluster's slice via
+        user_binding_by_namespace (45 rows at reference scale, plan measured); no
+        dedicated index until a real cluster shows it needed.
         """
         sql, params = " WHERE cluster_id=?", [cluster_id]
         if not include_platform:
@@ -2123,6 +2154,9 @@ class Store:
         if namespace is not None:
             sql += " AND binding_namespace=?"
             params.append("" if namespace == self.CLUSTER_SCOPE else namespace)
+        if user_name:
+            sql += " AND user_name=?"
+            params.append(user_name)
         return sql, params
 
     def direct_user_bindings(
@@ -2132,6 +2166,7 @@ class Store:
         namespace: str | None = None,
         limit: int | None = None,
         offset: int = 0,
+        user_name: str | None = None,
     ) -> list[dict]:
         """Every binding naming a User subject, worst-first by privilege then namespace.
 
@@ -2149,7 +2184,7 @@ class Store:
         truncated audit list is worse than a slow one.
         """
         where, params = self._direct_user_binding_where(
-            cluster_id, include_platform, namespace)
+            cluster_id, include_platform, namespace, user_name)
         sql = ("""SELECT binding_kind, binding_namespace, binding_name, role_kind,
                          role_name, user_name, is_platform
                     FROM user_binding""" + where +
@@ -2166,11 +2201,11 @@ class Store:
 
     def count_direct_user_bindings(
         self, cluster_id: str, include_platform: bool = False,
-        namespace: str | None = None,
+        namespace: str | None = None, user_name: str | None = None,
     ) -> int:
         """How many rows `direct_user_bindings` would return before its limit."""
         where, params = self._direct_user_binding_where(
-            cluster_id, include_platform, namespace)
+            cluster_id, include_platform, namespace, user_name)
         rows = self._rows(
             "SELECT COUNT(*) AS n FROM user_binding" + where, tuple(params))
         return rows[0]["n"] if rows else 0
@@ -2438,11 +2473,14 @@ class Store:
         params.append(limit)
         return self._rows(sql, params)
 
-    def groups(self, cluster_id: str, state: str = "all") -> list[dict]:
-        sql = """SELECT name, member_count, sync_provider, group_synced_at, ldap_uid,
-                        observed_at
-                   FROM group_state WHERE cluster_id=?"""
-        params: list = [cluster_id]
+    @staticmethod
+    def _group_state_predicate(state: str, alias: str = "") -> str:
+        """The `state` filter, written once for both shapes of groups().
+
+        Two copies of this predicate would drift the way the count-versus-list defects did,
+        and the `empty` reading below has already been re-litigated once — it must not fork.
+        """
+        prefix = f"{alias}." if alias else ""
         if state == "empty":
             # EVERY group with no members, whatever created it. This was scoped to
             # `sync_provider IS NOT NULL` on PLAN §7's reading of EMPTY as "synced, then lost
@@ -2454,13 +2492,59 @@ class Store:
             # two questions, not a partition. "Which groups grant nobody?" and "which groups is
             # no CR managing?" have different answers and a group can be both. Nothing sums
             # them — checked across store, api, metrics and the UI before the change.
-            sql += " AND member_count = 0"
-        elif state == "unattributed":
-            sql += " AND sync_provider IS NULL"
-        elif state != "all":
+            return f" AND {prefix}member_count = 0"
+        if state == "unattributed":
+            return f" AND {prefix}sync_provider IS NULL"
+        if state != "all":
             raise ValueError(f"unknown group state filter {state!r}")
-        sql += " ORDER BY name"
-        return self._rows(sql, params)
+        return ""
+
+    def groups(
+        self, cluster_id: str, state: str = "all", user_name: str | None = None
+    ) -> list[dict]:
+        """Current groups, optionally narrowed to the ones this user is a member of.
+
+        `user_name` is the privacy scope, not a convenience filter — the API passes the
+        proxy-authenticated viewer's own name when view restrictions are on, the same
+        contract user_activity() documents. One method rather than a scoped sibling so a
+        handler has exactly one call site and the state predicate cannot fork.
+
+        Matching is byte-exact on purpose. X-Forwarded-User and the Group objects' member
+        names carry the same directory form (measured live: `lateef.o` in both), and a
+        case-insensitive match would defeat the group_member index AND cross-leak between
+        two OpenShift Users differing only by case — User names are case-sensitive.
+
+        Plan for the scoped shape, measured on the live database: group_state by its PK
+        autoindex, group_member by its PK covering index — no new index needed.
+        """
+        if user_name:
+            sql = ("""SELECT g.name, g.member_count, g.sync_provider, g.group_synced_at,
+                            g.ldap_uid, g.observed_at
+                       FROM group_state g
+                       JOIN group_member m
+                         ON m.cluster_id = g.cluster_id AND m.group_name = g.name
+                      WHERE g.cluster_id=? AND m.user_name=?"""
+                   + self._group_state_predicate(state, alias="g") + " ORDER BY g.name")
+            return self._rows(sql, [cluster_id, user_name])
+        sql = ("""SELECT name, member_count, sync_provider, group_synced_at, ldap_uid,
+                        observed_at
+                   FROM group_state WHERE cluster_id=?"""
+               + self._group_state_predicate(state) + " ORDER BY name")
+        return self._rows(sql, [cluster_id])
+
+    def is_group_member(self, cluster_id: str, group_name: str, user_name: str) -> bool:
+        """Whether this user is currently a member of this group — the self-tier gate.
+
+        One primary-key probe (covering index, measured). The API asks this BEFORE any
+        existence lookup so a non-member's 403 is constant for a real group and a
+        nonexistent one alike — a per-name existence oracle would leak the group list
+        the self tier exists to withhold.
+        """
+        rows = self._rows(
+            "SELECT 1 AS yes FROM group_member WHERE cluster_id=? AND group_name=? AND user_name=?",
+            (cluster_id, group_name, user_name),
+        )
+        return bool(rows)
 
     def group_counts(self, cluster_id: str) -> dict:
         row = self._row(

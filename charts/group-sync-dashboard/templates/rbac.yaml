@@ -111,7 +111,7 @@ subjects:
     namespace: {{ .Release.Namespace }}
 {{- end }}
 
-{{- if and .Values.oauthProxy.enabled .Values.oauthProxy.apiTokenAccess.enabled }}
+{{- if and .Values.oauthProxy.enabled (or .Values.oauthProxy.apiTokenAccess.enabled (eq (include "gsd.visibilityEnabled" .) "true")) }}
 ---
 # Delegated authorization for the oauth-proxy, so `Authorization: Bearer <token>` works
 # against /api and the API can be curl'd without a browser.
@@ -127,7 +127,19 @@ subjects:
 # -openshift-delegate-urls names". They are cluster-scoped and they are real privilege — a
 # compromised proxy container could validate any token presented to it and ask the API server
 # about any subject's permissions. It cannot mint tokens and it gains no read access to
-# workloads. That trade is why this is default-off and why the dashboard works without it.
+# workloads.
+#
+# TWO CONSUMERS, one grant, and only the second is on by default. The proxy uses it for
+# -openshift-delegate-urls (apiTokenAccess, default off). The DASHBOARD uses
+# `create subjectaccessreviews` for the per-user visibility tiers: it asks "may this reader
+# pass visibility.adminSar?" (the wide view) and "may this reader pass visibility.usageAdminSar?"
+# (the stricter Usage-tab tier) as its own ServiceAccount, which is why this binding renders
+# whenever visibility.enabled is true. Both are the same grant — a SubjectAccessReview creates
+# no persistent object and reads nothing, so the reader role's rule (no write verb on anything
+# the dashboard reports on) still holds even though usageAdminSar's default question names a
+# write verb: it only ASKS whether the reader could, it never performs it. Without this grant
+# every review errors and every reader, administrators included, fails closed to the self tier
+# permanently.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:

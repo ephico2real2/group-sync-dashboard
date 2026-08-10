@@ -24,6 +24,18 @@ import yaml
 
 log = logging.getLogger(__name__)
 
+# The visibility tier cache lifetime, in seconds — declared HERE and nowhere else.
+#
+# It lives in this module because gsd.kube imports gsd.config and not the reverse, so this is
+# the only direction a shared constant can travel. `gsd.kube.TIER_TTL_SECONDS` re-exports it.
+#
+# WHY ONE DECLARATION MATTERS. The number was previously written out twice — a Settings default
+# here and an identical constructor default in kube.py — and that is exactly how the knob
+# shipped inert: nothing passed the setting through to the resolver, the resolver fell back to
+# its own 60, and every test exercising the default agreed with the bug because both halves
+# said the same thing. Two literals that must agree will eventually disagree; one cannot.
+VISIBILITY_TIER_TTL_DEFAULT = 60
+
 
 class ConfigError(Exception):
     """Raised for a malformed or unusable cluster configuration."""
@@ -290,6 +302,59 @@ class Settings:
     user_activity_flush_seconds: int = 60
     user_activity_retention_days: int = 400
 
+    # ── PER-USER VISIBILITY ────────────────────────────────────────────────────────────────────────
+    # ON by default: with restrictions off, every authenticated reader sees the ServiceAccount's
+    # view of the cluster — the full RBAC binding surface and every person's login failures — which
+    # a plain user cannot read with oc. `false` restores that wide view as a deliberate choice.
+    #
+    # The chart wires this as GSD_ENABLE_VIEW_RESTRICTIONS on the Deployment, and the spelling is
+    # load-bearing: a misspelt variable is simply never read, and the default here is True, so a
+    # typo leaves the control ON rather than silently disabling a security control.
+    view_restrictions_enabled: bool = True
+    # The SubjectAccessReview separating the wide tier from the self tier, chosen by the operator
+    # (chart: visibility.adminSar). The default — list groups.user.openshift.io — admits
+    # cluster-admin and cluster-reader and nobody else; `list rolebindings` also admits
+    # cluster-wide `admin`; `edit`/`view` pass no cluster-scoped list at all. Expressed as the
+    # check itself, not role names: a name list would miss cluster-reader and every custom role.
+    visibility_admin_sar_api_group: str = "user.openshift.io"
+    visibility_admin_sar_resource: str = "groups"
+    # Split out of a "resource/subresource" spelling (e.g. pods/log) at parse time, so the SAR
+    # builder never re-parses the string.
+    visibility_admin_sar_subresource: str = ""
+    visibility_admin_sar_verb: str = "list"
+    # Empty means a cluster-scoped check.
+    visibility_admin_sar_namespace: str = ""
+
+    # The SECOND, STRICTER threshold, for the Usage tab alone (chart: visibility.usageAdminSar).
+    # Usage is dashboard-usage data — who opened this dashboard, on which days — and it lives
+    # only in the dashboard's own SQLite, so unlike every other wide view it cannot be reproduced
+    # with `oc`. That is why it gets a HIGHER bar than the audit views: cluster-reader (the
+    # auditor persona) keeps every wide audit view but must NOT see colleagues' presence records.
+    # Measured: no read check separates cluster-admin from cluster-reader, so the default asks a
+    # write verb — `update clusterrolebindings` — which the dashboard never performs; a SAR only
+    # asks. See docs/SPEC_usage_admin_tier.md.
+    visibility_usage_admin_sar_api_group: str = "rbac.authorization.k8s.io"
+    visibility_usage_admin_sar_resource: str = "clusterrolebindings"
+    visibility_usage_admin_sar_subresource: str = ""
+    visibility_usage_admin_sar_verb: str = "update"
+    visibility_usage_admin_sar_namespace: str = ""
+    # How long a viewer's tier verdict may be reused before it is re-decided.
+    #
+    # THE WORST-CASE STALENESS WINDOW, stated where the number lives: the SAR evaluates live RBAC,
+    # but its verdict is cached for this long, and the viewer's groups are supplied to it from a
+    # fresh read taken when the cache misses — never from the poll snapshot, whose interval is
+    # tuned for history resolution, not authorization. A user REMOVED from an admin group
+    # therefore keeps the wide view for at most this many seconds plus one in-flight page (the
+    # fail-open direction); a user ADDED waits the same. An indeterminate answer (SAR error,
+    # timeout) is never cached and always yields the self tier.
+    #
+    # The literal lives in VISIBILITY_TIER_TTL_DEFAULT above, and gsd.kube re-exports it as
+    # TIER_TTL_SECONDS, so this number is declared ONCE. It used to be declared here AND in
+    # kube.py, and that duplication is what let the knob ship inert: nothing passed the setting
+    # to the resolver, the resolver fell back to its own identical 60, and every test that
+    # exercised the default agreed with the bug.
+    visibility_tier_ttl_seconds: int = VISIBILITY_TIER_TTL_DEFAULT
+
     def cluster(self, name: str) -> ClusterConfig | None:
         for c in self.clusters:
             if c.name == name:
@@ -413,6 +478,87 @@ def _duration_setting(raw: dict, env_name: str, yaml_key: str, default: int) -> 
         log.warning("%s=%r is not a Go duration; using %r seconds", env_name, source, default)
         return default
     return int(total)
+# What each field of a visibility SubjectAccessReview may contain. RBAC matching is exact and
+# lowercase, so a miscased or misspelt field would not error — it would answer allowed=false for
+# every viewer and silently demote every administrator. The chart refuses these shapes at render
+# time; this guards the same line for a hand-written config file. Keyed by the ConfigMap-key
+# SUFFIX, so one rule set serves BOTH thresholds (visibilityAdminSar* and visibilityUsageAdminSar*)
+# — the operator meets one convention twice rather than two conventions once.
+_SAR_FIELD_PATTERNS = {
+    "ApiGroup": re.compile(r"[a-z0-9.\-]*"),
+    "Resource": re.compile(r"[a-z0-9\-]+(/[a-z0-9\-]+)?"),
+    "Verb": re.compile(r"[a-z]+"),
+    "Namespace": re.compile(r"[a-z0-9\-]*"),
+}
+
+# The wide tier's default: list groups.user.openshift.io, the narrowest measured threshold that
+# admits cluster-admin and cluster-reader and nobody else among the stock roles.
+_ADMIN_SAR_DEFAULTS = {
+    "ApiGroup": "user.openshift.io",
+    "Resource": "groups",
+    "Verb": "list",
+    "Namespace": "",
+}
+
+# The Usage tab's HIGHER default. Measured on the reference cluster: NO read check separates
+# cluster-admin from cluster-reader, because cluster-reader may read everything — so the default
+# asks about a WRITE verb, `update clusterrolebindings`, which cluster-admin holds and
+# cluster-reader does not. The dashboard still never writes; a SubjectAccessReview only asks
+# whether a subject could. See docs/SPEC_usage_admin_tier.md.
+_USAGE_ADMIN_SAR_DEFAULTS = {
+    "ApiGroup": "rbac.authorization.k8s.io",
+    "Resource": "clusterrolebindings",
+    "Verb": "update",
+    "Namespace": "",
+}
+
+
+def _sar_setting(raw: dict, key_prefix: str, defaults: dict[str, str], default_label: str
+                 ) -> tuple[str, str, str, str, str]:
+    """One visibility-threshold SubjectAccessReview, taken whole or not at all.
+
+    Fail SAFE, in the right direction: any unusable field falls back to the ENTIRE default check —
+    never to "everyone passes" and never to disabling the control. Whole, because half a custom
+    check (the operator's resource under the default verb) is a question nobody chose to ask.
+
+    `key_prefix` is the ConfigMap-key stem (visibilityAdminSar / visibilityUsageAdminSar); one
+    parser serves both thresholds so they cannot drift. `default_label` names the fallback check in
+    the warning. Returns (api_group, resource, subresource, verb, namespace); a resource/subresource
+    spelling is split here so the SAR builder never re-parses.
+    """
+    fields: dict[str, str] = {}
+    for suffix, pattern in _SAR_FIELD_PATTERNS.items():
+        key = key_prefix + suffix
+        value = raw.get(key)
+        if value is None:
+            # Absent or nil means "not set", which takes the default — matching the chart, where a
+            # commented-out sub-key must not change the question.
+            fields[suffix] = defaults[suffix]
+            continue
+        word = str(value).strip()
+        if not pattern.fullmatch(word):
+            log.warning(
+                "%s=%r is not usable in a SubjectAccessReview; using the default check (%s)",
+                key, value, default_label,
+            )
+            fields = dict(defaults)
+            break
+        fields[suffix] = word
+    resource, _, subresource = fields["Resource"].partition("/")
+    return (fields["ApiGroup"], resource, subresource, fields["Verb"], fields["Namespace"])
+
+
+def _visibility_sar_setting(raw: dict) -> tuple[str, str, str, str, str]:
+    """The WIDE-view admin threshold (chart: visibility.adminSar)."""
+    return _sar_setting(raw, "visibilityAdminSar", _ADMIN_SAR_DEFAULTS,
+                        "list groups.user.openshift.io")
+
+
+def _usage_visibility_sar_setting(raw: dict) -> tuple[str, str, str, str, str]:
+    """The stricter USAGE-tab threshold (chart: visibility.usageAdminSar). Separate default, same
+    fail-safe discipline — see _USAGE_ADMIN_SAR_DEFAULTS for why it is a write verb."""
+    return _sar_setting(raw, "visibilityUsageAdminSar", _USAGE_ADMIN_SAR_DEFAULTS,
+                        "update clusterrolebindings.rbac.authorization.k8s.io")
 
 
 def _bool_setting(raw: dict, env_name: str, yaml_key: str, default: bool) -> bool:
@@ -513,6 +659,8 @@ def load_settings(path: str | Path) -> Settings:
             )
         )
 
+    admin_sar = _visibility_sar_setting(raw)
+    usage_admin_sar = _usage_visibility_sar_setting(raw)
     return Settings(
         clusters=clusters,
         poll_interval_seconds=int(raw.get("pollIntervalSeconds", 60)),
@@ -568,6 +716,23 @@ def load_settings(path: str | Path) -> Settings:
         ),
         user_activity_enabled=_bool_setting(
             raw, "GSD_USER_ACTIVITY_ENABLED", "userActivityEnabled", True
+        ),
+        view_restrictions_enabled=_bool_setting(
+            raw, "GSD_ENABLE_VIEW_RESTRICTIONS", "visibilityEnabled", True
+        ),
+        visibility_admin_sar_api_group=admin_sar[0],
+        visibility_admin_sar_resource=admin_sar[1],
+        visibility_admin_sar_subresource=admin_sar[2],
+        visibility_admin_sar_verb=admin_sar[3],
+        visibility_admin_sar_namespace=admin_sar[4],
+        visibility_usage_admin_sar_api_group=usage_admin_sar[0],
+        visibility_usage_admin_sar_resource=usage_admin_sar[1],
+        visibility_usage_admin_sar_subresource=usage_admin_sar[2],
+        visibility_usage_admin_sar_verb=usage_admin_sar[3],
+        visibility_usage_admin_sar_namespace=usage_admin_sar[4],
+        visibility_tier_ttl_seconds=_num_setting(
+            raw, "GSD_VISIBILITY_TIER_TTL_SECONDS", "visibilityTierTtlSeconds",
+            VISIBILITY_TIER_TTL_DEFAULT, int
         ),
         user_activity_visibility=_visibility_setting(raw),
         user_activity_flush_seconds=_num_setting(

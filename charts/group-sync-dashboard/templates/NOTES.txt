@@ -34,8 +34,9 @@ dashboard{{ if .Values.oauthProxy.sar }}, subject to the SubjectAccessReview in 
 Sessions: the proxy cookie lives {{ $expire }} from login, and it is ABSOLUTE — there is
 no cookie refresh and no mid-session revalidation, so an active reader is signed out at
 that mark too, and a revoked user keeps access until it. Change it with
-oauthProxy.cookie.expire. Signing out revokes the OAuth token itself, so it does not
-merely forget the session.
+oauthProxy.cookie.expire. Signing out ends the proxy session; it does NOT revoke the OAuth
+token, because this chart authenticates as a ServiceAccount whose tokens carry only
+user:info and user:check-access — the DELETE was built, measured returning 403, and dropped.
 {{- $oauthCR := lookup "config.openshift.io/v1" "OAuth" "" "cluster" }}
 {{- if $oauthCR }}
 {{- $tc := (($oauthCR.spec) | default dict).tokenConfig | default dict }}
@@ -47,6 +48,41 @@ accessTokenMaxAgeSeconds ({{ $maxAge }}s). Nothing rechecks the token mid-sessio
 cookie would outlive the token it represents and API calls fail before sign-out does.
 Lower oauthProxy.cookie.expire.
 {{- end }}
+{{- end }}
+{{- if eq (include "gsd.visibilityEnabled" .) "true" }}
+{{- $sarGroup := include "gsd.visibilitySarApiGroup" . }}
+{{- $sarResource := include "gsd.visibilitySarResource" . }}
+{{- $sarVerb := include "gsd.visibilitySarVerb" . }}
+{{- $sarNamespace := include "gsd.visibilitySarNamespace" . }}
+
+Visibility: RESTRICTED (visibility.enabled=true, the default). Each reader sees only their
+own profile, groups, grants and login attempts. A reader sees everything only if a
+SubjectAccessReview allows:
+
+  {{ $sarVerb }} {{ $sarResource }}{{ with $sarGroup }}.{{ . }}{{ end }}{{ with $sarNamespace }} in namespace {{ . }}{{ end }}
+{{- if and (eq $sarGroup "user.openshift.io") (eq $sarResource "groups") (eq $sarVerb "list") (eq $sarNamespace "") }}
+
+That default check admits cluster-admin and cluster-reader, and nobody else.
+{{- else }}
+
+This is a custom check (visibility.adminSar): whoever holds a role granting it gets the
+wide view. Stock cluster-reader passes every threshold measured for this feature.
+{{- end }}
+Grant the wide view through normal RBAC, never a chart value:
+
+  oc adm policy add-cluster-role-to-user cluster-reader <username>
+
+  (prefer the group form — a grant naming a person survives their departure:
+   oc adm policy add-cluster-role-to-group cluster-reader <ldap-group>)
+
+An indeterminate review (API error, timeout) yields the narrow view, never the wide one.
+Restore the old everyone-sees-everything behaviour only as a deliberate choice:
+  --set visibility.enabled=false
+{{- else }}
+
+Visibility: WIDE (visibility.enabled=false). Every admitted reader sees the full RBAC
+binding surface, every group's membership and every person's login attempts. You chose
+this; the default is restricted.
 {{- end }}
 {{- else }}
 

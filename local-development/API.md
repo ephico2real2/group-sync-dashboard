@@ -16,6 +16,82 @@ than from this file, so they cannot drift:
 This document adds the part a schema cannot express: what each field *means*, and which ones
 are routinely misread.
 
+## Who sees what
+
+Responses are **scoped to the reader**. Every collection endpoint carries two fields saying whose
+view you are looking at:
+
+| field | values | meaning |
+|---|---|---|
+| `scope` | `"all"` \| `"self"` | whether these rows are the whole cluster or only the reader's own |
+| `viewer` | the username, or `null` | who the server decided you are |
+
+`self` means the rows are filtered to the reader's own groups, memberships and access. `all` means
+nothing was filtered. There is no third value.
+
+**Read `scope` before you read a count.** An empty list under `scope: "self"` means *nothing here
+belongs to you*; the same empty list under `scope: "all"` means *nothing here exists*. Those are
+different facts and the dashboard states them differently. A client that ignores `scope` will
+report a clean cluster to a reader who simply is not an administrator.
+
+**Aggregates that cannot honestly be computed are `null`, never `0`.** At `self` scope the
+cluster-wide rollups — `summary`, `ungoverned`, `access_without_login`, `login_without_access`,
+`in_access_group` — are withheld as `null`. A fabricated zero would read as "no problems found"
+when the truth is "not counted for you".
+
+How the scope is chosen:
+
+- With the oauth-proxy **off** there is no trusted identity to scope to, so `scope` is `"all"`,
+  `viewer` is `null`, and the app says so loudly at startup. This is the pre-existing behaviour of
+  a proxy-less install and is preserved deliberately.
+- With the proxy **on**, a SubjectAccessReview decides. It is posted with both `spec.user` and
+  `spec.groups`, because a reader granted cluster-admin through a Group rather than a direct
+  binding is refused when `spec.groups` is absent.
+- The decision is cached per viewer for 60 seconds. A **failure is never cached**, so an API-server
+  outage does not pin every reader to the narrow view until a TTL expires.
+- Anything indeterminate serves `self`. The log line names the reader, the cause and the decision:
+  `visibility tier for 'alice' is indeterminate (auth_failed: …) — failing closed to the self view
+  for this request`.
+
+**One endpoint has a SECOND, STRICTER threshold: `/api/dashboard/activity` (the Usage tab).** Every
+other view above can be reproduced with `oc` by anyone holding the roles that pass the wide check —
+groups, bindings, even the oauth-server logs behind Logins. Usage cannot: it is who-opened-this-
+dashboard data, living only in the dashboard's own database. So it does NOT follow the wide tier that
+`cluster-reader` (the auditor persona) also passes. Its `scope` is `all` only when
+`config.userActivity.visibility: all` is set (the blunt override, which always wins) OR a SEPARATE
+SubjectAccessReview — `visibility.usageAdminSar`, default `update clusterrolebindings`, a write verb
+`cluster-reader` fails and `cluster-admin` passes — allows this reader. The two tiers are independent
+and cached separately: a client will see `cluster-reader` come back `scope: all` on `/groups` and
+`scope: self` on `/api/dashboard/activity` in the same session. The dashboard still writes nothing; a
+SubjectAccessReview only asks whether a subject could. See docs/SPEC_usage_admin_tier.md.
+
+`GET /api/whoami` reports the same decision as a nested object rather than top-level fields:
+`"visibility": {"scope": "self", "enabled": true}`. `enabled` is the operator's switch
+(`GSD_ENABLE_VIEW_RESTRICTIONS`), not the outcome for this reader.
+
+**Only `groupsyncs` and its events do not vary by tier at all.** The criterion is measurable,
+not "is it about objects": `/metrics` is unauthenticated (chart `skipAuthRegex`) and already
+publishes `gsd_groupsync_state`, `gsd_groupsync_last_sync_timestamp_seconds` and
+`gsd_groupsync_groups_total` per CR to a credential-less `curl`, so refusing the same per-CR
+identity behind login would be theatre.
+
+**`bindings/findings` and `operator-configs` are the administrator tier** (`403` at self).
+They describe objects too, but that is not the test. A binding row names which *group* holds
+which *role* — the cluster's RBAC binding surface — which on the reference cluster an ordinary
+reader who could not `oc list` clusterrolebindings/rolebindings/groups was handed anyway (236
+rows, 21 naming an admin role): obtainable through the dashboard and not with `oc`, a privilege
+escalation. Neither has a `/metrics` analogue that would make gating theatre (`operator-configs`
+in particular is genuinely private), so the criterion above puts them *behind* the tier. This
+reverses an earlier ruling that served all four at both tiers; see
+`docs/SPEC_per_user_visibility.md` (Q3) and `docs/REQUIREMENTS_per_user_visibility.md` (§6 Q3).
+
+`/api/clusters` stays reachable at every tier — the cluster selector reads it on every tab —
+and every count on it is a public `/metrics` figure except the `operator_configs` summary,
+which has no `/metrics` analogue and is therefore the one field withheld (as `null`) at self.
+
+The administrator equality still holds where it always did: an administrator's response with
+restrictions on is byte-identical to the same request with them off, per endpoint (DoD #2).
+
 ## Clusters
 
 ### `GET /api/clusters`
@@ -114,6 +190,25 @@ started (§2). The response says so in a `note` field.
 ## Groups
 
 ### `GET /api/clusters/{cluster_id}/groups`
+
+Returns an **object**, not a bare array — the rows plus the scope they were selected under:
+
+```json
+{"cluster": "crc-local", "count": 41, "scope": "all", "viewer": null, "groups": [...]}
+```
+
+This changed when per-user visibility landed; it used to return the array alone. Read
+`response.json()["groups"]`. Two ways an old client breaks, and the quiet one is worse:
+
+```python
+body = r.json()
+len(body)                    # 5 — the number of KEYS, not rows. Silently plausible.
+for g in body: g["name"]     # TypeError: string indices must be integers, not 'str'
+```
+
+The `TypeError` announces itself. `len()` does not: it returns 5 on a cluster with 41 groups and 5
+on a cluster with none, so a caller that only counts reports a number that is never right and never
+obviously wrong. Use `count`, which is the row count under the current scope.
 
 Query: `state` = `all` (default) | `empty` | `unattributed`.
 
@@ -465,8 +560,15 @@ interaction count.
 **`scope` is `self` by default** — each person sees only their own row. This is identifiable
 personnel data (who was present, on which days, between which times), and the argument that
 carries the rest of this API, "you could read the groups with `oc` anyway", is true of group
-membership and false of who looked at it. `config.userActivity.visibility: all` widens it as a
-deliberate, documented choice.
+membership and false of who looked at it — and Usage is the one dataset with no `oc` equivalent at
+all, living only in this dashboard's database.
+
+**It is widened by its OWN, stricter tier, not the wide one.** `scope` is `all` here only when
+`config.userActivity.visibility: all` is set (the blunt override, which always wins) OR when this
+reader passes `visibility.usageAdminSar` — a separate SubjectAccessReview, default
+`update clusterrolebindings`, that `cluster-admin` passes and the auditor `cluster-reader` does not.
+Passing the wide `visibility.adminSar` does NOT widen this view; the two tiers are independent and
+cached separately. See docs/SPEC_usage_admin_tier.md.
 
 **`summary` describes the whole set, not the page.** It used to be computed in the browser from
 `activity`, which the API caps — measured against 1,092 stored rows, the UI reported 167 days

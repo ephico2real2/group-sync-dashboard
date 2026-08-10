@@ -158,10 +158,17 @@ class TestTrustBoundary:
                 "/api/whoami",
                 headers={"X-Forwarded-User": "alice", "X-Forwarded-Email": "a@x.com"},
             ).json()
+            # Exact equality, deliberately: it fails when a field is ADDED as well as when
+            # one changes, which is how a new key reaches this assertion for a ruling
+            # instead of riding along unnoticed.
             assert body == {
                 "user": "alice", "email": "a@x.com", "authenticated": True,
                 "logout_url": "/oauth/sign_out",
                 "session": {"cookie_expire_seconds": 14400, "cookie_refresh_seconds": 0},
+                # The tier rides on whoami so the UI can label itself from the wire. With
+                # no cluster behind this test app the review fails, and the answer fails
+                # CLOSED: self, never all.
+                "visibility": {"scope": "self", "enabled": True},
             }
     def test_interactions_are_captured_and_survive_shutdown(self, tmp_path):
         """The buffer is memory-only, so a graceful shutdown must flush it."""

@@ -200,7 +200,9 @@ class TestTheDashboardsGroupStateSelector:
     def _names(self, client, state):
         r = client.get("/api/clusters/c1/groups", params={"state": state})
         assert r.status_code == 200, r.text
-        return [g["name"] for g in r.json()]
+        # The endpoint returns an object since per-user visibility landed — the rows plus
+        # the scope/viewer contract — so the names live under `groups`.
+        return [g["name"] for g in r.json()["groups"]]
 
     def test_all_returns_every_group(self, client):
         assert len(self._names(client, "all")) == 5

@@ -202,3 +202,167 @@ ReadWriteOncePod
 {{- end -}}
 {{- $n -}}
 {{- end -}}
+# ── Per-user visibility ──────────────────────────────────────────────────────────────
+# Every read below is nil-safe on purpose: commenting out the sub-keys in a values file
+# leaves `visibility:` (or `adminSar:`) present-but-nil, which a bare field access — and
+# sprig's dig — panics on. Intermediates are defaulted to a dict and a nil leaf is
+# treated as "not set", which falls back to the shipped default, never to "off".
+
+# Returns the word true or false. The switch guards personal data, so the asymmetry is
+# deliberate: the conventional false spellings disable it — false, FALSE, 0, no, all of
+# which Helm and the app's own _bool_setting already read as false, and honouring them
+# keeps this flag consistent with every other boolean in the chart — while anything
+# UNRECOGNISED (a typo like "flase", or "nonsense") resolves to true. Measured both ways.
+# A misspelling must never be the thing that quietly switches a safeguard off.
+{{- define "gsd.visibilityEnabled" -}}
+{{- if eq (toString ((.Values.visibility | default dict).enabled)) "false" -}}
+false
+{{- else -}}
+true
+{{- end -}}
+{{- end -}}
+
+# The four adminSar fields, each validated where it is resolved so a nonsensical shape
+# refuses to render anywhere it would be used. RBAC matching is exact and lowercase, so a
+# miscased or misspelt field would not error — it would answer allowed=false for every
+# viewer and silently demote every administrator, which is why these fail the render
+# instead of passing the string through.
+
+{{- define "gsd.visibilitySarApiGroup" -}}
+{{- $sar := ((.Values.visibility | default dict).adminSar) | default dict -}}
+{{- if or (not (hasKey $sar "apiGroup")) (kindIs "invalid" $sar.apiGroup) -}}
+user.openshift.io
+{{- else -}}
+{{- $g := trim (toString $sar.apiGroup) -}}
+{{- if not (regexMatch "^[a-z0-9.-]*$" $g) -}}
+{{- fail (printf "visibility.adminSar.apiGroup %q is not an API group. Give the group alone (e.g. user.openshift.io, rbac.authorization.k8s.io), no version suffix, or \"\" for the core group." $g) -}}
+{{- end -}}
+{{- $g -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "gsd.visibilitySarResource" -}}
+{{- $sar := ((.Values.visibility | default dict).adminSar) | default dict -}}
+{{- if or (not (hasKey $sar "resource")) (kindIs "invalid" $sar.resource) -}}
+groups
+{{- else -}}
+{{- $r := trim (toString $sar.resource) -}}
+{{- if not (regexMatch "^[a-z0-9-]+(/[a-z0-9-]+)?$" $r) -}}
+{{- fail (printf "visibility.adminSar.resource %q is not a resource. Use the lowercase plural (e.g. groups, rolebindings), optionally resource/subresource (e.g. pods/log). RBAC matching is exact, so anything else would silently answer no for every viewer and demote every administrator." $r) -}}
+{{- end -}}
+{{- $r -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "gsd.visibilitySarVerb" -}}
+{{- $sar := ((.Values.visibility | default dict).adminSar) | default dict -}}
+{{- if or (not (hasKey $sar "verb")) (kindIs "invalid" $sar.verb) -}}
+list
+{{- else -}}
+{{- $v := trim (toString $sar.verb) -}}
+{{- if not (regexMatch "^[a-z]+$" $v) -}}
+{{- fail (printf "visibility.adminSar.verb %q is not a verb. Kubernetes verbs are lowercase words (list, get, watch, ...). RBAC matching is exact, so anything else would silently answer no for every viewer and demote every administrator." $v) -}}
+{{- end -}}
+{{- $v -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "gsd.visibilitySarNamespace" -}}
+{{- $sar := ((.Values.visibility | default dict).adminSar) | default dict -}}
+{{- if or (not (hasKey $sar "namespace")) (kindIs "invalid" $sar.namespace) -}}
+{{- else -}}
+{{- $n := trim (toString $sar.namespace) -}}
+{{- if not (regexMatch "^[a-z0-9-]*$" $n) -}}
+{{- fail (printf "visibility.adminSar.namespace %q is not a namespace name. Leave it empty for a cluster-scoped check." $n) -}}
+{{- end -}}
+{{- $n -}}
+{{- end -}}
+{{- end -}}
+
+# The four usageAdminSar fields — the Usage tab's SEPARATE, STRICTER threshold. Same nil-safe
+# style and same render-time validation as adminSar above, because the operator meets one pattern
+# twice: a nonsensical shape fails the render here rather than silently answering allowed=false for
+# every viewer (RBAC matching is exact and lowercase). The DEFAULT differs — a write verb, `update
+# clusterrolebindings`, because no read check separates cluster-admin from cluster-reader, and the
+# Usage dataset is the one thing on the cluster that cannot be reproduced with oc. See
+# docs/SPEC_usage_admin_tier.md. The dashboard never writes; a SubjectAccessReview only asks.
+
+{{- define "gsd.usageVisibilitySarApiGroup" -}}
+{{- $sar := ((.Values.visibility | default dict).usageAdminSar) | default dict -}}
+{{- if or (not (hasKey $sar "apiGroup")) (kindIs "invalid" $sar.apiGroup) -}}
+rbac.authorization.k8s.io
+{{- else -}}
+{{- $g := trim (toString $sar.apiGroup) -}}
+{{- if not (regexMatch "^[a-z0-9.-]*$" $g) -}}
+{{- fail (printf "visibility.usageAdminSar.apiGroup %q is not an API group. Give the group alone (e.g. rbac.authorization.k8s.io, user.openshift.io), no version suffix, or \"\" for the core group." $g) -}}
+{{- end -}}
+{{- $g -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "gsd.usageVisibilitySarResource" -}}
+{{- $sar := ((.Values.visibility | default dict).usageAdminSar) | default dict -}}
+{{- if or (not (hasKey $sar "resource")) (kindIs "invalid" $sar.resource) -}}
+clusterrolebindings
+{{- else -}}
+{{- $r := trim (toString $sar.resource) -}}
+{{- if not (regexMatch "^[a-z0-9-]+(/[a-z0-9-]+)?$" $r) -}}
+{{- fail (printf "visibility.usageAdminSar.resource %q is not a resource. Use the lowercase plural (e.g. clusterrolebindings, secrets), optionally resource/subresource (e.g. pods/log). RBAC matching is exact, so anything else would silently answer no for every viewer and demote every administrator." $r) -}}
+{{- end -}}
+{{- $r -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "gsd.usageVisibilitySarVerb" -}}
+{{- $sar := ((.Values.visibility | default dict).usageAdminSar) | default dict -}}
+{{- if or (not (hasKey $sar "verb")) (kindIs "invalid" $sar.verb) -}}
+update
+{{- else -}}
+{{- $v := trim (toString $sar.verb) -}}
+{{- if not (regexMatch "^[a-z]+$" $v) -}}
+{{- fail (printf "visibility.usageAdminSar.verb %q is not a verb. Kubernetes verbs are lowercase words (update, create, get, ...). RBAC matching is exact, so anything else would silently answer no for every viewer and demote every administrator." $v) -}}
+{{- end -}}
+{{- $v -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "gsd.usageVisibilitySarNamespace" -}}
+{{- $sar := ((.Values.visibility | default dict).usageAdminSar) | default dict -}}
+{{- if or (not (hasKey $sar "namespace")) (kindIs "invalid" $sar.namespace) -}}
+{{- else -}}
+{{- $n := trim (toString $sar.namespace) -}}
+{{- if not (regexMatch "^[a-z0-9-]*$" $n) -}}
+{{- fail (printf "visibility.usageAdminSar.namespace %q is not a namespace name. Leave it empty for a cluster-scoped check." $n) -}}
+{{- end -}}
+{{- $n -}}
+{{- end -}}
+{{- end -}}
+
+# How long a decided tier is cached, per viewer. Whole seconds, and 0 disables caching.
+#
+# This is the ONE knob whose wrong value is a security consequence rather than a broken render, so
+# it is worth saying what each direction costs. Larger: a reader REMOVED from an admin group keeps
+# the wide view for up to this long — the fail-open direction, and the reason the default is a
+# minute rather than an hour. Smaller: a SubjectAccessReview plus a group read per reader per
+# request, measured at 97ms for the 65-group reference cluster (gsd/kube.py, TierResolver).
+#
+# A decided answer is cached; an ERROR never is, so this number does not extend an outage.
+#
+# Nil-safe for the same reason the adminSar helpers are: commenting out the sub-keys leaves
+# `visibility:` present-but-nil, which a bare field access panics on.
+{{- define "gsd.visibilityTierTtl" -}}
+{{- $v := .Values.visibility | default dict -}}
+{{- if or (not (hasKey $v "tierTtlSeconds")) (kindIs "invalid" $v.tierTtlSeconds) -}}
+60
+{{- else -}}
+{{- $t := trim (toString $v.tierTtlSeconds) -}}
+{{- /* Whole non-negative seconds only. A float would reach the app's int() cast and fall back to
+       the default with only a log line to say so; a negative would make every entry instantly
+       stale, turning the cache off while the values file claims it is on. Both are quieter
+       failures than a refused render, which is why this refuses. */ -}}
+{{- if not (regexMatch "^[0-9]+$" $t) -}}
+{{- fail (printf "visibility.tierTtlSeconds %q is not a whole number of seconds. Use an integer >= 0 (0 disables caching, at the cost of a SubjectAccessReview per reader per request). A fractional or negative value would be silently discarded by the app and leave this file describing a cache that is not running." $t) -}}
+{{- end -}}
+{{- $t -}}
+{{- end -}}
+{{- end -}}
