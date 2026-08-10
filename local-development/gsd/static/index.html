@@ -83,7 +83,7 @@ let groupSearchComposing = false;
    then describe a position the click does not go to.
    POSITION ONLY, not every control. page/cluster/groupsync/group/user are a location — worth a
    URL, worth sharing, worth a history entry. The filters and the namespace-audit sort/expand
-   state are not: they live in `view` precisely because the page repaints on a timer (30s), one of them
+   state are not: they live in `view` precisely because the page repaints on a timer (60s), one of them
    is a Set, and pushing an entry per sort click would bury the positions a reader wants Back to
    reach under a pile of them. */
 const POSITION_KEYS = ["page", "cluster", "groupsync", "group", "user"];
@@ -126,7 +126,22 @@ function applyPosition(pos) {
   // repeat across clusters, so it silently shows a DIFFERENT object under the name you
   // expected, or 404s. Only overwritten when the entry carries one, so an entry predating
   // cluster selection does not blank it.
-  if (pos.cluster) view.cluster = pos.cluster;
+  if (pos.cluster) {
+    // A cluster switch orphans every cluster-scoped payload in `data`. The tab handler
+    // paints BEFORE it fetches, so leaving them in place would put cluster A's rows on
+    // screen under cluster B's title for the length of a fetch. Dropped, the same paint
+    // shows each page's own Loading state, which is true. This is the chokepoint: the
+    // selector, popstate and hashchange all arrive here, so no path can skip it.
+    // Cross-cluster payloads (clusters, alerts, whoami, version, usage) survive — they
+    // answer for every cluster or for none.
+    if (view.cluster && pos.cluster !== view.cluster) {
+      data.groupsyncs = null; data.groups = null; data.groupsMeta = null;
+      data.group = null; data.user = null; data.events = null;
+      data.logins = null; data.access = null; data.findings = null;
+      data.operatorConfigs = null; data.userBindings = null;
+    }
+    view.cluster = pos.cluster;
+  }
 }
 
 /* Every position change goes through here, so the URL, the history entry and `view` can never
@@ -234,7 +249,12 @@ window.addEventListener("hashchange", () => {
   history.replaceState({ pos: currentPosition(), from: null }, "", location.hash);
   refresh();
 });
-let data = { clusters: [], alerts: [], groupsyncs: [], groups: [], events: null,
+// null for the cluster-scoped payloads means "this cluster has not answered yet", and the
+// page functions render a Loading state for it. It is NOT the same as [] — with the tab
+// handler painting before it fetches, an empty array here made the first click on Groups
+// flash "No groups match this filter" for the length of the fetch, a false claim about a
+// cluster nobody had asked yet.
+let data = { clusters: [], alerts: [], groupsyncs: null, groups: null, events: null,
              group: null, user: null, logins: null, access: null,
              /* Identity + tier as the server reports them (whoami), and the scope the
                 groups response declared. Rendering reads these; nothing writes them but
@@ -245,8 +265,8 @@ const $ = (id) => document.getElementById(id);
 
 /* `mark` stamps this request as a human action for the usage counter. Exactly one request
    per user-initiated refresh carries it — see refresh(). Without that the counter measures
-   the 30s auto-refresh, which fires whether or not anyone is looking: 4 API calls every
-   30s is 480 requests an hour from a tab left open on an empty desk. */
+   the auto-refresh (60s), which fires whether or not anyone is looking: four to six API
+   calls a minute is hundreds of requests an hour from a tab left open on an empty desk. */
 async function api(path, mark) {
   const headers = { Accept: "application/json" };
   if (mark) headers["X-GSD-Interaction"] = "1";
@@ -381,7 +401,7 @@ function crSlot(provider) {
   // flatMap, because a CR with several providers owns several label values and each needs
   // its own slot — colouring by CR would give two visibly different provider groupings the
   // same dot and hide exactly the distinction the colour exists to draw.
-  const owners = data.groupsyncs.flatMap((g) => g.provider_keys || []).filter(Boolean).sort();
+  const owners = (data.groupsyncs || []).flatMap((g) => g.provider_keys || []).filter(Boolean).sort();
   const i = owners.indexOf(provider);
   if (i < 0) return null;
   // Never generate a 9th hue: past the 8 slots, identity folds into the text alone.
@@ -646,7 +666,7 @@ function renderFilters() {
   // open. The visual bar and the bolder label are the sighted half of the same signal.
   //
   // The id exists for the focus restore below, which finds elements by id alone — without it a
-  // keyboard user resting on a tab is dropped to <body> by every 30s repaint, losing their place
+  // keyboard user resting on a tab is dropped to <body> by every timed repaint, losing their place
   // in the tab order.
   const tab = (id, label) =>
     `<button class="tab" id="tab-${id}" data-nav="${id}"${view.page === id ? ' aria-current="page"' : ""}>${label}</button>`;
@@ -662,7 +682,7 @@ function renderFilters() {
     </nav>`;
   // FOCUS AND CARET SURVIVE THE REBUILD, and this is load-bearing rather than polish. This function
   // replaces the whole bar's innerHTML, render() calls it before every repaint, and the page repaints
-  // itself every 30 SECONDS. Without this a text field in here is unusable: the element the reader is
+  // itself every 60 SECONDS. Without this a text field in here is unusable: the element the reader is
   // typing into is destroyed and replaced, so focus goes to the body and the caret is lost — after one
   // character when the input re-renders on its own event, and mid-word when the poll fires.
   //
@@ -751,7 +771,7 @@ function renderFilters() {
     const el = $(restore.id);
     if (el) {
       // preventScroll: the bar sits at the top of the page, and a bare focus() scrolls it into view —
-      // so with focus parked in the search box, every 30s poll would yank a reader who had scrolled
+      // so with focus parked in the search box, every timed poll would yank a reader who had scrolled
       // into the table back to the top. Focus is being RESTORED here, not moved; the viewport must not
       // know the element was ever replaced.
       el.focus({ preventScroll: true });
@@ -769,6 +789,20 @@ function renderFilters() {
       // page but the one you were on was unreachable backwards. A drill-down is dropped
       // because it belongs to the page being left, not to the one being opened.
       navigate({ page: b.dataset.nav, groupsync: null, group: null, user: null });
+      // PAINT THE DESTINATION FIRST, then fetch. refresh() used to await every endpoint
+      // before rendering, and its first visible act dimmed the tab being LEFT — so the
+      // destination appeared only after the whole round trip: re-measured 2026-08-10
+      // (benchmark doc §6a), first destination paint at median 271-337 ms with 40 ms of
+      // per-request latency, the proxy path — the exact "did that register?" pause the
+      // user reported. With render() first it is 2-4 ms in the same setup.
+      //
+      // render() here is synchronous and costs 0.5-2.7 ms. A tab whose data is already in
+      // `data` (any revisit) appears complete, instantly; a first visit shows its own
+      // chrome and "Loading…", which is the right answer because it confirms the click and
+      // puts the destination's layout on screen. The fetch then fills it in. Painting from
+      // `data` is safe across cluster switches because applyPosition() drops every
+      // cluster-scoped payload the moment the cluster changes.
+      render();
       refresh();
     };
   });
@@ -839,6 +873,10 @@ function alertsCard() {
 
 function groupsyncTable() {
   const rows = data.groupsyncs;
+  // null (not fetched for this cluster yet) and [] (fetched, none exist) are different
+  // answers: claiming "None observed" while the fetch is still out is false.
+  if (!rows) return `<section class="card"><h2>GroupSync CRs</h2>
+    <div class="empty-note">Loading…</div></section>`;
   if (!rows.length) return `<section class="card"><h2>GroupSync CRs</h2>
     <div class="empty-note">None observed on this cluster yet.</div></section>`;
   return `<section class="card">
@@ -925,6 +963,11 @@ function timelineChart(events) {
 }
 
 function groupsyncDetail() {
+  // Loading before "not found": Back across a cluster switch restores a drill-down whose
+  // cluster's CRs are not here yet, and "CR not found" would be a verdict on data we lack.
+  if (!data.groupsyncs) {
+    return `<section class="card"><div class="empty-note">Loading…</div></section>`;
+  }
   const cr = data.groupsyncs.find((g) => g.name === view.groupsync);
   if (!cr) return `<section class="card"><div class="empty-note">CR not found.</div></section>`;
   const ev = data.events || { events: [], note: "" };
@@ -997,6 +1040,9 @@ function matchesGroupSearch(name, query) {
 }
 
 function groupsPage() {
+  // null = not fetched for this cluster yet (first visit, or a cluster switch dropped it).
+  // Same Loading state as every other tab; [] is a real answer and falls through.
+  if (!data.groups) return `<section class="card"><div class="empty-note">Loading…</div></section>`;
   // The whole list before the search narrows it, so the header can report what was hidden. A filtered
   // view that cannot state its own denominator has the same defect as a truncated page that cannot:
   // the reader cannot tell "there is one" from "there is one THAT MATCHES".
@@ -1163,7 +1209,7 @@ function usagePage() {
       session can therefore sit on the following UTC day.
       An interaction is one deliberate action — opening the dashboard,
       switching tab, drilling in, changing a filter — not one HTTP request: the page
-      refreshes itself every 30s and counting those measured how long a tab was left open
+      refreshes itself every 60s and counting those measured how long a tab was left open
       rather than whether anyone used it. Reading time is invisible, so a long look at one
       page counts once. These are not logins either: the proxy owns this dashboard's session, so
       nothing here records a sign-in to it. Logins to the <strong>cluster</strong> are a separate
@@ -2647,13 +2693,26 @@ function wireTooltip() {
    this easy to hit, because Back is instant while a fetch is not. */
 let navSeq = 0;
 
+// The last painted payload, so an automatic refresh that changed nothing can skip the DOM.
+// Deliberately NOT reset by navigation: the point is to compare what the SERVER returned.
+let lastFingerprint = null;
+
+// Wall clock of the last refresh() START — any refresh, not only the timer's. Every one of
+// them refetches the payloads, so any of them bounds how stale the page can possibly be;
+// the visibility catch-up below reads this to decide whether a refetch is owed at all.
+let lastRefreshStartedAt = Date.now();
+
 async function refresh(opts = {}) {
   const seq = ++navSeq;
   const superseded = () => seq !== navSeq;
-  $("main").classList.add("stale");
+  lastRefreshStartedAt = Date.now();
+  // The dim is feedback for the READER's own request. The timer's refresh dims nothing:
+  // with the unchanged-payload skip below, an idle cluster's poll would otherwise pulse
+  // the page to 0.55 opacity for the length of a fetch, every interval, changing nothing.
+  if (!opts.auto) $("main").classList.add("stale");
   // Count ONE interaction per user-initiated refresh, not one per HTTP request. `get`
   // stamps the first call and then stops, so a click is a click no matter how many
-  // endpoints the page happens to need. The 30s timer passes {auto: true} and stamps
+  // endpoints the page happens to need. The timer passes {auto: true} and stamps
   // nothing — it is the browser talking to itself, not a person using the dashboard.
   let mark = !opts.auto;
   const get = (path) => { const m = mark; mark = false; return api(path, m); };
@@ -2664,70 +2723,92 @@ async function refresh(opts = {}) {
         setDisplayZone(data.version.timezone);
       } catch (e) { /* older build */ }
     }
-    // Refetched every cycle, unlike /api/version: the tier can change under a running
-    // tab (a grant made or revoked), and the pill must follow the wire rather than the
-    // page's memory of it. Cheap — no store read behind it.
-    try {
-      data.whoami = await get("/api/whoami");
-    } catch (e) { data.whoami = null; }
-    data.clusters = await get("/api/clusters");
-    if (!view.cluster && data.clusters.length) {
-      view.cluster = data.clusters[0].id;
-      // The ONLY position mutation outside navigate(), and it has to be: the default is not known
-      // until the cluster list arrives, which is after boot stamped the entry. So the entry is
-      // amended in place rather than a new one pushed — otherwise the first entry has no cluster
-      // and Back from the reader's first switch restores a drill-down against the wrong one.
-      // `applyPosition` is a no-op here (nothing changes), and `replace` preserves `from`.
-      navigate({}, { replace: true });
+    // Boot only: the default cluster is not known until the list arrives, so the very first
+    // cycle pays one extra round trip to learn it. Every later cycle knows view.cluster and
+    // dispatches everything below in one burst.
+    let bootClusters = null;
+    if (!view.cluster) {
+      bootClusters = await get("/api/clusters");
+      if (bootClusters.length) {
+        view.cluster = bootClusters[0].id;
+        // The ONLY position mutation outside navigate(), and it has to be: the default is not known
+        // until the cluster list arrives, which is after boot stamped the entry. So the entry is
+        // amended in place rather than a new one pushed — otherwise the first entry has no cluster
+        // and Back from the reader's first switch restores a drill-down against the wrong one.
+        // `applyPosition` is a no-op here (nothing changes), and `replace` preserves `from`.
+        navigate({}, { replace: true });
+      }
     }
-    // The alerts endpoint is an object now — the rows plus the `scope`/`viewer` the API
-    // decided, so the page can say a narrowed feed is narrowed instead of guessing.
-    const alertsPayload = await get("/api/alerts");
-    data.alerts = alertsPayload.alerts;
-    data.alertsScope = alertsPayload.scope;
+    // EVERYTHING THIS VIEW NEEDS, DISPATCHED TOGETHER. These were awaited one at a time,
+    // which billed the reader one full round trip per endpoint before anything could paint:
+    // re-measured 2026-08-10 (benchmark doc §7), the four always-fetched endpoints cost
+    // 220 ms serial vs 105 ms parallel with 40 ms of per-request latency — the proxy path —
+    // and the tab-switch pause the user reported is exactly that serial sum. On loopback
+    // parallel is a wash (67 ms vs 59 ms serial), which is why the earlier loopback-only
+    // measurement rejected this; loopback does not generalise to the route.
+    //
+    // An object of promises drained by ONE Promise.all: creating a promise is dispatching
+    // it, so they run concurrently, and the single await means one rejection cannot leave
+    // a sibling unhandled. Per-promise handling stays exactly what each endpoint needs —
+    // whoami degrades to null, usage absorbs its designed 403, guard403 keeps refusals.
+    const want = {
+      // Refetched every cycle, unlike /api/version: the tier can change under a running
+      // tab (a grant made or revoked), and the pill must follow the wire rather than the
+      // page's memory of it. Cheap — no store read behind it.
+      whoami: get("/api/whoami").catch(() => null),
+      clusters: bootClusters ? Promise.resolve(bootClusters) : get("/api/clusters"),
+      // The alerts endpoint is an object now — the rows plus the `scope`/`viewer` the API
+      // decided, so the page can say a narrowed feed is narrowed instead of guessing.
+      alerts: get("/api/alerts"),
+    };
     if (view.cluster) {
-      data.groupsyncs = await get(`/api/clusters/${encodeURIComponent(view.cluster)}/groupsyncs`);
-      if (view.page === "bindings") {
-        data.findings = await guard403(get(
-          `/api/clusters/${encodeURIComponent(view.cluster)}/bindings/findings?limit=${FINDINGS_PAGE}`));
+      const base = `/api/clusters/${encodeURIComponent(view.cluster)}`;
+      want.groupsyncs = get(`${base}/groupsyncs`);
+      // guard403 on the administrator-tier payloads: a narrowed reader's 403 is the
+      // DESIGNED answer. Unguarded it fell to the catch below and replaced the whole tab
+      // with "Dashboard API error: 403 Forbidden" — the defect the Usage tab first fixed.
+      if (view.page === "bindings" || view.page === "policy") {
+        want.findings = guard403(get(`${base}/bindings/findings?limit=${FINDINGS_PAGE}`));
       }
       if (view.page === "groups") {
-        const base = `/api/clusters/${encodeURIComponent(view.cluster)}`;
         if (view.user) {
-          const got = await guard403(get(`${base}/users/${encodeURIComponent(view.user)}`));
-          // DISCARDED, not merely un-rendered: writing it would leave the wrong person in `data`
-          // for the next render that does not refetch — a sort click, or the 30s poll.
-          if (superseded()) return;
-          data.user = got;
+          want.user = guard403(get(`${base}/users/${encodeURIComponent(view.user)}`));
         } else if (view.group) {
-          const got = await guard403(get(`${base}/groups/${encodeURIComponent(view.group)}`));
-          if (superseded()) return;
-          data.group = got;
+          want.group = guard403(get(`${base}/groups/${encodeURIComponent(view.group)}`));
         } else {
-          const got = await get(`${base}/groups?state=${view.groupFilter}`);
-          if (superseded()) return;
-          // Rows and their declared scope travel together; the banner renders from
-          // `groupsMeta` and never from a client-side guess.
-          data.groups = got.groups;
-          data.groupsMeta = { scope: got.scope, viewer: got.viewer };
+          want.groups = get(`${base}/groups?state=${view.groupFilter}`);
         }
       }
-      data.events = view.groupsync
-        ? await get(`/api/clusters/${encodeURIComponent(view.cluster)}/groupsyncs/${encodeURIComponent(view.groupsync)}/events`)
-        : null;
-    }
-    // Cluster-scoped, unlike Usage: these are logins to the CLUSTER, read from its own
-    // oauth-server. Fetched only on its own tab so the other pages do not pay for it.
-    if (view.page === "logins" && view.cluster) {
-      const q = new URLSearchParams({ limit: String(LOGIN_PAGE) });
-      if (view.loginOutcome !== "all") q.set("outcome", view.loginOutcome);
-      data.logins = await get(
-        `/api/clusters/${encodeURIComponent(view.cluster)}/logins?${q}`);
-      // A SECOND endpoint on the same tab, deliberately not folded into the first: it answers a
-      // different question from different data — synced group membership, no logs involved — so it
-      // renders even when capture is off, and a failure of one must not blank the other.
-      data.access = await get(
-        `/api/clusters/${encodeURIComponent(view.cluster)}/cluster-access`);
+      if (view.groupsync) {
+        want.events = get(`${base}/groupsyncs/${encodeURIComponent(view.groupsync)}/events`);
+      }
+      // Cluster-scoped, unlike Usage: these are logins to the CLUSTER, read from its own
+      // oauth-server. Fetched only on its own tab so the other pages do not pay for it.
+      if (view.page === "logins") {
+        const q = new URLSearchParams({ limit: String(LOGIN_PAGE) });
+        if (view.loginOutcome !== "all") q.set("outcome", view.loginOutcome);
+        want.logins = get(`${base}/logins?${q}`);
+        // A SECOND endpoint on the same tab, deliberately not folded into the first: it answers a
+        // different question from different data — synced group membership, no logs involved — so it
+        // renders even when capture is off, and a failure of one must not blank the other.
+        want.access = get(`${base}/cluster-access`);
+      }
+      // The policy operator's health belongs on the landing page: these CRs template the
+      // RoleBindings that give every synced group its access, and a failing one is exactly
+      // the silent stoppage this dashboard exists to surface. configHealth() renders ""
+      // for a payload with no `present`, so a refused one simply omits the panel and the
+      // refusal card above carries the explanation.
+      if ((view.page === "overview" && !view.groupsync) || view.page === "policy") {
+        want.operatorConfigs = guard403(get(`${base}/operator-configs`));
+      }
+      if (view.page === "nsaudit") {
+        // The namespace filter is applied SERVER-side, not by filtering a full response in
+        // the browser: the point is to stop shipping thousands of rows, and a client-side
+        // filter still pays for every one of them over the wire and in memory.
+        const q = new URLSearchParams({ limit: String(NS_GRANT_PAGE) });
+        if (view.nsNamespace !== "all") q.set("namespace", view.nsNamespace);
+        want.userBindings = guard403(get(`${base}/user-bindings?${q}`));
+      }
     }
     // Not cluster-scoped: this is who used the DASHBOARD, which has no cluster dimension.
     // Fetched only on its own tab, so the other pages do not pay for it.
@@ -2737,41 +2818,67 @@ async function refresh(opts = {}) {
       // the whole tab with "Dashboard API error: 403 Forbidden" — and the panel written to
       // explain exactly this could never render. Only 403 is absorbed; a 500 is still a
       // fault and must still be shown as one.
-      try {
-        data.usage = await get("/api/dashboard/activity");
-      } catch (e) {
+      want.usage = get("/api/dashboard/activity").catch((e) => {
         if (e.status !== 403) throw e;
-        data.usage = { enabled: false, activity: [] };
-      }
+        return { enabled: false, activity: [] };
+      });
     }
-    // The policy operator's health belongs on the landing page: these CRs template the
-    // RoleBindings that give every synced group its access, and a failing one is exactly
-    // the silent stoppage this dashboard exists to surface.
-    if (view.cluster && ((view.page === "overview" && !view.groupsync) || view.page === "policy")) {
-      // guard403: this is the administrator tier now, and a narrowed reader's 403 is the
-      // DESIGNED answer. Unguarded it fell to the catch below and replaced the whole tab with
-      // "Dashboard API error: 403 Forbidden" — the same defect the Usage tab already fixed.
-      // configHealth() renders "" for a payload with no `present`, so a refused one simply
-      // omits the panel and the refusal card above carries the explanation.
-      data.operatorConfigs = await guard403(get(
-        `/api/clusters/${encodeURIComponent(view.cluster)}/operator-configs`));
-    }
-    if (view.page === "policy" && view.cluster) {
-      data.findings = await guard403(get(
-        `/api/clusters/${encodeURIComponent(view.cluster)}/bindings/findings?limit=${FINDINGS_PAGE}`));
-    }
-    if (view.page === "nsaudit" && view.cluster) {
-      // The namespace filter is applied SERVER-side, not by filtering a full response in
-      // the browser: the point is to stop shipping thousands of rows, and a client-side
-      // filter still pays for every one of them over the wire and in memory.
-      const q = new URLSearchParams({ limit: String(NS_GRANT_PAGE) });
-      if (view.nsNamespace !== "all") q.set("namespace", view.nsNamespace);
-      data.userBindings = await guard403(get(
-        `/api/clusters/${encodeURIComponent(view.cluster)}/user-bindings?${q}`));
-    }
-    // A superseded refresh must not paint: the reader has navigated on, and render() derives from
-    // the CURRENT view, so this would draw the new position with the old position's data.
+    const keys = Object.keys(want);
+    const values = await Promise.all(Object.values(want));
+    // A superseded refresh must not WRITE, not merely not paint. Responses are DISCARDED:
+    // the reader has navigated on, render() derives from the CURRENT view, and a stale write
+    // would surface on the next render that does not refetch — a sort click, or the poll.
+    // One guard now covers every payload, where the serial version could only guard the
+    // writes that happened after its own await.
     if (superseded()) return;
+    const got = {};
+    keys.forEach((k, i) => { got[k] = values[i]; });
+    data.whoami = got.whoami;
+    data.clusters = got.clusters;
+    data.alerts = got.alerts.alerts;
+    data.alertsScope = got.alerts.scope;
+    if (view.cluster) {
+      data.groupsyncs = got.groupsyncs;
+      data.events = view.groupsync ? got.events : null;
+    }
+    if ("findings" in got) data.findings = got.findings;
+    if ("user" in got) data.user = got.user;
+    if ("group" in got) data.group = got.group;
+    if ("groups" in got) {
+      // Rows and their declared scope travel together; the banner renders from
+      // `groupsMeta` and never from a client-side guess.
+      data.groups = got.groups.groups;
+      data.groupsMeta = { scope: got.groups.scope, viewer: got.groups.viewer };
+    }
+    if ("logins" in got) { data.logins = got.logins; data.access = got.access; }
+    if ("usage" in got) data.usage = got.usage;
+    if ("operatorConfigs" in got) data.operatorConfigs = got.operatorConfigs;
+    if ("userBindings" in got) data.userBindings = got.userBindings;
+    // An AUTOMATIC refresh that changed nothing must not touch the DOM. render() replaces #main
+    // wholesale, so an unconditional repaint every interval throws away the reader's scroll
+    // position, any open tooltip, and their text selection — on a cluster that is idle, which is
+    // most of the time. A user-initiated refresh always paints: they asked, so they get feedback
+    // even when the answer is identical.
+    //
+    // The fingerprint is over the fetched payloads only, never over `view`: a repaint the reader
+    // caused by navigating is not an "unchanged" case, and mixing the two here would suppress it.
+    // alertsScope rides along even though nothing renders it yet: it arrives on the same
+    // wire as fields that DO, and a fingerprint that omits a payload field is a repaint
+    // silently suppressed the day someone renders it.
+    const fingerprint = JSON.stringify([
+      data.clusters, data.alerts, data.alertsScope, data.groupsyncs, data.groups,
+      data.groupsMeta, data.group, data.user, data.events, data.logins, data.access,
+      data.usage, data.findings, data.operatorConfigs, data.userBindings, data.whoami,
+    ]);
+    if (opts.auto && fingerprint === lastFingerprint) {
+      // Still say so. Leaving the clock frozen would read as "the dashboard has stopped",
+      // which is the opposite of the truth and the exact confusion `sync_stopped` exists for.
+      $("main").classList.remove("stale");
+      $("last-refresh").textContent =
+        "updated " + fmtTime(new Date().toISOString()).slice(11);
+      return;
+    }
+    lastFingerprint = fingerprint;
     render();
   } catch (err) {
     // A dead session is not a fault to report as one — it gets its own honest panel.
@@ -2863,7 +2970,39 @@ function showSessionEnded() {
 initSession();
 refresh();
 // {auto: true}: background polling must not register as somebody using the page.
-setInterval(() => refresh({ auto: true }), 30000);
+// The automatic refresh. Two guards and a slower clock, all for the same reason: the browser
+// was asking more often than the answer can change, and repainting regardless.
+//
+// 60s, not 30s — config.pollIntervalSeconds is 60, bindingIntervalSeconds is 300, and the login
+// capture flushes every 60s. At 30s every other poll provably could not have new data, and each
+// one still replaced #main. Matching the fastest backend cadence is the most this can usefully be.
+//
+// document.hidden: a background tab has no reader to inform, so the work is pure waste — a full
+// fetch of four to six endpoints plus a DOM replacement, forever, per open tab. Chrome throttles
+// background timers but does not stop them.
+//
+// The unchanged-payload check in refresh() handles the rest: an idle cluster now costs the
+// requests but never the repaint.
+const POLL_INTERVAL_MS = 60000;
+setInterval(() => {
+  if (document.hidden) return;
+  refresh({ auto: true });
+}, POLL_INTERVAL_MS);
+// Catch up on becoming visible again, so a tab left in the background is not stale on return —
+// which is the failure mode the hidden-tab guard would otherwise introduce.
+//
+// Only when a refresh is actually OWED. Readers switch windows constantly, and an
+// unconditional catch-up billed a full fetch round for every cmd-tab away-and-back —
+// plus a second round moments later whenever the regular tick was already imminent
+// (hidden through second 59, visible at 59.5, tick at 60). The interval above keeps
+// ticking while hidden and only skips the work, so worst-case staleness on return
+// stays under two intervals: either the catch-up fires here, or a tick is due within
+// one interval anyway.
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) return;
+  if (Date.now() - lastRefreshStartedAt < POLL_INTERVAL_MS) return;
+  refresh({ auto: true });
+});
 </script>
 </body>
 </html>

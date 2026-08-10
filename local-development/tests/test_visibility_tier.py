@@ -12,6 +12,7 @@ real request/response parsing runs.
 from __future__ import annotations
 
 import json
+import threading
 import time
 
 import httpx
@@ -247,6 +248,73 @@ class TestTheCacheBoundsTheWindow:
         assert resolver.tier_for("john.doe") == TIER_ALL
         fake.allowed = False
         assert resolver.tier_for("lateef.o") == TIER_SELF
+        assert resolver.tier_for("john.doe") == TIER_ALL
+
+
+class TestSingleFlight:
+    """Concurrent cold-cache requests for one viewer resolve ONCE.
+
+    The browser dispatches four to seven API calls per refresh in ONE burst (index.html's
+    refresh() went parallel, 2026-08-10), so every one of them hits a cold tier interval
+    at the same instant. Unserialised, each raced into its own group-read + review —
+    measured as the 120-250ms first-call penalty, multiplied by the burst width.
+
+    Deterministic by gating, not by sleeping: the leader is held inside its group read
+    until the followers have been started, so the followers provably arrive mid-flight.
+    """
+
+    def _gated(self, allowed: bool = True, sar_status: int = 201):
+        entered, release = threading.Event(), threading.Event()
+
+        class GatedFake(FakeCluster):
+            def handler(self, request: httpx.Request) -> httpx.Response:
+                if request.url.path == GROUPS_PATH:
+                    entered.set()
+                    release.wait(5)
+                return super().handler(request)
+
+        fake = GatedFake(groups=[_group("admins", ["john.doe"])], allowed=allowed)
+        fake.sar_status = sar_status
+        return fake, entered, release
+
+    def _burst(self, resolver, entered, release, followers: int = 5) -> list[str]:
+        results: list[str] = []
+        record = lambda: results.append(resolver.tier_for("john.doe"))
+        leader = threading.Thread(target=record)
+        leader.start()
+        assert entered.wait(5), "the leader never reached the cluster"
+        rest = [threading.Thread(target=record) for _ in range(followers)]
+        for t in rest:
+            t.start()
+        time.sleep(0.05)          # let the followers reach the in-flight wait
+        release.set()
+        leader.join(5)
+        for t in rest:
+            t.join(5)
+        return results
+
+    def test_a_cold_burst_asks_the_cluster_once_and_every_caller_gets_the_verdict(
+        self, monkeypatch
+    ):
+        fake, entered, release = self._gated(allowed=True)
+        resolver = _resolver(monkeypatch, fake)
+        results = self._burst(resolver, entered, release)
+        assert results == [TIER_ALL] * 6
+        assert fake.group_lists == 1, "followers must ride the leader's read, not repeat it"
+        assert len(fake.sar_bodies) == 1
+
+    def test_followers_of_a_failed_leader_fail_closed_and_recovery_is_the_next_request(
+        self, monkeypatch
+    ):
+        """The leader's failure is not cached (a failure is not a decision), and the
+        followers inherit it as the self view for THEIR request only — the next request
+        after the blip resolves fresh and wins the wide view back."""
+        fake, entered, release = self._gated(allowed=True, sar_status=500)
+        resolver = _resolver(monkeypatch, fake)
+        results = self._burst(resolver, entered, release)
+        assert results == [TIER_SELF] * 6
+        assert fake.group_lists == 1, "a failed leader must not trigger follower re-resolves"
+        fake.sar_status = 201
         assert resolver.tier_for("john.doe") == TIER_ALL
 
 

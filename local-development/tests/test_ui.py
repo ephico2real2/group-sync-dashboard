@@ -495,7 +495,10 @@ class TestGroupSyncDetail:
 class TestGroupExplorer:
     def _open_groups(self, dash):
         dash.locator("button[data-nav='groups']").click()
-        dash.wait_for_selector("#f-state")
+        # A DATA row, not the filter chrome: the tab handler paints the destination before
+        # it fetches (2026-08-10), so #f-state now appears immediately and no longer means
+        # "the fetch landed". Only a fetched render produces tr[data-group].
+        dash.wait_for_selector("tr[data-group]")
 
     def test_all_groups_listed(self, dash):
         self._open_groups(dash)
@@ -548,7 +551,7 @@ class TestGroupExplorer:
 class TestGroupDrilldown:
     def _open_group(self, dash, name):
         dash.locator("button[data-nav='groups']").click()
-        dash.wait_for_selector("#f-state")
+        dash.wait_for_selector("tr[data-group]")
         dash.locator(f"tr[data-group='{name}']").click()
         dash.wait_for_selector("#back-groups")
 
@@ -703,7 +706,7 @@ class TestNavigationTrail:
 
     def _open_group(self, dash, name):
         dash.locator("button[data-nav='groups']").click()
-        dash.wait_for_selector("#f-state")
+        dash.wait_for_selector("tr[data-group]")
         dash.locator(f"tr[data-group='{name}']").click()
         dash.wait_for_selector("#back-groups")
 
@@ -764,7 +767,7 @@ class TestDeletedGroup:
         had been deleted, returned 404 and replaced the page. "This group is gone, here is
         who was in it" is the answer to that click."""
         dash.locator("button[data-nav='groups']").click()
-        dash.wait_for_selector("#f-state")
+        dash.wait_for_selector("tr[data-group]")
         dash.evaluate("""() => {
             navigate({ group: 'app-ocp-rbac-gone-ns-viewer' });
             refresh();
@@ -777,7 +780,7 @@ class TestDeletedGroup:
 
     def test_back_works_from_a_deleted_group(self, dash):
         dash.locator("button[data-nav='groups']").click()
-        dash.wait_for_selector("#f-state")
+        dash.wait_for_selector("tr[data-group]")
         dash.evaluate("""() => {
             navigate({ group: 'app-ocp-rbac-gone-ns-viewer' });
             refresh();
@@ -873,7 +876,7 @@ class TestClusterScopedNavigation:
         re-requests that name against the new cluster — a different object under the same
         name, or a 404 error page."""
         dash.locator("button[data-nav='groups']").click()
-        dash.wait_for_selector("#f-state")
+        dash.wait_for_selector("tr[data-group]")
         dash.locator("tr[data-group='app-ocp-rbac-alpha-ns-admin']").click()
         dash.wait_for_selector("#back-groups")
 
@@ -884,7 +887,7 @@ class TestClusterScopedNavigation:
 
     def test_back_restores_the_cluster_it_was_captured_with(self, dash):
         dash.locator("button[data-nav='groups']").click()
-        dash.wait_for_selector("#f-state")
+        dash.wait_for_selector("tr[data-group]")
         dash.locator("tr[data-group='app-ocp-rbac-alpha-ns-admin']").click()
         dash.wait_for_selector("#back-groups")
         dash.locator("tr[data-user='alice']").click()
@@ -911,7 +914,7 @@ class TestBrowserHistory:
 
     def _drill(self, dash):
         dash.locator("button[data-nav='groups']").click()
-        dash.wait_for_selector("#f-state")
+        dash.wait_for_selector("tr[data-group]")
         dash.locator("tr[data-group='app-ocp-rbac-alpha-ns-admin']").click()
         dash.wait_for_selector("#back-groups")
 
@@ -932,7 +935,7 @@ class TestBrowserHistory:
         """The biggest gap in the old design: tab clicks pushed nothing and CLEARED the trail,
         so every page but the current one was unreachable backwards."""
         dash.locator("button[data-nav='groups']").click()
-        dash.wait_for_selector("#f-state")
+        dash.wait_for_selector("tr[data-group]")
         dash.locator("button[data-nav='usage']").click()
         dash.wait_for_function("() => document.body.dataset.page === 'usage'")
         dash.go_back()
@@ -1052,7 +1055,7 @@ class TestBrowserHistory:
         """An identical position replaced rather than pushed: two duplicate entries made Back
         appear to do nothing, and could leave it oscillating instead of leaving."""
         dash.locator("button[data-nav='groups']").click()
-        dash.wait_for_selector("#f-state")
+        dash.wait_for_selector("tr[data-group]")
         before = dash.evaluate("() => history.length")
         dash.locator("button[data-nav='groups']").click()
         dash.locator("button[data-nav='groups']").click()
@@ -1091,7 +1094,7 @@ class TestBrowserHistory:
         """
         SLOW = "/groups/app-ocp-rbac-alpha-ns-admin"
         dash.locator("button[data-nav='groups']").click()
-        dash.wait_for_selector("#f-state")
+        dash.wait_for_selector("tr[data-group]")
         dash.evaluate("""(slow) => {
             const orig = window.fetch;
             window.__release = null;
@@ -1694,7 +1697,11 @@ class TestGroupSearch:
 
     def _open(self, dash):
         dash.locator("button[data-nav='groups']").click()
-        dash.wait_for_selector("#f-group-search")
+        # A DATA row, not #f-group-search: the tab handler paints the destination before it
+        # fetches (2026-08-10), so the box appears immediately and no longer means "the
+        # fetch landed". Only a fetched render produces tr[data-group]. Same reason in
+        # every helper that clicks a tab and then reads its rows.
+        dash.wait_for_selector("tr[data-group]")
 
     def _names(self, dash):
         return [r.split("\t")[0].strip() for r in dash.locator("tbody tr").all_inner_texts()]
@@ -1821,7 +1828,7 @@ class TestGroupSearchIme:
 
     def _open(self, dash):
         dash.locator("button[data-nav='groups']").click()
-        dash.wait_for_selector("#f-group-search")
+        dash.wait_for_selector("tr[data-group]")
         dash.focus("#f-group-search")
         return dash.context.new_cdp_session(dash)
 
@@ -1855,7 +1862,7 @@ class TestGroupSearchIme:
 class TestGroupSearchEmptyStateHonesty:
     def _open(self, dash):
         dash.locator("button[data-nav='groups']").click()
-        dash.wait_for_selector("#f-group-search")
+        dash.wait_for_selector("tr[data-group]")
 
     def test_a_zero_denominator_does_not_blame_the_search(self, dash):
         """With no groups matching the STATE filter the search hides nothing, so "it is the search
@@ -1913,7 +1920,7 @@ class TestGroupSearchScroll:
         so with focus parked in the search box, every poll would jump a reader who had scrolled
         into the table back to the top."""
         dash.locator("button[data-nav='groups']").click()
-        dash.wait_for_selector("#f-group-search")
+        dash.wait_for_selector("tr[data-group]")
         dash.set_viewport_size({"width": 900, "height": 400})
         dash.focus("#f-group-search")
         dash.evaluate("() => window.scrollTo(0, document.body.scrollHeight)")
@@ -2154,7 +2161,7 @@ class TestVisibilityLabels:
     def test_admin_groups_tab_is_complete_and_carries_no_self_banner(self, page, scoped_server):
         p = _open_as(page, scoped_server, "root")
         p.locator("button[data-nav='groups']").click()
-        p.wait_for_selector("#f-group-search")
+        p.wait_for_selector("tr[data-group]")
         assert p.locator("tbody tr").count() == SYNCED_GROUPS
         assert p.locator(".scope-banner").count() == 0
 
@@ -2258,6 +2265,6 @@ class TestVisibilityLabels:
         assert page.locator("#scope-pill").count() == 1, "the pill mount is missing from the header"
         assert page.locator("#scope-pill").is_hidden()
         page.locator("button[data-nav='groups']").click()
-        page.wait_for_selector("#f-group-search")
+        page.wait_for_selector("tr[data-group]")
         assert page.locator(".scope-banner").count() == 0
         assert page.locator(".scope-refusal").count() == 0

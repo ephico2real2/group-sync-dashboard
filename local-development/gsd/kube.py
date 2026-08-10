@@ -1039,8 +1039,14 @@ class TierResolver:
     TIER_TTL_SECONDS, where the worst-case window is stated.
 
     Thread-safe: handlers run in FastAPI's threadpool, so the cache is guarded. Concurrent
-    cold-cache requests for one viewer may race into duplicate reviews; that costs one spare
-    ~150ms round-trip, and both arrive at the same verdict, so it is left unserialised.
+    cold-cache requests for one viewer are SINGLE-FLIGHTED: the first becomes the leader and
+    resolves, the rest wait on its result. Duplicate reviews used to be tolerated ("one spare
+    ~150ms round-trip") because the browser fetched its endpoints one at a time — at most two
+    could race. The page now dispatches four to seven requests in one burst (index.html's
+    refresh()), so an unserialised cold interval would bill the API server four to seven
+    group-reads plus reviews per viewer, every TTL. Followers of a FAILED leader fail closed
+    to the self view for that request, uncached — the same "a failure is not a decision"
+    contract as the resolver's own error path.
     """
 
     def __init__(
@@ -1081,6 +1087,10 @@ class TierResolver:
         self._ttl = ttl_seconds
         self._cache: dict[str, tuple[float, str]] = {}
         self._lock = threading.Lock()
+        # One resolution in flight per viewer. Created under _lock by the leader, waited on
+        # by followers, and always popped-and-set in the leader's finally — a leader that
+        # raises must still wake its followers or they block for the full wait timeout.
+        self._inflight: dict[str, threading.Event] = {}
         if not verb.strip() or not resource.strip():
             # Said once at startup rather than once per refused review. The API server will
             # reject the malformed SubjectAccessReview and every reader will fail closed to
@@ -1104,6 +1114,35 @@ class TierResolver:
             cached = self._cache.get(viewer)
             if cached is not None and cached[0] > now:
                 return cached[1]
+            waiter = self._inflight.get(viewer)
+            if waiter is None:
+                self._inflight[viewer] = threading.Event()
+        if waiter is not None:
+            # A resolution for this viewer is already out; ride it instead of duplicating
+            # it. The wait is bounded by the leader's own worst case (two cluster calls,
+            # each capped at TIER_CHECK_TIMEOUT_SECONDS) plus margin — a wedged leader must
+            # not wedge its followers past that.
+            waiter.wait(TIER_CHECK_TIMEOUT_SECONDS * 2 + 1)
+            with self._lock:
+                cached = self._cache.get(viewer)
+            if cached is not None and cached[0] > time.monotonic():
+                return cached[1]
+            # The leader failed (failures are deliberately not cached) or timed out: fail
+            # closed for THIS request, cache nothing — a failure is not a decision.
+            return TIER_SELF
+        try:
+            return self._resolve_and_cache(viewer, now)
+        finally:
+            # ALWAYS wake the followers — success, failure and bug alike. A leader that
+            # returned without setting the event would hold every follower for the full
+            # wait timeout, turning one slow review into a page-wide stall.
+            with self._lock:
+                event = self._inflight.pop(viewer, None)
+            if event is not None:
+                event.set()
+
+    def _resolve_and_cache(self, viewer: str, now: float) -> str:
+        """The leader's half of tier_for: one review, cached on success only."""
         try:
             groups = self._kube.fetch_groups_of_user(viewer)
             allowed = self._kube.create_subject_access_review(
