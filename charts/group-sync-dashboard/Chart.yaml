@@ -3,12 +3,21 @@ name: group-sync-dashboard
 description: Read-only observability for the redhat-cop group-sync-operator
 type: application
 
-# version  — the CHART version, bumped when templates or defaults change.
-# appVersion — the application version. The image tag is set independently in values.yaml
-#              (image.tag), because the build script writes the exact <version>-<git-sha>
-#              there and that must not be confused with the chart's own versioning.
-version: 0.1.0
-appVersion: "0.5.2"
+# version  — the CHART version, bumped when templates or defaults change. It is also what
+#            gates publishing: chart-releaser skips a version it has already released, so a
+#            chart change without a bump here publishes NOTHING and still reports success.
+#            .github/workflows/helm.yaml warns when that is about to happen.
+#
+# appVersion — the application version, and it must equal local-development/pyproject.toml's
+#              `version`. That file is the single source of truth: build-and-push-external.sh
+#              reads it to build the image tag <version>-<git-sha>, which is then written into
+#              values.yaml's image.tag. appVersion sits OUTSIDE that chain, which is exactly
+#              how it rotted — it read 0.5.2 while the app had been 0.6.0 for weeks and the
+#              deployed image said so, so a consumer reading appVersion learned a version that
+#              had not shipped in a long time. tests/test_chart_versions.py now holds the two
+#              together, and holds appVersion against the pinned image tag's prefix.
+version: 0.2.0
+appVersion: "0.6.0"
 
 keywords: [openshift, ldap, rbac, groupsync, observability]
 home: https://github.com/ephico2real2/group-sync-dashboard
