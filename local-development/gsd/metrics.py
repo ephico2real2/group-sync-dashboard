@@ -21,7 +21,9 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 from prometheus_client import CollectorRegistry
 from prometheus_client.core import CounterMetricFamily, GaugeMetricFamily
@@ -34,6 +36,94 @@ log = logging.getLogger(__name__)
 STATES = (st.OK, st.LATE, st.OVERDUE, st.UNKNOWN)
 FINDINGS = ("ok", "dangling", "unresolved", "built_in")
 
+# The full kind vocabulary gsd_alerts_total can emit, kept beside the code that emits it:
+# compute_alerts' kinds (state.py literals), the poll outcomes a failing cluster reports as
+# its one critical alert (kube.py's AUTH_FAILED/FORBIDDEN/UNREACHABLE), and
+# dangling_binding, the per-row critical /api/alerts adds. tests/test_metrics.py holds
+# every PrometheusRule kind= matcher to this tuple AND holds this tuple to both upstream
+# sources — the guard the dangling_binding gap showed was missing: a family can be declared
+# while a label value on it is unemittable, and a rule on that value never fires.
+ALERT_KINDS = (
+    "groupsync_crd_absent", "unattributed", "empty_group", "invalid_schedule",
+    "sync_stopped", "overdue", "reconcile_error", "stale_group",
+    "config_reconcile_error", "direct_user_binding",
+    "dangling_binding",
+    "auth_failed", "forbidden", "unreachable",
+)
+
+# Vocabularies for the process-event families. Fixed tuples, like STATES and FINDINGS:
+# every combination is pre-seeded to 0 so increase() has a baseline before the first event,
+# and a typo'd label value fails loudly in tests instead of minting a new series.
+TIER_THRESHOLDS = ("admin", "usage")
+TIER_CHECK_OUTCOMES = ("allowed", "denied", "unreachable", "auth_failed", "forbidden", "error")
+TIERS = ("all", "self")
+RETENTION_TABLES = ("login_event", "dashboard_user_activity")
+
+
+class RuntimeSignals:
+    """Process-local counters for events that exist in no table.
+
+    The module docstring's rule — read the store, never mirror it — is about STATE, which
+    has a first copy to drift from. These are EVENTS: a tier check that failed, rows a
+    prune deleted, a backup that did not happen. No store row records them, so the process
+    counter IS the single copy. Per replica by construction: sum() across pods is the
+    correct aggregation, unlike the store-backed gauges (see the gsd_leader comment), and
+    a restart resets them the way Prometheus counters are allowed to reset.
+
+    Explicit note_* methods rather than a generic inc(name, labels): the call sites are
+    then greppable, typo-proof, and each one documents which vocabulary it draws from.
+    Nothing here raises past the lock — a metrics bug must not become an application bug.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._tier_checks: dict[tuple[str, str], int] = {}
+        self._decisions: dict[tuple[str, str], int] = {}
+        self._admin_refusals = 0
+        self._retention: dict[str, int] = {}
+        self._backup_failures = 0
+        self._poll_seconds: dict[str, float] = {}
+
+    def note_tier_check(self, threshold: str, outcome: str) -> None:
+        with self._lock:
+            key = (threshold, outcome)
+            self._tier_checks[key] = self._tier_checks.get(key, 0) + 1
+
+    def note_decision(self, threshold: str, tier: str) -> None:
+        with self._lock:
+            key = (threshold, tier)
+            self._decisions[key] = self._decisions.get(key, 0) + 1
+
+    def note_admin_refusal(self) -> None:
+        with self._lock:
+            self._admin_refusals += 1
+
+    def note_retention(self, table: str, rows: int) -> None:
+        if rows <= 0:
+            return
+        with self._lock:
+            self._retention[table] = self._retention.get(table, 0) + rows
+
+    def note_backup_failure(self) -> None:
+        with self._lock:
+            self._backup_failures += 1
+
+    def note_poll_duration(self, cluster: str, seconds: float) -> None:
+        with self._lock:
+            self._poll_seconds[cluster] = seconds
+
+    def snapshot(self) -> dict:
+        """One consistent copy for the collector — a scrape never reads a half-updated dict."""
+        with self._lock:
+            return {
+                "tier_checks": dict(self._tier_checks),
+                "decisions": dict(self._decisions),
+                "admin_refusals": self._admin_refusals,
+                "retention": dict(self._retention),
+                "backup_failures": self._backup_failures,
+                "poll_seconds": dict(self._poll_seconds),
+            }
+
 
 def _epoch(value: str | None) -> float | None:
     parsed = st.parse_time(value)
@@ -43,10 +133,17 @@ def _epoch(value: str | None) -> float | None:
 class DashboardCollector:
     """Reads the store on each scrape and yields the current picture."""
 
-    def __init__(self, store: StorageBackend, grace: timedelta, elector=None):
+    def __init__(self, store: StorageBackend, grace: timedelta, elector=None,
+                 signals: RuntimeSignals | None = None, settings=None):
         self.store = store
         self.grace = grace
         self.elector = elector
+        # The process-event seam (RuntimeSignals above) and the Settings object, both
+        # optional: a collector built without them still DECLARES the new families, empty —
+        # the alert-rule tests resolve rule references against HELP lines on a bare store —
+        # but claims no measurements it never took.
+        self.signals = signals
+        self.settings = settings
 
     def collect(self):
         """Materialise the whole exposition inside ONE snapshot, then yield it.
@@ -88,16 +185,20 @@ class DashboardCollector:
         # `sum()` wrong — the counts are cluster facts, not per-pod facts, so aggregate
         # with max() or filter on gsd_leader. This series is what makes that filtering
         # possible, and also answers "which pod is actually writing?".
+        # No labels: leadership is per-process — one Lease, one flag — and this used to
+        # carry a `cluster` label that was always the empty string, asserting a per-cluster
+        # fact that does not exist. Dropping it changes no selector: in PromQL an empty
+        # label value is indistinguishable from an absent label.
         leader = GaugeMetricFamily(
             "gsd_leader",
             "1 on the replica holding the poll lease, 0 on standbys. Use it to pick one "
             "replica's series: gsd_groups_total and on(pod) gsd_leader == 1",
-            labels=["cluster"],
+            labels=[],
         )
         if self.elector is not None:
-            leader.add_metric([""], 1 if self.elector.is_leader else 0)
+            leader.add_metric([], 1 if self.elector.is_leader else 0)
         else:
-            leader.add_metric([""], 1)
+            leader.add_metric([], 1)
         yield leader
 
         # One call, three metrics. The collector asks the backend how it is and exports
@@ -177,7 +278,8 @@ class DashboardCollector:
 
         up = GaugeMetricFamily(
             "gsd_cluster_up",
-            "1 if the last poll of this cluster succeeded, 0 otherwise.",
+            "1 if the last poll of this cluster succeeded, 0 otherwise — including a "
+            "cluster never yet polled, which also has no last_poll series.",
             labels=["cluster"],
         )
         last_poll = GaugeMetricFamily(
@@ -230,8 +332,19 @@ class DashboardCollector:
         )
         alerts = GaugeMetricFamily(
             "gsd_alerts_total",
-            "Computed alerts, by kind and severity.",
+            "Alerts as /api/alerts serves them at the wide tier, by kind and severity. A "
+            "failing cluster reports its poll outcome as one critical alert and none of "
+            "the computed kinds (those would come from stale cache); dangling bindings "
+            "count under kind=dangling_binding.",
             labels=["cluster", "kind", "severity"],
+        )
+        capture_last_read = GaugeMetricFamily(
+            "gsd_login_capture_last_read_timestamp_seconds",
+            "Unix time of the last successful oauth-log read for this cluster; advanced "
+            "only by a read that reached at least one pod. Alert on staleness against "
+            "pollIntervalSeconds — capture rides the poll thread. Absent until the first "
+            "successful read: absence means never, not zero.",
+            labels=["cluster"],
         )
 
         now = datetime.now(UTC)
@@ -253,6 +366,15 @@ class DashboardCollector:
                 poll_ts = _epoch(row["last_poll"])
                 if poll_ts is not None:
                     last_poll.add_metric([cluster], poll_ts)
+
+                # Capture liveness rides the same snapshot as the counts it explains. None
+                # means capture has never succeeded here, and that is OMITTED — an epoch-0
+                # sample would fire the staleness alert on a cluster where capture is
+                # simply not configured.
+                status = self.store.login_capture_status(cluster)
+                read_ts = _epoch((status or {}).get("last_read_at"))
+                if read_ts is not None:
+                    capture_last_read.add_metric([cluster], read_ts)
 
                 counts = self.store.group_counts(cluster)
                 groups.add_metric([cluster], counts["total"])
@@ -298,21 +420,33 @@ class DashboardCollector:
                         else 0,
                     )
 
-                for alert in st.compute_alerts(
-                    cluster=cluster,
-                    groupsyncs=cluster_groupsyncs,
-                    operator_configs=self.store.operator_configs(cluster)["configs"],
-                    user_bindings=self.store.direct_user_bindings(cluster),
-                    groups=self.store.groups(cluster, "all"),
-                    # Kept in step with the /api/alerts call site: a kind that exists in one
-                    # and not the other makes gsd_alerts_total disagree with the UI, so a
-                    # Prometheus rule can never be written against it.
-                    groupsync_present=self.store.groupsync_present(cluster),
-                    now=now,
-                    grace=self.grace,
-                ):
-                    key = (alert.kind, alert.severity)
-                    by_kind[key] = by_kind.get(key, 0) + 1
+                # Kept in step with the /api/alerts call site: a kind that exists in one
+                # and not the other makes gsd_alerts_total disagree with the UI, so a
+                # Prometheus rule can never be written against it. That promise was broken
+                # three ways and is now enforced (tests/test_metrics.py, both parity tests
+                # and the ALERT_KINDS vocabulary check): a failing cluster contributes ONE
+                # critical alert carrying its poll outcome as the kind and NONE of the
+                # computed kinds — those would be recomputed from cache that stopped
+                # updating when the poll did — and a healthy cluster reports one
+                # dangling_binding per dangling row, the count by_finding already holds
+                # from this same snapshot.
+                if row["status"] and row["status"] != "ok":
+                    by_kind[(row["status"], "critical")] = 1
+                else:
+                    for alert in st.compute_alerts(
+                        cluster=cluster,
+                        groupsyncs=cluster_groupsyncs,
+                        operator_configs=self.store.operator_configs(cluster)["configs"],
+                        user_bindings=self.store.direct_user_bindings(cluster),
+                        groups=self.store.groups(cluster, "all"),
+                        groupsync_present=self.store.groupsync_present(cluster),
+                        now=now,
+                        grace=self.grace,
+                    ):
+                        key = (alert.kind, alert.severity)
+                        by_kind[key] = by_kind.get(key, 0) + 1
+                    if by_finding.get("dangling"):
+                        by_kind[("dangling_binding", "critical")] = by_finding["dangling"]
                 for (kind, severity), count in by_kind.items():
                     alerts.add_metric([cluster, kind, severity], count)
             except Exception:  # noqa: BLE001
@@ -323,13 +457,134 @@ class DashboardCollector:
 
         yield from (
             up, last_poll, groups, empty, unattributed, bindings,
-            cr_last_sync, cr_state, cr_groups, cr_error, alerts,
+            cr_last_sync, cr_state, cr_groups, cr_error, alerts, capture_last_read,
+        )
+        yield from self._event_families()
+
+    def _event_families(self):
+        """Families whose source is the process or the filesystem, not the store.
+
+        Always DECLARED (HELP/TYPE), even when there is nothing to say: the alert-rule
+        tests resolve every PrometheusRule reference against a HELP line on a bare store,
+        and a family that only exists after its first event would make a rule on it
+        unverifiable. Samples are added only when the corresponding source is wired, so a
+        bare DashboardCollector(store, grace) claims no measurements it never took. When
+        wired, every enum combination is pre-seeded to 0 — the FINDINGS discipline — so
+        increase() has a baseline before the first failure, which is the failure that
+        matters.
+        """
+        snap = self.signals.snapshot() if self.signals is not None else None
+
+        checks = CounterMetricFamily(
+            "gsd_visibility_tier_checks_total",
+            "Fresh SubjectAccessReview-backed tier resolutions, by threshold and outcome. "
+            "allowed/denied are verdicts; every other outcome is a check that FAILED and "
+            "served the self view fail-closed — a sustained nonzero rate means readers "
+            "are being silently narrowed. Cache hits are not re-decided and single-flight "
+            "followers ride the leader's check, so this counts decisions, not requests. "
+            "Per replica: aggregate with sum().",
+            labels=["threshold", "outcome"],
+        )
+        decisions = CounterMetricFamily(
+            "gsd_visibility_decisions_total",
+            "Scope decisions actually served to requests while view restrictions are on, "
+            "by threshold and tier — cached, fresh, and no-identity decisions alike. The "
+            "all:self mix shifting toward self while tier_checks reports failures is the "
+            "everyone-silently-narrowed signature. Per replica: aggregate with sum().",
+            labels=["threshold", "tier"],
+        )
+        refusals = CounterMetricFamily(
+            "gsd_visibility_admin_refusals_total",
+            "Requests refused (403) by the administrator-tier gate on the cluster-scoped "
+            "views (/bindings/findings, /operator-configs). Occasional is a non-admin "
+            "clicking a tab; a step change across every viewer alongside tier-check "
+            "failures means the gate itself lost its answer. Per replica: sum().",
+            labels=[],
+        )
+        retention = CounterMetricFamily(
+            "gsd_retention_rows_deleted_total",
+            "Rows removed by retention, by table. login_event deletes are bounded at "
+            "5000/cycle, so a rate pinned at that ceiling means the backlog is not "
+            "draining. Only tables with a retention mechanism appear; membership_event "
+            "and sync_event deliberately have none. Per replica (leader): sum().",
+            labels=["table"],
+        )
+        backup_failures = CounterMetricFamily(
+            "gsd_backup_failures_total",
+            "Backup attempts that failed (VACUUM INTO error or unwritable backupDir). "
+            "Pair with gsd_backup_last_success_timestamp_seconds: failures say it is "
+            "breaking, the timestamp says how stale the last good copy already is.",
+            labels=[],
+        )
+        poll_duration = GaugeMetricFamily(
+            "gsd_cluster_poll_duration_seconds",
+            "Wall time of the most recent poll of this cluster, successful or not. "
+            "Emitted by the replica that polls (the leader); compare against "
+            "pollIntervalSeconds and the request timeout — a rising duration under a "
+            "green gsd_cluster_up is the slow-but-succeeding poll that the timestamp "
+            "metrics cannot show.",
+            labels=["cluster"],
         )
 
+        if snap is not None:
+            for threshold in TIER_THRESHOLDS:
+                for outcome in TIER_CHECK_OUTCOMES:
+                    checks.add_metric(
+                        [threshold, outcome],
+                        snap["tier_checks"].get((threshold, outcome), 0))
+                for tier in TIERS:
+                    decisions.add_metric(
+                        [threshold, tier], snap["decisions"].get((threshold, tier), 0))
+            refusals.add_metric([], snap["admin_refusals"])
+            for table in RETENTION_TABLES:
+                retention.add_metric([table], snap["retention"].get(table, 0))
+            backup_failures.add_metric([], snap["backup_failures"])
+            for cluster, seconds in sorted(snap["poll_seconds"].items()):
+                poll_duration.add_metric([cluster], seconds)
 
-def build_registry(store: StorageBackend, grace: timedelta, elector=None) -> CollectorRegistry:
+        yield from (checks, decisions, refusals, retention, backup_failures, poll_duration)
+
+        capture_enabled = GaugeMetricFamily(
+            "gsd_login_capture_enabled",
+            "1 when login capture is configured on. While this is 1, absence of "
+            "gsd_login_capture_last_read_timestamp_seconds means capture has never once "
+            "succeeded — a different failure from capture going stale.",
+            labels=[],
+        )
+        if self.settings is not None:
+            capture_enabled.add_metric([], 1 if self.settings.login_capture_enabled else 0)
+        yield capture_enabled
+
+        backup_ts = GaugeMetricFamily(
+            "gsd_backup_last_success_timestamp_seconds",
+            "Modification time of the newest backup file in backupDir. Read from the "
+            "files rather than remembered from the last attempt, so it survives restarts "
+            "and catches every failure shape, including a misconfigured directory. "
+            "Absent when backups are disabled or none exists yet.",
+            labels=[],
+        )
+        if self.settings is not None and self.settings.backup_dir:
+            try:
+                newest = max(
+                    (p.stat().st_mtime
+                     for p in Path(self.settings.backup_dir).glob("gsd-*.db")),
+                    default=None,
+                )
+            except OSError:
+                # OMITTED, never zeroed — the health() rule above: a failure to measure
+                # must not read as a measurement of failure. Epoch 0 here would fire the
+                # staleness alert while the backups may be perfectly fine.
+                newest = None
+            if newest is not None:
+                backup_ts.add_metric([], newest)
+        yield backup_ts
+
+
+def build_registry(store: StorageBackend, grace: timedelta, elector=None,
+                   signals: RuntimeSignals | None = None, settings=None) -> CollectorRegistry:
     """A dedicated registry — the default one carries process/GC collectors we do not want
     duplicated per app instance, and tests build several apps in one interpreter."""
     registry = CollectorRegistry()
-    registry.register(DashboardCollector(store, grace, elector))
+    registry.register(DashboardCollector(store, grace, elector,
+                                         signals=signals, settings=settings))
     return registry

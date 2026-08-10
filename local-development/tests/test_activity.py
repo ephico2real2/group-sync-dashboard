@@ -478,3 +478,18 @@ class TestFlushFailure:
         rec.stop()                      # must NOT launch a second write
         assert _Blocking.writes == 1
         release.set()
+
+
+class TestRetentionSignals:
+    def test_prune_notes_the_deletion_on_the_signals_seam(self, store):
+        """§3.8 of docs/DESIGN_metrics_refresh.md: the dashboard_user_activity increments
+        come from prune() itself, so the counter and the log line cannot disagree."""
+        from gsd.metrics import RuntimeSignals
+
+        signals = RuntimeSignals()
+        recorder = ActivityRecorder(store, enabled=True, flush_interval_seconds=3600,
+                                    retention_days=30, signals=signals)
+        recorder.record("alice", None, at="2020-01-01T10:00:00Z")
+        recorder.flush()
+        recorder.prune()
+        assert signals.snapshot()["retention"]["dashboard_user_activity"] == 1

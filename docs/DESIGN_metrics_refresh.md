@@ -1683,11 +1683,15 @@ shape.
         # Capture rides the poll thread, so its cadence is pollIntervalSeconds; stale by
         # several multiples means it stopped (grant revoked, pods unreadable, thread dead)
         # while the Logins page silently freezes.
+        # `and on()`, not a bare `and` — caught at application time: the enabled gauge is
+        # unlabelled while the staleness side carries {cluster} plus target labels, so
+        # default matching would never pair them and the alert could never fire. (An
+        # earlier draft of this snippet had exactly that bug.)
         - alert: GroupSyncDashboardLoginCaptureStalled
           expr: >-
-            gsd_login_capture_enabled == 1
-            and (time() - gsd_login_capture_last_read_timestamp_seconds)
-                > {{ .Values.monitoring.prometheusRule.captureStalledSeconds }}   # e.g. 1800
+            (time() - gsd_login_capture_last_read_timestamp_seconds)
+              > {{ .Values.monitoring.prometheusRule.captureStalledSeconds }}   # e.g. 1800
+            and on() (gsd_login_capture_enabled == 1)
           for: {{ .Values.monitoring.prometheusRule.for.captureStalled }}
           labels: {severity: warning}
           annotations:

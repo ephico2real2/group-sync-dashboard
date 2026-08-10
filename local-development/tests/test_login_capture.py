@@ -352,3 +352,21 @@ def test_gate_only_summary_is_not_capped_at_ten_thousand(store):
         )
     store.set_cluster_access_group("crc-local", "cn=gate,dc=x", "config", "gate", "t")
     assert store.cluster_access_summary("crc-local")["login_without_access"] == 10_001
+
+
+class TestRetentionSignals:
+    def test_the_prune_notes_what_it_deleted(self, store):
+        """§3.8 of docs/DESIGN_metrics_refresh.md: the login_event increments come from
+        _prune itself — the same count the log line reports, from the same call."""
+        from gsd.config import ClusterConfig, Settings
+        from gsd.logincapture import _prune
+        from gsd.metrics import RuntimeSignals
+
+        _record(store, [("old", loginlog.OUTCOME_FAILED, 60 * 60 * 24 * 500, "ldap-local")])
+        signals = RuntimeSignals()
+        settings = Settings(
+            clusters=[ClusterConfig("crc-local", "https://api.crc.testing:6443",
+                                    token_env="X")],
+            db_path=":memory:", login_retention_days=400)
+        _prune(store, settings.clusters[0], settings, None, signals)
+        assert signals.snapshot()["retention"]["login_event"] == 1

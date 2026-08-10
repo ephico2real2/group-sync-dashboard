@@ -468,6 +468,36 @@ class TestUsageAdminTier:
         assert body["summary"]["distinct_users"] == 3
         assert body["summary"]["interactions"] == 17
 
+    def test_restrictions_off_does_not_widen_usage(self, tmp_path):
+        """`visibility.enabled=false` widens CLUSTER data and must NOT widen Usage.
+
+        This branch had no test, and an audit proved it: mutating `usage_scope`'s
+        not-restricted return from "self" to "all" left the ENTIRE suite green. It is the one
+        boundary in the feature where the safe answer is the narrow one even though every other
+        view has just gone wide, so a future refactor tidying "two returns that look the same"
+        into one would silently publish colleagues' presence records to every authenticated
+        reader — the dataset with no `oc` equivalent, on a deployment whose operator asked only
+        to stop scoping cluster data.
+
+        `userActivity.visibility: all` remains the deliberate way to widen Usage, and the test
+        below it pins that it still works. This asserts the other half: that turning cluster
+        scoping off is NOT that switch.
+        """
+        db = str(tmp_path / "gsd.db")
+        _seed_usage(db)
+        # Restrictions off. The usage resolver would say "all" if it were consulted — it must
+        # not be, so a stub that admits everyone still yields the self view.
+        app = _usage_app(db, wide={"anyone": "all"}, usage={"anyone": "all"},
+                         view_restrictions_enabled=False)
+        with TestClient(app) as c:
+            groups = c.get("/api/clusters/c1/groups", headers=H("anyone")).json()
+            usage = c.get("/api/dashboard/activity", headers=H("anyone")).json()
+        assert groups["scope"] == "all", "restrictions off means cluster data is wide"
+        assert usage["scope"] == "self", (
+            "restrictions off must NOT widen Usage — presence records are not cluster data"
+        )
+        assert {r["user_name"] for r in usage["activity"]} <= {"anyone"}
+
     def test_the_usage_tier_is_independent_of_the_wide_tier(self, tmp_path):
         """Spec test 2 — THE test: cluster-reader passes the WIDE check and FAILS the usage
         check, so it stays scope=all on /groups (the audit view it is meant to keep) and
@@ -580,3 +610,33 @@ class TestUsageAdminTier:
         assert usage._attributes["resource"] == "clusterrolebindings"
         assert usage._attributes["verb"] == "update"
         assert wide._attributes != usage._attributes
+
+
+def _sample(text: str, needle: str) -> float:
+    """The value of one exposition sample, matched on its exact name{labels} prefix."""
+    for line in text.splitlines():
+        if not line.startswith("#") and line.startswith(needle):
+            return float(line.rsplit(" ", 1)[1])
+    raise AssertionError(f"{needle} not found in the exposition")
+
+
+class TestVisibilityMetricsSite:
+    """§3.2/§3.3 of docs/DESIGN_metrics_refresh.md, measured off the app's own /metrics:
+    the decision and refusal counters increment where the decisions actually happen."""
+
+    def test_decisions_and_refusals_reach_the_exposition(self, client):
+        before = client.get("/metrics").text
+        refused = client.get("/api/clusters/c1/bindings/findings", headers=H("alice"))
+        assert refused.status_code == 403
+        wide = client.get("/api/clusters/c1/groups", headers=H("root")).json()
+        assert wide["scope"] == "all"
+        after = client.get("/metrics").text
+
+        refusals = "gsd_visibility_admin_refusals_total"
+        d_self = 'gsd_visibility_decisions_total{threshold="admin",tier="self"}'
+        d_all = 'gsd_visibility_decisions_total{threshold="admin",tier="all"}'
+        assert _sample(after, refusals) == _sample(before, refusals) + 1
+        # >=, not ==: one request can be counted more than once by design (whoami and the
+        # admin gate both consult viewer_scope), and the module-scoped client is shared.
+        assert _sample(after, d_self) >= _sample(before, d_self) + 1
+        assert _sample(after, d_all) >= _sample(before, d_all) + 1

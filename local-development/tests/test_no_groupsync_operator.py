@@ -248,6 +248,33 @@ class TestTheDashboardsGroupStateSelector:
         """Ignoring it would return every group under a label the caller did not ask for."""
         assert client.get("/api/clusters/c1/groups", params={"state": "bogus"}).status_code == 422
 
+    def test_an_unknown_login_outcome_is_rejected_rather_than_matching_nothing(self, client):
+        """A misspelt filter must not read as "there were none of those".
+
+        This is the sibling of the state check above and it was missing. An unvalidated
+        `outcome` returned HTTP 200 with zero attempts, which is byte-identical to a valid
+        filter that genuinely matched nothing — so `outcome=bad_pasword` reported "no failed
+        logins" from a tool whose purpose is to tell you when there are some. The false
+        reassurance is the bug, not the typo.
+
+        The accepted vocabulary is derived from the parser's own OUTCOME_* constants
+        (api.LOGIN_OUTCOMES), so a new outcome becomes queryable as soon as it can be parsed
+        rather than waiting for someone to extend a second list.
+        """
+        from gsd.api import LOGIN_OUTCOMES
+
+        assert client.get("/api/clusters/c1/logins",
+                          params={"outcome": "bad_pasword"}).status_code == 422
+        assert client.get("/api/clusters/c1/logins",
+                          params={"outcome": ""}).status_code == 422
+        # Every value the parser can produce must be accepted, or the filter refuses rows the
+        # capture legitimately recorded.
+        for outcome in LOGIN_OUTCOMES:
+            assert client.get("/api/clusters/c1/logins",
+                              params={"outcome": outcome}).status_code == 200, outcome
+        # Omitting it still means "every outcome".
+        assert client.get("/api/clusters/c1/logins").status_code == 200
+
 
 class TestTheAbsenceStaysVISIBLE:
     """Making the poll succeed must not make the missing operator quiet.

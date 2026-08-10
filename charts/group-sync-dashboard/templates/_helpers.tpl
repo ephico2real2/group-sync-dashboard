@@ -184,24 +184,6 @@ ReadWriteOncePod
 {{- end -}}
 {{- end -}}
 
-# How many key bytes the proxy would actually derive from a cookie secret. Mirrors its
-# secretBytes(): a value that reads as URL-safe base64 (padding tolerated) is decoded and
-# the DECODED length padded up to a multiple of four; anything else counts raw. The mirror
-# matters in BOTH directions — a naive `len` would reject secrets the proxy accepts (32 hex
-# characters decode to 24 bytes) and accept ones it refuses.
-{{- define "gsd.cookieSecretBytes" -}}
-{{- $s := . -}}
-{{- $n := len $s -}}
-{{- if not (or (contains "+" $s) (contains "/" $s)) -}}
-{{- $t := $s | replace "-" "+" | replace "_" "/" -}}
-{{- $t = print $t (repeat (int (mod (sub 4 (mod (len $t) 4)) 4)) "=") -}}
-{{- $d := b64dec $t -}}
-{{- if not (contains "illegal base64" $d) -}}
-{{- $n = add (len $d) (mod (sub 4 (mod (len $d) 4)) 4) -}}
-{{- end -}}
-{{- end -}}
-{{- $n -}}
-{{- end -}}
 # ── Per-user visibility ──────────────────────────────────────────────────────────────
 # Every read below is nil-safe on purpose: commenting out the sub-keys in a values file
 # leaves `visibility:` (or `adminSar:`) present-but-nil, which a bare field access — and
