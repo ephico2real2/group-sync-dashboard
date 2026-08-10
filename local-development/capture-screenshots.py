@@ -8,7 +8,8 @@ the difference between images that describe the product and images that describe
     # through the real ingress, logging in as a cluster user. THIS IS THE ONE TO USE.
     GSD_UI_PASSWORD=$(cat ~/.crc/machines/crc/kubeadmin-password) \
       .venv/bin/python capture-screenshots.py \
-        --base https://group-sync-dashboard.apps-crc.testing --login-user kubeadmin
+        --base https://group-sync-dashboard.apps-crc.testing \
+        --login-user kubeadmin --provider developer
 
     # or bypass oauth-proxy by port-forwarding to the container's own port
     oc port-forward -n group-sync-dashboard deploy/group-sync-dashboard 18080:8080 &
@@ -50,13 +51,17 @@ REPO = pathlib.Path(__file__).resolve().parents[1]
 # times out on every other one, including the same cluster after a poll. The wait below is
 # structural instead: the clicked tab reports aria-current, the network settles, and some
 # heading exists.
+# Numbered in TAB-STRIP ORDER, which is the only ordering a reader can check against the
+# screenshots. Logins was missing entirely — seven tabs ship and six were captured — so Usage
+# moved from 06 to 07 rather than leaving a number that no longer means its position.
 TABS = [
     ("Overview",        "01-overview.png"),
     ("Groups",          "02-groups.png"),
     ("Access granted",  "03-access-granted.png"),
     ("RBAC policy",     "04-rbac-policy.png"),
     ("Namespace audit", "05-namespace-audit.png"),
-    ("Usage",           "06-usage.png"),
+    ("Logins",          "06-logins.png"),
+    ("Usage",           "07-usage.png"),
 ]
 
 
@@ -76,6 +81,13 @@ def main() -> int:
                          "and roughly quadruples the file size — 4.6 MB versus 1.2 MB for the "
                          "six tabs, for images GitHub displays at about 900px wide either way. "
                          "Not worth committing by default.")
+    ap.add_argument("--provider", default="developer", metavar="NAME",
+                    help="the identity provider to pick on OpenShift's chooser, when more than "
+                         "one is configured (default: %(default)s, which is the one kubeadmin "
+                         "authenticates through on the reference lab). An LDAP persona needs "
+                         "--provider ldap-local. Naming it beats guessing: the previous guess "
+                         "matched nothing once a second provider existed, and the failure looked "
+                         "like a timeout on the password form.")
     ap.add_argument("--login-user", default=None, metavar="USER",
                     help="log in through OpenShift OAuth first, reading the password from "
                          "GSD_UI_PASSWORD. Required only for --base pointing at the ingress; "
@@ -121,12 +133,31 @@ def main() -> int:
                 page.wait_for_load_state("networkidle")
 
             # 2. OpenShift's identity-provider chooser, shown only with more than one provider
-            #    configured. CRC has one and goes straight to the form.
-            chooser = page.locator(
-                "a:has-text('htpasswd'), a:has-text('kube:admin'), a:has-text('Log in with')")
+            #    configured — and NAMED rather than guessed.
+            #
+            #    This used to guess: `a:has-text('htpasswd'), a:has-text('kube:admin'), …`. It
+            #    worked while CRC had one provider and broke silently the moment the lab added a
+            #    second. Measured on the reference cluster, the chooser offers exactly
+            #    `developer` and `ldap-local` and there is NO kube:admin link — so the guess
+            #    matched nothing, the click never happened, and the script then waited 20s for a
+            #    username field on a page that was still the chooser. The documented invocation
+            #    could not have worked.
+            #
+            #    kubeadmin authenticates through the `developer` provider on this lab, which is
+            #    why that is the default; an LDAP persona needs --provider ldap-local.
+            chooser = page.locator(f"a:has-text('{args.provider}')")
             if chooser.count():
                 chooser.first.click()
                 page.wait_for_load_state("networkidle")
+            elif page.locator("a").count() and not page.locator("input[name='username']").count():
+                # Offered a choice, and ours is not among them. Fail with the list rather than
+                # timing out on a form that will never appear.
+                offered = [t.strip() for t in page.locator("a").all_inner_texts() if t.strip()]
+                print(f"ERROR: no identity provider named {args.provider!r}. "
+                      f"This cluster offers: {', '.join(offered) or '(none found)'}",
+                      file=sys.stderr)
+                browser.close()
+                return 1
 
             # 3. The credential form.
             page.wait_for_selector("input[name='username']", timeout=20_000)
