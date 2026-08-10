@@ -114,9 +114,9 @@ of it.
 | endpoint | at the self tier | at the wide tier |
 |---|---|---|
 | `/api/clusters/{c}/groups` | groups they belong to | all |
-| `/api/clusters/{c}/groups/{name}` | 403 unless a member | all |
+| `/api/clusters/{c}/groups/{name}` | 403 unless a member — **and a member's 200 names the group's bindings**, see below | all |
 | `/api/clusters/{c}/users` | their own row | all |
-| `/api/clusters/{c}/users/{name}` | 403 unless it is them | all |
+| `/api/clusters/{c}/users/{name}` | 403 unless it is them — **their own 200 names the bindings reaching them**, see below | all |
 | `/api/clusters/{c}/user-bindings` | their own grants | all |
 | `/api/clusters/{c}/membership-changes` | changes affecting them | all |
 | `/api/clusters/{c}/logins` | their own attempts | all |
@@ -142,6 +142,35 @@ of it.
 
 **Withheld aggregates are `null`, never `0`.** A fabricated zero reads as "no problems found" when
 the truth is "not counted for you".
+
+### The self tier withholds the cluster's bindings, not the reader's own
+
+Worth stating plainly, because "`/bindings/findings` → 403" invites the conclusion that a narrowed
+reader sees no binding at all, and that is not true.
+
+`/groups/{name}` and `/users/{name}` embed a `bindings` list. So a reader who belongs to a group
+that holds `cluster-admin` can see that their group holds it, and the name of the binding that
+grants it — `{"role_name": "cluster-admin", "binding_name": "admin-crb"}` — while
+`/bindings/findings` refuses them.
+
+**That is the design, not a leak.** The narrowed tier exists to answer *"what access do I have, and
+how did I get it"*, and that question is unanswerable without naming the binding that granted it.
+What separates it from the gated views is **scope**:
+
+| | `/groups/{name}`, `/users/{name}` | `/bindings/findings` |
+|---|---|---|
+| whose access | the reader's own path | everyone's, cluster-wide |
+| bounded by | membership, checked before any existence lookup | nothing — it is the whole surface |
+| a non-member gets | 403, identical whether or not the group exists | 403 |
+
+The membership check runs **before** the existence lookup precisely so the two 403s are
+indistinguishable: otherwise "403 for a real group, 404 for an absent one" would make the endpoint a
+group-name oracle for a reader who is in none of them.
+
+What a narrowed reader therefore cannot obtain: which *other* groups hold privileged roles, who is
+in them, or any binding that does not reach them. What they can: their own, in full. If even that is
+too much for a deployment, the control is `visibility.enabled=false` plus an external gate — not a
+narrower tier, because a tier that hides the reader's own access path has nothing left to show them.
 
 ---
 
