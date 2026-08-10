@@ -185,6 +185,7 @@ def build_app(
             resource=settings.visibility_admin_sar_resource,
             api_group=settings.visibility_admin_sar_api_group,
             namespace=settings.visibility_admin_sar_namespace,
+            subresource=settings.visibility_admin_sar_subresource,
             ttl_seconds=float(settings.visibility_tier_ttl_seconds),
         )
     # A SEPARATE instance for the Usage tab (docs/SPEC_usage_admin_tier.md), never the same one:
@@ -200,6 +201,7 @@ def build_app(
             resource=settings.visibility_usage_admin_sar_resource,
             api_group=settings.visibility_usage_admin_sar_api_group,
             namespace=settings.visibility_usage_admin_sar_namespace,
+            subresource=settings.visibility_usage_admin_sar_subresource,
             ttl_seconds=float(settings.visibility_tier_ttl_seconds),
         )
     if not settings.view_restrictions_enabled:

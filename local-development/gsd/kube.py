@@ -17,7 +17,7 @@ from urllib.parse import unquote
 
 import httpx
 
-from .config import ClusterConfig, ConfigError
+from .config import VISIBILITY_TIER_TTL_DEFAULT, ClusterConfig, ConfigError
 
 log = logging.getLogger(__name__)
 
@@ -96,7 +96,10 @@ TIER_ALL = "all"
 # true token identity rather than a subset of it.
 VIRTUAL_AUTH_GROUPS = ("system:authenticated", "system:authenticated:oauth")
 
-TIER_TTL_SECONDS = 60.0
+# Re-exported from gsd.config, which is the ONE place the number is written. Kept under this
+# name because the comments and docstrings in this module refer to it, and because a reader
+# asking "how long is a tier cached?" looks here first.
+TIER_TTL_SECONDS = float(VISIBILITY_TIER_TTL_DEFAULT)
 """How long one viewer's decided tier is believed before it is re-derived from the cluster.
 
 THE WORST-CASE STALE-VISIBILITY WINDOW — how long a user REMOVED from an admin group can retain
@@ -1048,14 +1051,33 @@ class TierResolver:
         resource: str,
         api_group: str = "",
         namespace: str = "",
-        ttl_seconds: float = TIER_TTL_SECONDS,
+        subresource: str,
+        ttl_seconds: float,
     ):
+        # ttl_seconds is REQUIRED and deliberately has no default. It used to default to
+        # TIER_TTL_SECONDS, and that default is precisely what hid the wiring bug: nothing
+        # passed the configured value in, the constructor supplied an identical 60, and the
+        # operator's knob did nothing while every default-value test agreed. A required
+        # argument turns that from a silent no-op into a TypeError at construction, which is
+        # the loudest place to find it. The canonical default now belongs to the caller
+        # (Settings.visibility_tier_ttl_seconds), where an operator can actually change it.
         self._kube = ClusterClient(cluster, timeout=TIER_CHECK_TIMEOUT_SECONDS)
         # resourceAttributes calls the API group `group`; an empty string is the CORE group
         # (pods, namespaces), so it is passed through rather than treated as unset.
         self._attributes = {"verb": verb, "resource": resource, "group": api_group}
         if namespace:
             self._attributes["namespace"] = namespace
+        # subresource is REQUIRED for the same reason ttl_seconds is, and it was the same bug:
+        # Settings has parsed `resource: pods/log` into resource=pods + subresource=log since
+        # the tier shipped, the chart's own guard explicitly ALLOWS that form, and this
+        # constructor never accepted the second half. So an operator who narrowed the threshold
+        # to `pods/log` was silently checked for `pods` — a DIFFERENT permission, potentially a
+        # broader one, admitting more readers to the wide view than they asked for, with
+        # nothing on screen or in the log to say so. An empty string is the ordinary value and
+        # means "no subresource"; it is still passed explicitly so a caller cannot omit it and
+        # reintroduce the silence.
+        if subresource:
+            self._attributes["subresource"] = subresource
         self._ttl = ttl_seconds
         self._cache: dict[str, tuple[float, str]] = {}
         self._lock = threading.Lock()

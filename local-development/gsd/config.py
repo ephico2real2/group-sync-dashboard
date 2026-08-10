@@ -24,6 +24,18 @@ import yaml
 
 log = logging.getLogger(__name__)
 
+# The visibility tier cache lifetime, in seconds — declared HERE and nowhere else.
+#
+# It lives in this module because gsd.kube imports gsd.config and not the reverse, so this is
+# the only direction a shared constant can travel. `gsd.kube.TIER_TTL_SECONDS` re-exports it.
+#
+# WHY ONE DECLARATION MATTERS. The number was previously written out twice — a Settings default
+# here and an identical constructor default in kube.py — and that is exactly how the knob
+# shipped inert: nothing passed the setting through to the resolver, the resolver fell back to
+# its own 60, and every test exercising the default agreed with the bug because both halves
+# said the same thing. Two literals that must agree will eventually disagree; one cannot.
+VISIBILITY_TIER_TTL_DEFAULT = 60
+
 
 class ConfigError(Exception):
     """Raised for a malformed or unusable cluster configuration."""
@@ -335,7 +347,13 @@ class Settings:
     # therefore keeps the wide view for at most this many seconds plus one in-flight page (the
     # fail-open direction); a user ADDED waits the same. An indeterminate answer (SAR error,
     # timeout) is never cached and always yields the self tier.
-    visibility_tier_ttl_seconds: int = 60
+    #
+    # The literal lives in VISIBILITY_TIER_TTL_DEFAULT above, and gsd.kube re-exports it as
+    # TIER_TTL_SECONDS, so this number is declared ONCE. It used to be declared here AND in
+    # kube.py, and that duplication is what let the knob ship inert: nothing passed the setting
+    # to the resolver, the resolver fell back to its own identical 60, and every test that
+    # exercised the default agreed with the bug.
+    visibility_tier_ttl_seconds: int = VISIBILITY_TIER_TTL_DEFAULT
 
     def cluster(self, name: str) -> ClusterConfig | None:
         for c in self.clusters:
@@ -713,7 +731,8 @@ def load_settings(path: str | Path) -> Settings:
         visibility_usage_admin_sar_verb=usage_admin_sar[3],
         visibility_usage_admin_sar_namespace=usage_admin_sar[4],
         visibility_tier_ttl_seconds=_num_setting(
-            raw, "GSD_VISIBILITY_TIER_TTL_SECONDS", "visibilityTierTtlSeconds", 60, int
+            raw, "GSD_VISIBILITY_TIER_TTL_SECONDS", "visibilityTierTtlSeconds",
+            VISIBILITY_TIER_TTL_DEFAULT, int
         ),
         user_activity_visibility=_visibility_setting(raw),
         user_activity_flush_seconds=_num_setting(

@@ -22,6 +22,7 @@ from gsd.kube import (
     SAR_API,
     TIER_ALL,
     TIER_SELF,
+    TIER_TTL_SECONDS,
     VIRTUAL_AUTH_GROUPS,
     TierResolver,
 )
@@ -73,6 +74,11 @@ def _resolver(monkeypatch, fake: FakeCluster, **kwargs) -> TierResolver:
     kwargs.setdefault("verb", "list")
     kwargs.setdefault("resource", "groups")
     kwargs.setdefault("api_group", "user.openshift.io")
+    # Both explicit, because TierResolver deliberately defaults NEITHER — see its constructor
+    # comment: a default on either is what let a configured value go unused in silence. A test
+    # that cares about expiry or a subresource passes its own; the rest just need a value.
+    kwargs.setdefault("subresource", "")
+    kwargs.setdefault("ttl_seconds", TIER_TTL_SECONDS)
     resolver = TierResolver(ClusterConfig("c", "https://api.example", token_env="X"), **kwargs)
     transport = httpx.MockTransport(fake.handler)
     monkeypatch.setattr(
@@ -131,6 +137,31 @@ class TestTheReviewCarriesTheGroups:
         resolver.tier_for("someone")
         attrs = fake.sar_bodies[0]["spec"]["resourceAttributes"]
         assert attrs["group"] == "" and "namespace" not in attrs
+
+    def test_a_subresource_threshold_reaches_the_review(self, monkeypatch):
+        """`pods/log` must be CHECKED as pods/log, not as pods.
+
+        The chart's own guard accepts `resource: pods/log`, and config has split that into
+        resource + subresource since the tier shipped — but the constructor never accepted the
+        second half, so the review asked about `pods` instead. A different permission, possibly
+        a BROADER one, admitting readers the operator meant to exclude, with nothing on screen
+        or in the log to say the configured threshold was not the threshold applied.
+        """
+        fake = FakeCluster(groups=[])
+        resolver = _resolver(monkeypatch, fake, verb="get", resource="pods",
+                             api_group="", subresource="log")
+        resolver.tier_for("someone")
+        assert fake.sar_bodies[0]["spec"]["resourceAttributes"] == {
+            "verb": "get", "resource": "pods", "group": "", "subresource": "log",
+        }
+
+    def test_no_subresource_omits_the_key_rather_than_sending_empty(self, monkeypatch):
+        """An empty subresource must be ABSENT, not `""`. The API server treats the empty
+        string as a distinct value in resourceAttributes, so sending it would change the
+        question for every deployment that does not use one — which is nearly all of them."""
+        fake = FakeCluster(groups=[])
+        _resolver(monkeypatch, fake, subresource="").tier_for("someone")
+        assert "subresource" not in fake.sar_bodies[0]["spec"]["resourceAttributes"]
 
 
 class TestFailClosed:
@@ -260,6 +291,90 @@ class TestSettings:
         assert s.visibility_admin_sar_resource == "rolebindings"
         assert s.visibility_admin_sar_api_group == "rbac.authorization.k8s.io"
         assert s.visibility_admin_sar_namespace == "team-a"
+
+    # BOTH endpoints, because they are served by DIFFERENT resolvers and each has its own
+    # `ttl_seconds=` argument to lose. Proven necessary by mutation: with only the /groups case,
+    # deleting `ttl_seconds=` from the USAGE construction left this test green.
+    #   /api/clusters/c1/groups  -> the wide tier   (app.state.tier_resolver)
+    #   /api/dashboard/activity  -> the usage tier  (app.state.usage_tier_resolver)
+    @pytest.mark.parametrize("endpoint", [
+        "/api/clusters/c1/groups",
+        "/api/dashboard/activity",
+    ])
+    @pytest.mark.parametrize("ttl,requests,pause,expected_reviews", [
+        (60, 3, 0.0, 1),      # cached: one review answers all three requests
+        (0, 3, 0.0, 3),       # caching off: a review per request, which is what 0 buys
+        (1, 3, 0.6, 2),       # expires once across the two 0.6s gaps
+    ])
+    def test_the_configured_ttl_changes_how_often_the_cluster_IS_ASKED(
+        self, tmp_path, endpoint, ttl, requests, pause, expected_reviews
+    ):
+        """The values key is only real if it changes BEHAVIOUR, so this counts the
+        SubjectAccessReviews the cluster actually receives rather than reading `_ttl` back.
+
+        Reading the attribute would pass while the number went unused — and that is not
+        hypothetical: `visibility_tier_ttl_seconds` was once committed and documented while
+        NOTHING passed it to the resolver, so the values file said 60 and the code used its own
+        module constant. Each half was correct in isolation, which is exactly why an
+        introspection assertion would not have caught it. The Usage tier later added a SECOND
+        resolver, doubling the number of places that can quietly stop reading it.
+
+        Real app, real TierResolver, real caching. Only the HTTP transport is faked, and the
+        group listing must be a proper `items` collection — a body without one is REFUSED
+        rather than read as "no groups" (a deliberate guard), which fails the tier closed
+        before any review is attempted and would make this test count zero forever.
+        """
+        import httpx
+        from fastapi.testclient import TestClient
+
+        from gsd.api import build_app
+        from gsd.config import ClusterConfig, Settings
+
+        settings = Settings(
+            clusters=[ClusterConfig("c1", "https://x", token_env="T")],
+            db_path=str(tmp_path / "ttl.db"),
+            oauth_proxy_enabled=True,
+            visibility_tier_ttl_seconds=ttl,
+        )
+        app = build_app(settings, run_poller=False)
+        assert app.state.tier_resolver is not None, "restrictions are on; the resolver must exist"
+        assert app.state.usage_tier_resolver is not None
+        # Separate instances with separate caches, so one verdict cannot answer the other's
+        # question about the same person.
+        assert app.state.tier_resolver is not app.state.usage_tier_resolver
+        assert app.state.tier_resolver._cache is not app.state.usage_tier_resolver._cache
+
+        reviews = {"n": 0}
+        groups = {"kind": "GroupList",
+                  "items": [{"metadata": {"name": "team-a"}, "users": ["someone"]}]}
+
+        def handler(request):
+            if "subjectaccessreviews" in str(request.url):
+                reviews["n"] += 1
+                return httpx.Response(201, json={"status": {"allowed": True}})
+            return httpx.Response(200, json=groups)
+
+        for resolver in (app.state.tier_resolver, app.state.usage_tier_resolver):
+            resolver._kube._client = lambda: httpx.Client(
+                transport=httpx.MockTransport(handler), base_url="https://x")
+
+        scopes = []
+        with TestClient(app) as client:
+            for i in range(requests):
+                if i and pause:
+                    time.sleep(pause)
+                scopes.append(client.get(
+                    endpoint,
+                    headers={"X-Forwarded-User": "someone"}).json()["scope"])
+
+        assert scopes == ["all"] * requests, (
+            f"the review said allowed, so every response must be the wide view; got {scopes} — "
+            f"a 'self' here means the tier failed closed and the count below is meaningless"
+        )
+        assert reviews["n"] == expected_reviews, (
+            f"ttl={ttl} over {requests} requests {pause}s apart should ask the cluster "
+            f"{expected_reviews} time(s), asked {reviews['n']}"
+        )
 
     def test_an_explicit_empty_api_group_means_core_not_the_default(self, tmp_path):
         """`or`-chaining would rewrite '' into user.openshift.io and silently change a
