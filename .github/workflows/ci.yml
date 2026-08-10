@@ -14,6 +14,10 @@ on:
   # unfixable CVE becoming fixable gets noticed.
   schedule:
     - cron: "0 6 * * 1"
+  # Called by helm.yaml as the gate in front of publishing the chart, so the checks are
+  # defined once here rather than duplicated there. Without this a direct push to main — or a
+  # merge landing while branch protection is off — would publish a chart nothing had validated.
+  workflow_call:
 
 permissions:
   contents: read
