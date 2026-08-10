@@ -276,16 +276,23 @@ def test_alerts_are_filtered_by_kind_at_self(tmp_path):
 def test_dangling_binding_alert_does_not_break_the_self_filter(tmp_path):
     """The regression this fixture's dangling binding exists for.
 
-    The dangling-alert loop used a local variable named `scope` for its namespace label,
-    which rebound the handler's tier variable — after one dangling finding the self filter
-    compared against "cluster-wide" and passed EVERYTHING through: a fail-open. The fix
-    renamed the local; this pins it by asserting both the filter and the declared scope
-    survive a feed that contains a dangling alert.
+    The dangling-alert loop once used a local `scope` for its namespace label, which rebound
+    the handler's tier variable — after one dangling finding the self filter compared against
+    "cluster-wide" and passed EVERYTHING through: a fail-open. The fix renamed the local to
+    `where`; this pins it, and the guard is load-bearing (it caught a real fail-open once).
+
+    `dangling_binding` is itself WITHHELD at self now — it carries a group->role binding row,
+    see test_alerts_do_not_carry_the_admin_only_surface_to_self — so the guard here is that a
+    dangling finding in the feed does not disable the self filter for the REST: `empty_group`
+    must still be filtered and the declared scope must survive the loop. If the shadowing bug
+    returned, `scope` would rebind to "cluster-wide", the filter at api.py would be skipped,
+    and `empty_group` would reappear — which is exactly what the second assertion catches.
     """
     c = _client(tmp_path)
     body = c.get("/api/alerts", headers=AS_VIEWER).json()
     kinds = {a["kind"] for a in body["alerts"]}
-    assert "dangling_binding" in kinds, "the allowed kind must still arrive at self"
+    assert "dangling_binding" not in kinds, (
+        "the binding surface is administrator-only; a dangling finding must not reach self")
     assert "empty_group" not in kinds, (
         "a dangling finding in the feed must not disable the self filter for the rest"
     )
@@ -429,3 +436,77 @@ def test_metrics_are_untouched_by_scoping(tmp_path):
     text = c.get("/metrics").text
     assert "gsd_groups_total" in text
     assert VIEWER not in text and OTHER not in text
+
+
+def test_alerts_do_not_carry_the_admin_only_surface_to_self(tmp_path):
+    """The alert feed must not become the alternate path around require_admin_tier.
+
+    A `dangling_binding` alert carries a group->role binding row and a
+    `config_reconcile_error` alert carries an operator-config object and its error message —
+    both from /bindings/findings and /operator-configs, which are the administrator tier now.
+    Measured at 03ad446: with the fixture's dangling binding (crb-gone -> gone-group) plus one
+    failing config, a self reader whom BOTH endpoints 403'd still received BOTH alerts, so the
+    feed leaked exactly what the gate withholds.
+
+    The failing config is written after `_client` seeds — `_seed` does not touch the operator-
+    config tables, so the extra row survives the re-seed the admin app performs.
+    """
+    c = _client(tmp_path)
+    store = Store(str(tmp_path / "t.db"))
+    store.replace_operator_configs("c1", [
+        {"kind": "NamespaceConfig", "name": "restricted-tenants", "error_at": now_iso(),
+         "error_message": "failed to reconcile RBAC template", "success_at": None},
+    ], now_iso())
+    store.close()
+
+    wide = _client(tmp_path, tier_resolver=_admin)
+    wide_kinds = {a["kind"] for a in wide.get("/api/alerts", headers=AS_VIEWER).json()["alerts"]}
+    assert {"dangling_binding", "config_reconcile_error"} <= wide_kinds, (
+        "the administrator must still see the whole feed")
+
+    body = c.get("/api/alerts", headers=AS_VIEWER).json()
+    self_kinds = {a["kind"] for a in body["alerts"]}
+    assert body["scope"] == "self"
+    assert "dangling_binding" not in self_kinds, (
+        "a group->role binding row must not reach self via alerts while /bindings/findings 403s")
+    assert "config_reconcile_error" not in self_kinds, (
+        "the operator-config surface must not reach self via alerts while /operator-configs 403s")
+
+
+def test_operator_config_summary_is_withheld_at_self_on_the_cluster_list(tmp_path):
+    """The one Overview aggregate with NO /metrics analogue, so the /api/clusters card leaks
+    it to a self reader unless the handler withholds it.
+
+    group_count and the binding-finding counts on each card are already world-readable on the
+    unauthenticated /metrics (gsd_groups_total, gsd_bindings_total{finding=...}), so serving
+    them at both tiers is not a leak. The operator-config {total, failing} pair is NOT on
+    /metrics (there is no gsd_operator_configs_total), so it is a genuinely private aggregate
+    reaching self through the one endpoint that must stay reachable for the cluster selector.
+    Withheld as None at self — never a fabricated 0, which would read as "operator installed,
+    nothing failing" to a reader who cannot know it was narrowed — present for an admin, with
+    reachable/status/error untouched so an ordinary reader can still tell a broken dashboard
+    from an empty one.
+    """
+    c = _client(tmp_path)
+    store = Store(str(tmp_path / "t.db"))
+    store.replace_operator_configs("c1", [
+        {"kind": "NamespaceConfig", "name": "multitenant", "error_at": None,
+         "error_message": None, "success_at": now_iso()},
+    ], now_iso())
+    store.close()
+    admin = _client(tmp_path, tier_resolver=_admin)
+
+    self_row = next(r for r in c.get("/api/clusters", headers=AS_VIEWER).json() if r["id"] == "c1")
+    admin_row = next(r for r in admin.get("/api/clusters", headers=AS_VIEWER).json()
+                     if r["id"] == "c1")
+
+    assert self_row["operator_configs"] is None, (
+        "the operator-config summary has no /metrics analogue and must be withheld at self")
+    assert admin_row["operator_configs"] == {"total": 1, "failing": 0}, (
+        "the administrator still gets the summary")
+    # The rest of the card is untouched at both tiers — the selector and the broken-vs-empty
+    # signal must keep working for every reader.
+    assert self_row["reachable"] == admin_row["reachable"]
+    assert self_row["status"] == admin_row["status"]
+    assert self_row["group_count"] == admin_row["group_count"]
+    assert self_row["dangling_bindings"] == admin_row["dangling_bindings"]

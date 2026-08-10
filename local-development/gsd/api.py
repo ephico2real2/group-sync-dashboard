@@ -55,21 +55,29 @@ LOGIN_OUTCOMES = tuple(
 # Alert kinds the SELF tier receives — an ALLOW-list, so a kind added later is hidden from
 # the narrow view until someone rules on it, which is the fail-closed direction.
 #
-# Membership is decided by the feed's own invariant, "an alert here always has a page
-# behind it": every kind here is backed by a page the self tier sees IN FULL (the cluster
-# cards, GroupSync CRs and their events, operator configs, binding findings — all ruled
-# governance data about objects). The excluded kinds are backed by pages the self tier does
-# not see whole: `empty_group`, `unattributed` and `stale_group` name groups from the
-# self-scoped Groups tab (and an empty group can never contain the viewer), and
-# `direct_user_binding` aggregates other people's grants from the self-scoped
-# user-bindings view.
+# Membership is the feed's own invariant, "an alert here always has a page behind it":
+# every kind here is backed by a page the self tier sees IN FULL — the cluster cards, and
+# the GroupSync CRs and their events (CR health, whose per-CR identity and state is already
+# public on the unauthenticated /metrics). The excluded kinds are backed by pages the self
+# tier does NOT see whole:
+#   * `empty_group`, `unattributed`, `stale_group` name groups from the self-scoped Groups
+#     tab (and an empty group can never contain the viewer);
+#   * `direct_user_binding` aggregates other people's grants from the self-scoped
+#     user-bindings view;
+#   * `dangling_binding` and `config_reconcile_error` are backed by /bindings/findings and
+#     /operator-configs, which require_admin_tier now REFUSES at self (the spec-Q3 reversal).
+#     A dangling_binding alert carries a group->role binding row and config_reconcile_error
+#     carries an operator-config object plus its error message — the very rows those two
+#     endpoints withhold — so leaving them here made the alert feed the alternate path around
+#     the gate. Measured: with one dangling finding and one failing config, a self reader
+#     whom BOTH endpoints 403'd still received BOTH alerts. Administrator-tier now; a dangling
+#     binding grants nobody, so a self reader loses no signal they could act on.
 SELF_ALERT_KINDS = frozenset({
-    # Poll failures — kind carries poll_outcome.status verbatim.
+    # Poll failures — kind carries poll_outcome.status verbatim; backed by the cluster cards
+    # and gsd_cluster_up on /metrics.
     "auth_failed", "forbidden", "unreachable",
-    # GroupSync CR health, full-view at both tiers.
+    # GroupSync CR health — per-CR state is public on /metrics, so full-view at both tiers.
     "groupsync_crd_absent", "invalid_schedule", "sync_stopped", "overdue", "reconcile_error",
-    # Policy-operator health and binding findings, full-view at both tiers.
-    "config_reconcile_error", "dangling_binding",
 })
 
 
@@ -451,13 +459,26 @@ def build_app(
 
     @app.get("/api/clusters")
     @consistent
-    def list_clusters() -> list[dict]:
+    def list_clusters(request: Request) -> list[dict]:
         """Every observed cluster with its poll status and headline counts.
 
         The overview reads this. An unreachable cluster still appears, carrying its error —
         a cluster this dashboard cannot poll is a thing it exists to report, not a reason to
         omit the row.
+
+        REACHABLE AT EVERY TIER, deliberately: the cluster selector reads this on every tab,
+        and reachable/status/error is how an ordinary reader tells a broken dashboard from an
+        empty one. Almost every count here is already world-readable on the unauthenticated
+        /metrics (gsd_groups_total, gsd_bindings_total{finding=...}), so withholding those
+        behind login would be theatre. The ONE exception is `operator_configs` below: it has
+        no /metrics analogue (there is no gsd_operator_configs_total; only the failing count
+        is inferable from gsd_alerts_total{kind="config_reconcile_error"}), so it is a
+        genuinely private aggregate that would otherwise reach a self reader through the one
+        endpoint that cannot be refused. It is withheld at self — the withheld-aggregate
+        pattern /logins and /cluster-access already use — while everything with a public
+        analogue stays full.
         """
+        _, scope = viewer_scope(request)
         out = []
         for row in store.clusters():
             counts = store.group_counts(row["id"])
@@ -483,8 +504,12 @@ def build_app(
                     "unattributed_groups": counts["unattributed"],
                     "oldest_last_sync": store.oldest_last_sync(row["id"]),
                     # Compact policy-operator summary for the card. None when the CRDs are
-                    # absent, so the UI can render nothing rather than a healthy-looking 0.
-                    "operator_configs": _config_summary(row["id"]),
+                    # absent, so the UI can render nothing rather than a healthy-looking 0 —
+                    # AND None at the self tier, where it is withheld (see the docstring): it
+                    # is the one card figure with no /metrics analogue. Both cases render as
+                    # nothing on the card, which is the right outcome for each.
+                    "operator_configs": (
+                        _config_summary(row["id"]) if scope == "all" else None),
                     # Surfaced on the landing page so binding problems are discoverable
                     # without knowing to navigate anywhere. `unresolved` does not alert
                     # (it cannot be told from a not-yet-synced group), so without a count
@@ -503,10 +528,19 @@ def build_app(
         schedule and the last sync, never stored — a stored state would be wrong the moment
         the clock moved past it.
 
-        FULL VIEW AT BOTH TIERS, by ruling (spec Q3): CR health is governance data about
-        objects, and per-CR name, namespace, state and last-sync are already public on
-        the unauthenticated /metrics. The payload never varies by tier, which is why this
-        stays a bare list with no scope field — there is no narrowing to declare.
+        FULL VIEW AT BOTH TIERS — the surviving half of spec Q3, and the ONLY half. Q3
+        originally served CR health, operator configuration AND the binding findings whole at
+        both tiers as "governance data about objects"; 03ad446 reversed that for the RBAC
+        binding surface (/bindings/findings) and the operator's private configuration
+        (/operator-configs), which are the administrator tier now. THIS endpoint survives on a
+        measurement the other two do not share: /metrics is in the chart's skipAuthRegex and
+        serves, to a credential-less curl, gsd_groupsync_state,
+        gsd_groupsync_last_sync_timestamp_seconds and gsd_groupsync_groups_total per CR — the
+        same per-CR identity and state this returns. Refusing it here would be theatre while
+        that holds, and it would cost the Groups tab its per-provider colour slots (crSlot
+        reads data.groupsyncs) for nothing. Gate /metrics first if this should ever change.
+        The payload never varies by tier, which is why this stays a bare list with no scope
+        field — there is no narrowing to declare.
         """
         require_cluster(cluster_id)
         now = datetime.now(UTC)

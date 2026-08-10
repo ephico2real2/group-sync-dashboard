@@ -68,6 +68,9 @@ REVIEW_ARTIFACTS = (
     # The PR #12 adversarial review. Its findings quote the exact lines they are about, which is
     # the point of a review record and precisely what the line-number rule forbids elsewhere.
     "REVIEW_login_capture_pr12.md",
+    # The admin-tier gating review (feat/per-user-visibility). Same reason: its findings cite the
+    # exact api.py / test lines they refuse or replace, so line numbers are the record, not rot.
+    "REVIEW_admin_tier_gating.md",
 )
 
 

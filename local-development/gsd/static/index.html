@@ -443,13 +443,16 @@ function renderScopePill() {
     : (vis.enabled === false
         ? "Full view — restrictions are off for this deployment"
         : "Full view — you are seeing everything");
+  // The narrowed tooltip says WHAT is scoped and stops there. It used to add "the grant that
+  // widens a view is documented in the chart README", removed for the reason refusalCard
+  // records: this text is read by the person being scoped down, who cannot reach the chart and
+  // should not be handed the name of the permission that would lift the restriction.
   pill.title = self
     ? "Every list here is scoped to you on the server: your groups, your grants, your "
-      + "sign-in attempts. An administrator sees the whole cluster; the grant that widens "
-      + "a view is documented in the chart README."
+      + "sign-in attempts. Some views are for administrators only."
     : (vis.enabled === false
-        ? "visibility.enabled is false, so every authenticated reader sees everything — "
-          + "a deliberate deployment choice, not a grant your account holds."
+        ? "Per-reader scoping is switched off here, so every authenticated reader sees "
+          + "everything — a deliberate choice for this cluster, not a grant your account holds."
         : "Your account holds the cluster permission this deployment treats as the "
           + "administrator tier, so nothing here is scoped down.");
 }
@@ -476,10 +479,6 @@ function scopeBanner(kind, d) {
   return `<div class="filterbar-note scope-banner">${words(d.viewer || "you")}</div>`;
 }
 
-/* A withheld view is a NAMED refusal, never a blank: an empty audit tab reads as a
-   healthy cluster, which is a lie of layout. Says what exists, why it is not shown, and
-   what changes that. `withBack` for drill-downs, so a refusal is a detour rather than a
-   dead end — the same rule the error card follows. */
 /* Is this reader on the narrowed tier? Read from whoami's server-computed `visibility`,
    the same source renderScopePill uses — the page still never DECIDES a tier, it only
    reports the one the wire declared. Absent declaration (older build, no authenticated
@@ -493,16 +492,30 @@ function narrowedReader() {
   return !!vis && vis.scope === "self";
 }
 
+/* A withheld view is a NAMED refusal, never a blank: an empty audit tab reads as a healthy
+   cluster, which is a lie of layout. So it says what exists and that it is reserved — and
+   deliberately NOT how to obtain it.
+
+   It used to name the widening grant (stock `cluster-reader`) and point at the chart README.
+   Both were removed on the operator's instruction, and the reasoning is worth keeping: this
+   card renders for the person being REFUSED. They cannot read the chart, they cannot grant
+   themselves anything, and naming the role that would widen their access turns a refusal into
+   a shopping list — an escalation path advertised to exactly the reader it is withheld from.
+   Worse, `cluster-reader` was the wrong role to advertise even to an operator: it satisfies
+   the default check as a side effect of granting cluster-wide read on everything.
+
+   The configurable check lives in `visibility.adminSar` and is documented in the chart values
+   and README, which is where an operator looks and a reader does not.
+
+   `withBack` for drill-downs, so a refusal is a detour rather than a dead end — the same rule
+   the error card follows. */
 function refusalCard(title, what, withBack) {
   return `<section class="card">
     ${withBack ? `<button class="back" id="back-groups">${backLabel()}</button>` : ""}
     <h2${withBack ? ' style="margin-top:10px"' : ""}>${esc(title)}</h2>
     <div class="scope-refusal"><strong>Withheld, not empty.</strong> ${what}
-      Your account does not hold the cluster permission this deployment treats as the
-      administrator tier, so this view is reserved — an administrator sees it in full,
-      and nothing on this page is broken. The grant that widens it (stock
-      <code>cluster-reader</code>, unless this deployment configured another check) is
-      documented in the chart README.</div>
+      <strong>For administrators only.</strong> Nothing on this page is broken and nothing is
+      missing from the cluster — this view is simply not part of yours.</div>
   </section>`;
 }
 
@@ -1055,13 +1068,17 @@ function usagePage() {
   // Disabled is a DIFFERENT state from "nobody has visited yet", and conflating them sends
   // the reader looking for users who were never going to be recorded. Say which it is.
   if (!d.enabled) {
+    // The config keys are shown to an ADMINISTRATOR only. This is a diagnostic rather than a
+    // lever — the feature is off for everyone, so naming the settings is not advertising an
+    // escalation the way refusalCard's old grant advice was — but an ordinary reader still
+    // cannot act on a chart value, and telling them the state is the whole of what they need.
     return `<section class="card">
       <h2>Dashboard usage</h2>
       <div class="empty-note">
-        Not being recorded. This needs <strong>both</strong>
-        <code>oauthProxy.enabled=true</code> — identity comes from the proxy, and with it
-        off there is no authentication and the username header would be whatever the caller
-        typed — and <code>config.userActivity.enabled=true</code>.
+        Not being recorded on this cluster.${narrowedReader() ? "" : ` This needs
+        <strong>both</strong> <code>oauthProxy.enabled=true</code> — identity comes from the
+        proxy, and with it off there is no authentication and the username header would be
+        whatever the caller typed — and <code>config.userActivity.enabled=true</code>.`}
       </div>
     </section>`;
   }
@@ -1086,13 +1103,16 @@ function usagePage() {
   return `<section class="card">
     <h2>Dashboard usage</h2>
     ${selfOnly
+      // No config key named here, for the reason refusalCard records: the reader seeing this
+      // is the one being scoped down, and naming the setting that would widen it hands them a
+      // lever they cannot pull. The operator-facing form is in the chart values, where an
+      // operator looks. Saying WHY the scoping exists is still worth it — that is not a lever.
       ? `<div class="filterbar-note" style="margin-bottom:8px">Showing
           <strong>${esc(d.viewer || "your")}</strong> activity only. This is identifiable
-          personnel data, so each person sees their own by default — an administrator can
-          set <code>config.userActivity.visibility: all</code> to widen it.</div>`
+          personnel data, so each person sees their own.</div>`
       : `<div class="filterbar-note" style="margin-bottom:8px">Showing
-          <strong>all users</strong>, because this deployment sets
-          <code>userActivity.visibility: all</code>.</div>`}
+          <strong>all users</strong>, because this deployment records dashboard usage for
+          everyone.</div>`}
     <div class="hero">
       <span class="value mono">${activeToday}</span>
       <span class="label">${selfOnly
@@ -1885,7 +1905,7 @@ function bindingsPage() {
   if (d && d.forbidden) {
     return refusalCard("Access granted",
       `Every group-subject binding on this cluster — who has been granted what — is the
-       cluster's RBAC surface. <strong>For administrators only.</strong>`);
+       cluster's RBAC surface.`);
   }
   if (!d) return `<section class="card"><div class="empty-note">Loading…</div></section>`;
   const c = d.counts || {};
@@ -2013,8 +2033,7 @@ function policyPage() {
   // bypasses the policy system", which at the narrowed tier is not knowledge anyone has.
   if (data.findings && data.findings.forbidden) {
     return refusalCard("RBAC policy",
-      `The grants that bypass the policy system name other people's access.
-       <strong>For administrators only.</strong>`)
+      `The grants that bypass the policy system name other people's access.`)
       + configHealth(oc);
   }
   const f = data.findings || {};
@@ -2471,8 +2490,7 @@ function render() {
     // vanishes reads as a broken build, and the reader cannot tell which of the two it is.
     main.innerHTML = refusalCard("Overview",
       `This page reports the cluster's own health — its GroupSync CRs, the policy operator
-       that templates every synced group's access, and cluster-wide totals.
-       <strong>For administrators only.</strong>`);
+       that templates every synced group's access, and cluster-wide totals.`);
   } else {
     main.innerHTML = alertsCard()
       + `<div class="grid">${data.clusters.map(clusterCard).join("")}</div>`

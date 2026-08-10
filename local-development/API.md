@@ -57,11 +57,28 @@ How the scope is chosen:
 `"visibility": {"scope": "self", "enabled": true}`. `enabled` is the operator's switch
 (`GSD_ENABLE_VIEW_RESTRICTIONS`), not the outcome for this reader.
 
-**Three endpoints do not vary by tier at all**: `groupsyncs` (and its events),
-`operator-configs`, and `bindings/findings`. Those describe *objects* — CR health, operator
-configuration, unmanaged grants — not people. This is a ruling, not an oversight, and it is
-asserted as an equality: an administrator's response with restrictions on is byte-identical to the
-same request with them off, across nine endpoints.
+**Only `groupsyncs` and its events do not vary by tier at all.** The criterion is measurable,
+not "is it about objects": `/metrics` is unauthenticated (chart `skipAuthRegex`) and already
+publishes `gsd_groupsync_state`, `gsd_groupsync_last_sync_timestamp_seconds` and
+`gsd_groupsync_groups_total` per CR to a credential-less `curl`, so refusing the same per-CR
+identity behind login would be theatre.
+
+**`bindings/findings` and `operator-configs` are the administrator tier** (`403` at self).
+They describe objects too, but that is not the test. A binding row names which *group* holds
+which *role* — the cluster's RBAC binding surface — which on the reference cluster an ordinary
+reader who could not `oc list` clusterrolebindings/rolebindings/groups was handed anyway (236
+rows, 21 naming an admin role): obtainable through the dashboard and not with `oc`, a privilege
+escalation. Neither has a `/metrics` analogue that would make gating theatre (`operator-configs`
+in particular is genuinely private), so the criterion above puts them *behind* the tier. This
+reverses an earlier ruling that served all four at both tiers; see
+`docs/SPEC_per_user_visibility.md` (Q3) and `docs/REQUIREMENTS_per_user_visibility.md` (§6 Q3).
+
+`/api/clusters` stays reachable at every tier — the cluster selector reads it on every tab —
+and every count on it is a public `/metrics` figure except the `operator_configs` summary,
+which has no `/metrics` analogue and is therefore the one field withheld (as `null`) at self.
+
+The administrator equality still holds where it always did: an administrator's response with
+restrictions on is byte-identical to the same request with them off, per endpoint (DoD #2).
 
 ## Clusters
 

@@ -2220,6 +2220,33 @@ class TestVisibilityLabels:
         assert "indistinguishable" in page.locator(".scope-refusal").inner_text()
         assert page.locator(".back").count() == 1
 
+    def test_the_admin_only_tabs_say_so_exactly_once_and_offer_no_route_in(self, page, scoped_server):
+        """The three administrator-tier tabs, as the operator specified them: each says "For
+        administrators only" and each says it ONCE.
+
+        Cardinality is pinned because it broke: the phrase was added to refusalCard's body AND
+        left on all three call sites, so every refusal printed it twice. refusalCard owns the
+        sentence now — a new refusal gets it for free and cannot double it.
+
+        The second half is the operator's other instruction: the card must not name the grant,
+        the role, the check or the chart. This text is read by the person being refused, who
+        cannot act on any of it, and naming the permission that would lift the restriction
+        turns a refusal into a shopping list.
+        """
+        for tab in ("overview", "bindings", "policy"):
+            p = _open_as(page, scoped_server + f"#page={tab}&cluster=crc-local", "alice")
+            p.wait_for_selector(".scope-refusal")
+            text = p.locator(".scope-refusal").inner_text()
+            assert text.count("For administrators only") == 1, (
+                f"{tab}: expected the phrase exactly once, got {text.count('For administrators only')}"
+            )
+            for leak in ("cluster-reader", "chart README", "adminSar", "visibility.enabled",
+                         "SubjectAccessReview", "ClusterRole"):
+                assert leak not in text, (
+                    f"{tab}: the refusal names {leak!r} — a reader who cannot reach it, and "
+                    f"should not be handed the route in"
+                )
+
     def test_no_declaration_on_the_wire_means_no_labels(self, page, server):
         """The search-box scar as a regression test: the page must not claim a narrowing
         the response never declared. The plain `server` fixture runs restrictions-off

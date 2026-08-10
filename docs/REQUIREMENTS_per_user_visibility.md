@@ -54,10 +54,10 @@ self-scoped reader legitimately wants:
 | `/api/clusters/{c}/user-bindings` | every user's grants | **their own** grants |
 | `/api/clusters/{c}/logins` | every login attempt, named, with failure causes | **their own** attempts |
 | `/api/clusters/{c}/cluster-access` | who is and is not in the gate group | **their own** gate status |
-| `/api/clusters/{c}/bindings/findings` | unmanaged-grant findings, cluster-wide | governance data; see §6 Q3 |
+| `/api/clusters/{c}/bindings/findings` | unmanaged-grant findings, cluster-wide | **administrator tier** (403 at self); see §6 Q3 |
 | `/api/clusters/{c}/membership-changes` | who joined and left which group, when | changes **affecting them** |
 | `/api/clusters/{c}/groupsyncs` (+events) | operator CR health | not personal data; see §6 Q3 |
-| `/api/clusters/{c}/operator-configs` | operator configuration | not personal data |
+| `/api/clusters/{c}/operator-configs` | operator configuration | **administrator tier** (403 at self); see §6 Q3 |
 | `/api/dashboard/activity` | who used the dashboard, when | **already self-scoped by default** |
 | `/api/alerts` | derived counts | depends on the above |
 | `/api/whoami` | the caller's own identity | unchanged |
@@ -237,6 +237,29 @@ GroupSync CR health, operator configuration, and unmanaged-grant findings are go
 personal data. Self-scoping them to nothing would make the dashboard useless to a non-admin; showing
 them in full may be exactly right. The spec must rule per endpoint and justify each, because this is
 where an over-broad rule would destroy the product's value and an over-narrow one would leak.
+
+> **RESOLVED — and the first ruling was wrong (reversed at commit 03ad446).** The spec first
+> ruled all three "governance data about objects" and served them at both tiers. That framing is
+> SUPERSEDED. The real criterion is not "is it about objects" but *"is it already public on the
+> unauthenticated `/metrics`"*: suppressing behind login what the pod serves without login is
+> theatre, and serving behind login what the pod withholds without login is a leak.
+>
+> - **GroupSync CR health (`/groupsyncs` + events) stays full at both tiers.** `/metrics`
+>   already publishes `gsd_groupsync_state`, `gsd_groupsync_last_sync_timestamp_seconds` and
+>   `gsd_groupsync_groups_total` per CR to a credential-less `curl`, so refusing the same per-CR
+>   identity behind login would be theatre.
+> - **Unmanaged-grant findings (`/bindings/findings`) become the administrator tier (403 at
+>   self).** The measurement that overturned the ruling: on the reference cluster `lateef.o`
+>   holds none of `list clusterrolebindings`, `list rolebindings` or `list groups` — `oc auth
+>   can-i` answers **no** to all three — yet the dashboard handed him **236 binding rows, 21
+>   naming an admin role**, including which group holds cluster-admin. A binding row names which
+>   *group* holds which *role*; that IS the RBAC surface, and handing it to a reader who cannot
+>   `oc`-read it is the privilege escalation the chart already documents for the bearer-token
+>   path. The COUNTS stay public (`gsd_bindings_total{finding=...}`); it is the rows that escalate.
+> - **Operator configuration (`/operator-configs`) becomes the administrator tier too.** Unlike
+>   CR health it has NO `/metrics` analogue — nothing here is public — so the "governance data"
+>   framing left a genuinely private view open. Its present/failing counts ride the overview; the
+>   config rows and their error detail move behind the tier.
 
 **Q4 — Is `cluster-admin` special, or merely one binding among many?**
 "Admin" in the suggestion means cluster-admin or an OpenShift admin role. The spec should say whether
