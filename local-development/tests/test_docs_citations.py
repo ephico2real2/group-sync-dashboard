@@ -71,6 +71,11 @@ REVIEW_ARTIFACTS = (
     # The admin-tier gating review (feat/per-user-visibility). Same reason: its findings cite the
     # exact api.py / test lines they refuse or replace, so line numbers are the record, not rot.
     "REVIEW_admin_tier_gating.md",
+    # The inert-code and vacuous-assertion audit. Its findings are line-anchored by necessity —
+    # "this branch has no test" and "this constant is read by nothing" are claims ABOUT a
+    # location, and the mutation that proves each one names the line it changed. Rewriting those
+    # to symbol names would erase the evidence rather than keep it fresh.
+    "AUDIT_visibility_premise_and_assumptions.md",
 )
 
 
