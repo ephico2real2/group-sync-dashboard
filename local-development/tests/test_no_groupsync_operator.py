@@ -275,6 +275,16 @@ class TestTheDashboardsGroupStateSelector:
         # Omitting it still means "every outcome".
         assert client.get("/api/clusters/c1/logins").status_code == 200
 
+    def test_a_future_outcome_with_regex_punctuation_remains_literal(self) -> None:
+        import re
+
+        from gsd.api import LOGIN_OUTCOMES, _login_outcome_pattern
+
+        outcomes = (*LOGIN_OUTCOMES, "failed.v2")
+        pattern = _login_outcome_pattern(outcomes)
+        assert re.fullmatch(pattern, "failed.v2")
+        assert re.fullmatch(pattern, "failedXv2") is None
+
 
 class TestTheAbsenceStaysVISIBLE:
     """Making the poll succeed must not make the missing operator quiet.

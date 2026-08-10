@@ -9,6 +9,7 @@ from __future__ import annotations
 import functools
 import logging
 import os
+import re
 import time
 from collections.abc import Callable
 from contextlib import asynccontextmanager
@@ -46,10 +47,20 @@ SKIP_AUTH_PATHS = frozenset({"/healthz", "/readyz", "/metrics", "/signed-out"})
 
 # The outcome vocabulary, read OFF THE PARSER rather than restated here. loginlog.py is where an
 # outcome is decided, so a new one (a new AD sub-code, say) must not require editing a second list that
-# then silently rejects it in a query parameter.
+# then silently rejects it in a query parameter. Each value is escaped because this vocabulary is
+# DATA inside the validator, never regex syntax; otherwise a later dot, bracket or pipe widens what
+# the query accepts while the store still compares the value literally.
 LOGIN_OUTCOMES = tuple(
     v for k, v in vars(loginlog).items() if k.startswith("OUTCOME_") and isinstance(v, str)
 )
+
+
+def _login_outcome_pattern(outcomes: tuple[str, ...]) -> str:
+    """Treat parser outcomes as literal vocabulary, never as regex source text."""
+    return f"^({'|'.join(re.escape(value) for value in outcomes)})$"
+
+
+LOGIN_OUTCOME_PATTERN = _login_outcome_pattern(LOGIN_OUTCOMES)
 
 
 # Alert kinds the SELF tier receives — an ALLOW-list, so a kind added later is hidden from
@@ -893,8 +904,9 @@ def build_app(
             #
             # Derived rather than restated so a new outcome in loginlog.py becomes queryable
             # the moment it can be parsed, instead of being rejected by a second list nobody
-            # remembered to extend.
-            pattern=f"^({'|'.join(LOGIN_OUTCOMES)})$",
+            # remembered to extend. The derived values are regex-escaped at construction: a
+            # future literal containing punctuation must remain one literal outcome.
+            pattern=LOGIN_OUTCOME_PATTERN,
             description="Return only attempts with this outcome. The vocabulary is the parser's: "
                         "success, bad_password, rejected (not found OR not permitted — the log "
                         "cannot tell those apart), password_expired, must_change_password, "
