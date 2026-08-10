@@ -57,14 +57,40 @@ them.
 
 ![Groups tab](docs/screenshots/02-groups.png)
 
+**Logins** — every login attempt against the cluster's own OAuth server: who, when, and why a
+failure failed. Read from the oauth-server pod log, which names the person only at Debug
+verbosity, so the tab says what period it can account for rather than implying it saw everything.
+
+![Logins tab](docs/screenshots/06-logins.png)
+
 **Usage** — who used the dashboard, one row per user per UTC day, self-scoped by default.
 
-![Usage tab](docs/screenshots/06-usage.png)
+![Usage tab](docs/screenshots/07-usage.png)
+
+### The same dashboard, to someone who is not an administrator
+
+Every image above is an administrator's view. An ordinary reader sees their own groups, their own
+grants and their own sign-ins, and the three tabs that report on the cluster rather than on them
+are refused outright — a named refusal, never a blank page, because an empty audit tab reads as a
+healthy cluster.
+
+![Access granted, refused for a non-administrator](docs/screenshots/self/03-access-granted.png)
+
+The header pill says which view you are in, so "nothing looks different" and "you are seeing
+everything" are distinguishable from the screen. Same deployment, same tab, same moment — the
+Groups tab shows this reader 2 groups where an administrator sees 65.
+
+![Groups, narrowed to one reader's own memberships](docs/screenshots/self/02-groups.png)
+
+Who counts as an administrator is a SubjectAccessReview the operator chooses, not a list of
+names — see [`docs/ACCESS_CONTROL.md`](docs/ACCESS_CONTROL.md).
 
 <sub>Regenerate with
 [`local-development/capture-screenshots.py`](local-development/capture-screenshots.py), which
 drives a real browser through the OAuth login and refuses to write an image for any page that
-raised a JavaScript error or rendered an API error.</sub>
+raised a JavaScript error or rendered an API error. Both sets come from the same script against
+the same deployment — the administrator's into `docs/screenshots/`, an ordinary reader's into
+`docs/screenshots/self/` via `--login-user` and `--provider`.</sub>
 
 ## Layout
 
