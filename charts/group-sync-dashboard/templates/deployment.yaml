@@ -146,8 +146,11 @@ spec:
               {{- else }}
               value: /data/gsd.db
               {{- end }}
+            # Through the helper, not the raw value: an unrecognised level does not degrade to a
+            # default, it raises inside the uvicorn factory and the container never starts. The
+            # helper refuses the render instead, and normalises case so `debug` is not an outage.
             - name: GSD_LOG_LEVEL
-              value: {{ .Values.logLevel | quote }}
+              value: {{ include "gsd.logLevel" . | quote }}
             # The view-restrictions switch rides the Deployment rather than the ConfigMap:
             # one wire from one values key, visible in `oc describe deploy` where an
             # auditor looks for a security control. The NAME is load-bearing — the app

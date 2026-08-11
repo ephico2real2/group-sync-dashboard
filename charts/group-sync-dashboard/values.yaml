@@ -385,9 +385,37 @@ config:
     # deployment rather than the growth control a request log would need. 0 disables it.
     retentionDays: 400
 
-# DEBUG | INFO | WARNING | ERROR | CRITICAL.
-# DEBUG adds per-poll timing, HTTP request lines, page counts and the countdown to the next
-# binding refresh. Safe to leave on briefly; chatty at one line or more per poll per cluster.
+# DEBUG | INFO | WARNING | ERROR | CRITICAL. Case does not matter; anything else refuses to render.
+#
+# EACH LEVEL IS A PROMISE, and the app is instrumented to keep it:
+#   CRITICAL  the process cannot serve truthfully. Exactly one line in the codebase can emit it —
+#             a poll failed AND the store could not record that it failed, so the dashboard reports
+#             healthy while serving frozen data under a stale status. Expect never to see it.
+#   ERROR     an operator must act; something advertised is broken and will not self-heal. RBAC
+#             missing on the Lease, a PVC that cannot support shared memory.
+#   WARNING   degraded but scoped or self-healing: one poll failed, one cluster unreachable, or a
+#             feature configured but inert (capture on without the RBAC to read pod logs).
+#   INFO      one line per completed unit of work or state change, readable at steady state.
+#   DEBUG     THIS APP'S OWN REASONING — what it read, what it skipped, and why a number is the
+#             number. Per-pod login-capture accounting, the poll cycle's timing and the countdown to
+#             the next binding refresh, page counts, which replica holds the Lease and how stale its
+#             renewal is, and why a given reader was put on the narrow tier.
+#
+# NOT HTTP REQUEST LINES. This value used to claim DEBUG added them; it does not. `httpx` logs
+# `HTTP Request: GET <url> "200 OK"` at INFO itself, so they are already present at the default —
+# measured identical at both levels. The layer below (`httpcore`, socket and TLS events) IS pinned to
+# WARNING, because unpinned it was 97% of DEBUG output: 356 lines of framing per 10 of the app's own.
+# Set GSD_DEBUG_HTTP=true to unpin it when diagnosing a handshake against a corporate CA.
+#
+# INBOUND REQUESTS ARE OUTSIDE THIS VALUE ENTIRELY. uvicorn logs one access line per request on its
+# own loggers, which carry propagate=False and their own handlers at INFO, so `logLevel` cannot raise
+# or lower them — at CRITICAL you still get a line per request and lose every app diagnostic.
+#
+# NOT TO BE CONFUSED WITH `authLogLevel` BELOW, which is a different log level, on a different
+# object, in a different vocabulary. That one sets spec.logLevel (Normal | Debug | Trace | TraceAll)
+# on authentications.operator.openshift.io/cluster and is what makes the oauth-server EMIT the login
+# lines this dashboard reads. `Debug` is the only word valid in both. If the Logins tab is empty,
+# that is the one to check — not this one.
 logLevel: INFO
 
 # Timezone for LOG LINES ONLY. Set it to whoever reads the logs at 3am — correlating an

@@ -348,3 +348,32 @@ update
 {{- $t -}}
 {{- end -}}
 {{- end -}}
+
+# logLevel, validated and case-normalised, because getting it wrong CRASH-LOOPS THE POD rather
+# than falling back to a default. `gsd/api.py#create_app` passes the value straight to
+# logging.basicConfig, that function is the uvicorn factory, and Python's logging raises
+# `ValueError: Unknown level: 'debug'` for anything it does not recognise. Measured: lowercase
+# `debug`, `Debug`, `info`, a numeric `20`, and an empty string each fail create_app, so the
+# container never starts and the only symptom is CrashLoopBackOff with a traceback.
+#
+# CASE IS NORMALISED rather than refused. `logLevel: debug` is the natural thing to write and it
+# unambiguously means DEBUG, so upper-casing it removes an outage class with no loss of meaning.
+# This is not the same as letting a misspelling through: `trace` still fails, because there is no
+# level it could have meant.
+#
+# The accepted set is the five the values file documents, deliberately NOT the eight Python
+# happens to take. `WARN` and `FATAL` are aliases that add nothing, and `NOTSET` on the root
+# logger means "no threshold" — it behaves as DEBUG while reading as "off", which is the opposite
+# of a level having a meaning.
+{{- define "gsd.logLevel" -}}
+{{- $raw := .Values.logLevel -}}
+{{- if or (not (hasKey .Values "logLevel")) (kindIs "invalid" $raw) -}}
+INFO
+{{- else -}}
+{{- $l := upper (trim (toString $raw)) -}}
+{{- if not (has $l (list "DEBUG" "INFO" "WARNING" "ERROR" "CRITICAL")) -}}
+{{- fail (printf "logLevel %q is not a log level for THIS chart. Use one of DEBUG, INFO, WARNING, ERROR, CRITICAL (case does not matter).\n\nIf you were reaching for OpenShift's vocabulary — Normal, Debug, Trace, TraceAll — that belongs to operator.openshift.io resources and means something different. This value configures the dashboard's own Python logging, and the two coexist in this chart: `logLevel` is the dashboard's, while `authLogLevel` manages spec.logLevel on authentications.operator.openshift.io/cluster, which is what makes the oauth-server EMIT the login lines the dashboard reads. Debug is the one word valid in both.\n\nThe value is passed to logging.basicConfig inside the uvicorn factory, which raises ValueError for anything it does not recognise — so an unrecognised level does not fall back to a default, it stops the container from starting at all." (toString $raw)) -}}
+{{- end -}}
+{{- $l -}}
+{{- end -}}
+{{- end -}}

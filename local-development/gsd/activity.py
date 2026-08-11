@@ -100,6 +100,9 @@ class ActivityRecorder:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._last_prune_day: str | None = None
+        # Latch for the missing-username DEBUG in record(): the condition is per-deployment, so it
+        # is worth saying once and worth not saying on every request.
+        self._warned_missing_user = False
 
     def record(self, user: str | None, email: str | None, at: str | None = None) -> None:
         """Note one request. In-memory only — never touches the database.
@@ -107,7 +110,22 @@ class ActivityRecorder:
         Called from the request path, so it must stay cheap and must never raise: a failure
         to record who read a page is not a reason to fail the page.
         """
-        if not self.enabled or not user:
+        if not self.enabled:
+            return
+        if not user:
+            # SAID ONCE PER PROCESS, not once per request. Capture being on while the username is
+            # absent is the one configuration that makes a working dashboard report zero usage
+            # forever: every request takes this branch, nothing is ever recorded, and the Usage tab
+            # is empty with no error anywhere. The cause is upstream — the proxy is not passing the
+            # header this reads — so it is the same on every request, and logging it per request
+            # would flood the very level an operator turned on to find it.
+            if not self._warned_missing_user:
+                self._warned_missing_user = True
+                log.debug("dashboard-usage recording is on but a request carried no username "
+                          "header, so nothing was recorded for it and nothing will be until the "
+                          "proxy supplies one — check the oauth-proxy sidecar is passing user "
+                          "headers. Said once per process; the condition is per-deployment, not "
+                          "per-request")
             return
         at = at or now_iso()
         key = (user, _day(at))
@@ -155,7 +173,17 @@ class ActivityRecorder:
             pending, self._buckets = list(self._buckets.values()), {}
         try:
             return self.store.record_user_activity(pending)
-        except Exception:  # noqa: BLE001 - usage stats must not take the process down
+        except Exception as exc:  # noqa: BLE001 - usage stats must not take the process down
+            # THE CAUSE, which used to be swallowed entirely. `_requeue` reports how many buckets
+            # were requeued and never why the write failed, so a Usage tab frozen at yesterday's
+            # counts had no explanation anywhere in the process — the one question an operator has.
+            #
+            # Type and message, not log.exception: this is an expected-and-handled path, and a
+            # stack trace on every transient SQLite lock would bury the line that matters. The
+            # traceback is not the interesting part; "database is locked" versus "no such column"
+            # is, and those two want opposite responses.
+            log.warning("dashboard-usage flush failed against the store — %s: %s",
+                        type(exc).__name__, exc)
             self._requeue(pending)
             return 0
 

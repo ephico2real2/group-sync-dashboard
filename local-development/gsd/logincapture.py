@@ -176,6 +176,12 @@ def capture_once(
     so a late write from a demoted leader cannot rewind it.
     """
     if not settings.login_capture_enabled:
+        # DEBUG, not INFO: this is a configuration state rather than an event, so at INFO it would
+        # repeat once per cluster per cycle forever and say nothing new. But it must be sayable
+        # SOMEWHERE — "the Logins tab is empty" and "capture is switched off" are the same symptom,
+        # and this is the only line that tells them apart.
+        log.debug("%s: login capture is disabled, so no oauth-server logs are read and the Logins "
+                  "tab will stay empty; set loginCapture.enabled=true to change that", cluster.name)
         return 0
 
     ns = settings.login_capture_namespace
@@ -188,8 +194,16 @@ def capture_once(
                     cluster.name, exc.message)
         return 0
     if pods is None:
-        log.info("%s: login capture is not permitted to list pods in %s; nothing recorded",
-                 cluster.name, ns)
+        # WARNING, not INFO, and the contract decides it: reaching here means capture is ENABLED
+        # (the check above returned otherwise) and RBAC forbids the read, so the feature is
+        # configured but inert and will not self-heal until somebody applies the grant. That is
+        # the contract's WARNING case in its own words.
+        #
+        # It was INFO, which also made it invisible to anyone watching WARNING and above — while
+        # kube.py#fetch_oauth_pods logs its own INFO for the same 403, so a forbidden cluster
+        # emitted two INFO lines every cycle and nothing an operator would ever be paged on.
+        log.warning("%s: login capture is enabled but not permitted to list pods in %s, so no "
+                    "logins will be recorded until the grant is applied", cluster.name, ns)
         return 0
     if not pods:
         log.info("%s: no Running oauth-server pods in %s", cluster.name, ns)
@@ -230,8 +244,54 @@ def capture_once(
         # hypothetical. Erring late costs at most a row near the edge, which in steady state was
         # already recorded a cycle ago.
         window_start = datetime.now(UTC) - timedelta(seconds=since)
-        attempts = _not_clipped(_recordable(parse(lines)), window_start)
+        # SPLIT INTO NAMED STAGES so the DEBUG line below can report each one. This was a single
+        # composed expression, which is tidier to read and impossible to explain: the two filters
+        # remove attempts for OPPOSITE reasons, and from outside both look like "the parser found
+        # things and the store got none".
+        #   _recordable  withholds an attempt whose success line may not be written yet — it comes
+        #                back next cycle (see its docstring).
+        #   _not_clipped drops an attempt whose earlier lines may lie behind the window's leading
+        #                edge — "dropped for good, not deferred", in its own words.
+        parsed = parse(lines)
+        settling = _recordable(parsed)
+        attempts = _not_clipped(settling, window_start)
         horizon = _settle_horizon(lines)
+
+        # THE LINE THAT MAKES SILENCE LEGIBLE, and the reason this module gained any DEBUG at all.
+        # In steady state every path from here down is quiet — no NEW attempts means no INFO — so a
+        # working capture and a broken one produce identical logs. Measured on the reference
+        # cluster: 73 attempts stored, 13 distinct users, and not one line in the pod log to say
+        # capture was running.
+        #
+        # "settled through", not "advances to": store.set_login_watermark applies max(), so a late
+        # write from a demoted leader cannot rewind it and this horizon may not become the new one.
+        log.debug("%s: %s read %d line(s) covering the last %ds from read position %s — parsed %d, "
+                  "withheld %d still settling (returns next cycle), dropped %d clipped at the "
+                  "window's leading edge (gone for good), %d to write; log settled through %s",
+                  cluster.name, pod, len(lines), since,
+                  settled_through or "none (first-sight window)",
+                  len(parsed), len(parsed) - len(settling), len(settling) - len(attempts),
+                  len(attempts), horizon or "nothing yet — read position holds")
+
+        if lines and not parsed:
+            # GATED ON `parsed`, NOT ON `attempts`, and that distinction is the whole point. If the
+            # parser found attempts and the two filters withheld them, the cause is this module's
+            # own arithmetic and the line above already says so — blaming the cluster there would
+            # send an operator to the wrong place.
+            #
+            # Nothing parsed at all has one overwhelmingly likely cause, and it is not "nobody
+            # logged in": the oauth-server writes the line naming a person ONLY while the
+            # authentication OPERATOR is at spec.logLevel: Debug. That is a different log level from
+            # this chart's `logLevel`, on a different object, in a different vocabulary
+            # (Normal/Debug/Trace/TraceAll) — and confusing the two is the likeliest reason a
+            # healthy-looking deployment records nothing. Both honest possibilities are stated,
+            # because a genuinely quiet cluster reads identically.
+            log.debug("%s: %s: %d line(s) read and no login attempt in any of them — either nobody "
+                      "logged in, or authentications.operator.openshift.io/cluster is not at "
+                      "spec.logLevel: Debug, without which the lines naming a person are never "
+                      "written (chart value authLogLevel, NOT logLevel; see "
+                      "docs/LOGIN_CAPTURE_QUICKCHECK.md)", cluster.name, pod, len(lines))
+
         if not attempts and horizon is None:
             continue
 
@@ -250,6 +310,14 @@ def capture_once(
             store.set_login_watermark(cluster.name, pod, horizon, observed_at)
         if n:
             log.info("%s: recorded %d login attempt(s) from %s", cluster.name, n, pod)
+        elif attempts:
+            # The commonest steady-state path, and previously the most confusing: attempts WERE
+            # found and none were new, because the overlap deliberately re-reads a window that was
+            # already recorded. Without this, a working capture that has caught up is silent in
+            # exactly the way a broken one is.
+            log.debug("%s: %s: all %d attempt(s) in the window were already stored — the %ds "
+                      "overlap re-reads them by design, so this is steady state, not a failure",
+                      cluster.name, pod, len(attempts), OVERLAP_SECONDS)
 
     # Forget read positions for pods that are gone. Every oauth roll replaces them, so without this
     # the table grows by one row per pod name the cluster has ever had.
@@ -269,6 +337,14 @@ def capture_once(
         # Not a single pod answered. Do NOT stamp a successful read: `started_at` would then claim we
         # have been watching since a cycle that saw nothing, and `last_read_at` is the liveness signal
         # that tells somebody capture has stopped.
+        #
+        # SAY SO, because the decision above is invisible otherwise. Its whole effect is a metric
+        # that stops moving (gsd_login_capture_last_read_timestamp_seconds), and a gauge going flat
+        # is not self-explaining — nothing marked the cycle where it happened. WARNING rather than
+        # ERROR: group polling is untouched and an oauth roll self-heals it within a cycle or two.
+        log.warning("%s: login capture read none of the %d oauth-server pod(s) in %s this cycle; "
+                    "the last-read stamp is deliberately not advanced, so the dashboard will report "
+                    "capture as stale until one answers", cluster.name, len(pods), ns)
         return recorded
 
     if elector is not None and not elector.is_leader:
