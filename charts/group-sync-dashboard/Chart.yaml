@@ -16,7 +16,23 @@ type: application
 #              deployed image said so, so a consumer reading appVersion learned a version that
 #              had not shipped in a long time. tests/test_chart_versions.py now holds the two
 #              together, and holds appVersion against the pinned image tag's prefix.
-version: 0.2.0
+# 0.3.0 rather than 0.2.1, because the templates changed BEHAVIOUR and not just wording: the new
+# `gsd.logLevel` helper refuses a render that 0.2.0 accepted. `logLevel: Trace` (OpenShift's
+# vocabulary, an easy thing to reach for) used to template happily and crash-loop the pod at
+# startup; it now fails at `helm template`. That is the improvement, and it is exactly the kind of
+# change a consumer should be told about by the version rather than discover in a pipeline.
+#
+# WHY THIS BUMP IS NOT OPTIONAL. chart-releaser skips a version it has already released, so the
+# three template changes that merged in #27 published NOTHING and the run still went green —
+# measured: the release run for d62a92d concluded `success` while the Helm repo kept serving 0.2.0
+# from 2026-08-10T16:52. Anyone installing from the published repo was getting a chart without the
+# guard, so `logLevel: debug` still crash-looped their pod even though main was fixed.
+version: 0.3.0
+# appVersion is deliberately UNCHANGED at 0.6.0. It must equal local-development/pyproject.toml's
+# `version` (tests/test_chart_versions.py holds them together, and holds appVersion against the
+# pinned image tag's prefix), so moving it means moving the app version and re-pinning the image.
+# The application did gain behaviour in #27; whether that earns 0.7.0 is a separate decision, and
+# bundling it into a chart-only bump would couple two releases that have no reason to be coupled.
 appVersion: "0.6.0"
 
 keywords: [openshift, ldap, rbac, groupsync, observability]
