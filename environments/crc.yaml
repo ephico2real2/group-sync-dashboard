@@ -22,6 +22,22 @@ config:
   unmanagedAudit:
     mode: "log"
 
+# THE DASHBOARD'S OWN log level, on DEBUG for this lab at the operator's request. This is a severity
+# for THIS Python process — not the cluster's verbosity, and not `authLogLevel` below. The two are
+# adjacent here on purpose: they are the pair that gets confused, and the whole reason the Logins tab
+# once looked broken while capture was working.
+#
+# DEBUG is affordable now in a way it was not before. It used to mean 366 lines a cycle of which 356
+# were httpcore socket framing, measured in this pod; the framing is pinned to WARNING, so DEBUG is
+# ~11 lines and every one of them is the app's own reasoning — per-pod login-capture accounting, the
+# poll cycle's timing, row counts per read, which replica holds the Lease and how stale its renewal
+# is. Set GSD_DEBUG_HTTP=true on the container if a TLS handshake ever needs the framing back.
+#
+# It lives HERE rather than in a `--set` because the deploy script passes this file on every upgrade
+# and Helm resets to chart defaults the moment either is given — a `--set logLevel=DEBUG` would be
+# silently dropped by the next `helm upgrade -f` that did not repeat it.
+logLevel: DEBUG
+
 # Login capture, on for this lab. Two halves that are deliberately separate decisions:
 #
 #   authLogLevel  raises `spec.logLevel` on the authentication OPERATOR CR — NOT the OAuth CR — so the
