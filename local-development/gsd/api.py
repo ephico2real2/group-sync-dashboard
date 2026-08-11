@@ -417,11 +417,22 @@ def build_app(
             # Counted before the raise: a refusal that leaves no trace anywhere is how a
             # gate that broke for everyone stays indistinguishable from one nobody hit.
             signals.note_admin_refusal()
+            # THE SAME SENTENCE THE CARD DRAWS, AND FIRST. The page and the API are two
+            # renderings of one refusal and they used to word it differently — the card said
+            # "For administrators only." while this said "reserved to the administrator tier",
+            # so a caller comparing them could not tell they were the same control. The
+            # operator asked for that exact phrase.
+            #
+            # It leads rather than trails: a client that shows only the head of a `detail`
+            # would drop a trailing clause, which is the one clause that must arrive.
+            #
+            # Says what the view contains and that it is reserved; never the role, grant, chart
+            # value or route that would widen it. This string reaches the person being refused.
             raise HTTPException(
                 status_code=403,
-                detail="this view reports the cluster's own RBAC binding surface and operator "
-                       "configuration rather than anything belonging to the reader, so it is "
-                       "reserved to the administrator tier",
+                detail="For administrators only. This view reports the cluster's own RBAC "
+                       "binding surface and operator configuration rather than anything "
+                       "belonging to the reader.",
             )
         return scope
 
