@@ -11,8 +11,15 @@ last-published image keeps being the pinned one, and main's chart deploys code t
 matches the source. A green run every time. The only way to notice by hand is to wonder why a
 change never reached the cluster.
 
-So the list is held against the Containerfile's own `COPY` lines. Adding an input to the image
+So the list is held against the Containerfile's own `COPY` and `ADD` lines, plus the two inputs it
+does not name — `.containerignore`, which the builder finds by convention at the context root, and
+`build-and-push-external.sh`, which decides the tag and the build args. Adding an input to the image
 without extending the filter fails here, at the point the input is added.
+
+WHAT THIS STILL DOES NOT COVER, so the docstring does not overclaim: an input reached some way other
+than a `COPY`/`ADD` source or those two named files — a BuildKit bind mount, a `RUN` that reads the
+context directly, a base image whose `:latest` tag moves underneath us. The floating base image is
+deliberately out of band; `workflow_dispatch` is how a rebuild is forced for that.
 
 THE TRAP THIS ALSO GUARDS. `COPY pyproject.toml README.md ./` puts `local-development/README.md`
 inside the image, so the tempting `paths-ignore: ['**/*.md']` would skip a rebuild that is
@@ -46,7 +53,11 @@ def _publish_paths() -> list[str]:
 
 
 def _copied_sources() -> list[str]:
-    """Every host path the Containerfile copies into the image.
+    """Every host path the Containerfile brings into the image.
+
+    `ADD` counts as well as `COPY`, and that is not hypothetical tidiness: the first version of
+    this helper matched `COPY ` alone, so switching a line to `ADD` would have removed an input
+    from this test's view while leaving it in the image.
 
     `COPY --from=build …` is excluded: it copies from an earlier STAGE, not from the repository,
     so it is not an input a push could change.
@@ -54,26 +65,44 @@ def _copied_sources() -> list[str]:
     sources: list[str] = []
     for line in CONTAINERFILE.read_text().splitlines():
         stripped = line.strip()
-        if not stripped.upper().startswith("COPY "):
+        verb = stripped.split(" ", 1)[0].upper() if " " in stripped else ""
+        if verb not in {"COPY", "ADD"}:
             continue
         if "--from=" in stripped:
             continue
-        parts = stripped.split()[1:]
+        parts = [p for p in stripped.split()[1:] if not p.startswith("--")]
         sources.extend(parts[:-1])          # the last token is the destination
-    assert sources, "no COPY lines parsed; the Containerfile format has changed"
+    assert sources, "no COPY/ADD lines parsed; the Containerfile format has changed"
     return sources
 
 
-def _covers(pattern: str, path: str) -> bool:
-    """Does one `paths` entry match this repo-relative path?
+def _covers(pattern: str, path: str, *, is_dir: bool) -> bool:
+    """Does one `paths` entry match this repo-relative path, the way GitHub would?
+
+    A DIRECTORY SOURCE NEEDS A RECURSIVE PATTERN, and getting this wrong is how the check passes
+    while the filter never fires. `paths: ['local-development/gsd']` matches a FILE at exactly
+    that path; it does NOT match `local-development/gsd/api.py`. The first version of this helper
+    compared `pattern == path` for every source, so an exact directory entry satisfied the test
+    and the workflow would then have ignored every edit inside that directory — the silent skip
+    this whole file exists to prevent, waved through by the thing meant to catch it.
 
     Only the two forms this workflow uses: an exact file, or a directory glob ending `/**`.
-    Deliberately not a general fnmatch — a filter that needs cleverer globs than these should be
-    read by a human, not matched by a helper that quietly says yes.
+    Deliberately not a general fnmatch — a filter needing cleverer globs than these should be read
+    by a human, not matched by a helper that quietly says yes.
     """
+    if is_dir:
+        return pattern.endswith("/**") and (
+            path == pattern[:-3] or path.startswith(pattern[:-3] + "/")
+        )
     if pattern.endswith("/**"):
         return path == pattern[:-3] or path.startswith(pattern[:-3] + "/")
     return pattern == path
+
+
+def _matches(paths: list[str], target: str) -> bool:
+    """Is this repo-relative path covered, judging directory-ness from the filesystem?"""
+    is_dir = (REPO / target).is_dir()
+    return any(_covers(p, target, is_dir=is_dir) for p in paths)
 
 
 def test_every_image_input_is_in_the_paths_filter() -> None:
@@ -82,7 +111,7 @@ def test_every_image_input_is_in_the_paths_filter() -> None:
     missing = []
     for source in _copied_sources():
         target = f"{CONTEXT}/{source}"
-        if not any(_covers(p, target) for p in paths):
+        if not _matches(paths, target):
             missing.append(f"{source} (as {target})")
     assert not missing, (
         "these Containerfile COPY sources are not covered by publish.yml's `paths`, so changing "
@@ -102,7 +131,7 @@ def test_the_readme_is_covered_because_it_is_image_content() -> None:
         "the Containerfile no longer copies README.md; if that is deliberate, drop it from "
         "publish.yml's paths too and delete this test"
     )
-    assert any(_covers(p, "local-development/README.md") for p in _publish_paths()), (
+    assert _matches(_publish_paths(), "local-development/README.md"), (
         "local-development/README.md is inside the image but is not in publish.yml's paths"
     )
 
@@ -119,7 +148,7 @@ def test_the_recipe_and_the_build_script_are_covered() -> None:
         "local-development/Containerfile",
         "local-development/build-and-push-external.sh",
     ):
-        assert any(_covers(p, required) for p in paths), f"{required} is not in publish.yml's paths"
+        assert _matches(paths, required), f"{required} is not in publish.yml's paths"
 
 
 def test_a_manual_run_is_still_possible() -> None:
@@ -135,3 +164,47 @@ def test_a_manual_run_is_still_possible() -> None:
         "publish.yml has a paths filter but no workflow_dispatch, so a needed rebuild cannot be "
         "triggered by hand"
     )
+
+
+def test_the_containerignore_is_in_the_paths_filter() -> None:
+    """It is an image input, and it was missing from the first version of this filter.
+
+    Podman applies `.containerignore` to the build context BEFORE any COPY runs, so editing it
+    changes what lands in the image with no change to any other listed path. Verified rather than
+    argued: a probe build of `COPY pkg /pkg` shipped both files, and the same build with
+    `pkg/drop.txt` in `.containerignore` shipped only one.
+
+    It currently excludes `tests/`, `docs/`, `*.db` and the local cluster config, so an edit there
+    can add or remove whole trees from the image while the workflow stays silent.
+
+    Not derived from the Containerfile like the COPY sources, because it is not named there — the
+    builder finds it by convention at the context root. So it is asserted by name.
+    """
+    ignore = REPO / CONTEXT / ".containerignore"
+    if not ignore.exists():
+        # Listing a path that does not exist is harmless, and it is what makes CREATING the file
+        # trigger a build. So the assertion below stands either way; this only skips the
+        # existence half.
+        pass
+    assert _matches(_publish_paths(), f"{CONTEXT}/.containerignore"), (
+        "local-development/.containerignore decides what every COPY may see, so editing it changes "
+        "the image — but it is not in publish.yml's paths, so such an edit would not rebuild"
+    )
+
+
+def test_a_directory_source_is_matched_recursively_or_not_at_all() -> None:
+    """The helper must judge patterns the way GitHub does, or it waves the bug through.
+
+    `paths: ['local-development/gsd']` matches a FILE at that exact path and does NOT match
+    `local-development/gsd/api.py`. An earlier version of `_covers` compared `pattern == path` for
+    every source, so an exact directory entry passed the check while the workflow ignored every
+    edit inside that directory.
+    """
+    assert _covers("local-development/gsd/**", "local-development/gsd", is_dir=True)
+    assert not _covers("local-development/gsd", "local-development/gsd", is_dir=True), (
+        "a non-recursive pattern was accepted for a directory source; GitHub would not fire on "
+        "files inside it, so the filter would silently stop rebuilding"
+    )
+    # A file source is the other way round: exact is correct and sufficient.
+    assert _covers("local-development/pyproject.toml", "local-development/pyproject.toml",
+                   is_dir=False)

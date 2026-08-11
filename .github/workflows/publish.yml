@@ -29,8 +29,15 @@ on:
     # AN ALLOWLIST, NOT paths-ignore, and derived from the Containerfile rather than guessed. The
     # naive `paths-ignore: ['**/*.md']` is WRONG here: `COPY pyproject.toml README.md ./` puts
     # local-development/README.md INSIDE the image, so ignoring markdown would skip a rebuild that
-    # is genuinely needed. The list below is exactly the build context the Containerfile reads,
-    # plus the two files that decide how it is built.
+    # is genuinely needed. The list is every COPY source, plus the three files that decide what a
+    # COPY may see or how it is built.
+    #
+    # .containerignore IS ONE OF THOSE THREE, and it was missing from the first version of this
+    # filter — caught in review. Podman applies it to the build context before any COPY runs, so
+    # editing it changes the image with no change to any other listed path. Verified rather than
+    # assumed: a probe build of `COPY pkg /pkg` shipped both files, and the same build with
+    # `pkg/drop.txt` in .containerignore shipped only one. It currently excludes tests/, docs/,
+    # *.db and the local cluster config, so an edit there can add or remove whole trees.
     #
     # tests/test_publish_paths.py holds this list against the Containerfile's COPY lines, because
     # the failure mode is forgetting to extend it when a new input appears — and that failure is
@@ -47,6 +54,7 @@ on:
       - 'local-development/pyproject.toml'             # COPY pyproject.toml README.md ./
       - 'local-development/README.md'                  # ...and it really is in the image
       - 'local-development/Containerfile'              # the recipe
+      - 'local-development/.containerignore'           # filters what every COPY is allowed to see
       - 'local-development/build-and-push-external.sh' # the tag scheme and the stamp check
       - '.github/workflows/publish.yml'                # this file
   # The escape hatch the filter makes necessary. A rebuild is occasionally wanted for a reason the
@@ -249,8 +257,12 @@ jobs:
             fi
 
             git add charts/group-sync-dashboard/values.yaml
-            # [skip publish] is what stops this commit re-triggering the workflow. The marker is
-            # required, not cosmetic — see the `if` on this job.
+            # [skip publish] is now the SECOND of two guards against this commit re-triggering the
+            # workflow, and the comment used to credit it as the only one. The paths filter is
+            # first: this commit touches charts/…/values.yaml alone, which is not an image input,
+            # so the workflow does not fire for it at all. The marker is kept because it is the
+            # guard that does not depend on the filter's contents — add charts/** to those paths
+            # for any reason and the loop is back without it.
             git commit -m "chore(chart): pin image tag ${TAG} [skip publish]" \
                        -m "Published ${REGISTRY}/${REGISTRY_NAMESPACE}/group-sync-dashboard:${TAG} for commit ${GITHUB_SHA}, so the chart deploys the image built from that commit rather than whatever was last pinned by hand." \
                        -m "Automated by .github/workflows/publish.yml."
