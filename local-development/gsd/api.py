@@ -38,11 +38,49 @@ STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 
 # Mirrors oauthProxy.skipAuthRegex. Requests here reach the app WITHOUT authentication, so
 # nothing they claim about identity can be believed or recorded.
-# Mirrors oauthProxy.skipAuthRegex. Requests here reach the app WITHOUT authentication, so
-# nothing they claim about identity can be believed or recorded. /signed-out is the proxy's
-# -logout-url landing page: it exists precisely for the moment the session cookie has just
-# been cleared, so it is unauthenticated by design rather than by oversight.
+# Paths that reach the app WITHOUT authentication, so nothing they claim about identity can be
+# believed — and therefore nothing they claim may be recorded. /signed-out is the proxy's
+# -logout-url landing page: it exists precisely for the moment the session cookie has just been
+# cleared, so it is unauthenticated by design rather than by oversight.
+#
+# THIS SET DRIFTED FROM THE PROXY'S REGEX AND IT WAS EXPLOITABLE. `oauthProxy.skipAuthRegex` gained
+# `static/(app\.css|favicon\.svg)` on 2026-08-08 (f42e60b); this set was last touched on 2026-08-02
+# (98d4ec6). For six days the proxy passed those two paths through unauthenticated — where every
+# header is the caller's own — while this set did not list them, so `record_dashboard_use` treated a
+# caller-supplied X-Forwarded-User there as a verified identity. Measured against the live route:
+#
+#   curl -H 'X-Forwarded-User: PROBE-forged-unauth' -H 'X-GSD-Interaction: 1' .../static/app.css
+#   -> 200, and one row ('PROBE-forged-unauth', 'PROBE@forged.invalid', '2026-08-11', 1)
+#      in dashboard_user_activity, written by an unauthenticated caller.
+#
+# The Usage tab presents that table as a record of who accessed a governance dashboard, so anyone
+# who could reach the Route could put any name on any day into it.
+#
+# 98d4ec6 shipped tests/test_session_api.py::test_records_no_activity_even_with_forged_headers,
+# which asserts exactly this invariant — six days before the regex outgrew it. It kept passing,
+# because it exercises the four paths that were in this set when it was written. A denylist of exact
+# paths is only as good as somebody remembering to extend it, which is why the prefix rule below and
+# tests/test_skip_auth_parity.py now exist.
 SKIP_AUTH_PATHS = frozenset({"/healthz", "/readyz", "/metrics", "/signed-out"})
+
+#: Whole subtrees where identity is never trustworthy, checked by prefix so a new file cannot open
+#: the hole again. `/static/` is the whole asset tree, not only the two files the regex currently
+#: exempts, and that is deliberately WIDER than the regex: a stylesheet or icon fetch is not a human
+#: interaction, so declining to record one costs nothing whether it arrived authenticated or not.
+#: Widening the regex to another asset therefore cannot reintroduce the defect.
+UNTRUSTED_IDENTITY_PREFIXES = ("/static/",)
+
+
+def identity_is_trustworthy(path: str) -> bool:
+    """Did this request pass the proxy, so the identity headers on it are the proxy's own?
+
+    The one question `record_dashboard_use` must answer before it believes a header. On a path the
+    proxy skips, every header is the caller's own — there is no header the app can read to tell the
+    two cases apart, because on an authenticated path the proxy OVERWRITES what the client sent and
+    on a skipped path it passes it through. So the path is the only available signal, and this is
+    the single place that decides it.
+    """
+    return path not in SKIP_AUTH_PATHS and not path.startswith(UNTRUSTED_IDENTITY_PREFIXES)
 
 
 # The outcome vocabulary, read OFF THE PARSER rather than restated here. loginlog.py is where an
@@ -496,14 +534,12 @@ def build_app(
         how long a tab had been open rather than whether anyone used the dashboard — one
         real session read 722. See activity.INTERACTION_HEADER.
 
-        The unauthenticated paths (/healthz, /readyz, /metrics — oauthProxy.skipAuthRegex)
-        need no special case: they carry neither header.
+        Unauthenticated paths are excluded EXPLICITLY rather than by assuming they arrive
+        header-less: they bypass the proxy (oauthProxy.skipAuthRegex), so whether they carry an
+        identity header is decided by the caller — which is exactly the input that must not decide
+        whether we record. See `identity_is_trustworthy`, and the exploit that proved the point.
         """
-        # Excluded EXPLICITLY, not by assuming they arrive header-less. These three
-        # bypass the proxy entirely (oauthProxy.skipAuthRegex), so whether they carry an
-        # identity header is decided by the caller — which is exactly the input we must not
-        # let decide whether we record.
-        if request.url.path not in SKIP_AUTH_PATHS and request.headers.get(INTERACTION_HEADER):
+        if identity_is_trustworthy(request.url.path) and request.headers.get(INTERACTION_HEADER):
             try:
                 activity.record(
                     request.headers.get(USER_HEADER), request.headers.get(EMAIL_HEADER)
