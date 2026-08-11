@@ -161,7 +161,7 @@ ones most likely to matter:
 | `monitoring.serviceMonitor.enabled` | `false` | Needs the Prometheus Operator CRDs |
 | `replicaCount` | `1` | Leave at 1. Above one, each pod keeps its own database and history diverges — see the chart README's Scaling section |
 | `config.pollIntervalSeconds` | `60` | Poll cadence, and the error bar on "when did this person lose access?" |
-| `logLevel` | `INFO` | `DEBUG` adds per-poll timing and HTTP request lines |
+| `logLevel` | `INFO` | `DEBUG` adds this app's own reasoning: login-capture accounting per pod, poll timing, row counts per read, which replica holds the Lease. **Not** HTTP request lines — httpx logs those at `INFO` already. Not the same value as `authLogLevel` |
 
 ## Authentication
 

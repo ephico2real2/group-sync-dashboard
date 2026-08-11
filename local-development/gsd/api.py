@@ -417,11 +417,22 @@ def build_app(
             # Counted before the raise: a refusal that leaves no trace anywhere is how a
             # gate that broke for everyone stays indistinguishable from one nobody hit.
             signals.note_admin_refusal()
+            # THE SAME SENTENCE THE CARD DRAWS, AND FIRST. The page and the API are two
+            # renderings of one refusal and they used to word it differently — the card said
+            # "For administrators only." while this said "reserved to the administrator tier",
+            # so a caller comparing them could not tell they were the same control. The
+            # operator asked for that exact phrase.
+            #
+            # It leads rather than trails: a client that shows only the head of a `detail`
+            # would drop a trailing clause, which is the one clause that must arrive.
+            #
+            # Says what the view contains and that it is reserved; never the role, grant, chart
+            # value or route that would widen it. This string reaches the person being refused.
             raise HTTPException(
                 status_code=403,
-                detail="this view reports the cluster's own RBAC binding surface and operator "
-                       "configuration rather than anything belonging to the reader, so it is "
-                       "reserved to the administrator tier",
+                detail="For administrators only. This view reports the cluster's own RBAC "
+                       "binding surface and operator configuration rather than anything "
+                       "belonging to the reader.",
             )
         return scope
 
@@ -1773,8 +1784,9 @@ def create_app() -> FastAPI:
     # line says which — the same ambiguity the dashboard header had between its own clock
     # and the UTC timestamps beneath it. Correlating a log against a stored timestamp (all
     # of which end in Z) needs the offset present, not inferred from a deployment's values.
+    level, complaint = _resolve_log_level(os.environ.get("GSD_LOG_LEVEL"))
     logging.basicConfig(
-        level=os.environ.get("GSD_LOG_LEVEL", "INFO"),
+        level=level,
         format="%(asctime)s%(tzoffset)s %(levelname)-7s %(name)s %(message)s",
     )
     # %z is not a logging format code; it belongs to strftime, and asctime is built with a
@@ -1789,4 +1801,101 @@ def create_app() -> FastAPI:
         return record
 
     logging.setLogRecordFactory(_factory)
+    if complaint:
+        # Emitted AFTER basicConfig, or it would be the call that configures logging and the
+        # format above would never apply. At WARNING it is visible at the default level, which is
+        # the point: the reader asked for a level they did not get.
+        log.warning("%s", complaint)
+    _quiet_transport_framing()
     return build_app(load_settings(os.environ.get("GSD_CONFIG", "clusters.yaml")))
+
+
+#: The five this app accepts, in ascending order. Deliberately NOT the eight Python takes: WARN and
+#: FATAL are aliases that add a spelling and no meaning, and NOTSET on the root logger means "no
+#: threshold" — it BEHAVES as DEBUG while READING as off, which is the opposite of a level meaning
+#: something. The chart refuses all three at render time; this refuses them at startup.
+LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
+
+
+def _resolve_log_level(raw: str | None) -> tuple[int, str | None]:
+    """One GSD_LOG_LEVEL value to a logging level, never raising. Returns (level, complaint).
+
+    WHY THIS EXISTS RATHER THAN PASSING THE STRING STRAIGHT THROUGH. `logging.basicConfig` raises
+    `ValueError: Unknown level: 'debug'` for anything it does not recognise, and this function is
+    the uvicorn factory — so the container did not start. Measured: lowercase `debug`, `Debug`,
+    `info`, a numeric `20`, and an empty string each crash-loop the pod, and lowercase is the
+    natural thing to type. Crashing a whole dashboard over the spelling of a log level is
+    disproportionate; a log level is not a security control, so this degrades and says so.
+
+    CASE IS NORMALISED because `debug` unambiguously means DEBUG. A value that is not a level at
+    all falls back to INFO and complains — the complaint is returned rather than logged here
+    because logging is not configured yet at the moment this runs.
+
+    THE OPENSHIFT COLLISION IS NAMED in the complaint on purpose. OpenShift's own `spec.logLevel`
+    takes Normal | Debug | Trace | TraceAll, this chart carries an `authLogLevel` that sets exactly
+    that field on authentications.operator.openshift.io/cluster, and an operator who knows the
+    platform will reasonably type `Trace` or `Normal` here. `Debug` is the one word valid in both
+    vocabularies. Saying so turns a puzzling fallback into a one-line fix.
+    """
+    if raw is None or not raw.strip():
+        return logging.INFO, None
+    wanted = raw.strip().upper()
+    if wanted in LOG_LEVELS:
+        return getattr(logging, wanted), None
+
+    # THE REJECTED VALUE IS NOT ECHOED, and that is a deliberate reversal of the obvious design.
+    # Repeating it back is the friendlier message and the wrong one: an environment variable is a
+    # place credentials get miswired, and this ran early enough to copy whatever it found straight
+    # into an admin-readable pod log. Measured on the first version — a value of
+    # `sha256~…-secret-token-value` came back verbatim in the warning, and a one-million-character
+    # value produced a 1,000,369-character log record. A typo became a disclosure and a log-pipeline
+    # problem at once. The accepted set is enough to repair the setting; the operator can read their
+    # own values file.
+    #
+    # THE OPENSHIFT HINT SURVIVES because it is a MEMBERSHIP TEST, not an echo. Naming the collision
+    # is the single most useful thing this message does — `Normal` and `Trace` are what somebody who
+    # knows the platform types — so it is checked against a fixed vocabulary and reported as a fact
+    # about that vocabulary, carrying none of the input forward.
+    openshift_only = wanted in {"NORMAL", "TRACE", "TRACEALL"}
+    hint = (
+        " That is OpenShift's own vocabulary (Normal, Debug, Trace, TraceAll), which belongs to "
+        "operator.openshift.io objects and reaches the cluster through this chart's authLogLevel "
+        "rather than logLevel — Debug is the only word valid in both."
+        if openshift_only else
+        " If you meant OpenShift's vocabulary (Normal, Debug, Trace, TraceAll), that is a different "
+        "setting, reached through the chart's authLogLevel."
+    )
+    return logging.INFO, (
+        f"GSD_LOG_LEVEL is set to a {len(raw)}-character value that is not a log level this app "
+        f"accepts, so it is running at INFO. The value is deliberately not repeated here, in case "
+        f"something other than a log level was wired into it. Use one of "
+        f"{', '.join(LOG_LEVELS)} (case does not matter).{hint}"
+    )
+
+
+def _quiet_transport_framing() -> None:
+    """Keep DEBUG meaning "this app's reasoning" rather than "somebody's TCP handshake".
+
+    MEASURED IN THE LIVE POD at GSD_LOG_LEVEL=DEBUG: 428 lines, 366 of them DEBUG, attributed
+    `httpcore.http11` 260, `httpcore.connection` 96, `gsd.poller` 6, `gsd.kube` 4. So 97% of what
+    DEBUG produced was transport framing — `connect_tcp.started`, `send_request_headers.complete`
+    — and the ten lines an operator turned it on for were buried in it. A level that floods is a
+    level nobody turns on twice.
+
+    HTTPX IS DELIBERATELY LEFT ALONE. Its `HTTP Request: GET <url> "200 OK"` lines are SEMANTIC —
+    which API call, against which cluster, with what status — and they are the record of what the
+    poller actually asked for. They sit at INFO by httpx's own choice, the chart README documents
+    them as intentionally present at the default, and they cost 12 lines a cycle rather than 356.
+    `httpcore` is the layer below: the same requests, spelled as socket events.
+
+    NOT disabled, THRESHOLDED. A TLS handshake failing against a corporate CA bundle is a real
+    thing to have to diagnose, and it is invisible above WARNING. `GSD_DEBUG_HTTP=true` restores
+    the framing for exactly that, so the capability is one variable away instead of gone.
+
+    Set on the logger rather than by filtering the root handler, because these records should not
+    be created at all: `httpcore` emits them at DEBUG, and a logger whose level rejects them never
+    formats the message.
+    """
+    if os.environ.get("GSD_DEBUG_HTTP", "").strip().lower() in {"1", "true", "yes"}:
+        return
+    logging.getLogger("httpcore").setLevel(logging.WARNING)

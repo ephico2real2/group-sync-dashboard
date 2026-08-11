@@ -604,10 +604,22 @@ class Poller:
                         cluster.name, "unreachable", "internal poller error"
                     )
                 except Exception:  # noqa: BLE001
-                    log.exception(
-                        "could not even record the poll failure for %s; "
-                        "the poll loop continues",
-                        cluster.name,
+                    # THE ONE CRITICAL IN THIS CODEBASE, and it earns the level rather than
+                    # decorating it. Reaching here means the poll failed AND the store could not
+                    # record that it failed, so the stored outcome keeps whatever it last said —
+                    # possibly `ok` — while /healthz is unconditionally green and /readyz only
+                    # reads. The dashboard then reports itself healthy and serves frozen data under
+                    # a stale success status: not degraded, but actively untruthful, which is what
+                    # separates CRITICAL from the ERROR above. It cannot self-heal, because the
+                    # thing that failed is the write path the recovery needs.
+                    #
+                    # log.critical with exc_info rather than log.exception: the traceback is the
+                    # only clue to WHY the store is unwritable (a full disk and a locked database
+                    # want different responses), and log.exception would pin this at ERROR.
+                    log.critical(
+                        "could not even record the poll failure for %s, so the stored status is "
+                        "now stale and may still read as healthy; the poll loop continues",
+                        cluster.name, exc_info=True,
                     )
 
             # Bindings ride the same thread but on their own due-time, so an expensive

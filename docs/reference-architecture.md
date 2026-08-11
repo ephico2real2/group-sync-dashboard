@@ -1374,7 +1374,8 @@ the page says so rather than leaving it to look like a bug.
 ## 8c. How a release is produced
 
 Two artefacts ship, they are versioned independently, and they are published by two different
-workflows. Both fire on push to `main`.
+workflows. **Neither fires on every push to `main` — each is scoped to the paths that can change
+the thing it publishes**, so a documentation-only merge publishes nothing.
 
 ```mermaid
 flowchart TB
@@ -1382,31 +1383,46 @@ flowchart TB
 
   subgraph img["publish.yml — the image"]
     direction TB
+    ipath{"paths: gsd/**, pyproject.toml,<br/>README.md, Containerfile,<br/>.containerignore, build script"}
     build["build-and-push-external.sh --update-values<br/>tag = &lt;pyproject version&gt;-&lt;10-char sha&gt;"]
     quay[("quay.io/…/group-sync-dashboard:TAG")]
     pin["commit: pin image tag TAG [skip publish]<br/>pushed to main"]
-    build --> quay --> pin
+    ipath -->|matched| build --> quay --> pin
   end
 
   subgraph chart["helm.yaml — the chart"]
     direction TB
+    cpath{"paths: charts/**"}
     ci["ci.yml must pass first"]
     cr["chart-releaser<br/>skips an already-released version"]
     gh[("gh-pages branch<br/>index.yaml + .tgz")]
-    ci --> cr --> gh
+    cpath -->|matched| ci --> cr --> gh
   end
 
-  merge --> build
-  merge --> ci
-  pin -.->|"[skip publish] stops the loop"| merge
+  merge --> ipath
+  merge --> cpath
+  ipath -.->|"no image input changed"| skip(["nothing published"])
+  cpath -.->|"no chart change"| skip
+  pin -.->|"touches charts/ only,<br/>so it cannot re-trigger publish"| merge
 ```
 
-**The image.** `publish.yml` runs the same script a laptop would, so the published artefact is the
+**The image.** `publish.yml` runs the same script a laptop would, so the published artefact is a
 merge commit and the chart records which one. The tag is `<version>-<sha>`, derived from
 `local-development/pyproject.toml` — the single source of truth — and written into
 `values.yaml`'s `image.tag`. `appVersion` sits *outside* that chain, which is exactly how it rotted
 to `0.5.2` while the app was `0.6.0`; `tests/test_chart_versions.py` now holds the two together and
 holds `appVersion` against the pinned tag's prefix.
+
+**The pinned tag is not necessarily HEAD**, and that is deliberate rather than drift. The workflow
+only runs when an image input changed, so after a documentation-only merge the pin still names the
+last commit that actually produced an image. That is the more truthful statement: `gsd_build_info`
+reports where the running code came from, not where the branch has since moved to. What the tag
+always means is "the commit this image was built from" — an edit to a doc does not make the running
+image a different image. `tests/test_publish_paths.py` holds the filter against the Containerfile's
+own `COPY`/`ADD` lines, because the failure mode of an incomplete filter is silent: the workflow
+simply stops firing, and main keeps deploying the last image it built while the source moves on.
+`.containerignore` is in that list too — the builder applies it to the context before any `COPY`
+runs, so editing it changes the image with nothing else changing.
 
 **Why the pin is written onto the fetched tip rather than rebased.** `actions/checkout` takes
 `github.sha`, the triggering commit, not the branch tip. So when two merges land close together the

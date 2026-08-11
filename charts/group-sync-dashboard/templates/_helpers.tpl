@@ -348,3 +348,44 @@ update
 {{- $t -}}
 {{- end -}}
 {{- end -}}
+
+# logLevel, validated and case-normalised at render time. THE APP NO LONGER CRASHES ON A BAD VALUE —
+# an earlier version of this comment said it did, and the same change that added this helper also
+# gave `gsd/api.py#_resolve_log_level` a fallback, which made the claim false. Corrected in review
+# rather than left to mislead.
+#
+# The two boundaries are deliberately different, and it is not an inconsistency:
+#   THE CHART REFUSES, because a release value is deterministic input available before any workload
+#   changes. Failing at `helm template` costs nothing and forces the value to be corrected once.
+#   THE APP DEGRADES — it runs at INFO and warns — because a directly supplied GSD_LOG_LEVEL (a
+#   `podman run`, an `oc set env`) reaches a running process, and a logging typo is not grounds for
+#   an outage.
+# So the chart can be stricter than the app without either being wrong.
+#
+# The history worth keeping: `create_app` used to pass the value straight to logging.basicConfig,
+# and that function IS the uvicorn factory, so Python's `ValueError: Unknown level: 'debug'` stopped
+# the container from starting. Measured then: lowercase `debug`, `Debug`, `info`, a numeric `20` and
+# an empty string each crash-looped the pod. That is why this guard exists; the app-side fallback is
+# the second layer, for deployments that never render this chart.
+#
+# CASE IS NORMALISED rather than refused. `logLevel: debug` is the natural thing to write and it
+# unambiguously means DEBUG, so upper-casing it removes an outage class with no loss of meaning.
+# This is not the same as letting a misspelling through: `trace` still fails, because there is no
+# level it could have meant.
+#
+# The accepted set is the five the values file documents, deliberately NOT the eight Python
+# happens to take. `WARN` and `FATAL` are aliases that add nothing, and `NOTSET` on the root
+# logger means "no threshold" — it behaves as DEBUG while reading as "off", which is the opposite
+# of a level having a meaning.
+{{- define "gsd.logLevel" -}}
+{{- $raw := .Values.logLevel -}}
+{{- if or (not (hasKey .Values "logLevel")) (kindIs "invalid" $raw) -}}
+INFO
+{{- else -}}
+{{- $l := upper (trim (toString $raw)) -}}
+{{- if not (has $l (list "DEBUG" "INFO" "WARNING" "ERROR" "CRITICAL")) -}}
+{{- fail (printf "logLevel %q is not a log level for THIS chart. Use one of DEBUG, INFO, WARNING, ERROR, CRITICAL (case does not matter).\n\nIf you were reaching for OpenShift's vocabulary — Normal, Debug, Trace, TraceAll — that belongs to operator.openshift.io resources and means something different. This value configures the dashboard's own Python logging, and the two coexist in this chart: `logLevel` is the dashboard's, while `authLogLevel` manages spec.logLevel on authentications.operator.openshift.io/cluster, which is what makes the oauth-server EMIT the login lines the dashboard reads. Debug is the one word valid in both.\n\nRefused here rather than passed through, because a release value can be corrected before anything is deployed. The app itself is more forgiving with a directly supplied GSD_LOG_LEVEL — it runs at INFO and logs a warning — so this is the stricter of two boundaries, not the only one." (toString $raw)) -}}
+{{- end -}}
+{{- $l -}}
+{{- end -}}
+{{- end -}}

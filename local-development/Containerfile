@@ -57,9 +57,18 @@ ARG BUILD_VERSION=unknown
 # land in lib. Listing only lib imports pydantic but not pydantic_core.
 # GSD_LOG_LEVEL is set explicitly rather than left to the code default, so it is
 # discoverable in `podman inspect` / `oc set env --list` — an env var nobody knows exists is
-# not a feature. DEBUG | INFO | WARNING | ERROR | CRITICAL. DEBUG adds per-poll timing, HTTP
-# request lines, page counts and the countdown to the next binding refresh; safe to leave on
-# briefly, chatty at a line or more per poll per cluster.
+# not a feature. DEBUG | INFO | WARNING | ERROR | CRITICAL, case-insensitive; anything else runs
+# at INFO and says so rather than failing to start.
+#
+# DEBUG adds THIS APP'S OWN REASONING: per-pod login-capture accounting, poll timing and the
+# countdown to the next binding refresh, row counts per read, which replica holds the Lease. NOT HTTP
+# request lines — this comment claimed them and they are httpx's, emitted at INFO already
+# (measured identical at both levels). The layer below, `httpcore`, is pinned to WARNING because
+# unpinned it was 97% of DEBUG output; GSD_DEBUG_HTTP=true restores it for handshake diagnosis.
+#
+# Not to be confused with the chart's authLogLevel, which sets spec.logLevel
+# (Normal | Debug | Trace | TraceAll) on authentications.operator.openshift.io/cluster — a
+# different level, on a different object, and the one to check if the Logins tab is empty.
 #
 # TZ is deliberately NOT set here. The chart owns it (values.yaml `timezone`), because it is
 # a per-deployment choice about who reads the logs, not a property of the image. Unset means

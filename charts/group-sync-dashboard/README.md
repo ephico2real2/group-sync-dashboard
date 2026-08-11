@@ -108,7 +108,7 @@ container starting, which is a louder failure than the one above but still not a
 | `config.scheduleGraceSeconds` | `120` | stops the state flapping `late` every cycle. Must stay **above** `pollIntervalSeconds` |
 | `config.bindingIntervalSeconds` | `300` | bindings are listed across every namespace, so deliberately slower. Must stay above the group poll |
 | `config.requestTimeoutSeconds` | `15` | per-request timeout against a cluster's API server |
-| `logLevel` | `INFO` | `DEBUG` adds per-poll timing, page counts and the binding-refresh countdown. Not HTTP request lines — httpx logs those at `INFO` itself (its `Client.send` calls `logger.info`, verified in 0.28.1), so they are already present at the default |
+| `logLevel` | `INFO` | `DEBUG` adds per-poll timing, row counts per read and the binding-refresh countdown. Not HTTP request lines — httpx logs those at `INFO` itself (its `Client.send` calls `logger.info`, verified in 0.28.1), so they are already present at the default |
 | `nameOverride` / `fullnameOverride` | `""` / `""` | standard Helm naming overrides. Changing either after install renames every object, including the PVC — which orphans the accumulated history |
 
 Three values move together and two of them fail loudly if you move only one:

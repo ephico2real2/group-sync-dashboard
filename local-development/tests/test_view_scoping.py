@@ -314,8 +314,25 @@ def test_the_rbac_surface_is_refused_at_self_not_served(tmp_path):
     for path in ("/api/clusters/c1/bindings/findings", "/api/clusters/c1/operator-configs"):
         r = c.get(path, headers=AS_VIEWER)
         assert r.status_code == 403, f"{path} served the cluster's RBAC surface to a self-tier reader"
-        assert "administrator tier" in r.json()["detail"], (
-            "the refusal must say what it is, so the UI can phrase it and the reader can act")
+        detail = r.json()["detail"]
+        # THE SAME SENTENCE THE CARD DRAWS, and the operator asked for this exact phrase. The API
+        # and the page are two renderings of one refusal; they used to word it differently ("For
+        # administrators only." on the card, "reserved to the administrator tier" here), so a
+        # caller comparing them could not tell they were the same control.
+        # startswith, not `in`. `require_admin_tier` states that the phrase LEADS so a client
+        # showing only the head of a `detail` still receives it — and an `in` assertion leaves
+        # that unenforced, so moving the sentence to the end would keep the suite green while
+        # breaking the property the comment promises.
+        assert detail.startswith("For administrators only."), (
+            f"{path}: the refusal must OPEN with the same sentence the UI card shows, so the "
+            f"reader sees one phrasing whichever way they reach it and a truncating client still "
+            f"gets the part that matters — got {detail!r}")
+        # It must not hand the refused reader the way in. Same rule the card follows.
+        for leak in ("cluster-admin", "cluster-reader", "clusterrolebinding", "can-i",
+                     "visibility.", "SubjectAccessReview"):
+            assert leak.lower() not in detail.lower(), (
+                f"{path}: the refusal names {leak!r}, which tells a non-administrator what to ask "
+                f"for — the escalation-path-as-shopping-list problem")
 
 
 def test_the_admin_still_gets_the_whole_rbac_surface(tmp_path):

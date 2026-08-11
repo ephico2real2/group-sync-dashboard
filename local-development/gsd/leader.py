@@ -124,7 +124,18 @@ class LeaderElector:
         response = client.get(f"{path}/{self.name}")
 
         if response.status_code == 404:
-            created = client.post(path, json=self._body(0))
+            body = self._body(0)
+            # ONE GLANCE AT THE MicroTime BUG. This sits immediately above the ERROR below, whose
+            # body reads `cannot parse "Z" as ".000000"` — because _now() emitted 3-digit
+            # milliseconds where Kubernetes MicroTime demands exactly 6. Every create was rejected
+            # 400, the pod never took leadership, and the poller is gated on leadership, so NO
+            # deployment polled at all for the life of that commit. Printing the timestamps the
+            # apiserver is about to judge turns "why is nothing polling" into a visible mismatch.
+            log.debug("leader election: lease %s/%s absent, creating it as %s "
+                      "(renewTime=%s, leaseDurationSeconds=%s)",
+                      self.namespace, self.name, self.identity,
+                      body["spec"].get("renewTime"), body["spec"].get("leaseDurationSeconds"))
+            created = client.post(path, json=body)
             # 409 means another replica created it in the same instant; it won, and that is
             # a normal outcome rather than an error.
             if created.status_code in (200, 201, 409):
@@ -139,6 +150,18 @@ class LeaderElector:
             )
             return False
 
+        if response.status_code in (401, 403):
+            # SEPARATED FROM THE GENERIC WARNING BELOW, because this one does not self-heal and the
+            # contract puts "an operator must act" at ERROR. It is the likeliest real failure after
+            # the chart's Role drifts: without coordination.k8s.io/leases the pod can never lead,
+            # and since the poller is leadership-gated the dashboard serves data that never
+            # updates — the same end state as the MicroTime bug, from a different cause.
+            log.error("leader election: forbidden reading lease %s/%s as this ServiceAccount — "
+                      "HTTP %s: %s. Polling stays stopped until RBAC on coordination.k8s.io/leases "
+                      "is granted; nothing retries its way out of this",
+                      self.namespace, self.name, response.status_code, response.text[:300])
+            return False
+
         if response.status_code != 200:
             log.warning("leader election: GET lease returned %s", response.status_code)
             return False
@@ -150,10 +173,15 @@ class LeaderElector:
 
         renew = spec.get("renewTime")
         expired = True
+        # Kept alongside `expired` so the stand-by DEBUG below can say HOW stale the holder's
+        # renewal is — "renewed 4s of 15s ago" is a healthy peer, "renewed 14s of 15s ago" is one
+        # about to lose it, and the two read very differently during an incident.
+        age: float | None = None
         if renew:
             try:
                 last = datetime.fromisoformat(renew.replace("Z", "+00:00"))
-                expired = (datetime.now(UTC) - last) > timedelta(seconds=self.lease_seconds)
+                age = (datetime.now(UTC) - last).total_seconds()
+                expired = age > self.lease_seconds
             except ValueError:
                 expired = True
 
@@ -165,6 +193,15 @@ class LeaderElector:
             log.info("leader election: lease held by %r has expired, taking it", holder)
             body = self._body(transitions + 1)
         else:
+            # THE FILE'S ONE SILENT OUTCOME, and the value the scar hid behind. A bare False here
+            # means "a peer legitimately leads, stand by" — which is correct and completely normal —
+            # but it is byte-identical to the False returned when a create is REJECTED. One is the
+            # mechanism working; the other is nothing polling anywhere. Saying which, with the
+            # holder named, makes them different in one glance.
+            log.debug("leader election: %s holds lease %s/%s, renewed %s of %ss ago — standing by, "
+                      "not polling", holder, self.namespace, self.name,
+                      f"{age:.0f}s" if age is not None else "an unreadable time",
+                      self.lease_seconds)
             return False
 
         body["metadata"]["resourceVersion"] = lease["metadata"]["resourceVersion"]
