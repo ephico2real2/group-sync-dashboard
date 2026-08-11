@@ -223,7 +223,11 @@ class ActivityRecorder:
                 dropped, MAX_FLUSH_ATTEMPTS, kept,
             )
         else:
-            log.warning("flush failed; %d user-activity bucket(s) requeued", kept)
+            # DEBUG, because flush() now logs the CAUSE at WARNING and this only carries the count.
+            # Two WARNINGs for one failure read as two failures — measured across an exhausted
+            # retry: three cause lines, two of these, and one ERROR, for a single unwritable store.
+            # The cause is the line worth waking up for; the bookkeeping belongs a level down.
+            log.debug("flush failed; %d user-activity bucket(s) requeued for retry", kept)
 
     def prune(self, today: str | None = None) -> int:
         """Drop activity older than the retention window. At most once per day.

@@ -718,10 +718,18 @@ class ClusterClient:
                 items = self._list_all(client, path)
             except ClusterError as exc:
                 if exc.outcome == FORBIDDEN and path in exc.message:
-                    log.info(
-                        "%s: not permitted to list pods in %s — login capture is off. Grant it with "
-                        "loginCapture.enabled=true.", self.cluster.name, namespace,
-                    )
+                    # DEBUG, and factual only. This said "login capture is off. Grant it with
+                    # loginCapture.enabled=true." at INFO, which was wrong twice over: this method
+                    # is called ONLY from logincapture#capture_once, which has already returned when
+                    # capture is disabled — so whenever this fires capture is ON and the missing
+                    # thing is the RBAC grant, not the feature flag. It sent an operator to set a
+                    # value that was already set.
+                    #
+                    # The operator-facing sentence now lives in capture_once, which is the layer
+                    # that knows what a 403 MEANS for the feature and says it once, at WARNING.
+                    # This layer only reports what it saw.
+                    log.debug("%s: forbidden listing pods in %s; returning no pods",
+                              self.cluster.name, namespace)
                     return None
                 raise
         return [
