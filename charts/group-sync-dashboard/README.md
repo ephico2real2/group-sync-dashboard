@@ -108,7 +108,7 @@ container starting, which is a louder failure than the one above but still not a
 | `config.scheduleGraceSeconds` | `120` | stops the state flapping `late` every cycle. Must stay **above** `pollIntervalSeconds` |
 | `config.bindingIntervalSeconds` | `300` | bindings are listed across every namespace, so deliberately slower. Must stay above the group poll |
 | `config.requestTimeoutSeconds` | `15` | per-request timeout against a cluster's API server |
-| `logLevel` | `INFO` | `DEBUG` adds per-poll timing, row counts per read and the binding-refresh countdown. Not HTTP request lines — httpx logs those at `INFO` itself (its `Client.send` calls `logger.info`, verified in 0.28.1), so they are already present at the default |
+| `logLevel` | `INFO` | `DEBUG` \| `INFO` \| `WARNING` \| `ERROR` \| `CRITICAL`, and nothing else — see [Dashboard log verbosity](#dashboard-log-verbosity--loglevel) for what each promises and which look-alike values are refused |
 | `nameOverride` / `fullnameOverride` | `""` / `""` | standard Helm naming overrides. Changing either after install renames every object, including the PVC — which orphans the accumulated history |
 
 Three values move together and two of them fail loudly if you move only one:
@@ -255,6 +255,31 @@ Grant the wide view through your normal RBAC process, never a chart value:
 | `monitoring.prometheusRule.captureStalledSeconds` | `1800` | seconds without a successful oauth-log read before login capture counts as stalled. Capture rides the poll thread, so this **must stay well above `config.pollIntervalSeconds`** — same reasoning as `notPollingSeconds` |
 | `monitoring.prometheusRule.backupStaleSeconds` | `43200` | seconds since the newest backup file before the copy counts as stale. Keep at ~2× `config.backupIntervalHours` × 3600 — one missed backup is a blip, two is a broken mechanism |
 | `monitoring.prometheusRule.for.*` | see below | the `for:` duration on each alert |
+
+### Dashboard log verbosity — `logLevel`
+
+**Five accepted values, and nothing else.** Case does not matter (`debug` works); anything outside
+this list is refused at `helm template`, and refused again at startup if it reaches the container
+some other way — it then runs at `INFO` and logs a warning rather than failing to start.
+
+| value | the promise it makes |
+|---|---|
+| `CRITICAL` | the process cannot serve truthfully. Exactly one line in the codebase can emit it — a poll failed *and* the store could not record the failure, so the dashboard reports healthy while serving frozen data. Expect never to see it |
+| `ERROR` | an operator must act; something advertised is broken and will not self-heal. Lease RBAC missing, a PVC that cannot support shared memory |
+| `WARNING` | degraded but scoped or self-healing: one poll failed, one cluster unreachable, or a feature configured but inert — capture enabled without the RBAC to read pod logs |
+| `INFO` | **the default.** One line per completed unit of work or state change; readable at steady state |
+| `DEBUG` | this app's own reasoning: per-pod login-capture accounting, poll timing and the binding-refresh countdown, row counts per read, which replica holds the Lease and how stale its renewal is, why a reader was put on the narrow tier |
+
+**Two things `logLevel` does not control**, both deliberate:
+
+- **Inbound request lines.** uvicorn logs one per request on its own loggers, which carry
+  `propagate=False` and their own handlers at `INFO`, so this value cannot raise or lower them. At
+  `CRITICAL` you still get a line per request and lose every application diagnostic.
+- **Outbound request lines.** `httpx` logs `HTTP Request: GET <url> "200 OK"` at `INFO` itself, so
+  they are present at the default. The transport layer beneath it (`httpcore`, socket and TLS
+  events) is pinned to `WARNING`, because unpinned it was 97% of `DEBUG` output — measured in a live
+  pod, 356 framing lines per 10 of the app's own. Set `GSD_DEBUG_HTTP=true` to restore it when
+  diagnosing a handshake against a corporate CA.
 
 ### oauth-server log verbosity
 
