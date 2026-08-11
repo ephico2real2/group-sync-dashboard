@@ -2141,6 +2141,8 @@ class TestVisibilityLabels:
         text = p.locator("#scope-pill").inner_text()
         assert text.startswith("Your view"), text
         assert "alice" in text, "the pill must name the viewer it is scoped to"
+        assert p.locator(".scope-refusal").count() == 1
+        assert p.locator(".hero").count() == 0
 
     def test_the_administrator_is_told_they_see_everything(self, page, scoped_server):
         """The admin marker. 'Nothing looks different' and 'you are seeing everything'
@@ -2148,6 +2150,34 @@ class TestVisibilityLabels:
         p = _open_as(page, scoped_server, "root")
         p.wait_for_selector("#scope-pill:not([hidden])")
         assert p.locator("#scope-pill").inner_text().startswith("Full view")
+        assert p.locator(".hero").count() == 1
+        assert p.locator(".scope-refusal").count() == 0
+
+    def test_an_unknown_tier_does_not_paint_the_wide_overview(self, page, scoped_server):
+        """A failed whoami is not evidence that the reader may see cluster-wide health."""
+        page.route("**/api/whoami", lambda route: route.fulfill(
+            status=503, content_type="application/json", body="{}"))
+        page.set_extra_http_headers({"X-Forwarded-User": "alice"})
+        page.goto(scoped_server)
+        page.wait_for_selector("#main .card", timeout=10_000)
+        assert page.locator("#main .hero").count() == 0
+
+    def test_an_unknown_tier_does_not_paint_a_refusal(self, page, scoped_server):
+        """Cold-load uncertainty is not evidence of narrowing either; wait for the authority."""
+        page.route("**/api/whoami", lambda route: route.fulfill(
+            status=503, content_type="application/json", body="{}"))
+        page.set_extra_http_headers({"X-Forwarded-User": "alice"})
+        page.goto(scoped_server)
+        page.wait_for_selector("#main .card", timeout=10_000)
+        assert page.locator("#main .scope-refusal").count() == 0
+        assert page.locator("#main").inner_text().strip() == "Loading…"
+
+    def test_an_unauthenticated_whoami_body_paints_the_wide_overview(self, page, scoped_server):
+        """Without a verified identity no tier applies, so silence must not invent narrowing."""
+        page.goto(scoped_server)
+        page.wait_for_selector("#main .card", timeout=10_000)
+        assert page.locator("#main .hero").count() == 1
+        assert page.locator("#main .scope-refusal").count() == 0
 
     def test_groups_tab_banner_and_scoped_count(self, page, scoped_server):
         p = _open_as(page, scoped_server, "alice")

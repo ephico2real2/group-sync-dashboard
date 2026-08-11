@@ -499,17 +499,22 @@ function scopeBanner(kind, d) {
   return `<div class="filterbar-note scope-banner">${words(d.viewer || "you")}</div>`;
 }
 
+function readerTierKnown() {
+  return data.whoami !== null;
+}
+
 /* Is this reader on the narrowed tier? Read from whoami's server-computed `visibility`,
    the same source renderScopePill uses — the page still never DECIDES a tier, it only
-   reports the one the wire declared. Absent declaration (older build, no authenticated
-   identity) is treated as NOT narrowed, because the endpoints are the actual control: a
-   reader who is narrowed gets a 403 from the server regardless of what this returns, and
-   guessing "narrowed" from silence would hide the Overview on a deployment that never
-   restricted anything. */
+   reports the one the wire declared. Missing whoami is indeterminate until the request
+   resolves. A resolved unauthenticated response has no verified identity and therefore no
+   tier; calling that narrowed would hide the Overview on a deployment that never restricted
+   anything. Once authenticated, only an explicit scope=all may widen the layout — silence or
+   junk from an authenticated response stays narrowed. */
 function narrowedReader() {
   const w = data.whoami;
-  const vis = w && w.authenticated && w.visibility;
-  return !!vis && vis.scope === "self";
+  if (!w || !w.authenticated) return false;
+  const vis = w.visibility;
+  return !vis || vis.scope !== "all";
 }
 
 /* A withheld view is a NAMED refusal, never a blank: an empty audit tab reads as a healthy
@@ -2532,6 +2537,11 @@ function render() {
     const back = $("back");
     if (back) back.onclick = () => { goBack(); };
     wireTooltip();
+  } else if (!readerTierKnown()) {
+    // The Overview layout itself claims a tier. Until whoami answers, neither the wide
+    // cluster surface nor a named refusal is truthful, so preserve the page's established
+    // unresolved-payload state instead of flashing either claim.
+    main.innerHTML = `<section class="card"><div class="empty-note">Loading…</div></section>`;
   } else if (narrowedReader()) {
     // Overview is the cluster's OWN health — sync CRs, the operator that templates access,
     // cluster-wide counts. None of it answers anything a reader can ask about themselves, so
