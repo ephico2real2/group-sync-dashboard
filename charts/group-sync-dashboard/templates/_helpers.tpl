@@ -373,10 +373,9 @@ update
 # This is not the same as letting a misspelling through: `trace` still fails, because there is no
 # level it could have meant.
 #
-# The accepted set is the five the values file documents, deliberately NOT the eight Python
-# happens to take. `WARN` and `FATAL` are aliases that add nothing, and `NOTSET` on the root
-# logger means "no threshold" — it behaves as DEBUG while reading as "off", which is the opposite
-# of a level having a meaning.
+# The accepted set is exactly the five the values file documents. Python itself would take a few
+# more spellings, and they are refused on purpose: a level is a promise about what you will see, and
+# two ways to write one level — or a name whose effect is the opposite of how it reads — is not one.
 {{- define "gsd.logLevel" -}}
 {{- $raw := .Values.logLevel -}}
 {{- if or (not (hasKey .Values "logLevel")) (kindIs "invalid" $raw) -}}
@@ -384,7 +383,7 @@ INFO
 {{- else -}}
 {{- $l := upper (trim (toString $raw)) -}}
 {{- if not (has $l (list "DEBUG" "INFO" "WARNING" "ERROR" "CRITICAL")) -}}
-{{- fail (printf "logLevel %q is not a log level for THIS chart. Use one of DEBUG, INFO, WARNING, ERROR, CRITICAL (case does not matter).\n\nIf you were reaching for OpenShift's vocabulary — Normal, Debug, Trace, TraceAll — that belongs to operator.openshift.io resources and means something different. This value configures the dashboard's own Python logging, and the two coexist in this chart: `logLevel` is the dashboard's, while `authLogLevel` manages spec.logLevel on authentications.operator.openshift.io/cluster, which is what makes the oauth-server EMIT the login lines the dashboard reads. Debug is the one word valid in both.\n\nRefused here rather than passed through, because a release value can be corrected before anything is deployed. The app itself is more forgiving with a directly supplied GSD_LOG_LEVEL — it runs at INFO and logs a warning — so this is the stricter of two boundaries, not the only one." (toString $raw)) -}}
+{{- fail (printf "logLevel %q is not a log level. Use one of DEBUG, INFO, WARNING, ERROR, CRITICAL (case does not matter).\n\nIf you are trying to raise the OAUTH-SERVER's verbosity so the Logins tab has something to read, that is the chart's `authLogLevel` value, not this one — a different setting on a different object.\n\nRefused here rather than passed through, because a release value can be corrected before anything is deployed. The app itself is more forgiving with a directly supplied GSD_LOG_LEVEL — it runs at INFO and logs a warning — so this is the stricter of two boundaries, not the only one." (toString $raw)) -}}
 {{- end -}}
 {{- $l -}}
 {{- end -}}

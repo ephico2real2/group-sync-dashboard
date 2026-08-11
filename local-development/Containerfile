@@ -66,9 +66,9 @@ ARG BUILD_VERSION=unknown
 # (measured identical at both levels). The layer below, `httpcore`, is pinned to WARNING because
 # unpinned it was 97% of DEBUG output; GSD_DEBUG_HTTP=true restores it for handshake diagnosis.
 #
-# Not to be confused with the chart's authLogLevel, which sets spec.logLevel
-# (Normal | Debug | Trace | TraceAll) on authentications.operator.openshift.io/cluster — a
-# different level, on a different object, and the one to check if the Logins tab is empty.
+# Not to be confused with the chart's authLogLevel, which raises the oauth-server's own verbosity
+# on authentications.operator.openshift.io/cluster — a different setting, on a different object,
+# and the one to check if the Logins tab is empty.
 #
 # TZ is deliberately NOT set here. The chart owns it (values.yaml `timezone`), because it is
 # a per-deployment choice about who reads the logs, not a property of the image. Unset means

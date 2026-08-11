@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+import re
 import subprocess
 import sys
 
@@ -120,19 +121,22 @@ def test_an_unrecognised_value_degrades_to_info_and_says_so(written: str) -> Non
 
 
 @pytest.mark.parametrize("written", ["Normal", "Trace", "TraceAll"])
-def test_the_openshift_vocabulary_is_rejected_and_the_collision_is_named(written: str) -> None:
-    """The trap this chart sets for anyone who knows the platform.
+def test_a_platform_operators_likely_mistake_is_rejected_and_redirected(written: str) -> None:
+    """The trap this chart sets for anyone who knows OpenShift.
 
-    OpenShift's own `spec.logLevel` takes Normal | Debug | Trace | TraceAll, and this chart carries
-    BOTH log levels: `logLevel` for the dashboard's Python logging and `authLogLevel` for
-    `spec.logLevel` on authentications.operator.openshift.io/cluster — which is what makes the
-    oauth-server emit the login lines the dashboard reads. So an operator typing `Trace` here is
-    making an understandable mistake, and the complaint has to name the other one or it is useless.
+    This chart carries two log levels: `logLevel` for the dashboard's own Python logging, and
+    `authLogLevel`, which raises the OAUTH-SERVER's verbosity and is what makes the login lines the
+    dashboard reads exist at all. Someone reaching for the second and typing it into the first is
+    making an understandable mistake, so the complaint has to name the other setting or it is
+    useless.
+
+    The values themselves are parametrised here — a test may name what the docs do not advertise,
+    because its job is to prove they are refused.
     """
     got = probe(written)
     assert got["effective"] == "INFO"
     assert "authLogLevel" in got["complaint"], (
-        f"{written!r} is OpenShift's vocabulary; the complaint must point at authLogLevel"
+        f"{written!r} must be refused with a pointer at authLogLevel"
     )
 
 
@@ -216,21 +220,76 @@ class TestTheRejectedValueIsNotRepublished:
         assert "42-character" in complaint
 
 
-def test_the_openshift_hint_is_a_membership_test_not_an_echo() -> None:
-    """The hint has to survive not echoing, because it is the most useful thing the message says.
+def test_the_complaint_advertises_only_the_levels_that_work() -> None:
+    """It names the five accepted levels and does NOT catalogue the ones that do not work.
 
-    `Normal` and `Trace` are what somebody who knows the platform types, so the collision is
-    checked against a fixed vocabulary and reported as a fact ABOUT that vocabulary — carrying none
-    of the input forward.
+    Listing near-misses reads as a menu, and a rejected value is not worth advertising — the
+    accepted set plus the one likely mistake is the whole of what repairs the setting. This is the
+    operator's instruction ("only advertise the loglevel that we support") made executable, because
+    a rule kept only in prose drifts back.
     """
-    from gsd.api import _resolve_log_level
-    for openshift_word in ("Normal", "Trace", "TraceAll"):
-        _, complaint = _resolve_log_level(openshift_word)
-        assert "authLogLevel" in complaint, f"{openshift_word} must point at authLogLevel"
-        assert "OpenShift's own vocabulary" in complaint, (
-            f"{openshift_word} is recognisably OpenShift's, so the message should say so directly "
-            f"rather than offering it as a possibility"
+    from gsd.api import LOG_LEVELS, _resolve_log_level
+    _, complaint = _resolve_log_level("nonsense")
+    for accepted in LOG_LEVELS:
+        assert accepted in complaint, f"the accepted level {accepted} is not named"
+    # Whole words, because "WARN" is a substring of the accepted "WARNING" — the first version of
+    # this assertion failed on its own accepted level.
+    for not_a_level in ("Normal", "Trace", "TraceAll", "WARN", "FATAL", "NOTSET"):
+        assert not re.search(rf"\b{not_a_level}\b", complaint), (
+            f"the complaint names {not_a_level!r}, which this app does not accept — the message "
+            f"should advertise what works, not catalogue what does not"
         )
-    # And a value that is NOT OpenShift's gets the softer form, so the specific hint stays meaningful.
-    _, other = _resolve_log_level("nonsense")
-    assert "OpenShift's own vocabulary" not in other
+    # The one pointer that stays, because it is the likely mistake rather than a near-miss level.
+    assert "authLogLevel" in complaint
+
+
+class TestTheDocsAdvertiseExactlyWhatWorks:
+    """Operator instruction, made executable: advertise the levels we support and nothing else.
+
+    This exists because doc drift is the failure this repository keeps hitting on this very value.
+    Two false promises shipped in the same sentence and were caught only by review: `values.yaml`
+    and the root README credited DEBUG with adding "HTTP request lines" (they are httpx's, at INFO,
+    measured identical at both levels), and all three descriptions promised "page counts" when no
+    page-count log exists anywhere in `gsd`. A rule kept only in prose drifts back; a rule with a
+    test does not.
+    """
+
+    OPERATOR_FACING = (
+        "charts/group-sync-dashboard/values.yaml",
+        "charts/group-sync-dashboard/README.md",
+        "README.md",
+        "local-development/Containerfile",
+    )
+
+    #: Spellings Python would take, or that belong to a different setting entirely. None of them is
+    #: accepted here, so none of them should appear in a description of THIS value.
+    NOT_OURS = ("Trace", "TraceAll", "FATAL", "NOTSET")
+
+    def _logLevel_context(self, path: str) -> str:
+        """The operator-facing prose about `logLevel`, excluding the `authLogLevel` sections.
+
+        `authLogLevel` legitimately documents `Normal` and `Debug` — those are ITS real values, on
+        the authentication operator's CR. Scrubbing them there would break the documentation of a
+        different setting, so this reads only up to where that subject starts.
+        """
+        text = (REPO / path).read_text()
+        for marker in ("authLogLevel", "oauth-server log verbosity", "### oauth-server"):
+            if marker in text:
+                text = text[: text.index(marker)]
+        return text
+
+    def test_every_accepted_level_is_advertised(self) -> None:
+        from gsd.api import LOG_LEVELS
+        for path in self.OPERATOR_FACING:
+            text = self._logLevel_context(path)
+            missing = [lvl for lvl in LOG_LEVELS if lvl not in text]
+            assert not missing, f"{path} does not advertise {missing}"
+
+    def test_no_unsupported_spelling_is_advertised(self) -> None:
+        for path in self.OPERATOR_FACING:
+            text = self._logLevel_context(path)
+            for word in self.NOT_OURS:
+                assert not re.search(rf"\b{word}\b", text, re.IGNORECASE), (
+                    f"{path} mentions {word!r} while describing logLevel. It is not an accepted "
+                    f"value, and naming it reads as a menu of things that might work"
+                )

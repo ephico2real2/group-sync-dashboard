@@ -411,11 +411,9 @@ config:
 # own loggers, which carry propagate=False and their own handlers at INFO, so `logLevel` cannot raise
 # or lower them — at CRITICAL you still get a line per request and lose every app diagnostic.
 #
-# NOT TO BE CONFUSED WITH `authLogLevel` BELOW, which is a different log level, on a different
-# object, in a different vocabulary. That one sets spec.logLevel (Normal | Debug | Trace | TraceAll)
-# on authentications.operator.openshift.io/cluster and is what makes the oauth-server EMIT the login
-# lines this dashboard reads. `Debug` is the only word valid in both. If the Logins tab is empty,
-# that is the one to check — not this one.
+# NOT TO BE CONFUSED WITH `authLogLevel` BELOW, which is a different setting on a different object:
+# it raises the oauth-server's own verbosity, which is what makes that server EMIT the login lines
+# this dashboard reads. If the Logins tab is empty, that is the one to check — not this one.
 logLevel: INFO
 
 # Timezone for LOG LINES ONLY. Set it to whoever reads the logs at 3am — correlating an

@@ -1810,10 +1810,10 @@ def create_app() -> FastAPI:
     return build_app(load_settings(os.environ.get("GSD_CONFIG", "clusters.yaml")))
 
 
-#: The five this app accepts, in ascending order. Deliberately NOT the eight Python takes: WARN and
-#: FATAL are aliases that add a spelling and no meaning, and NOTSET on the root logger means "no
-#: threshold" — it BEHAVES as DEBUG while READING as off, which is the opposite of a level meaning
-#: something. The chart refuses all three at render time; this refuses them at startup.
+#: The five this app accepts, in ascending order, and the only five it advertises. Python itself
+#: would take a few more spellings; they are refused on purpose, because a level is a promise about
+#: what you will see and two ways to write one level is not one promise. The chart refuses the same
+#: set at render time; this is the second boundary, for a container configured directly.
 LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
 
 
@@ -1831,11 +1831,11 @@ def _resolve_log_level(raw: str | None) -> tuple[int, str | None]:
     all falls back to INFO and complains — the complaint is returned rather than logged here
     because logging is not configured yet at the moment this runs.
 
-    THE OPENSHIFT COLLISION IS NAMED in the complaint on purpose. OpenShift's own `spec.logLevel`
-    takes Normal | Debug | Trace | TraceAll, this chart carries an `authLogLevel` that sets exactly
-    that field on authentications.operator.openshift.io/cluster, and an operator who knows the
-    platform will reasonably type `Trace` or `Normal` here. `Debug` is the one word valid in both
-    vocabularies. Saying so turns a puzzling fallback into a one-line fix.
+    THE COMPLAINT POINTS AT `authLogLevel`, because the commonest reason to be fiddling with a log
+    level on this deployment is to make the Logins tab show something — and that is a different
+    setting, on a different object, which raises the OAUTH-SERVER's verbosity rather than this
+    app's. Naming it turns a puzzling fallback into a one-line fix. Only the five levels this app
+    accepts are ever listed; the message does not catalogue values that do not work here.
     """
     if raw is None or not raw.strip():
         return logging.INFO, None
@@ -1852,24 +1852,18 @@ def _resolve_log_level(raw: str | None) -> tuple[int, str | None]:
     # problem at once. The accepted set is enough to repair the setting; the operator can read their
     # own values file.
     #
-    # THE OPENSHIFT HINT SURVIVES because it is a MEMBERSHIP TEST, not an echo. Naming the collision
-    # is the single most useful thing this message does — `Normal` and `Trace` are what somebody who
-    # knows the platform types — so it is checked against a fixed vocabulary and reported as a fact
-    # about that vocabulary, carrying none of the input forward.
-    openshift_only = wanted in {"NORMAL", "TRACE", "TRACEALL"}
-    hint = (
-        " That is OpenShift's own vocabulary (Normal, Debug, Trace, TraceAll), which belongs to "
-        "operator.openshift.io objects and reaches the cluster through this chart's authLogLevel "
-        "rather than logLevel — Debug is the only word valid in both."
-        if openshift_only else
-        " If you meant OpenShift's vocabulary (Normal, Debug, Trace, TraceAll), that is a different "
-        "setting, reached through the chart's authLogLevel."
-    )
+    # ONE POINTER, NO CATALOGUE. The message names the five levels that work and the ONE other
+    # setting somebody is likely to have been reaching for; it does not enumerate the values that do
+    # not work here. Listing them reads as a menu of near-misses, and a rejected value is not worth
+    # advertising — the accepted set plus the likely mistake is the whole of what repairs the
+    # setting.
     return logging.INFO, (
         f"GSD_LOG_LEVEL is set to a {len(raw)}-character value that is not a log level this app "
         f"accepts, so it is running at INFO. The value is deliberately not repeated here, in case "
         f"something other than a log level was wired into it. Use one of "
-        f"{', '.join(LOG_LEVELS)} (case does not matter).{hint}"
+        f"{', '.join(LOG_LEVELS)} (case does not matter). If you were trying to raise the "
+        f"oauth-server's verbosity so the Logins tab has something to read, that is the chart's "
+        f"authLogLevel value — a different setting, on a different object, not this one."
     )
 
 
