@@ -1102,20 +1102,40 @@ visibility:
   #
   # Measured on the reference cluster, per role bound CLUSTER-WIDE:
   #
-  #   check                                        admits
-  #   list groups.user.openshift.io (default)      cluster-admin, cluster-reader
-  #   list rolebindings.rbac.authorization.k8s.io  those two PLUS cluster-wide `admin`
-  #   anything your own ClusterRole grants         whoever holds that role
+  #   check                                              admits
+  #   list clusterrolebindings.rbac...k8s.io (default)   cluster-admin, cluster-reader
+  #   list groups.user.openshift.io                      the same two among stock roles — but
+  #                                                      ALSO any custom role granting only
+  #                                                      directory read. See below.
+  #   list rolebindings.rbac.authorization.k8s.io        those two PLUS cluster-wide `admin`
+  #   anything your own ClusterRole grants               whoever holds that role
   #
   # `edit` and `view` pass NO cluster-scoped list at all — bound cluster-wide they are
   # indistinguishable from a plain user here — and `cluster-edit`/`cluster-view` do not
   # exist as roles. If people holding edit/view must see everything, bind them a role that
   # grants the check above, or set enabled: false.
+  #
+  # THE DEFAULT CHANGED IN 0.4.0, from `list groups.user.openshift.io` to cluster-wide RBAC read.
+  # The old value was the threshold this file ALREADY documents as "WRONG — a privilege escalation,
+  # proven on the reference cluster" under oauthProxy.apiTokenAccess, where an account holding only
+  # `list groups` was handed 229 bindings including a cluster-admin CRB. The bearer path's floor was
+  # raised for that reason; the browser path's was not, although the code claimed it had been.
+  #
+  # UPGRADING CHANGES NOTHING FOR STOCK ROLES. Measured per persona, with their real group
+  # memberships, both thresholds side by side:
+  #
+  #   kubeadmin  (cluster-admin)   list groups=true   list clusterrolebindings=true
+  #   dana.lee   (cluster-reader)  list groups=true   list clusterrolebindings=true
+  #   an ordinary reader           list groups=false  list clusterrolebindings=false
+  #
+  # No read check separates cluster-admin from cluster-reader, so both keep the wide tier. What
+  # changes is the cluster this default was wrong for: one whose custom or aggregated role grants
+  # directory read without RBAC read. Set the old values explicitly if you need them back.
   adminSar:
     # "" means the core API group. No version suffix.
-    apiGroup: user.openshift.io
+    apiGroup: rbac.authorization.k8s.io
     # Lowercase plural; resource/subresource (e.g. pods/log) is accepted.
-    resource: groups
+    resource: clusterrolebindings
     verb: list
     # Empty means a cluster-scoped check — the normal case. Set a namespace only for a
     # threshold that is deliberately namespaced, e.g. get pods/log in
@@ -1133,7 +1153,7 @@ visibility:
   # Measured on the reference cluster, per role bound cluster-wide:
   #
   #   check                                              cluster-admin  cluster-reader  separates?
-  #   list groups.user.openshift.io (adminSar default)   yes            yes             no
+  #   list clusterrolebindings (adminSar default)         yes            yes             no
   #   list/read anything                                 yes            yes             no
   #   update clusterrolebindings (this default)          yes            NO              YES
   #   get secrets                                        yes            NO              YES

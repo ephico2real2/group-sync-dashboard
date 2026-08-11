@@ -287,10 +287,20 @@ class TestViewRestrictions:
         s = load_settings(write(tmp_path, BASE + "visibilityEnabled: false\n"))
         assert s.view_restrictions_enabled is False
 
-    def test_admin_sar_defaults_to_list_groups(self, tmp_path):
+    def test_admin_sar_defaults_to_cluster_wide_rbac_read(self, tmp_path):
+        """The floor, and it is `list clusterrolebindings` for a measured reason.
+
+        It was `list groups.user.openshift.io` — the threshold this repository documents as "WRONG
+        — a privilege escalation, proven on the reference cluster" when it was the bearer path's
+        check: an account holding only `list groups` was handed 229 bindings including a
+        cluster-admin CRB. `require_admin_tier` claimed to apply that raised floor and posted the
+        lower one. Among stock roles the two admit the same personas, so this is not about
+        cluster-admin or cluster-reader — it is about a custom role granting directory read
+        WITHOUT RBAC read, which the old default handed the whole binding surface to.
+        """
         s = load_settings(write(tmp_path, BASE))
-        assert s.visibility_admin_sar_api_group == "user.openshift.io"
-        assert s.visibility_admin_sar_resource == "groups"
+        assert s.visibility_admin_sar_api_group == "rbac.authorization.k8s.io"
+        assert s.visibility_admin_sar_resource == "clusterrolebindings"
         assert s.visibility_admin_sar_subresource == ""
         assert s.visibility_admin_sar_verb == "list"
         assert s.visibility_admin_sar_namespace == ""
@@ -328,8 +338,8 @@ class TestViewRestrictions:
         )
         s = load_settings(write(tmp_path, cfg))
         assert s.visibility_admin_sar_verb == "list"
-        assert s.visibility_admin_sar_resource == "groups"  # not rolebindings
-        assert s.visibility_admin_sar_api_group == "user.openshift.io"
+        assert s.visibility_admin_sar_resource == "clusterrolebindings"  # not rolebindings
+        assert s.visibility_admin_sar_api_group == "rbac.authorization.k8s.io"
 
     def test_a_nil_key_means_not_set_not_empty(self, tmp_path):
         """A hand-written `visibilityAdminSarVerb:` with no value must take the default,
@@ -361,8 +371,11 @@ class TestViewRestrictions:
         assert s.visibility_usage_admin_sar_api_group == ""      # the core group is expressible
         assert s.visibility_usage_admin_sar_resource == "secrets"
         assert s.visibility_usage_admin_sar_verb == "get"
-        # adminSar is untouched by usageAdminSar keys — the two are parsed separately.
-        assert s.visibility_admin_sar_resource == "groups"
+        # adminSar is untouched by usageAdminSar keys — the two are parsed separately. Both now
+        # name clusterrolebindings and differ only in VERB (list vs update), so this assertion is
+        # weaker than it looks; the verb assertions above are what separate the two tiers.
+        assert s.visibility_admin_sar_resource == "clusterrolebindings"
+        assert s.visibility_admin_sar_verb == "list"
 
     def test_usage_sar_falls_back_whole_to_its_own_default(self, tmp_path):
         """An unusable field takes the ENTIRE usage default (not adminSar's, and never

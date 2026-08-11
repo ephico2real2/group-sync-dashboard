@@ -1035,9 +1035,10 @@ class TierResolver:
     every token carries (VIRTUAL_AUTH_GROUPS). allowed=true is the all tier; a clean
     allowed=false, a missing identity, and EVERY failure are the self tier. The shape of the
     review — verb, resource, apiGroup, optional namespace — is the operator's choice
-    (Settings.visibility_admin_sar_*), defaulting to `list groups.user.openshift.io`, which
-    admits cluster-admin and cluster-reader and nobody else among the stock roles (measured;
-    `edit` and `view` pass no cluster-scoped list at all).
+    (Settings.visibility_admin_sar_*), defaulting to `list clusterrolebindings` — cluster-wide RBAC
+    read, which admits cluster-admin and cluster-reader and nobody else among the stock roles
+    (measured; `edit` and `view` pass no cluster-scoped list at all). That default was `list groups`
+    until it was raised to the floor this data actually warrants; Settings carries the measurement.
 
     WHY THE GROUPS COME FROM THE CLUSTER AND NOT FROM THE REQUEST. Nothing upstream has them:
     openshift/oauth-proxy forwards only X-Forwarded-User/-Email (its SessionState has no

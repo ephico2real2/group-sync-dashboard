@@ -856,7 +856,7 @@ class TestVisibilityThreading:
         assert ok, out
         assert self._env(out, "GSD_ENABLE_VIEW_RESTRICTIONS") == "true"
         cm = self._configmap(out)
-        assert cm["visibilityAdminSarResource"] == "groups"
+        assert cm["visibilityAdminSarResource"] == "clusterrolebindings"
         assert cm["visibilityAdminSarVerb"] == "list"
 
     def test_the_sar_shape_reaches_the_configmap(self):

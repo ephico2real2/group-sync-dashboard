@@ -213,7 +213,7 @@ true
 {{- define "gsd.visibilitySarApiGroup" -}}
 {{- $sar := ((.Values.visibility | default dict).adminSar) | default dict -}}
 {{- if or (not (hasKey $sar "apiGroup")) (kindIs "invalid" $sar.apiGroup) -}}
-user.openshift.io
+rbac.authorization.k8s.io
 {{- else -}}
 {{- $g := trim (toString $sar.apiGroup) -}}
 {{- if not (regexMatch "^[a-z0-9.-]*$" $g) -}}
@@ -226,7 +226,7 @@ user.openshift.io
 {{- define "gsd.visibilitySarResource" -}}
 {{- $sar := ((.Values.visibility | default dict).adminSar) | default dict -}}
 {{- if or (not (hasKey $sar "resource")) (kindIs "invalid" $sar.resource) -}}
-groups
+clusterrolebindings
 {{- else -}}
 {{- $r := trim (toString $sar.resource) -}}
 {{- if not (regexMatch "^[a-z0-9-]+(/[a-z0-9-]+)?$" $r) -}}
