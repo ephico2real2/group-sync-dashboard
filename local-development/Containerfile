@@ -61,7 +61,7 @@ ARG BUILD_VERSION=unknown
 # at INFO and says so rather than failing to start.
 #
 # DEBUG adds THIS APP'S OWN REASONING: per-pod login-capture accounting, poll timing and the
-# countdown to the next binding refresh, page counts, which replica holds the Lease. NOT HTTP
+# countdown to the next binding refresh, row counts per read, which replica holds the Lease. NOT HTTP
 # request lines — this comment claimed them and they are httpx's, emitted at INFO already
 # (measured identical at both levels). The layer below, `httpcore`, is pinned to WARNING because
 # unpinned it was 97% of DEBUG output; GSD_DEBUG_HTTP=true restores it for handshake diagnosis.

@@ -172,3 +172,65 @@ class TestDebugIsTheAppsOwnReasoning:
             "debug a handshake is to edit the code"
         )
         assert not probe("DEBUG")["httpcore"], "the default must stay quiet"
+
+
+class TestTheRejectedValueIsNotRepublished:
+    """An environment variable is a place credentials get miswired, and this runs early.
+
+    The first version of `_resolve_log_level` repeated the rejected value back in its warning,
+    which is the friendlier message and the wrong one. Measured: a value of
+    `sha256~…-secret-token-value` came back verbatim, and a one-million-character value produced a
+    1,000,369-character log record — a typo turned into a disclosure and a log-pipeline problem at
+    the same time. Found by review, not by us.
+    """
+
+    def test_a_credential_shaped_value_is_not_echoed(self) -> None:
+        from gsd.api import _resolve_log_level
+        secret = "sha256~AbCdEf-not-a-log-level-at-all"
+        _, complaint = _resolve_log_level(secret)
+        assert complaint, "an unrecognised value must still be reported"
+        assert secret not in complaint, (
+            "the rejected value was copied into the complaint, so anything miswired into "
+            "GSD_LOG_LEVEL lands in an admin-readable pod log"
+        )
+        for fragment in ("sha256", "AbCdEf", "not-a-log-level"):
+            assert fragment not in complaint, f"{fragment!r} survived into the complaint"
+
+    def test_the_complaint_is_bounded_regardless_of_input_size(self) -> None:
+        """One log record should not be able to grow with an env var."""
+        from gsd.api import _resolve_log_level
+        _, complaint = _resolve_log_level("x" * 1_000_000)
+        assert len(complaint) < 1000, (
+            f"a 1,000,000-character value produced a {len(complaint)}-character complaint; the "
+            f"message must describe the value, not contain it"
+        )
+
+    def test_it_still_says_how_long_the_value_was(self) -> None:
+        """Not echoing is not the same as saying nothing: the length is a safe, useful fact.
+
+        It distinguishes "someone typed `INFo`" from "someone wired a 900-character token in here",
+        which are very different mistakes with the same symptom.
+        """
+        from gsd.api import _resolve_log_level
+        _, complaint = _resolve_log_level("q" * 42)
+        assert "42-character" in complaint
+
+
+def test_the_openshift_hint_is_a_membership_test_not_an_echo() -> None:
+    """The hint has to survive not echoing, because it is the most useful thing the message says.
+
+    `Normal` and `Trace` are what somebody who knows the platform types, so the collision is
+    checked against a fixed vocabulary and reported as a fact ABOUT that vocabulary — carrying none
+    of the input forward.
+    """
+    from gsd.api import _resolve_log_level
+    for openshift_word in ("Normal", "Trace", "TraceAll"):
+        _, complaint = _resolve_log_level(openshift_word)
+        assert "authLogLevel" in complaint, f"{openshift_word} must point at authLogLevel"
+        assert "OpenShift's own vocabulary" in complaint, (
+            f"{openshift_word} is recognisably OpenShift's, so the message should say so directly "
+            f"rather than offering it as a possibility"
+        )
+    # And a value that is NOT OpenShift's gets the softer form, so the specific hint stays meaningful.
+    _, other = _resolve_log_level("nonsense")
+    assert "OpenShift's own vocabulary" not in other

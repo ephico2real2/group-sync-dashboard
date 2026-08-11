@@ -398,7 +398,7 @@ config:
 #   INFO      one line per completed unit of work or state change, readable at steady state.
 #   DEBUG     THIS APP'S OWN REASONING — what it read, what it skipped, and why a number is the
 #             number. Per-pod login-capture accounting, the poll cycle's timing and the countdown to
-#             the next binding refresh, page counts, which replica holds the Lease and how stale its
+#             the next binding refresh, row counts per read, which replica holds the Lease and how stale its
 #             renewal is, and why a given reader was put on the narrow tier.
 #
 # NOT HTTP REQUEST LINES. This value used to claim DEBUG added them; it does not. `httpx` logs

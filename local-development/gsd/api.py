@@ -1842,12 +1842,34 @@ def _resolve_log_level(raw: str | None) -> tuple[int, str | None]:
     wanted = raw.strip().upper()
     if wanted in LOG_LEVELS:
         return getattr(logging, wanted), None
+
+    # THE REJECTED VALUE IS NOT ECHOED, and that is a deliberate reversal of the obvious design.
+    # Repeating it back is the friendlier message and the wrong one: an environment variable is a
+    # place credentials get miswired, and this ran early enough to copy whatever it found straight
+    # into an admin-readable pod log. Measured on the first version — a value of
+    # `sha256~…-secret-token-value` came back verbatim in the warning, and a one-million-character
+    # value produced a 1,000,369-character log record. A typo became a disclosure and a log-pipeline
+    # problem at once. The accepted set is enough to repair the setting; the operator can read their
+    # own values file.
+    #
+    # THE OPENSHIFT HINT SURVIVES because it is a MEMBERSHIP TEST, not an echo. Naming the collision
+    # is the single most useful thing this message does — `Normal` and `Trace` are what somebody who
+    # knows the platform types — so it is checked against a fixed vocabulary and reported as a fact
+    # about that vocabulary, carrying none of the input forward.
+    openshift_only = wanted in {"NORMAL", "TRACE", "TRACEALL"}
+    hint = (
+        " That is OpenShift's own vocabulary (Normal, Debug, Trace, TraceAll), which belongs to "
+        "operator.openshift.io objects and reaches the cluster through this chart's authLogLevel "
+        "rather than logLevel — Debug is the only word valid in both."
+        if openshift_only else
+        " If you meant OpenShift's vocabulary (Normal, Debug, Trace, TraceAll), that is a different "
+        "setting, reached through the chart's authLogLevel."
+    )
     return logging.INFO, (
-        f"GSD_LOG_LEVEL={raw!r} is not a log level this app accepts, so it is running at INFO. "
-        f"Use one of {', '.join(LOG_LEVELS)} (case does not matter). If you meant OpenShift's "
-        f"vocabulary — Normal, Debug, Trace, TraceAll — that belongs to operator.openshift.io "
-        f"objects and is set through the chart's authLogLevel, not logLevel; only Debug means the "
-        f"same thing in both."
+        f"GSD_LOG_LEVEL is set to a {len(raw)}-character value that is not a log level this app "
+        f"accepts, so it is running at INFO. The value is deliberately not repeated here, in case "
+        f"something other than a log level was wired into it. Use one of "
+        f"{', '.join(LOG_LEVELS)} (case does not matter).{hint}"
     )
 
 

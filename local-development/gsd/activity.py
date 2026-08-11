@@ -119,8 +119,19 @@ class ActivityRecorder:
             # is empty with no error anywhere. The cause is upstream — the proxy is not passing the
             # header this reads — so it is the same on every request, and logging it per request
             # would flood the very level an operator turned on to find it.
-            if not self._warned_missing_user:
+            #
+            # THE CHECK-AND-SET IS UNDER THE LOCK, because request handlers are concurrent and an
+            # unsynchronised flag does not make a latch. Review forced two threads to observe False
+            # together and the once-per-process line appeared twice — a line that says "said once"
+            # appearing twice reads as two processes or two transitions, when it was one process and
+            # one unchanged condition.
+            #
+            # The log call is OUTSIDE the lock: it must not hold the buffer's lock for the length of
+            # a handler's logging, and by then the latch is already claimed by exactly one thread.
+            with self._lock:
+                first = not self._warned_missing_user
                 self._warned_missing_user = True
+            if first:
                 log.debug("dashboard-usage recording is on but a request carried no username "
                           "header, so nothing was recorded for it and nothing will be until the "
                           "proxy supplies one — check the oauth-proxy sidecar is passing user "
