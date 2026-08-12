@@ -8,6 +8,17 @@ type: application
 #            chart change without a bump here publishes NOTHING and still reports success.
 #            .github/workflows/helm.yaml warns when that is about to happen.
 #
+#            THE PATCH COMPONENT IS AUTOMATED NOW. publish.yml's pin commit bumps it in the same
+#            commit that rewrites image.tag, then dispatches Release Charts, because a new pin
+#            under an already-released version publishes nothing — exactly the trap the sentence
+#            above describes, and it bit this repo: published 0.4.0 pinned 0.6.0-424b3fdd63 while
+#            main pinned 0.6.0-d0c0edaeea, so `helm install` shipped an image without the
+#            self-tier fix that withholds directory DNs from narrowed readers.
+#
+#            So expect this line to move on its own, once per image build. MINOR and MAJOR stay
+#            human decisions and still mean "the templates changed behaviour" — do not read a
+#            patch bump as a template change. tests/test_publish_pin_step.py holds the pairing.
+#
 # appVersion — the application version, and it must equal local-development/pyproject.toml's
 #              `version`. That file is the single source of truth: build-and-push-external.sh
 #              reads it to build the image tag <version>-<git-sha>, which is then written into

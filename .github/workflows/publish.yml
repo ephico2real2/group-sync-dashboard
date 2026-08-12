@@ -89,8 +89,14 @@ jobs:
     runs-on: ubuntu-latest
 
     permissions:
-      # Only to push the one-line values.yaml pin back to main. Nothing else here writes.
+      # To push the pin commit (values.yaml's tag + Chart.yaml's version) back to main.
       contents: write
+      # To dispatch Release Charts afterwards. A push made with GITHUB_TOKEN does NOT trigger
+      # workflows — GitHub suppresses it to stop recursive runs — so the pin commit cannot
+      # publish the chart by landing on main. workflow_dispatch is the documented exception
+      # that DOES fire from a token-authenticated caller, which is why the step below exists
+      # and why this scope is needed.
+      actions: write
 
     steps:
       - uses: actions/checkout@v4
@@ -167,6 +173,7 @@ jobs:
           ./build-and-push-external.sh --update-values
 
       - name: Pin the published tag on main
+        id: pin
         if: steps.creds.outputs.configured == 'true'
         shell: bash
         env:
@@ -256,19 +263,64 @@ jobs:
               exit 0
             fi
 
-            git add charts/group-sync-dashboard/values.yaml
+            # BUMP THE CHART VERSION IN THE SAME COMMIT, because without it the new pin never
+            # reaches a consumer. chart-releaser skips a version it has already published, so
+            # rewriting the tag under an already-released version publishes NOTHING and reports
+            # success — the trap Chart.yaml's own comment names.
+            #
+            # Measured on this repository, 2026-08-12: published chart 0.4.0 pinned
+            # 0.6.0-424b3fdd63 while main pinned 0.6.0-d0c0edaeea, two merges newer. A consumer
+            # running `helm install` from the Helm repo got an image missing BOTH the wide-tier
+            # threshold fix (#32) and the self-tier projection (#33) — the second of which
+            # withholds directory DNs from narrowed readers, so the gap was a data exposure and
+            # not just staleness.
+            #
+            # Inside the loop, AFTER the reset and AFTER the already-pinned check: the version to
+            # bump is whatever the freshly fetched tip carries, which another publish run may have
+            # moved, and a run that changes no tag must not bump anything.
+            #
+            # PATCH, and only patch. The chart's MINOR/MAJOR keep meaning "the templates changed
+            # behaviour" — a human decision recorded in Chart.yaml's comments. This is the third
+            # component precisely because an image pin is a defaults change and nothing more.
+            python3 - <<'PY'
+          import pathlib, re
+          path = pathlib.Path("charts/group-sync-dashboard/Chart.yaml")
+          text = path.read_text()
+          # `^version:` at column zero, so appVersion (and any commented example) cannot match.
+          found = re.search(r"(?m)^version: (\d+)\.(\d+)\.(\d+)[ \t]*$", text)
+          assert found, "no `version: X.Y.Z` line in Chart.yaml"
+          major, minor, patch = (int(g) for g in found.groups())
+          new, n = re.subn(
+              r"(?m)^version: \d+\.\d+\.\d+[ \t]*$", f"version: {major}.{minor}.{patch + 1}", text
+          )
+          assert n == 1, f"expected exactly one version line, rewrote {n}"
+          path.write_text(new)
+          print(f"chart version {major}.{minor}.{patch} -> {major}.{minor}.{patch + 1}")
+          PY
+
+            git add charts/group-sync-dashboard/values.yaml charts/group-sync-dashboard/Chart.yaml
             # [skip publish] is now the SECOND of two guards against this commit re-triggering the
             # workflow, and the comment used to credit it as the only one. The paths filter is
-            # first: this commit touches charts/…/values.yaml alone, which is not an image input,
-            # so the workflow does not fire for it at all. The marker is kept because it is the
-            # guard that does not depend on the filter's contents — add charts/** to those paths
-            # for any reason and the loop is back without it.
+            # first: this commit touches charts/… alone, which is not an image input, so the
+            # workflow does not fire for it at all. The marker is kept because it is the guard
+            # that does not depend on the filter's contents — add charts/** to those paths for
+            # any reason and the loop is back without it.
             git commit -m "chore(chart): pin image tag ${TAG} [skip publish]" \
                        -m "Published ${REGISTRY}/${REGISTRY_NAMESPACE}/group-sync-dashboard:${TAG} for commit ${GITHUB_SHA}, so the chart deploys the image built from that commit rather than whatever was last pinned by hand." \
                        -m "Automated by .github/workflows/publish.yml."
 
             if git push origin HEAD:main; then
               echo "pinned ${TAG} on main"
+              # Signals the dispatch step below. Set ONLY on a push that actually landed a new
+              # pin — the already-pinned early exit above leaves it unset, because there is no
+              # new chart version to publish and a dispatch would package an unchanged chart
+              # that chart-releaser then skips, turning a no-op into a red-looking run.
+              #
+              # Defaulted so the step body stays runnable outside Actions: tests/
+              # test_publish_pin_step.py executes this exact script in a sandbox where
+              # GITHUB_OUTPUT does not exist, and an unguarded redirect would fail there for a
+              # reason that has nothing to do with pinning.
+              echo "pinned=true" >> "${GITHUB_OUTPUT:-/dev/null}"
               exit 0
             fi
             # Says "retrying" only when there is actually another attempt. The log is the only
@@ -286,3 +338,37 @@ jobs:
           echo "::error::could not pin ${TAG} after 3 attempts. The image IS published;"
           echo "::error::only the chart's tag is unpinned, so main may deploy an older image."
           exit 1
+
+      # WHY A DISPATCH AND NOT THE PUSH ITSELF. helm.yaml triggers on `push` to main under
+      # `paths: charts/**`, and the pin commit matches that filter — but it still never fires,
+      # because a push made with the repository's GITHUB_TOKEN does not create workflow runs.
+      # GitHub suppresses it deliberately, to stop a workflow from re-triggering itself:
+      #
+      #   "When a workflow run pushes code using the repository's GITHUB_TOKEN, a new workflow
+      #    will not run even when the repository contains a workflow configured to run when push
+      #    events occur … with the following exceptions: workflow_dispatch and
+      #    repository_dispatch events always create workflow runs."
+      #   https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow
+      #
+      # Measured here rather than taken on faith: across the three pin commits on main
+      # (e740cc5, 28e29fe, 284a45d) `gh run list --workflow="Release Charts"` shows no run at
+      # all, while every run it does show sits on a human merge commit.
+      #
+      # So the chart was only ever released from the MERGE commit — which by construction pins
+      # the PREVIOUS image, since the pin for this merge's image is the child commit this job
+      # creates. That is the second half of the staleness: one image behind on a chart-changing
+      # merge, and frozen indefinitely on a code-only one.
+      #
+      # workflow_dispatch is the documented exception, so it fires with the same token, and no
+      # PAT or GitHub App has to be introduced to make releases work.
+      - name: Publish the chart that pins the image just built
+        if: steps.pin.outputs.pinned == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # --ref main, not the triggering sha: the point is to package the tip that CARRIES the
+          # pin commit. github.sha predates it by definition.
+          gh workflow run helm.yaml --ref main
+          echo "dispatched Release Charts for main"
