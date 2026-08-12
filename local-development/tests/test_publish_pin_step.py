@@ -488,3 +488,123 @@ def test_the_pin_step_writes_both_files_it_commits() -> None:
     assert "values.yaml" in added[0] and "Chart.yaml" in added[0], (
         f"both files must be staged in the same commit as the pin; got {added[0]!r}"
     )
+
+
+# ── The dispatch must wait for the ref it is about to package ──────────────────────────────
+#
+# THE SCAR, AND IT IS MINE FROM THE SAME DAY. The dispatch step was added to fix the published
+# chart lagging main. It then lost a different race, on 2026-08-12. `gh workflow run helm.yaml
+# --ref main` resolves `main` when GITHUB PROCESSES the dispatch, not when we pushed, and one run
+# resolved it to the pre-push tip. The sha each Release Charts run actually packaged:
+#
+#   00:56  ef6d41db25  the pin commit    -> chart 0.4.1 published
+#   02:18  ee99856b1c  the pin commit    -> chart 0.4.2 published
+#   05:02  01d86756f4  the MERGE commit  -> published NOTHING
+#   05:05  f67af3254e  the pin commit    -> chart 0.4.3, dispatched BY HAND
+#
+# chart-releaser packaged Chart.yaml at the merge commit, where `version:` was still the already
+# released value, skipped it, and exited zero. **All four runs report `success`** — the same
+# silent-green property that let the original staleness bug hide for three merges. It won twice and
+# lost once, so nothing about it announces itself; the only reason it was caught is that the
+# published index was checked by hand after the merge.
+#
+# These run the dispatch step's REAL body out of the workflow, against a sandbox origin, with a
+# fake `gh` on PATH that records whether it was called — the only way to assert the thing that
+# matters: on a stale ref the dispatch must NOT happen.
+
+
+def run_dispatch(path: pathlib.Path, pinned_sha: str) -> tuple[subprocess.CompletedProcess, str]:
+    """Run the dispatch step's body with `gh` stubbed, returning (result, recorded gh args).
+
+    The stub records rather than refuses, because "did it dispatch?" is the assertion. A stub that
+    exited non-zero would conflate "declined to dispatch" with "dispatched and failed" — the exact
+    distinction these tests exist to make.
+    """
+    bin_dir = path / "fakebin"
+    bin_dir.mkdir(exist_ok=True)
+    calls = bin_dir / "gh-calls.txt"
+    stub = bin_dir / "gh"
+    stub.write_text(f'#!/usr/bin/env bash\nprintf "%s\\n" "$*" >> "{calls}"\n')
+    stub.chmod(0o755)
+
+    env = dict(GIT_ENV)
+    env["PATH"] = f"{bin_dir}:{env['PATH']}"
+    env["PINNED_SHA"] = pinned_sha
+    env["GH_TOKEN"] = "stub-token-never-used"
+    done = subprocess.run(
+        ["bash", "-c", dispatch_step()["run"]], cwd=path, env=env,
+        capture_output=True, text=True, check=False,
+    )
+    return done, (calls.read_text() if calls.exists() else "")
+
+
+def test_the_dispatch_fires_once_the_ref_carries_the_pin_commit(sandbox: Sandbox) -> None:
+    """The healthy path: origin/main IS the pin commit, so the release is dispatched for it."""
+    at_a = sandbox.merge("a.txt")
+    run = sandbox.runner("runA", at_a, "0.6.0-AAAAAAAAAA")
+    assert sandbox.run_step(run).returncode == 0
+
+    pinned = git(sandbox.seed, "ls-remote", "origin", "main").split()[0]
+    result, calls = run_dispatch(run, pinned)
+
+    assert result.returncode == 0, f"{result.stdout}\n{result.stderr}"
+    assert calls.count("workflow run helm.yaml --ref main") == 1, (
+        f"expected exactly one dispatch of the chart release; gh received:\n{calls!r}"
+    )
+    assert "ref converged" in result.stdout
+
+
+def test_a_stale_ref_is_never_dispatched(sandbox: Sandbox) -> None:
+    """THE 05:02 REGRESSION. If origin/main does not carry the pin commit, DO NOT DISPATCH.
+
+    Dispatching anyway is what happened: chart-releaser packaged an already-released version,
+    skipped, and reported success. A red run nobody can misread is strictly better than a green run
+    that published nothing — so this asserts BOTH halves: `gh` untouched, and a non-zero exit
+    carrying `::error::`.
+
+    Before the fix this cannot pass: the step called `gh workflow run` unconditionally, so `calls`
+    would contain the dispatch and the exit code would be 0.
+    """
+    at_a = sandbox.merge("a.txt")
+    run = sandbox.runner("runA", at_a, "0.6.0-AAAAAAAAAA")
+    assert sandbox.run_step(run).returncode == 0
+
+    # A sha origin will never report. Stands in for the real case — a tip that has not yet caught
+    # UP — because both mean the same thing here: origin/main is not the commit we are about to ask
+    # chart-releaser to package.
+    stale_pin = "0" * 40
+
+    result, calls = run_dispatch(run, stale_pin)
+
+    assert calls == "", (
+        "the step dispatched a chart release for a ref that does not carry the pin commit — "
+        f"chart-releaser would package a stale Chart.yaml and report success. gh got:\n{calls!r}"
+    )
+    assert result.returncode == 1, (
+        f"a refused dispatch must fail the job, not pass quietly:\n{result.stdout}\n{result.stderr}"
+    )
+    assert "::error::" in result.stdout, "the refusal must be legible in the run log"
+    assert "gh workflow run helm.yaml --ref main" in result.stdout, (
+        "the error must tell the operator how to force the release by hand"
+    )
+
+
+def test_the_dispatch_consumes_the_sha_the_pin_step_published() -> None:
+    """A guard on the SEAM, because the behavioural tests above supply PINNED_SHA themselves.
+
+    The step must read the pin step's own output rather than re-deriving HEAD, which would work
+    only by accident: the pin loop happens to leave HEAD on the pin commit, and nothing states
+    that. Rename this seam on one side only and PINNED_SHA is empty, the comparison never matches,
+    and every publish ends in the refusal path above — loud, but wrong.
+    """
+    step = dispatch_step()
+    assert step.get("env", {}).get("PINNED_SHA") == "${{ steps.pin.outputs.pinned_sha }}", (
+        f"the dispatch must consume the pin step's published sha; env is {step.get('env')!r}"
+    )
+    body = pin_step()
+    assert "pinned_sha=$(git rev-parse HEAD)" in body, (
+        "the pin step must publish the sha it landed, as `pinned_sha`"
+    )
+    assert "ls-remote" in step["run"], (
+        "the dispatch must verify the remote ref before asking for a release"
+    )
