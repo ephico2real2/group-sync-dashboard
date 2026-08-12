@@ -121,21 +121,31 @@ of it.
 | `/api/clusters/{c}/membership-changes` | changes affecting them | all |
 | `/api/clusters/{c}/logins` | their own attempts | all |
 | `/api/clusters/{c}/cluster-access` | their own gate status | all |
-| `/api/alerts` | filtered to `SELF_ALERT_KINDS` | all kinds |
+| `/api/alerts` | filtered to `SELF_ALERT_KINDS`; the `reconcile_error` detail is replaced with a generic sentence | all kinds, full detail |
 | `/api/dashboard/activity` | their own rows | all — **usage tier only** |
 | `/api/clusters/{c}/bindings/findings` | **403** | all |
 | `/api/clusters/{c}/operator-configs` | **403** | all |
 | `/api/clusters` | reachable; cluster-wide `operator_configs` withheld | full card |
-| `/api/clusters/{c}/groupsyncs` (+ events) | **unchanged at both tiers** | same |
+| `/api/clusters/{c}/groupsyncs` | full CR health **minus `ldap_filter` and `error_message`** | full row |
+| `/api/clusters/{c}/groupsyncs/{name}/events` | unchanged at both tiers | same |
 | `/api/whoami` | own identity + declared tier | same |
 
 **Two deliberate asymmetries, both measured:**
 
-- `groupsyncs` is *not* gated. `/metrics` is in `skipAuthRegex` and already serves
-  `gsd_groupsync_state{groupsync=...}`, `_last_sync_timestamp_seconds` and `_groups_total` to a
-  request with no credential at all. Refusing the API while the metric is public would be theatre,
-  and it would cost the Groups tab its per-provider colour slots. Gate `/metrics` first if this
-  should change.
+- `groupsyncs` is *not* gated, but it is *projected*. `/metrics` is in `skipAuthRegex` and already
+  serves `gsd_groupsync_state{groupsync=...}`, `_last_sync_timestamp_seconds` and `_groups_total` to
+  a request with no credential at all, so refusing CR health while the metric is public would be
+  theatre — and it would cost the Groups tab its per-provider colour slots. Gate `/metrics` first if
+  this should change. Two fields are the exception, by the spec's own ruling: **`ldap_filter` and
+  `error_message` are omitted at the self tier**, because both can embed directory DNs and the gate
+  group — which `/metrics` deliberately never carries, and which a narrowed reader cannot `oc get`
+  the CR to read (measured: the narrowed personas fail `oc auth can-i get
+  groupsyncs.redhatcop.redhat.io`). The omission is an allowlist
+  (`gsd/api.py#SELF_TIER_GROUPSYNC_FIELDS`), so a field added later is withheld at self until
+  somebody rules on it. The same diagnostic reaches `/api/alerts` as the `reconcile_error` detail,
+  where the self tier keeps the alert and receives a generic sentence instead of the text —
+  replaced rather than omitted, so an empty reason column cannot read as "no reason exists".
+  Administrators keep both fields and the full alert detail, byte-for-byte.
 - `/api/clusters` stays reachable for everyone because the cluster selector needs it on every tab.
   Its group and binding counts are also on `/metrics`, so they are not withheld; the
   `operator_configs` summary is **not** on `/metrics`, so that pair is withheld as `null`.
@@ -242,9 +252,15 @@ most one minute.
 
 ### Why the alert feed is an allow-list
 
-`api.py:75 SELF_ALERT_KINDS` is an **allow**-list, not a deny-list, so an alert kind added later is
-hidden from the narrow view until somebody rules on it. The list's invariant is *"every kind here is
-backed by a page the self tier sees in full"*.
+`gsd/api.py#SELF_ALERT_DETAILS` is an **allow**-list, not a deny-list, so an alert kind added later
+is hidden from the narrow view until somebody rules on it — and it is ONE structure carrying both
+the admitted kinds and each kind's detail policy, with `SELF_ALERT_KINDS` derived from its keys, so
+the two can never disagree. The list's invariant is *"every kind here is backed by a page the self
+tier sees"* — and where that page withholds a field, the alert must not re-serve it:
+`reconcile_error` keeps its kind at self (a current failure is actionable), but its `detail`, which
+copies the CR's `error_message`, is replaced with a generic sentence. Replaced, never omitted — an
+absent reason renders as an empty column, which reads as "no reason exists" when the truth is
+"withheld".
 
 That invariant was broken once, and it is why the shape matters: `dangling_binding` and
 `config_reconcile_error` were still in the list after their backing endpoints started refusing at
