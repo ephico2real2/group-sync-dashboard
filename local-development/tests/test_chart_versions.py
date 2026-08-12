@@ -57,19 +57,54 @@ def test_appversion_equals_the_application_version() -> None:
     )
 
 
-def test_the_pinned_image_tag_is_a_build_of_that_same_app_version() -> None:
-    """The pinned tag is `<version>-<git-sha>`, so its prefix must be appVersion.
+def test_the_image_tag_is_empty_or_a_build_of_that_same_app_version() -> None:
+    """SUCCESSOR to the pinned-tag check, which had nothing left to check once the pin went.
 
-    Catches the other half of the same drift: a chart claiming appVersion 0.6.0 while pinning an
-    0.5.x image would install something other than what it advertises. The tag is written by the
-    build script (or by CI's publish job), so a mismatch here means the chart was edited by hand
-    and the two halves were not reconciled.
+    THE ORIGINAL CAUGHT A REAL DEFECT and must not simply be deleted: it held the chart's pinned
+    tag to appVersion, the other half of the drift that let appVersion read 0.5.2 for weeks while
+    the application was 0.6.0. What changed is that `image.tag` now ships EMPTY — gsd.image resolves
+    `default .Chart.AppVersion`, so a chart naming no tag deploys the version it declares, and there
+    is no pin to compare (docs/DESIGN_decouple_chart_and_app_release.md).
+
+    So the invariant becomes conditional, and covers BOTH states rather than only the committed one:
+
+      empty      the chart resolves appVersion. Nothing to check, and this is what ships.
+      non-empty  somebody pinned deliberately, and the prefix must still be appVersion — exactly
+                 the original assertion, on exactly the original failure.
+
+    Why not assert it is always empty: `build-and-push-external.sh --update-values` writes a real
+    pin into a working copy, which is the supported path for building into your own registry. A test
+    demanding empty would red the suite for a developer mid-build and teach them to skip it. This
+    one passes for them AND still catches a pin that disagrees with appVersion — the case that
+    installs something other than what the chart advertises.
     """
     tag = yaml.safe_load(VALUES.read_text())["image"]["tag"]
     app = _chart()["appVersion"]
+
+    if not tag:
+        return
     assert tag.startswith(f"{app}-"), (
         f"values.yaml pins image tag {tag!r}, which is not a build of appVersion {app!r}. "
-        "Expected <appVersion>-<git-sha>."
+        f"Expected either an empty tag — the chart then resolves appVersion — or "
+        f"<appVersion>-<git-sha>."
+    )
+
+
+def test_an_empty_tag_still_resolves_to_something_the_chart_declares() -> None:
+    """The empty case is only safe because the HELPER falls back; assert the helper, not the value.
+
+    `image.tag: ""` is meaningless on its own — it is safe purely because
+    `templates/_helpers.tpl#gsd.image` reads `default .Chart.AppVersion .Values.image.tag`. Remove
+    that default and the chart renders `repository:` with a bare colon and no tag, which pulls
+    `:latest` on some runtimes and fails outright on others. Neither is what the chart says it does.
+
+    So this pins the coupling that makes an empty tag legitimate, in the file that ships it.
+    """
+    helper = (REPO / "charts" / "group-sync-dashboard" / "templates" / "_helpers.tpl").read_text()
+    assert "default .Chart.AppVersion .Values.image.tag" in helper, (
+        "gsd.image no longer falls back to .Chart.AppVersion, but values.yaml still ships an empty "
+        "image.tag — so the chart would render an image reference with no tag at all. Either "
+        "restore the fallback or stop shipping an empty tag."
     )
 
 

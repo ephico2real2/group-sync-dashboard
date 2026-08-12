@@ -64,6 +64,10 @@ LINE_NUMBER_CITATION = re.compile(
 # findings quote the exact lines they are about — rewriting those to symbol names as the code changes
 # would falsify the record of what was reviewed. These files are historical once written.
 REVIEW_ARTIFACTS = (
+    # The chart/app release-decoupling design. A review record: its findings quote the exact
+    # workflow steps, values lines and helper expressions they would replace, and the claims are
+    # about spans of code at a moment — which is what the line-number exemption is for.
+    "DESIGN_decouple_chart_and_app_release.md",
     # The tier-constants / `settling`-name debt review. Two claimed behaviour-PRESERVING
     # changes, which is why they earn a pass at all: the brief asks reviewers to prove identity,
     # not taste, and their verdicts quote the exact comparison sites and the DEBUG line's
