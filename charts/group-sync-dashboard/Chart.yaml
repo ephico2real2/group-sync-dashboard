@@ -8,16 +8,14 @@ type: application
 #            chart change without a bump here publishes NOTHING and still reports success.
 #            .github/workflows/helm.yaml warns when that is about to happen.
 #
-#            THE PATCH COMPONENT IS AUTOMATED NOW. publish.yml's pin commit bumps it in the same
-#            commit that rewrites image.tag, then dispatches Release Charts, because a new pin
-#            under an already-released version publishes nothing — exactly the trap the sentence
-#            above describes, and it bit this repo: published 0.4.0 pinned 0.6.0-424b3fdd63 while
-#            main pinned 0.6.0-d0c0edaeea, so `helm install` shipped an image without the
-#            self-tier fix that withholds directory DNs from narrowed readers.
+#            BUMPED BY HAND, IN THE PR THAT CHANGES THE CHART. It was briefly automated —
+#            publish.yml's pin commit bumped the patch on every image build — and that automation
+#            is gone with the pin commit it existed to publish. `Chart changes bump the chart
+#            version` in ci.yml is the enforcement now: a PR touching charts/ that does not move
+#            this line fails. Nothing writes to this file except a human in a reviewed change.
 #
-#            So expect this line to move on its own, once per image build. MINOR and MAJOR stay
-#            human decisions and still mean "the templates changed behaviour" — do not read a
-#            patch bump as a template change. tests/test_publish_pin_step.py holds the pairing.
+#            So every component means what it says again: MAJOR and MINOR for behaviour, PATCH for
+#            a fix or a defaults change. A patch bump is no longer noise from a build.
 #
 # appVersion — the application version, and it must equal local-development/pyproject.toml's
 #              `version`. That file is the single source of truth: build-and-push-external.sh
@@ -51,7 +49,18 @@ type: application
 #
 # So: a silent tightening for the clusters that need it, a no-op for the rest, and the old values
 # remain settable explicitly. values.yaml under visibility.adminSar carries the measurement.
-version: 0.4.4
+# 0.5.0, and a MINOR bump because this changes what an upgrade DEPLOYS for anyone who never set
+# image.tag. The chart shipped a pinned <appVersion>-<sha>; it now ships an empty tag and resolves
+# appVersion through gsd.image. So the first upgrade onto this chart moves a release from a fixed
+# image reference to the appVersion alias — the same application version, but no longer byte-pinned,
+# and with pullPolicy Always that is re-resolved on every container creation. A consumer must learn
+# that from the version rather than discover it on a node drain.
+#
+# Pin deliberately if you need byte-identical rollbacks:
+#   --set image.tag=0.7.0-db8a90510f
+# values.yaml under `image` carries the full reasoning, and
+# docs/DESIGN_decouple_chart_and_app_release.md carries the review that settled it.
+version: 0.5.0
 # 0.7.0. It must equal local-development/pyproject.toml's `version` (tests/test_chart_versions.py
 # holds them together, and holds appVersion against the pinned image tag's prefix), so moving it
 # means moving the app version AND re-pinning the image — all three land in one commit or CI is red,

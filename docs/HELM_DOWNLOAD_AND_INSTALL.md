@@ -113,14 +113,30 @@ grep -E '^  tag:'                ./charts/group-sync-dashboard/values.yaml
 ```
 
 ```
-version: 0.4.4
+version: 0.5.0
 appVersion: 0.7.0
-  tag: "0.7.0-db8a90510f"
+  tag: ""
 ```
 
-The pinned tag is `<appVersion>-<git-sha>`, so the chart names the exact commit its image was built
-from. A running pod reports the same sha at `/api/version` and on the `gsd_build_info` metric, which
-is how you confirm the cluster is running what the chart claimed.
+**An empty tag is the normal case, and it means `appVersion`.** The chart resolves
+`default .Chart.AppVersion .Values.image.tag`, so this chart deploys
+`quay.io/ephico2real/group-sync-dashboard:0.7.0`. Confirm it rather than infer it:
+
+```sh
+helm template gsd ./charts/group-sync-dashboard --set ingress.host=x.example.com \
+  | grep -m1 'image: quay'
+#             image: quay.io/ephico2real/group-sync-dashboard:0.7.0
+```
+
+That `:0.7.0` alias is republished when the application version changes, and
+`imagePullPolicy: Always` means every container creation re-resolves it — so it is stable for the
+life of an appVersion, but it is not a byte-pin. **Pin the sha form if you need byte-identical
+rollbacks:** `--set image.tag=0.7.0-<git-sha>`, which always means the same source. Either way a
+running pod reports its own commit at `/api/version` and on the `gsd_build_info` metric, which is how
+you confirm what the cluster is actually running.
+
+Charts at **0.4.4 and earlier** shipped a pinned `<appVersion>-<git-sha>` in `values.yaml` instead;
+if you are reading one of those, the tag is not empty and names the commit directly.
 
 ---
 
@@ -203,16 +219,28 @@ needs that mirrored independently.
 
 ```sh
 # On a connected machine
-helm pull group-sync-dashboard/group-sync-dashboard --version 0.4.4
+helm pull group-sync-dashboard/group-sync-dashboard --version 0.5.0
+tar -xzf group-sync-dashboard-0.5.0.tgz
 
-# Read the pinned image out of the tarball without unpacking it
-tar -xzOf group-sync-dashboard-0.4.4.tgz group-sync-dashboard/values.yaml \
-  | grep -E '^  (tag|repository):'
-#   repository: quay.io/ephico2real/group-sync-dashboard
-#   tag: "0.7.0-db8a90510f"
+# WHICH image does this chart deploy? Ask the chart, do not read one field — an empty
+# values.yaml tag means "appVersion", so grepping the tag alone answers "" and you would
+# mirror nothing. Rendering gives the reference the cluster will actually pull.
+helm template gsd ./group-sync-dashboard --set ingress.host=x.example.com \
+  | grep -m1 -oE 'quay\.io/[^"]*'
+#   quay.io/ephico2real/group-sync-dashboard:0.7.0
 
+skopeo copy docker://quay.io/ephico2real/group-sync-dashboard:0.7.0 \
+            docker://registry.internal.example.com/group-sync-dashboard:0.7.0
+```
+
+**Mirror the sha form instead if you want the pin.** `:0.7.0` is an alias that moves when the
+application version changes; an air-gapped mirror is exactly where you may prefer a reference that
+cannot:
+
+```sh
 skopeo copy docker://quay.io/ephico2real/group-sync-dashboard:0.7.0-db8a90510f \
             docker://registry.internal.example.com/group-sync-dashboard:0.7.0-db8a90510f
+# then, at install time:  --set image.tag=0.7.0-db8a90510f
 ```
 
 A plain pipe, not `grep <(tar ...)`. Process substitution here gave grep no output and left tar with

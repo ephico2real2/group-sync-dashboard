@@ -29,7 +29,7 @@ group membership, so it ships authenticated and you turn the proxy *off* deliber
 | Key | Default | Notes |
 |---|---|---|
 | `image.repository` | `quay.io/ephico2real/group-sync-dashboard` | written by `build-and-push-external.sh --update-values` |
-| `image.tag` | pinned by the build script | empty falls back to `Chart.appVersion` |
+| `image.tag` | `""` | empty resolves `Chart.appVersion`; set it to pin an exact build |
 | `image.pullPolicy` | `Always` | |
 | `image.pullSecrets` | `[]` | leave empty for a public repo — an empty secret *reference* fails scheduling rather than falling back to anonymous pull |
 
@@ -810,8 +810,30 @@ strategy. Keep both until you have watched a sync on your own cluster.
 ## Upgrading
 
 ```bash
-helm upgrade group-sync-dashboard . -n group-sync-dashboard --reuse-values \
-  --set image.tag=<new-tag>
+helm upgrade group-sync-dashboard . -n group-sync-dashboard -f my-values.yaml
+```
+
+**Which image that deploys, and how to choose.** From chart 0.5.0 the chart ships `image.tag: ""`
+and resolves `appVersion` — so an upgrade with no tag override deploys the application version the
+chart declares. Two consequences worth knowing before you run it:
+
+- **`--reuse-values` keeps whatever tag the release already has.** A release installed from chart
+  0.4.4 or earlier carries a pinned `<appVersion>-<sha>`, and `--reuse-values` preserves it, so the
+  cluster keeps that exact image and never adopts the fallback. That is a legitimate choice — it is
+  byte-pinned — but it is a choice, and it is easy to make by accident. Clear it deliberately with
+  `--set image.tag=""` if you want the chart's default.
+- **A values FILE is the better habit anyway.** Helm reuses the previous release's values only when
+  you pass neither `-f` nor `--set`; the moment either appears it resets to chart defaults plus what
+  this invocation supplied. Measured on this chart: one `helm upgrade --set logLevel=DEBUG` turned
+  `oauthProxy.apiTokenAccess` off and reported `STATUS: deployed`.
+
+Pin an exact build when you need byte-identical rollbacks — `appVersion` is republished when the
+application version changes, and `imagePullPolicy: Always` means every container creation
+re-resolves it:
+
+```bash
+helm upgrade group-sync-dashboard . -n group-sync-dashboard -f my-values.yaml \
+  --set image.tag=0.7.0-db8a90510f
 ```
 
 The Deployment checksums the ConfigMap, so a change to intervals or the cluster list

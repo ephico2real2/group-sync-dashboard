@@ -6,11 +6,34 @@
 # Image
 # ---------------------------------------------------------------------------
 image:
-  # repository and tag are written by local-development/build-and-push-external.sh, which
-  # tags <version>-<git-sha>. Editing them by hand works, but the script keeps them
-  # consistent with an image that actually exists in the registry.
   repository: quay.io/ephico2real/group-sync-dashboard
-  tag: "0.7.0-db8a90510f"
+
+  # EMPTY ON PURPOSE, and empty means `appVersion`. gsd.image resolves
+  # `default .Chart.AppVersion .Values.image.tag`, so a chart that names no tag deploys the
+  # application version it declares — the shape cert-manager uses, for a chart that ships
+  # alongside the app it deploys.
+  #
+  # It used to carry a pinned <appVersion>-<git-sha>, written back to `main` by CI after every
+  # build. That one write-back caused three defects: a published chart that lagged two merges and
+  # shipped without a data-exposure fix (#34), a release that published nothing while reporting
+  # success (#37), and branch protection being impossible because CI had to write to the default
+  # branch. docs/DESIGN_decouple_chart_and_app_release.md has the review that settled it.
+  #
+  # SET IT to deploy a specific build, and the fallback steps aside:
+  #   --set image.tag=0.7.0-db8a90510f      an exact commit's image, immutable
+  # `local-development/build-and-push-external.sh --update-values` writes exactly that for you,
+  # which is the path to use when you build into your own registry — a fork, an air-gapped
+  # mirror — and need the chart pointing at your own image rather than ours.
+  #
+  # WHAT `appVersion` RESOLVES TO IS A MOVING ALIAS, republished only when the application version
+  # changes. So it is stable for the life of an appVersion and NOT a substitute for pinning if you
+  # need byte-identical rollbacks: with pullPolicy Always below, every container creation
+  # re-resolves it. Pin the sha form if that matters to you.
+  tag: ""
+
+  # Always, deliberately. A tag that can be republished must be re-resolved, or two nodes end up
+  # running different bytes under one tag — and the sha form is immutable, so re-resolving it costs
+  # a registry round trip and changes nothing.
   pullPolicy: Always
 
   # Only needed for a PRIVATE registry. Leave empty for a public repository: an empty

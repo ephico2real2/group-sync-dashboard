@@ -23,6 +23,84 @@ permissions:
   contents: read
 
 jobs:
+  # A CHART CHANGE THAT DOES NOT BUMP THE VERSION PUBLISHES NOTHING AND REPORTS SUCCESS.
+  # chart-releaser skips a version it has already released, so the release run goes green having
+  # shipped no chart. This repo has paid for that twice: the three template changes in #27 published
+  # nothing while the Helm repo kept serving the previous chart, and #34 shipped a chart without the
+  # self-tier fix that withholds directory DNs from narrowed readers.
+  #
+  # The bump used to be automated — publish.yml's pin commit moved the patch on every image build —
+  # and that automation is gone with the pin commit, along with the three defects it caused. This
+  # check is the replacement: a human bumps the version in the PR, and CI refuses the PR if they
+  # forget. Ported from group-sync-operator-helm-chart, which has run it long enough to have
+  # documented the base-resolution traps below.
+  #
+  # PR-ONLY, deliberately. `main` is branch protected with pull requests required, so nothing reaches
+  # it without this having run. Extending it to `push` would add a post-merge repeat of a check that
+  # already passed, with extra base-ref edge cases to get wrong.
+  version-bump:
+    name: Chart changes bump the chart version
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    env:
+      CHART: charts/group-sync-dashboard
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Needs real history: the check compares this PR's chart against its base commit.
+          fetch-depth: 0
+      - name: A change under charts/ requires a new Chart.yaml version
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -uo pipefail
+
+          # VALIDATE THE BASE BEFORE USING IT. Both bad values fail in ways that look like a pass,
+          # or like an unrelated crash — measured on the repo this check came from:
+          #
+          #   BASE empty        `git diff "" HEAD` prints `fatal: bad revision ''` and falls into
+          #                     the `|| true` below, so `changed` is empty and this reports "no
+          #                     chart content changed": a VACUOUS PASS. Worse, `git show ":$CHART/..."`
+          #                     with an empty base reads the INDEX, so `was` comes back as the
+          #                     WORKING version and the comparison compares a value to itself.
+          #   BASE unresolvable `git show` exits 128 and, under the `-e` GitHub gives every `run:`
+          #                     block, kills the step at the `was=` assignment with no explanation.
+          #
+          # A base we cannot resolve is a BROKEN CHECK, not a passing one.
+          if [ -z "$BASE" ] || ! git rev-parse --verify --quiet "${BASE}^{commit}" >/dev/null; then
+            echo "::error::the base commit is '${BASE}' and cannot be resolved, so this check has"
+            echo "::error::nothing to compare the chart against. On a PR it comes from"
+            echo "::error::github.event.pull_request.base.sha and needs fetch-depth: 0, set above."
+            exit 1
+          fi
+
+          # Chart.yaml itself is excluded: bumping the version IS a change under charts/, and
+          # counting it would make every version bump look like content needing another bump.
+          changed=$(git diff --name-only "$BASE" HEAD -- "$CHART" | grep -v '/Chart.yaml$' || true)
+          if [ -z "$changed" ]; then
+            echo "no chart content changed — nothing to publish, no bump needed"
+            exit 0
+          fi
+          echo "chart content changed:"; printf '  %s\n' $changed
+
+          if ! git cat-file -e "$BASE:$CHART/Chart.yaml" 2>/dev/null; then
+            echo "Chart.yaml does not exist at the base — this PR creates the chart, so there is no"
+            echo "previous version to bump. Nothing to check."
+            exit 0
+          fi
+          # No 2>/dev/null here: the absent-file case is handled above, so any error now is real.
+          was=$(git show "$BASE:$CHART/Chart.yaml" | awk '/^version:/{print $2; exit}')
+          now=$(awk '/^version:/{print $2; exit}' "$CHART/Chart.yaml")
+          echo "version: $was -> $now"
+
+          if [ "$was" = "$now" ]; then
+            echo "::error file=$CHART/Chart.yaml::chart content changed but version is still $now, so"
+            echo "::error file=$CHART/Chart.yaml::chart-releaser will skip the release and report"
+            echo "::error file=$CHART/Chart.yaml::success while publishing nothing. Bump it."
+            exit 1
+          fi
+          echo "version was bumped"
+
   tests:
     runs-on: ubuntu-latest
     defaults:

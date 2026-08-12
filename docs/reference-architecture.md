@@ -1381,37 +1381,62 @@ the thing it publishes**, so a documentation-only merge publishes nothing.
 flowchart TB
   merge["merge to main"]
 
-  subgraph img["publish.yml — the image"]
+  subgraph img["publish.yml — the image (writes to NOTHING in this repo)"]
     direction TB
     ipath{"paths: gsd/**, pyproject.toml,<br/>README.md, Containerfile,<br/>.containerignore, build script"}
-    build["build-and-push-external.sh --update-values<br/>tag = &lt;pyproject version&gt;-&lt;10-char sha&gt;"]
-    quay[("quay.io/…/group-sync-dashboard:TAG")]
-    pin["commit: pin image tag TAG [skip publish]<br/>pushed to main"]
-    ipath -->|matched| build --> quay --> pin
+    rel{"did pyproject version change<br/>since the previous commit?"}
+    build["build-and-push-external.sh<br/>tag = &lt;appVersion&gt;-&lt;10-char sha&gt;"]
+    relbuild["…--release-tags<br/>ALSO pushes :&lt;appVersion&gt;"]
+    quay[("quay.io/…:&lt;appVersion&gt;-&lt;sha&gt;<br/>immutable, every merge")]
+    alias[("quay.io/…:&lt;appVersion&gt;<br/>alias, releases only")]
+    ipath -->|matched| rel
+    rel -->|no| build --> quay
+    rel -->|yes| relbuild --> alias
   end
 
   subgraph chart["helm.yaml — the chart"]
     direction TB
     cpath{"paths: charts/**"}
-    ci["ci.yml must pass first"]
+    ci["ci.yml must pass first<br/>incl. 'Chart changes bump the chart version'"]
+    label["skopeo copy → :&lt;chartVersion&gt;<br/>retag, never rebuild"]
     cr["chart-releaser<br/>skips an already-released version"]
     gh[("gh-pages branch<br/>index.yaml + .tgz")]
-    cpath -->|matched| ci --> cr --> gh
+    cpath -->|matched| ci --> label --> cr --> gh
   end
 
   merge --> ipath
   merge --> cpath
   ipath -.->|"no image input changed"| skip(["nothing published"])
   cpath -.->|"no chart change"| skip
-  pin -.->|"touches charts/ only,<br/>so it cannot re-trigger publish"| merge
+  alias -.->|"the chart resolves this<br/>when image.tag is empty"| label
 ```
 
 **The image.** `publish.yml` runs the same script a laptop would, so the published artefact is a
-merge commit and the chart records which one. The tag is `<version>-<sha>`, derived from
-`local-development/pyproject.toml` — the single source of truth — and written into
-`values.yaml`'s `image.tag`. `appVersion` sits *outside* that chain, which is exactly how it rotted
-to `0.5.2` while the app was `0.6.0`; `tests/test_chart_versions.py` now holds the two together and
-holds `appVersion` against the pinned tag's prefix.
+merge commit and the tag records which one. The tag is `<appVersion>-<sha>`, derived from
+`local-development/pyproject.toml` — the single source of truth. `appVersion` sits *outside* that
+chain, which is exactly how it rotted to `0.5.2` while the app was `0.6.0`;
+`tests/test_chart_versions.py` holds the two together, along with `gsd/__init__.py`'s `__version__`.
+
+**Nothing in `publish.yml` writes to this repository**, and that is the load-bearing property. It
+used to push a commit to `main` pinning the tag it had just built, and that one write-back caused
+three defects: a published chart that lagged two merges and shipped without a data-exposure fix
+(#34), a release that published nothing while reporting `success` (#37), and branch protection being
+impossible on `main`, because a user-owned repository cannot allowlist the Actions app as a bypass
+actor. The job now declares `contents: read` and `tests/test_publish_release_decision.py` asserts it.
+
+**Two kinds of tag, and the difference is the whole design.**
+`<appVersion>-<sha>` is immutable and published on every merge — a given tag always means the same
+source. `<appVersion>` is an alias the chart resolves by default, republished *only* when a human
+bumps the application version in a PR. It is deliberately not moved per merge: `values.yaml` sets
+`imagePullPolicy: Always`, so a moving default would let the running binary change on any container
+creation while the chart version on the cluster stayed put. Both adversarial reviewers refused the
+per-merge version; see `docs/DESIGN_decouple_chart_and_app_release.md`.
+
+**`<chartVersion>` is stamped by `helm.yaml`, not `publish.yml`**, and by `skopeo copy` rather than a
+rebuild. In `publish.yml` it would move `:0.4.4` on every image-input merge while the already-
+published chart 0.4.4 still deployed an older image — a label that lied about a shipped release —
+and a template-only change would never produce one at all, because `charts/**` is deliberately absent
+from that workflow's path filter.
 
 **The pinned tag is not necessarily HEAD**, and that is deliberate rather than drift. The workflow
 only runs when an image input changed, so after a documentation-only merge the pin still names the

@@ -13,6 +13,19 @@
 #   ./build-and-push-external.sh --create-pull-secret  # private repo: create/refresh the secret
 #   ./build-and-push-external.sh --update-values       # build, push, and write the ref into
 #                                                      # the chart's values.yaml for Helm
+#   ./build-and-push-external.sh --release-tags        # ALSO publish the release aliases
+#                                                      # :<appVersion> and :<chartVersion>
+#
+# THIS SCRIPT IS THE DISASTER-RECOVERY PATH. With --release-tags it does everything the publish
+# workflow does, so a laptop can cut a release on the day GitHub Actions is unavailable. Nothing
+# here depends on CI, and CI depends on this — .github/workflows/publish.yml calls this same file
+# rather than reimplementing the tag scheme.
+#
+# TWO KINDS OF TAG, and the difference matters:
+#   <appVersion>-<sha>  IMMUTABLE. Always pushed. A given tag always means the same source.
+#   <appVersion>        A MOVING ALIAS, and what the chart resolves by default. Only with
+#   <chartVersion>      --release-tags, because pushing these overwrites what the last release
+#                       published — see the block above the push for why that is opt-in.
 #
 # Configuration comes from .env (gitignored) or the environment. Credentials are never
 # written to disk by this script, never echoed, and never passed on a command line that
@@ -26,6 +39,7 @@ DEPLOY=false
 CREATE_PULL_SECRET=false
 UPDATE_VALUES=false
 ALLOW_DIRTY=false
+RELEASE_TAGS=false
 for arg in "$@"; do
   case "$arg" in
     --build-only)         BUILD_ONLY=true ;;
@@ -33,7 +47,11 @@ for arg in "$@"; do
     --create-pull-secret) CREATE_PULL_SECRET=true ;;
     --update-values)      UPDATE_VALUES=true ;;
     --allow-dirty)        ALLOW_DIRTY=true ;;
-    -h|--help)            sed -n '2,20p' "$0"; exit 0 ;;
+    --release-tags)       RELEASE_TAGS=true ;;
+    # Prints the whole header rather than a hardcoded line range. `sed -n '2,20p'` silently
+    # truncated --help the moment the header grew past line 20, which is how documentation
+    # disappears without anyone noticing: the flag still works, it just stops being described.
+    -h|--help)            awk 'NR>1 && !/^#/ {exit} NR>1' "$0"; exit 0 ;;
     *) echo "unknown argument: $arg" >&2; exit 2 ;;
   esac
 done
@@ -154,6 +172,49 @@ echo "login   : ok as ${REGISTRY_USERNAME}"
 
 podman push "${REF}"
 echo "pushed  : ${REF}"
+
+# ---------------------------------------------------------------------------
+# Optional: the release aliases
+# ---------------------------------------------------------------------------
+# OPT-IN, AND THAT IS DELIBERATE. These two tags MOVE. `:<appVersion>` is what the chart resolves
+# by default (values.yaml ships image.tag: "" and gsd.image falls back to .Chart.AppVersion), and
+# values.yaml sets imagePullPolicy: Always — so every container creation re-resolves it. Pushing it
+# from a routine build would silently make somebody's working tree the image every consumer runs,
+# on their next crash or node drain, with no chart change to show for it.
+#
+# So: default off, and on only when you mean "this is the release". CI passes it exactly when a
+# human changed `version` in pyproject.toml. Run it by hand when Actions is down and you are cutting
+# a real release — that is the whole reason the flag exists rather than being CI-only behaviour.
+if [ "$RELEASE_TAGS" = true ]; then
+  # A DIRTY BUILD MUST NEVER BECOME AN ALIAS. The immutable tag already says `-dirty` and is honest
+  # about it; an alias cannot be, because its name claims to be a released version. Refusing here
+  # rather than warning: this is the one path where the mistake reaches every consumer.
+  case "$COMMIT" in
+    *-dirty) echo "ERROR: refusing --release-tags from a dirty tree." >&2
+             echo "       The ${TAG} image is honest about being unreproducible; an alias named" >&2
+             echo "       ${VERSION} would not be. Commit, then re-run." >&2
+             exit 1 ;;
+  esac
+
+  # Read from the chart rather than taking it as an argument, for the same reason VERSION is read
+  # from pyproject.toml: one definition of "what version is this", not two that can disagree.
+  CHART="${CHART_FILE:-../charts/group-sync-dashboard/Chart.yaml}"
+  if [ ! -f "$CHART" ]; then
+    echo "ERROR: chart not found at ${CHART}; set CHART_FILE to point at it" >&2
+    exit 1
+  fi
+  CHART_VERSION=$(python3 -c "import re,pathlib,sys
+m = re.search(r'(?m)^version: (\d+\.\d+\.\d+)[ \t]*\$', pathlib.Path(sys.argv[1]).read_text())
+sys.exit('no bare-semver version line in the chart') if not m else print(m.group(1))" "$CHART")
+
+  for alias in "${VERSION}" "${CHART_VERSION}"; do
+    ALIAS_REF="${REGISTRY}/${REGISTRY_NAMESPACE}/${IMAGE_NAME}:${alias}"
+    podman tag "${REF}" "${ALIAS_REF}"
+    podman push "${ALIAS_REF}"
+    echo "pushed  : ${ALIAS_REF}  (alias of ${TAG})"
+  done
+  echo "release : app ${VERSION}, chart ${CHART_VERSION} — both aliases now point at ${COMMIT}"
+fi
 
 # ---------------------------------------------------------------------------
 # Optional: hand the built image to the Helm chart
