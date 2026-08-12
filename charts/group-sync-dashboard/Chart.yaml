@@ -51,7 +51,7 @@ type: application
 #
 # So: a silent tightening for the clusters that need it, a no-op for the rest, and the old values
 # remain settable explicitly. values.yaml under visibility.adminSar carries the measurement.
-version: 0.4.1
+version: 0.4.2
 # 0.7.0. It must equal local-development/pyproject.toml's `version` (tests/test_chart_versions.py
 # holds them together, and holds appVersion against the pinned image tag's prefix), so moving it
 # means moving the app version AND re-pinning the image — all three land in one commit or CI is red,
