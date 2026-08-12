@@ -1,6 +1,16 @@
 [project]
 name = "group-sync-dashboard"
-version = "0.6.0"
+# THE SOURCE OF TRUTH for the application version. build-and-push-external.sh reads this line to
+# build the image tag <version>-<git-sha>, so everything downstream — values.yaml's pin,
+# Chart.yaml's appVersion, gsd/__init__.py's __version__ — is held to it by
+# tests/test_chart_versions.py rather than maintained by hand in four places.
+#
+# 0.7.0 and a MINOR bump because /api/clusters/{c}/groupsyncs changed its response for narrowed
+# readers: `ldap_filter` and `error_message` are no longer served at the self tier, and the
+# reconcile_error alert's `detail` is replaced there. A self-tier consumer parsing either field
+# gets a KeyError after this upgrade, which is a contract change and not a patch — administrators
+# are unaffected, byte-for-byte.
+version = "0.7.0"
 description = "Read-only multi-cluster dashboard for the redhat-cop group-sync-operator"
 requires-python = ">=3.11"
 # FLOORS ARE A SECURITY CONTROL, not just a compatibility statement. These were set once
