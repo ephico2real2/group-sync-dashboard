@@ -41,3 +41,35 @@ build just produced — but only **alongside** `-f`, never instead of it.
 A new environment is a new file, reviewed like code. Nothing here holds a secret: the OAuth
 cookie secret is generated and reused by the chart, and image pull credentials come from the
 cluster's global pull secret.
+
+## What `crc.yaml` actually changes
+
+Every key `crc.yaml` sets already has a chart default. It introduces nothing the chart does not
+declare — it only *overrides*, and the table says which way:
+
+| key | chart default | crc.yaml | verdict |
+|---|---|---|---|
+| `config.unmanagedAudit.mode` | `log` | `log` | redundant — already the default |
+| `logLevel` | `INFO` | `DEBUG` | lab override |
+| `authLogLevel.manage` / `.enabled` | `false` / `false` | `true` / `true` | lab override |
+| `loginCapture.enabled` | `false` | `true` | lab override |
+| `oauthProxy.apiTokenAccess.enabled` | `false` | `true` | lab override |
+
+**Read the right-hand column as "why this is not the default".** Every override is fail-closed in
+the chart on purpose, and a plain `helm install` must not do any of it uninvited:
+
+- `authLogLevel` writes a **cluster-scoped** CR and rolls the OAuth server, which on a
+  single-replica cluster is a login outage rather than a rolling update. `values.yaml` carries the
+  measured blast radius and the check to run first.
+- `loginCapture` grants the dashboard `pods/log` in `openshift-authentication` — reading logs that
+  name every person who authenticates, with their LDAP DN.
+- `apiTokenAccess` opens `/api` to bearer tokens. Off means cookie sessions only.
+- `DEBUG` is for debugging. `INFO` is the level that stays readable at steady state.
+
+The redundant row is deliberate, not an oversight: a release file should **state** what it wants
+rather than inherit it, so a default that moves later cannot silently change this cluster. That
+costs one line and buys a diff that shows intent.
+
+`tests/test_environments_readme.py` holds this table against the real `values.yaml` and `crc.yaml`,
+because a table of defaults is exactly the kind of documentation that rots quietly — it stays
+plausible long after it stops being true.
