@@ -64,6 +64,12 @@ LINE_NUMBER_CITATION = re.compile(
 # findings quote the exact lines they are about — rewriting those to symbol names as the code changes
 # would falsify the record of what was reviewed. These files are historical once written.
 REVIEW_ARTIFACTS = (
+    # The tier-constants / `settling`-name debt review. Two claimed behaviour-PRESERVING
+    # changes, which is why they earn a pass at all: the brief asks reviewers to prove identity,
+    # not taste, and their verdicts quote the exact comparison sites and the DEBUG line's
+    # arithmetic. Symbol names would not distinguish "this `"all"` is a tier" from "this `"all"`
+    # is the operator's chart value", which is the whole question.
+    "REVIEW_tier_constants_and_settling_name.md",
     "OAUTH_LOGLEVEL_REVIEW.md",
     # The PR #12 adversarial review. Its findings quote the exact lines they are about, which is
     # the point of a review record and precisely what the line-number rule forbids elsewhere.
