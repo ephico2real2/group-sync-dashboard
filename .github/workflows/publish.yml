@@ -321,6 +321,11 @@ jobs:
               # GITHUB_OUTPUT does not exist, and an unguarded redirect would fail there for a
               # reason that has nothing to do with pinning.
               echo "pinned=true" >> "${GITHUB_OUTPUT:-/dev/null}"
+              # The EXACT commit the dispatch below must wait for. Published rather than
+              # re-derived there: `git rev-parse HEAD` in a later step would happen to work only
+              # because this loop leaves HEAD on the pin commit, which is a coupling nothing
+              # states and a future edit could break silently.
+              echo "pinned_sha=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT:-/dev/null}"
               exit 0
             fi
             # Says "retrying" only when there is actually another attempt. The log is the only
@@ -366,9 +371,41 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PINNED_SHA: ${{ steps.pin.outputs.pinned_sha }}
         run: |
           set -euo pipefail
           # --ref main, not the triggering sha: the point is to package the tip that CARRIES the
           # pin commit. github.sha predates it by definition.
-          gh workflow run helm.yaml --ref main
-          echo "dispatched Release Charts for main"
+          #
+          # BUT `--ref main` IS RESOLVED WHEN GITHUB PROCESSES THE DISPATCH, NOT WHEN WE PUSHED,
+          # and that gap is a real race this workflow lost on 2026-08-12. Measured, from the four
+          # Release Charts runs of that day — the sha each one actually packaged:
+          #
+          #   00:56  ef6d41db25  the pin commit    -> chart 0.4.1 published
+          #   02:18  ee99856b1c  the pin commit    -> chart 0.4.2 published
+          #   05:02  01d86756f4  the MERGE commit  -> published NOTHING
+          #   05:05  f67af3254e  the pin commit    -> chart 0.4.3, dispatched by hand
+          #
+          # On the third one the ref still resolved to the pre-push tip, so chart-releaser
+          # packaged Chart.yaml at the merge commit — where `version:` was still the ALREADY
+          # RELEASED value — skipped it, and exited zero. All four runs report `success`.
+          #
+          # THAT IS THE WHOLE DANGER: a failure here is indistinguishable from a success in the
+          # run list, which is the same silent-green property that let the original staleness bug
+          # hide for three merges. So wait for the ref to actually carry the pin commit, and if it
+          # never does, DO NOT DISPATCH — a dispatch that packages the wrong sha reports success
+          # and publishes nothing, which is strictly worse than a red run nobody can misread.
+          for attempt in $(seq 1 15); do
+            if [ "$(git ls-remote origin main | cut -f1)" = "${PINNED_SHA}" ]; then
+              gh workflow run helm.yaml --ref main
+              echo "dispatched Release Charts for main at ${PINNED_SHA} (ref converged on attempt ${attempt})"
+              exit 0
+            fi
+            sleep 2
+          done
+
+          echo "::error::origin/main still does not report ${PINNED_SHA} after 30s, so a dispatch"
+          echo "::error::would package a stale chart and report success. The image IS published and"
+          echo "::error::the pin IS on main; only the chart release is missing. Force it with:"
+          echo "::error::  gh workflow run helm.yaml --ref main"
+          exit 1
