@@ -2195,6 +2195,22 @@ class TestVisibilityLabels:
         assert p.locator("tbody tr").count() == SYNCED_GROUPS
         assert p.locator(".scope-banner").count() == 0
 
+    def test_group_source_dots_still_colour_at_the_narrowed_tier(self, page, scoped_server):
+        """crSlot reads provider_keys off data.groupsyncs — the ONE field of the self-tier
+        /groupsyncs projection the Groups tab consumes. This is the silent-regression case
+        the projection could ship: withhold provider_keys and no error fires anywhere —
+        crSlot returns null, every source dot quietly vanishes, and a narrowed reader
+        mis-reads the missing decoration as "unmapped provider" rather than "withheld".
+        So the dots themselves are pinned, at the tier that actually receives the
+        projected payload."""
+        p = _open_as(page, scoped_server, "alice")
+        p.locator("button[data-nav='groups']").click()
+        p.wait_for_selector(".scope-banner")
+        assert p.locator("tbody .cr-dot").count() > 0, (
+            "no source dot painted on the narrowed Groups tab — provider_keys went "
+            "missing from the self-tier /groupsyncs payload"
+        )
+
     def test_scoped_empty_is_not_mistaken_for_an_empty_cluster(self, page, scoped_server):
         """Q6's founding example: one row where an administrator sees two hundred must
         not read as a nearly-empty cluster — and a scoped ZERO rows must not read as an

@@ -19,9 +19,12 @@ What is pinned here, and why it must not drift:
     holds an as-typed `LATEEF.O` row that must stay invisible to `lateef.o` (fail-closed;
     a NOCASE match was measured to defeat the index and would cross-leak between Users
     differing only by case).
-  * governance-about-objects endpoints (groupsyncs, events, operator-configs,
-    bindings/findings) stay FULL VIEW at both tiers, by ruling (spec Q3) — self-scoping
-    them would make the dashboard useless to the audience it still serves.
+  * governance-about-objects endpoints split by ruling: groupsyncs and events stay SERVED
+    at both tiers (spec Q3), with exactly `ldap_filter` and `error_message` omitted at self
+    — the spec's two named exceptions, both able to embed directory DNs and the gate group
+    — while operator-configs and bindings/findings were reversed to the administrator tier
+    at 03ad446. Refusing CR health outright would make the dashboard useless to the
+    audience it still serves.
   * withheld aggregates are None, never fabricated zeros, and never recomputed over the
     visible subset — a number whose label lies is the count-versus-page defect class.
 """
@@ -345,13 +348,22 @@ def test_the_admin_still_gets_the_whole_rbac_surface(tmp_path):
 
 
 def test_cr_health_stays_full_view_because_metrics_already_publishes_it(tmp_path):
-    """groupsyncs and their events are NOT gated, and that is a measurement rather than an
-    oversight: /metrics is in the chart's skipAuthRegex and serves, to a credential-less
-    curl, `gsd_groupsync_state{groupsync="ldap-groupsync",namespace=...}`,
-    `gsd_groupsync_last_sync_timestamp_seconds` and `gsd_groupsync_groups_total` — the same
-    per-CR identity and state this endpoint returns. Refusing it here would be theatre while
-    that holds, and it would cost the Groups tab its per-provider colour slots, which read
-    `data.groupsyncs`. Gate /metrics first if this should change.
+    """groupsyncs and their events are NOT gated, and that is a ruling rather than an
+    oversight: spec Q3 keeps CR health visible at both tiers — refusing it outright would
+    be theatre while the unauthenticated /metrics names every CR and its state, and it
+    would cost the Groups tab its per-provider colour slots, which read `data.groupsyncs`.
+    Gate /metrics first if this should change.
+
+    Visible is not identical, though. The SAME ruling names two exceptions, `ldap_filter`
+    and `error_message`, omitted at the self tier because both can embed directory DNs and
+    the gate group, which /metrics deliberately never carries — the omission and its
+    exhaustive partition are pinned in tests/test_visibility.py. (The test name predates
+    that projection shipping: "full view" here means the endpoint is neither refused nor
+    row-scoped. It keeps its name because the round-2 review records cite it as a checked
+    anchor.) What THIS test pins is the transport: still a 200 and still a BARE LIST at
+    self — the field-withholding collection shape, like /api/clusters, never an envelope —
+    and the events response untouched, because its rows carry timestamps, a schedule and a
+    count, no error text.
     """
     c = _client(tmp_path)
     syncs = c.get("/api/clusters/c1/groupsyncs", headers=AS_VIEWER)

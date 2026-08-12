@@ -101,14 +101,33 @@ def _login_outcome_pattern(outcomes: tuple[str, ...]) -> str:
 LOGIN_OUTCOME_PATTERN = _login_outcome_pattern(LOGIN_OUTCOMES)
 
 
-# Alert kinds the SELF tier receives — an ALLOW-list, so a kind added later is hidden from
-# the narrow view until someone rules on it, which is the fail-closed direction.
+# Alert kinds the SELF tier receives, WITH each kind's detail policy — ONE structure, so the
+# kind list and the detail policy cannot disagree. Two structures that must agree is the shape
+# that produced the SKIP_AUTH_PATHS defect above; a set derived from this mapping cannot drift
+# from it. An ALLOW-list still: a kind added later is hidden from the narrow view until someone
+# rules on it here, which is the fail-closed direction.
 #
 # Membership is the feed's own invariant, "an alert here always has a page behind it":
-# every kind here is backed by a page the self tier sees IN FULL — the cluster cards, and
-# the GroupSync CRs and their events (CR health, whose per-CR identity and state is already
-# public on the unauthenticated /metrics). The excluded kinds are backed by pages the self
-# tier does NOT see whole:
+# every kind here is backed by a page the self tier sees — the cluster cards, and the GroupSync
+# CRs and their events (served at self minus exactly ldap_filter and error_message, the spec's
+# two named exceptions; see SELF_TIER_GROUPSYNC_FIELDS below). The VALUE is what the self tier
+# gets as that kind's `detail`:
+#   * None  — the computed detail is served unchanged. It carries nothing the kind's backing
+#     page withholds from this reader (a poll failure's detail is the same message
+#     /api/clusters serves to every tier as `error`).
+#   * a str — the computed detail is REPLACED with that string at self. Replaced, never
+#     omitted: index.html#function esc collapses a nullish detail to "", so an absent key
+#     renders as an EMPTY reason column, which reads as "no reason exists" when the truth is
+#     "withheld" — the fabricated-absence this repo already bans for aggregates ("null,
+#     never 0"). The admin feed is never rewritten.
+#
+# `reconcile_error` is the one replaced kind: gsd/state.py#compute_alerts copies the CR's
+# error_message straight into `detail` — the same operator diagnostic /groupsyncs withholds at
+# self, and it can carry the service bind DN (measured on this repo's own fixture:
+# 'LDAP bind failed for cn=svc,ou=people: invalid credentials'). The KIND stays, because the
+# existence of a current reconcile failure is actionable and not withheld; only the text is.
+#
+# The excluded kinds are backed by pages the self tier does NOT see whole:
 #   * `empty_group`, `unattributed`, `stale_group` name groups from the self-scoped Groups
 #     tab (and an empty group can never contain the viewer);
 #   * `direct_user_binding` aggregates other people's grants from the self-scoped
@@ -121,13 +140,107 @@ LOGIN_OUTCOME_PATTERN = _login_outcome_pattern(LOGIN_OUTCOMES)
 #     the gate. Measured: with one dangling finding and one failing config, a self reader
 #     whom BOTH endpoints 403'd still received BOTH alerts. Administrator-tier now; a dangling
 #     binding grants nobody, so a self reader loses no signal they could act on.
-SELF_ALERT_KINDS = frozenset({
+SELF_ALERT_DETAILS: dict[str, str | None] = {
     # Poll failures — kind carries poll_outcome.status verbatim; backed by the cluster cards
     # and gsd_cluster_up on /metrics.
-    "auth_failed", "forbidden", "unreachable",
-    # GroupSync CR health — per-CR state is public on /metrics, so full-view at both tiers.
-    "groupsync_crd_absent", "invalid_schedule", "sync_stopped", "overdue", "reconcile_error",
-})
+    "auth_failed": None,
+    "forbidden": None,
+    "unreachable": None,
+    # GroupSync CR health — backed by /groupsyncs at every tier.
+    "groupsync_crd_absent": None,
+    "invalid_schedule": None,
+    "sync_stopped": None,
+    "overdue": None,
+    "reconcile_error": "reconcile failed; diagnostic text is withheld in the self view",
+}
+
+# Derived, never restated: the admitted kinds ARE the keys of the detail policy.
+SELF_ALERT_KINDS = frozenset(SELF_ALERT_DETAILS)
+
+
+def _alerts_for_self(alerts: list[dict]) -> list[dict]:
+    """Apply kind admission and detail policy together; a new kind defaults to withheld."""
+    narrowed = []
+    for alert in alerts:
+        if alert["kind"] not in SELF_ALERT_DETAILS:
+            continue
+        replacement = SELF_ALERT_DETAILS[alert["kind"]]
+        narrowed.append(alert if replacement is None else {**alert, "detail": replacement})
+    return narrowed
+
+
+#: The GroupSync fields a self-tier reader receives — every field the spec rules full-view.
+#: docs/SPEC_per_user_visibility.md (Q3) rules CR health FULL at both tiers EXCEPT
+#: `ldap_filter` and `error_message`, its two named exceptions: both can embed directory DNs
+#: and the gate group (measured on this repo's own fixture, where error_message carries the
+#: service bind DN), and a reader below the wide tier cannot read the CR with `oc` anyway
+#: (measured: `oc auth can-i get groupsyncs.redhatcop.redhat.io` answers no for the narrowed
+#: personas) — so this endpoint would be their only source, which is what makes serving the
+#: two fields a leak by this project's own gate-what-oc-refuses rule.
+#:
+#: An ALLOWLIST even though only two fields are withheld, because a two-name denylist is the
+#: SKIP_AUTH_PATHS shape above: a list somebody must remember to extend, gone stale once
+#: already in this repo with an exploitable result. Projected this way, a NEW column on
+#: gsd/store.py#Store.groupsyncs or a new key from gsd/api.py#enrich is withheld from the
+#: narrow view by default until someone rules on it, and the partition test in
+#: tests/test_visibility.py makes an unclassified addition a red build rather than a quiet
+#: leak (denylist failure) or a quiet hole (stale-allowlist failure).
+#:
+#: A tuple, in the wide row's own key order — the store SELECT's columns, then the stitched
+#: provider_keys, then enrich's derived keys — so a projected row diffs against a wide row as
+#: pure omission, never reordering.
+SELF_TIER_GROUPSYNC_FIELDS = (
+    "name",
+    "namespace",
+    "schedule",
+    "last_sync_at",
+    "generation",
+    "observed_at",
+    "error_at",
+    "error_generation",
+    "group_count",
+    "provider_keys",
+    "state",
+    "next_expected",
+    "interval_seconds",
+    "schedule_valid",
+    "error_is_current",
+)
+
+#: The spec's two named exceptions, declared rather than implied so the partition test can
+#: prove the two sets tile the wide row exactly: allowlist ∪ withheld == every key the
+#: endpoint can emit, and nothing sits in both.
+WITHHELD_AT_SELF_GROUPSYNC_FIELDS = frozenset({"ldap_filter", "error_message"})
+
+
+def enrich(cr: dict, now: datetime, grace: timedelta) -> dict:
+    """Attach the computed fields of PLAN §11 — state is derived, never stored.
+
+    Module-level and pure (grace is an argument, not a closure) so the tier-policy
+    partition test can derive the endpoint's complete key universe from the real code
+    path — a store row through this function — instead of trusting a fixture payload
+    to have exercised every column.
+    """
+    last_sync = st.parse_time(cr.get("last_sync_at"))
+    schedule = cr.get("schedule")
+    interval = st.schedule_interval(schedule, now) if schedule else None
+    error_current = st.reconcile_error_is_current(
+        st.parse_time(cr.get("error_at")), st.parse_time(cr.get("last_sync_at"))
+    )
+    return {
+        **cr,
+        "state": st.compute_state(last_sync, schedule, now, grace),
+        "next_expected": (
+            st.next_expected(schedule, now).strftime("%Y-%m-%dT%H:%M:%SZ")
+            if schedule and st.next_expected(schedule, now)
+            else None
+        ),
+        "interval_seconds": int(interval.total_seconds()) if interval else None,
+        "schedule_valid": st.is_valid_schedule(schedule),
+        # Surfaced separately from `error_message` so a UI cannot accidentally render a
+        # stale failure as a live one (PLAN §2.1).
+        "error_is_current": error_current,
+    }
 
 
 #: What a `no match` refusal actually was, once gate membership is known.
@@ -585,29 +698,6 @@ def build_app(
             raise HTTPException(status_code=404, detail=f"unknown cluster {cluster_id!r}")
         return cluster
 
-    def enrich(cr: dict, now: datetime) -> dict:
-        """Attach the computed fields of PLAN §11 — state is derived, never stored."""
-        last_sync = st.parse_time(cr.get("last_sync_at"))
-        schedule = cr.get("schedule")
-        interval = st.schedule_interval(schedule, now) if schedule else None
-        error_current = st.reconcile_error_is_current(
-            st.parse_time(cr.get("error_at")), st.parse_time(cr.get("last_sync_at"))
-        )
-        return {
-            **cr,
-            "state": st.compute_state(last_sync, schedule, now, grace),
-            "next_expected": (
-                st.next_expected(schedule, now).strftime("%Y-%m-%dT%H:%M:%SZ")
-                if schedule and st.next_expected(schedule, now)
-                else None
-            ),
-            "interval_seconds": int(interval.total_seconds()) if interval else None,
-            "schedule_valid": st.is_valid_schedule(schedule),
-            # Surfaced separately from `error_message` so a UI cannot accidentally render a
-            # stale failure as a live one (PLAN §2.1).
-            "error_is_current": error_current,
-        }
-
     def _config_summary(cluster_id: str) -> dict | None:
         oc = store.operator_configs(cluster_id)
         if not oc["present"]:
@@ -692,30 +782,54 @@ def build_app(
         return out
 
     @app.get("/api/clusters/{cluster_id}/groupsyncs")
-    def list_groupsyncs(cluster_id: str) -> list[dict]:
+    def list_groupsyncs(request: Request, cluster_id: str) -> list[dict]:
         """GroupSync CRs on one cluster, with their derived state.
 
         `state`, `next_expected` and `error_is_current` are computed per request from the
         schedule and the last sync, never stored — a stored state would be wrong the moment
         the clock moved past it.
 
-        FULL VIEW AT BOTH TIERS — the surviving half of spec Q3, and the ONLY half. Q3
+        SERVED AT BOTH TIERS, PROJECTED AT SELF — spec Q3's ruling, both halves. Q3
         originally served CR health, operator configuration AND the binding findings whole at
         both tiers as "governance data about objects"; 03ad446 reversed that for the RBAC
         binding surface (/bindings/findings) and the operator's private configuration
-        (/operator-configs), which are the administrator tier now. THIS endpoint survives on a
-        measurement the other two do not share: /metrics is in the chart's skipAuthRegex and
-        serves, to a credential-less curl, gsd_groupsync_state,
-        gsd_groupsync_last_sync_timestamp_seconds and gsd_groupsync_groups_total per CR — the
-        same per-CR identity and state this returns. Refusing it here would be theatre while
-        that holds, and it would cost the Groups tab its per-provider colour slots (crSlot
-        reads data.groupsyncs) for nothing. Gate /metrics first if this should ever change.
-        The payload never varies by tier, which is why this stays a bare list with no scope
-        field — there is no narrowing to declare.
+        (/operator-configs), which are the administrator tier now. THIS endpoint stays served
+        on a measurement the other two do not share: /metrics is in the chart's skipAuthRegex
+        and serves, to a credential-less curl, gsd_groupsync_state,
+        gsd_groupsync_last_sync_timestamp_seconds and gsd_groupsync_groups_total per CR, so
+        REFUSING CR health here would be theatre while that holds — and it would cost the
+        Groups tab its per-provider colour slots (crSlot reads data.groupsyncs) for nothing.
+        Gate /metrics first if this should ever change.
+
+        Served is not identical, though: the SAME spec ruling names two exceptions,
+        `ldap_filter` and `error_message`, omitted at the self tier because both can embed
+        directory DNs and the gate group, which a narrowed reader cannot read with `oc`
+        (see SELF_TIER_GROUPSYNC_FIELDS). "The Overview tab is admin-only" never protected
+        them: index.html#async function refresh fetches this endpoint inside `if
+        (view.cluster)`, true on EVERY page, so a narrowed reader's browser downloads the
+        payload every refresh regardless of which tab they are on — not shown, but
+        delivered. The wide tier receives each enriched row unchanged; the operator's
+        diagnostic stays byte-for-byte.
+
+        Still a bare list, deliberately: this endpoint is FIELD-WITHHOLDING, the
+        /api/clusters class (operator_configs withheld at self on a bare list), not
+        row-scoping like /groups — an envelope here would create the inconsistency it
+        claimed to remove, and would break index.html#function groupsyncTable, which reads
+        `.length` off the value and would paint "None observed on this cluster yet." on a
+        truthy object whose `.length` is undefined, while CRs exist.
         """
         require_cluster(cluster_id)
+        _, scope = viewer_scope(request)
         now = datetime.now(UTC)
-        return [enrich(cr, now) for cr in store.groupsyncs(cluster_id)]
+        rows = [enrich(cr, now, grace) for cr in store.groupsyncs(cluster_id)]
+        if scope == "self":
+            # A projection into new dicts, never a mutation: the wide branch must keep
+            # returning the store's own rows untouched.
+            rows = [
+                {field: cr[field] for field in SELF_TIER_GROUPSYNC_FIELDS}
+                for cr in rows
+            ]
+        return rows
 
     @app.get("/api/clusters/{cluster_id}/groupsyncs/{name}/events")
     def list_events(
@@ -1447,11 +1561,14 @@ def build_app(
         of the API serves, so an alert here always has a page behind it.
 
         THAT INVARIANT IS WHAT SCOPES THIS FEED. Under view restrictions the self tier
-        receives only the kinds in SELF_ALERT_KINDS — the ones whose backing pages it
-        sees in full — filtered by kind rather than recomputed, and the response says so:
-        an alert feed that quietly dropped rows would train readers that green means
-        healthy when it means hidden. An object rather than the bare list this used to
-        be, so `scope` and `viewer` ride the wire (the activity contract).
+        receives only the kinds in SELF_ALERT_DETAILS — the ones whose backing pages it
+        sees — filtered by kind rather than recomputed, with each kind's detail policy
+        applied in the same pass (reconcile_error keeps its kind and loses its text; the
+        detail copies the CR's error_message, which /groupsyncs withholds at self). The
+        response says so: an alert feed that quietly dropped rows would train readers
+        that green means healthy when it means hidden. An object rather than the bare
+        list this used to be, so `scope` and `viewer` ride the wire (the activity
+        contract).
         """
         viewer, scope = viewer_scope(request)
         now = datetime.now(UTC)
@@ -1511,7 +1628,7 @@ def build_app(
                     }
                 )
         if scope == "self":
-            alerts = [a for a in alerts if a["kind"] in SELF_ALERT_KINDS]
+            alerts = _alerts_for_self(alerts)
         severity_rank = {"critical": 0, "warning": 1}
         alerts.sort(key=lambda a: (severity_rank.get(a["severity"], 9), a["cluster"], a["kind"]))
         return {

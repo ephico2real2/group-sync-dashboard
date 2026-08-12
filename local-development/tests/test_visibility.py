@@ -301,6 +301,134 @@ class TestTwoTiersPerEndpoint:
         wide = client.get("/api/clusters", headers=H("root")).json()
         assert mine == wide
 
+    def test_groupsyncs_omit_directory_detail_at_self(self, client):
+        """CR health is governance data and stays visible; ldap_filter and error_message
+        can embed directory DNs and the gate group, which /metrics deliberately never
+        carries — the same line drawn here. The spec ruled this and named this test; the
+        code never caught up until now, and the fixture measures why it mattered: the
+        error text carries the service bind DN, and the narrowed personas cannot
+        `oc get` the CR, so this endpoint was their only source.
+
+        The keys are OMITTED, not nulled: /api/clusters withholds by nulling because its
+        card must still render the key's slot, while here the whole point is that the
+        self payload does not carry the field at all — and provider_keys stays, because
+        index.html#function crSlot (the Groups tab, which the self tier DOES see) cannot
+        colour without it, and /groups already serves the same <cr>_<provider> string to
+        this reader on their own rows."""
+        crs = client.get("/api/clusters/c1/groupsyncs", headers=H("alice")).json()
+        assert crs, "the CR list itself must stay visible at self"
+        for cr in crs:
+            assert "ldap_filter" not in cr
+            assert "error_message" not in cr
+            assert cr["name"] == "ldap-sync" and "state" in cr, (
+                "CR health must survive the projection — the spec keeps it, only the two "
+                "directory diagnostics go")
+            assert cr["provider_keys"] == ["ldap-sync_ldap"], (
+                "crSlot reads provider_keys off this payload to colour the Groups tab")
+        wide = client.get("/api/clusters/c1/groupsyncs", headers=H("root")).json()
+        assert any(cr.get("ldap_filter") for cr in wide)
+        assert any(cr.get("error_message") for cr in wide)
+
+    def test_groupsync_tier_policy_is_exhaustive(self, db, client):
+        """Every key this endpoint can emit is classified: allowlist ∪ withheld tiles the
+        wide row exactly, so a NEW store column or enrich key is a red build here rather
+        than a quiet self-tier leak (denylist failure) or a quiet hole (stale allowlist).
+
+        The expected universe is derived from the CODE, not from a fixture payload: a row
+        from gsd/store.py#Store.groupsyncs carries exactly its SELECT's columns — SQL
+        emits every selected column even when NULL — plus the stitched provider_keys, and
+        gsd/api.py#enrich adds its derived keys unconditionally. A fixture-derived
+        expectation would only prove the fixture's shape, and a key that appears only
+        with production data would slip past it."""
+        from gsd.api import (
+            SELF_TIER_GROUPSYNC_FIELDS,
+            WITHHELD_AT_SELF_GROUPSYNC_FIELDS,
+            enrich,
+        )
+
+        store = Store(db)
+        try:
+            store_row = store.groupsyncs("c1")[0]
+        finally:
+            store.close()
+        universe = set(enrich(store_row, datetime.now(UTC), timedelta(seconds=120)))
+
+        allow = set(SELF_TIER_GROUPSYNC_FIELDS)
+        assert len(allow) == len(SELF_TIER_GROUPSYNC_FIELDS), "duplicate allowlist entry"
+        assert allow.isdisjoint(WITHHELD_AT_SELF_GROUPSYNC_FIELDS), (
+            "a field ruled both served and withheld is two policies for one key")
+        assert universe == allow | WITHHELD_AT_SELF_GROUPSYNC_FIELDS, (
+            "an unclassified GroupSync field exists — rule on it (allowlist or withheld) "
+            "before it ships to either tier")
+
+        wide = client.get("/api/clusters/c1/groupsyncs", headers=H("root")).json()[0]
+        mine = client.get("/api/clusters/c1/groupsyncs", headers=H("alice")).json()[0]
+        assert set(wide) == universe, "the wide tier serves the code-derived universe whole"
+        assert tuple(mine) == SELF_TIER_GROUPSYNC_FIELDS, (
+            "the self row is exactly the allowlist, in the wide row's own key order")
+
+    def test_reconcile_alert_replaces_only_the_self_tier_detail(self, client):
+        """The alert bus must not reopen the diagnostic /groupsyncs closes:
+        gsd/state.py#compute_alerts copies error_message straight into `detail`, so
+        before this fix a self reader whom the CR endpoint would deny the text was
+        handed the full bind DN by /api/alerts on every page refresh.
+
+        The detail is REPLACED, never omitted: index.html#function esc collapses a
+        nullish detail to "", so an absent key renders as an empty reason column, which
+        reads as "no reason exists" when the truth is "withheld" — the fabricated-absence
+        this repo already bans for aggregates. The KIND stays, because the existence of a
+        current reconcile failure is actionable and not secret."""
+        mine = client.get("/api/alerts", headers=H("alice")).json()["alerts"]
+        wide = client.get("/api/alerts", headers=H("root")).json()["alerts"]
+        mine_error = next(a for a in mine if a["kind"] == "reconcile_error")
+        wide_error = next(a for a in wide if a["kind"] == "reconcile_error")
+
+        assert mine_error["detail"] == (
+            "reconcile failed; diagnostic text is withheld in the self view"
+        )
+        assert "cn=svc,ou=people" not in mine_error["detail"]
+        assert mine_error["subject"] == "ldap-sync", (
+            "the kind and its subject stay actionable at self; only the text is withheld")
+        assert wide_error["detail"] == (
+            "LDAP bind failed for cn=svc,ou=people: invalid credentials"
+        )
+
+    def test_admin_keeps_the_diagnostic_bytes_on_both_endpoints(self, client):
+        """The operator's constraint 1, made executable: error_message is operational
+        data an administrator acts on quickly, so the wide tier keeps ldap_filter,
+        error_message and the alert detail BYTE-FOR-BYTE — narrowing anything an admin
+        sees is a defect, not a bonus, and this test is what stops somebody tidying the
+        diagnostic away later."""
+        wide_cr = client.get("/api/clusters/c1/groupsyncs", headers=H("root")).json()[0]
+        wide_alerts = client.get("/api/alerts", headers=H("root")).json()["alerts"]
+        wide_error = next(a for a in wide_alerts if a["kind"] == "reconcile_error")
+
+        secret = "LDAP bind failed for cn=svc,ou=people: invalid credentials"
+        assert wide_cr["error_message"] == wide_error["detail"] == secret, (
+            "the admin diagnostic must be the operator's own text, identical on both "
+            "endpoints — not a rewrite of either")
+        assert wide_cr["ldap_filter"] == "(&(objectClass=groupOfNames)(cn=app-*))"
+
+    def test_self_refresh_payload_does_not_carry_the_bind_dn(self, client):
+        """What a self browser DOWNLOADS every refresh — not what any tab paints.
+        index.html#async function refresh fetches /groupsyncs and /api/alerts on every
+        page, so 'the Overview tab is admin-only' never protected these fields; the
+        payload landed in the reader's network tab, page memory and any proxy log
+        regardless of which tab they were on. Delivered counts as leaked."""
+        alerts = client.get("/api/alerts", headers=H("alice")).json()["alerts"]
+        syncs = client.get("/api/clusters/c1/groupsyncs", headers=H("alice")).json()
+        events = client.get(
+            "/api/clusters/c1/groupsyncs/ldap-sync/events", headers=H("alice")
+        ).json()
+        blob = repr(alerts) + repr(syncs) + repr(events)
+        assert "cn=svc,ou=people" not in blob
+        assert "(&(objectClass=groupOfNames)(cn=app-*))" not in blob
+
+        wide_blob = repr(client.get("/api/alerts", headers=H("root")).json())
+        assert "cn=svc,ou=people" in wide_blob, (
+            "the probe string must be real at the wide tier, or the absence above proves "
+            "nothing")
+
 
 # ── Fail closed ──────────────────────────────────────────────────────────────────────────
 

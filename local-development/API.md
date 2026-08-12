@@ -69,11 +69,14 @@ SubjectAccessReview only asks whether a subject could. See docs/SPEC_usage_admin
 `"visibility": {"scope": "self", "enabled": true}`. `enabled` is the operator's switch
 (`GSD_ENABLE_VIEW_RESTRICTIONS`), not the outcome for this reader.
 
-**Only `groupsyncs` and its events do not vary by tier at all.** The criterion is measurable,
-not "is it about objects": `/metrics` is unauthenticated (chart `skipAuthRegex`) and already
-publishes `gsd_groupsync_state`, `gsd_groupsync_last_sync_timestamp_seconds` and
-`gsd_groupsync_groups_total` per CR to a credential-less `curl`, so refusing the same per-CR
-identity behind login would be theatre.
+**`groupsyncs` is served at both tiers minus two fields at `self`; only its events do not vary
+at all.** The criterion is measurable, not "is it about objects": `/metrics` is unauthenticated
+(chart `skipAuthRegex`) and already publishes `gsd_groupsync_state`,
+`gsd_groupsync_last_sync_timestamp_seconds` and `gsd_groupsync_groups_total` per CR to a
+credential-less `curl`, so refusing the same per-CR identity behind login would be theatre. What
+`/metrics` deliberately never carries is directory detail — so at the self tier the row omits
+`ldap_filter` and `error_message`, both of which can embed directory DNs and the gate group.
+Administrators receive the full row, unchanged.
 
 **`bindings/findings` and `operator-configs` are the administrator tier** (`403` at self).
 They describe objects too, but that is not the test. A binding row names which *group* holds
@@ -149,6 +152,14 @@ half-populated view that otherwise looks exactly like a cluster with no groups.
   "error_is_current": false
 }]
 ```
+
+**At the self tier the row omits `ldap_filter` and `error_message`.** Both can embed directory
+DNs and the gate group — an LDAP filter names the groups it selects, and a bind failure's text
+names the service DN — and a reader below the wide tier cannot `oc get` the CR to read them
+anyway. The keys are absent, not `null`; every other field above is present, and the response
+stays the bare list. The projection is an allowlist (`gsd/api.py#SELF_TIER_GROUPSYNC_FIELDS`),
+so a field added later is withheld at `self` until it is explicitly ruled on. Administrators
+always receive the full row, byte-for-byte.
 
 **`error_is_current` is the field to read, not `error_at`.** The operator never clears
 `ReconcileError` on a later success, so a perfectly healthy CR carries a months-old error
@@ -594,6 +605,14 @@ Computed on read across all clusters, sorted critical first.
 Kinds: `overdue`, `invalid_schedule`, `sync_stopped`, `empty_group`, `unattributed`,
 `stale_group`, `reconcile_error`, `dangling_binding`, `groupsync_crd_absent`, plus the poll
 outcome for a degraded cluster.
+
+At the self tier the feed is filtered to the kinds whose backing pages a narrowed reader sees
+(`gsd/api.py#SELF_ALERT_DETAILS`), and one kind's text is rewritten: `reconcile_error` keeps its
+kind and subject, but its `detail` — which copies the CR's `error_message`, the field
+`/groupsyncs` withholds at self — is replaced with
+`reconcile failed; diagnostic text is withheld in the self view`. Replaced rather than omitted,
+so an empty reason column cannot read as "no reason exists". Administrators receive every kind
+with the full detail.
 
 `groupsync_crd_absent` fires when the group-sync-operator's CRD is not installed. It is raised
 FIRST because it explains every other finding on the page: with no CR to attribute anything to,
