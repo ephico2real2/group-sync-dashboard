@@ -253,8 +253,8 @@ def capture_once(
         #   _not_clipped drops an attempt whose earlier lines may lie behind the window's leading
         #                edge — "dropped for good, not deferred", in its own words.
         parsed = parse(lines)
-        settling = _recordable(parsed)
-        attempts = _not_clipped(settling, window_start)
+        settled = _recordable(parsed)
+        attempts = _not_clipped(settled, window_start)
         horizon = _settle_horizon(lines)
 
         # THE LINE THAT MAKES SILENCE LEGIBLE, and the reason this module gained any DEBUG at all.
@@ -270,7 +270,7 @@ def capture_once(
                   "window's leading edge (gone for good), %d to write; log settled through %s",
                   cluster.name, pod, len(lines), since,
                   settled_through or "none (first-sight window)",
-                  len(parsed), len(parsed) - len(settling), len(settling) - len(attempts),
+                  len(parsed), len(parsed) - len(settled), len(settled) - len(attempts),
                   len(attempts), horizon or "nothing yet — read position holds")
 
         if lines and not parsed:

@@ -25,7 +25,7 @@ from . import __version__
 from . import state as st
 from .activity import EMAIL_HEADER, INTERACTION_HEADER, USER_HEADER, ActivityRecorder
 from .config import Settings, load_settings
-from .kube import TierResolver
+from .kube import TIER_ALL, TIER_SELF, TierResolver
 from .leader import LeaderElector
 from .metrics import RuntimeSignals, build_registry
 from .poller import Poller
@@ -437,7 +437,7 @@ def build_app(
         """
         viewer = trusted_viewer(request)
         if not restrict:
-            return viewer, "all"
+            return viewer, TIER_ALL
         # Read off app.state PER REQUEST — the published seam (see app.state.tier_resolver
         # below), so a test-substituted resolver is honoured by every handler. The
         # build-time `tier_resolver` callable is the fallback for an app built with an
@@ -447,8 +447,8 @@ def build_app(
             # Counted like every decision below; only the restrictions-off return above is
             # not a decision. gsd_visibility_decisions_total is what makes the served
             # all:self mix visible — the everyone-silently-narrowed signature.
-            signals.note_decision("admin", "self")
-            return viewer, "self"
+            signals.note_decision("admin", TIER_SELF)
+            return viewer, TIER_SELF
         try:
             tier = (state_resolver.resolve(viewer) if state_resolver is not None
                     else tier_resolver(viewer))
@@ -456,11 +456,13 @@ def build_app(
             # Logged with the trace, served as self: an API-server blip degrades the VIEW,
             # never the availability — the reader sees their own data, not an error page.
             log.exception("tier resolution failed for %r; serving the self view", viewer)
-            signals.note_decision("admin", "self")
-            return viewer, "self"
+            signals.note_decision("admin", TIER_SELF)
+            return viewer, TIER_SELF
         # Only the exact string "all" widens — the _visibility_setting discipline applied
         # to the resolver's answer, so a buggy resolver cannot widen by returning junk.
-        scope = "all" if tier == "all" else "self"
+        # Compared against TIER_ALL (the producer's vocabulary) and emitted as that same
+        # constant, so the wire `scope` cannot drift from what TierResolver returns.
+        scope = TIER_ALL if tier == TIER_ALL else TIER_SELF
         signals.note_decision("admin", scope)
         return viewer, scope
 
@@ -483,22 +485,25 @@ def build_app(
         viewer = trusted_viewer(request)
         # Precedence 1: the blunt operator override, independent of any tier. Preserved verbatim
         # from the pre-tier behaviour so a deployment that set it keeps working.
+        # LITERAL "all": this is the chart/config vocabulary (userActivity.visibility, parsed
+        # by _visibility_setting), not TierResolver's return. Do not substitute TIER_ALL here —
+        # the two vocabularies have different owners and are free to diverge.
         if settings.user_activity_visibility == "all":
             # A served wide decision, counted as one: a deployment that set the blunt
             # override should see that fact on the graph rather than a mysterious all-tier.
-            signals.note_decision("usage", "all")
-            return viewer, "all"
+            signals.note_decision("usage", TIER_ALL)
+            return viewer, TIER_ALL
         # Restrictions off (or proxy off) runs no tier machinery — but Usage is NOT the wide
         # view, so it stays self here rather than widening. This mirrors the pre-tier behaviour,
         # where /api/dashboard/activity was governed by userActivity.visibility alone and never
         # by the visibility tier: turning cluster-data restrictions off must not, as a side
         # effect, expose colleagues' presence records.
         if not restrict:
-            return viewer, "self"
+            return viewer, TIER_SELF
         state_resolver = getattr(app.state, "usage_tier_resolver", None)
         if not viewer or (state_resolver is None and usage_tier_resolver is None):
-            signals.note_decision("usage", "self")
-            return viewer, "self"
+            signals.note_decision("usage", TIER_SELF)
+            return viewer, TIER_SELF
         try:
             tier = (state_resolver.resolve(viewer) if state_resolver is not None
                     else usage_tier_resolver(viewer))
@@ -506,9 +511,9 @@ def build_app(
             # An API-server blip degrades the Usage VIEW to the reader's own rows, never the
             # availability and never the wide set — the same discipline viewer_scope follows.
             log.exception("usage tier resolution failed for %r; serving the self view", viewer)
-            signals.note_decision("usage", "self")
-            return viewer, "self"
-        scope = "all" if tier == "all" else "self"
+            signals.note_decision("usage", TIER_SELF)
+            return viewer, TIER_SELF
+        scope = TIER_ALL if tier == TIER_ALL else TIER_SELF
         signals.note_decision("usage", scope)
         return viewer, scope
 
