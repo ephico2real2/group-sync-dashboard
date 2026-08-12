@@ -52,12 +52,16 @@ type: application
 # So: a silent tightening for the clusters that need it, a no-op for the rest, and the old values
 # remain settable explicitly. values.yaml under visibility.adminSar carries the measurement.
 version: 0.4.1
-# appVersion is deliberately UNCHANGED at 0.6.0. It must equal local-development/pyproject.toml's
-# `version` (tests/test_chart_versions.py holds them together, and holds appVersion against the
-# pinned image tag's prefix), so moving it means moving the app version and re-pinning the image.
-# The application did gain behaviour in #27; whether that earns 0.7.0 is a separate decision, and
-# bundling it into a chart-only bump would couple two releases that have no reason to be coupled.
-appVersion: "0.6.0"
+# 0.7.0. It must equal local-development/pyproject.toml's `version` (tests/test_chart_versions.py
+# holds them together, and holds appVersion against the pinned image tag's prefix), so moving it
+# means moving the app version AND re-pinning the image — all three land in one commit or CI is red,
+# which is the whole point of the coupling.
+#
+# The deferred decision recorded here since #27 is taken: the self-tier projection removes
+# `ldap_filter` and `error_message` from /groupsyncs for narrowed readers, so a self-tier consumer
+# parsing either one breaks on upgrade. That is a contract change, hence MINOR and not a patch.
+# Administrators are unaffected, byte-for-byte.
+appVersion: "0.7.0"
 
 keywords: [openshift, ldap, rbac, groupsync, observability]
 home: https://github.com/ephico2real2/group-sync-dashboard

@@ -29,6 +29,7 @@ REPO = pathlib.Path(__file__).resolve().parents[2]
 CHART = REPO / "charts" / "group-sync-dashboard" / "Chart.yaml"
 VALUES = REPO / "charts" / "group-sync-dashboard" / "values.yaml"
 PYPROJECT = REPO / "local-development" / "pyproject.toml"
+INIT = REPO / "local-development" / "gsd" / "__init__.py"
 
 
 def _app_version() -> str:
@@ -69,6 +70,30 @@ def test_the_pinned_image_tag_is_a_build_of_that_same_app_version() -> None:
     assert tag.startswith(f"{app}-"), (
         f"values.yaml pins image tag {tag!r}, which is not a build of appVersion {app!r}. "
         "Expected <appVersion>-<git-sha>."
+    )
+
+
+def test_the_package_version_equals_the_application_version() -> None:
+    """THE SAME DRIFT, ONE FILE FURTHER IN, and nothing held it until 0.7.0.
+
+    `gsd/__init__.py` declares `__version__` by hand — a second copy of the number, outside the
+    chain this file's docstring draws. It is not decoration: gsd/api.py#version serves it at
+    /api/version and gsd/metrics.py exports it as the `version` label on gsd_build_info, so those
+    are what an operator reads to answer "what is this pod running?".
+
+    Left uncoupled it fails in the quiet direction, worse than appVersion's did. A stale
+    appVersion misinforms `helm search`; a stale `__version__` makes the RUNNING POD report a
+    version it is not, confidently, on the endpoint built for exactly that question — while the
+    image tag beside it (from GSD_GIT_COMMIT) is correct, so the two disagree and the
+    human-readable one is the wrong half.
+    """
+    found = re.search(r'^__version__ = "(.+?)"', INIT.read_text(), re.M)
+    assert found, f"no `__version__ = \"...\"` in {INIT}"
+    assert found.group(1) == _app_version(), (
+        f"gsd/__init__.py reports __version__ {found.group(1)!r} while pyproject.toml says "
+        f"{_app_version()!r}. /api/version and gsd_build_info serve the former, so the pod would "
+        "tell an operator it is running a version that was never built. pyproject is the source "
+        "of truth — bump this to match."
     )
 
 
