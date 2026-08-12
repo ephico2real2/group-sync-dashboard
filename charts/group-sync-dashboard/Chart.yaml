@@ -27,7 +27,20 @@ type: application
 # measured: the release run for d62a92d concluded `success` while the Helm repo kept serving 0.2.0
 # from 2026-08-10T16:52. Anyone installing from the published repo was getting a chart without the
 # guard, so `logLevel: debug` still crash-looped their pod even though main was fixed.
-version: 0.3.0
+# 0.4.0, and a MINOR bump because this one changes behaviour on upgrade for a release that never
+# set `visibility.adminSar` explicitly. The wide-tier threshold's default moves from
+# `list groups.user.openshift.io` to `list clusterrolebindings` — cluster-wide RBAC read.
+#
+# For stock roles nothing changes: measured per persona with their real group memberships, both
+# thresholds admit cluster-admin and cluster-reader and refuse everyone else. What changes is the
+# cluster this default was wrong for — one whose custom or aggregated role grants directory read
+# WITHOUT RBAC read. There, a reader entitled only to read the directory was being served the whole
+# RBAC binding surface, including which groups hold cluster-admin. On upgrade that reader correctly
+# loses the wide tier, and their Overview / Access granted / RBAC policy tabs become named refusals.
+#
+# So: a silent tightening for the clusters that need it, a no-op for the rest, and the old values
+# remain settable explicitly. values.yaml under visibility.adminSar carries the measurement.
+version: 0.4.0
 # appVersion is deliberately UNCHANGED at 0.6.0. It must equal local-development/pyproject.toml's
 # `version` (tests/test_chart_versions.py holds them together, and holds appVersion against the
 # pinned image tag's prefix), so moving it means moving the app version and re-pinning the image.

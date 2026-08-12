@@ -312,12 +312,40 @@ class Settings:
     # typo leaves the control ON rather than silently disabling a security control.
     view_restrictions_enabled: bool = True
     # The SubjectAccessReview separating the wide tier from the self tier, chosen by the operator
-    # (chart: visibility.adminSar). The default — list groups.user.openshift.io — admits
-    # cluster-admin and cluster-reader and nobody else; `list rolebindings` also admits
-    # cluster-wide `admin`; `edit`/`view` pass no cluster-scoped list at all. Expressed as the
-    # check itself, not role names: a name list would miss cluster-reader and every custom role.
-    visibility_admin_sar_api_group: str = "user.openshift.io"
-    visibility_admin_sar_resource: str = "groups"
+    # (chart: visibility.adminSar). Expressed as the check itself, not role names: a name list
+    # would miss cluster-reader and every custom role.
+    #
+    # THE DEFAULT WAS `list groups.user.openshift.io` AND THAT WAS THE WRONG FLOOR. It is the
+    # threshold this repository documents as "WRONG — a privilege escalation, proven on the
+    # reference cluster" when it was the BEARER path's check (values.yaml, oauthProxy.apiTokenAccess):
+    # an account holding only `list groups` answered no to `list clusterrolebindings` and no to
+    # `list rolebindings`, yet /bindings/findings handed it 229 bindings including
+    # app-ocp-rbac-alpha-cluster-admin-crb. The bearer floor was raised to cluster-wide RBAC read for
+    # exactly that reason, and `require_admin_tier` claimed in its own docstring to be "the same
+    # floor, applied where it was missing" — while actually posting `list groups`. The claim was the
+    # correct decision; only the implementation was one rung lower.
+    #
+    # RAISING IT COSTS NO ADMITTED PERSONA, which is why it is a default change rather than a
+    # breaking one. Measured on the reference cluster, SubjectAccessReview per persona with their
+    # real group memberships, both thresholds side by side:
+    #
+    #   kubeadmin   (cluster-admin)   list groups=true   list clusterrolebindings=true
+    #   dana.lee    (cluster-reader)  list groups=true   list clusterrolebindings=true
+    #   lateef.o    (ordinary)        list groups=false  list clusterrolebindings=false
+    #   jane.smith  (decoy: in a group NAMED ...-cluster-admin, no binding behind it)
+    #                                 list groups=false  list clusterrolebindings=false
+    #
+    # No read check separates cluster-admin from cluster-reader, so both stock roles that should
+    # hold the wide tier still do. What changes is the cluster this default was wrong for: one whose
+    # custom or aggregated role grants directory read without RBAC read. There, `list groups` handed
+    # the whole binding surface — which groups hold which admin role — to an identity entitled only
+    # to read the directory, and nothing else re-checked, because -openshift-delegate-urls governs
+    # bearer tokens and client certs only and never sees a cookie session.
+    #
+    # `list rolebindings` would also admit cluster-wide `admin`; `edit`/`view` pass no cluster-scoped
+    # list at all. An operator who wants the old, laxer threshold can still set it explicitly.
+    visibility_admin_sar_api_group: str = "rbac.authorization.k8s.io"
+    visibility_admin_sar_resource: str = "clusterrolebindings"
     # Split out of a "resource/subresource" spelling (e.g. pods/log) at parse time, so the SAR
     # builder never re-parses the string.
     visibility_admin_sar_subresource: str = ""
@@ -491,11 +519,13 @@ _SAR_FIELD_PATTERNS = {
     "Namespace": re.compile(r"[a-z0-9\-]*"),
 }
 
-# The wide tier's default: list groups.user.openshift.io, the narrowest measured threshold that
-# admits cluster-admin and cluster-reader and nobody else among the stock roles.
+# The wide tier's default: `list clusterrolebindings.rbac.authorization.k8s.io` — cluster-wide RBAC
+# read, which is the floor this repository already argued is honest for what /api returns, and the
+# floor require_admin_tier's docstring always claimed to apply. See Settings for the measurement
+# showing the change admits exactly the same personas among the stock roles.
 _ADMIN_SAR_DEFAULTS = {
-    "ApiGroup": "user.openshift.io",
-    "Resource": "groups",
+    "ApiGroup": "rbac.authorization.k8s.io",
+    "Resource": "clusterrolebindings",
     "Verb": "list",
     "Namespace": "",
 }
@@ -551,7 +581,7 @@ def _sar_setting(raw: dict, key_prefix: str, defaults: dict[str, str], default_l
 def _visibility_sar_setting(raw: dict) -> tuple[str, str, str, str, str]:
     """The WIDE-view admin threshold (chart: visibility.adminSar)."""
     return _sar_setting(raw, "visibilityAdminSar", _ADMIN_SAR_DEFAULTS,
-                        "list groups.user.openshift.io")
+                        "list clusterrolebindings.rbac.authorization.k8s.io")
 
 
 def _usage_visibility_sar_setting(raw: dict) -> tuple[str, str, str, str, str]:

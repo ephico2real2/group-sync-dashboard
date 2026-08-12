@@ -606,7 +606,7 @@ class TestUsageAdminTier:
         assert wide is not usage, "one resolver for both tiers would share a cache across two questions"
         assert wide._cache is not usage._cache, "the caches must be distinct objects"
         # The questions themselves differ — the reason a shared verdict would be wrong.
-        assert wide._attributes["resource"] == "groups"
+        assert wide._attributes["resource"] == "clusterrolebindings"
         assert usage._attributes["resource"] == "clusterrolebindings"
         assert usage._attributes["verb"] == "update"
         assert wide._attributes != usage._attributes

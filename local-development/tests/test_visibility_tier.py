@@ -337,8 +337,8 @@ class TestSettings:
         s = load_settings(self._write(tmp_path, BASE_CONFIG))
         assert s.view_restrictions_enabled is True
         assert s.visibility_admin_sar_verb == "list"
-        assert s.visibility_admin_sar_resource == "groups"
-        assert s.visibility_admin_sar_api_group == "user.openshift.io"
+        assert s.visibility_admin_sar_resource == "clusterrolebindings"
+        assert s.visibility_admin_sar_api_group == "rbac.authorization.k8s.io"
         assert s.visibility_admin_sar_namespace == ""
 
     def test_the_exact_env_var_spelling_disables(self, tmp_path, monkeypatch):

@@ -449,6 +449,13 @@ def build_app(
         never applied to the browser path, because -openshift-delegate-urls governs bearer
         tokens only and cookie sessions bypass it entirely. This is the same floor, applied
         where it was missing.
+
+        AND IT ONLY BECAME TRUE WHEN THE DEFAULT WAS RAISED. This paragraph claimed parity while
+        `visibility.adminSar` still defaulted to `list groups.user.openshift.io` — the very check
+        the sentence above calls wrong. Caught by review, not by a test, because on stock roles the
+        two thresholds admit the same personas and nothing observable differed. The threshold is
+        the operator's to choose, so what this function guarantees is the REVIEW, not a particular
+        resource; `config.py#Settings` carries the default and the measurement behind it.
         """
         _, scope = viewer_scope(request)
         if scope != "all":
@@ -766,8 +773,9 @@ def build_app(
         """Synced groups on one cluster, optionally narrowed to a problem state.
 
         SELF-SCOPED under view restrictions: a plain reader sees only the groups they are
-        a member of, because `list groups.user.openshift.io` is a permission they do not
-        hold (measured: eight-for-eight `no` for the lab's plain user). An object rather
+        a member of, because they do not pass the wide-tier review — `list clusterrolebindings`
+        by default (measured: `no` for every plain persona on the lab, with their real group
+        memberships supplied to the review). An object rather
         than the bare list this used to be, so `scope` and `viewer` ride the response and
         the UI never has to derive the tier — the activity-endpoint contract.
         """
