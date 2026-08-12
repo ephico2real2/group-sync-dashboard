@@ -45,6 +45,7 @@ REPO = pathlib.Path(__file__).resolve().parents[2]
 WORKFLOW = REPO / ".github" / "workflows" / "publish.yml"
 CHART = "charts/group-sync-dashboard"
 VALUES = f"{CHART}/values.yaml"
+CHART_YAML = f"{CHART}/Chart.yaml"
 
 
 def pin_step() -> str:
@@ -94,6 +95,19 @@ def tag_of(values_text: str) -> str:
     return found.group(1)
 
 
+def chart_version_of(chart_text: str) -> str:
+    """The chart's own version, read the way chart-releaser reads it: column zero."""
+    found = re.search(r"(?m)^version: (\d+\.\d+\.\d+)[ \t]*$", chart_text)
+    assert found, f"no version line in:\n{chart_text}"
+    return found.group(1)
+
+
+def app_version_of(chart_text: str) -> str:
+    found = re.search(r'(?m)^appVersion: "(.+?)"[ \t]*$', chart_text)
+    assert found, f"no appVersion line in:\n{chart_text}"
+    return found.group(1)
+
+
 class Sandbox:
     """A bare origin, a seed clone that plays "other people merging", and per-run checkouts."""
 
@@ -106,6 +120,17 @@ class Sandbox:
         (self.seed / CHART).mkdir(parents=True)
         (self.seed / VALUES).write_text(
             'image:\n  repository: quay.io/x/y\n  tag: "0.6.0-BASE000000"\n'
+        )
+        # Chart.yaml is seeded because the step now bumps it, and it carries two decoys the real
+        # file's shape makes possible: `appVersion` ends in `version:` and an indented comment can
+        # mention one. Both must survive, so the anchor is proven to be column zero and not a
+        # substring match.
+        (self.seed / CHART_YAML).write_text(
+            "apiVersion: v2\n"
+            "name: group-sync-dashboard\n"
+            "  # version: 9.9.9 — an indented decoy; the bump must not touch it\n"
+            "version: 0.4.0\n"
+            'appVersion: "0.6.0"\n'
         )
         (self.seed / "src").mkdir()
         (self.seed / "src" / "app.txt").write_text("base\n")
@@ -212,9 +237,12 @@ def test_the_pin_commit_does_not_revert_a_merge_that_landed_mid_run(sandbox: San
         sandbox.on_main(f"src/{filename}")   # raises if the pin commit deleted it
 
     head = git(sandbox.seed, "show", "--stat", "--oneline", "FETCH_HEAD")
-    assert "1 file changed" in head, (
-        f"the pin commit must touch values.yaml alone; it touched more:\n{head}"
+    assert "2 files changed" in head, (
+        "the pin commit must touch values.yaml and Chart.yaml and NOTHING else — two, because the "
+        "tag and the chart version have to move together or the new pin is never published; more "
+        f"than two means the reset regressed and the commit is carrying somebody's merge:\n{head}"
     )
+    assert "src/" not in head, f"the pin commit reached outside charts/:\n{head}"
 
 
 def test_a_rerun_of_an_already_pinned_tag_commits_nothing(sandbox: Sandbox) -> None:
@@ -275,4 +303,188 @@ def test_the_step_does_not_rebase_the_pin_commit(sandbox: Sandbox) -> None:
     assert "--rebase" not in code, (
         "the pin step must not rebase its own commit onto main; write the tag onto the fetched "
         "tip instead (see this file's docstring for the failure it caused)"
+    )
+
+
+# ── The published chart must carry the image the pin commit just built ────────────────────
+#
+# THE DEFECT THESE EXIST FOR SHIPPED A DATA EXPOSURE. Measured on this repository on
+# 2026-08-12, straight off the live Helm repo:
+#
+#     published chart 0.4.0   image.tag  "0.6.0-424b3fdd63"      <- #31's merge
+#     main                    image.tag  "0.6.0-d0c0edaeea"      <- #33's merge
+#
+# so `helm install group-sync-dashboard/group-sync-dashboard` deployed an image without the
+# wide-tier threshold fix (#32) AND without the self-tier projection (#33) — the latter being
+# what stops a narrowed reader receiving directory DNs. Two causes, both needed:
+#
+#   1. chart-releaser skips a version it has already released, so rewriting image.tag under an
+#      unchanged `version:` publishes nothing and reports success.
+#   2. a push made with GITHUB_TOKEN does not trigger workflows at all, so the pin commit could
+#      not have published the chart even with a bump.
+#
+# The fix pairs a patch bump with every pin and then dispatches Release Charts explicitly.
+# These hold that pairing, because nothing else can: a stale published chart installs cleanly,
+# runs, passes its probes, and serves the wrong code.
+
+
+def test_the_pin_commit_bumps_the_chart_patch_version(sandbox: Sandbox) -> None:
+    """A new pin must arrive with a new chart version, or chart-releaser publishes nothing."""
+    at_a = sandbox.merge("a.txt")
+    before = chart_version_of(sandbox.on_main(CHART_YAML))
+    assert before == "0.4.0"
+
+    result = sandbox.run_step(sandbox.runner("runA", at_a, "0.6.0-AAAAAAAAAA"))
+    assert result.returncode == 0, f"{result.stdout}\n{result.stderr}"
+
+    chart = sandbox.on_main(CHART_YAML)
+    assert chart_version_of(chart) == "0.4.1", (
+        "the chart version did not move with the pin, so the published chart keeps serving the "
+        "PREVIOUS image — install-time staleness that no test of the tag line alone can see"
+    )
+    assert tag_of(sandbox.on_main(VALUES)) == "0.6.0-AAAAAAAAAA"
+
+
+def test_the_bump_leaves_app_version_and_indented_decoys_alone(sandbox: Sandbox) -> None:
+    """Only `version:` at column zero moves.
+
+    `appVersion` ends in the same six characters and is held to pyproject.toml by
+    tests/test_chart_versions.py, so bumping it here would break that pairing and silently
+    claim an application release that never happened.
+    """
+    at_a = sandbox.merge("a.txt")
+    assert sandbox.run_step(sandbox.runner("runA", at_a, "0.6.0-AAAAAAAAAA")).returncode == 0
+
+    chart = sandbox.on_main(CHART_YAML)
+    assert app_version_of(chart) == "0.6.0", "appVersion must not move with a chart patch bump"
+    assert "# version: 9.9.9" in chart, "the indented decoy was rewritten; the anchor is not ^"
+
+
+def test_a_rerun_that_pins_nothing_does_not_bump_the_chart(sandbox: Sandbox) -> None:
+    """The already-pinned early exit must not manufacture a chart release.
+
+    Bumping on a no-op would publish a new chart version whose only difference from the last one
+    is the number — and, worse, would do it on every re-run of the same commit.
+    """
+    at_a = sandbox.merge("a.txt")
+    assert sandbox.run_step(sandbox.runner("runA", at_a, "0.6.0-AAAAAAAAAA")).returncode == 0
+    after_first = chart_version_of(sandbox.on_main(CHART_YAML))
+    log_before = sandbox.main_log()
+
+    again = sandbox.run_step(sandbox.runner("runA2", at_a, "0.6.0-AAAAAAAAAA"))
+    assert again.returncode == 0, f"{again.stdout}\n{again.stderr}"
+    assert chart_version_of(sandbox.on_main(CHART_YAML)) == after_first, (
+        "a re-run pinning the same tag bumped the chart anyway"
+    )
+    assert sandbox.main_log() == log_before
+
+
+def test_sequential_publishes_each_get_their_own_chart_version(sandbox: Sandbox) -> None:
+    """The bump reads the FETCHED tip, not the run's own checkout.
+
+    This is the concurrency case that broke the tag line, applied to the version: run B is
+    checked out at a commit predating run A's bump, so a version captured before the loop would
+    compute 0.4.1 twice. The second push would then either collide or re-release a version
+    chart-releaser has already published — the original defect, one layer down.
+    """
+    at_a = sandbox.merge("a.txt")
+    at_b = sandbox.merge("b.txt")
+    run_a = sandbox.runner("runA", at_a, "0.6.0-AAAAAAAAAA")
+    run_b = sandbox.runner("runB", at_b, "0.6.0-BBBBBBBBBB")
+
+    assert sandbox.run_step(run_a).returncode == 0
+    assert chart_version_of(sandbox.on_main(CHART_YAML)) == "0.4.1"
+
+    result_b = sandbox.run_step(run_b)
+    assert result_b.returncode == 0, f"{result_b.stdout}\n{result_b.stderr}"
+    assert chart_version_of(sandbox.on_main(CHART_YAML)) == "0.4.2", (
+        "run B reused run A's version number, so its image is published under a chart version "
+        "that already exists and chart-releaser drops it"
+    )
+    assert tag_of(sandbox.on_main(VALUES)) == "0.6.0-BBBBBBBBBB"
+
+
+def test_a_human_minor_bump_is_respected_rather_than_overwritten(sandbox: Sandbox) -> None:
+    """MINOR stays a human decision; the automation only ever adds to the third component.
+
+    A template change that earns 0.5.0 must not be flattened back to 0.4.x by the next image
+    build, which would publish the behaviour change under a version consumers read as a patch.
+    """
+    git(sandbox.seed, "fetch", "-q", "origin", "main")
+    git(sandbox.seed, "reset", "-q", "--hard", "FETCH_HEAD")
+    chart = sandbox.seed / CHART_YAML
+    chart.write_text(chart.read_text().replace("version: 0.4.0", "version: 0.5.0"))
+    sandbox._commit(sandbox.seed, "feat(chart): a template change worth a minor bump")
+    git(sandbox.seed, "push", "-q", "origin", "main")
+    at_a = git(sandbox.seed, "rev-parse", "HEAD").strip()
+
+    assert sandbox.run_step(sandbox.runner("runA", at_a, "0.6.0-AAAAAAAAAA")).returncode == 0
+    assert chart_version_of(sandbox.on_main(CHART_YAML)) == "0.5.1", (
+        "the automation must build on the human's minor bump, not reset it"
+    )
+
+
+# ── The dispatch, which is the half a push cannot do ──────────────────────────────────────
+
+
+def workflow() -> dict:
+    return yaml.safe_load(WORKFLOW.read_text())
+
+
+def dispatch_step() -> dict:
+    steps = workflow()["jobs"]["publish"]["steps"]
+    matched = [s for s in steps if "gh workflow run" in (s.get("run") or "")]
+    assert len(matched) == 1, (
+        "expected exactly one step dispatching a workflow; a pin that lands on main cannot "
+        f"publish the chart by itself, so this step is load-bearing. Found {len(matched)}"
+    )
+    return matched[0]
+
+
+def test_the_job_may_dispatch_a_workflow() -> None:
+    """Without `actions: write` the dispatch is a 403 and the chart silently stops publishing."""
+    perms = workflow()["jobs"]["publish"]["permissions"]
+    assert perms.get("actions") == "write", (
+        "publish needs actions: write to dispatch Release Charts; the pin commit cannot trigger "
+        "it by pushing, because pushes made with GITHUB_TOKEN do not create workflow runs"
+    )
+    assert perms.get("contents") == "write", "still needs contents: write to push the pin"
+
+
+def test_the_dispatch_targets_the_chart_release_on_main() -> None:
+    """--ref main, not the triggering sha: the pin commit is a CHILD of github.sha.
+
+    Dispatching at github.sha would package the chart exactly as it was before the pin — the
+    original staleness, reproduced deliberately.
+    """
+    run = dispatch_step()["run"]
+    assert "helm.yaml" in run, "the dispatch must name the chart-release workflow"
+    assert "--ref main" in run, (
+        "dispatch at main, not github.sha: the pin commit does not exist at the triggering sha"
+    )
+
+
+def test_the_dispatch_only_fires_when_a_pin_actually_landed() -> None:
+    """Gated on the pin step's output, so a no-op run does not ask for a redundant release."""
+    guard = dispatch_step().get("if", "")
+    assert "steps.pin.outputs.pinned" in guard, (
+        f"the dispatch must be conditional on the pin having landed; guard is {guard!r}"
+    )
+    body = pin_step()
+    assert "pinned=true" in body and "GITHUB_OUTPUT" in body, (
+        "the pin step must emit the output the dispatch is gated on"
+    )
+
+
+def test_the_pin_step_writes_both_files_it_commits() -> None:
+    """A guard on the APPROACH: the two edits must be staged together, in one commit.
+
+    Two commits would mean a window where main pins an image under a version already published —
+    and if the second push lost the race, that window becomes permanent.
+    """
+    body = pin_step()
+    added = [ln for ln in body.splitlines() if ln.strip().startswith("git add")]
+    assert len(added) == 1, f"expected one `git add`, found {len(added)}: {added}"
+    assert "values.yaml" in added[0] and "Chart.yaml" in added[0], (
+        f"both files must be staged in the same commit as the pin; got {added[0]!r}"
     )
