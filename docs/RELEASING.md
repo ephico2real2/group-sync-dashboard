@@ -108,29 +108,43 @@ human changed the application version.
   ┌──────────────────────┬───────────┬──────────────────┬─────────────────────────────┐
   │ tag                  │ mutable?  │ pushed when      │ who it is for               │
   ├──────────────────────┼───────────┼──────────────────┼─────────────────────────────┤
-  │ 0.7.0-f9fa896778     │ NEVER     │ every merge that │ you, when you need          │
-  │                      │           │ touches an image │ byte-identical rollbacks.   │
+  │ 0.7.0-f9fa896778     │ never, by │ every merge that │ you, when you need          │
+  │                      │ POLICY    │ touches an image │ byte-identical rollbacks.   │
   │ <appVersion>-<sha>   │           │ input            │ Always this exact source.   │
   ├──────────────────────┼───────────┼──────────────────┼─────────────────────────────┤
   │ 0.7.0                │ moves on  │ only when a      │ THE CHART, by default.      │
   │                      │ an APP    │ human bumps      │ image.tag is "" and         │
   │ <appVersion>         │ release   │ pyproject version│ gsd.image resolves this.    │
   ├──────────────────────┼───────────┼──────────────────┼─────────────────────────────┤
-  │ 0.5.0                │ moves on  │ at chart-release │ a human asking "which       │
-  │                      │ a CHART   │ time, by retag   │ image does chart 0.5.0      │
+  │ 0.6.0                │ moves on  │ at chart-release │ a human asking "which       │
+  │                      │ a CHART   │ time, by retag   │ image does chart 0.6.0      │
   │ <chartVersion>       │ release   │ (never a build)  │ deploy?"                    │
   └──────────────────────┴───────────┴──────────────────┴─────────────────────────────┘
 
+  every row above is a TAG, i.e. a name. "never, by policy" is a promise this project keeps, not
+  something the registry enforces — a tag's owner can always move it. If you need a guarantee
+  rather than a promise, pin image.digest and skip the table entirely.
+
   what the chart deploys, in order of precedence:
 
-      --set image.tag=0.7.0-f9fa896778   ─┐
-                                          ├─►  an exact, immutable image
-      values.yaml  image.tag: "<pin>"    ─┘
+      image.digest: "sha256:aa6a7f…"     ───►  repository@sha256:aa6a7f…
+                                               IMMUTABLE BY CONSTRUCTION. a digest is a hash of
+                                               the content, so nobody can repoint it.
+                                               note the @ — a digest is not a tag.
 
-      values.yaml  image.tag: ""         ───►  :<appVersion>   ← the shipped default
+      image.tag: "0.7.0-f9fa896778"      ───►  repository:0.7.0-f9fa896778
+                                               immutable BY CONVENTION — this project never
+                                               repoints one, but it is still a name, and a
+                                               name's owner can move it.
+
+      image.tag: ""   (the default)      ───►  repository:<appVersion>
                                                resolved via
                                                default .Chart.AppVersion .Values.image.tag
 ```
+
+A malformed `image.digest` **fails the render** rather than passing through. A bad digest still forms
+a reference Kubernetes accepts, so the alternative is finding out as `ImagePullBackOff` on a cluster
+instead of in a pipeline; the error names `skopeo inspect` so you can get a correct one.
 
 `values.yaml` ships `image.tag: ""`, and `gsd.image` resolves `default .Chart.AppVersion`. So the
 chart deploys `:<appVersion>` unless you say otherwise.

@@ -60,7 +60,11 @@ type: application
 #   --set image.tag=0.7.0-db8a90510f
 # values.yaml under `image` carries the full reasoning, and
 # docs/DESIGN_decouple_chart_and_app_release.md carries the review that settled it.
-version: 0.5.0
+# 0.6.0, MINOR because it adds a value rather than changing one. `image.digest` gives consumers an
+# immutable pin — a tag is a name the registry owner can repoint, a digest is the content itself —
+# and it wins over `image.tag`. Nothing changes for a release that does not set it: the default is
+# empty and the tag/appVersion path is byte-identical to 0.5.0's.
+version: 0.6.0
 # 0.7.0. It must equal local-development/pyproject.toml's `version` (tests/test_chart_versions.py
 # holds them together, and holds appVersion against the pinned image tag's prefix), so moving it
 # means moving the app version AND re-pinning the image — all three land in one commit or CI is red,

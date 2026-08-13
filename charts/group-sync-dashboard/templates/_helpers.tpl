@@ -41,8 +41,31 @@ app: {{ include "gsd.fullname" . }}
 {{- end -}}
 {{- end -}}
 
+{{/*
+The image reference, resolved digest first, then tag, then appVersion.
+
+WHY THREE FORMS AND NOT ONE. `image.tag` ships EMPTY so the chart deploys the appVersion it
+declares (see values.yaml under `image`). That alias is republished when the application version
+changes, and `imagePullPolicy` is `Always`, so every container creation re-resolves it — which is
+correct for a release channel and wrong for anyone who needs the same bytes after a node drain.
+A tag can be repointed by whoever owns the registry; a digest cannot be repointed by anyone. So
+`image.digest` is the immutable option, and it wins over both of the others.
+
+`@` AND NOT `:`, which is the whole reason this is a branch rather than another `default` in the
+chain: an OCI reference by digest is `repository@sha256:...`. Joining a digest with `:` produces
+`repository:sha256:abc...`, which is a syntactically valid TAG that no registry has, so the pod
+fails with ImagePullBackOff naming a tag nobody ever pushed.
+*/}}
 {{- define "gsd.image" -}}
+{{- $digest := default "" .Values.image.digest -}}
+{{- if $digest -}}
+{{- if not (regexMatch "^sha256:[a-f0-9]{64}$" $digest) -}}
+{{- fail (printf "image.digest %q is not a digest. Expected sha256: followed by 64 lowercase hex characters, for example sha256:aa6a7f5463c6... — get one with:\n\n  skopeo inspect --no-tags docker://%s:%s | grep Digest\n\nRefused at render time on purpose. A malformed digest still produces a reference Kubernetes will accept, so the alternative is a release that installs cleanly and then sits in ImagePullBackOff against a digest no registry has. UPPERCASE hex is rejected too: registries treat the digest as a literal string, so sha256:AB... and sha256:ab... are different references and only one of them exists.\n\nLeave image.digest empty to deploy image.tag, or the chart's appVersion when that is empty too." $digest .Values.image.repository (default .Chart.AppVersion .Values.image.tag)) -}}
+{{- end -}}
+{{- printf "%s@%s" .Values.image.repository $digest -}}
+{{- else -}}
 {{- printf "%s:%s" .Values.image.repository (default .Chart.AppVersion .Values.image.tag) -}}
+{{- end -}}
 {{- end -}}
 
 {{/*

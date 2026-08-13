@@ -108,6 +108,28 @@ def test_an_empty_tag_still_resolves_to_something_the_chart_declares() -> None:
     )
 
 
+def test_the_shipped_chart_pins_neither_a_tag_nor_a_digest() -> None:
+    """Both pins ship EMPTY, so the published chart deploys the appVersion it advertises.
+
+    `image.digest` exists for consumers who need an immutable reference — a tag is a name the
+    registry owner can repoint, a digest is the content itself. It must not be set HERE, because a
+    digest committed into the chart would pin every installation to one build of one appVersion and
+    quietly outlive the version it was taken from: `appVersion` would say 0.8.0 while the digest
+    still served 0.7.0 bits, with nothing in the chart to reveal the disagreement.
+    tests/test_chart_image_reference.py covers what each value does when a consumer sets it.
+    """
+    image = yaml.safe_load(VALUES.read_text())["image"]
+    assert image.get("digest", "") == "", (
+        f"values.yaml ships image.digest={image.get('digest')!r}. A committed digest overrides "
+        "appVersion for every consumer and cannot be seen in `helm search`; pass it with --set at "
+        "install time instead."
+    )
+    assert "digest" in image, (
+        "image.digest is gone from values.yaml, so the only documented immutable pin is undiscoverable "
+        "— `helm show values` is where a consumer looks for it."
+    )
+
+
 def test_the_package_version_equals_the_application_version() -> None:
     """THE SAME DRIFT, ONE FILE FURTHER IN, and nothing held it until 0.7.0.
 
