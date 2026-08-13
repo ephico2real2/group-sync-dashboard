@@ -243,6 +243,33 @@ skopeo copy docker://quay.io/ephico2real/group-sync-dashboard:0.7.0-db8a90510f \
 # then, at install time:  --set image.tag=0.7.0-db8a90510f
 ```
 
+**Or by digest, which is stronger than either tag.** A tag is a name, and a name can be repointed by
+whoever owns the registry — including your own internal one. A digest is a hash of the content, so it
+cannot name anything else:
+
+```sh
+skopeo inspect --no-tags docker://quay.io/ephico2real/group-sync-dashboard:0.7.0 | grep Digest
+#   "Digest": "sha256:aa6a7f5463c6b39f8d2647ba24ae756f4e7a0b101fe05c8e5bb58d05de016a68"
+
+# then, at install time — note this pins the CONTENT, so it survives any retagging on either side:
+helm upgrade --install group-sync-dashboard ./group-sync-dashboard -n group-sync-dashboard \
+  -f my-values.yaml \
+  --set image.repository=registry.internal.example.com/group-sync-dashboard \
+  --set image.digest=sha256:aa6a7f5463c6b39f8d2647ba24ae756f4e7a0b101fe05c8e5bb58d05de016a68
+```
+
+**Verify the digest on your mirror rather than assuming it carried over.** A straight `skopeo copy`
+does preserve it — measured on this registry, where the `:0.5.0` chart-version tag was created by
+`skopeo copy` from `:0.7.0` and both report `sha256:aa6a7f5463c6…` — but a copy that converts the
+manifest format produces different bytes and therefore a different digest. One command settles it:
+
+```sh
+skopeo inspect --no-tags docker://registry.internal.example.com/group-sync-dashboard:0.7.0-db8a90510f | grep Digest
+```
+
+`image.digest` wins over `image.tag`, and a malformed one fails the render rather than turning into an
+`ImagePullBackOff` on the disconnected side, where debugging is most expensive.
+
 A plain pipe, not `grep <(tar ...)`. Process substitution here gave grep no output and left tar with
 a broken pipe — measured while writing this page, which is the only reason it says so.
 

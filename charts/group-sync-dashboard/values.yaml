@@ -28,12 +28,35 @@ image:
   # WHAT `appVersion` RESOLVES TO IS A MOVING ALIAS, republished only when the application version
   # changes. So it is stable for the life of an appVersion and NOT a substitute for pinning if you
   # need byte-identical rollbacks: with pullPolicy Always below, every container creation
-  # re-resolves it. Pin the sha form if that matters to you.
+  # re-resolves it. Pin the sha form, or `digest` below, if that matters to you.
   tag: ""
+
+  # THE ONLY TRULY IMMUTABLE PIN, and it WINS over `tag` and over the appVersion fallback.
+  #
+  # A tag — including the <appVersion>-<sha> form — is a NAME, and whoever owns the registry can
+  # repoint a name. A digest IS the content: the registry cannot serve different bytes under it,
+  # because the digest is a hash of those bytes. So this is the value to set when "the same image
+  # after a node drain" has to be a guarantee rather than a convention.
+  #
+  # Get one from the tag you already trust:
+  #   skopeo inspect --no-tags docker://quay.io/ephico2real/group-sync-dashboard:0.7.0 | grep Digest
+  #   --set image.digest=sha256:aa6a7f5463c6b39f8d2647ba24ae756f4e7a0b101fe05c8e5bb58d05de016a68
+  #
+  # gsd.image renders `repository@digest` — `@`, not `:`. A malformed value is REFUSED at render
+  # time rather than passed through, because a bad digest still forms a reference Kubernetes accepts
+  # and the failure would surface as ImagePullBackOff on a cluster instead of in a pipeline. The
+  # error names how to get a correct one.
+  #
+  # WITH A DIGEST SET, `pullPolicy: Always` costs a registry round trip and buys nothing — the
+  # content cannot have changed. Deliberately NOT automated: silently flipping pullPolicy because
+  # another field is set is the kind of cleverness that surprises somebody at 2am. Set
+  # `pullPolicy: IfNotPresent` yourself if you want that saving.
+  digest: ""
 
   # Always, deliberately. A tag that can be republished must be re-resolved, or two nodes end up
   # running different bytes under one tag — and the sha form is immutable, so re-resolving it costs
-  # a registry round trip and changes nothing.
+  # a registry round trip and changes nothing. See `digest` above for the one case where this is
+  # pure overhead.
   pullPolicy: Always
 
   # Only needed for a PRIVATE registry. Leave empty for a public repository: an empty

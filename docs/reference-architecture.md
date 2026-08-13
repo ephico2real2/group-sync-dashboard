@@ -1432,6 +1432,13 @@ bumps the application version in a PR. It is deliberately not moved per merge: `
 creation while the chart version on the cluster stayed put. Both adversarial reviewers refused the
 per-merge version; see `docs/DESIGN_decouple_chart_and_app_release.md`.
 
+**And one thing that is not a tag at all.** `image.digest` pins the content rather than a name, and it
+wins over both forms above — `gsd.image` renders `repository@sha256:…`. The distinction the two kinds
+of tag rest on is *policy*: this project never repoints `<appVersion>-<sha>`, but a tag's owner always
+could. A digest is a hash of the bytes, so immutability is structural rather than promised. It ships
+empty, because a digest committed into the chart would outlive the appVersion it was taken from and
+pin every installation to one build with nothing in the chart to reveal the disagreement.
+
 **`<chartVersion>` is stamped by `helm.yaml`, not `publish.yml`**, and by `skopeo copy` rather than a
 rebuild. In `publish.yml` it would move `:0.4.4` on every image-input merge while the already-
 published chart 0.4.4 still deployed an older image — a label that lied about a shipped release —

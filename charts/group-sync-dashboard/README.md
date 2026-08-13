@@ -30,7 +30,8 @@ group membership, so it ships authenticated and you turn the proxy *off* deliber
 |---|---|---|
 | `image.repository` | `quay.io/ephico2real/group-sync-dashboard` | written by `build-and-push-external.sh --update-values` |
 | `image.tag` | `""` | empty resolves `Chart.appVersion`; set it to pin an exact build |
-| `image.pullPolicy` | `Always` | |
+| `image.digest` | `""` | **wins over `tag`.** The only immutable pin — a tag is a name that can be repointed, a digest is the content. Renders `repository@sha256:…`; a malformed value fails the render |
+| `image.pullPolicy` | `Always` | pure overhead when `digest` is set, since the content cannot change |
 | `image.pullSecrets` | `[]` | leave empty for a public repo — an empty secret *reference* fails scheduling rather than falling back to anonymous pull |
 
 ### Authentication
@@ -835,6 +836,21 @@ re-resolves it:
 helm upgrade group-sync-dashboard . -n group-sync-dashboard -f my-values.yaml \
   --set image.tag=0.7.0-db8a90510f
 ```
+
+**Or pin the digest, which is the stronger form.** The `<appVersion>-<sha>` tag above is immutable
+*by convention* — this project never repoints one — but it is still a name, and whoever controls the
+registry can move a name. A digest is a hash of the content, so no registry can serve different
+bytes under it:
+
+```bash
+skopeo inspect --no-tags docker://quay.io/ephico2real/group-sync-dashboard:0.7.0 | grep Digest
+helm upgrade group-sync-dashboard . -n group-sync-dashboard -f my-values.yaml \
+  --set image.digest=sha256:aa6a7f5463c6b39f8d2647ba24ae756f4e7a0b101fe05c8e5bb58d05de016a68
+```
+
+`digest` wins over `tag`, so a leftover tag in your values file cannot override it. With a digest set
+you may as well drop to `--set image.pullPolicy=IfNotPresent`: re-pulling content that cannot have
+changed buys nothing.
 
 The Deployment checksums the ConfigMap, so a change to intervals or the cluster list
 restarts the pod. Without that the ConfigMap would update and nothing would happen, because
