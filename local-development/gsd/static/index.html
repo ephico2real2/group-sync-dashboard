@@ -49,6 +49,11 @@ const view = { page: "overview", cluster: null, groupsync: null, groupFilter: "a
                 /* Free-text user search on the Users tab. The same kind of thing as groupSearch, kept
                    for the same reasons; it persists across tab switches like groupSearch does. */
                 userSearch: "",
+                /* Free-text filter over ONE group's members, on the group detail page. Per group:
+                   applyPosition() clears it whenever the group changes, so a reader who narrowed one
+                   group's members does not arrive at the next group already filtered — but a poll
+                   repaint, which never touches position, keeps it. */
+                memberSearch: "",
                 group: null, user: null,
                 /* Namespace-audit controls. They live HERE and not in the DOM because the
                    page repaints on every poll: state held in the markup would silently
@@ -125,6 +130,9 @@ function applyPosition(pos) {
   // old value would strand a drill-down open after Back returned to the list behind it.
   view.page = pos.page || "overview";
   view.groupsync = pos.groupsync || null;
+  // The member filter belongs to the group it was typed against. Compared before the assignment,
+  // so leaving the page, drilling to another group, and Back into a different one all clear it.
+  if ((pos.group || null) !== view.group) view.memberSearch = "";
   view.group = pos.group || null;
   view.user = pos.user || null;
   // `cluster` is part of the position, not context around it. Without it, Back after a cluster
@@ -641,6 +649,11 @@ const SEARCH_BOXES = {
     title: 'Filters by username or full name as you type. Several words are ANDed — "alice cooper" finds alice · Alice Cooper. Escape clears.',
     help: "Filters the user list by username or full name as you type. Several words are combined with AND, so every word must appear in one or the other. Press Escape to clear.",
   },
+  memberSearch: {
+    id: "f-member-search", label: "Find member", placeholder: "filter by id or name",
+    title: "Filters this group's members by username or full name as you type. Several words are ANDed. Escape clears.",
+    help: "Filters this group's members by username or full name as you type. Several words are combined with AND, so every word must appear in one or the other. Press Escape to clear.",
+  },
 };
 
 function searchBoxHtml(key) {
@@ -736,6 +749,10 @@ function renderFilters() {
   // too, filtering nothing; that slot now holds the box for whatever list the page actually shows.
   if (view.page === "groups" && !view.group && !view.user) html += searchBoxHtml("groupSearch");
   if (view.page === "users" && !view.user) html += searchBoxHtml("userSearch");
+  // In the BAR, not in the members card, and not only because of the rule above .filters: render()
+  // replaces #main with no focus or caret restore, so a box inside the card would lose focus after
+  // every character. The bar is the one place a text field survives the repaint.
+  if (view.page === "groups" && view.group && !view.user) html += searchBoxHtml("memberSearch");
   if (view.page === "groups") {
     html += `<label for="f-state">Group state</label>
       <select id="f-state">
@@ -1902,11 +1919,17 @@ function groupDetail() {
   if (!d) return `<section class="card"><div class="empty-note">Loading…</div></section>`;
 
   const members = d.members || [];
-  const memberBody = members.length
+  // The whole list before the filter narrows it, so the header can report what was hidden — the
+  // same denominator rule as the Groups and Users tabs. Both fields, so a member is findable by
+  // the display name a reader knows as well as the id the cluster knows.
+  const shown = members.filter((m) => matchesSearch([m.user_name, m.full_name], view.memberSearch));
+  const memberSearching = (view.memberSearch || "").trim().length > 0;
+  const memberQuery = (view.memberSearch || "").trim();
+  const memberBody = shown.length
     ? `<div class="scroll-x"><table>
         <thead><tr><th>User</th><th>In this group since</th><th>First ever granted</th>
           <th>Last confirmed</th></tr></thead>
-        <tbody>${members.map((m) => {
+        <tbody>${shown.map((m) => {
           // Distinguished on purpose: if a user left and rejoined, "since" is the current
           // unbroken stretch while "first ever" is the original grant. Showing only the
           // former would tell an auditor access is newer than it is.
@@ -1921,9 +1944,17 @@ function groupDetail() {
           <td class="mono muted">${esc(ago(m.last_seen_at))}</td>
         </tr>`;}).join("")}</tbody>
       </table></div>`
-    : `<div class="empty-note">This group has no members. If it is operator-managed, the
-        LDAP-side members either do not resolve or were filtered out — no object is created
-        for a member that cannot be resolved, so nothing else on the cluster shows this.</div>`;
+    : (memberSearching && members.length > 0
+        // Only blame the filter when it IS the filter: an empty group stays "no members" whatever
+        // is typed, or the reader clears the box expecting rows and gets the same empty table.
+        ? `<div class="empty-note">No member's id or name contains
+            <strong>${esc(memberQuery)}</strong>. ${members.length === 1
+            ? `1 member is in this group, so it is the search hiding them`
+            : `${members.length} members are in this group, so it is the search hiding them`}
+            rather than the group being empty.</div>`
+        : `<div class="empty-note">This group has no members. If it is operator-managed, the
+            LDAP-side members either do not resolve or were filtered out — no object is created
+            for a member that cannot be resolved, so nothing else on the cluster shows this.</div>`);
 
   const changes = d.changes || [];
   const changeBody = changes.length
@@ -1962,12 +1993,16 @@ function groupDetail() {
       <code>${esc(d.ldap_uid)}</code></div>` : ""}
   </section>
   <section class="card">
-    <h2>Members <span class="muted" style="font-weight:400">· ${members.length}</span></h2>
+    <h2>Members <span class="muted" style="font-weight:400">· ${memberSearching
+      ? `${shown.length} of ${members.length} shown` : members.length}</span></h2>
     <div class="filterbar-note" style="margin:4px 0 8px">
       <strong>Select a user to see every group they belong to.</strong>
       "Member since" is when this dashboard first observed the user in the group — not when
       LDAP added them. It cannot predate this dashboard.
     </div>
+    ${memberSearching ? `<div class="filterbar-note" style="margin:0 0 8px">Filtered by
+      <strong>${esc(memberQuery)}</strong> — every word must appear in the id or the name.${members.length > 0
+      ? ` Clear the box, or press Escape in it, to see all ${members.length}.` : ""}</div>` : ""}
     ${memberBody}
   </section>
   ${bindingsCard(d.bindings, "This group")}

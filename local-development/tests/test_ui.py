@@ -2565,3 +2565,129 @@ class TestUserSearchVisibility:
         p.wait_for_selector("tr[data-user='dave']")
         assert p.locator("tbody tr").count() == 3
         assert p.locator(".scope-banner").count() == 0
+
+
+class TestMemberSearch:
+    """The Find member box on a group's detail page: the third box on the shared machinery, and the
+    one with per-group state — a filter typed against one group must not follow the reader to the next."""
+
+    GROUP = "app-ocp-rbac-alpha-ns-admin"
+
+    def _open(self, dash, name=GROUP):
+        dash.locator("button[data-nav='groups']").click()
+        dash.wait_for_selector("tr[data-group]")
+        dash.locator(f"tr[data-group='{name}']").click()
+        dash.wait_for_selector("#back-groups")
+        dash.wait_for_selector("#f-member-search")
+
+    def _members(self, dash):
+        return dash.evaluate("() => Array.from(document.querySelectorAll('tr[data-user]'))"
+                             ".map(r => r.dataset.user)")
+
+    def _members_card(self, dash):
+        return dash.locator("section.card").nth(1).inner_text()
+
+    def test_a_term_matches_the_username(self, dash):
+        self._open(dash)
+        before = self._members(dash)
+        assert "dave" in before and "alice" in before, before
+        dash.fill("#f-member-search", "dave")
+        dash.wait_for_function("() => view.memberSearch === 'dave'")
+        assert self._members(dash) == ["dave"]
+
+    def test_a_term_matches_the_full_name(self, dash):
+        self._open(dash)
+        dash.fill("#f-member-search", "cooper")
+        dash.wait_for_function("() => view.memberSearch === 'cooper'")
+        assert self._members(dash) == ["alice"]
+
+    def test_the_header_reports_the_denominator(self, dash):
+        self._open(dash)
+        total = len(self._members(dash))
+        dash.fill("#f-member-search", "dave")
+        dash.wait_for_function("() => view.memberSearch === 'dave'")
+        assert f"1 of {total} shown" in self._members_card(dash)
+
+    def test_nothing_matching_blames_the_search_not_the_group(self, dash):
+        self._open(dash)
+        dash.fill("#f-member-search", "zzzznope")
+        dash.wait_for_function("() => view.memberSearch === 'zzzznope'")
+        card = self._members_card(dash)
+        assert "No member's id or name contains" in card and "search hiding them" in card, card
+        assert "no members" not in card, card
+
+    def test_an_empty_group_still_says_it_has_no_members(self, dash):
+        """Zero denominator: the group is empty whatever is typed, and the box must not offer "see all 0"."""
+        self._open(dash, "app-ocp-rbac-abcd-ns-superuser")
+        dash.fill("#f-member-search", "x")
+        dash.wait_for_function("() => view.memberSearch === 'x'")
+        card = self._members_card(dash)
+        assert "no members" in card, card
+        assert "search hiding" not in card and "to see all 0" not in card, card
+
+    def test_the_filter_clears_when_another_group_is_opened(self, dash):
+        self._open(dash)
+        dash.fill("#f-member-search", "dave")
+        dash.wait_for_function("() => view.memberSearch === 'dave'")
+        dash.evaluate("() => { navigate({ group: 'app-ssb-autobahnusers' }); refresh(); }")
+        # The state clears at navigate(); the BOX clears when the fetched page paints, so wait for
+        # the new group's payload before reading the DOM — the same paint-after-fetch as a real drill.
+        dash.wait_for_function("() => data.group && data.group.name === 'app-ssb-autobahnusers'")
+        assert dash.evaluate("() => view.memberSearch") == ""
+        assert dash.locator("#f-member-search").input_value() == ""
+
+    def test_the_filter_clears_on_the_way_back_to_the_list(self, dash):
+        self._open(dash)
+        dash.fill("#f-member-search", "dave")
+        dash.wait_for_function("() => view.memberSearch === 'dave'")
+        dash.locator("#back-groups").click()
+        dash.wait_for_selector("tr[data-group]")
+        assert dash.evaluate("() => view.memberSearch") == ""
+
+    def test_the_filter_survives_the_poll_repaint(self, dash):
+        """The poll never touches position, so a repaint keeps the filter AND the caret."""
+        self._open(dash)
+        dash.fill("#f-member-search", "dave")
+        dash.wait_for_function("() => view.memberSearch === 'dave'")
+        dash.evaluate("() => render()")
+        assert dash.evaluate("() => view.memberSearch") == "dave"
+        assert dash.evaluate("() => document.activeElement === document.getElementById('f-member-search')")
+        assert self._members(dash) == ["dave"]
+
+    def test_the_box_is_absent_on_the_group_list_and_the_user_page(self, dash):
+        self._open(dash)
+        assert dash.locator("#f-group-search").count() == 0, "the group box filters nothing here"
+        dash.locator("tr[data-user='alice']").click()
+        dash.wait_for_function("() => view.user === 'alice'")
+        dash.wait_for_selector("#back-groups")
+        assert dash.locator("#f-member-search").count() == 0
+        dash.locator("button[data-nav='groups']").click()
+        dash.wait_for_selector("tr[data-group]")
+        assert dash.locator("#f-member-search").count() == 0
+        assert dash.locator("#f-group-search").count() == 1
+
+    def test_escape_clears_it(self, dash):
+        self._open(dash)
+        dash.fill("#f-member-search", "dave")
+        dash.wait_for_function("() => view.memberSearch === 'dave'")
+        dash.locator("#f-member-search").press("Escape")
+        dash.wait_for_function("() => view.memberSearch === ''")
+        assert len(self._members(dash)) > 1
+
+    def test_the_visible_label_is_the_accessible_name(self, dash):
+        self._open(dash)
+        el = dash.locator("#f-member-search")
+        assert el.get_attribute("aria-label") is None
+        assert el.get_attribute("aria-describedby") == "f-member-search-help"
+        assert dash.locator("label[for='f-member-search']").inner_text().strip() == "Find member"
+        help_text = dash.locator("#f-member-search-help")
+        assert "AND" in help_text.inner_text()
+        assert help_text.evaluate("el => el.getBoundingClientRect().width") <= 2
+
+    def test_a_filtered_member_still_drills_in(self, dash):
+        self._open(dash)
+        dash.fill("#f-member-search", "cooper")
+        dash.wait_for_function("() => view.memberSearch === 'cooper'")
+        dash.locator("tr[data-user='alice']").click()
+        dash.wait_for_function("() => view.user === 'alice'")
+        assert dash.evaluate("() => view.page") == "groups"
