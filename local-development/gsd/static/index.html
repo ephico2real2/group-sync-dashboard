@@ -1202,8 +1202,10 @@ function usersPage() {
   const searching = (view.userSearch || "").trim().length > 0;
   const q = (view.userSearch || "").trim();
   return `<section class="card">
-    <h2>Users <span class="muted" style="font-weight:400">· ${searching
-      ? `${matched.length} of ${all.length} shown`
+    <h2>Users <span class="muted" style="font-weight:400">· ${rows.length < all.length
+      // What is PAINTED, so the number is true whether the search or the paint cap narrowed it;
+      // the notes below say which. Counting matches here read "1500 shown" over 1,000 rows.
+      ? `${rows.length} of ${all.length} shown`
       : `${all.length} shown`}</span></h2>
     ${scopeBanner("users", d)}
     ${d.truncated

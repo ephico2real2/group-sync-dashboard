@@ -2514,6 +2514,9 @@ class TestUserSearch:
         assert dash.locator("tbody tr").count() == 1000
         note = dash.locator(".truncation-note").first.inner_text()
         assert "1000 of 1500 users painted" in note, note
+        # The heading counts what is painted, not what matched — "1500 shown" over 1,000 rows was
+        # the defect the adversarial review found.
+        assert "1000 of 1500 shown" in dash.locator("section.card h2").first.inner_text()
         dash.fill("#f-user-search", "last person")
         dash.wait_for_function("() => view.userSearch === 'last person'")
         assert self._ids(dash) == ["u1499"], "the 1500th row was fetched, so it must be findable"
@@ -2533,6 +2536,36 @@ class TestUserSearch:
         got = dash.evaluate("() => document.getElementById('f-user-search').value")
         assert got == "かんり", f"the composition was aborted by a repaint: {got!r}"
         assert dash.evaluate("() => view.userSearch") == "かんり"
+
+    def test_a_refused_list_is_a_named_refusal_not_an_empty_table(self, dash):
+        """The endpoint 403s a reader with no verified identity; the tab must say so, not show nothing."""
+        self._open(dash)
+        dash.evaluate("() => { data.users = { forbidden: true }; render(); }")
+        assert dash.locator(".scope-refusal").count() == 1
+        body = dash.locator("#main").inner_text()
+        assert "Withheld, not empty" in body and "Users" in body, body[:200]
+        assert dash.locator("tr[data-user]").count() == 0
+
+    def test_a_cluster_switch_drops_the_list(self, dash):
+        """The rows belong to a cluster; painting them under another cluster's title would be a lie."""
+        self._open(dash)
+        assert dash.evaluate("() => data.users !== null")
+        dash.evaluate("() => { navigate({ cluster: 'prod-east', groupsync: null, group: null, user: null }); }")
+        assert dash.evaluate("() => data.users") is None
+        assert dash.evaluate("() => view.cluster") == "prod-east"
+
+    def test_other_tabs_never_request_the_user_list(self, dash):
+        """Fetched only on its own tab, like logins: the other pages must not pay for a 10,000-row list."""
+        dash.evaluate("() => { window.__urls = []; const f = window.fetch;"
+                      " window.fetch = (...a) => { window.__urls.push(String(a[0])); return f(...a); }; }")
+        for tab in ("Groups", "Overview", "Access granted"):
+            dash.click(f'button.tab:text-is("{tab}")')
+            dash.wait_for_timeout(400)
+        urls = dash.evaluate("() => window.__urls")
+        assert not [u for u in urls if u.endswith("/users") or "/users?" in u], urls
+        self._open(dash)
+        urls = dash.evaluate("() => window.__urls")
+        assert [u for u in urls if "/users?" in u], "the Users tab itself must fetch the list"
 
 
 class TestUserSearchVisibility:
