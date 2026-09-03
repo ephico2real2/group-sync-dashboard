@@ -1,8 +1,8 @@
 # Review: the dashboard's name in one place
 
 Adversarial review of PR #43 before merge, in the shape `docs/REVIEW_group_search.md` set. Codex
-ran the pass read-only against `git diff main...feat/configurable-title`. The Cursor pass is still
-unavailable (its CLI is not logged in on the machine).
+ran two passes read-only against `git diff main...feat/configurable-title` before merge; Cursor ran
+one against the merged range afterwards, and its findings are at the end of this file.
 
 Citations are by symbol (`file#symbol`), never by line, so this file stays true after the next edit.
 
@@ -68,3 +68,18 @@ Checked against the sources rather than from memory, on the operator's instructi
 
 Sources: FastAPI templates and path-operation configuration docs; Starlette `staticfiles.py`,
 `responses.py`, `routing.py`, `templating.py`; MDN HTTP caching guide; RFC 9110 §13.1.2, §15.4.5.
+
+## The Cursor pass, after merge
+
+Run against `git diff e496a74^1 e496a74` with both Codex rounds already applied, briefed to find
+what they missed. It confirmed the conditional-request logic, the escaping, the auth expectations
+and the tests, and found two things:
+
+| Finding | Severity | Outcome |
+|---|---|---|
+| The render cache was keyed on the file's mtime, so a content swap that keeps the mtime (`cp -p`, a bind mount) inside a live process kept answering 304 with the old tag — while the comment claimed the ETag over the body covered content changes. Both Codex passes accepted that claim. | low | Fixed: the source is read and hashed on every request and the cache is keyed on that digest; only the substitution is cached. Measured cost is well under a millisecond for 180 KB from the page cache. Test: rewrite the content, restore the mtime, expect a new tag. |
+| The shadow routes are exact-path only. Measured with the TestClient: `/static/index.html/`, `/static//index.html` and, on this case-insensitive volume, `/static/Index.html` all served the raw file with the token unfilled, because `StaticFiles` normalises the first two to the same file and the filesystem opens the third. | low | Fixed: the mount is a `StaticFiles` subclass that refuses the two page sources by case-folded basename after normalisation; the exact routes still render them. Test walks eight spellings. |
+
+Accepted and recorded, not changed: a missing source file is an uncaught error (500) rather
+than a soft page, which is right for an image that ships the files; the self-tier screenshots
+still show the old header until the persona can be signed in.
