@@ -1,4 +1,4 @@
-"""GroupSync dashboard — read-only multi-cluster observability for the group-sync-operator."""
+"""Read-only multi-cluster observability for the group-sync-operator. Named by TITLE below."""
 
 # Must equal pyproject.toml's `version`, which is the source of truth the build script reads.
 # This copy is what /api/version and gsd_build_info report, so drift here tells an operator the

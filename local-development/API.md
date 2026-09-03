@@ -646,6 +646,7 @@ stale by definition and would report yesterday's state as today's.
 | `GET /api/version` | `{version, commit, branch, dirty, timezone}` from the build stamp. `dirty: true` means no commit reproduces the running image. `timezone` is `{name, abbrev, utc_offset}` for the **container**, which the browser needs because it can only discover its own |
 | `GET /metrics` | Prometheus exposition. Unauthenticated so a ServiceMonitor can scrape it, which is why it emits counts and states only — never a group or user name |
 | `GET /signed-out` | the proxy's `-logout-url` landing page. Static, script-free, unauthenticated (it renders at the exact moment the cookie died), and worded to be true whether or not the revocation above happened |
+| `GET /static/index.html`, `GET /static/signed-out.html` | the same two pages, rendered. The `/static` mount would otherwise serve the source files with the dashboard's name unfilled, so these routes shadow them. Not in the OpenAPI schema |
 
 ## The schema, served
 
