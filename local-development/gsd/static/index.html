@@ -732,7 +732,7 @@ function renderFilters() {
   if (view.page === "bindings") {
     html += `<label for="f-binding">Show</label>
       <select id="f-binding">
-        <option value="review"${view.bindingFilter === "review" ? " selected" : ""}>needs review</option>
+        <option value="review"${view.bindingFilter === "review" ? " selected" : ""}>granted + needs review</option>
         <option value="all"${view.bindingFilter === "all" ? " selected" : ""}>all bindings</option>
         <option value="ok"${view.bindingFilter === "ok" ? " selected" : ""}>granted (group exists)</option>
         <option value="built_in"${view.bindingFilter === "built_in" ? " selected" : ""}>built-in</option>
@@ -2221,10 +2221,12 @@ function userDetail() {
 
 
 /* Every group-subject binding on the cluster, classified, filtered by the row above.
-   Defaults to "needs review" because that is the only part nothing else reports — but the
-   healthy majority is one filter away, so the page describes the cluster rather than only
-   its faults. An earlier version showed ONLY the non-resolving rows under the same
-   "Bindings" label, which misrepresented 228 bindings as 154. */
+   Opens on "granted + needs review": the faults first, because nothing else on the cluster
+   reports them, then the Granted section — what has actually been granted, which is what the
+   page is named for. The built-in majority stays one filter away; it is noise to a reviewer.
+   Two earlier shapes were both misrepresentations: a "Bindings" label over ONLY the
+   non-resolving rows (228 bindings shown as 154), and then a default of the faults alone,
+   which the operator read as the page missing its data (2026-09-03). */
 function bindingsPage() {
   const d = data.findings;
   // A DESIGNED 403 (the binding surface is the administrator tier), phrased — never the
@@ -2293,9 +2295,13 @@ function bindingsPage() {
       + bindingSection("Built-in", "Virtual groups; no Group object is expected.", d.built_in || []);
   }
 
-  // default: needs review. The header goes here too — without it this view would show a
-  // subset with no statement of the whole, which is the exact misrepresentation the filter
-  // was added to fix.
+  // default: what was granted, with what needs review on top. The page is called Access
+  // granted, and it used to open on the faults alone — the 34 bindings that actually grant
+  // access on the reference cluster sat behind the filter, and the operator read the page as
+  // missing its data (enhancement, 2026-09-03). The faults keep the top of the page because
+  // nothing else on the cluster reports them; the Granted section follows; the built-in
+  // majority (151 there) stays one filter away, because it is noise to a reviewer. The header
+  // goes here too — without it this view would show a subset with no statement of the whole.
   return header + `<section class="card">
     <div class="hero">
       <div class="value">${review}</div>
@@ -2304,8 +2310,8 @@ function bindingsPage() {
     <div class="filterbar-note">
       Each names a Group that does not exist, so the access it grants reaches no one.
       Nothing on the cluster reports this — <code>oc get rolebinding</code> shows a
-      perfectly healthy object. Switch the filter above to see all ${d.total || 0} group
-      bindings.
+      perfectly healthy object. The ${c.ok || 0} bindings that grant a real group follow
+      below; the ${c.built_in || 0} built-in ones are behind the filter above.
     </div>
   </section>
   ${bindingSection("Dangling", "The group was operator-managed and has disappeared.",
@@ -2319,7 +2325,10 @@ function bindingsPage() {
       `Hand-made grants on operator-synced groups, outside the policy system. Acknowledge
        a deliberate one with the <code>rbac.ocp.io/unmanaged-exception</code> annotation on
        the binding; the justification then lives next to the object and clears it here.`,
-      d.unmanaged || [], sevBadge("warning", "unmanaged"))}`;
+      d.unmanaged || [], sevBadge("warning", "unmanaged"))}
+  ${bindingSection("Granted",
+      "The group named by each of these exists, so the access reaches its members. This is what has actually been granted on this cluster through groups.",
+      d.ok || [])}`;
 }
 
 /* Binding table + section card, at module scope so both the Access-granted and the

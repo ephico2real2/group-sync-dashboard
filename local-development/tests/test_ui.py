@@ -814,6 +814,31 @@ class TestBindingFindingsVisible:
         assert dash.locator("button[data-nav='bindings']").count() == 1
         self._open(dash)
 
+    def test_the_default_view_shows_what_was_granted_under_what_needs_review(self, dash):
+        """The page is called Access granted and used to open on the faults alone; the bindings
+        that actually grant access sat behind the filter, and the operator read the page as
+        missing its data (enhancement, 2026-09-03). Faults stay on top; Granted follows; the
+        built-in majority stays one filter away."""
+        self._open(dash)
+        assert dash.evaluate("() => view.bindingFilter") == "review"
+        # Headings carry a severity badge and a count ("unresolved Unresolved · 1"), so match by word.
+        headings = [h.strip() for h in dash.locator("#main section.card h2").all_inner_texts()]
+        def at(word):
+            hits = [i for i, h in enumerate(headings) if word in h.split()]
+            assert hits, (word, headings)
+            return hits[0]
+        assert at("Granted") > at("Unresolved"), ("faults first, then what was granted", headings)
+        assert not any("Built-in" in h for h in headings), "built-in bindings are noise to a reviewer and stay behind the filter"
+        # The fixture's one healthy grant: a RoleBinding on a group that exists.
+        granted = dash.locator("section.card:has(h2:has-text('Granted')) tbody tr")
+        assert granted.count() >= 1
+        assert "app-ocp-rbac-alpha-ns-admin" in granted.first.inner_text()
+        assert "managed-admin-rb" in granted.first.inner_text()
+        # The review hero is still the first thing on the page.
+        assert "grant nobody" in dash.locator("#main").inner_text()
+        assert "grant a real group follow" in dash.locator("#main").inner_text()
+        assert dash.locator("#f-binding option[value='review']").inner_text().strip() == "granted + needs review"
+
     def test_dangling_and_unresolved_are_both_shown(self, dash):
         self._open(dash)
         body = dash.locator("body").inner_text()
