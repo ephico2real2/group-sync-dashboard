@@ -881,15 +881,17 @@ class TestBindingFindingsVisible:
         """The same box the Groups and Users tabs have: group, role, namespace or binding name."""
         self._open(dash)
         before = dash.locator("tbody tr").count()
-        # The denominator is every LOADED binding, built-in included, not the painted rows.
-        loaded = dash.evaluate("() => ['ok','dangling','unresolved','built_in','unmanaged']"
-                               ".reduce((n, t) => n + (data.findings[t] || []).length, 0)")
+        # The denominator is the sections SHOWN under the current filter — Built-in is hidden on
+        # the default view, so its rows are not counted (Codex, #48).
+        shown = dash.evaluate("() => ['ok','dangling','unresolved','unmanaged']"
+                              ".reduce((n, t) => n + (data.findings[t] || []).length, 0)")
+        assert shown == before
         dash.fill("#f-binding-search", "klta")
         dash.wait_for_function("() => view.bindingSearch === 'klta'")
         names = dash.locator("tbody tr td:first-child").all_inner_texts()
         assert names == ["app-ocp-rbac-klta-ns-audit"], names
         note = dash.locator("#binding-search-note").inner_text()
-        assert "klta" in note and f"1 of {loaded} loaded bindings match" in note, note
+        assert "klta" in note and f"1 of {shown} bindings in the sections shown match" in note, note
         # The header counts the cluster, never the match.
         assert "Group bindings on this cluster" in dash.locator("#main").inner_text()
         dash.fill("#f-binding-search", "prod-ns admin")
@@ -899,6 +901,18 @@ class TestBindingFindingsVisible:
         dash.locator("#f-binding-search").press("Escape")
         dash.wait_for_function("() => view.bindingSearch === ''")
         assert dash.locator("tbody tr").count() == before
+
+    def test_a_cluster_switch_clears_the_search_and_keeps_the_sort(self, dash):
+        self._open(dash)
+        dash.fill("#f-binding-search", "klta")
+        dash.wait_for_function("() => view.bindingSearch === 'klta'")
+        dash.evaluate("() => { view.bindingSort = 'binding'; view.bindingDir = 'desc'; }")
+        dash.evaluate("() => { navigate({ cluster: 'prod-east', groupsync: null, group: null, user: null }); }")
+        assert dash.evaluate("() => view.bindingSearch") == ""
+        assert dash.evaluate("() => [view.bindingSort, view.bindingDir]") == ["binding", "desc"]
+        dash.evaluate("() => { navigate({ cluster: 'crc-local', groupsync: null, group: null, user: null });"
+                      " view.bindingSort = 'group'; view.bindingDir = 'asc'; refresh(); }")
+        dash.wait_for_selector("text=grant nobody")
 
     def test_column_headers_sort_and_reaches_puts_the_unknowns_last(self, dash):
         self._open(dash)
@@ -2886,6 +2900,45 @@ class TestAccessGrantedSelfTier:
         assert p.locator(".scope-banner").count() == 0
         assert p.locator("section.card:has(h2:has-text('Granted')) tbody tr").count() >= 1
         assert p.locator("#f-binding").count() == 1
+
+    def test_a_reader_promoted_mid_session_sees_the_cluster_on_the_next_refresh(self, page, scoped_server):
+        """The tier used to be decided from the PREVIOUS cycle's identity: a promotion showed the
+        old narrowed view for a cycle (Codex, #48). The tab now decides from the whoami that just
+        arrived and makes one guarded follow-up fetch."""
+        p = self._open(page, scoped_server, "alice")
+        p.wait_for_selector(".scope-banner")
+        p.set_extra_http_headers({"X-Forwarded-User": "root"})
+        p.evaluate("() => refresh()")
+        p.wait_for_selector("text=grant nobody", timeout=10_000)
+        assert p.locator(".scope-banner").count() == 0
+        assert p.locator("section.card:has(h2:has-text('Granted')) tbody tr").count() >= 1
+        assert p.evaluate("() => data.myAccess") is None, "the narrowed payload is not left behind"
+
+    def test_a_reader_demoted_mid_session_sees_their_own_path_on_the_next_refresh(self, page, scoped_server):
+        p = self._open(page, scoped_server, "root")
+        p.wait_for_selector("text=grant nobody")
+        p.set_extra_http_headers({"X-Forwarded-User": "alice"})
+        p.evaluate("() => refresh()")
+        p.wait_for_selector(".scope-banner", timeout=10_000)
+        body = p.locator("#main").inner_text()
+        assert "reaches alice" in body and "grant nobody" not in body, body[:300]
+        assert p.evaluate("() => data.findings") is None, "the wide payload is not this reader's to paint"
+
+    def test_a_narrowed_identity_with_no_username_is_a_named_card_not_loading(self, page, scoped_server):
+        p = self._open(page, scoped_server, "alice")
+        p.wait_for_selector(".scope-banner")
+        p.evaluate("() => { data.whoami = Object.assign({}, data.whoami, { user: null }); data.myAccess = null; render(); }")
+        body = p.locator("#main").inner_text()
+        assert "passed no username" in body and "Loading" not in body, body[:300]
+        assert p.locator(".scope-refusal").count() == 1
+
+    def test_a_non_404_failure_on_the_own_path_is_still_an_error(self, page, scoped_server):
+        p = self._open(page, scoped_server, "alice")
+        p.wait_for_selector(".scope-banner")
+        p.route("**/users/alice", lambda route: route.fulfill(status=500, content_type="application/json", body='{"detail":"boom"}'))
+        p.evaluate("() => { data.myAccess = null; refresh(); }")
+        p.wait_for_function("() => /Dashboard API error/.test(document.querySelector('#main').innerText)", timeout=10_000)
+        p.unroute("**/users/alice")
 
     def test_the_via_group_drills_to_the_readers_own_group(self, page, scoped_server):
         p = self._open(page, scoped_server, "alice")

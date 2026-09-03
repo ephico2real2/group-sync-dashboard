@@ -107,8 +107,9 @@ since 0.10.0 the tab shows it (from their own `/users/{name}`), while the cluste
 `bindings/findings` stays the administrator tier and still answers a plain reader with the refusal.
 
 Two tabs are **refused** rather than narrowed, because their content is about the cluster rather
-than about any reader — a binding names whoever it names, so there is no honest per-reader subset
-of it.
+than about any reader: the Overview is the cluster's own health, and RBAC policy is the whole
+binding surface against the policy operator — the cluster-wide list, which has no honest per-reader
+subset. (Access granted has one: a reader's own path, above.)
 
 ---
 

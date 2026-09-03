@@ -552,7 +552,8 @@ def build_app(
         """The administrator tier, or a refusal that names itself as one.
 
         For the views that are ABOUT THE CLUSTER rather than about the reader: its whole RBAC
-        binding surface, the operator's configuration, the sync CRs. These cannot be scoped
+        binding surface and the operator's configuration (the sync CRs themselves are served at
+        both tiers, projected at self — see list_groupsyncs). These cannot be scoped
         the way a membership list can — a CLUSTER-WIDE binding list names whoever it names, so
         the honest choice is the whole thing or none of it, and none of it is what a
         non-administrator gets.

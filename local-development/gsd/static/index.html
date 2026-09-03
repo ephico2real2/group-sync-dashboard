@@ -167,6 +167,9 @@ function applyPosition(pos) {
       // empty state would blame the chip, but the reader never chose it here. Reset, like
       // memberSearch on a group change; the free-text search is a person, and persists.
       view.userFilter = "all"; view.showNeverNames = false;
+      // Same reasoning for the Access granted search: it names this cluster's groups and
+      // namespaces. The sort is a preference, not a cluster fact, and stays.
+      view.bindingSearch = "";
     }
     view.cluster = pos.cluster;
   }
@@ -549,6 +552,11 @@ function readerTierKnown() {
    tier; calling that narrowed would hide the Overview on a deployment that never restricted
    anything. Once authenticated, only an explicit scope=all may widen the layout — silence or
    junk from an authenticated response stays narrowed. */
+function narrowedFor(w) {
+  if (!w || !w.authenticated) return false;
+  const vis = w.visibility;
+  return !vis || vis.scope !== "all";
+}
 function narrowedReader() {
   const w = data.whoami;
   if (!w || !w.authenticated) return false;
@@ -2283,6 +2291,14 @@ function bindingsPage() {
   // cycle only after the findings fetch has come back forbidden and whoami has named them.
   if (narrowedReader()) {
     if (data.myAccess) return myAccessPage(data.myAccess);
+    // A narrowed identity that carries no username cannot be asked for its own path. Say so
+    // rather than spin: the reader can tell "the proxy sent no user" from "still fetching".
+    if (!(data.whoami && data.whoami.user)) {
+      return refusalCard("Access granted",
+        `Your session is narrowed to your own access, but the proxy passed no username to scope
+         it to, so there is nothing to show. Sign out and back in; if it persists, the proxy is
+         not setting X-Forwarded-User.`, true);
+    }
     return `<section class="card"><div class="empty-note">Loading…</div></section>`;
   }
   const raw = data.findings;
@@ -2293,6 +2309,11 @@ function bindingsPage() {
   const f = raw && !raw.forbidden ? Object.fromEntries(
     ["ok", "dangling", "unresolved", "built_in", "unmanaged"].map((t) =>
       [t, (raw[t] || []).filter((r) => bindingMatches(r, q))])) : null;
+  // Which tiers the selected filter paints — the search note's denominator, so it never
+  // counts a match the reader cannot see (Built-in is hidden on the default view).
+  const visible = ({ review: ["dangling", "unresolved", "unmanaged", "ok"], ok: ["ok"],
+                     built_in: ["built_in"], unmanaged: ["unmanaged"] })[view.bindingFilter]
+                  || ["dangling", "unresolved", "unmanaged", "ok", "built_in"];
   const d = raw;
   // A DESIGNED 403 (the binding surface is the administrator tier), phrased — never the
   // generic error card, and never a blank that reads as a healthy cluster.
@@ -2323,8 +2344,8 @@ function bindingsPage() {
     </div>
     ${searching ? `<div class="filterbar-note" id="binding-search-note" style="margin-top:6px">Filtered by
       <strong>${esc(q.trim())}</strong> — every word must appear in the group, role, namespace or binding
-      name. ${Object.values(f).reduce((n, rows) => n + rows.length, 0)} of
-      ${Object.values(raw).filter(Array.isArray).reduce((n, rows) => n + rows.length, 0)} loaded bindings match.
+      name. ${visible.reduce((n, t) => n + f[t].length, 0)} of
+      ${visible.reduce((n, t) => n + (raw[t] || []).length, 0)} bindings in the sections shown match.
       Clear the box, or press Escape in it, to see all of them.</div>` : ""}
   </section>`;
 
@@ -3270,15 +3291,32 @@ async function refresh(opts = {}) {
     }
     if ("findings" in got) data.findings = got.findings;
     if ("myAccess" in got) data.myAccess = got.myAccess;
-    // FIRST CYCLE on the Access granted tab: whoami arrives in the same burst as the findings
-    // request, so the tier was unknown when it was sent. A refusal plus an authenticated
-    // whoami means "narrowed" — fetch the reader's own path now, before painting, so the tab
-    // never flashes the refusal card at someone the next cycle would have served.
-    if (view.page === "bindings" && got.findings && got.findings.forbidden
-        && got.whoami && got.whoami.authenticated && got.whoami.user && !data.myAccess) {
-      const own = await myAccessFetch(get, `/api/clusters/${encodeURIComponent(view.cluster)}`, got.whoami.user);
-      if (superseded()) return;
-      data.myAccess = own;
+    // THE ACCESS GRANTED TAB DECIDES AGAIN FROM THE WHOAMI THAT JUST ARRIVED. The requests
+    // above were chosen from the previous cycle's identity — unknown on the first cycle, and
+    // stale for one cycle whenever a reader's tier changes mid-session (an admin grant made or
+    // revoked while the tab is open). Painting the old tier's payload under the new identity
+    // is exactly wrong in both directions, so: if the reader is narrowed now and their own path
+    // is missing, fetch it; if they are wide now and the findings are missing, fetch those. One
+    // guarded follow-up, then paint. (Codex review of #48 found the first-cycle-only form of
+    // this and the two transition races it missed.)
+    if (view.page === "bindings" && view.cluster) {
+      const base = `/api/clusters/${encodeURIComponent(view.cluster)}`;
+      const w = got.whoami;
+      if (narrowedFor(w)) {
+        if (!data.myAccess && w.user) {
+          const own = await myAccessFetch(get, base, w.user);
+          if (superseded()) return;
+          data.myAccess = own;
+        }
+        data.findings = null;   // the wide payload, if any, is not this reader's to paint
+      } else if (w && w.authenticated) {
+        if (!("findings" in got)) {
+          const wide = await guard403(get(`${base}/bindings/findings?limit=${FINDINGS_PAGE}`));
+          if (superseded()) return;
+          data.findings = wide;
+        }
+        data.myAccess = null;
+      }
     }
     if ("user" in got) data.user = got.user;
     if ("users" in got) data.users = got.users;

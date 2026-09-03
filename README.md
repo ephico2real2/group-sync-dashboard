@@ -348,7 +348,9 @@ the person finds the id the cluster knows them by. A non-administrator sees thei
 **Access granted** — every group-subject binding, classified `ok`, `dangling` (the group was
 operator-managed and has disappeared), `unresolved` (names a group that has never existed),
 `built_in` (Kubernetes virtual groups, expected), or `unmanaged` (a hand-made grant on a
-synced group, outside the policy system). Filterable, defaulting to what needs review.
+synced group, outside the policy system). Opens on what was granted with the faults on top;
+each granted row says who it reaches — the group's members, and how many have logged in — and the
+list filters as you type and sorts by column. Built-in bindings are one filter away.
 
 **RBAC policy** — the namespace-configuration-operator's `NamespaceConfig` and `GroupConfig`
 CRs beside the provenance of the bindings they template. These CRs are the other half of the
