@@ -2609,6 +2609,83 @@ class TestUserSearch:
         assert "not permitted to list users.user.openshift.io" in body and "rbac.users" in body, body
         assert "No one has logged in" not in dash.locator("section.card").first.inner_text()
 
+    def test_a_forbidden_source_with_stale_rows_keeps_them_and_says_they_are_stale(self, dash):
+        """rbac.users revoked after a successful poll: the rows are last cycle's and must be labelled so."""
+        self._open(dash)
+        dash.evaluate("() => { data.users = Object.assign({}, data.users, { source: 'forbidden' }); render(); }")
+        note = dash.locator("#users-source-note").inner_text()
+        assert "not permitted to list users.user.openshift.io" in note and "from the last poll" in note, note
+        assert dash.locator("tbody tr").count() == 3, "the stale rows stay on screen, labelled"
+        dash.evaluate("() => refresh()")
+        dash.wait_for_function("() => data.users && data.users.source === 'ok'")
+
+    def test_the_headline_does_not_count_a_manual_account_as_a_login(self, dash):
+        """A User object with no identity is a row, labelled, and not a login (Codex, #47)."""
+        self._open(dash)
+        dash.evaluate("""() => {
+            const rows = data.users.users.concat([{ user_name: 'manual', full_name: null, group_count: 0,
+                first_seen_at: null, logged_in: false, first_login_at: null, providers: [], last_login_at: null }]);
+            data.users = Object.assign({}, data.users, { users: rows, total: 4, logged_in_total: 3 }); render();
+        }""")
+        kpis = {k.split("\n")[0].strip(): k.split("\n")[1].strip()
+                for k in dash.locator(".kpi").all_inner_texts() if "\n" in k}
+        assert kpis["Have logged in"] == "3" and kpis["Logged in, no synced group"] == "1", kpis
+        assert "1 manual account" in dash.locator("#manual-accounts-note").inner_text()
+        assert "manual account · never logged in" in dash.locator("tr[data-user='manual']").inner_text()
+        dash.evaluate("() => refresh()")
+        dash.wait_for_function("() => data.users && data.users.users.length === 3")
+
+    def test_an_old_servers_payload_still_renders(self, dash):
+        """Rows without the new fields and an envelope without total/source/login_capture/never line:
+        the tab paints them as best it can and throws nowhere."""
+        self._open(dash)
+        dash.evaluate("""() => {
+            data.users = { cluster: 'crc-local', scope: 'all', viewer: null, count: 2, truncated: false, limit: 10000,
+                users: [{ user_name: 'old1', full_name: 'Old One', group_count: 1, first_seen_at: '2026-01-01T00:00:00+00:00' },
+                        { user_name: 'old2', full_name: null, group_count: 2, first_seen_at: '2026-01-02T00:00:00+00:00' }] };
+            render();
+        }""")
+        assert self._ids(dash) == ["old1", "old2"]
+        assert dash.locator("#never-logged-in").count() == 0 and dash.locator("#users-source-note").count() == 0
+        kpis = {k.split("\n")[0].strip(): k.split("\n")[1].strip()
+                for k in dash.locator(".kpi").all_inner_texts() if "\n" in k}
+        assert kpis["Have logged in"] == "2", kpis
+        dash.evaluate("() => refresh()")
+        dash.wait_for_selector("tr[data-user='alice']")
+
+    def test_the_tab_states_when_its_source_was_last_read(self, dash):
+        self._open(dash)
+        age = dash.locator("#users-source-age").inner_text()
+        assert "Users read from the cluster" in age and "ago" in age, age
+
+    def test_a_cluster_switch_resets_the_chips_but_keeps_the_search(self, dash):
+        """A provider chip names this cluster's providers; carried to another cluster it would hide
+        every row for a reason the reader never chose. The search is a person and persists."""
+        self._open(dash)
+        dash.fill("#f-user-search", "ali")
+        dash.wait_for_function("() => view.userSearch === 'ali'")
+        dash.evaluate("() => { view.userFilter = 'provider:ldap-local'; view.showNeverNames = true; render(); }")
+        dash.evaluate("() => { navigate({ cluster: 'prod-east', groupsync: null, group: null, user: null }); }")
+        assert dash.evaluate("() => view.userFilter") == "all"
+        assert dash.evaluate("() => view.showNeverNames") is False
+        assert dash.evaluate("() => view.userSearch") == "ali"
+        dash.evaluate("() => { navigate({ cluster: 'crc-local', groupsync: null, group: null, user: null }); view.userSearch = ''; refresh(); }")
+        dash.wait_for_selector("tr[data-user='alice']")
+
+    def test_the_detail_page_carries_the_login_facts(self, dash):
+        self._open(dash)
+        dash.locator("tr[data-user='kubeadmin']").click()
+        dash.wait_for_selector("#back-groups")
+        kpis = {k.split("\n")[0].strip(): k.split("\n")[1].strip()
+                for k in dash.locator(".kpi").all_inner_texts() if "\n" in k}
+        assert kpis["Groups"] == "0" and kpis["Logged in"] == "yes", kpis
+        assert "First login" in kpis and "Last captured login" in kpis, kpis
+        body = dash.locator("#main").inner_text()
+        assert "never been in a synced group" in body, "a User in no group must not be told they lost groups"
+        assert "were in at least one before" not in body
+        dash.locator("#back-groups").click()
+        dash.wait_for_selector("#f-user-search")
+
     def test_a_refused_list_is_a_named_refusal_not_an_empty_table(self, dash):
         """The endpoint 403s a reader with no verified identity; the tab must say so, not show nothing."""
         self._open(dash)
@@ -2689,6 +2766,19 @@ class TestUserSearchVisibility:
         body = p.locator("#main").inner_text()
         assert "nomember" in body and "not a statement that nobody has logged in" in body, body
         assert "No one has logged in" not in body, body
+
+    def test_self_tier_never_logged_in_line_names_nobody_else(self, page, scoped_server):
+        """dave has never logged in; at his own tier he learns that about himself and nothing about
+        anyone else — no toggle, no other names, no cluster-wide KPIs."""
+        p = self._open(page, scoped_server, "dave")
+        p.wait_for_selector("#never-logged-in")
+        line = p.locator("#never-logged-in").inner_text()
+        assert "1 synced member has never logged in" in line, line
+        assert p.locator("#toggle-never-names").count() == 0
+        assert p.locator(".kpi").count() == 0, "cluster-wide counts are the administrator tier"
+        body = p.locator("#main").inner_text()
+        for other in ("alice", "gatekeeper", "kubeadmin"):
+            assert other not in body, other
 
     def test_the_administrator_sees_every_user_and_no_banner(self, page, scoped_server):
         p = self._open(page, scoped_server, "root")

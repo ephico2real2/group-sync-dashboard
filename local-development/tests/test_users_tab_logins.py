@@ -100,6 +100,13 @@ class TestTheListIsThePeopleWhoHaveLoggedIn:
         assert body["login_capture"] == "off"
         assert all(u["last_login_at"] is None for u in body["users"])
 
+    def test_the_headline_counts_logins_not_user_objects(self, tmp_path):
+        """Four User objects, one of them a manual account nobody has logged in as: total says 4,
+        the headline says 3. Codex (#47) caught the headline counting the manual account as a login
+        while its own row said "never logged in"."""
+        body = _client(tmp_path).get("/api/clusters/c1/users", headers=ADMIN).json()
+        assert body["total"] == 4 and body["logged_in_total"] == 3
+
     def test_synced_members_who_never_logged_in_are_a_count_and_names_not_rows(self, tmp_path):
         body = _client(tmp_path).get("/api/clusters/c1/users", headers=ADMIN).json()
         assert body["never_logged_in_members"] == {"count": 1, "names": ["dave"]}
@@ -124,6 +131,23 @@ class TestPagingPerR3:
         page2 = c.get("/api/clusters/c1/users?limit=3&offset=3", headers=ADMIN).json()
         assert [u["user_name"] for u in page2["users"]] == ["manual"]
         assert (page2["total"], page2["offset"], page2["truncated"]) == (4, 3, False)
+
+    def test_an_offset_past_the_total_is_an_empty_page_that_still_states_the_total(self, tmp_path):
+        body = _client(tmp_path).get("/api/clusters/c1/users?limit=3&offset=40", headers=ADMIN).json()
+        assert body["users"] == [] and body["count"] == 0 and body["truncated"] is False
+        assert (body["total"], body["offset"]) == (4, 40), "the whole set is still described"
+
+    def test_providers_are_sorted_on_the_wire_whatever_order_the_poll_saw(self, tmp_path):
+        """Pinned on the JSON, not only in the kube fetch: replace_users sorts too."""
+        db = str(tmp_path / "t.db")
+        _seed(db)
+        store = Store(db)
+        store.replace_users("c1", [_rec("two", providers=("zeta", "alpha"))], _iso(NOW))
+        store.close()
+        settings = Settings(clusters=[ClusterConfig("c1", "https://x", token_env="T")], db_path=db, oauth_proxy_enabled=True)
+        body = TestClient(build_app(settings, run_poller=False, tier_resolver=lambda v: "all")).get(
+            "/api/clusters/c1/users", headers=ADMIN).json()
+        assert body["users"][0]["providers"] == ["alpha", "zeta"]
 
     def test_a_negative_offset_is_refused(self, tmp_path):
         assert _client(tmp_path).get("/api/clusters/c1/users?offset=-1", headers=ADMIN).status_code == 422
@@ -164,6 +188,13 @@ class TestTheSelfTierScopesBothSources:
         assert body["never_logged_in_members"] == {"count": 0, "names": []}, "dave's status is not theirs to see"
         for other in ("gatekeeper", "kubeadmin", "manual", "dave"):
             assert other not in resp.text
+
+    def test_a_case_variant_of_another_user_is_not_that_user(self, tmp_path):
+        """Byte-exact scoping: ALICE is not alice. The variant gets an empty view, never alice's row."""
+        resp = _client(tmp_path, tier="self").get("/api/clusters/c1/users", headers={"X-Forwarded-User": "ALICE"})
+        body = resp.json()
+        assert body["users"] == [] and body["total"] == 0 and body["logged_in_total"] == 0
+        assert "Alice Cooper" not in resp.text and "alice" not in {u["user_name"] for u in body["users"]}
 
     def test_a_narrowed_reader_who_never_logged_in_sees_only_that_fact_about_themselves(self, tmp_path):
         body = _client(tmp_path, tier="self").get("/api/clusters/c1/users", headers={"X-Forwarded-User": "dave"}).json()

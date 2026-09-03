@@ -74,10 +74,13 @@ and they remain fully visible on their group pages and in the access views, whic
 | Last login | `login_event` max successful `at` for the id | "capture off" when login capture is disabled; "none captured" when on but nothing seen |
 | First seen | `group_member` `MIN(first_seen_at)` | kept for continuity with today's tab; null for a user in no group |
 
-Headline: "**N** people have logged in to this cluster" with the never-logged-in-members line under
-it. Filter chips: all · in a synced group · in no synced group · never logged in (the members line) ·
-one per provider. The free-text filter over id and full name stays as it is
-(`gsd/static/index.html#usersPage`, `matchesSearch`).
+Headline: four counts — **have logged in** (Users with an identity; a manual account is listed
+below but is not a login and is said so in a note), in a synced group, logged in with no synced
+group, and synced members who have never logged in — with the never-logged-in-members line under
+them, expanding to the names. Filter chips: all · in a synced group · no synced group · one per
+provider. The never-logged-in members are not a chip, because they are not rows; the line is theirs.
+The free-text filter over id and full name stays as it is (`gsd/static/index.html#usersPage`,
+`matchesSearch`).
 
 ### Storage
 
@@ -101,8 +104,11 @@ protocol in `gsd/storage.py` moves in step — `tests/test_storage_seam.py` enfo
 `gsd/kube.py#ClusterClient.fetch_users` returns whole records. The 403 tolerance stays — an image
 upgraded without the chart's RBAC must not fail the poll — but its meaning changes from "names go
 stale" to "the tab has no rows", so it is surfaced: `gsd/poller.py#poll_once` records the refusal
-in cluster health, `/users` returns `source: "unavailable"` with the reason, and the tab shows a
-banner naming the grant instead of an empty list. `charts/group-sync-dashboard/values.yaml`'s
+in `ocp_user_status` (`Store.mark_users_unavailable`), `/users` returns `source: "forbidden"` with
+`source_observed_at`, and the tab shows a banner naming the grant instead of an empty list, and the
+age of the last successful read. A poll that fails before reaching the users read leaves the status
+as it was — the Overview's poll status is the freshness channel for the cluster as a whole, and the
+tab shows when its own source was last read. `charts/group-sync-dashboard/values.yaml`'s
 `rbac.users` comment, the README row, and `docs/reference-architecture.md`'s "one field" paragraph
 all currently say the read buys display names only, and all three change. The chart test
 `tests/test_chart_strategy.py#TestTheUsersGrantIsReadOnlyAndOptional` keeps the grant read-only and
@@ -112,13 +118,14 @@ tab's rows and keep the dashboard".
 ### API
 
 `GET /api/clusters/{id}/users` (`gsd/api.py#list_users`) keeps `cluster`, `scope`, `viewer`,
-`limit`, `truncated`; each row gains `logged_in`, `first_login_at`, `providers`, `last_login_at`,
-`login_capture` (`on`/`off`), and `group_count` may now be 0. It gains `total` and `offset`, which
-`docs/api-contract.md` rule R3 has required all along and this endpoint never had — the reference
-cluster has 1,240 users against the UI's 10,000 fetch cap, and a cluster's `User` count is every
-person who has ever logged in, so real paging is no longer optional. It gains
-`never_logged_in_members: {count, names}` for the headline line. The only consumer today is the UI
-(`gsd/static/index.html#usersPage`); `cluster-report.py` does not read `/users`.
+`limit`, `truncated`. Each row gains `logged_in`, `first_login_at`, `providers`, `last_login_at`,
+and `group_count` may now be 0. The envelope gains `login_capture` (`on`/`off`, top level),
+`source` and `source_observed_at`, `total` (every User under the scope), `logged_in_total` (those
+with an identity — the headline), `offset`, and `never_logged_in_members: {count, names}`. `total`
+and `offset` are what `docs/api-contract.md` rule R3 has required all along and this endpoint never
+had: a cluster's User count is every person who has ever logged in, so the API pages. The only
+consumer today is the UI (`gsd/static/index.html#usersPage`); `cluster-report.py` does not read
+`/users`.
 
 `GET /api/clusters/{id}/users/{name}` (`gsd/api.py#user_detail`) gains the same per-user fields and
 keeps its 404 rule, extended: a name with a `User` object is never 404 even with no groups.
@@ -140,8 +147,10 @@ logged-in users is added; the count lives only on the authenticated page.
 ### Scale
 
 One `list users` call per poll cycle, already made today. Thousands of `User` objects on a real
-cluster is the expected shape and the reason for real paging above. `USERS_FETCH` in the UI drops
-in favour of `offset` paging, or the fetch cap becomes a paged loop; decided at implementation.
+cluster is the expected shape and the reason the API pages. Decided at implementation: the UI keeps
+its single fetch at the server's maximum (`USERS_FETCH`, 10,000) with the existing truncation note,
+because the chips and the Find box work over what is loaded and a paged loop would make them lie
+about the denominator; a cluster past that cap gets the honest note, and an API consumer pages.
 
 ## Two incidental defects to fix in the same change
 

@@ -400,7 +400,7 @@ Eight tabs (`index.html#const tab = (id, label)`):
 |---|---|---|
 | Overview | `/api/clusters`, `/api/alerts`, `/api/clusters/{id}/groupsyncs`, `/api/clusters/{id}/operator-configs` | cluster cards, computed alerts, CR list and detail, operator-config health |
 | Groups | `/api/clusters/{id}/groups`, `.../groups/{name}`, `.../users/{name}` | every group; drill into members, first-seen, the change log, and the access it grants; reverse lookup per user |
-| Users | `/api/clusters/{id}/users`, `.../users/{name}` | every user with a membership, filtered in the browser as you type on id or display name; the same per-user page as Groups |
+| Users | `/api/clusters/{id}/users`, `.../users/{name}` | every person who has logged in — one row per OpenShift `User` object — with group membership as an attribute, filtered in the browser as you type on id or display name and by chips; synced members who have never logged in are one line, by count; the same per-user page as Groups |
 | Access granted | `/api/clusters/{id}/bindings/findings` | every group-subject binding, classified `ok` / `dangling` / `unresolved` / `built_in` / `unmanaged` |
 | RBAC policy | `/api/clusters/{id}/bindings/findings`, `.../operator-configs` | the policy operator's CR health beside the provenance of the bindings it templates |
 | Namespace audit | `/api/clusters/{id}/user-bindings` | grants that name a person rather than a group, ranked per namespace by privilege; server-side paging, sortable columns, namespace selector |
@@ -776,8 +776,9 @@ adds it back. §7.3 is the measurement.
 
 `users` is the **source of the Users tab** (`DESIGN_users_tab_logins.md`). OpenShift creates a User
 object at a person's first login through an identity provider and never before, so one row per
-object is one person who has logged in, and the tab's headline is how many people have used the
-cluster. Read off each object: the name, `fullName` (shown as `alice.cooper · Alice Cooper` on every
+object is one person who has logged in — with one exception the tab labels: a User created by hand
+(`oc create user`) has no identity, is listed as a manual account, and is not counted in the
+headline, which is how many people have used the cluster. Read off each object: the name, `fullName` (shown as `alice.cooper · Alice Cooper` on every
 member surface; absence is the ordinary case and renders the bare id), `metadata.creationTimestamp`
 (the first login, for a provider-created User), and the provider prefix of each `identities[]` entry.
 Group membership is **not** read from it — that is derived from the Group objects above, exactly as

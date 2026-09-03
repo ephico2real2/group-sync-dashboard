@@ -159,6 +159,11 @@ function applyPosition(pos) {
       data.group = null; data.user = null; data.events = null; data.users = null;
       data.logins = null; data.access = null; data.findings = null;
       data.operatorConfigs = null; data.userBindings = null;
+      // The Users-tab chips name providers and populations of THIS cluster; carried across, a
+      // `provider:corp-ldap` chip on a cluster with no such provider would hide every row — the
+      // empty state would blame the chip, but the reader never chose it here. Reset, like
+      // memberSearch on a group change; the free-text search is a person, and persists.
+      view.userFilter = "all"; view.showNeverNames = false;
     }
     view.cluster = pos.cluster;
   }
@@ -1201,16 +1206,18 @@ function usersPage() {
   }
   const all = d.users || [];
   const self = d.scope === "self";
-  const never = d.never_logged_in_members || { count: 0, names: [] };
+  const never = { count: (d.never_logged_in_members || {}).count || 0,
+                  names: Array.isArray((d.never_logged_in_members || {}).names) ? d.never_logged_in_members.names : [] };
+  const provs = (u) => Array.isArray(u.providers) ? u.providers : [];
   const captureOn = d.login_capture !== "off";
   // Chips: a whole-row predicate; the search box narrows further. Provider chips come from the
   // rows themselves, so a cluster with one identity provider shows one.
-  const providers = [...new Set(all.flatMap((u) => u.providers || []))].sort();
+  const providers = [...new Set(all.flatMap(provs))].sort();
   const chip = view.userFilter || "all";
   const byChip = (u) => chip === "all" ? true
     : chip === "grouped" ? (u.group_count || 0) > 0
     : chip === "nogroup" ? (u.group_count || 0) === 0
-    : chip.startsWith("provider:") ? (u.providers || []).includes(chip.slice(9))
+    : chip.startsWith("provider:") ? provs(u).includes(chip.slice(9))
     : true;
   // Both fields, so a reader who knows only the display name still finds the id — which is what
   // they need next, because the id is what `oc` and the group members answer to.
@@ -1220,8 +1227,15 @@ function usersPage() {
   const q = (view.userSearch || "").trim();
   const chipping = chip !== "all";
   const narrowed = searching || chipping;
-  const total = typeof d.total === "number" ? d.total : all.length;
+  // The headline counts LOGINS: Users with an identity. A manual account (`oc create user`,
+  // nobody has ever logged in as it) is a row, labelled as such, and is not a login — counting
+  // it as one contradicted its own row (Codex, #47). Old servers send only `total`.
+  const loggedIn = all.filter((u) => u.logged_in !== false);
+  const manual = all.length - loggedIn.length;
+  const total = typeof d.logged_in_total === "number" ? d.logged_in_total
+    : typeof d.total === "number" ? d.total - manual : loggedIn.length;
   const grouped = all.filter((u) => (u.group_count || 0) > 0).length;
+  const loggedInNoGroup = loggedIn.filter((u) => (u.group_count || 0) === 0).length;
   const chipBtn = (key, label, title) => `<button type="button" class="chip-btn" data-ufilter="${esc(key)}"
       aria-pressed="${chip === key}"${title ? ` title="${esc(title)}"` : ""}>${esc(label)}</button>`;
   const status = (u) => u.logged_in === false
@@ -1251,12 +1265,21 @@ function usersPage() {
     ${d.source === "pending" && all.length === 0
       ? `<div class="filterbar-note" id="users-source-note">Waiting for the first poll to read the
           cluster's users.</div>` : ""}
+    ${d.source === "ok" && d.source_observed_at
+      // The age of THIS tab's source. A poll that fails before reaching the users read leaves the
+      // rows and this timestamp as they were, so the reader can see it is not moving.
+      ? `<div class="filterbar-note" id="users-source-age">Users read from the cluster
+          <span class="mono">${esc(fmtTime(d.source_observed_at))}</span> <span class="muted">(${esc(ago(d.source_observed_at))})</span>.</div>` : ""}
     ${self ? "" : `<div class="kpis">
       <div class="kpi"><div class="label">Have logged in</div><div class="value">${total}</div></div>
       <div class="kpi"><div class="label">In a synced group</div><div class="value">${grouped}</div></div>
-      <div class="kpi"><div class="label">Logged in, no synced group</div><div class="value">${all.length - grouped}</div></div>
+      <div class="kpi"><div class="label">Logged in, no synced group</div><div class="value">${loggedInNoGroup}</div></div>
       <div class="kpi"><div class="label">Synced, never logged in</div><div class="value">${never.count}</div></div>
-    </div>`}
+    </div>
+    ${manual > 0
+      ? `<div class="filterbar-note" id="manual-accounts-note">${manual} manual ${manual === 1 ? "account" : "accounts"}
+          (a User object with no identity — created by hand, never logged in as) ${manual === 1 ? "is" : "are"}
+          listed below and not counted above.</div>` : ""}`}
     ${never.count > 0
       // Not rows: they have not logged in, so they are not users of the cluster yet. One line, and
       // the names one click away — their group pages, which come from the Group objects, are
@@ -1274,7 +1297,7 @@ function usersPage() {
       ${chipBtn("nogroup", `no synced group (${all.length - grouped})`,
         "Logged in, but holds no access through any synced group. Administrators and service identities land here; so does anyone whose access is granted outside group sync.")}
       ${providers.map((pv) => chipBtn(`provider:${pv}`,
-        `${pv} (${all.filter((u) => (u.providers || []).includes(pv)).length})`,
+        `${pv} (${all.filter((u) => provs(u).includes(pv)).length})`,
         "Identity provider the person has logged in through.")).join("")}
     </div>`}
     ${d.truncated
@@ -1316,7 +1339,7 @@ function usersPage() {
             <td><button type="button" class="drill">${esc(u.user_name)}</button>${u.full_name
               ? ` <span class="muted">· ${esc(u.full_name)}</span>` : ""}</td>
             <td>${status(u)}</td>
-            <td class="mono">${(u.providers || []).map(esc).join(", ") || `<span class="muted">—</span>`}</td>
+            <td class="mono">${provs(u).map(esc).join(", ") || `<span class="muted">—</span>`}</td>
             <td class="num${(u.group_count || 0) === 0 ? " warn" : ""}">${u.group_count || 0}</td>
             <td>${lastLogin(u)}</td>
             <td class="mono">${u.first_seen_at
@@ -2162,9 +2185,15 @@ function userDetail() {
   <section class="card">
     <h2>Group memberships</h2>
     ${groups.length === 0
-      ? `<div class="empty-note">This user is currently in no groups on this cluster. They
-          were in at least one before — see the history below. That is the answer to
-          "did they lose everything, or just this one?", not an error.</div>`
+      ? ((d.changes || []).length
+          ? `<div class="empty-note">This user is currently in no groups on this cluster. They
+              were in at least one before — see the history below. That is the answer to
+              "did they lose everything, or just this one?", not an error.</div>`
+          // A User who logged in and was never in a synced group: the row exists because of the
+          // login, and there is no history to point at. Administrators and service identities
+          // land here; so does anyone granted access outside group sync.
+          : `<div class="empty-note">This user has never been in a synced group on this cluster.
+              Whatever access they hold was granted outside group sync — see the bindings below.</div>`)
       : `<div class="scroll-x"><table>
           <thead><tr><th>Group</th><th>Owner</th><th>Member since</th></tr></thead>
           <tbody>${groups.map((g) => `<tr class="rowlink" data-group="${esc(g.group_name)}">

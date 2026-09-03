@@ -141,7 +141,7 @@ CREATE INDEX IF NOT EXISTS group_member_by_user
 --
 -- Wholly replaced each poll, like group_state and user_binding: an upsert would leave a row
 -- behind after the User object is deleted. When the list call is FORBIDDEN the poller does not
--- touch this table and writes ocp_user_status instead, so the API can say "unavailable" rather
+-- touch this table and writes ocp_user_status instead, so the API can say "forbidden" rather
 -- than letting an empty table read as "nobody has logged in".
 CREATE TABLE IF NOT EXISTS ocp_user (
     cluster_id          TEXT NOT NULL,
@@ -1391,10 +1391,20 @@ class Store:
         row["first_login_at"] = row["created_at"] if row["logged_in"] else None
         return row
 
-    def count_users(self, cluster_id: str, user_name: str | None = None) -> int:
-        """Whole-set count for the paged list, under the same privacy predicate."""
+    def count_users(
+        self, cluster_id: str, user_name: str | None = None, logged_in_only: bool = False
+    ) -> int:
+        """Whole-set count for the paged list, under the same privacy predicate.
+
+        `logged_in_only` counts the rows whose User carries an identity — the people who have
+        actually logged in. The plain count is every User object, which includes accounts created
+        by hand that nobody has used; the Codex review of #47 caught the headline counting those as
+        logins while their own rows said "never logged in". The API serves both numbers.
+        """
         sql = "SELECT COUNT(*) AS n FROM ocp_user WHERE cluster_id=?"
         params: list = [cluster_id]
+        if logged_in_only:
+            sql += " AND has_identity=1"
         if user_name:
             sql += " AND user_name=?"
             params.append(user_name)

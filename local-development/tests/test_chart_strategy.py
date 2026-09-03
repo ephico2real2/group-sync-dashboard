@@ -573,7 +573,7 @@ class TestTheUsersGrantIsReadOnlyAndOptional:
         )
 
     def test_declining_the_grant_drops_the_rule_and_keeps_the_rest(self):
-        """rbac.users=false must cost display names only — the group data must survive."""
+        """rbac.users=false must cost the Users tab's rows and display names only — the group data must survive."""
         ok, out = render(rbac__users="false")
         assert ok, out
         assert self._users_rules(out) == [], "rbac.users=false still grants users"

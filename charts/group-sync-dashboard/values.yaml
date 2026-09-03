@@ -638,6 +638,7 @@ rbac:
   # The User objects are the SOURCE of the Users tab: OpenShift creates one at a person's first
   # login through an identity provider and never before, so the tab's rows — and its headline,
   # how many people have logged in to the cluster — come from here (docs/DESIGN_users_tab_logins.md).
+  # (A User created by hand has no identity; it is listed as a manual account and not counted.)
   # Read off each object: the name, fullName (shown as "alice.cooper · Alice Cooper" on every member
   # surface, absent is ordinary), the creation time (first login), and the identity-provider prefix
   # of each identities[] entry. Group membership is NOT read from it; that comes from the Group

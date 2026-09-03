@@ -1024,6 +1024,10 @@ def build_app(
         `providers` (identity-provider names), `last_login_at` (the newest successful captured
         login, null when none — read `login_capture` before trusting the null), `full_name`.
 
+        `total` is every User object under the scope; `logged_in_total` is those with an identity —
+        the people who have actually logged in — and is the headline number. They differ by the
+        accounts created by hand (`logged_in: false`), which are listed but are not logins.
+
         `source` says whether the last poll could read the User objects: `ok`; `forbidden`, when
         the chart's `rbac.users` grant is missing, in which case the rows are stale or absent and the
         tab must say so rather than show an empty cluster; `pending` before the first poll.
@@ -1050,6 +1054,7 @@ def build_app(
             "source_observed_at": (status or {}).get("observed_at"),
             "login_capture": "on" if settings.login_capture_enabled else "off",
             "total": store.count_users(cluster_id, user_name=who),
+            "logged_in_total": store.count_users(cluster_id, user_name=who, logged_in_only=True),
             "offset": offset,
             "limit": limit,
             "count": min(len(rows), limit),
