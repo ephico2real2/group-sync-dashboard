@@ -37,9 +37,11 @@ Checked against the sources rather than from memory, on the operator's instructi
   door stays open.
 - **Caching.** MDN's pattern for HTML that must always be fresh is `Cache-Control: no-cache` with
   `ETag` and `Last-Modified`, answered by a bodiless `304`; `no-cache` permits storing and forbids
-  reuse without revalidation. RFC 9110 §15.4.5: a 304 MUST NOT carry a body and SHOULD carry
-  `Cache-Control` and `ETag`; §13.1.2: `If-None-Match` uses weak comparison, over a
-  comma-separated list.
+  reuse without revalidation. RFC 9110 §15.4.5: a 304 MUST carry any of `Date`, `Cache-Control`,
+  `Content-Location`, `ETag`, `Expires` and `Vary` that the 200 would have carried, MUST NOT
+  carry a body, and SHOULD NOT carry other representation metadata (`Last-Modified` is the
+  example given, useful only when there is no ETag); §13.1.2: `If-None-Match` uses weak
+  comparison, over a comma-separated list; §5.6.7: an HTTP-date is always GMT.
 - **What the old handler did.** Starlette's `FileResponse` computes an ETag from mtime and size and
   sets `Last-Modified`, but never answers a conditional request; only `StaticFiles` does (its
   `is_not_modified`). So the old `/` sent validators and always answered 200 with the body. The
@@ -52,10 +54,12 @@ Checked against the sources rather than from memory, on the operator's instructi
 ## What changed because of it
 
 - `gsd/api.py#named_page` renders once per file and name (cached on the file's mtime and the
-  constant), sends a strong `ETag` over the rendered body plus `Last-Modified`, compares
-  `If-None-Match` weakly over a list, falls back to `If-Modified-Since` when no tag is offered, and
-  answers `304` with the validators and `Cache-Control` and no body. Better than the `FileResponse`
-  it replaced, which never answered a 304.
+  constant, keeping the newer render if two threads race), sends a strong `ETag` over the rendered
+  body plus `Last-Modified` on the 200, compares `If-None-Match` weakly over a list, falls back to
+  `If-Modified-Since` only when no tag is offered and only for a GMT date (a zone-less value is not
+  an HTTP-date and could have answered 304 for a moment the client never named — the re-review's
+  finding), and answers `304` with `Cache-Control` and `ETag` and no body. Better than the
+  `FileResponse` it replaced, which never answered a 304.
 - Two routes ahead of the mount serve the rendered pages at `/static/index.html` and
   `/static/signed-out.html`, out of the schema, documented in `API.md`.
 - The package docstring and the favicon label no longer name the product; the guard test searches

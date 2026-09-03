@@ -1934,9 +1934,12 @@ def build_app(
         substitution dropped the validators as well, which the review measured. Now: a strong
         ETag over the RENDERED body, so it moves with the file or the name; Last-Modified from
         the file; If-None-Match compared the way RFC 9110 §13.1.2 requires (weak comparison,
-        over a comma-separated list); the 304 carries the validators and Cache-Control, as
-        §15.4.5 says it should, and no body. Not Jinja2Templates: FastAPI's documented engine
-        would be one more dependency for one text node, and it sets none of these headers.
+        over a comma-separated list). The 304 is built the way §15.4.5 requires: it MUST carry
+        Cache-Control and ETag because the 200 would have (Date comes from uvicorn), MUST NOT
+        carry a body, and SHOULD NOT carry other representation metadata — so Last-Modified
+        rides the 200 only; with an ETag present it guides no cache update on a 304. Not
+        Jinja2Templates: FastAPI's documented engine would be one more dependency for one text
+        node, and it sets none of these headers.
         """
         path = os.path.join(STATIC_DIR, filename)
         mtime = os.stat(path).st_mtime
@@ -1946,26 +1949,35 @@ def build_app(
                 body = fh.read().replace("__GSD_TITLE__", html.escape(TITLE)).encode("utf-8")
             etag = '"' + hashlib.sha256(body).hexdigest()[:32] + '"'
             cached = (mtime, TITLE, body, etag)
-            rendered_pages[filename] = cached
+            # Two threads can render the same file at once (sync handlers run on a pool). The
+            # dict itself is safe; what is not is a thread that stat'd the OLD file storing its
+            # render over a newer one. Keep whichever saw the newer file; the loser's render is
+            # still correct for the request that made it. Immutable containers never hit this.
+            current = rendered_pages.get(filename)
+            if current is None or current[1] != TITLE or current[0] <= mtime:
+                rendered_pages[filename] = cached
         _, _, body, etag = cached
-        headers = {
-            "Cache-Control": "no-cache, must-revalidate",
-            "ETag": etag,
-            "Last-Modified": formatdate(mtime, usegmt=True),
-        }
+        headers = {"Cache-Control": "no-cache, must-revalidate", "ETag": etag}
         if_none_match = request.headers.get("if-none-match")
         if if_none_match is not None:
             offered = [tag.strip().removeprefix("W/") for tag in if_none_match.split(",")]
             unchanged = etag in offered or "*" in offered
         else:
-            # Only consulted when there is no entity tag to compare — §13.1.3.
+            # Only consulted when there is no entity tag to compare — §13.1.3. An HTTP-date is
+            # always GMT (§5.6.7): a value that parses without a zone is not one, and treating
+            # it as local time would answer 304 for a date the client never meant.
+            unchanged = False
             since = request.headers.get("if-modified-since")
-            try:
-                unchanged = since is not None and int(mtime) <= parsedate_to_datetime(since).timestamp()
-            except (TypeError, ValueError):
-                unchanged = False
+            if since is not None:
+                try:
+                    parsed = parsedate_to_datetime(since)
+                except (TypeError, ValueError):
+                    parsed = None
+                if parsed is not None and parsed.tzinfo is not None:
+                    unchanged = int(mtime) <= parsed.timestamp()
         if unchanged:
             return Response(status_code=304, headers=headers)
+        headers["Last-Modified"] = formatdate(mtime, usegmt=True)
         return HTMLResponse(body, headers=headers)
 
     @app.get("/")

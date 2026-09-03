@@ -67,10 +67,11 @@ def test_a_reload_that_finds_the_same_page_costs_a_304(tmp_path):
         assert first.headers.get("last-modified", "").endswith(" GMT"), path
         again = c.get(path, headers={"If-None-Match": etag})
         assert again.status_code == 304 and again.content == b"", path
-        # RFC 9110 §15.4.5: the 304 SHOULD carry Cache-Control and ETag.
+        # RFC 9110 §15.4.5: the 304 MUST carry the Cache-Control and ETag the 200 would have,
+        # and SHOULD NOT carry other representation metadata — Last-Modified stays on the 200.
         assert again.headers["etag"] == etag
         assert again.headers["cache-control"] == "no-cache, must-revalidate"
-        assert again.headers["last-modified"] == first.headers["last-modified"]
+        assert "last-modified" not in again.headers
 
 
 def test_if_none_match_is_compared_weakly_over_a_list(tmp_path):
@@ -89,6 +90,43 @@ def test_if_modified_since_answers_when_there_is_no_etag_to_compare(tmp_path):
     assert c.get("/", headers={"If-Modified-Since": last}).status_code == 304
     assert c.get("/", headers={"If-Modified-Since": "Thu, 01 Jan 1970 00:00:00 GMT"}).status_code == 200
     assert c.get("/", headers={"If-Modified-Since": "not a date"}).status_code == 200
+
+
+def test_a_date_without_a_zone_is_not_an_http_date(tmp_path):
+    """RFC 9110 §5.6.7: HTTP-dates are GMT. A zone-less value parses to a naive datetime whose
+    timestamp depends on the server's zone, and could answer 304 for a moment the client never
+    named (review finding). Far in the future, so a wrong reading would be the 304."""
+    c = _client(tmp_path)
+    assert c.get("/", headers={"If-Modified-Since": "Thu, 01 Jan 2099 00:00:00"}).status_code == 200
+    assert c.get("/", headers={"If-Modified-Since": "Thu, 01 Jan 2099 00:00:00 GMT"}).status_code == 304
+
+
+def test_if_none_match_takes_precedence_over_if_modified_since(tmp_path):
+    """§13.1.3: when an entity tag is offered, the date is not consulted at all."""
+    c = _client(tmp_path)
+    last = c.get("/").headers["last-modified"]
+    r = c.get("/", headers={"If-None-Match": '"stale"', "If-Modified-Since": last})
+    assert r.status_code == 200
+
+
+def test_a_redeployed_file_is_rendered_afresh(tmp_path, monkeypatch):
+    """The render cache is keyed on the file's mtime: a new file is a new page and a new tag."""
+    import os
+    import shutil
+
+    static = tmp_path / "static"
+    shutil.copytree(STATIC, static)
+    monkeypatch.setattr(gsd.api, "STATIC_DIR", str(static))
+    c = _client(tmp_path)
+    before = c.get("/")
+    page = static / "index.html"
+    page.write_text(page.read_text(encoding="utf-8").replace("<h1>", "<h1 data-redeployed>", 1),
+                    encoding="utf-8")
+    os.utime(page, (page.stat().st_atime, page.stat().st_mtime + 5))
+    after = c.get("/")
+    assert "data-redeployed" in after.text
+    assert after.headers["etag"] != before.headers["etag"]
+    assert c.get("/", headers={"If-None-Match": before.headers["etag"]}).status_code == 200
 
 
 def test_the_etag_follows_the_name(tmp_path, monkeypatch):
