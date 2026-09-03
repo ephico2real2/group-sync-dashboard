@@ -1,4 +1,4 @@
-# OCP Access Control Dashboard
+# OCP Access Tracking Dashboard
 
 Read-only observability for the
 [redhat-cop group-sync-operator](https://github.com/redhat-cop/group-sync-operator).

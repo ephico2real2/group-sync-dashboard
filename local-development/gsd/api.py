@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import functools
 import logging
+import html
 import os
 import re
 import time
@@ -17,11 +18,11 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 
-from . import __version__
+from . import TITLE, __version__
 from . import state as st
 from .activity import EMAIL_HEADER, INTERACTION_HEADER, USER_HEADER, ActivityRecorder
 from .config import Settings, load_settings
@@ -631,7 +632,7 @@ def build_app(
     #   /api/redoc      the reference rendering
     #   /api/openapi.json  the spec itself, for codegen and for the drift test
     app = FastAPI(
-        title="GroupSync dashboard",
+        title=TITLE,
         version=__version__,
         lifespan=lifespan,
         # The built-in routes are disabled and re-served below from vendored assets:
@@ -1876,7 +1877,7 @@ def build_app(
         """Swagger UI, rendered from assets shipped in this image."""
         return get_swagger_ui_html(
             openapi_url="/api/openapi.json",
-            title="GroupSync dashboard — API",
+            title=f"{TITLE} — API",
             swagger_js_url=_JS,
             swagger_css_url=_CSS,
             # The default favicon is fetched from fastapi.tiangolo.com; the app already
@@ -1889,7 +1890,7 @@ def build_app(
         """ReDoc, rendered from assets shipped in this image."""
         return get_redoc_html(
             openapi_url="/api/openapi.json",
-            title="GroupSync dashboard — API reference",
+            title=f"{TITLE} — API reference",
             redoc_js_url=_REDOC,
             redoc_favicon_url="/static/favicon.svg",
         )
@@ -1904,30 +1905,38 @@ def build_app(
         """
         return RedirectResponse(url="/api", status_code=308)
 
+    def named_page(filename: str) -> HTMLResponse:
+        """A static page with the dashboard's name substituted in.
+
+        The two HTML files carry __GSD_TITLE__ where the name goes, and the name itself is
+        gsd.TITLE — one place, read here, so the tab title, the header, the signed-out page
+        and the API docs cannot disagree. Escaped, because a name is text and not markup.
+        Read per request rather than cached: the page is served no-cache anyway, and a
+        cached copy would survive a redeploy's file for exactly as long as the old bug did.
+
+        With no Cache-Control, browsers apply heuristic caching to HTML and keep serving
+        the old page after a redeploy — the user sees a version that no longer exists and
+        reasonably concludes the change was never shipped. The whole app is one file, so it
+        must always be revalidated; there is nothing here worth caching and a stale shell
+        silently disables every fix behind it.
+        """
+        with open(os.path.join(STATIC_DIR, filename), encoding="utf-8") as fh:
+            body = fh.read().replace("__GSD_TITLE__", html.escape(TITLE))
+        return HTMLResponse(body, headers={"Cache-Control": "no-cache, must-revalidate"})
+
     @app.get("/")
-    def index() -> FileResponse:
-        # With no Cache-Control, browsers apply heuristic caching to HTML and keep serving
-        # the old page after a redeploy — the user sees a version that no longer exists and
-        # reasonably concludes the change was never shipped. The whole app is this one
-        # file, so it must always be revalidated; there is nothing here worth caching and a
-        # stale shell silently disables every fix behind it.
-        return FileResponse(
-            os.path.join(STATIC_DIR, "index.html"),
-            headers={"Cache-Control": "no-cache, must-revalidate"},
-        )
+    def index() -> HTMLResponse:
+        return named_page("index.html")
 
     @app.get("/signed-out")
-    def signed_out() -> FileResponse:
+    def signed_out() -> HTMLResponse:
         # The proxy's -logout-url target, listed in oauthProxy.skipAuthRegex. It renders at
         # the exact moment the session cookie has just been cleared, so it reads no headers
         # and claims nothing about who signed out — anything it said would be
-        # caller-supplied. Same Cache-Control reasoning as index(): a stale cached copy
+        # caller-supplied. Same Cache-Control reasoning as named_page(): a stale cached copy
         # after a redeploy would misdescribe what logout actually does, and what it does
         # NOT do (end the reader's other cluster sessions) is its entire purpose.
-        return FileResponse(
-            os.path.join(STATIC_DIR, "signed-out.html"),
-            headers={"Cache-Control": "no-cache, must-revalidate"},
-        )
+        return named_page("signed-out.html")
 
     if os.path.isdir(STATIC_DIR):
         app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

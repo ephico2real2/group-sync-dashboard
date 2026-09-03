@@ -4,14 +4,16 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
-  <title>OCP Access Control Dashboard</title>
+  <title>__GSD_TITLE__</title>
 <link rel="stylesheet" href="/static/app.css">
 </head>
 <body data-page="overview">
 <a class="skip" href="#main">Skip to main content</a>
 <div class="wrap">
   <header class="top">
-    <h1>OCP Access Control Dashboard<span id="scope-note"></span></h1>
+    <!-- __GSD_TITLE__ is substituted by the / handler from gsd.TITLE, the one place the
+         dashboard is named. Not a literal here: this file is one of five that used to carry it. -->
+    <h1>__GSD_TITLE__<span id="scope-note"></span></h1>
     <!-- The visibility tier, as /api/whoami reports it. Populated by renderScopePill()
          and hidden until the wire declares a tier: the page labels what the server
          decided and never decides for itself. -->
