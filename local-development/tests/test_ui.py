@@ -2658,8 +2658,9 @@ class TestMemberSearch:
         self._open(dash)
         assert dash.locator("#f-group-search").count() == 0, "the group box filters nothing here"
         dash.locator("tr[data-user='alice']").click()
-        dash.wait_for_function("() => view.user === 'alice'")
-        dash.wait_for_selector("#back-groups")
+        # The user PAGE, not #back-groups, which the group page already shows: a drill paints
+        # after its fetch, so the bar is only re-rendered once the user payload lands.
+        dash.wait_for_function("() => data.user && data.user.user === 'alice'")
         assert dash.locator("#f-member-search").count() == 0
         dash.locator("button[data-nav='groups']").click()
         dash.wait_for_selector("tr[data-group]")
