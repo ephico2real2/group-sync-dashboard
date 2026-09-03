@@ -129,6 +129,29 @@ def test_a_redeployed_file_is_rendered_afresh(tmp_path, monkeypatch):
     assert c.get("/", headers={"If-None-Match": before.headers["etag"]}).status_code == 200
 
 
+def test_a_content_swap_that_keeps_the_mtime_is_still_seen(tmp_path, monkeypatch):
+    """`cp -p` and bind mounts keep the mtime. A cache keyed on it answered 304 with the old tag
+    for the new bytes (Cursor finding); the key is the content now."""
+    import os
+    import shutil
+
+    static = tmp_path / "static"
+    shutil.copytree(STATIC, static)
+    monkeypatch.setattr(gsd.api, "STATIC_DIR", str(static))
+    c = _client(tmp_path)
+    before = c.get("/")
+    page = static / "index.html"
+    st = page.stat()
+    page.write_text(page.read_text(encoding="utf-8").replace("<h1>", "<h1 data-swapped>", 1),
+                    encoding="utf-8")
+    os.utime(page, (st.st_atime, st.st_mtime))
+    assert page.stat().st_mtime == st.st_mtime
+    after = c.get("/")
+    assert "data-swapped" in after.text
+    assert after.headers["etag"] != before.headers["etag"]
+    assert c.get("/", headers={"If-None-Match": before.headers["etag"]}).status_code == 200
+
+
 def test_the_etag_follows_the_name(tmp_path, monkeypatch):
     """A validator that survived a rename would serve the old header from the browser cache."""
     c = _client(tmp_path)
@@ -149,6 +172,21 @@ def test_the_raw_static_paths_serve_the_rendered_page_too(tmp_path):
         assert TITLE in body, path
     # And the mount itself still serves the real assets.
     assert c.get("/static/app.css").status_code == 200
+
+
+def test_no_spelling_of_the_source_paths_reaches_the_raw_file(tmp_path):
+    """Exact routes shadow exact paths only. StaticFiles normalises `index.html/` and
+    `//index.html` to the same file, and a case-insensitive volume opens `Index.html` as it —
+    measured: all three served the raw token (Cursor finding). The mount refuses them now."""
+    c = _client(tmp_path)
+    for path in ("/static/index.html/", "/static//index.html", "/static/Index.html",
+                 "/static/INDEX.HTML", "/static/%69ndex.html", "/static/./index.html",
+                 "/static/signed-out.html/", "/static/Signed-Out.html"):
+        r = c.get(path)
+        assert r.status_code in (200, 404), (path, r.status_code)
+        assert PLACEHOLDER not in r.text, f"{path} leaked the placeholder"
+        if r.status_code == 200:
+            assert TITLE in r.text, path
     # Out of the schema, like the docs-UI routes: they are the page, not the API.
     assert not [p for p in c.get("/api/openapi.json").json()["paths"] if p.startswith("/static/")]
 

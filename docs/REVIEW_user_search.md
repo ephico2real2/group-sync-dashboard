@@ -2,8 +2,9 @@
 
 Adversarial review of PR #42 before merge, in the shape `docs/REVIEW_group_search.md` set: the
 claims the change makes, handed to a second reviewer with the exact files and what to confirm or
-refute, and what came back. Codex ran the pass read-only against `git diff main...feat/user-filter`.
-The Cursor pass could not run: its CLI was not logged in on the machine at the time.
+refute, and what came back. Codex ran the pass read-only against `git diff main...feat/user-filter` before merge; Cursor ran
+the same brief read-only against the merged range after merge (its CLI was not signed in at the
+time), and its findings are at the end of this file.
 
 Citations are by symbol (`file#symbol`), never by line, so this file stays true after the next edit.
 
@@ -73,3 +74,17 @@ through the real OAuth login with Playwright: 11 users listed, `cooper` narrowed
 `bob wil` to `bob.wilson`, a drill from Users came back under Users with "← all users", and a
 group's members narrowed by id with the header reading "1 of 2 shown". No JavaScript errors on any
 page. The heading defect above was not visible there: 11 users are far below the paint cap.
+
+## The Cursor pass, after merge
+
+Same brief, run against `git diff 4892172^1 4892172` with the heading-count fix already in. Every
+claim confirmed, including that fix; two findings:
+
+| Finding | Severity | Outcome |
+|---|---|---|
+| A pasted hash carrying `page=users` and a group name fetched the group, which the Users tab never paints, so the tab showed "Loading…" for good. No tab builds that pair; `positionFromHash` accepts it. | low | Fixed: `index.html#async function refresh` now tests the position in the order `render` dispatches it — user, then the Users list, then a group, then the group list — with a test that pastes the pair. |
+| The IME tests and one fetch-absence test wait on fixed timers (100 ms, 400 ms). | low, accepted | The IME pattern predates this feature and is shared with the group-search suite; replacing it with a condition to wait on is a change to both suites and was left as is. |
+
+Coverage it named as still missing, both added in the same fix: a test that a changed user list
+repaints on the auto-refresh (the fingerprint includes `data.users`), and the fetch-gate test now
+walks every other tab, not just Groups, Overview and Access granted.

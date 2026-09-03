@@ -20,7 +20,7 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 
@@ -38,6 +38,19 @@ from . import loginlog
 log = logging.getLogger(__name__)
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
+
+# The two page sources the / and /signed-out handlers render. Under the mount they are refused
+# by normalised basename, case-folded: StaticFiles collapses `index.html/` and `//index.html` to
+# the same file, and a case-insensitive volume opens `Index.html` as it — every one of those
+# served the raw token before this (see the routes ahead of the mount in build_app).
+PAGE_SOURCES = frozenset({"index.html", "signed-out.html"})
+
+
+class PageSourceRefusingStaticFiles(StaticFiles):
+    async def get_response(self, path: str, scope) -> Response:
+        if os.path.basename(path).lower() in PAGE_SOURCES:
+            return PlainTextResponse("Not Found", status_code=404)
+        return await super().get_response(path, scope)
 
 # Mirrors oauthProxy.skipAuthRegex. Requests here reach the app WITHOUT authentication, so
 # nothing they claim about identity can be believed or recorded.
@@ -1907,10 +1920,12 @@ def build_app(
         """
         return RedirectResponse(url="/api", status_code=308)
 
-    # Rendered pages, keyed by filename: (file mtime, name they were rendered with, body, ETag).
-    # A cache so the 180 KB file is not re-read and re-hashed per request; keyed on mtime and on
-    # the name so neither a redeployed file nor a monkeypatched TITLE can serve a stale render.
-    rendered_pages: dict[str, tuple[float, str, bytes, str]] = {}
+    # Rendered pages, keyed by filename: (digest of the source bytes, name they were rendered
+    # with, rendered body, ETag). The source is read and hashed on every request — 180 KB from
+    # the page cache, well under a millisecond — because a key built from mtime alone answered
+    # 304 with a stale tag after a content swap that kept the mtime (cp -p, a bind mount; the
+    # Cursor pass found it). Only the substitution is cached, and the key is the content itself.
+    rendered_pages: dict[str, tuple[str, str, bytes, str]] = {}
 
     def named_page(filename: str, request: Request) -> Response:
         """A static page with the dashboard's name substituted in.
@@ -1942,20 +1957,19 @@ def build_app(
         node, and it sets none of these headers.
         """
         path = os.path.join(STATIC_DIR, filename)
+        with open(path, "rb") as fh:
+            source = fh.read()
         mtime = os.stat(path).st_mtime
+        digest = hashlib.sha256(source).hexdigest()
         cached = rendered_pages.get(filename)
-        if cached is None or cached[0] != mtime or cached[1] != TITLE:
-            with open(path, encoding="utf-8") as fh:
-                body = fh.read().replace("__GSD_TITLE__", html.escape(TITLE)).encode("utf-8")
+        if cached is None or cached[0] != digest or cached[1] != TITLE:
+            body = source.decode("utf-8").replace("__GSD_TITLE__", html.escape(TITLE)).encode("utf-8")
             etag = '"' + hashlib.sha256(body).hexdigest()[:32] + '"'
-            cached = (mtime, TITLE, body, etag)
-            # Two threads can render the same file at once (sync handlers run on a pool). The
-            # dict itself is safe; what is not is a thread that stat'd the OLD file storing its
-            # render over a newer one. Keep whichever saw the newer file; the loser's render is
-            # still correct for the request that made it. Immutable containers never hit this.
-            current = rendered_pages.get(filename)
-            if current is None or current[1] != TITLE or current[0] <= mtime:
-                rendered_pages[filename] = cached
+            cached = (digest, TITLE, body, etag)
+            # Two threads can render at once (sync handlers run on a pool). Either result is a
+            # correct render of the bytes that thread read, and the key is those bytes, so the
+            # last writer wins harmlessly; the next request re-reads and re-keys regardless.
+            rendered_pages[filename] = cached
         _, _, body, etag = cached
         headers = {"Cache-Control": "no-cache, must-revalidate", "ETag": etag}
         if_none_match = request.headers.get("if-none-match")
@@ -1999,7 +2013,10 @@ def build_app(
     # 200 at /static/index.html with __GSD_TITLE__ in it. Routes are matched in registration
     # order, so these two, declared before the mount, shadow the raw files with the rendered
     # pages. Moving the files out of the directory would be cleaner, but a dozen tests and
-    # doc anchors name gsd/static/index.html.
+    # doc anchors name gsd/static/index.html. The mount itself refuses the sources too, below:
+    # exact routes do not catch /static/index.html/ or /static//index.html, which StaticFiles
+    # normalises to the same file, nor a case variant on a case-insensitive volume (measured:
+    # all three served the raw token on macOS).
     # Out of the schema like the docs-UI routes: they are the page, not the API.
     @app.get("/static/index.html", include_in_schema=False)
     def index_raw(request: Request) -> Response:
@@ -2010,7 +2027,7 @@ def build_app(
         return named_page("signed-out.html", request)
 
     if os.path.isdir(STATIC_DIR):
-        app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+        app.mount("/static", PageSourceRefusingStaticFiles(directory=STATIC_DIR), name="static")
 
     app.state.store = store
     app.state.settings = settings

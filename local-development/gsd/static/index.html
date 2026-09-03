@@ -2947,13 +2947,17 @@ async function refresh(opts = {}) {
         want.findings = guard403(get(`${base}/bindings/findings?limit=${FINDINGS_PAGE}`));
       }
       if (view.page === "groups" || view.page === "users") {
+        // The SAME order render() dispatches in, so what is fetched is what is painted. A pasted
+        // hash can carry page=users AND a group name — no tab produces that pair, but
+        // positionFromHash accepts it — and with the group tested first the Users tab fetched a
+        // group it never paints and stayed on "Loading…" for good (Cursor review finding).
         if (view.user) {
           want.user = guard403(get(`${base}/users/${encodeURIComponent(view.user)}`));
-        } else if (view.group) {
-          want.group = guard403(get(`${base}/groups/${encodeURIComponent(view.group)}`));
         } else if (view.page === "users") {
           // Fetched only on its own tab, like logins, so the other pages do not pay for it.
           want.users = guard403(get(`${base}/users?limit=${USERS_FETCH}`));
+        } else if (view.group) {
+          want.group = guard403(get(`${base}/groups/${encodeURIComponent(view.group)}`));
         } else {
           want.groups = get(`${base}/groups?state=${view.groupFilter}`);
         }

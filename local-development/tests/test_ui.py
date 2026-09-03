@@ -2554,13 +2554,38 @@ class TestUserSearch:
         assert dash.evaluate("() => data.users") is None
         assert dash.evaluate("() => view.cluster") == "prod-east"
 
+    def test_a_changed_user_list_repaints_on_the_poll(self, dash):
+        """The auto-refresh skips the repaint when nothing it fetched changed, judged by a
+        fingerprint of the payloads. A payload left out of it is a change silently suppressed."""
+        self._open(dash)
+        before = dash.evaluate("() => document.querySelectorAll('tr[data-user]').length")
+        dash.route("**/users?*", lambda route: route.fulfill(
+            status=200, content_type="application/json",
+            body='{"cluster":"crc-local","scope":"all","viewer":null,"count":1,"truncated":false,'
+                 '"limit":10000,"users":[{"user_name":"zed","full_name":null,"group_count":1,'
+                 '"first_seen_at":"2026-01-01T00:00:00+00:00"}]}'))
+        dash.evaluate("() => refresh({ auto: true })")
+        dash.wait_for_selector("tr[data-user='zed']", timeout=10_000)
+        assert before == 3 and self._ids(dash) == ["zed"]
+
+    def test_a_pasted_position_with_a_group_name_still_loads_the_list(self, dash):
+        """No tab builds page=users together with a group, but a hash can carry both. The fetch
+        must follow what render() paints — the list — or the tab loads forever (Cursor finding)."""
+        dash.evaluate("() => { navigate({ page: 'users', group: 'app-ocp-rbac-alpha-ns-admin',"
+                      " user: null }); render(); refresh(); }")
+        dash.wait_for_selector("tr[data-user]", timeout=10_000)
+        assert dash.evaluate("() => data.users !== null")
+        assert len(self._ids(dash)) == 3
+
     def test_other_tabs_never_request_the_user_list(self, dash):
         """Fetched only on its own tab, like logins: the other pages must not pay for a 10,000-row list."""
         dash.evaluate("() => { window.__urls = []; const f = window.fetch;"
                       " window.fetch = (...a) => { window.__urls.push(String(a[0])); return f(...a); }; }")
-        for tab in ("Groups", "Overview", "Access granted"):
+        for tab in ("Groups", "Overview", "Access granted", "RBAC policy", "Namespace audit", "Logins", "Usage"):
             dash.click(f'button.tab:text-is("{tab}")')
-            dash.wait_for_timeout(400)
+            dash.wait_for_function("() => !document.querySelector('#main .empty-note') || "
+                                   "!/Loading/.test(document.querySelector('#main .empty-note').textContent)",
+                                   timeout=10_000)
         urls = dash.evaluate("() => window.__urls")
         assert not [u for u in urls if u.endswith("/users") or "/users?" in u], urls
         self._open(dash)
