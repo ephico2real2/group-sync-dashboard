@@ -2287,6 +2287,12 @@ function bindingMatches(r, q) {
 }
 
 function bindingsPage() {
+  // The tier is unknown until whoami answers — and unknown again if a later whoami fails.
+  // Neither the cached wide payload nor the cached own path is truthful then, so this fails
+  // closed like the Overview: the same Loading state, never a claim (Codex second pass).
+  if (!readerTierKnown()) {
+    return `<section class="card"><div class="empty-note">Loading…</div></section>`;
+  }
   // A narrowed reader sees their own path. `myAccess` arrives from refresh(), on the first
   // cycle only after the findings fetch has come back forbidden and whoami has named them.
   if (narrowedReader()) {
@@ -2458,13 +2464,18 @@ function reachCell(r) {
    deletion which never happened (operator, 2026-09-04). Dangling and granted groups keep the
    drill: the object exists, or existed and left history the page can show. */
 function groupNameCell(r) {
-  if (r.finding === "built_in" || r.finding === "unresolved") {
-    const why = r.finding === "built_in"
-      ? "A Kubernetes virtual group: it has no Group object, so there is no page to open."
-      : "No Group object with this name exists on the cluster, so there is no page to open.";
-    return `<span class="mono" title="${why}">${esc(r.group_name)}</span>`;
+  // A POSITIVE rule: drill only for the tiers where a group page can answer. Written as a
+  // negative rule it drilled for a row that carried no tier at all (an older server), which is
+  // exactly the dead end it was meant to remove (Codex second pass, 2026-09-04).
+  if (r.finding === "ok" || r.finding === "unmanaged" || r.finding === "dangling") {
+    return `<button type="button" class="drill" data-group="${esc(r.group_name)}">${esc(r.group_name)}</button>`;
   }
-  return `<button type="button" class="drill" data-group="${esc(r.group_name)}">${esc(r.group_name)}</button>`;
+  const why = r.finding === "built_in"
+    ? "A Kubernetes virtual group: it has no Group object, so there is no page to open."
+    : r.finding === "unresolved"
+      ? "No Group object with this name exists on the cluster, so there is no page to open."
+      : "This server did not say whether a Group object exists, so there is no page to open safely.";
+  return `<span class="mono" title="${why}">${esc(r.group_name)}</span>`;
 }
 
 function bindingTable(rows) {

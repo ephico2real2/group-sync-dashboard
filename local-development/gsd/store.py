@@ -1582,12 +1582,15 @@ class Store:
     # this and are hot: the metrics scrape, the poller's audit planning, and /api/clusters.
     _REACH_JOIN = """
                  LEFT JOIN (SELECT m.cluster_id, m.group_name,
+                                   COUNT(*) AS member_count,
                                    SUM(CASE WHEN u.has_identity = 1 THEN 1 ELSE 0 END) AS logged_in_count
                               FROM group_member m
                               LEFT JOIN ocp_user u
                                      ON u.cluster_id = m.cluster_id AND u.user_name = m.user_name
                              GROUP BY m.cluster_id, m.group_name) li
-                        ON li.cluster_id = b.cluster_id AND li.group_name = b.group_name"""
+                        ON li.cluster_id = b.cluster_id AND li.group_name = b.group_name
+                 LEFT JOIN ocp_user_status ust
+                        ON ust.cluster_id = b.cluster_id"""
 
     def count_bindings_by_finding(self, cluster_id: str) -> dict[str, int]:
         """How many bindings fall in each tier, for the WHOLE cluster.
@@ -1609,9 +1612,10 @@ class Store:
         """Every group-subject binding, each classified.
 
         `reach=True` adds two columns that say who the binding reaches today: `member_count`, the
-        Group object's own count, and `logged_in_count`, how many of those members have logged in
-        (a User with an identity). Both are NULL when no Group object exists — dangling,
-        unresolved, built-in — so a consumer can tell "nobody" (0) from "not applicable". Only
+        group's synced members, and `logged_in_count`, how many of those members have logged in
+        (a User with an identity) — both from the same membership rows. Both are NULL when no Group object exists — dangling,
+        unresolved, built-in — so a consumer can tell "nobody" (0) from "not applicable"; and
+        `logged_in_count` is NULL until the User objects have been read at least once. Only
         the findings endpoint asks; see _REACH_JOIN for why it is not unconditional.
 
         Includes the ones that resolve normally (`ok`). Those are the majority of a healthy
@@ -1623,9 +1627,20 @@ class Store:
         Pair it with `count_bindings_by_finding` — the counts must describe the cluster, not
         the page.
         """
+        # logged_in_count is NULL — not 0 — until the User objects have been read at least once
+        # (no ocp_user_status row yet: a fresh install, or the cycle after migration 7 rebuilt
+        # the table). A confident zero there would say "nobody in this group has logged in" about
+        # a cluster the dashboard has not asked yet (Codex second pass, 2026-09-04). Once a read
+        # has happened the count stands even if a later read was refused, like the Users tab.
+        # Both numbers come from the SAME membership rows, so "members minus logged in" is exactly
+        # the members with no login, by construction. group_state.member_count is the Group object's
+        # own figure and the poller writes both in one transaction, so they agree — but nothing in
+        # the store made them agree, and both second-pass reviewers found the seam (2026-09-04).
+        # Group EXISTENCE still comes from group_state: a group with no member rows is 0, not NULL.
         reach_cols = ("""
-                      g.member_count AS member_count,
                       CASE WHEN g.name IS NULL THEN NULL
+                           ELSE COALESCE(li.member_count, 0) END AS member_count,
+                      CASE WHEN g.name IS NULL OR ust.cluster_id IS NULL THEN NULL
                            ELSE COALESCE(li.logged_in_count, 0) END AS logged_in_count,"""
                       if reach else "")
         sql = ("""SELECT b.binding_kind, b.binding_namespace, b.binding_name,

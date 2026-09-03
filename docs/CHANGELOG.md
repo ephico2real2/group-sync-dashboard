@@ -6,6 +6,17 @@ and the chart (`Chart.yaml`, published to the Helm repository). A chart release 
 `appVersion` is listed under the application release it carries. The reasoning behind each change
 lives next to the code and in the design and review records linked here.
 
+## Application 0.10.2 — chart 0.9.4 — 2026-09-04
+
+- **Access granted, from the second-pass review:** when the reader's tier is indeterminate (a
+  whoami that fails on a later cycle) the tab fails closed to Loading, as the Overview does, instead
+  of painting a cached payload of either tier; the Reaches column's logged-in count is null until
+  the User objects have been read at least once, rather than a confident zero on a fresh install or
+  the cycle after migration 7; a row that carries no tier renders its group name as plain text,
+  closing the last way into the 404 that #49 removed. (review record `REVIEW_second_pass_2026-09-04.md`)
+- **Chart 0.9.3:** the chart README's values table only — the row for a `redirectMode` key that no
+  longer exists. Docs for the whole day's state, and this changelog, landed with it. (#50)
+
 ## Application 0.10.1 — chart 0.9.2 — 2026-09-04
 
 - **Access granted:** a group name is a drill only where a group page can answer. Built-in

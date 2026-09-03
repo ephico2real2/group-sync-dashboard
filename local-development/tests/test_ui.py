@@ -996,6 +996,21 @@ class TestBindingFindingsVisible:
         self._open(dash)
         assert dash.locator(".drill[data-group='was-managed']").count() == 1
 
+    def test_a_row_with_no_tier_from_an_older_server_is_not_a_link_either(self, dash):
+        """The drill rule is positive — ok, unmanaged, dangling — so a row that says nothing about
+        whether a Group object exists cannot drill into a 404 (Codex second pass)."""
+        self._open(dash)
+        dash.evaluate("""() => {
+            const strip = (rows) => rows.map(({ finding, ...rest }) => rest);
+            const d = data.findings;
+            data.findings = Object.assign({}, d, { ok: strip(d.ok), unresolved: strip(d.unresolved) });
+            render();
+        }""")
+        assert dash.locator("section.card:has(h2:has-text('Granted')) .drill").count() == 0
+        assert dash.locator("section.card:has(h2:has-text('Unresolved')) .drill").count() == 0
+        dash.evaluate("() => refresh()")
+        dash.wait_for_selector("section.card:has(h2:has-text('Granted')) .drill")
+
     def test_a_name_with_no_group_object_is_not_a_link_to_a_404(self, dash):
         """Built-in virtual groups never have a Group object and unresolved bindings name groups
         that never existed, so a drill from either could only reach the 404 card — which blamed a
@@ -2972,6 +2987,19 @@ class TestAccessGrantedSelfTier:
         body = p.locator("#main").inner_text()
         assert "reaches alice" in body and "grant nobody" not in body, body[:300]
         assert p.evaluate("() => data.findings") is None, "the wide payload is not this reader's to paint"
+
+    def test_an_unknown_tier_paints_neither_tiers_payload(self, page, scoped_server):
+        """A whoami that fails on a later cycle leaves the tier indeterminate. The cached wide
+        payload is not the reader's to see then, and the own path is not a claim either: the tab
+        fails closed to Loading, as the Overview does (Codex second pass)."""
+        p = self._open(page, scoped_server, "root")
+        p.wait_for_selector("text=grant nobody")
+        p.evaluate("() => { data.whoami = null; render(); }")
+        body = p.locator("#main").inner_text()
+        assert "Loading" in body and "grant nobody" not in body and "Granted" not in body, body[:200]
+        assert p.locator(".drill").count() == 0
+        p.evaluate("() => refresh()")
+        p.wait_for_selector("text=grant nobody", timeout=10_000)
 
     def test_a_narrowed_identity_with_no_username_is_a_named_card_not_loading(self, page, scoped_server):
         p = self._open(page, scoped_server, "alice")

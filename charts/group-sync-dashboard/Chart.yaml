@@ -105,7 +105,9 @@ type: application
 # CHART 0.9.3 (2026-09-04), PATCH: the chart README's values table only — the row for a
 # `redirectMode` key that no longer exists now says the callback form follows route/ingress.
 # No template or default changes; appVersion unchanged.
-version: 0.9.3
+# CHART 0.9.4 (2026-09-04), PATCH: appVersion moves to application 0.10.2 (below); no template or
+# default changes.
+version: 0.9.4
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,
@@ -141,7 +143,12 @@ version: 0.9.3
 # answer. Built-in virtual groups never have a Group object and unresolved bindings name groups
 # that never existed, so those names drilled to a 404 that blamed a deletion which never happened.
 # They render as plain text now; dangling and granted groups keep the drill. PATCH.
-appVersion: "0.10.1"
+# 0.10.2 (2026-09-04). The second-pass review's findings on Access granted: the tab fails closed
+# to Loading when the reader's tier is indeterminate instead of painting a cached payload of either
+# tier; the Reaches column's logged-in count is null until the User objects have been read at least
+# once, rather than a confident zero; and a row that carries no tier renders its group name as text,
+# not a drill. PATCH.
+appVersion: "0.10.2"
 
 keywords: [openshift, ldap, rbac, groupsync, observability]
 home: https://github.com/ephico2real2/group-sync-dashboard

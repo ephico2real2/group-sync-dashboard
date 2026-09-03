@@ -62,12 +62,30 @@ def test_reach_counts_members_and_the_members_who_have_logged_in(tmp_path):
 
 def test_a_group_with_no_members_reaches_nobody_and_says_zero_not_null(tmp_path):
     """The group exists, so the binding is `ok` — and it grants nobody today. 0, distinct from
-    the NULL a missing Group object produces."""
+    the NULL a missing Group object produces — once the User objects have been read."""
     store = _store(tmp_path)
     store.replace_group_state("c1", [_group("empty", 0)], T)
     store.replace_bindings("c1", [_binding("empty")], T)
+    store.replace_users("c1", [], T)
     row = store.all_bindings("c1", reach=True)[0]
     assert (row["finding"], row["member_count"], row["logged_in_count"]) == ("ok", 0, 0)
+
+
+def test_logged_in_is_null_until_the_user_objects_have_been_read_once(tmp_path):
+    """A fresh install, or the cycle after migration 7 rebuilt ocp_user: no User read has
+    happened, so "0 logged in" would be a confident claim about a question never asked (Codex
+    second pass, 2026-09-04). NULL until ocp_user_status has a row; then the count stands even
+    if a later read was refused, like the Users tab's stale rows."""
+    store = _store(tmp_path)
+    store.replace_group_state("c1", [_group("team", 2)], T)
+    store.sync_members("c1", {"team": ["alice", "bob"]}, {}, T)
+    store.replace_bindings("c1", [_binding("team")], T)
+    row = store.all_bindings("c1", reach=True)[0]
+    assert (row["member_count"], row["logged_in_count"]) == (2, None)
+    store.replace_users("c1", [_user("alice")], T)
+    assert store.all_bindings("c1", reach=True)[0]["logged_in_count"] == 1
+    store.mark_users_unavailable("c1", T)
+    assert store.all_bindings("c1", reach=True)[0]["logged_in_count"] == 1, "a refusal does not unsay what was read"
 
 
 def test_no_group_object_means_null_on_both_whatever_the_tier(tmp_path):
@@ -106,6 +124,21 @@ def test_the_name_join_is_byte_exact(tmp_path):
     store.replace_bindings("c1", [_binding("team")], T)
     row = store.all_bindings("c1", reach=True)[0]
     assert (row["member_count"], row["logged_in_count"]) == (1, 0)
+
+
+def test_members_and_logged_in_come_from_the_same_rows_so_the_gap_is_exactly_the_unlogged(tmp_path):
+    """group_state's member_count and the membership rows are written together by the poller, but
+    nothing in the store ties them. Both second-pass reviewers found the seam: a Group object
+    saying 5 over 3 synced rows would have shown "5 members · 1 logged in" and a gap of four where
+    two people exist. Both numbers now come from the rows, so the gap is the members with no login."""
+    store = _store(tmp_path)
+    store.replace_group_state("c1", [_group("team", 5)], T)     # the object claims five
+    store.sync_members("c1", {"team": ["a", "b", "c"]}, {}, T)  # three rows synced
+    store.replace_users("c1", [_user("a")], T)
+    store.replace_bindings("c1", [_binding("team")], T)
+    row = store.all_bindings("c1", reach=True)[0]
+    assert (row["member_count"], row["logged_in_count"]) == (3, 1)
+    assert row["member_count"] - row["logged_in_count"] == len(store.synced_members_without_user("c1"))
 
 
 def test_logged_in_never_exceeds_members_and_paging_still_applies(tmp_path):

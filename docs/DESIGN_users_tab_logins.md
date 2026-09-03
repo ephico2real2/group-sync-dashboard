@@ -40,14 +40,15 @@ There is no last-login field. The login-capture feature (`docs/DESIGN_login_capt
 Identity providers seen on `User.identities`: `ldap-local` 8, `ceo_rnd_oim` 49, `developer` 2,
 `my-provider` 2. `fullName` is set on the 8 LDAP users and on none of the others.
 
-## What the tab does today, and why that is a different question
+## What the tab did before 0.9.0, and why that was a different question
 
-Rows come from `gsd/store.py#group_member`, filled by `gsd/poller.py#poll_once` from the `Group`
-objects' member lists. The `User` read (`gsd/kube.py#ClusterClient.fetch_users`) is a decoration:
-it stores only `fullName`, only for names that are set, into `gsd/store.py#ocp_user`, and
-`gsd/store.py#Store.users` LEFT JOINs it. So the tab answers "who has access through synced
+Rows came from `gsd/store.py#group_member`, filled by `gsd/poller.py#poll_once` from the `Group`
+objects' member lists. The `User` read (`gsd/kube.py#ClusterClient.fetch_users`) was a decoration:
+it stored only `fullName`, only for names that were set, into `gsd/store.py#ocp_user`, and
+`gsd/store.py#Store.users` LEFT JOINed it. So the tab answered "who has access through synced
 groups". `docs/REVIEW_user_search.md` locked that shape in when PR #42 shipped it; this document
-changes the question the tab answers, deliberately, and says so.
+changed the question the tab answers, deliberately, and says so. (Written in the present tense
+before implementation; both second-pass reviewers read it as a description of the current tab.)
 
 The RBAC is already in place: `charts/group-sync-dashboard/templates/rbac.yaml#rbac.users` grants
 `get`/`list` on `users.user.openshift.io`, on by default. `identities` is not granted and this
