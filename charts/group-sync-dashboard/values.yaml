@@ -472,10 +472,11 @@ logLevel: INFO
 # Log lines carry the OFFSET (%z), so "2026-08-02 17:17:59-0400" is unambiguous against a
 # stored "2026-08-02T21:17:59Z" whatever this is set to. Leave empty for UTC.
 #
-# Requires tzdata, which the Containerfile installs. It is not in ubi9-minimal by default,
-# and its absence fails misleadingly rather than loudly: Python reads TZ as a POSIX spec,
-# takes "America" from "America/New_York" as the zone name, finds no offset, and reports
-# tzname=('America','America') while the clock stays UTC — a New York label over UTC times.
+# Requires the zoneinfo database, which the hardened base image ships (/usr/share/zoneinfo)
+# and the Containerfile proves at build time. Its absence fails misleadingly rather than
+# loudly: Python reads TZ as a POSIX spec, takes "America" from "America/New_York" as the
+# zone name, finds no offset, and reports tzname=('America','America') while the clock stays
+# UTC — a New York label over UTC times.
 timezone: "America/New_York"
 
 # Clusters to observe. The default observes the cluster the pod runs on, using its own
@@ -573,11 +574,24 @@ trustedCA:
     enabled: false
     name: enterprise-ca
     key: ca-bundle.crt
+    # Optional: the CA's OpenSSL subject hash, eight hex digits from
+    #   openssl x509 -noout -subject_hash -in /path/to/ca.pem
+    # When set, the same ConfigMap is ALSO mounted as /etc/pki/tls/certs/<hash>.0 — an entry
+    # in OpenSSL's hashed directory, the shape Hummingbird's Python guidance calls "Approach
+    # 2" — so curl in the pod, urllib, and the dashboard's fallback context all trust it. The
+    # dashboard needs none of this for itself (it reads the bundle by path); this is for the
+    # `oc exec … curl` that would otherwise refuse the corporate-signed URL. One CA per hash:
+    # a bundle of several CAs under one hash is only ever looked up by the first subject.
+    subjectHash: ""
 
   # BOTH may be enabled at once. They are concatenated into one bundle at startup, in the
   # order injected-then-manual, because a bundle is just a list of PEM blocks and there is
   # no reason to make the operator choose. Enabling neither falls back to Python's default
   # trust store.
+  #
+  # The injected bundle is also handed to curl in the pod (CURL_CA_BUNDLE), so an `oc exec …
+  # curl` against a corporate-signed URL verifies the way the application does. The manual
+  # ConfigMap is not: it carries only the extra CA, and curl reads one file.
   mountPath: /etc/pki/ca-trust/extracted/pem
 
 # ---------------------------------------------------------------------------

@@ -1,44 +1,114 @@
-# Two stages so build-time tooling never reaches the runtime image.
+# THREE STAGES ON THE RED HAT HARDENED IMAGES, AND THE SPLIT IS LOAD-BEARING.
 #
-# Python 3.14 from the RHEL APPSTREAM, deliberately not from python.org. UBI9 ships
-# python3.14 (3.14.5 vs python.org's 3.14.6 — Red Hat backports security fixes into
-# theirs), and the RPM keeps interpreter CVEs on Red Hat's books: they patch it, a
-# rebuild picks it up, and Trivy sees it. A hand-compiled /usr/local python is invisible
-# to the rpm database, so every scanner reports a clean image while the interpreter
-# quietly ages — the worst of both worlds.
+# The runtime base (hi/python:3.14) has NO SHELL AT ALL — /bin/sh does not exist, so a shell-form
+# RUN in the final stage cannot execute in any form. Everything that used to happen there on
+# ubi9-minimal (microdnf, mkdir, chgrp) now happens in builder stages and crosses into the runtime
+# as files, via COPY --from. What the runtime DOES have, measured from its layers on 2026-09-04:
+# /usr/bin/python3.14 with site-packages split across /usr/lib and /usr/lib64 exactly as UBI's
+# (so the --prefix=/install tree and PYTHONPATH below are unchanged), SQLite 3.53.4, a full
+# /usr/share/zoneinfo (so the tzdata reinstall the UBI recipe needed is gone), libtinfo.so.6 and
+# libsystemd.so.0, an RPM database at /usr/lib/sysimage/rpm with no rpm binary to read it — and no
+# pip executable, no coreutils, no curl.
 #
-# ubi9-minimal for BOTH stages, replacing the old ubi9/python-311 s2i build image (no
-# python-314 s2i image exists yet, and none is needed): our own wheel is pure Python and
-# every compiled dependency — pydantic-core, uvloop, httptools — ships prebuilt cp314
-# wheels, so the "build" stage needs pip, not gcc.
-FROM registry.access.redhat.com/ubi9-minimal:latest AS build
+# Floating tags on purpose: `3.14` and `3.14-builder` move with Red Hat's latest 3.14 build, so
+# every build of THIS image picks up their fixes rather than pinning to one snapshot.
+#
+# The pre-hardened recipe is kept beside this file as Containerfile.ubi, built by nothing.
 
+# ----------------------------------------------------------------------------
+# Stage 1 — build: the wheel and its dependency tree, resolved into a self-contained prefix so the
+# runtime needs no compiler and no package index. The hardened builder ships pip3.14 and no gcc —
+# fine: our wheel is pure Python and every compiled dependency (pydantic-core, uvloop, httptools)
+# ships a prebuilt cp314 wheel. Nothing this stage's RPMs could gain from `dnf update` reaches the
+# runtime — only /install crosses — so there is deliberately no update here (see the pack stage,
+# where the opposite holds).
+FROM registry.access.redhat.com/hi/python:3.14-builder AS build
+
+# The hardened builder's default user is 65532; writing /build and /install wants root. Root never
+# survives into the runtime image.
 USER 0
 WORKDIR /build
-
-# update first: the base is rebuilt by Red Hat on their cadence, and this picks up any
-# fixes published since, on every one of OUR builds rather than only on theirs.
-RUN microdnf update -y \
- && microdnf install -y python3.14 python3.14-pip \
- && microdnf clean all
 
 COPY pyproject.toml README.md ./
 COPY gsd ./gsd
 
-# Build a wheel and resolve dependencies into a self-contained prefix, so the runtime
-# stage needs no compiler and no package index.
-# The API-docs bundles (Swagger UI, ReDoc) ride along inside gsd/static/vendor, which is
-# committed to the repository and declared as package-data in pyproject.toml. They are NOT
-# downloaded here, and that is deliberate: a build-time fetch makes every release depend on
-# npm being up, on the version still being published, and on this host having a route out.
-# Any of those turns a release into an incident, at the moment you are least able to absorb
-# one. Refresh them with ./vendor-assets.sh --update; verify with ./vendor-assets.sh.
+# The API-docs bundles (Swagger UI, ReDoc) ride along inside gsd/static/vendor, which is committed
+# to the repository and declared as package-data in pyproject.toml. They are NOT downloaded here,
+# and that is deliberate: a build-time fetch makes every release depend on npm being up, on the
+# version still being published, and on this host having a route out. Refresh them with
+# ./vendor-assets.sh --update; verify with ./vendor-assets.sh.
 RUN python3.14 -m pip install --no-cache-dir --upgrade pip build \
  && python3.14 -m build --wheel --outdir /wheels \
- && python3.14 -m pip install --no-cache-dir --prefix=/install /wheels/*.whl
+ && python3.14 -m pip install --no-cache-dir --prefix=/install /wheels/*.whl \
+ && PYTHONPATH=/install/lib/python3.14/site-packages:/install/lib64/python3.14/site-packages \
+    python3.14 -c "import gsd, fastapi, uvicorn, httpx, yaml, croniter, prometheus_client; print('wheel tree imports under the builder')"
 
+# ----------------------------------------------------------------------------
+# The runtime base, named once. The pack stage reads its RPM database and the final stage is built
+# on it; naming it makes both resolve to the same pull of the floating tag within one build.
+FROM registry.access.redhat.com/hi/python:3.14 AS runner
 
-FROM registry.access.redhat.com/ubi9-minimal:latest
+# ----------------------------------------------------------------------------
+# Stage 2 — pack: the shell and the debugging tools the runtime cannot install for itself.
+#
+# Same base as the runtime, so every library copied out matches its glibc exactly. Unlike the build
+# stage, `dnf update` EARNS ITS PLACE here: everything this stage copies out ships, so it must carry
+# whatever Red Hat has fixed since the base was cut.
+#
+# Contents measured, not guessed, on the pattern of fluentd-hec's Dockerfile.curl: jq + libjq +
+# libonig; bash with an sh -> bash symlink; curl on libcurl-MINIMAL, swapped in deliberately (full
+# libcurl drags ~26 extra libraries — LDAP, libssh, HTTP/3, brotli, sasl, fido2...), which needs the
+# nghttp2/idn2/unistring/kerberos family below; and coreutils, because cat, ls and base64 in this
+# base are shims into one multicall binary ("#!/usr/bin/coreutils --coreutils-prog-shebang=cat"),
+# copied WITHOUT -L to stay shims, with the binary itself copied -L. mkdir, chgrp, chmod and rm
+# ride along the same way so the runtime stage can create its directories with the same line the
+# UBI recipe used, and drop pip, with ordinary tools rather than through the interpreter. Two libraries the fluentd pack
+# carries are left out on purpose — libtinfo.so.6 and libsystemd.so.0 are already in this runtime,
+# and copying them would overwrite the hardened base's own files. `ldd` is printed for the record;
+# the final stage proves the pack from the outside, under the pack's own shell, and fails the build
+# if a library is missing.
+FROM registry.access.redhat.com/hi/python:3.14-builder AS pack
+
+USER 0
+
+RUN dnf update -y \
+ && dnf swap -y libcurl libcurl-minimal \
+ && dnf install -y jq && dnf clean all \
+ && mkdir -p /jqpack/bin /jqpack/lib64 \
+ && cp -L /usr/bin/jq /usr/bin/bash /usr/bin/curl /usr/bin/coreutils /jqpack/bin/ \
+ && cp /usr/bin/cat /usr/bin/ls /usr/bin/base64 /usr/bin/mkdir /usr/bin/chgrp /usr/bin/chmod /usr/bin/rm /jqpack/bin/ \
+ && ln -s bash /jqpack/bin/sh \
+ && cp -L /usr/lib64/libjq.so.1 /usr/lib64/libonig.so.5 \
+          /usr/lib64/libcurl.so.4 /usr/lib64/libnghttp2.so.14 /usr/lib64/libidn2.so.0 \
+          /usr/lib64/libunistring.so.5 /usr/lib64/libgssapi_krb5.so.2 /usr/lib64/libkrb5.so.3 \
+          /usr/lib64/libk5crypto.so.3 /usr/lib64/libcom_err.so.2 /usr/lib64/libkrb5support.so.0 \
+          /usr/lib64/libkeyutils.so.1 /jqpack/lib64/ \
+ && for b in jq bash curl coreutils; do echo "== ldd $b"; ldd /usr/bin/$b; done \
+ && /jqpack/bin/jq --version && /jqpack/bin/curl --version >/dev/null && echo "curl pack OK"
+
+# THE RUNTIME'S RPM DATABASE, EDITED HERE BECAUSE THE RUNTIME HAS NO rpm. Two packages are
+# uninstalled from the shipped image (their files go in the runtime stage, below), and an uninstall
+# is files AND record, or scanners keep reporting what is no longer there:
+#   libuuid — the one OS package a scanner rates HIGH in the base (four util-linux CVEs, 2026-09-02,
+#     all in libmount/mount(8)/nsenter, none of which the base ships; libuuid is flagged by source
+#     package, and Red Hat lists Hardened Images as Affected with no fixed build in the repo as of
+#     2026-09-04, newest 2.42.2-3.4). Nothing here needs it: only python3-libs' _uuid module links
+#     it, and the uuid module falls back to pure Python when _uuid is absent — measured, uuid4 works.
+#   python3-pip and python-pip-wheel — pip, removed for the reasons given in the runtime stage.
+# --justdb touches the database only; the pack stage's own files are not what is being uninstalled.
+# --nodeps because python3-libs declares the libuuid dependency that the fallback makes optional.
+COPY --from=runner /usr/lib/sysimage/rpm /rpmdb
+# The shm/wal files are SQLite's, created whenever rpm opens the database; the last command
+# removes them so the copy that ships is the one file the base shipped, and nothing opens it after.
+RUN rpm --dbpath /rpmdb -e --justdb --nodeps libuuid python3-pip python-pip-wheel \
+ && ! rpm --dbpath /rpmdb -q libuuid python3-pip python-pip-wheel >/dev/null 2>&1 \
+ && echo "runtime rpm db: $(rpm --dbpath /rpmdb -qa | wc -l) packages after erase" \
+ && rm -f /rpmdb/rpmdb.sqlite-shm /rpmdb/rpmdb.sqlite-wal
+
+# ----------------------------------------------------------------------------
+# Stage 3 — runtime. NO SHELL EXISTS IN THIS IMAGE until the pack lands, so nothing below the base
+# line is a shell-form RUN: metadata, COPY, and exec-form RUN only.
+FROM runner
 
 # Stamped at build time so a running pod can prove which source it was built from.
 # This exists because of a real failure: an image was built, the source was then changed,
@@ -90,91 +160,75 @@ LABEL org.opencontainers.image.revision="$GIT_COMMIT" \
       org.opencontainers.image.title="group-sync-dashboard" \
       org.opencontainers.image.source="https://github.com/ephico2real2/group-sync-dashboard"
 
-USER 0
-# `update` cannot clear the known curl HIGHs today: CVE-2026-8286, CVE-2026-8925,
-# CVE-2026-8927, CVE-2026-9547, CVE-2026-11352 and CVE-2026-11586 against curl-minimal and
-# libcurl-minimal all report NO fixed version from Red Hat, and a dry run on a fresh base
-# says "Nothing to do". They are also unreachable here — every HTTP call goes through
-# Python httpx, nothing shells out to curl, and the HEALTHCHECK below uses urllib.
-#
-# Two sqlite advisories are in the same position (CVE-2024-0232, CVE-2025-70873): UBI9
-# ships only 3.34.1, so they cannot be patched out. sqlite IS used, so gsd/store.py
-# disables extension loading to cut the surface instead. See
-# docs/image-vulnerability-scan.md.
-#
-# The update still earns its place: every rebuild of THIS image picks up whatever HAS been
-# fixed since Red Hat last rebuilt the base, rather than waiting on their cadence.
-# Measured effect when python3.14 landed: MEDIUM 119 -> 113.
-#
-# TZDATA: REINSTALL, NOT INSTALL — and that is the whole trick.
-#
-# ubi9-minimal already lists tzdata in its rpm database (glibc pulls it in) but strips
-# /usr/share/zoneinfo to save space. `microdnf install -y tzdata` therefore sees the
-# dependency satisfied, does nothing, and exits 0. Measured on the shipped image: `rpm -q`
-# reported tzdata-2026b-1.el9 and `rpm -ql` listed 1,864 zoneinfo paths, while
-# /usr/share/zoneinfo did not exist. `reinstall` rewrites the files.
-#
-# The failure it prevents is silent and actively misleading rather than merely absent: with
-# TZ set and no zoneinfo, glibc and Python parse the value as a POSIX TZ spec, so
-# "America/New_York" yields zone name "America" with NO offset and logs get a New York
-# label over a UTC clock. Verified before and after:
-#   before:  tzname ('America','America')  offset +0000  local == utc
-#   after:   TZ=America/New_York date -> 17:29 EDT -0400  (utc 21:29)
-#
-# Stored data is unaffected either way: every timestamp in the app is datetime.now(UTC) and
-# every stored string ends in Z. TZ governs log lines and the rendered UI, nothing else.
-RUN microdnf update -y \
- && microdnf install -y python3.14 \
- && (microdnf reinstall -y tzdata || microdnf install -y tzdata) \
- && microdnf clean all \
- && rm -rf /var/cache/yum
-
+# The wheel tree, at the same prefix and with the same lib/lib64 split the UBI recipe used.
 COPY --from=build /install /install
 
-RUN mkdir -p /data /etc/gsd \
- && chgrp -R 0 /data /etc/gsd \
- && chmod -R g=u /data /etc/gsd
+# The pack: bash (and sh), curl, jq, coreutils with the cat/ls/base64 shims, and the libraries the
+# runtime lacks. /bin is a symlink to /usr/bin in this base, so /usr/bin is the one place to put
+# them and /bin/sh resolves through the symlink. A shell returns to the attack surface, and that is
+# accepted on purpose: the release scripts verify the build stamp with `--entrypoint sh` and the
+# docs debug in-pod with curl and ls, and the alternative was an image nothing in this repo could
+# check. The pack is scanned at its source too, the pack stage, where its RPM records live; in this
+# image the copied binaries are known to a scanner only through the ELF package notes Red Hat's
+# builds carry (docs/image-vulnerability-scan.md).
+COPY --from=pack /jqpack/bin/ /usr/bin/
+COPY --from=pack /jqpack/lib64/ /usr/lib64/
 
-# A non-root default so the image is also safe to run outside OpenShift, where no
-# arbitrary UID is assigned.
+# The directories the chart mounts into and the process writes under, made exactly as the UBI
+# recipe made them — OpenShift runs containers as an arbitrary high UID in the root group, so both
+# stay group-writable and group-owned by root, the SQLite file included. This is a shell-form step
+# in a base that has no shell: it works only because it comes AFTER the pack COPY above, which is
+# what puts /bin/sh, mkdir, chgrp and chmod here. They are not carried over from the pack stage
+# because a COPY of an empty directory lands as 0755 whatever the source's mode and whatever
+# --chmod says (measured: --chmod reaches a directory's contents, never the directory itself).
+# Root for this one step only; the base's default user is 65532 and cannot chgrp to root.
+USER 0
+RUN ["/bin/sh", "-c", "mkdir -p /data /etc/gsd && chgrp -R 0 /data /etc/gsd && chmod -R g=u /data /etc/gsd"]
+
+# TWO PACKAGES UNINSTALLED — files here, records in the pack stage (which has rpm; this stage does
+# not). The database copied in below then says what is actually on disk.
+#
+# pip does not ship. The base carries a working `python3.14 -m pip` (pip 26.2, measured) and nothing
+# here needs it: the wheel tree is resolved in the build stage and crosses as files. Leaving it is
+# an installer in a production image, and it is also the only thing a scanner finds in the base's
+# Python — pip vendors its own msgpack and setuptools, and Trivy reads them out of
+# pip/_vendor/vendor.txt as HIGH findings with fixes pip has not taken (msgpack 1.1.2, setuptools
+# 70.3.0, measured 2026-09-04). The glob is deliberate: the dist-info directory carries pip's
+# version in its name, and the base's floating tag moves it.
+#
+# libuuid does not ship. See the pack stage for the finding it carries; the uuid module keeps
+# working without it (measured, and proven again below). `rm -f` on paths that do not exist is not
+# an error, so both steps stay quiet if a future base ships without either package.
+RUN ["/bin/sh", "-c", "rm -rf /usr/lib/python3.14/site-packages/pip /usr/lib/python3.14/site-packages/pip-*.dist-info && rm -f /usr/lib64/libuuid.so.1 /usr/lib64/libuuid.so.1.* /usr/share/licenses/libuuid/COPYING.BSD-3-Clause && rm -rf /usr/share/licenses/libuuid"]
+COPY --from=pack /rpmdb/ /usr/lib/sysimage/rpm/
+
+# A non-root default so the image is also safe to run outside OpenShift, where no arbitrary UID is
+# assigned. 1001, as before, and not the base's 65532 — an operator decision, so that nothing about
+# the declared identity of the image moves with the base change. Set BEFORE the proofs below, so
+# they run as the user the container will run as.
 USER 1001
+
+# PROVE THE IMAGE AT BUILD TIME, FROM THE OUTSIDE — fluentd-hec's principle. Two exec-form RUNs,
+# as the runtime user (no shell needed for the first; the second runs under the pack's own shell):
+#   1. the wheel tree imports under THIS interpreter, the runtime's, not the builder's; the SQLite
+#      the app will use is the base's (3.53.4 at the time of writing, against UBI's 3.34.1); the
+#      zoneinfo the chart's `timezone` relies on resolves; and uuid works without libuuid.
+#   2. every pack binary runs, which is the same as saying every library it needs is present — a
+#      missing one is a loader error here, not a broken `oc exec` on a cluster.
+RUN ["python3.14", "-c", "import gsd, fastapi, uvicorn, httpx, sqlite3, zoneinfo, uuid; zoneinfo.ZoneInfo('America/New_York'); uuid.uuid4(); print('runtime imports OK; sqlite', sqlite3.sqlite_version)"]
+RUN ["/bin/sh", "-c", "curl --version >/dev/null && jq --version && ls / >/dev/null && cat /etc/os-release >/dev/null && base64 --version >/dev/null && echo 'pack OK'"]
 
 EXPOSE 8080
 VOLUME ["/data"]
 
-# For `podman run` / `docker run` ONLY, and it is worth knowing that before trusting it.
-#
-# TWO REASONS IT IS NOT PROTECTING THE DEPLOYMENT:
-#
-#   1. It is not in the shipped image. `podman build` defaults to the OCI manifest format,
-#      whose image config has no healthcheck field, so the instruction is dropped and the
-#      build logs "HEALTHCHECK is not supported for OCI image format and will be ignored".
-#      Verified on a built image: Config keys are Cmd, Env, ExposedPorts, Labels, User,
-#      Volumes, WorkingDir — no healthcheck of any kind. Keeping OCI is the right trade;
-#      switching to --format docker to preserve this would change the manifest format of a
-#      published image to rescue a check Kubernetes ignores anyway.
-#   2. Kubernetes never reads it. kubelet uses the probes in the chart, not the image's own
-#      healthcheck, so on the cluster this is inert twice over.
-#
-# INTERVAL 300s, matching probes.liveness.periodSeconds in the chart, deliberately. It was
-# 30s, which is both wasteful and inconsistent: it spawns a Python interpreter every half
-# minute for the lifetime of the container, and it implied a urgency the chart had already
-# decided against. The reasoning there applies here — being wrong about liveness is
-# expensive, because a restart destroys in-flight state and this process holds the only copy
-# of accumulated history between checkpoints — so one mental model, one number.
-#
-# retries=2 for the same reason: 2 x 300s is a 10-minute budget before the container is
-# called unhealthy, which is the same budget the chart's liveness probe gives it.
-#
-# Readiness is deliberately not gated on a reachable cluster: an unreachable cluster is a
-# thing this dashboard exists to display, so failing a check for one would take the
-# dashboard down exactly when it has something to report. /healthz is unconditional.
-HEALTHCHECK --interval=300s --timeout=5s --start-period=15s --retries=2 \
-    CMD ["python3.14", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=3).status==200 else 1)"]
+# No HEALTHCHECK. The UBI recipe carried one and documented that it shipped nowhere: `podman build`
+# writes an OCI manifest, whose config has no healthcheck field, and kubelet reads the chart's
+# probes, never the image's. It is gone rather than carried as dead weight.
 
-# `python3.14 -m uvicorn`, not the /install/bin/uvicorn console script: that script's
-# shebang points at the *build* stage's interpreter path, which does not exist here.
-# Single worker on purpose — the poller runs in-process and owns the SQLite store, so a
-# second worker would mean two pollers racing on the same file and duplicate observations.
+# `python3.14 -m uvicorn`, not the /install/bin/uvicorn console script: that script's shebang points
+# at the build stage's interpreter path. EXEC FORM — with no /bin/sh at the point Kubernetes starts
+# this container it would matter, and it was already right: uvicorn is PID 1, so SIGTERM reaches it.
+# Single worker on purpose — the poller runs in-process and owns the SQLite store, so a second
+# worker would mean two pollers racing on the same file and duplicate observations.
 CMD ["python3.14", "-m", "uvicorn", "gsd.api:create_app", "--factory", \
      "--host", "0.0.0.0", "--port", "8080", "--workers", "1"]

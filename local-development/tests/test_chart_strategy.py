@@ -1079,3 +1079,183 @@ class TestTheServiceMonitorVerifiesTLS:
         assert ok, out
         ep = self._endpoint(out)
         assert "scheme" not in ep and "tlsConfig" not in ep
+
+
+class TestCurlInThePodTrustsTheInjectedBundle:
+    """curl in the pod reads none of the application's settings — measured in the hardened image,
+    it trusts the base's own bundle (/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem) and refuses
+    a corporate-signed URL that the application, through GSD_TRUSTED_CA_FILE, verifies fine. curl
+    honours CURL_CA_BUNDLE, Python's OpenSSL ignores it, and curl fails outright (exit 77) on an
+    empty or missing file. Hence the rules held here:
+
+    * injected on (the default): CURL_CA_BUNDLE names the injected bundle, which OpenShift fills
+      with the system store MERGED with proxy/cluster.spec.trustedCA — curl loses nothing;
+    * injected off: no CURL_CA_BUNDLE at all, whatever the manual ConfigMap says, because that
+      ConfigMap carries only the extra CA and curl reads one file — naming it would drop every
+      public CA from curl. Those URLs are `curl --cacert`'s job.
+    * whatever it names is mounted, or curl in the pod is broken for everything.
+
+    Placement: this file, for the reason given on TestTheProxyTrustsTheSameCAsTheApp.
+    """
+
+    def _app(self, **values):
+        import yaml
+        ok, out = render(**values)
+        assert ok, f"failed to render with {values}:\n{out}"
+        for doc in yaml.safe_load_all(out):
+            if doc and doc.get("kind") == "Deployment":
+                spec = doc["spec"]["template"]["spec"]
+                app = next(c for c in spec["containers"] if c["name"] == "dashboard")
+                return app, spec
+        raise AssertionError("no Deployment in the rendered output")
+
+    @staticmethod
+    def _env(container):
+        return {e["name"]: e.get("value") for e in container.get("env", [])}
+
+    def test_default_hands_curl_the_injected_bundle_and_nothing_else_changes(self):
+        app, _ = self._app()
+        env = self._env(app)
+        assert env["CURL_CA_BUNDLE"] == "/etc/pki/ca-trust/extracted/pem/injected/ca-bundle.crt"
+        assert env["GSD_TRUSTED_CA_FILE"] == env["CURL_CA_BUNDLE"], (
+            "the application and curl must be reading the same injected bundle"
+        )
+
+    def test_the_manual_bundle_alone_never_reaches_curl(self):
+        app, _ = self._app(
+            trustedCA__injected__enabled="false", trustedCA__existingConfigMap__enabled="true"
+        )
+        env = self._env(app)
+        assert "CURL_CA_BUNDLE" not in env, (
+            f"CURL_CA_BUNDLE={env.get('CURL_CA_BUNDLE')} — the manual ConfigMap carries only "
+            f"the extra CA; handing it to curl drops every public CA"
+        )
+        assert env["GSD_TRUSTED_CA_FILE"].endswith("/enterprise/ca-bundle.crt")
+
+    def test_both_bundles_still_hand_curl_only_the_injected_one(self):
+        app, _ = self._app(trustedCA__existingConfigMap__enabled="true")
+        env = self._env(app)
+        assert env["CURL_CA_BUNDLE"].endswith("/injected/ca-bundle.crt")
+        assert "enterprise" in env["GSD_TRUSTED_CA_FILE"]
+
+    def test_the_path_curl_is_given_is_mounted(self):
+        app, _ = self._app()
+        path = self._env(app)["CURL_CA_BUNDLE"]
+        mounts = [m["mountPath"] for m in app.get("volumeMounts", [])]
+        assert any(path.startswith(m.rstrip("/") + "/") for m in mounts), (
+            f"CURL_CA_BUNDLE={path} but the container mounts only {mounts}; curl would fail "
+            f"with exit 77 for every URL"
+        )
+
+    def test_it_follows_a_custom_mount_path(self):
+        app, _ = self._app(trustedCA__mountPath="/etc/custom-ca")
+        assert self._env(app)["CURL_CA_BUNDLE"] == "/etc/custom-ca/injected/ca-bundle.crt"
+
+
+class TestCurlInThePodTrustsWhatTheAppTrusts:
+    """curl in the pod reads none of the application's settings — measured in the hardened image,
+    it trusts the base's own bundle (/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem) and refuses
+    a corporate-signed URL that the application, through GSD_TRUSTED_CA_FILE, verifies fine. Three
+    facts, all measured, decide the wiring held here:
+
+    * curl honours CURL_CA_BUNDLE (a file) and SSL_CERT_DIR (an OpenSSL hashed directory);
+      Python's OpenSSL ignores CURL_CA_BUNDLE, and SSL_CERT_DIR=/etc/pki/tls/certs is its compiled
+      default, so neither changes what the application trusts;
+    * curl fails outright (exit 77) on an empty or missing CURL_CA_BUNDLE, and the injected
+      ConfigMap is one 149-certificate file, so it can only ever be a CURL_CA_BUNDLE, never a
+      hashed-directory entry;
+    * the manual ConfigMap carries one CA, which is exactly the shape of a hashed-directory entry
+      (Hummingbird's "Approach 2"): mounted a second time as /etc/pki/tls/certs/<subject hash>.0
+      it reaches curl, urllib and the application's fallback context alike.
+
+    Hence: injected on (the default) sets CURL_CA_BUNDLE to the injected bundle; injected off sets
+    no CURL_CA_BUNDLE at all, because the manual bundle in that slot would drop every public CA
+    from curl; SSL_CERT_DIR is always set; and `trustedCA.existingConfigMap.subjectHash`, when
+    given, adds the hashed mount.
+
+    Placement: this file, for the reason given on TestTheProxyTrustsTheSameCAsTheApp.
+    """
+
+    INJECTED = "/etc/pki/ca-trust/extracted/pem/injected/ca-bundle.crt"
+    HASHED_DIR = "/etc/pki/tls/certs"
+
+    def _app(self, **values):
+        import yaml
+        ok, out = render(**values)
+        assert ok, f"failed to render with {values}:\n{out}"
+        for doc in yaml.safe_load_all(out):
+            if doc and doc.get("kind") == "Deployment":
+                spec = doc["spec"]["template"]["spec"]
+                app = next(c for c in spec["containers"] if c["name"] == "dashboard")
+                return app, spec
+        raise AssertionError("no Deployment in the rendered output")
+
+    @staticmethod
+    def _env(container):
+        return {e["name"]: e.get("value") for e in container.get("env", [])}
+
+    def test_default_hands_curl_the_injected_bundle_the_app_already_reads(self):
+        app, _ = self._app()
+        env = self._env(app)
+        assert env["CURL_CA_BUNDLE"] == self.INJECTED
+        assert env["GSD_TRUSTED_CA_FILE"] == env["CURL_CA_BUNDLE"]
+
+    def test_ssl_cert_dir_is_always_the_openssl_default_directory(self):
+        for values in ({}, {"trustedCA__injected__enabled": "false"}):
+            app, _ = self._app(**values)
+            assert self._env(app)["SSL_CERT_DIR"] == self.HASHED_DIR, values
+
+    def test_the_manual_bundle_alone_never_becomes_curls_bundle(self):
+        app, _ = self._app(
+            trustedCA__injected__enabled="false", trustedCA__existingConfigMap__enabled="true"
+        )
+        env = self._env(app)
+        assert "CURL_CA_BUNDLE" not in env, (
+            f"CURL_CA_BUNDLE={env.get('CURL_CA_BUNDLE')} — the manual ConfigMap carries only "
+            f"the extra CA; as curl's one file it drops every public CA"
+        )
+        assert env["GSD_TRUSTED_CA_FILE"].endswith("/enterprise/ca-bundle.crt")
+
+    def test_the_bundle_curl_is_given_is_mounted(self):
+        app, _ = self._app()
+        path = self._env(app)["CURL_CA_BUNDLE"]
+        mounts = [m["mountPath"] for m in app.get("volumeMounts", [])]
+        assert any(path.startswith(m.rstrip("/") + "/") for m in mounts), (
+            f"CURL_CA_BUNDLE={path} but the container mounts only {mounts}; curl would fail "
+            f"with exit 77 for every URL"
+        )
+
+    def test_a_subject_hash_mounts_the_manual_ca_into_the_hashed_directory(self):
+        app, spec = self._app(
+            trustedCA__existingConfigMap__enabled="true",
+            trustedCA__existingConfigMap__subjectHash="c275f070",
+        )
+        hashed = next(
+            (m for m in app["volumeMounts"] if m["mountPath"] == f"{self.HASHED_DIR}/c275f070.0"),
+            None,
+        )
+        assert hashed, f"no hashed mount among {[m['mountPath'] for m in app['volumeMounts']]}"
+        assert hashed["subPath"] == "ca-bundle.crt", "subPath must name the ConfigMap key"
+        assert hashed.get("readOnly") is True
+        # the same ConfigMap volume the enterprise bundle already uses, not a second copy
+        enterprise = next(m for m in app["volumeMounts"] if m["mountPath"].endswith("/enterprise"))
+        assert hashed["name"] == enterprise["name"]
+        # and the whole-directory mount must NOT happen: it would hide the base's 292 hashed links
+        assert not any(m["mountPath"].rstrip("/") == self.HASHED_DIR for m in app["volumeMounts"])
+
+    def test_no_subject_hash_means_no_hashed_mount(self):
+        app, _ = self._app(trustedCA__existingConfigMap__enabled="true")
+        assert not any(self.HASHED_DIR in m["mountPath"] for m in app["volumeMounts"])
+
+    def test_a_subject_hash_without_the_configmap_is_refused(self):
+        """A hash with nothing to mount is a values typo, not a no-op."""
+        ok, out = render(trustedCA__existingConfigMap__subjectHash="c275f070")
+        assert not ok and "subjectHash" in out, out
+
+    def test_a_malformed_subject_hash_is_refused(self):
+        """OpenSSL looks up exactly eight hex digits; anything else is silently never consulted."""
+        ok, out = render(
+            trustedCA__existingConfigMap__enabled="true",
+            trustedCA__existingConfigMap__subjectHash="not-a-hash",
+        )
+        assert not ok and "subjectHash" in out, out

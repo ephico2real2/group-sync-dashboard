@@ -153,8 +153,9 @@ class TestSecondPassFixes:
 
     def test_large_group_does_not_exceed_the_sqlite_variable_limit(self, store):
         """The IN-list was unchunked, which passes on a dev Mac (SQLITE_LIMIT_VARIABLE_NUMBER
-        250000, SQLite 3.53) and raises "too many SQL variables" in the UBI9 runtime (32766,
-        SQLite 3.34.1) — confirmed by running the real code inside the deployment image.
+        250000, SQLite 3.53) and raises "too many SQL variables" in the deployment image
+        (32766) — confirmed by running the real code inside it, first on the UBI9 runtime
+        (SQLite 3.34.1) and again on the hardened base (SQLite 3.53.4, same 32766 limit).
 
         40000 exceeds the production limit, so this fails on an unchunked build even though
         the local interpreter would happily allow it.

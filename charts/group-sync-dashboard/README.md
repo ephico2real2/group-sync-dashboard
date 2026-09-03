@@ -64,6 +64,7 @@ moves the probes behind the proxy. All automatic.
 | `trustedCA.existingConfigMap.enabled` | `false` | a ConfigMap you create out of band |
 | `trustedCA.existingConfigMap.name` | `enterprise-ca` | |
 | `trustedCA.existingConfigMap.key` | `ca-bundle.crt` | |
+| `trustedCA.existingConfigMap.subjectHash` | `""` | `openssl x509 -noout -subject_hash` of that CA; when set, it is also mounted as `/etc/pki/tls/certs/<hash>.0` so curl in the pod trusts it |
 | `trustedCA.mountPath` | `/etc/pki/ca-trust/extracted/pem` | |
 
 Both may be on; they are loaded in turn. A cluster entry naming its own `caBundleFile`
@@ -95,6 +96,29 @@ oc create configmap enterprise-ca --from-file=ca-bundle.crt=/path/to/ingress-ca.
   -n group-sync-dashboard
 helm upgrade ... --set trustedCA.existingConfigMap.enabled=true
 ```
+
+The injected bundle is also what `curl` inside the pod trusts: the container sets
+`CURL_CA_BUNDLE` to it, because curl otherwise reads only the image's own system bundle and
+would refuse a corporate-signed URL that the dashboard verifies. The manual ConfigMap is not
+handed to curl — it carries only the extra CA, and curl reads one file — so for those URLs pass
+`curl --cacert`. Enforced by `test_chart_strategy.py::TestCurlInThePodTrustsTheInjectedBundle`.
+
+**curl inside the pod** reads none of the above; measured in the image, it trusts only the base's
+own bundle. So the container also sets `CURL_CA_BUNDLE` to the injected bundle (curl's variable
+alone, invisible to Python) and `SSL_CERT_DIR=/etc/pki/tls/certs` (OpenSSL's own default, so a
+no-op for the dashboard, and the hashed directory curl otherwise ignores). The manual ConfigMap is
+never curl's one file — it carries only the extra CA and would drop every public CA — but it can
+be mounted into that hashed directory as well, the way Hummingbird's Python guidance describes,
+by giving the chart the CA's subject hash:
+
+```bash
+openssl x509 -noout -subject_hash -in /path/to/ingress-ca.pem      # e.g. c275f070
+helm upgrade ... --set trustedCA.existingConfigMap.enabled=true \
+  --set trustedCA.existingConfigMap.subjectHash=c275f070
+```
+
+With that, curl, `urllib` and the dashboard's fallback context all trust it. Enforced by
+`test_chart_strategy.py::TestCurlInThePodTrustsWhatTheAppTrusts`.
 
 Enforced by `test_chart_strategy.py::TestTheProxyTrustsTheSameCAsTheApp`, which also checks
 every CA path handed to the proxy is actually mounted — a path it cannot read stops the
@@ -647,7 +671,7 @@ blocks for the entire duration of the writer's transaction. The mode is read bac
 
 **`busy_timeout` is set on every connection.** SQLite's default is `0`: it raises `database is
 locked` the instant a lock is held, with no retry. That default is the usual cause of the
-error. Measured in the deployment image (UBI9, SQLite 3.34.1) against a lock held by another
+error. Measured in the deployment image (then UBI9, SQLite 3.34.1) against a lock held by another
 connection: `busy_timeout=0` fails in `0.000s`; `busy_timeout=1500` waits `1.512s`. The
 contention this covers is cross-**connection** — the `Recreate` rollover, where the outgoing
 pod still holds the lock as the incoming one opens the file. Threads inside one pod are

@@ -232,25 +232,60 @@ jobs:
         working-directory: local-development
         run: docker build -f Containerfile -t gsd:ci .
 
-      # --ignore-unfixed is load-bearing, not laziness. The base carries ten HIGH curl CVEs
-      # with no available patch; without this flag the gate is red on every run for
-      # something nobody can act on, and a permanently-red gate gets ignored — which is
-      # worse than no gate. This fails only on findings somebody can actually fix.
-      - name: Scan for FIXABLE vulnerabilities
-        uses: aquasecurity/trivy-action@master
+      # The pack stage is built and scanned ON ITS OWN. bash, curl, jq and coreutils are installed
+      # there, with dnf, and copied into the shipped image as files; the shipped image's RPM
+      # database never lists them, and a scanner sees them there only through the ELF package
+      # notes Red Hat's builds carry. Scanning the stage they were installed in is the reading
+      # that cannot miss one. docs/image-vulnerability-scan.md has the measurements.
+      - name: Build the pack stage
+        working-directory: local-development
+        run: docker build -f Containerfile --target pack -t gsd:pack .
+
+      # GRYPE, NOT TRIVY — measured, not preferred. The image is on Hummingbird OS (Red Hat
+      # Hardened Images), which Trivy does not recognise: it reports no OS, reads no RPM
+      # database, and scans the Python packages alone; told --distro redhat/10 it reads the
+      # database and matches nothing, because the packages are Hummingbird builds. Grype
+      # identifies the distribution, reads the database and Red Hat's advisory data for it,
+      # and is the scanner Red Hat's own documentation names for these images.
+      #
+      # only-fixed is load-bearing, not laziness. A base can carry HIGH CVEs with no available
+      # patch (four util-linux advisories on 2026-09-04, state Affected, no fixed build); without
+      # this flag the gate is red on every run for something nobody can act on, and a
+      # permanently-red gate gets ignored — which is worse than no gate. This fails only on
+      # findings somebody can actually fix.
+      - name: Scan the shipped image for FIXABLE vulnerabilities
+        uses: anchore/scan-action@v7
         with:
-          image-ref: gsd:ci
-          exit-code: "1"
-          ignore-unfixed: true
-          severity: CRITICAL,HIGH
-          scanners: vuln
+          image: gsd:ci
+          fail-build: true
+          only-fixed: true
+          severity-cutoff: high
+          output-format: table
+
+      - name: Scan the pack stage for FIXABLE vulnerabilities (bash, curl, jq, coreutils)
+        uses: anchore/scan-action@v7
+        with:
+          image: gsd:pack
+          fail-build: true
+          only-fixed: true
+          severity-cutoff: high
+          output-format: table
 
       # Separate, non-blocking, so the unfixable inventory is visible without gating.
-      - name: Full inventory (informational)
+      - name: Full inventory, shipped image (informational)
         if: always()
-        uses: aquasecurity/trivy-action@master
+        uses: anchore/scan-action@v7
         with:
-          image-ref: gsd:ci
-          exit-code: "0"
-          severity: CRITICAL,HIGH
-          scanners: vuln
+          image: gsd:ci
+          fail-build: false
+          severity-cutoff: medium
+          output-format: table
+
+      - name: Full inventory, pack stage (informational)
+        if: always()
+        uses: anchore/scan-action@v7
+        with:
+          image: gsd:pack
+          fail-build: false
+          severity-cutoff: medium
+          output-format: table

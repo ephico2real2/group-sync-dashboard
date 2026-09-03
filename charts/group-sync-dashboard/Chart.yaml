@@ -107,7 +107,7 @@ type: application
 # No template or default changes; appVersion unchanged.
 # CHART 0.9.4 (2026-09-04), PATCH: appVersion moves to application 0.10.2 (below); no template or
 # default changes.
-version: 0.9.4
+version: 0.10.0
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,
@@ -148,7 +148,7 @@ version: 0.9.4
 # tier; the Reaches column's logged-in count is null until the User objects have been read at least
 # once, rather than a confident zero; and a row that carries no tier renders its group name as text,
 # not a drill. PATCH.
-appVersion: "0.10.2"
+appVersion: "0.11.0"
 
 keywords: [openshift, ldap, rbac, groupsync, observability]
 home: https://github.com/ephico2real2/group-sync-dashboard

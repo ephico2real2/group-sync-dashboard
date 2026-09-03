@@ -177,6 +177,30 @@ spec:
             - name: GSD_TRUSTED_CA_FILE
               value: {{ join ":" $ca | quote }}
             {{- end }}
+            # For curl IN THE POD, which reads none of the above: it trusts the image's own
+            # system bundle (/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem, measured) and
+            # would refuse a corporate-signed URL that the application itself verifies fine.
+            # Two variables, both measured against the application's own TLS paths:
+            #
+            #   SSL_CERT_DIR — OpenSSL's hashed directory. This value IS the compiled default
+            #   for Python in the image, so the application sees no change; curl, which does
+            #   not consult the directory unless told, now does. It is what makes the hashed
+            #   mount of the manual CA below reach curl.
+            #
+            #   CURL_CA_BUNDLE — curl's alone (Python's OpenSSL ignores it), pointed at the
+            #   injected bundle, so pointing it there changes nothing for the application.
+            #   Only the injected bundle qualifies: OpenShift fills it with the system store
+            #   MERGED with proxy/cluster.spec.trustedCA, so curl loses nothing, and it is one
+            #   149-certificate file, which can never be a hashed-directory entry. The manual
+            #   ConfigMap must NOT go here — it carries only the extra CA, and curl takes one
+            #   file, so naming it would drop every public CA. Its route to curl is the hashed
+            #   mount (trustedCA.existingConfigMap.subjectHash).
+            - name: SSL_CERT_DIR
+              value: /etc/pki/tls/certs
+            {{- if .Values.trustedCA.injected.enabled }}
+            - name: CURL_CA_BUNDLE
+              value: {{ printf "%s/injected/ca-bundle.crt" .Values.trustedCA.mountPath | quote }}
+            {{- end }}
           securityContext: {{- toYaml .Values.securityContext | nindent 12 }}
           volumeMounts:
             - name: config
@@ -195,6 +219,25 @@ spec:
             {{- if .Values.trustedCA.existingConfigMap.enabled }}
             - name: trusted-ca-enterprise
               mountPath: {{ .Values.trustedCA.mountPath }}/enterprise
+              readOnly: true
+            {{- end }}
+            {{- with .Values.trustedCA.existingConfigMap.subjectHash }}
+            {{- if not $.Values.trustedCA.existingConfigMap.enabled }}
+            {{- fail "trustedCA.existingConfigMap.subjectHash is set but trustedCA.existingConfigMap.enabled is false — there is no ConfigMap to mount" }}
+            {{- end }}
+            {{- if not (regexMatch "^[0-9a-f]{8}$" .) }}
+            {{- fail (printf "trustedCA.existingConfigMap.subjectHash %q is not an OpenSSL subject hash (eight lowercase hex digits, from `openssl x509 -noout -subject_hash -in ca.crt`)" .) }}
+            {{- end }}
+            # The same CA a second time, as an entry in OpenSSL's hashed directory (Hummingbird's
+            # "Approach 2" for Python images): curl reads it through SSL_CERT_DIR above, urllib
+            # and the application's fallback context read it as OpenSSL's default capath. A
+            # subPath mount of ONE file, never the directory — mounting the directory would hide
+            # the base's ~290 hashed links to the public CAs. subPath mounts do not follow later
+            # ConfigMap edits; a changed CA needs a rollout, which a hand-made ConfigMap needs
+            # anyway. The hash cannot be computed at render time, hence the value.
+            - name: trusted-ca-enterprise
+              mountPath: /etc/pki/tls/certs/{{ . }}.0
+              subPath: {{ $.Values.trustedCA.existingConfigMap.key }}
               readOnly: true
             {{- end }}
           {{- if .Values.probes.liveness.enabled }}
