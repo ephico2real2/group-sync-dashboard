@@ -996,6 +996,23 @@ class TestBindingFindingsVisible:
         self._open(dash)
         assert dash.locator(".drill[data-group='was-managed']").count() == 1
 
+    def test_a_name_with_no_group_object_is_not_a_link_to_a_404(self, dash):
+        """Built-in virtual groups never have a Group object and unresolved bindings name groups
+        that never existed, so a drill from either could only reach the 404 card — which blamed a
+        deletion that never happened (operator, 2026-09-04). Dangling keeps the drill: history."""
+        self._open(dash)
+        unresolved = dash.locator("section.card:has(h2:has-text('Unresolved')) tbody tr td:first-child")
+        assert unresolved.count() >= 1
+        assert unresolved.locator(".drill").count() == 0
+        assert "app-ocp-rbac-klta-ns-audit" in unresolved.first.inner_text()
+        assert dash.locator("section.card:has(h2:has-text('Dangling')) .drill[data-group='was-managed']").count() == 1
+        dash.select_option("#f-binding", "built_in")
+        dash.wait_for_function("() => document.body.innerText.includes('system:serviceaccounts:ns0')")
+        assert dash.locator("section.card:has(h2:has-text('Built-in')) tbody tr").count() >= 1
+        assert dash.locator("section.card:has(h2:has-text('Built-in')) .drill").count() == 0
+        dash.select_option("#f-binding", "review")
+        dash.wait_for_selector("text=grant nobody")
+
     def test_cluster_card_surfaces_the_count_without_navigating(self, dash):
         """Discoverability: the landing page must show that there is something to look at,
         or the page may as well not exist."""
