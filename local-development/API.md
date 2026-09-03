@@ -262,37 +262,58 @@ marks it.
 
 ### `GET /api/clusters/{cluster_id}/users`
 
-Users with at least one group membership. **Bounded.**
+Everyone who has logged in to the cluster: one row per OpenShift `User` object, which the cluster
+creates at a person's first login through an identity provider and never before — so the row is
+the fact of a login, and the headline count is how many people have used the cluster. Group
+membership is an attribute of a row, not the reason it exists (`docs/DESIGN_users_tab_logins.md`).
+**Bounded and paged.**
 
-Query: `limit` (default 1000, max 10000).
-
-Returns an object, not a bare list — it previously returned every row, which is one per
-distinct user across every group and grows with the size of the directory rather than with
-anything the dashboard controls (102,921 bytes at reference scale). `truncated` tells the
-caller the list was clipped, because a clipped list that looks complete is the failure
-worth avoiding.
+| parameter | default | meaning |
+|---|---|---|
+| `limit` | `1000` (max 10000) | rows on this page; `truncated` says whether more exist, `total` is the whole set |
+| `offset` | `0` | rows to skip, for paging |
 
 ```json
-{"cluster": "crc", "count": 1000, "truncated": true, "limit": 1000,
- "users": [{"user_name": "alice", "full_name": "Alice Cooper", "group_count": 2,
-            "first_seen_at": "2026-08-01T09:00:00+00:00"}, ...]}
+{"cluster": "crc", "scope": "all", "viewer": "kubeadmin",
+ "source": "ok", "source_observed_at": "2026-09-03T17:52:38Z", "login_capture": "on",
+ "total": 62, "logged_in_total": 61, "offset": 0, "limit": 1000, "count": 62, "truncated": false,
+ "never_logged_in_members": {"count": 3, "names": ["bob.wilson", "charlie.brown", "hello1"]},
+ "users": [{"user_name": "alice.cooper", "full_name": "Alice Cooper",
+            "logged_in": true, "first_login_at": "2026-08-05T16:14:16Z", "providers": ["ldap-local"],
+            "last_login_at": null, "created_at": "2026-08-05T16:14:16Z",
+            "group_count": 7, "first_seen_at": "2026-08-05T16:20:01Z"}, ...]}
 ```
 
-Each row carries `full_name`, `null` when OpenShift has no User object for the id or the IdP
-supplied no name — the same field and the same absence rule as a group's members. The Users
-tab filters in the browser on both `user_name` and `full_name`, so it requests the maximum
-`limit`; when `truncated` is true the tab says so, because a filter over a clipped list would
-report a real person as "no match".
+Per row: `logged_in` is false only for a `User` created by hand (`oc create user`) with no identity,
+which is listed but is not a login; `first_login_at` is the object's creation time when an identity
+proves a login happened; `providers` are the identity-provider names from the object's `identities`;
+`last_login_at` is the newest **successful** captured login, `null` when none — read `login_capture`
+before trusting the null, since nothing before capture began was ever recorded; `group_count` may be
+0 (logged in, no synced access); `first_seen_at` is when the dashboard first saw them in any group,
+`null` for a user in none; `full_name` is `null` when the provider supplied no name.
+
+Envelope: `total` is every `User` under the scope and `logged_in_total` those with an identity — the
+headline; they differ by the manual accounts. `never_logged_in_members` are members of synced groups
+with no `User` object: not rows, reported once. `source` is `ok`, `forbidden` (the chart's
+`rbac.users` grant is missing, so the rows are stale or absent and the tab says so by name) or
+`pending` (no poll has read users yet); `source_observed_at` is when the source was last read.
+
+**Self-scoped** under view restrictions: a plain reader gets their own row or an empty list, and
+`never_logged_in_members` is scoped the same way, so nothing about anyone else is on the wire.
 
 
 ### `GET /api/clusters/{cluster_id}/users/{name}`
 
 The reverse lookup: every group the user is in, every binding that reaches them, and their
 membership history. Each binding row carries `via_group`, because "why do they have this?"
-is the next question after "do they have it".
+is the next question after "do they have it". Since 0.9.0 it also carries the login facts a row of
+`/users` has — `logged_in`, `first_login_at`, `last_login_at`, `providers`, `login_capture` — so the
+detail page and the list cannot disagree.
 
-**A user with no current groups returns 200, not 404**, if any history exists. "They are in
-nothing now" is the answer, not an error. 404 only when the user has never been seen.
+**A user with no current groups returns 200, not 404**, if any history exists or a `User` object
+does: "they are in nothing now" is the answer, and a person who logged in and holds no synced access
+is a finding, not an error. 404 only when the name has been seen nowhere. At the narrowed tier only
+the reader's own name is served, and the refusal for any other name comes before any lookup.
 
 ### `GET /api/clusters/{cluster_id}/logins`
 

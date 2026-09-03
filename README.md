@@ -57,9 +57,12 @@ them. The Find box narrows the list as you type.
 
 ![Groups tab](docs/screenshots/02-groups.png)
 
-**Users** — every user with a synced membership, with the display name where the person has
-signed in, how many groups they hold, and when they were first seen. Type part of an id or a name
-to filter; a person who has never signed in has no display name and is found by id.
+**Users** — everyone who has logged in to the cluster: one row per OpenShift `User` object, which
+the cluster creates at a person's first login and never before. Each row says when they first
+logged in, through which identity provider, how many synced groups they hold (zero is allowed and
+highlighted: logged in, no synced access), and their last captured login. Synced members who have
+never logged in are not rows; they are one line, by count, with the names a click away. Type part
+of an id or a name to filter; chips narrow by membership and by provider.
 
 ![Users tab](docs/screenshots/03-users.png)
 
@@ -103,6 +106,7 @@ the same deployment — the administrator's into `docs/screenshots/`, an ordinar
 
 | Where | What |
 |---|---|
+| [`docs/CHANGELOG.md`](docs/CHANGELOG.md) | what each application and chart release changed, newest first |
 | [`docs/reference-architecture.md`](docs/reference-architecture.md) | **start here to operate or extend it** — components, poll and request flow, data model, concurrency, security, and the reason behind each deliberate constraint |
 | [`charts/group-sync-dashboard/`](charts/group-sync-dashboard/README.md) | the Helm chart — how you deploy it, and every value |
 | [`local-development/`](local-development/README.md) | the application, tests and build tooling |
@@ -192,7 +196,7 @@ The **API** is gated properly. `oauthProxy.apiTokenAccess.enabled` lets a bearer
 floor for that data. Verified: an identity without it gets `403` where it would otherwise have
 read every binding on the cluster. See [`docs/api-access.md`](docs/api-access.md).
 
-Turning the proxy on also switches the Ingress to `reencrypt`, binds the app to `127.0.0.1`
+Turning the proxy on also switches the Route (or Ingress) to `reencrypt`, binds the app to `127.0.0.1`
 so the proxy cannot be bypassed from inside the cluster, and moves the probes behind
 `skip-auth-regex` — all handled by the chart.
 
@@ -341,9 +345,10 @@ member, the reverse lookup: every group that user belongs to and every binding t
 them, each row naming the group that confers it. The cluster can only answer that by scanning
 every Group object by hand.
 
-**Users** — every user with a synced membership: id, display name where OpenShift has one,
-group count, first seen. Filtered as you type on either the id or the name, so a reader who knows
-the person finds the id the cluster knows them by. A non-administrator sees their own row.
+**Users** — everyone who has logged in: one row per OpenShift `User` object, with first login,
+identity provider, synced-group count, last captured login and display name where the provider
+supplies one. Synced members who have never logged in are reported as a count, not as rows.
+Filtered as you type on the id or the name, and by chips. A non-administrator sees their own row.
 
 **Access granted** — every group-subject binding, classified `ok`, `dangling` (the group was
 operator-managed and has disappeared), `unresolved` (names a group that has never existed),

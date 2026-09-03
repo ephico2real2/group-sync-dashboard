@@ -73,11 +73,12 @@ charts/group-sync-dashboard/
 ├── values.yaml
 └── templates/
     ├── deployment.yaml
-    ├── ingress.yaml
+    ├── ingress.yaml                  # the alternative for plain Kubernetes (ingress.enabled)
     ├── oauth-secret.yaml
     ├── pdb.yaml
     ├── pvc.yaml
     ├── rbac.yaml
+    ├── route.yaml                    # the default exposure: a Route the router names
     ├── serviceaccount.yaml
     ├── trusted-ca.yaml
     └── ...                       # 19 files in total at 0.4.4
@@ -120,12 +121,11 @@ appVersion: 0.7.0
 
 **An empty tag is the normal case, and it means `appVersion`.** The chart resolves
 `default .Chart.AppVersion .Values.image.tag`, so this chart deploys
-`quay.io/ephico2real/group-sync-dashboard:0.7.0`. Confirm it rather than infer it:
+`quay.io/ephico2real/group-sync-dashboard:0.10.1` (the version at the time of writing). Confirm it rather than infer it:
 
 ```sh
-helm template gsd ./charts/group-sync-dashboard --set ingress.host=x.example.com \
-  | grep -m1 'image: quay'
-#             image: quay.io/ephico2real/group-sync-dashboard:0.7.0
+helm template gsd ./charts/group-sync-dashboard | grep -m1 'image: quay'
+#             image: quay.io/ephico2real/group-sync-dashboard:0.10.1
 ```
 
 That `:0.7.0` alias is republished when the application version changes, and
@@ -229,11 +229,10 @@ tar -xzf group-sync-dashboard-0.5.0.tgz
 # WHICH image does this chart deploy? Ask the chart, do not read one field — an empty
 # values.yaml tag means "appVersion", so grepping the tag alone answers "" and you would
 # mirror nothing. Rendering gives the reference the cluster will actually pull.
-helm template gsd ./group-sync-dashboard --set ingress.host=x.example.com \
-  | grep -m1 -oE 'quay\.io/[^"]*'
-#   quay.io/ephico2real/group-sync-dashboard:0.7.0
+helm template gsd ./group-sync-dashboard | grep -m1 -oE 'quay\.io/[^"]*'
+#   quay.io/ephico2real/group-sync-dashboard:0.10.1
 
-skopeo copy docker://quay.io/ephico2real/group-sync-dashboard:0.7.0 \
+skopeo copy docker://quay.io/ephico2real/group-sync-dashboard:0.10.1 \
             docker://registry.internal.example.com/group-sync-dashboard:0.7.0
 ```
 
@@ -242,7 +241,7 @@ application version changes; an air-gapped mirror is exactly where you may prefe
 cannot:
 
 ```sh
-skopeo copy docker://quay.io/ephico2real/group-sync-dashboard:0.7.0-db8a90510f \
+skopeo copy docker://quay.io/ephico2real/group-sync-dashboard:0.10.1-94c792ade2 \
             docker://registry.internal.example.com/group-sync-dashboard:0.7.0-db8a90510f
 # then, at install time:  --set image.tag=0.7.0-db8a90510f
 ```
@@ -252,7 +251,7 @@ whoever owns the registry — including your own internal one. A digest is a has
 cannot name anything else:
 
 ```sh
-skopeo inspect --no-tags docker://quay.io/ephico2real/group-sync-dashboard:0.7.0 | grep Digest
+skopeo inspect --no-tags docker://quay.io/ephico2real/group-sync-dashboard:0.10.1 | grep Digest
 #   "Digest": "sha256:aa6a7f5463c6b39f8d2647ba24ae756f4e7a0b101fe05c8e5bb58d05de016a68"
 
 # then, at install time — note this pins the CONTENT, so it survives any retagging on either side:
@@ -300,7 +299,7 @@ build it deploys, and rewriting it decouples the chart from the image it was pub
 | Download and unpack | `helm pull group-sync-dashboard/group-sync-dashboard --untar --untardir ./charts` |
 | Pin a version | `helm pull group-sync-dashboard/group-sync-dashboard --version 0.4.3` |
 | Read the defaults | `helm show values ./charts/group-sync-dashboard` |
-| Render offline | `helm template gsd ./charts/group-sync-dashboard --set ingress.host=<host>` |
+| Render offline | `helm template gsd ./charts/group-sync-dashboard` — no host needed; the default Route is named by the router |
 | Render against the cluster | `helm upgrade ... --dry-run=server` |
 | Install from the copy | `helm upgrade --install group-sync-dashboard ./charts/group-sync-dashboard -n group-sync-dashboard -f <values>` |
 | Confirm what is running | `oc exec ... -c dashboard -- curl -s http://127.0.0.1:8080/api/version` |

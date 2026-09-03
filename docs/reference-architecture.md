@@ -153,7 +153,7 @@ flowchart TB
 
 ```mermaid
 flowchart LR
-  browser["Browser<br/>index.html, vanilla JS"] -->|HTTPS| route["Route / Ingress"]
+  browser["Browser<br/>index.html, vanilla JS"] -->|HTTPS| route["Route (default)<br/>or Ingress → Route"]
   prom["Prometheus"] -->|"/metrics, unauthenticated"| route
 
   subgraph pod["Pod — one replica"]
@@ -1091,7 +1091,7 @@ flowchart TB
     dep["Deployment<br/>replicas 1, Recreate"]
     pvc["PVC -data<br/>helm.sh/resource-policy: keep"]
     svc["Service :8080 → oauth-proxy"]
-    ing["Ingress → Route"]
+    ing["Route (default, spec.subdomain)<br/>or Ingress → Route"]
     lease["Lease<br/>coordination.k8s.io"]
     pdb["PodDisruptionBudget<br/>optional"]
     sm["ServiceMonitor + PrometheusRule<br/>optional"]
