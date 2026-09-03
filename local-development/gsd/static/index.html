@@ -46,6 +46,9 @@ const view = { page: "overview", cluster: null, groupsync: null, groupFilter: "a
                    same reasoning as groupFilter: it narrows what a page shows, it is not a place, and
                    a history entry per keystroke would bury every position Back exists to reach. */
                 groupSearch: "",
+                /* Free-text user search on the Users tab. The same kind of thing as groupSearch, kept
+                   for the same reasons; it persists across tab switches like groupSearch does. */
+                userSearch: "",
                 group: null, user: null,
                 /* Namespace-audit controls. They live HERE and not in the DOM because the
                    page repaints on every poll: state held in the markup would silently
@@ -139,7 +142,7 @@ function applyPosition(pos) {
     // answer for every cluster or for none.
     if (view.cluster && pos.cluster !== view.cluster) {
       data.groupsyncs = null; data.groups = null; data.groupsMeta = null;
-      data.group = null; data.user = null; data.events = null;
+      data.group = null; data.user = null; data.events = null; data.users = null;
       data.logins = null; data.access = null; data.findings = null;
       data.operatorConfigs = null; data.userBindings = null;
     }
@@ -188,7 +191,7 @@ function goBack() {
    — a reader matches the label to a tab, so a second vocabulary for the same six places would be
    its own small lie. */
 const PAGE_LABEL = {
-  overview: "overview", groups: "all groups", bindings: "access granted",
+  overview: "overview", groups: "all groups", users: "all users", bindings: "access granted",
   policy: "RBAC policy", nsaudit: "namespace audit", logins: "logins", usage: "usage",
 };
 
@@ -259,6 +262,9 @@ window.addEventListener("hashchange", () => {
 // cluster nobody had asked yet.
 let data = { clusters: [], alerts: [], groupsyncs: null, groups: null, events: null,
              group: null, user: null, logins: null, access: null,
+             /* The /users envelope whole — rows, scope, viewer, truncated, limit — because the
+                Users tab states the truncation and renders the banner from the wire's fields. */
+             users: null,
              /* Identity + tier as the server reports them (whoami), and the scope the
                 groups response declared. Rendering reads these; nothing writes them but
                 the wire. */
@@ -488,6 +494,8 @@ function renderScopePill() {
 const SCOPE_BANNER = {
   groups: (v) => `Showing only the groups <strong>${esc(v)}</strong> belongs to. The
     cluster-wide list is the administrator tier.`,
+  users: (v) => `Showing only your own row, <strong>${esc(v)}</strong>. The cluster-wide user
+    list is the administrator tier.`,
   logins: (v) => `Showing only sign-in attempts recorded for <strong>${esc(v)}</strong>.
     Attempts are recorded under the name <em>as typed</em>, so an attempt typed with
     different capitalisation is a different name and is not shown here.`,
@@ -628,6 +636,11 @@ const SEARCH_BOXES = {
     title: 'Filters by name as you type. Several words are ANDed — "alpha admin" finds app-ocp-rbac-alpha-ns-admin. Escape clears.',
     help: "Filters the group list by name as you type. Several words are combined with AND, so every word must appear. Press Escape to clear.",
   },
+  userSearch: {
+    id: "f-user-search", label: "Find", placeholder: "filter by id or name",
+    title: 'Filters by username or full name as you type. Several words are ANDed — "alice cooper" finds alice · Alice Cooper. Escape clears.',
+    help: "Filters the user list by username or full name as you type. Several words are combined with AND, so every word must appear in one or the other. Press Escape to clear.",
+  },
 };
 
 function searchBoxHtml(key) {
@@ -722,6 +735,7 @@ function renderFilters() {
   // The group box belongs to the group LIST. It used to render on the group and user detail pages
   // too, filtering nothing; that slot now holds the box for whatever list the page actually shows.
   if (view.page === "groups" && !view.group && !view.user) html += searchBoxHtml("groupSearch");
+  if (view.page === "users" && !view.user) html += searchBoxHtml("userSearch");
   if (view.page === "groups") {
     html += `<label for="f-state">Group state</label>
       <select id="f-state">
@@ -742,6 +756,7 @@ function renderFilters() {
     <nav class="tabs" aria-label="Dashboard sections">
       ${tab("overview", "Overview")}
       ${tab("groups", "Groups")}
+      ${tab("users", "Users")}
       ${tab("bindings", "Access granted")}
       ${tab("policy", "RBAC policy")}
       ${tab("nsaudit", "Namespace audit")}
@@ -1138,6 +1153,82 @@ function groupsPage() {
           </tr>`).join("")}</tbody>
         </table></div>
         <div class="filterbar-note" style="margin-top:8px">Select a group to see its members.</div>`}
+  </section>`;
+}
+
+/* The Users tab asks for the server's MAXIMUM, not its default. The default (1,000) is below the
+   1,240 users with a membership on the reference cluster, so a default fetch would clip a list the
+   Find box then searches — a person past the cut would be unfindable while the box said "no match".
+   10,000 is the API's ceiling; past it the page states `truncated` rather than implying completeness. */
+const USERS_FETCH = 10000;
+/* Rows painted at once. Every keystroke rebuilds #main, and the benchmark doc (§7) measured that
+   rebuild at 1.3 ms for 65 rows — so ~20 ms at 1,000, and a visible stall per keystroke at 10,000.
+   Only the PAINT is capped: matching runs over every fetched row, so a person is always findable by
+   typing more of their name, and the cap is stated on the page whenever it bites. */
+const USERS_RENDER = 1000;
+
+function usersPage() {
+  const d = data.users;
+  if (!d) return `<section class="card"><div class="empty-note">Loading…</div></section>`;
+  // The endpoint refuses a reader with no verified identity (proxy on, no header): there is no
+  // "own row" to scope to. Named, like every other refusal, never rendered as an empty cluster.
+  if (d.forbidden) {
+    return refusalCard("Users", `Every row here is a person and the groups they hold, so the list
+      needs an authenticated identity to scope to.`, false);
+  }
+  const all = d.users || [];
+  const self = d.scope === "self";
+  // Both fields, so a reader who knows only the display name still finds the id — which is what
+  // they need next, because the id is what `oc` and the group members answer to.
+  const matched = all.filter((u) => matchesSearch([u.user_name, u.full_name], view.userSearch));
+  const rows = matched.slice(0, USERS_RENDER);
+  const searching = (view.userSearch || "").trim().length > 0;
+  const q = (view.userSearch || "").trim();
+  return `<section class="card">
+    <h2>Users <span class="muted" style="font-weight:400">· ${searching
+      ? `${matched.length} of ${all.length} shown`
+      : `${all.length} shown`}</span></h2>
+    ${scopeBanner("users", d)}
+    ${d.truncated
+      // Stated BEFORE the search note, so the denominator is qualified before it is used.
+      ? `<div class="truncation-note">Showing the first <strong>${all.length}</strong> users by id;
+          the cluster has more. The Find box searches only these, so a person past the cut cannot be
+          found here.</div>` : ""}
+    ${searching ? `<div class="filterbar-note" style="margin-top:4px">Filtered by
+      <strong>${esc(q)}</strong> — every word must appear in the id or the name.${all.length > 0
+      ? ` Clear the box, or press Escape in it, to see all ${all.length}.` : ""}</div>` : ""}
+    ${matched.length > rows.length
+      ? `<div class="truncation-note">${rows.length} of ${matched.length} ${searching ? "matches" : "users"}
+          painted. Keep typing to narrow the list.</div>` : ""}
+    ${rows.length === 0
+      ? (searching && all.length > 0
+          // Only blame the search when it IS the search — the zero-denominator rule from the
+          // Groups tab. Under truncation, hedge: the person may be past the cut.
+          ? `<div class="empty-note">No user id or name contains <strong>${esc(q)}</strong>.
+              ${all.length === 1
+                ? `1 user is loaded, so it is the search hiding them`
+                : `${all.length} users are loaded, so it is the search hiding them`}
+              rather than the data being empty.${d.truncated
+                ? ` Only the first ${all.length} were loaded — the person may be past the cut.` : ""}</div>`
+          : (self && !searching
+              // Scoped-and-empty is NOT an empty cluster (requirements Q6). Naming the viewer is
+              // also the diagnostic when the IdP's username does not match the members' names.
+              ? `<div class="empty-note">You are in no synced group on this cluster (signed in as
+                  <strong>${esc(d.viewer || "")}</strong>). This view is scoped to you — it is not
+                  a statement that the cluster has no users.</div>`
+              : `<div class="empty-note">No user has a synced group membership on this cluster
+                  yet.</div>`))
+      : `<div class="scroll-x"><table>
+          <thead><tr><th>User</th><th class="num">Groups</th><th>First seen</th></tr></thead>
+          <tbody>${rows.map((u) => `<tr class="rowlink" data-user="${esc(u.user_name)}">
+            <td><button type="button" class="drill">${esc(u.user_name)}</button>${u.full_name
+              ? ` <span class="muted">· ${esc(u.full_name)}</span>` : ""}</td>
+            <td class="num">${u.group_count}</td>
+            <td class="mono">${esc(fmtTime(u.first_seen_at))} <span class="muted">(${esc(ago(u.first_seen_at))})</span></td>
+          </tr>`).join("")}</tbody>
+        </table></div>
+        <div class="filterbar-note" style="margin-top:8px">Select a user to see every group they
+          belong to and every binding that reaches them.</div>`}
   </section>`;
 }
 
@@ -2554,8 +2645,13 @@ function render() {
   } else if (view.page === "bindings") {
     main.innerHTML = bindingsPage();
     wireDrilldown();
-  } else if (view.page === "groups" && view.user) {
+  } else if ((view.page === "groups" || view.page === "users") && view.user) {
+    // One user page, reached from either tab: the Users tab is the other list that drills to it,
+    // and staying under the tab the reader came from is what makes Back read "← all users".
     main.innerHTML = userDetail();
+    wireDrilldown();
+  } else if (view.page === "users") {
+    main.innerHTML = usersPage();
     wireDrilldown();
   } else if (view.page === "groups" && view.group) {
     main.innerHTML = groupDetail();
@@ -2681,7 +2777,7 @@ function wireDrilldown() {
   document.querySelectorAll("[data-user]").forEach((el) => {
     const go = (e) => {
       e.stopPropagation();
-      navigate({ page: "groups", user: el.dataset.user, group: null });
+      navigate({ page: view.page === "users" ? "users" : "groups", user: el.dataset.user, group: null });
       refresh();
     };
     el.onclick = go;
@@ -2694,7 +2790,7 @@ function wireDrilldown() {
       e.preventDefault();
       const target = el.dataset.user || el.closest("[data-user]")?.dataset.user;
       if (!target) return;
-      navigate({ page: "groups", user: target, group: null });
+      navigate({ page: view.page === "users" ? "users" : "groups", user: target, group: null });
       refresh();
     };
   });
@@ -2811,11 +2907,14 @@ async function refresh(opts = {}) {
       if (view.page === "bindings" || view.page === "policy") {
         want.findings = guard403(get(`${base}/bindings/findings?limit=${FINDINGS_PAGE}`));
       }
-      if (view.page === "groups") {
+      if (view.page === "groups" || view.page === "users") {
         if (view.user) {
           want.user = guard403(get(`${base}/users/${encodeURIComponent(view.user)}`));
         } else if (view.group) {
           want.group = guard403(get(`${base}/groups/${encodeURIComponent(view.group)}`));
+        } else if (view.page === "users") {
+          // Fetched only on its own tab, like logins, so the other pages do not pay for it.
+          want.users = guard403(get(`${base}/users?limit=${USERS_FETCH}`));
         } else {
           want.groups = get(`${base}/groups?state=${view.groupFilter}`);
         }
@@ -2884,6 +2983,7 @@ async function refresh(opts = {}) {
     }
     if ("findings" in got) data.findings = got.findings;
     if ("user" in got) data.user = got.user;
+    if ("users" in got) data.users = got.users;
     if ("group" in got) data.group = got.group;
     if ("groups" in got) {
       // Rows and their declared scope travel together; the banner renders from
@@ -2908,7 +3008,7 @@ async function refresh(opts = {}) {
     // silently suppressed the day someone renders it.
     const fingerprint = JSON.stringify([
       data.clusters, data.alerts, data.alertsScope, data.groupsyncs, data.groups,
-      data.groupsMeta, data.group, data.user, data.events, data.logins, data.access,
+      data.groupsMeta, data.group, data.user, data.users, data.events, data.logins, data.access,
       data.usage, data.findings, data.operatorConfigs, data.userBindings, data.whoami,
     ]);
     if (opts.auto && fingerprint === lastFingerprint) {
