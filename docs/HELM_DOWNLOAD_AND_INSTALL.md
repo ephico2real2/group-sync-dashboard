@@ -1,5 +1,9 @@
 # Download the chart, then install from the copy on disk
 
+> The version numbers, digests and revision quoted in this walkthrough are the measured values
+> from the release it was written against (chart 0.4.4, application 0.7.0). The commands are
+> unchanged; the current releases are in [`CHANGELOG.md`](CHANGELOG.md).
+
 Every command here was run against the published repository and a live cluster on 2026-08-12 with
 `helm v3.14.0`, `oc 4.13.6` and `skopeo 1.20.0`. Where a command fails, the failure is shown rather
 than described — one of them fails on purpose, and knowing which saves an afternoon.
@@ -121,11 +125,11 @@ appVersion: 0.7.0
 
 **An empty tag is the normal case, and it means `appVersion`.** The chart resolves
 `default .Chart.AppVersion .Values.image.tag`, so this chart deploys
-`quay.io/ephico2real/group-sync-dashboard:0.10.1` (the version at the time of writing). Confirm it rather than infer it:
+`quay.io/ephico2real/group-sync-dashboard:0.7.0`. Confirm it rather than infer it:
 
 ```sh
 helm template gsd ./charts/group-sync-dashboard | grep -m1 'image: quay'
-#             image: quay.io/ephico2real/group-sync-dashboard:0.10.1
+#             image: quay.io/ephico2real/group-sync-dashboard:0.7.0
 ```
 
 That `:0.7.0` alias is republished when the application version changes, and
@@ -230,9 +234,9 @@ tar -xzf group-sync-dashboard-0.5.0.tgz
 # values.yaml tag means "appVersion", so grepping the tag alone answers "" and you would
 # mirror nothing. Rendering gives the reference the cluster will actually pull.
 helm template gsd ./group-sync-dashboard | grep -m1 -oE 'quay\.io/[^"]*'
-#   quay.io/ephico2real/group-sync-dashboard:0.10.1
+#   quay.io/ephico2real/group-sync-dashboard:0.7.0
 
-skopeo copy docker://quay.io/ephico2real/group-sync-dashboard:0.10.1 \
+skopeo copy docker://quay.io/ephico2real/group-sync-dashboard:0.7.0 \
             docker://registry.internal.example.com/group-sync-dashboard:0.7.0
 ```
 
@@ -241,7 +245,7 @@ application version changes; an air-gapped mirror is exactly where you may prefe
 cannot:
 
 ```sh
-skopeo copy docker://quay.io/ephico2real/group-sync-dashboard:0.10.1-94c792ade2 \
+skopeo copy docker://quay.io/ephico2real/group-sync-dashboard:0.7.0-db8a90510f \
             docker://registry.internal.example.com/group-sync-dashboard:0.7.0-db8a90510f
 # then, at install time:  --set image.tag=0.7.0-db8a90510f
 ```
@@ -251,7 +255,7 @@ whoever owns the registry — including your own internal one. A digest is a has
 cannot name anything else:
 
 ```sh
-skopeo inspect --no-tags docker://quay.io/ephico2real/group-sync-dashboard:0.10.1 | grep Digest
+skopeo inspect --no-tags docker://quay.io/ephico2real/group-sync-dashboard:0.7.0 | grep Digest
 #   "Digest": "sha256:aa6a7f5463c6b39f8d2647ba24ae756f4e7a0b101fe05c8e5bb58d05de016a68"
 
 # then, at install time — note this pins the CONTENT, so it survives any retagging on either side:
