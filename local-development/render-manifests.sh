@@ -51,21 +51,32 @@ done
 # empty. Two of them matter, and both fail QUIETLY rather than loudly, which is why they are
 # resolved here instead of being left to the chart.
 
-# 1. The Ingress host. Without it the chart's own guard aborts the render (deliberately: a
-#    hostless Ingress produces no Route on OpenShift, so the release would install cleanly
-#    and be unreachable). Derive it the same way the chart does when it can.
-HOST=""
+# 1. The Ingress host — ONLY when the Ingress is turned on. The default Route needs no host:
+#    the router names it from spec.subdomain, so the chart does no lookup and the render needs
+#    no cluster at all — that default exists precisely for renderers like this one. With
+#    `--set ingress.enabled=true` the chart's own guard aborts a hostless render (deliberately:
+#    a hostless Ingress produces no Route on OpenShift, so the release would install cleanly
+#    and be unreachable), so derive the host the same way the chart does when it can.
+#
+#    <release>.<domain>, matching the chart's gsd.externalHost — NOT <release>-<namespace>,
+#    which is what this line used to derive and what the chart never emitted.
+#    Only `--set` arguments are inspected; a values file that turns the Ingress on must also
+#    carry its host.
+INGRESS_ON=""; HOST=""
 for arg in "${EXTRA[@]+"${EXTRA[@]}"}"; do
-  case "$arg" in *ingress.host=*) HOST="already-set" ;; esac
+  case "$arg" in
+    *ingress.enabled=true*) INGRESS_ON="yes" ;;
+    *ingress.host=*)        HOST="already-set" ;;
+  esac
 done
-if [ -z "$HOST" ]; then
+if [ -n "$INGRESS_ON" ] && [ -z "$HOST" ]; then
   DOMAIN=$(oc get ingresses.config/cluster -o jsonpath='{.spec.domain}' 2>/dev/null || true)
   if [ -z "$DOMAIN" ]; then
-    echo "ERROR: could not read the cluster apps domain, and no ingress.host was given." >&2
+    echo "ERROR: ingress.enabled=true, but the cluster apps domain could not be read and no ingress.host was given." >&2
     echo "  Either log in to a cluster, or pass:  --set ingress.host=<host>" >&2
     exit 1
   fi
-  EXTRA+=(--set "ingress.host=${RELEASE}-${NAMESPACE}.${DOMAIN}")
+  EXTRA+=(--set "ingress.host=${RELEASE}.${DOMAIN}")
 fi
 
 # 2. The oauth-proxy cookie secret. THIS IS THE ONE THAT BITES.

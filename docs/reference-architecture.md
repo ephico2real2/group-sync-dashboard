@@ -1075,7 +1075,7 @@ refuses that combination outright rather than shipping a control that cannot wor
 ```mermaid
 flowchart TB
   subgraph ns["namespace: group-sync-dashboard"]
-    sa["ServiceAccount<br/>+ oauth-redirecturi annotation"]
+    sa["ServiceAccount<br/>+ oauth-redirectreference annotation<br/>(oauth-redirecturi with the Ingress)"]
     cr["ClusterRole + Binding<br/>read-only + own Lease"]
     cm["ConfigMap -config<br/>clusters.yaml"]
     tca["ConfigMap -trusted-ca<br/>empty; OpenShift fills it"]
@@ -1160,13 +1160,19 @@ because of Recreate, leader election and `busyTimeoutMs`.
 `/data/$(POD_NAME)/gsd.db` above. A shared *volume* with unshared *files* is safe; a shared
 *file* is not.
 
-`ingress.host` (`_helpers.tpl#gsd.externalHost`) — derived from the cluster's published apps domain via
-`lookup`. It cannot simply be omitted: a Route auto-generates its host, an Ingress does not,
-and OpenShift's ingress-to-route controller silently creates **no Route at all** for a
-hostless Ingress. A default install was therefore unreachable with nothing reporting an
-error. `lookup` returns empty during `helm template`, so the fallback `fail`s loudly rather
-than emitting a wrong host — which is why every `helm template` needs
-`--set ingress.host=…`.
+`ingress.host` (`_helpers.tpl#gsd.externalHost`) — used only when the Ingress is turned on
+(`ingress.enabled`, off by default). It is derived from the cluster's published apps domain via
+`lookup`, and it cannot simply be omitted: an Ingress does not auto-generate a host, and
+OpenShift's ingress-to-route controller silently creates **no Route at all** for a hostless
+Ingress, so an install without it was unreachable with nothing reporting an error. `lookup`
+returns empty during `helm template`, so the fallback `fail`s loudly rather than emitting a
+wrong host — which is why an Ingress render needs `--set ingress.host=…`, and why the Ingress is
+no longer the default. The default Route (`templates/route.yaml`) has no such requirement: it
+carries `spec.subdomain: <fullname>`, the router composes `<fullname>.<apps domain>` — the
+release name, never the namespace — and reports it in `status`, and the ServiceAccount references
+the Route by name (`oauth-redirectreference`) instead of a literal callback URL. A `route.host`
+set deliberately is used as given. That is what lets ArgoCD and Flux, which render with no
+cluster connection at all, deploy the chart with no per-cluster value.
 
 The oauth cookie secret (`templates/oauth-secret.yaml#lookup`) — generated once, then reused
 across upgrades by `lookup`ing the existing Secret. Generating it inline in the container
@@ -1568,8 +1574,9 @@ has no dependencies and gives six meaningless collection errors:
 cd local-development && .venv/bin/python -m pytest tests/ -q
 ```
 
-`helm lint` and `helm template` run from the repository root, and `helm template` needs
-`--set ingress.host=x.example.com` or the host guard fails the render deliberately.
+`helm lint` and `helm template` run from the repository root. A plain `helm template` renders
+the default Route with no flags; with `--set ingress.enabled=true` it also needs
+`--set ingress.host=x.example.com`, or the host guard fails the render deliberately.
 
 ---
 

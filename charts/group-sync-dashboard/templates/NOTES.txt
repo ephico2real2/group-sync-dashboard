@@ -2,14 +2,19 @@
 
 Image: {{ include "gsd.image" . }}
 
-{{- if .Values.ingress.enabled }}
+{{- $exposure := include "gsd.exposure" . }}
+{{- if eq $exposure "Route" }}
+
+Route (the router names the host and reports it in status; spec.host is empty unless you set it):
+  oc get route {{ include "gsd.fullname" . }} -n {{ .Release.Namespace }} -o jsonpath='{.status.ingress[0].host}'
+{{- else if eq $exposure "Ingress" }}
 
 Route:
   oc get ingress {{ include "gsd.fullname" . }} -n {{ .Release.Namespace }} -o jsonpath='{.spec.rules[0].host}'
 {{- end }}
 
 Confirm what is actually running — the pod reports the commit it was built from:
-  curl -sk https://{{ .Values.ingress.host | default "<ingress.host>" }}/api/version
+  curl -sk https://{{ include "gsd.routeHost" . | default "<the host above>" }}/api/version
 
 {{- if not .Values.persistence.enabled }}
 
@@ -24,7 +29,7 @@ writers. What they do not share is HISTORY: each pod holds only the timeline sin
 database existed, so the Service answers "when did this user leave?" differently depending
 on which pod you reach. Current state self-heals within one poll; history does not.
 {{- end }}
-{{- if .Values.ingress.enabled }}
+{{- if $exposure }}
 {{- if .Values.oauthProxy.enabled }}
 
 Authentication: OpenShift OAuth. Anyone who can log into this cluster can view the
@@ -86,7 +91,7 @@ this; the default is restricted.
 {{- end }}
 {{- else }}
 
-WARNING: the Ingress has NO authentication and the dashboard exposes group membership.
-Set oauthProxy.enabled=true (and ingress.host) before exposing it on a shared cluster.
+WARNING: the {{ $exposure }} has NO authentication and the dashboard exposes group membership.
+Set oauthProxy.enabled=true before exposing it on a shared cluster.
 {{- end }}
 {{- end }}

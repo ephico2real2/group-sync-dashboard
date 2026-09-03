@@ -112,8 +112,9 @@ Two values the chart normally reads from the live cluster are resolved by the sc
 because `helm template` runs with no cluster connection and every `lookup` in the chart
 returns empty:
 
-* **the Ingress host**, derived from the cluster's apps domain — without it the chart's own
-  guard aborts, since a hostless Ingress produces no Route at all on OpenShift;
+* **the Ingress host**, only when `--set ingress.enabled=true` is passed — derived from the
+  cluster's apps domain, because without it the chart's own guard aborts, since a hostless
+  Ingress produces no Route at all on OpenShift. The default Route needs no host and no lookup;
 * **the oauth cookie secret**, read back from the live Secret. This one matters: the chart
   mints a fresh `randAlpha 32` whenever it cannot find an existing Secret, so two consecutive
   renders produce two different keys and applying them in turn signs every logged-in user

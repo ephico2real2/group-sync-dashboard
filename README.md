@@ -157,7 +157,8 @@ ones most likely to matter:
 | Value | Default | Why you would change it |
 |---|---|---|
 | `oauthProxy.enabled` | `true` | **Leave it on.** With it off the route is unauthenticated and the dashboard exposes group membership |
-| `ingress.host` | derived | Set explicitly if you do not want `<name>-<ns>.<apps domain>` |
+| `route.enabled` / `ingress.enabled` | `true` / `false` | A Route the router names `<release>.<apps domain>` — no host at render time, so it deploys under ArgoCD, Flux and plain `helm template` with no per-cluster value. Plain Kubernetes: Route off, Ingress on, and give it `ingress.host` |
+| `route.host` | derived | Set it only to pin the hostname, e.g. a second release in another namespace |
 | `clusters` | the local cluster | Add entries to observe others |
 | `trustedCA.*` | injected on | Corporate CAs for external clusters — see below |
 | `persistence.enabled` | `true` | Leave on. The accumulated history cannot be re-fetched |
