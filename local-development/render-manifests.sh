@@ -60,13 +60,31 @@ done
 #
 #    <release>.<domain>, matching the chart's gsd.externalHost — NOT <release>-<namespace>,
 #    which is what this line used to derive and what the chart never emitted.
-#    Only `--set` arguments are inspected; a values file that turns the Ingress on must also
-#    carry its host.
+#
+#    Only `--set` / `--set-string` assignments are inspected, parsed as Helm parses them: the
+#    option's value (attached with `=` or as the next argument), split on commas, each piece
+#    matched as a whole `key=value`. A bare substring match was the previous shape and the Codex
+#    review of #45 showed it firing on unrelated arguments that merely CONTAINED the text. A
+#    values file that turns the Ingress on must also carry its host; -f is not read here.
 INGRESS_ON=""; HOST=""
+inspect_assignments() {
+  # $1: a comma-separated list of key=value assignments from one --set/--set-string option.
+  local IFS=','; local pair
+  for pair in $1; do
+    case "$pair" in
+      ingress.enabled=true) INGRESS_ON="yes" ;;
+      ingress.host=?*)      HOST="already-set" ;;
+    esac
+  done
+}
+# The `${EXTRA[@]+...}` form is the bash-3.2-safe way to expand a possibly-empty array under
+# `set -u`, and macOS ships bash 3.2 at /bin/bash.
+pending=""
 for arg in "${EXTRA[@]+"${EXTRA[@]}"}"; do
+  if [ -n "$pending" ]; then inspect_assignments "$arg"; pending=""; continue; fi
   case "$arg" in
-    *ingress.enabled=true*) INGRESS_ON="yes" ;;
-    *ingress.host=*)        HOST="already-set" ;;
+    --set|--set-string)     pending="yes" ;;
+    --set=*|--set-string=*) inspect_assignments "${arg#*=}" ;;
   esac
 done
 if [ -n "$INGRESS_ON" ] && [ -z "$HOST" ]; then

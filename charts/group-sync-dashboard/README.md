@@ -224,7 +224,7 @@ Grant the wide view through your normal RBAC process, never a chart value:
 
 | Key | Default | Notes |
 |---|---|---|
-| `route.enabled` | `true` | an OpenShift Route the chart owns, named like the Service. **Needs no host at render time**: the router names it from `spec.subdomain` and reports it in `status`, so it renders under ArgoCD, Flux and plain `helm template` with no cluster and no per-cluster value — see [Deploying with ArgoCD](#deploying-with-argocd). Both flags on fails the render: they would claim one hostname |
+| `route.enabled` | `true` | an OpenShift Route the chart owns, named like the Service. **Needs no host at render time**: the router names it from `spec.subdomain` and reports it in `status`, so it renders under ArgoCD, Flux and plain `helm template` with no cluster and no per-cluster value — see [Deploying with ArgoCD](#deploying-with-argocd). Both flags on fails the render, as a policy: one front door |
 | `route.host` | derived | `<fullname>.<cluster apps domain>` — the release name, **never the namespace**. Set it only to pin the name, e.g. for a second release in another namespace, which would otherwise be refused with `HostAlreadyClaimed`. An `ingress.host` carried over from an older values file is honoured too, so an upgrade never moves a pinned URL |
 | `route.termination` | `edge` | `spec.tls.termination`. Forced to `reencrypt` when the proxy is on |
 | `route.insecureEdgeTerminationPolicy` | `Redirect` | `spec.tls.insecureEdgeTerminationPolicy`. Omitted when empty |
@@ -698,12 +698,20 @@ name, but a hostless Route gets `spec.host` **written by the API server** on cre
 `<name>-<namespace>.<domain>` — the namespace appended, and a field in the live object that git
 does not carry, so Argo reports the Route OutOfSync until an `ignoreDifferences` on `/spec/host`
 is added ([argo-cd#20305](https://github.com/argoproj/argo-cd/issues/20305) is exactly that
-report); under server-side apply the applier would also own a field it never set (inferred, not
-measured). With `subdomain`, `spec.host` stays empty on create and on re-apply, and the host
-lives only in `status`.
+report). With `subdomain`, `spec.host` stays empty on create and on re-apply, and the host lives
+only in `status`. Two caveats from the Route API: an ingress controller may ignore the suggested
+subdomain and report what it assigned, and a server that does not support `subdomain` (before
+OpenShift 4.11) populates `spec.host` itself, which works but brings that drift back. Login is
+unaffected either way, because the redirect reference resolves against the host in `status`.
 
 `route.host` pins the name when you need to — a second release in another namespace, which
-would otherwise be refused with `HostAlreadyClaimed`. It is never *required*.
+would otherwise be refused with `HostAlreadyClaimed` in its status (Helm still reports success,
+so check `oc get route`). It is never *required*.
+
+Upgrading from the Ingress default does not trip that refusal: the controller-generated Route
+carries path `/` and the chart's Route carries none, and the router's uniqueness check is per
+host *and* path, so both are admitted for the moment they coexist and the old one goes with its
+Ingress. Measured on CRC: same hostname before and after, no refusal recorded.
 
 Verified end to end on CRC 4.18.2 with a release applied from plain `helm template` output,
 which is ArgoCD's render: the Route was admitted with `spec.host` empty, the proxy's

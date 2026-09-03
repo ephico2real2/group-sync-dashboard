@@ -7,6 +7,13 @@ Image: {{ include "gsd.image" . }}
 
 Route (the router names the host and reports it in status; spec.host is empty unless you set it):
   oc get route {{ include "gsd.fullname" . }} -n {{ .Release.Namespace }} -o jsonpath='{.status.ingress[0].host}'
+{{- if and (not .Values.route.host) .Values.ingress.host }}
+
+NOTE: the Route's host ({{ .Values.ingress.host }}) came from ingress.host, which the Ingress is not
+using — route.enabled is on. The chart honours it so that an upgrade never moves a URL you pinned.
+If you pinned it, move it to route.host. If it was only there because the Ingress needed one (a
+plain-Kubernetes values file, say), clear it and let the router name the Route.
+{{- end }}
 {{- else if eq $exposure "Ingress" }}
 
 Route:

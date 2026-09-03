@@ -120,6 +120,13 @@ class TestTheDefaultIsARouteThatNeedsNoCluster:
         assert ok, out
         assert one(out, "Route")["metadata"]["annotations"] == {"haproxy.router.openshift.io/timeout": "60s"}
 
+    def test_argocd_annotations_land_on_the_service_account_and_not_on_the_route(self):
+        """Both halves in one render, so a regression that moves the annotation shows up."""
+        ok, out = render("--set", "argocd.enabled=true")
+        assert ok, out
+        assert one(out, "ServiceAccount")["metadata"]["annotations"]["argocd.argoproj.io/sync-options"] == "ServerSideApply=true"
+        assert "argocd.argoproj.io/sync-options" not in (one(out, "Route")["metadata"].get("annotations") or {})
+
     def test_the_route_carries_no_argocd_sync_option(self):
         """Nothing in the Route's spec is server-populated, so there is no SSA fight to settle —
         and SSA on a Route is exactly what would strip a host the server chose."""
@@ -176,6 +183,11 @@ class TestTheServiceAccountFollowsTheExposure:
         assert ann["serviceaccounts.openshift.io/oauth-redirecturi.primary"] == "https://t.example.com/oauth/callback"
         assert "serviceaccounts.openshift.io/oauth-redirectreference.primary" not in ann
 
+    def test_no_service_account_means_no_reference_and_the_route_still_renders(self):
+        ok, out = render("--set", "serviceAccount.create=false")
+        assert ok, out
+        assert "ServiceAccount" not in kinds(out) and "Route" in kinds(out)
+
     def test_with_the_proxy_off_neither_annotation_is_emitted(self):
         ok, out = render(*PROXY_OFF)
         assert ok, out
@@ -210,6 +222,59 @@ class TestTheIngressPathIsUnchanged:
         assert one(out, "Ingress")["metadata"]["annotations"]["route.openshift.io/termination"] == "edge"
 
 
+class TestTheRenderSurvivesHostileNames:
+    def test_a_quote_in_the_fullname_still_yields_valid_json(self):
+        """The reference used to be hand-built inside a single-quoted YAML scalar, so a quote in
+        the name broke the render (Codex, #45). The API's own error for a bad name is the one the
+        operator should see, not a YAML parse error from the chart."""
+        ok, out = render("--set-string", "fullnameOverride=x'y\"z")
+        assert ok, out
+        ann = one(out, "ServiceAccount")["metadata"]["annotations"]
+        ref = json.loads(ann["serviceaccounts.openshift.io/oauth-redirectreference.primary"])
+        assert ref["reference"]["name"] == one(out, "Route")["metadata"]["name"] == "x'y\"z"
+
+    def test_the_encoded_reference_is_the_same_json_for_an_ordinary_name(self):
+        """Encoding must not change what a valid name means. toJson sorts keys, so the bytes differ
+        from the hand-built form (kind first); the JSON is the same, and OpenShift parses it."""
+        ok, out = render()
+        assert ok, out
+        ann = one(out, "ServiceAccount")["metadata"]["annotations"]
+        assert ann["serviceaccounts.openshift.io/oauth-redirectreference.primary"] == (
+            '{"apiVersion":"v1","kind":"OAuthRedirectReference","reference":{"kind":"Route","name":"group-sync-dashboard"}}'
+        )
+
+
+class TestTheNotesNameTheRightObject:
+    def notes(self, *extra: str) -> str:
+        done = subprocess.run(["helm", "install", "--dry-run", "group-sync-dashboard", str(CHART), "-n", "group-sync-dashboard", *extra],
+                              capture_output=True, text=True)
+        assert done.returncode == 0, done.stdout + done.stderr
+        return done.stdout.split("NOTES:", 1)[1]
+
+    def test_route_notes_read_the_host_from_status(self):
+        n = self.notes()
+        assert "oc get route group-sync-dashboard -n group-sync-dashboard -o jsonpath='{.status.ingress[0].host}'" in n
+        assert "oc get ingress" not in n
+
+    def test_ingress_notes_read_the_host_from_the_rule(self):
+        n = self.notes(*INGRESS_ONLY, "--set", "ingress.host=t.example.com")
+        assert "oc get ingress group-sync-dashboard -n group-sync-dashboard -o jsonpath='{.spec.rules[0].host}'" in n
+        assert "curl -sk https://t.example.com/api/version" in n
+
+    def test_a_carried_over_ingress_host_is_called_out_with_its_origin(self):
+        """Both reviewers of #45 named the edge: the chart cannot tell a pinned host from one set
+        only because the Ingress demanded it. The fallback stays, but it is not silent."""
+        n = self.notes("--set", "ingress.host=old.example.com")
+        assert "came from ingress.host" in n and "old.example.com" in n
+        assert "move it to route.host" in n
+        assert "came from ingress.host" not in self.notes("--set", "route.host=pinned.example.com")
+        assert "came from ingress.host" not in self.notes()
+
+    def test_the_unauthenticated_warning_names_the_object_that_is_exposed(self):
+        assert "WARNING: the Route has NO authentication" in self.notes(*PROXY_OFF)
+        assert "WARNING: the Ingress has NO authentication" in self.notes(*INGRESS_ONLY, *PROXY_OFF, "--set", "ingress.host=t.example.com")
+
+
 class TestTheFlagsAreValidatedTogether:
     def test_both_on_fails_the_render(self):
         """Two objects claiming one hostname; the second sits refused with HostAlreadyClaimed."""
@@ -229,3 +294,16 @@ class TestTheFlagsAreValidatedTogether:
         ok, out = render("--set", "route.enabled=false")
         assert not ok
         assert "ingress.host is not set" in out
+
+    def test_neither_on_with_the_proxy_off_needs_no_host_at_all(self):
+        """No object to expose and no callback to advertise: nothing needs the host."""
+        ok, out = render("--set", "route.enabled=false", *PROXY_OFF)
+        assert ok, out
+        assert "Route" not in kinds(out) and "Ingress" not in kinds(out)
+
+    def test_the_both_flags_error_says_it_is_a_policy_and_names_both_ways_out(self):
+        ok, out = render("--set", "ingress.enabled=true", "--set", "ingress.host=t.example.com")
+        assert not ok
+        assert "as a policy" in out
+        assert "route.enabled=true is the OpenShift default" in out
+        assert "ingress.enabled=true is for plain Kubernetes" in out

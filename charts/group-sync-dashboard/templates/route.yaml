@@ -26,9 +26,7 @@
 #                                       git does not carry, so ArgoCD reports the Route
 #                                       OutOfSync until someone adds an ignoreDifferences for
 #                                       /spec/host (argo-cd issue #20305 is exactly this
-#                                       report). Inferred, not measured: under
-#                                       ServerSideApply the applier would also own a field it
-#                                       never set.
+#                                       report).
 #
 #     spec:                          -> spec.host stays EMPTY, on create AND on re-apply.
 #       subdomain: <fullname>           The router composes <fullname>.<apps domain> and
@@ -37,24 +35,35 @@
 #
 # So the subdomain form is the one with the short name and no drift, and it yields the SAME
 # hostname the Ingress path derived — group-sync-dashboard.apps-crc.testing on CRC — so the
-# upgrade from the Ingress default does not move the URL. The API notes that an ingress
-# controller "may choose to ignore this suggested name" and report what it assigned instead;
-# login still works then, because the redirect REFERENCE (see serviceaccount.yaml) is resolved
-# against whatever host the Route's status reports, never against a name this chart computed.
+# upgrade from the Ingress default does not move the URL. Two caveats from the Route API, both
+# survivable: an ingress controller "may choose to ignore this suggested name" and report what
+# it assigned instead, and a server that does not support subdomain (before OpenShift 4.11)
+# populates spec.host itself, which works but brings the drift above back. Login works in
+# every case, because the redirect REFERENCE (see serviceaccount.yaml) is resolved against
+# whatever host the Route's status reports, never against a name this chart computed.
 #
 # A HOST SET DELIBERATELY IS USED AS GIVEN. route.host — or an ingress.host carried over from
-# an older values file — becomes spec.host, and subdomain is not emitted. See gsd.routeHost.
+# an older values file — becomes spec.host, subdomain is not emitted, and the router admits it
+# provided it is valid and unclaimed. See gsd.routeHost.
 #
 # The trade the subdomain form keeps from the Ingress path: two releases in DIFFERENT
-# namespaces request the same subdomain, and the second is refused with HostAlreadyClaimed —
-# loud, at admission, and fixed by setting route.host on one of them.
+# namespaces request the same subdomain, and the second is refused with HostAlreadyClaimed.
+# That refusal lives in the Route's status (Admitted=False); Helm still reports success, so it
+# is legible but not loud. Fixed by setting route.host on one of them.
+#
+# UPGRADING FROM THE INGRESS (chart <= 0.7.1) DOES NOT TRIP THAT REFUSAL. Helm creates this
+# Route before it deletes the Ingress, so for a moment two Routes claim one host in one
+# namespace — but the controller-generated Route carries path "/" and this one carries none,
+# and the router's uniqueness check is per host AND path (openshift/router
+# unique_host.go compares Spec.Path), so both are admitted and the old one simply goes with
+# its Ingress. Measured on CRC 4.18.2: same hostname before and after, no refusal recorded.
 #
 # NO argocd sync-options annotation here, unlike the Ingress. That one carries
 # ServerSideApply=true because the ingress-to-route controller writes status.loadBalancer into
 # it. A Route's status is written by the router too, but nothing in this Route's SPEC is ever
-# server-populated, so there is no field-ownership fight for SSA to settle — and SSA on a
-# Route whose host the server chose is exactly the case that would strip it. The Application
-# still wants an ignoreDifferences entry for /status; the chart README carries it.
+# server-populated when subdomain is honoured, so there is no field-ownership question for SSA
+# to settle and no reason to change how Argo applies it. The Application still wants an
+# ignoreDifferences entry for /status; the chart README carries it.
 #
 # TLS is a real field here rather than a route.openshift.io annotation, and it follows the
 # same rule as the Ingress: reencrypt whenever the proxy is on, because the proxy terminates

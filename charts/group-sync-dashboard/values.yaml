@@ -873,10 +873,12 @@ service:
 #                    reads the cluster's apps domain with `lookup`, and REFUSES TO RENDER when
 #                    it can do neither, which is every GitOps renderer.
 #
-# Both enabled fails the render: they would claim the same hostname, and the second would be
-# refused with HostAlreadyClaimed. Neither enabled is allowed — bring your own exposure — but
-# with the proxy on the ServiceAccount still needs a literal callback URL, so ingress.host must
-# then be set or derivable.
+# Both enabled fails the render, as a policy: one front door. With default hosts both would
+# derive the same hostname and the router admits one claim per host and path, so the second
+# would sit refused in its status after an install that reported success; with two different
+# explicit hosts you would have two doors to keep in step. Neither enabled is allowed — bring
+# your own exposure — but with the proxy on the ServiceAccount still needs a literal callback
+# URL, so ingress.host must then be set or derivable.
 #
 # WARNING: with oauthProxy.enabled=false there is NO authentication and the dashboard
 # exposes group membership. Do not expose it on a shared cluster that way.
@@ -894,14 +896,24 @@ route:
   # domain. Measured on OpenShift 4.18.2: with subdomain set, spec.host stays EMPTY and the
   # host appears only in status — so there is no server-written spec field for ArgoCD to
   # report as drift, which a hostless Route would have (its spec.host is filled on create).
+  # subdomain needs a router that honours it — OpenShift 4.11 and later; the Route API says an
+  # older server populates spec.host itself instead, which works but reintroduces that drift.
   #
   # The trade: a second release in ANOTHER namespace requests the same subdomain and is
-  # refused with HostAlreadyClaimed — loud, at admission — and the fix is to set this on one.
+  # refused with HostAlreadyClaimed. That is written into the refused Route's status, NOT
+  # reported by Helm — the install still says success — so check `oc get route`. The fix is
+  # to set this on one of them.
   #
-  # SET IT to pin the hostname exactly. The Route then carries spec.host and the router uses
-  # it as given; the OAuth callback still resolves through the Route, so nothing else needs
-  # to change. An `ingress.host` left over from an older values file is honoured here too,
-  # so an upgrade never silently moves a URL somebody pinned.
+  # SET IT to pin the hostname exactly. The Route then carries spec.host, and the router admits
+  # it as given provided it is valid and unclaimed; the OAuth callback still resolves through
+  # the Route, so nothing else needs to change.
+  #
+  # An `ingress.host` left over from an older values file is honoured here too, so an upgrade
+  # never silently moves a URL somebody pinned. THE EDGE OF THAT: the chart cannot tell a host
+  # that was pinned on purpose from one that was set only because the Ingress demanded one —
+  # a plain-Kubernetes values file, say — and the latter, carried onto an OpenShift Route, is a
+  # hostname the router does not own. So the fallback is not silent: NOTES says where the host
+  # came from and what to do (move it here, or clear it). Both reviewers of #45 named this edge.
   host: ""
   annotations: {}
   # Real Route fields, unlike the Ingress where they ride as annotations. termination is
@@ -918,7 +930,9 @@ ingress:
   className: openshift-default
   # LEAVE EMPTY. It is auto-detected as <fullname>.<cluster apps domain>, reading the domain
   # from the cluster's own ingresses.config/cluster object, so a plain `helm install` needs no
-  # flag and no knowledge of the cluster:
+  # flag and no knowledge of the cluster. NOTE that with the Ingress off and the Route on, a
+  # value here is still read — by the Route, as its pinned host (see route.host above) — so do
+  # not leave a plain-Kubernetes hostname behind when moving a values file to OpenShift:
   #
   #   group-sync-dashboard.apps-crc.testing
   #
@@ -929,8 +943,8 @@ ingress:
   # human can type, and read out in a review meeting, is worth more.
   #
   # The trade, because it is real: two releases in DIFFERENT namespaces derive the SAME host
-  # and the second Route is rejected with HostAlreadyClaimed. That fails loudly at install
-  # time, and the fix is to set this explicitly on the second one.
+  # and the second Route is refused with HostAlreadyClaimed — in its status, not as a Helm
+  # error — and the fix is to set this explicitly on the second one.
   #
   # It cannot simply be omitted: a Route auto-generates its host, but an Ingress does not,
   # and OpenShift's ingress-to-route controller silently creates NO Route for a hostless

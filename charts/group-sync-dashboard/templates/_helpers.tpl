@@ -99,7 +99,7 @@ the cluster, after a green install; better to meet it at render time with its ca
 */}}
 {{- define "gsd.exposure" -}}
 {{- if and .Values.route.enabled .Values.ingress.enabled -}}
-{{- fail "route.enabled and ingress.enabled are both true. They expose the same Service under the same hostname, and the router admits only one claim on a host, so the second object would sit refused with HostAlreadyClaimed after an install that reported success. Choose one: route.enabled=true is the OpenShift default and needs no host at render time; ingress.enabled=true is for plain Kubernetes and needs ingress.host." -}}
+{{- fail "route.enabled and ingress.enabled are both true. This chart exposes the Service through exactly one object, as a policy: with default hosts both would derive the same hostname and the router admits one claim per host and path, leaving the other refused in its status after an install that reported success; with two different explicit hosts you would have two front doors to keep in step. Choose one: route.enabled=true is the OpenShift default and needs no host at render time; ingress.enabled=true is for plain Kubernetes and needs ingress.host." -}}
 {{- else if .Values.route.enabled -}}
 Route
 {{- else if .Values.ingress.enabled -}}
@@ -153,8 +153,9 @@ namespace are both `group-sync-dashboard`, so the generated host said the same w
 group-sync-dashboard-group-sync-dashboard.apps.example.com.
 
 THE TRADE, stated because it is real: two releases in DIFFERENT namespaces now derive the
-SAME host, and the second Route is rejected with HostAlreadyClaimed. That is a loud, legible
-failure at install time rather than a silent one, and the fix is one flag — set
+SAME host, and the second Route is refused with HostAlreadyClaimed. That is legible — it is
+written into the refused Route's status — but it is NOT a Helm failure: the object is accepted
+by the API and the install reports success, so check `oc get route`. The fix is one flag — set
 `ingress.host` explicitly on the second. Worth it for a URL a human can type and read out in
 a meeting.
 */ -}}

@@ -23,18 +23,23 @@ cluster was the documented workaround; the requirement was that auto-discovery w
 ## The design
 
 The chart owns a Route (`templates/route.yaml`, `route.enabled`, default true). The Ingress remains
-as the alternative for plain Kubernetes (`ingress.enabled`, default false), unchanged in what it
-renders. Both on fails the render, because they would claim one hostname.
+as the alternative for plain Kubernetes (`ingress.enabled`, default false); the Ingress manifest
+itself renders as it did in 0.7.1. Both on fails the render, as a policy of one front door: with
+default hosts both would derive the same hostname and the router admits one claim per host and
+path, and with two different explicit hosts there would be two doors to keep in step.
 
 | | Route (default) | Ingress |
 |---|---|---|
 | host known at | admission: the router composes `<fullname>.<apps domain>` from `spec.subdomain` and reports it in `status.ingress[].host` | render time: `ingress.host`, or `lookup` |
 | under `helm template` | renders | refuses without a host |
 | OAuth callback on the ServiceAccount | `oauth-redirectreference`, the Route by name, resolved at login | `oauth-redirecturi`, a literal URL |
-| a host set deliberately | `route.host` (or a carried-over `ingress.host`) becomes `spec.host`, used as given | `ingress.host`, used as given |
+| a host set deliberately | `route.host` (or a carried-over `ingress.host`) becomes `spec.host`; the router admits it if valid and unclaimed | `ingress.host`, likewise |
 
-Two properties were required and both hold: the hostname is `<fullname>.<apps domain>` with the
-namespace never appended, and a host set on purpose is respected.
+Two properties were required and both hold on a router that honours `spec.subdomain` (OpenShift
+4.11 and later): the hostname is `<fullname>.<apps domain>` with the namespace never appended, and
+a host set on purpose is respected. `<fullname>` is not validated by the chart; a `nameOverride` or
+`fullnameOverride` that is not a DNS label is rejected by the API server for the Route exactly as
+it is for the Service, unchanged from 0.7.1.
 
 ## Why `spec.subdomain` and not an empty `spec.host`
 
@@ -50,9 +55,11 @@ name — and writes a `spec` field git does not carry, so Argo reports the Route
 `ignoreDifferences` on `/spec/host` is added
 ([argo-cd#20305](https://github.com/argoproj/argo-cd/issues/20305) is exactly that report). The
 subdomain form has no spec drift and yields the same short hostname the Ingress path derived, so the
-URL does not move on upgrade. The Route API notes an ingress controller "may choose to ignore this
-suggested name"; login still works then, because the redirect reference resolves against whatever
-host the Route's status reports.
+URL does not move on upgrade. Two caveats from the Route API, both survivable: an ingress controller
+"may choose to ignore this suggested name" and report what it assigned, and a server that does not
+support `subdomain` populates `spec.host` itself, which works but brings the drift back. Login still
+works in either case, because the redirect reference resolves against whatever host the Route's
+status reports.
 
 ## The redirect reference, and why `/oauth/callback` matches it
 
@@ -115,7 +122,14 @@ reference to a Route named `proxy`, `reencrypt`, and the proxy's `/oauth/callbac
 
 The CRC release was upgraded from 0.7.1 with its own values file and image. Helm created the chart's
 Route, then deleted the Ingress and with it the controller-generated Route. The new Route was admitted
-on the same hostname with `spec.host` empty; the pod was untouched (revision 139). A second upgrade
+on the same hostname with `spec.host` empty; the pod was untouched (revision 139).
+
+No `HostAlreadyClaimed` occurs while the two Routes coexist, and the reason is in the router: the
+controller-generated Route carries `spec.path: /` (from the Ingress rule) and the chart's Route
+carries no path, and `openshift/router`'s `unique_host.go` treats routes on one host as conflicting
+only when their paths are equal. Both are admitted; the old one is garbage-collected with its Ingress.
+Had a conflict existed, the same code re-activates a displaced route when the claimant is deleted, so
+recovery would still need no operator action. A second upgrade
 that only flipped `argocd.enabled` to its new default changed metadata only — same pod, no rollout
 (revision 140). Sessions, data and RBAC were not involved.
 
@@ -128,10 +142,13 @@ a CRC restart or a hosts-file line.
 
 - An actual Argo sync. The reference cluster has no Argo controller. The drift reasoning rests on
   the measured `spec.host` behaviour and the two cited issues.
-- That server-side apply would strip a server-chosen `spec.host`. Labelled inferred in
-  `templates/route.yaml`; it is one more reason the subdomain form leaves `spec` untouched.
-- The intermediate state during upgrade while both Routes exist. It converged within seconds on CRC
-  and no `HostAlreadyClaimed` was visible afterwards; the transient itself was not captured.
+- Behaviour on a server that does not honour `spec.subdomain` (before OpenShift 4.11). Stated from
+  the Route API's field documentation, not measured.
+
+An earlier draft of this document claimed a server-side-apply hazard on a hostless Route and an
+upgrade transient with both Routes refused. The Codex review of PR #45 refuted both: the first was
+unsupported, the second is ruled out by the router's path-aware admission described above. Both
+claims were removed rather than qualified. The review record is `REVIEW_route_exposure.md`.
 
 ## References
 
@@ -148,3 +165,4 @@ a CRC restart or a hosts-file line.
 - argo-cd#5202 (Helm `lookup` unsupported): <https://github.com/argoproj/argo-cd/issues/5202>
 - argo-cd#20305 (hostless Route `spec.host` drift): <https://github.com/argoproj/argo-cd/issues/20305>
 - argo-cd#2370 (Route `status` drift): <https://github.com/argoproj/argo-cd/issues/2370>
+- `openshift/router` host admission, path-aware: <https://github.com/openshift/router/blob/master/pkg/router/controller/unique_host.go>
