@@ -37,35 +37,41 @@ naming a person rather than a group, and two hand-made groups that no GroupSync 
 has never existed and therefore grant nobody, 4 are hand-made on an operator-synced group, and
 146 are Kubernetes' own virtual groups, which are expected and filtered out by default.
 
-![Access granted tab](docs/screenshots/03-access-granted.png)
+![Access granted tab](docs/screenshots/04-access-granted.png)
 
 **Namespace audit** — bindings that name a *person*, ranked per namespace by the worst privilege
 granted there rather than by count, because one forgotten `cluster-admin` outranks twenty `view`
 grants.
 
-![Namespace audit tab](docs/screenshots/05-namespace-audit.png)
+![Namespace audit tab](docs/screenshots/06-namespace-audit.png)
 
 **RBAC policy** — the policy operator's CRs beside the provenance of the bindings they template,
 and the grants that have none. The `cluster-admin` ClusterRoleBinding on the first row is
 hand-made: nothing in the policy system produced it.
 
-![RBAC policy tab](docs/screenshots/04-rbac-policy.png)
+![RBAC policy tab](docs/screenshots/05-rbac-policy.png)
 
 **Groups** — all 64, with the CR that owns each one, member count, refresh age and source DN.
 The two without an owner are hand-made, and the `empty` and `unattributed` filters both find
-them.
+them. The Find box narrows the list as you type.
 
 ![Groups tab](docs/screenshots/02-groups.png)
+
+**Users** — every user with a synced membership, with the display name where the person has
+signed in, how many groups they hold, and when they were first seen. Type part of an id or a name
+to filter; a person who has never signed in has no display name and is found by id.
+
+![Users tab](docs/screenshots/03-users.png)
 
 **Logins** — every login attempt against the cluster's own OAuth server: who, when, and why a
 failure failed. Read from the oauth-server pod log, which names the person only at Debug
 verbosity, so the tab says what period it can account for rather than implying it saw everything.
 
-![Logins tab](docs/screenshots/06-logins.png)
+![Logins tab](docs/screenshots/07-logins.png)
 
 **Usage** — who used the dashboard, one row per user per UTC day, self-scoped by default.
 
-![Usage tab](docs/screenshots/07-usage.png)
+![Usage tab](docs/screenshots/08-usage.png)
 
 ### The same dashboard, to someone who is not an administrator
 
@@ -74,7 +80,7 @@ grants and their own sign-ins, and the three tabs that report on the cluster rat
 are refused outright — a named refusal, never a blank page, because an empty audit tab reads as a
 healthy cluster.
 
-![Access granted, refused for a non-administrator](docs/screenshots/self/03-access-granted.png)
+![Access granted, refused for a non-administrator](docs/screenshots/self/04-access-granted.png)
 
 The header pill says which view you are in, so "nothing looks different" and "you are seeing
 everything" are distinguishable from the screen. Same deployment, same tab, same moment — the
@@ -317,7 +323,7 @@ the secrets in a step rather than in a job `if:`: per
 
 ## What it shows
 
-Six tabs.
+Eight tabs.
 
 **Overview** — per cluster: reachable, CR count, group count, empty and unattributed groups,
 bindings needing review, oldest last sync, and the health of the
@@ -326,11 +332,16 @@ namespace-configuration-operator's CRs. Alongside it, the computed alerts.
 Drill into a CR for its schedule, LDAP filter, last sync, next expected (from a real cron
 parser), the accumulated sync timeline, and the groups it owns.
 
-**Groups** — every group, filterable to `empty` and `unattributed`. Drill in for members,
-when each was first seen, the membership change log, and the access the group grants. From
-any member, the reverse lookup: every group that user belongs to and every binding that
-reaches them, each row naming the group that confers it. The cluster can only answer that by
-scanning every Group object by hand.
+**Groups** — every group, filterable to `empty` and `unattributed`, and by name as you type.
+Drill in for members, when each was first seen, the membership change log, and the access the
+group grants; a Find member box narrows the members table by id or display name. From any
+member, the reverse lookup: every group that user belongs to and every binding that reaches
+them, each row naming the group that confers it. The cluster can only answer that by scanning
+every Group object by hand.
+
+**Users** — every user with a synced membership: id, display name where OpenShift has one,
+group count, first seen. Filtered as you type on either the id or the name, so a reader who knows
+the person finds the id the cluster knows them by. A non-administrator sees their own row.
 
 **Access granted** — every group-subject binding, classified `ok`, `dangling` (the group was
 operator-managed and has disappeared), `unresolved` (names a group that has never existed),

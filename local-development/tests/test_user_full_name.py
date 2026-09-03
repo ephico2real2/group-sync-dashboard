@@ -182,3 +182,40 @@ class TestJoin:
         # Names that would invert the order if they were sorted on.
         store.replace_users("c1", {"aaa": "Zoe", "ccc": "Adam"}, seen)
         assert [r["user_name"] for r in store.group_members("c1", "g1")] == ["aaa", "bbb", "ccc"]
+
+    def test_users_index_carries_the_name_and_absence_stays_absent(self, tmp_path):
+        """The same join on the cluster-wide index, so the Users tab can filter on either field."""
+        store = Store(str(tmp_path / "t.db"))
+        seen = now_iso()
+        store.sync_members("c1", {"g1": ["named", "unnamed"]}, {}, seen)
+        store.replace_users("c1", {"named": "Named Person"}, seen)
+
+        rows = {r["user_name"]: r for r in store.users("c1")}
+        assert {n: r["full_name"] for n, r in rows.items()} == {"named": "Named Person", "unnamed": None}
+        # The join must not disturb what the index already reported.
+        assert {n: r["group_count"] for n, r in rows.items()} == {"named": 1, "unnamed": 1}
+        assert all(r["first_seen_at"] == seen for r in rows.values())
+
+    def test_users_index_ordering_is_still_by_user_id(self, tmp_path):
+        store = Store(str(tmp_path / "t.db"))
+        seen = now_iso()
+        store.sync_members("c1", {"g1": ["aaa", "bbb", "ccc"]}, {}, seen)
+        store.replace_users("c1", {"aaa": "Zoe", "ccc": "Adam"}, seen)
+        assert [r["user_name"] for r in store.users("c1")] == ["aaa", "bbb", "ccc"]
+
+    def test_users_index_stays_one_row_per_user_across_groups(self, tmp_path):
+        """Guards the GROUP BY: a join that multiplied rows would inflate group_count silently."""
+        store = Store(str(tmp_path / "t.db"))
+        seen = now_iso()
+        store.sync_members("c1", {"g1": ["multi"], "g2": ["multi"], "g3": ["multi"]}, {}, seen)
+        store.replace_users("c1", {"multi": "Many Groups"}, seen)
+        rows = store.users("c1")
+        assert len(rows) == 1
+        assert rows[0]["group_count"] == 3 and rows[0]["full_name"] == "Many Groups"
+
+    def test_users_index_still_fetches_limit_plus_one(self, tmp_path):
+        """The truncation contract survives the join: the caller detects a clip by the extra row."""
+        store = Store(str(tmp_path / "t.db"))
+        seen = now_iso()
+        store.sync_members("c1", {"g1": ["a", "b", "c"]}, {}, seen)
+        assert [r["user_name"] for r in store.users("c1", limit=2)] == ["a", "b", "c"]

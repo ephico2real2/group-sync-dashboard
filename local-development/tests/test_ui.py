@@ -2314,3 +2314,414 @@ class TestVisibilityLabels:
         page.wait_for_selector("tr[data-group]")
         assert page.locator(".scope-banner").count() == 0
         assert page.locator(".scope-refusal").count() == 0
+
+
+class TestUserSearch:
+    """The Users tab: every user with a membership, filtered as you type on id OR display name.
+
+    The same box as the Groups tab — same matcher, same bar, same focus and IME machinery — so the
+    behaviour that matters is what is different: two fields, one of them nullable. "cooper" has to
+    find alice, whose id says nothing of the kind, and dave, who has never signed in and so has no
+    User object, has to stay findable by id and render as a bare id.
+    """
+
+    def _open(self, dash):
+        dash.locator("button[data-nav='users']").click()
+        # A DATA row, not the box: the tab paints before it fetches, so the box appears at once and
+        # only a fetched render produces tr[data-user] — the same reason every tab helper waits this way.
+        dash.wait_for_selector("tr[data-user]")
+
+    def _ids(self, dash):
+        return [r.split("\t")[0].split("·")[0].strip()
+                for r in dash.locator("tbody tr").all_inner_texts()]
+
+    def test_the_tab_lists_every_user_with_a_group_count(self, dash):
+        self._open(dash)
+        assert self._ids(dash) == ["alice", "dave", "gatekeeper"], self._ids(dash)
+        row = dash.locator("tr[data-user='alice']").inner_text()
+        assert "2" in row.split("\t")[1], row
+        assert "3 shown" in dash.locator("section.card h2").first.inner_text()
+
+    def test_a_single_term_matches_the_username(self, dash):
+        self._open(dash)
+        dash.fill("#f-user-search", "dave")
+        dash.wait_for_function("() => view.userSearch === 'dave'")
+        assert self._ids(dash) == ["dave"]
+
+    def test_a_term_matches_the_full_name(self, dash):
+        """The whole point: the reader knows the person, not the id."""
+        self._open(dash)
+        dash.fill("#f-user-search", "cooper")
+        dash.wait_for_function("() => view.userSearch === 'cooper'")
+        assert self._ids(dash) == ["alice"]
+        assert "cooper" not in "alice", "the premise: the id alone would not have matched"
+
+    def test_terms_are_ANDed_across_id_and_name_in_either_order(self, dash):
+        self._open(dash)
+        for query in ("alice cooper", "cooper alice"):
+            dash.fill("#f-user-search", query)
+            dash.wait_for_function(f"() => view.userSearch === {query!r}")
+            assert self._ids(dash) == ["alice"], (query, self._ids(dash))
+
+    def test_a_term_cannot_straddle_the_id_and_the_name(self, dash):
+        """Fields are joined with a space, so "ecoop" (the end of alice + the start of Cooper) is no match."""
+        self._open(dash)
+        dash.fill("#f-user-search", "ecoop")
+        dash.wait_for_function("() => view.userSearch === 'ecoop'")
+        assert self._ids(dash) == []
+
+    def test_it_is_case_insensitive(self, dash):
+        self._open(dash)
+        dash.fill("#f-user-search", "COOPER")
+        dash.wait_for_function("() => view.userSearch === 'COOPER'")
+        assert self._ids(dash) == ["alice"]
+
+    def test_an_unnamed_user_renders_the_bare_id(self, dash):
+        """No User object means no name, and the id is rendered unchanged — never a placeholder."""
+        self._open(dash)
+        assert "·" not in dash.locator("tr[data-user='dave']").inner_text()
+        assert "· Alice Cooper" in dash.locator("tr[data-user='alice']").inner_text()
+
+    def test_a_term_matching_nothing_says_the_search_is_hiding_them(self, dash):
+        self._open(dash)
+        dash.fill("#f-user-search", "zzzznope")
+        dash.wait_for_function("() => view.userSearch === 'zzzznope'")
+        body = dash.locator("section.card").first.inner_text()
+        assert "No user id or name contains" in body, body[:200]
+        assert "search hiding them" in body, body[:300]
+
+    def test_the_header_reports_the_denominator_while_filtering(self, dash):
+        self._open(dash)
+        assert "of" not in dash.locator("section.card h2").first.inner_text()
+        dash.fill("#f-user-search", "dave")
+        dash.wait_for_function("() => view.userSearch === 'dave'")
+        assert "1 of 3 shown" in dash.locator("section.card h2").first.inner_text()
+
+    def test_escape_clears_it(self, dash):
+        self._open(dash)
+        dash.fill("#f-user-search", "dave")
+        dash.wait_for_function("() => view.userSearch === 'dave'")
+        dash.locator("#f-user-search").press("Escape")
+        dash.wait_for_function("() => view.userSearch === ''")
+        assert len(self._ids(dash)) == 3
+
+    def test_the_caret_and_focus_survive_a_repaint(self, dash):
+        """The shared machinery has to work for the SECOND box, not just the one it was written for."""
+        self._open(dash)
+        dash.fill("#f-user-search", "alice-cooper")
+        dash.locator("#f-user-search").evaluate("el => el.setSelectionRange(5, 5)")
+        dash.evaluate("() => render()")
+        state = dash.evaluate("""() => {
+            const el = document.getElementById('f-user-search');
+            return { focused: document.activeElement === el, start: el.selectionStart, value: el.value };
+        }""")
+        assert state["focused"], "focus was lost when the filter bar re-rendered"
+        assert state["start"] == 5, f"the caret moved to {state['start']}"
+        assert state["value"] == "alice-cooper"
+
+    def test_searching_does_not_refetch(self, dash):
+        dash.evaluate("() => { window.__calls = 0; const f = window.fetch;"
+                      " window.fetch = (...a) => { window.__calls++; return f(...a); }; }")
+        self._open(dash)
+        before = dash.evaluate("() => window.__calls")
+        dash.fill("#f-user-search", "ali")
+        dash.wait_for_function("() => view.userSearch === 'ali'")
+        dash.wait_for_timeout(400)
+        assert dash.evaluate("() => window.__calls") == before, "filtering issued a network request"
+
+    def test_the_list_is_fetched_at_the_servers_maximum(self, dash):
+        """The default limit (1,000) is below the reference cluster's 1,240 users; a default fetch would
+        clip the list the box then searches, and a person past the cut would read as "no match"."""
+        self._open(dash)
+        limit = dash.evaluate("() => data.users.limit")
+        assert limit == 10000, limit
+
+    def test_a_filtered_row_drills_in_and_back_returns_to_the_tab(self, dash):
+        self._open(dash)
+        dash.fill("#f-user-search", "cooper")
+        dash.wait_for_function("() => view.userSearch === 'cooper'")
+        dash.locator("tr[data-user='alice']").click()
+        dash.wait_for_selector("#back-groups")
+        assert dash.evaluate("() => view.user") == "alice"
+        assert dash.evaluate("() => view.page") == "users", "a drill from Users must stay under Users"
+        assert "all users" in dash.locator("#back-groups").inner_text()
+        dash.locator("#back-groups").click()
+        dash.wait_for_selector("#f-user-search")
+        assert dash.evaluate("() => view.page") == "users"
+        # The filter is a filter, not a position: it survives the round trip, exactly as the group
+        # box's does, so the reader lands back on the narrowed list they left.
+        assert dash.evaluate("() => view.userSearch") == "cooper"
+        assert self._ids(dash) == ["alice"]
+
+    def test_the_box_only_exists_on_the_users_tab(self, dash):
+        self._open(dash)
+        assert dash.locator("#f-user-search").count() == 1
+        assert dash.locator("#f-group-search").count() == 0
+        dash.click('button.tab:text-is("Groups")')
+        dash.wait_for_selector("tr[data-group]")
+        assert dash.locator("#f-user-search").count() == 0
+        assert dash.locator("#f-group-search").count() == 1
+        dash.click('button.tab:text-is("Overview")')
+        dash.wait_for_timeout(300)
+        assert dash.locator("#f-user-search").count() == 0
+
+    def test_the_visible_label_is_the_accessible_name(self, dash):
+        self._open(dash)
+        el = dash.locator("#f-user-search")
+        assert el.get_attribute("aria-label") is None, "aria-label is overriding the visible label"
+        assert el.get_attribute("aria-describedby") == "f-user-search-help"
+        assert dash.locator("label[for='f-user-search']").inner_text().strip() == "Find"
+        help_text = dash.locator("#f-user-search-help")
+        assert "AND" in help_text.inner_text()
+        assert help_text.evaluate("el => getComputedStyle(el).display") != "none"
+        assert help_text.evaluate("el => el.getBoundingClientRect().width") <= 2
+
+    def test_a_zero_denominator_does_not_blame_the_search(self, dash):
+        """With nothing behind the search, "the search is hiding them" would be false."""
+        self._open(dash)
+        dash.evaluate("() => { data.users = { scope: 'all', users: [], truncated: false, limit: 10000 };"
+                      " view.userSearch = 'x'; render(); }")
+        body = dash.locator("section.card").first.inner_text()
+        assert "search hiding" not in body, body
+        assert "to see all 0" not in body, body
+        assert "No user has a synced group membership" in body, body
+
+    def test_a_truncated_list_says_so_and_the_empty_state_hedges(self, dash):
+        """A capped list that looks complete is the failure the envelope's `truncated` exists to avoid."""
+        self._open(dash)
+        dash.evaluate("""() => {
+            data.users = { scope: 'all', truncated: true, limit: 3, users: data.users.users };
+            view.userSearch = ''; render();
+        }""")
+        note = dash.locator(".truncation-note").first.inner_text()
+        assert "first 3" in note and "past the cut" in note, note
+        dash.fill("#f-user-search", "zzz")
+        dash.wait_for_function("() => view.userSearch === 'zzz'")
+        body = dash.locator("section.card").first.inner_text()
+        assert "search hiding them" in body and "past the cut" in body, body
+
+    def test_the_paint_cap_is_stated_and_never_hides_a_match(self, dash):
+        """Only the PAINT is capped; the match runs over every fetched row."""
+        self._open(dash)
+        dash.evaluate("""() => {
+            const rows = [];
+            for (let i = 0; i < 1500; i++) rows.push({ user_name: `u${String(i).padStart(4, '0')}`,
+                full_name: i === 1499 ? 'Last Person' : null, group_count: 1,
+                first_seen_at: '2026-01-01T00:00:00+00:00' });
+            data.users = { scope: 'all', truncated: false, limit: 10000, users: rows };
+            view.userSearch = ''; render();
+        }""")
+        assert dash.locator("tbody tr").count() == 1000
+        note = dash.locator(".truncation-note").first.inner_text()
+        assert "1000 of 1500 users painted" in note, note
+        # The heading counts what is painted, not what matched — "1500 shown" over 1,000 rows was
+        # the defect the adversarial review found.
+        assert "1000 of 1500 shown" in dash.locator("section.card h2").first.inner_text()
+        dash.fill("#f-user-search", "last person")
+        dash.wait_for_function("() => view.userSearch === 'last person'")
+        assert self._ids(dash) == ["u1499"], "the 1500th row was fetched, so it must be findable"
+        assert dash.locator(".truncation-note").count() == 0
+
+    def test_an_ime_composition_survives_its_own_input_events(self, dash):
+        """The composing slot has to hold THIS box's id, not a flag written for the group box."""
+        self._open(dash)
+        dash.focus("#f-user-search")
+        cdp = dash.context.new_cdp_session(dash)
+        cdp.send("Input.imeSetComposition", {"text": "か", "selectionStart": 1, "selectionEnd": 1})
+        dash.wait_for_timeout(100)
+        cdp.send("Input.imeSetComposition", {"text": "かん", "selectionStart": 2, "selectionEnd": 2})
+        dash.wait_for_timeout(100)
+        cdp.send("Input.insertText", {"text": "かんり"})
+        dash.wait_for_timeout(100)
+        got = dash.evaluate("() => document.getElementById('f-user-search').value")
+        assert got == "かんり", f"the composition was aborted by a repaint: {got!r}"
+        assert dash.evaluate("() => view.userSearch") == "かんり"
+
+    def test_a_refused_list_is_a_named_refusal_not_an_empty_table(self, dash):
+        """The endpoint 403s a reader with no verified identity; the tab must say so, not show nothing."""
+        self._open(dash)
+        dash.evaluate("() => { data.users = { forbidden: true }; render(); }")
+        assert dash.locator(".scope-refusal").count() == 1
+        body = dash.locator("#main").inner_text()
+        assert "Withheld, not empty" in body and "Users" in body, body[:200]
+        assert dash.locator("tr[data-user]").count() == 0
+
+    def test_a_cluster_switch_drops_the_list(self, dash):
+        """The rows belong to a cluster; painting them under another cluster's title would be a lie."""
+        self._open(dash)
+        assert dash.evaluate("() => data.users !== null")
+        dash.evaluate("() => { navigate({ cluster: 'prod-east', groupsync: null, group: null, user: null }); }")
+        assert dash.evaluate("() => data.users") is None
+        assert dash.evaluate("() => view.cluster") == "prod-east"
+
+    def test_other_tabs_never_request_the_user_list(self, dash):
+        """Fetched only on its own tab, like logins: the other pages must not pay for a 10,000-row list."""
+        dash.evaluate("() => { window.__urls = []; const f = window.fetch;"
+                      " window.fetch = (...a) => { window.__urls.push(String(a[0])); return f(...a); }; }")
+        for tab in ("Groups", "Overview", "Access granted"):
+            dash.click(f'button.tab:text-is("{tab}")')
+            dash.wait_for_timeout(400)
+        urls = dash.evaluate("() => window.__urls")
+        assert not [u for u in urls if u.endswith("/users") or "/users?" in u], urls
+        self._open(dash)
+        urls = dash.evaluate("() => window.__urls")
+        assert [u for u in urls if "/users?" in u], "the Users tab itself must fetch the list"
+
+
+class TestUserSearchVisibility:
+    """The Users tab under view restrictions: own row at the narrowed tier, said in words."""
+
+    def _open(self, page, base, user):
+        p = _open_as(page, base, user)
+        p.locator("button[data-nav='users']").click()
+        p.wait_for_function("() => data.users !== null")
+        return p
+
+    def test_self_tier_shows_only_your_own_row_and_says_so(self, page, scoped_server):
+        p = self._open(page, scoped_server, "alice")
+        p.wait_for_selector("tr[data-user='alice']")
+        assert p.locator("tbody tr").count() == 1
+        banner = p.locator(".scope-banner").inner_text()
+        assert "alice" in banner and "own row" in banner, banner
+        assert p.locator("#scope-pill").inner_text().startswith("Your view")
+        assert "Alice Cooper" in p.locator("tr[data-user='alice']").inner_text()
+
+    def test_self_tier_with_no_membership_is_not_an_empty_cluster(self, page, scoped_server):
+        p = self._open(page, scoped_server, "nomember")
+        p.wait_for_selector("#main .empty-note")
+        body = p.locator("#main").inner_text()
+        assert "nomember" in body and "not a statement that the cluster has no users" in body, body
+        assert "No user has" not in body, body
+
+    def test_the_administrator_sees_every_user_and_no_banner(self, page, scoped_server):
+        p = self._open(page, scoped_server, "root")
+        p.wait_for_selector("tr[data-user='dave']")
+        assert p.locator("tbody tr").count() == 3
+        assert p.locator(".scope-banner").count() == 0
+
+
+class TestMemberSearch:
+    """The Find member box on a group's detail page: the third box on the shared machinery, and the
+    one with per-group state — a filter typed against one group must not follow the reader to the next."""
+
+    GROUP = "app-ocp-rbac-alpha-ns-admin"
+
+    def _open(self, dash, name=GROUP):
+        dash.locator("button[data-nav='groups']").click()
+        dash.wait_for_selector("tr[data-group]")
+        dash.locator(f"tr[data-group='{name}']").click()
+        dash.wait_for_selector("#back-groups")
+        dash.wait_for_selector("#f-member-search")
+
+    def _members(self, dash):
+        return dash.evaluate("() => Array.from(document.querySelectorAll('tr[data-user]'))"
+                             ".map(r => r.dataset.user)")
+
+    def _members_card(self, dash):
+        return dash.locator("section.card").nth(1).inner_text()
+
+    def test_a_term_matches_the_username(self, dash):
+        self._open(dash)
+        before = self._members(dash)
+        assert "dave" in before and "alice" in before, before
+        dash.fill("#f-member-search", "dave")
+        dash.wait_for_function("() => view.memberSearch === 'dave'")
+        assert self._members(dash) == ["dave"]
+
+    def test_a_term_matches_the_full_name(self, dash):
+        self._open(dash)
+        dash.fill("#f-member-search", "cooper")
+        dash.wait_for_function("() => view.memberSearch === 'cooper'")
+        assert self._members(dash) == ["alice"]
+
+    def test_the_header_reports_the_denominator(self, dash):
+        self._open(dash)
+        total = len(self._members(dash))
+        dash.fill("#f-member-search", "dave")
+        dash.wait_for_function("() => view.memberSearch === 'dave'")
+        assert f"1 of {total} shown" in self._members_card(dash)
+
+    def test_nothing_matching_blames_the_search_not_the_group(self, dash):
+        self._open(dash)
+        dash.fill("#f-member-search", "zzzznope")
+        dash.wait_for_function("() => view.memberSearch === 'zzzznope'")
+        card = self._members_card(dash)
+        assert "No member's id or name contains" in card and "search hiding them" in card, card
+        assert "no members" not in card, card
+
+    def test_an_empty_group_still_says_it_has_no_members(self, dash):
+        """Zero denominator: the group is empty whatever is typed, and the box must not offer "see all 0"."""
+        self._open(dash, "app-ocp-rbac-abcd-ns-superuser")
+        dash.fill("#f-member-search", "x")
+        dash.wait_for_function("() => view.memberSearch === 'x'")
+        card = self._members_card(dash)
+        assert "no members" in card, card
+        assert "search hiding" not in card and "to see all 0" not in card, card
+
+    def test_the_filter_clears_when_another_group_is_opened(self, dash):
+        self._open(dash)
+        dash.fill("#f-member-search", "dave")
+        dash.wait_for_function("() => view.memberSearch === 'dave'")
+        dash.evaluate("() => { navigate({ group: 'app-ssb-autobahnusers' }); refresh(); }")
+        # The state clears at navigate(); the BOX clears when the fetched page paints, so wait for
+        # the new group's payload before reading the DOM — the same paint-after-fetch as a real drill.
+        dash.wait_for_function("() => data.group && data.group.name === 'app-ssb-autobahnusers'")
+        assert dash.evaluate("() => view.memberSearch") == ""
+        assert dash.locator("#f-member-search").input_value() == ""
+
+    def test_the_filter_clears_on_the_way_back_to_the_list(self, dash):
+        self._open(dash)
+        dash.fill("#f-member-search", "dave")
+        dash.wait_for_function("() => view.memberSearch === 'dave'")
+        dash.locator("#back-groups").click()
+        dash.wait_for_selector("tr[data-group]")
+        assert dash.evaluate("() => view.memberSearch") == ""
+
+    def test_the_filter_survives_the_poll_repaint(self, dash):
+        """The poll never touches position, so a repaint keeps the filter AND the caret."""
+        self._open(dash)
+        dash.fill("#f-member-search", "dave")
+        dash.wait_for_function("() => view.memberSearch === 'dave'")
+        dash.evaluate("() => render()")
+        assert dash.evaluate("() => view.memberSearch") == "dave"
+        assert dash.evaluate("() => document.activeElement === document.getElementById('f-member-search')")
+        assert self._members(dash) == ["dave"]
+
+    def test_the_box_is_absent_on_the_group_list_and_the_user_page(self, dash):
+        self._open(dash)
+        assert dash.locator("#f-group-search").count() == 0, "the group box filters nothing here"
+        dash.locator("tr[data-user='alice']").click()
+        # The user PAGE, not #back-groups, which the group page already shows: a drill paints
+        # after its fetch, so the bar is only re-rendered once the user payload lands.
+        dash.wait_for_function("() => data.user && data.user.user === 'alice'")
+        assert dash.locator("#f-member-search").count() == 0
+        dash.locator("button[data-nav='groups']").click()
+        dash.wait_for_selector("tr[data-group]")
+        assert dash.locator("#f-member-search").count() == 0
+        assert dash.locator("#f-group-search").count() == 1
+
+    def test_escape_clears_it(self, dash):
+        self._open(dash)
+        dash.fill("#f-member-search", "dave")
+        dash.wait_for_function("() => view.memberSearch === 'dave'")
+        dash.locator("#f-member-search").press("Escape")
+        dash.wait_for_function("() => view.memberSearch === ''")
+        assert len(self._members(dash)) > 1
+
+    def test_the_visible_label_is_the_accessible_name(self, dash):
+        self._open(dash)
+        el = dash.locator("#f-member-search")
+        assert el.get_attribute("aria-label") is None
+        assert el.get_attribute("aria-describedby") == "f-member-search-help"
+        assert dash.locator("label[for='f-member-search']").inner_text().strip() == "Find member"
+        help_text = dash.locator("#f-member-search-help")
+        assert "AND" in help_text.inner_text()
+        assert help_text.evaluate("el => el.getBoundingClientRect().width") <= 2
+
+    def test_a_filtered_member_still_drills_in(self, dash):
+        self._open(dash)
+        dash.fill("#f-member-search", "cooper")
+        dash.wait_for_function("() => view.memberSearch === 'cooper'")
+        dash.locator("tr[data-user='alice']").click()
+        dash.wait_for_function("() => view.user === 'alice'")
+        assert dash.evaluate("() => view.page") == "groups"

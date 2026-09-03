@@ -64,7 +64,15 @@ type: application
 # immutable pin — a tag is a name the registry owner can repoint, a digest is the content itself —
 # and it wins over `image.tag`. Nothing changes for a release that does not set it: the default is
 # empty and the tag/appVersion path is byte-identical to 0.5.0's.
-version: 0.6.0
+# 0.7.0, MINOR because appVersion moves: the chart deploys application 0.8.0 (below). No template
+# or default changes; a consumer who upgrades gets the new app and byte-identical Kubernetes
+# objects otherwise.
+version: 0.7.0
+# 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
+# id or display name — and a Find member box on the group page. /users rows gain `full_name`,
+# nullable, the same field the members list already carried. Additive on the wire and in the UI,
+# hence MINOR; nothing a 0.7.0 consumer parses changes shape.
+#
 # 0.7.0. It must equal local-development/pyproject.toml's `version` (tests/test_chart_versions.py
 # holds them together, and holds appVersion against the pinned image tag's prefix), so moving it
 # means moving the app version AND re-pinning the image — all three land in one commit or CI is red,
@@ -74,7 +82,7 @@ version: 0.6.0
 # `ldap_filter` and `error_message` from /groupsyncs for narrowed readers, so a self-tier consumer
 # parsing either one breaks on upgrade. That is a contract change, hence MINOR and not a patch.
 # Administrators are unaffected, byte-for-byte.
-appVersion: "0.7.0"
+appVersion: "0.8.0"
 
 keywords: [openshift, ldap, rbac, groupsync, observability]
 home: https://github.com/ephico2real2/group-sync-dashboard

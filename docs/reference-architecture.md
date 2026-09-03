@@ -90,7 +90,7 @@ flowchart TB
 
   subgraph publish["Published three ways, same data"]
     direction LR
-    ui["UI — six tabs<br/>verdict, why, what to do"]
+    ui["UI — eight tabs<br/>verdict, why, what to do"]
     api["/api — JSON<br/>bearer token, per cluster"]
     logs["Log — WARNING per finding<br/>UNMANAGED GRANT DISCOVERED"]
   end
@@ -394,12 +394,13 @@ decides what headers they carry (`gsd/api.py#build_app`).
 ### The UI
 
 One self-contained file, `gsd/static/index.html`, vanilla JS, no build step, strict CSP.
-Six tabs (`index.html#const tab = (id, label)`):
+Eight tabs (`index.html#const tab = (id, label)`):
 
 | Tab | Reads | Shows |
 |---|---|---|
 | Overview | `/api/clusters`, `/api/alerts`, `/api/clusters/{id}/groupsyncs`, `/api/clusters/{id}/operator-configs` | cluster cards, computed alerts, CR list and detail, operator-config health |
 | Groups | `/api/clusters/{id}/groups`, `.../groups/{name}`, `.../users/{name}` | every group; drill into members, first-seen, the change log, and the access it grants; reverse lookup per user |
+| Users | `/api/clusters/{id}/users`, `.../users/{name}` | every user with a membership, filtered in the browser as you type on id or display name; the same per-user page as Groups |
 | Access granted | `/api/clusters/{id}/bindings/findings` | every group-subject binding, classified `ok` / `dangling` / `unresolved` / `built_in` / `unmanaged` |
 | RBAC policy | `/api/clusters/{id}/bindings/findings`, `.../operator-configs` | the policy operator's CR health beside the provenance of the bindings it templates |
 | Namespace audit | `/api/clusters/{id}/user-bindings` | grants that name a person rather than a group, ranked per namespace by privilege; server-side paging, sortable columns, namespace selector |

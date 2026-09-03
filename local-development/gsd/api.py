@@ -1001,6 +1001,10 @@ def build_app(
         SELF-SCOPED under view restrictions: a plain reader gets their own row or an
         empty list, because `list users.user.openshift.io` is a permission they do not
         hold — the only self-read OpenShift grants everyone is `get users/~`.
+
+        Each row carries `full_name`, null when OpenShift has no User object for the id
+        or the IdP supplied no name — the same field and the same absence rule as a group's
+        members. The Users tab filters on both, so a person is findable by either.
         """
         require_cluster(cluster_id)
         viewer, scope = viewer_scope(request)

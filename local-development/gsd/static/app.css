@@ -77,6 +77,11 @@
   --tab-bindings: #6d4bc7;
   --tab-policy: #9333ea;
   --tab-nsaudit: #b3306e;
+  /* Cyan, hue 192 — between the overview blue (213) and the groups teal (172), and lighter
+     than both, which is what keeps it apart from them for a deuteranope. Users is the Groups
+     tab's reverse index, so a neighbour of teal is the honest place for it. Ratios against
+     --page are in tests/test_accessibility.py, which measures every --tab-* token. */
+  --tab-users: #0e7490;
   /* Olive, hue 78 — the last hue on the wheel this palette had not spent. Every other band
      was either taken by a tab (blue 213, teal 172, violet 256, purple 271, pink 332, orange
      17) or reserved by the status vocabulary: green would sit on --status-good, red on
@@ -165,6 +170,7 @@
     --tab-bindings: #8468d0;
     --tab-policy: #a855f7;
     --tab-nsaudit: #e0559a;
+    --tab-users: #22a5c9;
     --tab-logins: #678e0b;
     --tab-usage: #d9490d;
   }
@@ -200,6 +206,7 @@
   --tab-bindings: #8468d0;
   --tab-policy: #a855f7;
   --tab-nsaudit: #e0559a;
+  --tab-users: #22a5c9;
   --tab-logins: #678e0b;
   --tab-usage: #d9490d;
 }
@@ -286,7 +293,7 @@ body {
    inherited the UA outline, and `.drill` actively removed it. A 2px ring plus a 2px offset
    stays visible against both the card and the accent tint. :focus-visible, not :focus, so
    a mouse click does not leave a ring behind. */
-:where(a, button, select, [tabindex]):focus-visible {
+:where(a, button, select, input, [tabindex]):focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
   border-radius: 4px;
@@ -358,13 +365,17 @@ header.top .spacer { flex: 1; }
   margin-bottom: 18px;
 }
 .filters label { color: var(--text-secondary); font-size: var(--text-sm); }
-select, button, a.btn {
+select, button, a.btn, input[type="search"] {
   font: inherit; font-size: var(--text-md); color: var(--text-primary);
   background: var(--surface-1); border: 1px solid var(--border);
   border-radius: 6px; padding: 5px 9px; cursor: pointer;
 }
+/* The search boxes take the same border, surface and type as the selects beside them — they
+   were the one control in the bar left to the browser's default look. A text field is not a
+   button, so the pointer cursor is the one property they do not share. */
+input[type="search"] { cursor: text; }
 a.btn { text-decoration: none; }
-button:hover, select:hover, a.btn:hover { border-color: var(--baseline); }
+button:hover, select:hover, a.btn:hover, input[type="search"]:hover { border-color: var(--baseline); }
 
 /* Refetch holds the previous render at reduced opacity — no skeleton flash, no jump.
    The 150ms delay keeps the dim invisible for any fetch that beats it: the tab handler
@@ -693,6 +704,7 @@ code { font-family: var(--font-mono); font-size: var(--text-sm); }
    nothing else. */
 body[data-page="overview"] { --accent: var(--tab-overview); }
 body[data-page="groups"]   { --accent: var(--tab-groups); }
+body[data-page="users"]    { --accent: var(--tab-users); }
 body[data-page="bindings"] { --accent: var(--tab-bindings); }
 body[data-page="policy"]   { --accent: var(--tab-policy); }
 body[data-page="nsaudit"]  { --accent: var(--tab-nsaudit); }

@@ -271,8 +271,16 @@ caller the list was clipped, because a clipped list that looks complete is the f
 worth avoiding.
 
 ```json
-{"cluster": "crc", "count": 1000, "truncated": true, "limit": 1000, "users": [...]}
+{"cluster": "crc", "count": 1000, "truncated": true, "limit": 1000,
+ "users": [{"user_name": "alice", "full_name": "Alice Cooper", "group_count": 2,
+            "first_seen_at": "2026-08-01T09:00:00+00:00"}, ...]}
 ```
+
+Each row carries `full_name`, `null` when OpenShift has no User object for the id or the IdP
+supplied no name — the same field and the same absence rule as a group's members. The Users
+tab filters in the browser on both `user_name` and `full_name`, so it requests the maximum
+`limit`; when `truncated` is true the tab says so, because a filter over a clipped list would
+report a real person as "no match".
 
 
 ### `GET /api/clusters/{cluster_id}/users/{name}`

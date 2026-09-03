@@ -19,7 +19,7 @@ the difference between images that describe the product and images that describe
     .venv/bin/python capture-screenshots.py --base http://127.0.0.1:8080 --theme light
 
 WHY THE INGRESS IS WORTH THE LOGIN. Port-forwarding reaches the same process and renders the
-same markup for five of the six tabs — the proxy adds authentication, not HTML. Usage is the
+same markup for seven of the eight tabs — the proxy adds authentication, not HTML. Usage is the
 exception and it is not cosmetic: that tab reports on who has used the dashboard, the username
 comes from the proxy's header, and with the proxy bypassed the page correctly says it is
 recording nothing. Screenshotting that produces an image of a working feature looking broken,
@@ -53,15 +53,17 @@ REPO = pathlib.Path(__file__).resolve().parents[1]
 # heading exists.
 # Numbered in TAB-STRIP ORDER, which is the only ordering a reader can check against the
 # screenshots. Logins was missing entirely — seven tabs ship and six were captured — so Usage
-# moved from 06 to 07 rather than leaving a number that no longer means its position.
+# moved from 06 to 07 rather than leaving a number that no longer means its position. Users
+# arrived third in the strip, so everything after it moved up one for the same reason.
 TABS = [
     ("Overview",        "01-overview.png"),
     ("Groups",          "02-groups.png"),
-    ("Access granted",  "03-access-granted.png"),
-    ("RBAC policy",     "04-rbac-policy.png"),
-    ("Namespace audit", "05-namespace-audit.png"),
-    ("Logins",          "06-logins.png"),
-    ("Usage",           "07-usage.png"),
+    ("Users",           "03-users.png"),
+    ("Access granted",  "04-access-granted.png"),
+    ("RBAC policy",     "05-rbac-policy.png"),
+    ("Namespace audit", "06-namespace-audit.png"),
+    ("Logins",          "07-logins.png"),
+    ("Usage",           "08-usage.png"),
 ]
 
 
