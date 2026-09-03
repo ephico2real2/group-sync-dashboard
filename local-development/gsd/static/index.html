@@ -68,10 +68,13 @@ const view = { page: "overview", cluster: null, groupsync: null, groupFilter: "a
                    would bury the positions Back exists to reach. */
                 loginOutcome: "all",
                 nsGrantsOpen: false };
-/* True while an IME composition is live in the search box. Module-level rather than on the element,
+/* Id of the search box with a live IME composition, or null. Module-level rather than on the element,
    because the element this bar renders is replaced wholesale — state on the node would vanish with it,
-   which is the exact failure this flag exists to prevent. */
-let groupSearchComposing = false;
+   which is the exact failure this slot exists to prevent. An ID rather than a boolean: at most one box
+   exists at a time, and the guard in renderFilters() compares it against the focused element, so a
+   slot left behind by a box that has since been unrendered (Back pressed mid-composition) can never
+   freeze the bar. */
+let searchComposingIn = null;
 
 /* ── Navigation: the browser's history IS the trail ──────────────────────────────────────
    This used to be a private `trail` array with its own push/pop, which meant the in-page Back
@@ -612,6 +615,74 @@ function selfGrantsView(ub) {
   </section>`;
 }
 
+/* ── Search boxes ────────────────────────────────────────────────────────────────────────
+   One implementation for every as-you-type filter in the bar. Each entry is keyed by the `view`
+   field that holds its query; `id` is what the focus restore and the IME guard find the element by.
+   Never an aria-label: it would REPLACE the accessible name, so a screen reader would announce the
+   help sentence where the visible label says "Find" — WCAG 2.5.3 Label in Name, and a voice user
+   saying "click Find" would hit nothing. The help text is a DESCRIPTION, so it sits behind
+   aria-describedby in an .sr-only span. */
+const SEARCH_BOXES = {
+  groupSearch: {
+    id: "f-group-search", label: "Find", placeholder: "filter by name",
+    title: 'Filters by name as you type. Several words are ANDed — "alpha admin" finds app-ocp-rbac-alpha-ns-admin. Escape clears.',
+    help: "Filters the group list by name as you type. Several words are combined with AND, so every word must appear. Press Escape to clear.",
+  },
+};
+
+function searchBoxHtml(key) {
+  const b = SEARCH_BOXES[key];
+  // type=search rather than text: it gets the platform's clear affordance and, on iOS, a keyboard
+  // with no autocorrect — which would otherwise "fix" a group name like `ns-admin` while it is typed.
+  // The value is esc()'d into an attribute like every other interpolation on this page.
+  return `<label for="${b.id}">${esc(b.label)}</label>
+      <input id="${b.id}" type="search" inputmode="search" autocomplete="off"
+             spellcheck="false" placeholder="${esc(b.placeholder)}"
+             aria-describedby="${b.id}-help"
+             title="${esc(b.title)}"
+             value="${esc(view[key])}">
+      <span id="${b.id}-help" class="sr-only">${esc(b.help)}</span>`;
+}
+
+function wireSearchBox(key) {
+  const b = SEARCH_BOXES[key];
+  const el = $(b.id);
+  if (!el) return;
+  // `input`, not `change`: it has to filter as the reader types. render() rather than refresh()
+  // because every list these boxes filter is already in the browser in full — filtering is a repaint
+  // and costs no round trip, and a request per keystroke would be both slower and wrong.
+  //
+  // Except mid-IME-composition: those input events describe an unfinished conversion, and a repaint
+  // here replaces the node the IME is composing into (see the guard above the innerHTML swap in
+  // renderFilters). The state still updates, so the compositionend render loses nothing.
+  el.oninput = (e) => {
+    view[key] = e.target.value;
+    if (!e.isComposing) render();
+  };
+  // addEventListener, not on-properties: composition events have no IDL handler attribute, so
+  // `el.oncompositionstart = …` is a silent no-op expando — the slot would never be set. The node is
+  // freshly created on every rebuild, so listeners never stack on one element.
+  el.addEventListener("compositionstart", () => { searchComposingIn = b.id; });
+  el.addEventListener("compositionend", (e) => {
+    searchComposingIn = null;
+    view[key] = e.target.value;
+    render();
+  });
+  // compositionend fires before blur in every engine, but a missed one would freeze this bar
+  // forever (the guard would always return), so blur clears the slot as a backstop.
+  el.addEventListener("blur", () => { searchComposingIn = null; });
+  el.onkeydown = (e) => {
+    // Escape clears rather than blurring, which is what a reader expects of a filter box and what
+    // type=search does natively on the platforms that render its clear button. Mid-composition it
+    // belongs to the IME — cancel the kana, keep the query — so it is left alone.
+    if (e.key === "Escape" && !e.isComposing && view[key]) {
+      e.preventDefault();
+      view[key] = "";
+      render();
+    }
+  };
+}
+
 function renderFilters() {
   const clusters = data.clusters;
   const opts = clusters.map((c) =>
@@ -648,18 +719,10 @@ function renderFilters() {
         `<option value="${esc(o)}"${o === view.loginOutcome ? " selected" : ""}>${
           o === "all" ? "all outcomes" : esc(OUTCOME_LABEL[o] || o)}</option>`).join("")}</select>`;
   }
+  // The group box belongs to the group LIST. It used to render on the group and user detail pages
+  // too, filtering nothing; that slot now holds the box for whatever list the page actually shows.
+  if (view.page === "groups" && !view.group && !view.user) html += searchBoxHtml("groupSearch");
   if (view.page === "groups") {
-    // type=search rather than text: it gets the platform's clear affordance and, on iOS, a keyboard
-    // with no autocorrect — which would otherwise "fix" a group name like `ns-admin` while it is typed.
-    // The value is esc()'d into an attribute like every other interpolation on this page.
-    html += `<label for="f-group-search">Find</label>
-      <input id="f-group-search" type="search" inputmode="search" autocomplete="off"
-             spellcheck="false" placeholder="filter by name"
-             aria-describedby="f-group-search-help"
-             title="Filters by name as you type. Several words are ANDed — &quot;alpha admin&quot; finds app-ocp-rbac-alpha-ns-admin. Escape clears."
-             value="${esc(view.groupSearch)}">
-      <span id="f-group-search-help" class="sr-only">Filters the group list by name as you type.
-        Several words are combined with AND, so every word must appear. Press Escape to clear.</span>`;
     html += `<label for="f-state">Group state</label>
       <select id="f-state">
         <option value="all"${view.groupFilter === "all" ? " selected" : ""}>all</option>
@@ -700,7 +763,7 @@ function renderFilters() {
   // second session on the replacement — typing かんり lands as かかんかんり. No after-the-fact restore
   // can repair that, so while a composition is live in this box the bar keeps its existing DOM and the
   // caller still repaints the data below; the compositionend handler runs the catch-up render.
-  if (groupSearchComposing && active === $("f-group-search")) return;
+  if (searchComposingIn && active && active.id === searchComposingIn) return;
   let restore = null;
   if (active && active.id && $("filters").contains(active)) {
     restore = { id: active.id, start: null, end: null };
@@ -727,42 +790,7 @@ function renderFilters() {
     navigate({ cluster: e.target.value, groupsync: null, group: null, user: null });
     refresh();
   };
-  const gs = $("f-group-search");
-  if (gs) {
-    // `input`, not `change`: it has to filter as the reader types. render() rather than refresh()
-    // because the groups endpoint applies no limit, so the whole list is already here — filtering is a
-    // repaint and costs no round trip, and a request per keystroke would be both slower and wrong.
-    //
-    // Except mid-IME-composition: those input events describe an unfinished conversion, and a repaint
-    // here replaces the node the IME is composing into (see the guard above the innerHTML swap). The
-    // state still updates, so the compositionend render loses nothing.
-    gs.oninput = (e) => {
-      view.groupSearch = e.target.value;
-      if (!e.isComposing) render();
-    };
-    // addEventListener, not on-properties: composition events have no IDL handler attribute, so
-    // `gs.oncompositionstart = …` is a silent no-op expando — the flag would never be set. The node is
-    // freshly created on every rebuild, so listeners never stack on one element.
-    gs.addEventListener("compositionstart", () => { groupSearchComposing = true; });
-    gs.addEventListener("compositionend", (e) => {
-      groupSearchComposing = false;
-      view.groupSearch = e.target.value;
-      render();
-    });
-    // compositionend fires before blur in every engine, but a missed one would freeze this bar
-    // forever (the guard above would always return), so blur clears the flag as a backstop.
-    gs.addEventListener("blur", () => { groupSearchComposing = false; });
-    gs.onkeydown = (e) => {
-      // Escape clears rather than blurring, which is what a reader expects of a filter box and what
-      // type=search does natively on the platforms that render its clear button. Mid-composition it
-      // belongs to the IME — cancel the kana, keep the query — so it is left alone.
-      if (e.key === "Escape" && !e.isComposing && view.groupSearch) {
-        e.preventDefault();
-        view.groupSearch = "";
-        render();
-      }
-    };
-  }
+  Object.keys(SEARCH_BOXES).forEach(wireSearchBox);
   const st = $("f-state");
   if (st) st.onchange = (e) => { view.groupFilter = e.target.value; refresh(); };
   const bf = $("f-binding");
@@ -1037,10 +1065,13 @@ function groupsyncDetail() {
    No regex and no globbing: a reader typing `app-ocp-rbac-*` means those characters, and treating the
    input as a pattern would make `*` and `(` either magic or an error. Matching runs against the DATA;
    the row is still rendered through esc(), so nothing here changes what reaches innerHTML. */
-function matchesGroupSearch(name, query) {
+function matchesSearch(fields, query) {
   const terms = (query || "").toLowerCase().split(/\s+/).filter(Boolean);
   if (terms.length === 0) return true;
-  const haystack = (name || "").toLowerCase();
+  // Joined with a space so a term can never straddle two fields — "ecoop" must not match a user
+  // whose id is alice and whose name is Cooper. Null fields (full_name is nullable) drop out here,
+  // so a person with no display name is matched on the id alone.
+  const haystack = fields.filter(Boolean).join(" ").toLowerCase();
   return terms.every((t) => haystack.includes(t));
 }
 
@@ -1057,7 +1088,7 @@ function groupsPage() {
   // guess — the search-box scar, applied to a security label.
   const meta = data.groupsMeta || {};
   const self = meta.scope === "self";
-  const rows = all.filter((g) => matchesGroupSearch(g.name, view.groupSearch));
+  const rows = all.filter((g) => matchesSearch([g.name], view.groupSearch));
   const searching = (view.groupSearch || "").trim().length > 0;
   const note = {
     empty: "Zero members, so the group grants nobody. On an operator-synced group that usually means an LDAP-side problem — a member DN that does not resolve. Includes hand-made groups, which also appear under unattributed.",
