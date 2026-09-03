@@ -67,7 +67,8 @@ type: application
 # 0.7.0, MINOR because appVersion moves: the chart deploys application 0.8.0 (below). No template
 # or default changes; a consumer who upgrades gets the new app and byte-identical Kubernetes
 # objects otherwise.
-version: 0.7.0
+# 0.7.1, PATCH: appVersion moves to 0.8.1 (below); no template or default changes.
+version: 0.7.1
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,
@@ -82,7 +83,10 @@ version: 0.7.0
 # `ldap_filter` and `error_message` from /groupsyncs for narrowed readers, so a self-tier consumer
 # parsing either one breaks on upgrade. That is a contract change, hence MINOR and not a patch.
 # Administrators are unaffected, byte-for-byte.
-appVersion: "0.8.0"
+# 0.8.1 (2026-09-03). The dashboard is renamed "OCP Access Tracking Dashboard" — it reads and
+# reports access, it never controls it — and the name now lives in ONE constant (gsd.TITLE) that
+# the page, the signed-out page and the API docs read. Nothing on the wire changes shape.
+appVersion: "0.8.1"
 
 keywords: [openshift, ldap, rbac, groupsync, observability]
 home: https://github.com/ephico2real2/group-sync-dashboard

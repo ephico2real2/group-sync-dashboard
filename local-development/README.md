@@ -22,6 +22,12 @@ Run everything below from **this** directory.
 | `crc-ca.crt` | CRC's CA, extracted from kubeconfig. Gitignored, regenerable |
 | [`API.md`](API.md) | every endpoint, what each field means, and the ones routinely misread |
 
+## Renaming the dashboard
+
+The name is one constant, `TITLE` in `gsd/__init__.py`. The page title, the header, the
+signed-out page and the API docs read it, and `tests/test_title.py` holds the README heading to
+it. Change it there, then recapture the screenshots, which are the only copies that cannot follow.
+
 ## Run the dashboard against CRC
 
 ```bash

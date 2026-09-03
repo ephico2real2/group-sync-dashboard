@@ -8,7 +8,10 @@ from __future__ import annotations
 
 import functools
 import logging
+import hashlib
+import html
 import os
+from email.utils import formatdate, parsedate_to_datetime
 import re
 import time
 from collections.abc import Callable
@@ -17,11 +20,11 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 
-from . import __version__
+from . import TITLE, __version__
 from . import state as st
 from .activity import EMAIL_HEADER, INTERACTION_HEADER, USER_HEADER, ActivityRecorder
 from .config import Settings, load_settings
@@ -631,7 +634,7 @@ def build_app(
     #   /api/redoc      the reference rendering
     #   /api/openapi.json  the spec itself, for codegen and for the drift test
     app = FastAPI(
-        title="GroupSync dashboard",
+        title=TITLE,
         version=__version__,
         lifespan=lifespan,
         # The built-in routes are disabled and re-served below from vendored assets:
@@ -1876,7 +1879,7 @@ def build_app(
         """Swagger UI, rendered from assets shipped in this image."""
         return get_swagger_ui_html(
             openapi_url="/api/openapi.json",
-            title="GroupSync dashboard — API",
+            title=f"{TITLE} — API",
             swagger_js_url=_JS,
             swagger_css_url=_CSS,
             # The default favicon is fetched from fastapi.tiangolo.com; the app already
@@ -1889,7 +1892,7 @@ def build_app(
         """ReDoc, rendered from assets shipped in this image."""
         return get_redoc_html(
             openapi_url="/api/openapi.json",
-            title="GroupSync dashboard — API reference",
+            title=f"{TITLE} — API reference",
             redoc_js_url=_REDOC,
             redoc_favicon_url="/static/favicon.svg",
         )
@@ -1904,30 +1907,107 @@ def build_app(
         """
         return RedirectResponse(url="/api", status_code=308)
 
+    # Rendered pages, keyed by filename: (file mtime, name they were rendered with, body, ETag).
+    # A cache so the 180 KB file is not re-read and re-hashed per request; keyed on mtime and on
+    # the name so neither a redeployed file nor a monkeypatched TITLE can serve a stale render.
+    rendered_pages: dict[str, tuple[float, str, bytes, str]] = {}
+
+    def named_page(filename: str, request: Request) -> Response:
+        """A static page with the dashboard's name substituted in.
+
+        The two HTML files carry __GSD_TITLE__ where the name goes, and the name itself is
+        gsd.TITLE — one place, read here, so the tab title, the header, the signed-out page
+        and the API docs cannot disagree. Escaped, because a name is text and not markup.
+
+        With no Cache-Control, browsers apply heuristic caching to HTML and keep serving
+        the old page after a redeploy — the user sees a version that no longer exists and
+        reasonably concludes the change was never shipped. The whole app is one file, so it
+        must always be revalidated; there is nothing here worth caching and a stale shell
+        silently disables every fix behind it.
+
+        REVALIDATION NEEDS A VALIDATOR. `no-cache` lets the browser keep a copy but forbids
+        reusing it unchecked, and the check is only cheap when the response carries something
+        to check against: MDN's pattern for always-fresh HTML is exactly no-cache plus ETag and
+        Last-Modified, answered with a bodiless 304. The FileResponse this replaced sent both
+        validators but never answered a conditional request (Starlette leaves 304s to
+        StaticFiles), so every reload paid for the whole file; the first version of this
+        substitution dropped the validators as well, which the review measured. Now: a strong
+        ETag over the RENDERED body, so it moves with the file or the name; Last-Modified from
+        the file; If-None-Match compared the way RFC 9110 §13.1.2 requires (weak comparison,
+        over a comma-separated list). The 304 is built the way §15.4.5 requires: it MUST carry
+        Cache-Control and ETag because the 200 would have (Date comes from uvicorn), MUST NOT
+        carry a body, and SHOULD NOT carry other representation metadata — so Last-Modified
+        rides the 200 only; with an ETag present it guides no cache update on a 304. Not
+        Jinja2Templates: FastAPI's documented engine would be one more dependency for one text
+        node, and it sets none of these headers.
+        """
+        path = os.path.join(STATIC_DIR, filename)
+        mtime = os.stat(path).st_mtime
+        cached = rendered_pages.get(filename)
+        if cached is None or cached[0] != mtime or cached[1] != TITLE:
+            with open(path, encoding="utf-8") as fh:
+                body = fh.read().replace("__GSD_TITLE__", html.escape(TITLE)).encode("utf-8")
+            etag = '"' + hashlib.sha256(body).hexdigest()[:32] + '"'
+            cached = (mtime, TITLE, body, etag)
+            # Two threads can render the same file at once (sync handlers run on a pool). The
+            # dict itself is safe; what is not is a thread that stat'd the OLD file storing its
+            # render over a newer one. Keep whichever saw the newer file; the loser's render is
+            # still correct for the request that made it. Immutable containers never hit this.
+            current = rendered_pages.get(filename)
+            if current is None or current[1] != TITLE or current[0] <= mtime:
+                rendered_pages[filename] = cached
+        _, _, body, etag = cached
+        headers = {"Cache-Control": "no-cache, must-revalidate", "ETag": etag}
+        if_none_match = request.headers.get("if-none-match")
+        if if_none_match is not None:
+            offered = [tag.strip().removeprefix("W/") for tag in if_none_match.split(",")]
+            unchanged = etag in offered or "*" in offered
+        else:
+            # Only consulted when there is no entity tag to compare — §13.1.3. An HTTP-date is
+            # always GMT (§5.6.7): a value that parses without a zone is not one, and treating
+            # it as local time would answer 304 for a date the client never meant.
+            unchanged = False
+            since = request.headers.get("if-modified-since")
+            if since is not None:
+                try:
+                    parsed = parsedate_to_datetime(since)
+                except (TypeError, ValueError):
+                    parsed = None
+                if parsed is not None and parsed.tzinfo is not None:
+                    unchanged = int(mtime) <= parsed.timestamp()
+        if unchanged:
+            return Response(status_code=304, headers=headers)
+        headers["Last-Modified"] = formatdate(mtime, usegmt=True)
+        return HTMLResponse(body, headers=headers)
+
     @app.get("/")
-    def index() -> FileResponse:
-        # With no Cache-Control, browsers apply heuristic caching to HTML and keep serving
-        # the old page after a redeploy — the user sees a version that no longer exists and
-        # reasonably concludes the change was never shipped. The whole app is this one
-        # file, so it must always be revalidated; there is nothing here worth caching and a
-        # stale shell silently disables every fix behind it.
-        return FileResponse(
-            os.path.join(STATIC_DIR, "index.html"),
-            headers={"Cache-Control": "no-cache, must-revalidate"},
-        )
+    def index(request: Request) -> Response:
+        return named_page("index.html", request)
 
     @app.get("/signed-out")
-    def signed_out() -> FileResponse:
+    def signed_out(request: Request) -> Response:
         # The proxy's -logout-url target, listed in oauthProxy.skipAuthRegex. It renders at
         # the exact moment the session cookie has just been cleared, so it reads no headers
         # and claims nothing about who signed out — anything it said would be
-        # caller-supplied. Same Cache-Control reasoning as index(): a stale cached copy
+        # caller-supplied. Same Cache-Control reasoning as named_page(): a stale cached copy
         # after a redeploy would misdescribe what logout actually does, and what it does
         # NOT do (end the reader's other cluster sessions) is its entire purpose.
-        return FileResponse(
-            os.path.join(STATIC_DIR, "signed-out.html"),
-            headers={"Cache-Control": "no-cache, must-revalidate"},
-        )
+        return named_page("signed-out.html", request)
+
+    # The /static mount below serves the whole directory, these two source files included, and
+    # a raw copy carries the placeholder where the name should be — measured by the review as a
+    # 200 at /static/index.html with __GSD_TITLE__ in it. Routes are matched in registration
+    # order, so these two, declared before the mount, shadow the raw files with the rendered
+    # pages. Moving the files out of the directory would be cleaner, but a dozen tests and
+    # doc anchors name gsd/static/index.html.
+    # Out of the schema like the docs-UI routes: they are the page, not the API.
+    @app.get("/static/index.html", include_in_schema=False)
+    def index_raw(request: Request) -> Response:
+        return named_page("index.html", request)
+
+    @app.get("/static/signed-out.html", include_in_schema=False)
+    def signed_out_raw(request: Request) -> Response:
+        return named_page("signed-out.html", request)
 
     if os.path.isdir(STATIC_DIR):
         app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

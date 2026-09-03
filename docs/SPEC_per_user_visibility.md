@@ -3562,7 +3562,7 @@ class TestVisibilityThreading:
 
 ### `local-development/gsd/static/index.html`
 
-**Anchor.** `<h1>OCP Access Control Dashboard<span id="scope-note"></span></h1>`
+**Anchor.** `<h1>__GSD_TITLE__<span id="scope-note"></span></h1>` (the placeholder is filled from `gsd.TITLE` by the `/` handler)
 
 **Purpose.** INSERT AFTER the anchor line: the header mount for the tier pill — present on every tab, hidden until the wire declares a tier. This is the element the render-guard test asserts exists-but-hidden when nothing is declared.
 

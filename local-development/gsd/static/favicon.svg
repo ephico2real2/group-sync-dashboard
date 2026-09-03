@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img"
-     aria-label="GroupSync dashboard">
+     aria-label="Dashboard icon">
   <!-- Three linked figures: a group, which is the unit this dashboard is about. Drawn in
        the overview tab's accent so the browser tab matches the page it opens.
        currentColor is not used — a favicon has no inherited colour — but the two tones are
