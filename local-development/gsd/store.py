@@ -1304,14 +1304,30 @@ class Store:
 
         `user_name` is the privacy scope — the user_activity() contract. Byte-exact,
         served by group_member_by_user (plan measured on the live database).
+
+        `full_name` rides along from ocp_user, the same LEFT JOIN group_members() makes and for
+        the same reason: the Users tab filters on it, and NULL is the ordinary result (3 of 10
+        members on the reference cluster have no User object), so the row keeps its bare id.
+        The join is 1:1 — ocp_user's key is (cluster_id, user_name) — so grouping on the
+        dependent column splits nothing; it is in the GROUP BY because an engine stricter than
+        SQLite would refuse a bare select of it. Ordering stays on the id: the 30% with no name
+        would otherwise scatter, and the id is what an operator matches against `oc`.
+
+        The privacy predicate stays on the base table, so at the narrowed tier the only ocp_user
+        row the join can reach is the viewer's own.
         """
-        sql = """SELECT user_name, COUNT(*) AS group_count, MIN(first_seen_at) AS first_seen_at
-                     FROM group_member WHERE cluster_id=?"""
+        sql = """SELECT m.user_name, COUNT(*) AS group_count, MIN(m.first_seen_at) AS first_seen_at,
+                        u.full_name
+                     FROM group_member m
+                     LEFT JOIN ocp_user u
+                            ON u.cluster_id = m.cluster_id
+                           AND u.user_name  = m.user_name
+                    WHERE m.cluster_id=?"""
         params: list = [cluster_id]
         if user_name:
-            sql += " AND user_name=?"
+            sql += " AND m.user_name=?"
             params.append(user_name)
-        sql += " GROUP BY user_name ORDER BY user_name LIMIT ?"
+        sql += " GROUP BY m.user_name, u.full_name ORDER BY m.user_name LIMIT ?"
         params.append(limit + 1)
         return self._rows(sql, params)
 

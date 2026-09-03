@@ -171,6 +171,8 @@ def test_self_reader_sees_only_their_own_user_row(tmp_path):
     assert body["scope"] == "self"
     assert [u["user_name"] for u in body["users"]] == [VIEWER]
     assert body["users"][0]["group_count"] == 3
+    # No User objects are seeded here, so the name is null — and present, not missing.
+    assert body["users"][0]["full_name"] is None
 
 
 def test_other_profile_is_refused_before_existence(tmp_path):

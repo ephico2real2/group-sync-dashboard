@@ -227,11 +227,17 @@ class TestTwoTiersPerEndpoint:
                           headers=H("root")).status_code == 200
 
     def test_users_list_is_own_row_only_at_self(self, client):
-        body = client.get("/api/clusters/c1/users", headers=H("alice")).json()
+        resp = client.get("/api/clusters/c1/users", headers=H("alice"))
+        body = resp.json()
         assert body["scope"] == "self"
         assert [u["user_name"] for u in body["users"]] == ["alice"]
+        # Your own display name comes with your row; nobody else's name is anywhere in the
+        # response — the join must not widen what the privacy predicate narrowed.
+        assert body["users"][0]["full_name"] == "Alice A"
+        assert "Bob B" not in resp.text
         wide = client.get("/api/clusters/c1/users", headers=H("root")).json()
         assert {u["user_name"] for u in wide["users"]} == {"alice", "bob"}
+        assert {u["full_name"] for u in wide["users"]} == {"Alice A", "Bob B"}
 
     def test_user_detail_is_own_profile_or_a_constant_403(self, client):
         assert client.get("/api/clusters/c1/users/alice",

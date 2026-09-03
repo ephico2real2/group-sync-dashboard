@@ -114,6 +114,8 @@ class TestReverseLookup:
         by_name = {u["user_name"]: u for u in store.users("crc")}
         assert by_name["alice"]["group_count"] == 2
         assert by_name["bob"]["group_count"] == 1
+        # Nobody has a User object here, so the name is present as a key and absent as a value.
+        assert by_name["alice"]["full_name"] is None and by_name["bob"]["full_name"] is None
 
     def test_membership_events_filter_by_user(self, store):
         sync(store, {"a": ["alice"], "b": ["bob"]}, T1)
