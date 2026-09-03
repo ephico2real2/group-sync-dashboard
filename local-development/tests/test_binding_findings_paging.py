@@ -171,7 +171,9 @@ def test_rows_say_who_the_group_reaches(client):
     by_name = {r["binding_name"]: r for tier in ("ok", "unmanaged", "dangling", "built_in") for r in body[tier]}
     assert (by_name["ok-50"]["member_count"], by_name["ok-50"]["logged_in_count"]) == (1, 1)
     assert (by_name["un-10"]["member_count"], by_name["un-10"]["logged_in_count"]) == (1, 0), "a manual account is not a login"
-    assert (by_name["ok-51"]["member_count"], by_name["ok-51"]["logged_in_count"]) == (1, 0), "no member rows yet: 0, not null"
+    # grp-51 exists (group_state says one member) but has no synced membership rows: both counts
+    # come from the rows, so 0 members, 0 logged in — not null, because the group object exists.
+    assert (by_name["ok-51"]["member_count"], by_name["ok-51"]["logged_in_count"]) == (0, 0)
     assert by_name["dang-0"]["member_count"] is None and by_name["dang-0"]["logged_in_count"] is None
     assert by_name["bi-0"]["member_count"] is None and by_name["bi-0"]["logged_in_count"] is None
     for tier in ("ok", "unmanaged"):

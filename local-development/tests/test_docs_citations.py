@@ -96,6 +96,7 @@ REVIEW_ARTIFACTS = (
     "REVIEW_route_exposure.md",
     "REVIEW_users_tab_logins.md",
     "REVIEW_access_granted_reach.md",
+    "REVIEW_second_pass_2026-09-04.md",
     # The log-level contract review. Same reason, plus a worked example of why the exemption is
     # right: it cites `README.md#Configuration`, a heading that does not exist — and the finding
     # attached to that citation was correct and was applied. Rewriting the citation would not make

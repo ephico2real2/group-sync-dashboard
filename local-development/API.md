@@ -428,10 +428,13 @@ including healthy ones — the caller filters.
 }
 ```
 
-Every row, in every tier, has the same shape. `member_count` is the named Group's own member count
+Every row, in every tier, has the same shape. `member_count` is the named group's synced members
 and `logged_in_count` is how many of those members have logged in — a User object with an identity,
-the Users tab's definition. Both are `null` when no Group object exists (`dangling`, `unresolved`,
-`built_in`), so `0` keeps its meaning: the group exists and grants nobody today.
+the Users tab's definition — both from the same membership rows, so their difference is exactly the
+members with no login. Both are `null` when no Group object exists (`dangling`, `unresolved`,
+`built_in`), so `0` keeps its meaning: the group exists and grants nobody today. `logged_in_count`
+is also `null` until the User objects have been read at least once (`/users` says `source: pending`
+then), rather than a confident zero.
 
 | Parameter | Default | |
 |---|---|---|
