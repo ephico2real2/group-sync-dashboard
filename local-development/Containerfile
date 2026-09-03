@@ -98,10 +98,18 @@ RUN dnf update -y \
 # --justdb touches the database only; the pack stage's own files are not what is being uninstalled.
 # --nodeps because python3-libs declares the libuuid dependency that the fallback makes optional.
 COPY --from=runner /usr/lib/sysimage/rpm /rpmdb
-# The shm/wal files are SQLite's, created whenever rpm opens the database; the last command
-# removes them so the copy that ships is the one file the base shipped, and nothing opens it after.
-RUN rpm --dbpath /rpmdb -e --justdb --nodeps libuuid python3-pip python-pip-wheel \
- && ! rpm --dbpath /rpmdb -q libuuid python3-pip python-pip-wheel >/dev/null 2>&1 \
+# Per package and conditional, because the base floats: the day Red Hat ships 3.14 without pip or
+# without libuuid, `rpm -e` of a package that is not installed is an error, and the build would
+# break for the wrong reason. Then a check that none of the three is left, and the shm/wal files —
+# SQLite's, created whenever rpm opens the database — removed LAST, after the final rpm command,
+# so the copy that ships is the one file the base shipped.
+RUN for p in libuuid python3-pip python-pip-wheel; do \
+      if rpm --dbpath /rpmdb -q "$p" >/dev/null 2>&1; then rpm --dbpath /rpmdb -e --justdb --nodeps "$p"; \
+      else echo "$p: not in the base, nothing to erase"; fi; \
+    done \
+ && for p in libuuid python3-pip python-pip-wheel; do \
+      if rpm --dbpath /rpmdb -q "$p" >/dev/null 2>&1; then echo "still recorded: $p" >&2; exit 1; fi; \
+    done \
  && echo "runtime rpm db: $(rpm --dbpath /rpmdb -qa | wc -l) packages after erase" \
  && rm -f /rpmdb/rpmdb.sqlite-shm /rpmdb/rpmdb.sqlite-wal
 
