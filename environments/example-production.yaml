@@ -3,10 +3,20 @@
 #   helm upgrade --install group-sync-dashboard charts/group-sync-dashboard \
 #     -n group-sync-dashboard -f environments/<cluster>.yaml
 
-# Usually omit this. The chart reads the cluster's apps domain and derives
-# group-sync-dashboard.apps.<cluster>.<domain>. Set it ONLY when the chart cannot look it up
-# — under ArgoCD or any GitOps tool, because `helm template` has no cluster connection.
+# Usually omit this. The default Route is named by the router as
+# group-sync-dashboard.apps.<cluster>.<domain> — no lookup, so it works under ArgoCD and any
+# other GitOps tool, which render with no cluster connection. Set host ONLY to pin the name,
+# e.g. for a second release in another namespace, which would otherwise be refused with
+# HostAlreadyClaimed.
+# route:
+#   host: group-sync-dashboard.apps.prod.example.com
+#
+# Plain Kubernetes has no Routes: turn the Route off, the Ingress on, and give it the host —
+# an Ingress needs it at render time.
+# route:
+#   enabled: false
 # ingress:
+#   enabled: true
 #   host: group-sync-dashboard.apps.prod.example.com
 
 oauthProxy:
@@ -28,5 +38,7 @@ config:
   unmanagedAudit:
     mode: "off"
 
+# On by default: the Argo sync-option annotations are inert outside Argo and protect the PVC
+# and the injected CA bundle inside it. Stated here so the intent is in git.
 argocd:
-  enabled: false
+  enabled: true

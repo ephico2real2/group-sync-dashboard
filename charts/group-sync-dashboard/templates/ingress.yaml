@@ -1,6 +1,12 @@
-# Ingress rather than a Route. On OpenShift the ingress-to-route controller
-# (openshift.io/ingress-to-route) converts this into a Route automatically, so one manifest
-# covers both OpenShift and plain Kubernetes.
+# The Ingress alternative (ingress.enabled, off by default; the Route in route.yaml is the
+# default). On OpenShift the ingress-to-route controller (openshift.io/ingress-to-route)
+# converts this into a Route automatically, so one manifest covers both OpenShift and plain
+# Kubernetes — which is what this is for.
+#
+# The cost of that portability is a host known at template time: a hostless Ingress produces
+# no Route at all, so gsd.externalHost either takes ingress.host or reads the cluster's apps
+# domain — and refuses to render when it can do neither, which is every GitOps renderer.
+# The Route has no such requirement, which is why it is the default.
 #
 # TLS termination is carried by an annotation because Ingress has no field for it. Verified
 # on this cluster: the generated Route came out `reencrypt/Redirect`.
@@ -18,7 +24,7 @@
 #
 # Pair it with an ignoreDifferences entry on /status in the Application; see the chart
 # README for why both, and which of the two was measured rather than inferred.
-{{- if .Values.ingress.enabled }}
+{{- if eq (include "gsd.exposure" .) "Ingress" }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -30,8 +36,8 @@ metadata:
     argocd.argoproj.io/sync-options: ServerSideApply=true
     {{- end }}
     # reencrypt whenever the proxy is on — it terminates TLS itself with the service-ca
-    # certificate, so the router must re-encrypt to it. See the gsd.routeTermination helper.
-    route.openshift.io/termination: {{ include "gsd.routeTermination" . | quote }}
+    # certificate, so the router must re-encrypt to it. See the gsd.termination helper.
+    route.openshift.io/termination: {{ include "gsd.termination" (dict "root" . "configured" .Values.ingress.termination) | quote }}
     {{- if .Values.ingress.insecureEdgeTerminationPolicy }}
     route.openshift.io/insecureEdgeTerminationPolicy: {{ .Values.ingress.insecureEdgeTerminationPolicy | quote }}
     {{- end }}

@@ -51,21 +51,50 @@ done
 # empty. Two of them matter, and both fail QUIETLY rather than loudly, which is why they are
 # resolved here instead of being left to the chart.
 
-# 1. The Ingress host. Without it the chart's own guard aborts the render (deliberately: a
-#    hostless Ingress produces no Route on OpenShift, so the release would install cleanly
-#    and be unreachable). Derive it the same way the chart does when it can.
-HOST=""
+# 1. The Ingress host — ONLY when the Ingress is turned on. The default Route needs no host:
+#    the router names it from spec.subdomain, so the chart does no lookup and the render needs
+#    no cluster at all — that default exists precisely for renderers like this one. With
+#    `--set ingress.enabled=true` the chart's own guard aborts a hostless render (deliberately:
+#    a hostless Ingress produces no Route on OpenShift, so the release would install cleanly
+#    and be unreachable), so derive the host the same way the chart does when it can.
+#
+#    <release>.<domain>, matching the chart's gsd.externalHost — NOT <release>-<namespace>,
+#    which is what this line used to derive and what the chart never emitted.
+#
+#    Only `--set` / `--set-string` assignments are inspected, parsed as Helm parses them: the
+#    option's value (attached with `=` or as the next argument), split on commas, each piece
+#    matched as a whole `key=value`. A bare substring match was the previous shape and the Codex
+#    review of #45 showed it firing on unrelated arguments that merely CONTAINED the text. A
+#    values file that turns the Ingress on must also carry its host; -f is not read here.
+INGRESS_ON=""; HOST=""
+inspect_assignments() {
+  # $1: a comma-separated list of key=value assignments from one --set/--set-string option.
+  local IFS=','; local pair
+  for pair in $1; do
+    case "$pair" in
+      ingress.enabled=true) INGRESS_ON="yes" ;;
+      ingress.host=?*)      HOST="already-set" ;;
+    esac
+  done
+}
+# The `${EXTRA[@]+...}` form is the bash-3.2-safe way to expand a possibly-empty array under
+# `set -u`, and macOS ships bash 3.2 at /bin/bash.
+pending=""
 for arg in "${EXTRA[@]+"${EXTRA[@]}"}"; do
-  case "$arg" in *ingress.host=*) HOST="already-set" ;; esac
+  if [ -n "$pending" ]; then inspect_assignments "$arg"; pending=""; continue; fi
+  case "$arg" in
+    --set|--set-string)     pending="yes" ;;
+    --set=*|--set-string=*) inspect_assignments "${arg#*=}" ;;
+  esac
 done
-if [ -z "$HOST" ]; then
+if [ -n "$INGRESS_ON" ] && [ -z "$HOST" ]; then
   DOMAIN=$(oc get ingresses.config/cluster -o jsonpath='{.spec.domain}' 2>/dev/null || true)
   if [ -z "$DOMAIN" ]; then
-    echo "ERROR: could not read the cluster apps domain, and no ingress.host was given." >&2
+    echo "ERROR: ingress.enabled=true, but the cluster apps domain could not be read and no ingress.host was given." >&2
     echo "  Either log in to a cluster, or pass:  --set ingress.host=<host>" >&2
     exit 1
   fi
-  EXTRA+=(--set "ingress.host=${RELEASE}-${NAMESPACE}.${DOMAIN}")
+  EXTRA+=(--set "ingress.host=${RELEASE}.${DOMAIN}")
 fi
 
 # 2. The oauth-proxy cookie secret. THIS IS THE ONE THAT BITES.

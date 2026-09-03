@@ -69,29 +69,64 @@ fails with ImagePullBackOff naming a tag nobody ever pushed.
 {{- end -}}
 
 {{/*
-Route TLS. The proxy terminates TLS itself using the service-ca certificate, so the router
-must RE-ENCRYPT to it. Leaving this as edge sends plaintext to a port that only speaks TLS
-and the Route silently fails.
+TLS termination. The proxy terminates TLS itself using the service-ca certificate, so the
+router must RE-ENCRYPT to it. Leaving this as edge sends plaintext to a port that only speaks
+TLS and the Route silently fails.
 
 Kept here rather than inline so the rule lives in one place: it is the kind of coupling that
-gets forgotten when someone later adds another ingress path.
+gets forgotten when someone later adds another exposure path — which is exactly what happened
+when the Route joined the Ingress, so the helper now takes the caller's configured value:
+  (dict "root" . "configured" .Values.route.termination)     from route.yaml
+  (dict "root" . "configured" .Values.ingress.termination)   from ingress.yaml
 */}}
-{{- define "gsd.routeTermination" -}}
-{{- if .Values.oauthProxy.enabled -}}
+{{- define "gsd.termination" -}}
+{{- if .root.Values.oauthProxy.enabled -}}
 reencrypt
 {{- else -}}
-{{ .Values.ingress.termination }}
+{{ .configured }}
 {{- end -}}
 {{- end -}}
 
 {{/*
-The externally reachable URL. Required when the OAuth proxy is on, because the
-ServiceAccount must advertise a literal callback URL.
+What exposes the dashboard: "Route", "Ingress" or "" (neither). Two flags in values,
+route.enabled and ingress.enabled, validated HERE and in one place so that every template
+that branches on them sees the same answer.
 
-It cannot be derived: OpenShift's ingress-to-route controller names the generated Route
+Both on fails the render. They would derive the same hostname — <fullname>.<apps domain>,
+the Route from spec.subdomain and the Ingress from the cluster lookup — and the second to be
+admitted is refused with HostAlreadyClaimed. That is a failure the operator would meet on
+the cluster, after a green install; better to meet it at render time with its cause named.
+*/}}
+{{- define "gsd.exposure" -}}
+{{- if and .Values.route.enabled .Values.ingress.enabled -}}
+{{- fail "route.enabled and ingress.enabled are both true. This chart exposes the Service through exactly one object, as a policy: with default hosts both would derive the same hostname and the router admits one claim per host and path, leaving the other refused in its status after an install that reported success; with two different explicit hosts you would have two front doors to keep in step. Choose one: route.enabled=true is the OpenShift default and needs no host at render time; ingress.enabled=true is for plain Kubernetes and needs ingress.host." -}}
+{{- else if .Values.route.enabled -}}
+Route
+{{- else if .Values.ingress.enabled -}}
+Ingress
+{{- end -}}
+{{- end -}}
+
+{{/*
+The Route's effective host. An explicit route.host wins; an ingress.host set in an older
+values file is honoured next, so an upgrade onto the Route default never silently moves a URL
+somebody pinned; empty means "let the router name it from spec.subdomain".
+*/}}
+{{- define "gsd.routeHost" -}}
+{{- .Values.route.host | default .Values.ingress.host -}}
+{{- end -}}
+
+{{/*
+The externally reachable host, WHEN THE ROUTE IS OFF. The Ingress needs it because a hostless
+Ingress produces no Route on OpenShift, and with the OAuth proxy on the ServiceAccount must
+advertise a literal callback URL: the ingress-to-route controller names the generated Route
 `<ingress-name>-<random>` (observed: probe-ingress-7669p), so the redirectREFERENCE form —
-which points at a Route by name — cannot be used with an Ingress. Hence redirectURI, hence
-a host that must be stated.
+which points at a Route by name — cannot be used with an Ingress. Hence redirectURI, hence a
+host that must be known here.
+
+The default Route path never calls this. It emits spec.subdomain and lets the router name the
+host, and the ServiceAccount references the Route by name, so nothing on that path needs the
+host at template time. That is why the chart renders under ArgoCD — see route.yaml.
 */}}
 {{- define "gsd.externalHost" -}}
 {{- if .Values.ingress.host -}}
@@ -118,8 +153,9 @@ namespace are both `group-sync-dashboard`, so the generated host said the same w
 group-sync-dashboard-group-sync-dashboard.apps.example.com.
 
 THE TRADE, stated because it is real: two releases in DIFFERENT namespaces now derive the
-SAME host, and the second Route is rejected with HostAlreadyClaimed. That is a loud, legible
-failure at install time rather than a silent one, and the fix is one flag — set
+SAME host, and the second Route is refused with HostAlreadyClaimed. That is legible — it is
+written into the refused Route's status — but it is NOT a Helm failure: the object is accepted
+by the API and the install reports success, so check `oc get route`. The fix is one flag — set
 `ingress.host` explicitly on the second. Worth it for a URL a human can type and read out in
 a meeting.
 */ -}}
@@ -127,7 +163,7 @@ a meeting.
 {{- if and $cfg $cfg.spec.domain -}}
 {{ printf "%s.%s" (include "gsd.fullname" .) $cfg.spec.domain }}
 {{- else -}}
-{{- fail "ingress.host is not set and the cluster apps domain could not be read.\n\nThe domain is normally auto-detected, so a plain `helm install`/`helm upgrade` needs no flag. It cannot be detected in three cases, and one of them is probably yours:\n\n  1. GitOps. ArgoCD, Flux and anything else built on `helm template` render with NO cluster connection, so the lookup returns nothing. Set ingress.host in your Application values.\n  2. `helm template` or `--dry-run` run by hand. Use `--dry-run=server`, or pass the host.\n  3. The installing identity cannot read ingresses.config/cluster. It is cluster-scoped and NOT readable by an ordinary user, so a namespace-scoped installer must be given the host.\n\nSet it with:\n  --set ingress.host=group-sync-dashboard.$(oc get ingresses.config/cluster -o jsonpath='{.spec.domain}')\n\nThis fails the render on purpose. An Ingress without a host produces NO Route on OpenShift, so the alternative is a release that installs cleanly, reports healthy, and is unreachable." -}}
+{{- fail "ingress.host is not set and the cluster apps domain could not be read.\n\nThe domain is normally auto-detected, so a plain `helm install`/`helm upgrade` needs no flag. It cannot be detected in three cases, and one of them is probably yours:\n\n  1. GitOps. ArgoCD, Flux and anything else built on `helm template` render with NO cluster connection, so the lookup returns nothing. You have turned the default Route off (route.enabled=false) and the Ingress on; a Route needs no host at render time because the cluster names it, so either turn it back on or set ingress.host.\n  2. `helm template` or `--dry-run` run by hand. Use `--dry-run=server`, or pass the host.\n  3. The installing identity cannot read ingresses.config/cluster. It is cluster-scoped and NOT readable by an ordinary user, so a namespace-scoped installer must be given the host.\n\nSet it with:\n  --set ingress.host=group-sync-dashboard.$(oc get ingresses.config/cluster -o jsonpath='{.spec.domain}')\nor use the default Route, which needs no host at all:\n  --set route.enabled=true --set ingress.enabled=false\n\nThis fails the render on purpose. An Ingress without a host produces NO Route on OpenShift, so the alternative is a release that installs cleanly, reports healthy, and is unreachable." -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}

@@ -68,7 +68,31 @@ type: application
 # or default changes; a consumer who upgrades gets the new app and byte-identical Kubernetes
 # objects otherwise.
 # 0.7.1, PATCH: appVersion moves to 0.8.1 (below); no template or default changes.
-version: 0.7.1
+# CHART 0.8.0 (2026-09-03; the application 0.8.0 paragraph below is a coincidence of numbering),
+# MINOR because it changes what a default upgrade DEPLOYS. The dashboard is now exposed by an
+# OpenShift Route the chart owns (`route.enabled`, default true) instead of an Ingress the
+# ingress-to-route controller converted (`ingress.enabled`, now default false). On upgrade Helm
+# deletes the Ingress — and with it the Route the controller generated — and creates the chart's
+# Route, named like the Service, with the SAME hostname: <fullname>.<apps domain>, requested via
+# spec.subdomain so the namespace is never appended. The ServiceAccount's OAuth callback moves
+# from a literal URL to a reference to that Route by name. Sessions, data and RBAC are untouched.
+#
+# Why: the Ingress path needs the host at render time and reads the cluster's apps domain to get
+# it, which ArgoCD, Flux and every other `helm template` renderer cannot do — the render was
+# refused on every GitOps cluster. The Route needs no host at render time because the router
+# names it, so the default now works everywhere with no per-cluster value. A deliberately set
+# host (route.host, or an ingress.host carried over from an older values file) is used as given.
+#
+# Also in 0.8.0: `argocd.enabled` defaults to true. It adds `argocd.argoproj.io/sync-options`
+# annotations and nothing else (measured by diffing the render with it on and off), which
+# Kubernetes ignores outside Argo and which protect the PVC and the injected CA under it — so
+# an Application now needs no chart value at all.
+#
+# Measured on CRC 4.18.2: the upgrade of the reference release from 0.7.1, the resulting Route's
+# admission and host, and the OAuth server accepting the reference-resolved callback while
+# refusing a foreign one. The Ingress path is unchanged for those who turn it back on; its render
+# is byte-identical to 0.7.1 apart from the chart-version label.
+version: 0.8.0
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,

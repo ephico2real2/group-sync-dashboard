@@ -158,11 +158,15 @@ is a release that installs cleanly, reports healthy, and is unreachable. The err
 three cases it happens in (GitOps, `helm template` by hand, and an installer that cannot read the
 cluster-scoped ingress config).
 
-Two ways forward:
+You only see it when the Ingress is turned on (`ingress.enabled=true`, off by default). The
+default Route needs no host at render time — the router names it — so a plain
+`helm template gsd ./charts/group-sync-dashboard` renders with no cluster and no flag, which is
+what ArgoCD and every other GitOps tool do. With the Ingress on, two ways forward:
 
 ```sh
 # Render offline, supplying the host yourself
-helm template gsd ./charts/group-sync-dashboard --set ingress.host=gsd.apps.example.com
+helm template gsd ./charts/group-sync-dashboard --set route.enabled=false --set ingress.enabled=true \
+  --set ingress.host=gsd.apps.example.com
 
 # Or render against the live cluster, so the lookup succeeds and you need no flag
 helm upgrade --install group-sync-dashboard ./charts/group-sync-dashboard \

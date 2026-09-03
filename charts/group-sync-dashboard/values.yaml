@@ -496,8 +496,12 @@ clusters:
 # ---------------------------------------------------------------------------
 # ArgoCD / GitOps
 # ---------------------------------------------------------------------------
-# Adds Argo-specific annotations. Off by default because they are inert noise when you are
-# not running GitOps, and misleading metadata is worse than none.
+# Adds Argo-specific annotations. ON by default since chart 0.8.0. They are
+# `argocd.argoproj.io/sync-options` annotations and nothing else — measured by diffing the
+# render with the flag on and off — so outside Argo they are metadata Kubernetes ignores, and
+# a plain `helm install` is unaffected. Inside Argo they are the difference between a release
+# that keeps its data and one that does not (below), and the failure mode of forgetting them
+# is silent until a prune. Turn them off only if the annotations themselves are unwelcome.
 #
 # Two distinct problems, both of which cost you data or sleep if unhandled:
 #
@@ -512,7 +516,7 @@ clusters:
 #    OutOfSync permanently, and with self-heal on will WIPE the CA bundle the pod depends
 #    on — turning every external cluster unreachable on a sync.
 argocd:
-  enabled: false
+  enabled: true
 
   # Prune=false     — not removed when it leaves the source
   # Delete=false    — not removed when the Application itself is deleted (cascade)
@@ -851,18 +855,84 @@ service:
   type: ClusterIP
   port: 8080
 
-# Ingress, not Route. On OpenShift the ingress-to-route controller converts this into a
-# Route automatically (ingressClassName: openshift-default), so one manifest serves both
-# OpenShift and plain Kubernetes.
+# WHAT EXPOSES THE DASHBOARD: a Route (the default), an Ingress, or neither. Two flags,
+# because they are two different objects with two different requirements, and the difference
+# is exactly WHEN the hostname has to be known.
+#
+#   route.enabled    (default true)  an OpenShift Route the chart owns, named like the
+#                    Service. Needs NO host at render time: it emits spec.subdomain=<fullname>
+#                    and the ROUTER composes <fullname>.<apps domain> — the release name,
+#                    never the namespace — and reports it in status. The ServiceAccount's
+#                    OAuth callback references the Route by name. Renders anywhere, including
+#                    ArgoCD, Flux and a plain `helm template`, with no cluster connection and
+#                    no per-cluster value.
+#
+#   ingress.enabled  (default false) an Ingress the ingress-to-route controller converts into
+#                    a Route. Portable to plain Kubernetes. Needs a host AT RENDER TIME — a
+#                    hostless Ingress yields no Route at all — so it takes ingress.host or
+#                    reads the cluster's apps domain with `lookup`, and REFUSES TO RENDER when
+#                    it can do neither, which is every GitOps renderer.
+#
+# Both enabled fails the render, as a policy: one front door. With default hosts both would
+# derive the same hostname and the router admits one claim per host and path, so the second
+# would sit refused in its status after an install that reported success; with two different
+# explicit hosts you would have two doors to keep in step. Neither enabled is allowed — bring
+# your own exposure — but with the proxy on the ServiceAccount still needs a literal callback
+# URL, so ingress.host must then be set or derivable.
 #
 # WARNING: with oauthProxy.enabled=false there is NO authentication and the dashboard
 # exposes group membership. Do not expose it on a shared cluster that way.
-ingress:
+route:
   enabled: true
+  # LEAVE EMPTY to let the router name it <fullname>.<apps domain>:
+  #
+  #   group-sync-dashboard.apps-crc.testing
+  #
+  # <fullname>, NOT <fullname>-<namespace>. OpenShift's own auto-generation for a hostless
+  # Route appends the namespace so that two namespaces cannot claim one hostname. Here the
+  # usual install is one dashboard per cluster with release and namespace both
+  # `group-sync-dashboard`, so that produced a URL that said the same word twice.
+  # spec.subdomain is how the chart asks the router for the short form without knowing the
+  # domain. Measured on OpenShift 4.18.2: with subdomain set, spec.host stays EMPTY and the
+  # host appears only in status — so there is no server-written spec field for ArgoCD to
+  # report as drift, which a hostless Route would have (its spec.host is filled on create).
+  # subdomain needs a router that honours it — OpenShift 4.11 and later; the Route API says an
+  # older server populates spec.host itself instead, which works but reintroduces that drift.
+  #
+  # The trade: a second release in ANOTHER namespace requests the same subdomain and is
+  # refused with HostAlreadyClaimed. That is written into the refused Route's status, NOT
+  # reported by Helm — the install still says success — so check `oc get route`. The fix is
+  # to set this on one of them.
+  #
+  # SET IT to pin the hostname exactly. The Route then carries spec.host, and the router admits
+  # it as given provided it is valid and unclaimed; the OAuth callback still resolves through
+  # the Route, so nothing else needs to change.
+  #
+  # An `ingress.host` left over from an older values file is honoured here too, so an upgrade
+  # never silently moves a URL somebody pinned. THE EDGE OF THAT: the chart cannot tell a host
+  # that was pinned on purpose from one that was set only because the Ingress demanded one —
+  # a plain-Kubernetes values file, say — and the latter, carried onto an OpenShift Route, is a
+  # hostname the router does not own. So the fallback is not silent: NOTES says where the host
+  # came from and what to do (move it here, or clear it). Both reviewers of #45 named this edge.
+  host: ""
+  annotations: {}
+  # Real Route fields, unlike the Ingress where they ride as annotations. termination is
+  # overridden to reencrypt automatically whenever the proxy is enabled: the proxy terminates
+  # TLS itself with the service-ca certificate, so the router must re-encrypt to it.
+  termination: edge
+  insecureEdgeTerminationPolicy: Redirect
+
+# The Ingress alternative. On OpenShift the ingress-to-route controller converts it into a
+# Route automatically (ingressClassName: openshift-default). On plain Kubernetes it is the
+# only option: set route.enabled=false and this to true.
+ingress:
+  enabled: false
   className: openshift-default
   # LEAVE EMPTY. It is auto-detected as <fullname>.<cluster apps domain>, reading the domain
-  # from the cluster's own ingresses.config/cluster object, so a default install needs no
-  # flag and no knowledge of the cluster:
+  # from the cluster's own ingresses.config/cluster object, so a plain `helm install` needs no
+  # flag and no knowledge of the cluster. NOTE that with the Ingress off and the Route on, a
+  # value here is still read — by the Route, as its pinned host (see route.host above) — so do
+  # not leave a plain-Kubernetes hostname behind when moving a values file to OpenShift:
   #
   #   group-sync-dashboard.apps-crc.testing
   #
@@ -873,8 +943,8 @@ ingress:
   # human can type, and read out in a review meeting, is worth more.
   #
   # The trade, because it is real: two releases in DIFFERENT namespaces derive the SAME host
-  # and the second Route is rejected with HostAlreadyClaimed. That fails loudly at install
-  # time, and the fix is to set this explicitly on the second one.
+  # and the second Route is refused with HostAlreadyClaimed — in its status, not as a Helm
+  # error — and the fix is to set this explicitly on the second one.
   #
   # It cannot simply be omitted: a Route auto-generates its host, but an Ingress does not,
   # and OpenShift's ingress-to-route controller silently creates NO Route for a hostless
@@ -1082,16 +1152,22 @@ oauthProxy:
     requests: {cpu: 10m, memory: 64Mi}
     limits: {cpu: 200m, memory: 256Mi}
 
-  # There is deliberately NO `redirectMode` setting. The ServiceAccount always advertises a
-  # literal redirectURI, because the alternative — redirectREFERENCE — points at a Route by
-  # NAME, and OpenShift's ingress-to-route controller generates that name with a random
-  # suffix (observed: probe-ingress-7669p), so it cannot be known at template time. This
-  # chart ships an Ingress, so the reference form is not available to it at all. See the
-  # gsd.externalHost helper, which is why ingress.host must be set or derivable.
+  # There is deliberately NO `redirectMode` setting; the redirect form FOLLOWS what exposes
+  # the dashboard, because only one form is correct for each and a separate knob could only
+  # pick the wrong one:
+  #
+  #   route.enabled   -> a redirectREFERENCE naming the chart's own Route, resolved by
+  #                      OpenShift at login time against the host the Route reports. No host
+  #                      is needed at template time.
+  #   otherwise       -> a literal redirectURI. The reference form points at a Route by NAME,
+  #                      and the ingress-to-route controller generates that name with a random
+  #                      suffix (observed: probe-ingress-7669p), so it cannot be known at
+  #                      template time. Hence ingress.host must be set or derivable — see the
+  #                      gsd.externalHost helper.
   #
   # A `redirectMode: redirectreference` key used to sit here. It was read by nothing, and
-  # its default named the one mode the chart CANNOT use — so it documented the opposite of
-  # the behaviour, in a place an operator would reasonably believe.
+  # its default named the one mode the chart could not use at the time — so it documented the
+  # opposite of the behaviour, in a place an operator would reasonably believe.
 
 # ---------------------------------------------------------------------------
 # Per-user visibility

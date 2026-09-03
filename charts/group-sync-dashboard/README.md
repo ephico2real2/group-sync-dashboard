@@ -15,9 +15,9 @@ group membership, so it ships authenticated and you turn the proxy *off* deliber
 
 ## Prerequisites
 
-* OpenShift 4.x — the chart uses `Route`-via-`Ingress`, `service-ca` and the OAuth proxy.
-  On plain Kubernetes, set `oauthProxy.enabled=false`, `trustedCA.injected.enabled=false`
-  and supply `ingress.host` and `ingress.className` yourself.
+* OpenShift 4.x — the chart uses a `Route`, `service-ca` and the OAuth proxy. On plain
+  Kubernetes, set `route.enabled=false`, `ingress.enabled=true`, `oauthProxy.enabled=false`,
+  `trustedCA.injected.enabled=false` and supply `ingress.host` and `ingress.className` yourself.
 * A default StorageClass, or set `persistence.storageClass` / `persistence.existingClaim`.
 * Cluster admin **once**, to create the ClusterRole. The dashboard needs no admin at runtime.
 * The Prometheus Operator CRDs, only if you enable `monitoring.*`.
@@ -224,8 +224,13 @@ Grant the wide view through your normal RBAC process, never a chart value:
 
 | Key | Default | Notes |
 |---|---|---|
-| `ingress.enabled` | `true` | on OpenShift, `ingress-to-route` converts it |
-| `ingress.host` | derived | `<fullname>-<namespace>.<cluster apps domain>`. A **hostless Ingress produces no Route at all**, so this is always emitted |
+| `route.enabled` | `true` | an OpenShift Route the chart owns, named like the Service. **Needs no host at render time**: the router names it from `spec.subdomain` and reports it in `status`, so it renders under ArgoCD, Flux and plain `helm template` with no cluster and no per-cluster value — see [Deploying with ArgoCD](#deploying-with-argocd). Both flags on fails the render, as a policy: one front door |
+| `route.host` | derived | `<fullname>.<cluster apps domain>` — the release name, **never the namespace**. Set it only to pin the name, e.g. for a second release in another namespace, which would otherwise be refused with `HostAlreadyClaimed`. An `ingress.host` carried over from an older values file is honoured too, so an upgrade never moves a pinned URL |
+| `route.termination` | `edge` | `spec.tls.termination`. Forced to `reencrypt` when the proxy is on |
+| `route.insecureEdgeTerminationPolicy` | `Redirect` | `spec.tls.insecureEdgeTerminationPolicy`. Omitted when empty |
+| `route.annotations` | `{}` | |
+| `ingress.enabled` | `false` | the alternative for plain Kubernetes; on OpenShift `ingress-to-route` converts it. **Needs the host at render time** (a hostless Ingress produces no Route at all), so with `ingress.host` empty it reads the cluster's apps domain and refuses to render with no cluster — which is every GitOps renderer, and why it is no longer the default |
+| `ingress.host` | derived | `<fullname>.<cluster apps domain>` by `lookup` of `ingresses.config/cluster`. Required under `helm template` |
 | `ingress.className` | `openshift-default` | |
 | `ingress.termination` | `edge` | carried as `route.openshift.io/termination`, since Ingress has no field for it. Forced to `reencrypt` when the proxy is on |
 | `ingress.insecureEdgeTerminationPolicy` | `Redirect` | carried as `route.openshift.io/insecureEdgeTerminationPolicy`. Omitted from the Ingress when empty |
@@ -237,7 +242,7 @@ Grant the wide view through your normal RBAC process, never a chart value:
 
 | Key | Default | Notes |
 |---|---|---|
-| `serviceAccount.create` / `.name` / `.annotations` | `true` / derived / `{}` | with the proxy on, the SA also carries the `oauth-redirecturi` annotation that makes it an OAuth client — no `OAuthClient` object to register |
+| `serviceAccount.create` / `.name` / `.annotations` | `true` / derived / `{}` | with the proxy on, the SA also carries the annotation that makes it an OAuth client — no `OAuthClient` object to register. `oauth-redirectreference` (the chart's Route, by name, resolved at login time) with the default Route; `oauth-redirecturi` (a literal callback URL) otherwise |
 | `rbac.create` | `true` | ClusterRole + binding, read-only, no `watch` |
 | `rbac.bindings` | `true` | adds `get`/`list` on rolebindings/clusterrolebindings, powering the Access-granted, RBAC-policy and Namespace-audit views. Disable and the dashboard degrades to group data only |
 | `authLogLevel.manage` | `false` | lets this chart own `spec.logLevel` on the authentication **operator** CR (`authentications.operator.openshift.io/cluster`) — not the OAuth CR, and not `operatorLogLevel`. Off by default — turning it on is what transfers ownership |
@@ -395,7 +400,7 @@ there when the PVC dies.
 
 | Key | Default | Notes |
 |---|---|---|
-| `argocd.enabled` | `false` | adds Argo-specific annotations. Inert noise when you are not running GitOps, and misleading metadata is worse than none |
+| `argocd.enabled` | `true` | adds the `argocd.argoproj.io/sync-options` annotations below, and nothing else — measured. Kubernetes ignores them without Argo, so a plain `helm install` is unaffected; under Argo, forgetting them costs the PVC on the first prune. Off only if you object to the metadata |
 | `argocd.preservePVC` | `true` | three sync-options on the PVC — see [Deploying with ArgoCD](#deploying-with-argocd) |
 | `argocd.serverSideApplyInjectedCA` | `true` | lets the CA operator keep ownership of the `data` it writes. **Not sufficient alone** — the Application also needs an `ignoreDifferences` entry |
 
@@ -667,32 +672,59 @@ cycle means starvation, flat means the checkpoint is merely lagging a burst.
 
 ## Deploying with ArgoCD
 
-**Set `ingress.host` explicitly. This is not optional under GitOps.**
+**Nothing to set for the host.** The default Route needs no per-cluster value.
 
-Everywhere else the host is auto-detected from the cluster's own `ingresses.config/cluster`
-object, so a plain `helm install` needs no flag. ArgoCD renders with `helm template`, which
-runs with **no cluster connection**, so the `lookup` returns nothing. The chart refuses to
-render rather than emit a hostless Ingress — which on OpenShift produces no Route at all,
-leaving a release that syncs green and is unreachable.
+Chart versions before 0.8.0 exposed the dashboard through an Ingress, and under Argo the sync
+failed at render time with `ingress.host is not set and the cluster apps domain could not be
+read`. The reason was structural, not a bug to wait out: an Ingress must carry a host — a
+hostless Ingress produces no Route on OpenShift — so with `ingress.host` empty the chart read the
+cluster's apps domain with Helm's `lookup`. A plain `helm install` has a cluster and that works.
+ArgoCD's repo-server renders with `helm template` and **no cluster connection**, so the lookup
+returned nothing, every time, on every cluster. Argo does not support `lookup` at all
+([argo-cd#5202](https://github.com/argoproj/argo-cd/issues/5202)).
 
-```yaml
-# Application.spec.source.helm
-parameters:
-  - name: ingress.host
-    value: group-sync-dashboard.apps.<your-cluster-domain>
-```
+The Route moves host generation onto the cluster, where the information actually is:
 
-Get the domain once with:
+| | `route.enabled` (default) | `ingress.enabled` |
+|---|---|---|
+| host known at | admission: the router composes `<fullname>.<apps domain>` from `spec.subdomain` and reports it in `status.ingress[].host` | render time (`ingress.host` or `lookup`) |
+| under `helm template` | renders | refuses to render without a host |
+| OAuth callback on the SA | `oauth-redirectreference`, the Route by name, resolved at login | `oauth-redirecturi`, a literal URL |
+| URL on CRC | `group-sync-dashboard.apps-crc.testing` | `group-sync-dashboard.apps-crc.testing` — the same |
+| `spec` fields the server fills in | none — `spec.host` stays empty, measured on 4.18.2, so there is nothing for Argo to diff | none |
 
-```bash
-oc get ingresses.config/cluster -o jsonpath='{.spec.domain}'
-```
+`spec.subdomain` rather than an empty `spec.host`, deliberately. Both let the cluster pick the
+name, but a hostless Route gets `spec.host` **written by the API server** on create, as
+`<name>-<namespace>.<domain>` — the namespace appended, and a field in the live object that git
+does not carry, so Argo reports the Route OutOfSync until an `ignoreDifferences` on `/spec/host`
+is added ([argo-cd#20305](https://github.com/argoproj/argo-cd/issues/20305) is exactly that
+report). With `subdomain`, `spec.host` stays empty on create and on re-apply, and the host lives
+only in `status`. Two caveats from the Route API: an ingress controller may ignore the suggested
+subdomain and report what it assigned, and a server that does not support `subdomain` (before
+OpenShift 4.11) populates `spec.host` itself, which works but brings that drift back. Login is
+unaffected either way, because the redirect reference resolves against the host in `status`.
 
-The same applies to Flux, `helm template` by hand, and any installer whose identity cannot
-read `ingresses.config/cluster` — it is cluster-scoped and an ordinary user cannot read it.
+`route.host` pins the name when you need to — a second release in another namespace, which
+would otherwise be refused with `HostAlreadyClaimed` in its status (Helm still reports success,
+so check `oc get route`). It is never *required*.
 
-Then set `argocd.enabled=true`. It adds annotations for two problems that each cost you
-something real if unhandled.
+Upgrading from the Ingress default does not trip that refusal: the controller-generated Route
+carries path `/` and the chart's Route carries none, and the router's uniqueness check is per
+host *and* path, so both are admitted for the moment they coexist and the old one goes with its
+Ingress. Measured on CRC: same hostname before and after, no refusal recorded.
+
+Verified end to end on CRC 4.18.2 with a release applied from plain `helm template` output,
+which is ArgoCD's render: the Route was admitted with `spec.host` empty, the proxy's
+`/oauth/start` redirected to the OAuth server with the router-assigned host as `redirect_uri`,
+the OAuth server served its login page for that request, and the same request with a foreign
+`redirect_uri` was refused with `400 invalid_request`.
+
+The full reasoning, the platform precedent (Red Hat's own Jenkins template uses the same
+reference form) and every source are in
+[`docs/DESIGN_route_exposure.md`](../../docs/DESIGN_route_exposure.md).
+
+`argocd.enabled` is on by default (since 0.8.0). It adds annotations for two problems that
+each cost you something real if unhandled.
 
 **The PVC gets pruned.** Argo reconciles manifests; it does not run Helm's uninstall path,
 so `helm.sh/resource-policy: keep` does not protect it. A prune, or deleting the
@@ -741,10 +773,11 @@ spec:
     path: charts/group-sync-dashboard
     helm:
       values: |
-        # REQUIRED under GitOps. Argo renders with `helm template`, which has no cluster
-        # connection, so the chart cannot auto-detect the apps domain and refuses to render.
-        ingress:
-          host: group-sync-dashboard.apps.<your-cluster-domain>
+        # Nothing here is specific to one cluster, and nothing Argo needs is missing: the
+        # default Route needs no host at render time — the router names it
+        # <fullname>.<apps domain> and the ServiceAccount references the Route by name —
+        # and the Argo sync-option annotations are on by default. Both values below are
+        # already the chart's defaults; they are stated so that the intent is in git.
         argocd:
           enabled: true
         oauthProxy:
@@ -788,12 +821,24 @@ spec:
         - /secrets
         - /imagePullSecrets
         - /metadata/annotations/openshift.io~1internal-registry-pull-secret-ref
-    # The ingress-to-route controller writes status.loadBalancer once a Route exists.
-    - group: networking.k8s.io
-      kind: Ingress
+    # The router writes status.ingress — the assigned host, the admitting router, and a
+    # lastTransitionTime that moves — once it admits the Route. None of it is in git, and
+    # Routes are an aggregated API rather than a CRD, so Argo's default status-ignore for
+    # CRDs does not cover them (argo-cd#2370 is this exact drift). Nothing in SPEC is
+    # server-populated (see above), so this is the only entry the Route needs.
+    - group: route.openshift.io
+      kind: Route
       name: group-sync-dashboard
       jsonPointers:
         - /status
+    # With the Ingress instead (route.enabled=false, ingress.enabled=true), replace the Route
+    # entry with this one: the ingress-to-route controller writes status.loadBalancer once a
+    # Route exists.
+    # - group: networking.k8s.io
+    #   kind: Ingress
+    #   name: group-sync-dashboard
+    #   jsonPointers:
+    #     - /status
 ```
 
 **Both mechanisms, deliberately.** `ServerSideApply=true` on the objects addresses the
