@@ -110,7 +110,12 @@ def _seed(db_path: str) -> None:
         "c1", {"g-adm": ["alice"], "g-dev": ["bob"], "gate": ["alice"]},
         {}, _iso(now - timedelta(minutes=4)),
     )
-    store.replace_users("c1", {"alice": "Alice A", "bob": "Bob B"}, _iso(now))
+    store.replace_users("c1", [
+        {"user_name": "alice", "full_name": "Alice A", "created_at": _iso(now - timedelta(days=9)),
+         "providers": ["ldap-local"], "has_identity": True},
+        {"user_name": "bob", "full_name": "Bob B", "created_at": _iso(now - timedelta(days=3)),
+         "providers": ["ldap-local"], "has_identity": True},
+    ], _iso(now))
     store.set_cluster_access_group("c1", GATE_DN, "config", "gate", _iso(now))
 
     # One managed group that vanished + a binding still naming it -> a `dangling` finding

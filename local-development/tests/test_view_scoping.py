@@ -72,6 +72,13 @@ def _seed(db: str) -> None:
         ("team-a", "team-b", "secret-group", "lonely-group", "gate-group")}, now)
     store.set_cluster_access_group(
         "c1", "cn=gate,ou=groups,dc=example,dc=com", "discovered", "gate-group", now)
+    # The User objects: both people have logged in, neither provider supplied a name. Since the
+    # Users tab is sourced from these (docs/DESIGN_users_tab_logins.md) a row exists only for a
+    # User, so the self-tier user tests need the viewer to have one.
+    store.replace_users("c1", [
+        {"user_name": VIEWER, "full_name": None, "created_at": now, "providers": ["corp-ldap"], "has_identity": True},
+        {"user_name": OTHER, "full_name": None, "created_at": now, "providers": ["corp-ldap"], "has_identity": True},
+    ], now)
     store.replace_user_bindings("c1", [
         {"binding_kind": "RoleBinding", "binding_namespace": "dev", "binding_name": "rb1",
          "role_kind": "ClusterRole", "role_name": "edit", "user_name": VIEWER,
@@ -171,8 +178,11 @@ def test_self_reader_sees_only_their_own_user_row(tmp_path):
     assert body["scope"] == "self"
     assert [u["user_name"] for u in body["users"]] == [VIEWER]
     assert body["users"][0]["group_count"] == 3
-    # No User objects are seeded here, so the name is null — and present, not missing.
+    # The viewer's User has no name from its provider, so the name is null — and present, not missing.
     assert body["users"][0]["full_name"] is None
+    # The other source of the tab is scoped the same way: nothing about anyone else.
+    assert body["never_logged_in_members"] == {"count": 0, "names": []}
+    assert OTHER not in str(body)
 
 
 def test_other_profile_is_refused_before_existence(tmp_path):

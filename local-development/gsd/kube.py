@@ -29,15 +29,20 @@ one character apart and transposing them yields a 404 that looks like a missing 
 
 GROUP_API = "/apis/user.openshift.io/v1/groups"
 
-# The User objects themselves, read for ONE field: fullName.
+# The User objects themselves: the cluster's own record of WHO HAS LOGGED IN.
 #
 # A User exists only once that person has authenticated — OpenShift creates it on first login and the
 # identity provider fills fullName from its `attributes.name` mapping. Group membership does NOT create
 # one: the group-sync operator writes LDAP uids into a Group's `users` array, and nothing about that
-# implies the person has ever logged in. Measured on the reference cluster: 10 distinct group members,
-# 7 with a User carrying a fullName, 3 with no User object at all — one of which (`hello1`) has no
-# directory entry either, so it can never acquire one. Absence is therefore the normal case, not an
-# error, and every consumer of this data has to render the bare id unchanged.
+# implies the person has ever logged in. Measured on the reference cluster (2026-09-03): 62 User
+# objects, 61 with an identity; 11 distinct group members, 8 with a User, 3 with none — one of which
+# (`hello1`) has no directory entry either, so it can never acquire one.
+#
+# That is why the Users tab is sourced from here (docs/DESIGN_users_tab_logins.md): its rows are the
+# people who have logged in, and group membership is an attribute of a row. A member with no User is
+# not a user of the cluster yet; the tab reports them once, by count, and their group pages — which
+# come from the Group objects above — are unchanged. fullName is still read for every member surface,
+# and its absence is still the ordinary case rendered as the bare id.
 USER_API = "/apis/user.openshift.io/v1/users"
 
 # The cluster's OAuth configuration — the object that holds the identity providers, and the ONLY
@@ -599,23 +604,32 @@ class ClusterClient:
         log.debug("fetched %d direct-user binding rows from %s", len(out), self.cluster.name)
         return out
 
-    def fetch_users(self) -> dict[str, str] | None:
-        """Display names for users who have logged in, or None when we may not read them.
+    def fetch_users(self) -> list[dict] | None:
+        """Every User object on the cluster, or None when we may not read them.
 
-        One list call for one field. Keyed by username, and only names that are actually set:
-        a User with no fullName is indistinguishable from no User at all as far as anything
-        downstream is concerned, so it is left out rather than stored as an empty string.
+        One list call. A record per User — not, as before, a display name per User that happened to
+        have one — because the Users tab counts the people who have LOGGED IN, and the User object is
+        the cluster's own record of that: OpenShift creates it at first login through an identity
+        provider and never before (docs/DESIGN_users_tab_logins.md). Per record:
 
-        None means FORBIDDEN, and it is deliberately distinct from {} (allowed, nobody has a
-        name yet). The grant is new: an install that upgrades the image without re-applying the
-        chart's RBAC gets a 403 here, and that must not fail the poll or blank the names already
-        known — so the caller skips its write and last cycle's names survive.
+          user_name     metadata.name
+          full_name     fullName, or None when unset or blank — never ""
+          created_at    metadata.creationTimestamp: the first login, for a provider-created User
+          providers     the prefix of every identities[] entry ("ldap-local:<id>" -> "ldap-local"),
+                        sorted and de-duplicated
+          has_identity  identities[] non-empty. Empty means the object was created by hand
+                        (`oc create user`) and nobody has ever logged in as it.
+
+        None means FORBIDDEN, and it is deliberately distinct from [] (allowed, no User yet). The
+        read is optional in the chart (rbac.users), and an install that upgrades the image without
+        re-applying RBAC gets a 403 here; that must not fail the poll. What the tab changed is the
+        COST of a 403: it used to be display names, now it is the tab's rows. So the caller records
+        the refusal (store.mark_users_unavailable) and the API and the tab say so by name, rather
+        than showing an empty list that would read as "nobody has logged in".
 
         Note the asymmetry with fetch(): there, swallowing a 403 would report a missing grant as
         a healthy operator-less cluster, which is the failure this dashboard exists to prevent
-        applied to itself. Here the grant is optional by construction and the whole feature is
-        cosmetic — a 403 costs display names, never correctness — so tolerating it is right in
-        this one place and wrong in that one. Every other status still raises.
+        applied to itself. Here the refusal is tolerated AND surfaced. Every other status raises.
         """
         with self._client() as client:
             try:
@@ -627,22 +641,32 @@ class ClusterClient:
                 # read as "no permission on users".
                 if exc.outcome == FORBIDDEN and USER_API in exc.message:
                     log.debug(
-                        "%s: not permitted to list users — display names unavailable",
+                        "%s: not permitted to list users — the Users tab has no source",
                         self.cluster.name,
                     )
                     return None
                 raise
-        names = {
-            name: full
-            for obj in items
-            if (name := (obj.get("metadata") or {}).get("name"))
-            and (full := (obj.get("fullName") or "").strip())
-        }
+        records: list[dict] = []
+        for obj in items:
+            meta = obj.get("metadata") or {}
+            name = meta.get("name")
+            if not name:
+                continue
+            identities = [i for i in (obj.get("identities") or []) if isinstance(i, str) and i]
+            records.append({
+                "user_name": name,
+                "full_name": (obj.get("fullName") or "").strip() or None,
+                "created_at": meta.get("creationTimestamp"),
+                "providers": sorted({i.split(":", 1)[0] for i in identities}),
+                "has_identity": bool(identities),
+            })
         log.debug(
-            "fetched %d users from %s, %d with a display name",
-            len(items), self.cluster.name, len(names),
+            "fetched %d users from %s, %d with an identity, %d with a display name",
+            len(records), self.cluster.name,
+            sum(1 for r in records if r["has_identity"]),
+            sum(1 for r in records if r["full_name"]),
         )
-        return names
+        return records
 
     def fetch_access_group_dn(self) -> str | None:
         """The login-gate group's DN, read out of the OAuth CR, or None if there is none to read.

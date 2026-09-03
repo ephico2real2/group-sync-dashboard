@@ -326,7 +326,9 @@ class TestEnrichment:
             == (False, False)
 
     def test_the_display_name_comes_from_the_same_source_as_every_member_list(self, store):
-        store.replace_users("crc-local", {"jane.smith": "Jane Smith"}, _iso(datetime.now(UTC)))
+        store.replace_users("crc-local", [{"user_name": "jane.smith", "full_name": "Jane Smith",
+                                           "created_at": None, "providers": ["ldap-local"],
+                                           "has_identity": True}], _iso(datetime.now(UTC)))
         _record(store, [("jane.smith", loginlog.OUTCOME_SUCCESS, 60, "ldap-local")])
         assert store.login_events("crc-local")[0]["full_name"] == "Jane Smith"
 

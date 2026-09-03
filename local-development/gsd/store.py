@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import os
+import json
 import sqlite3
 import threading
 from contextlib import contextmanager
@@ -130,19 +131,35 @@ CREATE INDEX IF NOT EXISTS group_member_by_user
 -- group_member it would also outlive its truth: that table is diff-and-append so first_seen_at
 -- survives, meaning a name removed upstream would never be cleared.
 --
--- Only names that are SET are stored. A User with an empty fullName is downstream-identical to
--- no User at all, so the absent row is the single representation of "no name to show" and every
--- read is an outer join that yields NULL.
+-- Since the Users tab was re-sourced (docs/DESIGN_users_tab_logins.md) this holds EVERY User
+-- object, not only the ones with a name: the row IS the fact that the person has logged in, because
+-- OpenShift creates the object at first login and never before. full_name is therefore nullable —
+-- a User whose provider supplies no name is still a user — and created_at is the first login for a
+-- provider-created User. providers is a JSON list of identity-provider names taken from the
+-- prefix of each identities[] entry; has_identity=0 marks an object created by hand (`oc create
+-- user`) that nobody has ever logged in as.
 --
--- Wholly replaced each poll, like group_state and user_binding: an upsert would leave a name
--- behind after the User object is deleted. The poller skips the replace entirely when the fetch
--- was forbidden, so a missing RBAC grant costs nothing already known.
+-- Wholly replaced each poll, like group_state and user_binding: an upsert would leave a row
+-- behind after the User object is deleted. When the list call is FORBIDDEN the poller does not
+-- touch this table and writes ocp_user_status instead, so the API can say "forbidden" rather
+-- than letting an empty table read as "nobody has logged in".
 CREATE TABLE IF NOT EXISTS ocp_user (
     cluster_id          TEXT NOT NULL,
     user_name           TEXT NOT NULL,
-    full_name           TEXT NOT NULL,
+    full_name           TEXT,
+    created_at          TEXT,
+    providers           TEXT NOT NULL DEFAULT '[]',
+    has_identity        INTEGER NOT NULL DEFAULT 0,
     observed_at         TEXT NOT NULL,
     PRIMARY KEY(cluster_id, user_name)
+);
+
+-- Whether the last poll could read the User objects at all. One row per cluster; state is 'ok'
+-- or 'forbidden'. Absent means no poll has reported yet.
+CREATE TABLE IF NOT EXISTS ocp_user_status (
+    cluster_id          TEXT PRIMARY KEY,
+    state               TEXT NOT NULL,
+    observed_at         TEXT NOT NULL
 );
 
 -- Membership changes, append-only. The API has no history (PLAN §2), and a user quietly
@@ -486,6 +503,38 @@ _MIGRATIONS: list[tuple[int, str, list[str]]] = [
             # Nothing to backfill. The DN comes from configuration or from the OAuth CR, and both are
             # read on the next poll — so an upgraded cluster is correct within one cycle without a
             # migration that would have to talk to a cluster to fill this in.
+        ],
+    ),
+    (
+        7,
+        "ocp_user: every User object, not only the named ones; ocp_user_status",
+        [
+            # DROP, not ALTER. The table was a cache of display names, wholly replaced on every poll,
+            # and its contents are a strict subset of what the next poll writes — so nothing in it is
+            # worth carrying across, and rebuilding is the one shape that also relaxes full_name from
+            # NOT NULL, which ALTER TABLE cannot do in SQLite. Until that poll the Users tab shows
+            # last cycle's... nothing: an empty table for at most one poll interval, and
+            # ocp_user_status is absent rather than 'ok', so the API reports the source as pending
+            # instead of claiming that nobody has logged in.
+            "DROP TABLE IF EXISTS ocp_user",
+            """CREATE TABLE IF NOT EXISTS ocp_user (
+                   cluster_id          TEXT NOT NULL,
+                   user_name           TEXT NOT NULL,
+                   full_name           TEXT,
+                   created_at          TEXT,
+                   providers           TEXT NOT NULL DEFAULT '[]',
+                   has_identity        INTEGER NOT NULL DEFAULT 0,
+                   observed_at         TEXT NOT NULL,
+                   PRIMARY KEY(cluster_id, user_name)
+               )""",
+            """CREATE TABLE IF NOT EXISTS ocp_user_status (
+                   cluster_id          TEXT PRIMARY KEY,
+                   state               TEXT NOT NULL,
+                   observed_at         TEXT NOT NULL
+               )""",
+            # On a FRESH database SCHEMA has already created both tables in this shape; the DROP then
+            # removes an empty table and the CREATE puts it back, which is harmless and keeps the
+            # replay idempotent (_migrate tolerates exactly one error, and this raises none).
         ],
     ),
 ]
@@ -1288,48 +1337,112 @@ class Store:
         )
 
     def users(
-        self, cluster_id: str, limit: int = 1000, user_name: str | None = None
+        self, cluster_id: str, limit: int = 1000, offset: int = 0, user_name: str | None = None
     ) -> list[dict]:
-        """Every user with a membership. BOUNDED.
+        """Every person who has logged in to the cluster — one row per User object. BOUNDED.
 
-        Unbounded, this returned one row per distinct user across every group: 1,240 rows
-        and 102,921 bytes on a reference-shaped cluster with 62 groups, and it grows with
-        the DIRECTORY rather than with anything the dashboard controls. A real corporate
-        LDAP makes that a response big enough to hurt the browser and the pod.
+        The base table is ocp_user, not group_member: a row IS the fact of a login, because OpenShift
+        creates the User object at first login and never before (docs/DESIGN_users_tab_logins.md).
+        Group membership rides along as an attribute — group_count, which may be 0 for someone who
+        logged in and holds no synced access, and first_seen_at, the moment the dashboard first saw
+        them in any group. A synced member with no User object is not a row here; see
+        synced_members_without_user, which the tab reports as one line.
 
-        `limit + 1` is fetched deliberately: the caller compares the length against the
-        limit to know it truncated, without a second COUNT query. A silently truncated
-        list is worse than a large one — the reader cannot tell a short directory from a
-        clipped answer.
+        `limit + 1` is fetched deliberately: the caller compares the length against the limit to
+        know it truncated. `offset` pages, per docs/api-contract.md R3 — a cluster's User count is
+        every person who has ever logged in, so the list grows with the organisation.
 
-        `user_name` is the privacy scope — the user_activity() contract. Byte-exact,
-        served by group_member_by_user (plan measured on the live database).
+        `user_name` is the privacy scope — the user_activity() contract. The predicate is on the
+        base table, so at the narrowed tier the only row reachable is the viewer's own.
 
-        `full_name` rides along from ocp_user, the same LEFT JOIN group_members() makes and for
-        the same reason: the Users tab filters on it, and NULL is the ordinary result (3 of 10
-        members on the reference cluster have no User object), so the row keeps its bare id.
-        The join is 1:1 — ocp_user's key is (cluster_id, user_name) — so grouping on the
-        dependent column splits nothing; it is in the GROUP BY because an engine stricter than
-        SQLite would refuse a bare select of it. Ordering stays on the id: the 30% with no name
-        would otherwise scatter, and the id is what an operator matches against `oc`.
-
-        The privacy predicate stays on the base table, so at the narrowed tier the only ocp_user
-        row the join can reach is the viewer's own.
+        last_login_at is the newest SUCCESSFUL login-capture event for the id, or NULL: nothing
+        before capture began was ever recorded, so the API says whether capture is on at all.
+        The two joins are to pre-grouped subqueries, so they are 1:1 and cannot multiply rows.
+        Ordering stays on the id: it is what an operator matches against `oc`.
         """
-        sql = """SELECT m.user_name, COUNT(*) AS group_count, MIN(m.first_seen_at) AS first_seen_at,
-                        u.full_name
-                     FROM group_member m
-                     LEFT JOIN ocp_user u
-                            ON u.cluster_id = m.cluster_id
-                           AND u.user_name  = m.user_name
-                    WHERE m.cluster_id=?"""
+        sql = """SELECT u.user_name, u.full_name, u.created_at, u.providers, u.has_identity,
+                        COALESCE(g.group_count, 0) AS group_count, g.first_seen_at, l.last_login_at
+                   FROM ocp_user u
+                   LEFT JOIN (SELECT cluster_id, user_name, COUNT(*) AS group_count,
+                                     MIN(first_seen_at) AS first_seen_at
+                                FROM group_member GROUP BY cluster_id, user_name) g
+                          ON g.cluster_id = u.cluster_id AND g.user_name = u.user_name
+                   LEFT JOIN (SELECT cluster_id, user_name, MAX(at) AS last_login_at
+                                FROM login_event WHERE outcome = 'success'
+                               GROUP BY cluster_id, user_name) l
+                          ON l.cluster_id = u.cluster_id AND l.user_name = u.user_name
+                  WHERE u.cluster_id=?"""
+        params: list = [cluster_id]
+        if user_name:
+            sql += " AND u.user_name=?"
+            params.append(user_name)
+        sql += " ORDER BY u.user_name LIMIT ? OFFSET ?"
+        params += [limit + 1, offset]
+        return [self._user_row(r) for r in self._rows(sql, params)]
+
+    @staticmethod
+    def _user_row(row: dict) -> dict:
+        """Decode the stored record into what the API serves. providers is JSON text in the table;
+        logged_in is has_identity, named for what it means; first_login_at is the creation time only
+        when an identity proves a login happened — a manual account's creation time is not one."""
+        row = dict(row)
+        row["providers"] = json.loads(row.pop("providers") or "[]")
+        row["logged_in"] = bool(row.pop("has_identity"))
+        row["first_login_at"] = row["created_at"] if row["logged_in"] else None
+        return row
+
+    def count_users(
+        self, cluster_id: str, user_name: str | None = None, logged_in_only: bool = False
+    ) -> int:
+        """Whole-set count for the paged list, under the same privacy predicate.
+
+        `logged_in_only` counts the rows whose User carries an identity — the people who have
+        actually logged in. The plain count is every User object, which includes accounts created
+        by hand that nobody has used; the Codex review of #47 caught the headline counting those as
+        logins while their own rows said "never logged in". The API serves both numbers.
+        """
+        sql = "SELECT COUNT(*) AS n FROM ocp_user WHERE cluster_id=?"
+        params: list = [cluster_id]
+        if logged_in_only:
+            sql += " AND has_identity=1"
+        if user_name:
+            sql += " AND user_name=?"
+            params.append(user_name)
+        return int(self._rows(sql, params)[0]["n"])
+
+    def synced_members_without_user(
+        self, cluster_id: str, user_name: str | None = None
+    ) -> list[str]:
+        """Members of synced groups who have never logged in: no User object exists for the id.
+
+        The tab reports these as one line under the headline rather than as rows, because they are
+        not users of the cluster yet — but a reviewer wants the number, and the names one click
+        away. Same privacy predicate as users(): a narrowed reader learns only about themselves.
+        """
+        sql = """SELECT DISTINCT m.user_name FROM group_member m
+                  WHERE m.cluster_id=?
+                    AND NOT EXISTS(SELECT 1 FROM ocp_user u
+                                    WHERE u.cluster_id = m.cluster_id AND u.user_name = m.user_name)"""
         params: list = [cluster_id]
         if user_name:
             sql += " AND m.user_name=?"
             params.append(user_name)
-        sql += " GROUP BY m.user_name, u.full_name ORDER BY m.user_name LIMIT ?"
-        params.append(limit + 1)
-        return self._rows(sql, params)
+        sql += " ORDER BY m.user_name"
+        return [r["user_name"] for r in self._rows(sql, params)]
+
+    def user_record(self, cluster_id: str, user_name: str) -> dict | None:
+        """One user's row as users() would serve it, or None when no User object exists."""
+        rows = self.users(cluster_id, limit=1, user_name=user_name)
+        return rows[0] if rows else None
+
+    def users_source(self, cluster_id: str) -> dict | None:
+        """The last poll's verdict on reading User objects: {'state': 'ok'|'forbidden', 'observed_at'},
+        or None before any poll has reported. The API turns None into 'pending' so that an empty
+        table on a fresh install is never presented as an empty cluster."""
+        rows = self._rows(
+            "SELECT state, observed_at FROM ocp_user_status WHERE cluster_id=?", (cluster_id,)
+        )
+        return dict(rows[0]) if rows else None
 
     # -- RBAC bindings -----------------------------------------------------------------
 
@@ -1510,27 +1623,48 @@ class Store:
                 [{**r, "cluster_id": cluster_id, "observed_at": observed_at} for r in rows],
             )
 
-    def replace_users(self, cluster_id: str, names: dict[str, str], observed_at: str) -> None:
-        """Replace this cluster's display names wholesale.
+    def replace_users(self, cluster_id: str, users: list[dict], observed_at: str) -> None:
+        """Replace this cluster's User records wholesale, and record that the read succeeded.
 
         Delete-then-insert rather than upsert, for the same reason replace_group_state gives:
-        an upsert would leave a name behind after its User object is deleted, and a stale name
-        on a departed account is worse than no name at all.
+        an upsert would leave a row behind after its User object is deleted, and a departed
+        account still listed as a user of the cluster is worse than a missing name ever was.
 
-        The caller must not reach here when the fetch was FORBIDDEN — passing {} would wipe
-        every known name, which is exactly what tolerating the 403 exists to prevent.
+        The caller must not reach here when the fetch was FORBIDDEN — passing [] would wipe
+        every row and read as "nobody has logged in"; mark_users_unavailable is for that.
+        Each record is what ClusterClient.fetch_users returns.
         """
         with self._write() as conn:
             conn.execute("DELETE FROM ocp_user WHERE cluster_id=?", (cluster_id,))
             conn.executemany(
                 """INSERT OR REPLACE INTO ocp_user(
-                       cluster_id, user_name, full_name, observed_at)
-                   VALUES(:cluster_id,:user_name,:full_name,:observed_at)""",
+                       cluster_id, user_name, full_name, created_at, providers, has_identity, observed_at)
+                   VALUES(:cluster_id,:user_name,:full_name,:created_at,:providers,:has_identity,:observed_at)""",
                 [
-                    {"cluster_id": cluster_id, "user_name": name,
-                     "full_name": full, "observed_at": observed_at}
-                    for name, full in names.items()
+                    {"cluster_id": cluster_id,
+                     "user_name": u["user_name"],
+                     "full_name": u.get("full_name") or None,
+                     "created_at": u.get("created_at"),
+                     "providers": json.dumps(sorted(u.get("providers") or [])),
+                     "has_identity": 1 if u.get("has_identity") else 0,
+                     "observed_at": observed_at}
+                    for u in users
                 ],
+            )
+            conn.execute(
+                """INSERT INTO ocp_user_status(cluster_id, state, observed_at) VALUES(?, 'ok', ?)
+                   ON CONFLICT(cluster_id) DO UPDATE SET state='ok', observed_at=excluded.observed_at""",
+                (cluster_id, observed_at),
+            )
+
+    def mark_users_unavailable(self, cluster_id: str, observed_at: str) -> None:
+        """The list call was refused. Rows are left as they were; the status says why the tab
+        should not present them — or their absence — as the truth."""
+        with self._write() as conn:
+            conn.execute(
+                """INSERT INTO ocp_user_status(cluster_id, state, observed_at) VALUES(?, 'forbidden', ?)
+                   ON CONFLICT(cluster_id) DO UPDATE SET state='forbidden', observed_at=excluded.observed_at""",
+                (cluster_id, observed_at),
             )
 
     def user_full_name(self, cluster_id: str, user_name: str) -> str | None:

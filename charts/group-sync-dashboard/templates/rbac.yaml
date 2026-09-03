@@ -32,13 +32,15 @@ rules:
   # Measured on the reference cluster: 10 distinct group members, 7 named, 3 with no User object.
   #
   # OPTIONAL BY CONSTRUCTION, and the code proves it rather than assuming it: without this rule the
-  # list call 403s, `ClusterClient.fetch_users` returns None, and the poller keeps whatever names it
-  # already had instead of writing an empty set. So an install that upgrades the image without
-  # re-applying RBAC loses new names, not correctness and not the tab. Set this false to decline the
-  # grant deliberately; the dashboard then shows bare user ids exactly as it did before the feature.
+  # list call 403s, `ClusterClient.fetch_users` returns None, the poller records the refusal and
+  # keeps whatever rows it already had instead of writing an empty set. An install that upgrades the
+  # image without re-applying RBAC therefore keeps polling; the Users tab reports "not permitted to
+  # list users.user.openshift.io" and names this grant. Set it false to decline deliberately.
   #
-  # A User carries identities and group membership too, and neither is read — the dashboard derives
-  # membership from Group objects, which it already lists above.
+  # Since chart 0.9.0 the User objects are the SOURCE of the Users tab — OpenShift creates one at a
+  # person's first login, so the tab counts who has logged in (docs/DESIGN_users_tab_logins.md).
+  # Read: name, fullName, creation time, and the provider prefix of each identities[] entry. Group
+  # membership is still derived from Group objects, listed above, never from the User.
   - apiGroups: ["user.openshift.io"]
     resources: ["users"]
     verbs: ["get", "list"]

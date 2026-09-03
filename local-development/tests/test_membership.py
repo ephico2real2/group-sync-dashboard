@@ -111,11 +111,21 @@ class TestReverseLookup:
 
     def test_users_index(self, store):
         sync(store, {"a": ["alice", "bob"], "b": ["alice"]}, T1)
+        # The index is the User objects — people who have logged in — with membership as an
+        # attribute (docs/DESIGN_users_tab_logins.md). Without any, there are no rows, and the
+        # synced members are reported separately as never having logged in.
+        assert store.users("crc") == []
+        assert store.synced_members_without_user("crc") == ["alice", "bob"]
+        store.replace_users("crc", [
+            {"user_name": "alice", "full_name": None, "created_at": T1, "providers": ["ldap"], "has_identity": True},
+            {"user_name": "bob", "full_name": None, "created_at": T1, "providers": ["ldap"], "has_identity": True},
+        ], T1)
         by_name = {u["user_name"]: u for u in store.users("crc")}
         assert by_name["alice"]["group_count"] == 2
         assert by_name["bob"]["group_count"] == 1
-        # Nobody has a User object here, so the name is present as a key and absent as a value.
+        # A User whose provider supplies no name: present as a key, absent as a value.
         assert by_name["alice"]["full_name"] is None and by_name["bob"]["full_name"] is None
+        assert store.synced_members_without_user("crc") == []
 
     def test_membership_events_filter_by_user(self, store):
         sync(store, {"a": ["alice"], "b": ["bob"]}, T1)

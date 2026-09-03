@@ -1000,42 +1000,66 @@ def build_app(
         }
 
     @app.get("/api/clusters/{cluster_id}/users")
+    @consistent
     def list_users(
         request: Request,
         cluster_id: str,
         limit: int = Query(
             default=1000, ge=1, le=10000,
-            description="Maximum users to return. `truncated` says whether more exist."),
+            description="Maximum users to return. `truncated` says whether more exist; `total` is the whole set."),
+        offset: int = Query(default=0, ge=0, description="Users to skip, for paging."),
     ) -> dict:
-        """Users with a membership, bounded and honest about it.
+        """People who have logged in to this cluster, bounded and honest about it.
 
-        This used to return a bare unbounded list — 102,921 bytes at reference scale, and
-        it grows with the size of the directory rather than with anything the dashboard
-        controls. The response is now an object so `truncated` can be reported: a clipped
-        list that looks like a complete one is the failure worth avoiding.
+        One row per OpenShift User object, because the cluster creates one at first login through
+        an identity provider and never before — so the row IS the fact of a login, and the
+        headline count is how many people have used the cluster (docs/DESIGN_users_tab_logins.md).
+        Group membership is an attribute of a row: `group_count` may be 0 for someone who logged
+        in and holds no synced access. Members of synced groups who have never logged in are not
+        rows; they are reported once, as `never_logged_in_members`, so a reviewer still gets the
+        number and the names without them inflating the count.
 
-        SELF-SCOPED under view restrictions: a plain reader gets their own row or an
-        empty list, because `list users.user.openshift.io` is a permission they do not
-        hold — the only self-read OpenShift grants everyone is `get users/~`.
+        Per row: `logged_in` (false only for an account created by hand that nobody has used),
+        `first_login_at` (the User's creation time, when an identity proves a login happened),
+        `providers` (identity-provider names), `last_login_at` (the newest successful captured
+        login, null when none — read `login_capture` before trusting the null), `full_name`.
 
-        Each row carries `full_name`, null when OpenShift has no User object for the id
-        or the IdP supplied no name — the same field and the same absence rule as a group's
-        members. The Users tab filters on both, so a person is findable by either.
+        `total` is every User object under the scope; `logged_in_total` is those with an identity —
+        the people who have actually logged in — and is the headline number. They differ by the
+        accounts created by hand (`logged_in: false`), which are listed but are not logins.
+
+        `source` says whether the last poll could read the User objects: `ok`; `forbidden`, when
+        the chart's `rbac.users` grant is missing, in which case the rows are stale or absent and the
+        tab must say so rather than show an empty cluster; `pending` before the first poll.
+
+        Paged, per R3: `total` is the whole set, `offset` and `limit` are this page. Fetches
+        `limit + 1` to report `truncated` without trusting the count and the page to agree.
+
+        SELF-SCOPED under view restrictions: a plain reader gets their own row or an empty list,
+        because `list users.user.openshift.io` is a permission they do not hold — the only
+        self-read OpenShift grants everyone is `get users/~`. The never-logged-in line is scoped
+        the same way, so a narrowed reader learns nothing about anyone else.
         """
         require_cluster(cluster_id)
         viewer, scope = viewer_scope(request)
-        rows = store.users(
-            cluster_id, limit=limit,
-            user_name=None if scope == "all" else require_viewer(viewer),
-        )
-        truncated = len(rows) > limit
+        who = None if scope == "all" else require_viewer(viewer)
+        rows = store.users(cluster_id, limit=limit, offset=offset, user_name=who)
+        never = store.synced_members_without_user(cluster_id, user_name=who)
+        status = store.users_source(cluster_id)
         return {
             "cluster": cluster_id,
             "scope": scope,
             "viewer": viewer,
-            "count": min(len(rows), limit),
-            "truncated": truncated,
+            "source": (status or {}).get("state") or "pending",
+            "source_observed_at": (status or {}).get("observed_at"),
+            "login_capture": "on" if settings.login_capture_enabled else "off",
+            "total": store.count_users(cluster_id, user_name=who),
+            "logged_in_total": store.count_users(cluster_id, user_name=who, logged_in_only=True),
+            "offset": offset,
             "limit": limit,
+            "count": min(len(rows), limit),
+            "truncated": len(rows) > limit,
+            "never_logged_in_members": {"count": len(never), "names": never},
             "users": rows[:limit],
         }
 
@@ -1060,10 +1084,15 @@ def build_app(
             )
         groups = store.user_groups(cluster_id, name)
         changes = store.membership_events(cluster_id, user_name=name, limit=100)
+        # The person as the Users tab knows them: None when no User object exists, i.e. they have
+        # never logged in — a synced member reached from a group page, typically.
+        record = store.user_record(cluster_id, name)
         # A user with no CURRENT groups is not unknown — they may have just been removed
         # from the last one, and "they are in nothing now" is the answer to the question,
-        # not an error. 404 only when we have never seen them at all.
-        if not groups and not changes:
+        # not an error. And a User object with no groups at all is a person who logged in
+        # and holds no synced access, which is a finding, not a 404. Only a name we have never
+        # seen anywhere is unknown.
+        if not groups and not changes and record is None:
             raise HTTPException(status_code=404, detail=f"unknown user {name!r}")
         return {
             "user": name,
@@ -1075,6 +1104,13 @@ def build_app(
             # supplies no name attribute. A separate store call rather than a join because this
             # handler is @consistent and already makes several inside one snapshot.
             "full_name": store.user_full_name(cluster_id, name),
+            # The login facts, or null for a member who has never logged in. Same fields as a
+            # row of /users, so the detail page and the list cannot disagree.
+            "logged_in": bool(record and record["logged_in"]),
+            "first_login_at": record["first_login_at"] if record else None,
+            "last_login_at": record["last_login_at"] if record else None,
+            "providers": record["providers"] if record else [],
+            "login_capture": "on" if settings.login_capture_enabled else "off",
             "groups": groups,
             "changes": changes,
             # Reachable through their group memberships. Each row carries via_group, so

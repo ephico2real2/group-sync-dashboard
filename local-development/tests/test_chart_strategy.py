@@ -536,13 +536,13 @@ class TestTheOauthLogLevelJobKeepsTheWriteOffTheDashboard:
 
 
 class TestTheUsersGrantIsReadOnlyAndOptional:
-    """The `users` grant exists for one field, `fullName`, and must stay the smallest thing that
-    buys it.
+    """The `users` grant is the Users tab's source and must stay the smallest thing that buys it.
 
     A User object carries identities and group membership as well as a display name, and the read
     is cluster-wide — every account on the cluster, not just group members. So `get`/`list` and
     nothing else, and it has to remain switchable off: an operator who will not grant a read over
-    every identity on the cluster should lose display names and keep the dashboard.
+    every identity on the cluster loses the Users tab's rows (the tab says so by name) and keeps
+    the rest of the dashboard.
 
     NOTE ON PLACEMENT: like the class below, this lives here because `.github/workflows/ci.yml`
     points the `chart` job at THIS FILE by name. A chart-rendering test in any other module is not
@@ -573,7 +573,7 @@ class TestTheUsersGrantIsReadOnlyAndOptional:
         )
 
     def test_declining_the_grant_drops_the_rule_and_keeps_the_rest(self):
-        """rbac.users=false must cost display names only — the group data must survive."""
+        """rbac.users=false must cost the Users tab's rows and display names only — the group data must survive."""
         ok, out = render(rbac__users="false")
         assert ok, out
         assert self._users_rules(out) == [], "rbac.users=false still grants users"
