@@ -51,6 +51,10 @@ const view = { page: "overview", cluster: null, groupsync: null, groupFilter: "a
                 /* Free-text user search on the Users tab. The same kind of thing as groupSearch, kept
                    for the same reasons; it persists across tab switches like groupSearch does. */
                 userSearch: "",
+                /* Users-tab chip filter: "all" | "grouped" | "nogroup" | "provider:<name>". A filter,
+                   not a position, for the same reasons as userSearch. showNeverNames expands the
+                   never-logged-in members line. */
+                userFilter: "all", showNeverNames: false,
                 /* Free-text filter over ONE group's members, on the group detail page. Per group:
                    applyPosition() clears it whenever the group changes, so a reader who narrowed one
                    group's members does not arrive at the next group already filtered — but a poll
@@ -1192,60 +1196,132 @@ function usersPage() {
   // The endpoint refuses a reader with no verified identity (proxy on, no header): there is no
   // "own row" to scope to. Named, like every other refusal, never rendered as an empty cluster.
   if (d.forbidden) {
-    return refusalCard("Users", `Every row here is a person and the groups they hold, so the list
-      needs an authenticated identity to scope to.`, false);
+    return refusalCard("Users", `Every row here is a person who has logged in to this cluster, so
+      the list needs an authenticated identity to scope to.`, false);
   }
   const all = d.users || [];
   const self = d.scope === "self";
+  const never = d.never_logged_in_members || { count: 0, names: [] };
+  const captureOn = d.login_capture !== "off";
+  // Chips: a whole-row predicate; the search box narrows further. Provider chips come from the
+  // rows themselves, so a cluster with one identity provider shows one.
+  const providers = [...new Set(all.flatMap((u) => u.providers || []))].sort();
+  const chip = view.userFilter || "all";
+  const byChip = (u) => chip === "all" ? true
+    : chip === "grouped" ? (u.group_count || 0) > 0
+    : chip === "nogroup" ? (u.group_count || 0) === 0
+    : chip.startsWith("provider:") ? (u.providers || []).includes(chip.slice(9))
+    : true;
   // Both fields, so a reader who knows only the display name still finds the id — which is what
   // they need next, because the id is what `oc` and the group members answer to.
-  const matched = all.filter((u) => matchesSearch([u.user_name, u.full_name], view.userSearch));
+  const matched = all.filter((u) => byChip(u) && matchesSearch([u.user_name, u.full_name], view.userSearch));
   const rows = matched.slice(0, USERS_RENDER);
   const searching = (view.userSearch || "").trim().length > 0;
   const q = (view.userSearch || "").trim();
+  const chipping = chip !== "all";
+  const narrowed = searching || chipping;
+  const total = typeof d.total === "number" ? d.total : all.length;
+  const grouped = all.filter((u) => (u.group_count || 0) > 0).length;
+  const chipBtn = (key, label, title) => `<button type="button" class="chip-btn" data-ufilter="${esc(key)}"
+      aria-pressed="${chip === key}"${title ? ` title="${esc(title)}"` : ""}>${esc(label)}</button>`;
+  const status = (u) => u.logged_in === false
+    ? `<span class="muted">manual account · never logged in</span>`
+    : u.first_login_at
+      ? `logged in since <span class="mono">${esc(fmtTime(u.first_login_at))}</span> <span class="muted">(${esc(ago(u.first_login_at))})</span>`
+      : `<span class="muted">logged in</span>`;
+  const lastLogin = (u) => !captureOn
+    ? `<span class="muted" title="Login capture is off, so the dashboard has not recorded any login.">capture off</span>`
+    : u.last_login_at
+      ? `<span class="mono">${esc(fmtTime(u.last_login_at))}</span> <span class="muted">(${esc(ago(u.last_login_at))})</span>`
+      : `<span class="muted" title="Nothing since capture began. Earlier logins were never recorded.">none captured</span>`;
   return `<section class="card">
     <h2>Users <span class="muted" style="font-weight:400">· ${rows.length < all.length
-      // What is PAINTED, so the number is true whether the search or the paint cap narrowed it;
-      // the notes below say which. Counting matches here read "1500 shown" over 1,000 rows.
+      // What is PAINTED, so the number is true whether the search, a chip or the paint cap narrowed
+      // it; the notes below say which. Counting matches here read "1500 shown" over 1,000 rows.
       ? `${rows.length} of ${all.length} shown`
       : `${all.length} shown`}</span></h2>
     ${scopeBanner("users", d)}
+    ${d.source === "forbidden"
+      // The rows below, if any, are last cycle's. Named by grant, because the alternative is an
+      // empty table that reads as "nobody has logged in".
+      ? `<div class="truncation-note" id="users-source-note">The dashboard is <strong>not permitted to list
+          users.user.openshift.io</strong> on this cluster, so this tab has no source${all.length
+            ? " and the rows below are from the last poll that could read them" : ""}. Grant
+          <code>rbac.users</code> in the chart to enable it.</div>` : ""}
+    ${d.source === "pending" && all.length === 0
+      ? `<div class="filterbar-note" id="users-source-note">Waiting for the first poll to read the
+          cluster's users.</div>` : ""}
+    ${self ? "" : `<div class="kpis">
+      <div class="kpi"><div class="label">Have logged in</div><div class="value">${total}</div></div>
+      <div class="kpi"><div class="label">In a synced group</div><div class="value">${grouped}</div></div>
+      <div class="kpi"><div class="label">Logged in, no synced group</div><div class="value">${all.length - grouped}</div></div>
+      <div class="kpi"><div class="label">Synced, never logged in</div><div class="value">${never.count}</div></div>
+    </div>`}
+    ${never.count > 0
+      // Not rows: they have not logged in, so they are not users of the cluster yet. One line, and
+      // the names one click away — their group pages, which come from the Group objects, are
+      // where they live.
+      ? `<div class="filterbar-note" id="never-logged-in">
+          <strong>${never.count}</strong> synced ${never.count === 1 ? "member has" : "members have"} never logged in
+          to this cluster${self ? "" : `. <button type="button" class="linkish" id="toggle-never-names"
+            aria-expanded="${view.showNeverNames}">${view.showNeverNames ? "hide names" : "show names"}</button>`}
+          ${view.showNeverNames ? `<div style="margin-top:4px">${never.names.map((n) =>
+            `<button type="button" class="drill mono" data-user="${esc(n)}">${esc(n)}</button>`).join(" ")}</div>` : ""}
+        </div>` : ""}
+    ${self || all.length === 0 ? "" : `<div class="filterbar" style="margin-top:8px">
+      ${chipBtn("all", `all (${all.length})`)}
+      ${chipBtn("grouped", `in a synced group (${grouped})`)}
+      ${chipBtn("nogroup", `no synced group (${all.length - grouped})`,
+        "Logged in, but holds no access through any synced group. Administrators and service identities land here; so does anyone whose access is granted outside group sync.")}
+      ${providers.map((pv) => chipBtn(`provider:${pv}`,
+        `${pv} (${all.filter((u) => (u.providers || []).includes(pv)).length})`,
+        "Identity provider the person has logged in through.")).join("")}
+    </div>`}
     ${d.truncated
       // Stated BEFORE the search note, so the denominator is qualified before it is used.
-      ? `<div class="truncation-note">Showing the first <strong>${all.length}</strong> users by id;
-          the cluster has more. The Find box searches only these, so a person past the cut cannot be
-          found here.</div>` : ""}
+      ? `<div class="truncation-note">Showing the first <strong>${all.length}</strong> of
+          <strong>${total}</strong> users by id. The Find box and the chips search only these, so a
+          person past the cut cannot be found here.</div>` : ""}
     ${searching ? `<div class="filterbar-note" style="margin-top:4px">Filtered by
       <strong>${esc(q)}</strong> — every word must appear in the id or the name.${all.length > 0
       ? ` Clear the box, or press Escape in it, to see all ${all.length}.` : ""}</div>` : ""}
     ${matched.length > rows.length
-      ? `<div class="truncation-note">${rows.length} of ${matched.length} ${searching ? "matches" : "users"}
+      ? `<div class="truncation-note">${rows.length} of ${matched.length} ${narrowed ? "matches" : "users"}
           painted. Keep typing to narrow the list.</div>` : ""}
     ${rows.length === 0
-      ? (searching && all.length > 0
-          // Only blame the search when it IS the search — the zero-denominator rule from the
+      ? (narrowed && all.length > 0
+          // Only blame the filter when it IS the filter — the zero-denominator rule from the
           // Groups tab. Under truncation, hedge: the person may be past the cut.
-          ? `<div class="empty-note">No user id or name contains <strong>${esc(q)}</strong>.
+          ? `<div class="empty-note">${searching
+                ? `No user id or name contains <strong>${esc(q)}</strong>${chipping ? " under the selected chip" : ""}.`
+                : `No user matches the selected chip.`}
               ${all.length === 1
-                ? `1 user is loaded, so it is the search hiding them`
-                : `${all.length} users are loaded, so it is the search hiding them`}
+                ? `1 user is loaded, so it is the ${searching ? "search" : "chip"} hiding them`
+                : `${all.length} users are loaded, so it is the ${searching ? "search" : "chip"} hiding them`}
               rather than the data being empty.${d.truncated
                 ? ` Only the first ${all.length} were loaded — the person may be past the cut.` : ""}</div>`
-          : (self && !searching
+          : (self && !narrowed
               // Scoped-and-empty is NOT an empty cluster (requirements Q6). Naming the viewer is
-              // also the diagnostic when the IdP's username does not match the members' names.
-              ? `<div class="empty-note">You are in no synced group on this cluster (signed in as
-                  <strong>${esc(d.viewer || "")}</strong>). This view is scoped to you — it is not
-                  a statement that the cluster has no users.</div>`
-              : `<div class="empty-note">No user has a synced group membership on this cluster
-                  yet.</div>`))
+              // also the diagnostic when the IdP's username does not match the User object's name.
+              ? `<div class="empty-note">No User object on this cluster is named
+                  <strong>${esc(d.viewer || "")}</strong>, which is the identity you are signed in as.
+                  This view is scoped to you — it is not a statement that nobody has logged in.</div>`
+              : d.source === "forbidden" || d.source === "pending"
+                ? ""
+                : `<div class="empty-note">No one has logged in to this cluster yet — there is no
+                    User object. Synced group members appear above once they have.</div>`))
       : `<div class="scroll-x"><table>
-          <thead><tr><th>User</th><th class="num">Groups</th><th>First seen</th></tr></thead>
+          <thead><tr><th>User</th><th>Status</th><th>Provider</th><th class="num">Groups</th><th>Last login</th><th>First seen in a group</th></tr></thead>
           <tbody>${rows.map((u) => `<tr class="rowlink" data-user="${esc(u.user_name)}">
             <td><button type="button" class="drill">${esc(u.user_name)}</button>${u.full_name
               ? ` <span class="muted">· ${esc(u.full_name)}</span>` : ""}</td>
-            <td class="num">${u.group_count}</td>
-            <td class="mono">${esc(fmtTime(u.first_seen_at))} <span class="muted">(${esc(ago(u.first_seen_at))})</span></td>
+            <td>${status(u)}</td>
+            <td class="mono">${(u.providers || []).map(esc).join(", ") || `<span class="muted">—</span>`}</td>
+            <td class="num${(u.group_count || 0) === 0 ? " warn" : ""}">${u.group_count || 0}</td>
+            <td>${lastLogin(u)}</td>
+            <td class="mono">${u.first_seen_at
+              ? `${esc(fmtTime(u.first_seen_at))} <span class="muted">(${esc(ago(u.first_seen_at))})</span>`
+              : `<span class="muted">—</span>`}</td>
           </tr>`).join("")}</tbody>
         </table></div>
         <div class="filterbar-note" style="margin-top:8px">Select a user to see every group they
@@ -2070,10 +2146,17 @@ function userDetail() {
       ? ` <span class="muted">· ${esc(d.full_name)}</span>` : ""}</h2>
     <div class="kpis">
       <div class="kpi"><div class="label">Groups</div><div class="value">${groups.length}</div></div>
+      <div class="kpi"><div class="label">Logged in</div><div class="value">${d.logged_in ? "yes" : "no"}</div></div>
+      ${d.first_login_at ? `<div class="kpi"><div class="label">First login</div><div class="value mono" style="font-size:1rem">${esc(fmtTime(d.first_login_at))}</div></div>` : ""}
+      ${d.login_capture === "off" ? "" : `<div class="kpi"><div class="label">Last captured login</div><div class="value mono" style="font-size:1rem">${d.last_login_at ? esc(fmtTime(d.last_login_at)) : "none"}</div></div>`}
     </div>
     <div class="filterbar-note" style="margin-top:8px">
-      Every group this user belongs to on this cluster. The cluster itself can only answer
-      this by scanning every Group object.
+      ${d.logged_in
+        ? `Has logged in to this cluster${(d.providers || []).length ? ` through <span class="mono">${d.providers.map(esc).join(", ")}</span>` : ""}.`
+        : `Has <strong>never logged in</strong> to this cluster — OpenShift has no User object for this id.
+           Membership below comes from group sync, which does not depend on a login.`}
+      Every group this user belongs to on this cluster is listed below; the cluster itself can only
+      answer this by scanning every Group object.
     </div>
   </section>
   <section class="card">
@@ -2813,6 +2896,11 @@ function wireDrilldown() {
       refresh();
     };
   });
+  document.querySelectorAll("[data-ufilter]").forEach((el) => {
+    el.onclick = () => { view.userFilter = el.dataset.ufilter; render(); };
+  });
+  const neverToggle = $("toggle-never-names");
+  if (neverToggle) neverToggle.onclick = () => { view.showNeverNames = !view.showNeverNames; render(); };
   document.querySelectorAll("[data-user]").forEach((el) => {
     const go = (e) => {
       e.stopPropagation();

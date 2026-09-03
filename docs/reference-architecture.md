@@ -774,23 +774,29 @@ renders zero occurrences of `"patch"`. A conditional `patch` on `rolebindings` a
 `clusterrolebindings` used to render here; `rbac.yaml#NO WRITE VERB` records why it is gone, so nobody
 adds it back. §7.3 is the measurement.
 
-`users` is read for exactly one field, `fullName`, so a member list can show
-`alice.cooper · Alice Cooper` rather than the bare id. Nothing else on the object is read — not
-`identities`, and not group membership, which is derived from the Group objects above.
+`users` is the **source of the Users tab** (`DESIGN_users_tab_logins.md`). OpenShift creates a User
+object at a person's first login through an identity provider and never before, so one row per
+object is one person who has logged in, and the tab's headline is how many people have used the
+cluster. Read off each object: the name, `fullName` (shown as `alice.cooper · Alice Cooper` on every
+member surface; absence is the ordinary case and renders the bare id), `metadata.creationTimestamp`
+(the first login, for a provider-created User), and the provider prefix of each `identities[]` entry.
+Group membership is **not** read from it — that is derived from the Group objects above, exactly as
+before — so a synced member who has never logged in is not a row; the tab reports them once, by
+count, and their group pages are unchanged.
 
-That grant is **optional by construction, and the code proves it rather than documenting it**: with
-`rbac.users=false`, or on an install that upgraded the image without re-applying RBAC, the list call
-403s, `ClusterClient.fetch_users` returns `None`, and the poller keeps the names it already had
-instead of writing an empty set. A missing grant costs new display names — never correctness, and
-never a view. It is also the one place a 403 is tolerated: everywhere else swallowing one would
+That grant is **still optional, and the code still proves it**: with `rbac.users=false`, or on an
+install that upgraded the image without re-applying RBAC, the list call 403s,
+`ClusterClient.fetch_users` returns `None`, the poll succeeds, and the poller records the refusal
+(`Store.mark_users_unavailable`) instead of writing an empty set. What changed is the cost: it used
+to be new display names, now it is the Users tab's rows — so `/users` reports `source: forbidden`
+and the tab names the grant to add, rather than showing an empty list that would read as "nobody
+has logged in". It remains the one place a 403 is tolerated: everywhere else swallowing one would
 report a missing grant as a healthy cluster, which is the failure this dashboard exists to prevent
 applied to itself.
 
-A name exists only for people who have **logged in**. OpenShift creates the User object on first
-authentication and the identity provider fills `fullName` from its `attributes.name` mapping;
-group membership creates nothing. Measured on the reference cluster: 10 distinct group members, 7
-named, 3 with no User object at all — one of which has no directory entry either, so it never will.
-Absence is the ordinary case, and an unnamed member renders exactly as it did before the feature.
+Measured on the reference cluster (2026-09-03): 62 User objects, 61 with an identity; 11 distinct
+synced members, 8 with a User object, 3 with none — one of which has no directory entry either, so
+it never will.
 
 `roles`/`clusterroles` are deliberately **not** requested, since role rules are never
 evaluated. `rbac.yaml#statement of intent` is careful to record that this is a statement of intent and not

@@ -142,11 +142,21 @@ def _seed(db_path: str) -> None:
         _iso(now - timedelta(minutes=4)),
     )
 
-    # Display names for SOME members only, which is the real shape: a name exists only once that
-    # person has logged in. alice has one, dave does not — so every member surface renders both
-    # states in the same table, and "no name" is covered by the fixture rather than only by unit
-    # tests. Measured on the reference cluster: 7 of 10 members named, 3 not.
-    store.replace_users("crc-local", {"alice": "Alice Cooper"}, _iso(now))
+    # The User objects — the people who have LOGGED IN, which is what the Users tab lists
+    # (docs/DESIGN_users_tab_logins.md). The real shape, measured on the reference cluster:
+    #   alice       logged in, named, in a synced group
+    #   gatekeeper  logged in, provider supplied no name, in the gate group only
+    #   kubeadmin   logged in, in NO synced group — the "logged in, no synced access" row
+    #   dave        a synced member who has NEVER logged in: no User object, so not a row here,
+    #               reported on the tab as one line and rendered as a bare id on every member surface.
+    store.replace_users("crc-local", [
+        {"user_name": "alice", "full_name": "Alice Cooper", "created_at": _iso(now - timedelta(days=30)),
+         "providers": ["ldap-local"], "has_identity": True},
+        {"user_name": "gatekeeper", "full_name": None, "created_at": _iso(now - timedelta(days=2)),
+         "providers": ["ldap-local"], "has_identity": True},
+        {"user_name": "kubeadmin", "full_name": None, "created_at": _iso(now - timedelta(days=400)),
+         "providers": ["developer"], "has_identity": True},
+    ], _iso(now))
 
     # Bindings covering all three finding tiers: one genuinely broken, one that names a
     # group which never existed, and the built-in noise that must not drown them.
@@ -2317,12 +2327,13 @@ class TestVisibilityLabels:
 
 
 class TestUserSearch:
-    """The Users tab: every user with a membership, filtered as you type on id OR display name.
+    """The Users tab: every person who has logged in, filtered as you type on id OR display name.
 
     The same box as the Groups tab — same matcher, same bar, same focus and IME machinery — so the
     behaviour that matters is what is different: two fields, one of them nullable. "cooper" has to
-    find alice, whose id says nothing of the kind, and dave, who has never signed in and so has no
-    User object, has to stay findable by id and render as a bare id.
+    find alice, whose id says nothing of the kind, and gatekeeper, whose provider supplied no name,
+    has to stay findable by id and render as a bare id. dave, a synced member who has never logged
+    in, is NOT a row: he is the never-logged-in line (TestUsersTabLogins).
     """
 
     def _open(self, dash):
@@ -2335,18 +2346,18 @@ class TestUserSearch:
         return [r.split("\t")[0].split("·")[0].strip()
                 for r in dash.locator("tbody tr").all_inner_texts()]
 
-    def test_the_tab_lists_every_user_with_a_group_count(self, dash):
+    def test_the_tab_lists_every_user_who_has_logged_in_with_a_group_count(self, dash):
         self._open(dash)
-        assert self._ids(dash) == ["alice", "dave", "gatekeeper"], self._ids(dash)
+        assert self._ids(dash) == ["alice", "gatekeeper", "kubeadmin"], self._ids(dash)
         row = dash.locator("tr[data-user='alice']").inner_text()
-        assert "2" in row.split("\t")[1], row
+        assert row.split("\t")[3].strip() == "2", row
         assert "3 shown" in dash.locator("section.card h2").first.inner_text()
 
     def test_a_single_term_matches_the_username(self, dash):
         self._open(dash)
-        dash.fill("#f-user-search", "dave")
-        dash.wait_for_function("() => view.userSearch === 'dave'")
-        assert self._ids(dash) == ["dave"]
+        dash.fill("#f-user-search", "gate")
+        dash.wait_for_function("() => view.userSearch === 'gate'")
+        assert self._ids(dash) == ["gatekeeper"]
 
     def test_a_term_matches_the_full_name(self, dash):
         """The whole point: the reader knows the person, not the id."""
@@ -2377,9 +2388,9 @@ class TestUserSearch:
         assert self._ids(dash) == ["alice"]
 
     def test_an_unnamed_user_renders_the_bare_id(self, dash):
-        """No User object means no name, and the id is rendered unchanged — never a placeholder."""
+        """A User whose provider supplied no name: the id is rendered unchanged — never a placeholder."""
         self._open(dash)
-        assert "·" not in dash.locator("tr[data-user='dave']").inner_text()
+        assert "·" not in dash.locator("tr[data-user='gatekeeper']").inner_text().split("\t")[0]
         assert "· Alice Cooper" in dash.locator("tr[data-user='alice']").inner_text()
 
     def test_a_term_matching_nothing_says_the_search_is_hiding_them(self, dash):
@@ -2393,14 +2404,14 @@ class TestUserSearch:
     def test_the_header_reports_the_denominator_while_filtering(self, dash):
         self._open(dash)
         assert "of" not in dash.locator("section.card h2").first.inner_text()
-        dash.fill("#f-user-search", "dave")
-        dash.wait_for_function("() => view.userSearch === 'dave'")
+        dash.fill("#f-user-search", "gate")
+        dash.wait_for_function("() => view.userSearch === 'gate'")
         assert "1 of 3 shown" in dash.locator("section.card h2").first.inner_text()
 
     def test_escape_clears_it(self, dash):
         self._open(dash)
-        dash.fill("#f-user-search", "dave")
-        dash.wait_for_function("() => view.userSearch === 'dave'")
+        dash.fill("#f-user-search", "gate")
+        dash.wait_for_function("() => view.userSearch === 'gate'")
         dash.locator("#f-user-search").press("Escape")
         dash.wait_for_function("() => view.userSearch === ''")
         assert len(self._ids(dash)) == 3
@@ -2484,7 +2495,7 @@ class TestUserSearch:
         body = dash.locator("section.card").first.inner_text()
         assert "search hiding" not in body, body
         assert "to see all 0" not in body, body
-        assert "No user has a synced group membership" in body, body
+        assert "No one has logged in to this cluster yet" in body, body
 
     def test_a_truncated_list_says_so_and_the_empty_state_hedges(self, dash):
         """A capped list that looks complete is the failure the envelope's `truncated` exists to avoid."""
@@ -2536,6 +2547,67 @@ class TestUserSearch:
         got = dash.evaluate("() => document.getElementById('f-user-search').value")
         assert got == "かんり", f"the composition was aborted by a repaint: {got!r}"
         assert dash.evaluate("() => view.userSearch") == "かんり"
+
+    def test_the_headline_counts_people_who_have_logged_in_and_the_members_who_have_not(self, dash):
+        """The number the operator asked for: how many people have logged in to the cluster."""
+        self._open(dash)
+        kpis = {k.split("\n")[0].strip(): k.split("\n")[1].strip()
+                for k in dash.locator(".kpi").all_inner_texts() if "\n" in k}
+        assert kpis["Have logged in"] == "3", kpis
+        assert kpis["In a synced group"] == "2" and kpis["Logged in, no synced group"] == "1", kpis
+        assert kpis["Synced, never logged in"] == "1", kpis
+
+    def test_a_synced_member_who_never_logged_in_is_a_line_not_a_row(self, dash):
+        """dave is in a synced group and has no User object. He is not a user of the cluster yet,
+        so he is not counted — but a reviewer wants the number, and the name one click away."""
+        self._open(dash)
+        assert "dave" not in self._ids(dash)
+        line = dash.locator("#never-logged-in")
+        assert "1 synced member has never logged in" in line.inner_text()
+        assert dash.locator("#never-logged-in [data-user='dave']").count() == 0, "names start hidden"
+        dash.locator("#toggle-never-names").click()
+        dash.wait_for_selector("#never-logged-in [data-user='dave']")
+        dash.locator("#never-logged-in [data-user='dave']").click()
+        dash.wait_for_selector("#back-groups")
+        assert dash.evaluate("() => view.user") == "dave", "the name drills to his group page as usual"
+
+    def test_a_user_in_no_synced_group_shows_zero_and_the_login_status(self, dash):
+        self._open(dash)
+        row = dash.locator("tr[data-user='kubeadmin']").inner_text().split("\t")
+        assert row[3].strip() == "0", row
+        assert "logged in since" in row[1], row
+        assert row[2].strip() == "developer", row
+
+    def test_chips_narrow_by_group_membership_and_by_provider(self, dash):
+        self._open(dash)
+        dash.locator("[data-ufilter='nogroup']").click()
+        dash.wait_for_function("() => view.userFilter === 'nogroup'")
+        assert self._ids(dash) == ["kubeadmin"]
+        assert dash.locator("[data-ufilter='nogroup']").get_attribute("aria-pressed") == "true"
+        dash.locator("[data-ufilter='provider:ldap-local']").click()
+        dash.wait_for_function("() => view.userFilter === 'provider:ldap-local'")
+        assert self._ids(dash) == ["alice", "gatekeeper"]
+        assert "2 of 3 shown" in dash.locator("section.card h2").first.inner_text()
+        dash.locator("[data-ufilter='all']").click()
+        dash.wait_for_function("() => view.userFilter === 'all'")
+        assert len(self._ids(dash)) == 3
+
+    def test_a_chip_that_hides_everything_blames_the_chip_not_the_data(self, dash):
+        self._open(dash)
+        dash.evaluate("() => { view.userFilter = 'provider:nobody-uses-this'; render(); }")
+        body = dash.locator("section.card").first.inner_text()
+        assert "No user matches the selected chip" in body and "chip hiding them" in body, body
+        dash.evaluate("() => { view.userFilter = 'all'; render(); }")
+
+    def test_a_forbidden_source_is_named_by_grant_not_shown_as_an_empty_cluster(self, dash):
+        """rbac.users off, or an image upgraded without the chart's RBAC: the poll still runs, and
+        the tab must say what it cannot read rather than imply that nobody has logged in."""
+        self._open(dash)
+        dash.evaluate("() => { data.users = { scope: 'all', source: 'forbidden', users: [], total: 0,"
+                      " truncated: false, limit: 10000, never_logged_in_members: { count: 0, names: [] } }; render(); }")
+        body = dash.locator("#users-source-note").inner_text()
+        assert "not permitted to list users.user.openshift.io" in body and "rbac.users" in body, body
+        assert "No one has logged in" not in dash.locator("section.card").first.inner_text()
 
     def test_a_refused_list_is_a_named_refusal_not_an_empty_table(self, dash):
         """The endpoint 403s a reader with no verified identity; the tab must say so, not show nothing."""
@@ -2615,12 +2687,12 @@ class TestUserSearchVisibility:
         p = self._open(page, scoped_server, "nomember")
         p.wait_for_selector("#main .empty-note")
         body = p.locator("#main").inner_text()
-        assert "nomember" in body and "not a statement that the cluster has no users" in body, body
-        assert "No user has" not in body, body
+        assert "nomember" in body and "not a statement that nobody has logged in" in body, body
+        assert "No one has logged in" not in body, body
 
     def test_the_administrator_sees_every_user_and_no_banner(self, page, scoped_server):
         p = self._open(page, scoped_server, "root")
-        p.wait_for_selector("tr[data-user='dave']")
+        p.wait_for_selector("tr[data-user='kubeadmin']")
         assert p.locator("tbody tr").count() == 3
         assert p.locator(".scope-banner").count() == 0
 

@@ -635,18 +635,19 @@ rbac:
   # detection. Disable to drop that grant; the dashboard degrades to group data only.
   bindings: true
 
-  # Users are read for ONE field, fullName, so a member list can show "alice.cooper · Alice
-  # Cooper" instead of the bare id. Nothing else on the object is read — not identities, not
-  # group membership, which comes from the Group objects granted above.
+  # The User objects are the SOURCE of the Users tab: OpenShift creates one at a person's first
+  # login through an identity provider and never before, so the tab's rows — and its headline,
+  # how many people have logged in to the cluster — come from here (docs/DESIGN_users_tab_logins.md).
+  # Read off each object: the name, fullName (shown as "alice.cooper · Alice Cooper" on every member
+  # surface, absent is ordinary), the creation time (first login), and the identity-provider prefix
+  # of each identities[] entry. Group membership is NOT read from it; that comes from the Group
+  # objects granted above, exactly as before. Measured on the reference cluster: 62 User objects,
+  # 11 distinct synced members, 8 of whom have logged in.
   #
-  # A name exists only for people who have LOGGED IN: OpenShift creates the User object on
-  # first authentication and the identity provider fills fullName from its attributes.name
-  # mapping. Members who have never logged in have no User object and render exactly as
-  # before. Measured on the reference cluster: 7 of 10 group members named, 3 not.
-  #
-  # Safe to leave false, and safe to upgrade the image without re-applying RBAC: the list call
-  # 403s, the collector reports "not permitted", and the poller keeps the names it already had
-  # rather than blanking them. You lose new names, never correctness.
+  # Still switchable off, and still safe to upgrade the image without re-applying RBAC — the list
+  # call 403s and the poll succeeds — but the cost is no longer cosmetic: the Users tab has no
+  # source and says so by name ("not permitted to list users.user.openshift.io"), rather than
+  # showing an empty list that would read as "nobody has logged in". Members still show bare ids.
   users: true
 
 # ---------------------------------------------------------------------------

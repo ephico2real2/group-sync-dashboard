@@ -140,21 +140,27 @@ def poll_once(
     #
     # getattr, not a direct call: tests stub this client with only the methods they exercise, and a
     # cosmetic field must not turn an old stub into an AttributeError mid-poll.
+    # The User objects: the Users tab's rows (docs/DESIGN_users_tab_logins.md), and the display
+    # names every member surface shows. A failure here must not fail the poll — groups, bindings
+    # and events do not depend on it — but it is no longer cosmetic, so a refusal is RECORDED and
+    # the API and the tab say "unavailable, grant rbac.users" rather than "nobody has logged in".
     fetch_users = getattr(client, "fetch_users", None)
     if fetch_users is not None:
         try:
-            names = fetch_users()
+            users = fetch_users()
         except ClusterError as exc:
-            log.warning("display-name refresh for %s failed: %s — names are unaffected",
+            log.warning("user refresh for %s failed: %s — the Users tab keeps last cycle's rows",
                         cluster.name, exc.message)
         else:
-            if names is None:
-                log.info("%s: not permitted to list users — display names left as they were. "
+            if users is None:
+                store.mark_users_unavailable(cluster.name, observed_at)
+                log.info("%s: not permitted to list users — the Users tab has no source. "
                          "Grant user.openshift.io/users [get,list] (chart: rbac.users) to enable.",
                          cluster.name)
             else:
-                store.replace_users(cluster.name, names, observed_at)
-                log.info("%s: %d display name(s) recorded", cluster.name, len(names))
+                store.replace_users(cluster.name, users, observed_at)
+                log.info("%s: %d user(s) recorded, %d with a display name", cluster.name,
+                         len(users), sum(1 for u in users if u.get("full_name")))
 
     # Steps 3-4: attribute groups to CRs, then record any sync we had not seen before.
     cr_rows = []

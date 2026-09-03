@@ -92,7 +92,12 @@ type: application
 # admission and host, and the OAuth server accepting the reference-resolved callback while
 # refusing a foreign one. The Ingress path is unchanged for those who turn it back on; its render
 # is byte-identical to 0.7.1 apart from the chart-version label.
-version: 0.8.0
+# CHART 0.9.0 (2026-09-03), MINOR: appVersion moves to application 0.9.0 (below), and the meaning of
+# the `rbac.users` grant changes even though no template output does. The User objects are now the
+# SOURCE of the Users tab rather than a decoration of it (docs/DESIGN_users_tab_logins.md), so an
+# operator who turns the grant off loses that tab's rows — the tab says so by name — instead of
+# losing display names. Rendered objects are byte-identical to 0.8.0 apart from the version labels.
+version: 0.9.0
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,
@@ -110,7 +115,15 @@ version: 0.8.0
 # 0.8.1 (2026-09-03). The dashboard is renamed "OCP Access Tracking Dashboard" — it reads and
 # reports access, it never controls it — and the name now lives in ONE constant (gsd.TITLE) that
 # the page, the signed-out page and the API docs read. Nothing on the wire changes shape.
-appVersion: "0.8.1"
+# 0.9.0 (2026-09-03). The Users tab counts the people who have LOGGED IN: its rows are the OpenShift
+# User objects, which the cluster creates at first login and never before, with group membership as an
+# attribute of a row. Synced members who have never logged in are reported once, by count, not as rows.
+# /users gains logged_in, first_login_at, providers, last_login_at, login_capture, source, total and
+# offset (the paging rule R3 it never met), and never_logged_in_members; group_count may now be 0.
+# /users/{name} gains the same login facts and is no longer a 404 for a User in no group. Schema
+# migration 7 rebuilds ocp_user. MINOR: additive on the wire for a consumer that read the old fields,
+# but the row population changes — a synced member with no User object is no longer a row.
+appVersion: "0.9.0"
 
 keywords: [openshift, ldap, rbac, groupsync, observability]
 home: https://github.com/ephico2real2/group-sync-dashboard
