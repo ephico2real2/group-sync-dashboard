@@ -1592,6 +1592,7 @@ the default Route with no flags; with `--set ingress.enabled=true` it also needs
 | [`LOGIN_CAPTURE_QUICKCHECK.md`](LOGIN_CAPTURE_QUICKCHECK.md) | the short version: is capture working on this cluster, and how to tell |
 | [`DESIGN_session_and_signout.md`](DESIGN_session_and_signout.md) | cookie lifetime, sign-out, and the `/signed-out` path the chart guards |
 | [`DESIGN_metrics_refresh.md`](DESIGN_metrics_refresh.md) | what `/metrics` emits now, what was added, and the dedicated-listener design that is deliberately **not** applied |
+| [`DESIGN_route_exposure.md`](DESIGN_route_exposure.md) | why the chart exposes through a Route the router names, the OAuth redirect reference and its matching rule, and the Jenkins precedent |
 | [`BENCHMARK_browser_rendering.md`](BENCHMARK_browser_rendering.md) | the rendering measurements behind the paint-first change, with the commands to reproduce them |
 | [`AUDIT_visibility_premise_and_assumptions.md`](AUDIT_visibility_premise_and_assumptions.md) | the assumptions the visibility work rests on, each checked against the cluster rather than assumed |
 | [`storage-coupling.md`](storage-coupling.md) | how the app talks to SQLite and what a real engine swap would cost |

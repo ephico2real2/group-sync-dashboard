@@ -711,6 +711,10 @@ which is ArgoCD's render: the Route was admitted with `spec.host` empty, the pro
 the OAuth server served its login page for that request, and the same request with a foreign
 `redirect_uri` was refused with `400 invalid_request`.
 
+The full reasoning, the platform precedent (Red Hat's own Jenkins template uses the same
+reference form) and every source are in
+[`docs/DESIGN_route_exposure.md`](../../docs/DESIGN_route_exposure.md).
+
 `argocd.enabled` is on by default (since 0.8.0). It adds annotations for two problems that
 each cost you something real if unhandled.
 
