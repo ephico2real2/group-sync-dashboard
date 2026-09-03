@@ -244,12 +244,34 @@ class TestTheRenderSurvivesHostileNames:
         )
 
 
+def _notes_probe_chart(tmp_root: pathlib.Path) -> pathlib.Path:
+    """A copy of the chart whose NOTES.txt is rendered INTO a manifest, so `helm template` can
+    show it. `helm template` drops NOTES, and `helm install --dry-run` — even `--dry-run=client` —
+    still asks the cluster for its version and fails in CI, which is how the first version of
+    these tests went red there while passing against a live CRC. The probe moves NOTES.txt out of
+    templates/ (where .Files cannot see it) and renders it with `tpl` in the same context, so every
+    helper and value resolves exactly as in the real NOTES."""
+    probe = tmp_root / "probe-chart"
+    shutil.copytree(CHART, probe)
+    (probe / "files").mkdir()
+    (probe / "templates" / "NOTES.txt").rename(probe / "files" / "NOTES.txt")
+    (probe / "templates" / "notes-probe.yaml").write_text(
+        "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: notes-probe\ndata:\n"
+        "  notes: {{ tpl (.Files.Get \"files/NOTES.txt\") . | toYaml | indent 4 | trim }}\n"
+    )
+    return probe
+
+
 class TestTheNotesNameTheRightObject:
+    @pytest.fixture(autouse=True)
+    def _probe(self, tmp_path_factory):
+        self.probe = _notes_probe_chart(tmp_path_factory.mktemp("notes"))
+
     def notes(self, *extra: str) -> str:
-        done = subprocess.run(["helm", "install", "--dry-run", "group-sync-dashboard", str(CHART), "-n", "group-sync-dashboard", *extra],
-                              capture_output=True, text=True)
+        done = subprocess.run(["helm", "template", "group-sync-dashboard", str(self.probe), "-n", "group-sync-dashboard",
+                               "-s", "templates/notes-probe.yaml", *extra], capture_output=True, text=True)
         assert done.returncode == 0, done.stdout + done.stderr
-        return done.stdout.split("NOTES:", 1)[1]
+        return one(done.stdout, "ConfigMap")["data"]["notes"]
 
     def test_route_notes_read_the_host_from_status(self):
         n = self.notes()
