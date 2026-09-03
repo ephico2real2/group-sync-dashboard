@@ -83,6 +83,14 @@ def client(tmp_path):
         for i in range(BUILT_IN)
     ]
     store.replace_bindings("c1", bindings, now)
+    # Who two of the groups reach: grp-50 (ok) has one member who has logged in; grp-10
+    # (unmanaged) has one member with a hand-created User and no identity — a member, not a
+    # login. Every other group carries member_count 1 from group_state and no member rows.
+    store.sync_members("c1", {"grp-50": ["p50"], "grp-10": ["p10"]}, {}, now)
+    store.replace_users("c1", [
+        {"user_name": "p50", "full_name": None, "created_at": now, "providers": ["ldap"], "has_identity": True},
+        {"user_name": "p10", "full_name": None, "created_at": now, "providers": [], "has_identity": False},
+    ], now)
     store.close()
 
     settings = Settings(db_path=db,
@@ -154,3 +162,18 @@ def test_the_tier_structure_survives_paging(client):
 def test_operator_configs_are_not_paged(client):
     """Bounded by CR count, and the UI reads `present` to tell 'absent' from 'zero CRs'."""
     assert "operator_configs" in get(client, limit=1)
+
+
+def test_rows_say_who_the_group_reaches(client):
+    """member_count is the Group's own count; logged_in_count is how many members have a User with
+    an identity. Null on both when no Group object exists, so 0 keeps its meaning."""
+    body = get(client, limit=5000)
+    by_name = {r["binding_name"]: r for tier in ("ok", "unmanaged", "dangling", "built_in") for r in body[tier]}
+    assert (by_name["ok-50"]["member_count"], by_name["ok-50"]["logged_in_count"]) == (1, 1)
+    assert (by_name["un-10"]["member_count"], by_name["un-10"]["logged_in_count"]) == (1, 0), "a manual account is not a login"
+    assert (by_name["ok-51"]["member_count"], by_name["ok-51"]["logged_in_count"]) == (1, 0), "no member rows yet: 0, not null"
+    assert by_name["dang-0"]["member_count"] is None and by_name["dang-0"]["logged_in_count"] is None
+    assert by_name["bi-0"]["member_count"] is None and by_name["bi-0"]["logged_in_count"] is None
+    for tier in ("ok", "unmanaged"):
+        for r in body[tier]:
+            assert r["logged_in_count"] <= r["member_count"], r

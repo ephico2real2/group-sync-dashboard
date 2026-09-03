@@ -1560,13 +1560,34 @@ class Store:
                         ELSE 'ok'
                       END"""
 
-    _FINDING_FROM = """
+    _FINDING_JOINS = """
                  FROM rbac_group_binding b
                  LEFT JOIN group_state g
                         ON g.cluster_id = b.cluster_id AND g.name = b.group_name
                  LEFT JOIN managed_group_seen s
-                        ON s.cluster_id = b.cluster_id AND s.group_name = b.group_name
+                        ON s.cluster_id = b.cluster_id AND s.group_name = b.group_name"""
+    _FINDING_WHERE = """
                 WHERE b.cluster_id = ?"""
+    # The name the count query and the docs use; the split above exists so that all_bindings can
+    # put one more join between the two halves without touching the classification.
+    _FINDING_FROM = _FINDING_JOINS + _FINDING_WHERE
+
+    # WHO A GRANTED BINDING REACHES, joined only on request (all_bindings(reach=True)). The
+    # member count is the Group object's own, from group_state, already joined above. The
+    # logged-in count is new: of the group's members (group_member, the same poll that wrote
+    # group_state), how many have a User object WITH an identity — the 0.9.0 definition of a
+    # login (docs/DESIGN_users_tab_logins.md); a hand-created account counts as a member and
+    # not as a login. Pre-grouped, like the joins in users(), so it is 1:1 with the binding row
+    # and cannot multiply it. Opt-in because all_bindings has three callers that want none of
+    # this and are hot: the metrics scrape, the poller's audit planning, and /api/clusters.
+    _REACH_JOIN = """
+                 LEFT JOIN (SELECT m.cluster_id, m.group_name,
+                                   SUM(CASE WHEN u.has_identity = 1 THEN 1 ELSE 0 END) AS logged_in_count
+                              FROM group_member m
+                              LEFT JOIN ocp_user u
+                                     ON u.cluster_id = m.cluster_id AND u.user_name = m.user_name
+                             GROUP BY m.cluster_id, m.group_name) li
+                        ON li.cluster_id = b.cluster_id AND li.group_name = b.group_name"""
 
     def count_bindings_by_finding(self, cluster_id: str) -> dict[str, int]:
         """How many bindings fall in each tier, for the WHOLE cluster.
@@ -1583,9 +1604,15 @@ class Store:
         return {r["finding"]: r["n"] for r in rows}
 
     def all_bindings(
-        self, cluster_id: str, limit: int | None = None, offset: int = 0
+        self, cluster_id: str, limit: int | None = None, offset: int = 0, *, reach: bool = False
     ) -> list[dict]:
         """Every group-subject binding, each classified.
+
+        `reach=True` adds two columns that say who the binding reaches today: `member_count`, the
+        Group object's own count, and `logged_in_count`, how many of those members have logged in
+        (a User with an identity). Both are NULL when no Group object exists — dangling,
+        unresolved, built-in — so a consumer can tell "nobody" (0) from "not applicable". Only
+        the findings endpoint asks; see _REACH_JOIN for why it is not unconditional.
 
         Includes the ones that resolve normally (`ok`). Those are the majority of a healthy
         cluster — 74 of 228 here — and omitting them made a view labelled "Bindings" show
@@ -1596,10 +1623,16 @@ class Store:
         Pair it with `count_bindings_by_finding` — the counts must describe the cluster, not
         the page.
         """
+        reach_cols = ("""
+                      g.member_count AS member_count,
+                      CASE WHEN g.name IS NULL THEN NULL
+                           ELSE COALESCE(li.logged_in_count, 0) END AS logged_in_count,"""
+                      if reach else "")
         sql = ("""SELECT b.binding_kind, b.binding_namespace, b.binding_name,
                       b.role_kind, b.role_name, b.group_name,
-                      b.managed_source, b.exception, b.audit_stamped,"""
-               + self._FINDING_CASE + " AS finding" + self._FINDING_FROM
+                      b.managed_source, b.exception, b.audit_stamped,""" + reach_cols
+               + self._FINDING_CASE + " AS finding"
+               + self._FINDING_JOINS + (self._REACH_JOIN if reach else "") + self._FINDING_WHERE
                + """
                 ORDER BY b.group_name, b.binding_kind, b.binding_namespace, b.binding_name""")
         params: list = [cluster_id]

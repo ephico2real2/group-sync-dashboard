@@ -78,7 +78,9 @@ credential-less `curl`, so refusing the same per-CR identity behind login would 
 `ldap_filter` and `error_message`, both of which can embed directory DNs and the gate group.
 Administrators receive the full row, unchanged.
 
-**`bindings/findings` and `operator-configs` are the administrator tier** (`403` at self).
+**`bindings/findings` and `operator-configs` are the administrator tier** (`403` at self). The
+Access granted tab at the narrowed tier reads the reader's own path instead — `/users/{name}`
+for their own name, whose `bindings` carry `via_group` — which the gate never withheld.
 They describe objects too, but that is not the test. A binding row names which *group* holds
 which *role* — the cluster's RBAC binding surface — which on the reference cluster an ordinary
 reader who could not `oc list` clusterrolebindings/rolebindings/groups was handed anyway (236
@@ -394,10 +396,21 @@ including healthy ones — the caller filters.
 {
   "total": 229, "limit": 500, "offset": 0, "truncated": false,
   "counts": {"ok": 70, "dangling": 0, "unresolved": 9, "built_in": 146, "unmanaged": 4},
-  "ok": [], "dangling": [], "unresolved": [], "built_in": [], "unmanaged": [],
+  "ok": [
+    {"binding_kind": "RoleBinding", "binding_namespace": "prod-ns", "binding_name": "managed-admin-rb",
+     "role_kind": "ClusterRole", "role_name": "admin", "group_name": "app-ocp-rbac-alpha-ns-admin",
+     "managed_source": "baseline-nonprod-rbac", "exception": null, "audit_stamped": 0, "finding": "ok",
+     "member_count": 2, "logged_in_count": 1}
+  ],
+  "dangling": [], "unresolved": [], "built_in": [], "unmanaged": [],
   "operator_configs": {}
 }
 ```
+
+Every row, in every tier, has the same shape. `member_count` is the named Group's own member count
+and `logged_in_count` is how many of those members have logged in — a User object with an identity,
+the Users tab's definition. Both are `null` when no Group object exists (`dangling`, `unresolved`,
+`built_in`), so `0` keeps its meaning: the group exists and grants nobody today.
 
 | Parameter | Default | |
 |---|---|---|

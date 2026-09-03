@@ -23,7 +23,7 @@ tier serves is obtainable with `oc` by anyone holding the roles that pass the ti
 
 | tab | reproducible outside the dashboard? |
 |---|---|
-| Groups, Access granted, RBAC policy, Namespace audit | yes — `oc get groups`, `oc get clusterrolebindings`, `oc get rolebindings -A` |
+| Groups, Access granted, RBAC policy, Namespace audit | yes — `oc get groups`, `oc get clusterrolebindings`, `oc get rolebindings -A` (and `oc get users` for Access granted's member and login counts) |
 | Logins | yes — `cluster-reader` holds `get,list,watch` on `pods/log` in the core group, cluster-wide, so `oc logs` against the oauth-server pod yields the same records |
 | **Usage** | **no** — it lives only in the dashboard's own `dashboard_user_activity` table |
 

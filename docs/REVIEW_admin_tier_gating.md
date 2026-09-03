@@ -141,6 +141,12 @@ Tests:
    ruling and should say why *this* endpoint is the surviving half.
 3. **Access granted is only refused via `findings`.** The tab's sole fetch is
    `bindings/findings`, so gating that endpoint gates the tab. Confirm there is no second path in.
+   *Held until 2026-09-03.* The tab now has a second fetch at the narrowed tier — the reader's own
+   `/users/{name}`, which serves their own bindings with `via_group` and refuses anyone else's name
+   before any lookup — and renders their own grants where the refusal card was. The endpoint gate
+   is unchanged: `bindings/findings` still refuses a plain reader with the same sentence, the
+   refusal is still counted on `/metrics`, and the card still renders when the tier cannot be
+   established (whoami unavailable). RBAC policy keeps its refusal.
 4. **Not rebuilt or redeployed.** Live verification of these three tabs as `lateef.o` has not
    happened yet. Release 102 on CRC runs `0.6.0-6ed5d8ade9`, which predates this commit.
 5. **`data.alertsScope`** is set by the loader and consumed by no renderer. Pre-existing.

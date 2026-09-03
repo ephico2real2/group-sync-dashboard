@@ -51,6 +51,9 @@ const view = { page: "overview", cluster: null, groupsync: null, groupFilter: "a
                 /* Free-text user search on the Users tab. The same kind of thing as groupSearch, kept
                    for the same reasons; it persists across tab switches like groupSearch does. */
                 userSearch: "",
+                /* Access granted: free-text filter over group, role, namespace and binding name, and
+                   the column sort. Filters, not positions, like the boxes above. */
+                bindingSearch: "", bindingSort: "group", bindingDir: "asc",
                 /* Users-tab chip filter: "all" | "grouped" | "nogroup" | "provider:<name>". A filter,
                    not a position, for the same reasons as userSearch. showNeverNames expands the
                    never-logged-in members line. */
@@ -158,7 +161,7 @@ function applyPosition(pos) {
       data.groupsyncs = null; data.groups = null; data.groupsMeta = null;
       data.group = null; data.user = null; data.events = null; data.users = null;
       data.logins = null; data.access = null; data.findings = null;
-      data.operatorConfigs = null; data.userBindings = null;
+      data.operatorConfigs = null; data.userBindings = null; data.myAccess = null;
       // The Users-tab chips name providers and populations of THIS cluster; carried across, a
       // `provider:corp-ldap` chip on a cluster with no such provider would hide every row — the
       // empty state would blame the chip, but the reader never chose it here. Reset, like
@@ -287,7 +290,11 @@ let data = { clusters: [], alerts: [], groupsyncs: null, groups: null, events: n
              /* Identity + tier as the server reports them (whoami), and the scope the
                 groups response declared. Rendering reads these; nothing writes them but
                 the wire. */
-             whoami: null, groupsMeta: null };
+             whoami: null, groupsMeta: null,
+             /* The narrowed reader's own access path on the Access granted tab (their /users/{me}
+                payload). Its own slot, not `user`: the user detail page owns `user` and a drill
+                from this tab to their own profile must not race two writers into one slot. */
+             myAccess: null };
 
 const $ = (id) => document.getElementById(id);
 
@@ -515,6 +522,8 @@ const SCOPE_BANNER = {
     cluster-wide list is the administrator tier.`,
   users: (v) => `Showing only your own row, <strong>${esc(v)}</strong>. The cluster-wide user
     list is the administrator tier.`,
+  access: (v) => `Showing the access that reaches <strong>${esc(v)}</strong> through your groups.
+    The cluster-wide list — every group's grants — is the administrator tier.`,
   logins: (v) => `Showing only sign-in attempts recorded for <strong>${esc(v)}</strong>.
     Attempts are recorded under the name <em>as typed</em>, so an attempt typed with
     different capitalisation is a different name and is not shown here.`,
@@ -660,6 +669,11 @@ const SEARCH_BOXES = {
     title: 'Filters by username or full name as you type. Several words are ANDed — "alice cooper" finds alice · Alice Cooper. Escape clears.',
     help: "Filters the user list by username or full name as you type. Several words are combined with AND, so every word must appear in one or the other. Press Escape to clear.",
   },
+  bindingSearch: {
+    id: "f-binding-search", label: "Find", placeholder: "filter by group, role, namespace or binding",
+    title: 'Filters every section by group, role, namespace or binding name as you type. Several words are ANDed — "alpha admin" finds admin granted to app-ocp-rbac-alpha-ns-admin. Escape clears.',
+    help: "Filters the binding sections by group name, role, namespace or binding name as you type. Several words are combined with AND, so every word must appear. Press Escape to clear.",
+  },
   memberSearch: {
     id: "f-member-search", label: "Find member", placeholder: "filter by id or name",
     title: "Filters this group's members by username or full name as you type. Several words are ANDed. Escape clears.",
@@ -729,7 +743,8 @@ function renderFilters() {
   // filter them while silently doing nothing.
   let html = view.page === "usage" ? "" : `<label for="f-cluster">Cluster</label>
     <select id="f-cluster">${opts}</select>`;
-  if (view.page === "bindings") {
+  if (view.page === "bindings" && !narrowedReader()) {
+    html += searchBoxHtml("bindingSearch");
     html += `<label for="f-binding">Show</label>
       <select id="f-binding">
         <option value="review"${view.bindingFilter === "review" ? " selected" : ""}>granted + needs review</option>
@@ -2118,7 +2133,7 @@ function groupDetail() {
 /* Direct bindings only. The heading and the note both say so, because a reader who thinks
    this is an effective-permission calculation could conclude access is absent when it is
    not — a false negative here gets an incident closed wrongly. */
-function bindingsCard(bindings, who) {
+function bindingsCard(bindings, who, lead) {
   const rows = bindings || [];
   const ns = rows.filter((b) => b.binding_kind === "RoleBinding");
   const cluster = rows.filter((b) => b.binding_kind === "ClusterRoleBinding");
@@ -2137,7 +2152,7 @@ function bindingsCard(bindings, who) {
   return `<section class="card">
     <h2>Access granted <span class="muted" style="font-weight:400">· direct role bindings</span></h2>
     <div class="filterbar-note" style="margin:4px 0 10px">
-      ${esc(who)} is named by these bindings. Role rules are <strong>not</strong> evaluated,
+      ${lead ? lead : `${esc(who)} is named by these bindings.`} Role rules are <strong>not</strong> evaluated,
       so this is what has been granted, not a computed list of permitted actions.
     </div>
     ${rows.length === 0
@@ -2227,8 +2242,58 @@ function userDetail() {
    Two earlier shapes were both misrepresentations: a "Bindings" label over ONLY the
    non-resolving rows (228 bindings shown as 154), and then a default of the faults alone,
    which the operator read as the page missing its data (2026-09-03). */
+/* The narrowed reader's Access granted: the bindings that reach THEM through their groups —
+   the one thing require_admin_tier's gate never withheld (a reader's own path, bounded by
+   membership) — rendered where the refusal card used to be. The payload is their own
+   /users/{me}; a viewer the store has never seen (no group, no history, no User) is a 404
+   there, and that is the empty state here, never an error card. */
+function myAccessPage(d) {
+  const rows = d.bindings || [];
+  const banner = scopeBanner("access", d);
+  if (rows.length === 0) {
+    return `<section class="card">
+      <h2>Access granted</h2>
+      ${banner}
+      <div class="empty-note">No group grants you access on this cluster. Access here arrives through
+        synced groups, and <strong>${esc(d.viewer || d.user || "you")}</strong> is in none that a
+        RoleBinding or ClusterRoleBinding names. This view is scoped to you — it says nothing about
+        what the cluster grants to others.</div>
+    </section>`;
+  }
+  return `<section class="card"><h2>Access granted</h2>${banner}</section>`
+    + bindingsCard(rows, "You",
+        "These bindings reach you through the group in the Via group column. Select the group to see who else is in it.");
+}
+
+const BIND_SORT = {
+  group: (r) => r.group_name || "",
+  // Nulls (no Group object) rank below zero, so they gather at the far end whichever way.
+  reaches: (r) => r.member_count == null ? -1 : r.member_count,
+  grants: (r) => `${r.role_name || ""} ${r.role_kind || ""}`,
+  scope: (r) => r.binding_namespace || "",
+  binding: (r) => r.binding_name || "",
+};
+
+function bindingMatches(r, q) {
+  return matchesSearch([r.group_name, r.role_name, r.binding_namespace, r.binding_name], q);
+}
+
 function bindingsPage() {
-  const d = data.findings;
+  // A narrowed reader sees their own path. `myAccess` arrives from refresh(), on the first
+  // cycle only after the findings fetch has come back forbidden and whoami has named them.
+  if (narrowedReader()) {
+    if (data.myAccess) return myAccessPage(data.myAccess);
+    return `<section class="card"><div class="empty-note">Loading…</div></section>`;
+  }
+  const raw = data.findings;
+  // The search narrows every section at once. `f` is what every branch below renders from;
+  // `raw` keeps the whole-cluster counts for the header, which the search must not move.
+  const q = view.bindingSearch || "";
+  const searching = q.trim().length > 0;
+  const f = raw && !raw.forbidden ? Object.fromEntries(
+    ["ok", "dangling", "unresolved", "built_in", "unmanaged"].map((t) =>
+      [t, (raw[t] || []).filter((r) => bindingMatches(r, q))])) : null;
+  const d = raw;
   // A DESIGNED 403 (the binding surface is the administrator tier), phrased — never the
   // generic error card, and never a blank that reads as a healthy cluster.
   if (d && d.forbidden) {
@@ -2256,6 +2321,11 @@ function bindingsPage() {
       <strong>not</strong> evaluated, so this is what has been granted, not a computed list
       of permitted actions.
     </div>
+    ${searching ? `<div class="filterbar-note" id="binding-search-note" style="margin-top:6px">Filtered by
+      <strong>${esc(q.trim())}</strong> — every word must appear in the group, role, namespace or binding
+      name. ${Object.values(f).reduce((n, rows) => n + rows.length, 0)} of
+      ${Object.values(raw).filter(Array.isArray).reduce((n, rows) => n + rows.length, 0)} loaded bindings match.
+      Clear the box, or press Escape in it, to see all of them.</div>` : ""}
   </section>`;
 
   // The policy-operator strip is part of the page, not of a filter: these CRs template
@@ -2269,30 +2339,30 @@ function bindingsPage() {
        acknowledged with the <code>rbac.ocp.io/unmanaged-exception</code> annotation on the
        binding itself, which records the justification next to the object and clears it
        from this list.`,
-      d.unmanaged || [], sevBadge("warning", "unmanaged"));
+      f.unmanaged, sevBadge("warning", "unmanaged"));
   }
   if (view.bindingFilter === "ok") {
     return header + bindingSection("Granted",
       "The group named by each of these exists, so the access reaches its members.",
-      d.ok || []);
+      f.ok);
   }
   if (view.bindingFilter === "built_in") {
     return header + bindingSection("Built-in",
       `Kubernetes virtual groups such as <code>system:authenticated</code> and
        <code>system:serviceaccounts:*</code>. They authorise real access and no Group object
        exists for them by design, so their absence is expected and not a fault.`,
-      d.built_in || []);
+      f.built_in);
   }
   if (view.bindingFilter === "all") {
     return header
       + bindingSection("Dangling", "The group was operator-managed and has disappeared — this "
-          + "binding now grants nobody.", d.dangling || [], sevBadge("critical", "dangling"))
+          + "binding now grants nobody.", f.dangling, sevBadge("critical", "dangling"))
       + bindingSection("Unresolved", "Names a group that has never existed here.",
-          d.unresolved || [], sevBadge("warning", "unresolved"))
+          f.unresolved, sevBadge("warning", "unresolved"))
       + bindingSection("Unmanaged", "Hand-made grant on an operator-synced group, outside the "
-          + "policy system.", d.unmanaged || [], sevBadge("warning", "unmanaged"))
-      + bindingSection("Granted", "The group exists; access reaches its members.", d.ok || [])
-      + bindingSection("Built-in", "Virtual groups; no Group object is expected.", d.built_in || []);
+          + "policy system.", f.unmanaged, sevBadge("warning", "unmanaged"))
+      + bindingSection("Granted", "The group exists; access reaches its members.", f.ok)
+      + bindingSection("Built-in", "Virtual groups; no Group object is expected.", f.built_in);
   }
 
   // default: what was granted, with what needs review on top. The page is called Access
@@ -2315,20 +2385,20 @@ function bindingsPage() {
     </div>
   </section>
   ${bindingSection("Dangling", "The group was operator-managed and has disappeared.",
-      d.dangling || [], sevBadge("critical", "dangling"))}
+      f.dangling, sevBadge("critical", "dangling"))}
   ${bindingSection("Unresolved",
       `These do not raise alerts: a group that has never been seen cannot be told apart
        from one that simply has not synced yet. They still grant nobody — typically a
        misspelled group name, or an onboarding that stopped halfway.`,
-      d.unresolved || [], sevBadge("warning", "unresolved"))}
+      f.unresolved, sevBadge("warning", "unresolved"))}
   ${bindingSection("Unmanaged",
       `Hand-made grants on operator-synced groups, outside the policy system. Acknowledge
        a deliberate one with the <code>rbac.ocp.io/unmanaged-exception</code> annotation on
        the binding; the justification then lives next to the object and clears it here.`,
-      d.unmanaged || [], sevBadge("warning", "unmanaged"))}
+      f.unmanaged, sevBadge("warning", "unmanaged"))}
   ${bindingSection("Granted",
-      "The group named by each of these exists, so the access reaches its members. This is what has actually been granted on this cluster through groups.",
-      d.ok || [])}`;
+      "The group named by each of these exists, so the access reaches its members. This is what has actually been granted on this cluster through groups; Reaches says how many people that is today, and how many of them have ever logged in.",
+      f.ok)}`;
 }
 
 /* Binding table + section card, at module scope so both the Access-granted and the
@@ -2336,12 +2406,36 @@ function bindingsPage() {
    calling them from the new page failed at runtime with "section is not defined" — caught
    by a screenshot, not by the suite, because no test opened that tab. tests/test_ui.py
    now does. */
+/* Who a binding reaches today. `member_count` is the Group object's own count and
+   `logged_in_count` is how many of those members have a User with an identity — the 0.9.0
+   definition of a login. Both are null when no Group object exists (dangling, unresolved,
+   built-in) and on an older server that does not send them; either way the cell says nothing
+   rather than "0", because 0 is a finding: the group exists and grants nobody today. */
+function reachCell(r) {
+  if (r.member_count == null) return `<span class="muted">—</span>`;
+  if (r.member_count === 0) {
+    return `<strong class="err" title="The group exists but has no members, so this binding grants nobody today.">0 members</strong>`;
+  }
+  const members = `${r.member_count} member${r.member_count === 1 ? "" : "s"}`;
+  return r.logged_in_count == null ? members
+    : `${members} <span class="muted">· ${r.logged_in_count} logged in</span>`;
+}
+
 function bindingTable(rows) {
+  const key = view.bindingSort, dir = view.bindingDir;
+  let sorted = sortBy(rows, BIND_SORT[key] || BIND_SORT.group, dir);
+  // Rows with no Group object have nothing to say in Reaches; whichever way the column is
+  // sorted they go last, so a descending sort still starts with the biggest real group.
+  if (key === "reaches") sorted = sorted.filter((r) => r.member_count != null).concat(sorted.filter((r) => r.member_count == null));
+  const th = (label, k, extra) => sortableTh(label, k, key, dir, "bind", extra);
   return `<div class="scroll-x"><table>
-      <thead><tr><th>Group named by the binding</th><th>Grants</th><th>Scope</th>
-        <th>Binding</th></tr></thead>
-      <tbody>${rows.map((r) => `<tr>
+      <thead><tr>${th("Group named by the binding", "group")}
+        ${th("Reaches", "reaches")}
+        ${th("Grants", "grants")}${th("Scope", "scope")}
+        ${th("Binding", "binding")}</tr></thead>
+      <tbody>${sorted.map((r) => `<tr>
         <td><button type="button" class="drill" data-group="${esc(r.group_name)}">${esc(r.group_name)}</button></td>
+        <td>${reachCell(r)}</td>
         <td><code>${esc(r.role_name)}</code> <span class="muted">${esc(r.role_kind)}</span></td>
         <td>${r.binding_namespace
               ? esc(r.binding_namespace)
@@ -2934,6 +3028,9 @@ function wireDrilldown() {
       refresh();
     };
   });
+  document.querySelectorAll('[data-sort-group="bind"]').forEach((el) => {
+    el.onclick = () => { view.bindingSort = el.dataset.sortKey; view.bindingDir = el.dataset.sortDir; render(); };
+  });
   document.querySelectorAll("[data-ufilter]").forEach((el) => {
     el.onclick = () => { view.userFilter = el.dataset.ufilter; render(); };
   });
@@ -3004,6 +3101,20 @@ let lastFingerprint = null;
 // the visibility catch-up below reads this to decide whether a refetch is owed at all.
 let lastRefreshStartedAt = Date.now();
 
+/* The narrowed reader's own access path for the Access granted tab. A 404 is a viewer the
+   store has never seen — in no group, no history, no User object — which is an empty state,
+   not a fault; every other error is still one. The stand-in declares scope so the banner
+   renders from the wire's vocabulary, as scopeBanner requires. */
+function myAccessFetch(get, base, viewer) {
+  // `get` is refresh()'s own fetcher (it stamps the interaction), handed in rather than reached
+  // for: it is a local of refresh, and a module-level reference to it was a ReferenceError
+  // that the error card swallowed — caught by the self-tier UI tests, not by the parser.
+  return get(`${base}/users/${encodeURIComponent(viewer)}`).catch((e) => {
+    if (e.status !== 404) throw e;
+    return { scope: "self", viewer, user: viewer, bindings: [], unseen: true };
+  });
+}
+
 async function refresh(opts = {}) {
   const seq = ++navSeq;
   const superseded = () => seq !== navSeq;
@@ -3069,8 +3180,15 @@ async function refresh(opts = {}) {
       // guard403 on the administrator-tier payloads: a narrowed reader's 403 is the
       // DESIGNED answer. Unguarded it fell to the catch below and replaced the whole tab
       // with "Dashboard API error: 403 Forbidden" — the defect the Usage tab first fixed.
-      if (view.page === "bindings" || view.page === "policy") {
+      // Access granted at the narrowed tier is the reader's OWN path (myAccess), not the
+      // cluster's findings — which would only come back as the designed 403 and count as a
+      // refusal on /metrics once a minute for as long as they sit on the tab. RBAC policy has
+      // no narrowed form and keeps its refusal.
+      if (view.page === "policy" || (view.page === "bindings" && !narrowedReader())) {
         want.findings = guard403(get(`${base}/bindings/findings?limit=${FINDINGS_PAGE}`));
+      }
+      if (view.page === "bindings" && narrowedReader() && data.whoami && data.whoami.user) {
+        want.myAccess = myAccessFetch(get, base, data.whoami.user);
       }
       if (view.page === "groups" || view.page === "users") {
         // The SAME order render() dispatches in, so what is fetched is what is painted. A pasted
@@ -3151,6 +3269,17 @@ async function refresh(opts = {}) {
       data.events = view.groupsync ? got.events : null;
     }
     if ("findings" in got) data.findings = got.findings;
+    if ("myAccess" in got) data.myAccess = got.myAccess;
+    // FIRST CYCLE on the Access granted tab: whoami arrives in the same burst as the findings
+    // request, so the tier was unknown when it was sent. A refusal plus an authenticated
+    // whoami means "narrowed" — fetch the reader's own path now, before painting, so the tab
+    // never flashes the refusal card at someone the next cycle would have served.
+    if (view.page === "bindings" && got.findings && got.findings.forbidden
+        && got.whoami && got.whoami.authenticated && got.whoami.user && !data.myAccess) {
+      const own = await myAccessFetch(get, `/api/clusters/${encodeURIComponent(view.cluster)}`, got.whoami.user);
+      if (superseded()) return;
+      data.myAccess = own;
+    }
     if ("user" in got) data.user = got.user;
     if ("users" in got) data.users = got.users;
     if ("group" in got) data.group = got.group;
@@ -3178,7 +3307,7 @@ async function refresh(opts = {}) {
     const fingerprint = JSON.stringify([
       data.clusters, data.alerts, data.alertsScope, data.groupsyncs, data.groups,
       data.groupsMeta, data.group, data.user, data.users, data.events, data.logins, data.access,
-      data.usage, data.findings, data.operatorConfigs, data.userBindings, data.whoami,
+      data.usage, data.findings, data.operatorConfigs, data.userBindings, data.whoami, data.myAccess,
     ]);
     if (opts.auto && fingerprint === lastFingerprint) {
       // Still say so. Leaving the clock frozen would read as "the dashboard has stopped",

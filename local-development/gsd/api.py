@@ -568,7 +568,11 @@ def build_app(
         neither can be used to enumerate.
 
         The distinction is scope, not category: this gate withholds the cluster's binding
-        surface, and never a reader's own. `docs/ACCESS_CONTROL.md` tabulates both.
+        surface, and never a reader's own. `docs/ACCESS_CONTROL.md` tabulates both. Since
+        0.10.0 the Access granted tab renders exactly that at the narrowed tier — the reader's
+        own `/users/{name}` bindings, with the group named — where the refusal card used to be;
+        the refusal this raises is unchanged, and still what a plain reader gets from the
+        endpoint itself.
 
         WHY A REFUSAL AND NOT A FILTER, measured on the reference cluster. An ordinary reader
         (`lateef.o`) holds none of `list clusterrolebindings`, `list rolebindings` or `list
@@ -730,13 +734,16 @@ def build_app(
         return {"total": len(oc["configs"]), "failing": failing}
 
     def _binding_counts(cluster_id: str) -> dict:
-        counts = {"dangling": 0, "unresolved": 0, "built_in": 0}
-        for finding in store.binding_findings(cluster_id):
-            counts[finding["finding"]] = counts.get(finding["finding"], 0) + 1
+        # A scalar GROUP BY, not every row materialised and counted in Python: this runs on every
+        # /api/clusters, which every tab reads, and the row form grew with the cluster (measured
+        # at 2,280 rows at ten times the reference cluster). Same classification, same numbers.
+        # GROUP BY yields only the tiers present, so a cluster with no dangling bindings has no
+        # "dangling" key — index with a default, as the pre-seeded dict this replaced did.
+        counts = store.count_bindings_by_finding(cluster_id)
         return {
-            "dangling_bindings": counts["dangling"],
-            "unresolved_bindings": counts["unresolved"],
-            "builtin_bindings": counts["built_in"],
+            "dangling_bindings": counts.get("dangling", 0),
+            "unresolved_bindings": counts.get("unresolved", 0),
+            "builtin_bindings": counts.get("built_in", 0),
         }
 
     @app.get("/api/clusters")
@@ -1424,6 +1431,12 @@ def build_app(
 
         The COUNTS remain public on /metrics (`gsd_bindings_total{finding=...}`) and that is
         unchanged and fine: an aggregate is not a target list. It is the rows that escalate.
+
+        Each row also says who it REACHES: `member_count`, the named Group's own member count,
+        and `logged_in_count`, how many of those members have logged in — a User object with an
+        identity, the definition the Users tab uses. Both are null when no Group object exists
+        (dangling, unresolved, built-in), so 0 keeps its meaning: the group exists and grants
+        nobody today. A binding that names a role is not access until someone is in the group.
         """
         require_cluster(cluster_id)
         require_admin_tier(request)
@@ -1437,7 +1450,7 @@ def build_app(
         # rows, so it keeps describing the cluster once the rows are a page of it.
         counts = store.count_bindings_by_finding(cluster_id)
         total = sum(counts.values())
-        rows = store.all_bindings(cluster_id, limit=limit, offset=offset)
+        rows = store.all_bindings(cluster_id, limit=limit, offset=offset, reach=True)
         by_tier: dict[str, list[dict]] = {
             "ok": [], "dangling": [], "unresolved": [], "built_in": [], "unmanaged": []
         }

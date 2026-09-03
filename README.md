@@ -76,11 +76,12 @@ verbosity, so the tab says what period it can account for rather than implying i
 ### The same dashboard, to someone who is not an administrator
 
 Every image above is an administrator's view. An ordinary reader sees their own groups, their own
-grants and their own sign-ins, and the three tabs that report on the cluster rather than on them
-are refused outright — a named refusal, never a blank page, because an empty audit tab reads as a
-healthy cluster.
+grants — the Access granted tab shows them the bindings that reach them through their groups — and
+their own sign-ins, and the two tabs that report on the cluster rather than on them (Overview, RBAC
+policy) are refused outright — a named refusal, never a blank page, because an empty audit tab
+reads as a healthy cluster.
 
-![Access granted, refused for a non-administrator](docs/screenshots/self/04-access-granted.png)
+![Access granted, an ordinary reader's own access](docs/screenshots/self/04-access-granted.png)
 
 The header pill says which view you are in, so "nothing looks different" and "you are seeing
 everything" are distinguishable from the screen. Same deployment, same tab, same moment — the
