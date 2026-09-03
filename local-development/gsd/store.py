@@ -1896,23 +1896,6 @@ class Store:
                                        AND g.user_name  = m.user_name
                                        AND g.group_name <> ?)"""
 
-    def login_without_access(self, cluster_id: str, limit: int = 200) -> list[dict]:
-        """People in the gate group who hold no access through another synced group."""
-        access = self.cluster_access_group(cluster_id)
-        if not access or not access["group_name"]:
-            return []
-        where = self._login_without_access_where()
-        return self._rows(
-            """SELECT m.user_name, m.first_seen_at, u.full_name,
-                      EXISTS(SELECT 1 FROM login_event e
-                              WHERE e.cluster_id=m.cluster_id AND e.user_name=m.user_name) AS has_tried
-                 FROM group_member m
-                 LEFT JOIN ocp_user u
-                        ON u.cluster_id=m.cluster_id AND u.user_name=m.user_name"""
-            + where + " ORDER BY m.user_name LIMIT ?",
-            (cluster_id, access["group_name"], access["group_name"], limit),
-        )
-
     def count_login_without_access(self, cluster_id: str) -> int:
         """Whole-set count for a list that is deliberately paged."""
         access = self.cluster_access_group(cluster_id)
