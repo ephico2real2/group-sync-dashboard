@@ -31,8 +31,25 @@ verdicts rest on reading code and probing with in-memory SQLite where it could.
 
 ## Cursor
 
-The `cursor agent` run lost its connection to the service repeatedly and had produced no verdicts
-when this record was written; see the addendum below if it completed.
+The first `cursor agent` run lost its connection to the service repeatedly and produced nothing; a
+second run reviewed the head that already carried the Codex fixes, in ask mode with the shell
+blocked (its own note), so its verdicts rest on code and test source. It confirmed the Codex fixes
+held — including the tier-transition race, which it re-attacked with the promote/demote cases — and
+found one thing Codex had not.
+
+| Claim | Verdict | Re-check | Disposition |
+|---|---|---|---|
+| C1–C4, C6–C9 | CONFIRMED (C6 shared sort state: PLAUSIBLE as accepted debt) | — | accepted |
+| C5 search | REFUTED as written against the fixed head (the two Codex items were already fixed); **new attack**: the search runs over a page of `FINDINGS_PAGE` rows and the tab never disclosed truncation, so "see all of them" was false on a cluster with more than 500 group bindings and a group past the cut read as holding no grant | true: `bindingsPage` read nothing from `truncated` | **fixed**: a truncation note like the Users and Logins tabs, stated before the search note, and the search note stops promising everything when truncated; test |
+| C10 tests | REFUTED, list of gaps | accurate | **fixed** for the truncation disclosure and for "a known narrowed reader never requests the findings" (a fetch-interception test); the rest recorded below |
+| C11 docs | two current-doc mismatches: `SPEC_usage_admin_tier.md` "three admin-tier tabs", and the 0.4.0 paragraph in `Chart.yaml` naming Access granted among the tabs that become refusals; two archival records flagged, not treated as product docs | both true | **fixed**: both sentences; the archival records (`REVIEW_admin_tier_gating.md` C5, `AUDIT_visibility_premise_and_assumptions.md` premise 6) are point-in-time and left as written |
+
+## Where the two differed
+
+Codex, with a shell, found the race; Cursor, reviewing after the fix, confirmed it closed and found
+the truncation gap by reasoning about `FINDINGS_PAGE` against the header's cluster-wide counts — a
+gap that predates this PR (the tab never disclosed truncation) and that the new search made sharper.
+Neither returned a wrong CONFIRMED.
 
 ## Declined or deferred
 
@@ -41,6 +58,11 @@ when this record was written; see the addendum below if it completed.
   break on any reformatting. Declined.
 - **A whoami failure while findings is refused** (C10): `narrowedFor(null)` is false, so the refusal
   card renders — the pre-existing behaviour, unchanged; not separately tested.
+- **Server-side search** (Cursor C5, the alternative to disclosure): the Find box works over what is
+  loaded on every tab; disclosure keeps the denominators honest without a new endpoint. Deferred.
+- **A dedicated test for `_binding_counts` on an empty or built-in-only cluster** (Cursor C10): the
+  UI fixture has no dangling bindings and exercises the defaulted lookup on every `/api/clusters`
+  read; the KeyError it replaced was caught by exactly that path. Not added separately.
 
 ## What changed because of the review
 

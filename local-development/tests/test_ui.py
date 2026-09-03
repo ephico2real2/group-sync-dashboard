@@ -902,6 +902,24 @@ class TestBindingFindingsVisible:
         dash.wait_for_function("() => view.bindingSearch === ''")
         assert dash.locator("tbody tr").count() == before
 
+    def test_a_truncated_page_says_so_and_the_search_note_stops_promising_everything(self, dash):
+        """The page holds FINDINGS_PAGE rows; the header counts the cluster. Without a disclosure a
+        reader searching for a group past the cut concludes it holds no grant (Cursor, #48)."""
+        self._open(dash)
+        assert dash.locator("#binding-truncation-note").count() == 0, "the fixture fits in one page"
+        dash.evaluate("() => { data.findings = Object.assign({}, data.findings, { truncated: true, total: 900 }); render(); }")
+        note = dash.locator("#binding-truncation-note").inner_text()
+        assert "of 900 group bindings" in note and "past the cut cannot be found here" in note, note
+        dash.fill("#f-binding-search", "klta")
+        dash.wait_for_function("() => view.bindingSearch === 'klta'")
+        search = dash.locator("#binding-search-note").inner_text()
+        assert "loaded bindings" in search and "past the cut is not searched" in search, search
+        assert "see all of them" not in search
+        dash.locator("#f-binding-search").press("Escape")
+        dash.wait_for_function("() => view.bindingSearch === ''")
+        dash.evaluate("() => refresh()")
+        dash.wait_for_function("() => data.findings && data.findings.truncated === false")
+
     def test_a_cluster_switch_clears_the_search_and_keeps_the_sort(self, dash):
         self._open(dash)
         dash.fill("#f-binding-search", "klta")
@@ -2900,6 +2918,20 @@ class TestAccessGrantedSelfTier:
         assert p.locator(".scope-banner").count() == 0
         assert p.locator("section.card:has(h2:has-text('Granted')) tbody tr").count() >= 1
         assert p.locator("#f-binding").count() == 1
+
+    def test_a_known_narrowed_reader_never_requests_the_findings(self, page, scoped_server):
+        """Once the tier is known, the tab fetches only the reader's own path: a findings request
+        would only come back as the designed 403 and count as a refusal on /metrics every cycle."""
+        p = self._open(page, scoped_server, "alice")
+        p.wait_for_selector(".scope-banner")
+        p.evaluate("() => { window.__urls = []; const f = window.fetch;"
+                   " window.fetch = (...a) => { window.__urls.push(String(a[0])); return f(...a); }; }")
+        p.evaluate("() => refresh()")
+        p.wait_for_function("() => window.__urls.some((u) => u.includes('/users/alice'))", timeout=10_000)
+        p.wait_for_timeout(300)
+        urls = p.evaluate("() => window.__urls")
+        assert not [u for u in urls if "bindings/findings" in u], urls
+        assert [u for u in urls if u.endswith("/users/alice")], urls
 
     def test_a_reader_promoted_mid_session_sees_the_cluster_on_the_next_refresh(self, page, scoped_server):
         """The tier used to be decided from the PREVIOUS cycle's identity: a promotion showed the

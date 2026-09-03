@@ -108,8 +108,9 @@ tier's. It is a different question about the same person and must not share a ca
 - A self-tier reader still gets their own rows on Usage and 403 on the two gated endpoints.
 - `/api/clusters` stays reachable for every reader; `operator_configs` stays withheld at self.
 - The proxy-off install is untouched: wide view plus the startup warning.
-- The three admin-tier tabs still say "For administrators only" exactly once and still name no
-  role, check, chart key or README.
+- The two admin-tier tabs (Overview, RBAC policy) still say "For administrators only" exactly once
+  and still name no role, check, chart key or README. Access granted is narrowed rather than
+  refused since 0.10.0: a plain reader sees the bindings that reach them through their groups.
 
 ## Tests required
 

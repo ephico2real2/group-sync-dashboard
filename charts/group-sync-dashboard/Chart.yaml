@@ -45,7 +45,8 @@ type: application
 # cluster this default was wrong for — one whose custom or aggregated role grants directory read
 # WITHOUT RBAC read. There, a reader entitled only to read the directory was being served the whole
 # RBAC binding surface, including which groups hold cluster-admin. On upgrade that reader correctly
-# loses the wide tier, and their Overview / Access granted / RBAC policy tabs become named refusals.
+# loses the wide tier, and their Overview / Access granted / RBAC policy tabs become named refusals
+# (Access granted only until 0.10.0, which shows a narrowed reader their own grants instead).
 #
 # So: a silent tightening for the clusters that need it, a no-op for the rest, and the old values
 # remain settable explicitly. values.yaml under visibility.adminSar carries the measurement.
