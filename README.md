@@ -76,11 +76,12 @@ verbosity, so the tab says what period it can account for rather than implying i
 ### The same dashboard, to someone who is not an administrator
 
 Every image above is an administrator's view. An ordinary reader sees their own groups, their own
-grants and their own sign-ins, and the three tabs that report on the cluster rather than on them
-are refused outright — a named refusal, never a blank page, because an empty audit tab reads as a
-healthy cluster.
+grants — the Access granted tab shows them the bindings that reach them through their groups — and
+their own sign-ins, and the two tabs that report on the cluster rather than on them (Overview, RBAC
+policy) are refused outright — a named refusal, never a blank page, because an empty audit tab
+reads as a healthy cluster.
 
-![Access granted, refused for a non-administrator](docs/screenshots/self/04-access-granted.png)
+![Access granted, an ordinary reader's own access](docs/screenshots/self/04-access-granted.png)
 
 The header pill says which view you are in, so "nothing looks different" and "you are seeing
 everything" are distinguishable from the screen. Same deployment, same tab, same moment — the
@@ -347,7 +348,9 @@ the person finds the id the cluster knows them by. A non-administrator sees thei
 **Access granted** — every group-subject binding, classified `ok`, `dangling` (the group was
 operator-managed and has disappeared), `unresolved` (names a group that has never existed),
 `built_in` (Kubernetes virtual groups, expected), or `unmanaged` (a hand-made grant on a
-synced group, outside the policy system). Filterable, defaulting to what needs review.
+synced group, outside the policy system). Opens on what was granted with the faults on top;
+each granted row says who it reaches — the group's members, and how many have logged in — and the
+list filters as you type and sorts by column. Built-in bindings are one filter away.
 
 **RBAC policy** — the namespace-configuration-operator's `NamespaceConfig` and `GroupConfig`
 CRs beside the provenance of the bindings they template. These CRs are the other half of the

@@ -5,7 +5,7 @@
 # pod is running a version it is not — the same failure appVersion had, and quieter, because the
 # endpoint answers confidently either way. tests/test_chart_versions.py holds the two together;
 # before that test existed nothing did.
-__version__ = "0.9.0"
+__version__ = "0.10.0"
 
 # THE ONE PLACE THE DASHBOARD IS NAMED. The page title, the header, the signed-out page and
 # the API docs all read this; the README heading is held to it by tests/test_title.py. It used

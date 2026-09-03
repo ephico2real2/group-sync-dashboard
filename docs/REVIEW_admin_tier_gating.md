@@ -120,7 +120,9 @@ UI (`local-development/gsd/static/index.html`):
 - `operator-configs` fetch wrapped in the existing `guard403`, so the designed 403 does not replace
   the tab with "Dashboard API error: 403 Forbidden".
 - The **already-existing** refusal cards for "Access granted" and "RBAC policy" now fire, because
-  something finally refuses. All three carry `<strong>For administrators only.</strong>`.
+  something finally refuses. All three carry `<strong>For administrators only.</strong>`. *(As of
+  that revision. Since 0.10.0 the Access granted card fires only when the tier cannot be
+  established; a known narrowed reader is shown their own grants instead — §6 item 3.)*
 
 Tests:
 
@@ -139,8 +141,14 @@ Tests:
 2. **`list_groupsyncs`'s docstring** still says "FULL VIEW AT BOTH TIERS, by ruling (spec Q3)" —
    still true for that endpoint, but the Q3 cross-reference now points at a partially reversed
    ruling and should say why *this* endpoint is the surviving half.
-3. **Access granted is only refused via `findings`.** The tab's sole fetch is
-   `bindings/findings`, so gating that endpoint gates the tab. Confirm there is no second path in.
+3. **Access granted is only refused via `findings`** *(as of the revision reviewed; superseded,
+   see below)*. The tab's sole fetch was `bindings/findings`, so gating that endpoint gated the tab.
+   *Held until 2026-09-03.* The tab now has a second fetch at the narrowed tier — the reader's own
+   `/users/{name}`, which serves their own bindings with `via_group` and refuses anyone else's name
+   before any lookup — and renders their own grants where the refusal card was. The endpoint gate
+   is unchanged: `bindings/findings` still refuses a plain reader with the same sentence, the
+   refusal is still counted on `/metrics`, and the card still renders when the tier cannot be
+   established (whoami unavailable). RBAC policy keeps its refusal.
 4. **Not rebuilt or redeployed.** Live verification of these three tabs as `lateef.o` has not
    happened yet. Release 102 on CRC runs `0.6.0-6ed5d8ade9`, which predates this commit.
 5. **`data.alertsScope`** is set by the loader and consumed by no renderer. Pre-existing.

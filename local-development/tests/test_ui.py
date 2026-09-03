@@ -814,6 +814,143 @@ class TestBindingFindingsVisible:
         assert dash.locator("button[data-nav='bindings']").count() == 1
         self._open(dash)
 
+    def test_the_default_view_shows_what_was_granted_under_what_needs_review(self, dash):
+        """The page is called Access granted and used to open on the faults alone; the bindings
+        that actually grant access sat behind the filter, and the operator read the page as
+        missing its data (enhancement, 2026-09-03). Faults stay on top; Granted follows; the
+        built-in majority stays one filter away."""
+        self._open(dash)
+        assert dash.evaluate("() => view.bindingFilter") == "review"
+        # Headings carry a severity badge and a count ("unresolved Unresolved · 1"), so match by word.
+        headings = [h.strip() for h in dash.locator("#main section.card h2").all_inner_texts()]
+        def at(word):
+            hits = [i for i, h in enumerate(headings) if word in h.split()]
+            assert hits, (word, headings)
+            return hits[0]
+        assert at("Granted") > at("Unresolved"), ("faults first, then what was granted", headings)
+        assert not any("Built-in" in h for h in headings), "built-in bindings are noise to a reviewer and stay behind the filter"
+        # The fixture's one healthy grant: a RoleBinding on a group that exists.
+        granted = dash.locator("section.card:has(h2:has-text('Granted')) tbody tr")
+        assert granted.count() >= 1
+        assert "app-ocp-rbac-alpha-ns-admin" in granted.first.inner_text()
+        assert "managed-admin-rb" in granted.first.inner_text()
+        # The review hero is still the first thing on the page.
+        assert "grant nobody" in dash.locator("#main").inner_text()
+        assert "grant a real group follow" in dash.locator("#main").inner_text()
+        assert dash.locator("#f-binding option[value='review']").inner_text().strip() == "granted + needs review"
+
+    def test_each_granted_row_says_who_it_reaches(self, dash):
+        """2 members · 1 logged in: alice has a User with an identity, dave has no User at all."""
+        self._open(dash)
+        row = dash.locator("section.card:has(h2:has-text('Granted')) tbody tr").first.inner_text()
+        assert "2 members" in row and "1 logged in" in row, row
+        # A row whose group has no object says nothing, not "0".
+        unresolved = dash.locator("section.card:has(h2:has-text('Unresolved')) tbody tr").first.inner_text()
+        assert "—" in unresolved and "members" not in unresolved, unresolved
+        dash.select_option("#f-binding", "built_in")
+        dash.wait_for_function("() => document.body.innerText.includes('system:serviceaccounts:ns0')")
+        cells = dash.locator("tbody tr td:nth-child(2)").all_inner_texts()
+        assert cells and all(c.strip() == "—" for c in cells), cells
+        dash.select_option("#f-binding", "review")
+        dash.wait_for_selector("text=grant nobody")
+
+    def test_the_rbac_policy_page_shares_the_reaches_column(self, dash):
+        dash.locator("button[data-nav='policy']").click()
+        dash.wait_for_selector("section.card:has(h2:has-text('Grants outside')) tbody tr")
+        row = dash.locator("section.card:has(h2:has-text('Grants outside')) tbody tr").first.inner_text()
+        assert "2 members" in row and "1 logged in" in row, row
+        self._open(dash)
+
+    def test_an_old_servers_rows_render_a_dash_without_a_page_error(self, dash):
+        self._open(dash)
+        errors = []
+        dash.on("pageerror", lambda e: errors.append(str(e)))
+        dash.evaluate("""() => {
+            const strip = (rows) => rows.map(({ member_count, logged_in_count, ...rest }) => rest);
+            const d = data.findings;
+            data.findings = Object.assign({}, d, { ok: strip(d.ok), unmanaged: strip(d.unmanaged) });
+            render();
+        }""")
+        cells = dash.locator("section.card:has(h2:has-text('Granted')) tbody tr td:nth-child(2)").all_inner_texts()
+        assert cells and all(c.strip() == "—" for c in cells), cells
+        assert errors == [], errors
+        dash.evaluate("() => refresh()")
+        dash.wait_for_function("() => data.findings && data.findings.ok[0].member_count !== undefined")
+
+    def test_typing_filters_every_section_and_says_so(self, dash):
+        """The same box the Groups and Users tabs have: group, role, namespace or binding name."""
+        self._open(dash)
+        before = dash.locator("tbody tr").count()
+        # The denominator is the sections SHOWN under the current filter — Built-in is hidden on
+        # the default view, so its rows are not counted (Codex, #48).
+        shown = dash.evaluate("() => ['ok','dangling','unresolved','unmanaged']"
+                              ".reduce((n, t) => n + (data.findings[t] || []).length, 0)")
+        assert shown == before
+        dash.fill("#f-binding-search", "klta")
+        dash.wait_for_function("() => view.bindingSearch === 'klta'")
+        names = dash.locator("tbody tr td:first-child").all_inner_texts()
+        assert names == ["app-ocp-rbac-klta-ns-audit"], names
+        note = dash.locator("#binding-search-note").inner_text()
+        assert "klta" in note and f"1 of {shown} bindings in the sections shown match" in note, note
+        # The header counts the cluster, never the match.
+        assert "Group bindings on this cluster" in dash.locator("#main").inner_text()
+        dash.fill("#f-binding-search", "prod-ns admin")
+        dash.wait_for_function("() => view.bindingSearch === 'prod-ns admin'")
+        names = dash.locator("tbody tr td:first-child").all_inner_texts()
+        assert names and all(n in ("was-managed", "app-ocp-rbac-alpha-ns-admin") for n in names), names
+        dash.locator("#f-binding-search").press("Escape")
+        dash.wait_for_function("() => view.bindingSearch === ''")
+        assert dash.locator("tbody tr").count() == before
+
+    def test_a_truncated_page_says_so_and_the_search_note_stops_promising_everything(self, dash):
+        """The page holds FINDINGS_PAGE rows; the header counts the cluster. Without a disclosure a
+        reader searching for a group past the cut concludes it holds no grant (Cursor, #48)."""
+        self._open(dash)
+        assert dash.locator("#binding-truncation-note").count() == 0, "the fixture fits in one page"
+        dash.evaluate("() => { data.findings = Object.assign({}, data.findings, { truncated: true, total: 900 }); render(); }")
+        note = dash.locator("#binding-truncation-note").inner_text()
+        assert "of 900 group bindings" in note and "past the cut cannot be found here" in note, note
+        dash.fill("#f-binding-search", "klta")
+        dash.wait_for_function("() => view.bindingSearch === 'klta'")
+        search = dash.locator("#binding-search-note").inner_text()
+        assert "loaded bindings" in search and "past the cut is not searched" in search, search
+        assert "see all of them" not in search
+        dash.locator("#f-binding-search").press("Escape")
+        dash.wait_for_function("() => view.bindingSearch === ''")
+        dash.evaluate("() => refresh()")
+        dash.wait_for_function("() => data.findings && data.findings.truncated === false")
+
+    def test_a_cluster_switch_clears_the_search_and_keeps_the_sort(self, dash):
+        self._open(dash)
+        dash.fill("#f-binding-search", "klta")
+        dash.wait_for_function("() => view.bindingSearch === 'klta'")
+        dash.evaluate("() => { view.bindingSort = 'binding'; view.bindingDir = 'desc'; }")
+        dash.evaluate("() => { navigate({ cluster: 'prod-east', groupsync: null, group: null, user: null }); }")
+        assert dash.evaluate("() => view.bindingSearch") == ""
+        assert dash.evaluate("() => [view.bindingSort, view.bindingDir]") == ["binding", "desc"]
+        dash.evaluate("() => { navigate({ cluster: 'crc-local', groupsync: null, group: null, user: null });"
+                      " view.bindingSort = 'group'; view.bindingDir = 'asc'; refresh(); }")
+        dash.wait_for_selector("text=grant nobody")
+
+    def test_column_headers_sort_and_reaches_puts_the_unknowns_last(self, dash):
+        self._open(dash)
+        dash.select_option("#f-binding", "all")
+        dash.wait_for_function("() => document.body.innerText.includes('Built-in')")
+        dash.locator("[data-sort-group='bind'][data-sort-key='reaches']").first.click()
+        dash.wait_for_function("() => view.bindingSort === 'reaches' && view.bindingDir === 'desc'")
+        cells = dash.locator("section.card:has(h2:has-text('Built-in')) tbody tr td:nth-child(2)").all_inner_texts()
+        assert all(c.strip() == "—" for c in cells), cells
+        # Sorting by binding name, ascending, on the Granted section.
+        dash.locator("section.card:has(h2:has-text('Granted')) [data-sort-key='binding']").click()
+        dash.wait_for_function("() => view.bindingSort === 'binding'")
+        dash.locator("section.card:has(h2:has-text('Granted')) [data-sort-key='binding']").click()
+        dash.wait_for_function("() => view.bindingSort === 'binding' && view.bindingDir === 'asc'")
+        th = dash.locator("section.card:has(h2:has-text('Granted')) th[aria-sort='ascending']")
+        assert th.count() == 1 and "binding" in th.inner_text().lower()   # CSS uppercases headers
+        dash.evaluate("() => { view.bindingSort = 'group'; view.bindingDir = 'asc'; }")
+        dash.select_option("#f-binding", "review")
+        dash.wait_for_selector("text=grant nobody")
+
     def test_dangling_and_unresolved_are_both_shown(self, dash):
         self._open(dash)
         body = dash.locator("body").inner_text()
@@ -2296,7 +2433,9 @@ class TestVisibilityLabels:
         cannot act on any of it, and naming the permission that would lift the restriction
         turns a refusal into a shopping list.
         """
-        for tab in ("overview", "bindings", "policy"):
+        # Access granted left this list on 2026-09-03: a narrowed reader now sees their own
+        # grants there (TestAccessGrantedSelfTier), and only the two cluster-wide tabs refuse.
+        for tab in ("overview", "policy"):
             p = _open_as(page, scoped_server + f"#page={tab}&cluster=crc-local", "alice")
             p.wait_for_selector(".scope-refusal")
             text = p.locator(".scope-refusal").inner_text()
@@ -2740,6 +2879,105 @@ class TestUserSearch:
         self._open(dash)
         urls = dash.evaluate("() => window.__urls")
         assert [u for u in urls if "/users?" in u], "the Users tab itself must fetch the list"
+
+
+class TestAccessGrantedSelfTier:
+    """A narrowed reader's Access granted tab: their own path, not the refusal. The endpoint the
+    administrator view reads still 403s at self (test_view_scoping pins the body); the tab reads
+    the reader's own /users/{me} instead, which the gate never withheld."""
+
+    def _open(self, page, base, user):
+        p = _open_as(page, base, user)
+        p.locator("button[data-nav='bindings']").click()
+        p.wait_for_function("() => document.querySelector('#main .empty-note') === null"
+                            " || !/Loading/.test(document.querySelector('#main .empty-note').textContent)",
+                            timeout=10_000)
+        return p
+
+    def test_a_member_sees_the_bindings_that_reach_them_and_no_refusal(self, page, scoped_server):
+        p = self._open(page, scoped_server, "alice")
+        p.wait_for_selector(".scope-banner")
+        assert p.locator(".scope-refusal").count() == 0
+        body = p.locator("#main").inner_text()
+        assert "reaches alice" in body, body[:300]
+        assert "managed-admin-rb" in body and "hand-made-crb" in body, body[:400]
+        assert "app-ocp-rbac-alpha-ns-admin" in body
+        assert "For administrators only" not in body and "Dashboard API error" not in body
+        assert p.locator("#f-binding").count() == 0 and p.locator("#f-binding-search").count() == 0
+
+    def test_a_reader_in_no_group_gets_the_empty_state_not_an_error(self, page, scoped_server):
+        p = self._open(page, scoped_server, "nomember")
+        p.wait_for_selector("#main .empty-note")
+        body = p.locator("#main").inner_text()
+        assert "No group grants you access" in body and "nomember" in body, body[:300]
+        assert "Dashboard API error" not in body and "For administrators only" not in body
+
+    def test_the_administrator_still_sees_the_whole_cluster(self, page, scoped_server):
+        p = self._open(page, scoped_server, "root")
+        p.wait_for_selector("text=grant nobody")
+        assert p.locator(".scope-banner").count() == 0
+        assert p.locator("section.card:has(h2:has-text('Granted')) tbody tr").count() >= 1
+        assert p.locator("#f-binding").count() == 1
+
+    def test_a_known_narrowed_reader_never_requests_the_findings(self, page, scoped_server):
+        """Once the tier is known, the tab fetches only the reader's own path: a findings request
+        would only come back as the designed 403 and count as a refusal on /metrics every cycle."""
+        p = self._open(page, scoped_server, "alice")
+        p.wait_for_selector(".scope-banner")
+        p.evaluate("() => { window.__urls = []; const f = window.fetch;"
+                   " window.fetch = (...a) => { window.__urls.push(String(a[0])); return f(...a); }; }")
+        p.evaluate("() => refresh()")
+        p.wait_for_function("() => window.__urls.some((u) => u.includes('/users/alice'))", timeout=10_000)
+        p.wait_for_timeout(300)
+        urls = p.evaluate("() => window.__urls")
+        assert not [u for u in urls if "bindings/findings" in u], urls
+        assert [u for u in urls if u.endswith("/users/alice")], urls
+
+    def test_a_reader_promoted_mid_session_sees_the_cluster_on_the_next_refresh(self, page, scoped_server):
+        """The tier used to be decided from the PREVIOUS cycle's identity: a promotion showed the
+        old narrowed view for a cycle (Codex, #48). The tab now decides from the whoami that just
+        arrived and makes one guarded follow-up fetch."""
+        p = self._open(page, scoped_server, "alice")
+        p.wait_for_selector(".scope-banner")
+        p.set_extra_http_headers({"X-Forwarded-User": "root"})
+        p.evaluate("() => refresh()")
+        p.wait_for_selector("text=grant nobody", timeout=10_000)
+        assert p.locator(".scope-banner").count() == 0
+        assert p.locator("section.card:has(h2:has-text('Granted')) tbody tr").count() >= 1
+        assert p.evaluate("() => data.myAccess") is None, "the narrowed payload is not left behind"
+
+    def test_a_reader_demoted_mid_session_sees_their_own_path_on_the_next_refresh(self, page, scoped_server):
+        p = self._open(page, scoped_server, "root")
+        p.wait_for_selector("text=grant nobody")
+        p.set_extra_http_headers({"X-Forwarded-User": "alice"})
+        p.evaluate("() => refresh()")
+        p.wait_for_selector(".scope-banner", timeout=10_000)
+        body = p.locator("#main").inner_text()
+        assert "reaches alice" in body and "grant nobody" not in body, body[:300]
+        assert p.evaluate("() => data.findings") is None, "the wide payload is not this reader's to paint"
+
+    def test_a_narrowed_identity_with_no_username_is_a_named_card_not_loading(self, page, scoped_server):
+        p = self._open(page, scoped_server, "alice")
+        p.wait_for_selector(".scope-banner")
+        p.evaluate("() => { data.whoami = Object.assign({}, data.whoami, { user: null }); data.myAccess = null; render(); }")
+        body = p.locator("#main").inner_text()
+        assert "passed no username" in body and "Loading" not in body, body[:300]
+        assert p.locator(".scope-refusal").count() == 1
+
+    def test_a_non_404_failure_on_the_own_path_is_still_an_error(self, page, scoped_server):
+        p = self._open(page, scoped_server, "alice")
+        p.wait_for_selector(".scope-banner")
+        p.route("**/users/alice", lambda route: route.fulfill(status=500, content_type="application/json", body='{"detail":"boom"}'))
+        p.evaluate("() => { data.myAccess = null; refresh(); }")
+        p.wait_for_function("() => /Dashboard API error/.test(document.querySelector('#main').innerText)", timeout=10_000)
+        p.unroute("**/users/alice")
+
+    def test_the_via_group_drills_to_the_readers_own_group(self, page, scoped_server):
+        p = self._open(page, scoped_server, "alice")
+        p.wait_for_selector("[data-group='app-ocp-rbac-alpha-ns-admin']")
+        p.locator("[data-group='app-ocp-rbac-alpha-ns-admin']").first.click()
+        p.wait_for_function("() => view.group === 'app-ocp-rbac-alpha-ns-admin'")
+        assert p.evaluate("() => view.page") == "groups"
 
 
 class TestUserSearchVisibility:

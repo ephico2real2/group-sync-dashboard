@@ -45,7 +45,8 @@ type: application
 # cluster this default was wrong for — one whose custom or aggregated role grants directory read
 # WITHOUT RBAC read. There, a reader entitled only to read the directory was being served the whole
 # RBAC binding surface, including which groups hold cluster-admin. On upgrade that reader correctly
-# loses the wide tier, and their Overview / Access granted / RBAC policy tabs become named refusals.
+# loses the wide tier, and their Overview / Access granted / RBAC policy tabs become named refusals
+# (Access granted only until 0.10.0, which shows a narrowed reader their own grants instead).
 #
 # So: a silent tightening for the clusters that need it, a no-op for the rest, and the old values
 # remain settable explicitly. values.yaml under visibility.adminSar carries the measurement.
@@ -97,7 +98,9 @@ type: application
 # SOURCE of the Users tab rather than a decoration of it (docs/DESIGN_users_tab_logins.md), so an
 # operator who turns the grant off loses that tab's rows — the tab says so by name — instead of
 # losing display names. Rendered objects are byte-identical to 0.8.0 apart from the version labels.
-version: 0.9.0
+# CHART 0.9.1 (2026-09-03), PATCH: appVersion moves to application 0.10.0 (below); no template or
+# default changes — the 0.7.1 precedent.
+version: 0.9.1
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,
@@ -123,7 +126,13 @@ version: 0.9.0
 # /users/{name} gains the same login facts and is no longer a 404 for a User in no group. Schema
 # migration 7 rebuilds ocp_user. MINOR: additive on the wire for a consumer that read the old fields,
 # but the row population changes — a synced member with no User object is no longer a row.
-appVersion: "0.9.0"
+# 0.10.0 (2026-09-03). Access granted opens on what was granted, faults first; every row says who
+# it reaches (the group's members, and how many have logged in — the 0.9.0 definition); the page
+# filters as you type and sorts by column; and a narrowed reader sees the bindings that reach them
+# through their groups instead of a refusal, from their own /users/{name} — the findings endpoint
+# is unchanged and still refuses a plain reader. Two additive fields on /bindings/findings rows,
+# member_count and logged_in_count, null when no Group object exists. MINOR.
+appVersion: "0.10.0"
 
 keywords: [openshift, ldap, rbac, groupsync, observability]
 home: https://github.com/ephico2real2/group-sync-dashboard

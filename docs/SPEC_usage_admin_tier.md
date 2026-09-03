@@ -23,7 +23,7 @@ tier serves is obtainable with `oc` by anyone holding the roles that pass the ti
 
 | tab | reproducible outside the dashboard? |
 |---|---|
-| Groups, Access granted, RBAC policy, Namespace audit | yes — `oc get groups`, `oc get clusterrolebindings`, `oc get rolebindings -A` |
+| Groups, Access granted, RBAC policy, Namespace audit | yes — `oc get groups`, `oc get clusterrolebindings`, `oc get rolebindings -A` (and `oc get users` for Access granted's member and login counts) |
 | Logins | yes — `cluster-reader` holds `get,list,watch` on `pods/log` in the core group, cluster-wide, so `oc logs` against the oauth-server pod yields the same records |
 | **Usage** | **no** — it lives only in the dashboard's own `dashboard_user_activity` table |
 
@@ -108,8 +108,9 @@ tier's. It is a different question about the same person and must not share a ca
 - A self-tier reader still gets their own rows on Usage and 403 on the two gated endpoints.
 - `/api/clusters` stays reachable for every reader; `operator_configs` stays withheld at self.
 - The proxy-off install is untouched: wide view plus the startup warning.
-- The three admin-tier tabs still say "For administrators only" exactly once and still name no
-  role, check, chart key or README.
+- The two admin-tier tabs (Overview, RBAC policy) still say "For administrators only" exactly once
+  and still name no role, check, chart key or README. Access granted is narrowed rather than
+  refused since 0.10.0: a plain reader sees the bindings that reach them through their groups.
 
 ## Tests required
 

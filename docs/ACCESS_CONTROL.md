@@ -79,7 +79,7 @@ the dashboard by anyone who passes the wide check:
 
 | view | reproducible with `oc`? |
 |---|---|
-| Groups, Access granted, RBAC policy, Namespace audit | yes — `oc get groups`, `oc get clusterrolebindings`, `oc get rolebindings -A` |
+| Groups, Access granted, RBAC policy, Namespace audit | yes — `oc get groups`, `oc get clusterrolebindings`, `oc get rolebindings -A`; Access granted's "Reaches" column (members, and members who have logged in) also needs `oc get users` |
 | Logins | yes — `cluster-reader` holds `get,list,watch` on `pods/log` cluster-wide, so `oc logs` on the oauth-server pod yields the same records |
 | **Usage** | **no** — it exists only in the dashboard's own `dashboard_user_activity` table |
 
@@ -98,12 +98,18 @@ diverge, so Usage gets the higher bar.
 | Logins | their own attempts | all | all |
 | Usage | their own activity | **their own activity** | all |
 | Overview | *For administrators only* | all | all |
-| Access granted | *For administrators only* | all | all |
+| Access granted | their own grants, via their groups | all | all |
 | RBAC policy | *For administrators only* | all | all |
 
-Three tabs are **refused** rather than narrowed, because their content is about the cluster rather
-than about any reader — a binding names whoever it names, so there is no honest per-reader subset
-of it.
+Access granted is narrowed, not refused: a reader's own path — the bindings that reach them through
+their groups, with the group named — is what `require_admin_tier` deliberately never withheld, and
+since 0.10.0 the tab shows it (from their own `/users/{name}`), while the cluster-wide list behind
+`bindings/findings` stays the administrator tier and still answers a plain reader with the refusal.
+
+Two tabs are **refused** rather than narrowed, because their content is about the cluster rather
+than about any reader: the Overview is the cluster's own health, and RBAC policy is the whole
+binding surface against the policy operator — the cluster-wide list, which has no honest per-reader
+subset. (Access granted has one: a reader's own path, above.)
 
 ---
 
