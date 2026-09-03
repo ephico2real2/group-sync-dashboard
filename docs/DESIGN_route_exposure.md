@@ -129,7 +129,13 @@ controller-generated Route carries `spec.path: /` (from the Ingress rule) and th
 carries no path, and `openshift/router`'s `unique_host.go` treats routes on one host as conflicting
 only when their paths are equal. Both are admitted; the old one is garbage-collected with its Ingress.
 Had a conflict existed, the same code re-activates a displaced route when the claimant is deleted, so
-recovery would still need no operator action. A second upgrade
+recovery would still need no operator action.
+
+Measured, after the review fixes: the CRC release was rolled back to the 0.7.1 revision (Ingress and
+generated Route restored, literal redirect URI on the ServiceAccount) and upgraded again to the branch
+head while Route admission was sampled every 0.5 s. Of 50 samples, 5 showed only the old Route, **one
+showed both Routes admitted at once** — old with path `/`, new with the subdomain, both reporting the
+same status host — and 44 showed only the new one. No sample and no event recorded a refusal. A second upgrade
 that only flipped `argocd.enabled` to its new default changed metadata only — same pod, no rollout
 (revision 140). Sessions, data and RBAC were not involved.
 
