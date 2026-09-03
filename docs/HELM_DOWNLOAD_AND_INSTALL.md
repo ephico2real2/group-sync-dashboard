@@ -1,5 +1,9 @@
 # Download the chart, then install from the copy on disk
 
+> The version numbers, digests and revision quoted in this walkthrough are the measured values
+> from the release it was written against (chart 0.4.4, application 0.7.0). The commands are
+> unchanged; the current releases are in [`CHANGELOG.md`](CHANGELOG.md).
+
 Every command here was run against the published repository and a live cluster on 2026-08-12 with
 `helm v3.14.0`, `oc 4.13.6` and `skopeo 1.20.0`. Where a command fails, the failure is shown rather
 than described — one of them fails on purpose, and knowing which saves an afternoon.
@@ -73,11 +77,12 @@ charts/group-sync-dashboard/
 ├── values.yaml
 └── templates/
     ├── deployment.yaml
-    ├── ingress.yaml
+    ├── ingress.yaml                  # the alternative for plain Kubernetes (ingress.enabled)
     ├── oauth-secret.yaml
     ├── pdb.yaml
     ├── pvc.yaml
     ├── rbac.yaml
+    ├── route.yaml                    # the default exposure: a Route the router names
     ├── serviceaccount.yaml
     ├── trusted-ca.yaml
     └── ...                       # 19 files in total at 0.4.4
@@ -123,8 +128,7 @@ appVersion: 0.7.0
 `quay.io/ephico2real/group-sync-dashboard:0.7.0`. Confirm it rather than infer it:
 
 ```sh
-helm template gsd ./charts/group-sync-dashboard --set ingress.host=x.example.com \
-  | grep -m1 'image: quay'
+helm template gsd ./charts/group-sync-dashboard | grep -m1 'image: quay'
 #             image: quay.io/ephico2real/group-sync-dashboard:0.7.0
 ```
 
@@ -229,8 +233,7 @@ tar -xzf group-sync-dashboard-0.5.0.tgz
 # WHICH image does this chart deploy? Ask the chart, do not read one field — an empty
 # values.yaml tag means "appVersion", so grepping the tag alone answers "" and you would
 # mirror nothing. Rendering gives the reference the cluster will actually pull.
-helm template gsd ./group-sync-dashboard --set ingress.host=x.example.com \
-  | grep -m1 -oE 'quay\.io/[^"]*'
+helm template gsd ./group-sync-dashboard | grep -m1 -oE 'quay\.io/[^"]*'
 #   quay.io/ephico2real/group-sync-dashboard:0.7.0
 
 skopeo copy docker://quay.io/ephico2real/group-sync-dashboard:0.7.0 \
@@ -300,7 +303,7 @@ build it deploys, and rewriting it decouples the chart from the image it was pub
 | Download and unpack | `helm pull group-sync-dashboard/group-sync-dashboard --untar --untardir ./charts` |
 | Pin a version | `helm pull group-sync-dashboard/group-sync-dashboard --version 0.4.3` |
 | Read the defaults | `helm show values ./charts/group-sync-dashboard` |
-| Render offline | `helm template gsd ./charts/group-sync-dashboard --set ingress.host=<host>` |
+| Render offline | `helm template gsd ./charts/group-sync-dashboard` — no host needed; the default Route is named by the router |
 | Render against the cluster | `helm upgrade ... --dry-run=server` |
 | Install from the copy | `helm upgrade --install group-sync-dashboard ./charts/group-sync-dashboard -n group-sync-dashboard -f <values>` |
 | Confirm what is running | `oc exec ... -c dashboard -- curl -s http://127.0.0.1:8080/api/version` |

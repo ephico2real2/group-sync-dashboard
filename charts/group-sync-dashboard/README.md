@@ -51,7 +51,7 @@ group membership, so it ships authenticated and you turn the proxy *off* deliber
 | `oauthProxy.skipProviderButton` | `false` | `false` shows an explicit **Log In** button. `true` skips straight to the OAuth server — one fewer click, but any mid-flow failure then lands on the proxy's own page headed "403 Permission Denied", which reads as *you are not allowed in* rather than *your session expired*. Observed here after a rollout landed between redirect and callback |
 | `oauthProxy.requestLogging` | `false` | |
 | `oauthProxy.resources` | 10m/64Mi → 200m/256Mi | |
-| `oauthProxy.redirectMode` | `redirectreference` | **currently inert.** No template reads it — `serviceaccount.yaml` always emits `serviceaccounts.openshift.io/oauth-redirecturi.primary`, because the reference form points at a Route by name and OpenShift's ingress-to-route controller generates the Route with a random suffix that cannot be known at template time |
+| *(no `redirectMode` key)* | — | the ServiceAccount's OAuth callback form follows what exposes the dashboard and cannot be set separately: `oauth-redirectreference` naming the chart's Route with the default `route.enabled`, `oauth-redirecturi` with a literal URL when the Ingress is used instead. A `redirectMode` key existed once, read by nothing; it is gone |
 
 Enabling it also switches the Ingress to `reencrypt`, binds the app to `127.0.0.1`, and
 moves the probes behind the proxy. All automatic.

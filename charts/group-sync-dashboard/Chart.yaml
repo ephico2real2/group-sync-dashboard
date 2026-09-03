@@ -102,7 +102,10 @@ type: application
 # default changes — the 0.7.1 precedent.
 # CHART 0.9.2 (2026-09-04), PATCH: appVersion moves to application 0.10.1 (below); no template or
 # default changes.
-version: 0.9.2
+# CHART 0.9.3 (2026-09-04), PATCH: the chart README's values table only — the row for a
+# `redirectMode` key that no longer exists now says the callback form follows route/ingress.
+# No template or default changes; appVersion unchanged.
+version: 0.9.3
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,
