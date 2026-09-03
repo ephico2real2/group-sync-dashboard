@@ -100,7 +100,9 @@ type: application
 # losing display names. Rendered objects are byte-identical to 0.8.0 apart from the version labels.
 # CHART 0.9.1 (2026-09-03), PATCH: appVersion moves to application 0.10.0 (below); no template or
 # default changes — the 0.7.1 precedent.
-version: 0.9.1
+# CHART 0.9.2 (2026-09-04), PATCH: appVersion moves to application 0.10.1 (below); no template or
+# default changes.
+version: 0.9.2
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,
@@ -132,7 +134,11 @@ version: 0.9.1
 # through their groups instead of a refusal, from their own /users/{name} — the findings endpoint
 # is unchanged and still refuses a plain reader. Two additive fields on /bindings/findings rows,
 # member_count and logged_in_count, null when no Group object exists. MINOR.
-appVersion: "0.10.0"
+# 0.10.1 (2026-09-04). Access granted: a group name is a drill only where a group page can
+# answer. Built-in virtual groups never have a Group object and unresolved bindings name groups
+# that never existed, so those names drilled to a 404 that blamed a deletion which never happened.
+# They render as plain text now; dangling and granted groups keep the drill. PATCH.
+appVersion: "0.10.1"
 
 keywords: [openshift, ldap, rbac, groupsync, observability]
 home: https://github.com/ephico2real2/group-sync-dashboard

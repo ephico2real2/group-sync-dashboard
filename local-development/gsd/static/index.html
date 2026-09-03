@@ -2452,6 +2452,21 @@ function reachCell(r) {
     : `${members} <span class="muted">· ${r.logged_in_count} logged in</span>`;
 }
 
+/* The group name, as a drill only where a group page can answer. A built-in virtual group
+   (system:authenticated, system:serviceaccounts:*) never has a Group object, and an unresolved
+   binding names a group that has never existed here — both drilled to a 404 card that blamed a
+   deletion which never happened (operator, 2026-09-04). Dangling and granted groups keep the
+   drill: the object exists, or existed and left history the page can show. */
+function groupNameCell(r) {
+  if (r.finding === "built_in" || r.finding === "unresolved") {
+    const why = r.finding === "built_in"
+      ? "A Kubernetes virtual group: it has no Group object, so there is no page to open."
+      : "No Group object with this name exists on the cluster, so there is no page to open.";
+    return `<span class="mono" title="${why}">${esc(r.group_name)}</span>`;
+  }
+  return `<button type="button" class="drill" data-group="${esc(r.group_name)}">${esc(r.group_name)}</button>`;
+}
+
 function bindingTable(rows) {
   const key = view.bindingSort, dir = view.bindingDir;
   let sorted = sortBy(rows, BIND_SORT[key] || BIND_SORT.group, dir);
@@ -2465,7 +2480,7 @@ function bindingTable(rows) {
         ${th("Grants", "grants")}${th("Scope", "scope")}
         ${th("Binding", "binding")}</tr></thead>
       <tbody>${sorted.map((r) => `<tr>
-        <td><button type="button" class="drill" data-group="${esc(r.group_name)}">${esc(r.group_name)}</button></td>
+        <td>${groupNameCell(r)}</td>
         <td>${reachCell(r)}</td>
         <td><code>${esc(r.role_name)}</code> <span class="muted">${esc(r.role_kind)}</span></td>
         <td>${r.binding_namespace
