@@ -25,6 +25,9 @@ WHAT IS HELD, and why each line matters:
   loader's own resolution of every packed binary, and real work from every pack tool.
 * `CMD` is exec form and equal to the UBI recipe's; `Containerfile.ubi` is kept beside it and
   referenced by nothing that builds.
+* `Containerfile.annotated` — the same recipe with the full reasoning beside every step, made
+  with `cp` from the lean copy's ancestor — is instruction-for-instruction identical to
+  `Containerfile`, so an edit to one without the other fails here, naming the line.
 
 WHAT THIS DOES NOT CHECK: that the image builds, or that the pack is complete, or what the base
 contains — those are the build-time proofs in the Containerfile and the scripts it runs, which
@@ -40,6 +43,7 @@ REPO = pathlib.Path(__file__).resolve().parents[2]
 LOCAL = REPO / "local-development"
 CONTAINERFILE = LOCAL / "Containerfile"
 BACKUP = LOCAL / "Containerfile.ubi"
+ANNOTATED = LOCAL / "Containerfile.annotated"
 LISTS = LOCAL / "uninstall-lists.py"
 PROOF = LOCAL / "image-proof.py"
 
@@ -305,3 +309,30 @@ class TestBackup:
         assert "ubi9-minimal" in BACKUP.read_text()
         for path in [*LOCAL.glob("*.sh"), *(REPO / ".github" / "workflows").glob("*.yml")]:
             assert "Containerfile.ubi" not in path.read_text(), f"{path.name} references the backup"
+
+
+class TestAnnotatedCopy:
+    """Two files, one recipe. The lean Containerfile is what builds; Containerfile.annotated is the
+    same instructions with the full reasoning and every measurement beside each step. They must
+    never disagree on an instruction, or the explanation describes a recipe that does not ship."""
+
+    def test_the_annotated_copy_exists_and_is_built_by_nothing(self) -> None:
+        assert ANNOTATED.is_file()
+        for path in [*LOCAL.glob("*.sh"), *(REPO / ".github" / "workflows").glob("*.yml")]:
+            assert "Containerfile.annotated" not in path.read_text(), f"{path.name} builds the annotated copy"
+
+    def test_instruction_for_instruction_identical(self) -> None:
+        lean = _logical_lines(CONTAINERFILE.read_text())
+        annotated = _logical_lines(ANNOTATED.read_text())
+        for i, (a, b) in enumerate(zip(lean, annotated), 1):
+            assert a == b, f"instruction {i} differs:\n  Containerfile:           {a}\n  Containerfile.annotated: {b}"
+        assert len(lean) == len(annotated), (
+            f"{len(lean)} instructions in Containerfile, {len(annotated)} in Containerfile.annotated"
+        )
+
+    def test_the_annotated_copy_is_the_explained_one(self) -> None:
+        """The point of keeping two: the annotated copy carries the reasoning, the lean one the
+        pointers. If the lean copy grew back to the annotated one's size, one of them is redundant."""
+        comments = lambda t: sum(1 for l in t.splitlines() if l.lstrip().startswith("#"))
+        assert comments(ANNOTATED.read_text()) > 1.5 * comments(CONTAINERFILE.read_text())
+        assert "Containerfile.annotated" in CONTAINERFILE.read_text(), "the lean copy must point at the explained one"
