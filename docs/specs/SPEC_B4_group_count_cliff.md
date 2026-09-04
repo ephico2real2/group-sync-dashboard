@@ -28,6 +28,8 @@ request, with the reason, under "Orchestrator's notes".
 - Before the spec is applied, measure on CRC whether the group-sync-operator preserves a foreign annotation on a synced Group (annotate, force a sync, read back); the README's recommended silence path follows the measurement.
 - The B3 half of the same design lands after this one; the shared `Chart.yaml` history comment in B4.8 that mentions `monitoring.grafanaDashboard` is written here for the cliff alert only, and B3 extends it.
 
+- Routed here from the A3 review (PR #71): this is the first PR to edit `charts/group-sync-dashboard/Chart.yaml` after `local-development/prepare-release.py` landed. Correct the preamble sentence that says nothing but a human writes the file: the release script writes the version fields and the history lines from two arguments; the reasoning is still typed by the operator as the reason.
+
 ## Batch preamble (verbatim from the design)
 
 I have read everything the design needs. Here is the complete design document.

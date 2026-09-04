@@ -42,6 +42,8 @@ GIT_ENV = {
     # otherwise fail the run for reasons unrelated to the script under test.
     "GIT_CONFIG_GLOBAL": "/dev/null",
     "GIT_CONFIG_SYSTEM": "/dev/null",
+    # ...and no configuration injected through the environment either.
+    "GIT_CONFIG_COUNT": "0",
     "GIT_TERMINAL_PROMPT": "0",
     "GIT_AUTHOR_NAME": "Release Operator",
     "GIT_AUTHOR_EMAIL": "operator@example.com",
@@ -254,7 +256,9 @@ def test_a_reason_that_would_break_the_changelog_bullet_is_refused(sandbox: path
 
 
 def test_the_reason_must_be_one_line(sandbox: pathlib.Path) -> None:
-    for reason in ("", "   ", "two\nlines"):
+    """Including a reason that is nothing but full stops: it strips to nothing and would have landed
+    as `- **.**` in the changelog."""
+    for reason in ("", "   ", "two\nlines", ".", "...", "   ."):
         done = run(sandbox, "--app", "9.0.0", reason)
         assert done.returncode == 1, repr(reason)
     assert git(sandbox, "status", "--porcelain").strip() == ""

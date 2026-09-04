@@ -137,7 +137,10 @@ def sentence(reason: str) -> str:
         raise ReleaseError("the reason has an unbalanced backtick; close the code span")
     if "*" in text:
         raise ReleaseError("the reason may not contain '*'; the changelog bullet is already bold")
-    return text.rstrip(".")
+    text = text.rstrip(".")
+    if not text:
+        raise ReleaseError("the reason must be one non-empty line")
+    return text
 
 
 def main(argv: list[str]) -> int:

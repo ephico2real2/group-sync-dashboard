@@ -37,6 +37,9 @@ request, with the reason, under "Orchestrator's notes".
 - Found in review (PR #71, Codex C6): an unbalanced backtick in the reason produced an unclosed code span in the changelog bullet. The reviewer's fix escaped every backtick, which would break the code span an operator means ("the `--pr` flag"); rejected. The reason is refused, never rewritten, when its backticks are unbalanced or it contains `*` (the bullet is already bold); a balanced pair is tested to pass through intact.
 - Found in review (PR #71, Codex C4), routed to A2: `.github/workflows/helm.yaml`'s `sed` extractors accept broader version forms than this script writes (`[0-9][0-9.]*`, `"(.*)"` with trailing blanks). Everything the script writes is accepted, so nothing changes here; A2, which rewrites `helm.yaml`, tightens both extractors to `X.Y.Z` and `"(.+)"` with a test.
 
+- Found in review (PR #71, Cursor C6, on the fixed head): a reason of only full stops stripped to nothing and would have landed as `- **.**`; refused now, tested. Cursor also noted the test harness inherited `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_*` from the environment; `GIT_CONFIG_COUNT=0` closes it. The verification section's "13 passed" is the design's count; the file holds 17 after the review.
+- Found in review (PR #71, Cursor, not asked), routed to B4: the `Chart.yaml` preamble says nothing but a human writes the file, which this script now does. A comment-only edit under `charts/` costs a chart release, so the sentence is corrected in B4's PR, the first to bump the chart.
+
 ## Batch preamble (verbatim from the design)
 
 # Design: A1 (UI tests in CI), A2 (SBOM, signing, provenance), A3 (release preparation script)
