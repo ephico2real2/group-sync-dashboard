@@ -28,6 +28,14 @@ describes it correctly. Renaming a function and updating the docs is now enforce
 a function does and leaving the prose stale is not, and no static check will catch that. The
 guarantee is narrower than "the docs are right" — it is "the docs do not point at nothing", which
 is exactly the failure that kept recurring.
+
+SPECIFICATIONS ARE THE ONE EXCEPTION, AND A NARROW ONE. A file under `docs/specs/` describes code
+that does not exist yet — the complete code is in the spec, and the spec is what the implementation
+is applied from — so it cites names its own code creates (`gsd/store.py#Store.prune_sync_events`
+before that method is written). Such a citation passes only if the anchor text appears in the spec
+itself, outside the citation spans; once the feature ships the anchor exists in the cited file too
+and the ordinary rule takes over. A spec citing a name that neither the code nor the spec contains
+is a design error, and fails like any other broken citation.
 """
 
 from __future__ import annotations
@@ -171,6 +179,34 @@ def _python_symbols(path: pathlib.Path) -> set[str]:
     return names
 
 
+def _spec_introduces(md: pathlib.Path, anchor: str) -> bool:
+    """True when `md` is a spec under docs/specs and a spec's own text (outside citations) carries `anchor`.
+
+    Every spec in the programme is searched, not only the citing one: the specs ship in a fixed
+    order and a later one may cite what an earlier one creates (the backup runbook in the B1 spec
+    cites the retention methods the B2 spec introduces). The citing spans are removed first,
+    because the citation itself contains the anchor and would otherwise make every spec citation
+    self-certifying. A trailing backslash is stripped: a spec that quotes a doc edit inside a
+    backtick span escapes the inner backticks as \\` and the anchor regex, which runs to the next
+    backtick, captures the escape.
+    """
+    if "specs" not in md.relative_to(REPO).parts:
+        return False
+    needle = anchor.rstrip("\\")
+    # A qualified Python name (`Store.prune_sync_events`) never appears literally in the code that
+    # defines it: a spec introduces it as `def prune_sync_events(` inside the class, or as
+    # `NAME = ` for a class attribute. Accept exactly those two definition forms, nothing looser.
+    forms = [needle]
+    if "." in needle:
+        member = needle.rpartition(".")[2]
+        forms += [f"def {member}(", f"{member} = "]
+    for spec in sorted(md.parent.glob("SPEC_*.md")):
+        outside_citations = CITATION.sub("", spec.read_text())
+        if any(form in outside_citations for form in forms):
+            return True
+    return False
+
+
 def _citations() -> list[tuple[pathlib.Path, int, str, str | None]]:
     out = []
     for md in _markdown():
@@ -250,7 +286,7 @@ def test_the_anchor_exists_in_the_cited_file(md, doc_line, cited, anchor):
         # Through the AST, so `Store.groups` resolves even though that exact string never appears
         # in the file. A substring search would demand the docs write `def groups` instead.
         symbols = _python_symbols(target)
-        if anchor in symbols:
+        if anchor in symbols or _spec_introduces(md, anchor):
             return
         # Some Python anchors name a string inside the file rather than a symbol — a log message
         # or a SQL fragment. Allow that, but only after the symbol lookup fails, so a typo'd
@@ -262,7 +298,7 @@ def test_the_anchor_exists_in_the_cited_file(md, doc_line, cited, anchor):
         )
         return
 
-    assert anchor in target.read_text(), (
+    assert anchor in target.read_text() or _spec_introduces(md, anchor), (
         f"{where} — that text is not in {target.relative_to(REPO)}. If the code was renamed, "
         f"update the citation; if it was deleted, the claim around it probably needs rewriting "
         f"too."

@@ -131,6 +131,7 @@ Design notes, for the decisions that are not obvious from the code:
 | [`docs/TUTORIAL_ca_trust_hashed_directory.md`](docs/TUTORIAL_ca_trust_hashed_directory.md) | tutorial: how OpenSSL's hashed CA directory works, and the injected, hand-made, cert-manager and Kyverno ways to trust a CA in a pod — every step run on CRC |
 | [`docs/TUTORIAL_mermaid_diagrams.md`](docs/TUTORIAL_mermaid_diagrams.md) | tutorial: how the diagrams are derived from code, written in Mermaid, checked in half a second and rendered in CI — with two built from scratch |
 | [`docs/namespace-report-design.md`](docs/namespace-report-design.md) | **PARKED** — per-namespace PDF reports, and the definitive answer on `--openshift-sar` |
+| [`docs/specs/README.md`](docs/specs/README.md) | **the feature programme** — thirteen modules specified with their complete code before any is implemented, one GitHub issue and milestone each, released strictly one at a time; the index, the version ladder and the definition of done |
 
 ## Install
 

@@ -14,6 +14,13 @@
     "node_modules/**",
     ".git/**",
     ".venv/**",
-    "venv/**"
+    "venv/**",
+    // Feature specifications are the design agents' text VERBATIM, sliced by heading and
+    // re-concatenated to the byte before being written (docs/specs/README.md). Their bodies
+    // carry a second H1, heading jumps and HTML element names in prose; restyling six hundred
+    // spots by hand in code-bearing text is the rewriting the programme forbids. Exempt, like
+    // the review records are from the citation rule. The index README in that directory is
+    // hand-written and is NOT exempt.
+    "docs/specs/SPEC_*.md"
   ]
 }
