@@ -1344,21 +1344,24 @@ class Store:
         return self._rows(sql, params)
 
     def group_count_changes(self, cluster_id: str, since: str) -> dict[str, dict]:
-        """Per group, how many members were added and removed at or after ``since``.
+        """Per group, how many members were added and removed strictly after ``since``.
 
         The group-count cliff's only store read (state.py#compute_alerts). ``since`` is a
         timeutil-format timestamp, compared lexicographically like every other timestamp
         here. The count at the window's start is exactly ``current + removed - added``
         because sync_members writes one event per member transition and nothing else — so
         this is the per-poll history the cliff needs without a second table holding a copy
-        of it. Groups with no events in the window are absent from the result.
+        of it. STRICTLY after: events stamped exactly at ``since`` were written by the poll
+        that defines the window's start, and the count that poll held is the "before" — an
+        inclusive bound rewound that poll too and reported the state before it (found in
+        review, PR #72). Groups with no later events are absent from the result.
         """
         rows = self._rows(
             """SELECT group_name,
                       SUM(CASE WHEN change = 'added'   THEN 1 ELSE 0 END) AS added,
                       SUM(CASE WHEN change = 'removed' THEN 1 ELSE 0 END) AS removed
                  FROM membership_event
-                WHERE cluster_id = ? AND observed_at >= ?
+                WHERE cluster_id = ? AND observed_at > ?
                 GROUP BY group_name""",
             (cluster_id, since),
         )

@@ -318,12 +318,31 @@ class TestGroupCountChanges:
         finally:
             s.close()
 
+    def test_boundary_polls_are_the_count_held_at_the_window_start(self):
+        """Events stamped exactly at `since` belong to the poll that defines the window's start;
+        an inclusive bound rewound them and reported the state BEFORE that poll (review, PR #72)."""
+        s = self._store()
+        try:
+            old, since = "2026-09-03T00:00:00Z", "2026-09-04T00:00:00Z"
+            members = [f"u{i}" for i in range(20)]
+            s.sync_members("crc", {"g": members}, {}, old)
+            s.sync_members("crc", {"g": members[:5]}, {}, since)
+            s.sync_members("crc", {"g": members[:8]}, {}, since)
+            s.replace_group_state("crc", [{"name": "g", "member_count": 8, "sync_provider": "p",
+                                           "group_synced_at": None, "ldap_uid": None}], since)
+            assert s.group_count_changes("crc", since) == {}, "nothing after the boundary poll"
+            assert s.groups("crc", "all")[0]["member_count"] == 8
+        finally:
+            s.close()
+
     def test_a_deleted_group_records_its_departures(self):
         s = self._store()
         try:
             s.sync_members("crc", {"g": ["a", "b"]}, {}, "2026-09-04T00:00:00Z")
             s.sync_members("crc", {}, {}, "2026-09-04T00:01:00Z")
-            assert s.group_count_changes("crc", "2026-09-04T00:00:00Z") == {"g": {"added": 2, "removed": 2}}
+            # `since` strictly precedes the adds: an event stamped exactly at `since` belongs to
+            # the window's starting state and is not counted (see the boundary test above).
+            assert s.group_count_changes("crc", "2026-09-03T23:59:59Z") == {"g": {"added": 2, "removed": 2}}
         finally:
             s.close()
 

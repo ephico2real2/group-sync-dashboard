@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import fnmatch
+import re
 from datetime import UTC, date, datetime, timedelta
 from fractions import Fraction
 
@@ -196,6 +197,11 @@ def cliff_policy(settings) -> CliffPolicy | None:
     )
 
 
+# `until=YYYY-MM-DD`, exactly: four digits, dash, two, dash, two. The calendar check is
+# date.fromisoformat's; this is the shape check it does not make.
+UNTIL_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
 def cliff_silence(
     annotation: str | None, silence: tuple[str, ...], group: str, now: datetime
 ) -> str | None:
@@ -211,10 +217,16 @@ def cliff_silence(
         if word == "true":
             return "annotation"
         if word.startswith("until="):
-            try:
-                until = date.fromisoformat(word[len("until="):].strip())
-            except ValueError:
-                until = None
+            raw = word[len("until="):].strip()
+            until = None
+            # The documented grammar is YYYY-MM-DD and nothing else. date.fromisoformat alone
+            # also accepts the compact 20260905 (Python 3.11+), which the docs call malformed
+            # and which therefore must NOT silence (found in review, PR #72).
+            if UNTIL_DATE.fullmatch(raw):
+                try:
+                    until = date.fromisoformat(raw)
+                except ValueError:
+                    until = None
             if until is not None and now.date() <= until:
                 return "annotation"
     for pattern in silence:

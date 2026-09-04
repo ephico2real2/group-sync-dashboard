@@ -117,6 +117,7 @@ REVIEW_ARTIFACTS = (
     # The PR #70 (A1) review; its findings quote the workflow and test lines they are about.
     "REVIEW_A1.md",
     "REVIEW_A3.md",
+    "REVIEW_B4.md",
     # The log-level contract review. Same reason, plus a worked example of why the exemption is
     # right: it cites `README.md#Configuration`, a heading that does not exist — and the finding
     # attached to that citation was correct and was applied. Rewriting the citation would not make

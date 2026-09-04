@@ -329,6 +329,14 @@ class TestGroupCountCliff:
             got = self._alerts([self._group(member_count=5, cliff_silence=value)], {"app-ocp-rbac-team-ns-view": {"added": 0, "removed": 5}})
             assert got[0].kind == "group_count_cliff", value
 
+    def test_only_the_documented_date_shape_can_silence(self):
+        """date.fromisoformat accepts the compact 20260905; the docs promise YYYY-MM-DD and call
+        everything else malformed, so the compact form must not silence (review, PR #72)."""
+        for value in ("until=20260905", "until=2026-9-5", "until=2026-09-05T00:00:00Z", "until=2026-W36-5"):
+            got = self._alerts([self._group(member_count=5, cliff_silence=value)],
+                               {"app-ocp-rbac-team-ns-view": {"added": 0, "removed": 5}})
+            assert (got[0].kind, got[0].silenced, got[0].silenced_by) == ("group_count_cliff", False, None), value
+
     def test_silenced_by_values_glob(self):
         policy = st.CliffPolicy(min_members=10, drop_ratio=0.5, window_hours=24.0,
                                 silence=("app-ocp-rbac-team-*",))
