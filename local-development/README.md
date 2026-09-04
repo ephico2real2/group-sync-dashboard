@@ -64,6 +64,30 @@ It deploys with `helm upgrade --install`, passing the released tag with `--set`.
 written back into the tree: `helm get values` already records what is deployed, so there is
 no manifest to pin and no commit to remember.
 
+## The image
+
+`Containerfile` builds on the Red Hat Hardened Images: `hi/python:3.14-builder` to resolve the wheel
+tree, `hi/python:3.14` to run, both on the floating minor tag so a rebuild takes Red Hat's current
+3.14. The runtime base has **no shell**; a `pack` stage installs bash, `curl`, `jq` and a handful of
+coreutils with `dnf` and copies them in with the libraries they need, so `oc exec … -- sh -c` and
+the stamp check in the release scripts work. Two copies sit beside it, both built by nothing:
+`Containerfile.annotated`, the same instructions with the full reasoning and every measurement
+beside each step (a test holds the two identical), and `Containerfile.ubi`, the previous UBI9
+recipe. `docs/DESIGN_hardened_image.md` has the design and the measurements;
+`docs/image-vulnerability-scan.md` has the scan.
+
+What is in the pod's shell: `sh`, `bash`, `curl`, `jq`, `cat`, `ls`, `base64`, `mkdir`, `chgrp`,
+`chmod`, `rm`. What is not: `head`, `wc`, `grep`, `id`, `pip`, `rpm`, `dnf`. A command that needs
+one of those fails with "command not found".
+
+Scan locally the way CI does — Grype, because Trivy does not recognise the base's OS:
+
+```bash
+podman build --target pack -t gsd:pack -f Containerfile .
+podman save --format docker-archive -o /tmp/gsd.tar group-sync-dashboard:<tag>
+grype docker-archive:/tmp/gsd.tar --only-fixed --fail-on high
+```
+
 ## API docs
 
 Swagger UI at `/api` (`/api/docs` redirects there), ReDoc at `/api/redoc`, the spec at

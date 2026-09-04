@@ -573,10 +573,10 @@ def _harden(conn: sqlite3.Connection) -> None:
     jsonParseAddNodeArray. It needs SQL JSON functions, which this store does not use
     (zero `json_` / `->>` occurrences); nothing here changes its reachability either way.
 
-    NEITHER IS FIXABLE BY UPGRADING. UBI9 ships exactly one build,
-    sqlite-libs-3.34.1-10.el9_8: `microdnf repoquery sqlite-libs` offers no other, and
-    `microdnf update sqlite-libs` reports "Nothing to do". Since the version cannot move,
-    the surface it exposes is reduced instead.
+    NEITHER WAS FIXABLE BY UPGRADING when this was written: UBI9 shipped exactly one build,
+    sqlite-libs-3.34.1-10.el9_8, so the surface it exposed was reduced instead. The hardened
+    base the image runs on since 0.11.0 carries SQLite 3.53.4, past both advisories; the
+    reduction stays because it costs nothing and closes the mechanism whatever the version.
 
     Extension loading was ENABLED by default — verified in the shipped image, not assumed.
     It lets SQL pull arbitrary shared objects into the process, which beyond CVE-2025-70873
@@ -1217,7 +1217,8 @@ class Store:
                     changes += 1
 
                 # Chunked because SQLITE_LIMIT_VARIABLE_NUMBER is per-statement and varies by
-                # build: 32766 in the UBI9 runtime (SQLite 3.34.1) but 250000 on a dev Mac
+                # build: 32766 in the deployment image (measured on both the UBI9 runtime,
+                # SQLite 3.34.1, and the hardened base, 3.53.4) but 250000 on a dev Mac
                 # (3.53.0). An unchunked IN-list therefore passes every local test and then
                 # raises "too many SQL variables" in production on a group with >32k members,
                 # which a large LDAP directory can genuinely have.

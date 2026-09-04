@@ -205,9 +205,11 @@ class TestHardening:
     CVE-2024-0232 — use-after-free in jsonParseAddNodeArray. Not addressed here and not
     reachable: the store uses no SQL JSON functions.
 
-    Neither is fixable by upgrading — UBI9 ships only sqlite-libs-3.34.1-10.el9_8 and
-    `microdnf update sqlite-libs` reports "Nothing to do" — so the surface is reduced
-    instead of the version moved. docs/image-vulnerability-scan.md has the analysis.
+    Neither was fixable by upgrading when this was written — UBI9 shipped only
+    sqlite-libs-3.34.1-10.el9_8 — so the surface was reduced instead of the version moved.
+    The hardened base the image now runs on carries SQLite 3.53.4, past both advisories; the
+    reduction stays because it costs nothing and closes the mechanism regardless of version.
+    docs/image-vulnerability-scan.md has the analysis.
     """
 
     def test_extensions_cannot_be_loaded_on_the_writer(self, tmp_path):

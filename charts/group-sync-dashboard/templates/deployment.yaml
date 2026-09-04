@@ -177,6 +177,21 @@ spec:
             - name: GSD_TRUSTED_CA_FILE
               value: {{ join ":" $ca | quote }}
             {{- end }}
+            # For curl IN THE POD, which reads none of the above: it trusts the image's own
+            # system bundle (/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem, measured) and
+            # would refuse a corporate-signed URL that the application itself verifies fine.
+            #
+            # curl is told through ITS OWN configuration file, not through environment
+            # variables. CURL_HOME names the directory curl reads .curlrc from; the ConfigMap
+            # mounted there (configmap-curlrc.yaml) carries `capath` for the hashed directory
+            # and, when the injected bundle is on, `cacert` for it. Measured on curl 7.76 and
+            # 8.22: when CURL_CA_BUNDLE is set, curl IGNORES SSL_CERT_DIR — `-v` names only the
+            # CAfile — so the earlier pair of variables could never make curl trust a hashed
+            # CA while the injected bundle was on, which is the default. A .curlrc names both
+            # and curl uses both (`-v` shows CAfile and CApath). Nothing but the curl tool
+            # reads it: the application's own TLS is untouched, and so is Python's.
+            - name: CURL_HOME
+              value: /etc/curl
           securityContext: {{- toYaml .Values.securityContext | nindent 12 }}
           volumeMounts:
             - name: config
@@ -187,6 +202,11 @@ spec:
             # readOnlyRootFilesystem is on, so anything writing to /tmp needs a volume.
             - name: tmp
               mountPath: /tmp
+            # curl's configuration (see CURL_HOME above): a ConfigMap of one key, mounted as a
+            # directory so curl finds $CURL_HOME/.curlrc.
+            - name: curlrc
+              mountPath: /etc/curl
+              readOnly: true
             {{- if .Values.trustedCA.injected.enabled }}
             - name: trusted-ca-injected
               mountPath: {{ .Values.trustedCA.mountPath }}/injected
@@ -195,6 +215,27 @@ spec:
             {{- if .Values.trustedCA.existingConfigMap.enabled }}
             - name: trusted-ca-enterprise
               mountPath: {{ .Values.trustedCA.mountPath }}/enterprise
+              readOnly: true
+            {{- end }}
+            {{- with .Values.trustedCA.existingConfigMap.subjectHash }}
+            {{- if not $.Values.trustedCA.existingConfigMap.enabled }}
+            {{- fail "trustedCA.existingConfigMap.subjectHash is set but trustedCA.existingConfigMap.enabled is false — there is no ConfigMap to mount" }}
+            {{- end }}
+            {{- if not (regexMatch "^[0-9a-f]{8}(\\.[0-9]+)?$" .) }}
+            {{- fail (printf "trustedCA.existingConfigMap.subjectHash %q is not an OpenSSL subject hash (eight lowercase hex digits from `openssl x509 -noout -subject_hash -in ca.crt`, optionally followed by .N)" .) }}
+            {{- end }}
+            # The same CA a second time, as an entry in OpenSSL's hashed directory (Hummingbird's
+            # "Approach 2" for Python images): curl reads it through SSL_CERT_DIR above, urllib
+            # and the application's fallback context read it as OpenSSL's default capath. A
+            # subPath mount of ONE file, never the directory — mounting the directory would hide
+            # the base's ~290 hashed links to the public CAs. It does shadow the one entry of the
+            # same name if the base already has it, which is why the value may carry OpenSSL's
+            # collision suffix (`c275f070.1`): `.0` is assumed when none is given. subPath mounts
+            # do not follow later ConfigMap edits; a changed CA needs a rollout, which a hand-made
+            # ConfigMap needs anyway. The hash cannot be computed at render time, hence the value.
+            - name: trusted-ca-enterprise
+              mountPath: /etc/pki/tls/certs/{{ . }}{{ if not (contains "." .) }}.0{{ end }}
+              subPath: {{ $.Values.trustedCA.existingConfigMap.key }}
               readOnly: true
             {{- end }}
           {{- if .Values.probes.liveness.enabled }}
@@ -366,6 +407,9 @@ spec:
         {{- end }}
         - name: tmp
           emptyDir: {}
+        - name: curlrc
+          configMap:
+            name: {{ include "gsd.fullname" . }}-curlrc
         {{- if .Values.trustedCA.injected.enabled }}
         - name: trusted-ca-injected
           configMap:

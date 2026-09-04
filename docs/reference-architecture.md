@@ -1379,9 +1379,11 @@ date being formatted — January is EST where July is EDT.
 **Log lines carry the offset** (`%z`), so a line reading `17:31:31-0400` and a stored
 `21:31:31Z` are visibly the same moment.
 
-Two consequences worth knowing. `tzdata` must be installed for `TZ` to mean anything — UBI9
-minimal strips `/usr/share/zoneinfo`, and with it absent Python reads `America/New_York` as a
-POSIX spec with a zero offset, stamping a New York label on a UTC clock. And the Usage tab's
+Two consequences worth knowing. The zoneinfo database must be present for `TZ` to mean anything
+— the UBI9-minimal base stripped `/usr/share/zoneinfo` and the recipe had to reinstall `tzdata`;
+the hardened base ships it, and the Containerfile proves `ZoneInfo('America/New_York')` resolves
+on every build. With it absent Python reads `America/New_York` as a POSIX spec with a zero offset,
+stamping a New York label on a UTC clock. And the Usage tab's
 **Day** column is a stored UTC bucket, so near midnight a session sits on the following UTC day;
 the page says so rather than leaving it to look like a bug.
 

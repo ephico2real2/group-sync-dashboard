@@ -6,6 +6,45 @@ and the chart (`Chart.yaml`, published to the Helm repository). A chart release 
 `appVersion` is listed under the application release it carries. The reasoning behind each change
 lives next to the code and in the design and review records linked here.
 
+## Application 0.11.0 — chart 0.10.0 — 2026-09-04
+
+- **The image runs on Red Hat Hardened Images.** `hi/python:3.14` to run and `hi/python:3.14-builder`
+  to build, on the floating `3.14` tags so every build takes Red Hat's latest 3.14. The runtime base
+  has no shell, so a third stage assembles one — bash (and `sh`), `curl` on `libcurl-minimal`, `jq`,
+  and the coreutils shims `cat`, `ls`, `base64`, `mkdir`, `chgrp`, `chmod`, `rm` — with exactly the
+  twelve libraries the runtime lacks, measured by `ldd`, and copies it in. Every in-pod command in
+  the docs and the release scripts' stamp check still work. SQLite is 3.53.4 (UBI: 3.34.1); zoneinfo
+  ships, so the tzdata reinstall is gone; 186 MB against 227. The declared user is the base's
+  65532 rather than UBI's 1001 — the distroless convention, numeric, and on OpenShift never the
+  UID the process runs as anyway. The recipe is written to be read, with its two Python steps
+  as repository scripts; `Containerfile.annotated` is the same instructions with the full
+  reasoning beside each step, held identical by a test, and `Containerfile.ubi` is the previous
+  recipe — both built by nothing. (#52; design `DESIGN_hardened_image.md`)
+- **Three packages uninstalled from the base, files and RPM records together.** `libuuid`, the one
+  HIGH-rated package in the base (four util-linux advisories of 2026-09-02, all in mount code the
+  image does not ship, no fixed build from Red Hat yet) — nothing needs it, and `uuid` falls back to
+  pure Python, proven on every build. And pip, twice (`python3-pip` and the `python-pip-wheel`
+  seed), an installer nothing needs, whose vendored msgpack and setuptools were the only Python
+  findings. The file list comes from the RPM database itself, so files and records cannot diverge.
+  The shipped image scans at zero CRITICAL, zero HIGH, zero fixable at any severity. (#52;
+  `image-vulnerability-scan.md`)
+- **CI scans with Grype, not Trivy.** Measured: Trivy does not recognise Hummingbird OS and scans
+  no OS package; Grype reads the RPM database and Red Hat's advisories for it. The gate runs on the
+  shipped image and on the pack stage, fails only on fixable HIGH, and a separate step shows the
+  full inventory. (#52)
+- **Chart 0.10.0: curl in the pod trusts what the dashboard trusts.** curl reads the image's own
+  system bundle and none of the application's settings, so an `oc exec … curl` against a
+  corporate-signed URL failed where the application verified it. Now a `.curlrc` ConfigMap,
+  mounted at `/etc/curl` and found through `CURL_HOME`, names the injected bundle as `cacert`
+  (when `trustedCA.injected` is on) and OpenSSL's hashed directory as `capath`; and a new
+  `trustedCA.existingConfigMap.subjectHash` mounts the manual CA into that directory as
+  `<hash>.0`, Hummingbird's "Approach 2", so curl, urllib and the dashboard's fallback context all
+  trust it. A file rather than `CURL_CA_BUNDLE` and `SSL_CERT_DIR`, because curl ignores the
+  second whenever the first is set (measured on curl 7.76 and 8.22), and only the curl tool reads
+  the file, so the dashboard's own TLS cannot be touched by it. Every claim measured in a pod;
+  `TUTORIAL_ca_trust_hashed_directory.md` teaches the mechanism. Also `appVersion`, and the
+  `timezone` and SQLite comments now say what the hardened base ships. (#52)
+
 ## Application 0.10.2 — chart 0.9.4 — 2026-09-04
 
 - **Access granted, from the second-pass review:** when the reader's tier is indeterminate (a

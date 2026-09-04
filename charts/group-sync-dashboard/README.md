@@ -64,6 +64,7 @@ moves the probes behind the proxy. All automatic.
 | `trustedCA.existingConfigMap.enabled` | `false` | a ConfigMap you create out of band |
 | `trustedCA.existingConfigMap.name` | `enterprise-ca` | |
 | `trustedCA.existingConfigMap.key` | `ca-bundle.crt` | |
+| `trustedCA.existingConfigMap.subjectHash` | `""` | `openssl x509 -noout -subject_hash` of that CA, optionally with a `.N` collision suffix; when set, it is also mounted as `/etc/pki/tls/certs/<hash>.0` (or `.N`) so curl in the pod trusts it |
 | `trustedCA.mountPath` | `/etc/pki/ca-trust/extracted/pem` | |
 
 Both may be on; they are loaded in turn. A cluster entry naming its own `caBundleFile`
@@ -95,6 +96,34 @@ oc create configmap enterprise-ca --from-file=ca-bundle.crt=/path/to/ingress-ca.
   -n group-sync-dashboard
 helm upgrade ... --set trustedCA.existingConfigMap.enabled=true
 ```
+
+**curl inside the pod** reads none of the above; measured in the image, it trusts only the base's
+own bundle. So the chart gives curl its own configuration: a ConfigMap mounted at `/etc/curl`
+with a `.curlrc` that curl finds through `CURL_HOME`, naming the injected bundle as `cacert`
+(when injected is on) and OpenSSL's hashed directory `/etc/pki/tls/certs` as `capath`. A file
+rather than `CURL_CA_BUNDLE` and `SSL_CERT_DIR`, because curl ignores the second whenever the
+first is set (measured on curl 7.76 and 8.22), so the variables could never name both stores.
+Only the curl tool reads that file; the dashboard's own TLS is untouched. Two consequences worth
+knowing: the injected ConfigMap is empty until OpenShift fills it, moments after creation, and
+curl fails with exit 77 for every URL while it is — the dashboard's own polling does not read
+`.curlrc` and is unaffected; and the manual ConfigMap is never curl's `cacert`, because it
+carries only the extra CA and one `cacert` replaces the default bundle. Without the hash below,
+an in-pod curl to a URL signed by that CA takes `--cacert`. With it, the manual CA is mounted
+into the hashed directory as well, the way Hummingbird's Python guidance describes:
+
+```bash
+openssl x509 -noout -subject_hash -in /path/to/ingress-ca.pem      # e.g. c275f070
+helm upgrade ... --set trustedCA.existingConfigMap.enabled=true \
+  --set trustedCA.existingConfigMap.subjectHash=c275f070      # or c275f070.1 on a collision
+```
+
+With that, curl, `urllib` and the dashboard's fallback context all trust it. One address stays
+outside both: the in-cluster API (`https://kubernetes.default.svc`) is signed by the cluster's
+own CA, which is in the ServiceAccount's `ca.crt` and not in the injected bundle — measured on
+CRC — so an in-pod curl to it takes
+`--cacert /var/run/secrets/kubernetes.io/serviceaccount/ca.crt`, as it always did; the dashboard
+names that file explicitly for the local cluster. Enforced by
+`test_chart_strategy.py::TestCurlInThePodTrustsWhatTheAppTrusts`.
 
 Enforced by `test_chart_strategy.py::TestTheProxyTrustsTheSameCAsTheApp`, which also checks
 every CA path handed to the proxy is actually mounted — a path it cannot read stops the
@@ -647,7 +676,7 @@ blocks for the entire duration of the writer's transaction. The mode is read bac
 
 **`busy_timeout` is set on every connection.** SQLite's default is `0`: it raises `database is
 locked` the instant a lock is held, with no retry. That default is the usual cause of the
-error. Measured in the deployment image (UBI9, SQLite 3.34.1) against a lock held by another
+error. Measured in the deployment image (then UBI9, SQLite 3.34.1) against a lock held by another
 connection: `busy_timeout=0` fails in `0.000s`; `busy_timeout=1500` waits `1.512s`. The
 contention this covers is cross-**connection** — the `Recreate` rollover, where the outgoing
 pod still holds the lock as the incoming one opens the file. Threads inside one pod are

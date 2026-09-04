@@ -63,6 +63,8 @@ on:
       - 'local-development/gsd/**'                     # COPY gsd ./gsd
       - 'local-development/pyproject.toml'             # COPY pyproject.toml README.md ./
       - 'local-development/README.md'                  # ...and it really is in the image
+      - 'local-development/uninstall-lists.py'         # COPY uninstall-lists.py (pack stage)
+      - 'local-development/image-proof.py'             # COPY image-proof.py (runtime proof)
       - 'local-development/Containerfile'              # the recipe
       - 'local-development/.containerignore'           # filters what every COPY is allowed to see
       - 'local-development/build-and-push-external.sh' # the tag scheme and the stamp check
