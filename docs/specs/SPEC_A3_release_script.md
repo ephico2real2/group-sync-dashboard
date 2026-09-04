@@ -7,7 +7,7 @@
 | Release | R1 — Quality and release tooling |
 | Version on release | no version change (a repository tool) |
 | Issue | [#57](https://github.com/ephico2real2/group-sync-dashboard/issues/57) |
-| Status | specified |
+| Status | in progress |
 | Source | design agent output `a38be666b46d57784`; one message; no seam |
 
 ## How to read this spec
@@ -27,6 +27,20 @@ request, with the reason, under "Orchestrator's notes".
 - Lands second in R1. The script's first real use is B4's release.
 - Ladder inversion found in review (PR #69, C8): A3 lands BEFORE A2, so the body's "after the A2 bullet" places the CHANGELOG bullet directly under `## Unreleased`, and the RELEASING sentences that describe signed images with SBOM and provenance and an attested chart package are NOT written by A3 — A2 adds them when it lands. A3 documents the release as it is at that point.
 - Citation corrected: the design cited the chart README with the anchor "(no `redirectMode` key)", which nests backticks that the citation grammar (path#anchor inside one backtick span) cannot express; the anchor now cites `redirectMode`, the row's own text.
+
+- Deviation recorded at implementation (PR for #57): the body's test asserted `"## Unreleased" not in log` after a release, but the CHANGELOG's intro sentence (written by A1 and extended by this spec) contains that text inside backticks, so the substring assertion cannot pass on the real file while the script correctly replaces only the heading line. Both assertions now test for the heading LINE (`^## Unreleased` with `re.M`), which is what the script's own regex targets. No change to the script.
+
+- Deviation recorded at implementation (PR for #57): the sandbox `FILES` list gains `.gitignore`. The script runs `tests/test_chart_versions.py` inside the sandbox, which writes `tests/__pycache__/`; the real repository ignores it, the sandbox did not, and the "everything edited was committed" assertion saw an untracked directory. Test harness only; no change to the script.
+
+- Found in review (PR #71, Codex C2): the docstring promised "either completes or changes nothing" while the existing-branch check ran after the four edits. The check now runs before any edit (skipped under `--no-commit`, which never branches) and both docstrings say what is true: a refusal before the edits changes nothing; a failed version test leaves its edits for inspection, as the design intended.
+- Found in review (PR #71, Codex C7): `--date` was shape-checked only, so `2026-99-99` was written into both history records. Now `date.fromisoformat` with a round-trip; three bad dates are tested.
+- Found in review (PR #71, Codex C6): an unbalanced backtick in the reason produced an unclosed code span in the changelog bullet. The reviewer's fix escaped every backtick, which would break the code span an operator means ("the `--pr` flag"); rejected. The reason is refused, never rewritten, when its backticks are unbalanced or it contains `*` (the bullet is already bold); a balanced pair is tested to pass through intact.
+- Found in review (PR #71, Codex C4), routed to A2: `.github/workflows/helm.yaml`'s `sed` extractors accept broader version forms than this script writes (`[0-9][0-9.]*`, `"(.*)"` with trailing blanks). Everything the script writes is accepted, so nothing changes here; A2, which rewrites `helm.yaml`, tightens both extractors to `X.Y.Z` and `"(.+)"` with a test.
+
+- Found in review (PR #71, Cursor C6, on the fixed head): a reason of only full stops stripped to nothing and would have landed as `- **.**`; refused now, tested. Cursor also noted the test harness inherited `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_*` from the environment; `GIT_CONFIG_COUNT=0` closes it. The verification section's "13 passed" is the design's count; the file holds 17 after the review.
+- Found in review (PR #71, Cursor, not asked), routed to B4: the `Chart.yaml` preamble says nothing but a human writes the file, which this script now does. A comment-only edit under `charts/` costs a chart release, so the sentence is corrected in B4's PR, the first to bump the chart.
+
+- Found in the second pass (PR #71; Codex gpt-5.6-sol at xhigh and Cursor Grok 4.6 high fast, both on the fixed head): (1) `--pr` with no `gh` on PATH raised an uncaught `FileNotFoundError` after the release commit existed — the body's risk section claimed the script "says so"; now a `ReleaseError` that names the branch and commit. (2) The body only NOTED a checkout other than main; a release branch cut from a topic branch carries that branch's commits into a PR based on main, so it is refused when the run would commit (`--no-commit` edits and branches nothing, so the spec's dry run on a feature branch still works). (3) The one-line check tested `\n` only; `\r` passed and U+2028 corrupted Chart.yaml; now `splitlines()` on the stripped text, so a trailing newline is still fine. (4) A reason of dots and spaces or only zero-width characters still produced an empty bold bullet; a reason must contain a letter or digit. Rejected: `break_long_words=True` to hold the 100-column comment width (it would split a URL or identifier in a comment) and display-width wrapping. The test file holds 19 tests after this.
 
 ## Batch preamble (verbatim from the design)
 

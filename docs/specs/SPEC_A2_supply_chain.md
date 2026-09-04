@@ -28,6 +28,8 @@ request, with the reason, under "Orchestrator's notes".
 - First feature of R4, before B1. Any version numbers in the body are superseded by the ladder in `docs/specs/README.md`.
 - Citation corrected: the design cited the chart README with the anchor "(no `redirectMode` key)", which nests backticks that the citation grammar (path#anchor inside one backtick span) cannot express; the anchor now cites `redirectMode`, the row's own text.
 
+- Routed here from the A3 review (PR #71, Codex C4): when this spec edits `.github/workflows/helm.yaml`, tighten the two `sed` extractors — `CHART_VERSION` to `^version: \([0-9]\+\.[0-9]\+\.[0-9]\+\)[ \t]*$` and `APP_VERSION` to `^appVersion: "\(.\+\)"$` — so they accept exactly the forms `prepare-release.py` and `build-and-push-external.sh` accept, and hold them with a test in `tests/test_workflow_pins.py`.
+
 ## Batch preamble (verbatim from the design)
 
 # Design: A1 (UI tests in CI), A2 (SBOM, signing, provenance), A3 (release preparation script)

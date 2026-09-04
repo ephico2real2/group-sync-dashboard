@@ -17,6 +17,7 @@ Run everything below from **this** directory.
 | File | What it is |
 |---|---|
 | `release-crc.sh` | build + push + deploy against **CRC's built-in registry**. Portable nowhere else |
+| `prepare-release.py` | the four version fields, the Chart.yaml history line, the changelog heading, the branch and the commit, from `--app`/`--chart` and a reason; runs the version test first (`../docs/RELEASING.md`) |
 | `clusters.example.yaml` | template for `clusters.yaml`, the local poller config |
 | `clusters.yaml` | your local config. Gitignored |
 | `crc-ca.crt` | CRC's CA, extracted from kubeconfig. Gitignored, regenerable |
