@@ -275,7 +275,7 @@ jobs:
       # permanently-red gate gets ignored — which is worse than no gate. This fails only on
       # findings somebody can actually fix.
       - name: Scan the shipped image for FIXABLE vulnerabilities
-        uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.4.2
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
         with:
           image: gsd:ci
           grype-version: v0.118.0
@@ -285,7 +285,7 @@ jobs:
           output-format: table
 
       - name: Scan the pack stage for FIXABLE vulnerabilities (bash, curl, jq, coreutils)
-        uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.4.2
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
         with:
           image: gsd:pack
           grype-version: v0.118.0
@@ -297,7 +297,7 @@ jobs:
       # Separate, non-blocking, so the unfixable inventory is visible without gating.
       - name: Full inventory, shipped image (informational)
         if: always()
-        uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.4.2
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
         with:
           image: gsd:ci
           grype-version: v0.118.0
@@ -308,7 +308,7 @@ jobs:
       - name: Full inventory, pack stage (informational)
         id: pack-inventory
         if: always()
-        uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.4.2
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
         with:
           image: gsd:pack
           grype-version: v0.118.0
