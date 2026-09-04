@@ -28,13 +28,26 @@ describes it correctly. Renaming a function and updating the docs is now enforce
 a function does and leaving the prose stale is not, and no static check will catch that. The
 guarantee is narrower than "the docs are right" — it is "the docs do not point at nothing", which
 is exactly the failure that kept recurring.
+
+SPECIFICATIONS ARE THE ONE EXCEPTION, AND A NARROW ONE. A file under `docs/specs/` describes code
+that does not exist yet — the complete code is in the spec, and the spec is what the implementation
+is applied from — so it cites names its own code creates (`gsd/store.py#Store.prune_sync_events`
+before that method is written). Such a citation passes only if the specs themselves introduce the
+anchor: for a Python target, a name the Python code blocks of some spec DEFINE (parsed, not
+searched — see `_spec_definitions`) or literal text inside one of those code blocks; for any other
+target, the anchor text in some spec outside the citation spans. Once the feature ships the anchor
+exists in the cited file too and the ordinary rule takes over. A spec citing a name that neither
+the code nor any spec introduces is a design error, and fails like any other broken citation —
+which is how four wrong citations in the designs were found.
 """
 
 from __future__ import annotations
 
 import ast
+import functools
 import pathlib
 import re
+import textwrap
 
 import pytest
 
@@ -98,6 +111,9 @@ REVIEW_ARTIFACTS = (
     "REVIEW_access_granted_reach.md",
     "REVIEW_second_pass_2026-09-04.md",
     "REVIEW_hardened_image.md",
+    # The PR #69 specifications review. It quotes the wrong anchors the reviewers' probes used,
+    # deliberately — an anchor that MUST fail is the record.
+    "REVIEW_feature_specs.md",
     # The log-level contract review. Same reason, plus a worked example of why the exemption is
     # right: it cites `README.md#Configuration`, a heading that does not exist — and the finding
     # attached to that citation was correct and was applied. Rewriting the citation would not make
@@ -169,6 +185,95 @@ def _python_symbols(path: pathlib.Path) -> set[str]:
                 names.update(f"{cls.name}.{t.id}" for t in child.targets
                              if isinstance(t, ast.Name))
     return names
+
+
+# Fences at LINE START only: the specs quote triple backticks inside sentences, and an unanchored
+# pattern paired one of those with a real fence and swallowed a page of prose as "code".
+PYTHON_FENCE = re.compile(r"^```(?:python|py)\n(.*?)^```", re.S | re.M)
+DEFINITION_LINE = re.compile(r"^\s*(?:def\s+(\w+)\s*\(|class\s+(\w+)\b|(\w+)\s*(?::[^=\n]+)?=(?!=))", re.M)
+
+
+@functools.lru_cache(maxsize=None)
+def _spec_definitions(spec: pathlib.Path) -> frozenset[str]:
+    """Every name the Python code blocks of one spec DEFINE: defs, classes, class members and
+    module-level assignments, as `name` and, inside a class, `Class.name` too.
+
+    Parsed, not searched: a substring rule ("`name = ` appears somewhere") let a made-up
+    `Store.name` pass on the strength of an unrelated assignment in another spec's prose. A spec
+    quotes methods as an indented fragment without the `class` line, so each block is dedented
+    before parsing and a member is also recorded bare; a block that is not parseable Python (a
+    snippet with a prose line in it) defines nothing, which can only fail a citation, never pass
+    one. Local variables inside function bodies are not definitions and are not collected.
+    """
+    names: set[str] = set()
+
+    def collect(node: ast.AST, prefix: str) -> None:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            names.update({node.name, prefix + node.name})
+        elif isinstance(node, ast.ClassDef):
+            names.update({node.name, prefix + node.name})
+            for child in node.body:
+                collect(child, node.name + ".")
+        elif isinstance(node, ast.Assign):
+            for t in node.targets:
+                if isinstance(t, ast.Name):
+                    names.update({t.id, prefix + t.id})
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            names.update({node.target.id, prefix + node.target.id})
+
+    for block in PYTHON_FENCE.findall(spec.read_text()):
+        try:
+            tree = ast.parse(textwrap.dedent(block))
+        except SyntaxError:
+            # A fragment that starts inside one method and goes on to whole methods has two
+            # indentation levels and no single dedent makes it parse. Take the definition
+            # forms at line start — `def name(`, `class name`, `name = ` — and nothing else.
+            names.update(n for groups in DEFINITION_LINE.findall(block) for n in groups if n)
+            continue
+        for node in tree.body:
+            collect(node, "")
+    return frozenset(names)
+
+
+ANY_FENCE = re.compile(r"^```[^\n]*\n(.*?)^```", re.S | re.M)
+
+
+def _spec_introduces(md: pathlib.Path, cited: pathlib.Path, anchor: str) -> bool:
+    """True when `md` is a spec under docs/specs and the specs' own CODE introduces `anchor`.
+
+    Every spec in the programme is searched, not only the citing one: the specs ship in a fixed
+    order and a later one may cite what an earlier one creates (the backup runbook in the B1 spec
+    cites the retention methods the B2 spec introduces). Code, never prose: a spec's prose is full
+    of plausible names and phrases, and the first version of this rule certified a made-up anchor
+    on the strength of a heading in an unrelated spec. So —
+
+    * a Python target: the anchor must be a name some spec's Python code DEFINES
+      (`_spec_definitions`), or literal text inside one of those Python blocks (an index name in
+      the schema, a log message). A qualified name matched by its bare member (a fragment quoted
+      without the class line) must also have its class defined by the cited file or by a spec,
+      so `Bogus.group_count_changes` cannot ride on B4's `def group_count_changes(`;
+    * any other target: the anchor is literal text, and it must appear inside a fenced code
+      block of some spec — the new file or the edit that will carry it — never in a sentence.
+
+    A trailing backslash is stripped: a spec that quotes a doc edit inside a backtick span escapes
+    the inner backticks as \\` and the anchor regex, which runs to the next backtick, captures
+    the escape.
+    """
+    if "specs" not in md.relative_to(REPO).parts:
+        return False
+    needle = anchor.rstrip("\\")
+    specs = sorted(md.parent.glob("SPEC_*.md"))
+    if cited.suffix == ".py":
+        defined = frozenset().union(*(_spec_definitions(spec) for spec in specs))
+        if needle in defined:
+            return True
+        if "." in needle:
+            cls, _, member = needle.rpartition(".")
+            if member in defined and (cls in defined or cls in _python_symbols(cited)):
+                return True
+        return any(needle in block
+                   for spec in specs for block in PYTHON_FENCE.findall(spec.read_text()))
+    return any(needle in block for spec in specs for block in ANY_FENCE.findall(spec.read_text()))
 
 
 def _citations() -> list[tuple[pathlib.Path, int, str, str | None]]:
@@ -250,7 +355,7 @@ def test_the_anchor_exists_in_the_cited_file(md, doc_line, cited, anchor):
         # Through the AST, so `Store.groups` resolves even though that exact string never appears
         # in the file. A substring search would demand the docs write `def groups` instead.
         symbols = _python_symbols(target)
-        if anchor in symbols:
+        if anchor in symbols or _spec_introduces(md, target, anchor):
             return
         # Some Python anchors name a string inside the file rather than a symbol — a log message
         # or a SQL fragment. Allow that, but only after the symbol lookup fails, so a typo'd
@@ -262,7 +367,7 @@ def test_the_anchor_exists_in_the_cited_file(md, doc_line, cited, anchor):
         )
         return
 
-    assert anchor in target.read_text(), (
+    assert anchor in target.read_text() or _spec_introduces(md, target, anchor), (
         f"{where} — that text is not in {target.relative_to(REPO)}. If the code was renamed, "
         f"update the citation; if it was deleted, the claim around it probably needs rewriting "
         f"too."
