@@ -1010,6 +1010,19 @@ function groupsyncTable() {
    the heading names it. Step line, because the count holds between syncs rather than
    drifting continuously. Always shipped with the table twin below it, so no value is
    reachable only via hover. */
+/* Retention makes a timeline's first row a CUT, not a beginning. Said only when a window is in
+   force: window_days 0 keeps everything, and the `note` beside it already covers "since this
+   dashboard started". `retained_since` is the oldest row still held on this cluster. */
+function retentionNote(r) {
+  if (!r || !(r.window_days > 0)) return "";
+  const since = r.retained_since
+    ? `History retained since <strong>${esc(fmtTime(r.retained_since))}</strong>; `
+    : "";
+  return `<div class="muted" style="font-size:11px;margin-bottom:6px">${since}rows older than
+    ${Number(r.window_days)} days are removed by retention, so a timeline that begins there was
+    cut there — it does not mean nothing happened before.</div>`;
+}
+
 function timelineChart(events) {
   const pts = events.slice().reverse().filter((e) => e.synced_at);
   if (pts.length < 2) return "";
@@ -1122,6 +1135,7 @@ function groupsyncDetail() {
     ${timelineChart(ev.events)}
     <h3 style="margin-top:14px">Observed syncs</h3>
     <div class="muted" style="font-size:11px;margin-bottom:6px">${esc(ev.note || "")}</div>
+    ${retentionNote(ev.retention)}
     ${eventsTable}
   </section>`;
 }
@@ -2141,6 +2155,7 @@ function groupDetail() {
   ${bindingsCard(d.bindings, "This group")}
   <section class="card">
     <h2>Membership changes</h2>
+    ${retentionNote(d.retention)}
     ${changeBody}
   </section>`;
 }
@@ -2236,6 +2251,7 @@ function userDetail() {
   ${bindingsCard(d.bindings, esc(d.user))}
   <section class="card">
     <h2>History</h2>
+    ${retentionNote(d.retention)}
     ${(d.changes || []).length === 0
       ? `<div class="empty-note">No membership changes observed for this user yet.</div>`
       : `<div class="scroll-x"><table>

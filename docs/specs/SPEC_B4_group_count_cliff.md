@@ -7,7 +7,7 @@
 | Release | R2 — Alerts, retention, Grafana |
 | Version on release | app 0.12.0, chart 0.11.0 |
 | Issue | [#58](https://github.com/ephico2real2/group-sync-dashboard/issues/58) |
-| Status | in progress |
+| Status | released |
 | Source | design agent output `abe89ca84ad184702`; two messages; the first ended inside a ```python fence with a partial `def test_env_overrides_the_file` and the second re-emitted that test from its first line under a new fence opener, so the partial tail and the duplicate opener were dropped and the code continues inside the original fence |
 
 ## How to read this spec

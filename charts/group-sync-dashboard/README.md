@@ -173,6 +173,18 @@ cover corruption, a bad migration and accidental deletion — not loss of the vo
 off it with a CronJob mounting the same PVC read-only; the dashboard deliberately does not
 grow credentials for object storage.
 
+### Retention on the history
+
+| Key | Default | Notes |
+|---|---|---|
+| `config.retention.membershipEventsDays` | `0` | `0` keeps forever — one row per join/leave, ~1 MB/year, and the answer to "when did this person lose access?". Set a window only as a deliberate policy |
+| `config.retention.syncEventsDays` | `730` | one row per observed sync per CR (~52k/year per ten-minute CR); names CRs and counts, never a person. `0` keeps forever |
+
+The leader prunes **after** the cycle's backup and never before one has succeeded in its own
+life — with `config.backup.enabled=false` nothing is ever deleted — 5,000 rows per table per cycle, counted into `gsd_retention_rows_deleted_total{table}`. The
+API and the page state the cut (`retention.retained_since`), so a timeline that begins at the edge
+is read as cut there, not started there.
+
 ### Dashboard usage tracking
 
 Powers the **Usage** tab and `GET /api/dashboard/activity`.

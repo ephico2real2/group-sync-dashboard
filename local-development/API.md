@@ -200,6 +200,11 @@ blame the operator for our latency.
 synced. The API keeps no history, so the timeline only covers the period since the dashboard
 started (§2). The response says so in a `note` field.
 
+Since 0.13.0 the response also carries `retention: {"window_days": N, "retained_since": "…Z"|null}`
+for `sync_event`. `window_days` is the configured window (`0` = kept forever) and `retained_since`
+is the oldest observation still held on this cluster — a timeline that begins there was cut
+there by retention, which is a different fact from "the dashboard started there".
+
 ## Groups
 
 ### `GET /api/clusters/{cluster_id}/groups`
@@ -247,7 +252,7 @@ LDAP side for a group somebody created by hand.
 
 ### `GET /api/clusters/{cluster_id}/groups/{name}`
 
-Adds `members`, `changes` and `bindings`.
+Adds `members`, `changes`, `bindings` and, since 0.13.0, `retention` (the `membership_event` window and edge — same shape as on `/membership-changes`).
 
 Each member carries two dates:
 
@@ -311,7 +316,8 @@ The reverse lookup: every group the user is in, every binding that reaches them,
 membership history. Each binding row carries `via_group`, because "why do they have this?"
 is the next question after "do they have it". Since 0.9.0 it also carries the login facts a row of
 `/users` has — `logged_in`, `first_login_at`, `last_login_at`, `providers`, `login_capture` — so the
-detail page and the list cannot disagree.
+detail page and the list cannot disagree. Since 0.13.0 it carries `retention` for `membership_event`, the
+same shape as on `/membership-changes`.
 
 **A user with no current groups returns 200, not 404**, if any history exists or a `User` object
 does: "they are in nothing now" is the answer, and a person who logged in and holds no synced access
@@ -408,6 +414,9 @@ Query: `limit` (1–1000, default 100). Joins and departures cluster-wide.
 Each change carries `group_synced_at` — the group's own sync-time when the change was seen.
 That distinguishes *"the operator did this"* from *"someone edited the object"*: a change
 stamped with a stale sync-time did not come from a sync.
+
+Since 0.13.0: `retention` for `membership_event`, the same shape as on `/events`. With the default
+`membershipEventsDays: 0` it reads `{"window_days": 0, "retained_since": <oldest row>}`.
 
 ## RBAC
 

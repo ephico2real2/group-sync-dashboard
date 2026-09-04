@@ -36,6 +36,11 @@ the irreplaceable history the backup exists for). A metric cannot watch a mechan
 does not exist, so the retention counter below covers the two real prunes and its label
 vocabulary is written to be extended if those tables ever gain one.
 
+*(Extended 2026-09-05: `membership_event` and `sync_event` gained retention in application 0.13.0
+— `gsd/poller.py#Poller._prune_history`, `docs/specs/SPEC_B2_history_retention.md` — and
+`RETENTION_TABLES` now names all four tables. §10's exclusion is therefore closed by a later
+change, not by this one.)*
+
 **0.3 — the coverage gap itself is confirmed.** Live scrape, no credential, from outside
 the cluster:
 

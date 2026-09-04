@@ -439,8 +439,7 @@ read. Recipes for `curl` and Postman: [`docs/api-access.md`](docs/api-access.md)
 
 ## Not built yet
 
-Effective-permission expansion, log-scrape enrichment, retention on the accumulated history,
-per-namespace PDF reports
+Effective-permission expansion, log-scrape enrichment, per-namespace PDF reports
 (designed and **parked** — [`docs/namespace-report-design.md`](docs/namespace-report-design.md)),
 and per-cluster authorization for the multi-cluster case: OAuth authenticates against the
 hosting cluster only, so one instance holding several clusters' data can show a user

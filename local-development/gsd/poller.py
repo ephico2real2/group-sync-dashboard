@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from .config import ClusterConfig, Settings
 from .kube import OK, ClusterClient, ClusterError, GroupSyncView, GroupView, dn_equal
@@ -478,6 +478,12 @@ def refresh_bindings(
     return OK
 
 
+# Rows removed per history table per cycle by Poller._prune_history. The same bound as
+# Store.prune_login_events: small enough that the single writer is never held for long, large
+# enough that a backlog of years drains in hours — 5000 rows a minute is 300k an hour.
+HISTORY_PRUNE_BATCH = 5000
+
+
 class Poller:
     """Runs one polling thread per enabled cluster."""
 
@@ -516,6 +522,11 @@ class Poller:
         # 0 so the first cycle after start takes one immediately: a pod that
         # has just come up is exactly when you want a copy on disk.
         self._next_backup = 0.0
+        # pending | ok | failed — what the LAST backup attempt in this process did. Retention
+        # reads it: nothing is deleted until a backup has succeeded here, so a broken backup
+        # holds the prune instead of the prune quietly outrunning it.
+        self._backup_state = "pending"
+        self._prune_held_logged = False
 
     def _maybe_backup(self) -> None:
         """Snapshot the irreplaceable history on its own slower schedule.
@@ -542,12 +553,78 @@ class Poller:
                 # directory) — already logged with the trace in the store; counted here,
                 # where the schedule lives, so the exposition can say backups are breaking
                 # hours before the last-success timestamp goes stale.
+                self._backup_state = "failed"
                 if self.signals is not None:
                     self.signals.note_backup_failure()
+            else:
+                self._backup_state = "ok"
         except Exception:  # noqa: BLE001 - a failed backup must never stop the poll
+            self._backup_state = "failed"
             if self.signals is not None:
                 self.signals.note_backup_failure()
             log.exception("backup failed; the poll continues and the history is unprotected")
+
+    def _prune_history(self, cluster: ClusterConfig) -> None:
+        """Retention on membership_event and sync_event, AFTER the backup and never ahead of one.
+
+        Three gates, in order. The windows: 0 disables a table, both 0 is a no-op. The backup:
+        nothing is deleted until a backup has SUCCEEDED in this process — a failing backup holds
+        the prune rather than the prune outrunning it, backups DISABLED hold it for good (the
+        history has no copy anywhere; found in review, PR #69), and a standby never backs up so
+        never prunes. Leadership: re-checked right before the write, as
+        logincapture._prune does, because the per-cycle check above is a cycle old.
+
+        Bounded at HISTORY_PRUNE_BATCH per table per cycle so a first prune over years of rows
+        cannot hold the single writer; a full batch means more remains and the next cycle
+        continues. Counted into gsd_retention_rows_deleted_total{table} from the same number the
+        log line reports. Never raises: a prune failure is not a poll failure.
+        """
+        windows = (
+            ("membership_event", self.settings.membership_events_retention_days,
+             self.store.prune_membership_events),
+            ("sync_event", self.settings.sync_events_retention_days,
+             self.store.prune_sync_events),
+        )
+        if all(days <= 0 for _, days, _ in windows):
+            return
+        if not self.settings.backup_dir or self._backup_state != "ok":
+            if not self._prune_held_logged:
+                log.warning("%s: retention is held until a backup succeeds in this process "
+                            "(backups %s; last attempt: %s)", cluster.name,
+                            "enabled" if self.settings.backup_dir else "DISABLED — nothing is deleted",
+                            self._backup_state)
+                self._prune_held_logged = True
+            return
+        self._prune_held_logged = False
+        if self.elector is not None and not self.elector.is_leader:
+            return
+        try:
+            for table, days, prune in windows:
+                if days <= 0:
+                    continue
+                before = (datetime.now(UTC) - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+                removed = prune(cluster.name, before, max_rows=HISTORY_PRUNE_BATCH)
+                if removed:
+                    if self.signals is not None:
+                        self.signals.note_retention(table, removed)
+                    log.info("%s: pruned %d %s row(s) older than %s%s", cluster.name, removed,
+                             table, before,
+                             " (more remain; continuing next cycle)"
+                             if removed >= HISTORY_PRUNE_BATCH else "")
+        except Exception:  # noqa: BLE001 - retention must never stop the poll
+            log.exception("%s: retention prune failed; the poll continues", cluster.name)
+
+    def _after_poll(self, cluster: ClusterConfig) -> None:
+        """The upkeep tail of a cycle, in an order that is the point: checkpoint, then the
+        backup, then retention — so nothing is deleted before the copy that would hold it."""
+        # After the write, never during it, and never from a request handler:
+        # whatever upkeep the engine needs may wait on open readers, and that wait
+        # is free here and would be user-visible latency anywhere else. The poller
+        # does not know or care what the engine actually does — for SQLite it is a
+        # WAL checkpoint; for another engine it may be nothing at all.
+        self.store.maintain()
+        self._maybe_backup()
+        self._prune_history(cluster)
 
     def _run_cluster(self, cluster: ClusterConfig) -> None:
         # Poll immediately on start rather than sleeping first: a restarted dashboard that
@@ -593,13 +670,7 @@ class Poller:
                                  signals=self.signals)
                 except Exception:  # noqa: BLE001 - capture must never stop the poll loop
                     log.exception("%s: login capture raised; group polling continues", cluster.name)
-                # After the write, never during it, and never from a request handler:
-                # whatever upkeep the engine needs may wait on open readers, and that wait
-                # is free here and would be user-visible latency anywhere else. The poller
-                # does not know or care what the engine actually does — for SQLite it is a
-                # WAL checkpoint; for another engine it may be nothing at all.
-                self.store.maintain()
-                self._maybe_backup()
+                self._after_poll(cluster)
             except Exception:  # noqa: BLE001 - a poll thread must never die silently
                 log.exception("unhandled error polling %s", cluster.name)
                 # The recovery write can fail for the SAME reason the poll did — a full or

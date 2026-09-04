@@ -7,7 +7,7 @@
 | Release | R2 — Alerts, retention, Grafana |
 | Version on release | app 0.13.0, chart 0.12.0 |
 | Issue | [#59](https://github.com/ephico2real2/group-sync-dashboard/issues/59) |
-| Status | specified |
+| Status | in progress |
 | Source | design agent output `a7eabba23e10eec8a`; one message; no seam |
 
 ## How to read this spec
@@ -33,6 +33,8 @@ request, with the reason, under "Orchestrator's notes".
 - The body inserts `membership_event_by_time` into SCHEMA; that insertion is SKIPPED here because B4 already made it. Only `sync_event_by_time` is added.
 
 - Citation corrected when B4 landed (1 occurrence): the design's ground-truth table cited the chart README heading "The eleven alerts"; B4 made it twelve, and the heading is cited by its current text. The count this spec's own edits produce is re-derived from main at implementation, as the notes above already say.
+
+- Deviations recorded at implementation (PR for #59): (1) every "Since 0.12.0" in the body's API.md text and the metrics design's "application 0.12.0" read 0.13.0, the release this spec ships in; (2) `docs/DESIGN_backup_offsite_and_retention.md`, a record never written, is cited as this spec instead; (3) the chart README's insertion anchor is the half-an-answer paragraph's actual last line ("grow credentials for object storage.") — the off-volume section it names does not exist until B1; (4) the body's test harness recomputed "now" after the app started and asserted the newest of three seeded rows where `MIN` returns the oldest: one frozen clock per module, and the oldest row (two seconds older) as the expectation.
 
 ## Batch preamble (verbatim from the design)
 
