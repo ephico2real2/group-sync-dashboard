@@ -144,8 +144,9 @@ LOGIN_OUTCOME_PATTERN = _login_outcome_pattern(LOGIN_OUTCOMES)
 # existence of a current reconcile failure is actionable and not withheld; only the text is.
 #
 # The excluded kinds are backed by pages the self tier does NOT see whole:
-#   * `empty_group`, `unattributed`, `stale_group` name groups from the self-scoped Groups
-#     tab (and an empty group can never contain the viewer);
+#   * `empty_group`, `unattributed`, `stale_group`, `group_count_cliff` and
+#     `group_count_cliff_silenced` name groups from the self-scoped Groups tab (and an empty
+#     group can never contain the viewer);
 #   * `direct_user_binding` aggregates other people's grants from the self-scoped
 #     user-bindings view;
 #   * `dangling_binding` and `config_reconcile_error` are backed by /bindings/findings and
@@ -1647,6 +1648,9 @@ def build_app(
         """
         viewer, scope = viewer_scope(request)
         now = datetime.now(UTC)
+        # The cliff policy, or None with the module off. Kept in step with the metrics
+        # collector's call (gsd/metrics.py#DashboardCollector._gather) — the parity contract.
+        policy = st.cliff_policy(settings)
         alerts: list[dict] = []
         for row in store.clusters():
             cluster_id = row["id"]
@@ -1658,6 +1662,8 @@ def build_app(
                         "subject": cluster_id,
                         "detail": row["message"] or "cluster poll failed",
                         "severity": "critical",
+                        "silenced": False,
+                        "silenced_by": None,
                     }
                 )
                 # A degraded cluster's cached rows are stale by definition; computing
@@ -1672,6 +1678,10 @@ def build_app(
                 groupsync_present=store.groupsync_present(cluster_id),
                 now=now,
                 grace=grace,
+                count_changes=(
+                    store.group_count_changes(cluster_id, policy.since(now)) if policy else None
+                ),
+                cliff=policy,
             )
             alerts.extend(a.as_dict() for a in computed)
 
@@ -1700,6 +1710,8 @@ def build_app(
                             f"manage and no longer exists — this binding now grants nobody"
                         ),
                         "severity": "critical",
+                        "silenced": False,
+                        "silenced_by": None,
                     }
                 )
         if scope == "self":

@@ -1235,3 +1235,46 @@ class TestCurlInThePodTrustsWhatTheAppTrusts:
         )
         assert any(m["mountPath"] == f"{self.HASHED_DIR}/c275f070.1" for m in app["volumeMounts"])
         assert not any(m["mountPath"] == f"{self.HASHED_DIR}/c275f070.1.0" for m in app["volumeMounts"])
+
+
+class TestGroupCountCliffValues:
+    def test_configmap_carries_the_keys_and_joins_the_silence_list(self):
+        ok, out = render(**{
+            "config__alerts__groupCountCliff__minMembers": 25,
+            "config__alerts__groupCountCliff__silence[0]": "app-ocp-rbac-a-*",
+            "config__alerts__groupCountCliff__silence[1]": "app-ocp-rbac-b-ns-view",
+        })
+        assert ok, out
+        cfg = _config_data(out)
+        assert cfg["groupCountCliffEnabled"] is True
+        assert (cfg["groupCountCliffMinMembers"], cfg["groupCountCliffDropRatio"],
+                cfg["groupCountCliffWindowHours"]) == (25, 0.5, 24)
+        assert cfg["groupCountCliffSilence"] == "app-ocp-rbac-a-*,app-ocp-rbac-b-ns-view"
+
+    def test_the_rule_summary_names_the_configured_ratio_not_the_word_half(self):
+        ok, out = render(**{"monitoring__prometheusRule__enabled": "true",
+                            "config__alerts__groupCountCliff__dropRatio": "0.3"})
+        assert ok, out
+        assert "lost at least 30% of their members" in out
+        assert "half their members" not in out
+        ok, out = render(**{"monitoring__prometheusRule__enabled": "true"})
+        assert ok and "lost at least 50% of their members" in out
+
+    def test_a_window_shorter_than_the_poll_interval_refuses_the_render(self):
+        ok, out = render(**{"config__pollIntervalSeconds": "3600",
+                            "config__alerts__groupCountCliff__windowHours": "0.5"})
+        assert not ok and "must cover at least one poll interval" in out
+        ok, out = render(**{"config__pollIntervalSeconds": "3600",
+                            "config__alerts__groupCountCliff__windowHours": "1"})
+        assert ok, out
+
+    @pytest.mark.parametrize("key,value", [
+        ("config__alerts__groupCountCliff__dropRatio", "0"),
+        ("config__alerts__groupCountCliff__dropRatio", "1.5"),
+        ("config__alerts__groupCountCliff__minMembers", "0"),
+        ("config__alerts__groupCountCliff__windowHours", "0"),
+    ])
+    def test_a_threshold_that_cannot_or_always_fires_refuses_the_render(self, key, value):
+        ok, out = render(**{key: value})
+        assert not ok
+        assert "config.alerts.groupCountCliff" in out

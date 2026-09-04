@@ -112,3 +112,14 @@ def test_a_read_that_outlives_its_budget_is_cut_like_a_cap_hit(monkeypatch, capl
     assert lines[-1] not in got, "the tail should be deferred to the next cycle, not returned"
     assert "budget" in caplog.text, caplog.text
     assert "byte cap" not in caplog.text, "a budget stop must not report itself as a cap hit"
+
+
+def test_group_view_reads_exactly_the_silence_annotation():
+    from gsd.kube import CLIFF_SILENCE_ANNOTATION, _group_view
+    obj = {"metadata": {"name": "g", "annotations": {
+        CLIFF_SILENCE_ANNOTATION: "until=2026-10-01", "somebody.else/note": "ignored"}},
+        "users": ["a"]}
+    view = _group_view(obj)
+    assert view.cliff_silence == "until=2026-10-01"
+    assert _group_view({"metadata": {"name": "g"}, "users": None}).cliff_silence is None
+    assert CLIFF_SILENCE_ANNOTATION == "groupsync-dashboard.io/silence-group-count-cliff"

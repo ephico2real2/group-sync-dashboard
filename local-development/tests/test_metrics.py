@@ -558,3 +558,72 @@ class TestCaptureAndBackupGauges:
                     "gsd_login_capture_enabled": 1 if enabled else 0}
         finally:
             store.close()
+
+
+class TestGroupCountCliffMetric:
+    def _store(self, silence=None):
+        now = datetime.now(UTC)
+        store = Store(":memory:")
+        store.upsert_cluster("crc", "https://x", True)
+        store.record_poll("crc", "ok", None)
+        store.sync_members("crc", {"big": [f"u{i}" for i in range(20)]}, {}, "2026-01-01T00:00:00Z")
+        store.sync_members("crc", {"big": ["u0"]}, {}, _iso(now))
+        store.replace_group_state("crc", [{"name": "big", "member_count": 1, "sync_provider": "gs",
+                                           "group_synced_at": None, "ldap_uid": None,
+                                           "cliff_silence": silence}], _iso(now))
+        return store
+
+    def test_kind_only_never_the_group_name(self):
+        from gsd.config import Settings
+        store = self._store()
+        try:
+            text = generate_latest(build_registry(store, GRACE, settings=Settings())).decode()
+        finally:
+            store.close()
+        assert series(text, "gsd_alerts_total")[
+            'gsd_alerts_total{cluster="crc",kind="group_count_cliff",severity="warning"}'] == 1
+        assert "big" not in text.replace("gsd_build_info", ""), "a group name reached /metrics"
+
+    def test_silenced_counts_under_its_own_kind(self):
+        from gsd.config import Settings
+        store = self._store(silence="true")
+        try:
+            text = generate_latest(build_registry(store, GRACE, settings=Settings())).decode()
+        finally:
+            store.close()
+        got = series(text, "gsd_alerts_total")
+        assert got['gsd_alerts_total{cluster="crc",kind="group_count_cliff_silenced",severity="warning"}'] == 1
+        assert 'kind="group_count_cliff",' not in text
+
+    def test_no_settings_means_module_off_on_the_collector(self):
+        """A bare DashboardCollector(store, grace) claims no cliff: the policy derives from
+        settings, and None is the off state — the same rule as the event families."""
+        store = self._store()
+        try:
+            text = generate_latest(build_registry(store, GRACE)).decode()
+        finally:
+            store.close()
+        # The HELP line names the kind; what must be absent is a SERIES carrying it.
+        assert 'kind="group_count_cliff' not in text
+
+    def test_the_rule_renders_with_defaults_and_is_derived_away_when_the_module_is_off(self):
+        import subprocess
+        from pathlib import Path
+        chart = Path(__file__).resolve().parents[2] / "charts" / "group-sync-dashboard"
+
+        def rules(*sets):
+            args = ["helm", "template", "t", str(chart), "-n", "x", "--set", "ingress.host=h",
+                    "--set", "monitoring.prometheusRule.enabled=true", *sum((["--set", s] for s in sets), [])]
+            try:
+                done = subprocess.run(args, capture_output=True, text=True, timeout=120)
+            except (FileNotFoundError, subprocess.TimeoutExpired):
+                pytest.skip("helm not available")
+            assert done.returncode == 0, done.stderr
+            return done.stdout
+
+        on = rules()
+        assert "alert: GroupSyncGroupCountCliff" in on
+        assert 'gsd_alerts_total{kind="group_count_cliff"} > 0' in on
+        assert 'kind="group_count_cliff_silenced"' not in on, "a silenced cliff must never page"
+        off = rules("config.alerts.groupCountCliff.enabled=false")
+        assert "GroupSyncGroupCountCliff" not in off

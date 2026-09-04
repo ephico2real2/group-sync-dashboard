@@ -266,3 +266,107 @@ class TestStoppedSyncWithUnusableSchedule:
             "crc", [self._cr("*/30 * * * *", now - timedelta(minutes=2))], [], now, GRACE
         )
         assert alerts == []
+
+
+class TestGroupCountCliff:
+    """docs/specs/SPEC_B4_group_count_cliff.md B4: before = after + removed - added."""
+
+    NOW = t("2026-09-04T12:00:00")
+    POLICY = st.CliffPolicy(min_members=10, drop_ratio=0.5, window_hours=24.0)
+
+    def _group(self, name="app-ocp-rbac-team-ns-view", member_count=5, **kw):
+        return {"name": name, "member_count": member_count, "sync_provider": "ldap-groupsync_ldap",
+                "group_synced_at": "2026-09-04T11:00:00Z", **kw}
+
+    def _alerts(self, groups, changes, policy=POLICY):
+        return [a for a in st.compute_alerts("crc", [], groups, self.NOW, GRACE,
+                                             count_changes=changes, cliff=policy)
+                if a.kind.startswith("group_count_cliff")]
+
+    def test_fires_exactly_at_the_floor_and_the_ratio(self):
+        # before = 5 + 5 - 0 = 10 (the floor), drop 5/10 = 0.5 (the ratio): both boundaries inclusive.
+        got = self._alerts([self._group(member_count=5)], {"app-ocp-rbac-team-ns-view": {"added": 0, "removed": 5}})
+        assert [a.kind for a in got] == ["group_count_cliff"]
+        assert got[0].severity == "warning" and not got[0].silenced and got[0].silenced_by is None
+        assert "members 10 -> 5" in got[0].detail and "24h" in got[0].detail
+
+    def test_one_below_the_floor_is_silent(self):
+        # before = 4 + 5 = 9 < 10, even though the ratio (5/9) clears 0.5.
+        assert self._alerts([self._group(member_count=4)], {"app-ocp-rbac-team-ns-view": {"added": 0, "removed": 5}}) == []
+
+    def test_just_under_the_ratio_is_silent(self):
+        # before = 11 + 9 = 20, drop 9/20 = 0.45 < 0.5.
+        assert self._alerts([self._group(member_count=11)], {"app-ocp-rbac-team-ns-view": {"added": 0, "removed": 9}}) == []
+
+    def test_a_recovered_group_nets_out(self):
+        # 20 -> 5 -> 18 inside the window: before = 18 + 15 - 13 = 20, drop 2/20.
+        assert self._alerts([self._group(member_count=18)], {"app-ocp-rbac-team-ns-view": {"added": 13, "removed": 15}}) == []
+
+    def test_a_brand_new_group_has_no_before(self):
+        # Every member was `added` inside the window: before = 50 - 50 = 0.
+        assert self._alerts([self._group(member_count=50)], {"app-ocp-rbac-team-ns-view": {"added": 50, "removed": 0}}) == []
+
+    def test_a_group_with_no_events_or_no_state_is_not_evaluated(self):
+        assert self._alerts([self._group(member_count=5)], {}) == []
+        # events for a deleted group (absent from group_state) are the dangling finding's job
+        assert self._alerts([], {"gone": {"added": 0, "removed": 40}}) == []
+
+    def test_module_off_computes_nothing(self):
+        assert self._alerts([self._group(member_count=0)], {"app-ocp-rbac-team-ns-view": {"added": 0, "removed": 40}}, policy=None) == []
+
+    def test_silenced_by_annotation_true_is_reported_not_dropped(self):
+        got = self._alerts([self._group(member_count=5, cliff_silence="true")], {"app-ocp-rbac-team-ns-view": {"added": 0, "removed": 5}})
+        assert [(a.kind, a.silenced, a.silenced_by) for a in got] == [("group_count_cliff_silenced", True, "annotation")]
+        assert "members 10 -> 5" in got[0].detail, "the numbers stay; only the kind changes"
+
+    def test_silenced_until_a_future_or_todays_date(self):
+        for value in ("until=2026-09-04", "until=2026-12-31", " UNTIL=2026-09-05 "):
+            got = self._alerts([self._group(member_count=5, cliff_silence=value)], {"app-ocp-rbac-team-ns-view": {"added": 0, "removed": 5}})
+            assert got[0].kind == "group_count_cliff_silenced", value
+
+    def test_an_expired_or_malformed_until_unsilences(self):
+        for value in ("until=2026-09-03", "until=yesterday", "maybe", ""):
+            got = self._alerts([self._group(member_count=5, cliff_silence=value)], {"app-ocp-rbac-team-ns-view": {"added": 0, "removed": 5}})
+            assert got[0].kind == "group_count_cliff", value
+
+    def test_only_the_documented_date_shape_can_silence(self):
+        """date.fromisoformat accepts the compact 20260905; the docs promise YYYY-MM-DD and call
+        everything else malformed, so the compact form must not silence (review, PR #72)."""
+        for value in ("until=20260905", "until=2026-9-5", "until=2026-09-05T00:00:00Z", "until=2026-W36-5"):
+            got = self._alerts([self._group(member_count=5, cliff_silence=value)],
+                               {"app-ocp-rbac-team-ns-view": {"added": 0, "removed": 5}})
+            assert (got[0].kind, got[0].silenced, got[0].silenced_by) == ("group_count_cliff", False, None), value
+
+    def test_silenced_by_values_glob(self):
+        policy = st.CliffPolicy(min_members=10, drop_ratio=0.5, window_hours=24.0,
+                                silence=("app-ocp-rbac-team-*",))
+        got = self._alerts([self._group(member_count=5)], {"app-ocp-rbac-team-ns-view": {"added": 0, "removed": 5}}, policy=policy)
+        assert (got[0].kind, got[0].silenced_by) == ("group_count_cliff_silenced", "values")
+        other = self._alerts([self._group(name="app-ocp-rbac-ops-ns-view", member_count=5)], {"app-ocp-rbac-ops-ns-view": {"added": 0, "removed": 5}}, policy=policy)
+        assert other[0].kind == "group_count_cliff", "globs are exact and case-sensitive"
+
+    def test_annotation_wins_over_values_in_the_reason(self):
+        policy = st.CliffPolicy(silence=("*",))
+        got = self._alerts([self._group(member_count=5, cliff_silence="true")], {"app-ocp-rbac-team-ns-view": {"added": 0, "removed": 5}}, policy=policy)
+        assert got[0].silenced_by == "annotation"
+
+    def test_the_ratio_boundary_is_inclusive_in_exact_arithmetic(self):
+        """0.07 * 100 is 7.000000000000001 as a double, so `drop < ratio * before` missed a drop of
+        exactly seven in a hundred — the boundary the values promise fires. Measured: 141 such
+        boundaries among two-decimal ratios and group sizes up to 1000. Found in review (PR #72)."""
+        for ratio, before, drop in ((0.07, 100, 7), (0.07, 300, 21), (0.3, 10, 3), (0.15, 20, 3)):
+            policy = st.CliffPolicy(min_members=10, drop_ratio=ratio, window_hours=24.0)
+            got = self._alerts([self._group(member_count=before - drop)],
+                               {"app-ocp-rbac-team-ns-view": {"added": 0, "removed": drop}}, policy=policy)
+            assert [a.kind for a in got] == ["group_count_cliff"], (ratio, before, drop)
+            assert f"members {before} -> {before - drop}" in got[0].detail
+        one_under = st.CliffPolicy(min_members=10, drop_ratio=0.3, window_hours=24.0)
+        assert self._alerts([self._group(member_count=8)],
+                            {"app-ocp-rbac-team-ns-view": {"added": 0, "removed": 2}}, policy=one_under) == []
+
+    def test_since_is_in_the_pollers_timestamp_format(self):
+        assert self.POLICY.since(self.NOW) == "2026-09-03T12:00:00Z"
+
+    def test_as_dict_carries_the_silence_fields_for_every_kind(self):
+        plain = st.Alert("crc", "overdue", "x", "y", "critical").as_dict()
+        assert plain["silenced"] is False and plain["silenced_by"] is None

@@ -50,7 +50,9 @@ GIT_ENV = {
     "GIT_COMMITTER_NAME": "Release Operator",
     "GIT_COMMITTER_EMAIL": "operator@example.com",
 }
-DATE = "2026-09-05"
+# Far in the future on purpose: the real Chart.yaml and CHANGELOG are copied into the sandbox, and a
+# date that could already appear in them would make "no application paragraph" assertions lie.
+DATE = "2031-01-15"
 
 
 def git(cwd: pathlib.Path, *args: str) -> str:
@@ -83,6 +85,13 @@ def field(sandbox: pathlib.Path, rel: str, prefix: str) -> str:
         if line.startswith(prefix):
             return line[len(prefix):].strip().strip('"')
     raise AssertionError(f"no line starting {prefix!r} in {rel}")
+
+
+def _next_chart_patch(sandbox: pathlib.Path) -> str:
+    """A chart version that advances whatever the copied Chart.yaml says — never a literal, which
+    stopped advancing the day the real chart moved past it."""
+    major, minor, patch = current(sandbox)["chart"].split(".")
+    return f"{major}.{minor}.{int(patch) + 1}"
 
 
 def current(sandbox: pathlib.Path) -> dict[str, str]:
@@ -237,7 +246,7 @@ def test_an_existing_release_branch_is_refused_before_anything_is_edited(sandbox
 @pytest.mark.parametrize("bad_date", ["2026-99-99", "2026-02-30", "26-09-05"])
 def test_the_date_must_be_a_real_calendar_date(sandbox: pathlib.Path, bad_date: str) -> None:
     """A regex accepted 2026-99-99 and wrote it into both history records."""
-    done = run(sandbox, "--chart", "0.10.1", "Bad date", "--no-commit", date=bad_date)
+    done = run(sandbox, "--chart", _next_chart_patch(sandbox), "Bad date", "--no-commit", date=bad_date)
     assert done.returncode == 1, done.stdout + done.stderr
     assert "not a real YYYY-MM-DD date" in done.stderr
     assert git(sandbox, "status", "--porcelain").strip() == ""
@@ -246,11 +255,12 @@ def test_the_date_must_be_a_real_calendar_date(sandbox: pathlib.Path, bad_date: 
 def test_a_reason_that_would_break_the_changelog_bullet_is_refused(sandbox: pathlib.Path) -> None:
     """The bullet is `- **reason.**`: an odd backtick swallows the rest of the file into a code span
     and an asterisk ends the bold early. A balanced pair is a code span the operator meant."""
+    target = _next_chart_patch(sandbox)
     for reason in ("an `unclosed span", "a *star*"):
-        done = run(sandbox, "--chart", "0.10.1", reason, "--no-commit")
+        done = run(sandbox, "--chart", target, reason, "--no-commit")
         assert done.returncode == 1, reason
     assert git(sandbox, "status", "--porcelain").strip() == ""
-    done = run(sandbox, "--chart", "0.10.1", "the `--pr` flag opens the pull request", "--no-commit")
+    done = run(sandbox, "--chart", target, "the `--pr` flag opens the pull request", "--no-commit")
     assert done.returncode == 0, done.stdout + done.stderr
     assert "- **the `--pr` flag opens the pull request.**" in (sandbox / "docs/CHANGELOG.md").read_text()
 
@@ -265,7 +275,7 @@ def test_the_reason_must_be_one_line(sandbox: pathlib.Path) -> None:
         done = run(sandbox, "--app", "9.0.0", reason)
         assert done.returncode == 1, repr(reason)
     assert git(sandbox, "status", "--porcelain").strip() == ""
-    done = run(sandbox, "--chart", "0.10.1", "trailing newline\n", "--no-commit")
+    done = run(sandbox, "--chart", _next_chart_patch(sandbox), "trailing newline\n", "--no-commit")
     assert done.returncode == 0, done.stdout + done.stderr
 
 
@@ -277,7 +287,7 @@ def test_a_release_is_cut_from_main_only(sandbox: pathlib.Path) -> None:
     git(sandbox, "add", "topic-only.txt")
     git(sandbox, "commit", "-qm", "topic commit")
     before = current(sandbox)
-    done = run(sandbox, "--chart", "0.10.1", "Chart release")
+    done = run(sandbox, "--chart", _next_chart_patch(sandbox), "Chart release")
     assert done.returncode == 1
     assert "cut from main" in done.stderr
     assert current(sandbox) == before

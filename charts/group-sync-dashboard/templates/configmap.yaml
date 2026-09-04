@@ -41,6 +41,14 @@ data:
     {{- end }}
     unmanagedAuditMode: {{ .Values.config.unmanagedAudit.mode | quote }}
     unmanagedAuditMaxPerCycle: {{ .Values.config.unmanagedAudit.maxPerCycle }}
+    {{- include "gsd.groupCountCliff" . }}
+    # The group-count cliff alert (values.yaml config.alerts.groupCountCliff). The silence
+    # list is joined like loginCaptureHtpasswdProviders: the app splits on commas.
+    groupCountCliffEnabled: {{ .Values.config.alerts.groupCountCliff.enabled }}
+    groupCountCliffMinMembers: {{ .Values.config.alerts.groupCountCliff.minMembers }}
+    groupCountCliffDropRatio: {{ .Values.config.alerts.groupCountCliff.dropRatio }}
+    groupCountCliffWindowHours: {{ .Values.config.alerts.groupCountCliff.windowHours }}
+    groupCountCliffSilence: {{ .Values.config.alerts.groupCountCliff.silence | join "," | quote }}
     userActivityEnabled: {{ .Values.config.userActivity.enabled }}
     userActivityVisibility: {{ .Values.config.userActivity.visibility | quote }}
     userActivityFlushSeconds: {{ .Values.config.userActivity.flushSeconds }}

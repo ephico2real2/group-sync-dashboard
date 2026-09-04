@@ -297,3 +297,93 @@ class TestAttributionAmbiguity:
     def test_no_ambiguity_reported_for_distinct_names(self):
         from gsd.poller import ambiguous_attribution
         assert ambiguous_attribution([self._cr("a"), self._cr("b")]) == []
+
+
+class TestGroupCountChanges:
+    def _store(self):
+        s = Store(":memory:")
+        s.upsert_cluster("crc", "https://x", True)
+        return s
+
+    def test_sums_added_and_removed_inside_the_window_only(self):
+        s = self._store()
+        try:
+            s.sync_members("crc", {"g": [f"u{i}" for i in range(12)]}, {}, "2026-09-01T00:00:00Z")
+            s.sync_members("crc", {"g": [f"u{i}" for i in range(12, 15)]}, {}, "2026-09-04T00:00:00Z")
+            inside = s.group_count_changes("crc", "2026-09-03T00:00:00Z")
+            assert inside == {"g": {"added": 3, "removed": 12}}
+            everything = s.group_count_changes("crc", "2026-08-01T00:00:00Z")
+            assert everything == {"g": {"added": 15, "removed": 12}}
+            assert s.group_count_changes("crc", "2026-09-05T00:00:00Z") == {}
+        finally:
+            s.close()
+
+    def test_boundary_polls_are_the_count_held_at_the_window_start(self):
+        """Events stamped exactly at `since` belong to the poll that defines the window's start;
+        an inclusive bound rewound them and reported the state BEFORE that poll (review, PR #72)."""
+        s = self._store()
+        try:
+            old, since = "2026-09-03T00:00:00Z", "2026-09-04T00:00:00Z"
+            members = [f"u{i}" for i in range(20)]
+            s.sync_members("crc", {"g": members}, {}, old)
+            s.sync_members("crc", {"g": members[:5]}, {}, since)
+            s.sync_members("crc", {"g": members[:8]}, {}, since)
+            s.replace_group_state("crc", [{"name": "g", "member_count": 8, "sync_provider": "p",
+                                           "group_synced_at": None, "ldap_uid": None}], since)
+            assert s.group_count_changes("crc", since) == {}, "nothing after the boundary poll"
+            assert s.groups("crc", "all")[0]["member_count"] == 8
+        finally:
+            s.close()
+
+    def test_a_deleted_group_records_its_departures(self):
+        s = self._store()
+        try:
+            s.sync_members("crc", {"g": ["a", "b"]}, {}, "2026-09-04T00:00:00Z")
+            s.sync_members("crc", {}, {}, "2026-09-04T00:01:00Z")
+            # `since` strictly precedes the adds: an event stamped exactly at `since` belongs to
+            # the window's starting state and is not counted (see the boundary test above).
+            assert s.group_count_changes("crc", "2026-09-03T23:59:59Z") == {"g": {"added": 2, "removed": 2}}
+        finally:
+            s.close()
+
+    def test_cliff_silence_is_stored_and_served_and_defaults_to_null(self):
+        s = self._store()
+        try:
+            s.replace_group_state("crc", [
+                {"name": "a", "member_count": 1, "sync_provider": None, "group_synced_at": None,
+                 "ldap_uid": None, "cliff_silence": "until=2026-12-31"},
+                {"name": "b", "member_count": 1, "sync_provider": None, "group_synced_at": None,
+                 "ldap_uid": None},
+            ], "2026-09-04T00:00:00Z")
+            by_name = {g["name"]: g["cliff_silence"] for g in s.groups("crc", "all")}
+            assert by_name == {"a": "until=2026-12-31", "b": None}
+            # The detail row says the same as the list row: the two cannot disagree (API.md).
+            assert s.group_detail("crc", "a")["cliff_silence"] == "until=2026-12-31"
+            assert s.group_detail("crc", "b")["cliff_silence"] is None
+        finally:
+            s.close()
+
+
+class TestPollCarriesTheSilenceAnnotation:
+    def test_poll_once_writes_the_annotation_it_read(self, tmp_path, monkeypatch):
+        from gsd import poller
+        from gsd.config import ClusterConfig
+        from gsd.kube import GroupView
+
+        class FakeClient:
+            def __init__(self, *a, **kw): pass
+            def fetch(self):
+                return [], [GroupView("app-ocp-rbac-a-ns-view", 1, "gs_ldap", None, None, ["alice"],
+                                      cliff_silence="true"),
+                            GroupView("app-ocp-rbac-b-ns-view", 1, "gs_ldap", None, None, ["bob"])]
+            def fetch_access_group_dn(self): return None
+
+        monkeypatch.setattr(poller, "ClusterClient", FakeClient)
+        store = Store(str(tmp_path / "t.db"))
+        try:
+            store.upsert_cluster("c1", "https://x", True)
+            assert poller.poll_once(store, ClusterConfig("c1", "https://x", token_env="T"), timeout=5) == "ok"
+            rows = {g["name"]: g["cliff_silence"] for g in store.groups("c1", "all")}
+            assert rows == {"app-ocp-rbac-a-ns-view": "true", "app-ocp-rbac-b-ns-view": None}
+        finally:
+            store.close()

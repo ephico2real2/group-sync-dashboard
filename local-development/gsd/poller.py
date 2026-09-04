@@ -233,6 +233,8 @@ def poll_once(
                     "sync_provider": g.sync_provider,
                     "group_synced_at": g.group_synced_at,
                     "ldap_uid": g.ldap_uid,
+                    # The silence annotation, carried as observed. Read-only: see kube.py.
+                    "cliff_silence": g.cliff_silence,
                 }
                 for g in groups
             ],

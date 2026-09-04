@@ -32,6 +32,8 @@ request, with the reason, under "Orchestrator's notes".
 - Ladder inversion found in review (PR #69, C8): the body's "Not built yet" NEW text keeps the cliff-alert clause, which B4 already removed. After B2 the sentence reads "Effective-permission expansion, log-scrape enrichment, per-namespace PDF reports"; the old text is the sentence as it stands after B4.
 - The body inserts `membership_event_by_time` into SCHEMA; that insertion is SKIPPED here because B4 already made it. Only `sync_event_by_time` is added.
 
+- Citation corrected when B4 landed (1 occurrence): the design's ground-truth table cited the chart README heading "The eleven alerts"; B4 made it twelve, and the heading is cited by its current text. The count this spec's own edits produce is re-derived from main at implementation, as the notes above already say.
+
 ## Batch preamble (verbatim from the design)
 
 # DESIGN — B1 off-volume backup CronJob + restore runbook, B2 retention for `membership_event` / `sync_event`
@@ -64,7 +66,7 @@ Everything below is grounded in files read during this pass; each claim is cited
 | The chart's Job precedent uses an operator-supplied image for a CLI the dashboard image lacks | `charts/group-sync-dashboard/templates/auth-loglevel-job.yaml#authLogLevel.image` |
 | The pod has sh, curl, jq, ls, cat, base64, mkdir, chgrp, chmod, rm, rmdir, python3.14 — no tar/gzip/rsync/aws/head/wc/grep; the interpreter is `python3.14`; `PYTHONDONTWRITEBYTECODE=1` | `docs/DESIGN_hardened_image.md#What it changed for operators`, `local-development/Containerfile#PYTHONDONTWRITEBYTECODE` |
 | Alert-rule tests extract only `gsd_*` names from `expr`, so a `kube_*` metric in a rule does not need a collector HELP line | `tests/test_metrics.py` (`test_every_metric_an_alert_references_is_declared_by_the_collector`) |
-| README and chart README both say "eleven" alerts | `README.md#eleven alerting`, `charts/group-sync-dashboard/README.md#The eleven alerts` |
+| README and chart README both say "eleven" alerts | `README.md#eleven alerting`, `charts/group-sync-dashboard/README.md#The twelve alerts` |
 | The `helm template` test helper is `render(**values)` with `__` → `.` | `tests/test_chart_strategy.py#render` |
 
 ---

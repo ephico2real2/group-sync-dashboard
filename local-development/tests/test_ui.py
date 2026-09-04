@@ -3195,3 +3195,67 @@ class TestMemberSearch:
         dash.locator("tr[data-user='alice']").click()
         dash.wait_for_function("() => view.user === 'alice'")
         assert dash.evaluate("() => view.page") == "groups"
+
+
+@pytest.fixture(scope="module")
+def cliff_server(tmp_path_factory):
+    """Its own store: one active cliff and one silenced, so the Overview's two renderings can
+    be asserted without changing the shared seed's alert list."""
+    db = str(tmp_path_factory.mktemp("gsd") / "cliff.db")
+    now = datetime.now(UTC)
+    store = Store(db)
+    store.upsert_cluster("crc-local", "https://api.crc.testing:6443", True)
+    store.record_poll("crc-local", "ok", None)
+    store.sync_members("crc-local", {"app-ocp-rbac-loud-ns-view": [f"u{i}" for i in range(20)],
+                                     "app-ocp-rbac-quiet-ns-view": [f"v{i}" for i in range(20)]},
+                       {}, "2026-01-01T00:00:00Z")
+    store.sync_members("crc-local", {"app-ocp-rbac-loud-ns-view": ["u0"],
+                                     "app-ocp-rbac-quiet-ns-view": ["v0"]}, {}, _iso(now))
+    store.replace_group_state("crc-local", [
+        {"name": "app-ocp-rbac-loud-ns-view", "member_count": 1, "sync_provider": "gs_ldap",
+         "group_synced_at": None, "ldap_uid": None},
+        {"name": "app-ocp-rbac-quiet-ns-view", "member_count": 1, "sync_provider": "gs_ldap",
+         "group_synced_at": None, "ldap_uid": None, "cliff_silence": "until=2099-01-01"},
+    ], _iso(now))
+    store.close()
+    settings = Settings(clusters=[ClusterConfig("crc-local", "https://api.crc.testing:6443", token_env="X")],
+                        db_path=db, view_restrictions_enabled=False)
+    port = _free_port()
+    srv = uvicorn.Server(uvicorn.Config(build_app(settings, run_poller=False), host="127.0.0.1",
+                                        port=port, log_level="warning"))
+    thread = threading.Thread(target=srv.run, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{port}"
+    for _ in range(100):
+        try:
+            if httpx.get(f"{base}/healthz", timeout=1).status_code == 200:
+                break
+        except httpx.HTTPError:
+            time.sleep(0.1)
+    yield base
+    srv.should_exit = True
+    thread.join(timeout=5)
+
+
+class TestGroupCountCliffOnTheOverview:
+    def test_silenced_is_shown_dimmed_and_counted_apart(self, page, cliff_server):
+        errors: list[str] = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.goto(cliff_server)
+        page.wait_for_selector(".alert-row", timeout=10_000)
+        assert not errors, errors
+        rows = page.locator(".alert-row")
+        silenced = page.locator(".alert-row.silenced")
+        assert silenced.count() == 1
+        assert "app-ocp-rbac-quiet-ns-view" in silenced.first.inner_text()
+        assert "silenced by annotation" in silenced.first.locator(".silence-tag").inner_text()
+        # The active cliff has no tag and the hero counts it alone (2 empty_group rows are
+        # also active: both groups now have one member, not zero — so exactly 1 active row).
+        active_rows = [rows.nth(i).inner_text() for i in range(rows.count())
+                       if "silenced by" not in rows.nth(i).inner_text()]
+        assert any("app-ocp-rbac-loud-ns-view" in t for t in active_rows)
+        assert page.locator(".hero .value").first.inner_text().strip() == str(len(active_rows))
+        assert "1 silenced" in page.locator(".hero .label").first.inner_text()
+        labels = {page.locator(".alert-row .badge").nth(i).inner_text().strip()
+                  for i in range(page.locator(".alert-row .badge").count())}
+        assert labels <= {"critical", "warning"}, "silenced is a tag, not a severity"

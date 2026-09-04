@@ -91,6 +91,7 @@ CREATE TABLE IF NOT EXISTS group_state (
     group_synced_at     TEXT,           -- the group's OWN sync-time annotation
     ldap_uid            TEXT,
     observed_at         TEXT NOT NULL,
+    cliff_silence       TEXT,           -- kube.CLIFF_SILENCE_ANNOTATION, raw; migration 8
     PRIMARY KEY(cluster_id, name)
 );
 
@@ -178,6 +179,11 @@ CREATE INDEX IF NOT EXISTS membership_event_lookup
     ON membership_event(cluster_id, group_name, id DESC);
 CREATE INDEX IF NOT EXISTS membership_event_by_user
     ON membership_event(cluster_id, user_name, id DESC);
+-- The group-count cliff sums a cluster's events inside a time window (Store.group_count_changes);
+-- without this the read scans every event the cluster has ever recorded, and the table has no
+-- retention by design. Migration 8.
+CREATE INDEX IF NOT EXISTS membership_event_by_time
+    ON membership_event(cluster_id, observed_at);
 
 -- One row per (binding, Group subject). Current state, replaced each refresh: a binding
 -- is fully re-readable from the API, so nothing here is irreplaceable history.
@@ -535,6 +541,18 @@ _MIGRATIONS: list[tuple[int, str, list[str]]] = [
             # On a FRESH database SCHEMA has already created both tables in this shape; the DROP then
             # removes an empty table and the CREATE puts it back, which is harmless and keeps the
             # replay idempotent (_migrate tolerates exactly one error, and this raises none).
+        ],
+    ),
+    (
+        8,
+        "group_state carries the cliff-silence annotation; membership_event indexed by time",
+        [
+            # ADD COLUMN replays with "duplicate column name" on a fresh database, which _migrate
+            # tolerates. Nullable: an upgraded cluster's rows are NULL (not silenced) until its
+            # next poll rewrites group_state, which is one interval away.
+            "ALTER TABLE group_state ADD COLUMN cliff_silence TEXT",
+            "CREATE INDEX IF NOT EXISTS membership_event_by_time "
+            "ON membership_event(cluster_id, observed_at)",
         ],
     ),
 ]
@@ -1158,10 +1176,13 @@ class Store:
             conn.execute("DELETE FROM group_state WHERE cluster_id=?", (cluster_id,))
             conn.executemany(
                 """INSERT INTO group_state(cluster_id, name, member_count, sync_provider,
-                       group_synced_at, ldap_uid, observed_at)
+                       group_synced_at, ldap_uid, observed_at, cliff_silence)
                    VALUES(:cluster_id,:name,:member_count,:sync_provider,
-                          :group_synced_at,:ldap_uid,:observed_at)""",
-                [{**r, "cluster_id": cluster_id, "observed_at": observed_at} for r in rows],
+                          :group_synced_at,:ldap_uid,:observed_at,:cliff_silence)""",
+                # cliff_silence defaults to NULL so every existing caller (and every fixture) that
+                # builds rows without it keeps working; the poller always supplies it.
+                [{"cliff_silence": None, **r, "cluster_id": cluster_id, "observed_at": observed_at}
+                 for r in rows],
             )
 
     def sync_members(
@@ -1298,7 +1319,8 @@ class Store:
 
     def group_detail(self, cluster_id: str, group_name: str) -> dict | None:
         row = self._row(
-            """SELECT name, member_count, sync_provider, group_synced_at, ldap_uid, observed_at
+            """SELECT name, member_count, sync_provider, group_synced_at, ldap_uid, observed_at,
+                      cliff_silence
                  FROM group_state WHERE cluster_id=? AND name=?""",
             (cluster_id, group_name),
         )
@@ -1320,6 +1342,33 @@ class Store:
         sql += " ORDER BY id DESC LIMIT ?"
         params.append(limit)
         return self._rows(sql, params)
+
+    def group_count_changes(self, cluster_id: str, since: str) -> dict[str, dict]:
+        """Per group, how many members were added and removed strictly after ``since``.
+
+        The group-count cliff's only store read (state.py#compute_alerts). ``since`` is a
+        timeutil-format timestamp, compared lexicographically like every other timestamp
+        here. The count at the window's start is exactly ``current + removed - added``
+        because sync_members writes one event per member transition and nothing else — so
+        this is the per-poll history the cliff needs without a second table holding a copy
+        of it. STRICTLY after: events stamped exactly at ``since`` were written by the poll
+        that defines the window's start, and the count that poll held is the "before" — an
+        inclusive bound rewound that poll too and reported the state before it (found in
+        review, PR #72). Groups with no later events are absent from the result.
+        """
+        rows = self._rows(
+            """SELECT group_name,
+                      SUM(CASE WHEN change = 'added'   THEN 1 ELSE 0 END) AS added,
+                      SUM(CASE WHEN change = 'removed' THEN 1 ELSE 0 END) AS removed
+                 FROM membership_event
+                WHERE cluster_id = ? AND observed_at > ?
+                GROUP BY group_name""",
+            (cluster_id, since),
+        )
+        return {
+            r["group_name"]: {"added": int(r["added"] or 0), "removed": int(r["removed"] or 0)}
+            for r in rows
+        }
 
     def user_groups(self, cluster_id: str, user_name: str) -> list[dict]:
         """Every group a user belongs to — the reverse lookup.
@@ -2701,7 +2750,7 @@ class Store:
         """
         if user_name:
             sql = ("""SELECT g.name, g.member_count, g.sync_provider, g.group_synced_at,
-                            g.ldap_uid, g.observed_at
+                            g.ldap_uid, g.observed_at, g.cliff_silence
                        FROM group_state g
                        JOIN group_member m
                          ON m.cluster_id = g.cluster_id AND m.group_name = g.name
@@ -2709,7 +2758,7 @@ class Store:
                    + self._group_state_predicate(state, alias="g") + " ORDER BY g.name")
             return self._rows(sql, [cluster_id, user_name])
         sql = ("""SELECT name, member_count, sync_provider, group_synced_at, ldap_uid,
-                        observed_at
+                        observed_at, cliff_silence
                    FROM group_state WHERE cluster_id=?"""
                + self._group_state_predicate(state) + " ORDER BY name")
         return self._rows(sql, [cluster_id])

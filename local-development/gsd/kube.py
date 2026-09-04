@@ -293,6 +293,13 @@ UNMANAGED_EXCEPTION_ANNOTATION = "rbac.ocp.io/unmanaged-exception"
 UNMANAGED_LABEL = "rbac.ocp.io/unmanaged"
 SYNC_TIME_ANNOTATION = "group-sync-operator.redhat-cop.io/sync-time"
 LDAP_UID_ANNOTATION = "openshift.io/ldap.uid"
+# READ, NEVER WRITTEN — the exception-annotation pattern above, applied to the group-count
+# cliff alert (docs/specs/SPEC_B4_group_count_cliff.md). An administrator sets
+# it on the Group with `oc annotate`; the value is "true" or "until=YYYY-MM-DD" (inclusive,
+# UTC). The dashboard carries it to group_state.cliff_silence and decides in state.py. It is
+# the ONE annotation carried beyond the two above: not "all annotations", because the store
+# would then hold whatever anybody writes on a Group.
+CLIFF_SILENCE_ANNOTATION = "groupsync-dashboard.io/silence-group-count-cliff"
 
 PAGE_SIZE = 500
 
@@ -357,6 +364,9 @@ class GroupView:
 
     A count answers "is this group empty?"; only the names answer "why does this person have
     access?" — which is the question an operator actually arrives with."""
+    cliff_silence: str | None = None
+    """CLIFF_SILENCE_ANNOTATION's raw value, or None. Last and defaulted so the positional
+    constructors in tests keep working."""
 
 
 @dataclass
@@ -1429,4 +1439,5 @@ def _group_view(obj: dict) -> GroupView:
         group_synced_at=annotations.get(SYNC_TIME_ANNOTATION),
         ldap_uid=annotations.get(LDAP_UID_ANNOTATION),
         members=members,
+        cliff_silence=annotations.get(CLIFF_SILENCE_ANNOTATION),
     )

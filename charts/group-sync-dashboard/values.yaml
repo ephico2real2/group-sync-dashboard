@@ -431,6 +431,43 @@ config:
     # deployment rather than the growth control a request log would need. 0 disables it.
     retentionDays: 400
 
+  # Computed alerts with a tunable threshold. Every kind /api/alerts serves is derived at
+  # read time from what the poll stored (docs/reference-architecture.md, "Derived, never
+  # stored"); this block holds the ones that carry a number.
+  alerts:
+    # THE GROUP-COUNT CLIFF: a group whose membership fell by dropRatio or more, from a
+    # count of at least minMembers, within windowHours — reconstructed exactly from the
+    # membership events the poll records, so no extra table and no extra RBAC. Kind
+    # `group_count_cliff`, severity warning; gsd_alerts_total{kind="group_count_cliff"};
+    # PrometheusRule GroupSyncGroupCountCliff (rendered only while this is enabled, because a
+    # rule on a kind that is never emitted can never fire).
+    #
+    # DEFAULT ON. Read-only, one indexed query per cluster per read, no side effect. What
+    # keeps ON quiet is the floor: below ten members, half is one or two people — churn,
+    # not a cliff. Raise minMembers or lower dropRatio for a large directory; the values
+    # are refused at render if the ratio leaves (0, 1], the floor drops below 1 or the
+    # window is not positive.
+    #
+    # SILENCING IS READ-ONLY, from two places an administrator controls, and a silenced
+    # cliff is still REPORTED (kind `group_count_cliff_silenced`, `silenced: true`, dimmed on
+    # the Overview) — never hidden:
+    #   1. the Group annotation groupsync-dashboard.io/silence-group-count-cliff, value
+    #      "true" or "until=YYYY-MM-DD" (inclusive, UTC; expired un-silences), e.g.
+    #        oc annotate group app-ocp-rbac-contractors-ns-view \
+    #          groupsync-dashboard.io/silence-group-count-cliff=until=2026-10-31
+    #      The dashboard READS it on every poll and writes nothing back.
+    #   2. `silence` below: exact names or fnmatch globs.
+    groupCountCliff:
+      enabled: true
+      minMembers: 10
+      dropRatio: 0.5
+      windowHours: 24
+      silence: []
+      # e.g.
+      # silence:
+      #   - app-ocp-rbac-contractors-*
+      #   - app-ocp-rbac-seasonal-ns-view
+
 # DEBUG | INFO | WARNING | ERROR | CRITICAL. Case does not matter; anything else refuses to render.
 #
 # EACH LEVEL IS A PROMISE, and the app is instrumented to keep it:
@@ -1379,6 +1416,9 @@ monitoring:
       # A config CR's reconcile is retried by its operator; a couple of minutes of failing
       # is a blip, sustained failure is stopped RBAC reconciliation.
       configError: 10m
+      # A cliff is a completed event, not a transient: the window is a day, so fifteen
+      # minutes only has to outlast a scrape gap.
+      groupCountCliff: 15m
       # Long: this is a migration backlog, not an incident. It should be visible and
       # tracked, never paging anyone at 3am.
       directUserGrants: 1h

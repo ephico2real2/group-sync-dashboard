@@ -48,6 +48,12 @@ ALERT_KINDS = (
     "sync_stopped", "overdue", "reconcile_error", "stale_group",
     "config_reconcile_error", "direct_user_binding",
     "dangling_binding",
+    # The group-count cliff, and the same cliff an administrator silenced (annotation or
+    # values). Two KIND values rather than a `silenced` label, so the label set of
+    # gsd_alerts_total — and every rule written against it — is unchanged, and the shipped
+    # rule matches the unsilenced kind alone. Kind only: the group's name never reaches
+    # /metrics (module docstring).
+    "group_count_cliff", "group_count_cliff_silenced",
     "auth_failed", "forbidden", "unreachable",
 )
 
@@ -335,7 +341,9 @@ class DashboardCollector:
             "Alerts as /api/alerts serves them at the wide tier, by kind and severity. A "
             "failing cluster reports its poll outcome as one critical alert and none of "
             "the computed kinds (those would come from stale cache); dangling bindings "
-            "count under kind=dangling_binding.",
+            "count under kind=dangling_binding; a group-count cliff an administrator "
+            "silenced counts under kind=group_count_cliff_silenced, never under "
+            "group_count_cliff.",
             labels=["cluster", "kind", "severity"],
         )
         capture_last_read = GaugeMetricFamily(
@@ -433,6 +441,9 @@ class DashboardCollector:
                 if row["status"] and row["status"] != "ok":
                     by_kind[(row["status"], "critical")] = 1
                 else:
+                    # Same policy the API derives (gsd/api.py#list_alerts): None when the
+                    # module is off OR when this collector was built without settings.
+                    policy = st.cliff_policy(self.settings)
                     for alert in st.compute_alerts(
                         cluster=cluster,
                         groupsyncs=cluster_groupsyncs,
@@ -442,6 +453,11 @@ class DashboardCollector:
                         groupsync_present=self.store.groupsync_present(cluster),
                         now=now,
                         grace=self.grace,
+                        count_changes=(
+                            self.store.group_count_changes(cluster, policy.since(now))
+                            if policy else None
+                        ),
+                        cliff=policy,
                     ):
                         key = (alert.kind, alert.severity)
                         by_kind[key] = by_kind.get(key, 0) + 1

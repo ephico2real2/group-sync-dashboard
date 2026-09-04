@@ -490,6 +490,14 @@ healthy CR's observed age exceeds one interval near the end of every cycle
 (`gsd/state.py#compute_state`). `scheduleGraceSeconds` shifts the boundary; it does not widen the
 classes, and it must stay above `pollIntervalSeconds`.
 
+**The group-count cliff is reconstructed, not sampled.** `group_state` holds one count per
+group, replaced each poll; the count at the window's start is `after + removed − added` over
+the window's `membership_event` rows (`gsd/store.py#Store.group_count_changes`), which is exact
+because `sync_members` writes one event per member transition. No sample table, so nothing to
+drift and nothing to retain. Silencing is read from the Group annotation the poller carries
+into `group_state.cliff_silence` or from values; a silenced cliff is still computed and served
+(`gsd/state.py#cliff_silence`).
+
 ### Binding classification
 
 One SQL `CASE` decides all five tiers (`gsd/store.py#Store.user_bindings`), in this order:

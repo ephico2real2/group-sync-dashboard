@@ -267,6 +267,18 @@ class Settings:
     # is downgraded to `log` below rather than failing to start.
     unmanaged_audit_mode: str = "off"
     unmanaged_audit_max_per_cycle: int = 20
+    # The group-count cliff alert (docs/specs/SPEC_B4_group_count_cliff.md).
+    # ON by default: read-only, no RBAC beyond the Group list the poll already makes, one
+    # indexed query per cluster per read. The floor is what keeps ON quiet — below ten
+    # members, half is one or two people. Validated in load_settings: a ratio outside (0, 1],
+    # a floor below 1 or a non-positive window refuses to start, because an alert that can
+    # never or always fire is a misconfiguration rather than a preference.
+    group_count_cliff_enabled: bool = True
+    group_count_cliff_min_members: int = 10
+    group_count_cliff_drop_ratio: float = 0.5
+    group_count_cliff_window_hours: float = 24.0
+    # Exact names or fnmatch globs. A match is reported as silenced, never dropped.
+    group_count_cliff_silence: tuple[str, ...] = ()
 
     # Whether the oauth-proxy sidecar is in front of us. The app cannot detect this for
     # itself, and it must not infer it from the presence of X-Forwarded-User — that header
@@ -615,6 +627,48 @@ def _require(raw: dict, key: str, where: str) -> object:
     return raw[key]
 
 
+def _cliff_settings(raw: dict) -> dict:
+    """config.alerts.groupCountCliff, validated. Refuses rather than clamps: unlike the
+    SQLite knobs, a threshold that cannot fire (ratio > 1) or always fires (ratio <= 0) is
+    not a degraded-but-running state, it is an alert lying in one direction."""
+    enabled = _bool_setting(raw, "GSD_GROUP_COUNT_CLIFF_ENABLED", "groupCountCliffEnabled", True)
+    min_members = _num_setting(
+        raw, "GSD_GROUP_COUNT_CLIFF_MIN_MEMBERS", "groupCountCliffMinMembers", 10, int)
+    ratio = _num_setting(
+        raw, "GSD_GROUP_COUNT_CLIFF_DROP_RATIO", "groupCountCliffDropRatio", 0.5, float)
+    window = _num_setting(
+        raw, "GSD_GROUP_COUNT_CLIFF_WINDOW_HOURS", "groupCountCliffWindowHours", 24.0, float)
+    if not 0 < ratio <= 1:
+        raise ConfigError(f"groupCountCliffDropRatio must be in (0, 1]; got {ratio!r}")
+    if min_members < 1:
+        raise ConfigError(f"groupCountCliffMinMembers must be >= 1; got {min_members!r}")
+    if window <= 0:
+        raise ConfigError(f"groupCountCliffWindowHours must be > 0; got {window!r}")
+    # The window is reconstructed from polls, so a window shorter than one poll interval has
+    # no observation at its start and a cliff inside it can vanish before the next poll — or
+    # before the PrometheusRule's pending period elapses (found in review, PR #72).
+    poll = int(raw.get("pollIntervalSeconds", 60))
+    if window * 3600 < poll:
+        raise ConfigError(
+            f"groupCountCliffWindowHours must cover at least one poll interval; got {window!r}h "
+            f"with pollIntervalSeconds={poll!r}"
+        )
+    source = os.environ.get("GSD_GROUP_COUNT_CLIFF_SILENCE")
+    if source is None:
+        source = raw.get("groupCountCliffSilence", "")
+    if isinstance(source, (list, tuple)):
+        patterns = [str(p).strip() for p in source]
+    else:
+        patterns = [p.strip() for p in str(source or "").split(",")]
+    return {
+        "group_count_cliff_enabled": enabled,
+        "group_count_cliff_min_members": min_members,
+        "group_count_cliff_drop_ratio": ratio,
+        "group_count_cliff_window_hours": window,
+        "group_count_cliff_silence": tuple(p for p in patterns if p),
+    }
+
+
 def load_settings(path: str | Path) -> Settings:
     """Load and validate settings from a YAML file.
 
@@ -729,6 +783,7 @@ def load_settings(path: str | Path) -> Settings:
         unmanaged_audit_max_per_cycle=_num_setting(
             raw, "GSD_UNMANAGED_AUDIT_MAX_PER_CYCLE", "unmanagedAuditMaxPerCycle", 20, int
         ),
+        **_cliff_settings(raw),
         sqlite_wal_checkpoint_mb=_num_setting(
             raw, "GSD_SQLITE_WAL_CHECKPOINT_MB", "sqliteWalCheckpointMb", 8.0, float
         ),

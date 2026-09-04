@@ -447,3 +447,27 @@ INFO
 {{- $l -}}
 {{- end -}}
 {{- end -}}
+
+{{/*
+config.alerts.groupCountCliff, validated at render so a threshold that can never or always
+fire is refused here rather than discovered as silence. Emits nothing; include it for effect.
+*/}}
+{{- define "gsd.groupCountCliff" -}}
+{{- $c := ((.Values.config | default dict).alerts | default dict).groupCountCliff | default dict -}}
+{{- $ratio := $c.dropRatio | float64 -}}
+{{- if or (le $ratio 0.0) (gt $ratio 1.0) -}}
+{{- fail (printf "config.alerts.groupCountCliff.dropRatio must be in (0, 1]; got %v" $c.dropRatio) -}}
+{{- end -}}
+{{- if lt ($c.minMembers | int) 1 -}}
+{{- fail (printf "config.alerts.groupCountCliff.minMembers must be >= 1; got %v" $c.minMembers) -}}
+{{- end -}}
+{{- if le ($c.windowHours | float64) 0.0 -}}
+{{- fail (printf "config.alerts.groupCountCliff.windowHours must be > 0; got %v" $c.windowHours) -}}
+{{- end -}}
+{{- /* The window is reconstructed from polls: shorter than one poll interval, it has no
+       observation at its start and a cliff inside it can vanish before the next poll or
+       before the rule's pending period (found in review, PR #72). */ -}}
+{{- if lt (mulf ($c.windowHours | float64) 3600.0) (.Values.config.pollIntervalSeconds | float64) -}}
+{{- fail (printf "config.alerts.groupCountCliff.windowHours must cover at least one poll interval; got %v hours with config.pollIntervalSeconds=%v" $c.windowHours .Values.config.pollIntervalSeconds) -}}
+{{- end -}}
+{{- end -}}

@@ -8,7 +8,19 @@ lives next to the code and in the design and review records linked here. Changes
 last release sit under `## Unreleased` until the release that carries them replaces that heading —
 which `local-development/prepare-release.py` does when the release is cut.
 
-## Unreleased
+## Application 0.12.0 — chart 0.11.0 — 2026-09-05
+
+- **Group-count cliff alert, with read-only silencing.** A group whose membership fell by
+  `config.alerts.groupCountCliff.dropRatio` (0.5) from at least `minMembers` (10) within
+  `windowHours` (24) is alert kind `group_count_cliff`, severity warning — reconstructed from the
+  membership events the poll already records, so no new table. Silence it read-only with the Group
+  annotation `groupsync-dashboard.io/silence-group-count-cliff` (`true` or `until=YYYY-MM-DD`) or the
+  chart's `silence` globs; a silenced cliff is still reported as `group_count_cliff_silenced`, dimmed
+  on the Overview, counted under its own kind on `/metrics`, and never pages. New
+  `GroupSyncGroupCountCliff` rule (the twelfth). `/api/alerts` rows gain `silenced` and
+  `silenced_by`; group rows gain `cliff_silence`; schema migration 8. Both cliff kinds are withheld
+  at the self tier. Default on, and the README's "needs a floor as well as a ratio" is answered by
+  the floor. (spec `docs/specs/SPEC_B4_group_count_cliff.md`)
 
 - **The browser tests run in CI.** `tests/test_ui.py` — the real app on a free port, a seeded store,
   Playwright against it — now runs in a `ui` job of its own on every pull request and push, on the
