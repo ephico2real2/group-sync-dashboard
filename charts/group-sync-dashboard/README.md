@@ -117,7 +117,12 @@ helm upgrade ... --set trustedCA.existingConfigMap.enabled=true \
   --set trustedCA.existingConfigMap.subjectHash=c275f070
 ```
 
-With that, curl, `urllib` and the dashboard's fallback context all trust it. Enforced by
+With that, curl, `urllib` and the dashboard's fallback context all trust it. One address stays
+outside both: the in-cluster API (`https://kubernetes.default.svc`) is signed by the cluster's
+own CA, which is in the ServiceAccount's `ca.crt` and not in the injected bundle — measured on
+CRC — so an in-pod curl to it takes
+`--cacert /var/run/secrets/kubernetes.io/serviceaccount/ca.crt`, as it always did; the dashboard
+names that file explicitly for the local cluster. Enforced by
 `test_chart_strategy.py::TestCurlInThePodTrustsWhatTheAppTrusts`.
 
 Enforced by `test_chart_strategy.py::TestTheProxyTrustsTheSameCAsTheApp`, which also checks

@@ -248,6 +248,14 @@ jobs:
       # identifies the distribution, reads the database and Red Hat's advisory data for it,
       # and is the scanner Red Hat's own documentation names for these images.
       #
+      # grype-version is PINNED, and the pin is the difference between a gate and a green
+      # light. The action's own default (v0.110.0 on 2026-09-04) predates Grype's Hummingbird
+      # support (source-RPM filtering in v0.113.0, the distro marked rolling in v0.115.0) and
+      # reported "0 vulnerability matches across 84 packages" on an image where v0.118.0 finds
+      # 12 Medium and 2 Low, and 26 High on the pack stage. Move the pin forward deliberately;
+      # never let it fall back to the default. The blindness check below catches the day the
+      # pinned version stops identifying the distribution.
+      #
       # only-fixed is load-bearing, not laziness. A base can carry HIGH CVEs with no available
       # patch (four util-linux advisories on 2026-09-04, state Affected, no fixed build); without
       # this flag the gate is red on every run for something nobody can act on, and a
@@ -257,6 +265,7 @@ jobs:
         uses: anchore/scan-action@v7
         with:
           image: gsd:ci
+          grype-version: v0.118.0
           fail-build: true
           only-fixed: true
           severity-cutoff: high
@@ -266,6 +275,7 @@ jobs:
         uses: anchore/scan-action@v7
         with:
           image: gsd:pack
+          grype-version: v0.118.0
           fail-build: true
           only-fixed: true
           severity-cutoff: high
@@ -277,15 +287,37 @@ jobs:
         uses: anchore/scan-action@v7
         with:
           image: gsd:ci
+          grype-version: v0.118.0
           fail-build: false
           severity-cutoff: medium
           output-format: table
 
       - name: Full inventory, pack stage (informational)
+        id: pack-inventory
         if: always()
         uses: anchore/scan-action@v7
         with:
           image: gsd:pack
+          grype-version: v0.118.0
           fail-build: false
           severity-cutoff: medium
-          output-format: table
+          output-format: json
+          output-file: pack-inventory.json
+
+      # THE BLINDNESS CHECK. A scanner that does not recognise the operating system matches no
+      # OS package and reports a clean image it has not assessed — Trivy does exactly that on
+      # this base, and so did the action's default Grype. The pack stage always has an RPM
+      # database and /etc/os-release, so if Grype did not name the distribution here, the two
+      # gates above passed on nothing. This step also prints what the table format would have,
+      # by severity, so the inventory stays readable in the log.
+      - name: Grype identified the distribution
+        if: always()
+        run: |
+          distro=$(jq -r '.distro.name // ""' pack-inventory.json)
+          echo "distro: ${distro:-<none>} $(jq -r '.distro.version // ""' pack-inventory.json)"
+          jq -r '[.matches[] | .vulnerability.severity] | group_by(.) | map("\(.[0]): \(length)") | join(", ")' pack-inventory.json
+          jq -r '.matches[] | select(.vulnerability.severity=="High" or .vulnerability.severity=="Critical") | "\(.vulnerability.severity)\t\(.artifact.name) \(.artifact.version)\t\(.vulnerability.id)\tfix: \(.vulnerability.fix.state // "none")"' pack-inventory.json | sort -u
+          if [ "$distro" != "hummingbird" ]; then
+            echo "::error::Grype did not identify the pack stage as Hummingbird OS (got '${distro:-<none>}'); the scans above matched no OS package and prove nothing"
+            exit 1
+          fi

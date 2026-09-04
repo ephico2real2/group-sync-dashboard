@@ -175,6 +175,11 @@ nothing imports it, and installing a dependency nothing uses is only surface.
   found" rather than something subtler.
 * No `pip` and no package manager in the runtime: nothing can be installed into a running pod.
 * Timezone needs nothing installed; the base ships zoneinfo and the build proves it.
+* An in-pod curl to the in-cluster API address still takes
+  `--cacert /var/run/secrets/kubernetes.io/serviceaccount/ca.crt`: that CA is the cluster's own,
+  present in the ServiceAccount token's `ca.crt` and not in the injected bundle (measured on CRC:
+  exit 60 through the injected bundle, 200 with the ServiceAccount CA). The dashboard names that
+  file explicitly for the local cluster, so nothing changes for it.
 * CI scans with Grype, on the shipped image and on the pack stage, gating on fixable HIGH.
 * `Chart.yaml` `appVersion` 0.11.0; chart 0.10.0 adds `SSL_CERT_DIR`, `CURL_CA_BUNDLE` for the
   injected bundle, and `trustedCA.existingConfigMap.subjectHash` for the hashed mount.
