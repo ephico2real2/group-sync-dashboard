@@ -4,7 +4,17 @@ What each release changed, newest first. Two artefacts, two version lines (`docs
 the application (`pyproject.toml`, deployed as `quay.io/ephico2real/group-sync-dashboard:<version>`)
 and the chart (`Chart.yaml`, published to the Helm repository). A chart release that only moves
 `appVersion` is listed under the application release it carries. The reasoning behind each change
-lives next to the code and in the design and review records linked here.
+lives next to the code and in the design and review records linked here. Changes merged since the
+last release sit under `## Unreleased` until the release that carries them replaces that heading.
+
+## Unreleased
+
+- **The browser tests run in CI.** `tests/test_ui.py` — the real app on a free port, a seeded store,
+  Playwright against it — now runs in a `ui` job of its own on every pull request and push, on the
+  interpreter the image ships, with the Playwright package pinned so the Chromium build is too.
+  Screenshots and traces are kept as a workflow artifact only when a test fails. Repository
+  variable `CI_UI_TESTS=false` turns the job off and leaves the interpreter matrix exactly as it
+  was; `test_live_smoke.py` still runs nowhere but against a cluster you name.
 
 ## Application 0.11.0 — chart 0.10.0 — 2026-09-04
 

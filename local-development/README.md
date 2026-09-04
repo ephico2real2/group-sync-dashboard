@@ -64,6 +64,24 @@ It deploys with `helm upgrade --install`, passing the released tag with `--set`.
 written back into the tree: `helm get values` already records what is deployed, so there is
 no manifest to pin and no commit to remember.
 
+## Tests
+
+```bash
+./.venv/bin/python -m pytest tests/ -q                 # everything hermetic, browser tests included
+./.venv/bin/python -m playwright install chromium      # once, for tests/test_ui.py
+./.venv/bin/python -m pytest tests/test_ui.py -q       # the browser tests alone
+```
+
+`tests/test_ui.py` starts the real application on a free port with a seeded store and the poller
+off, then drives it with Playwright (`tests/test_ui.py#server`). Its `dash` fixture turns any
+uncaught page error into an immediate failure, which is how a stray backtick that blanked the whole
+page was found. CI runs the file in a job of its own (`.github/workflows/ci.yml#ui`), on the
+interpreter the image ships, with the Playwright package pinned so the browser is; screenshots and
+traces are uploaded only when a test fails. Repository variable `CI_UI_TESTS=false` turns that job
+off — for a fork or a runner that cannot download browsers — and leaves every other job as it is.
+
+`tests/test_live_smoke.py` is the one file no CI job runs: it needs a cluster. See below.
+
 ## The image
 
 `Containerfile` builds on the Red Hat Hardened Images: `hi/python:3.14-builder` to resolve the wheel

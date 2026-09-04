@@ -141,15 +141,84 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e '.[dev]' || pip install -e .
       - name: Unit and integration tests
-        # test_ui.py needs a Playwright browser and test_live_smoke.py needs a real cluster,
-        # so both are deselected — which is why the count here is lower than a local run, and
-        # why a green CI is NOT a substitute for running the UI tests before shipping a
-        # front-end change. A stray backtick once blanked the whole page while the suite was
-        # green, and only the browser tests could have caught it.
+        # test_ui.py is deselected HERE because it runs in the `ui` job below — once, with a
+        # browser — rather than twice across this matrix, whose variable is the interpreter and
+        # not the page. test_live_smoke.py is deselected everywhere: it polls a real cluster
+        # through a token (GSD_LIVE_CONFIG), and a runner has neither.
         #
         # No hardcoded count in this comment: the last one said "285 of 340" and was stale by
         # a hundred and fifty tests, which makes it worse than no number at all.
         run: pytest tests/ -q --deselect tests/test_ui.py --deselect tests/test_live_smoke.py
+
+  ui:
+    # THE BROWSER TESTS, IN CI AT LAST. A stray backtick inside a template literal once blanked
+    # the whole page while this workflow was green: index.html is one file with no build step
+    # and no type checker, and only a browser executes it. tests/test_ui.py starts the real app
+    # (uvicorn, a seeded Store, the poller off) and drives it with Playwright, and until now it
+    # ran only on a laptop that remembered to run it.
+    #
+    # A JOB OF ITS OWN, not a third leg of the `tests` matrix. That matrix proves the interpreter
+    # floor and ceiling, and the page does not change with the interpreter; once, on the version
+    # the Containerfile ships, keeps the matrix fast and the evidence in one place.
+    #
+    # THE SWITCH: repository variable CI_UI_TESTS. The value false turns the job off — in any
+    # letter case, because GitHub ignores case when it compares strings — and anything else,
+    # including the variable not existing at all, runs it.
+    # ON by default because it needs no credential, no cluster and no second image — only a
+    # Chromium download — and a green run that skips tests which exist is the failure this repo
+    # keeps naming. A fork or a self-hosted runner that cannot fetch browsers sets it to false;
+    # the `tests` job above is byte-identical either way.
+    #
+    # NO --no-sandbox CONFIG, unlike the diagrams job below. Playwright launches Chromium with
+    # sandboxing OFF unless asked (chromium_sandbox "Defaults to false" in its launch options),
+    # so the AppArmor user-namespace restriction that broke puppeteer never reaches it.
+    #
+    # NO BROWSER CACHE, deliberately. The Chromium download is ~150 MB and takes about as long
+    # as restoring a cache of the same bytes, --with-deps has to run apt either way, and a stale
+    # cache is one more way for a green run to have tested yesterday's browser.
+    name: Browser tests (Playwright, Chromium)
+    if: vars.CI_UI_TESTS != 'false'
+    runs-on: ubuntu-latest
+    # Finite. Locally the file runs in a few minutes; a hung browser would otherwise hold the
+    # runner for the six-hour default.
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: local-development
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          # What the Containerfile ships. The page is the variable in this job, not the interpreter.
+          python-version: "3.14"
+      - name: Install, with the browser driver pinned
+        # pyproject's dev extra says pytest-playwright>=0.5 so a developer takes what pip has.
+        # CI PINS BOTH PACKAGES: `playwright install` fetches the Chromium build that matches
+        # the installed playwright package, so pinning the package pins the browser — and a
+        # browser that moves under a green run is a variable this job exists to remove. Move
+        # the two together, by hand, after a local run of tests/test_ui.py on the new pair;
+        # Dependabot reads `uses:` lines, not pins inside a run: block.
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e '.[dev]' 'playwright==1.62.0' 'pytest-playwright==0.8.0'
+      - name: Install Chromium and its system libraries
+        run: python -m playwright install --with-deps chromium
+      - name: Browser tests
+        # EVIDENCE ON FAILURE ONLY. A screenshot and a Playwright trace per failed test land
+        # under test-results/ (pytest-playwright's default --output, already gitignored) and the
+        # next step uploads them; a green run writes and uploads nothing. No rerun plugin: a
+        # test that passes on the second try is a flake, and hiding one is how it becomes a habit.
+        run: >
+          pytest tests/test_ui.py -q --browser chromium
+          --screenshot only-on-failure --tracing retain-on-failure
+      - name: Keep the evidence of a failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ui-test-failures-${{ github.run_id }}-${{ github.run_attempt }}
+          path: local-development/test-results/
+          if-no-files-found: ignore
+          retention-days: 7
 
   chart:
     runs-on: ubuntu-latest
