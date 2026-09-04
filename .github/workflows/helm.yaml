@@ -44,7 +44,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # chart-releaser needs the full history: it decides what to publish by looking for a
           # tag matching each chart version, and a shallow clone has no tags.
@@ -56,7 +56,7 @@ jobs:
           git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
 
       - name: Install Helm
-        uses: azure/setup-helm@v4
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
 
       # SAY SO WHEN THERE IS NOTHING TO DO. chart-releaser's skip_existing means a chart change
       # WITHOUT a Chart.yaml version bump publishes nothing and still succeeds — a green run

@@ -1,0 +1,15 @@
+# Dependabot for the actions the workflows use. Actions are pinned by commit with the version
+# in a comment (see the note at the top of ci.yml); Dependabot understands that form and moves
+# both together. Weekly, grouped, so a runtime change like the Node 20 -> 24 move arrives as one
+# reviewable pull request rather than as warnings on every run.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      actions:
+        patterns: ["*"]
+    labels: ["dependencies", "github-actions"]
