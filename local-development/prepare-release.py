@@ -23,9 +23,11 @@ and the release guide requires the bump — that is the precedent of chart 0.7.1
 WHAT IT REFUSES. A dirty tree (a release commit must contain exactly the release). A version that
 does not advance, or that moves a component while leaving a lower one non-zero (0.10.0 -> 0.11.1
 is not a bump anyone means). A reason that is empty or spans lines. A release branch that already
-exists (checked before anything is edited). A version test that fails — the edits are left in the
-tree for inspection, and nothing is committed. A reason with an unbalanced backtick or an asterisk:
-the changelog bullet is already bold, and a code span must close.
+exists (checked before anything is edited). A checkout that is not main: a release branch cut from
+a topic branch carries that branch's commits into a pull request based on main. A version test that
+fails — the edits are left in the tree for inspection, and nothing is committed. A reason with an
+unbalanced backtick or an asterisk (the changelog bullet is already bold, and a code span must
+close), or with no letter or digit in it, or spanning any line boundary (\r and U+2028 included).
 
 NO Co-Authored-By TRAILER. The operator cutting the release is its sole author.
 """
@@ -128,8 +130,13 @@ def git(*args: str, check: bool = True) -> subprocess.CompletedProcess:
 def sentence(reason: str) -> str:
     """The reason as a sentence: one line, capitalised as given, exactly one full stop."""
     text = reason.strip()
-    if not text or "\n" in text:
+    # splitlines(), not "\n" in text: \r, \x0b, \x0c, \x85, U+2028 and U+2029 all end a line for
+    # Python, and U+2028 in a YAML comment corrupted Chart.yaml in review. On the STRIPPED text, so a
+    # trailing newline from "$(cat file)" stays harmless.
+    if not text or text.splitlines() != [text]:
         raise ReleaseError("the reason must be one non-empty line")
+    if not any(c.isalnum() for c in text):
+        raise ReleaseError("the reason must contain a letter or a digit")
     # The reason lands inside a bold changelog bullet and a YAML comment, unescaped. A balanced
     # pair of backticks is a code span an operator meant; an odd count would swallow the rest of
     # the changelog into one, and an asterisk would end the bold early. Refused, never rewritten.
@@ -176,8 +183,11 @@ def run(args: argparse.Namespace) -> int:
         raise ReleaseError("the working tree has uncommitted changes; a release commit must contain "
                            "exactly the release. Commit or stash first.")
     branch_now = git("rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
-    if branch_now != "main":
-        print(f"note    : branching from {branch_now}, not main", file=sys.stderr)
+    if branch_now != "main" and not args.no_commit:
+        # A release branch cut from a topic branch carries every commit of that branch, and a
+        # pull request based on main would ship them all under the release's title. --no-commit
+        # edits the tree and branches nothing, so a dry run on a feature branch stays possible.
+        raise ReleaseError(f"a release is cut from main, not from {branch_now}; check out main first")
 
     app_old = read_field(PYPROJECT, r'^version = "(.+?)"$', 'version = "..."')
     init_old = read_field(INIT, r'^__version__ = "(.+?)"$', '__version__ = "..."')
@@ -272,9 +282,16 @@ def run(args: argparse.Namespace) -> int:
     print(f"commit  : {title}")
 
     if args.pr:
-        done = subprocess.run(["gh", "pr", "create", "--base", "main", "--head", branch,
-                               "--title", title, "--body", body],
-                              cwd=REPO, capture_output=True, text=True, check=False)
+        try:
+            done = subprocess.run(["gh", "pr", "create", "--base", "main", "--head", branch,
+                                   "--title", title, "--body", body],
+                                  cwd=REPO, capture_output=True, text=True, check=False)
+        except FileNotFoundError:
+            # Raised before gh runs at all. The branch and the commit already exist; a traceback
+            # here read as "nothing happened" and the operator retried or reset a landed commit.
+            raise ReleaseError("gh pr create failed (the branch and commit exist):\n"
+                               "gh is not installed or not on PATH; push the branch and open the "
+                               "pull request by hand") from None
         if done.returncode != 0:
             raise ReleaseError(f"gh pr create failed (the branch and commit exist):\n{done.stderr}")
         print(f"pr      : {done.stdout.strip()}")

@@ -60,9 +60,28 @@ lists, no shell, `cwd=REPO`.
 - Codex: the brief's path `tests/test_prepare_release.py` was relative to `local-development/`, as the spec
   writes it. No change.
 
+## Second pass, on the fixed head, with the required models
+
+Codex at `gpt-5.6-sol` / `xhigh` (verified in its session log) and Cursor on `cursor-grok-4.6-high-fast`,
+each given the five accepted fixes to verify and a list of new attacks. Both confirmed all five fixes with
+measurements. New findings and decisions:
+
+| Finding | Codex | Cursor | Decision |
+|---|---|---|---|
+| `--pr` with no `gh` on PATH: uncaught traceback after the release commit exists | REFUTED | REFUTED (its most important) | **Accepted**: a `ReleaseError` naming the branch and commit |
+| A release cut from a branch other than `main` carries that branch's commits into a PR based on `main` | REFUTED (its most important) | PLAUSIBLE | **Accepted**: refused when the run would commit; `--no-commit` still dry-runs anywhere |
+| The one-line check tests `\n` only; `\r` passes, U+2028 corrupts Chart.yaml | REFUTED | — | **Accepted**: `splitlines()` on the stripped text |
+| A reason of dots and spaces, or only a zero-width space, is an empty bold bullet | — | residual under P3 | **Accepted**: a letter or digit required |
+| One 180-character token overruns the 100-column comment | REFUTED | PLAUSIBLE | **Rejected**: `break_long_words=True` would split a URL or identifier inside a comment; one long line is the lesser harm |
+| CJK wraps by code point, not display width | — | PLAUSIBLE | **Rejected**: `textwrap` semantics; a comment, not a table |
+
+Both reviewers ran only in copies outside the repository this time and left the tree clean. The Codex
+run outlived the ten-minute shell cap of its agent; its answer was recovered from the thread's session
+log, which is where the model and effort are recorded.
+
 ## Outcome
 
 Four claims refuted by Codex and one more hole found by Cursor on the fixed head; all five accepted on the
 fact, one reviewer snippet rejected for the reason above, one finding routed to the spec that owns the file.
-After the edits: 17 tests in `test_prepare_release.py`, the dry run on the real tree repeated and undone, the
+After the second pass: 19 tests in `test_prepare_release.py`, the dry run on the real tree repeated and undone, the
 citation and index tests green, CI green on the PR.

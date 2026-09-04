@@ -256,9 +256,52 @@ def test_a_reason_that_would_break_the_changelog_bullet_is_refused(sandbox: path
 
 
 def test_the_reason_must_be_one_line(sandbox: pathlib.Path) -> None:
-    """Including a reason that is nothing but full stops: it strips to nothing and would have landed
-    as `- **.**` in the changelog."""
-    for reason in ("", "   ", "two\nlines", ".", "...", "   ."):
+    """Including a reason that is nothing but full stops, or dots and spaces, or a zero-width space:
+    each would have landed as an empty bold bullet. Every line boundary Python knows is a boundary
+    here too — U+2028 in a YAML comment corrupted Chart.yaml in review — but a trailing newline, the
+    shape "$(cat file)" gives, is stripped and accepted."""
+    for reason in ("", "   ", "two\nlines", "two\rparts", "two\u2028parts", ".", "...", "   .",
+                   " . . ", "\u200b"):
         done = run(sandbox, "--app", "9.0.0", reason)
         assert done.returncode == 1, repr(reason)
+    assert git(sandbox, "status", "--porcelain").strip() == ""
+    done = run(sandbox, "--chart", "0.10.1", "trailing newline\n", "--no-commit")
+    assert done.returncode == 0, done.stdout + done.stderr
+
+
+def test_a_release_is_cut_from_main_only(sandbox: pathlib.Path) -> None:
+    """From a topic branch the release branch would carry the topic's commits into a pull request
+    based on main, under the release's title."""
+    git(sandbox, "switch", "-q", "-c", "topic")
+    (sandbox / "topic-only.txt").write_text("unrelated\n")
+    git(sandbox, "add", "topic-only.txt")
+    git(sandbox, "commit", "-qm", "topic commit")
+    before = current(sandbox)
+    done = run(sandbox, "--chart", "0.10.1", "Chart release")
+    assert done.returncode == 1
+    assert "cut from main" in done.stderr
+    assert current(sandbox) == before
+    assert git(sandbox, "rev-parse", "--abbrev-ref", "HEAD").strip() == "topic"
+    assert git(sandbox, "status", "--porcelain").strip() == ""
+
+
+def test_missing_gh_leaves_the_branch_and_says_so(sandbox: pathlib.Path) -> None:
+    """--pr with no gh on PATH must not traceback: the branch and commit exist and the error says so,
+    or the operator reads the crash as nothing having happened."""
+    bin_dir = sandbox.parent / "path-with-git-only"
+    bin_dir.mkdir()
+    git_path = shutil.which("git")
+    assert git_path
+    os.symlink(git_path, bin_dir / "git")
+    env = {**GIT_ENV, "PATH": str(bin_dir)}
+    done = subprocess.run(
+        [sys.executable, str(sandbox / "local-development" / "prepare-release.py"),
+         "--app", "9.0.0", "Need a PR", "--pr", "--date", DATE],
+        cwd=sandbox, env=env, capture_output=True, text=True, check=False,
+    )
+    assert done.returncode == 1, done.stdout + done.stderr
+    assert "Traceback" not in done.stderr
+    assert "the branch and commit exist" in done.stderr
+    assert git(sandbox, "rev-parse", "--abbrev-ref", "HEAD").strip() == "release/app-9.0.0"
+    assert git(sandbox, "rev-list", "--count", "main..HEAD").strip() == "1"
     assert git(sandbox, "status", "--porcelain").strip() == ""
