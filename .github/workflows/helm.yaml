@@ -149,7 +149,7 @@ jobs:
       # needed. packages_with_index keeps the .tgz next to index.yaml on gh-pages, which is what
       # `helm repo add` against a Pages site expects.
       - name: Run chart-releaser
-        uses: helm/chart-releaser-action@v1.6.0
+        uses: helm/chart-releaser-action@v1.7.0
         with:
           skip_existing: true
           packages_with_index: true
