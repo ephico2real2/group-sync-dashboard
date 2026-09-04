@@ -1,142 +1,271 @@
-# THREE STAGES ON THE RED HAT HARDENED IMAGES, AND THE SPLIT IS LOAD-BEARING.
+# =============================================================================================
+#  group-sync-dashboard — the container image
+# =============================================================================================
 #
-# The runtime base (hi/python:3.14) has NO SHELL AT ALL — /bin/sh does not exist, so a shell-form
-# RUN in the final stage cannot execute in any form. Everything that used to happen there on
-# ubi9-minimal (microdnf, mkdir, chgrp) now happens in builder stages and crosses into the runtime
-# as files, via COPY --from. What the runtime DOES have, measured from its layers on 2026-09-04:
-# /usr/bin/python3.14 with site-packages split across /usr/lib and /usr/lib64 exactly as UBI's
-# (so the --prefix=/install tree and PYTHONPATH below are unchanged), SQLite 3.53.4, a full
-# /usr/share/zoneinfo (so the tzdata reinstall the UBI recipe needed is gone), libtinfo.so.6 and
-# libsystemd.so.0, an RPM database at /usr/lib/sysimage/rpm with no rpm binary to read it — and no
-# pip executable, no coreutils, no curl.
+#  READ THIS FIRST: the map of the file.
 #
-# Floating tags on purpose: `3.14` and `3.14-builder` move with Red Hat's latest 3.14 build, so
-# every build of THIS image picks up their fixes rather than pinning to one snapshot.
+#  This is a multi-stage build on Red Hat's hardened images. Four FROM lines, three real stages:
 #
-# The pre-hardened recipe is kept beside this file as Containerfile.ubi, built by nothing.
+#      build   FROM hi/python:3.14-builder   installs the application and its Python packages
+#                                            into one directory, /install
+#      runner  FROM hi/python:3.14           the runtime base, given a name so the two stages
+#                                            below can both refer to the same pull of it
+#      pack    FROM hi/python:3.14-builder   prepares three things the runtime cannot make for
+#                                            itself: a shell with a few tools (/jqpack), an
+#                                            edited copy of the runtime's RPM database (/rpmdb),
+#                                            and two lists of paths to delete
+#      final   FROM runner                   copies those in, deletes what the lists name, proves
+#                                            itself, and becomes the image that ships
+#
+#  Only files cross from one stage to the next (COPY --from=...). Nothing else does: not
+#  packages, not users, not environment variables.
+#
+#  THE ONE FACT THAT SHAPES EVERYTHING: THE RUNTIME BASE HAS NO SHELL.
+#
+#  hi/python:3.14 ships no /bin/sh, no bash, no coreutils (ls, cat, mkdir ...), no curl, no
+#  package manager, and no rpm command even though it carries an RPM database. So in the final
+#  stage, nothing can run a shell command until this file has copied a shell in. That is why the
+#  work that a plain Dockerfile would do in the final stage with RUN is done here in the pack
+#  stage and copied across, and why the order of the final stage matters. A "shell-form" RUN
+#  (RUN some command) is executed by /bin/sh -c; the first one appears only after /bin/sh exists.
+#
+#  What the runtime base DOES have, measured from its layers on 2026-09-04: /usr/bin/python3.14
+#  with site-packages under both /usr/lib and /usr/lib64 (the same split as UBI, so nothing about
+#  where the application's packages live had to change), SQLite 3.53.4, the zoneinfo database
+#  under /usr/share/zoneinfo, libtinfo.so.6, libsystemd.so.0, and an RPM database at
+#  /usr/lib/sysimage/rpm.
+#
+#  FLOATING TAGS, ON PURPOSE. `3.14` and `3.14-builder` follow Red Hat's newest 3.14 build, so
+#  every build of this image takes their latest fixes instead of a pinned snapshot. The price is
+#  that a base can change under us; the proofs at the end of this file exist so that such a
+#  change fails the build rather than shipping.
+#
+#  COMPANION FILES: uninstall-lists.py and image-proof.py (both used below and explained where
+#  they are used); Containerfile.ubi, the previous recipe on ubi9-minimal, kept for reference and
+#  built by nothing; tests/test_containerfile.py, which holds this file's shape;
+#  docs/DESIGN_hardened_image.md, with every measurement behind these comments.
+# =============================================================================================
 
-# ----------------------------------------------------------------------------
-# Stage 1 — build: the wheel and its dependency tree, resolved into a self-contained prefix so the
-# runtime needs no compiler and no package index. The hardened builder ships pip3.14 and no gcc —
-# fine: our wheel is pure Python and every compiled dependency (pydantic-core, uvloop, httptools)
-# ships a prebuilt cp314 wheel. Nothing this stage's RPMs could gain from `dnf update` reaches the
-# runtime — only /install crosses — so there is deliberately no update here (see the pack stage,
-# where the opposite holds).
+
+# ---------------------------------------------------------------------------------------------
+#  STAGE 1 · build — the application and its Python dependencies, resolved into /install
+# ---------------------------------------------------------------------------------------------
+#
+#  Why a separate stage: the runtime should contain the application and nothing that was only
+#  needed to install it. pip, the build backend and its caches stay here.
+#
+#  The hardened builder has pip but no C compiler. That is fine: the application's wheel is pure
+#  Python and every compiled dependency (pydantic-core, uvloop, httptools) publishes a ready-made
+#  wheel for CPython 3.14. If one ever stopped, this stage would fail loudly at pip install.
+#
+#  No `dnf update` here, deliberately. Only /install leaves this stage, so updating the stage's
+#  own RPMs would change nothing that ships. (The pack stage is the opposite case — see there.)
+
 FROM registry.access.redhat.com/hi/python:3.14-builder AS build
 
-# The hardened builder's default user is 65532; writing /build and /install wants root. Root never
-# survives into the runtime image.
+# The builder's default user is 65532, which cannot write /build or /install. Root is fine here:
+# nothing from this stage's user database reaches the runtime.
 USER 0
 WORKDIR /build
 
 COPY pyproject.toml README.md ./
 COPY gsd ./gsd
 
-# The API-docs bundles (Swagger UI, ReDoc) ride along inside gsd/static/vendor, which is committed
-# to the repository and declared as package-data in pyproject.toml. They are NOT downloaded here,
-# and that is deliberate: a build-time fetch makes every release depend on npm being up, on the
-# version still being published, and on this host having a route out. Refresh them with
+# The API-docs bundles (Swagger UI, ReDoc) live inside gsd/static/vendor, committed to the
+# repository and declared as package data in pyproject.toml. They are NOT downloaded during the
+# build, on purpose: a build-time download would make every release depend on npm being up, on
+# the version still being published, and on this host having a route out. Refresh them with
 # ./vendor-assets.sh --update; verify with ./vendor-assets.sh.
+#
+# The last line proves the installed tree imports under the builder's interpreter. The same list
+# is proven again in the final stage, under the runtime's interpreter, by image-proof.py.
 RUN python3.14 -m pip install --no-cache-dir --upgrade pip build \
  && python3.14 -m build --wheel --outdir /wheels \
  && python3.14 -m pip install --no-cache-dir --prefix=/install /wheels/*.whl \
  && PYTHONPATH=/install/lib/python3.14/site-packages:/install/lib64/python3.14/site-packages \
-    python3.14 -c "import gsd, fastapi, uvicorn, httpx, yaml, croniter, prometheus_client; print('wheel tree imports under the builder')"
+    python3.14 -c "import gsd, fastapi, uvicorn, httpx, yaml, croniter, prometheus_client; \
+                   print('wheel tree imports under the builder')"
 
-# ----------------------------------------------------------------------------
-# The runtime base, named once. The pack stage reads its RPM database and the final stage is built
-# on it; naming it makes both resolve to the same pull of the floating tag within one build.
+
+# ---------------------------------------------------------------------------------------------
+#  The runtime base, named once
+# ---------------------------------------------------------------------------------------------
+#
+#  Two later stages need this image: the pack stage reads its RPM database, and the final stage
+#  is built on it. Naming it here makes both refer to one pull of the floating tag within a
+#  build, so the database that gets edited is the database of the image that ships.
+
 FROM registry.access.redhat.com/hi/python:3.14 AS runner
 
-# ----------------------------------------------------------------------------
-# Stage 2 — pack: the shell and the debugging tools the runtime cannot install for itself.
+
+# ---------------------------------------------------------------------------------------------
+#  STAGE 2 · pack — what the runtime cannot install for itself
+# ---------------------------------------------------------------------------------------------
 #
-# Same base as the runtime, so every library copied out matches its glibc exactly. Unlike the build
-# stage, `dnf update` EARNS ITS PLACE here: everything this stage copies out ships, so it must carry
-# whatever Red Hat has fixed since the base was cut.
+#  The same builder image as stage 1, chosen because it is built from the same repository as the
+#  runtime base: every library copied out of here matches the runtime's glibc exactly.
 #
-# Contents measured, not guessed, on the pattern of fluentd-hec's Dockerfile.curl: jq + libjq +
-# libonig; bash with an sh -> bash symlink; curl on libcurl-MINIMAL, swapped in deliberately (full
-# libcurl drags ~26 extra libraries — LDAP, libssh, HTTP/3, brotli, sasl, fido2...), which needs the
-# nghttp2/idn2/unistring/kerberos family below; and coreutils, because cat, ls and base64 in this
-# base are shims into one multicall binary ("#!/usr/bin/coreutils --coreutils-prog-shebang=cat"),
-# copied WITHOUT -L to stay shims, with the binary itself copied -L. mkdir, chgrp, chmod and rm
-# ride along the same way so the runtime stage can create its directories with the same line the
-# UBI recipe used, and drop pip, with ordinary tools rather than through the interpreter. Two libraries the fluentd pack
-# carries are left out on purpose — libtinfo.so.6 and libsystemd.so.0 are already in this runtime,
-# and copying them would overwrite the hardened base's own files. `ldd` is printed for the record;
-# the final stage proves the pack from the outside, under the pack's own shell, and fails the build
-# if a library is missing.
+#  Unlike stage 1, `dnf update` EARNS ITS PLACE here: everything this stage copies out ships, so
+#  it must carry whatever Red Hat has fixed since the base was cut.
+#
+#  Three products leave this stage:
+#    /jqpack/bin, /jqpack/lib64   a shell and a few tools, with the libraries they need
+#    /rpmdb                       the runtime's RPM database, with three packages erased
+#    /rpmdb-erased-files, -dirs   the paths those three packages owned, for the final stage to
+#                                 delete
+
 FROM registry.access.redhat.com/hi/python:3.14-builder AS pack
 
 USER 0
 
+# --- 2a. The tools ---------------------------------------------------------------------------
+#
+# What goes in, and why each one:
+#   bash, with an `sh -> bash` symlink   the shell. `oc exec ... -- sh -c` and the release
+#                                        scripts' stamp check need one.
+#   curl                                 on libcurl-MINIMAL, swapped in on purpose: the full
+#                                        libcurl drags in eleven more packages (LDAP, libssh,
+#                                        HTTP/3, brotli, sasl, fido2 ...) for features no one
+#                                        uses from inside a pod.
+#   jq                                   for reading the API's JSON in the pod.
+#   coreutils                            ONE binary that behaves as cat, ls, base64, mkdir,
+#                                        chgrp, chmod, rm or rmdir depending on the name it is
+#                                        called by. In this base each of those names is a tiny
+#                                        script ("shim") that calls the binary with the right
+#                                        name, so the shims are copied WITHOUT -L (to stay
+#                                        shims) and the binary itself WITH -L (to get the real
+#                                        file, not a symlink). Those eight are the ones the
+#                                        final stage and the documentation use.
+#
+# Which libraries go with them is MEASURED, not guessed: `ldd` of the four binaries names 26
+# shared objects; the runtime base already has 14 of them (glibc, openssl, zlib, pcre2,
+# libtinfo, libsystemd ...). The twelve below are the ones it lacks — and none more, because
+# copying a library the base already has would overwrite the base's own file.
+# tests/test_containerfile.py holds this list; if the base or the tools change, re-measure
+# rather than guess.
+#
+# The `ldd` output is printed into the build log for the record; the final stage proves the
+# result properly, with the dynamic loader itself, on the finished image.
 RUN dnf update -y \
  && dnf swap -y libcurl libcurl-minimal \
- && dnf install -y jq && dnf clean all \
- && mkdir -p /jqpack/bin /jqpack/lib64 \
- && cp -L /usr/bin/jq /usr/bin/bash /usr/bin/curl /usr/bin/coreutils /jqpack/bin/ \
- && cp /usr/bin/cat /usr/bin/ls /usr/bin/base64 /usr/bin/mkdir /usr/bin/chgrp /usr/bin/chmod /usr/bin/rm /jqpack/bin/ \
- && ln -s bash /jqpack/bin/sh \
- && cp -L /usr/lib64/libjq.so.1 /usr/lib64/libonig.so.5 \
-          /usr/lib64/libcurl.so.4 /usr/lib64/libnghttp2.so.14 /usr/lib64/libidn2.so.0 \
-          /usr/lib64/libunistring.so.5 /usr/lib64/libgssapi_krb5.so.2 /usr/lib64/libkrb5.so.3 \
-          /usr/lib64/libk5crypto.so.3 /usr/lib64/libcom_err.so.2 /usr/lib64/libkrb5support.so.0 \
-          /usr/lib64/libkeyutils.so.1 /jqpack/lib64/ \
- && for b in jq bash curl coreutils; do echo "== ldd $b"; ldd /usr/bin/$b; done \
- && /jqpack/bin/jq --version && /jqpack/bin/curl --version >/dev/null && echo "curl pack OK"
+ && dnf install -y jq \
+ && dnf clean all
 
-# THE RUNTIME'S RPM DATABASE, EDITED HERE BECAUSE THE RUNTIME HAS NO rpm. Three packages are
-# uninstalled from the shipped image, and an uninstall is files AND record, or scanners keep
-# reporting what is no longer there — and worse, the reverse: a record erased while its files
-# remain is an inventory that lies (the first cut of this recipe left python-pip-wheel's 1.3 MB
-# wheel on disk with its record gone; the review caught it). So the file lists come FROM the
-# database, before the erase, and the runtime stage removes exactly those paths.
-#   libuuid — the one OS package a scanner rates HIGH in the base (four util-linux CVEs, 2026-09-02,
-#     all in libmount/mount(8)/nsenter, none of which the base ships; libuuid is flagged by source
-#     package, and Red Hat lists Hardened Images as Affected with no fixed build in the repo as of
-#     2026-09-04, newest 2.42.2-3.4). Nothing here needs it: only python3-libs' _uuid module links
-#     it, and the uuid module falls back to pure Python when _uuid is absent — measured, uuid4 works.
-#   python3-pip and python-pip-wheel — pip, removed for the reasons given in the runtime stage.
-# --justdb touches the database only; the pack stage's own files are not what is being uninstalled.
-# --nodeps because python3-libs declares the libuuid dependency that the fallback makes optional;
-# the shipped database therefore records a dependency it cannot satisfy, on purpose and by name.
+RUN mkdir -p /jqpack/bin /jqpack/lib64 \
+ && cp -L /usr/bin/jq /usr/bin/bash /usr/bin/curl /usr/bin/coreutils /jqpack/bin/ \
+ && cp    /usr/bin/cat /usr/bin/ls /usr/bin/base64 \
+          /usr/bin/mkdir /usr/bin/chgrp /usr/bin/chmod /usr/bin/rm /usr/bin/rmdir \
+          /jqpack/bin/ \
+ && ln -s bash /jqpack/bin/sh \
+ && cp -L /usr/lib64/libjq.so.1 \
+          /usr/lib64/libonig.so.5 \
+          /usr/lib64/libcurl.so.4 \
+          /usr/lib64/libnghttp2.so.14 \
+          /usr/lib64/libidn2.so.0 \
+          /usr/lib64/libunistring.so.5 \
+          /usr/lib64/libgssapi_krb5.so.2 \
+          /usr/lib64/libkrb5.so.3 \
+          /usr/lib64/libk5crypto.so.3 \
+          /usr/lib64/libcom_err.so.2 \
+          /usr/lib64/libkrb5support.so.0 \
+          /usr/lib64/libkeyutils.so.1 \
+          /jqpack/lib64/ \
+ && for b in jq bash curl coreutils; do echo "== ldd $b"; ldd "/usr/bin/$b"; done \
+ && /jqpack/bin/jq --version \
+ && /jqpack/bin/curl --version >/dev/null \
+ && echo "tools packed"
+
+# --- 2b. The runtime's RPM database, with three packages erased ------------------------------
 #
-# Per package and conditional, because the base floats: the day Red Hat ships 3.14 without pip or
-# without libuuid, `rpm -e` of a package that is not installed is an error, and the build would
-# break for the wrong reason. Then a check that none of the three is left; then the database is
-# checkpointed explicitly — rpm 6 keeps it in SQLite WAL mode, and rather than trust that rpm
-# left nothing in the log, the interpreter folds the log into the main file — and the shm/wal
-# files, which SQLite creates whenever the database is opened, are removed LAST, after the final
-# command that opens it, so the copy that ships is the two files the base shipped (rpmdb.sqlite
-# and its .rpm.lock).
+# WHY. Three packages are removed from the shipped image:
+#   libuuid            the one OS package a scanner rates HIGH in the base — four util-linux
+#                      advisories of 2026-09-02, all in mount code (libmount, mount, nsenter)
+#                      that the base does not ship; libuuid is flagged only because it is built
+#                      from the same source package. Red Hat lists Hardened Images as Affected
+#                      with no fixed build in the repository on 2026-09-04. Nothing here needs
+#                      it: only Python's _uuid module links it, and the uuid module falls back to
+#                      pure Python when _uuid is missing. Measured: uuid4() works without it.
+#   python3-pip        pip. Nothing here needs it — the application arrives ready-installed from
+#                      stage 1 — and an installer in a production image is surface for nothing.
+#                      It is also the only thing a scanner flags in the base's Python: pip
+#                      carries its own copies of msgpack and setuptools, flagged HIGH with fixes
+#                      pip has not taken (msgpack 1.1.2, setuptools 70.3.0, measured 2026-09-04).
+#   python-pip-wheel   the same pip again, as a wheel under /usr/share/python-wheels, kept by
+#                      the base to seed `python -m venv`. Nothing here makes a venv.
+#
+# HOW, AND WHY IT IS DONE HERE. An uninstall is two things: the package's FILES go, and its
+# RECORD in the RPM database goes. Do only one and the inventory lies — a record without files
+# keeps scanners reporting a package that is not there; files without a record hide a package
+# that is. The runtime has the database but no `rpm` to edit it with, so a COPY of that database
+# is edited here (`--dbpath /rpmdb` points rpm at the copy) and copied back in the final stage.
+#
+#   uninstall-lists.py   reads out of the database, BEFORE anything is erased, every path the
+#                        three packages own, into two lists: files (anything that is not a
+#                        directory), and directories that no other package records. It uses the
+#                        database alone, never this stage's own filesystem, because this stage
+#                        holds a different build of the same packages. Its docstring says more.
+#   rpm -e --justdb      erases the record only (`--justdb`: touch the database, not the files —
+#                        the files being uninstalled are the runtime's, not this stage's).
+#                        `--nodeps`, because python3-libs declares a dependency on libuuid that
+#                        the pure-Python fallback makes optional; the shipped database therefore
+#                        records one dependency it cannot satisfy, knowingly.
+#                        Per package, and only if the package is recorded: the base floats, and
+#                        the day Red Hat ships 3.14 without pip, erasing a package that is not
+#                        there would fail the build for the wrong reason.
+#   the check            fails the build if any of the three is still recorded.
+#   the checkpoint       rpm 6 keeps the database in SQLite's write-ahead-log mode, where recent
+#                        changes can sit in a side file (-wal) rather than the main file. The
+#                        interpreter folds them into the main file, and the -wal/-shm side files
+#                        (SQLite creates them whenever the database is opened) are removed LAST,
+#                        after the final command that opens it, so what ships is the two files
+#                        the base shipped: rpmdb.sqlite and its .rpm.lock.
 COPY --from=runner /usr/lib/sysimage/rpm /rpmdb
-RUN for p in libuuid python3-pip python-pip-wheel; do rpm --dbpath /rpmdb -ql "$p" 2>/dev/null; done \
-      | sort -u > /rpmdb-erased-paths \
- && sort -ur /rpmdb-erased-paths > /rpmdb-erased-paths-deepest-first \
- && echo "paths owned by the packages being uninstalled: $(wc -l < /rpmdb-erased-paths)" \
+COPY uninstall-lists.py /uninstall-lists.py
+
+RUN python3.14 /uninstall-lists.py --dbpath /rpmdb \
+        --files /rpmdb-erased-files --dirs /rpmdb-erased-dirs \
+        libuuid python3-pip python-pip-wheel \
  && for p in libuuid python3-pip python-pip-wheel; do \
-      if rpm --dbpath /rpmdb -q "$p" >/dev/null 2>&1; then rpm --dbpath /rpmdb -e --justdb --nodeps "$p"; \
-      else echo "$p: not in the base, nothing to erase"; fi; \
+      if rpm --dbpath /rpmdb -q "$p" >/dev/null 2>&1; then \
+        rpm --dbpath /rpmdb -e --justdb --nodeps "$p"; \
+      else \
+        echo "$p: not in the base, nothing to erase"; \
+      fi; \
     done \
  && for p in libuuid python3-pip python-pip-wheel; do \
-      if rpm --dbpath /rpmdb -q "$p" >/dev/null 2>&1; then echo "still recorded: $p" >&2; exit 1; fi; \
+      if rpm --dbpath /rpmdb -q "$p" >/dev/null 2>&1; then \
+        echo "still recorded: $p" >&2; exit 1; \
+      fi; \
     done \
  && echo "runtime rpm db: $(rpm --dbpath /rpmdb -qa | wc -l) packages after erase" \
- && python3.14 -c "import sqlite3; c = sqlite3.connect('/rpmdb/rpmdb.sqlite'); print('checkpoint', c.execute('PRAGMA wal_checkpoint(TRUNCATE)').fetchone()); c.close()" \
+ && python3.14 -c "import sqlite3; \
+                   c = sqlite3.connect('/rpmdb/rpmdb.sqlite'); \
+                   print('checkpoint', c.execute('PRAGMA wal_checkpoint(TRUNCATE)').fetchone()); \
+                   c.close()" \
  && rm -f /rpmdb/rpmdb.sqlite-shm /rpmdb/rpmdb.sqlite-wal \
  && ls -la /rpmdb
 
-# ----------------------------------------------------------------------------
-# Stage 3 — runtime. NO SHELL EXISTS IN THIS IMAGE until the pack lands, so nothing below the base
-# line is a shell-form RUN: metadata, COPY, and exec-form RUN only.
+
+# ---------------------------------------------------------------------------------------------
+#  STAGE 3 · final — the image that ships
+# ---------------------------------------------------------------------------------------------
+#
+#  ORDER IS THE WHOLE POINT OF THIS STAGE. Read it as four movements:
+#    1. metadata and COPYs only — there is no shell yet, so nothing here can RUN a command
+#    2. as root, with the shell the pack just provided: make directories, delete the three
+#       packages' files, replace the RPM database
+#    3. drop to the runtime user
+#    4. prove the image, as that user, on the finished filesystem
+
 FROM runner
 
-# Stamped at build time so a running pod can prove which source it was built from.
-# This exists because of a real failure: an image was built, the source was then changed,
-# and the older image was deployed — the commit contained the fix and the running pod did
-# not, with nothing to reveal the gap. GIT_COMMIT carries `-dirty` when the tree had
-# uncommitted changes, so a build that no commit can reproduce says so.
+# --- 3.1 metadata and files ------------------------------------------------------------------
+
+# Stamped at build time so a running pod can prove which source it was built from. This exists
+# because of a real failure: an image was built, the source was then changed, and the older
+# image was deployed — the commit contained the fix and the running pod did not, with nothing to
+# reveal the gap. GIT_COMMIT carries `-dirty` when the tree had uncommitted changes, so a build
+# that no commit can reproduce says so.
 ARG GIT_COMMIT=unknown
 ARG GIT_BRANCH=unknown
 ARG BUILD_VERSION=unknown
@@ -182,92 +311,144 @@ LABEL org.opencontainers.image.revision="$GIT_COMMIT" \
       org.opencontainers.image.title="group-sync-dashboard" \
       org.opencontainers.image.source="https://github.com/ephico2real2/group-sync-dashboard"
 
-# The wheel tree, at the same prefix and with the same lib/lib64 split the UBI recipe used.
+# The application and its dependencies, from stage 1, at the same prefix and with the same
+# lib/lib64 split the UBI recipe used (PYTHONPATH above names both halves).
 COPY --from=build /install /install
 
-# The pack: bash (and sh), curl, jq, coreutils with the cat/ls/base64 shims, and the libraries the
-# runtime lacks. /bin is a symlink to /usr/bin in this base, so /usr/bin is the one place to put
-# them and /bin/sh resolves through the symlink. A shell returns to the attack surface, and that is
-# accepted on purpose: the release scripts verify the build stamp with `--entrypoint sh` and the
-# docs debug in-pod with curl and ls, and the alternative was an image nothing in this repo could
-# check. The pack is scanned at its source too, the pack stage, where its RPM records live; in this
-# image the copied binaries are known to a scanner only through the ELF package notes Red Hat's
-# builds carry (docs/image-vulnerability-scan.md).
-COPY --from=pack /jqpack/bin/ /usr/bin/
+# The shell and the tools, from stage 2. /bin is a symlink to /usr/bin in this base, so /usr/bin
+# is the one place to put them, and /bin/sh resolves through the symlink. FROM THIS LINE ON, a
+# shell exists.
+#
+# A shell in a production image is attack surface, and that is accepted on purpose: the release
+# scripts verify the build stamp with `--entrypoint sh`, the documentation debugs in the pod with
+# curl and ls, and the alternative was an image nothing in this repository could check. CI scans
+# the pack stage itself, where these tools' RPM records live (docs/image-vulnerability-scan.md).
+COPY --from=pack /jqpack/bin/   /usr/bin/
 COPY --from=pack /jqpack/lib64/ /usr/lib64/
 
-# The directories the chart mounts into and the process writes under, made exactly as the UBI
-# recipe made them — OpenShift runs containers as an arbitrary high UID in the root group, so both
-# stay group-writable and group-owned by root, the SQLite file included. These modes govern a bare
-# `podman run` and an emptyDir; under the chart /data is a PersistentVolumeClaim and /etc/gsd a
-# Secret mount, and a mount's ownership comes from the volume and the pod's supplemental groups,
-# not from the image (measured on CRC: the mounted /data is root:1000670000). This is a shell-form step
-# in a base that has no shell: it works only because it comes AFTER the pack COPY above, which is
-# what puts /bin/sh, mkdir, chgrp and chmod here. They are not carried over from the pack stage
-# because a COPY of an empty directory lands as 0755 whatever the source's mode and whatever
-# --chmod says (measured: --chmod reaches a directory's contents, never the directory itself).
-# Root for this one step only; the base's default user is 65532 and cannot chgrp to root.
+# --- 3.2 as root: directories, the uninstall, the database -----------------------------------
+#
+# Root for these three steps only. The base's default user is 65532, which could not chgrp to
+# root or delete the base's files; USER 1001 follows before anything is proven or run.
 USER 0
-RUN ["/bin/sh", "-c", "mkdir -p /data /etc/gsd && chgrp -R 0 /data /etc/gsd && chmod -R g=u /data /etc/gsd"]
 
-# THREE PACKAGES UNINSTALLED — files here, records in the pack stage (which has rpm; this stage
-# does not). The paths come from the database, listed before the erase, so what is removed is
-# exactly what the records said the packages owned: every regular file and symlink, then every
-# directory of theirs that is empty afterwards (rmdir refuses a directory another package still
-# fills, which is the right refusal — /usr/lib/.build-id is everyone's). The deepest-first order
-# for that comes from the pack stage as a second list, because `sort` is not among the tools this
-# image carries — the first cut piped through it here, and the error was hidden and the loop
-# silently empty. Then a check that no listed path survives except such shared directories, and
-# the database directory is emptied and REPLACED by the edited copy, not merged with it, so a
-# sidecar the base might one day ship cannot survive beside a database that no longer matches it.
+# The directories the chart mounts into (/etc/gsd, the configuration) and the process writes
+# under (/data, the SQLite database). OpenShift runs containers as an arbitrary high UID in the
+# root group, so both are group-owned by root and group-writable — the same line the UBI recipe
+# used. Two things a newcomer should know:
+#   * these modes govern a bare `podman run` and an emptyDir. Under the chart, /data is a
+#     PersistentVolumeClaim and /etc/gsd a Secret mount, and a mount's ownership comes from the
+#     volume and the pod's supplemental groups, not from the image (measured on CRC: the mounted
+#     /data is root:1000670000);
+#   * they are made HERE rather than in the pack stage and copied, because a COPY of an empty
+#     directory arrives as 0755 whatever the source's mode and whatever --chmod says
+#     (measured: --chmod reaches a directory's contents, never the directory itself).
+RUN mkdir -p /data /etc/gsd \
+ && chgrp -R 0 /data /etc/gsd \
+ && chmod -R g=u /data /etc/gsd
+
+# The three packages' FILES go, from the two lists stage 2 read out of the database:
+#   files   every regular file and symlink the packages owned — removed one by one;
+#   dirs    every directory no other package records, deepest first — removed with rmdir, which
+#           removes only an EMPTY directory, and that is the point: a directory nothing else
+#           records can still hold another package's file (/usr/lib/.build-id/2d held one,
+#           measured), so a directory that still has content after the file removal is kept,
+#           and the build log says so.
+# Then two checks that fail the build rather than warn: no listed file survives, and no listed
+# directory survives empty. Then the database DIRECTORY is removed whole and recreated by the
+# COPY of the edited copy — whole, because a glob such as rpm/* skips dotfiles and would leave
+# the base's .rpm.lock beside a database it no longer belongs to.
 #
-# pip does not ship. The base carries a working `python3.14 -m pip` (pip 26.2, measured) and nothing
-# here needs it: the wheel tree is resolved in the build stage and crosses as files. Leaving it is
-# an installer in a production image, and it is also the only thing a scanner finds in the base's
-# Python — pip vendors its own msgpack and setuptools, and Trivy reads them out of
-# pip/_vendor/vendor.txt as HIGH findings with fixes pip has not taken (msgpack 1.1.2, setuptools
-# 70.3.0, measured 2026-09-04). python-pip-wheel is the same pip again, as a wheel under
-# /usr/share/python-wheels, for `python -m venv` to seed; nothing here makes a venv.
-#
-# libuuid does not ship. See the pack stage for the finding it carries; the uuid module keeps
-# working without it (measured, and proven again below).
-COPY --from=pack /rpmdb-erased-paths /rpmdb-erased-paths-deepest-first /
-RUN ["/bin/sh", "-c", "set -e; while read -r f; do if [ -f \"$f\" ] || [ -L \"$f\" ]; then rm -f \"$f\"; fi; done < /rpmdb-erased-paths; while read -r d; do if [ -d \"$d\" ] && [ ! -L \"$d\" ]; then rmdir \"$d\" 2>/dev/null || true; fi; done < /rpmdb-erased-paths-deepest-first; while read -r f; do if [ -e \"$f\" ] && [ ! -d \"$f\" ]; then echo \"still present: $f\" >&2; exit 1; fi; done < /rpmdb-erased-paths; rm -rf /rpmdb-erased-paths /rpmdb-erased-paths-deepest-first /usr/lib/python3.14/site-packages/pip /usr/lib/python3.14/site-packages/pip-*.dist-info /usr/share/python-wheels /usr/lib/sysimage/rpm/*; echo 'uninstalled files gone'"]
+# The first line proves the tools this step needs exist before anything is deleted. It is there
+# because the lesson was learned the hard way: a tool that is not packed fails with "command not
+# found", and `2>/dev/null || true` around it turns that into a step that silently does nothing.
+# Nothing in this step hides an error.
+COPY --from=pack /rpmdb-erased-files /rpmdb-erased-dirs /
+
+RUN for t in rm rmdir ls; do \
+      command -v "$t" >/dev/null || { echo "$t: not packed" >&2; exit 1; }; \
+    done \
+ && while IFS= read -r f; do \
+      rm -f "$f"; \
+    done < /rpmdb-erased-files \
+ && while IFS= read -r d; do \
+      if [ -d "$d" ] && [ ! -L "$d" ] && [ -z "$(ls -A "$d")" ]; then rmdir "$d"; fi; \
+    done < /rpmdb-erased-dirs \
+ && while IFS= read -r f; do \
+      if [ -e "$f" ] || [ -L "$f" ]; then echo "still present: $f" >&2; exit 1; fi; \
+    done < /rpmdb-erased-files \
+ && while IFS= read -r d; do \
+      if [ -d "$d" ] && [ -z "$(ls -A "$d")" ]; then \
+        echo "empty directory survived: $d" >&2; exit 1; \
+      fi; \
+      if [ -d "$d" ]; then echo "kept, another package's content inside: $d"; fi; \
+    done < /rpmdb-erased-dirs \
+ && rm -f /rpmdb-erased-files /rpmdb-erased-dirs \
+ && rm -rf /usr/lib/sysimage/rpm \
+ && echo "uninstalled files gone"
+
+# The edited database, from stage 2: the records now match the disk.
 COPY --from=pack /rpmdb/ /usr/lib/sysimage/rpm/
 
-# A non-root default so the image is also safe to run outside OpenShift, where no arbitrary UID is
-# assigned. 1001, as before, and not the base's 65532 — an operator decision, so that nothing about
-# the declared identity of the image moves with the base change. Set BEFORE the proofs below, so
+# --- 3.3 the runtime user --------------------------------------------------------------------
+#
+# A non-root default, so the image is also safe to run outside OpenShift, where no arbitrary UID
+# is assigned. 1001, as before, and not the base's 65532 — an operator decision, so that nothing
+# about the declared identity of the image moved with the base change. Set BEFORE the proofs, so
 # they run as the user the container will run as.
 USER 1001
 
-# PROVE THE IMAGE AT BUILD TIME, FROM THE OUTSIDE — fluentd-hec's principle. Three exec-form RUNs,
-# as the runtime user (no shell needed for the first two; the third runs under the pack's shell):
-#   1. every module the build stage proved imports again under THIS interpreter, the runtime's;
-#      the SQLite the app will use is the base's (3.53.4 at the time of writing, against UBI's
-#      3.34.1) and WAL mode works on /data as the store needs it; zoneinfo resolves; uuid works
-#      WITHOUT _uuid, which must fail to import — that is the libuuid removal, observed; pip is
-#      not importable; and the uninstalled packages' files are gone.
-#   2. the dynamic loader resolves every library of every packed binary — not `--version`, which
-#      only exercises what a binary loads on the way to printing it, but ld.so's own listing, in
-#      which a missing library reads "not found".
-#   3. every pack tool does a real unit of work: jq evaluates JSON, base64 round-trips, and sh, ls,
-#      cat and curl run.
-RUN ["python3.14", "-c", "import os, sqlite3, uuid, zoneinfo\nimport gsd, fastapi, uvicorn, httpx, yaml, croniter, prometheus_client\nzoneinfo.ZoneInfo('America/New_York'); uuid.uuid4()\ntry:\n    import _uuid; raise SystemExit('_uuid still importable: libuuid was not removed')\nexcept ImportError: pass\ntry:\n    import pip; raise SystemExit('pip still importable')\nexcept ImportError: pass\nfor p in ('/usr/lib64/libuuid.so.1', '/usr/share/python-wheels', '/usr/lib/python3.14/site-packages/pip', '/rpmdb-erased-paths', '/rpmdb-erased-paths-deepest-first'):\n    assert not os.path.exists(p), p\nassert sorted(os.listdir('/usr/lib/sysimage/rpm')) == ['.rpm.lock', 'rpmdb.sqlite'], os.listdir('/usr/lib/sysimage/rpm')\nc = sqlite3.connect('/data/.build-proof.db'); assert c.execute('pragma journal_mode=wal').fetchone() == ('wal',); c.execute('create table t(x)'); c.commit(); c.close()\nfor f in os.listdir('/data'): os.remove('/data/' + f)\nprint('runtime proof OK; sqlite', sqlite3.sqlite_version)"]
-RUN ["/bin/sh", "-c", "for b in jq bash curl coreutils; do out=$(/lib64/ld-linux-x86-64.so.2 --list /usr/bin/$b) || exit 1; case \"$out\" in *'not found'*) echo \"$b: $out\" >&2; exit 1;; esac; done; echo 'every packed binary resolves'"]
-RUN ["/bin/sh", "-c", "test \"$(printf '{\"a\":[1,2]}' | jq -r '.a[1]')\" = 2 && test \"$(printf hi | base64)\" = aGk= && test \"$(printf aGk= | base64 -d)\" = hi && curl --version >/dev/null && ls / >/dev/null && cat /etc/os-release >/dev/null && echo 'pack OK'"]
+# --- 3.4 prove the image, from the outside ---------------------------------------------------
+#
+# The principle (borrowed from fluentd-hec's hardened build): do not trust that the steps above
+# produced a working image; make the image demonstrate it, and let a failed demonstration be a
+# failed build. Three steps, as the runtime user, on the finished filesystem.
+#
+# 1. image-proof.py — its docstring is the full list. In short: every module stage 1 proved
+#    imports again under THIS interpreter, the runtime's; SQLite is the base's (3.53.4 at the
+#    time of writing, against UBI's 3.34.1) and its write-ahead-log mode works on /data, as the
+#    store needs; zoneinfo resolves; uuid works while _uuid must FAIL to import, which is the
+#    libuuid removal observed; pip is not importable; the uninstalled paths are gone; the RPM
+#    database directory holds exactly the base's two files. It cleans /data and deletes itself.
+#    It lands under /tmp because that is where user 1001 may write and delete; the chart mounts
+#    an emptyDir there anyway.
+COPY --chown=1001:0 image-proof.py /tmp/image-proof.py
+RUN python3.14 /tmp/image-proof.py
+
+# 2. Every library of every packed binary resolves — asked of the dynamic loader itself
+#    (`ld.so --list` is what the `ldd` command runs underneath), not of `--version`, which only
+#    exercises what a binary happens to load on its way to printing a string. A missing library
+#    reads "not found" in the listing. The loader's path is the x86-64 one because this image is
+#    built for linux/amd64 only; a second architecture would need its own.
+RUN for b in jq bash curl coreutils; do \
+      out=$(/lib64/ld-linux-x86-64.so.2 --list "/usr/bin/$b" 2>&1) || exit 1; \
+      case "$out" in *'not found'*) echo "$b: $out" >&2; exit 1;; esac; \
+    done \
+ && echo "every packed binary resolves"
+
+# 3. Every tool does one real unit of work: jq evaluates JSON, base64 round-trips a string, and
+#    sh, ls, cat and curl run.
+RUN test "$(printf '{"a":[1,2]}' | jq -r '.a[1]')" = 2 \
+ && test "$(printf hi | base64)" = aGk= \
+ && test "$(printf aGk= | base64 -d)" = hi \
+ && curl --version >/dev/null \
+ && ls / >/dev/null \
+ && cat /etc/os-release >/dev/null \
+ && echo "pack OK"
+
+# --- 3.5 how it runs -------------------------------------------------------------------------
 
 EXPOSE 8080
 VOLUME ["/data"]
 
-# No HEALTHCHECK. The UBI recipe carried one and documented that it shipped nowhere: `podman build`
-# writes an OCI manifest, whose config has no healthcheck field, and kubelet reads the chart's
-# probes, never the image's. It is gone rather than carried as dead weight.
+# No HEALTHCHECK. The UBI recipe carried one and documented that it shipped nowhere: `podman
+# build` writes an OCI manifest, whose config has no healthcheck field, and kubelet reads the
+# chart's probes, never the image's. It is gone rather than carried as dead weight.
 
-# `python3.14 -m uvicorn`, not the /install/bin/uvicorn console script: that script's shebang points
-# at the build stage's interpreter path. EXEC FORM — with no /bin/sh at the point Kubernetes starts
-# this container it would matter, and it was already right: uvicorn is PID 1, so SIGTERM reaches it.
-# Single worker on purpose — the poller runs in-process and owns the SQLite store, so a second
-# worker would mean two pollers racing on the same file and duplicate observations.
+# `python3.14 -m uvicorn`, not the /install/bin/uvicorn console script: that script's first line
+# points at the build stage's interpreter path. EXEC FORM (the JSON list), so uvicorn is PID 1
+# and SIGTERM reaches it directly rather than a shell in between. Single worker on purpose — the
+# poller runs in-process and owns the SQLite store, so a second worker would mean two pollers
+# racing on the same file and duplicate observations.
 CMD ["python3.14", "-m", "uvicorn", "gsd.api:create_app", "--factory", \
      "--host", "0.0.0.0", "--port", "8080", "--workers", "1"]

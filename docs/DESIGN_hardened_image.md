@@ -56,46 +56,57 @@ none more. `libtinfo` and `libsystemd`, which fluentd-hec's pack carries, are le
 the runtime has them, and copying them would overwrite the base's own files.
 
 This stage also edits **a copy of the runtime's RPM database** (`COPY --from=runner
-/usr/lib/sysimage/rpm`), because the runtime cannot. In order: the file lists of `libuuid`,
-`python3-pip` and `python-pip-wheel` are read out of that database (`rpm -ql`) into a file the
-runtime stage will consume; each package is erased with `rpm -e --justdb --nodeps`, **per package
-and only if it is recorded**, because the base floats and erasing a package that is no longer
-there would fail the build for the wrong reason; a check fails the build if any of the three is
-still recorded; the database is checkpointed explicitly (rpm 6 keeps it in SQLite WAL mode) and
-the shm/wal files SQLite creates on every open are removed last. The reasons for the three are in
-`image-vulnerability-scan.md`; the short form is that `libuuid` is the one HIGH-rated package in
-the base and nothing needs it, and pip — installed once as a package and once more as the wheel
-under `/usr/share/python-wheels` that seeds virtual environments — is an installer nothing needs.
-`--justdb` touches the database only; the pack stage's own files are not what is being
-uninstalled. The database that ships records, on purpose, one dependency it cannot satisfy:
-`python3-libs` on `libuuid`.
+/usr/lib/sysimage/rpm`), because the runtime cannot. In order: `uninstall-lists.py` reads, out of
+that database and before anything is erased, every path that `libuuid`, `python3-pip` and
+`python-pip-wheel` own, into two lists — every path that is not a directory, and every directory
+that no other package records. It uses the database alone (`rpm --dump` for each path's mode,
+the owner table from `rpm -qa --qf '[%{=NAME}\t%{FILENAMES}\n]'`), never the pack stage's own
+filesystem, which holds a different build of the same packages: its libuuid's build-id directory
+is not the runtime's, so a `test -d` there misclassified a runtime directory as a file and
+`rpm -qf` there could not answer for a path it did not have. Then each package is erased with
+`rpm -e --justdb --nodeps`, **per package and only if it is recorded**, because the base floats
+and erasing a package that is no longer there would fail the build for the wrong reason; a check
+fails the build if any of the three is still recorded; the database is checkpointed explicitly
+(rpm 6 keeps it in SQLite WAL mode) and the shm/wal files SQLite creates on every open are removed
+last. The reasons for the three are in `image-vulnerability-scan.md`; the short form is that
+`libuuid` is the one HIGH-rated package in the base and nothing needs it, and pip — installed once
+as a package and once more as the wheel under `/usr/share/python-wheels` that seeds virtual
+environments — is an installer nothing needs. `--justdb` touches the database only; the pack
+stage's own files are not what is being uninstalled. The database that ships records, on purpose,
+one dependency it cannot satisfy: `python3-libs` on `libuuid`.
 
-**runtime** — `FROM runner`. Order is the whole point, because nothing below the base line can be
-a shell-form `RUN` until the pack has landed: `ARG`s, the `ENV` block verbatim (its `GSD_LOG_LEVEL`
+**runtime** — `FROM runner`. Order is the whole point, because nothing below the base line can
+run a command until the pack has landed: `ARG`s, the `ENV` block verbatim (its `GSD_LOG_LEVEL`
 commentary is pinned by `tests/test_log_levels.py`), `LABEL`s, `COPY --from=build /install`,
 `COPY --from=pack` of the binaries into `/usr/bin` and the libraries into `/usr/lib64`. Then, as
-root for three steps: the UBI recipe's own directory line (`mkdir -p /data /etc/gsd && chgrp -R 0
-… && chmod -R g=u …`); the removal of every file and symlink the three uninstalled packages owned,
-from the list the pack stage read out of the database, then their directories where empty (`rmdir`
-refuses a directory another package still fills, which is right — `/usr/lib/.build-id` is
-everyone's), then a check that no listed path but such a shared directory survives — the first cut
-of this recipe removed pip's site-packages by hand and left the 1.3 MB wheel under
-`/usr/share/python-wheels` with its record gone, which the review caught; and the RPM database
-directory emptied and **replaced** by the edited copy, not merged with it. Then `USER 1001`, and
-three exec-form proofs *as that user*: every module the build stage proved imports again under the
-runtime's interpreter, WAL mode works on `/data`, `zoneinfo` resolves, `uuid` works while `_uuid`
-must fail to import (that is the libuuid removal, observed), `pip` is not importable, the removed
-paths are gone and the database directory holds exactly the base's two files; the dynamic loader
-itself lists every library of every packed binary with none "not found" (`ld.so --list`, not
-`--version`, which exercises only what a binary loads on the way to printing it); and each pack
-tool does a real unit of work — jq evaluates JSON, base64 round-trips, sh, ls, cat and curl run.
-`EXPOSE`, `VOLUME`, and the `CMD` unchanged. `HEALTHCHECK` is gone: the UBI recipe documented that
-OCI builds discard it and kubelet never reads it.
+root for three steps, in shell form under the pack's own `sh`, one command per line: the UBI
+recipe's own directory line (`mkdir -p /data /etc/gsd && chgrp -R 0 … && chmod -R g=u …`); the
+uninstall from the two lists — every listed file removed, every listed directory removed with
+`rmdir`, which removes only an *empty* directory, and that is the point, because a directory no
+other package records can still hold another package's file (`/usr/lib/.build-id/2d` held one,
+measured, and an earlier cut's `rm -rf` took it) — then a check that fails the build if a listed
+file survives or a listed directory survives empty, and the RPM database directory removed whole
+(a glob would skip the dotfile lock) to be recreated by the copy of the edited database. The
+first line of that step proves `rm`, `rmdir` and `ls` exist before anything is deleted, and
+nothing in it hides an error: twice in this recipe's history a tool the pack did not carry failed
+with "command not found" behind a `2>/dev/null || true`, and the step silently did nothing. Then
+`USER 1001`, and three proofs *as that user* on the finished filesystem: `image-proof.py`, a
+script copied to `/tmp` that imports every module the build stage proved (the test holds the two
+lists equal), requires `_uuid` and `pip` to fail to import (the removals, observed), checks the
+removed paths and that the database directory holds exactly the base's two files, exercises WAL
+mode on `/data`, cleans `/data`, and deletes itself; the dynamic loader itself listing every
+library of every packed binary with none "not found" (`ld.so --list`, not `--version`, which
+exercises only what a binary loads on the way to printing it); and each pack tool doing a real
+unit of work — jq evaluates JSON, base64 round-trips, sh, ls, cat and curl run. `EXPOSE`,
+`VOLUME`, and the `CMD` unchanged. `HEALTHCHECK` is gone: the UBI recipe documented that OCI
+builds discard it and kubelet never reads it.
 
 `tests/test_containerfile.py` holds the shape: the three bases on floating tags, no `RUN` of any
-form before the pack `COPY`, the exact twelve packed libraries, the directory line, the file list
-read before the erase and consumed before the database is replaced, root dropped before the
-proofs and the `CMD`, the proofs' coverage, the exact `CMD`, the backup referenced by nothing.
+form before the pack `COPY`, the exact twelve packed libraries and every tool the final stage
+names, the directory line, the lists read before the erase and consumed before the database is
+replaced with `rmdir` and no hidden error, root dropped before the proofs and the `CMD`, the
+proof script's imports equal to the build stage's, the exact `CMD`, the backup referenced by
+nothing. It reads text and observes no image; the proofs in the image are what observe.
 
 ## Two things the interpreter could not be trusted to do
 
@@ -115,7 +126,16 @@ makes the PVC writable; OpenShift's security context constraints are.
 checkpoints the database through the interpreter (`PRAGMA wal_checkpoint(TRUNCATE)`) and ends with
 their removal, *after* the last command that opens it, so the copy that ships is the two files the
 base shipped, `rpmdb.sqlite` and its `.rpm.lock` — and the runtime proof asserts exactly that
-listing.
+listing. The runtime removes its database directory whole before the copy lands; a glob such as
+`rpm/*` skips dotfiles, and the review's second pass caught that the base's lock file would have
+survived a merge beside a database it no longer belonged to.
+
+**Which directories are ours to remove.** A directory that only our packages *record* can still
+hold another package's *file* (`/usr/lib/.build-id/2d`: recorded by libuuid alone in the runtime
+database, holding one file of another package's). `rm -rf` on such a directory took that file,
+measured. So directories are removed with `rmdir`, which refuses anything but an empty directory;
+a listed directory with content left is kept and the build log says so; a listed directory that
+survives empty fails the build.
 
 ## SQLite, checked rather than assumed
 

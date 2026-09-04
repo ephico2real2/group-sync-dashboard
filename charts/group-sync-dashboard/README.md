@@ -97,12 +97,6 @@ oc create configmap enterprise-ca --from-file=ca-bundle.crt=/path/to/ingress-ca.
 helm upgrade ... --set trustedCA.existingConfigMap.enabled=true
 ```
 
-The injected bundle is also what `curl` inside the pod trusts: the container sets
-`CURL_CA_BUNDLE` to it, because curl otherwise reads only the image's own system bundle and
-would refuse a corporate-signed URL that the dashboard verifies. The manual ConfigMap is not
-handed to curl — it carries only the extra CA, and curl reads one file — so for those URLs pass
-`curl --cacert`. Enforced by `test_chart_strategy.py::TestCurlInThePodTrustsTheInjectedBundle`.
-
 **curl inside the pod** reads none of the above; measured in the image, it trusts only the base's
 own bundle. So the container also sets `CURL_CA_BUNDLE` to the injected bundle (curl's variable
 alone, invisible to Python) and `SSL_CERT_DIR=/etc/pki/tls/certs` (OpenSSL's own default, so a
