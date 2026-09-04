@@ -68,7 +68,7 @@ be read and the two Python steps became repository files. Codex resumed its thre
 | U7 | Cursor (should-fix) | The tests did not hold `IFS=` on the read loops, the deepest-first order, or any of `uninstall-lists.py`'s decisions; `LISTS` was bound and unused. | Read. | **Fixed.** Four `IFS= read -r` held; the script's format string, refusals, mode test, ownership test and reverse sort held as text. |
 | U8 | Cursor (should-fix) | The design doc's shim inventory omitted `rmdir`; the pack comment did not say why only jq is installed. | Read. | **Fixed.** |
 | U9 | Cursor (note) | The proof's docstring implied it checks the full removal lists; it spot-checks the historically missed paths. | Read. | **Fixed.** The docstring says which and why. |
-| — | found by the rebuild | A context file bind-mounted into the proof step arrives with the host's ownership, unreadable by user 1001 ("Permission denied"). | Build failure. | **Fixed.** The script is staged in the build stage with mode 0644 and mounted from there; it still enters no layer of the shipped image, and `test_publish_paths.py` still sees it as an input through that stage's COPY. |
+| — | found by the rebuild | A context file bind-mounted into the proof step arrives with the host's ownership, unreadable by the non-root runtime user ("Permission denied"). | Build failure. | **Fixed.** The script is staged in the build stage with mode 0644 and mounted from there; it still enters no layer of the shipped image, and `test_publish_paths.py` still sees it as an input through that stage's COPY. |
 
 Confirmed without change: the uninstall step's loops, quoting and exit status (T3); the publish
 filter and its test (T6).

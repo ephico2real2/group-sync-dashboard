@@ -20,7 +20,7 @@ WHAT IS HELD, and why each line matters:
   erased; the final stage consumes its two lists, removes files and only EMPTY directories,
   fails on a survivor, removes the database directory whole, and only then copies the edited
   database in. The order of those lines is the whole guarantee.
-* Root is dropped to `USER 1001` before the proofs and `CMD`; the proofs cover every module the
+* Root is dropped to `USER 65532` before the proofs and `CMD`; the proofs cover every module the
   build stage proved (the two lists are held equal), the removals as observed absences, the
   loader's own resolution of every packed binary, and real work from every pack tool.
 * `CMD` is exec form and equal to the UBI recipe's; `Containerfile.ubi` is kept beside it and
@@ -176,13 +176,16 @@ class TestRuntimeStageOrder:
 
     def test_root_is_dropped_before_the_proofs_and_the_cmd(self) -> None:
         user_lines = [i for i, l in enumerate(RUNTIME) if l.startswith("USER ")]
-        assert RUNTIME[user_lines[-1]] == "USER 1001"
+        assert RUNTIME[user_lines[-1]] == "USER 65532", (
+            "the hardened base's own default and the distroless convention; numeric, so "
+            "runAsNonRoot can verify it without a passwd entry"
+        )
         last_user = user_lines[-1]
         proofs = [i for i, l in enumerate(RUNTIME) if "python3.14 /tmp/image-proof.py" in l or "pack OK" in l or "--list" in l]
         assert len(proofs) == 3 and all(i > last_user for i in proofs)
         cmd = self._index(lambda l: l.startswith("CMD "))
         assert cmd > last_user
-        assert "USER 0" in RUNTIME  # root exists only between the pack COPY and USER 1001
+        assert "USER 0" in RUNTIME  # root exists only between the pack COPY and USER 65532
         assert RUNTIME.index("USER 0") > self._index(lambda l: l.startswith("COPY --from=pack /jqpack/bin/"))
 
     def test_the_proofs_cover_what_the_base_change_could_break(self) -> None:

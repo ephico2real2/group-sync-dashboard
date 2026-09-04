@@ -12,7 +12,8 @@ to run, `hi/python:3.14-builder` to build — keeping the multi-stage build, and
 runtime a shell plus `curl`, `jq`, `ls`, `cat` and `base64` the way `fluentd-hec`'s
 `Dockerfile.curl` does it: a "pack" assembled with `dnf` in a builder stage and copied into the
 runtime as files. Operator decisions on the way: the **floating** `3.14` tags, so every build takes
-Red Hat's latest 3.14; the declared user stays **1001**; the pack stage is scanned in CI as well as
+Red Hat's latest 3.14; the declared user is the base's **65532** (first kept at 1001, then moved
+with the base once the convention was checked — see below); the pack stage is scanned in CI as well as
 the shipped image; directories are made with `mkdir`/`chgrp`/`chmod`, not through the interpreter.
 
 ## What the runtime base is
@@ -91,7 +92,7 @@ file survives or a listed directory survives empty, and the RPM database directo
 first line of that step proves `rm`, `rmdir` and `ls` exist before anything is deleted, and
 nothing in it hides an error: twice in this recipe's history a tool the pack did not carry failed
 with "command not found" behind a `2>/dev/null || true`, and the step silently did nothing. Then
-`USER 1001`, and three proofs *as that user* on the finished filesystem: `image-proof.py`, a
+`USER 65532`, and three proofs *as that user* on the finished filesystem: `image-proof.py`, a
 script staged in the build stage and bind-mounted under `/tmp` for its one step (never copied
 into this image, so it is in no layer of it) that
 imports every module the build stage proved (the test holds the runtime list as a superset),
@@ -143,13 +144,38 @@ survives empty fails the build.
 ## SQLite, checked rather than assumed
 
 The application's store is the part of the image most sensitive to a base change, so it was probed
-in the built image, as user 1001 and again under a read-only root filesystem with `/data` and
+in the built image, as the declared user and again under a read-only root filesystem with `/data` and
 `/tmp` mounted, the way the chart runs it: `sqlite3.sqlite_version` 3.53.4, `threadsafety` 3,
 `enable_load_extension` present (the store calls it), `PRAGMA journal_mode=WAL` on `/data` returns
 `wal` and creates the `-wal`/`-shm` files, `busy_timeout` takes, JSON functions and `->>`, FTS5,
 R-tree, math and window functions, `STRICT` tables, temp store on disk with `/tmp` writable, and
 `SQLITE_MAX_VARIABLE_NUMBER` still 32766. The compile options are Red Hat's (`gcc 16.1.1`,
 `SECURE_DELETE`, `ENABLE_FTS5`, `ENABLE_RTREE`, `ENABLE_MATH_FUNCTIONS`, `THREADSAFE=1`).
+
+## The declared user: 65532, the base's own
+
+The UBI recipe declared `USER 1001`, and the first cut kept it so that nothing about the image's
+declared identity moved with the base. The operator then asked what the number costs on OpenShift
+and what others do with the hardened images, and the answer, measured and read, is:
+
+* On OpenShift the declared user is never the UID the process runs as. The default
+  `restricted-v2` SCC replaces it with an arbitrary UID from the project's range and puts that
+  UID in the root group — on CRC the container declaring `1001` ran as `1000670000`, gid 0. The
+  number matters only for the `runAsNonRoot` check, which needs it to be numeric and non-zero
+  (both pass), and outside OpenShift, where it is the real UID.
+* 65532 is the convention: the hardened base's own default, the `nonroot` user of Google's
+  distroless images and Chainguard's, and what Red Hat's Hummingbird examples declare
+  (`USER ${CONTAINER_DEFAULT_USER}`, defined as 65532 in the builder; `COPY --chown=65532`).
+  There is no passwd entry and no group 65532 in the runtime base; the UID stands alone, which
+  is fine because only the number is ever read.
+* Docker's guide for its hardened images on OpenShift makes the complementary point: file
+  ownership by group 65532 helps nobody on OpenShift, because the arbitrary UID is not in it.
+  This recipe never relied on that; its writable directories are root-group and group-writable.
+
+So the declared user moved to 65532 on 2026-09-04, stated explicitly in the Containerfile rather
+than inherited, so that a base that changed its default would not change ours silently. Nothing
+else changed: the chart sets no `runAsUser`, the directories are group-owned by root, the proofs
+run as the declared user and pass, and the pod on CRC runs as the same arbitrary UID as before.
 
 ## Trust store, checked against the Hummingbird guidance
 

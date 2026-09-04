@@ -14,8 +14,10 @@ lives next to the code and in the design and review records linked here.
   and the coreutils shims `cat`, `ls`, `base64`, `mkdir`, `chgrp`, `chmod`, `rm` — with exactly the
   twelve libraries the runtime lacks, measured by `ldd`, and copies it in. Every in-pod command in
   the docs and the release scripts' stamp check still work. SQLite is 3.53.4 (UBI: 3.34.1); zoneinfo
-  ships, so the tzdata reinstall is gone; 186 MB against 227. The previous recipe is kept as
-  `Containerfile.ubi`, built by nothing. (#52; design `DESIGN_hardened_image.md`)
+  ships, so the tzdata reinstall is gone; 186 MB against 227. The declared user is the base's
+  65532 rather than UBI's 1001 — the distroless convention, numeric, and on OpenShift never the
+  UID the process runs as anyway. The previous recipe is kept as `Containerfile.ubi`, built by
+  nothing. (#52; design `DESIGN_hardened_image.md`)
 - **Three packages uninstalled from the base, files and RPM records together.** `libuuid`, the one
   HIGH-rated package in the base (four util-linux advisories of 2026-09-02, all in mount code the
   image does not ship, no fixed build from Red Hat yet) — nothing needs it, and `uuid` falls back to

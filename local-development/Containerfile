@@ -341,7 +341,7 @@ COPY --from=pack /jqpack/lib64/ /usr/lib64/
 # --- 3.2 as root: directories, the uninstall, the database -----------------------------------
 #
 # Root for these three steps only. The base's default user is 65532, which could not chgrp to
-# root or delete the base's files; USER 1001 follows before anything is proven or run.
+# root or delete the base's files; USER 65532 follows before anything is proven or run.
 USER 0
 
 # The directories the chart mounts into (/etc/gsd, the configuration) and the process writes
@@ -407,12 +407,23 @@ COPY --from=pack /rpmdb/ /usr/lib/sysimage/rpm/
 
 # --- 3.3 the runtime user --------------------------------------------------------------------
 #
-# A non-root default, so the image is also safe to run outside OpenShift, where no arbitrary UID
-# is assigned. 1001, as before, and not the base's 65532 — an operator decision, so that nothing
-# about the declared identity of the image moved with the base change. Set BEFORE the proofs, so
-# they run as the user the container will run as. (The proof script is mounted under /tmp, the
-# one place user 1001 may write; the chart mounts an emptyDir there anyway.)
-USER 1001
+# 65532: the hardened base's own default user, and the convention shared by Google's distroless
+# images, Chainguard's, and Red Hat's Hummingbird examples (`USER ${CONTAINER_DEFAULT_USER}`,
+# which the builder defines as 65532). It is a numeric UID with no name — there is no passwd
+# entry and no group 65532 in the base — and numeric is what matters: Kubernetes' runAsNonRoot
+# check reads the image config and cannot resolve a name.
+#
+# On OpenShift this number is never the UID the process runs as. The default SCC replaces it
+# with an arbitrary UID from the project's range and puts that UID in the root group (measured
+# on CRC: 1000670000, gid 0), which is why the directories above are group-owned by root and
+# group-writable, not owned by 65532. The declared user matters only outside OpenShift — plain
+# Kubernetes, `podman run` — where it is the real UID, and there a non-root default keeps the
+# image safe. Stated explicitly rather than inherited from the base, so the choice is visible
+# here and a base that changed its default would not change ours silently. (The UBI recipe
+# declared 1001; the number moved with the base, deliberately, on 2026-09-04.) Set BEFORE the
+# proofs, so they run as the user the container will run as; the proof script is mounted under
+# /tmp, which is this user's HOME in the base and the one place it may write.
+USER 65532
 
 # --- 3.4 prove the image, from the outside ---------------------------------------------------
 #
