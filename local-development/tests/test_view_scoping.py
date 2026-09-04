@@ -613,3 +613,35 @@ def test_that_visibility_is_bounded_by_membership_and_cannot_enumerate(tmp_path)
         "the two refusals differ, so a reader can tell which group names exist"
     )
     assert "cluster-admin" not in forbidden.text and "secret-crb" not in forbidden.text
+
+
+def test_a_group_count_cliff_is_withheld_at_self_and_full_at_wide(tmp_path):
+    """Both cliff kinds name a group from the self-scoped Groups tab, so they follow
+    empty_group/unattributed: absent at self (gsd/api.py#SELF_ALERT_DETAILS), full at wide —
+    including the silenced one, which is reported rather than hidden."""
+    # Both clients first: every _client call re-seeds the store, and the seed replaces group_state
+    # wholesale, so a cliff written before the second client would be wiped by it.
+    c = _client(tmp_path)
+    wide_client = _client(tmp_path, tier_resolver=_admin)
+    store = Store(str(tmp_path / "t.db"))
+    old = "2026-01-01T00:00:00Z"
+    store.sync_members("c1", {"big-a": [f"u{i}" for i in range(20)],
+                              "big-b": [f"v{i}" for i in range(20)]}, {}, old)
+    store.sync_members("c1", {"big-a": ["u0"], "big-b": ["v0"]}, {}, now_iso())
+    store.replace_group_state("c1", [
+        {"name": "big-a", "member_count": 1, "sync_provider": "gs_ldap", "group_synced_at": None, "ldap_uid": None},
+        {"name": "big-b", "member_count": 1, "sync_provider": "gs_ldap", "group_synced_at": None,
+         "ldap_uid": None, "cliff_silence": "true"},
+    ], now_iso())
+    store.close()
+
+    wide = wide_client.get("/api/alerts", headers=AS_VIEWER).json()
+    by_subject = {a["subject"]: a for a in wide["alerts"] if a["kind"].startswith("group_count_cliff")}
+    assert by_subject["big-a"]["kind"] == "group_count_cliff" and by_subject["big-a"]["silenced"] is False
+    assert by_subject["big-b"]["kind"] == "group_count_cliff_silenced"
+    assert by_subject["big-b"]["silenced"] is True and by_subject["big-b"]["silenced_by"] == "annotation"
+
+    body = c.get("/api/alerts", headers=AS_VIEWER).json()
+    assert body["scope"] == "self"
+    assert not [a for a in body["alerts"] if a["kind"].startswith("group_count_cliff")]
+    assert "big-a" not in repr(body) and "big-b" not in repr(body)

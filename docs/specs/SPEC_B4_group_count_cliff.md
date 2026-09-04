@@ -7,7 +7,7 @@
 | Release | R2 — Alerts, retention, Grafana |
 | Version on release | app 0.12.0, chart 0.11.0 |
 | Issue | [#58](https://github.com/ephico2real2/group-sync-dashboard/issues/58) |
-| Status | specified |
+| Status | in progress |
 | Source | design agent output `abe89ca84ad184702`; two messages; the first ended inside a ```python fence with a partial `def test_env_overrides_the_file` and the second re-emitted that test from its first line under a new fence opener, so the partial tail and the duplicate opener were dropped and the code continues inside the original fence |
 
 ## How to read this spec
@@ -29,6 +29,8 @@ request, with the reason, under "Orchestrator's notes".
 - The B3 half of the same design lands after this one; the shared `Chart.yaml` history comment in B4.8 that mentions `monitoring.grafanaDashboard` is written here for the cliff alert only, and B3 extends it.
 
 - Routed here from the A3 review (PR #71): this is the first PR to edit `charts/group-sync-dashboard/Chart.yaml` after `local-development/prepare-release.py` landed. Correct the preamble sentence that says nothing but a human writes the file: the release script writes the version fields and the history lines from two arguments; the reasoning is still typed by the operator as the reason.
+
+- Deviations recorded at implementation (PR for #58), each a defect in the body's own code or test found by running it: (1) `_cliff_settings` split the ConfigMap's comma-joined silence list without stripping, so `"a, b"` yielded `" b"`; stripped now, as the list branch already did. (2) `test_a_group_count_cliff_is_withheld_at_self_and_full_at_wide` called `_client` a second time AFTER seeding the cliff rows, and `_client` re-seeds with `replace_group_state`, wiping them; both clients are built first now. (3) `test_no_settings_means_module_off_on_the_collector` asserted the kind's name absent from the whole exposition while the body's own HELP text names it; the assertion is on a series (`kind="group_count_cliff`) now. (4) The body cites `docs/DESIGN_grafana_dashboard_and_group_count_cliff.md`, a design record that was never written; every reference points at this spec instead, and the README docs-table row for that file is not added (the programme row already covers `docs/specs/`). (5) The body's rule reads `monitoring.prometheusRule.for.groupCountCliff` but never adds the value; `groupCountCliff: 15m` is added to the `for:` block after `configError`, with the chart README's documented `15m`. (6) `test_migration_8…` uses try/finally: `Store` is not a context manager, as the body itself anticipated.
 
 ## Batch preamble (verbatim from the design)
 

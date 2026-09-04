@@ -388,3 +388,39 @@ class TestViewRestrictions:
         assert s.visibility_usage_admin_sar_verb == "update"
         assert s.visibility_usage_admin_sar_resource == "clusterrolebindings"
         assert s.visibility_usage_admin_sar_api_group == "rbac.authorization.k8s.io"
+
+
+class TestGroupCountCliff:
+    def test_defaults_are_on_with_the_documented_floor(self, tmp_path):
+        s = load_settings(write(tmp_path, BASE))
+        assert s.group_count_cliff_enabled is True
+        assert (s.group_count_cliff_min_members, s.group_count_cliff_drop_ratio,
+                s.group_count_cliff_window_hours, s.group_count_cliff_silence) == (10, 0.5, 24.0, ())
+
+    def test_configmap_keys_load_and_the_silence_list_splits_on_commas(self, tmp_path):
+        cfg = BASE + ("groupCountCliffEnabled: false\ngroupCountCliffMinMembers: 25\n"
+                      "groupCountCliffDropRatio: 0.3\ngroupCountCliffWindowHours: 6\n"
+                      "groupCountCliffSilence: \"app-ocp-rbac-contractors-*, app-ocp-rbac-x-ns-view\"\n")
+        s = load_settings(write(tmp_path, cfg))
+        assert s.group_count_cliff_enabled is False
+        assert (s.group_count_cliff_min_members, s.group_count_cliff_drop_ratio, s.group_count_cliff_window_hours) == (25, 0.3, 6.0)
+        assert s.group_count_cliff_silence == ("app-ocp-rbac-contractors-*", "app-ocp-rbac-x-ns-view")
+
+    @pytest.mark.parametrize("line", [
+        "groupCountCliffDropRatio: 0\n", "groupCountCliffDropRatio: 1.5\n",
+        "groupCountCliffMinMembers: 0\n", "groupCountCliffWindowHours: 0\n",
+    ])
+    def test_a_threshold_that_cannot_or_always_fires_is_refused(self, tmp_path, line):
+        with pytest.raises(ConfigError):
+            load_settings(write(tmp_path, BASE + line))
+
+    def test_env_overrides_the_file(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("GSD_GROUP_COUNT_CLIFF_ENABLED", "false")
+        monkeypatch.setenv("GSD_GROUP_COUNT_CLIFF_SILENCE", "a-*,b")
+        try:
+            s = load_settings(write(tmp_path, BASE + "groupCountCliffEnabled: true\n"))
+        finally:
+            monkeypatch.delenv("GSD_GROUP_COUNT_CLIFF_ENABLED", raising=False)
+            monkeypatch.delenv("GSD_GROUP_COUNT_CLIFF_SILENCE", raising=False)
+        assert s.group_count_cliff_enabled is False
+        assert s.group_count_cliff_silence == ("a-*", "b")

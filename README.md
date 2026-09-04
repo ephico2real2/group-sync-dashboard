@@ -245,7 +245,7 @@ about what it trusts, and silently widening it would be the wrong kind of helpfu
 
 ## Monitoring
 
-`/metrics` serves Prometheus exposition; the chart ships a ServiceMonitor and eleven alerting
+`/metrics` serves Prometheus exposition; the chart ships a ServiceMonitor and twelve alerting
 rules, both off by default because they need the Prometheus Operator CRDs.
 
 Cardinality is bounded deliberately: series are per cluster and per GroupSync CR only, never
@@ -439,8 +439,8 @@ read. Recipes for `curl` and Postman: [`docs/api-access.md`](docs/api-access.md)
 
 ## Not built yet
 
-Effective-permission expansion, log-scrape enrichment, the group-count cliff alert (needs a
-floor as well as a ratio), retention on the accumulated history, per-namespace PDF reports
+Effective-permission expansion, log-scrape enrichment, retention on the accumulated history,
+per-namespace PDF reports
 (designed and **parked** — [`docs/namespace-report-design.md`](docs/namespace-report-design.md)),
 and per-cluster authorization for the multi-cluster case: OAuth authenticates against the
 hosting cluster only, so one instance holding several clusters' data can show a user

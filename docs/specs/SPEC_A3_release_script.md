@@ -7,7 +7,7 @@
 | Release | R1 — Quality and release tooling |
 | Version on release | no version change (a repository tool) |
 | Issue | [#57](https://github.com/ephico2real2/group-sync-dashboard/issues/57) |
-| Status | in progress |
+| Status | released |
 | Source | design agent output `a38be666b46d57784`; one message; no seam |
 
 ## How to read this spec

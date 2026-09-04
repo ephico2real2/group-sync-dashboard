@@ -12,7 +12,9 @@ type: application
 #            publish.yml's pin commit bumped the patch on every image build — and that automation
 #            is gone with the pin commit it existed to publish. `Chart changes bump the chart
 #            version` in ci.yml is the enforcement now: a PR touching charts/ that does not move
-#            this line fails. Nothing writes to this file except a human in a reviewed change.
+#            this line fails. Nothing writes to this file except a human in a reviewed change —
+#            by hand, or through local-development/prepare-release.py, which moves the version
+#            fields and writes the history lines from two arguments the human gives it.
 #
 #            So every component means what it says again: MAJOR and MINOR for behaviour, PATCH for
 #            a fix or a defaults change. A patch bump is no longer noise from a build.

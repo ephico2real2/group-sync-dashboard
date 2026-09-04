@@ -8,7 +8,8 @@ directly (PLAN §11, §2.1).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+import fnmatch
+from datetime import UTC, date, datetime, timedelta
 
 from croniter import CroniterBadCronError, croniter
 
@@ -132,6 +133,11 @@ class Alert:
     subject: str
     detail: str
     severity: str = "warning"
+    # A silenced alert is still an alert: reported with the reason, never dropped. Only the
+    # group-count cliff sets these today; every other kind carries the defaults on the wire so
+    # the shape is uniform.
+    silenced: bool = False
+    silenced_by: str | None = None
 
     def as_dict(self) -> dict:
         return {
@@ -140,6 +146,8 @@ class Alert:
             "subject": self.subject,
             "detail": self.detail,
             "severity": self.severity,
+            "silenced": self.silenced,
+            "silenced_by": self.silenced_by,
         }
 
 
@@ -156,6 +164,64 @@ def stale_group_threshold(interval: timedelta | None, write_window: timedelta) -
     return max(interval, write_window)
 
 
+@dataclass(frozen=True)
+class CliffPolicy:
+    """config.alerts.groupCountCliff, as the pure layer sees it. None means the module is off."""
+
+    min_members: int = 10
+    drop_ratio: float = 0.5
+    window_hours: float = 24.0
+    silence: tuple[str, ...] = ()
+
+    def since(self, now: datetime) -> str:
+        """The window's start in timeutil's fixed-width UTC format — the store compares
+        observed_at lexicographically, so the format must be the poller's exactly."""
+        return (now - timedelta(hours=self.window_hours)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def cliff_policy(settings) -> CliffPolicy | None:
+    """Settings -> CliffPolicy, or None when the module is off or no settings were given.
+
+    Duck-typed on purpose: this module imports nothing from config.py (it is the pure
+    layer), and the metrics collector is legitimately built without settings in tests.
+    """
+    if settings is None or not getattr(settings, "group_count_cliff_enabled", False):
+        return None
+    return CliffPolicy(
+        min_members=int(settings.group_count_cliff_min_members),
+        drop_ratio=float(settings.group_count_cliff_drop_ratio),
+        window_hours=float(settings.group_count_cliff_window_hours),
+        silence=tuple(settings.group_count_cliff_silence),
+    )
+
+
+def cliff_silence(
+    annotation: str | None, silence: tuple[str, ...], group: str, now: datetime
+) -> str | None:
+    """Why a cliff on ``group`` is silenced: "annotation", "values", or None.
+
+    The annotation (kube.CLIFF_SILENCE_ANNOTATION) is "true" or "until=YYYY-MM-DD"; the
+    date is inclusive and read as a UTC calendar date, and an expired or unparseable value
+    un-silences rather than silencing — the direction that reports rather than hides.
+    Values patterns are fnmatch globs, case-sensitive like group names.
+    """
+    if annotation is not None:
+        word = annotation.strip().lower()
+        if word == "true":
+            return "annotation"
+        if word.startswith("until="):
+            try:
+                until = date.fromisoformat(word[len("until="):].strip())
+            except ValueError:
+                until = None
+            if until is not None and now.date() <= until:
+                return "annotation"
+    for pattern in silence:
+        if fnmatch.fnmatchcase(group, pattern):
+            return "values"
+    return None
+
+
 def compute_alerts(
     cluster: str,
     groupsyncs: list[dict],
@@ -167,11 +233,15 @@ def compute_alerts(
     operator_configs: list[dict] | None = None,
     user_bindings: list[dict] | None = None,
     groupsync_present: bool | None = None,
+    count_changes: dict[str, dict] | None = None,
+    cliff: CliffPolicy | None = None,
 ) -> list[Alert]:
     """Compute the PLAN §8 conditions the first slice has data for.
 
-    Excluded: dangling bindings (needs RBAC outside the first slice, PLAN §14) and the group
-    count cliff (needs a tuned floor as well as a ratio, PLAN §8).
+    Excluded: dangling bindings (needs RBAC outside the first slice, PLAN §14). The group
+    count cliff, once excluded for want of a floor, is computed when ``cliff`` is given:
+    ``count_changes`` is store.group_count_changes for the policy's window
+    (docs/specs/SPEC_B4_group_count_cliff.md).
     """
     alerts: list[Alert] = []
     by_provider: dict[str, list[dict]] = {}
@@ -229,6 +299,63 @@ def compute_alerts(
                     detail="synced with zero members — check the LDAP-side member DNs resolve",
                 )
             )
+
+    # THE GROUP-COUNT CLIFF. before = the count at the window's start, reconstructed exactly
+    # from the membership events inside the window (state is replaced each poll; the events
+    # are the history). Evaluated only for groups that still exist — a deleted group is the
+    # dangling-binding finding's job — and only above the floor: below ten members, half is
+    # one or two people, which is churn, not a cliff. Silenced cliffs are STILL reported,
+    # under their own kind, so a reader sees "known" rather than "nothing".
+    if cliff is not None and count_changes:
+        for group in groups:
+            change = count_changes.get(group["name"])
+            if not change:
+                continue
+            after = int(group.get("member_count") or 0)
+            before = after + int(change.get("removed") or 0) - int(change.get("added") or 0)
+            if before < cliff.min_members:
+                continue
+            drop = before - after
+            if drop <= 0 or drop < cliff.drop_ratio * before:
+                continue
+            by = cliff_silence(group.get("cliff_silence"), cliff.silence, group["name"], now)
+            detail = (
+                f"members {before} -> {after} within the last {cliff.window_hours:g}h "
+                f"({drop / before:.0%} drop; floor {cliff.min_members}, ratio "
+                f"{cliff.drop_ratio:g}) — a directory-side change, or a sync that resolved "
+                f"fewer member DNs; compare the group's LDAP entry with its CR's last sync"
+            )
+            if by == "annotation":
+                alerts.append(
+                    Alert(
+                        cluster=cluster,
+                        kind="group_count_cliff_silenced",
+                        subject=group["name"],
+                        detail=detail + "; silenced by the Group's silence annotation",
+                        silenced=True,
+                        silenced_by="annotation",
+                    )
+                )
+            elif by == "values":
+                alerts.append(
+                    Alert(
+                        cluster=cluster,
+                        kind="group_count_cliff_silenced",
+                        subject=group["name"],
+                        detail=detail + "; silenced by config.alerts.groupCountCliff.silence",
+                        silenced=True,
+                        silenced_by="values",
+                    )
+                )
+            else:
+                alerts.append(
+                    Alert(
+                        cluster=cluster,
+                        kind="group_count_cliff",
+                        subject=group["name"],
+                        detail=detail,
+                    )
+                )
 
     for cr in groupsyncs:
         name = cr["name"]

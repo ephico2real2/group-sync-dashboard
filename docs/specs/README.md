@@ -49,8 +49,8 @@ Two consequences for the tooling:
 | Id | Specification | Batch | Milestone | Version on release | Issue | Status |
 |---|---|---|---|---|---|---|
 | A1 | [`SPEC_A1_ui_tests_in_ci.md`](SPEC_A1_ui_tests_in_ci.md) — Playwright UI tests in CI | A — quality | R1 | no version change (CI and docs only) | [#56](https://github.com/ephico2real2/group-sync-dashboard/issues/56) | released |
-| A3 | [`SPEC_A3_release_script.md`](SPEC_A3_release_script.md) — release preparation script | A — release | R1 | no version change (a repository tool) | [#57](https://github.com/ephico2real2/group-sync-dashboard/issues/57) | in progress |
-| B4 | [`SPEC_B4_group_count_cliff.md`](SPEC_B4_group_count_cliff.md) — group-count cliff alert with read-only silencing | B — alerts | R2 | app 0.12.0, chart 0.11.0 | [#58](https://github.com/ephico2real2/group-sync-dashboard/issues/58) | specified |
+| A3 | [`SPEC_A3_release_script.md`](SPEC_A3_release_script.md) — release preparation script | A — release | R1 | no version change (a repository tool) | [#57](https://github.com/ephico2real2/group-sync-dashboard/issues/57) | released |
+| B4 | [`SPEC_B4_group_count_cliff.md`](SPEC_B4_group_count_cliff.md) — group-count cliff alert with read-only silencing | B — alerts | R2 | app 0.12.0, chart 0.11.0 | [#58](https://github.com/ephico2real2/group-sync-dashboard/issues/58) | in progress |
 | B2 | [`SPEC_B2_history_retention.md`](SPEC_B2_history_retention.md) — retention for membership_event and sync_event | B — data | R2 | app 0.13.0, chart 0.12.0 | [#59](https://github.com/ephico2real2/group-sync-dashboard/issues/59) | specified |
 | B3 | [`SPEC_B3_grafana_dashboard.md`](SPEC_B3_grafana_dashboard.md) — Grafana dashboard shipped with the chart | B — observability | R2 | chart 0.13.0 (chart only) | [#60](https://github.com/ephico2real2/group-sync-dashboard/issues/60) | specified |
 | C1 | [`SPEC_C1_table_export.md`](SPEC_C1_table_export.md) — CSV and JSON export of the table on screen | C — product | R3 | app 0.14.0, chart 0.14.0 | [#61](https://github.com/ephico2real2/group-sync-dashboard/issues/61) | specified |

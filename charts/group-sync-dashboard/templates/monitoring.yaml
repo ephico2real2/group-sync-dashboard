@@ -155,6 +155,26 @@ spec:
               reconciling: new namespaces receive no bindings and drift stops being
               corrected. Nothing else on the cluster reports this.
 
+        {{- if .Values.config.alerts.groupCountCliff.enabled }}
+        # A group lost config.alerts.groupCountCliff.dropRatio of at least minMembers members
+        # within windowHours. The unsilenced kind ONLY: a cliff an administrator silenced (the
+        # Group annotation or the values list) is exported as kind=group_count_cliff_silenced
+        # and must not page. Rendered only while the module is on — a rule on a kind the
+        # collector never emits can never fire (docs/DESIGN_metrics_refresh.md §5.2).
+        - alert: GroupSyncGroupCountCliff
+          expr: gsd_alerts_total{kind="group_count_cliff"} > 0
+          for: {{ .Values.monitoring.prometheusRule.for.groupCountCliff }}
+          labels: {severity: warning}
+          annotations:
+            summary: "{{ `{{ $value }}` }} group(s) on {{ `{{ $labels.cluster }}` }} lost at least half their members"
+            description: >-
+              A synced group's membership fell by the configured ratio within the window.
+              The dashboard's Overview names the group and the before/after counts; compare
+              the group's LDAP entry with its GroupSync CR's last sync. If the drop is
+              expected, annotate the Group with
+              groupsync-dashboard.io/silence-group-count-cliff=until=YYYY-MM-DD — the
+              alert then reports as silenced instead of firing.
+        {{- end }}
         # Both of the following are SILENT failures: the pod stays Ready, every other metric
         # looks normal, and the first visible symptom is a full volume or a latency cliff.
         - alert: GroupSyncDashboardWalGrowing

@@ -138,6 +138,9 @@ container starting, which is a louder failure than the one above but still not a
 | `config.scheduleGraceSeconds` | `120` | stops the state flapping `late` every cycle. Must stay **above** `pollIntervalSeconds` |
 | `config.bindingIntervalSeconds` | `300` | bindings are listed across every namespace, so deliberately slower. Must stay above the group poll |
 | `config.requestTimeoutSeconds` | `15` | per-request timeout against a cluster's API server |
+| `config.alerts.groupCountCliff.enabled` | `true` | read-only, no extra RBAC, one indexed query per cluster per read. Off removes the kind and the rule together |
+| `config.alerts.groupCountCliff.minMembers` / `.dropRatio` / `.windowHours` | `10` / `0.5` / `24` | the floor is what keeps the default quiet — below ten, half is one or two people. Ratio outside `(0, 1]`, floor below 1 or non-positive window refuse the render |
+| `config.alerts.groupCountCliff.silence` | `[]` | exact names or fnmatch globs. Silenced cliffs are still reported (`group_count_cliff_silenced`), dimmed on the Overview. The other silence is the Group annotation `groupsync-dashboard.io/silence-group-count-cliff=true` or `=until=YYYY-MM-DD`, read on every poll, never written |
 | `logLevel` | `INFO` | `DEBUG` \| `INFO` \| `WARNING` \| `ERROR` \| `CRITICAL`, and nothing else — see [Dashboard log verbosity](#dashboard-log-verbosity--loglevel) for what each promises and which look-alike values are refused |
 | `nameOverride` / `fullnameOverride` | `""` / `""` | standard Helm naming overrides. Changing either after install renames every object, including the PVC — which orphans the accumulated history |
 
@@ -282,7 +285,7 @@ Grant the wide view through your normal RBAC process, never a chart value:
 | `monitoring.serviceMonitor.enabled` | `false` | needs the Prometheus Operator CRDs |
 | `monitoring.serviceMonitor.interval` / `.scrapeTimeout` | `30s` / `10s` | every series is recomputed from SQLite on scrape and each scrape takes a read snapshot. Faster buys no resolution — the data only changes once per poll |
 | `monitoring.serviceMonitor.labels` | `{}` | extra metadata labels. Usually how a cluster's Prometheus selects which ServiceMonitors it owns |
-| `monitoring.prometheusRule.enabled` | `false` | **eleven** alerts — see below |
+| `monitoring.prometheusRule.enabled` | `false` | **twelve** alerts — see below |
 | `monitoring.prometheusRule.labels` | `{}` | as above, for rule selection |
 | `monitoring.prometheusRule.overdueSeconds` | `7200` | a GroupSync has not synced for this long |
 | `monitoring.prometheusRule.notPollingSeconds` | `600` | catches a dead poll loop, which the health endpoints cannot. **Must stay above ~2× `config.pollIntervalSeconds`** or it fires continuously on a healthy deployment |
@@ -404,7 +407,7 @@ evaluated. That is a statement of intent, not an isolation boundary — OpenShif
 `basic-user` to `system:authenticated`, which already grants `get`/`list` on clusterroles to
 every authenticated identity including this one.
 
-#### The eleven alerts
+#### The twelve alerts
 
 | Alert | Fires on | `for` |
 |---|---|---|
@@ -414,6 +417,7 @@ every authenticated identity including this one.
 | `GroupSyncClusterUnreachable` | `gsd_cluster_up == 0` | `for.unreachable`, `15m` |
 | `GroupSyncDashboardDirectUserGrants` | bindings still name people rather than LDAP groups | `for.directUserGrants`, `1h` — long, because this is a migration backlog, not an incident |
 | `GroupSyncDashboardConfigReconcileError` | a `NamespaceConfig`/`GroupConfig` is failing, so RBAC has silently stopped reconciling | `for.configError`, `10m` |
+| `GroupSyncGroupCountCliff` | `gsd_alerts_total{kind="group_count_cliff"} > 0` — a group lost `dropRatio` of at least `minMembers` members within `windowHours`. Rendered only while `config.alerts.groupCountCliff.enabled`; silenced cliffs count under `group_count_cliff_silenced` and never fire | `for.groupCountCliff`, `15m` |
 | `GroupSyncDashboardWalGrowing` | `gsd_sqlite_wal_bytes` above `walMiB` — checkpoint starvation | `for.walGrowing`, `30m` |
 | `GroupSyncDashboardWalDisabled` | `gsd_sqlite_wal_enabled == 0` — the filesystem refused WAL | `for.walDisabled`, `10m` |
 | `GroupSyncDashboardVisibilityChecksFailing` | the SubjectAccessReview behind per-user visibility is erroring, so readers are silently served the self view fail-closed | `for.visibilityFailing`, `15m` |

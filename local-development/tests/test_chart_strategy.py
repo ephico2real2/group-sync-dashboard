@@ -1235,3 +1235,29 @@ class TestCurlInThePodTrustsWhatTheAppTrusts:
         )
         assert any(m["mountPath"] == f"{self.HASHED_DIR}/c275f070.1" for m in app["volumeMounts"])
         assert not any(m["mountPath"] == f"{self.HASHED_DIR}/c275f070.1.0" for m in app["volumeMounts"])
+
+
+class TestGroupCountCliffValues:
+    def test_configmap_carries_the_keys_and_joins_the_silence_list(self):
+        ok, out = render(**{
+            "config__alerts__groupCountCliff__minMembers": 25,
+            "config__alerts__groupCountCliff__silence[0]": "app-ocp-rbac-a-*",
+            "config__alerts__groupCountCliff__silence[1]": "app-ocp-rbac-b-ns-view",
+        })
+        assert ok, out
+        cfg = _config_data(out)
+        assert cfg["groupCountCliffEnabled"] is True
+        assert (cfg["groupCountCliffMinMembers"], cfg["groupCountCliffDropRatio"],
+                cfg["groupCountCliffWindowHours"]) == (25, 0.5, 24)
+        assert cfg["groupCountCliffSilence"] == "app-ocp-rbac-a-*,app-ocp-rbac-b-ns-view"
+
+    @pytest.mark.parametrize("key,value", [
+        ("config__alerts__groupCountCliff__dropRatio", "0"),
+        ("config__alerts__groupCountCliff__dropRatio", "1.5"),
+        ("config__alerts__groupCountCliff__minMembers", "0"),
+        ("config__alerts__groupCountCliff__windowHours", "0"),
+    ])
+    def test_a_threshold_that_cannot_or_always_fires_refuses_the_render(self, key, value):
+        ok, out = render(**{key: value})
+        assert not ok
+        assert "config.alerts.groupCountCliff" in out

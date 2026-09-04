@@ -225,6 +225,9 @@ obviously wrong. Use `count`, which is the row count under the current scope.
 
 Query: `state` = `all` (default) | `empty` | `unattributed`.
 
+Each row also carries `cliff_silence` — the raw value of the Group annotation
+`groupsync-dashboard.io/silence-group-count-cliff`, or `null` (application 0.12.0).
+
 The two filters **overlap, deliberately**. `empty` means *zero members* for any group,
 whatever created it; `unattributed` means *no GroupSync CR claims it*. A hand-made group with no
 members is both, and is returned by both.
@@ -648,8 +651,18 @@ no authentication, so nothing is recorded whatever the setting says, and the end
 Computed on read across all clusters, sorted critical first.
 
 Kinds: `overdue`, `invalid_schedule`, `sync_stopped`, `empty_group`, `unattributed`,
-`stale_group`, `reconcile_error`, `dangling_binding`, `groupsync_crd_absent`, plus the poll
-outcome for a degraded cluster.
+`stale_group`, `reconcile_error`, `dangling_binding`, `groupsync_crd_absent`,
+`config_reconcile_error`, `direct_user_binding`, `group_count_cliff`,
+`group_count_cliff_silenced`, plus the poll outcome for a degraded cluster.
+
+Every row carries `silenced` (boolean) and `silenced_by` (`"annotation"` | `"values"` | `null`).
+Only the group-count cliff sets them: a group whose membership fell by
+`config.alerts.groupCountCliff.dropRatio` from at least `minMembers` within `windowHours`,
+reconstructed from `membership_event` (`gsd/state.py#compute_alerts`,
+`gsd/store.py#Store.group_count_changes`). A cliff silenced by the Group annotation
+`groupsync-dashboard.io/silence-group-count-cliff` (`"true"` or `until=YYYY-MM-DD`) or by the
+chart's `silence` list is reported under `group_count_cliff_silenced` with the same detail —
+reported, never dropped. Both kinds are withheld at the self tier, like `empty_group`.
 
 At the self tier the feed is filtered to the kinds whose backing pages a narrowed reader sees
 (`gsd/api.py#SELF_ALERT_DETAILS`), and one kind's text is rewritten: `reconcile_error` keeps its

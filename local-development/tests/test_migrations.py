@@ -98,3 +98,32 @@ def test_a_fresh_database_lands_on_the_latest_migration(tmp_path):
         assert got == max(target for target, _, _ in _MIGRATIONS)
     finally:
         store.close()
+
+
+def test_migration_8_adds_cliff_silence_and_the_time_index_to_an_older_database(tmp_path):
+    """A pre-0.12 group_state has no cliff_silence; opening it must add the column (NULL for
+    every existing row) and the membership_event time index, and land on the latest version."""
+    path = str(tmp_path / "old.db")
+    conn = sqlite3.connect(path)
+    conn.executescript("""
+        CREATE TABLE group_state (
+            cluster_id TEXT NOT NULL, name TEXT NOT NULL, member_count INTEGER NOT NULL,
+            sync_provider TEXT, group_synced_at TEXT, ldap_uid TEXT, observed_at TEXT NOT NULL,
+            PRIMARY KEY(cluster_id, name));
+        INSERT INTO group_state VALUES ('crc','g',3,NULL,NULL,NULL,'2026-09-01T00:00:00Z');
+        PRAGMA user_version = 7;
+    """)
+    conn.commit()
+    conn.close()
+
+    from gsd.store import _MIGRATIONS
+    store = Store(path)
+    try:
+        cols = {r[1] for r in store._conn.execute("PRAGMA table_info(group_state)")}
+        assert "cliff_silence" in cols
+        assert store._conn.execute("SELECT cliff_silence FROM group_state").fetchone()[0] is None
+        indexes = {r[1] for r in store._conn.execute("PRAGMA index_list(membership_event)")}
+        assert "membership_event_by_time" in indexes
+        assert store._conn.execute("PRAGMA user_version").fetchone()[0] == max(t for t, _, _ in _MIGRATIONS) == 8
+    finally:
+        store.close()
