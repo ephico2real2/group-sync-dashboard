@@ -115,7 +115,12 @@ type: application
 # cacert (when trustedCA.injected is on) and OpenSSL's hashed directory as capath, and a new
 # value, trustedCA.existingConfigMap.subjectHash, mounts the manual CA a second time into that
 # hashed directory (docs/DESIGN_hardened_image.md). Rendered objects otherwise unchanged.
-version: 0.10.0
+# CHART 0.11.0 (2026-09-05), MINOR: appVersion moves to application 0.12.0 (below), and one new module,
+# default-on. `config.alerts.groupCountCliff` (default true) adds five ConfigMap keys, a render guard on
+# its thresholds (`gsd.groupCountCliff`), a `for.groupCountCliff` interval and a twelfth PrometheusRule
+# alert, GroupSyncGroupCountCliff, rendered only while the module is on. A default upgrade therefore
+# gains the ConfigMap keys and, if the rules are on, one alert; nothing else changes shape.
+version: 0.11.0
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,
@@ -156,7 +161,11 @@ version: 0.10.0
 # tier; the Reaches column's logged-in count is null until the User objects have been read at least
 # once, rather than a confident zero; and a row that carries no tier renders its group name as text,
 # not a drill. PATCH.
-appVersion: "0.11.0"
+# 0.12.0 (2026-09-05). The group-count cliff alert (kinds group_count_cliff and
+# group_count_cliff_silenced), `silenced`/`silenced_by` on every /api/alerts row, `cliff_silence` on
+# group rows, schema migration 8. Additive on the wire; a consumer enumerating kinds sees two new
+# ones. MINOR.
+appVersion: "0.12.0"
 
 keywords: [openshift, ldap, rbac, groupsync, observability]
 home: https://github.com/ephico2real2/group-sync-dashboard
