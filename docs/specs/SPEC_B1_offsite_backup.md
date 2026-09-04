@@ -13,16 +13,21 @@
 ## How to read this spec
 
 Everything under "Batch preamble", "Design" and "Batch closing sections" is the design agent's text,
-**verbatim** — it was sliced from the agent's output by heading and re-concatenated to the byte before
-this file was written, and nothing in it was rewritten by hand. Implementation applies the code in
-"Design" exactly as written, one file at a time; a deviation found necessary during implementation is
-written back into this file in the same pull request, with the reason, under "Orchestrator's notes".
+sliced from the agent's output by heading and re-concatenated to the byte before this file was
+written. It is verbatim with exactly two kinds of exception, both stated in this file: the seam
+repair named in the Source row where the agent's output was cut across messages, and the citation or
+name corrections listed under "Orchestrator's notes", each of which changes a reference and never a
+claim. Nothing else was rewritten by hand. Implementation applies the code in "Design" exactly as
+written, one file at a time, with the orchestrator's notes governing where they and the body differ;
+a deviation found necessary during implementation is written back into this file in the same pull
+request, with the reason, under "Orchestrator's notes".
 
 ## Orchestrator's notes
 
 - Lands in R4 after A2, so `docs/CHANGELOG.md` and `Chart.yaml` history text in the body is applied against the file as it stands then; the version pair in the body (chart 0.11.0 / app 0.12.0) is superseded by chart 0.16.0, chart only, because the application does not change.
 - The `## Unreleased` heading already exists (A1); the body's instruction to create it becomes an edit under it.
 - The B2 half of the same design lands earlier (R2); the shared `## 1. Versions and shared bookkeeping` section in the preamble is applied once, by B2, and B1 adds only its own history line.
+- Ladder inversion found in review (PR #69, C8): the body's chart README old text says "eleven" alerts; after B4 it says "twelve", and B1 makes it fourteen. The count is re-derived from main at implementation.
 
 ## Batch preamble (verbatim from the design)
 

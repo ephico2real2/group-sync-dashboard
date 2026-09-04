@@ -13,10 +13,14 @@
 ## How to read this spec
 
 Everything under "Batch preamble", "Design" and "Batch closing sections" is the design agent's text,
-**verbatim** — it was sliced from the agent's output by heading and re-concatenated to the byte before
-this file was written, and nothing in it was rewritten by hand. Implementation applies the code in
-"Design" exactly as written, one file at a time; a deviation found necessary during implementation is
-written back into this file in the same pull request, with the reason, under "Orchestrator's notes".
+sliced from the agent's output by heading and re-concatenated to the byte before this file was
+written. It is verbatim with exactly two kinds of exception, both stated in this file: the seam
+repair named in the Source row where the agent's output was cut across messages, and the citation or
+name corrections listed under "Orchestrator's notes", each of which changes a reference and never a
+claim. Nothing else was rewritten by hand. Implementation applies the code in "Design" exactly as
+written, one file at a time, with the orchestrator's notes governing where they and the body differ;
+a deviation found necessary during implementation is written back into this file in the same pull
+request, with the reason, under "Orchestrator's notes".
 
 ## Orchestrator's notes
 
@@ -24,6 +28,9 @@ written back into this file in the same pull request, with the reason, under "Or
 - Version pair superseded: app 0.13.0, chart 0.12.0 (B4 took 0.12.0 / 0.11.0). The operator confirmed `syncEventsDays: 730` on by default and `membershipEventsDays: 0`.
 - The `README.md` "Not built yet" sentence is edited as it stands after B4 merged (B4 already removed the cliff-alert clause).
 - The preamble's B1 bookkeeping (backup.offsite history text) is NOT applied here; B1 lands in R4.
+- Interaction found in review (PR #69, C7) and modelled as DERIVE: the body lets retention run when `backup_dir` is empty ("purely the operator's policy"). With `syncEventsDays: 730` on by default that is an irreversible delete with no copy anywhere, so the prune is HELD whenever backups are disabled, exactly as it is held until the first successful backup — the `_prune_history` gate becomes `if not self.settings.backup_dir or self._backup_state != "ok"` with the same once-only warning, the test `test_with_backups_disabled_retention_is_the_operators_policy` becomes `test_with_backups_disabled_retention_is_held`, and the values comment and chart README say "retention runs only after a successful backup; with backups off nothing is ever deleted". The operator's 730 default stands.
+- Ladder inversion found in review (PR #69, C8): the body's "Not built yet" NEW text keeps the cliff-alert clause, which B4 already removed. After B2 the sentence reads "Effective-permission expansion, log-scrape enrichment, per-namespace PDF reports"; the old text is the sentence as it stands after B4.
+- The body inserts `membership_event_by_time` into SCHEMA; that insertion is SKIPPED here because B4 already made it. Only `sync_event_by_time` is added.
 
 ## Batch preamble (verbatim from the design)
 

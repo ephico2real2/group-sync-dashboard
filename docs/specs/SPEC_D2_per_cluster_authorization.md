@@ -13,17 +13,21 @@
 ## How to read this spec
 
 Everything under "Batch preamble", "Design" and "Batch closing sections" is the design agent's text,
-**verbatim** — it was sliced from the agent's output by heading and re-concatenated to the byte before
-this file was written, and nothing in it was rewritten by hand. Implementation applies the code in
-"Design" exactly as written, one file at a time; a deviation found necessary during implementation is
-written back into this file in the same pull request, with the reason, under "Orchestrator's notes".
+sliced from the agent's output by heading and re-concatenated to the byte before this file was
+written. It is verbatim with exactly two kinds of exception, both stated in this file: the seam
+repair named in the Source row where the agent's output was cut across messages, and the citation or
+name corrections listed under "Orchestrator's notes", each of which changes a reference and never a
+claim. Nothing else was rewritten by hand. Implementation applies the code in "Design" exactly as
+written, one file at a time, with the orchestrator's notes governing where they and the body differ;
+a deviation found necessary during implementation is written back into this file in the same pull
+request, with the reason, under "Orchestrator's notes".
 
 ## Orchestrator's notes
 
 - R7: app 0.19.0, chart 0.20.0; the body's "PR 1, before D1" ordering and version pair are superseded by the milestone order (D1 lands in R5, D2 in R7).
 - Citation corrected (twice): the design cited the login-capture design doc with the anchor "The five deliberate test logins appear exactly as made", but that sentence is line-wrapped in the source after "The five"; the anchor now cites the part that is on one line.
 - Citation corrected: the design cited the login-capture design doc with the anchor "needs nodes/proxy", but the source has bold and code marks between those two words; the anchor now cites `nodes/proxy`.
-- Name corrected: the design cited a PrometheusRule alert `GroupSyncDashboardVisibilityTierFailing`; no such alert exists. The alert on `gsd_tier_check` outcomes in `charts/group-sync-dashboard/templates/monitoring.yaml` is `GroupSyncDashboardVisibilityChecksFailing`, and the claim (the remote resolver's failures count under the same signal, so the same alert fires) is unchanged.
+- Name corrected: the design cited a PrometheusRule alert `GroupSyncDashboardVisibilityTierFailing`; no such alert exists. The alert on `gsd_visibility_tier_checks_total` failure outcomes in `charts/group-sync-dashboard/templates/monitoring.yaml` is `GroupSyncDashboardVisibilityChecksFailing`, and the claim (the remote resolver's failures count under the same signal, so the same alert fires) is unchanged.
 
 ## Batch preamble (verbatim from the design)
 

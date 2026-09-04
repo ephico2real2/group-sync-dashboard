@@ -13,14 +13,19 @@
 ## How to read this spec
 
 Everything under "Batch preamble", "Design" and "Batch closing sections" is the design agent's text,
-**verbatim** — it was sliced from the agent's output by heading and re-concatenated to the byte before
-this file was written, and nothing in it was rewritten by hand. Implementation applies the code in
-"Design" exactly as written, one file at a time; a deviation found necessary during implementation is
-written back into this file in the same pull request, with the reason, under "Orchestrator's notes".
+sliced from the agent's output by heading and re-concatenated to the byte before this file was
+written. It is verbatim with exactly two kinds of exception, both stated in this file: the seam
+repair named in the Source row where the agent's output was cut across messages, and the citation or
+name corrections listed under "Orchestrator's notes", each of which changes a reference and never a
+claim. Nothing else was rewritten by hand. Implementation applies the code in "Design" exactly as
+written, one file at a time, with the orchestrator's notes governing where they and the body differ;
+a deviation found necessary during implementation is written back into this file in the same pull
+request, with the reason, under "Orchestrator's notes".
 
 ## Orchestrator's notes
 
 - Lands second in R1. The script's first real use is B4's release.
+- Ladder inversion found in review (PR #69, C8): A3 lands BEFORE A2, so the body's "after the A2 bullet" places the CHANGELOG bullet directly under `## Unreleased`, and the RELEASING sentences that describe signed images with SBOM and provenance and an attested chart package are NOT written by A3 — A2 adds them when it lands. A3 documents the release as it is at that point.
 - Citation corrected: the design cited the chart README with the anchor "(no `redirectMode` key)", which nests backticks that the citation grammar (path#anchor inside one backtick span) cannot express; the anchor now cites `redirectMode`, the row's own text.
 
 ## Batch preamble (verbatim from the design)

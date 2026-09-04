@@ -9,20 +9,24 @@ applied file by file as written.
 ## The rule that governs this directory
 
 Every `SPEC_*.md` was written by a design agent that read the repository, and its body is that
-agent's text **verbatim**: sliced from the agent's output by heading and re-concatenated to the byte
-before the file was written, with the exact seam rule stated in the file's header where an agent's
-output was cut across messages. The only hand-written parts are the header table, the
-"Orchestrator's notes" (what supersedes a number in the body, and which citations were corrected
-and why) and this index. A deviation found necessary during implementation is written back into
+agent's text: sliced from the agent's output by heading and re-concatenated to the byte before the
+file was written. It is verbatim with exactly two kinds of exception, both stated in the file: the
+seam repair named in its Source row where the agent's output was cut across messages, and the
+citation or name corrections listed in its orchestrator's notes, each changing a reference and
+never a claim. The only hand-written parts are the header table, the "Orchestrator's notes" (what
+supersedes a number in the body, the corrections, and deviations found in review or in
+implementation) and this index. A deviation found necessary during implementation is written back into
 the spec in the same pull request, with the reason, under the orchestrator's notes.
 
 Two consequences for the tooling:
 
 - A spec cites names its own code will create. `local-development/tests/test_docs_citations.py#_spec_introduces`
-  lets a citation from a spec pass when the anchor appears in the text of any spec in the
-  programme (outside the citing span itself); once the feature ships, the anchor exists in the
-  cited file and the ordinary rule takes over. A spec citing a name that neither the code nor any
-  spec contains fails, which is how four wrong citations in the designs were found and corrected.
+  lets a citation from a spec pass when the specs introduce the anchor: for a Python target, a
+  name that the Python code blocks of some spec define (parsed, so a plausible name in prose
+  cannot pass) or literal text inside one of those blocks; for any other target, the anchor text
+  in some spec outside the citing span. Once the feature ships, the anchor exists in the cited
+  file and the ordinary rule takes over. A spec citing a name that neither the code nor any spec
+  introduces fails, which is how four wrong citations in the designs were found and corrected.
 - The verbatim bodies are exempt from `markdownlint` (see the comment in the lint config at the
   repository root); this index is not.
 
@@ -44,15 +48,15 @@ Two consequences for the tooling:
 
 | Id | Specification | Batch | Milestone | Version on release | Issue | Status |
 |---|---|---|---|---|---|---|
-| A1 | [`SPEC_A1_ui_tests_in_ci.md`](SPEC_A1_ui_tests_in_ci.md) — Playwright UI tests in CI | A — quality | R1 | none (CI and docs) | [#56](https://github.com/ephico2real2/group-sync-dashboard/issues/56) | specified |
-| A3 | [`SPEC_A3_release_script.md`](SPEC_A3_release_script.md) — release preparation script | A — release | R1 | none (a tool) | [#57](https://github.com/ephico2real2/group-sync-dashboard/issues/57) | specified |
+| A1 | [`SPEC_A1_ui_tests_in_ci.md`](SPEC_A1_ui_tests_in_ci.md) — Playwright UI tests in CI | A — quality | R1 | no version change (CI and docs only) | [#56](https://github.com/ephico2real2/group-sync-dashboard/issues/56) | specified |
+| A3 | [`SPEC_A3_release_script.md`](SPEC_A3_release_script.md) — release preparation script | A — release | R1 | no version change (a repository tool) | [#57](https://github.com/ephico2real2/group-sync-dashboard/issues/57) | specified |
 | B4 | [`SPEC_B4_group_count_cliff.md`](SPEC_B4_group_count_cliff.md) — group-count cliff alert with read-only silencing | B — alerts | R2 | app 0.12.0, chart 0.11.0 | [#58](https://github.com/ephico2real2/group-sync-dashboard/issues/58) | specified |
 | B2 | [`SPEC_B2_history_retention.md`](SPEC_B2_history_retention.md) — retention for membership_event and sync_event | B — data | R2 | app 0.13.0, chart 0.12.0 | [#59](https://github.com/ephico2real2/group-sync-dashboard/issues/59) | specified |
-| B3 | [`SPEC_B3_grafana_dashboard.md`](SPEC_B3_grafana_dashboard.md) — Grafana dashboard shipped with the chart | B — observability | R2 | chart 0.13.0 | [#60](https://github.com/ephico2real2/group-sync-dashboard/issues/60) | specified |
+| B3 | [`SPEC_B3_grafana_dashboard.md`](SPEC_B3_grafana_dashboard.md) — Grafana dashboard shipped with the chart | B — observability | R2 | chart 0.13.0 (chart only) | [#60](https://github.com/ephico2real2/group-sync-dashboard/issues/60) | specified |
 | C1 | [`SPEC_C1_table_export.md`](SPEC_C1_table_export.md) — CSV and JSON export of the table on screen | C — product | R3 | app 0.14.0, chart 0.14.0 | [#61](https://github.com/ephico2real2/group-sync-dashboard/issues/61) | specified |
 | C2 | [`SPEC_C2_users_tab_providers_identities.md`](SPEC_C2_users_tab_providers_identities.md) — Users tab: provider allow-list and exact first login | C — product | R3 | app 0.15.0, chart 0.15.0 | [#62](https://github.com/ephico2real2/group-sync-dashboard/issues/62) | specified |
-| A2 | [`SPEC_A2_supply_chain.md`](SPEC_A2_supply_chain.md) — SBOM, keyless signing, build and chart provenance | A — supply chain | R4 | none (workflows and the build script) | [#63](https://github.com/ephico2real2/group-sync-dashboard/issues/63) | specified |
-| B1 | [`SPEC_B1_offsite_backup.md`](SPEC_B1_offsite_backup.md) — off-volume backup CronJob and restore runbook | B — operations | R4 | chart 0.16.0 | [#64](https://github.com/ephico2real2/group-sync-dashboard/issues/64) | specified |
+| A2 | [`SPEC_A2_supply_chain.md`](SPEC_A2_supply_chain.md) — SBOM, keyless signing, build and chart provenance | A — supply chain | R4 | no app or chart version change (workflows and the build script only) | [#63](https://github.com/ephico2real2/group-sync-dashboard/issues/63) | specified |
+| B1 | [`SPEC_B1_offsite_backup.md`](SPEC_B1_offsite_backup.md) — off-volume backup CronJob and restore runbook | B — operations | R4 | chart 0.16.0 (chart only) | [#64](https://github.com/ephico2real2/group-sync-dashboard/issues/64) | specified |
 | C4 | [`SPEC_C4_idle_timeout.md`](SPEC_C4_idle_timeout.md) — idle timeout with countdown | C — product | R5 | app 0.16.0, chart 0.17.0 | [#65](https://github.com/ephico2real2/group-sync-dashboard/issues/65) | specified |
 | D1 | [`SPEC_D1_audit_log_login_capture.md`](SPEC_D1_audit_log_login_capture.md) — login capture from the oauth-server audit log | D — architecture | R5 | app 0.17.0, chart 0.18.0 | [#66](https://github.com/ephico2real2/group-sync-dashboard/issues/66) | specified |
 | C3 | [`SPEC_C3_namespace_report.md`](SPEC_C3_namespace_report.md) — namespace access report, HTML core and optional PDF image | C — product | R6 | app 0.18.0, chart 0.19.0, reporting image 0.1.0 | [#67](https://github.com/ephico2real2/group-sync-dashboard/issues/67) | specified |
@@ -111,12 +115,19 @@ implementation order, never by any single body:
    no migration.
 2. **The `(cluster_id, observed_at)` index on `membership_event`.** Both B2 and B4 define
    `membership_event_by_time`. B4 ships first and defines it; B2 adds only `sync_event_by_time`.
-3. **Version pairs.** See the ladder above.
+3. **Version pairs.** Every release-bearing body assumed it was the next release (app 0.12.0,
+   chart 0.11.0); the A batch explicitly carries no release. The header and the ladder above
+   supersede every version number inside a body.
 4. **The README's "Not built yet" sentence and the CHANGELOG's `## Unreleased` heading.** A1
    creates the heading; B4 then B2 each edit the sentence as it stands after the earlier merge.
 5. **Shared constants.** B2 extends `RETENTION_TABLES`; B4 extends the alert-kind vocabulary and
    the self-tier detail list; D1 adds a login outcome. Each old/new text in a body is re-derived
    from main at implementation time, and a difference is recorded as a deviation.
+6. **Found by the adversarial review of PR #69** (`docs/REVIEW_feature_specs.md`): A3 lands before
+   A2, so the release-tooling docs describe signing and SBOMs only when A2 adds them; B1's chart
+   README old text counts eleven alerts, which B4 makes twelve; and B2's retention is held while
+   backups are disabled, so the default window never deletes what has no copy. Each is in the
+   affected spec's orchestrator's notes.
 
 ## Decisions the operator has made
 
