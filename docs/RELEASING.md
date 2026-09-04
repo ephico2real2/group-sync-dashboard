@@ -168,22 +168,49 @@ helm upgrade ... --set image.tag=0.7.0-f9fa896778
 
 ### An application release
 
+```sh
+cd local-development
+./prepare-release.py --app 0.12.0 "Users tab pages by cursor"          # branch + commit
+./prepare-release.py --app 0.12.0 "Users tab pages by cursor" --pr     # ...and the pull request
+```
+
+What that does, and what you would do by hand without it:
+
 1. Bump `version` in `local-development/pyproject.toml`.
 2. Bump `__version__` in `local-development/gsd/__init__.py` to match — it is what `/api/version` and
    `gsd_build_info` report, and a test holds the two together.
 3. Bump `appVersion` in `charts/group-sync-dashboard/Chart.yaml` to match.
-4. Bump `Chart.yaml` `version` too, because you just changed the chart. `ci.yml` will fail the PR if
-   you forget.
-5. Open the PR, merge it. `publish.yml` sees the version change and publishes both the immutable tag
+4. Bump `Chart.yaml` `version` too, because you just changed the chart. The script derives a PATCH
+   bump; pass `--chart A.B.C` when the release is more than that. `ci.yml` fails the PR if the
+   version did not move.
+5. Write the `# CHART A.B.C (date), KIND: …` line above `version:` and the application paragraph
+   above `appVersion:` — the file's history, newest nearest the field.
+6. Turn `## Unreleased` in `docs/CHANGELOG.md` into `## Application X — chart Y — date`, with the
+   reason as its first bullet and everything merged since the last release beneath it.
+7. Run `tests/test_chart_versions.py`. The script refuses to commit if it fails, and leaves the
+   edits in the tree for you to read.
+8. Open the PR, merge it. `publish.yml` sees the version change and publishes both the immutable tag
    and the `:<appVersion>` alias.
 
-All three version edits land in one PR, or CI is red. That is the coupling working, not friction.
+The script refuses a dirty tree, a version that does not advance, a bump that leaves a lower
+component non-zero, and a release branch that already exists; it commits to `release/app-X.Y.Z`
+with you as the only author and never touches `main` (`local-development/prepare-release.py#WHAT IT REFUSES`).
+All the edits land in one PR, or CI is red. That is the coupling working, not friction.
 
 ### A chart-only release
 
-Change the templates or defaults, bump `Chart.yaml` `version`, open the PR, merge. No image is
-built — `charts/**` is deliberately absent from `publish.yml`'s path filter — and `helm.yaml` retags
-the existing image under the new chart version.
+Change the templates or defaults, then:
+
+```sh
+cd local-development
+./prepare-release.py --chart 0.11.0 "route.tls.termination is settable"
+```
+
+Commit the template change first; the script refuses a dirty tree, so the release commit contains
+only the release. It bumps `Chart.yaml` `version`, writes the history line, and turns `## Unreleased` into
+`## Chart A.B.C — application X.Y.Z — date`. Open the PR, merge. No image is built — `charts/**`
+is deliberately absent from `publish.yml`'s path filter — and `helm.yaml` retags the existing image
+under the new chart version.
 
 ### Neither
 

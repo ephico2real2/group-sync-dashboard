@@ -7,7 +7,7 @@
 | Release | R1 — Quality and release tooling |
 | Version on release | no version change (a repository tool) |
 | Issue | [#57](https://github.com/ephico2real2/group-sync-dashboard/issues/57) |
-| Status | specified |
+| Status | in progress |
 | Source | design agent output `a38be666b46d57784`; one message; no seam |
 
 ## How to read this spec
@@ -27,6 +27,10 @@ request, with the reason, under "Orchestrator's notes".
 - Lands second in R1. The script's first real use is B4's release.
 - Ladder inversion found in review (PR #69, C8): A3 lands BEFORE A2, so the body's "after the A2 bullet" places the CHANGELOG bullet directly under `## Unreleased`, and the RELEASING sentences that describe signed images with SBOM and provenance and an attested chart package are NOT written by A3 — A2 adds them when it lands. A3 documents the release as it is at that point.
 - Citation corrected: the design cited the chart README with the anchor "(no `redirectMode` key)", which nests backticks that the citation grammar (path#anchor inside one backtick span) cannot express; the anchor now cites `redirectMode`, the row's own text.
+
+- Deviation recorded at implementation (PR for #57): the body's test asserted `"## Unreleased" not in log` after a release, but the CHANGELOG's intro sentence (written by A1 and extended by this spec) contains that text inside backticks, so the substring assertion cannot pass on the real file while the script correctly replaces only the heading line. Both assertions now test for the heading LINE (`^## Unreleased` with `re.M`), which is what the script's own regex targets. No change to the script.
+
+- Deviation recorded at implementation (PR for #57): the sandbox `FILES` list gains `.gitignore`. The script runs `tests/test_chart_versions.py` inside the sandbox, which writes `tests/__pycache__/`; the real repository ignores it, the sandbox did not, and the "everything edited was committed" assertion saw an untracked directory. Test harness only; no change to the script.
 
 ## Batch preamble (verbatim from the design)
 

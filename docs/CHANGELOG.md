@@ -5,7 +5,8 @@ the application (`pyproject.toml`, deployed as `quay.io/ephico2real/group-sync-d
 and the chart (`Chart.yaml`, published to the Helm repository). A chart release that only moves
 `appVersion` is listed under the application release it carries. The reasoning behind each change
 lives next to the code and in the design and review records linked here. Changes merged since the
-last release sit under `## Unreleased` until the release that carries them replaces that heading.
+last release sit under `## Unreleased` until the release that carries them replaces that heading —
+which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
@@ -15,6 +16,12 @@ last release sit under `## Unreleased` until the release that carries them repla
   Screenshots and traces are kept as a workflow artifact only when a test fails. Repository
   variable `CI_UI_TESTS=false` turns the job off and leaves the interpreter matrix exactly as it
   was; `test_live_smoke.py` still runs nowhere but against a cluster you name.
+- **A release is one command.** `local-development/prepare-release.py --app X.Y.Z "reason"` (or
+  `--chart A.B.C`) moves the four version fields together, writes the `Chart.yaml` history line and
+  the application paragraph, turns this `## Unreleased` heading into the release heading, runs
+  `tests/test_chart_versions.py`, and commits to `release/…` with the operator as sole author;
+  `--pr` opens the pull request. It refuses a dirty tree, a version that does not advance, and a
+  branch that exists. Nothing writes to `main`, as before.
 
 ## Application 0.11.0 — chart 0.10.0 — 2026-09-04
 
