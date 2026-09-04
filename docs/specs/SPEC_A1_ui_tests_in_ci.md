@@ -7,7 +7,7 @@
 | Release | R1 — Quality and release tooling |
 | Version on release | no version change (CI and docs only) |
 | Issue | [#56](https://github.com/ephico2real2/group-sync-dashboard/issues/56) |
-| Status | specified |
+| Status | in progress |
 | Source | design agent output `a38be666b46d57784`; one message; no seam |
 
 ## How to read this spec
@@ -26,6 +26,8 @@ request, with the reason, under "Orchestrator's notes".
 
 - This is the first feature to land, so its `## Unreleased` heading in `docs/CHANGELOG.md` is the one every later spec extends; where a later spec says it introduces that heading, it edits the existing one instead.
 - Citation corrected: the design cited the chart README with the anchor "(no `redirectMode` key)", which nests backticks that the citation grammar (path#anchor inside one backtick span) cannot express; the anchor now cites `redirectMode`, the row's own text.
+
+- Deviation recorded at implementation (PR for #56): the closing section says a `README.md` variables row for `CI_UI_TESTS` is "included in A2's table rewrite; if A1 lands alone, add only that row". No such table exists on main today — A2 creates it — so A1 adds no README row; the switch is documented in the local-development README's Tests section, and A2's table carries the row when it lands.
 
 ## Batch preamble (verbatim from the design)
 

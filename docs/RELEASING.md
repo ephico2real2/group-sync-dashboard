@@ -27,7 +27,7 @@ Every merge goes through one gate, then fans out to two independent workflows:
 ```
    pull request
         |
-        |   ci.yml:  tests(3.11) · tests(3.14) · chart · diagrams · image
+        |   ci.yml:  tests(3.11) · tests(3.14) · ui · chart · diagrams · image
         |            "Chart changes bump the chart version"
         v
    merge to main
