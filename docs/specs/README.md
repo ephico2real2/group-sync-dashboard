@@ -140,6 +140,8 @@ Recorded 2026-09-04, before implementation:
   the README carries both the sidecar-label and the operator-CR recipes.
 - **D1:** the rendered default when the module is on is cluster-wide `get nodes/proxy` and
   `list nodes`; `nodeNames` stays the optional narrowing. The module itself stays off.
+- **A1:** the browser-tests job is a required status check on `main` from its first merge, not after a
+  week of green runs: "this is real life testing, so it is needed."
 
 Questions each design left for the operator are collected in the feature's issue and answered
 before its pull request opens: A1 (when the browser job becomes a required check), A2 (the cosign

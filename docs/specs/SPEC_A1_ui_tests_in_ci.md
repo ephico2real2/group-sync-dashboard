@@ -32,6 +32,8 @@ request, with the reason, under "Orchestrator's notes".
 - Found in review (PR #70, C1): the body's comment "anything but the string 'false' runs the job" is not GitHub's semantics — `==`/`!=` ignore case, so `False` and `FALSE` also turn the job off. Kept as the contract (an operator who writes `False` means off); the workflow comment and the test docstrings say so. The `toJSON` comparison the reviewer proposed, which would make the switch case-sensitive, was rejected. The unset case was measured: the repository has no variables and the job ran.
 - Found in review (PR #70, C4): the body's risk sentence calls Playwright 1.62 an "abi3 wheel". Measured with `pip download` for CPython 3.14 on manylinux2014: `playwright-1.62.0-py3-none-manylinux1_x86_64.whl` (platform-tagged for the bundled driver, no Python ABI), `pytest_playwright-0.8.0-py3-none-any.whl`, and `greenlet-3.2.5-cp314-cp314-manylinux2014_x86_64…whl`. Nothing compiles from source; the greenlet half of the sentence is right, the abi3 half is not.
 
+- Q1 answered by the operator on 2026-09-04, before the merge: "this is real life testing, so it is needed." `Browser tests (Playwright, Chromium)` was added to main's required status checks at once (the seventh, beside the six existing ones, same GitHub Actions app id), not after a week of green runs.
+
 ## Batch preamble (verbatim from the design)
 
 # Design: A1 (UI tests in CI), A2 (SBOM, signing, provenance), A3 (release preparation script)
