@@ -6,7 +6,8 @@ remembered to run it. `ci.yml` now runs the file once, with a browser, next to t
 matrix. A workflow is text, so the only way to keep that true is to read the text back.
 
 BOTH STATES ARE ASSERTED. The switch is repository variable CI_UI_TESTS; ON unless the value is
-exactly 'false'. The OFF state must be the workflow as it was before the job existed — the
+'false' — in any letter case, because GitHub ignores case when comparing strings, so an operator
+who writes False gets off, which is what they meant. The OFF state must be the workflow as it was before the job existed — the
 `tests` matrix still deselecting the browser file and the live smoke test — so an operator who
 turns the job off gets yesterday's CI and not a third variant of it.
 """
@@ -51,7 +52,9 @@ def test_the_ui_job_runs_the_browser_file_with_a_browser() -> None:
 
 
 def test_the_switch_is_a_repository_variable_that_is_on_unless_told_otherwise() -> None:
-    """ON by default: no credential, no cluster, no second image. 'false' and nothing else turns it off."""
+    """ON by default: no credential, no cluster, no second image. Only the value false, in any letter
+    case, turns it off; an unset variable is the empty string and runs the job (measured: the first run
+    of this job was on a repository with no variables at all)."""
     assert _job("ui").get("if") == "vars.CI_UI_TESTS != 'false'", (
         f"the ui job's condition is {_job('ui').get('if')!r}; it must be exactly "
         "vars.CI_UI_TESTS != 'false' so an unset variable runs the job"

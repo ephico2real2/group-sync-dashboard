@@ -114,6 +114,8 @@ REVIEW_ARTIFACTS = (
     # The PR #69 specifications review. It quotes the wrong anchors the reviewers' probes used,
     # deliberately — an anchor that MUST fail is the record.
     "REVIEW_feature_specs.md",
+    # The PR #70 (A1) review; its findings quote the workflow and test lines they are about.
+    "REVIEW_A1.md",
     # The log-level contract review. Same reason, plus a worked example of why the exemption is
     # right: it cites `README.md#Configuration`, a heading that does not exist — and the finding
     # attached to that citation was correct and was applied. Rewriting the citation would not make

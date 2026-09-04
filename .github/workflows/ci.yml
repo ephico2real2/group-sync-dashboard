@@ -161,7 +161,9 @@ jobs:
     # floor and ceiling, and the page does not change with the interpreter; once, on the version
     # the Containerfile ships, keeps the matrix fast and the evidence in one place.
     #
-    # THE SWITCH: repository variable CI_UI_TESTS. Anything but the string 'false' runs the job.
+    # THE SWITCH: repository variable CI_UI_TESTS. The value false turns the job off — in any
+    # letter case, because GitHub ignores case when it compares strings — and anything else,
+    # including the variable not existing at all, runs it.
     # ON by default because it needs no credential, no cluster and no second image — only a
     # Chromium download — and a green run that skips tests which exist is the failure this repo
     # keeps naming. A fork or a self-hosted runner that cannot fetch browsers sets it to false;
