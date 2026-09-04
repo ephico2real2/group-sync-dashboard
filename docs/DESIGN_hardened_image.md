@@ -286,6 +286,15 @@ application is configured by `GSD_TRUSTED_CA_FILE` and its own `caBundleFile`, O
 `capath` serves its fallback context unchanged, and curl is now configured by a file the
 application never opens.
 
+**Proven on the deployed chart, from the dashboard pod.** With default values: `curl -v` reports
+`CAfile` (the injected bundle) and `CApath` (`/etc/pki/tls/certs`), a public host verifies, and a
+server signed by a CA the cluster does not know is refused (exit 60). With
+`trustedCA.existingConfigMap` naming that CA and `subjectHash=7886c608`: the hashed file is
+mounted, and the enterprise server is verified by curl, by the application's own
+`_trusted_ca_context()` through httpx, and by urllib's default context — while public hosts still
+verify and the application keeps polling. Measured 2026-09-04 against the tutorial's TLS server
+(`TUTORIAL_ca_trust_hashed_directory.md`, Part 3.2).
+
 One address stays outside both: the in-cluster API (`https://kubernetes.default.svc`) is signed
 by the cluster's own CA, present in the ServiceAccount's `ca.crt` and not in the injected bundle
 (measured on CRC: exit 60 through the injected bundle, 200 with the ServiceAccount CA). An
