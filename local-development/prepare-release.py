@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Prepare a release pull request: the version fields, the history comment, the changelog heading,
-the branch and the commit — one operation that either completes or changes nothing.
+the branch and the commit — one operation that commits every release edit or commits nothing.
 
     ./prepare-release.py --app 0.12.0 "Users tab pages by cursor"
     ./prepare-release.py --chart 0.11.0 "route.tls.termination is settable"
@@ -23,8 +23,9 @@ and the release guide requires the bump — that is the precedent of chart 0.7.1
 WHAT IT REFUSES. A dirty tree (a release commit must contain exactly the release). A version that
 does not advance, or that moves a component while leaving a lower one non-zero (0.10.0 -> 0.11.1
 is not a bump anyone means). A reason that is empty or spans lines. A release branch that already
-exists. A version test that fails — the edits are left in the tree for inspection, and nothing is
-committed.
+exists (checked before anything is edited). A version test that fails — the edits are left in the
+tree for inspection, and nothing is committed. A reason with an unbalanced backtick or an asterisk:
+the changelog bullet is already bold, and a code span must close.
 
 NO Co-Authored-By TRAILER. The operator cutting the release is its sole author.
 """
@@ -129,6 +130,13 @@ def sentence(reason: str) -> str:
     text = reason.strip()
     if not text or "\n" in text:
         raise ReleaseError("the reason must be one non-empty line")
+    # The reason lands inside a bold changelog bullet and a YAML comment, unescaped. A balanced
+    # pair of backticks is a code span an operator meant; an odd count would swallow the rest of
+    # the changelog into one, and an asterisk would end the bold early. Refused, never rewritten.
+    if text.count("`") % 2:
+        raise ReleaseError("the reason has an unbalanced backtick; close the code span")
+    if "*" in text:
+        raise ReleaseError("the reason may not contain '*'; the changelog bullet is already bold")
     return text.rstrip(".")
 
 
@@ -152,8 +160,12 @@ def main(argv: list[str]) -> int:
 def run(args: argparse.Namespace) -> int:
     if not args.app and not args.chart:
         raise ReleaseError("nothing to release: give --app and/or --chart")
-    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", args.date):
-        raise ReleaseError(f"--date {args.date!r} is not YYYY-MM-DD")
+    try:
+        parsed_date = dt.date.fromisoformat(args.date)
+    except ValueError:
+        parsed_date = None
+    if parsed_date is None or parsed_date.isoformat() != args.date:
+        raise ReleaseError(f"--date {args.date!r} is not a real YYYY-MM-DD date")
     reason = sentence(args.reason)
 
     # ── Preconditions ─────────────────────────────────────────────────────────────────────────
@@ -181,6 +193,10 @@ def run(args: argparse.Namespace) -> int:
     chart_kind = kind_of_bump(chart_old, chart_new)
     if args.app and not args.chart:
         print(f"derived : chart {chart_old} -> {chart_new} (PATCH, because appVersion moves)")
+    branch = f"release/app-{app_new}" if args.app else f"release/chart-{chart_new}"
+    if (not args.no_commit
+            and git("rev-parse", "--verify", "--quiet", f"refs/heads/{branch}", check=False).returncode == 0):
+        raise ReleaseError(f"branch {branch} already exists; nothing was changed. Delete or rename it.")
 
     # ── The edits ─────────────────────────────────────────────────────────────────────────────
     changed: list[pathlib.Path] = [CHART, CHANGELOG]
@@ -237,10 +253,6 @@ def run(args: argparse.Namespace) -> int:
         return 0
 
     # ── The branch and the commit ──────────────────────────────────────────────────────────────
-    branch = f"release/app-{app_new}" if args.app else f"release/chart-{chart_new}"
-    if git("rev-parse", "--verify", "--quiet", f"refs/heads/{branch}", check=False).returncode == 0:
-        raise ReleaseError(f"branch {branch} already exists; the edits are in the tree, nothing was "
-                           "committed. Delete or rename it, or `git checkout -- .` to undo.")
     title = (f"release: application {app_new}, chart {chart_new}" if args.app
              else f"release: chart {chart_new}")
     body_lines = [reason + "."]

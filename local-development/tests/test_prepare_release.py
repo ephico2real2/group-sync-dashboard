@@ -1,5 +1,6 @@
 """prepare-release.py moves the four version fields together, writes the two history records, and
-commits to a branch that is not main — or refuses and changes nothing.
+commits to a branch that is not main — or refuses. A refusal before the edits changes nothing; a
+version test that fails after them leaves the edits for inspection and commits nothing.
 
 Run in a COPY of the repository under a temporary git checkout: the script derives every path from
 its own location, so copying it beside copies of the files it edits is the whole harness. The
@@ -68,9 +69,9 @@ def sandbox(tmp_path: pathlib.Path) -> pathlib.Path:
     return tmp_path
 
 
-def run(sandbox: pathlib.Path, *args: str) -> subprocess.CompletedProcess:
+def run(sandbox: pathlib.Path, *args: str, date: str = DATE) -> subprocess.CompletedProcess:
     return subprocess.run(
-        [sys.executable, str(sandbox / "local-development" / "prepare-release.py"), *args, "--date", DATE],
+        [sys.executable, str(sandbox / "local-development" / "prepare-release.py"), *args, "--date", date],
         cwd=sandbox, env=GIT_ENV, capture_output=True, text=True, check=False,
     )
 
@@ -221,12 +222,35 @@ def test_no_commit_edits_the_tree_and_stops(sandbox: pathlib.Path) -> None:
     assert git(sandbox, "status", "--porcelain").strip() != ""
 
 
-def test_an_existing_release_branch_is_refused(sandbox: pathlib.Path) -> None:
+def test_an_existing_release_branch_is_refused_before_anything_is_edited(sandbox: pathlib.Path) -> None:
+    before = current(sandbox)
     git(sandbox, "branch", "release/app-9.0.0")
     done = run(sandbox, "--app", "9.0.0", "Twice")
     assert done.returncode == 1
     assert "already exists" in done.stderr
     assert git(sandbox, "rev-parse", "--abbrev-ref", "HEAD").strip() == "main"
+    assert current(sandbox) == before and git(sandbox, "status", "--porcelain").strip() == ""
+
+
+@pytest.mark.parametrize("bad_date", ["2026-99-99", "2026-02-30", "26-09-05"])
+def test_the_date_must_be_a_real_calendar_date(sandbox: pathlib.Path, bad_date: str) -> None:
+    """A regex accepted 2026-99-99 and wrote it into both history records."""
+    done = run(sandbox, "--chart", "0.10.1", "Bad date", "--no-commit", date=bad_date)
+    assert done.returncode == 1, done.stdout + done.stderr
+    assert "not a real YYYY-MM-DD date" in done.stderr
+    assert git(sandbox, "status", "--porcelain").strip() == ""
+
+
+def test_a_reason_that_would_break_the_changelog_bullet_is_refused(sandbox: pathlib.Path) -> None:
+    """The bullet is `- **reason.**`: an odd backtick swallows the rest of the file into a code span
+    and an asterisk ends the bold early. A balanced pair is a code span the operator meant."""
+    for reason in ("an `unclosed span", "a *star*"):
+        done = run(sandbox, "--chart", "0.10.1", reason, "--no-commit")
+        assert done.returncode == 1, reason
+    assert git(sandbox, "status", "--porcelain").strip() == ""
+    done = run(sandbox, "--chart", "0.10.1", "the `--pr` flag opens the pull request", "--no-commit")
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert "- **the `--pr` flag opens the pull request.**" in (sandbox / "docs/CHANGELOG.md").read_text()
 
 
 def test_the_reason_must_be_one_line(sandbox: pathlib.Path) -> None:

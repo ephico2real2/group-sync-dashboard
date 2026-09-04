@@ -32,6 +32,11 @@ request, with the reason, under "Orchestrator's notes".
 
 - Deviation recorded at implementation (PR for #57): the sandbox `FILES` list gains `.gitignore`. The script runs `tests/test_chart_versions.py` inside the sandbox, which writes `tests/__pycache__/`; the real repository ignores it, the sandbox did not, and the "everything edited was committed" assertion saw an untracked directory. Test harness only; no change to the script.
 
+- Found in review (PR #71, Codex C2): the docstring promised "either completes or changes nothing" while the existing-branch check ran after the four edits. The check now runs before any edit (skipped under `--no-commit`, which never branches) and both docstrings say what is true: a refusal before the edits changes nothing; a failed version test leaves its edits for inspection, as the design intended.
+- Found in review (PR #71, Codex C7): `--date` was shape-checked only, so `2026-99-99` was written into both history records. Now `date.fromisoformat` with a round-trip; three bad dates are tested.
+- Found in review (PR #71, Codex C6): an unbalanced backtick in the reason produced an unclosed code span in the changelog bullet. The reviewer's fix escaped every backtick, which would break the code span an operator means ("the `--pr` flag"); rejected. The reason is refused, never rewritten, when its backticks are unbalanced or it contains `*` (the bullet is already bold); a balanced pair is tested to pass through intact.
+- Found in review (PR #71, Codex C4), routed to A2: `.github/workflows/helm.yaml`'s `sed` extractors accept broader version forms than this script writes (`[0-9][0-9.]*`, `"(.*)"` with trailing blanks). Everything the script writes is accepted, so nothing changes here; A2, which rewrites `helm.yaml`, tightens both extractors to `X.Y.Z` and `"(.+)"` with a test.
+
 ## Batch preamble (verbatim from the design)
 
 # Design: A1 (UI tests in CI), A2 (SBOM, signing, provenance), A3 (release preparation script)
