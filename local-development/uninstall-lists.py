@@ -21,7 +21,10 @@ Two lists come out:
   so the packages still recorded as owning it stay true.
 
 Anything unexpected — a --dump line that does not parse, a package that is recorded but yields
-no paths — is an exit code, not a shorter list.
+no paths, a path the owner table does not know — is an exit code, not a shorter list. That
+includes a path with whitespace in it: rpm's --dump is whitespace-separated, so such a path
+cannot be read back unambiguously, and this script refuses rather than guesses. None of the
+three packages has one; if a future base does, the build fails and says which.
 """
 
 from __future__ import annotations
@@ -74,9 +77,12 @@ def main() -> int:
             if len(fields) != 11:
                 sys.exit(f"unexpected --dump line for {package}: {line!r}")
             path, mode = fields[0], int(fields[4], 8)
+            if path not in owners:
+                # The two views of the same database disagree; do not guess which is right.
+                sys.exit(f"{path} is in {package}'s --dump but in no package's file list")
             if mode & 0o170000 != 0o040000:
                 files.add(path)
-            elif owners.get(path, set()) <= ours:
+            elif owners[path] <= ours:
                 dirs.add(path)
             # else: a directory another package owns — stays
 

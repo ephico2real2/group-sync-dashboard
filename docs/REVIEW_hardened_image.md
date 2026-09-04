@@ -27,7 +27,7 @@ declined; the verdict column is mine, not theirs.
 | 14 | Codex (should-fix) | Floating tags: pin digests and automate digest-update PRs instead. | — | **Declined, by the operator's decision** to take Red Hat's latest 3.14 on every build. The failure modes both reviewers enumerated are recorded in the design doc. What catches the silent ones is the proofs in the image, which observe the removals and the loader's resolution on every build; the exact-list unit test reads the Containerfile's text and cannot see the base — the second pass was right to say so, and the test's docstring now says it. |
 | 15 | Codex | Verify `python3-libs`' dependency on `libuuid` is knowingly broken in the shipped database. | — | **Accepted as is.** It is deliberate, `--nodeps`, and now named in the Containerfile and the design doc. |
 | 16 | Cursor (note) | `Chart.yaml` had no history comment for 0.10.0. | Read. | **Fixed.** |
-| 17 | Cursor (A2 residual) | A future base that gains one of the twelve packed libraries would be silently overwritten by the pack copy. | — | **Accepted.** The exact-list test forces a re-measurement whenever the list moves; a base that gains one of these libraries would be overwritten with the pack stage's build of the same library from the same repository, which is the pack's premise. Recorded in the design doc. |
+| 17 | Cursor (A2 residual) | A future base that gains one of the twelve packed libraries would be silently overwritten by the pack copy. | — | **Accepted.** Nothing in the repository can observe the base; the unit test reads the Containerfile's text and would not notice (the third pass was right to say so). What bounds the risk is that the overwrite would be with the pack stage's build of the same library from the same repository, after `dnf update` — the pack's premise — and that the loader proof runs on every build. Recorded in the design doc. |
 
 Confirmed without change: A1 (no `RUN` before the pack), A6 (ENV/LABEL/CMD verbatim), B1
 (`SSL_CERT_DIR` is OpenSSL's default; not for the proxy, which takes `-openshift-ca`), C1 (the
@@ -52,12 +52,34 @@ thread; Cursor ran fresh. Every finding re-checked against a rebuilt image befor
 | S10 | Codex | Outcomes 1, 2, 11 and 14 above overstated what had been done. | Read against the tree. | **Corrected** in place. |
 | — | found by the rebuild, not the reviewers | The pack stage classified paths by its own filesystem (`test -d`, `rpm -qf`), which holds a different build of the same packages: a runtime directory was listed as a file and the step failed; then `rm -rf` on a directory only our packages *record* deleted another package's file in `/usr/lib/.build-id/2d`; then the owner query's format string was wrong and rpm returned an empty table that made every directory look exclusive. | Build failures and `ls` of the image, each time. | **Fixed.** Classification and ownership come from the database alone (`rpm --dump`, `rpm -qa --qf '[%{=NAME}\t%{FILENAMES}\n]'`, an empty table refused); directories go only with `rmdir`. |
 
+## Third pass, on the final shape
+
+One brief of seven items (T1–T7) over commit `3016382`, after the Containerfile was rewritten to
+be read and the two Python steps became repository files. Codex resumed its thread.
+
+| # | Raised by | Finding | Verified how | Outcome |
+|---|---|---|---|---|
+| U1 | Codex (should-fix) | `uninstall-lists.py` treated a `--dump` path absent from the owner table as exclusively ours, because the empty set is a subset of anything. | Read. | **Fixed.** A path the owner table does not know is an exit code. |
+| U2 | Codex (should-fix) | The lists and the proof script were `COPY`ed and deleted in a later step, so they stayed in a lower layer of the image although absent from its filesystem; "nothing of it ships" overclaimed. | Read; true of OCI layering. | **Fixed.** Both are `RUN --mount=type=bind` for their one step — the lists from the pack stage, the proof script from the build stage — and never enter a layer of the shipped image; the proof asserts none of the three paths exists; `test_publish_paths.py` also counts a bind-mounted context file as an image input, should one ever be used that way. |
+| U3 | Codex (should-fix) | The "every tool is packed" test compared two hand-kept lists and would not notice a new `sed`; the import test said "exactly" and checked a superset. | Read. | **Fixed.** The programs are parsed out of the final stage's RUN lines at command position; the import test says what it holds. |
+| U4 | Codex (note) | The script's docstring claimed every RPM-valid path while `split()` refuses whitespace. | Read. | **Fixed.** The docstring says it refuses, and why. |
+| U5 | Codex (note) | "Four FROM lines, three real stages" — `runner` is a stage. | Read. | **Fixed.** |
+| U6 | Codex (note) | Outcome 17 above credited the exact-list test with an observation it cannot make. | Read. | **Corrected** in place. |
+| U7 | Cursor (should-fix) | The tests did not hold `IFS=` on the read loops, the deepest-first order, or any of `uninstall-lists.py`'s decisions; `LISTS` was bound and unused. | Read. | **Fixed.** Four `IFS= read -r` held; the script's format string, refusals, mode test, ownership test and reverse sort held as text. |
+| U8 | Cursor (should-fix) | The design doc's shim inventory omitted `rmdir`; the pack comment did not say why only jq is installed. | Read. | **Fixed.** |
+| U9 | Cursor (note) | The proof's docstring implied it checks the full removal lists; it spot-checks the historically missed paths. | Read. | **Fixed.** The docstring says which and why. |
+| — | found by the rebuild | A context file bind-mounted into the proof step arrives with the host's ownership, unreadable by user 1001 ("Permission denied"). | Build failure. | **Fixed.** The script is staged in the build stage with mode 0644 and mounted from there; it still enters no layer of the shipped image, and `test_publish_paths.py` still sees it as an input through that stage's COPY. |
+
+Confirmed without change: the uninstall step's loops, quoting and exit status (T3); the publish
+filter and its test (T6).
+
 ## What the second build proved
 
 After both rounds: `./release-crc.sh --build-only` passes all three proofs; in the image the
 removed paths are absent, the shared directories (`/usr/lib/.build-id/2d` with its other file,
-the bash-completion directory) are kept, `/data` is empty after the WAL exercise, the proof script
-is gone, and `/usr/lib/sysimage/rpm` holds exactly `.rpm.lock` and `rpmdb.sqlite`; Syft lists 57
+the bash-completion directory) are kept, `/data` is empty after the WAL exercise, neither the
+lists nor the proof script ever entered a layer, and `/usr/lib/sysimage/rpm` holds exactly
+`.rpm.lock` and `rpmdb.sqlite`; Syft lists 57
 RPMs and 27 Python packages with neither pip nor libuuid; Grype (0.118.0) reports 0 CRITICAL,
 0 HIGH, 12 Medium, 2 Low, 0 fixable; 186 MB. CI with the pinned Grype identifies
 `hummingbird 20251124`, reports 14 matches across 84 packages on the shipped image and 43 across

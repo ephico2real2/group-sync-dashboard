@@ -8,10 +8,15 @@ rather than assumed:
   the builder's — with the SQLite the store will use, WAL mode working on /data, and the zoneinfo
   the chart's `timezone` relies on;
 * `uuid` works while `_uuid` must fail to import: that is the libuuid removal, observed;
-* `pip` must fail to import, and the paths the uninstall removed must be gone;
+* `pip` must fail to import, and the paths the uninstall is known to have missed once (the wheel
+  directory, pip's site-packages, the libuuid library, a completion shim) must be gone — a spot
+  check of the historically missed paths, not the full lists, which the uninstall step itself
+  verifies one by one before this runs;
 * the RPM database directory holds exactly the two files the base shipped.
 
-The script removes what it created under /data and then itself; nothing of it ships.
+The script is staged in the build stage and bind-mounted into this one step, never copied into a
+layer of the shipped image, and removes what it created under /data; nothing of it ships, in the
+filesystem or in any layer beneath it.
 """
 
 from __future__ import annotations
@@ -31,9 +36,11 @@ REMOVED = (
     "/usr/share/python-wheels",
     "/usr/lib/python3.14/site-packages/pip",
     "/usr/share/bash-completion/completions/pip3.14",
-    "/rpmdb-erased-files",
+    "/rpmdb-erased-files",      # bind-mounted into their step; must not have been copied in
     "/rpmdb-erased-dirs",
 )
+# Not in that list: this script's own path. It is bind-mounted for exactly this step, so it exists
+# while this runs; that it is in no layer of the image is checked from outside, on the saved image.
 
 
 def must_not_import(name: str, reason: str) -> None:
@@ -69,7 +76,6 @@ def main() -> None:
         sys.exit("/data is not empty after the proof")
 
     print("runtime proof OK; sqlite", sqlite3.sqlite_version)
-    os.remove(__file__)
 
 
 if __name__ == "__main__":

@@ -17,9 +17,10 @@ does not name — `.containerignore`, which the builder finds by convention at t
 without extending the filter fails here, at the point the input is added.
 
 WHAT THIS STILL DOES NOT COVER, so the docstring does not overclaim: an input reached some way other
-than a `COPY`/`ADD` source or those two named files — a BuildKit bind mount, a `RUN` that reads the
-context directly, a base image whose `:latest` tag moves underneath us. The floating base image is
-deliberately out of band; `workflow_dispatch` is how a rebuild is forced for that.
+than a `COPY`/`ADD` source, a `RUN --mount=type=bind` of a context file, or those two named files —
+a `RUN` that reads the context directly, a base image whose floating tag moves underneath us. The
+floating base image is deliberately out of band; `workflow_dispatch` is how a rebuild is forced for
+that.
 
 THE TRAP THIS ALSO GUARDS. `COPY pyproject.toml README.md ./` puts `local-development/README.md`
 inside the image, so the tempting `paths-ignore: ['**/*.md']` would skip a rebuild that is
@@ -63,15 +64,21 @@ def _copied_sources() -> list[str]:
     so it is not an input a push could change.
     """
     sources: list[str] = []
-    for line in CONTAINERFILE.read_text().splitlines():
+    text = re.sub(r"\\\n", " ", CONTAINERFILE.read_text())   # join continued lines first
+    for line in text.splitlines():
         stripped = line.strip()
         verb = stripped.split(" ", 1)[0].upper() if " " in stripped else ""
-        if verb not in {"COPY", "ADD"}:
-            continue
-        if "--from=" in stripped:
-            continue
-        parts = [p for p in stripped.split()[1:] if not p.startswith("--")]
-        sources.extend(parts[:-1])          # the last token is the destination
+        if verb in {"COPY", "ADD"} and "--from=" not in stripped:
+            parts = [p for p in stripped.split()[1:] if not p.startswith("--")]
+            sources.extend(parts[:-1])      # the last token is the destination
+        # A bind mount of a context file into a RUN step is an input too — the one way in that
+        # the first version of this helper could not see (its docstring said so). A mount with
+        # `from=` lends a file from another STAGE and is not a repository input.
+        if verb == "RUN":
+            for mount in re.findall(r"--mount=(\S+)", stripped):
+                opts = dict(kv.split("=", 1) for kv in mount.split(",") if "=" in kv)
+                if opts.get("type") == "bind" and "from" not in opts and "source" in opts:
+                    sources.append(opts["source"])
     assert sources, "no COPY/ADD lines parsed; the Containerfile format has changed"
     return sources
 

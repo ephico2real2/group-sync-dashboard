@@ -47,7 +47,7 @@ floating tag to the same pull within a build.
 copied out ships. `dnf swap libcurl libcurl-minimal` (full libcurl drags eleven more packages —
 LDAP, libssh, HTTP/3, brotli, sasl, fido2 …), `dnf install jq`, then `cp -L` of `jq`, `bash`,
 `curl`, the `coreutils` multicall binary, and the shims `cat`, `ls`, `base64`, `mkdir`, `chgrp`,
-`chmod`, `rm` (copied *without* `-L`, so they stay the one-line scripts that call the multicall
+`chmod`, `rm`, `rmdir` (copied *without* `-L`, so they stay the one-line scripts that call the multicall
 binary), `ln -s bash sh`, and **exactly the twelve libraries the runtime lacks**: `ldd` of the four
 binaries gives 26 shared objects; diffed against the runtime's `/usr/lib64`, twelve are absent
 (`libjq`, `libonig`, `libcurl`, `libnghttp2`, `libidn2`, `libunistring`, `libgssapi_krb5`,
@@ -81,7 +81,8 @@ commentary is pinned by `tests/test_log_levels.py`), `LABEL`s, `COPY --from=buil
 `COPY --from=pack` of the binaries into `/usr/bin` and the libraries into `/usr/lib64`. Then, as
 root for three steps, in shell form under the pack's own `sh`, one command per line: the UBI
 recipe's own directory line (`mkdir -p /data /etc/gsd && chgrp -R 0 … && chmod -R g=u …`); the
-uninstall from the two lists — every listed file removed, every listed directory removed with
+uninstall from the two lists, bind-mounted from the pack stage for that one step so they enter no
+layer — every listed file removed, every listed directory removed with
 `rmdir`, which removes only an *empty* directory, and that is the point, because a directory no
 other package records can still hold another package's file (`/usr/lib/.build-id/2d` held one,
 measured, and an earlier cut's `rm -rf` took it) — then a check that fails the build if a listed
@@ -91,10 +92,12 @@ first line of that step proves `rm`, `rmdir` and `ls` exist before anything is d
 nothing in it hides an error: twice in this recipe's history a tool the pack did not carry failed
 with "command not found" behind a `2>/dev/null || true`, and the step silently did nothing. Then
 `USER 1001`, and three proofs *as that user* on the finished filesystem: `image-proof.py`, a
-script copied to `/tmp` that imports every module the build stage proved (the test holds the two
-lists equal), requires `_uuid` and `pip` to fail to import (the removals, observed), checks the
-removed paths and that the database directory holds exactly the base's two files, exercises WAL
-mode on `/data`, cleans `/data`, and deletes itself; the dynamic loader itself listing every
+script staged in the build stage and bind-mounted under `/tmp` for its one step (never copied
+into this image, so it is in no layer of it) that
+imports every module the build stage proved (the test holds the runtime list as a superset),
+requires `_uuid` and `pip` to fail to import (the removals, observed), checks the removed paths
+and that the database directory holds exactly the base's two files, exercises WAL mode on
+`/data`, and cleans `/data`; the dynamic loader itself listing every
 library of every packed binary with none "not found" (`ld.so --list`, not `--version`, which
 exercises only what a binary loads on the way to printing it); and each pack tool doing a real
 unit of work — jq evaluates JSON, base64 round-trips, sh, ls, cat and curl run. `EXPOSE`,

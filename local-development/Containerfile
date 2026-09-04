@@ -4,7 +4,8 @@
 #
 #  READ THIS FIRST: the map of the file.
 #
-#  This is a multi-stage build on Red Hat's hardened images. Four FROM lines, three real stages:
+#  This is a multi-stage build on Red Hat's hardened images. Four stages, one of which only
+#  gives the runtime base a name:
 #
 #      build   FROM hi/python:3.14-builder   installs the application and its Python packages
 #                                            into one directory, /install
@@ -17,8 +18,9 @@
 #      final   FROM runner                   copies those in, deletes what the lists name, proves
 #                                            itself, and becomes the image that ships
 #
-#  Only files cross from one stage to the next (COPY --from=...). Nothing else does: not
-#  packages, not users, not environment variables.
+#  Only files cross from one stage to the next — by COPY --from, which writes them into a layer
+#  of the image, or by RUN --mount=type=bind, which lends them to one step and leaves nothing
+#  behind in any layer. Nothing else crosses: not packages, not users, not environment variables.
 #
 #  THE ONE FACT THAT SHAPES EVERYTHING: THE RUNTIME BASE HAS NO SHELL.
 #
@@ -71,6 +73,13 @@ WORKDIR /build
 COPY pyproject.toml README.md ./
 COPY gsd ./gsd
 
+# The final stage's proof script is staged HERE, with a mode every user can read, so the final
+# stage can bind-mount it from this stage for its one step. Mounting it straight from the build
+# context does not work for that step: the file arrives with the host's ownership, which the
+# runtime user cannot read (measured: "Permission denied"). Nothing from this stage's layers
+# reaches the shipped image.
+COPY --chmod=0644 image-proof.py /image-proof.py
+
 # The API-docs bundles (Swagger UI, ReDoc) live inside gsd/static/vendor, committed to the
 # repository and declared as package data in pyproject.toml. They are NOT downloaded during the
 # build, on purpose: a build-time download would make every release depend on npm being up, on
@@ -105,8 +114,8 @@ FROM registry.access.redhat.com/hi/python:3.14 AS runner
 #  The same builder image as stage 1, chosen because it is built from the same repository as the
 #  runtime base: every library copied out of here matches the runtime's glibc exactly.
 #
-#  Unlike stage 1, `dnf update` EARNS ITS PLACE here: everything this stage copies out ships, so
-#  it must carry whatever Red Hat has fixed since the base was cut.
+#  Unlike stage 1, `dnf update` EARNS ITS PLACE here: the tools and libraries this stage packs
+#  ship in the final image, so they must carry whatever Red Hat has fixed since the base was cut.
 #
 #  Three products leave this stage:
 #    /jqpack/bin, /jqpack/lib64   a shell and a few tools, with the libraries they need
@@ -136,6 +145,9 @@ USER 0
 #                                        shims) and the binary itself WITH -L (to get the real
 #                                        file, not a symlink). Those eight are the ones the
 #                                        final stage and the documentation use.
+#
+# Of those, only jq has to be installed: bash, curl and coreutils are already on the builder
+# image, and `dnf update` above has just brought them to Red Hat's current builds.
 #
 # Which libraries go with them is MEASURED, not guessed: `ldd` of the four binaries names 26
 # shared objects; the runtime base already has 14 of them (glibc, openssl, zlib, pcre2,
@@ -363,9 +375,13 @@ RUN mkdir -p /data /etc/gsd \
 # because the lesson was learned the hard way: a tool that is not packed fails with "command not
 # found", and `2>/dev/null || true` around it turns that into a step that silently does nothing.
 # Nothing in this step hides an error.
-COPY --from=pack /rpmdb-erased-files /rpmdb-erased-dirs /
-
-RUN for t in rm rmdir ls; do \
+#
+# The two lists are BIND-MOUNTED from the pack stage for the duration of this one step, not
+# copied in: a COPY writes a layer, and a file deleted in a later layer is still in the image
+# underneath. A mount leaves nothing behind.
+RUN --mount=type=bind,from=pack,source=/rpmdb-erased-files,target=/rpmdb-erased-files \
+    --mount=type=bind,from=pack,source=/rpmdb-erased-dirs,target=/rpmdb-erased-dirs \
+    for t in rm rmdir ls; do \
       command -v "$t" >/dev/null || { echo "$t: not packed" >&2; exit 1; }; \
     done \
  && while IFS= read -r f; do \
@@ -383,7 +399,6 @@ RUN for t in rm rmdir ls; do \
       fi; \
       if [ -d "$d" ]; then echo "kept, another package's content inside: $d"; fi; \
     done < /rpmdb-erased-dirs \
- && rm -f /rpmdb-erased-files /rpmdb-erased-dirs \
  && rm -rf /usr/lib/sysimage/rpm \
  && echo "uninstalled files gone"
 
@@ -395,7 +410,8 @@ COPY --from=pack /rpmdb/ /usr/lib/sysimage/rpm/
 # A non-root default, so the image is also safe to run outside OpenShift, where no arbitrary UID
 # is assigned. 1001, as before, and not the base's 65532 — an operator decision, so that nothing
 # about the declared identity of the image moved with the base change. Set BEFORE the proofs, so
-# they run as the user the container will run as.
+# they run as the user the container will run as. (The proof script is mounted under /tmp, the
+# one place user 1001 may write; the chart mounts an emptyDir there anyway.)
 USER 1001
 
 # --- 3.4 prove the image, from the outside ---------------------------------------------------
@@ -409,11 +425,11 @@ USER 1001
 #    time of writing, against UBI's 3.34.1) and its write-ahead-log mode works on /data, as the
 #    store needs; zoneinfo resolves; uuid works while _uuid must FAIL to import, which is the
 #    libuuid removal observed; pip is not importable; the uninstalled paths are gone; the RPM
-#    database directory holds exactly the base's two files. It cleans /data and deletes itself.
-#    It lands under /tmp because that is where user 1001 may write and delete; the chart mounts
-#    an emptyDir there anyway.
-COPY --chown=1001:0 image-proof.py /tmp/image-proof.py
-RUN python3.14 /tmp/image-proof.py
+#    database directory holds exactly the base's two files. It cleans /data after itself. The
+#    script is bind-mounted from the build stage for this one step, so it never enters a layer
+#    of this image.
+RUN --mount=type=bind,from=build,source=/image-proof.py,target=/tmp/image-proof.py \
+    python3.14 /tmp/image-proof.py
 
 # 2. Every library of every packed binary resolves — asked of the dynamic loader itself
 #    (`ld.so --list` is what the `ldd` command runs underneath), not of `--version`, which only

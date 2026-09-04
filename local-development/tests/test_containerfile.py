@@ -136,11 +136,15 @@ class TestRuntimeStageOrder:
         assert "still recorded: $p" in erase
         assert erase.index("wal_checkpoint(TRUNCATE)") < erase.index("rm -f /rpmdb/rpmdb.sqlite-shm")
 
-        list_copy = self._index(lambda l: l == "COPY --from=pack /rpmdb-erased-files /rpmdb-erased-dirs /")
-        removal = self._index(lambda l: l.startswith("RUN for t in rm rmdir ls; do"))
+        removal = self._index(lambda l: l.startswith("RUN --mount=type=bind,from=pack,source=/rpmdb-erased-files"))
         db_copy = self._index(lambda l: l == "COPY --from=pack /rpmdb/ /usr/lib/sysimage/rpm/")
-        assert list_copy < removal < db_copy
+        assert removal < db_copy
         run = RUNTIME[removal]
+        assert "--mount=type=bind,from=pack,source=/rpmdb-erased-dirs,target=/rpmdb-erased-dirs" in run
+        assert not any(l.startswith("COPY --from=pack /rpmdb-erased") for l in RUNTIME), (
+            "the lists must be mounted, not copied: a COPY writes a layer a later rm cannot undo"
+        )
+        assert "for t in rm rmdir ls; do" in run
         assert "command -v" in run and "not packed" in run, "the tools must be proven present first"
         assert 'rm -f "$f"' in run and "< /rpmdb-erased-files" in run
         assert 'rmdir "$d"' in run and "rm -rf \"$d\"" not in run, "only rmdir: never delete another package's content"
@@ -148,13 +152,33 @@ class TestRuntimeStageOrder:
         assert "rm -rf /usr/lib/sysimage/rpm " in run + " ", "the database directory goes whole, not by glob"
         assert "/usr/lib/sysimage/rpm/*" not in run
         assert "2>/dev/null || true" not in run, "nothing in this step may hide an error"
-        assert "sort" not in run
+        assert run.count("IFS= read -r") == 4, "every read loop keeps whitespace intact"
+
+    def test_the_list_script_classifies_from_the_database_alone(self) -> None:
+        """The load-bearing decisions in uninstall-lists.py, held as text: the owner table's
+        format string (the `=` is what makes it work), the refusal of an empty table and of a path
+        the table does not know, the mode test that tells a directory from everything else, the
+        exclusive-ownership test, and the deepest-first order the runtime's rmdir loop relies on."""
+        text = LISTS.read_text()
+        for needle in (
+            '"[%{=NAME}\\t%{FILENAMES}\\n]"',
+            "if not owners:",
+            "if path not in owners:",
+            "if len(fields) != 11:",
+            "int(fields[4], 8)",
+            "mode & 0o170000 != 0o040000",
+            "owners[path] <= ours",
+            "sorted(dirs, reverse=True)",
+            'if not recorded(args.dbpath, package):',
+        ):
+            assert needle in text, needle
+        assert 'rpm(args.dbpath, "-q", "--dump", package)' in text
 
     def test_root_is_dropped_before_the_proofs_and_the_cmd(self) -> None:
         user_lines = [i for i, l in enumerate(RUNTIME) if l.startswith("USER ")]
         assert RUNTIME[user_lines[-1]] == "USER 1001"
         last_user = user_lines[-1]
-        proofs = [i for i, l in enumerate(RUNTIME) if l == "RUN python3.14 /tmp/image-proof.py" or "pack OK" in l or "--list" in l]
+        proofs = [i for i, l in enumerate(RUNTIME) if "python3.14 /tmp/image-proof.py" in l or "pack OK" in l or "--list" in l]
         assert len(proofs) == 3 and all(i > last_user for i in proofs)
         cmd = self._index(lambda l: l.startswith("CMD "))
         assert cmd > last_user
@@ -162,9 +186,11 @@ class TestRuntimeStageOrder:
         assert RUNTIME.index("USER 0") > self._index(lambda l: l.startswith("COPY --from=pack /jqpack/bin/"))
 
     def test_the_proofs_cover_what_the_base_change_could_break(self) -> None:
-        """The runtime proof script imports exactly the modules the build stage proved (parsed
-        from both with `ast`, not by eye), observes the removals, exercises WAL on /data and
-        cleans up; the loader proof asks ld.so itself; the tool proof makes each tool work."""
+        """The runtime proof script imports every module the build stage proved (parsed from
+        both with `ast`, not by eye; the proof may import more, for its own checks), names the
+        removals it observes, exercises WAL on /data and cleans up; the loader proof asks ld.so
+        itself; the tool proof makes each tool work. This reads the script's text — that the
+        named checks are reachable is the build's business, since the build runs it."""
         import ast
         build_proof = next(l for l in BY_NAME["build"] if "python3.14 -c" in l and "import gsd" in l)
         code = re.search(r'python3\.14 -c "(.*)"', build_proof).group(1)
@@ -172,6 +198,8 @@ class TestRuntimeStageOrder:
         proof_tree = ast.parse(PROOF.read_text())
         proof_mods = {a.name for n in ast.walk(proof_tree) if isinstance(n, ast.Import) for a in n.names}
         assert build_mods <= proof_mods, f"proved by the build stage but not the runtime: {build_mods - proof_mods}"
+        # The proof imports MORE than the build stage proves (sqlite3, zoneinfo, uuid, os, sys —
+        # its own checks); the guarantee held here is the superset, and the docstring says so.
         text = PROOF.read_text()
         for needle in (
             'must_not_import("_uuid"',              # libuuid removal, observed
@@ -180,11 +208,16 @@ class TestRuntimeStageOrder:
             '[".rpm.lock", "rpmdb.sqlite"]',        # the database directory, exactly
             'pragma journal_mode=wal',              # the store's mode, on /data
             'os.remove(os.path.join("/data", name))',  # nothing of the proof ships
-            "os.remove(__file__)",
         ):
             assert needle in text, needle
-        assert self._index(lambda l: l == "COPY --chown=1001:0 image-proof.py /tmp/image-proof.py") < \
-            self._index(lambda l: l == "RUN python3.14 /tmp/image-proof.py")
+        proof = next(l for l in RUNTIME if "python3.14 /tmp/image-proof.py" in l)
+        assert proof.startswith("RUN --mount=type=bind,from=build,source=/image-proof.py,target=/tmp/image-proof.py"), (
+            "the proof script must be mounted for its step, never copied into a layer of this image"
+        )
+        assert not any("COPY" in l and "image-proof.py" in l for l in RUNTIME)
+        assert "COPY --chmod=0644 image-proof.py /image-proof.py" in BY_NAME["build"], (
+            "staged in the build stage with a mode the runtime user can read"
+        )
         loader = next(l for l in RUNTIME if "ld-linux-x86-64.so.2 --list" in l)
         for b in ("jq", "bash", "curl", "coreutils"):
             assert b in loader
@@ -216,17 +249,35 @@ class TestPackStage:
         assert "ln -s bash /jqpack/bin/sh" in tools, "sh must resolve to bash"
         assert "cp -L /usr/bin/jq /usr/bin/bash /usr/bin/curl /usr/bin/coreutils /jqpack/bin/" in tools
 
-    def test_every_tool_the_final_stage_runs_is_packed(self) -> None:
-        """A tool the final stage names but the pack does not ship fails with "command not found",
-        and the history of this file is that such a failure was hidden twice."""
+    # Words that may appear in command position in the final stage's RUN lines without being a
+    # program the pack must ship: shell keywords and builtins (bash provides them), the
+    # interpreter the base provides, and variable assignments.
+    SHELL_WORDS = {
+        "for", "do", "done", "if", "then", "else", "fi", "while", "case", "esac", "in",
+        "command", "test", "echo", "exit", "printf", "read", "python3.14",
+    }
+
+    def test_every_program_the_final_stage_runs_is_packed(self) -> None:
+        """Derived from the RUN lines, not from a hand-kept list: every word in command position
+        — at the start, or after &&, ||, ;, |, {, then, do, else, or $( — must be a shell word, the
+        interpreter, an assignment, or a program the pack copies. A tool the final stage names
+        but the pack does not ship fails with "command not found", and the history of this file
+        is that such a failure was hidden twice."""
         run = next(l for l in BY_NAME["pack"] if "/jqpack/bin/" in l and "cp " in l)
-        packed = set(re.findall(r"/usr/bin/([\w-]+)", run))
-        used = {"mkdir", "chgrp", "chmod", "rm", "rmdir", "ls", "cat", "base64", "jq", "curl", "bash"}
+        packed = set(re.findall(r"/usr/bin/([\w-]+)", run)) | {"sh"}      # sh is the symlink
+        pattern = re.compile(r"(?:^|&&|\|\||;|\||\{|\bthen\b|\bdo\b|\belse\b|\$\()\s*(?:!\s*)?([A-Za-z0-9_./-]+=?)")
+        seen: set[str] = set()
         for line in RUNTIME:
-            if line.startswith("RUN "):
-                assert used & packed == used, f"unpacked: {used - packed}"
-        for tool in used:
-            assert tool in packed, f"{tool} is used by the final stage and not packed"
+            if not line.startswith("RUN"):
+                continue
+            body = re.sub(r"^RUN(?:\s+--mount=\S+)*\s+", "", line)
+            for word in pattern.findall(body):
+                if word.endswith("=") or word.startswith("/lib64/ld-linux"):
+                    continue                 # an assignment; the loader is the base's
+                seen.add(word)
+        programs = seen - self.SHELL_WORDS
+        assert programs, "no programs parsed from the final stage; the parser is broken"
+        assert programs <= packed, f"named by the final stage, not packed: {sorted(programs - packed)}"
 
     PACKED = {
         "libjq.so.1", "libonig.so.5", "libcurl.so.4", "libnghttp2.so.14", "libidn2.so.0",
