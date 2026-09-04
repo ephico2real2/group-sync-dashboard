@@ -99,7 +99,7 @@ jobs:
       contents: read
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # The script derives the tag from `git rev-parse HEAD` and reads the branch name, so it
           # needs real git history rather than a detached export. It also needs the PREVIOUS commit

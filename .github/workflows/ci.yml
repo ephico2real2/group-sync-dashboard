@@ -6,6 +6,16 @@
 # terminal, which meant a green pull request proved nothing.
 name: ci
 
+# ACTION PINS. Every third-party action is referenced by the full commit of a released version,
+# with the version beside it as a comment — the form GitHub's own guidance calls the safest for
+# stability and security, and the one Dependabot (.github/dependabot.yml) knows how to move.
+# A major tag such as @v4 is mutable, and it is also how the runtime moved under us: on
+# 2026-09-04 every job printed "Node.js 20 is deprecated. The following actions target Node.js
+# 20 but are being forced to run on Node.js 24" for checkout@v4, setup-node@v4, setup-python@v5
+# and setup-helm@v4, because runners default to Node 24 since 2026-06-16 and Node 20 leaves them
+# on 2026-09-23. Each is now on its Node 24 major (runs.using: node24 in its action.yml — read,
+# not assumed). To bump one: take the release's commit from `gh api repos/<action>/git/ref/tags/<tag>`
+# (resolve an annotated tag to its commit), update the SHA and the comment together.
 on:
   push:
     branches: [main]
@@ -45,7 +55,7 @@ jobs:
     env:
       CHART: charts/group-sync-dashboard
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # Needs real history: the check compares this PR's chart against its base commit.
           fetch-depth: 0
@@ -122,8 +132,8 @@ jobs:
       matrix:
         python: ["3.11", "3.14"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ matrix.python }}
       - name: Install
@@ -144,11 +154,11 @@ jobs:
   chart:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: azure/setup-helm@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
       - name: helm lint
         run: helm lint charts/group-sync-dashboard
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.14"   # keep in step with the tests job and the Containerfile
       - name: Render guards must still refuse the unsafe combinations
@@ -173,8 +183,8 @@ jobs:
     # looking at the page, so a real render earns its minute.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22"
       - name: Render every mermaid block
@@ -227,7 +237,7 @@ jobs:
   image:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Build
         working-directory: local-development
         run: docker build -f Containerfile -t gsd:ci .
