@@ -8,6 +8,16 @@ lives next to the code and in the design and review records linked here. Changes
 last release sit under `## Unreleased` until the release that carries them replaces that heading —
 which `local-development/prepare-release.py` does when the release is cut.
 
+## Application 0.13.0 — chart 0.12.0 — 2026-09-05
+
+- **Retention for the accumulated history, `config.retention`.** `membershipEventsDays: 0`
+  (forever) and `syncEventsDays: 730` by default; the leader prunes after the cycle's backup, never
+  before one has succeeded in this process's life and never at all while `config.backup` is off,
+  5,000 rows per table per cycle, counted into `gsd_retention_rows_deleted_total{table}`. Four
+  history responses gain `retention: {window_days, retained_since}` and the page says "history
+  retained since …" where a timeline begins at the cut. First start after upgrade builds the
+  `sync_event_by_time` index. (spec `docs/specs/SPEC_B2_history_retention.md`)
+
 ## Application 0.12.0 — chart 0.11.0 — 2026-09-05
 
 - **Group-count cliff alert, with read-only silencing.** A group whose membership fell by
