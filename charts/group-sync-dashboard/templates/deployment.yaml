@@ -180,27 +180,18 @@ spec:
             # For curl IN THE POD, which reads none of the above: it trusts the image's own
             # system bundle (/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem, measured) and
             # would refuse a corporate-signed URL that the application itself verifies fine.
-            # Two variables, both measured against the application's own TLS paths:
             #
-            #   SSL_CERT_DIR — OpenSSL's hashed directory. This value IS the compiled default
-            #   for Python in the image, so the application sees no change; curl, which does
-            #   not consult the directory unless told, now does. It is what makes the hashed
-            #   mount of the manual CA below reach curl.
-            #
-            #   CURL_CA_BUNDLE — curl's alone (Python's OpenSSL ignores it), pointed at the
-            #   injected bundle, so pointing it there changes nothing for the application.
-            #   Only the injected bundle qualifies: OpenShift fills it with the system store
-            #   MERGED with proxy/cluster.spec.trustedCA, so curl loses nothing, and it is one
-            #   149-certificate file, which can never be a hashed-directory entry. The manual
-            #   ConfigMap must NOT go here — it carries only the extra CA, and curl takes one
-            #   file, so naming it would drop every public CA. Its route to curl is the hashed
-            #   mount (trustedCA.existingConfigMap.subjectHash).
-            - name: SSL_CERT_DIR
-              value: /etc/pki/tls/certs
-            {{- if .Values.trustedCA.injected.enabled }}
-            - name: CURL_CA_BUNDLE
-              value: {{ printf "%s/injected/ca-bundle.crt" .Values.trustedCA.mountPath | quote }}
-            {{- end }}
+            # curl is told through ITS OWN configuration file, not through environment
+            # variables. CURL_HOME names the directory curl reads .curlrc from; the ConfigMap
+            # mounted there (configmap-curlrc.yaml) carries `capath` for the hashed directory
+            # and, when the injected bundle is on, `cacert` for it. Measured on curl 7.76 and
+            # 8.22: when CURL_CA_BUNDLE is set, curl IGNORES SSL_CERT_DIR — `-v` names only the
+            # CAfile — so the earlier pair of variables could never make curl trust a hashed
+            # CA while the injected bundle was on, which is the default. A .curlrc names both
+            # and curl uses both (`-v` shows CAfile and CApath). Nothing but the curl tool
+            # reads it: the application's own TLS is untouched, and so is Python's.
+            - name: CURL_HOME
+              value: /etc/curl
           securityContext: {{- toYaml .Values.securityContext | nindent 12 }}
           volumeMounts:
             - name: config
@@ -211,6 +202,11 @@ spec:
             # readOnlyRootFilesystem is on, so anything writing to /tmp needs a volume.
             - name: tmp
               mountPath: /tmp
+            # curl's configuration (see CURL_HOME above): a ConfigMap of one key, mounted as a
+            # directory so curl finds $CURL_HOME/.curlrc.
+            - name: curlrc
+              mountPath: /etc/curl
+              readOnly: true
             {{- if .Values.trustedCA.injected.enabled }}
             - name: trusted-ca-injected
               mountPath: {{ .Values.trustedCA.mountPath }}/injected
@@ -411,6 +407,9 @@ spec:
         {{- end }}
         - name: tmp
           emptyDir: {}
+        - name: curlrc
+          configMap:
+            name: {{ include "gsd.fullname" . }}-curlrc
         {{- if .Values.trustedCA.injected.enabled }}
         - name: trusted-ca-injected
           configMap:

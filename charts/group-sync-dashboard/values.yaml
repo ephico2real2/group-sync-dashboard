@@ -578,9 +578,10 @@ trustedCA:
     #   openssl x509 -noout -subject_hash -in /path/to/ca.pem
     # When set, the same ConfigMap is ALSO mounted as /etc/pki/tls/certs/<hash>.0 — an entry
     # in OpenSSL's hashed directory, the shape Hummingbird's Python guidance calls "Approach
-    # 2" — so curl in the pod, urllib, and the dashboard's fallback context all trust it. The
-    # dashboard needs none of this for itself (it reads the bundle by path); this is for the
-    # `oc exec … curl` that would otherwise refuse the corporate-signed URL. One CA per hash:
+    # 2" — so curl in the pod (through the mounted .curlrc's capath), urllib, and the
+    # dashboard's fallback context all trust it. The dashboard needs none of this for itself
+    # (it reads the bundle by path); this is for the `oc exec … curl` that would otherwise
+    # refuse the corporate-signed URL. One CA per hash:
     # a bundle of several CAs under one hash is only ever looked up by the first subject. The
     # image already holds ~290 entries for the public CAs; if yours collides with one of them,
     # give OpenSSL's collision suffix (`c275f070.1`) rather than shadow the base's `.0`.
@@ -591,9 +592,11 @@ trustedCA:
   # no reason to make the operator choose. Enabling neither falls back to Python's default
   # trust store.
   #
-  # The injected bundle is also handed to curl in the pod (CURL_CA_BUNDLE), so an `oc exec …
-  # curl` against a corporate-signed URL verifies the way the application does. The manual
-  # ConfigMap is not: it carries only the extra CA, and curl reads one file.
+  # curl in the pod is told about these through its own configuration file (a mounted
+  # .curlrc, found via CURL_HOME): the injected bundle as `cacert`, the hashed directory as
+  # `capath`, so an `oc exec … curl` against a corporate-signed URL verifies the way the
+  # application does. The manual ConfigMap never becomes curl's `cacert` — it carries only the
+  # extra CA — but reaches curl through the hashed directory when subjectHash is set.
   mountPath: /etc/pki/ca-trust/extracted/pem
 
 # ---------------------------------------------------------------------------

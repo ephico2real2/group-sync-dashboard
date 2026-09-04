@@ -34,12 +34,15 @@ lives next to the code and in the design and review records linked here.
   full inventory. (#52)
 - **Chart 0.10.0: curl in the pod trusts what the dashboard trusts.** curl reads the image's own
   system bundle and none of the application's settings, so an `oc exec … curl` against a
-  corporate-signed URL failed where the application verified it. Now `CURL_CA_BUNDLE` names the
-  injected bundle when `trustedCA.injected` is on (curl's variable alone, invisible to Python);
-  `SSL_CERT_DIR` is set to OpenSSL's own hashed directory, a no-op for the dashboard that curl
-  otherwise ignores; and a new `trustedCA.existingConfigMap.subjectHash` mounts the manual CA into
-  that directory as `<hash>.0`, Hummingbird's "Approach 2", so curl, urllib and the dashboard's
-  fallback context all trust it. Every claim measured in the image. Also `appVersion`, and the
+  corporate-signed URL failed where the application verified it. Now a `.curlrc` ConfigMap,
+  mounted at `/etc/curl` and found through `CURL_HOME`, names the injected bundle as `cacert`
+  (when `trustedCA.injected` is on) and OpenSSL's hashed directory as `capath`; and a new
+  `trustedCA.existingConfigMap.subjectHash` mounts the manual CA into that directory as
+  `<hash>.0`, Hummingbird's "Approach 2", so curl, urllib and the dashboard's fallback context all
+  trust it. A file rather than `CURL_CA_BUNDLE` and `SSL_CERT_DIR`, because curl ignores the
+  second whenever the first is set (measured on curl 7.76 and 8.22), and only the curl tool reads
+  the file, so the dashboard's own TLS cannot be touched by it. Every claim measured in a pod;
+  `TUTORIAL_ca_trust_hashed_directory.md` teaches the mechanism. Also `appVersion`, and the
   `timezone` and SQLite comments now say what the hardened base ships. (#52)
 
 ## Application 0.10.2 — chart 0.9.4 — 2026-09-04

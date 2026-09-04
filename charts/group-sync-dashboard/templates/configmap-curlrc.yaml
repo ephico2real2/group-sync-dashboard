@@ -1,0 +1,26 @@
+# curl's configuration for the dashboard pod. curl reads $CURL_HOME/.curlrc (the Deployment sets
+# CURL_HOME=/etc/curl and mounts this ConfigMap there), and this is the ONE place both of curl's
+# trust stores can be named at once:
+#   capath   OpenSSL's hashed directory — where trustedCA.existingConfigMap.subjectHash puts the
+#            manual CA, and where the image already keeps its ~290 public CAs. curl consults a
+#            directory only when told; every OpenSSL client already reads this one by default.
+#   cacert   the injected bundle — the cluster's trust store, the system CAs merged with
+#            proxy/cluster.spec.trustedCA — when trustedCA.injected is on. Never the manual
+#            ConfigMap: it carries only the extra CA, and one `cacert` replaces the default
+#            bundle, so naming it would drop every public CA. That CA reaches curl as the hashed
+#            file instead.
+# Why a file and not CURL_CA_BUNDLE + SSL_CERT_DIR: measured on curl 7.76 and 8.22, when
+# CURL_CA_BUNDLE is set curl ignores SSL_CERT_DIR, so the variables could name one store or the
+# other, never both. The file names both, and curl -v then reports CAfile and CApath. Only the
+# curl tool reads .curlrc — libcurl users and Python are untouched.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "gsd.fullname" . }}-curlrc
+  labels: {{- include "gsd.labels" . | nindent 4 }}
+data:
+  .curlrc: |
+    capath = /etc/pki/tls/certs
+    {{- if .Values.trustedCA.injected.enabled }}
+    cacert = {{ .Values.trustedCA.mountPath }}/injected/ca-bundle.crt
+    {{- end }}

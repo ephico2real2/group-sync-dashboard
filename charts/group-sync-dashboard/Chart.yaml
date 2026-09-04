@@ -108,10 +108,10 @@ type: application
 # CHART 0.9.4 (2026-09-04), PATCH: appVersion moves to application 0.10.2 (below); no template or
 # default changes.
 # CHART 0.10.0 (2026-09-04), MINOR: appVersion moves to application 0.11.0 (below), the image on the
-# Red Hat Hardened Images, and curl in the pod trusts what the dashboard trusts: the dashboard
-# container gains SSL_CERT_DIR (OpenSSL's own hashed directory, a no-op for the dashboard),
-# CURL_CA_BUNDLE naming the injected bundle when trustedCA.injected is on, and a new value,
-# trustedCA.existingConfigMap.subjectHash, that mounts the manual CA a second time into that
+# Red Hat Hardened Images, and curl in the pod trusts what the dashboard trusts: a new ConfigMap
+# <fullname>-curlrc mounted at /etc/curl and named by CURL_HOME gives curl the injected bundle as
+# cacert (when trustedCA.injected is on) and OpenSSL's hashed directory as capath, and a new
+# value, trustedCA.existingConfigMap.subjectHash, mounts the manual CA a second time into that
 # hashed directory (docs/DESIGN_hardened_image.md). Rendered objects otherwise unchanged.
 version: 0.10.0
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on

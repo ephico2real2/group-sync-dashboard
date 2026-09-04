@@ -98,15 +98,18 @@ helm upgrade ... --set trustedCA.existingConfigMap.enabled=true
 ```
 
 **curl inside the pod** reads none of the above; measured in the image, it trusts only the base's
-own bundle. So the container also sets `CURL_CA_BUNDLE` to the injected bundle (curl's variable
-alone, invisible to Python) and `SSL_CERT_DIR=/etc/pki/tls/certs` (OpenSSL's own default, so a
-no-op for the dashboard, and the hashed directory curl otherwise ignores). Two consequences worth
+own bundle. So the chart gives curl its own configuration: a ConfigMap mounted at `/etc/curl`
+with a `.curlrc` that curl finds through `CURL_HOME`, naming the injected bundle as `cacert`
+(when injected is on) and OpenSSL's hashed directory `/etc/pki/tls/certs` as `capath`. A file
+rather than `CURL_CA_BUNDLE` and `SSL_CERT_DIR`, because curl ignores the second whenever the
+first is set (measured on curl 7.76 and 8.22), so the variables could never name both stores.
+Only the curl tool reads that file; the dashboard's own TLS is untouched. Two consequences worth
 knowing: the injected ConfigMap is empty until OpenShift fills it, moments after creation, and
 curl fails with exit 77 for every URL while it is — the dashboard's own polling does not read
-`CURL_CA_BUNDLE` and is unaffected; and the manual ConfigMap is never curl's one file, because it
-carries only the extra CA and would drop every public CA. Without the hash below, an in-pod curl
-to a URL signed by that CA takes `--cacert`. With it, the manual CA is mounted into the hashed
-directory as well, the way Hummingbird's Python guidance describes:
+`.curlrc` and is unaffected; and the manual ConfigMap is never curl's `cacert`, because it
+carries only the extra CA and one `cacert` replaces the default bundle. Without the hash below,
+an in-pod curl to a URL signed by that CA takes `--cacert`. With it, the manual CA is mounted
+into the hashed directory as well, the way Hummingbird's Python guidance describes:
 
 ```bash
 openssl x509 -noout -subject_hash -in /path/to/ingress-ca.pem      # e.g. c275f070

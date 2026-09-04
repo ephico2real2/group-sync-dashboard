@@ -19,7 +19,7 @@ declined; the verdict column is mine, not theirs.
 | 6 | Codex, Cursor | The design and scan docs described one unconditional erase; the Containerfile had become conditional. | Read. | **Fixed.** Both describe the conditional, per-package erase, the file lists, the checkpoint and the replacement. |
 | 7 | Codex, Cursor | The chart README did not disclose curl's exit 77 while the injected ConfigMap is still empty, and said `--cacert` for the manual CA right before documenting the mechanism that makes curl trust it. | Measured earlier: exit 77 on an empty or missing bundle. | **Fixed.** One paragraph says both, and qualifies `--cacert` as the route without `subjectHash`. |
 | 8 | Codex, Cursor | `subjectHash` accepted only a bare hash and always mounted `.0`; OpenSSL's `.1` collision suffix is legitimate, and a base entry of the same name would be shadowed. | Read; the base holds ~290 hashed entries. | **Fixed.** The value may carry `.N`; the mount honours it verbatim; `.0` is assumed only when absent; the values comment says when to use it. |
-| 9 | Codex, Cursor | The curl chart tests: the "mounted" check was prefix-satisfiable by a parent mount; nothing asserted the injected volume is optional, the ConfigMap carries the label, or the proxy is left alone; one malformed case only. | Read. | **Fixed.** Exact parent mount with volume identity and `optional: true`; label asserted; proxy asserted clean; six malformed hashes parametrised; `.1` honoured. |
+| 9 | Codex, Cursor | The curl chart tests: the "mounted" check was prefix-satisfiable by a parent mount; nothing asserted the injected volume is optional, the ConfigMap carries the label, or the proxy is left alone; one malformed case only. | Read. | **Fixed.** Exact parent mount with volume identity and `optional: true`; label asserted; proxy asserted clean; six malformed hashes parametrised; `.1` honoured. (The mechanism itself was later replaced — see V1 below.) |
 | 10 | Cursor | A duplicate curl test class, easy to fix one and leave the other. | `grep class` — two classes. | **Fixed.** The older one removed. |
 | 11 | Codex, Cursor | `test_containerfile.py` passed broken recipes: it did not assert the twelve libraries, the erase mechanism, the proof coverage, ordering, or the exact `CMD`. | Read. | **Fixed, in two rounds.** Exact twelve; every tool the final stage names is packed; listing before erase and the conditional erase; list copy → removal → database copy ordering, `rmdir` only, no glob, no hidden error; the proof script's imports parsed with `ast` and held to the build stage's; loader proof present with stderr captured; `CMD` equal to the UBI recipe's. It still reads text only — see finding 14. |
 | 12 | Codex, Cursor | The `/data` mode in the image does not govern a PVC; the chart sets no `fsGroup`. | Measured on CRC: the mounted `/data` is `root:1000670000`, from OpenShift's assigned group. | **Accepted, documented.** Containerfile comment and design doc say the mode governs `podman run` and emptyDir, and that on the cluster the volume and the SCC decide. No chart change: OpenShift's restricted SCC supplies the group; `fsGroup` would be a non-OpenShift concern the chart already scopes out. |
@@ -72,6 +72,12 @@ be read and the two Python steps became repository files. Codex resumed its thre
 
 Confirmed without change: the uninstall step's loops, quoting and exit status (T3); the publish
 filter and its test (T6).
+
+## Found by writing the tutorial, after the third pass
+
+| # | Found by | Finding | Verified how | Outcome |
+|---|---|---|---|---|
+| V1 | the tutorial's own verification in a pod carrying both variables | With `CURL_CA_BUNDLE` set, curl ignores `SSL_CERT_DIR`: `curl -v` names only the `CAfile`, so the `subjectHash` mount reached Python but never curl whenever the injected bundle was on — the default. Three review rounds had confirmed the wiring by reading the template; none could run curl. | `curl -v` under both variables on curl 7.76 (UBI 9) and 8.22 (the hardened image); a `.curlrc` naming both stores measured to work on both. | **Fixed.** The chart replaces the two variables with a `.curlrc` ConfigMap mounted at `/etc/curl` and `CURL_HOME`; the tests hold the file's contents and the mount rather than the variables; the tutorial records the rule. |
 
 ## What the second build proved
 

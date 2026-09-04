@@ -40,6 +40,7 @@ runtime as files.
 | Scanning | The pack stage is scanned in CI as well as the shipped image | 9 |
 | Directories | Made with `mkdir`/`chgrp`/`chmod`, the UBI recipe's own line, not through the interpreter | 5 |
 | Readability | The recipe written for a junior engineer; the two Python steps as repository scripts | 1 |
+| Teaching | A tested tutorial on the hashed directory and the three trust layouts, `TUTORIAL_ca_trust_hashed_directory.md`; its verification found the curl defect in 8.3 | 8 |
 | Scope | Fix every HIGH in the shipped image; the pack stage's non-shipping HIGHs are not the target | 9 |
 
 ## 3. The runtime base, measured
@@ -268,9 +269,22 @@ the application's own polling in that window is the wrong trade for an interacti
 
 | Setting | When | Effect |
 |---|---|---|
-| `CURL_CA_BUNDLE` = the injected bundle | `trustedCA.injected` on | curl trusts the cluster's trust store, which is the system store merged with the cluster's CA, so it loses nothing. The manual ConfigMap never goes here: it carries only the extra CA, and curl reads one file. |
-| `SSL_CERT_DIR=/etc/pki/tls/certs` | always | OpenSSL's compiled default in this image, so the application sees no change (measured: public hosts verify, a self-signed host is still refused, the fallback context unchanged). curl, which ignores the directory unless told, now reads it. |
-| `trustedCA.existingConfigMap.subjectHash` | when set | Hummingbird's "Approach 2": the manual CA mounted a second time as `/etc/pki/tls/certs/<hash>.0` (or `<hash>.N` on a collision), a subPath mount of one file — never the directory, which would hide the base's ~290 hashed links. Measured with a self-signed host's CA mounted that way: curl, urllib and the application's fallback context all verify it. The injected bundle cannot take this route: one file with 149 certificates, and a hashed entry is looked up by one subject. |
+| a `.curlrc` ConfigMap (`<release>-curlrc`) mounted at `/etc/curl`, `CURL_HOME=/etc/curl` | always | curl's own configuration, read by the curl tool alone. `capath = /etc/pki/tls/certs` always — OpenSSL's hashed directory, which every OpenSSL client already reads by default and curl consults only when told. `cacert = <injected bundle>` when `trustedCA.injected` is on — the cluster's trust store, the system CAs merged with the cluster's CA, so curl loses nothing. The manual ConfigMap never becomes `cacert`: it carries only the extra CA, and one `cacert` replaces the default bundle. |
+| `trustedCA.existingConfigMap.subjectHash` | when set | Hummingbird's "Approach 2": the manual CA mounted a second time as `/etc/pki/tls/certs/<hash>.0` (or `<hash>.N` on a collision), a subPath mount of one file — never the directory, which would hide the base's ~290 hashed links. Measured with a self-signed host's CA mounted that way: curl (through the `.curlrc`'s `capath`), urllib and the application's fallback context all verify it. The injected bundle cannot take this route: one file with 149 certificates, and a hashed entry is looked up by one subject. |
+
+**Why a file and not two variables.** The first version set `CURL_CA_BUNDLE` for the injected
+bundle and `SSL_CERT_DIR` for the hashed directory. Writing the tutorial
+(`TUTORIAL_ca_trust_hashed_directory.md`) and verifying it in a pod that carried both showed
+that **curl reads `SSL_CERT_DIR` only when `CURL_CA_BUNDLE` is unset** — `curl -v` named only the
+`CAfile`, and the hashed CA that Python verified was invisible to curl. Measured on curl 7.76
+(UBI 9) and 8.22 (the hardened image). Environment variables can therefore give curl one store
+or the other, never both. `.curlrc` names both, `curl -v` reports `CAfile` and `CApath`, and the
+mechanism has one more property the variables lacked: nothing but the curl tool reads it, so the
+application's TLS, Python's default context and libcurl users cannot be affected by it. That is
+also the answer to which variable is safe for the Python application — none is needed; the
+application is configured by `GSD_TRUSTED_CA_FILE` and its own `caBundleFile`, OpenSSL's default
+`capath` serves its fallback context unchanged, and curl is now configured by a file the
+application never opens.
 
 One address stays outside both: the in-cluster API (`https://kubernetes.default.svc`) is signed
 by the cluster's own CA, present in the ServiceAccount's `ca.crt` and not in the injected bundle
@@ -306,8 +320,8 @@ The full analysis is `image-vulnerability-scan.md`. The facts that shaped the wo
 * Timezone needs nothing installed; the base ships zoneinfo and the build proves it.
 * An in-pod curl to a corporate-signed URL verifies; to the in-cluster API it takes the
   ServiceAccount CA (section 8.3).
-* `Chart.yaml` `appVersion` 0.11.0; chart 0.10.0 adds `SSL_CERT_DIR`, `CURL_CA_BUNDLE` for the
-  injected bundle, and `trustedCA.existingConfigMap.subjectHash` for the hashed mount.
+* `Chart.yaml` `appVersion` 0.11.0; chart 0.10.0 adds curl's `.curlrc` ConfigMap with
+  `CURL_HOME`, and `trustedCA.existingConfigMap.subjectHash` for the hashed mount.
 
 ## Sources
 
