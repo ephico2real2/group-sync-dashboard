@@ -42,6 +42,8 @@ request, with the reason, under "Orchestrator's notes".
 
 - Found in the second pass (PR #71; Codex gpt-5.6-sol at xhigh and Cursor Grok 4.6 high fast, both on the fixed head): (1) `--pr` with no `gh` on PATH raised an uncaught `FileNotFoundError` after the release commit existed — the body's risk section claimed the script "says so"; now a `ReleaseError` that names the branch and commit. (2) The body only NOTED a checkout other than main; a release branch cut from a topic branch carries that branch's commits into a PR based on main, so it is refused when the run would commit (`--no-commit` edits and branches nothing, so the spec's dry run on a feature branch still works). (3) The one-line check tested `\n` only; `\r` passed and U+2028 corrupted Chart.yaml; now `splitlines()` on the stripped text, so a trailing newline is still fine. (4) A reason of dots and spaces or only zero-width characters still produced an empty bold bullet; a reason must contain a letter or digit. Rejected: `break_long_words=True` to hold the 100-column comment width (it would split a URL or identifier in a comment) and display-width wrapping. The test file holds 19 tests after this.
 
+- Found by B4's release (the script's first real use): three tests added in the #71 review hardcoded `--chart 0.10.1`, which stopped advancing once the real chart reached 0.11.0, and the harness date equalled the day of a real release, so the real Chart.yaml carried it. Targets derive from the sandbox's current version (`_next_chart_patch`) and the harness date is 2031-01-15.
+
 ## Batch preamble (verbatim from the design)
 
 # Design: A1 (UI tests in CI), A2 (SBOM, signing, provenance), A3 (release preparation script)

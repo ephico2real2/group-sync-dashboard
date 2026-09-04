@@ -34,6 +34,8 @@ request, with the reason, under "Orchestrator's notes".
 
 - MEASURED on CRC (2026-09-04T22:28Z): `oc annotate group app-ocp-rbac-abcd-ns-superuser groupsync-dashboard.io/silence-group-count-cliff=until=2026-12-31`; the GroupSync CR `app-ocp-rbac-group-groupsync` (schedule `*/30 * * * *`) synced at 22:30:07Z and the Group's annotation was still present afterwards, beside the operator's own `sync-time` and `ldap.uid`. The group-sync-operator PRESERVES foreign annotations, so the annotation is a durable silence and the README recommends it as designed (risk 1 closed).
 
+- Deviation recorded at implementation: the body's `.silence-tag` rule set `font-size: 11px`; `tests/test_type_scale.py` requires a `--text-*` token, so it is `var(--text-xs)` (11px on the scale).
+
 ## Batch preamble (verbatim from the design)
 
 I have read everything the design needs. Here is the complete design document.
