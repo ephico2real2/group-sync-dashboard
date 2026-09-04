@@ -464,4 +464,10 @@ fire is refused here rather than discovered as silence. Emits nothing; include i
 {{- if le ($c.windowHours | float64) 0.0 -}}
 {{- fail (printf "config.alerts.groupCountCliff.windowHours must be > 0; got %v" $c.windowHours) -}}
 {{- end -}}
+{{- /* The window is reconstructed from polls: shorter than one poll interval, it has no
+       observation at its start and a cliff inside it can vanish before the next poll or
+       before the rule's pending period (found in review, PR #72). */ -}}
+{{- if lt (mulf ($c.windowHours | float64) 3600.0) (.Values.config.pollIntervalSeconds | float64) -}}
+{{- fail (printf "config.alerts.groupCountCliff.windowHours must cover at least one poll interval; got %v hours with config.pollIntervalSeconds=%v" $c.windowHours .Values.config.pollIntervalSeconds) -}}
+{{- end -}}
 {{- end -}}

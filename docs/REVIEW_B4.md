@@ -64,6 +64,17 @@ operator wrote; the test uses the measured cases and fails on the previous code.
 Nothing from the first pass was rejected outright; two snippets were reshaped (the regex, the percentage) and the
 Cursor example replaced by measured ones.
 
+## Second pass, on the fixed head, with the same models
+
+Cursor confirmed all fifteen items with artefacts and no refutation; its sharpest remaining observation — a Group
+deleted and recreated under another name with half the members is not a cliff — is the spec's stated design (B4.3),
+not a regression. Codex confirmed fourteen with Store, helm and API probes and refuted one:
+
+| Finding | Codex | Decision |
+|---|---|---|
+| `windowHours` shorter than the poll interval is accepted; a cliff in a 6-minute window with an hourly poll was present at 12:00 and gone at 12:07, before `for: 15m` | REFUTED | **Accepted**: app and chart refuse a window shorter than `pollIntervalSeconds`, with tests |
+| the same window compared against the rule's `for:` duration | part of the same fix | **Rejected**: the Helm snippet calls a `gsd.durationSeconds` helper that does not exist and none was supplied |
+
 ## Live, on CRC (measured here, since neither sandbox could reach the cluster)
 
 Migration 8 in the pod log; `/api/version` 0.12.0; the Group annotated before the change and re-synced by the

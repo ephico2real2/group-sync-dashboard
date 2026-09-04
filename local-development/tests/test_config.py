@@ -414,6 +414,14 @@ class TestGroupCountCliff:
         with pytest.raises(ConfigError):
             load_settings(write(tmp_path, BASE + line))
 
+    def test_the_window_must_cover_at_least_one_poll_interval(self, tmp_path):
+        """Reconstructed from polls, a window shorter than one interval has no observation at
+        its start and a cliff in it can vanish before the rule's pending period (review, PR #72)."""
+        with pytest.raises(ConfigError, match="at least one poll interval"):
+            load_settings(write(tmp_path, BASE + "pollIntervalSeconds: 3600\ngroupCountCliffWindowHours: 0.5\n"))
+        s = load_settings(write(tmp_path, BASE + "pollIntervalSeconds: 3600\ngroupCountCliffWindowHours: 1\n"))
+        assert s.group_count_cliff_window_hours == 1.0, "exactly one interval is allowed"
+
     def test_env_overrides_the_file(self, tmp_path, monkeypatch):
         monkeypatch.setenv("GSD_GROUP_COUNT_CLIFF_ENABLED", "false")
         monkeypatch.setenv("GSD_GROUP_COUNT_CLIFF_SILENCE", "a-*,b")

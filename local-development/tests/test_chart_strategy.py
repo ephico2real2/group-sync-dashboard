@@ -1260,6 +1260,14 @@ class TestGroupCountCliffValues:
         ok, out = render(**{"monitoring__prometheusRule__enabled": "true"})
         assert ok and "lost at least 50% of their members" in out
 
+    def test_a_window_shorter_than_the_poll_interval_refuses_the_render(self):
+        ok, out = render(**{"config__pollIntervalSeconds": "3600",
+                            "config__alerts__groupCountCliff__windowHours": "0.5"})
+        assert not ok and "must cover at least one poll interval" in out
+        ok, out = render(**{"config__pollIntervalSeconds": "3600",
+                            "config__alerts__groupCountCliff__windowHours": "1"})
+        assert ok, out
+
     @pytest.mark.parametrize("key,value", [
         ("config__alerts__groupCountCliff__dropRatio", "0"),
         ("config__alerts__groupCountCliff__dropRatio", "1.5"),

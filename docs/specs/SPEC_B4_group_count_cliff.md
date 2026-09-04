@@ -40,6 +40,8 @@ request, with the reason, under "Orchestrator's notes".
 
 - Found in review (PR #72, Codex gpt-5.6-sol xhigh): (1) `group_count_changes` summed events with `observed_at >= since`; events stamped exactly at the boundary were written by the poll that defines the window's start, so the inclusive bound rewound that poll and reported the state BEFORE it (a real Store sequence: 20 → 5 → 8 in the boundary second reconstructed 20, not 8). Strictly after now, with the docstring saying why; the body's `test_a_deleted_group_records_its_departures` set `since` equal to the adds' timestamp and moves it one second earlier. (2) `cliff_silence` parsed `until=` with `date.fromisoformat` alone, which accepts the compact `20260905` that the documented grammar calls malformed; a `YYYY-MM-DD` shape check precedes the parse.
 
+- Found in the second review pass (PR #72, Codex xhigh, on the fixed head): a `windowHours` shorter than the poll interval was accepted by the app and the chart; the window is reconstructed from polls, so such a window has no observation at its start and a cliff inside it vanished before the rule's `for: 15m` (measured: alert at 12:00, gone at 12:07 with a 6-minute window and an hourly poll). Both now refuse a window shorter than `pollIntervalSeconds`. The reviewer's further comparison of the window against the rule's `for:` duration was rejected: its Helm snippet calls a duration-parsing helper that does not exist and it supplied none.
+
 ## Batch preamble (verbatim from the design)
 
 I have read everything the design needs. Here is the complete design document.

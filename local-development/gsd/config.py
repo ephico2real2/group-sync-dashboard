@@ -644,6 +644,15 @@ def _cliff_settings(raw: dict) -> dict:
         raise ConfigError(f"groupCountCliffMinMembers must be >= 1; got {min_members!r}")
     if window <= 0:
         raise ConfigError(f"groupCountCliffWindowHours must be > 0; got {window!r}")
+    # The window is reconstructed from polls, so a window shorter than one poll interval has
+    # no observation at its start and a cliff inside it can vanish before the next poll — or
+    # before the PrometheusRule's pending period elapses (found in review, PR #72).
+    poll = int(raw.get("pollIntervalSeconds", 60))
+    if window * 3600 < poll:
+        raise ConfigError(
+            f"groupCountCliffWindowHours must cover at least one poll interval; got {window!r}h "
+            f"with pollIntervalSeconds={poll!r}"
+        )
     source = os.environ.get("GSD_GROUP_COUNT_CLIFF_SILENCE")
     if source is None:
         source = raw.get("groupCountCliffSilence", "")
