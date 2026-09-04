@@ -12,11 +12,14 @@ WHAT IS HELD, and why each line matters:
 
 * The three bases are the hardened images on their FLOATING minor tags (`3.14`, `3.14-builder`),
   which is an operator decision: every build takes the latest 3.14 rather than a pinned snapshot.
-* In the runtime stage, no shell-form `RUN` appears before the pack `COPY` — there is nothing to
-  run it with.
+* In the runtime stage, no `RUN` of any form appears before the pack `COPY` — there is nothing to
+  run a shell-form one with, and nothing needs an exec-form one there.
+* The pack copies exactly the twelve libraries the runtime lacks, measured, and no other.
 * The runtime creates its writable directories with the UBI recipe's own line (mkdir/chgrp/chmod),
-  uninstalls libuuid and pip (files here, records in the pack stage), and drops to `USER 1001`
-  before the proofs and before `CMD`.
+  uninstalls libuuid and pip from the database's own file list (files here, records in the pack
+  stage, database replaced not merged), and drops to `USER 1001` before the proofs and `CMD`.
+* The proofs cover every module the build stage proved, the two removals as observed absences,
+  the loader's own resolution of every packed binary, and real work from every pack tool.
 * `CMD` is exec form (uvicorn is PID 1, so SIGTERM reaches it) and unchanged in substance.
 * `Containerfile.ubi` is kept beside it for reference and is built by nothing in the repository.
 
@@ -86,10 +89,13 @@ class TestRuntimeStageOrder:
                 return i
         raise AssertionError(f"no runtime line matches {predicate.__name__}")
 
-    def test_no_shell_form_run_before_the_pack_lands(self) -> None:
+    def test_no_run_of_any_form_before_the_pack_lands(self) -> None:
+        """Stricter than "no shell-form RUN": an exec-form RUN of python3.14 would work before
+        the pack, but nothing in the recipe needs one there, and forbidding all of them keeps the
+        rule simple enough to hold."""
         pack_copy = self._index(lambda l: l.startswith("COPY --from=pack /jqpack/bin/"))
         for line in RUNTIME[:pack_copy]:
-            assert not line.startswith("RUN "), f"shell-form RUN before /bin/sh exists: {line}"
+            assert not line.startswith("RUN"), f"RUN before the pack lands: {line}"
 
     def test_the_pack_copies_both_binaries_and_libraries(self) -> None:
         assert "COPY --from=pack /jqpack/bin/ /usr/bin/" in RUNTIME
@@ -101,21 +107,41 @@ class TestRuntimeStageOrder:
         assert "chmod -R g=u /data /etc/gsd" in line
         assert line.startswith('RUN ["/bin/sh", "-c",'), "must be exec form through the pack's shell"
 
-    def test_libuuid_and_pip_are_uninstalled_files_and_records(self) -> None:
-        removal = next(l for l in RUNTIME if "rm -rf /usr/lib/python3.14/site-packages/pip" in l)
-        assert "/usr/lib64/libuuid.so.1" in removal
-        assert "COPY --from=pack /rpmdb/ /usr/lib/sysimage/rpm/" in RUNTIME
-        erase = next(l for l in BY_NAME["pack"] if "-e --justdb --nodeps" in l)
+    def test_the_uninstall_removes_the_files_the_database_listed_then_replaces_the_database(self) -> None:
+        """Files and records together, in this order: the pack stage lists the packages' paths
+        out of the database BEFORE erasing them; the runtime stage consumes that list, removes
+        the paths, fails if one survives, empties the database directory, and only then copies
+        the edited database in. A merge-copy or a hand-written path list is what the review
+        caught (a 1.3 MB pip wheel left on disk with its record gone)."""
+        pack = BY_NAME["pack"]
+        listing = next(l for l in pack if "-ql" in l and "/rpmdb-erased-paths" in l)
+        erase = listing  # same logical RUN: the listing precedes the erase inside it
+        assert listing.index("-ql") < erase.index("-e --justdb --nodeps")
         for pkg in ("libuuid", "python3-pip", "python-pip-wheel"):
-            assert pkg in erase
-        assert "COPY --from=runner /usr/lib/sysimage/rpm /rpmdb" in BY_NAME["pack"]
+            assert pkg in listing
+        assert "wal_checkpoint(TRUNCATE)" in erase
+        assert erase.index("wal_checkpoint") < erase.index("rm -f /rpmdb/rpmdb.sqlite-shm")
+        assert "COPY --from=runner /usr/lib/sysimage/rpm /rpmdb" in pack
+
+        list_copy = self._index(lambda l: l == "COPY --from=pack /rpmdb-erased-paths /rpmdb-erased-paths-deepest-first /")
+        removal = self._index(lambda l: l.startswith('RUN ["/bin/sh", "-c", "set -e; while read -r f;'))
+        db_copy = self._index(lambda l: l == "COPY --from=pack /rpmdb/ /usr/lib/sysimage/rpm/")
+        assert list_copy < removal < db_copy
+        run = RUNTIME[removal]
+        assert 'echo \\"still present: $f\\"' in run and "exit 1" in run
+        assert "rm -rf /rpmdb-erased-paths" in run
+        assert "/usr/share/python-wheels" in run
+        assert "/usr/lib/sysimage/rpm/*" in run, "the database directory must be emptied, not merged into"
+        assert "sort" not in run, "sort is not among the packed tools; the deepest-first order comes from the pack stage"
+        assert "sort -ur /rpmdb-erased-paths > /rpmdb-erased-paths-deepest-first" in listing
+        assert run.startswith('RUN ["/bin/sh", "-c", "set -e;'), "an error inside the loops must fail the build"
 
     def test_root_is_dropped_before_the_proofs_and_the_cmd(self) -> None:
         user_lines = [i for i, l in enumerate(RUNTIME) if l.startswith("USER ")]
         assert RUNTIME[user_lines[-1]] == "USER 1001"
         last_user = user_lines[-1]
-        proofs = [i for i, l in enumerate(RUNTIME) if l.startswith('RUN ["python3.14"') or "pack OK" in l]
-        assert len(proofs) == 2 and all(i > last_user for i in proofs)
+        proofs = [i for i, l in enumerate(RUNTIME) if l.startswith('RUN ["python3.14"') or "pack OK" in l or "--list" in l]
+        assert len(proofs) == 3 and all(i > last_user for i in proofs)
         cmd = self._index(lambda l: l.startswith("CMD "))
         assert cmd > last_user
         assert "USER 0" in RUNTIME  # root exists only between the pack COPY and USER 1001
@@ -123,17 +149,35 @@ class TestRuntimeStageOrder:
 
     def test_the_proofs_cover_what_the_base_change_could_break(self) -> None:
         py = next(l for l in RUNTIME if l.startswith('RUN ["python3.14"'))
-        for name in ("import gsd", "sqlite3", "zoneinfo", "uuid.uuid4()"):
-            assert name in py
+        build_proof = next(l for l in BY_NAME["build"] if "python3.14 -c" in l and "import gsd" in l)
+        build_imports = re.search(r"import (gsd[\w, ]+?);", build_proof).group(1).replace(" ", "").split(",")
+        for mod in build_imports:
+            assert re.search(rf"\b{mod}\b", py), f"the build stage proves {mod} imports; the runtime proof must too"
+        for needle in (
+            "zoneinfo.ZoneInfo('America/New_York')",
+            "uuid.uuid4()",
+            "import _uuid; raise SystemExit",           # libuuid removal, observed
+            "import pip; raise SystemExit",             # pip removal, observed
+            "/usr/share/python-wheels",                 # the wheel the first cut left behind
+            "['.rpm.lock', 'rpmdb.sqlite']",            # the database directory, exactly
+            "pragma journal_mode=wal",                  # the store's mode, on /data
+        ):
+            assert needle in py, needle
+        loader = next(l for l in RUNTIME if "ld-linux-x86-64.so.2 --list" in l)
+        for b in ("jq", "bash", "curl", "coreutils"):
+            assert b in loader
+        assert "not found" in loader
         sh = next(l for l in RUNTIME if "pack OK" in l)
-        for tool in ("curl --version", "jq --version", "ls /", "cat /etc/os-release", "base64 --version"):
-            assert tool in sh
+        for work in ("jq -r '.a[1]'", "base64 -d", "curl --version", "ls /", "cat /etc/os-release"):
+            assert work in sh, work
 
     def test_cmd_is_exec_form_and_unchanged(self) -> None:
+        """Exact equality with the UBI recipe's CMD, whitespace aside — a changed flag or an
+        extra argument is a behaviour change nothing else would notice."""
         cmd = next(l for l in RUNTIME if l.startswith("CMD "))
         assert cmd.startswith("CMD [")
-        for part in ('"python3.14"', '"-m"', '"uvicorn"', '"gsd.api:create_app"', '"--factory"', '"--workers", "1"'):
-            assert part in cmd
+        ubi_cmd = next(l for l in _logical_lines(BACKUP.read_text()) if l.startswith("CMD "))
+        assert re.sub(r"\s+", " ", cmd) == re.sub(r"\s+", " ", ubi_cmd)
 
     def test_no_healthcheck(self) -> None:
         """OCI builds discard it and kubelet never reads it; the chart's probes are the health check."""
@@ -152,11 +196,21 @@ class TestPackStage:
         for tool in ("cat", "ls", "base64", "mkdir", "chgrp", "chmod", "rm"):
             assert f"/usr/bin/{tool} " in run or f"/usr/bin/{tool}\t" in run, f"{tool} shim not packed"
 
-    def test_libraries_the_runner_already_has_are_not_overwritten(self) -> None:
-        """libtinfo and libsystemd are in the runner base; packing them would replace its files."""
+    PACKED = {
+        "libjq.so.1", "libonig.so.5", "libcurl.so.4", "libnghttp2.so.14", "libidn2.so.0",
+        "libunistring.so.5", "libgssapi_krb5.so.2", "libkrb5.so.3", "libk5crypto.so.3",
+        "libcom_err.so.2", "libkrb5support.so.0", "libkeyutils.so.1",
+    }
+
+    def test_exactly_the_twelve_libraries_the_runtime_lacks_are_packed(self) -> None:
+        """Measured on 2026-09-04: ldd of jq/bash/curl/coreutils names 26 shared objects, of
+        which the runtime base lacks these twelve and no other. One more would overwrite a file of
+        the base's (libtinfo, libsystemd); one fewer is a loader error the build-time proof turns
+        into a failed build. If the base or the pack's dependency closure moves, this list moves
+        with a new measurement, not by intuition."""
         run = next(l for l in BY_NAME["pack"] if "libjq.so.1" in l)
-        assert "libtinfo" not in run
-        assert "libsystemd" not in run
+        packed = set(re.findall(r"/usr/lib64/(lib[\w.+-]+\.so\.\d+)", run))
+        assert packed == self.PACKED, packed ^ self.PACKED
 
 
 class TestBackup:

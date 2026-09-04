@@ -225,18 +225,20 @@ spec:
             {{- if not $.Values.trustedCA.existingConfigMap.enabled }}
             {{- fail "trustedCA.existingConfigMap.subjectHash is set but trustedCA.existingConfigMap.enabled is false — there is no ConfigMap to mount" }}
             {{- end }}
-            {{- if not (regexMatch "^[0-9a-f]{8}$" .) }}
-            {{- fail (printf "trustedCA.existingConfigMap.subjectHash %q is not an OpenSSL subject hash (eight lowercase hex digits, from `openssl x509 -noout -subject_hash -in ca.crt`)" .) }}
+            {{- if not (regexMatch "^[0-9a-f]{8}(\\.[0-9]+)?$" .) }}
+            {{- fail (printf "trustedCA.existingConfigMap.subjectHash %q is not an OpenSSL subject hash (eight lowercase hex digits from `openssl x509 -noout -subject_hash -in ca.crt`, optionally followed by .N)" .) }}
             {{- end }}
             # The same CA a second time, as an entry in OpenSSL's hashed directory (Hummingbird's
             # "Approach 2" for Python images): curl reads it through SSL_CERT_DIR above, urllib
             # and the application's fallback context read it as OpenSSL's default capath. A
             # subPath mount of ONE file, never the directory — mounting the directory would hide
-            # the base's ~290 hashed links to the public CAs. subPath mounts do not follow later
-            # ConfigMap edits; a changed CA needs a rollout, which a hand-made ConfigMap needs
-            # anyway. The hash cannot be computed at render time, hence the value.
+            # the base's ~290 hashed links to the public CAs. It does shadow the one entry of the
+            # same name if the base already has it, which is why the value may carry OpenSSL's
+            # collision suffix (`c275f070.1`): `.0` is assumed when none is given. subPath mounts
+            # do not follow later ConfigMap edits; a changed CA needs a rollout, which a hand-made
+            # ConfigMap needs anyway. The hash cannot be computed at render time, hence the value.
             - name: trusted-ca-enterprise
-              mountPath: /etc/pki/tls/certs/{{ . }}.0
+              mountPath: /etc/pki/tls/certs/{{ . }}{{ if not (contains "." .) }}.0{{ end }}
               subPath: {{ $.Values.trustedCA.existingConfigMap.key }}
               readOnly: true
             {{- end }}

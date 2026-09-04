@@ -56,27 +56,46 @@ none more. `libtinfo` and `libsystemd`, which fluentd-hec's pack carries, are le
 the runtime has them, and copying them would overwrite the base's own files.
 
 This stage also edits **a copy of the runtime's RPM database** (`COPY --from=runner
-/usr/lib/sysimage/rpm`), because the runtime cannot: `rpm -e --justdb --nodeps libuuid
-python3-pip python-pip-wheel`. The reasons are in `image-vulnerability-scan.md`; the short form is
-that `libuuid` is the one HIGH-rated package in the base and nothing needs it, and pip is an
-installer nothing needs. `--justdb` touches the database only; the pack stage's own files are not
-what is being uninstalled.
+/usr/lib/sysimage/rpm`), because the runtime cannot. In order: the file lists of `libuuid`,
+`python3-pip` and `python-pip-wheel` are read out of that database (`rpm -ql`) into a file the
+runtime stage will consume; each package is erased with `rpm -e --justdb --nodeps`, **per package
+and only if it is recorded**, because the base floats and erasing a package that is no longer
+there would fail the build for the wrong reason; a check fails the build if any of the three is
+still recorded; the database is checkpointed explicitly (rpm 6 keeps it in SQLite WAL mode) and
+the shm/wal files SQLite creates on every open are removed last. The reasons for the three are in
+`image-vulnerability-scan.md`; the short form is that `libuuid` is the one HIGH-rated package in
+the base and nothing needs it, and pip — installed once as a package and once more as the wheel
+under `/usr/share/python-wheels` that seeds virtual environments — is an installer nothing needs.
+`--justdb` touches the database only; the pack stage's own files are not what is being
+uninstalled. The database that ships records, on purpose, one dependency it cannot satisfy:
+`python3-libs` on `libuuid`.
 
 **runtime** — `FROM runner`. Order is the whole point, because nothing below the base line can be
 a shell-form `RUN` until the pack has landed: `ARG`s, the `ENV` block verbatim (its `GSD_LOG_LEVEL`
 commentary is pinned by `tests/test_log_levels.py`), `LABEL`s, `COPY --from=build /install`,
 `COPY --from=pack` of the binaries into `/usr/bin` and the libraries into `/usr/lib64`. Then, as
 root for three steps: the UBI recipe's own directory line (`mkdir -p /data /etc/gsd && chgrp -R 0
-… && chmod -R g=u …`), the file removals for `libuuid` and pip, and the edited RPM database copied
-over the base's. Then `USER 1001`, and two exec-form proofs *as that user*: the wheel tree imports
-under the runtime's interpreter with `sqlite3`, `zoneinfo` and `uuid` working; and `curl`, `jq`,
-`ls`, `cat`, `base64` all run under the pack's own shell, which is the same as saying every library
-they need is present. `EXPOSE`, `VOLUME`, and the `CMD` unchanged. `HEALTHCHECK` is gone: the UBI
-recipe documented that OCI builds discard it and kubelet never reads it.
+… && chmod -R g=u …`); the removal of every file and symlink the three uninstalled packages owned,
+from the list the pack stage read out of the database, then their directories where empty (`rmdir`
+refuses a directory another package still fills, which is right — `/usr/lib/.build-id` is
+everyone's), then a check that no listed path but such a shared directory survives — the first cut
+of this recipe removed pip's site-packages by hand and left the 1.3 MB wheel under
+`/usr/share/python-wheels` with its record gone, which the review caught; and the RPM database
+directory emptied and **replaced** by the edited copy, not merged with it. Then `USER 1001`, and
+three exec-form proofs *as that user*: every module the build stage proved imports again under the
+runtime's interpreter, WAL mode works on `/data`, `zoneinfo` resolves, `uuid` works while `_uuid`
+must fail to import (that is the libuuid removal, observed), `pip` is not importable, the removed
+paths are gone and the database directory holds exactly the base's two files; the dynamic loader
+itself lists every library of every packed binary with none "not found" (`ld.so --list`, not
+`--version`, which exercises only what a binary loads on the way to printing it); and each pack
+tool does a real unit of work — jq evaluates JSON, base64 round-trips, sh, ls, cat and curl run.
+`EXPOSE`, `VOLUME`, and the `CMD` unchanged. `HEALTHCHECK` is gone: the UBI recipe documented that
+OCI builds discard it and kubelet never reads it.
 
-`tests/test_containerfile.py` holds the shape: the three bases on floating tags, no shell-form
-`RUN` before the pack `COPY`, the directory line, the two uninstalls, root dropped before the
-proofs and the `CMD`, exec-form `CMD`, the backup referenced by nothing.
+`tests/test_containerfile.py` holds the shape: the three bases on floating tags, no `RUN` of any
+form before the pack `COPY`, the exact twelve packed libraries, the directory line, the file list
+read before the erase and consumed before the database is replaced, root dropped before the
+proofs and the `CMD`, the proofs' coverage, the exact `CMD`, the backup referenced by nothing.
 
 ## Two things the interpreter could not be trusted to do
 
@@ -86,11 +105,17 @@ measured, `COPY --chmod=0775` of an empty directory lands `0755`, and of a direc
 it the *file* gets `0775` and the directory still `0755`. So the directories are made in the
 runtime stage, after the pack has provided `mkdir`, `chgrp` and `chmod`, with the UBI recipe's own
 line. Result: `drwxrwxr-x root root`, and an arbitrary UID in gid 0 creates a SQLite file under
-`/data` (measured with `--user 1000:0`).
+`/data` (measured with `--user 1000:0`). That governs a bare `podman run` and an emptyDir. Under
+the chart, `/data` is a PersistentVolumeClaim and `/etc/gsd` a Secret mount, and a mount's
+ownership comes from the volume and the pod's supplemental groups, not from the image — on CRC the
+mounted `/data` is `root:1000670000`, the project's assigned group. The image's mode is not what
+makes the PVC writable; OpenShift's security context constraints are.
 
 **The RPM database.** SQLite creates `-shm`/`-wal` files whenever `rpm` opens it. The erase step
-ends with their removal, *after* the last `rpm` command, so the copy that ships is the one file the
-base shipped.
+checkpoints the database through the interpreter (`PRAGMA wal_checkpoint(TRUNCATE)`) and ends with
+their removal, *after* the last command that opens it, so the copy that ships is the two files the
+base shipped, `rpmdb.sqlite` and its `.rpm.lock` — and the runtime proof asserts exactly that
+listing.
 
 ## SQLite, checked rather than assumed
 

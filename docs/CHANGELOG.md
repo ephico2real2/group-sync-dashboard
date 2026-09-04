@@ -6,7 +6,7 @@ and the chart (`Chart.yaml`, published to the Helm repository). A chart release 
 `appVersion` is listed under the application release it carries. The reasoning behind each change
 lives next to the code and in the design and review records linked here.
 
-## Application 0.11.0 — chart 0.9.5 — 2026-09-04
+## Application 0.11.0 — chart 0.10.0 — 2026-09-04
 
 - **The image runs on Red Hat Hardened Images.** `hi/python:3.14` to run and `hi/python:3.14-builder`
   to build, on the floating `3.14` tags so every build takes Red Hat's latest 3.14. The runtime base
@@ -16,12 +16,14 @@ lives next to the code and in the design and review records linked here.
   the docs and the release scripts' stamp check still work. SQLite is 3.53.4 (UBI: 3.34.1); zoneinfo
   ships, so the tzdata reinstall is gone; 186 MB against 227. The previous recipe is kept as
   `Containerfile.ubi`, built by nothing. (#52; design `DESIGN_hardened_image.md`)
-- **Two packages uninstalled from the base, files and RPM records together.** `libuuid`, the one
+- **Three packages uninstalled from the base, files and RPM records together.** `libuuid`, the one
   HIGH-rated package in the base (four util-linux advisories of 2026-09-02, all in mount code the
   image does not ship, no fixed build from Red Hat yet) — nothing needs it, and `uuid` falls back to
-  pure Python, proven on every build. And pip, an installer nothing needs, whose vendored msgpack and
-  setuptools were the only Python findings. The shipped image scans at zero CRITICAL, zero HIGH,
-  zero fixable at any severity. (#52; `image-vulnerability-scan.md`)
+  pure Python, proven on every build. And pip, twice (`python3-pip` and the `python-pip-wheel`
+  seed), an installer nothing needs, whose vendored msgpack and setuptools were the only Python
+  findings. The file list comes from the RPM database itself, so files and records cannot diverge.
+  The shipped image scans at zero CRITICAL, zero HIGH, zero fixable at any severity. (#52;
+  `image-vulnerability-scan.md`)
 - **CI scans with Grype, not Trivy.** Measured: Trivy does not recognise Hummingbird OS and scans
   no OS package; Grype reads the RPM database and Red Hat's advisories for it. The gate runs on the
   shipped image and on the pack stage, fails only on fixable HIGH, and a separate step shows the

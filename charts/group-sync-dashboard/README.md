@@ -64,7 +64,7 @@ moves the probes behind the proxy. All automatic.
 | `trustedCA.existingConfigMap.enabled` | `false` | a ConfigMap you create out of band |
 | `trustedCA.existingConfigMap.name` | `enterprise-ca` | |
 | `trustedCA.existingConfigMap.key` | `ca-bundle.crt` | |
-| `trustedCA.existingConfigMap.subjectHash` | `""` | `openssl x509 -noout -subject_hash` of that CA; when set, it is also mounted as `/etc/pki/tls/certs/<hash>.0` so curl in the pod trusts it |
+| `trustedCA.existingConfigMap.subjectHash` | `""` | `openssl x509 -noout -subject_hash` of that CA, optionally with a `.N` collision suffix; when set, it is also mounted as `/etc/pki/tls/certs/<hash>.0` (or `.N`) so curl in the pod trusts it |
 | `trustedCA.mountPath` | `/etc/pki/ca-trust/extracted/pem` | |
 
 Both may be on; they are loaded in turn. A cluster entry naming its own `caBundleFile`
@@ -106,15 +106,18 @@ handed to curl — it carries only the extra CA, and curl reads one file — so 
 **curl inside the pod** reads none of the above; measured in the image, it trusts only the base's
 own bundle. So the container also sets `CURL_CA_BUNDLE` to the injected bundle (curl's variable
 alone, invisible to Python) and `SSL_CERT_DIR=/etc/pki/tls/certs` (OpenSSL's own default, so a
-no-op for the dashboard, and the hashed directory curl otherwise ignores). The manual ConfigMap is
-never curl's one file — it carries only the extra CA and would drop every public CA — but it can
-be mounted into that hashed directory as well, the way Hummingbird's Python guidance describes,
-by giving the chart the CA's subject hash:
+no-op for the dashboard, and the hashed directory curl otherwise ignores). Two consequences worth
+knowing: the injected ConfigMap is empty until OpenShift fills it, moments after creation, and
+curl fails with exit 77 for every URL while it is — the dashboard's own polling does not read
+`CURL_CA_BUNDLE` and is unaffected; and the manual ConfigMap is never curl's one file, because it
+carries only the extra CA and would drop every public CA. Without the hash below, an in-pod curl
+to a URL signed by that CA takes `--cacert`. With it, the manual CA is mounted into the hashed
+directory as well, the way Hummingbird's Python guidance describes:
 
 ```bash
 openssl x509 -noout -subject_hash -in /path/to/ingress-ca.pem      # e.g. c275f070
 helm upgrade ... --set trustedCA.existingConfigMap.enabled=true \
-  --set trustedCA.existingConfigMap.subjectHash=c275f070
+  --set trustedCA.existingConfigMap.subjectHash=c275f070      # or c275f070.1 on a collision
 ```
 
 With that, curl, `urllib` and the dashboard's fallback context all trust it. One address stays

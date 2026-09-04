@@ -86,9 +86,12 @@ RUN dnf update -y \
  && for b in jq bash curl coreutils; do echo "== ldd $b"; ldd /usr/bin/$b; done \
  && /jqpack/bin/jq --version && /jqpack/bin/curl --version >/dev/null && echo "curl pack OK"
 
-# THE RUNTIME'S RPM DATABASE, EDITED HERE BECAUSE THE RUNTIME HAS NO rpm. Two packages are
-# uninstalled from the shipped image (their files go in the runtime stage, below), and an uninstall
-# is files AND record, or scanners keep reporting what is no longer there:
+# THE RUNTIME'S RPM DATABASE, EDITED HERE BECAUSE THE RUNTIME HAS NO rpm. Three packages are
+# uninstalled from the shipped image, and an uninstall is files AND record, or scanners keep
+# reporting what is no longer there — and worse, the reverse: a record erased while its files
+# remain is an inventory that lies (the first cut of this recipe left python-pip-wheel's 1.3 MB
+# wheel on disk with its record gone; the review caught it). So the file lists come FROM the
+# database, before the erase, and the runtime stage removes exactly those paths.
 #   libuuid — the one OS package a scanner rates HIGH in the base (four util-linux CVEs, 2026-09-02,
 #     all in libmount/mount(8)/nsenter, none of which the base ships; libuuid is flagged by source
 #     package, and Red Hat lists Hardened Images as Affected with no fixed build in the repo as of
@@ -96,14 +99,23 @@ RUN dnf update -y \
 #     it, and the uuid module falls back to pure Python when _uuid is absent — measured, uuid4 works.
 #   python3-pip and python-pip-wheel — pip, removed for the reasons given in the runtime stage.
 # --justdb touches the database only; the pack stage's own files are not what is being uninstalled.
-# --nodeps because python3-libs declares the libuuid dependency that the fallback makes optional.
-COPY --from=runner /usr/lib/sysimage/rpm /rpmdb
+# --nodeps because python3-libs declares the libuuid dependency that the fallback makes optional;
+# the shipped database therefore records a dependency it cannot satisfy, on purpose and by name.
+#
 # Per package and conditional, because the base floats: the day Red Hat ships 3.14 without pip or
 # without libuuid, `rpm -e` of a package that is not installed is an error, and the build would
-# break for the wrong reason. Then a check that none of the three is left, and the shm/wal files —
-# SQLite's, created whenever rpm opens the database — removed LAST, after the final rpm command,
-# so the copy that ships is the one file the base shipped.
-RUN for p in libuuid python3-pip python-pip-wheel; do \
+# break for the wrong reason. Then a check that none of the three is left; then the database is
+# checkpointed explicitly — rpm 6 keeps it in SQLite WAL mode, and rather than trust that rpm
+# left nothing in the log, the interpreter folds the log into the main file — and the shm/wal
+# files, which SQLite creates whenever the database is opened, are removed LAST, after the final
+# command that opens it, so the copy that ships is the two files the base shipped (rpmdb.sqlite
+# and its .rpm.lock).
+COPY --from=runner /usr/lib/sysimage/rpm /rpmdb
+RUN for p in libuuid python3-pip python-pip-wheel; do rpm --dbpath /rpmdb -ql "$p" 2>/dev/null; done \
+      | sort -u > /rpmdb-erased-paths \
+ && sort -ur /rpmdb-erased-paths > /rpmdb-erased-paths-deepest-first \
+ && echo "paths owned by the packages being uninstalled: $(wc -l < /rpmdb-erased-paths)" \
+ && for p in libuuid python3-pip python-pip-wheel; do \
       if rpm --dbpath /rpmdb -q "$p" >/dev/null 2>&1; then rpm --dbpath /rpmdb -e --justdb --nodeps "$p"; \
       else echo "$p: not in the base, nothing to erase"; fi; \
     done \
@@ -111,7 +123,9 @@ RUN for p in libuuid python3-pip python-pip-wheel; do \
       if rpm --dbpath /rpmdb -q "$p" >/dev/null 2>&1; then echo "still recorded: $p" >&2; exit 1; fi; \
     done \
  && echo "runtime rpm db: $(rpm --dbpath /rpmdb -qa | wc -l) packages after erase" \
- && rm -f /rpmdb/rpmdb.sqlite-shm /rpmdb/rpmdb.sqlite-wal
+ && python3.14 -c "import sqlite3; c = sqlite3.connect('/rpmdb/rpmdb.sqlite'); print('checkpoint', c.execute('PRAGMA wal_checkpoint(TRUNCATE)').fetchone()); c.close()" \
+ && rm -f /rpmdb/rpmdb.sqlite-shm /rpmdb/rpmdb.sqlite-wal \
+ && ls -la /rpmdb
 
 # ----------------------------------------------------------------------------
 # Stage 3 — runtime. NO SHELL EXISTS IN THIS IMAGE until the pack lands, so nothing below the base
@@ -184,7 +198,10 @@ COPY --from=pack /jqpack/lib64/ /usr/lib64/
 
 # The directories the chart mounts into and the process writes under, made exactly as the UBI
 # recipe made them — OpenShift runs containers as an arbitrary high UID in the root group, so both
-# stay group-writable and group-owned by root, the SQLite file included. This is a shell-form step
+# stay group-writable and group-owned by root, the SQLite file included. These modes govern a bare
+# `podman run` and an emptyDir; under the chart /data is a PersistentVolumeClaim and /etc/gsd a
+# Secret mount, and a mount's ownership comes from the volume and the pod's supplemental groups,
+# not from the image (measured on CRC: the mounted /data is root:1000670000). This is a shell-form step
 # in a base that has no shell: it works only because it comes AFTER the pack COPY above, which is
 # what puts /bin/sh, mkdir, chgrp and chmod here. They are not carried over from the pack stage
 # because a COPY of an empty directory lands as 0755 whatever the source's mode and whatever
@@ -193,21 +210,29 @@ COPY --from=pack /jqpack/lib64/ /usr/lib64/
 USER 0
 RUN ["/bin/sh", "-c", "mkdir -p /data /etc/gsd && chgrp -R 0 /data /etc/gsd && chmod -R g=u /data /etc/gsd"]
 
-# TWO PACKAGES UNINSTALLED — files here, records in the pack stage (which has rpm; this stage does
-# not). The database copied in below then says what is actually on disk.
+# THREE PACKAGES UNINSTALLED — files here, records in the pack stage (which has rpm; this stage
+# does not). The paths come from the database, listed before the erase, so what is removed is
+# exactly what the records said the packages owned: every regular file and symlink, then every
+# directory of theirs that is empty afterwards (rmdir refuses a directory another package still
+# fills, which is the right refusal — /usr/lib/.build-id is everyone's). The deepest-first order
+# for that comes from the pack stage as a second list, because `sort` is not among the tools this
+# image carries — the first cut piped through it here, and the error was hidden and the loop
+# silently empty. Then a check that no listed path survives except such shared directories, and
+# the database directory is emptied and REPLACED by the edited copy, not merged with it, so a
+# sidecar the base might one day ship cannot survive beside a database that no longer matches it.
 #
 # pip does not ship. The base carries a working `python3.14 -m pip` (pip 26.2, measured) and nothing
 # here needs it: the wheel tree is resolved in the build stage and crosses as files. Leaving it is
 # an installer in a production image, and it is also the only thing a scanner finds in the base's
 # Python — pip vendors its own msgpack and setuptools, and Trivy reads them out of
 # pip/_vendor/vendor.txt as HIGH findings with fixes pip has not taken (msgpack 1.1.2, setuptools
-# 70.3.0, measured 2026-09-04). The glob is deliberate: the dist-info directory carries pip's
-# version in its name, and the base's floating tag moves it.
+# 70.3.0, measured 2026-09-04). python-pip-wheel is the same pip again, as a wheel under
+# /usr/share/python-wheels, for `python -m venv` to seed; nothing here makes a venv.
 #
 # libuuid does not ship. See the pack stage for the finding it carries; the uuid module keeps
-# working without it (measured, and proven again below). `rm -f` on paths that do not exist is not
-# an error, so both steps stay quiet if a future base ships without either package.
-RUN ["/bin/sh", "-c", "rm -rf /usr/lib/python3.14/site-packages/pip /usr/lib/python3.14/site-packages/pip-*.dist-info && rm -f /usr/lib64/libuuid.so.1 /usr/lib64/libuuid.so.1.* /usr/share/licenses/libuuid/COPYING.BSD-3-Clause && rm -rf /usr/share/licenses/libuuid"]
+# working without it (measured, and proven again below).
+COPY --from=pack /rpmdb-erased-paths /rpmdb-erased-paths-deepest-first /
+RUN ["/bin/sh", "-c", "set -e; while read -r f; do if [ -f \"$f\" ] || [ -L \"$f\" ]; then rm -f \"$f\"; fi; done < /rpmdb-erased-paths; while read -r d; do if [ -d \"$d\" ] && [ ! -L \"$d\" ]; then rmdir \"$d\" 2>/dev/null || true; fi; done < /rpmdb-erased-paths-deepest-first; while read -r f; do if [ -e \"$f\" ] && [ ! -d \"$f\" ]; then echo \"still present: $f\" >&2; exit 1; fi; done < /rpmdb-erased-paths; rm -rf /rpmdb-erased-paths /rpmdb-erased-paths-deepest-first /usr/lib/python3.14/site-packages/pip /usr/lib/python3.14/site-packages/pip-*.dist-info /usr/share/python-wheels /usr/lib/sysimage/rpm/*; echo 'uninstalled files gone'"]
 COPY --from=pack /rpmdb/ /usr/lib/sysimage/rpm/
 
 # A non-root default so the image is also safe to run outside OpenShift, where no arbitrary UID is
@@ -216,15 +241,21 @@ COPY --from=pack /rpmdb/ /usr/lib/sysimage/rpm/
 # they run as the user the container will run as.
 USER 1001
 
-# PROVE THE IMAGE AT BUILD TIME, FROM THE OUTSIDE — fluentd-hec's principle. Two exec-form RUNs,
-# as the runtime user (no shell needed for the first; the second runs under the pack's own shell):
-#   1. the wheel tree imports under THIS interpreter, the runtime's, not the builder's; the SQLite
-#      the app will use is the base's (3.53.4 at the time of writing, against UBI's 3.34.1); the
-#      zoneinfo the chart's `timezone` relies on resolves; and uuid works without libuuid.
-#   2. every pack binary runs, which is the same as saying every library it needs is present — a
-#      missing one is a loader error here, not a broken `oc exec` on a cluster.
-RUN ["python3.14", "-c", "import gsd, fastapi, uvicorn, httpx, sqlite3, zoneinfo, uuid; zoneinfo.ZoneInfo('America/New_York'); uuid.uuid4(); print('runtime imports OK; sqlite', sqlite3.sqlite_version)"]
-RUN ["/bin/sh", "-c", "curl --version >/dev/null && jq --version && ls / >/dev/null && cat /etc/os-release >/dev/null && base64 --version >/dev/null && echo 'pack OK'"]
+# PROVE THE IMAGE AT BUILD TIME, FROM THE OUTSIDE — fluentd-hec's principle. Three exec-form RUNs,
+# as the runtime user (no shell needed for the first two; the third runs under the pack's shell):
+#   1. every module the build stage proved imports again under THIS interpreter, the runtime's;
+#      the SQLite the app will use is the base's (3.53.4 at the time of writing, against UBI's
+#      3.34.1) and WAL mode works on /data as the store needs it; zoneinfo resolves; uuid works
+#      WITHOUT _uuid, which must fail to import — that is the libuuid removal, observed; pip is
+#      not importable; and the uninstalled packages' files are gone.
+#   2. the dynamic loader resolves every library of every packed binary — not `--version`, which
+#      only exercises what a binary loads on the way to printing it, but ld.so's own listing, in
+#      which a missing library reads "not found".
+#   3. every pack tool does a real unit of work: jq evaluates JSON, base64 round-trips, and sh, ls,
+#      cat and curl run.
+RUN ["python3.14", "-c", "import os, sqlite3, uuid, zoneinfo\nimport gsd, fastapi, uvicorn, httpx, yaml, croniter, prometheus_client\nzoneinfo.ZoneInfo('America/New_York'); uuid.uuid4()\ntry:\n    import _uuid; raise SystemExit('_uuid still importable: libuuid was not removed')\nexcept ImportError: pass\ntry:\n    import pip; raise SystemExit('pip still importable')\nexcept ImportError: pass\nfor p in ('/usr/lib64/libuuid.so.1', '/usr/share/python-wheels', '/usr/lib/python3.14/site-packages/pip', '/rpmdb-erased-paths', '/rpmdb-erased-paths-deepest-first'):\n    assert not os.path.exists(p), p\nassert sorted(os.listdir('/usr/lib/sysimage/rpm')) == ['.rpm.lock', 'rpmdb.sqlite'], os.listdir('/usr/lib/sysimage/rpm')\nc = sqlite3.connect('/data/.build-proof.db'); assert c.execute('pragma journal_mode=wal').fetchone() == ('wal',); c.execute('create table t(x)'); c.commit(); c.close()\nfor f in os.listdir('/data'): os.remove('/data/' + f)\nprint('runtime proof OK; sqlite', sqlite3.sqlite_version)"]
+RUN ["/bin/sh", "-c", "for b in jq bash curl coreutils; do out=$(/lib64/ld-linux-x86-64.so.2 --list /usr/bin/$b) || exit 1; case \"$out\" in *'not found'*) echo \"$b: $out\" >&2; exit 1;; esac; done; echo 'every packed binary resolves'"]
+RUN ["/bin/sh", "-c", "test \"$(printf '{\"a\":[1,2]}' | jq -r '.a[1]')\" = 2 && test \"$(printf hi | base64)\" = aGk= && test \"$(printf aGk= | base64 -d)\" = hi && curl --version >/dev/null && ls / >/dev/null && cat /etc/os-release >/dev/null && echo 'pack OK'"]
 
 EXPOSE 8080
 VOLUME ["/data"]

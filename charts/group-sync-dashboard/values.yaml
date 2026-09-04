@@ -581,7 +581,9 @@ trustedCA:
     # 2" — so curl in the pod, urllib, and the dashboard's fallback context all trust it. The
     # dashboard needs none of this for itself (it reads the bundle by path); this is for the
     # `oc exec … curl` that would otherwise refuse the corporate-signed URL. One CA per hash:
-    # a bundle of several CAs under one hash is only ever looked up by the first subject.
+    # a bundle of several CAs under one hash is only ever looked up by the first subject. The
+    # image already holds ~290 entries for the public CAs; if yours collides with one of them,
+    # give OpenSSL's collision suffix (`c275f070.1`) rather than shadow the base's `.0`.
     subjectHash: ""
 
   # BOTH may be enabled at once. They are concatenated into one bundle at startup, in the
