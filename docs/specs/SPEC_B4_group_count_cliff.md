@@ -36,6 +36,8 @@ request, with the reason, under "Orchestrator's notes".
 
 - Deviation recorded at implementation: the body's `.silence-tag` rule set `font-size: 11px`; `tests/test_type_scale.py` requires a `--text-*` token, so it is `var(--text-xs)` (11px on the scale).
 
+- Found in review (PR #72, Cursor Grok 4.6): the body's `drop < cliff.drop_ratio * before` is a float compare, and `0.07 * 100` is 7.000000000000001 as a double, so a drop of exactly seven in a hundred at ratio 0.07 — the boundary the values promise fires — stayed silent. Measured by brute force: 141 such boundaries among two-decimal ratios and group sizes up to 1000. The compare is exact now: `Fraction(drop, before) < Fraction(str(cliff.drop_ratio))`. (Cursor's own example, `0.1 * 30`, is exactly 3.0 on this interpreter, as were my first two; the class of defect is real and the examples had to be measured.) Also from that pass: the rule's summary hardcoded "half"; it names the configured ratio as a percentage. Measured myself: `EXPLAIN QUERY PLAN` uses `membership_event_by_time`; and `Store.group_detail` lacked `cliff_silence`, so the detail row could disagree with the list — added.
+
 ## Batch preamble (verbatim from the design)
 
 I have read everything the design needs. Here is the complete design document.

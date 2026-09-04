@@ -166,7 +166,7 @@ spec:
           for: {{ .Values.monitoring.prometheusRule.for.groupCountCliff }}
           labels: {severity: warning}
           annotations:
-            summary: "{{ `{{ $value }}` }} group(s) on {{ `{{ $labels.cluster }}` }} lost at least half their members"
+            summary: "{{ `{{ $value }}` }} group(s) on {{ `{{ $labels.cluster }}` }} lost at least {{ printf "%g" (mulf (.Values.config.alerts.groupCountCliff.dropRatio | float64) 100.0) }}% of their members"
             description: >-
               A synced group's membership fell by the configured ratio within the window.
               The dashboard's Overview names the group and the before/after counts; compare

@@ -1319,7 +1319,8 @@ class Store:
 
     def group_detail(self, cluster_id: str, group_name: str) -> dict | None:
         row = self._row(
-            """SELECT name, member_count, sync_provider, group_synced_at, ldap_uid, observed_at
+            """SELECT name, member_count, sync_provider, group_synced_at, ldap_uid, observed_at,
+                      cliff_silence
                  FROM group_state WHERE cluster_id=? AND name=?""",
             (cluster_id, group_name),
         )

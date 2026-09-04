@@ -342,6 +342,20 @@ class TestGroupCountCliff:
         got = self._alerts([self._group(member_count=5, cliff_silence="true")], {"app-ocp-rbac-team-ns-view": {"added": 0, "removed": 5}}, policy=policy)
         assert got[0].silenced_by == "annotation"
 
+    def test_the_ratio_boundary_is_inclusive_in_exact_arithmetic(self):
+        """0.07 * 100 is 7.000000000000001 as a double, so `drop < ratio * before` missed a drop of
+        exactly seven in a hundred — the boundary the values promise fires. Measured: 141 such
+        boundaries among two-decimal ratios and group sizes up to 1000. Found in review (PR #72)."""
+        for ratio, before, drop in ((0.07, 100, 7), (0.07, 300, 21), (0.3, 10, 3), (0.15, 20, 3)):
+            policy = st.CliffPolicy(min_members=10, drop_ratio=ratio, window_hours=24.0)
+            got = self._alerts([self._group(member_count=before - drop)],
+                               {"app-ocp-rbac-team-ns-view": {"added": 0, "removed": drop}}, policy=policy)
+            assert [a.kind for a in got] == ["group_count_cliff"], (ratio, before, drop)
+            assert f"members {before} -> {before - drop}" in got[0].detail
+        one_under = st.CliffPolicy(min_members=10, drop_ratio=0.3, window_hours=24.0)
+        assert self._alerts([self._group(member_count=8)],
+                            {"app-ocp-rbac-team-ns-view": {"added": 0, "removed": 2}}, policy=one_under) == []
+
     def test_since_is_in_the_pollers_timestamp_format(self):
         assert self.POLICY.since(self.NOW) == "2026-09-03T12:00:00Z"
 

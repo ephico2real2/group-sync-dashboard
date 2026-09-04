@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import fnmatch
 from datetime import UTC, date, datetime, timedelta
+from fractions import Fraction
 
 from croniter import CroniterBadCronError, croniter
 
@@ -316,7 +317,12 @@ def compute_alerts(
             if before < cliff.min_members:
                 continue
             drop = before - after
-            if drop <= 0 or drop < cliff.drop_ratio * before:
+            # Inclusive at the ratio, in EXACT arithmetic: 0.07 * 100 is 7.000000000000001 in IEEE
+            # doubles, so `drop < ratio * before` missed a drop of exactly seven in a hundred — the
+            # boundary the values promise fires (141 such boundaries measured among two-decimal
+            # ratios and sizes up to 1000). Fraction(str(ratio)) is the decimal the operator wrote,
+            # and the compare is then between integers.
+            if drop <= 0 or Fraction(drop, before) < Fraction(str(cliff.drop_ratio)):
                 continue
             by = cliff_silence(group.get("cliff_silence"), cliff.silence, group["name"], now)
             detail = (

@@ -338,6 +338,9 @@ class TestGroupCountChanges:
             ], "2026-09-04T00:00:00Z")
             by_name = {g["name"]: g["cliff_silence"] for g in s.groups("crc", "all")}
             assert by_name == {"a": "until=2026-12-31", "b": None}
+            # The detail row says the same as the list row: the two cannot disagree (API.md).
+            assert s.group_detail("crc", "a")["cliff_silence"] == "until=2026-12-31"
+            assert s.group_detail("crc", "b")["cliff_silence"] is None
         finally:
             s.close()
 

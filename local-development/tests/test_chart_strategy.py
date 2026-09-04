@@ -1251,6 +1251,15 @@ class TestGroupCountCliffValues:
                 cfg["groupCountCliffWindowHours"]) == (25, 0.5, 24)
         assert cfg["groupCountCliffSilence"] == "app-ocp-rbac-a-*,app-ocp-rbac-b-ns-view"
 
+    def test_the_rule_summary_names_the_configured_ratio_not_the_word_half(self):
+        ok, out = render(**{"monitoring__prometheusRule__enabled": "true",
+                            "config__alerts__groupCountCliff__dropRatio": "0.3"})
+        assert ok, out
+        assert "lost at least 30% of their members" in out
+        assert "half their members" not in out
+        ok, out = render(**{"monitoring__prometheusRule__enabled": "true"})
+        assert ok and "lost at least 50% of their members" in out
+
     @pytest.mark.parametrize("key,value", [
         ("config__alerts__groupCountCliff__dropRatio", "0"),
         ("config__alerts__groupCountCliff__dropRatio", "1.5"),
