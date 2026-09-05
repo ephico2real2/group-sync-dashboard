@@ -14,6 +14,14 @@ there is no second pod to keep serving.
 
 Kubernetes will report `DisruptionAllowed=False` for the second case, which is the signal
 that a drain is being blocked rather than merely slow.
+
+The selector must match the Deployment's pods and NOTHING else. The disruption controller
+resolves every matched pod's owner to count expected pods, and an owner without a scale
+subresource (a Job) fails the whole budget: status SyncFailed, DisruptionAllowed=False,
+disruptionsAllowed 0 — a blocked drain with maxUnavailable: 1. Measured on the reference
+cluster when the authLogLevel hook pods still carried gsd.selectorLabels; the hook pod
+templates now carry only name, instance and component, and a test holds the selector to
+the Deployment's pod template alone.
 */}}
 apiVersion: policy/v1
 kind: PodDisruptionBudget

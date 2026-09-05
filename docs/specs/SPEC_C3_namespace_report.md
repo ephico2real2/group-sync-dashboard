@@ -5,7 +5,7 @@
 | Programme | Feature programme 2026-09 — index and version ladder in `docs/specs/README.md` |
 | Batch | C — product |
 | Release | R6 — Reporting |
-| Version on release | app 0.18.0, chart 0.19.0, reporting image 0.1.0 |
+| Version on release | app 0.18.0, chart 0.20.0, reporting image 0.1.0 |
 | Issue | [#67](https://github.com/ephico2real2/group-sync-dashboard/issues/67) |
 | Status | specified |
 | Source | design agent output `a836ef1bc0058551a`; two messages; the first ended inside a ```sh fence and the second began with two fence lines (a closer and a stray duplicate), so one duplicate fence line was dropped |
@@ -24,7 +24,7 @@ request, with the reason, under "Orchestrator's notes".
 
 ## Orchestrator's notes
 
-- R6: app 0.18.0, chart 0.19.0, reporting image 0.1.0; schema migration 11 (the body says 9; D1 takes 10). The operator's answers to the design's questions 2–4 are collected in the issue before the PR opens.
+- R6: app 0.18.0, chart 0.20.0, reporting image 0.1.0; schema migration 11 (the body says 9; D1 takes 10). The operator's answers to the design's questions 2–4 are collected in the issue before the PR opens.
 
 ## Batch preamble (verbatim from the design)
 

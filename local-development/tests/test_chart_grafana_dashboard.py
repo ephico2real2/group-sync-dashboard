@@ -187,7 +187,11 @@ class TestTheFile:
 @needs_helm
 class TestTheConfigMap:
     def test_off_by_default_because_the_servicemonitor_is(self):
+        # The ServiceMonitor stays off by operator decision (chart 0.14.0); "" follows it.
         assert not _dashboard_configmaps(_render())
+
+    def test_follows_the_servicemonitor_on_when_left_empty(self):
+        assert len(_dashboard_configmaps(_render("monitoring.serviceMonitor.enabled=true"))) == 1
 
     def test_follows_the_servicemonitor_when_left_empty(self):
         docs = _render("monitoring.serviceMonitor.enabled=true")
@@ -197,7 +201,7 @@ class TestTheConfigMap:
         assert "grafana_folder" not in (cms[0]["metadata"].get("annotations") or {})
 
     def test_explicit_true_ships_it_without_the_servicemonitor(self):
-        docs = _render("monitoring.grafanaDashboard.enabled=true")
+        docs = _render("monitoring.grafanaDashboard.enabled=true", "monitoring.serviceMonitor.enabled=false")
         assert _dashboard_configmaps(docs)
         assert not [d for d in docs if d.get("kind") == "ServiceMonitor"]
 
@@ -223,7 +227,8 @@ class TestTheConfigMap:
 
     def test_a_missing_dashboard_map_follows_the_servicemonitor(self):
         """`--set monitoring.grafanaDashboard=null` died on `.labels` of nil (review, PR #74)."""
-        assert not _dashboard_configmaps(_render("monitoring.grafanaDashboard=null"))
+        assert not _dashboard_configmaps(
+            _render("monitoring.serviceMonitor.enabled=false", "monitoring.grafanaDashboard=null"))
         docs = _render("monitoring.serviceMonitor.enabled=true", "monitoring.grafanaDashboard=null")
         cms = _dashboard_configmaps(docs)
         assert len(cms) == 1 and cms[0]["metadata"]["labels"]["grafana_dashboard"] == "1"

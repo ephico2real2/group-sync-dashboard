@@ -102,8 +102,15 @@ replicaCount: 1
 #                      it. Cluster admins hit this during maintenance and cannot see whose
 #                      workload is stalling them. Only choose it if a human must be involved
 #                      before this pod moves.
+#
+# On by default since chart 0.14.0 (the chart's rule since 0.14.0: every switch is on unless it costs RBAC, a credential,
+# a second image or a cluster-wide write): with maxUnavailable: 1 the object costs nothing on one
+# replica and a drain still proceeds. Only minAvailable turns it into something that blocks a human.
+# One more thing can block it, and the chart guards against it: a pod the selector matches whose
+# owner has no scale subresource (a Job) fails the budget with DisruptionAllowed=False. The hook
+# Jobs therefore do not carry the selector labels — see templates/pdb.yaml.
 podDisruptionBudget:
-  enabled: false
+  enabled: true
   maxUnavailable: 1
   minAvailable: ""     # set this INSTEAD of maxUnavailable to block drains
 
@@ -147,6 +154,8 @@ podSecurityContext:
     type: RuntimeDefault
 
 securityContext:
+  # Stays false under the 0.14.0 on-by-default rule: a hardening posture, not a feature switch.
+  # true would grant the container a privilege; the rule turns features on and relaxes nothing.
   allowPrivilegeEscalation: false
   readOnlyRootFilesystem: true
   capabilities:
@@ -625,6 +634,8 @@ trustedCA:
   #
   # Deliberately NOT templated into the chart: certificates in values.yaml end up in git,
   # in `helm get values`, and in every CI log that echoes them.
+  # Stays false under the 0.14.0 on-by-default rule: this switch needs the name of a ConfigMap you
+  # created, so there is nothing a default could turn on.
   existingConfigMap:
     enabled: false
     name: enterprise-ca
@@ -743,8 +754,14 @@ rbac:
 # The cost, stated rather than hidden: this creates a Role and RoleBinding in a namespace the chart
 # does not own. An ArgoCD Application will show them outside its destination namespace, and a policy
 # forbidding writes to `openshift-*` namespaces will reject them.
+#
+# ON by default since chart 0.14.0: the read is scoped to one namespace, costs no credential, and is
+# what the Users tab's login columns need. It stays inert until the lines exist — the Debug level
+# (authLogLevel below) today; the oauth-server audit log (`loginCapture.source: audit-log`) once
+# that source ships, which is the intended pair: the Debug level is being retired in its favour.
+# Set false where a policy forbids the Role in `openshift-authentication`.
 loginCapture:
-  enabled: false
+  enabled: true
 
   # Where the oauth-server runs. Only change this if your cluster is unusual; it is the fixed
   # namespace OpenShift installs the OAuth server into.
@@ -849,6 +866,10 @@ clusterAccess:
 # `manage: true` is the operator DECLARING THAT THIS CHART OWNS the cluster's log level. That is why
 # it defaults to false: opting in is what transfers ownership, and the uninstall revert below then
 # has the standing to put it back.
+#
+# Both stay false under the chart's on-by-default rule (0.14.0), on purpose: the Debug level is a
+# cluster-wide write that rolls the OAuth server, and the oauth-server audit log
+# (`loginCapture.source: audit-log`) is replacing it as the way login lines are obtained.
 authLogLevel:
   manage: false
   enabled: false
@@ -1206,8 +1227,13 @@ oauthProxy:
   # Prefer the GROUP form. It is the argument the Namespace audit tab makes about the cluster,
   # applied here: a grant naming a person survives their departure, one naming a group is
   # revoked when the directory removes them from it.
+  #
+  # ON by default since chart 0.14.0. The switch grants nothing on its own: a bearer token reaches
+  # `/api` only after the proxy's SubjectAccessReview confirms its holder already has the
+  # cluster-wide read named in delegateUrls. What it buys is scripts and reporting tooling using a
+  # ServiceAccount token instead of a browser cookie. Set false for cookie sessions only.
   apiTokenAccess:
-    enabled: false
+    enabled: true
     delegateUrls: '{"/api":{"resource":"clusterrolebindings","group":"rbac.authorization.k8s.io","verb":"list"}}'
 
   # The interstitial page that offers exactly one login choice.
@@ -1221,7 +1247,18 @@ oauthProxy:
   #
   # false shows an explicit Log In button instead. One extra click, and the unauthenticated
   # state is a page that says sign in.
+  #
+  # Stays false under the 0.14.0 on-by-default rule by operator decision (2026-09-05): people
+  # should log in from the OpenShift login screen, and the explicit button is the state that
+  # gives them that screen and the friendlier failure page. This is a product choice, not a
+  # feature switch, so the rule does not move it.
   skipProviderButton: false
+  # Stays false under the 0.14.0 on-by-default rule, as a confidentiality cost found in review:
+  # oauth-proxy's request logger writes the complete request URI, query string included, and
+  # excludes nothing (logging_handler.go formats url.RequestURI()), so the OAuth callback's
+  # `?code=…&state=…` and any credential an API client puts in a query parameter land in the pod
+  # log. Authorization and Cookie headers are not printed. Turn it on only where the log pipeline
+  # redacts query strings; the lines then show whether a 403 came from the proxy or the dashboard.
   requestLogging: false
 
   resources:
@@ -1376,9 +1413,13 @@ visibility:
 # ---------------------------------------------------------------------------
 # Monitoring
 # ---------------------------------------------------------------------------
-# Both default OFF: they need the Prometheus Operator CRDs, and applying them where those
-# CRDs are absent fails the install outright. On CRC monitoring is disabled at the CVO
-# level, so they would be inert even if applied.
+# Both default OFF, by operator decision (2026-09-05) under the chart's on-by-default rule: the
+# reference cluster runs no Prometheus (built-in monitoring disabled to save resources), so a
+# ServiceMonitor and rules there are objects nobody reads, and on a cluster without the
+# Prometheus Operator CRDs applying them fails the install outright. Rendering with both on was
+# verified before the default went back — lint, template, a server-side dry run against the CRDs
+# and a live deploy on the reference cluster (chart 0.14.0 review record) — so turning them on is
+# a values change and nothing else. OpenShift ships the CRDs; set both true where Prometheus runs.
 monitoring:
   serviceMonitor:
     enabled: false

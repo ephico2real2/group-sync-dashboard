@@ -160,10 +160,18 @@ def test_the_redundant_row_is_still_redundant() -> None:
     If it moves again the row becomes a real override and the word "redundant" becomes a lie — so
     this asserts the equality the word rests on, rather than the word.
     """
-    key = "config.unmanagedAudit.mode"
-    default = flatten(yaml.safe_load(VALUES.read_text()))[key]
-    crc = flatten(yaml.safe_load(CRC.read_text()))[key]
-    assert default == crc, (
-        f"{key} is no longer redundant: the chart defaults to {default!r} while crc.yaml sets "
-        f"{crc!r}. Update the README's verdict from 'redundant' to 'lab override'."
-    )
+    defaults = flatten(yaml.safe_load(VALUES.read_text()))
+    crc_values = flatten(yaml.safe_load(CRC.read_text()))
+    redundant = [line for line in README.read_text().splitlines()
+                 if line.startswith("| `") and "redundant" in line.rsplit("|", 2)[-2]]
+    assert len(redundant) >= 3, redundant  # unmanagedAudit plus the two chart 0.14.0 made redundant
+    for line in redundant:
+        key = line.split("`")[1]
+        default, crc = defaults[key], crc_values[key]
+        if key == "monitoring.grafanaDashboard.enabled" and default == "":
+            # The tri-state follows the ServiceMonitor; "redundant" means the followed value.
+            default = defaults["monitoring.serviceMonitor.enabled"]
+        assert default == crc, (
+            f"{key} is no longer redundant: the chart defaults to {default!r} while crc.yaml sets "
+            f"{crc!r}. Update the README's verdict from 'redundant' to 'lab override'."
+        )

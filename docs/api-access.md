@@ -11,18 +11,29 @@ https://group-sync-dashboard.apps.<cluster>.<company-domain>/api
 
 Two things have to be true first.
 
-## 1. Enable it on the chart
+## 1. It is on by default since chart 0.14.0
+
+`oauthProxy.apiTokenAccess.enabled` defaults to `true`: a default install already adds
+`-openshift-delegate-urls` for the `/api` prefix and binds `system:auth-delegator` to the
+**proxy's** ServiceAccount — the proxy is the party that calls TokenReview and
+SubjectAccessReview. Callers do not need that role. The switch grants nothing on its own: a
+bearer token reaches `/api` only after the proxy's SubjectAccessReview against the cluster-wide
+read named in `delegateUrls` succeeds. The application then repeats that same check as
+`visibility.adminSar`, so a token the proxy admitted normally lands on the wide cluster-data view;
+the two exceptions are the same as for a cookie session — an indeterminate app-side review
+fail-closes to the self view, and the Usage tab asks its own stricter review
+(`visibility.usageAdminSar`, `update clusterrolebindings` by default), so a `cluster-reader` token
+is wide on the cluster data and self on `/api/dashboard/activity`. A token that fails the proxy's
+review never reaches the application. For cookie sessions only:
 
 ```bash
-helm upgrade --install group-sync-dashboard charts/group-sync-dashboard \
-  -n group-sync-dashboard \
-  --set oauthProxy.apiTokenAccess.enabled=true
+helm upgrade group-sync-dashboard charts/group-sync-dashboard \
+  -n group-sync-dashboard -f my-values.yaml \
+  --set oauthProxy.apiTokenAccess.enabled=false
 ```
 
-That adds `-openshift-delegate-urls` for the `/api` prefix and binds `system:auth-delegator` to
-the **proxy's** ServiceAccount — the proxy is the party that calls TokenReview and
-SubjectAccessReview. Callers do not need that role. Without this, the proxy only understands
-browser cookies and a perfectly valid bearer token gets a `403` whose body is the login page.
+With it off, the proxy only understands browser cookies and a perfectly valid bearer token gets a
+`403` whose body is the login page.
 
 ### What the caller must be allowed to do, and why it is not `list groups`
 
@@ -59,6 +70,15 @@ oc adm policy add-cluster-role-to-group cluster-reader <ldap-group-for-reporting
 # or a service account the aggregator runs as
 oc adm policy add-cluster-role-to-user cluster-reader \
   system:serviceaccount:<namespace>:<name>
+```
+
+For a ServiceAccount use exactly that user form. The dashboard's repeated review sends the identity
+with the OAuth virtual groups only, not `system:serviceaccounts:<namespace>`, so a grant made to the
+ServiceAccount's namespace group passes the proxy and still lands on the self view inside the
+application (recorded in `docs/REVIEW_chart_defaults.md`; carrying ServiceAccount virtual groups is
+routed to `docs/specs/SPEC_D2_per_cluster_authorization.md`, which owns the tier resolver).
+
+```bash
 ```
 
 Verified after tightening: an identity that cannot list ClusterRoleBindings gets `403`, one

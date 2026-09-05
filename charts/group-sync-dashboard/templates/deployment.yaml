@@ -66,6 +66,16 @@ spec:
   template:
     metadata:
       labels:
+        {{- /* A podLabels key that is also a selector label would win by YAML last-key-wins and
+               change the pod's identity: the API server then rejects the Deployment (template
+               labels outside its selector), and the PDB and Service would match no pod. Refuse it
+               by name rather than reorder the includes, which would discard the operator's label
+               silently (review of chart 0.14.0, second pass). */}}
+        {{- range $k, $_ := .Values.podLabels }}
+        {{- if hasKey (include "gsd.selectorLabels" $ | fromYaml) $k }}
+        {{- fail (printf "podLabels must not set %q: it is one of the selector labels the Service, the PodDisruptionBudget and the Deployment select the pod by" $k) }}
+        {{- end }}
+        {{- end }}
         {{- include "gsd.selectorLabels" . | nindent 8 }}
         {{- with .Values.podLabels }}{{- toYaml . | nindent 8 }}{{- end }}
       annotations:

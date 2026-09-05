@@ -1652,14 +1652,16 @@ function captureSection(d, access) {
     return `<section class="card">
       <h2>Login attempts</h2>
       <div class="empty-note">
-        Not being captured. This needs <strong>both</strong>
-        <code>config.loginCapture.enabled=true</code> — the module that reads the log — and the
-        authentication <em>operator</em> at <code>spec.logLevel: Debug</code>, which is what
-        makes the oauth-server write a username at all. At the default verbosity the lines this
-        page parses do not exist, so capture would run and find nothing.
+        Not being captured. <code>loginCapture.enabled</code> — the module that reads the log —
+        is off on this release; the chart default since 0.14.0 is on. Login lines also only exist
+        while the authentication <em>operator</em> is at <code>spec.logLevel: Debug</code>, which
+        makes the oauth-server write a username at all; the chart leaves that off by default
+        because the oauth-server audit log is replacing it as the source. At the default verbosity
+        capture runs and finds nothing.
       </div>
-      <div class="filterbar-note">Both are one <code>helm upgrade</code>:
-        <code>loginCapture.enabled</code> and <code>authLogLevel.manage</code>. See
+      <div class="filterbar-note">Turning capture back on is <code>loginCapture.enabled=true</code>;
+        the Debug source is <code>authLogLevel.manage</code> and <code>.enabled</code>, a
+        cluster-wide write that rolls the OAuth server. See
         <code>docs/LOGIN_CAPTURE_QUICKCHECK.md</code> for the five commands that prove the path
         end to end.</div>
     </section>` + access;

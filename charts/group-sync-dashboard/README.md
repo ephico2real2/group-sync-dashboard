@@ -17,7 +17,8 @@ group membership, so it ships authenticated and you turn the proxy *off* deliber
 
 * OpenShift 4.x — the chart uses a `Route`, `service-ca` and the OAuth proxy. On plain
   Kubernetes, set `route.enabled=false`, `ingress.enabled=true`, `oauthProxy.enabled=false`,
-  `trustedCA.injected.enabled=false` and supply `ingress.host` and `ingress.className` yourself.
+  `trustedCA.injected.enabled=false`, `loginCapture.enabled=false` (its Role lives in
+  `openshift-authentication`) and supply `ingress.host` and `ingress.className` yourself.
 * A default StorageClass, or set `persistence.storageClass` / `persistence.existingClaim`.
 * Cluster admin **once**, to create the ClusterRole. The dashboard needs no admin at runtime.
 * The Prometheus Operator CRDs, only if you enable `monitoring.serviceMonitor` or `monitoring.prometheusRule`. The Grafana dashboard (`monitoring.grafanaDashboard`) is a plain ConfigMap and needs no CRD.
@@ -49,7 +50,7 @@ group membership, so it ships authenticated and you turn the proxy *off* deliber
 | `oauthProxy.skipAuthRegex` | `^/(healthz\|readyz\|metrics)$` | the health paths **must** stay, or kubelet gets a 302 and kills a healthy pod |
 | `oauthProxy.sar` | `""` | empty = authentication only. Set a SubjectAccessReview to also require a permission |
 | `oauthProxy.skipProviderButton` | `false` | `false` shows an explicit **Log In** button. `true` skips straight to the OAuth server — one fewer click, but any mid-flow failure then lands on the proxy's own page headed "403 Permission Denied", which reads as *you are not allowed in* rather than *your session expired*. Observed here after a rollout landed between redirect and callback |
-| `oauthProxy.requestLogging` | `false` | |
+| `oauthProxy.requestLogging` | `false` | opt-in: the proxy logs the complete request URI, query string included, so the OAuth callback's authorization code would land in the pod log; enable only behind query-string redaction |
 | `oauthProxy.resources` | 10m/64Mi → 200m/256Mi | |
 | *(no `redirectMode` key)* | — | the ServiceAccount's OAuth callback form follows what exposes the dashboard and cannot be set separately: `oauth-redirectreference` naming the chart's Route with the default `route.enabled`, `oauth-redirecturi` with a literal URL when the Ingress is used instead. A `redirectMode` key existed once, read by nothing; it is gone |
 
@@ -242,7 +243,7 @@ plus one in-flight page.
 |---|---|---|
 | `visibility.enabled` | `true` | reaches the app as `GSD_ENABLE_VIEW_RESTRICTIONS` on the Deployment — one wire, and the spelling is load-bearing. **`false` restores everyone-sees-everything**: a deliberate, recorded choice, since it re-exposes the full RBAC binding surface and every person's login failures to any account that can log in. Requires `oauthProxy.enabled` — the chart refuses to render a per-user control with no trusted identity |
 | `visibility.tierTtlSeconds` | `60` | how long a **decided** tier is cached, per viewer, in whole seconds; serves both thresholds, each with its own cache. Larger means a reader removed from an admin group keeps the wide view for up to that long — the fail-open direction, and why the default is a minute. Smaller means a SubjectAccessReview plus a group read per reader per request, measured at 97ms on the 65-group reference cluster. `0` disables caching. An **error** is never cached, so this never extends an API-server outage. A fractional or negative value fails the render, because the app would cast it with `int()`, fall back to 60, and leave your values file describing a cache that is not running |
-| `visibility.adminSar.apiGroup` / `.resource` / `.verb` | `user.openshift.io` / `groups` / `list` | the check a reader must pass to see everything. The default admits `cluster-admin` and `cluster-reader`; `list` `rolebindings.rbac.authorization.k8s.io` also admits cluster-wide `admin`; `edit`/`view` pass no cluster-scoped list at all, and `cluster-edit`/`cluster-view` do not exist as roles. A miscased or versioned shape fails the render — RBAC matching is exact and lowercase, so it would not error at runtime, it would silently demote every administrator |
+| `visibility.adminSar.apiGroup` / `.resource` / `.verb` | `rbac.authorization.k8s.io` / `clusterrolebindings` / `list` | the check a reader must pass to see everything. The default admits `cluster-admin` and `cluster-reader`; `list` `rolebindings.rbac.authorization.k8s.io` also admits cluster-wide `admin`; `edit`/`view` pass no cluster-scoped list at all, and `cluster-edit`/`cluster-view` do not exist as roles. A miscased or versioned shape fails the render — RBAC matching is exact and lowercase, so it would not error at runtime, it would silently demote every administrator |
 | `visibility.adminSar.namespace` | `""` | empty = a cluster-scoped check, the normal case. Set it only for a deliberately namespaced threshold such as `get` `pods/log` in `openshift-authentication` |
 | `visibility.usageAdminSar.apiGroup` / `.resource` / `.verb` | `rbac.authorization.k8s.io` / `clusterrolebindings` / `update` | the SECOND, STRICTER check, for the **Usage tab alone**. The Usage dataset lives only in the dashboard's own database — unreproducible with `oc` — so it must not fall to the wide tier that `cluster-reader` also passes. No *read* check separates `cluster-admin` from `cluster-reader` (the latter may read everything), so the default asks a *write* verb, which `cluster-admin` holds and `cluster-reader` does not. **The dashboard never writes; a SubjectAccessReview only asks whether the subject could.** Independent of `adminSar`: separate review, separate cache. Same exact-lowercase render guard — a miscased or versioned shape fails the render |
 | `visibility.usageAdminSar.namespace` | `""` | empty = a cluster-scoped check, the normal case, which `update clusterrolebindings` is |
@@ -257,7 +258,7 @@ Grant the wide view through your normal RBAC process, never a chart value:
 | `strategy` | `""` | derived: `Recreate` at one replica, `RollingUpdate` above. Set explicitly to override |
 | `leaderElection.enabled` | `true` | only the lease holder polls. **Best-effort, not a write fence** — see [Leader election](#leader-election). Must be `false` above one replica; the chart refuses to render otherwise |
 | `leaderElection.leaseName` | `group-sync-dashboard` | the `coordination.k8s.io` Lease object's name, in the release namespace. Two releases in one namespace must not share it |
-| `podDisruptionBudget.enabled` | `false` | on one replica this governs **drains**, not availability — see below |
+| `podDisruptionBudget.enabled` | `true` | on one replica this governs **drains**, not availability — see below |
 | `podDisruptionBudget.maxUnavailable` / `.minAvailable` | `1` / `""` | set `minAvailable` **instead of** `maxUnavailable` to block drains. Only one is rendered; `minAvailable` wins when non-empty |
 | `config.sqlite.busyTimeoutMs` | `5000` | how long a write waits for a lock another connection holds. SQLite's own default is `0` — fail instantly, no retry |
 | `config.sqlite.readerBusyTimeoutMs` | `2000` | deliberately shorter: `/readyz` reads, and the probe gives up at 5s |
@@ -306,7 +307,7 @@ Grant the wide view through your normal RBAC process, never a chart value:
 | `authLogLevel.revertOnUninstall` | `true` | **leave on.** A pre-delete Job puts the level back, or removing the dashboard leaves the OAuth server naming every person who authenticates with nothing left watching |
 | `authLogLevel.waitSeconds` / `.activeDeadlineSeconds` / `.revertDeadlineSeconds` | `180` / `300` / `120` | the Job polls the Deployment's `observedGeneration` rather than using `oc rollout status`, which returned success ~30s **before** the rollout began. A wait timeout is not a failure — the patch has landed |
 | `rbac.users` | `true` | adds `get`/`list` on `users`. The User objects are the **source of the Users tab**: OpenShift creates one at first login, so the tab counts people who have logged in, with group membership as an attribute. Also supplies `fullName` for every member surface. Switchable off; the poll still succeeds, but the Users tab then has no source and says so by name rather than showing an empty list |
-| `monitoring.serviceMonitor.enabled` | `false` | needs the Prometheus Operator CRDs |
+| `monitoring.serviceMonitor.enabled` | `false` | needs the Prometheus Operator CRDs (OpenShift ships them; the install fails on the unknown kind where they are absent). Off by default because the reference cluster runs no Prometheus; rendering with it on is verified |
 | `monitoring.serviceMonitor.interval` / `.scrapeTimeout` | `30s` / `10s` | every series is recomputed from SQLite on scrape and each scrape takes a read snapshot. Faster buys no resolution — the data only changes once per poll |
 | `monitoring.serviceMonitor.labels` | `{}` | extra metadata labels. Usually how a cluster's Prometheus selects which ServiceMonitors it owns |
 | `monitoring.prometheusRule.enabled` | `false` | **twelve** alerts — see below |
@@ -707,7 +708,11 @@ no second pod to keep serving:
 | `minAvailable: 1` | the drain **blocks indefinitely** — one replica can never satisfy it. Cluster admins hit this during maintenance and cannot see whose workload is stalling them |
 
 Choose `minAvailable` only if a human must be involved before this pod moves, and tell
-whoever operates the cluster. Kubernetes reports `DisruptionAllowed=False` when it is
+whoever operates the cluster. The budget's selector matches the Deployment's pods only: the
+`authLogLevel` hook Job pods carry `app.kubernetes.io/name`, `instance` and `component` but not
+the `app` selector label, because a matched pod whose owner has no scale subresource fails the
+whole budget (`SyncFailed`, `DisruptionAllowed=False`, every drain blocked — measured on the
+reference cluster before the labels were split). Kubernetes reports `DisruptionAllowed=False` when it is
 blocking.
 
 ## Storage

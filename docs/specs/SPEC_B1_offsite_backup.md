@@ -5,7 +5,7 @@
 | Programme | Feature programme 2026-09 — index and version ladder in `docs/specs/README.md` |
 | Batch | B — operations |
 | Release | R4 — Supply chain and backup |
-| Version on release | chart 0.16.0 (chart only) |
+| Version on release | chart 0.17.0 (chart only) |
 | Issue | [#64](https://github.com/ephico2real2/group-sync-dashboard/issues/64) |
 | Status | specified |
 | Source | design agent output `a7eabba23e10eec8a`; one message; no seam |
@@ -24,7 +24,7 @@ request, with the reason, under "Orchestrator's notes".
 
 ## Orchestrator's notes
 
-- Lands in R4 after A2, so `docs/CHANGELOG.md` and `Chart.yaml` history text in the body is applied against the file as it stands then; the version pair in the body (chart 0.11.0 / app 0.12.0) is superseded by chart 0.16.0, chart only, because the application does not change.
+- Lands in R4 after A2, so `docs/CHANGELOG.md` and `Chart.yaml` history text in the body is applied against the file as it stands then; the version pair in the body (chart 0.11.0 / app 0.12.0) is superseded by chart 0.17.0, chart only, because the application does not change (0.16.0 before chart 0.14.0, the defaults release, moved the ladder by one).
 - The `## Unreleased` heading already exists (A1); the body's instruction to create it becomes an edit under it.
 - The B2 half of the same design lands earlier (R2); the shared `## 1. Versions and shared bookkeeping` section in the preamble is applied once, by B2, and B1 adds only its own history line.
 - Ladder inversion found in review (PR #69, C8): the body's chart README old text says "eleven" alerts; after B4 it says "twelve", and B1 makes it fourteen. The count is re-derived from main at implementation.

@@ -207,10 +207,14 @@ class TestLoginCaptureReadsOneNamespaceOnly:
         import yaml
         return [d for d in yaml.safe_load_all(out) if d]
 
-    def test_nothing_renders_by_default(self):
+    def test_it_renders_by_default_and_nothing_renders_when_off(self):
+        # On since chart 0.14.0: a namespaced read is inside the on-by-default rule.
         ok, out = render()
         assert ok, out
-        assert "login-capture" not in out, "the log read renders without being enabled"
+        assert "login-capture" in out, "the log read is the default since chart 0.14.0"
+        ok, out = render(loginCapture__enabled="false")
+        assert ok, out
+        assert "login-capture" not in out, "the log read renders after being disabled"
 
     def test_the_log_read_is_never_cluster_scoped(self):
         """The whole point. A ClusterRole here reads every pod's logs on the cluster."""
@@ -893,8 +897,8 @@ class TestVisibilityThreading:
     def test_the_sar_grant_is_present_on_a_default_install(self):
         """The tier check needs `create subjectaccessreviews`. It arrives via the stock
         system:auth-delegator binding, which used to render only for apiTokenAccess
-        (default off) — so a default install would have failed every viewer closed to
-        the self tier, permanently and invisibly."""
+        (off by default at the time) — so a default install would have failed every viewer
+        closed to the self tier, permanently and invisibly."""
         ok, out = render()
         assert ok, out
         bindings = [d for d in self._docs(out)
@@ -906,7 +910,8 @@ class TestVisibilityThreading:
         assert subject["name"] == "t-group-sync-dashboard"
 
     def test_the_sar_grant_disappears_when_nothing_needs_it(self):
-        ok, out = render(visibility__enabled="false")
+        # apiTokenAccess is the other user of the grant, and on by default since chart 0.14.0.
+        ok, out = render(visibility__enabled="false", oauthProxy__apiTokenAccess__enabled="false")
         assert ok, out
         assert not any(d.get("kind") == "ClusterRoleBinding"
                        and d["roleRef"]["name"] == "system:auth-delegator"
@@ -1003,20 +1008,31 @@ class TestVisibilityThreading:
 
     def test_the_usage_tier_reuses_the_one_sar_grant(self):
         """The usage tier needs no new RBAC: it is the SAME `create subjectaccessreviews`
-        (system:auth-delegator) the wide tier uses. So the default install still carries
-        exactly one such binding, and it still disappears when visibility is off — one grant,
-        two questions."""
-        ok, out = render()
-        assert ok, out
-        bindings = [d for d in self._docs(out)
+        (system:auth-delegator) the wide tier uses. So the default install carries exactly one
+        such binding — one grant, two questions — and with visibility off the binding is still
+        there, kept by its other consumer, API-token access (on by default since chart 0.14.0);
+        the both-off state that removes it is `test_the_sar_grant_disappears_when_nothing_needs_it`."""
+        def delegator_bindings(out):
+            return [d for d in self._docs(out)
                     if d.get("kind") == "ClusterRoleBinding"
                     and d["roleRef"]["name"] == "system:auth-delegator"]
-        assert len(bindings) == 1, "the usage tier must not add a second SAR grant"
+        ok, out = render()
+        assert ok, out
+        assert len(delegator_bindings(out)) == 1, "the usage tier must not add a second SAR grant"
         ok, out = render(visibility__enabled="false")
         assert ok, out
-        assert not any(d.get("kind") == "ClusterRoleBinding"
-                       and d["roleRef"]["name"] == "system:auth-delegator"
-                       for d in self._docs(out)), "no tier -> no SAR grant, usage included"
+        assert len(delegator_bindings(out)) == 1, "token access alone keeps the one grant"
+
+
+class TestProxyRequestLogging:
+    """Off by default (review of chart 0.14.0, second pass): oauth-proxy's request logger writes the
+    complete request URI, so the OAuth callback's `?code=…` would land in the pod log."""
+
+    def test_off_by_default_and_explicitly_switchable(self):
+        for value, expect in (("false", "-request-logging=false"), ("true", "-request-logging=true")):
+            ok, out = render(oauthProxy__requestLogging=value) if value == "true" else render()
+            assert ok, out
+            assert expect in out and ("-request-logging=" + ("true" if value == "false" else "false")) not in out
 
 
 class TestTheServiceMonitorVerifiesTLS:
