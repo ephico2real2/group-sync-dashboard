@@ -158,7 +158,11 @@ class TestPvcDestination:
         selector = [d for d in docs if d.get("kind") == "Service"][0]["spec"]["selector"]
         labels = job["spec"]["template"]["metadata"]["labels"]
         assert "app" not in labels and labels["app.kubernetes.io/name"] != selector["app.kubernetes.io/name"]
-        assert "helm.sh/hook" not in (job["metadata"].get("annotations") or {}), "a post hook would deadlock --wait"
+        annotations = job["metadata"].get("annotations") or {}
+        assert "helm.sh/hook" not in annotations, "a Helm post hook would deadlock --wait"
+        # To Argo it IS a hook: a Sync hook in the claim's wave, removed once it succeeds.
+        assert annotations["argocd.argoproj.io/hook"] == "Sync"
+        assert annotations["argocd.argoproj.io/hook-delete-policy"] == "BeforeHookCreation,HookSucceeded"
 
     def test_the_bind_job_is_renamed_when_its_pod_spec_changes(self):
         """A Job's pod template is immutable: a new image must be a new Job, not a refused patch."""
@@ -180,7 +184,7 @@ class TestPvcDestination:
         assert wave("CronJob", "-backup-offsite") == "1"
         ok, out = render(**ON, argocd__enabled="false")
         assert ok, out
-        assert "argocd.argoproj.io/sync-wave" not in out
+        assert "argocd.argoproj.io/" not in out.split("kind: Job", 1)[1].split("---", 1)[0], "no Argo annotations without Argo"
 
     def test_no_bind_job_for_an_existing_claim_or_s3(self):
         for values in ({**ON, "backup__offsite__destination__pvc__existingClaim": "mine"}, S3):

@@ -773,9 +773,10 @@ persistence:
 # CronJob may not run for six hours — `helm upgrade --wait` timed out on exactly that (measured on
 # the reference cluster, 2026-09-05), and a timed-out upgrade is a FAILED revision whose objects
 # Helm does not own. So, when the chart creates the claim, it also renders a one-shot bind Job
-# that mounts it and exits: --wait succeeds in seconds, and under Argo CD the claim and the bind
-# Job share sync wave 0 while the CronJob follows in wave 1. With destination.pvc.existingClaim
-# the claim is yours and no bind Job renders.
+# that mounts it and exits: --wait succeeds in seconds. Under Argo CD the bind Job is a Sync hook
+# in the claim's wave (0), deleted once it succeeds, so the wave turns healthy as soon as the claim
+# binds and the CronJob follows in wave 1. With destination.pvc.existingClaim the claim is yours
+# and no bind Job renders.
 backup:
   offsite:
     enabled: false

@@ -64,8 +64,9 @@ same Python snippet with `python3`.
 ## 2. Run the off-volume copy by hand
 
 The destination claim is bound by the chart's one-shot bind Job when the module is enabled
-(`oc get job -n $NS -l app.kubernetes.io/component=backup-offsite` shows it `Complete`), so
-`helm upgrade --wait` works. If an upgrade ever fails part-way, the objects that revision created
+(`oc get job -n $NS -l app.kubernetes.io/component=backup-offsite` shows it `Complete` under Helm;
+under Argo CD it is a Sync hook and is gone once it succeeded), so `helm upgrade --wait` works and
+an Argo sync turns healthy without waiting for the first scheduled run. If an upgrade ever fails part-way, the objects that revision created
 are not owned by Helm until the next successful one renders them — delete them by label,
 `oc delete cronjob,job,sa,cm -l app.kubernetes.io/component=backup-offsite`, for a clean slate; the
 claim carries `helm.sh/resource-policy: keep` and is never removed that way.

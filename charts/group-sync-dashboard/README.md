@@ -211,11 +211,13 @@ read the live claim and refuses to guess.
 **The claim binds at once.** On a `WaitForFirstConsumer` StorageClass a claim stays Pending until a
 pod mounts it, and the CronJob may not run for six hours — so when the chart creates the claim it
 also renders a one-shot **bind Job** (`<fullname>-backup-offsite-bind-<hash>`, the dashboard image,
-mounts the claim and exits) and `helm upgrade --wait` succeeds in seconds. Under Argo CD the claim
-and the bind Job share sync wave 0 and the CronJob follows in wave 1. The Job is an ordinary
-resource rather than a Helm hook because post-install hooks run only after `--wait` has finished;
-its name carries a hash of its pod spec so an image change makes a new Job instead of patching an
-immutable one. With `destination.pvc.existingClaim` no bind Job renders — the claim is yours.
+mounts the claim and exits) and `helm upgrade --wait` succeeds in seconds. Under Argo CD it is a
+`Sync` hook in the claim's wave (0) with `HookSucceeded` deletion, so the wave turns healthy as soon
+as the claim binds, nothing lingers, and the CronJob follows in wave 1; it re-runs on each full
+sync, a pod for a few seconds. To Helm it is an ordinary resource rather than a hook because
+post-install hooks run only after `--wait` has finished; its name carries a hash of its pod spec so
+an image change makes a new Job instead of patching an immutable one. With
+`destination.pvc.existingClaim` no bind Job renders — the claim is yours.
 
 ### Retention on the history
 

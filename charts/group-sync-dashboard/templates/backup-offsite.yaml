@@ -116,9 +116,16 @@ spec:
 # mounts it, and the only consumer here is a CronJob that may not run for six hours — so
 # `helm upgrade --wait` (which waits for claims to bind) timed out, and Argo would show the claim
 # Progressing for a slot. This pod binds it in seconds and exits; it reads nothing but the mount.
-# An ordinary resource, not a Helm hook: post-install hooks run only AFTER --wait has finished,
-# which is a deadlock with the very wait this exists to satisfy. No ttlSecondsAfterFinished: a
-# Job that deletes itself is a resource Argo sees missing and recreates on every sync.
+# To HELM it is an ordinary resource, not a hook: post-install hooks run only AFTER --wait has
+# finished, which is a deadlock with the very wait this exists to satisfy; pre-hooks run before
+# the claim exists. To ARGO CD it is a Sync-phase hook in the claim's wave: Argo applies a wave's
+# resources and Sync hooks together (its documented order is phase, wave, kind, name) and moves
+# to the next wave only when everything in it is synced and healthy — a Pending claim is
+# Progressing, a Bound one Healthy — so the hook's pod is what turns the wave green. HookSucceeded
+# removes it afterwards, so no completed Job lingers in the app; BeforeHookCreation clears a failed
+# one before the next sync's; it re-runs on every full sync, a pod for a few seconds. No
+# ttlSecondsAfterFinished: under Helm a Job that deletes itself would be re-created by the next
+# upgrade for nothing.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -129,7 +136,9 @@ metadata:
     app.kubernetes.io/component: backup-offsite
   {{- if .Values.argocd.enabled }}
   annotations:
+    argocd.argoproj.io/hook: Sync
     argocd.argoproj.io/sync-wave: "0"
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
   {{- end }}
 spec:
   backoffLimit: 0
