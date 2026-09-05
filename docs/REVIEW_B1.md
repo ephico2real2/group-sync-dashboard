@@ -81,3 +81,19 @@ keeps the verified copy and says so, which is the bounded form of what both aske
 
 Not asked (Codex): the Grafana panel — already fixed from Cursor's pass; the time-ns runbook test
 rejected as prose-asserting.
+
+## Second pass — Cursor (on 6332449)
+
+| Claim | Cursor | Decision |
+|---|---|---|
+| C1 publication | PLAUSIBLE — every interleaving it attacked leaves a state the next run repairs; deviation 12's "never" was stronger than the code (a SIGKILL between the two renames) | **Wording accepted** — deviation 12 now says so |
+| C2 the bounded re-pick | CONFIRMED | — |
+| C3 sidecar validation | CONFIRMED (backup names cannot contain a space; `sha256sum -b`'s `*name` is refused as malformed, by design) | — |
+| C4 pruning | REFUTED on the claim's wording — a sidecar-less copy beyond `keep` IS removed, and must be, or it would be immortal | **Accepted as a characterisation test**; the code is right, the claim overstated |
+| C5 the bind Job | REFUTED — the hash omitted `pullPolicy`, `pullSecrets`, `podSecurityContext`, `nodeSelector`, `tolerations`, all rendered into the immutable pod template | **Accepted** — all hashed; Cursor's test taken (pullPolicy and nodeSelector change the name, an unchanged spec does not). The single most important finding of the pass |
+| C6 the guards | PLAUSIBLE — `--set keep=007` reaches the guard as Helm's integer 7 | — ; noted in deviation 13 |
+| C7 documentation | CONFIRMED | — |
+| C8 fidelity | PLAUSIBLE (no diff available to it) | — |
+
+Not asked, noted in deviation 13: a failure on a second re-pick attempt skips that run's prune; a
+hash change while a previous bind Job still runs leaves two bind pods until the older one completes.

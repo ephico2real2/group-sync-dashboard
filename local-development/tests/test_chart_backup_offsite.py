@@ -174,6 +174,23 @@ class TestPvcDestination:
         ok3, out3 = render(**ON, image__tag="1.0.0")
         assert name(out1) == name(out3), "the same spec renders the same name, so an unchanged upgrade patches nothing"
 
+    def test_the_bind_job_is_renamed_when_pull_policy_or_node_selector_changes(self):
+        """Review of B1, second pass (Cursor): pullPolicy, pullSecrets, podSecurityContext, nodeSelector
+        and tolerations land on the bind Job's immutable pod template but were not hashed — the
+        documented "pin a digest and set pullPolicy: IfNotPresent" move would have been a refused patch."""
+        name = lambda out: next(d["metadata"]["name"] for d in _docs(out) if d.get("kind") == "Job" and "-bind-" in d["metadata"]["name"])
+        spec = lambda out: next(d["spec"]["template"]["spec"] for d in _docs(out) if d.get("kind") == "Job" and "-bind-" in d["metadata"]["name"])
+        ok1, out1 = render(**ON, image__pullPolicy="Always")
+        ok2, out2 = render(**ON, image__pullPolicy="IfNotPresent")
+        assert ok1 and ok2, out1 + out2
+        assert spec(out1)["containers"][0]["imagePullPolicy"] != spec(out2)["containers"][0]["imagePullPolicy"]
+        assert name(out1) != name(out2)
+        ok3, out3 = render(**ON, image__pullPolicy="Always", **{"nodeSelector__kubernetes\\.io/hostname": "crc"})
+        assert ok3, out3
+        assert name(out1) != name(out3)
+        ok4, out4 = render(**ON, image__pullPolicy="Always")
+        assert name(out1) == name(out4), "the same spec renders the same name"
+
     def test_argo_waves_order_the_claim_and_bind_job_before_the_cronjob(self):
         ok, out = render(**ON)
         assert ok, out

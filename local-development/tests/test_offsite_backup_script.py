@@ -160,6 +160,17 @@ class TestDurability:
         assert script.main(["--source", str(backups), "--dest", str(dest)]) == 1
         assert not list(dest.glob("gsd-*"))
 
+    def test_prune_removes_an_old_copy_even_without_a_sidecar(self, script, tmp_path):
+        """Review of B1, second pass (Cursor): a copy beyond `keep` goes whether or not it has a sidecar
+        — `ship` re-sidecars only the source's newest, so a sidecar-required guard would make old
+        sidecar-less copies immortal."""
+        dest = tmp_path / "offsite"; dest.mkdir()
+        old = dest / "gsd-20200101T000000.000000Z.db"; new = dest / "gsd-20260905T000000.000000Z.db"
+        old.write_bytes(b"old"); new.write_bytes(b"new")
+        (dest / (new.name + ".sha256")).write_text("0" * 64 + f"  {new.name}\n")
+        assert script.prune(dest, keep=1) == 1
+        assert not old.exists() and new.exists()
+
     def test_an_orphan_sidecar_is_pruned_with_the_transients(self, script, source, tmp_path):
         backups, _ = source
         dest = tmp_path / "offsite"; dest.mkdir()

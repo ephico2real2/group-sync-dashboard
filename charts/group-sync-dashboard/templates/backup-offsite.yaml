@@ -18,7 +18,10 @@ setting the wrong key and seeing nothing render.
 {{- /* The bind Job's name carries a hash of what its pod runs with, because a Job's pod template is
 immutable: an image or resources change must produce a NEW Job (Helm and Argo then create it and
 remove the old one) rather than a patch the API server refuses. */}}
-{{- $bindHash := printf "%s|%s|%s" (include "gsd.image" .) (toYaml $o.resources) (toYaml .Values.securityContext) | sha256sum | trunc 8 }}
+{{- /* Every field that lands in the pod template is hashed — pullPolicy, pullSecrets, the pod and
+container security contexts, nodeSelector, tolerations — because a change to any of them with a
+stable name is a refused patch, not a no-op (review of B1, second pass). */}}
+{{- $bindHash := printf "%s|%s|%s|%s|%s|%s|%s|%s" (include "gsd.image" .) .Values.image.pullPolicy (toYaml .Values.image.pullSecrets) (toYaml $o.resources) (toYaml .Values.securityContext) (toYaml .Values.podSecurityContext) (toYaml .Values.nodeSelector) (toYaml .Values.tolerations) | sha256sum | trunc 8 }}
 {{- if not .Values.persistence.enabled }}
 {{- fail "backup.offsite.enabled=true requires persistence.enabled=true. With an emptyDir there is no volume to ship a backup off, and the history it would protect resets on every restart anyway." }}
 {{- end }}
