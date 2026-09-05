@@ -49,11 +49,33 @@ described in the note; its spec-text tests rejected (prose).
 
 ## Verdicts — Codex
 
-Pending; the section is completed when the pass lands.
+Codex re-derived every count from the saved log (SHA-256 recorded), cited OpenShift's library-go and
+`oc` sources for the challenging-client flow, and reviewed the note after the operator's revision.
+
+| Claim | Codex | Decision |
+|---|---|---|
+| C1 the counts | CONFIRMED by re-derivation | — |
+| C2 browser re-authorisations | REFUTED on the timing | **Accepted** — the note said the pairs arrive 0–4 s apart with one at 18 s; measured: 77 within 1 s, 119 within 2 s, 125 within 4 s, max 20.97 s; every one has an earlier credential allow; the note now carries those numbers and says a 1 s window would have hidden 77 and left 56 as spurious logins |
+| C3 CLI logins are the challenging client | CONFIRMED from source | — ; `oc login --token` sets the bearer and calls `whoAmI`, leaving no annotated record |
+| C4 the identity classification | REFUTED on one sentence | **Accepted** — the note said the LDAP provider "accepted" the mixed-case login; it was a deny. Case-insensitive attribution is still required, for the failed attempt's row; reworded |
+| C5 the DN pattern | PLAUSIBLE (no live oc) | — ; the decode holds on the saved objects |
+| C6 the D1 body against the note | REFUTED | **Accepted** — see below |
+
+### C6 — the body still discarded the discriminator and counted two families
+
+**Finding (Codex).** D1.3 keeps the request path without its query and says `client_id` is not stored,
+which the `session` kind needs; the body still documents browser-pair coalescing; D1.8 says "two
+families" while the note adds a third. Volunteered: the 21 username-bearing consent records
+(`/oauth/authorize/approve`) made "every annotated record is a row" contradict "consent is not a login".
+
+**Decision.** Accepted. The note now states the rule as the three admitted shapes, ignores consent
+records explicitly, persists only `client_id` from the query for `cli` and `session` rows, names three
+families, and carries Codex's four tests in the body's vocabulary for R5. Codex's scope remark (the
+branch changes three files, not one: the spec, this record, and the citation test's list) is correct.
 
 ## Outcome
 
-Cursor refuted three claims and volunteered three defects; all accepted on the fact and applied in the
-note, with the operator's mid-review revision (rows for every attempt, session kind kept, the error as
-the record carries it) folded in. Re-validated: `test_docs_citations.py`, `test_specs_index.py`; CI
+Cursor refuted three claims and volunteered three defects; Codex refuted three and volunteered one; all
+accepted on the fact and applied in the note, with the operator's mid-review revision (rows for every
+attempt, session kind kept, the error as the record carries it) folded in. Re-validated: `test_docs_citations.py`, `test_specs_index.py`; CI
 green on every commit of the branch.
