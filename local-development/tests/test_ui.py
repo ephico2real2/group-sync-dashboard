@@ -3833,6 +3833,10 @@ class TestIdleTimeout:
         p.go_back()
         p.clock.run_for(1_000)
         assert p.evaluate("() => window.__calls") == 0
+        # A hash edit reaches the hashchange handler by another path (review of C4, Codex).
+        p.evaluate("() => { location.hash = '#page=users'; }")
+        p.clock.run_for(1_000)
+        assert p.evaluate("() => window.__calls") == 0
 
     def test_the_skip_link_is_inert_while_the_dialog_is_open(self, page, idle_server):
         """Review of C4 (Cursor): the skip link is a sibling of #wrap, so it stayed reachable."""

@@ -547,6 +547,10 @@ class TestIdleTimeout:
         assert "not a whole number" in caplog.text
         monkeypatch.setenv("GSD_SESSION_IDLE_TIMEOUT_MINUTES", "1.5")
         assert load_settings(write(tmp_path, BASE)).session_idle_timeout_seconds == 1800
+        monkeypatch.delenv("GSD_SESSION_IDLE_TIMEOUT_MINUTES", raising=False)
+        # Review of C4 (Codex): a YAML boolean is int(True) == 1 to `_num_setting` — a one-minute window.
+        s = load_settings(write(tmp_path, BASE + "sessionIdleTimeoutMinutes: true\nsessionIdleTimeoutWarningSeconds: 45.5\n"))
+        assert (s.session_idle_timeout_seconds, s.session_idle_timeout_warning_seconds) == (1800, 60)
 
     def test_an_idle_window_past_the_cap_is_inert_and_logged(self, tmp_path, caplog):
         cfg = BASE + ("oauthProxyEnabled: true\nsessionCookieExpire: 10m\n"

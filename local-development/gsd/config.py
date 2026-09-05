@@ -563,6 +563,25 @@ def _duration_setting(raw: dict, env_name: str, yaml_key: str, default: int) -> 
     return int(total)
 
 
+def _idle_integer_setting(raw: dict, env_name: str, yaml_key: str, default: int) -> int:
+    """One whole-number idle setting, checked as TEXT. `_num_setting(..., int)` would coerce a YAML
+    boolean (`int(True) == 1`) or float (`int(1.5) == 1`) into a one-minute window while the same
+    value from the environment fell back — one key, two answers (review of C4, both reviewers).
+    Both forms now fall back to the default with the reason logged."""
+    source = os.environ.get(env_name)
+    source_name = env_name
+    if source is None:
+        if yaml_key not in raw:
+            return default
+        source = raw[yaml_key]
+        source_name = yaml_key
+    text = str(source).strip()
+    if isinstance(source, bool) or re.fullmatch(r"-?[0-9]+", text) is None:
+        log.warning("%s=%r is not a whole number; using %r", source_name, source, default)
+        return default
+    return int(text)
+
+
 def _idle_timeout_setting(raw: dict, cookie_expire_seconds: int) -> tuple[bool, int, int]:
     """(enabled, seconds, warning_seconds). Env wins over the ConfigMap; a bad number falls back.
 
@@ -573,24 +592,13 @@ def _idle_timeout_setting(raw: dict, cookie_expire_seconds: int) -> tuple[bool, 
     absolute cap can never fire, so the module is inert and the log says so.
     """
     enabled = _bool_setting(raw, "GSD_SESSION_IDLE_TIMEOUT_ENABLED", "sessionIdleTimeoutEnabled", False)
-    # Whole minutes, checked as text: `int(1.5)` from a YAML float would silently truncate to 1
-    # while the same value from the environment falls back to 30 — one key, two answers (review
-    # of C4). Both forms now fall back, with the reason logged.
-    minutes_source = os.environ.get("GSD_SESSION_IDLE_TIMEOUT_MINUTES")
-    if minutes_source is None:
-        minutes_source = raw.get("sessionIdleTimeoutMinutes", 30)
-    minutes_text = str(minutes_source).strip()
-    if not re.fullmatch(r"[0-9]+", minutes_text):
-        log.warning("sessionIdleTimeoutMinutes=%r is not a whole number of minutes; using 30", minutes_source)
-        minutes = 30
-    else:
-        minutes = int(minutes_text)
+    minutes = _idle_integer_setting(raw, "GSD_SESSION_IDLE_TIMEOUT_MINUTES", "sessionIdleTimeoutMinutes", 30)
     if minutes < 1:
         log.warning("sessionIdleTimeoutMinutes=%r is below 1; using 30", minutes)
         minutes = 30
     seconds = minutes * 60
-    warning = _num_setting(
-        raw, "GSD_SESSION_IDLE_TIMEOUT_WARNING_SECONDS", "sessionIdleTimeoutWarningSeconds", 60, int
+    warning = _idle_integer_setting(
+        raw, "GSD_SESSION_IDLE_TIMEOUT_WARNING_SECONDS", "sessionIdleTimeoutWarningSeconds", 60
     )
     if not 5 <= warning < seconds:
         fallback = min(60, max(5, seconds // 2))

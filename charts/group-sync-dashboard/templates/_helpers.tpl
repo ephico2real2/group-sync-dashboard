@@ -219,7 +219,14 @@ ReadWriteOncePod
 # before any value comes back. `default dict` on each hop tolerates both absent and null.
 {{- define "gsd.cookieExpire" -}}
 {{- $cookie := (.Values.oauthProxy | default dict).cookie | default dict -}}
+{{- /* Helm's `default` treats a NUMERIC zero as empty, so an unquoted `expire: 0` silently became
+     4h while the string "0" stayed zero (review of C4). A zero the operator typed is returned as
+     typed, and the deployment refuses it by name: a zero cap is not a cap. */ -}}
+{{- if and (hasKey $cookie "expire") (eq (toString $cookie.expire) "0") -}}
+0
+{{- else -}}
 {{- $cookie.expire | default "4h" -}}
+{{- end -}}
 {{- end -}}
 
 # Go duration string -> seconds (a float for sub-second units), or -1 when it is not a

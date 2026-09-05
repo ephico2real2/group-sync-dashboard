@@ -39,7 +39,10 @@ worst of both worlds: the release says deployed and nobody can log in.
 which is exactly what a values file produces when somebody comments out the keys under
 `cookie:`. Measured: "interface conversion: interface {} is nil, not map[string]interface {}".
 */}}
-{{- $expire := $cookie.expire | default "4h" }}
+{{- $expire := include "gsd.cookieExpire" . }}
+{{- if eq (toString $expire) "0" }}
+{{- fail "oauthProxy.cookie.expire is 0: a zero cap is not a cap — the proxy would expire every session at once. Use a Go duration such as 4h; the default is 4h." }}
+{{- end }}
 {{- if eq (include "gsd.durationSeconds" $expire) "-1" }}
 {{- /*
 toString before %q, because a values file may carry an unquoted number and Helm types it as an

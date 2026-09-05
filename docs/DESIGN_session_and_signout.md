@@ -20,9 +20,11 @@ number in values, not the design.
 `/api/whoami` reports `logout_url` (the proxy's `sign_out`, composed from `oauthProxy.proxyPrefix`)
 and `session.cookie_expire_seconds`. The page reads the cap from there rather than hardcoding it, so
 an operator lowering `cookie.expire` cannot leave the UI quoting a number the proxy no longer
-enforces. It is fetched **once at load and never polled** — every request through the proxy
-re-stamps the session cookie, so a page that asked about its own session on a timer would hold that
-session open forever.
+enforces. `initSession()` reads it once at load for the session controls and the idle model; the
+ordinary data refresh also fetches it, because the viewer's tier can change while the page is open.
+There is **no session-only timer** — every request through the proxy re-stamps the session cookie,
+so a page that asked about its own session on a timer would hold that session open forever — and
+the automatic data refresh is suspended while the idle model is warning or expired.
 
 ## Measurements
 

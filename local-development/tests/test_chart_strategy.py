@@ -1400,6 +1400,15 @@ class TestIdleTimeoutThreading:
         ok, out = render(session__idleTimeout__enabled="true", session__idleTimeout__minutes="240")
         assert not ok and "could never fire" in out
 
+    def test_a_numeric_zero_cookie_cap_is_refused_not_silently_four_hours(self):
+        """Review of C4 (Codex): Helm's `default` treats numeric 0 as empty, so an unquoted
+        `oauthProxy.cookie.expire: 0` rendered `-cookie-expire=4h` while "0" stayed zero."""
+        for form in ("--set", "--set-string"):
+            done = subprocess.run(["helm", "template", "t", str(CHART), "--set", "ingress.host=t.example.com",
+                                   form, "oauthProxy.cookie.expire=0"], capture_output=True, text=True)
+            assert done.returncode != 0, form
+            assert "a zero cap is not a cap" in done.stdout + done.stderr, form
+
     def test_a_warning_longer_than_the_window_is_refused(self):
         ok, out = render(session__idleTimeout__minutes="1", session__idleTimeout__warningSeconds="60")
         assert not ok and "shorter than the idle window" in out

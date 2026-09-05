@@ -299,7 +299,8 @@ window.addEventListener("hashchange", () => {
   // `from: null` is the truth here, and it is what makes goBack() rise to the parent instead of
   // calling history.back() into whatever preceded the dashboard.
   history.replaceState({ pos: currentPosition(), from: null }, "", location.hash);
-  refresh();
+  // A hash edit is not inert either: while the countdown is up it must not fetch (review of C4).
+  if (!(typeof idleSuspended === "function" && idleSuspended())) refresh();
 });
 // null for the cluster-scoped payloads means "this cluster has not answered yet", and the
 // page functions render a Loading state for it. It is NOT the same as [] — with the tab
@@ -3768,7 +3769,9 @@ async function refresh(opts = {}) {
     render();
   } catch (err) {
     // A dead session is not a fault to report as one — it gets its own honest panel.
-    if (idle.state === "expired") return;
+    // A superseded or post-expiry refresh reports nothing: a late auth redirect must not replace
+    // the inactivity card with the cap's "session has ended" panel (review of C4).
+    if (superseded() || idle.state === "expired") return;
     if (err && err.sessionEnded) { showSessionEnded(); return; }
     // An error must never strand the reader: keep a working Back so a dead link is a
     // detour, not a dead end. This was reported from the field — a 404 on a deleted group
@@ -3965,14 +3968,16 @@ function wireIdleDialog() {
 
 let sessionCapNote = "";
 
-/* ── The session, asked about ONCE ──────────────────────────────────────────────────────
-   Fetched at load and never polled. Every request through the proxy re-stamps the session
-   cookie, so a page that asked about its own session on a timer would hold that session open
-   forever — the exact thing an absolute cap exists to prevent.
+/* ── The session's controls, bootstrapped once ───────────────────────────────────────────
+   whoami is read here at load to set up the sign-out link, the cap note and the idle model. It is
+   also fetched by every ordinary data refresh — the viewer's tier (`visibility`) can change while
+   the page is open — but never on a session-only timer, and the automatic refresh is suspended
+   while the idle model is warning or expired, so an unattended tab does not re-stamp its own
+   cookie (review of C4 corrected the older "never polled" wording here and in the design).
 
-   `logout_url` is the app's own /sign-out, which revokes the OpenShift access token the way
-   the console does and then falls through to the proxy's cookie-clear. Aiming the link
-   straight at the proxy would skip the revocation, so the href always comes from here. */
+   `logout_url` is the proxy's own sign_out under its configured prefix. The proxy clears its
+   session cookie there; the application does not revoke the OpenShift access token (measured in
+   docs/DESIGN_session_and_signout.md — revocation is deliberately not implemented). */
 async function initSession() {
   try {
     const who = await api("/api/whoami");
@@ -3987,8 +3992,9 @@ async function initSession() {
       link.href = who.logout_url;
       link.hidden = false;
       link.title = who.user ? `Sign out ${who.user}` : "Sign out";
-      // The idle model starts only with a session to end AND the module on. Read once, here:
-      // its inputs are deployment configuration, and whoami is deliberately never polled.
+      // The idle model starts only with a session to end AND the module on, from this bootstrap
+      // response: its inputs are deployment configuration, and a later refresh's whoami must not
+      // restart a model that is already counting.
       const it = who.session && who.session.idle_timeout;
       if (it && it.enabled === true) startIdleWatch(it, who.logout_url);
     }

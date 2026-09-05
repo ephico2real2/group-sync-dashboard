@@ -32,3 +32,32 @@ Read-only (no shell in ask mode); every refutation re-checked against the code.
 | C8 tests | REFUTED — four behaviours untested | **Accepted** — Cursor's four Playwright tests taken |
 | C9 docs | REFUTED — values/README/CHANGELOG described `minutes` as the time before the countdown; `API.md` stale | **Accepted** — wording fixed everywhere; the spec's Goal sentence noted in deviation 8 |
 | C10 the live run | PLAUSIBLE — predicted `sign_out` redirects to `/signed-out` | — ; measured above exactly so |
+
+## Verdicts — Codex
+
+Codex (gpt-5.6-sol, xhigh) reviewed the first head 721d412 with a pinned-code harness (its sandbox
+refused pytest's temp directory); the branch moved to Cursor's fixes during its run.
+
+| Claim | Codex | Decision |
+|---|---|---|
+| C1 states | REFUTED — "Sign out now" not terminal; Escape revived (as Cursor) | already applied |
+| C2 activity | CONFIRMED (harness: broadcasts, backdrop, other tab, no channel) | — |
+| C3 enforcement | REFUTED — in-flight refresh repaints; a late auth response shows the ended panel (as Cursor) | already applied; the catch also returns when superseded |
+| C4 the poll gate | REFUTED — `popstate` AND `hashchange` call `refresh()` straight | **Accepted** — `hashchange` gated too; the Back test also edits the hash |
+| C5 accessibility | REFUTED — the skip link outside `#wrap` (as Cursor); dialog contrast measured 7.7–19.2 | already applied |
+| C6 the server side | REFUTED — YAML `true`/`1.5` become one minute through `_num_setting(int)`; disagrees with Cursor that 0/−1 is "no cap" | **Accepted** — `_idle_integer_setting` refuses booleans and floats as text for both numbers; the cap disagreement recorded, the guard kept as harmless and unreachable |
+| C7 the chart | REFUTED — an unquoted `cookie.expire: 0` renders `4h` (Helm's `default` treats numeric zero as empty) | **Accepted** — `gsd.cookieExpire` returns `0` as typed and the deployment refuses it by name; Codex's test taken for both `--set` forms |
+| C8 tests | REFUTED — the untested behaviours (as Cursor) | already applied |
+| C9 docs | REFUTED — "never polled" in the design, the docstring and the page, and the "app's own /sign-out" comment, contradict `refresh()` fetching whoami every cycle | **Accepted** — all three corrected; Codex's prose test rejected |
+| C10 the live run | PLAUSIBLE (no cluster) | — ; measured above |
+
+Not asked, accepted: the chart README's `skipAuthRegex` row was the pre-C4 three-path regex.
+
+## Outcome
+
+Two first passes on two heads; between them the defects that mattered were about expiry being
+final and complete — a refresh already in flight, "Sign out now", browser history, the skip link —
+plus the whole-number rule for the idle settings, the exact whoami consumers, Helm's numeric zero,
+and three stale sentences about whoami polling. Rejected: the prose-asserting tests. Live on CRC
+before the reviews: the countdown at 29.4 s, expiry at 59.4 s, credentials demanded on re-entry. A
+second pass by both reviewers runs on the fixed head before merge.
