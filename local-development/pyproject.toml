@@ -10,7 +10,7 @@ name = "group-sync-dashboard"
 # reconcile_error alert's `detail` is replaced there. A self-tier consumer parsing either field
 # gets a KeyError after this upgrade, which is a contract change and not a patch — administrators
 # are unaffected, byte-for-byte.
-version = "0.12.0"
+version = "0.13.0"
 description = "Read-only multi-cluster dashboard for the redhat-cop group-sync-operator"
 requires-python = ">=3.11"
 # FLOORS ARE A SECURITY CONTROL, not just a compatibility statement. These were set once

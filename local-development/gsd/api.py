@@ -725,6 +725,23 @@ def build_app(
             raise HTTPException(status_code=404, detail=f"unknown cluster {cluster_id!r}")
         return cluster
 
+    def history_retention(table: str, since: dict[str, str | None]) -> dict:
+        """The retention edge of one history table, for the wire.
+
+        `window_days` is the configured window (0 = kept forever); `retained_since` is the
+        oldest row still held for this cluster, or null. Together they let a page say
+        "history retained since T" where a timeline begins at the cut — without them an
+        empty or short list reads as "nothing happened", which is the false absence this
+        dashboard exists to avoid. Callers pass `store.history_retained_since(cluster_id)`
+        themselves, at the call site, so the API contract's store-call count (R5) sees the
+        second read and holds them to @consistent — a helper that read the store would hide it.
+        """
+        days = {
+            "membership_event": settings.membership_events_retention_days,
+            "sync_event": settings.sync_events_retention_days,
+        }[table]
+        return {"window_days": max(0, int(days)), "retained_since": since.get(table)}
+
     def _config_summary(cluster_id: str) -> dict | None:
         oc = store.operator_configs(cluster_id)
         if not oc["present"]:
@@ -862,6 +879,7 @@ def build_app(
         return rows
 
     @app.get("/api/clusters/{cluster_id}/groupsyncs/{name}/events")
+    @consistent
     def list_events(
         request: Request,
         cluster_id: str,
@@ -901,6 +919,9 @@ def build_app(
             # dashboard has been running (PLAN §2). Saying so stops an empty list being
             # read as "the operator never synced".
             "note": "accumulated from polling; covers only the period since this dashboard started",
+            # Where retention has cut the timeline, if anywhere. Cluster-wide: the edge is a
+            # property of the policy, not of this CR.
+            "retention": history_retention("sync_event", store.history_retained_since(cluster_id)),
             "events": events,
         }
 
@@ -986,6 +1007,7 @@ def build_app(
                 "owner": None,
                 "members": [],
                 "changes": history,
+                "retention": history_retention("membership_event", store.history_retained_since(cluster_id)),
                 "bindings": store.group_bindings(cluster_id, name),
             }
         detail["deleted"] = False
@@ -1003,6 +1025,7 @@ def build_app(
             "owner": owner,
             "members": store.group_members(cluster_id, name),
             "changes": store.membership_events(cluster_id, group_name=name, limit=100),
+            "retention": history_retention("membership_event", store.history_retained_since(cluster_id)),
             # DIRECT bindings only. Role rules are never fetched or expanded, so this is
             # not an effective-permission calculation and must not be presented as one.
             "bindings": store.group_bindings(cluster_id, name),
@@ -1122,6 +1145,7 @@ def build_app(
             "login_capture": "on" if settings.login_capture_enabled else "off",
             "groups": groups,
             "changes": changes,
+            "retention": history_retention("membership_event", store.history_retained_since(cluster_id)),
             # Reachable through their group memberships. Each row carries via_group, so
             # "why do they have this?" is answerable without a second lookup.
             "bindings": store.user_bindings(cluster_id, name),
@@ -1587,6 +1611,7 @@ def build_app(
         }
 
     @app.get("/api/clusters/{cluster_id}/membership-changes")
+    @consistent
     def membership_changes(
         request: Request,
         cluster_id: str,
@@ -1625,6 +1650,7 @@ def build_app(
             "limit": limit,
             "truncated": truncated,
             "note": "accumulated from polling; covers only the period since this dashboard started",
+            "retention": history_retention("membership_event", store.history_retained_since(cluster_id)),
             "changes": events,
         }
 

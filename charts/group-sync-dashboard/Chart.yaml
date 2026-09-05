@@ -120,7 +120,11 @@ type: application
 # its thresholds (`gsd.groupCountCliff`), a `for.groupCountCliff` interval and a twelfth PrometheusRule
 # alert, GroupSyncGroupCountCliff, rendered only while the module is on. A default upgrade therefore
 # gains the ConfigMap keys and, if the rules are on, one alert; nothing else changes shape.
-version: 0.11.0
+# CHART 0.12.0 (2026-09-05), MINOR: appVersion moves to application 0.13.0 (below), and one new module.
+# `config.retention` (membershipEventsDays 0 = forever, syncEventsDays 730) reaches the app as two new
+# ConfigMap keys; no template, RBAC or default object changes. Rendered objects for a release that sets
+# neither are unchanged apart from the two ConfigMap keys and the version labels.
+version: 0.12.0
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,
@@ -165,7 +169,14 @@ version: 0.11.0
 # group_count_cliff_silenced), `silenced`/`silenced_by` on every /api/alerts row, `cliff_silence` on
 # group rows, schema migration 8. Additive on the wire; a consumer enumerating kinds sees two new
 # ones. MINOR.
-appVersion: "0.12.0"
+# 0.13.0 (2026-09-05). Retention for the accumulated history, leader-only, after the backup, in bounded
+# batches, and never when backups are off (docs/specs/SPEC_B2_history_retention.md). membership_event
+# keeps forever by default; sync_event keeps 730 days. Four responses gain an additive `retention` object
+# (/groupsyncs/{name}/events, /membership-changes, /groups/{name}, /users/{name}) so a timeline that
+# begins at the retention edge says so. The sync_event_by_time index is added to SCHEMA and built at first
+# start. gsd_retention_rows_deleted_total gains table="membership_event" and table="sync_event".
+# MINOR: additive on the wire, new settings, no shape change.
+appVersion: "0.13.0"
 
 keywords: [openshift, ldap, rbac, groupsync, observability]
 home: https://github.com/ephico2real2/group-sync-dashboard

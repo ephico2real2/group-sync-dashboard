@@ -51,6 +51,12 @@ CREATE TABLE IF NOT EXISTS sync_event (
 );
 CREATE INDEX IF NOT EXISTS sync_event_lookup
     ON sync_event(cluster_id, groupsync_name, synced_at DESC);
+-- Retention's index (prune_sync_events, history_retained_since): the prune subselect is a
+-- range seek and MIN(observed_at) an index seek. Without it an EMPTY prune is a full scan
+-- every poll. An index, not a migration: CREATE INDEX IF NOT EXISTS applies at startup on an
+-- existing database, which ALTER TABLE ADD COLUMN does not (see _MIGRATIONS).
+CREATE INDEX IF NOT EXISTS sync_event_by_time
+    ON sync_event(cluster_id, observed_at);
 
 -- Current CR state, replaced each poll.
 CREATE TABLE IF NOT EXISTS groupsync_state (
@@ -179,9 +185,10 @@ CREATE INDEX IF NOT EXISTS membership_event_lookup
     ON membership_event(cluster_id, group_name, id DESC);
 CREATE INDEX IF NOT EXISTS membership_event_by_user
     ON membership_event(cluster_id, user_name, id DESC);
--- The group-count cliff sums a cluster's events inside a time window (Store.group_count_changes);
--- without this the read scans every event the cluster has ever recorded, and the table has no
--- retention by design. Migration 8.
+-- Shared by the group-count cliff (Store.group_count_changes: a window of events) and retention
+-- (prune_membership_events' subselect is a range seek, history_retained_since's MIN an index
+-- seek). Without it both are a scan of every event the cluster has ever recorded. Added by B4
+-- as migration 8; B2 reuses it.
 CREATE INDEX IF NOT EXISTS membership_event_by_time
     ON membership_event(cluster_id, observed_at);
 
@@ -1887,6 +1894,61 @@ class Store:
                 (cluster_id, before_at, max_rows),
             )
             return conn.total_changes - before
+
+    # The two history tables retention may touch. A closed tuple, interpolated into SQL by
+    # _prune_history — never a caller's string.
+    _HISTORY_TABLES = ("membership_event", "sync_event")
+
+    def prune_membership_events(self, cluster_id: str, before_at: str, max_rows: int = 5000) -> int:
+        """Delete membership events observed before `before_at`, at most `max_rows`. Returns rows deleted.
+
+        THE IRREPLACEABLE TABLE. The poller calls this only after the cycle's backup and only on
+        the leader (Poller._prune_history); this method enforces the batch bound, not the policy.
+        Same shape and same reasons as prune_login_events: id-IN-subselect because DELETE ... LIMIT
+        is not compiled into this build, and a non-positive limit deletes NOTHING because SQLite
+        reads LIMIT -1 as unlimited. The subselect is served by membership_event_by_time.
+        """
+        return self._prune_history("membership_event", cluster_id, before_at, max_rows)
+
+    def prune_sync_events(self, cluster_id: str, before_at: str, max_rows: int = 5000) -> int:
+        """Delete sync events OBSERVED before `before_at`, at most `max_rows`. Returns rows deleted.
+
+        observed_at, not synced_at: the window is about how long this dashboard keeps what it
+        saw, and observed_at is the stamp it controls. Served by sync_event_by_time.
+        """
+        return self._prune_history("sync_event", cluster_id, before_at, max_rows)
+
+    def _prune_history(self, table: str, cluster_id: str, before_at: str, max_rows: int) -> int:
+        if table not in self._HISTORY_TABLES:
+            raise ValueError(f"not a history table: {table!r}")
+        if max_rows <= 0:
+            return 0
+        with self._write() as conn:
+            before = conn.total_changes
+            conn.execute(
+                f"""DELETE FROM {table} WHERE id IN (
+                       SELECT id FROM {table}
+                        WHERE cluster_id=? AND observed_at < ?
+                        ORDER BY observed_at LIMIT ?)""",
+                (cluster_id, before_at, max_rows),
+            )
+            return conn.total_changes - before
+
+    def history_retained_since(self, cluster_id: str) -> dict[str, str | None]:
+        """The oldest observed_at still held, per history table — the edge retention has cut to.
+
+        None for a table with no rows for this cluster. Two MIN()s over the (cluster_id,
+        observed_at) indexes: an index seek each, not a scan, so a handler can afford it on
+        every request. The API pairs it with the configured window so a timeline that begins
+        here is read as CUT here rather than started here.
+        """
+        out: dict[str, str | None] = {}
+        for table in self._HISTORY_TABLES:
+            row = self._row(
+                f"SELECT MIN(observed_at) AS since FROM {table} WHERE cluster_id=?", (cluster_id,)
+            )
+            out[table] = row["since"] if row else None
+        return out
 
     def record_login_read(self, cluster_id: str, read_at: str) -> None:
         """Record a SUCCESSFUL read. `started_at` is set once; `last_read_at` advances every time.

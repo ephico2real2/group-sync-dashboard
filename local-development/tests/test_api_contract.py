@@ -285,3 +285,17 @@ def test_every_endpoint_appears_in_api_md(spec):
         "endpoints absent from API.md: " + ", ".join(missing)
         + ". Document them, or a reader trusts an incomplete reference."
     )
+
+
+def test_r5_sees_the_history_retention_store_call():
+    """list_events and membership_changes grew a second store read for `retention`. Written as a
+    helper that read the store itself, R5's `store.\\w+(` count stayed at 1 and a dropped @consistent
+    would have passed; the read is made at the call site so the guard counts it (review, PR #73)."""
+    src = API_SRC.read_text()
+    for name in ("list_events", "membership_changes"):
+        node = _handlers()[name]
+        body = ast.get_source_segment(src, node) or ""
+        calls = len(re.findall(r"\bstore\.\w+\(", body))
+        decorated = any("consistent" in ast.unparse(d) for d in node.decorator_list)
+        assert calls > 1, f"{name} has {calls} store call(s) in its body; history_retained_since must be at the call site"
+        assert decorated, f"{name} must stay @consistent"

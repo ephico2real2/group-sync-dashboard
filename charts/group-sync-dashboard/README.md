@@ -173,6 +173,30 @@ cover corruption, a bad migration and accidental deletion — not loss of the vo
 off it with a CronJob mounting the same PVC read-only; the dashboard deliberately does not
 grow credentials for object storage.
 
+### Retention on the history
+
+| Key | Default | Notes |
+|---|---|---|
+| `config.retention.membershipEventsDays` | `0` | `0` keeps forever — one row per join/leave, ~1 MB/year, and the answer to "when did this person lose access?". Set a window only as a deliberate policy |
+| `config.retention.syncEventsDays` | `730` | one row per observed sync per CR (~52k/year per ten-minute CR); names CRs and counts, never a person. `0` keeps forever |
+
+The leader prunes **after** the cycle's backup and never before one has succeeded in its own
+life — with `config.backup.enabled=false` nothing is ever deleted — 5,000 rows per table per cycle, counted into `gsd_retention_rows_deleted_total{table}`. The
+API and the page state the cut (`retention.retained_since`), so a timeline that begins at the edge
+is read as cut there, not started there.
+
+A `membershipEventsDays` window shorter than `config.alerts.groupCountCliff.windowHours` does not get to
+delete the rows the cliff still reads: the membership cutoff is the earlier of the two edges. A membership
+window also makes a person who has left every group and never logged in unresolvable — `/users/{name}`
+answers `404 unknown user` once their rows are gone, so `retention` cannot explain that absence. The default
+is forever for both reasons.
+
+**Before you restore an old `gsd-*.db` onto the live claim, set both windows to `0`.** The first
+leader cycle after the new process's first successful backup releases the prune, and the default
+window then deletes `sync_event` rows older than 730 days, 5,000 per cycle. The copy just taken under
+`config.backup.dir` still holds the pre-prune file; the live API will not, unless the windows stay at
+`0` until you have read what you restored.
+
 ### Dashboard usage tracking
 
 Powers the **Usage** tab and `GET /api/dashboard/activity`.

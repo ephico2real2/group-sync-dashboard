@@ -167,3 +167,18 @@ def test_the_chart_version_is_semver_and_not_the_app_version() -> None:
         f"chart version {version!r} is not bare semver; chart-releaser tags releases as "
         f"<name>-<version> and a prerelease suffix changes how consumers resolve it"
     )
+
+
+def test_the_changelog_heading_names_the_current_release_pair() -> None:
+    """prepare-release.py writes `## Application X — chart Y — date` (or the chart-led form) at the
+    top of the changelog; nothing held that heading to the files it describes, so a hand edit to
+    one of them could leave the changelog naming a pair that never shipped (review, PR #73)."""
+    log = (REPO / "docs" / "CHANGELOG.md").read_text()
+    heading = next(line for line in log.splitlines() if line.startswith("## "))
+    app = re.search(r'^version = "(.+?)"', PYPROJECT.read_text(), re.M).group(1)
+    chart = re.search(r"^version: (\d+\.\d+\.\d+)", CHART.read_text(), re.M).group(1)
+    assert heading in (
+        f"## Application {app} — chart {chart} — {heading.rsplit(' — ', 1)[1]}",
+        f"## Chart {chart} — application {app} — {heading.rsplit(' — ', 1)[1]}",
+        "## Unreleased",
+    ), f"the changelog's first heading {heading!r} does not name app {app} / chart {chart}"

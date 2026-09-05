@@ -280,6 +280,24 @@ config:
     intervalHours: 6
     keep: 4     # 4 x 6h = the last day, at roughly the size of the database each
 
+  # Retention on the accumulated history — the two tables the backup above exists for.
+  # 0 keeps a table forever. The leader prunes after each cycle's backup and NEVER before one
+  # has succeeded in its own life (a failing backup holds the prune; with config.backup off
+  # nothing is ever deleted, because the history would have no copy anywhere), 5000 rows per table per
+  # cycle so years of backlog cannot hold the single writer, counted into
+  # gsd_retention_rows_deleted_total{table}. The page and the API say where the cut is
+  # ("history retained since ...") so a timeline that begins there is not read as empty before.
+  #
+  # membershipEventsDays 0 — FOREVER — by judgment: one row per join or leave, about a megabyte
+  # a year at reference scale, and it is the answer to "when did this person lose access?".
+  # Deleting that is a policy an operator sets, not a default a chart picks.
+  # syncEventsDays 730 by judgment: one row per observed sync per CR — a ten-minute schedule
+  # is ~52k rows a year per CR, tens of megabytes a year on a claim that also holds every
+  # backup copy — naming CRs and counts and never a person. Two years bounds the claim.
+  retention:
+    membershipEventsDays: 0
+    syncEventsDays: 730
+
   # Unmanaged-grant DISCOVERY. This feature writes nothing — and to be exact about the
   # dashboard as a whole, the only object it writes on any cluster is its own
   # leader-election Lease, which is its coordination and not anything it reports on.

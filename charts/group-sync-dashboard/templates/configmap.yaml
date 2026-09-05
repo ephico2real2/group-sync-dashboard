@@ -53,6 +53,9 @@ data:
     userActivityVisibility: {{ .Values.config.userActivity.visibility | quote }}
     userActivityFlushSeconds: {{ .Values.config.userActivity.flushSeconds }}
     userActivityRetentionDays: {{ .Values.config.userActivity.retentionDays }}
+    # Retention on the irreplaceable history; 0 keeps forever. See values.yaml config.retention.
+    membershipEventsRetentionDays: {{ .Values.config.retention.membershipEventsDays }}
+    syncEventsRetentionDays: {{ .Values.config.retention.syncEventsDays }}
     # Per-user visibility: the SubjectAccessReview that separates the wide tier from the
     # self tier. The ON/OFF switch itself travels as GSD_ENABLE_VIEW_RESTRICTIONS on the
     # Deployment — one wire, visible where an auditor reads the pod spec — so it is

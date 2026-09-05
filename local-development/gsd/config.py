@@ -314,6 +314,20 @@ class Settings:
     user_activity_flush_seconds: int = 60
     user_activity_retention_days: int = 400
 
+    # ── RETENTION ON THE ACCUMULATED HISTORY ──────────────────────────────────────────────────────
+    # The two tables the backup exists for. 0 keeps a table forever. Pruned by the leader after
+    # the cycle's backup and never before one has succeeded in this process's life, 5000 rows per
+    # table per cycle (poller.HISTORY_PRUNE_BATCH), so a first prune over years of rows cannot
+    # hold the single writer.
+    #
+    # membership_event keeps FOREVER by default: one row per join or leave, a megabyte a year at
+    # reference scale, and it is the answer to "when did this person lose access?" — deleting it
+    # is a policy only an operator can set. sync_event keeps two years: one row per observed sync
+    # per CR, tens of megabytes a year on a claim that also holds every backup copy, naming CRs
+    # and counts and never a person.
+    membership_events_retention_days: int = 0
+    sync_events_retention_days: int = 730
+
     # ── PER-USER VISIBILITY ────────────────────────────────────────────────────────────────────────
     # ON by default: with restrictions off, every authenticated reader sees the ServiceAccount's
     # view of the cluster — the full RBAC binding surface and every person's login failures — which
@@ -825,5 +839,11 @@ def load_settings(path: str | Path) -> Settings:
         ),
         user_activity_retention_days=_num_setting(
             raw, "GSD_USER_ACTIVITY_RETENTION_DAYS", "userActivityRetentionDays", 400, int
+        ),
+        membership_events_retention_days=_num_setting(
+            raw, "GSD_MEMBERSHIP_EVENTS_RETENTION_DAYS", "membershipEventsRetentionDays", 0, int
+        ),
+        sync_events_retention_days=_num_setting(
+            raw, "GSD_SYNC_EVENTS_RETENTION_DAYS", "syncEventsRetentionDays", 730, int
         ),
     )
