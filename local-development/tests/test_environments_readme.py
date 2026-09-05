@@ -44,6 +44,10 @@ def as_written(value: object) -> str:
     """Render a YAML value the way the README's backticks show it."""
     if isinstance(value, bool):
         return "true" if value else "false"
+    if value == "":
+        # values.yaml writes an empty-string default as `""` (monitoring.grafanaDashboard.enabled,
+        # a tri-state whose empty value means "follow"); the table shows it the same way.
+        return '""'
     return str(value)
 
 
