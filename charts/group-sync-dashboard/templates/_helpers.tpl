@@ -477,9 +477,11 @@ true/false are explicit. Anything else refuses the render — a misspelt "ture" 
 silently become "off". Returns the string "true" or "false".
 */}}
 {{- define "gsd.grafanaDashboardEnabled" -}}
-{{- $raw := ((.Values.monitoring | default dict).grafanaDashboard | default dict).enabled -}}
+{{- $mon := .Values.monitoring | default dict -}}
+{{- $raw := ($mon.grafanaDashboard | default dict).enabled -}}
 {{- if or (kindIs "invalid" $raw) (eq (toString $raw) "") -}}
-{{- toString .Values.monitoring.serviceMonitor.enabled -}}
+{{- /* nil-safe one hop up too: `--set monitoring=null` must be "off", not a nil-pointer render (review, PR #74). */ -}}
+{{- toString (($mon.serviceMonitor | default dict).enabled) -}}
 {{- else if eq (toString $raw) "true" -}}
 true
 {{- else if eq (toString $raw) "false" -}}

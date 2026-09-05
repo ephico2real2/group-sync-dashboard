@@ -87,7 +87,7 @@
         "defaults": {
           "unit": "s",
           "decimals": 0,
-          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 300 }, { "color": "red", "value": 600 } ] }
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "text", "value": null }, { "color": "green", "value": 0 }, { "color": "orange", "value": 300 }, { "color": "red", "value": 600 } ] }
         },
         "overrides": []
       },
@@ -113,7 +113,7 @@
         "defaults": {
           "unit": "s",
           "decimals": 1,
-          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 15 }, { "color": "red", "value": 30 } ] }
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "text", "value": null }, { "color": "green", "value": 0 }, { "color": "orange", "value": 15 }, { "color": "red", "value": 30 } ] }
         },
         "overrides": []
       },
@@ -154,7 +154,7 @@
           "instant": true
         }
       ],
-      "fieldConfig": { "defaults": { "unit": "none", "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 1 } ] } }, "overrides": [] },
+      "fieldConfig": { "defaults": { "unit": "none", "thresholds": { "mode": "absolute", "steps": [ { "color": "text", "value": null }, { "color": "green", "value": 0 }, { "color": "orange", "value": 1 } ] } }, "overrides": [] },
       "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "value", "graphMode": "none", "textMode": "value_and_name", "orientation": "auto" }
     },
     {
@@ -173,7 +173,7 @@
           "instant": true
         }
       ],
-      "fieldConfig": { "defaults": { "unit": "none", "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 1 } ] } }, "overrides": [] },
+      "fieldConfig": { "defaults": { "unit": "none", "thresholds": { "mode": "absolute", "steps": [ { "color": "text", "value": null }, { "color": "green", "value": 0 }, { "color": "orange", "value": 1 } ] } }, "overrides": [] },
       "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "value", "graphMode": "none", "textMode": "value_and_name", "orientation": "auto" }
     },
     {
@@ -271,9 +271,9 @@
         { "refId": "A", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "max by (cluster, kind, severity) (gsd_alerts_total{cluster=~\"$cluster\"})", "legendFormat": "{{cluster}} {{severity}} {{kind}}", "instant": true }
       ],
       "fieldConfig": {
-        "defaults": { "unit": "none", "min": 0, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 1 } ] } },
+        "defaults": { "unit": "none", "min": 0, "thresholds": { "mode": "absolute", "steps": [ { "color": "text", "value": null }, { "color": "green", "value": 0 }, { "color": "orange", "value": 1 } ] } },
         "overrides": [
-          { "matcher": { "id": "byRegexp", "options": ".* critical .*" }, "properties": [ { "id": "thresholds", "value": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] } } ] },
+          { "matcher": { "id": "byRegexp", "options": ".* critical .*" }, "properties": [ { "id": "thresholds", "value": { "mode": "absolute", "steps": [ { "color": "text", "value": null }, { "color": "green", "value": 0 }, { "color": "red", "value": 1 } ] } } ] },
           { "matcher": { "id": "byRegexp", "options": ".*_silenced" }, "properties": [ { "id": "thresholds", "value": { "mode": "absolute", "steps": [ { "color": "text", "value": null } ] } } ] }
         ]
       },
@@ -381,7 +381,7 @@
         { "refId": "A", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "time() - max(gsd_backup_last_success_timestamp_seconds)", "legendFormat": "backup age", "instant": true }
       ],
       "fieldConfig": {
-        "defaults": { "unit": "s", "decimals": 0, "noValue": "no backup", "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 21600 }, { "color": "red", "value": 43200 } ] } },
+        "defaults": { "unit": "s", "decimals": 0, "noValue": "no backup", "thresholds": { "mode": "absolute", "steps": [ { "color": "text", "value": null }, { "color": "green", "value": 0 }, { "color": "orange", "value": 21600 }, { "color": "red", "value": 43200 } ] } },
         "overrides": []
       },
       "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "value", "graphMode": "none", "textMode": "value", "orientation": "auto" }
@@ -481,7 +481,7 @@
         { "refId": "A", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "time() - max by (cluster) (gsd_login_capture_last_read_timestamp_seconds{cluster=~\"$cluster\"})", "legendFormat": "{{cluster}}", "instant": true }
       ],
       "fieldConfig": {
-        "defaults": { "unit": "s", "decimals": 0, "noValue": "never read", "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 900 }, { "color": "red", "value": 1800 } ] } },
+        "defaults": { "unit": "s", "decimals": 0, "noValue": "never read", "thresholds": { "mode": "absolute", "steps": [ { "color": "text", "value": null }, { "color": "green", "value": 0 }, { "color": "orange", "value": 900 }, { "color": "red", "value": 1800 } ] } },
         "overrides": []
       },
       "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "value", "graphMode": "none", "textMode": "value_and_name", "orientation": "auto" }

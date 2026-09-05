@@ -118,15 +118,30 @@ class TestTheFile:
         missing = {a for a in shipped if f"`{a}`" not in text_panel["options"]["content"]}
         assert not missing, f"text panel does not name: {missing}"
 
-    def test_nodata_does_not_use_the_alarm_colour_as_the_base_step(self):
-        """No series is not DOWN / WAL-off / split-brain. The reference cluster's screenshot is the
-        scar: three stats painted red on "No data" (review, PR #74)."""
+    def test_nodata_does_not_use_a_verdict_colour_as_the_base_step(self):
+        """No series is not DOWN, WAL-off, split-brain, "just polled" or "zero empty groups". The
+        reference screenshot is the scar twice over: three stats painted No data red, and after that
+        fix six more still painted it green (review, PR #74, both passes). Every coloured stat and
+        bar-gauge panel's base step is neutral; a real zero earns its green from the next step."""
         board = json.loads(DASHBOARD.read_text())
-        by_title = {p["title"]: p for p in _walk_panels(board["panels"])}
-        for title in ("Cluster up", "WAL mode", "Leader replicas"):
-            steps = by_title[title]["fieldConfig"]["defaults"]["thresholds"]["steps"]
-            assert steps[0]["value"] is None
-            assert steps[0]["color"] != "red", f"{title} paints No data as alarm-red"
+        seen = set()
+        for p in _walk_panels(board["panels"]):
+            if p["type"] not in ("stat", "bargauge") or (p.get("options") or {}).get("colorMode") == "none":
+                continue
+            defaults = (p.get("fieldConfig") or {}).get("defaults") or {}
+            steps = (defaults.get("thresholds") or {}).get("steps") or []
+            if not steps:
+                continue
+            seen.add(p["title"])
+            for step_list in [steps] + [pr["value"]["steps"] for ov in (p["fieldConfig"].get("overrides") or [])
+                                         for pr in ov.get("properties", []) if pr.get("id") == "thresholds"]:
+                base = step_list[0]
+                assert base.get("value") is None
+                assert base["color"] not in ("red", "green"), f"{p['title']} paints No data as {base['color']}"
+        for title in ("Cluster up", "WAL mode", "Leader replicas", "Last poll age", "Poll duration", "Empty groups",
+                      "Unattributed groups", "Backup age", "Login capture: last successful read age",
+                      "Alerts by kind and severity"):
+            assert title in seen, f"{title} was not checked; the probe missed it"
 
     def test_readme_does_not_treat_folder_as_a_namespace_fix(self):
         """B3.9: folder/labels cannot fix sidecar namespace scope, and the operator recipe that worked
@@ -210,6 +225,10 @@ class TestTheConfigMap:
         docs = _render("monitoring.serviceMonitor.enabled=true", "monitoring.grafanaDashboard=null")
         cms = _dashboard_configmaps(docs)
         assert len(cms) == 1 and cms[0]["metadata"]["labels"]["grafana_dashboard"] == "1"
+
+    def test_a_missing_monitoring_map_is_off(self):
+        """`--set monitoring=null` died on .serviceMonitor.enabled of nil (review, PR #74 second pass)."""
+        assert not _dashboard_configmaps(_render("monitoring=null"))
 
     def test_a_colliding_sidecar_label_refuses_the_render(self):
         """Extra labels are for a different key; overwriting grafana_dashboard would drop the
