@@ -120,7 +120,10 @@ jobs:
           REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
           REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
         run: |
-          set -uo pipefail
+          # -e as well: without it a refused `skopeo copy --preserve-digests` would be ignored and the
+          # digest comparison could pass on a tag that already existed (review of A2, second pass).
+          # Every deliberate exit below is explicit, and the `if !` guard keeps -e off the probe.
+          set -euo pipefail
           CHART=charts/group-sync-dashboard/Chart.yaml
           VALUES=charts/group-sync-dashboard/values.yaml
           # Exactly the forms prepare-release.py writes (SEMVER = three numbers, appVersion quoted):

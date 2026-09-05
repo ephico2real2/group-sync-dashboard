@@ -303,8 +303,8 @@ Full detail, including CRC-specific traps, in
 [`.github/workflows/publish.yml`](.github/workflows/publish.yml) runs **that same script** on
 every merge to `main` that changes an image input, and writes nothing back to this repository:
 the immutable `<version>-<sha>` tag every time, the `:<version>` alias only when a human moved
-`version` in `pyproject.toml`. The pushed digest is then signed and attested — keyless, under
-GitHub's OIDC identity — and its SBOM kept as an artifact and attached to the image. How an
+`version` in `pyproject.toml`. On `main`, the pushed digest is then signed and attested — keyless,
+under GitHub's OIDC identity — and its SBOM kept as an artifact and attached to the image. How an
 operator checks all of that: [`docs/HELM_DOWNLOAD_AND_INSTALL.md`](docs/HELM_DOWNLOAD_AND_INSTALL.md);
 the release model: [`docs/RELEASING.md`](docs/RELEASING.md).
 

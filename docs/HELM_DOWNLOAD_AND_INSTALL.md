@@ -296,8 +296,9 @@ build it deploys, and rewriting it decouples the chart from the image it was pub
 
 ## 7. Verify what you downloaded
 
-Every image `publish.yml` pushes is signed and attested, and every chart `helm.yaml` publishes is
-attested, with GitHub's OIDC identity — no key to fetch, nothing to trust but the identity strings
+Every image `publish.yml` pushes from `main` is signed and attested (a `workflow_dispatch` from
+another branch pushes its immutable tag unsigned — `DESIGN_supply_chain.md`, D9), and every chart
+`helm.yaml` publishes as a new version is attested, with GitHub's OIDC identity — no key to fetch, nothing to trust but the identity strings
 below (`.github/workflows/publish.yml#attest`, `.github/workflows/helm.yaml#Attest the provenance of the packaged chart`).
 The commands need `cosign` 3.x and `gh` 2.49 or newer; the outputs shown are the tools' own
 wording, with the values that change per release elided as `…`.
@@ -338,7 +339,7 @@ mirror copies them with `oras cp --recursive` (or re-signs at the destination), 
 cosign verify-attestation --type spdxjson \
   --certificate-identity https://github.com/ephico2real2/group-sync-dashboard/.github/workflows/publish.yml@refs/heads/main \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  quay.io/ephico2real/group-sync-dashboard:0.15.0 \
+  quay.io/ephico2real/group-sync-dashboard:0.15.0-<sha> \
   | jq -r '.payload | @base64d | fromjson | .predicate' > sbom.spdx.json
 grype sbom:sbom.spdx.json
 ```
@@ -350,13 +351,13 @@ the image was mirrored without its referrers. It is produced by Syft 1.51.1, the
 **Build provenance (SLSA).** Recorded in this repository's attestation store:
 
 ```sh
-gh attestation verify oci://quay.io/ephico2real/group-sync-dashboard:0.15.0 \
+gh attestation verify oci://quay.io/ephico2real/group-sync-dashboard:0.15.0-<sha> \
   --repo ephico2real2/group-sync-dashboard \
   --signer-workflow ephico2real2/group-sync-dashboard/.github/workflows/publish.yml
 ```
 
 ```text
-Loaded digest sha256:… for oci://quay.io/ephico2real/group-sync-dashboard:0.15.0
+Loaded digest sha256:… for oci://quay.io/ephico2real/group-sync-dashboard:0.15.0-<sha>
 Loaded 1 attestation from GitHub API
 ✓ Verification succeeded!
 …
@@ -371,21 +372,22 @@ Loaded 1 attestation from GitHub API
 provenance is attested the same way:
 
 ```sh
-helm pull group-sync-dashboard/group-sync-dashboard --version 0.16.0
-gh attestation verify group-sync-dashboard-0.16.0.tgz \
+helm pull group-sync-dashboard/group-sync-dashboard --version <version>
+gh attestation verify group-sync-dashboard-<version>.tgz \
   --repo ephico2real2/group-sync-dashboard \
   --signer-workflow ephico2real2/group-sync-dashboard/.github/workflows/helm.yaml
 ```
 
 ```text
-Loaded digest sha256:… for file://group-sync-dashboard-0.16.0.tgz
+Loaded digest sha256:… for file://group-sync-dashboard-<version>.tgz
 Loaded 1 attestation from GitHub API
 ✓ Verification succeeded!
 ```
 
 There is no GPG signature and `helm verify` is not supported — deliberately; the reasoning is in
-`DESIGN_supply_chain.md`. Charts published before this attestation existed have none, and `gh`
-reports `no attestations found` for them.
+`DESIGN_supply_chain.md`. Charts published before this attestation existed (0.16.0 and earlier) have
+none, and `gh` reports `no attestations found` for them; the first attested chart is the next version
+`helm.yaml` publishes.
 
 **A fork verifies against its own identity.** Replace the repository in `--certificate-identity`,
 `--repo` and `--signer-workflow`; the workflow file names are the same. Repository variables

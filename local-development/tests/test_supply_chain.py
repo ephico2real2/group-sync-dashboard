@@ -289,6 +289,11 @@ class TestWhatIsSignedAndHow:
         on an application release. The guide's command names the immutable tag and says when the alias
         verifies too, or the first reader after this lands verifies yesterday's unsigned alias."""
         section = INSTALL_GUIDE.read_text().split("## 7. Verify what you downloaded", 1)[1].split("## Quick reference", 1)[0]
-        cosign_cmd = section.split("cosign verify \\", 1)[1].split("```", 1)[0]
-        assert "group-sync-dashboard:0.15.0-<sha>" in cosign_cmd, cosign_cmd
+        # Every image command, not only the first: the second pass found verify-attestation and
+        # gh attestation verify still naming the alias after the first pass fixed `cosign verify`.
+        for verb in ("cosign verify \\", "cosign verify-attestation", "gh attestation verify oci://"):
+            block = section.split(verb, 1)[1].split("```", 1)[0]
+            assert "group-sync-dashboard:0.15.0-<sha>" in block, (verb, block)
+            assert "group-sync-dashboard:0.15.0 " not in block and "group-sync-dashboard:0.15.0\n" not in block, verb
         assert "moves only on an application release" in section
+        assert "Every image `publish.yml` pushes is signed" not in section, "a branch dispatch pushes unsigned (D9)"

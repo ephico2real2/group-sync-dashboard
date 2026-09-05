@@ -64,4 +64,20 @@ documented command fails: the SBOM filename, the skopeo copy contract, the branc
 identity, the unsigned alias in the install guide, and the BSD-sed bracket class. Every accepted
 finding carries the reviewer's test or an adapted one; three snippets were rejected with a measured
 reason (the deprecated legacy bundle flag, gating `publish`, the diff- and prose-asserting tests).
-A second pass by both reviewers ran on the fixed head before merge (recorded below).
+A second pass by both reviewers ran on the fixed head before merge (below).
+
+## Second pass — Cursor (on the fixed head cd92020)
+
+| Claim | Cursor | Decision |
+|---|---|---|
+| C1 the SBOM handoff | CONFIRMED | — |
+| C2 signing only on main | CONFIRMED (SAN = `job_workflow_ref` with `refs/heads/main` for a push and a dispatch on main) | — |
+| C3 the alias copies | REFUTED — `skopeo inspect --format '{{.Digest}}'` said to resolve an index to a platform child; the label step's `set -uo pipefail` ignores a failed copy | **Half accepted, measured** — the digest claim is wrong: on `quay.io/podman/hello:latest` (four platforms) under `--override-os linux --override-arch amd64`, `{{.Digest}}` printed the list digest, equal to `sha256(skopeo inspect --raw)` and different from the amd64 child, so the comparison holds for both shapes and the `--raw \| sha256` snippet was not taken; the missing `-e` is real and added |
+| C4 the digest check | CONFIRMED | — |
+| C5 the extractors | CONFIRMED | — |
+| C6 documentation | REFUTED — §7's `verify-attestation` and `gh attestation verify` still named `:0.15.0`; "Every image … is signed" contradicts D9 | **Accepted** — both subjects are the immutable tag, the opening sentence carries the D9 caveat, the chart example is `<version>` (0.16.0 predates the attestation), README says "on `main`"; the first-pass test read only the first command and now reads all three (Cursor's test, adapted) |
+| C7 fidelity | PLAUSIBLE — the range includes the merge of `origin/main` | — ; that merge (464d963) brought PR #81's release marking of C2, nothing of A2's |
+| C8 the first run | REFUTED on the same two §7 commands | **Accepted** as C6 |
+
+Not asked: `--signer-workflow` without `@ref` is weaker than the cosign identity — noted, harmless
+while only `main` signs (the record says so under D9).
