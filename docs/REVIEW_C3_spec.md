@@ -190,6 +190,21 @@ Codex is recorded below when its pass lands.
 | C4 the override ConfigMap | REFUTED | **Accepted** — a default `Environment` reaches `os.environ` and the HMAC token file from a template; `SandboxedEnvironment` with a data-only context is required, and the override ships only if question 9 is answered yes |
 | C5 the tests | REFUTED | **Accepted** — an AST import allow-list replaces the `<`-walk (which false-positives on `n < p.lo` and misses ElementTree or a sidecar file); partial markers plus the §9.6 escape case through an override |
 
+Codex (gpt-5.6-sol, xhigh; read-only, on the head that already carried Cursor's corrections) confirmed
+C1 and refuted C2–C5 with measurements:
+
+| Claim | Codex | Decision |
+|---|---|---|
+| C1 | CONFIRMED at the corrected head | — |
+| C2 | REFUTED — two wheels, one native (MarkupSafe 3.0.3 cp314 manylinux); §6.1, §3.3, §8.16 and §9 still said fpdf2 only | **Accepted** — floors `Jinja2>=3.1.6`, `MarkupSafe>=3.0.3` (both verified on PyPI here), the inventory row, and every fpdf2-only passage corrected |
+| C3 | REFUTED — a marking beginning with a newline closes the CSS string in `@page { content: "…" }`; HTML autoescape is not CSS escaping | **Accepted** — a `css_string` filter (six-digit CSS escapes) for model values inside `<style>`; the `<script>` case confirmed handled by autoescape |
+| C4 | REFUTED — `SandboxedEnvironment` let a template mutate the supplied dict and call public methods; mounted ConfigMaps update live, bypassing a one-time startup check | **Accepted** — `ImmutableSandboxedEnvironment`, cleared globals, `safe` removed, `StrictUndefined`, a detached `json.loads(report.to_json())` context, keys snapshotted at startup into a `DictLoader`, changes need a restart or an atomic swap; ConfigMap writers named trusted authors of report HTML |
+| C5 | REFUTED — `data-gsd-partial` markers are self-reported; an override can omit, rename or duplicate them | **Accepted** — a recording loader asserts the exact templates resolved; the exact module list and the §9.5 `Built` loop kept alongside the AST allow-list |
+
+Codex's "not asked": the issue text said eight operator questions (now nine), and the verification
+output line still names only fpdf2's version — left as it is, because the proof script §8.16 ships
+prints fpdf2's version and the templates add no PDF-side check.
+
 Not asked and accepted: question 9 added to §14 in the same change; §8.1's extra and `package-data`
 updated; the ConfigMap value's shape (a name, default empty) and mount path named; `write_html`
 forbidden by name.
