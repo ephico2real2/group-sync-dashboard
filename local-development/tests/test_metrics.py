@@ -619,7 +619,11 @@ class TestGroupCountCliffMetric:
             except (FileNotFoundError, subprocess.TimeoutExpired):
                 pytest.skip("helm not available")
             assert done.returncode == 0, done.stderr
-            return done.stdout
+            # The PrometheusRule alone: the Grafana dashboard (on by default since chart 0.14.0)
+            # names every rule in a text panel, which would satisfy a whole-render substring test.
+            chunks = [c for c in done.stdout.split("\n---\n") if "kind: PrometheusRule" in c]
+            assert len(chunks) == 1, "expected exactly one PrometheusRule document"
+            return chunks[0]
 
         on = rules()
         assert "alert: GroupSyncGroupCountCliff" in on

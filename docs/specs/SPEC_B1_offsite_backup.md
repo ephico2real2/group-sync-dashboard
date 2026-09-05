@@ -5,7 +5,7 @@
 | Programme | Feature programme 2026-09 — index and version ladder in `docs/specs/README.md` |
 | Batch | B — operations |
 | Release | R4 — Supply chain and backup |
-| Version on release | chart 0.16.0 (chart only) |
+| Version on release | chart 0.17.0 (chart only) |
 | Issue | [#64](https://github.com/ephico2real2/group-sync-dashboard/issues/64) |
 | Status | specified |
 | Source | design agent output `a7eabba23e10eec8a`; one message; no seam |

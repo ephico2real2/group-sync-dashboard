@@ -5,7 +5,7 @@
 | Programme | Feature programme 2026-09 — index and version ladder in `docs/specs/README.md` |
 | Batch | C — product |
 | Release | R5 — Sessions and login source |
-| Version on release | app 0.16.0, chart 0.17.0 |
+| Version on release | app 0.16.0, chart 0.18.0 |
 | Issue | [#65](https://github.com/ephico2real2/group-sync-dashboard/issues/65) |
 | Status | specified |
 | Source | design agent output `a836ef1bc0058551a`; two messages; the first ended inside a ```sh fence and the second began with two fence lines (a closer and a stray duplicate), so one duplicate fence line was dropped |
@@ -24,7 +24,7 @@ request, with the reason, under "Orchestrator's notes".
 
 ## Orchestrator's notes
 
-- First feature of R5: app 0.16.0, chart 0.17.0; the body's version numbers are superseded.
+- First feature of R5: app 0.16.0, chart 0.18.0; the body's version numbers are superseded.
 
 ## Batch preamble (verbatim from the design)
 

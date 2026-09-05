@@ -5,7 +5,7 @@
 | Programme | Feature programme 2026-09 — index and version ladder in `docs/specs/README.md` |
 | Batch | C — product |
 | Release | R3 — Product wins |
-| Version on release | app 0.14.0, chart 0.14.0 |
+| Version on release | app 0.14.0, chart 0.15.0 |
 | Issue | [#61](https://github.com/ephico2real2/group-sync-dashboard/issues/61) |
 | Status | specified |
 | Source | design agent output `a836ef1bc0058551a`; two messages; the first ended inside a ```sh fence and the second began with two fence lines (a closer and a stray duplicate), so one duplicate fence line was dropped |
@@ -24,7 +24,7 @@ request, with the reason, under "Orchestrator's notes".
 
 ## Orchestrator's notes
 
-- First feature of R3: app 0.14.0, chart 0.14.0; the body's version numbers are superseded. Default answer to the design's question 1: exports are not recorded in `dashboard_user_activity` (client-side action).
+- First feature of R3: app 0.14.0, chart 0.15.0; the body's version numbers are superseded. Default answer to the design's question 1: exports are not recorded in `dashboard_user_activity` (client-side action).
 
 ## Batch preamble (verbatim from the design)
 

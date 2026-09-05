@@ -207,10 +207,14 @@ class TestLoginCaptureReadsOneNamespaceOnly:
         import yaml
         return [d for d in yaml.safe_load_all(out) if d]
 
-    def test_nothing_renders_by_default(self):
+    def test_it_renders_by_default_and_nothing_renders_when_off(self):
+        # On since chart 0.14.0: a namespaced read is inside the on-by-default rule.
         ok, out = render()
         assert ok, out
-        assert "login-capture" not in out, "the log read renders without being enabled"
+        assert "login-capture" in out, "the log read is the default since chart 0.14.0"
+        ok, out = render(loginCapture__enabled="false")
+        assert ok, out
+        assert "login-capture" not in out, "the log read renders after being disabled"
 
     def test_the_log_read_is_never_cluster_scoped(self):
         """The whole point. A ClusterRole here reads every pod's logs on the cluster."""
@@ -906,7 +910,8 @@ class TestVisibilityThreading:
         assert subject["name"] == "t-group-sync-dashboard"
 
     def test_the_sar_grant_disappears_when_nothing_needs_it(self):
-        ok, out = render(visibility__enabled="false")
+        # apiTokenAccess is the other user of the grant, and on by default since chart 0.14.0.
+        ok, out = render(visibility__enabled="false", oauthProxy__apiTokenAccess__enabled="false")
         assert ok, out
         assert not any(d.get("kind") == "ClusterRoleBinding"
                        and d["roleRef"]["name"] == "system:auth-delegator"
@@ -1012,7 +1017,7 @@ class TestVisibilityThreading:
                     if d.get("kind") == "ClusterRoleBinding"
                     and d["roleRef"]["name"] == "system:auth-delegator"]
         assert len(bindings) == 1, "the usage tier must not add a second SAR grant"
-        ok, out = render(visibility__enabled="false")
+        ok, out = render(visibility__enabled="false", oauthProxy__apiTokenAccess__enabled="false")
         assert ok, out
         assert not any(d.get("kind") == "ClusterRoleBinding"
                        and d["roleRef"]["name"] == "system:auth-delegator"

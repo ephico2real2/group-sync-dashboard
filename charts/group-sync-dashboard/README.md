@@ -48,8 +48,8 @@ group membership, so it ships authenticated and you turn the proxy *off* deliber
 | `oauthProxy.logoutUrl` | `""` | where the browser lands after sign-out; empty means this dashboard's own unauthenticated `/signed-out` page |
 | `oauthProxy.skipAuthRegex` | `^/(healthz\|readyz\|metrics)$` | the health paths **must** stay, or kubelet gets a 302 and kills a healthy pod |
 | `oauthProxy.sar` | `""` | empty = authentication only. Set a SubjectAccessReview to also require a permission |
-| `oauthProxy.skipProviderButton` | `false` | `false` shows an explicit **Log In** button. `true` skips straight to the OAuth server — one fewer click, but any mid-flow failure then lands on the proxy's own page headed "403 Permission Denied", which reads as *you are not allowed in* rather than *your session expired*. Observed here after a rollout landed between redirect and callback |
-| `oauthProxy.requestLogging` | `false` | |
+| `oauthProxy.skipProviderButton` | `true` | `false` shows an explicit **Log In** button. `true` skips straight to the OAuth server — one fewer click, but any mid-flow failure then lands on the proxy's own page headed "403 Permission Denied", which reads as *you are not allowed in* rather than *your session expired*. Observed here after a rollout landed between redirect and callback |
+| `oauthProxy.requestLogging` | `true` | the proxy logs every request it handles; the cost is log volume |
 | `oauthProxy.resources` | 10m/64Mi → 200m/256Mi | |
 | *(no `redirectMode` key)* | — | the ServiceAccount's OAuth callback form follows what exposes the dashboard and cannot be set separately: `oauth-redirectreference` naming the chart's Route with the default `route.enabled`, `oauth-redirecturi` with a literal URL when the Ingress is used instead. A `redirectMode` key existed once, read by nothing; it is gone |
 
@@ -257,7 +257,7 @@ Grant the wide view through your normal RBAC process, never a chart value:
 | `strategy` | `""` | derived: `Recreate` at one replica, `RollingUpdate` above. Set explicitly to override |
 | `leaderElection.enabled` | `true` | only the lease holder polls. **Best-effort, not a write fence** — see [Leader election](#leader-election). Must be `false` above one replica; the chart refuses to render otherwise |
 | `leaderElection.leaseName` | `group-sync-dashboard` | the `coordination.k8s.io` Lease object's name, in the release namespace. Two releases in one namespace must not share it |
-| `podDisruptionBudget.enabled` | `false` | on one replica this governs **drains**, not availability — see below |
+| `podDisruptionBudget.enabled` | `true` | on one replica this governs **drains**, not availability — see below |
 | `podDisruptionBudget.maxUnavailable` / `.minAvailable` | `1` / `""` | set `minAvailable` **instead of** `maxUnavailable` to block drains. Only one is rendered; `minAvailable` wins when non-empty |
 | `config.sqlite.busyTimeoutMs` | `5000` | how long a write waits for a lock another connection holds. SQLite's own default is `0` — fail instantly, no retry |
 | `config.sqlite.readerBusyTimeoutMs` | `2000` | deliberately shorter: `/readyz` reads, and the probe gives up at 5s |
@@ -306,10 +306,10 @@ Grant the wide view through your normal RBAC process, never a chart value:
 | `authLogLevel.revertOnUninstall` | `true` | **leave on.** A pre-delete Job puts the level back, or removing the dashboard leaves the OAuth server naming every person who authenticates with nothing left watching |
 | `authLogLevel.waitSeconds` / `.activeDeadlineSeconds` / `.revertDeadlineSeconds` | `180` / `300` / `120` | the Job polls the Deployment's `observedGeneration` rather than using `oc rollout status`, which returned success ~30s **before** the rollout began. A wait timeout is not a failure — the patch has landed |
 | `rbac.users` | `true` | adds `get`/`list` on `users`. The User objects are the **source of the Users tab**: OpenShift creates one at first login, so the tab counts people who have logged in, with group membership as an attribute. Also supplies `fullName` for every member surface. Switchable off; the poll still succeeds, but the Users tab then has no source and says so by name rather than showing an empty list |
-| `monitoring.serviceMonitor.enabled` | `false` | needs the Prometheus Operator CRDs |
+| `monitoring.serviceMonitor.enabled` | `true` | needs the Prometheus Operator CRDs (OpenShift ships them); set `false` on a cluster without them or the install fails on the unknown kind |
 | `monitoring.serviceMonitor.interval` / `.scrapeTimeout` | `30s` / `10s` | every series is recomputed from SQLite on scrape and each scrape takes a read snapshot. Faster buys no resolution — the data only changes once per poll |
 | `monitoring.serviceMonitor.labels` | `{}` | extra metadata labels. Usually how a cluster's Prometheus selects which ServiceMonitors it owns |
-| `monitoring.prometheusRule.enabled` | `false` | **twelve** alerts — see below |
+| `monitoring.prometheusRule.enabled` | `true` | **twelve** alerts — see below |
 | `monitoring.prometheusRule.labels` | `{}` | as above, for rule selection |
 | `monitoring.prometheusRule.overdueSeconds` | `7200` | a GroupSync has not synced for this long |
 | `monitoring.prometheusRule.notPollingSeconds` | `600` | catches a dead poll loop, which the health endpoints cannot. **Must stay above ~2× `config.pollIntervalSeconds`** or it fires continuously on a healthy deployment |

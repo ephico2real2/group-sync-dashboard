@@ -8,6 +8,21 @@ lives next to the code and in the design and review records linked here. Changes
 last release sit under `## Unreleased` until the release that carries them replaces that heading —
 which `local-development/prepare-release.py` does when the release is cut.
 
+## Unreleased
+
+- **Every switch is on by default unless it costs something the chart cannot grant.** The
+  operator's rule for the chart: a boolean defaults to `true` unless the switch needs RBAC beyond a
+  namespaced read, a credential, a second image or a cluster-wide write. Flipped: `podDisruptionBudget.enabled`
+  (harmless with `maxUnavailable: 1`), `loginCapture.enabled` (inert until the login lines exist),
+  `oauthProxy.apiTokenAccess.enabled` (the proxy's SubjectAccessReview still gates every token),
+  `oauthProxy.skipProviderButton`, `oauthProxy.requestLogging`, `monitoring.serviceMonitor.enabled`
+  and `monitoring.prometheusRule.enabled` (OpenShift ships the CRDs; set both off on a cluster
+  without them). The Grafana dashboard follows the ServiceMonitor and is therefore on too. Kept
+  off, each with its reason in `values.yaml`: `securityContext.allowPrivilegeEscalation`,
+  `trustedCA.existingConfigMap.enabled`, `ingress.enabled`, and `authLogLevel.manage`/`.enabled` —
+  the OAuth Debug level is being retired in favour of the oauth-server audit log as the source of
+  login lines. An upgrade that relied on a `false` default now needs the value set explicitly.
+
 ## Chart 0.13.0 — application 0.13.0 — 2026-09-05
 
 - **A Grafana dashboard ships with the chart.** `monitoring.grafanaDashboard` renders

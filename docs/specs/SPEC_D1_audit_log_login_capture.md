@@ -5,7 +5,7 @@
 | Programme | Feature programme 2026-09 — index and version ladder in `docs/specs/README.md` |
 | Batch | D — architecture |
 | Release | R5 — Sessions and login source |
-| Version on release | app 0.17.0, chart 0.18.0 |
+| Version on release | app 0.17.0, chart 0.19.0 |
 | Issue | [#66](https://github.com/ephico2real2/group-sync-dashboard/issues/66) |
 | Status | specified |
 | Source | design agent output `a1c16fd988d22c70e`; three messages; the first ended mid-token (`"nodes/` | `proxy"]`) and is joined to the second with nothing between; the third is the agent's confirmation reply summarising D2 and is not design text, so it is omitted |
@@ -24,7 +24,7 @@ request, with the reason, under "Orchestrator's notes".
 
 ## Orchestrator's notes
 
-- Second feature of R5: app 0.17.0, chart 0.18.0; schema migration 10 (the body says 8). The operator chose cluster-wide `get nodes/proxy` + `list nodes` as the rendered default when the module is on; `nodeNames` stays the optional narrowing. The body's audit-log fixtures are documented-shape and MUST be replaced by lines captured on CRC during implementation, as the design itself says.
+- Second feature of R5: app 0.17.0, chart 0.19.0; schema migration 10 (the body says 8). The operator chose cluster-wide `get nodes/proxy` + `list nodes` as the rendered default when the module is on; `nodeNames` stays the optional narrowing. The body's audit-log fixtures are documented-shape and MUST be replaced by lines captured on CRC during implementation, as the design itself says.
 - Citation corrected (twice): the design cited the login-capture design doc with the anchor "The five deliberate test logins appear exactly as made", but that sentence is line-wrapped in the source after "The five"; the anchor now cites the part that is on one line.
 - Citation corrected: the design cited the login-capture design doc with the anchor "needs nodes/proxy", but the source has bold and code marks between those two words; the anchor now cites `nodes/proxy`.
 

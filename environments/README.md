@@ -52,24 +52,25 @@ declare — it only *overrides*, and the table says which way:
 | `config.unmanagedAudit.mode` | `log` | `log` | redundant — already the default |
 | `logLevel` | `INFO` | `DEBUG` | lab override |
 | `authLogLevel.manage` / `.enabled` | `false` / `false` | `true` / `true` | lab override |
-| `loginCapture.enabled` | `false` | `true` | lab override |
-| `oauthProxy.apiTokenAccess.enabled` | `false` | `true` | lab override |
-| `monitoring.grafanaDashboard.enabled` | `""` | `true` | lab override: `""` follows the ServiceMonitor, which stays off here (no Prometheus Operator); grafana-operator v5 in namespace `grafana-test` validates the shipped board |
+| `loginCapture.enabled` | `true` | `true` | redundant — the default since chart 0.14.0 |
+| `oauthProxy.apiTokenAccess.enabled` | `true` | `true` | redundant — the default since chart 0.14.0 |
+| `monitoring.grafanaDashboard.enabled` | `""` | `true` | redundant since chart 0.14.0: `""` follows the ServiceMonitor, now on by default (the CRDs exist on CRC, Prometheus does not, so the scrape is inert); grafana-operator v5 in namespace `grafana-test` validates the shipped board |
 
-**Read the right-hand column as "why this is not the default".** Every override is fail-closed in
-the chart on purpose, and a plain `helm install` must not do any of it uninvited:
+**Read the right-hand column as "why this is not the default".** The two overrides that remain are
+fail-closed in the chart on purpose, and a plain `helm install` must not do either uninvited:
 
 - `authLogLevel` writes a **cluster-scoped** CR and rolls the OAuth server, which on a
   single-replica cluster is a login outage rather than a rolling update. `values.yaml` carries the
-  measured blast radius and the check to run first.
-- `loginCapture` grants the dashboard `pods/log` in `openshift-authentication` — reading logs that
-  name every person who authenticates, with their LDAP DN.
-- `apiTokenAccess` opens `/api` to bearer tokens. Off means cookie sessions only.
+  measured blast radius and the check to run first. It is the one switch chart 0.14.0's
+  on-by-default rule left off: the oauth-server audit log is replacing it as the source of login
+  lines.
 - `DEBUG` is for debugging. `INFO` is the level that stays readable at steady state.
 
-The redundant row is deliberate, not an oversight: a release file should **state** what it wants
-rather than inherit it, so a default that moves later cannot silently change this cluster. That
-costs one line and buys a diff that shows intent.
+The redundant rows are deliberate, not an oversight: a release file should **state** what it wants
+rather than inherit it, so a default that moves later cannot silently change this cluster. Three of
+them became redundant on chart 0.14.0 (`loginCapture`, `apiTokenAccess`, the Grafana dashboard) and
+were kept for exactly that reason: the file records what this cluster runs with, whichever way the
+default moves. That costs one line each and buys a diff that shows intent.
 
 `tests/test_environments_readme.py` holds this table against the real `values.yaml` and `crc.yaml`,
 because a table of defaults is exactly the kind of documentation that rots quietly — it stays

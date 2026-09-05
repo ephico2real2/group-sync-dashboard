@@ -102,8 +102,12 @@ replicaCount: 1
 #                      it. Cluster admins hit this during maintenance and cannot see whose
 #                      workload is stalling them. Only choose it if a human must be involved
 #                      before this pod moves.
+#
+# On by default since chart 0.14.0 (the chart's rule since 0.14.0: every switch is on unless it costs RBAC, a credential,
+# a second image or a cluster-wide write): with maxUnavailable: 1 the object costs nothing on one
+# replica and a drain still proceeds. Only minAvailable turns it into something that blocks a human.
 podDisruptionBudget:
-  enabled: false
+  enabled: true
   maxUnavailable: 1
   minAvailable: ""     # set this INSTEAD of maxUnavailable to block drains
 
@@ -743,8 +747,14 @@ rbac:
 # The cost, stated rather than hidden: this creates a Role and RoleBinding in a namespace the chart
 # does not own. An ArgoCD Application will show them outside its destination namespace, and a policy
 # forbidding writes to `openshift-*` namespaces will reject them.
+#
+# ON by default since chart 0.14.0: the read is scoped to one namespace, costs no credential, and is
+# what the Users tab's login columns need. It stays inert until the lines exist — the Debug level
+# (authLogLevel below) today; the oauth-server audit log (`loginCapture.source: audit-log`) once
+# that source ships, which is the intended pair: the Debug level is being retired in its favour.
+# Set false where a policy forbids the Role in `openshift-authentication`.
 loginCapture:
-  enabled: false
+  enabled: true
 
   # Where the oauth-server runs. Only change this if your cluster is unusual; it is the fixed
   # namespace OpenShift installs the OAuth server into.
@@ -849,6 +859,10 @@ clusterAccess:
 # `manage: true` is the operator DECLARING THAT THIS CHART OWNS the cluster's log level. That is why
 # it defaults to false: opting in is what transfers ownership, and the uninstall revert below then
 # has the standing to put it back.
+#
+# Both stay false under the chart's on-by-default rule (0.14.0), on purpose: the Debug level is a
+# cluster-wide write that rolls the OAuth server, and the oauth-server audit log
+# (`loginCapture.source: audit-log`) is replacing it as the way login lines are obtained.
 authLogLevel:
   manage: false
   enabled: false
@@ -1206,8 +1220,13 @@ oauthProxy:
   # Prefer the GROUP form. It is the argument the Namespace audit tab makes about the cluster,
   # applied here: a grant naming a person survives their departure, one naming a group is
   # revoked when the directory removes them from it.
+  #
+  # ON by default since chart 0.14.0. The switch grants nothing on its own: a bearer token reaches
+  # `/api` only after the proxy's SubjectAccessReview confirms its holder already has the
+  # cluster-wide read named in delegateUrls. What it buys is scripts and reporting tooling using a
+  # ServiceAccount token instead of a browser cookie. Set false for cookie sessions only.
   apiTokenAccess:
-    enabled: false
+    enabled: true
     delegateUrls: '{"/api":{"resource":"clusterrolebindings","group":"rbac.authorization.k8s.io","verb":"list"}}'
 
   # The interstitial page that offers exactly one login choice.
@@ -1221,8 +1240,14 @@ oauthProxy:
   #
   # false shows an explicit Log In button instead. One extra click, and the unauthenticated
   # state is a page that says sign in.
-  skipProviderButton: false
-  requestLogging: false
+  #
+  # true by default since chart 0.14.0 (the chart's rule: every switch on unless it costs RBAC, a
+  # credential, a second image or a cluster-wide write). Set false to get the explicit button back
+  # and the friendlier failure page with it.
+  skipProviderButton: true
+  # The proxy logs every request it handles. On by default since 0.14.0; the cost is log volume,
+  # and the lines are what shows whether a 403 came from the proxy or from the dashboard.
+  requestLogging: true
 
   resources:
     requests: {cpu: 10m, memory: 64Mi}
@@ -1376,12 +1401,13 @@ visibility:
 # ---------------------------------------------------------------------------
 # Monitoring
 # ---------------------------------------------------------------------------
-# Both default OFF: they need the Prometheus Operator CRDs, and applying them where those
-# CRDs are absent fails the install outright. On CRC monitoring is disabled at the CVO
-# level, so they would be inert even if applied.
+# Both default ON since chart 0.14.0. They need the Prometheus Operator CRDs, which every
+# OpenShift cluster ships — CRC too, even with monitoring disabled at the CVO level, where the
+# objects are simply inert. On a plain Kubernetes cluster without the operator set both to
+# false, or the install fails outright on the unknown kinds.
 monitoring:
   serviceMonitor:
-    enabled: false
+    enabled: true
     # 30s: every series is recomputed from SQLite on scrape and each scrape takes the
     # store's lock. Faster buys no resolution — the data only changes once per poll.
     interval: 30s
@@ -1389,7 +1415,7 @@ monitoring:
     labels: {}
 
   prometheusRule:
-    enabled: false
+    enabled: true
     labels: {}
     # Thresholds live here rather than inside the exporter, so they can be seen and tuned.
     # The metric is a unix timestamp, so the rule expresses staleness against real time.

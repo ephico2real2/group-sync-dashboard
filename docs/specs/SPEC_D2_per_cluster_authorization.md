@@ -5,7 +5,7 @@
 | Programme | Feature programme 2026-09 — index and version ladder in `docs/specs/README.md` |
 | Batch | D — architecture |
 | Release | R7 — Multi-cluster authorization |
-| Version on release | app 0.19.0, chart 0.20.0 |
+| Version on release | app 0.19.0, chart 0.21.0 |
 | Issue | [#68](https://github.com/ephico2real2/group-sync-dashboard/issues/68) |
 | Status | specified |
 | Source | design agent output `a1c16fd988d22c70e`; three messages; the first ended mid-token (`"nodes/` | `proxy"]`) and is joined to the second with nothing between; the third is the agent's confirmation reply summarising D2 and is not design text, so it is omitted |
@@ -24,7 +24,7 @@ request, with the reason, under "Orchestrator's notes".
 
 ## Orchestrator's notes
 
-- R7: app 0.19.0, chart 0.20.0; the body's "PR 1, before D1" ordering and version pair are superseded by the milestone order (D1 lands in R5, D2 in R7).
+- R7: app 0.19.0, chart 0.21.0; the body's "PR 1, before D1" ordering and version pair are superseded by the milestone order (D1 lands in R5, D2 in R7).
 - Citation corrected (twice): the design cited the login-capture design doc with the anchor "The five deliberate test logins appear exactly as made", but that sentence is line-wrapped in the source after "The five"; the anchor now cites the part that is on one line.
 - Citation corrected: the design cited the login-capture design doc with the anchor "needs nodes/proxy", but the source has bold and code marks between those two words; the anchor now cites `nodes/proxy`.
 - Name corrected: the design cited a PrometheusRule alert `GroupSyncDashboardVisibilityTierFailing`; no such alert exists. The alert on `gsd_visibility_tier_checks_total` failure outcomes in `charts/group-sync-dashboard/templates/monitoring.yaml` is `GroupSyncDashboardVisibilityChecksFailing`, and the claim (the remote resolver's failures count under the same signal, so the same alert fires) is unchanged.
