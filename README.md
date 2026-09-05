@@ -128,6 +128,7 @@ Design notes, for the decisions that are not obvious from the code:
 | [`docs/unmanaged-audit-design.md`](docs/unmanaged-audit-design.md) | unmanaged-grant discovery, its invariants, and the live-cluster measurement that removed the write path |
 | [`docs/DESIGN_session_and_signout.md`](docs/DESIGN_session_and_signout.md) | the 4-hour session cap and the sign-out button — and the four measurements that made the design this small, including why there is no `-cookie-refresh` and why sign-out cannot revoke the token |
 | [`docs/image-vulnerability-scan.md`](docs/image-vulnerability-scan.md) | the CVE position, what is reachable, and what a rebuild cannot fix |
+| [`docs/DESIGN_supply_chain.md`](docs/DESIGN_supply_chain.md) | the image signature, SBOM and provenance, the chart attestation, and why none of it has a key |
 | [`docs/TUTORIAL_ca_trust_hashed_directory.md`](docs/TUTORIAL_ca_trust_hashed_directory.md) | tutorial: how OpenSSL's hashed CA directory works, and the injected, hand-made, cert-manager and Kyverno ways to trust a CA in a pod — every step run on CRC |
 | [`docs/TUTORIAL_mermaid_diagrams.md`](docs/TUTORIAL_mermaid_diagrams.md) | tutorial: how the diagrams are derived from code, written in Mermaid, checked in half a second and rendered in CI — with two built from scratch |
 | [`docs/namespace-report-design.md`](docs/namespace-report-design.md) | **PARKED** — per-namespace PDF reports, and the definitive answer on `--openshift-sar` |
@@ -300,9 +301,12 @@ Full detail, including CRC-specific traps, in
 ### Publishing from `main`
 
 [`.github/workflows/publish.yml`](.github/workflows/publish.yml) runs **that same script** on
-every merge to `main`, then commits the resulting tag into the chart's `values.yaml`. So the
-published image is the merge commit, and the chart records which one — rather than whichever
-working tree last ran the script by hand. The local path is unchanged and still does both.
+every merge to `main` that changes an image input, and writes nothing back to this repository:
+the immutable `<version>-<sha>` tag every time, the `:<version>` alias only when a human moved
+`version` in `pyproject.toml`. The pushed digest is then signed and attested — keyless, under
+GitHub's OIDC identity — and its SBOM kept as an artifact and attached to the image. How an
+operator checks all of that: [`docs/HELM_DOWNLOAD_AND_INSTALL.md`](docs/HELM_DOWNLOAD_AND_INSTALL.md);
+the release model: [`docs/RELEASING.md`](docs/RELEASING.md).
 
 Configure once, under **Settings → Secrets and variables → Actions**:
 
@@ -312,19 +316,18 @@ Configure once, under **Settings → Secrets and variables → Actions**:
 | **Secret** | `REGISTRY_PASSWORD` | that robot's token — not a personal password |
 | Variable (optional) | `REGISTRY` | defaults to `quay.io` |
 | Variable (optional) | `REGISTRY_NAMESPACE` | defaults to `ephico2real` |
+| Variable (optional) | `SUPPLY_CHAIN_SBOM` | `false` turns the SBOM job off; unset means on |
+| Variable (optional) | `SUPPLY_CHAIN_SIGNING` | `false` turns image signing, SBOM attestation and provenance off — for a runner without egress to the Sigstore services; unset means on |
+| Variable (optional) | `CI_UI_TESTS` | `false` turns the browser-test job in `ci.yml` off; unset means on |
 
 The names deliberately match what the script already reads from `.env`, so one name means one
 thing locally and in CI. Registry and namespace are **variables, not secrets** — they are not
 sensitive, and as secrets they would be masked in exactly the logs where you want to see which
 registry a run pushed to.
 
-Two properties worth knowing:
-
-- **The pin commit carries `[skip publish]`**, and the workflow skips on that marker. Without it
-  the commit would retrigger the workflow, which would publish, which would commit again.
-- **Re-running a commit is safe.** The tag embeds the commit sha, so the same tag can only ever
-  mean the same source; a re-run pushes an identical image and the pin step finds nothing to
-  change. There is no tag to accidentally overwrite with different content.
+**Re-running a commit is safe.** The tag embeds the commit sha, so the same tag can only ever
+mean the same source; a re-run pushes an identical image, and the aliases are server-side copies
+of that manifest, so no tag can end up naming different content than the digest that was signed.
 
 Credentials are never put on a command line — `secrets` go to the step's `env` and the script
 pipes the password to `podman login --password-stdin`. That is also why the workflow checks for

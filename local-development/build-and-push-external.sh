@@ -27,6 +27,13 @@
 #   <chartVersion>      --release-tags, because pushing these overwrites what the last release
 #                       published — see the block above the push for why that is opt-in.
 #
+# ONE DIGEST, HOWEVER MANY NAMES. The immutable tag is pushed once and podman records the digest
+# the registry acknowledged (--digestfile); the aliases are then made by `skopeo copy` from that
+# pushed manifest, server side, and read back — so every name this script publishes resolves to
+# the same bytes and a signature over the digest covers all of them. DIGEST_FILE=<path> in the
+# environment receives a copy of the digest, which is how .github/workflows/publish.yml hands it
+# to the job that signs it. --release-tags therefore needs skopeo, which ships beside podman.
+#
 # Configuration comes from .env (gitignored) or the environment. Credentials are never
 # written to disk by this script, never echoed, and never passed on a command line that
 # would show up in `ps`.
@@ -95,6 +102,12 @@ missing=()
 if [ ${#missing[@]} -gt 0 ]; then
   echo "ERROR: missing required config: ${missing[*]}" >&2
   echo "       set them in .env (see .env.example) or in the environment" >&2
+  exit 1
+fi
+# Checked BEFORE the build, not at the alias step forty seconds of build later. The aliases are
+# server-side copies (see the release block), and skopeo is what makes them.
+if [ "$RELEASE_TAGS" = true ] && ! command -v skopeo >/dev/null 2>&1; then
+  echo "ERROR: --release-tags copies the aliases with skopeo, which is not on PATH." >&2
   exit 1
 fi
 
@@ -170,8 +183,23 @@ if ! printf '%s' "${REGISTRY_PASSWORD}" \
 fi
 echo "login   : ok as ${REGISTRY_USERNAME}"
 
-podman push "${REF}"
+# --digestfile: the digest the REGISTRY acknowledged, which is the only digest worth recording.
+# `podman inspect` reports a local image ID, and a manifest digest computed before the push can
+# differ from what lands after compression. Whatever signs this image signs THIS value.
+DIGEST_OUT=$(mktemp)
+podman push --digestfile "${DIGEST_OUT}" "${REF}"
+DIGEST=$(tr -d '\r\n' < "${DIGEST_OUT}")
+rm -f "${DIGEST_OUT}"
+case "${DIGEST}" in
+  sha256:[0-9a-f]*) ;;
+  *) echo "ERROR: podman reported no sha256 digest for ${REF} (got '${DIGEST}')" >&2; exit 1 ;;
+esac
 echo "pushed  : ${REF}"
+echo "digest  : ${DIGEST}"
+if [ -n "${DIGEST_FILE:-}" ]; then
+  printf '%s\n' "${DIGEST}" > "${DIGEST_FILE}"
+  echo "digest  : written to ${DIGEST_FILE}"
+fi
 
 # ---------------------------------------------------------------------------
 # Optional: the release aliases
@@ -207,11 +235,23 @@ if [ "$RELEASE_TAGS" = true ]; then
 m = re.search(r'(?m)^version: (\d+\.\d+\.\d+)[ \t]*\$', pathlib.Path(sys.argv[1]).read_text())
 sys.exit('no bare-semver version line in the chart') if not m else print(m.group(1))" "$CHART")
 
+  # COPIED IN THE REGISTRY, NOT PUSHED AGAIN. A second `podman push` re-uploads from the local
+  # store and can produce a different manifest digest for the same image — and then the alias
+  # `:<appVersion>` would not resolve to the digest that was signed, so `cosign verify` on the
+  # name every chart resolves would fail. `skopeo copy` between two tags of one repository moves
+  # the manifest server side — the same call helm.yaml makes to label a chart's image — and the
+  # digest is read back and compared, so an alias that is not byte-identical to the immutable
+  # tag is a refusal here rather than a signature that fails on somebody's cluster.
   for alias in "${VERSION}" "${CHART_VERSION}"; do
     ALIAS_REF="${REGISTRY}/${REGISTRY_NAMESPACE}/${IMAGE_NAME}:${alias}"
-    podman tag "${REF}" "${ALIAS_REF}"
-    podman push "${ALIAS_REF}"
-    echo "pushed  : ${ALIAS_REF}  (alias of ${TAG})"
+    skopeo copy "docker://${REF}" "docker://${ALIAS_REF}"
+    ALIAS_DIGEST=$(skopeo inspect --no-tags --format '{{.Digest}}' "docker://${ALIAS_REF}")
+    if [ "${ALIAS_DIGEST}" != "${DIGEST}" ]; then
+      echo "ERROR: ${ALIAS_REF} resolves to ${ALIAS_DIGEST}, not ${DIGEST} — the alias is not the" >&2
+      echo "       image that was pushed. Nothing else was changed; inspect both before retrying." >&2
+      exit 1
+    fi
+    echo "pushed  : ${ALIAS_REF}  (alias of ${TAG}, ${DIGEST})"
   done
   echo "release : app ${VERSION}, chart ${CHART_VERSION} — both aliases now point at ${COMMIT}"
 fi

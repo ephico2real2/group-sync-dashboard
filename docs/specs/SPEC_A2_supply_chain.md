@@ -7,7 +7,7 @@
 | Release | R4 — Supply chain and backup |
 | Version on release | no app or chart version change (workflows and the build script only) |
 | Issue | [#63](https://github.com/ephico2real2/group-sync-dashboard/issues/63) |
-| Status | specified |
+| Status | in progress |
 | Source | design agent output `a38be666b46d57784`; one message; no seam |
 
 ## How to read this spec
@@ -29,6 +29,7 @@ request, with the reason, under "Orchestrator's notes".
 - Citation corrected: the design cited the chart README with the anchor "(no `redirectMode` key)", which nests backticks that the citation grammar (path#anchor inside one backtick span) cannot express; the anchor now cites `redirectMode`, the row's own text.
 
 - Routed here from the A3 review (PR #71, Codex C4): when this spec edits `.github/workflows/helm.yaml`, tighten the two `sed` extractors — `CHART_VERSION` to `^version: \([0-9]\+\.[0-9]\+\.[0-9]\+\)[ \t]*$` and `APP_VERSION` to `^appVersion: "\(.\+\)"$` — so they accept exactly the forms `prepare-release.py` and `build-and-push-external.sh` accept, and hold them with a test in `tests/test_workflow_pins.py`.
+- Applied at implementation (PR for #63), 2026-09-05. Deviations, each with its reason: (1) the install guide's §7 examples name the current release pair (image `:0.15.0`, chart `0.16.0`) instead of the body's 0.11.0 / 0.10.0, which predate the ladder; (2) the CHANGELOG bullet lands under a new `## Unreleased` heading above `## Application 0.15.0 — chart 0.16.0`, because the body's anchor (A1's bullet followed by the 0.11.0 heading) no longer exists — the intro's convention is followed instead; and `tests/test_chart_versions.py`'s heading test, which allowed `## Unreleased` in its tuple but split the heading on ` — ` before comparing, raised on that heading — the date is now taken only from a heading that has one; (3) the routed `sed` tightening above is applied in PORTABLE basic regex — `[0-9][0-9]*` and `..*` — not the GNU-only `\+` the note prescribed: the test runs the real patterns through sed, and on macOS (BSD sed) `\+` matches nothing, which would have made the test red locally and the extractor silently empty for anyone running that step off the Ubuntu runner (measured here: the `\+` form printed nothing, the portable form printed `0.16.0`); the test lifts the patterns from `helm.yaml` and runs them against the forms they must accept and refuse; (4) every action pin was re-verified against `git/ref/tags` on 2026-09-05 (six matches, all the latest releases), the two actions' input names were read from their `action.yml` at the pinned commits, and cosign v3.1.3 and Syft v1.51.1 were confirmed as the latest releases; (5) operator questions Q2 (cosign major) and Q4 (robot scope) were unanswered when the PR opened — the defaults the body states are taken and posted on #63.
 
 ## Batch preamble (verbatim from the design)
 

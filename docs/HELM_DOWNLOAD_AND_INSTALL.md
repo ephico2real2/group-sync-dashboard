@@ -294,6 +294,99 @@ build it deploys, and rewriting it decouples the chart from the image it was pub
 
 ---
 
+## 7. Verify what you downloaded
+
+Every image `publish.yml` pushes is signed and attested, and every chart `helm.yaml` publishes is
+attested, with GitHub's OIDC identity — no key to fetch, nothing to trust but the identity strings
+below (`.github/workflows/publish.yml#attest`, `.github/workflows/helm.yaml#Attest the provenance of the packaged chart`).
+The commands need `cosign` 3.x and `gh` 2.49 or newer; the outputs shown are the tools' own
+wording, with the values that change per release elided as `…`.
+
+**The image signature.** The identity is the workflow file on `main`; the issuer is GitHub's:
+
+```sh
+cosign verify \
+  --certificate-identity https://github.com/ephico2real2/group-sync-dashboard/.github/workflows/publish.yml@refs/heads/main \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  quay.io/ephico2real/group-sync-dashboard:0.15.0
+```
+
+```text
+Verification for quay.io/ephico2real/group-sync-dashboard:0.15.0 --
+The following checks were performed on each of these signatures:
+  - The cosign claims were validated
+  - Existence of the claims in the transparency log was verified offline
+  - The code-signing certificate was verified using trusted certificate authority certificates
+[{"critical":{"identity":{"docker-reference":"quay.io/ephico2real/group-sync-dashboard"},"image":{"docker-manifest-digest":"sha256:…"},"type":"cosign container image signature"},…}]
+```
+
+The signature is over the **digest**, so it verifies for every tag that resolves to it —
+`:<appVersion>-<sha>`, `:<appVersion>` and `:<chartVersion>` are one manifest, copied server side
+(`local-development/build-and-push-external.sh#skopeo copy`). On a mirror, verify the mirrored
+reference the same way; the signature travels with `skopeo copy --all`.
+
+**The SBOM.** Attached to the image as an attestation. Extract it and scan it:
+
+```sh
+cosign verify-attestation --type spdxjson \
+  --certificate-identity https://github.com/ephico2real2/group-sync-dashboard/.github/workflows/publish.yml@refs/heads/main \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  quay.io/ephico2real/group-sync-dashboard:0.15.0 \
+  | jq -r '.payload | @base64d | fromjson | .predicate' > sbom.spdx.json
+grype sbom:sbom.spdx.json
+```
+
+The same file is a workflow artifact named `sbom-<commit>` on the publish run, for the case where
+the image was mirrored without its referrers. It is produced by Syft 1.51.1, the version
+`image-vulnerability-scan.md` measured identifying the hardened base's operating system.
+
+**Build provenance (SLSA).** Recorded in this repository's attestation store:
+
+```sh
+gh attestation verify oci://quay.io/ephico2real/group-sync-dashboard:0.15.0 \
+  --repo ephico2real2/group-sync-dashboard \
+  --signer-workflow ephico2real2/group-sync-dashboard/.github/workflows/publish.yml
+```
+
+```text
+Loaded digest sha256:… for oci://quay.io/ephico2real/group-sync-dashboard:0.15.0
+Loaded 1 attestation from GitHub API
+✓ Verification succeeded!
+…
+- Attestation #1
+  - Build repo:..... ephico2real2/group-sync-dashboard
+  - Build workflow:. .github/workflows/publish.yml@refs/heads/main
+  - Signer repo:.... ephico2real2/group-sync-dashboard
+  - Signer workflow: .github/workflows/publish.yml@refs/heads/main
+```
+
+**The chart.** The package `helm pull` returns is the file chart-releaser uploaded, and its
+provenance is attested the same way:
+
+```sh
+helm pull group-sync-dashboard/group-sync-dashboard --version 0.16.0
+gh attestation verify group-sync-dashboard-0.16.0.tgz \
+  --repo ephico2real2/group-sync-dashboard \
+  --signer-workflow ephico2real2/group-sync-dashboard/.github/workflows/helm.yaml
+```
+
+```text
+Loaded digest sha256:… for file://group-sync-dashboard-0.16.0.tgz
+Loaded 1 attestation from GitHub API
+✓ Verification succeeded!
+```
+
+There is no GPG signature and `helm verify` is not supported — deliberately; the reasoning is in
+`DESIGN_supply_chain.md`. Charts published before this attestation existed have none, and `gh`
+reports `no attestations found` for them.
+
+**A fork verifies against its own identity.** Replace the repository in `--certificate-identity`,
+`--repo` and `--signer-workflow`; the workflow file names are the same. Repository variables
+`SUPPLY_CHAIN_SIGNING=false` and `SUPPLY_CHAIN_SBOM=false` turn the two modules off for a runner
+that cannot reach the registry or the Sigstore services.
+
+---
+
 ## Quick reference
 
 | Goal | Command |
@@ -307,3 +400,5 @@ build it deploys, and rewriting it decouples the chart from the image it was pub
 | Render against the cluster | `helm upgrade ... --dry-run=server` |
 | Install from the copy | `helm upgrade --install group-sync-dashboard ./charts/group-sync-dashboard -n group-sync-dashboard -f <values>` |
 | Confirm what is running | `oc exec ... -c dashboard -- curl -s http://127.0.0.1:8080/api/version` |
+| Verify the image signature | `cosign verify --certificate-identity …/publish.yml@refs/heads/main --certificate-oidc-issuer https://token.actions.githubusercontent.com <image>` — §7 |
+| Verify provenance (image or chart) | `gh attestation verify <oci://image \| file.tgz> --repo ephico2real2/group-sync-dashboard` — §7 |

@@ -64,6 +64,12 @@ Every merge goes through one gate, then fans out to two independent workflows:
 
    cannot tell? (workflow_dispatch, first push, unreadable base)
         --> immutable tag only, plus a ::warning:: naming --release-tags
+
+   then, on the digest the registry acknowledged — one digest, every tag:
+   sbom    job   Syft -> SPDX JSON, a workflow artifact                SUPPLY_CHAIN_SBOM
+   attest  job   cosign sign (keyless) · SBOM attached · SLSA          SUPPLY_CHAIN_SIGNING
+                 provenance in GitHub's store — each read back
+                 before the run is green
 ```
 
 **`helm.yaml` — the chart.**
@@ -93,6 +99,10 @@ Every merge goes through one gate, then fans out to two independent workflows:
         |
         v
    gh-pages:  index.yaml + group-sync-dashboard-0.5.0.tgz
+        |
+        v
+   attest that .tgz (SLSA provenance, GitHub's store)      SUPPLY_CHAIN_SIGNING
+   only for a NEW version; a skipped version attests nothing
 ```
 
 **Read the two `rel` branches carefully — they are the part people get wrong.** An ordinary merge
@@ -161,6 +171,13 @@ design that did.
 ```sh
 helm upgrade ... --set image.tag=0.7.0-f9fa896778
 ```
+
+**And verify, whichever form you pinned.** Every pushed image is signed and attested by digest
+under GitHub's OIDC identity — no key to fetch — and every published chart package is attested
+the same way. The commands, with their outputs, are in
+`HELM_DOWNLOAD_AND_INSTALL.md#7. Verify what you downloaded`; the decisions, including why there is
+no GPG key, in `DESIGN_supply_chain.md`. Two repository variables turn the modules off,
+`SUPPLY_CHAIN_SBOM` and `SUPPLY_CHAIN_SIGNING`; unset means on.
 
 ---
 

@@ -41,6 +41,11 @@ jobs:
       # chart-releaser pushes the packaged chart and the index to gh-pages, and creates a
       # GitHub release per chart version. Both need write.
       contents: write
+      # For the chart's provenance attestation (the last two steps): the OIDC token Fulcio
+      # exchanges for a signing certificate, and the store the statement is written to. Neither
+      # widens what this job can do to the repository.
+      id-token: write
+      attestations: write
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -64,10 +69,15 @@ jobs:
       # cannot fail the build (the version legitimately stays put when only a README changes)
       # but it puts the answer in the run summary instead of leaving it to be inferred.
       - name: Report what this run will publish
+        # Also the DECISION the attestation steps at the end key on: only a NEW release has a
+        # package to attest, and attesting on a skipped run would claim provenance for bytes this
+        # run did not publish.
+        id: plan
         run: |
           set -uo pipefail
           version=$(grep -E '^version:' charts/group-sync-dashboard/Chart.yaml | awk '{print $2}')
           echo "Chart.yaml version: $version"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
           if git rev-parse --verify --quiet "refs/tags/group-sync-dashboard-${version}" >/dev/null; then
             # No backticks anywhere in this block: inside a run: script bash reads them as
             # command substitution, so a prose backtick around a field name becomes an attempt
@@ -75,8 +85,10 @@ jobs:
             echo "::warning::group-sync-dashboard-${version} is already released, so this run will"
             echo "::warning::publish NOTHING. Bump the version field in"
             echo "::warning::charts/group-sync-dashboard/Chart.yaml to release the current chart."
+            echo "new=false" >> "$GITHUB_OUTPUT"
           else
             echo "will publish a new release: group-sync-dashboard-${version}"
+            echo "new=true" >> "$GITHUB_OUTPUT"
           fi
 
       # ── Label the image this chart version deploys ────────────────────────────────────────────
@@ -111,8 +123,13 @@ jobs:
           set -uo pipefail
           CHART=charts/group-sync-dashboard/Chart.yaml
           VALUES=charts/group-sync-dashboard/values.yaml
-          CHART_VERSION=$(sed -n 's/^version: \([0-9][0-9.]*\)[ \t]*$/\1/p' "$CHART" | head -1)
-          APP_VERSION=$(sed -n 's/^appVersion: "\(.*\)"[ \t]*$/\1/p'  "$CHART" | head -1)
+          # Exactly the forms prepare-release.py writes and build-and-push-external.sh accepts: a bare
+          # three-part semver, and a double-quoted appVersion with nothing after the quote (review of
+          # A3, routed here; tests/test_workflow_pins.py runs the two patterns through sed). Portable
+          # basic regex on purpose — `[0-9][0-9]*`, not the GNU-only `\+` — because the test runs the
+          # real patterns on macOS (BSD sed) as well as on the Ubuntu runner.
+          CHART_VERSION=$(sed -n 's/^version: \([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)[ \t]*$/\1/p' "$CHART" | head -1)
+          APP_VERSION=$(sed -n 's/^appVersion: "\(..*\)"$/\1/p' "$CHART" | head -1)
           PINNED=$(sed -n 's/^  tag: "\(.*\)"[ \t]*$/\1/p' "$VALUES" | head -1)
           REPO="${REGISTRY}/${REGISTRY_NAMESPACE}/group-sync-dashboard"
 
@@ -149,9 +166,40 @@ jobs:
       # needed. packages_with_index keeps the .tgz next to index.yaml on gh-pages, which is what
       # `helm repo add` against a Pages site expects.
       - name: Run chart-releaser
-        uses: helm/chart-releaser-action@v1.7.0
+        uses: helm/chart-releaser-action@cae68fefc6b5f367a0275617c9f83181ba54714f # v1.7.0
         with:
           skip_existing: true
           packages_with_index: true
         env:
           CR_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+
+      # ── Chart provenance ──────────────────────────────────────────────────────────────────────
+      #
+      # A GITHUB ATTESTATION OF THE .tgz, NOT `helm package --sign`. GPG signing needs a private
+      # key held as a repository secret for years, a keyring handed to every consumer out of band,
+      # and `helm verify` on their side; keyless needs none of that and is the same identity the
+      # image is signed with (publish.yml). Not cosign sign-blob either: chart-releaser publishes
+      # the package to gh-pages and a GitHub Release, and a bundle beside it would need a second
+      # upload path that `helm pull` would never fetch. `gh attestation verify <file>` is the check.
+      #
+      # THE SUBJECT IS THE FILE chart-releaser UPLOADED — its package directory, .cr-release-packages,
+      # is where cr packages and what it copies to gh-pages — so the attestation is over the bytes
+      # `helm pull` returns. Only for a NEW release (steps.plan), and only with the same switch as
+      # the image signing, so one variable turns every attestation this repository makes on or off.
+      - name: Attest the provenance of the packaged chart
+        if: steps.plan.outputs.new == 'true' && vars.SUPPLY_CHAIN_SIGNING != 'false'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: .cr-release-packages/group-sync-dashboard-${{ steps.plan.outputs.version }}.tgz
+
+      - name: Read the chart attestation back
+        if: steps.plan.outputs.new == 'true' && vars.SUPPLY_CHAIN_SIGNING != 'false'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          gh attestation verify ".cr-release-packages/group-sync-dashboard-${VERSION}.tgz" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/helm.yaml"
