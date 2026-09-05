@@ -164,7 +164,8 @@ class TestTrustBoundary:
             assert body == {
                 "user": "alice", "email": "a@x.com", "authenticated": True,
                 "logout_url": "/oauth/sign_out",
-                "session": {"cookie_expire_seconds": 14400, "cookie_refresh_seconds": 0},
+                "session": {"cookie_expire_seconds": 14400, "cookie_refresh_seconds": 0,
+                            "idle_timeout": {"enabled": False}},
                 # The tier rides on whoami so the UI can label itself from the wire. With
                 # no cluster behind this test app the review fails, and the answer fails
                 # CLOSED: self, never all.

@@ -1810,17 +1810,20 @@ def build_app(
         remains is enough: the proxy clears its own cookie and re-entry demands credentials,
         measured on the reference cluster.
 
-        `session` carries the CONFIGURED durations, never a deadline. The session cookie is
+        `session` carries the CONFIGURED durations, never a deadline. Its `idle_timeout` is the same
+        kind of thing — inputs to a model the browser runs, never a deadline the server knows. The session cookie is
         HttpOnly and the proxy forwards no session-age header, so the true expiry is not
         observable from here; these numbers are trustworthy only because the ConfigMap
         renders them from the same chart values as the proxy's own flags. The browser owns
         the countdown model built on them — see static/index.html.
 
-        NEVER POLL THIS ON A TIMER. Requesting it through the proxy re-stamps the session
-        cookie like any other request, so a page calling it periodically would hold every
-        session open forever — the exact defect the durations exist to fix. It is called
-        once, at page load; the page's "Stay signed in" control re-proves the session with
-        an ordinary interaction-marked data refresh instead of calling this again.
+        NEVER POLL THIS ON A SESSION-ONLY TIMER. Requesting it through the proxy re-stamps the
+        session cookie like any other request, so a page calling it periodically would hold
+        every session open forever — the exact defect the durations exist to fix. The page
+        reads it once at load for its session controls; it also rides along in the ordinary
+        data refresh, because `visibility` must follow live authorization changes, and that
+        refresh is suspended by the browser's idle model while a countdown is up or expired.
+        "Stay signed in" re-proves the session with one interaction-marked data refresh.
         `visibility` rides here so the page can LABEL its tier from the wire instead of
         deriving one — the UI never decides (tests/test_ui.py). Absent entirely when there
         is no authenticated identity: reporting a tier for a name nobody verified would
@@ -1841,6 +1844,19 @@ def build_app(
                 {
                     "cookie_expire_seconds": settings.session_cookie_expire_seconds,
                     "cookie_refresh_seconds": settings.session_cookie_refresh_seconds,
+                    # The idle-timeout MODEL's inputs, restated like the cap above and enforced
+                    # here just as little: the page counts, and at zero sends the browser to
+                    # logout_url. Present in both states so an operator can read the module's
+                    # state off the wire; the page acts only on `enabled: true`.
+                    "idle_timeout": (
+                        {
+                            "enabled": True,
+                            "seconds": settings.session_idle_timeout_seconds,
+                            "warning_seconds": settings.session_idle_timeout_warning_seconds,
+                        }
+                        if settings.session_idle_timeout_enabled
+                        else {"enabled": False}
+                    ),
                 }
                 if authenticated
                 else None

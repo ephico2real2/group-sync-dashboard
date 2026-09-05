@@ -45,9 +45,12 @@ group membership, so it ships authenticated and you turn the proxy *off* deliber
 | `oauthProxy.port` | `8443` | |
 | `oauthProxy.cookieSecret` | `""` | generated once and reused across upgrades |
 | `oauthProxy.cookie.expire` | `4h` | absolute session cap, a Go duration. There is deliberately no `refresh` key: measured on `provider=openshift`, `-cookie-refresh` force-clears the session at every interval instead of sliding it, so the chart refuses a values file that sets it |
+| `session.idleTimeout.enabled` | `false` | signs people out after inactivity: the page counts pointer, keyboard and tab-visibility activity, shows a countdown, and at zero sends the browser to the proxy's `sign_out`, which ends the session. Off because it is a session policy. Refused without `oauthProxy.enabled` |
+| `session.idleTimeout.minutes` | `30` | whole minutes of inactivity before sign-out; the countdown is the last `warningSeconds` of that window; must be shorter than `oauthProxy.cookie.expire` or the render is refused (the cap would end every session first) |
+| `session.idleTimeout.warningSeconds` | `60` | how long the countdown runs; at least 5 and shorter than the window |
 | `oauthProxy.proxyPrefix` | `/oauth` | the prefix everything the proxy serves lives under; the app composes its sign-out link from it |
 | `oauthProxy.logoutUrl` | `""` | where the browser lands after sign-out; empty means this dashboard's own unauthenticated `/signed-out` page |
-| `oauthProxy.skipAuthRegex` | `^/(healthz\|readyz\|metrics)$` | the health paths **must** stay, or kubelet gets a 302 and kills a healthy pod |
+| `oauthProxy.skipAuthRegex` | `^/(healthz\|readyz\|metrics\|signed-out\|static/(app\.css\|favicon\.svg))$` | the health paths **must** stay, or kubelet gets a 302 and kills a healthy pod |
 | `oauthProxy.sar` | `""` | empty = authentication only. Set a SubjectAccessReview to also require a permission |
 | `oauthProxy.skipProviderButton` | `false` | `false` shows an explicit **Log In** button. `true` skips straight to the OAuth server — one fewer click, but any mid-flow failure then lands on the proxy's own page headed "403 Permission Denied", which reads as *you are not allowed in* rather than *your session expired*. Observed here after a rollout landed between redirect and callback |
 | `oauthProxy.requestLogging` | `false` | opt-in: the proxy logs the complete request URI, query string included, so the OAuth callback's authorization code would land in the pod log; enable only behind query-string redaction |

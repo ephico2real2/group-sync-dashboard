@@ -573,6 +573,32 @@ ui:
     # actions (docs/DESIGN_export.md). Set false to keep the control off the page.
     enabled: true
 
+# ---------------------------------------------------------------------------
+# Session idle timeout
+# ---------------------------------------------------------------------------
+# OFF by default: it signs people out, which is a policy the platform team chooses. When on, the
+# page shows a countdown after `minutes` without pointer, keyboard or tab-visibility activity, and
+# at zero sends the browser to the proxy's sign_out — the proxy clears the cookie, and re-entry
+# demands credentials (measured; docs/DESIGN_session_and_signout.md). Its OWN keys: the cookie does
+# not slide, so nothing here is derived from `oauthProxy.cookie.expire`, and that cap remains the
+# guarantee for a tab that never reaches sign_out (a closed laptop). Activity in one tab of the
+# same browser defers the timeout in every other tab of it, so an idle tab cannot sign out a
+# colleague mid-task; nothing is persisted, so a re-login starts a fresh clock. While the countdown
+# is on screen the page's own 60 s poll is suspended, so an unattended tab does not keep a session
+# alive with its own requests.
+#
+# Refused at render: enabled without oauthProxy.enabled (no session to end), and an idle window at
+# or beyond oauthProxy.cookie.expire (it could never fire).
+session:
+  idleTimeout:
+    # OFF by default: it signs people out, a session policy the platform team chooses (see above).
+    enabled: false
+    # Whole minutes of inactivity before SIGN-OUT; the countdown opens warningSeconds before
+    # that. At least 1, and shorter than oauthProxy.cookie.expire.
+    minutes: 30
+    # How long the countdown runs. At least 5, and shorter than the idle window.
+    warningSeconds: 60
+
 # Clusters to observe. The default observes the cluster the pod runs on, using its own
 # projected ServiceAccount token — which kubelet rotates and the app re-reads every poll, so
 # there is no long-lived credential to mint or expire.

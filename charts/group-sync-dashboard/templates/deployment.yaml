@@ -15,6 +15,16 @@ It refused those renders with a message about a volume that did not exist.
 {{- if and (eq (int .Values.replicaCount) 1) .Values.persistence.enabled (eq (toString .Values.strategy) "RollingUpdate") }}
 {{- fail "strategy=RollingUpdate is unsafe at replicaCount 1 with persistence enabled, whatever the access mode. RollingUpdate starts the incoming pod BEFORE terminating the outgoing one, and at one replica both use /data/gsd.db — two processes on one SQLite file, which corrupts rather than errors because WAL coordinates through an mmap'd -shm file that assumes a single host. The guard above catches only ReadWriteOncePod, where the scheduler refuses the second pod anyway; the DEFAULT ReadWriteMany happily mounts twice and was therefore the dangerous case, not the protected one. Use Recreate, or leave strategy empty to derive it. Above one replica RollingUpdate is correct and stays allowed, because each pod owns /data/$POD_NAME/gsd.db." }}
 {{- end }}
+{{- if and (eq (include "gsd.idleTimeoutEnabled" .) "true") (not .Values.oauthProxy.enabled) }}
+{{- fail "session.idleTimeout.enabled=true requires oauthProxy.enabled=true. The idle timeout ends a proxy session by sending the browser to the proxy's sign_out; with no proxy there is no session to end and the countdown would be theatre." }}
+{{- end }}
+{{- if and (eq (include "gsd.idleTimeoutEnabled" .) "true") .Values.oauthProxy.enabled }}
+{{- $idle := mul (include "gsd.idleTimeoutMinutes" . | int) 60 }}
+{{- $cap := include "gsd.durationSeconds" (include "gsd.cookieExpire" .) }}
+{{- if and (ne $cap "-1") (ge $idle (int $cap)) }}
+{{- fail (printf "session.idleTimeout.minutes (%d minutes) is not shorter than oauthProxy.cookie.expire (%s = %s seconds), so the idle timeout could never fire: the absolute cap ends every session first. Lower the minutes or raise the cap." (include "gsd.idleTimeoutMinutes" . | int) (include "gsd.cookieExpire" .) $cap) }}
+{{- end }}
+{{- end }}
 {{- if and (eq (include "gsd.visibilityEnabled" .) "true") (not .Values.oauthProxy.enabled) }}
 {{- fail "visibility.enabled=true requires oauthProxy.enabled=true. The per-user tiers scope data to X-Forwarded-User, which is trustworthy only when the oauth-proxy sets it; with the proxy off the header is whatever the caller typed, so the control cannot work. Turn the proxy on, or set visibility.enabled=false to accept — deliberately and on the record — that every reader of an unauthenticated route sees everything." }}
 {{- end }}
@@ -29,7 +39,10 @@ worst of both worlds: the release says deployed and nobody can log in.
 which is exactly what a values file produces when somebody comments out the keys under
 `cookie:`. Measured: "interface conversion: interface {} is nil, not map[string]interface {}".
 */}}
-{{- $expire := $cookie.expire | default "4h" }}
+{{- $expire := include "gsd.cookieExpire" . }}
+{{- if eq (toString $expire) "0" }}
+{{- fail "oauthProxy.cookie.expire is 0: a zero cap is not a cap — the proxy would expire every session at once. Use a Go duration such as 4h; the default is 4h." }}
+{{- end }}
 {{- if eq (include "gsd.durationSeconds" $expire) "-1" }}
 {{- /*
 toString before %q, because a values file may carry an unquoted number and Helm types it as an
