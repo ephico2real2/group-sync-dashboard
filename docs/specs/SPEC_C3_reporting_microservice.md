@@ -372,19 +372,27 @@ New:
 dev = [
     "pytest>=8.0",
     "pytest-playwright>=0.5",
-    # The report service's tests render real PDFs; the extra below is what the reporting image
-    # installs, so the suite exercises the same wheel the image ships.
+    # The report service's tests render real PDFs and HTML; the extra below is what the reporting
+    # image installs, so the suite exercises the same wheels the image ships.
     "fpdf2>=2.8.8",
+    "jinja2>=3.1",
+    "MarkupSafe>=3.0",
 ]
-# THE REPORTING IMAGE'S ONLY ADDITION. fpdf2 is pure Python (py3-none-any) and its three
-# dependencies — Pillow, fontTools, defusedxml — ship cp314 manylinux wheels, so nothing is
-# compiled and nothing is installed with dnf: measured on 2026-09-05, the Hummingbird
+# THE REPORTING IMAGE'S ADDITIONS. fpdf2 is pure Python (py3-none-any) and its three
+# dependencies — Pillow, fontTools, defusedxml — ship cp314 manylinux wheels; Jinja2 is pure
+# Python and MarkupSafe ships a manylinux wheel, so nothing is compiled and nothing is installed
+# with dnf: measured on 2026-09-05, the Hummingbird
 # repository has no pango, cairo, gdk-pixbuf or font package, which rules WeasyPrint out on
 # this base (docs/specs/SPEC_C3_reporting_microservice.md §6). The floor is the version verified
 # for PDF/A-2B output on the same day. Not a runtime dependency of the dashboard image: the
 # dashboard never renders a PDF, and a library it does not use is surface it should not carry.
 report = [
-    "fpdf2>=2.8.8",, "jinja2>=3.1", "MarkupSafe>=3.0"]
+    "fpdf2>=2.8.8",
+    # Dynamic templates (orchestrator's note): the HTML renderer is Jinja2 in its sandbox;
+    # MarkupSafe is Jinja2's dependency and ships a C-accelerator wheel — still nothing from dnf.
+    "jinja2>=3.1",
+    "MarkupSafe>=3.0",
+]
 ```
 Old:
 ```toml
