@@ -12,7 +12,7 @@
 
 ## How to read this spec
 
-Everything under "Design" is the design agent's text and complete code. It supersedes the "Design (verbatim)" section of the former `docs/specs/SPEC_C3_namespace_report.md` (replaced by this file) in full, and keeps three things from it by name (the wide-tier gate, the sha256 data provenance, the print stylesheet) — see "Supersedes". Every claim about existing code is cited as `path#anchor`; every claim about a library, a repository or a platform is cited in "Sources" and, where it could be measured on this machine, was measured (the measurement is quoted where it is used). Schema migration numbers, version numbers and the issue text in the header are the orchestrator's; the body uses the ladder's numbers (app 0.18.0, chart 0.20.0, migration 11).
+Everything under "Design" is the design agent's text and complete code. It supersedes the "Design (verbatim)" section of the predecessor specification (deleted by the PR that added this file) in full, and keeps three things from it by name (the wide-tier gate, the sha256 data provenance, the print stylesheet) — see "Supersedes". Every claim about existing code is cited as `path#anchor`; every claim about a library, a repository or a platform is cited in "Sources" and, where it could be measured on this machine, was measured (the measurement is quoted where it is used). Schema migration numbers, version numbers and the issue text in the header are the orchestrator's; the body uses the ladder's numbers (app 0.18.0, chart 0.20.0, migration 11).
 
 ## Orchestrator's notes
 
@@ -74,6 +74,7 @@ Everything under "Design" is the design agent's text and complete code. It super
 - Section 2's default rule already matches chart 0.14.0's: every switch on unless it costs RBAC, a credential, a second image or a cluster-wide write; `rbac.namespaces` is the stated exception. Chart 0.14.0 added two more exceptions the reporting values must not contradict: `monitoring.*` stays off (the reference cluster runs no Prometheus; the report service's ServiceMonitor, if the body adds one, follows `monitoring.serviceMonitor.enabled`), and `oauthProxy.requestLogging` stays off (the proxy logs the full request URI) — the `/report/` upstream adds no logging of its own.
 - Schema migration 11 and the version pair are per the index ladder; the body's "migration 11" already agrees.
 - Corrections applied from the spec's adversarial review (PR #76, `docs/REVIEW_C3_spec.md`), in the body itself so the file stays the single source: (1) §8.17.2 `gsd.reportingGuards` included two value-returning helpers and would have printed `pdf/a-2b` and the catalogue list into both Deployment manifests — their output is now assigned away; (2) §8.17.6 the report Service carries `gsd.reportSelectorLabels` as well as `gsd.reportLabels`, because the ServiceMonitor selects Services by metadata labels and `gsd.reportLabels` names the dashboard; (3) §8.17.13's `monitoring.prometheusRule.for.reportPull/reportSnapshot` are written as a values block; (4) §8.7.3 `namespace_access.py` imports `KeyValues` and `Note`, which it constructs; (5) §5.1 states ServeMux's slashless-path redirect, the `-pass-user-headers` default and that `-upstream-ca` is unverified on the shipped tag; (6) §6.1 requires the Hummingbird `dnf list` re-measure at implementation; (7) §9.9/§9.11 name the test helpers that exist (`tests/test_chart_pdb.py` `_render`/`_one`/`_matches`; `test_chart_strategy.render` returns a tuple; no conftest); (8) §11's doc texts cite this file, not the deleted one.
+- Corrections applied from Codex's pass on the same PR (`docs/REVIEW_C3_spec.md`): (9) §8.3 the ticket verifier bounds `iat` (30 s skew) and the lifetime (3600 s) — the original accepted a ticket minted by a clock far ahead for as long as that clock said; (10) §8.15.5 `_after_poll` re-checks leadership before the snapshot and before the usage pull, and §4.1 calls the check admission control, not a fence, which is what `poller.py` says of leadership; (11) §8 `principal()` answers an expired ticket with 401 so the browser's single re-mint (§9.11) works — §9.7 had said 403, contradicting §9.11; (12) the data claim must be `ReadWriteMany`: the RWO pod-affinity derivation is withdrawn (§2 row, §4.1, the guard, the report Deployment) because affinity is ignored after scheduling and a dashboard-only restart could strand the single-node claim with the report pod; the reference cluster's claim is RWX; (13) §10.2 builds and scans the report image's pack stage as the dashboard image's is, and keeps the Hummingbird-blindness check; (14) every code comment and doc text in the body cites this file's name; the predecessor is referred to without a path. The tests Codex supplied for (9)–(13) are in §9.
 
 ---
 
@@ -95,7 +96,7 @@ The operator's rule of 2026-09-05: **every boolean switch defaults to ENABLED un
 
 | Value | Default | Kind | Why this default | Refuse / derive |
 |---|---|---|---|---|
-| `reporting.enabled` | **`true`** | module switch | The chart supplies everything it needs: the second image (`reporting.image`, published by the same `publish.yml` run that publishes the dashboard image, same appVersion), a PVC for artefacts, the token Secret it generates itself, the Service, the NetworkPolicy. Nothing external. The rule's exception does not apply once the image is shipped; **until the first release that publishes the image, the chart of that same release ships it, so there is no window where `true` points at a tag that does not exist** — `gsd.reportImage` resolves the same appVersion `gsd.image` does. | **Refuse** with `oauthProxy.enabled=false` (no proxy → no path-routed `/report/` upstream and no trusted identity; message names both remedies, like the visibility guard at `templates/deployment.yaml#visibility.enabled=true requires oauthProxy.enabled=true`). **Refuse** with `persistence.enabled=false` (an emptyDir cannot be mounted by a second pod; there is no snapshot to read). **Refuse** with `replicaCount > 1` (each replica holds its own history — `templates/deployment.yaml#PER-POD database file` — so a snapshot from one is a report from an arbitrary replica; `docs/reference-architecture.md#Scaling, and why the answer is "don't"`). **Refuse** with `rbac.bindings=false` (nine of eleven reports are the binding surface; kept from the current C3). **Refuse** with `gsd.accessMode == ReadWriteOncePod` (the report pod cannot mount the data claim; the B1 table, `docs/specs/SPEC_B1_offsite_backup.md#2.3`). **Derive** `ReadWriteOnce` → required podAffinity to the dashboard's node (B1's rule). |
+| `reporting.enabled` | **`true`** | module switch | The chart supplies everything it needs: the second image (`reporting.image`, published by the same `publish.yml` run that publishes the dashboard image, same appVersion), a PVC for artefacts, the token Secret it generates itself, the Service, the NetworkPolicy. Nothing external. The rule's exception does not apply once the image is shipped; **until the first release that publishes the image, the chart of that same release ships it, so there is no window where `true` points at a tag that does not exist** — `gsd.reportImage` resolves the same appVersion `gsd.image` does. | **Refuse** with `oauthProxy.enabled=false` (no proxy → no path-routed `/report/` upstream and no trusted identity; message names both remedies, like the visibility guard at `templates/deployment.yaml#visibility.enabled=true requires oauthProxy.enabled=true`). **Refuse** with `persistence.enabled=false` (an emptyDir cannot be mounted by a second pod; there is no snapshot to read). **Refuse** with `replicaCount > 1` (each replica holds its own history — `templates/deployment.yaml#PER-POD database file` — so a snapshot from one is a report from an arbitrary replica; `docs/reference-architecture.md#Scaling, and why the answer is "don't"`). **Refuse** with `rbac.bindings=false` (nine of eleven reports are the binding surface; kept from the current C3). **Refuse** with any data-claim access mode other than `ReadWriteMany`: `ReadWriteOncePod` admits one pod; `ReadWriteOnce` admits one node, and because the two pods restart independently and inter-pod affinity is ignored after scheduling, replacing only the dashboard can leave the report pod holding the claim on the old node while the new dashboard pod lands elsewhere and cannot attach it (review of the spec, Codex). The B1 table, `docs/specs/SPEC_B1_offsite_backup.md#2.3`, is the same reasoning for the backup pod. |
 | `reporting.pdf.enabled` | **`true`** | format switch | fpdf2 is pure Python and ships in the reporting image; no library, no credential. Off = HTML and JSON artefacts only. | Independent. |
 | `reporting.pdf.variant` | `"pdf/a-2b"` | enum: `""`, `pdf/a-1b`, `pdf/a-2b`, `pdf/a-2u`, `pdf/a-3b`, `pdf/a-3u`, `pdf/a-4` | A report is evidence; PDF/A-2b is the widely recommended archival default and fpdf2 enforces it (measured §6.2: XMP `pdfaid:part=2`/`conformance=B`, OutputIntent, embedded font). `""` gives a plain PDF. Not a boolean, so the rule does not apply; refused at render for any other string (`gsd.reportPdfVariant`). | Requires `reporting.pdf.enabled` to mean anything; with pdf off the value is ignored and the render **warns** through NOTES, never fails (a format setting is not a safety switch). |
 | `reporting.tls.enabled` | **`true`** | transport switch | The chart supplies the certificate through the service-ca annotation the dashboard's own Service already uses (`templates/service.yaml#service.beta.openshift.io/serving-cert-secret-name`), and the proxy verifies it with `-upstream-ca` against `openshift-service-ca.crt`, the ConfigMap the ServiceMonitor already trusts (`templates/monitoring.yaml#openshift-service-ca.crt`). OpenShift supplies both; this chart is OpenShift-shaped (`templates/monitoring.yaml#OPENSHIFT-ONLY, deliberately`). Off = plain HTTP inside the cluster; the ticket and the NetworkPolicy still hold (§5). | Independent. Pre-flight: the shipped proxy binary must have `-upstream-ca` (§5.4). |
@@ -204,6 +205,8 @@ The operator's expectation, verbatim: *"I am also sure that reporting service wi
 ### 4.1 Freshness, stated on every report
 
 A snapshot is as fresh as its stamp. The leader writes one every `reporting.snapshot.intervalSeconds` (default 300, the binding cadence — `values.yaml#bindingIntervalSeconds` is 300 too) from `Poller._after_poll` (`local-development/gsd/poller.py#Poller._after_poll`), **after** `maintain()` and beside `_maybe_backup()`, on the poll thread — the same rule `backup()` states: "Called from the POLL THREAD only … doing that from a request handler would put a user's page behind it." Worst-case staleness is one poll interval plus one snapshot interval, and every report prints `data as of <snapshot stamp> (taken N minutes before generation; bindings refresh every 300 s)` in its provenance block, beside the last poll's outcome.
+
+Reporting requires a `ReadWriteMany` data claim (the chart default). `ReadWriteOncePod` cannot be mounted by both pods; `ReadWriteOnce` is refused as well, because a required pod affinity from the report pod to the dashboard only holds at the moment the report pod is scheduled and is ignored afterwards — replacing only the dashboard can separate the pods across nodes and make the single-node attachment fail, which would block the dashboard's own rollout. The guard in `gsd.reportingGuards` refuses both modes by name.
 
 ### 4.2 Why not the existing backups
 
@@ -374,7 +377,7 @@ dev = [
 # dependencies — Pillow, fontTools, defusedxml — ship cp314 manylinux wheels, so nothing is
 # compiled and nothing is installed with dnf: measured on 2026-09-05, the Hummingbird
 # repository has no pango, cairo, gdk-pixbuf or font package, which rules WeasyPrint out on
-# this base (docs/specs/SPEC_C3_namespace_report.md §6). The floor is the version verified
+# this base (docs/specs/SPEC_C3_reporting_microservice.md §6). The floor is the version verified
 # for PDF/A-2B output on the same day. Not a runtime dependency of the dashboard image: the
 # dashboard never renders a PDF, and a library it does not use is surface it should not carry.
 report = [
@@ -398,7 +401,7 @@ gsd = ["static/*", "static/vendor/*", "reporting/report.css"]
 """The report service — a separate pod that renders evidence documents from a read-only copy
 of the dashboard's database, stores them, and is polled by the dashboard for its usage.
 
-docs/specs/SPEC_C3_namespace_report.md is the design. The seams, in one place:
+docs/specs/SPEC_C3_reporting_microservice.md is the design. The seams, in one place:
 
 * DATA: never the live gsd.db. `snapshot.py` opens the newest `VACUUM INTO` copy the dashboard's
   leader writes under GSD_REPORT_SNAPSHOT_DIR, with `immutable=1&mode=ro` (§4).
@@ -430,23 +433,7 @@ TICKET_HEADER = "x-gsd-report-ticket"
 ### 8.3 NEW `local-development/gsd/reporting/ticket.py`
 
 ```python
-"""The wide-tier decision, carried from the dashboard to the report service as a signed ticket.
-
-WHY A TICKET AND NOT A SECOND DECISION. The tier is a SubjectAccessReview the dashboard makes as
-its ServiceAccount (gsd/kube.py#TierResolver). The report service holds no cluster credential and
-no RBAC — it cannot ask, and duplicating the resolver in a second pod would be a second copy of a
-security decision. So the dashboard decides (gsd/api.py#require_admin_tier), signs the outcome, and
-the browser carries it. The report service checks four things and grants nothing else:
-
-    1. the signature (HMAC-SHA256 with the token both pods mount);
-    2. the expiry (short: GSD_REPORT_TICKET_TTL_SECONDS, default 300);
-    3. tier == "all" — only the exact string, the discipline viewer_scope applies to the resolver;
-    4. the ticket's viewer equals the X-Forwarded-User the proxy stamped on THIS request, so a
-       ticket lifted from one session is useless from another.
-
-The payload is JSON, base64url; the signature is over the exact payload bytes. No library:
-hmac + hashlib + json is the whole implementation, and a reader can verify a ticket by hand.
-"""
+"""Signed authorization tickets carried from the dashboard to the report service."""
 
 from __future__ import annotations
 
@@ -459,10 +446,14 @@ import time
 
 TICKET_VERSION = 1
 TIER_ALL = "all"
+# Review of the spec (Codex): a verifier that ignores `iat` accepts a ticket minted by a clock far
+# ahead of ours for as long as that clock says. Bound both the skew and the lifetime.
+MAX_CLOCK_SKEW_SECONDS = 30
+MAX_TICKET_TTL_SECONDS = 3600
 
 
 class TicketError(ValueError):
-    """A ticket that must be refused; the message is safe to serve to the caller."""
+    """A ticket that must be refused; the message is safe to log."""
 
 
 def _b64(raw: bytes) -> str:
@@ -479,27 +470,25 @@ def _sign(secret: bytes, payload: bytes) -> bytes:
 
 
 def mint(secret: bytes, viewer: str, tier: str, ttl_seconds: int, now: float | None = None) -> str:
-    """A ticket for `viewer` at `tier`, valid for `ttl_seconds` from `now`.
-
-    Called by the dashboard only, and only after require_admin_tier passed — the tier argument is
-    still checked here so a caller cannot mint a self-tier ticket that the service would refuse
-    anyway; minting one would be a bug, and raising is louder than a 403 later.
-    """
+    """Mint one short-lived wide-tier ticket for a proxy-authenticated viewer."""
     if tier != TIER_ALL:
         raise TicketError("only the wide tier is ever minted")
     if not viewer:
         raise TicketError("a ticket needs a viewer")
+    ttl = int(ttl_seconds)
+    if ttl < 1 or ttl > MAX_TICKET_TTL_SECONDS:
+        raise TicketError(f"ticket lifetime must be between 1 and {MAX_TICKET_TTL_SECONDS} seconds")
     issued = int(now if now is not None else time.time())
     payload = json.dumps(
         {"v": TICKET_VERSION, "viewer": viewer, "tier": tier, "iat": issued,
-         "exp": issued + int(ttl_seconds), "nonce": secrets.token_urlsafe(8)},
+         "exp": issued + ttl, "nonce": secrets.token_urlsafe(8)},
         sort_keys=True, separators=(",", ":"),
     ).encode("utf-8")
     return f"{_b64(payload)}.{_b64(_sign(secret, payload))}"
 
 
 def verify(secret: bytes, ticket: str, forwarded_user: str | None, now: float | None = None) -> dict:
-    """The payload of a valid ticket, or TicketError. Every refusal names its reason."""
+    """Return valid claims; refuse malformed, misbound, expired or future-dated tickets."""
     if not ticket or "." not in ticket:
         raise TicketError("ticket missing or malformed")
     body, _, sig = ticket.partition(".")
@@ -516,22 +505,30 @@ def verify(secret: bytes, ticket: str, forwarded_user: str | None, now: float | 
         raise TicketError("ticket payload is not JSON") from exc
     if claims.get("v") != TICKET_VERSION:
         raise TicketError("ticket version is not understood")
+    issued = claims.get("iat")
+    expires = claims.get("exp")
+    if not isinstance(issued, int):
+        raise TicketError("ticket issued-at time is missing or invalid")
+    if not isinstance(expires, int):
+        raise TicketError("ticket expiry is missing or invalid")
+    if expires <= issued:
+        raise TicketError("ticket expiry is not after its issued-at time")
+    if expires - issued > MAX_TICKET_TTL_SECONDS:
+        raise TicketError("ticket lifetime exceeds the configured maximum")
     current = now if now is not None else time.time()
-    if not isinstance(claims.get("exp"), int) or claims["exp"] <= current:
+    if issued > current + MAX_CLOCK_SKEW_SECONDS:
+        raise TicketError("ticket was issued too far in the future")
+    if expires <= current:
         raise TicketError("ticket has expired")
     if claims.get("tier") != TIER_ALL:
         raise TicketError("ticket does not carry the wide tier")
-    # The binding to the session. The proxy overwrites X-Forwarded-User on every authenticated
-    # request (docs/ACCESS_CONTROL.md §1), so on a request that arrived through it this header
-    # is the proxy's word — and a ticket for somebody else is refused however it was obtained.
     if not forwarded_user or claims.get("viewer") != forwarded_user:
         raise TicketError("ticket was minted for a different viewer")
     return claims
 
 
 def load_secret(path: str) -> bytes:
-    """The shared token, read once at startup. Whitespace-trimmed: a Secret written with a
-    trailing newline must sign the same bytes in both pods."""
+    """Read and validate the shared token once during application startup."""
     with open(path, "rb") as fh:
         raw = fh.read().strip()
     if len(raw) < 32:
@@ -2323,7 +2320,7 @@ fpdf2 is imported HERE and only here, lazily: the dashboard image ships this pac
 `report` extra and must import gsd.reporting.ticket without it (tests/test_reporting_render.py holds
 the module-level import list to that).
 
-PDF/A, measured on fpdf2 2.8.8 (docs/specs/SPEC_C3_namespace_report.md §6.2): base fonts are refused
+PDF/A, measured on fpdf2 2.8.8 (docs/specs/SPEC_C3_reporting_microservice.md §6.2): base fonts are refused
 under every PDF/A profile, so both faces of the vendored DejaVu Sans are registered; the table
 heading row uses the bold face, which is why the bold file is not optional. Under 3b/3u the canonical
 .json is embedded as an attachment — the one thing 3b exists for.
@@ -2958,7 +2955,11 @@ def build_report_app(settings: ReportSettings, *, secret: bytes | None = None, c
         except TicketError as exc:
             # A refused ticket is a 403 with the gate's own sentence: the browser shows the reader
             # the same refusal the dashboard would, and the reason goes to the log, not the wire.
+            # The one exception is expiry: a 401, which reportFetch answers by minting a fresh
+            # ticket exactly once (§9.11), so a page left open past the TTL keeps working.
             log.info("ticket refused: %s", exc)
+            if str(exc) == "ticket has expired":
+                raise HTTPException(status_code=401, detail="the report ticket expired; mint a new ticket") from exc
             raise HTTPException(status_code=403, detail=REFUSAL) from exc
         return Principal(kind="viewer", name=claims["viewer"], note="proxy-verified, ticket from the dashboard")
 
@@ -3206,7 +3207,7 @@ if __name__ == "__main__":
 
 Append to `Settings` after `visibility_tier_ttl_seconds`:
 ```python
-    # ── REPORTING (docs/specs/SPEC_C3_namespace_report.md) ─────────────────────────────────────
+    # ── REPORTING (docs/specs/SPEC_C3_reporting_microservice.md) ─────────────────────────────────────
     # The report service's Service URL inside the cluster, e.g. https://gsd-report.ns.svc:8443.
     # Empty means the module is off: no ticket endpoint, no snapshot, no usage pull, no tab.
     reporting_url: str = ""
@@ -3323,7 +3324,7 @@ New (the body of `backup` moves into `_vacuum_into`; `backup` and the new `snaps
         writes — and NOT a backup: it is not the retention gate's copy (poller._prune_history reads
         _backup_state, which only _maybe_backup sets), it is overwritten every few minutes, and it
         exists so a second POD can read this database without ever opening the live WAL file
-        (docs/specs/SPEC_C3_namespace_report.md §4). Written under a `.tmp` name and renamed, so a
+        (docs/specs/SPEC_C3_reporting_microservice.md §4). Written under a `.tmp` name and renamed, so a
         reader listing the directory never opens a half-written file. Logged at DEBUG: every five
         minutes at INFO would bury the log.
         """
@@ -3464,8 +3465,17 @@ New:
         self._maybe_backup()
         self._prune_history(cluster)
         # Reporting rides the same tail: the snapshot after the checkpoint (so the copy is the
-        # smallest it can be), the usage pull after that. Both leader-only by being here.
+        # smallest it can be), the usage pull after that. _run_cluster's leadership check is a
+        # cycle old after the poll's network I/O, so re-check before each operation. Both checks are
+        # best-effort admission control, not a fence (poller.py says so of leadership itself); the
+        # one-replica Recreate deployment is the actual single-writer guarantee.
+        if self.elector is not None and not self.elector.is_leader:
+            log.warning("%s: reporting tail skipped; leadership was lost during the poll", cluster.name)
+            return
         self._maybe_report_snapshot()
+        if self.elector is not None and not self.elector.is_leader:
+            log.warning("%s: report usage pull skipped; leadership was lost after the snapshot", cluster.name)
+            return
         self._pull_report_usage()
 ```
 New methods on `Poller`:
@@ -3558,7 +3568,7 @@ Imports: `from .reporting import REPORT_PREFIX`, `from .reporting.ticket import 
 
 In `build_app`, after the `signals`/`poller` construction:
 ```python
-    # The report service (docs/specs/SPEC_C3_namespace_report.md). The token is read ONCE at
+    # The report service (docs/specs/SPEC_C3_reporting_microservice.md). The token is read ONCE at
     # startup: the same bytes the report pod verifies with, so a ticket minted here is accepted
     # there. Missing or short when reporting is on is a startup failure — a module that is on and
     # cannot work is the state this repository refuses to run in.
@@ -3656,7 +3666,7 @@ and in the assignment tail: `if ("reportCatalog" in got) data.reportCatalog = go
 
 New functions (placed after `usagePage`):
 ```js
-/* ── Reports (docs/specs/SPEC_C3_namespace_report.md) ────────────────────────────────────────
+/* ── Reports (docs/specs/SPEC_C3_reporting_microservice.md) ────────────────────────────────────────
    The report service is another pod behind the same proxy, under /report. The dashboard decides
    the tier and mints a ticket (GET /api/report/ticket); every call below carries it in a custom
    header, which is also what makes the POST non-simple (CSRF). Downloads go through fetch() and
@@ -3843,7 +3853,7 @@ async function downloadArtifact(runId, format) {
 #### 8.15.9 `local-development/gsd/static/app.css` — tokens only
 
 ```css
-/* Reports tab (docs/specs/SPEC_C3_namespace_report.md). Tokens only, as tests/test_accessibility.py
+/* Reports tab (docs/specs/SPEC_C3_reporting_microservice.md). Tokens only, as tests/test_accessibility.py
    demands; sizes through --text-* (tests/test_type_scale.py). */
 .switch-list { list-style: none; margin: 8px 0; padding: 0; max-height: 360px; overflow: auto; }
 .report-pick { display: block; width: 100%; text-align: left; padding: 6px 8px; border-radius: 6px; }
@@ -3893,7 +3903,7 @@ Same four stages as `Containerfile` (`docs/DESIGN_hardened_image.md` §4), same 
 # Why a second image at all: fpdf2 and its three dependencies are the report service's and not
 # the dashboard's, and a library the dashboard never calls is surface the dashboard image should
 # not carry. Why NOT WeasyPrint: it needs Pango, and the Hummingbird repository has no pango,
-# cairo or gdk-pixbuf package (measured 2026-09-05) — docs/specs/SPEC_C3_namespace_report.md §6.
+# cairo or gdk-pixbuf package (measured 2026-09-05) — docs/specs/SPEC_C3_reporting_microservice.md §6.
 
 # ---------------------------------------------------------------------------------------------
 #  STAGE 1 · build — the application, its Python dependencies AND the report extra, into /install
@@ -4193,7 +4203,7 @@ Insert after the `persistence:` block (before `# RBAC`). `rbac.namespaces` goes 
 
 ```yaml
 # ---------------------------------------------------------------------------
-# Reporting — the report service (docs/specs/SPEC_C3_namespace_report.md)
+# Reporting — the report service (docs/specs/SPEC_C3_reporting_microservice.md)
 # ---------------------------------------------------------------------------
 # A SECOND POD, on its own image, that renders evidence documents — the namespace access report
 # and ten more (users, groups, bindings, privileged access, dormant access, login activity,
@@ -4334,7 +4344,7 @@ Under `rbac:`, after `users: true` and its comment:
 
 ```
 {{/*
-Reporting (docs/specs/SPEC_C3_namespace_report.md). Nil-safe like every helper here.
+Reporting (docs/specs/SPEC_C3_reporting_microservice.md). Nil-safe like every helper here.
 */}}
 {{- define "gsd.reportingEnabled" -}}
 {{- if eq (toString ((.Values.reporting | default dict).enabled)) "true" -}}true{{- else -}}false{{- end -}}
@@ -4433,8 +4443,9 @@ args depend on them), so both objects refuse together. Emits nothing.
 {{- if not .Values.rbac.bindings -}}
 {{- fail "reporting.enabled=true requires rbac.bindings=true: nine of the eleven reports are the RBAC binding surface, which the dashboard does not read without that grant." -}}
 {{- end -}}
-{{- if eq (include "gsd.accessMode" .) "ReadWriteOncePod" -}}
-{{- fail "reporting.enabled=true cannot work with a ReadWriteOncePod data volume: that mode lets exactly ONE pod mount the claim, and the report pod must mount it read-only. Use ReadWriteOnce (the report pod is then pinned to the dashboard's node by podAffinity) or ReadWriteMany (the default). accessModes are immutable on an existing claim — docs/RUNBOOK_backup_restore.md §5 covers moving the data." -}}
+{{- $mode := include "gsd.accessMode" . -}}
+{{- if ne $mode "ReadWriteMany" -}}
+{{- fail (printf "reporting.enabled=true requires persistence.accessMode=ReadWriteMany; got %s. ReadWriteOncePod admits one pod only. ReadWriteOnce is refused too: the two pods restart independently, inter-pod affinity is ignored once a pod is scheduled, so replacing only the dashboard can leave the report pod holding the single-node claim on the old node while the new dashboard pod lands on another and cannot attach it. Use ReadWriteMany (the default) or set reporting.enabled=false. accessModes are immutable on an existing claim — docs/RUNBOOK_backup_restore.md §5 covers moving the data." $mode) -}}
 {{- end -}}
 {{- $snap := (.Values.reporting | default dict).snapshot | default dict -}}
 {{- if lt (int ($snap.intervalSeconds | default 300)) 60 -}}
@@ -4649,16 +4660,6 @@ spec:
       {{- if or .Values.reporting.affinity (eq $mode "ReadWriteOnce") }}
       affinity:
         {{- with .Values.reporting.affinity }}{{- toYaml . | nindent 8 }}{{- end }}
-        {{- if eq $mode "ReadWriteOnce" }}
-        # DERIVED: a ReadWriteOnce claim binds one NODE, so the report pod must land beside the
-        # dashboard to mount it. A dashboard scaled to zero leaves this Pending — the honest
-        # outcome (B1's rule, docs/specs/SPEC_B1_offsite_backup.md §2.3).
-        podAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-            - topologyKey: kubernetes.io/hostname
-              labelSelector:
-                matchLabels: {{- include "gsd.selectorLabels" . | nindent 18 }}
-        {{- end }}
       {{- end }}
       containers:
         - name: report
@@ -5142,6 +5143,23 @@ def test_a_short_secret_is_refused(tmp_path):
     assert load_secret(str(p)) == b"a" * 48      # trailing newline trimmed: both pods sign the same bytes
 ```
 
+
+Added from the spec's review (Codex): the issued-at bound.
+
+```python
+def test_ticket_issued_far_in_the_future_is_refused():
+    ticket = mint(SECRET, "root", "all", 300, now=10_000)
+    with pytest.raises(TicketError, match="issued too far in the future"):
+        verify(SECRET, ticket, "root", now=1_000)
+
+
+def test_small_clock_skew_is_tolerated_but_exact_expiry_is_not():
+    ticket = mint(SECRET, "root", "all", 300, now=1_020)
+    assert verify(SECRET, ticket, "root", now=1_000)["iat"] == 1_020
+    with pytest.raises(TicketError, match="expired"):
+        verify(SECRET, ticket, "root", now=1_320)
+```
+
 ### 9.2 `tests/test_storage_seam.py` — the second backend
 
 Old:
@@ -5205,12 +5223,30 @@ Seeds a `Store` (the writer) with groups, members, bindings, a User, a gate grou
 Uses `build_report_app(settings, secret=SECRET, clock=fixed)` with `snapshot_dir`/`artifact_dir` under `tmp_path` and a seeded snapshot; `TestClient`.
 
 - **Its own contract** (the dashboard's R1/R2/R6 applied here): every route's docstring first line is a sentence; every `Query` has a description; the only non-GET is `POST /report/api/runs`; the unauthenticated set is exactly `UNAUTHENTICATED`; every path starts with `/report`.
-- No ticket → 401; a self-viewer ticket cannot exist (mint refuses); a ticket for `root` with header `X-Forwarded-User: alice` → 403 with `REFUSAL` verbatim; an expired ticket → 403; the service token → 200 on `/api/runs`, `/api/usage`; a viewer ticket on `/api/usage` → 403.
+- No ticket → 401; a self-viewer ticket cannot exist (mint refuses); a ticket for `root` with header `X-Forwarded-User: alice` → 403 with `REFUSAL` verbatim; an expired ticket → 401 with `the report ticket expired; mint a new ticket` (so the browser mints once); malformed, wrongly signed, wrong-tier or wrong-viewer tickets → 403; the service token → 200 on `/api/runs`, `/api/usage`; a viewer ticket on `/api/usage` → 403.
 - `POST /report/api/runs`: 202 then, after the worker runs (poll `GET /api/runs/{id}` up to 10 s), `status == done`, `sha256` set, `bytes` has `json`, `html`, `pdf`; the artefact GETs return the right media types, `Content-Disposition`, `X-GSD-Report-SHA256`, `Cache-Control: no-store`; `format=pdf` bytes start `%PDF`; 404 before `done`.
 - Disabled report → 404 naming the values key; unknown param → 422; `pdf` requested with `pdf_enabled=False` → 422; `schedule` from a viewer → 422; `max_queued_runs=1` and two posts while the worker is blocked (a snapshot dir that is a broken symlink makes the first run fail slowly? No — the worker is deterministic; instead monkeypatch `RunManager._render` to block on an `Event`) → the second is 429 and recorded `failed`.
 - `/report/api/usage?since_id=` pages in id order with `next_since_id`; `truncated` true when `limit` rows came back.
 - `/report/readyz` 503 with no snapshot, 200 with one; `/report/metrics` names `gsd_report_runs_finished_total{report="namespace-access",status="done"}` and contains no viewer name.
 - `ArtifactStore` restart: a manifest with `status: running` is loaded as `failed` with the restart sentence; `prune` honours both bounds.
+
+
+Added from the spec's review (Codex): expiry is the one 401.
+
+```python
+def test_expired_ticket_returns_401_for_the_single_remint_path(tmp_path):
+    snapshots = tmp_path / "snapshots"; artifacts = tmp_path / "artifacts"
+    snapshots.mkdir(); artifacts.mkdir()
+    clock = [datetime.fromtimestamp(1_301, UTC)]
+    settings = ReportSettings(snapshot_dir=str(snapshots), artifact_dir=str(artifacts),
+                              pdf_enabled=False, pdf_variant="", enabled_reports=("namespace-access",))
+    app = build_report_app(settings, secret=SECRET, clock=lambda: clock[0])
+    ticket = mint(SECRET, "root", "all", 300, now=1_000)
+    with TestClient(app) as client:
+        response = client.get("/report/api/reports", headers={TICKET_HEADER: ticket, USER_HEADER: "root"})
+    assert response.status_code == 401
+    assert response.json()["detail"] == "the report ticket expired; mint a new ticket"
+```
 
 ### 9.8 Dashboard-side tests
 
@@ -5224,6 +5260,24 @@ Uses `build_report_app(settings, secret=SECRET, clock=fixed)` with `snapshot_dir
 - `tests/test_read_snapshot_scope.py`: passes unchanged (`import httpx` is inside `_pull_report_usage`, which is not a snapshotted region).
 - `tests/test_no_duplicate_methods.py`: passes (new methods are unique).
 
+
+Added from the spec's review (Codex): the poll tail re-checks leadership.
+
+```python
+def test_reporting_tail_rechecks_leadership_after_the_poll():
+    poller = Poller.__new__(Poller)
+    poller.store = SimpleNamespace(maintain=Mock())
+    poller.elector = SimpleNamespace(is_leader=False)
+    poller._maybe_backup = Mock(); poller._prune_history = Mock()
+    poller._maybe_report_snapshot = Mock(); poller._pull_report_usage = Mock()
+    poller._after_poll(SimpleNamespace(name="crc-local"))
+    poller.store.maintain.assert_called_once_with()
+    poller._maybe_backup.assert_called_once_with()
+    poller._prune_history.assert_called_once()
+    poller._maybe_report_snapshot.assert_not_called()
+    poller._pull_report_usage.assert_not_called()
+```
+
 ### 9.9 Chart tests — NEW `tests/test_chart_reporting.py`
 
 Reuse `_render`, `_one` and `_matches` from `tests/test_chart_pdb.py` (`_render(*sets: str) -> list[dict]`: helm `--set` strings in, parsed documents out) for every document assertion. `test_chart_strategy.render(**values)` returns `(ok, text)` and takes `__` for dots; use it only where a test needs the raw text — ConfigMap bodies go through `test_chart_strategy._config_data(out)`. `_docs` there is an instance method on its test classes, not a module helper, and there is no `tests/conftest.py`: fixtures live in the test files.
@@ -5234,10 +5288,75 @@ Reuse `_render`, `_one` and `_matches` from `tests/test_chart_pdb.py` (`_render(
 - `rbac.namespaces=true` adds the core-group rule; false omits it; the ConfigMap key follows it.
 - `tests/test_chart_versions.py`: a new assertion that `reporting.image.tag` is empty or a build of appVersion (the same rule as `image.tag`).
 
+
+Added from the spec's review (Cursor and Codex): the two defects the review found in the templates, and the storage refusal.
+
+```python
+from __future__ import annotations
+
+import subprocess
+
+import pytest
+
+from test_chart_pdb import CHART, _matches, _render
+
+
+def _exact(docs: list[dict], kind: str, name: str) -> dict:
+    hits = [d for d in docs if d.get("kind") == kind and d.get("metadata", {}).get("name") == name]
+    assert len(hits) == 1, (kind, name, [d.get("metadata", {}).get("name") for d in docs if d.get("kind") == kind])
+    return hits[0]
+
+
+@pytest.mark.parametrize("mode", ["ReadWriteOnce", "ReadWriteOncePod"])
+def test_reporting_refuses_data_claim_modes_that_do_not_survive_independent_rescheduling(mode):
+    done = subprocess.run(["helm", "template", "t", str(CHART), "-n", "x", "--set", "ingress.host=h",
+                           "--set", "reporting.enabled=true", "--set", f"persistence.accessMode={mode}"],
+                          capture_output=True, text=True, timeout=120)
+    assert done.returncode != 0
+    assert "reporting.enabled=true requires persistence.accessMode=ReadWriteMany" in done.stderr and mode in done.stderr
+
+
+def test_default_reporting_render_is_yaml_and_all_selectors_match_only_their_workloads():
+    docs = _render("reporting.enabled=true", "monitoring.serviceMonitor.enabled=true",
+                   "reporting.schedules[0].name=weekly", "reporting.schedules[0].schedule=0 6 * * 1",
+                   "reporting.schedules[0].report=access-matrix")
+    dashboard_name = "t-group-sync-dashboard"; report_name = f"{dashboard_name}-report"
+    dashboard = _exact(docs, "Deployment", dashboard_name); report = _exact(docs, "Deployment", report_name)
+    service = _exact(docs, "Service", report_name); monitor = _exact(docs, "ServiceMonitor", report_name)
+    dashboard_pdb = _exact(docs, "PodDisruptionBudget", dashboard_name); report_pdb = _exact(docs, "PodDisruptionBudget", report_name)
+    dl = dashboard["spec"]["template"]["metadata"]["labels"]; rl = report["spec"]["template"]["metadata"]["labels"]
+    ds = dashboard_pdb["spec"]["selector"]["matchLabels"]; rs = report_pdb["spec"]["selector"]["matchLabels"]
+    assert _matches(ds, dl) and not _matches(ds, rl)
+    assert _matches(rs, rl) and not _matches(rs, dl)
+    assert _matches(service["spec"]["selector"], rl)
+    assert _matches(monitor["spec"]["selector"]["matchLabels"], service["metadata"]["labels"])
+    cronjobs = [d for d in docs if d.get("kind") == "CronJob"]
+    assert len(cronjobs) == 1
+    cl = cronjobs[0]["spec"]["jobTemplate"]["spec"]["template"]["metadata"]["labels"]
+    assert not _matches(ds, cl) and not _matches(rs, cl)
+```
+
+(A first render must parse as YAML at all — the guard helper used to print its validation helpers' output; `_render` fails on non-YAML, which is the test.)
+
 ### 9.10 Image and workflow tests
 
 - NEW `tests/test_containerfile_report.py`: `Containerfile.report`'s logical instruction lines equal `Containerfile`'s except at exactly the lines marked `REPORT:` (the stages' FROMs, the pack stage and the uninstall RUN are byte-identical); the final stage's proof line names `report-image-proof.py`; `CMD` is `gsd.reporting.server:create_report_app` on 8443; `EXPOSE 8443`; the build stage installs `[report]`; `report-image-proof.py` imports every module `Containerfile.report`'s build-stage proof names (the two lists held equal, the `image-proof.py` rule).
-- `tests/test_publish_paths.py`: `_copied_sources()` scans both Containerfiles (`for cf in (CONTAINERFILE, CONTAINERFILE_REPORT)`), so `report-image-proof.py` and `Containerfile.report` must be in `publish.yml`'s `paths`; a new assertion that the workflow has a step building `Containerfile.report` and that `ci.yml`'s image job scans `gsd-report:ci`.
+- `tests/test_publish_paths.py`: `_copied_sources()` scans both Containerfiles (`for cf in (CONTAINERFILE, CONTAINERFILE_REPORT)`), so `report-image-proof.py` and `Containerfile.report` must be in `publish.yml`'s `paths`; a new assertion that the workflow has a step building `Containerfile.report` and that `ci.yml`'s image job scans both `gsd-report:ci` and the `gsd-report:pack` stage (the same pair the dashboard image gets — review of the spec, Codex).
+
+
+Added from the spec's review (Codex): both report stages are gated.
+
+```python
+def test_report_final_and_pack_stages_are_built_and_gated_independently():
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
+    assert "docker build -f Containerfile.report -t gsd-report:ci ." in workflow
+    assert "docker build -f Containerfile.report --target pack -t gsd-report:pack ." in workflow
+    assert workflow.count("image: gsd-report:pack") >= 2
+    assert "output-file: report-pack-inventory.json" in workflow
+    region = workflow[workflow.index("- name: Build the report image"):]
+    assert region.count("anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439") >= 4
+    assert region.count("only-fixed: true") >= 2
+```
 
 ### 9.11 `tests/test_ui.py` — the Reports tab (Playwright)
 
@@ -5290,12 +5409,17 @@ After "Build and push the image", a second step with the same `env` block:
 
 In the `image` job, after the dashboard's steps and with the same pinned action and Grype version:
 ```yaml
-      # THE REPORT IMAGE, THE SAME GATE. Its own build (fpdf2, Pillow, fontTools, defusedxml are
-      # the only additions), its own pack-stage scan (the pack is identical, scanned again so a
-      # divergence would show), the same only-fixed HIGH cutoff, the same blindness check.
+      # Build and scan BOTH report stages, the way the image job already does for gsd:pack:
+      # the final image proves what ships; the pack stage proves the RPM-installed tools copied
+      # into it were assessed, and its inventory feeds the Hummingbird-blindness check.
       - name: Build the report image
         working-directory: local-development
         run: docker build -f Containerfile.report -t gsd-report:ci .
+
+      - name: Build the report pack stage
+        working-directory: local-development
+        run: docker build -f Containerfile.report --target pack -t gsd-report:pack .
+
       - name: Scan the report image for FIXABLE vulnerabilities
         uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
         with:
@@ -5305,7 +5429,18 @@ In the `image` job, after the dashboard's steps and with the same pinned action 
           only-fixed: true
           severity-cutoff: high
           output-format: table
-      - name: Full inventory, report image (informational)
+
+      - name: Scan the report pack stage for FIXABLE vulnerabilities
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        with:
+          image: gsd-report:pack
+          grype-version: v0.118.0
+          fail-build: true
+          only-fixed: true
+          severity-cutoff: high
+          output-format: table
+
+      - name: Full inventory, report image
         if: always()
         uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
         with:
@@ -5313,16 +5448,27 @@ In the `image` job, after the dashboard's steps and with the same pinned action 
           grype-version: v0.118.0
           fail-build: false
           severity-cutoff: medium
+          output-format: table
+
+      - name: Full inventory, report pack stage
+        if: always()
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        with:
+          image: gsd-report:pack
+          grype-version: v0.118.0
+          fail-build: false
+          severity-cutoff: medium
           output-format: json
-          output-file: report-inventory.json
-      - name: Grype identified the report image's distribution
+          output-file: report-pack-inventory.json
+
+      - name: Grype identified the report pack stage distribution
         if: always()
         run: |
-          distro=$(jq -r '.distro.name // ""' report-inventory.json)
-          echo "report image distro: ${distro:-<none>}"
-          jq -r '[.matches[] | .vulnerability.severity] | group_by(.) | map("\(.[0]): \(length)") | join(", ")' report-inventory.json
+          distro=$(jq -r '.distro.name // ""' report-pack-inventory.json)
+          echo "report pack distro: ${distro:-<none>} $(jq -r '.distro.version // ""' report-pack-inventory.json)"
+          jq -r '[.matches[] | .vulnerability.severity] | group_by(.) | map("\(.[0]): \(length)") | join(", ")' report-pack-inventory.json
           if [ "$distro" != "hummingbird" ]; then
-            echo "::error::Grype did not identify the report image as Hummingbird OS; the gate above proved nothing"
+            echo "::error::Grype did not identify the report pack stage as Hummingbird OS; the report scans proved nothing"
             exit 1
           fi
 ```
@@ -5336,7 +5482,7 @@ Unchanged: the chart release is gated by `ci.yml` through `workflow_call`, which
 
 - **`docs/specs/README.md`**: the C3 row's title becomes "reporting as a microservice: the report service, its eleven-report catalogue, and the dashboard's pull of its usage"; "Version on release" becomes `app 0.18.0, chart 0.20.0 (reporting image at appVersion)`; the reconciliation list gains "C3 = migration 11 creates `cluster_namespace`, `cluster_namespace_status` and `report_run`"; the "Decisions the operator has made" gains the 2026-09-05 direction (microservice; every boolean defaults on unless it cannot work without something the chart cannot supply) and the operator's answers to §14.
 - **`docs/namespace-report-design.md`**: the PARKED banner becomes `> **SUPERSEDED — 2026-09-05.** Built as a separate report service: docs/specs/SPEC_C3_reporting_microservice.md. §1's --openshift-sar answer, §4's argument for a canonical HTML artefact with a sha256, §5's selector and §6's provenance block and caveats are carried into it; §2–3 (the viewer-token authorisation layer) and question E stay not built.` "Status: proposed, not built" → "Status: superseded by the report service; §1, §4–§6 are the record of what it kept".
-- **`README.md`**: the docs-table row loses **PARKED** and reads "per-namespace and access-review reports as HTML/PDF from a separate report service; the definitive answer on `--openshift-sar`"; a row for `docs/specs/SPEC_C3_namespace_report.md` is not added (the specs index row covers it); "Not built yet" drops "per-namespace PDF reports (designed and parked …)" and keeps "Effective-permission expansion, log-scrape enrichment, … per-cluster authorization".
+- **`README.md`**: the docs-table row loses **PARKED** and reads "per-namespace and access-review reports as HTML/PDF from a separate report service; the definitive answer on `--openshift-sar`"; a row for `docs/specs/SPEC_C3_reporting_microservice.md` is not added (the specs index row covers it); "Not built yet" drops "per-namespace PDF reports (designed and parked …)" and keeps "Effective-permission expansion, log-scrape enrichment, … per-cluster authorization".
 - NEW **`docs/DESIGN_reporting_service.md`**: §§3–7 of this spec (architecture, data path, auth, PDF library, catalogue) as the maintained design record, citing `gsd/reporting/server.py#build_report_app`, `gsd/reporting/snapshot.py#Snapshot`, `gsd/reporting/ticket.py#verify`, `gsd/store.py#Store.snapshot`, `gsd/poller.py#Poller._pull_report_usage`, `charts/group-sync-dashboard/templates/report-deployment.yaml`, `local-development/Containerfile.report`; listed in `docs/reference-architecture.md` §12 and the README docs table.
 - **`docs/reference-architecture.md`**: §8's topology diagram gains the report pod, its Service, PVC, Secret, NetworkPolicy and the proxy's second upstream; §2's module list gains `gsd/reporting/*`; the RBAC table gains `namespaces` (core, only with `rbac.namespaces`); §6 gains a paragraph "The report service reads a copy" beside "WAL, and how it fails"; the `fail` guards section lists the six reporting guards.
 - **`docs/ACCESS_CONTROL.md`**: §3 gains `| Reports | *For administrators only* | all | all |`; §4 gains `/api/report/ticket` (403 self / 200 all), `/api/dashboard/reports` (usage tier, like activity) and a note that `/report/**` is the report service's API behind the same proxy, admitted by ticket; §5's diagram gains `mint ticket` under `require_admin_tier`.
@@ -5439,7 +5585,7 @@ curl -sk https://<route>/report/api/reports                      # -> 302 to log
 7. **Retention**: 90 days / 500 runs — right for the review cycle?
 8. **Own-namespace reports** (the parked design's question E): still wide-tier only; `-pass-access-token` remains refused by the session design. Confirm this stays not built.
 
-## 15. Supersedes — what changes in `SPEC_C3_namespace_report.md` and in issue #67
+## 15. Supersedes — what changes from the predecessor specification and in issue #67
 
 **Dropped from the current body**: the loopback PDF sidecar (`gsd/reportpdf.py`, `features.namespaceReport.pdf.*`, the `report-pdf` container, `report-libs.sh`, WeasyPrint — the Hummingbird repository has no pango, measured); the four dashboard endpoints under `/api/clusters/{id}/report/namespaces*` (rendering leaves the dashboard); `features.namespaceReport.enabled` (replaced by `reporting.enabled`, default on); the Namespace-audit card (replaced by the Reports tab); the UBI9-fallback question (answered: not needed).
 

@@ -66,13 +66,54 @@ which is not a product invariant.
 
 ## Verdicts — Codex
 
-Pending; the section is completed when the pass lands.
+Codex reviewed commit `b7011eb` (the checkout moved to the Cursor-corrected head during its run; it
+pinned every read to that commit), worked read-only because its sandbox refused the scratch
+subdirectory, and cited the exact oauth-proxy commit Red Hat maps to the shipped image tag.
+
+| Claim | Codex | Decision |
+|---|---|---|
+| C1 oauth-proxy premises | CONFIRMED | — ; agrees with the §5.1 text Cursor's pass added (ServeMux most-specific match, bare `/report` 301) |
+| C2 the data path | REFUTED | **Accepted** — the snapshot half is sound; the RWO derivation is not lifecycle-safe (see below) |
+| C3 the ticket | PLAUSIBLE | **Accepted** — the verifier ignored `iat`; executing §8.3 accepted a ticket minted 9,000 s in the future; bounded now (30 s skew, 3600 s lifetime), Codex's module and tests applied |
+| C4 CSRF; dashboard GET-only | CONFIRMED | — |
+| C5 fpdf2 and the Hummingbird measurement | CONFIRMED | — ; wheel names and fpdf2 2.8.8's OutputIntent cited from PyPI and source |
+| C6 guards, Service labels | REFUTED | **Accepted** — the same two defects Cursor found, already applied; Codex's regression test is in §9.9 |
+| C7 migration, leader-only, usage tier | REFUTED | **Accepted** — "leader only" was too strong: `poller.py` calls leadership best-effort admission control, the check is a cycle old by `_after_poll`; the tail now re-checks before the snapshot and before the pull, §4.1 says so, Codex's test in §9.8 |
+| C8 catalogue SQL | CONFIRMED | — ; Codex executed all 33 snapshot queries against the current schema plus migration 11 with no failure |
+| C9 the tests | REFUTED | **Accepted** — beyond Cursor's helper-shape finding, §9.7 said an expired ticket is a 403 while §9.11 relied on a 401 to re-mint; `principal()` now answers expiry with 401 and everything else with 403, §9.7 rewritten, Codex's test in §9.7 |
+| C10 CI/publish, versions, citations | REFUTED | **Accepted** — §10.2 scanned only the final report image while the repository's own gate scans the pack stage too; the block now builds and scans both and keeps the Hummingbird-blindness check; every remaining code comment cites this file |
+
+### C2 — ReadWriteOnce was not lifecycle-safe for two independently restarting pods
+
+**Finding (Codex).** The design derived `ReadWriteOnce` into a required pod affinity from the report
+pod to the dashboard. Affinity is `IgnoredDuringExecution`: it holds only when the report pod is
+scheduled. Replacing the dashboard alone can put the new dashboard pod on another node while the
+report pod still holds the single-node claim, and the dashboard's own rollout blocks on the attach.
+
+**Re-check.** Kubernetes access-mode and affinity semantics as Codex cited; the reference cluster's
+claim is `ReadWriteMany` on `crc-csi-hostpath-provisioner` (measured), so refusing RWO costs the
+programme nothing.
+
+**Decision.** Accepted: the guard refuses any mode other than `ReadWriteMany` with the reason; the §2
+row, §4.1 and the report Deployment's affinity block follow; Codex's parametrised refusal test is in
+§9.9. Codex's rewritten §2 row and §4.1 paragraph were used as the source but re-worded to the spec's
+voice.
+
+### Rejected from Codex's pass
+
+Every prose-asserting test (the filename test, the four-record phrase test of the first PR's pattern);
+the full §8.7.3 module replacement (only the import line was wrong — Cursor's finding, already
+applied). Codex's request to rewrite "How to read" and the first orchestrator's note in its words was
+rejected in favour of the orchestrator's own text; the substance (no path to the deleted file) is
+applied.
 
 ## Outcome
 
-Cursor refuted two claims, marked three plausible with a named risk, and volunteered one defect; all six
-accepted on the fact and applied in the spec body, every proposed test rejected as either prose-pinning
-or network-dependent, with the R6 chart tests noted for implementation. Re-validated:
-`test_docs_citations.py`, `test_docs_diagrams.py` (the design's two sequence diagrams also needed brace
-placeholders and no bare semicolon for the mermaid lint) and `test_specs_index.py` pass; CI green on the
-branch before the corrections and re-run after them.
+Cursor refuted two claims and marked three plausible; Codex refuted six and marked one plausible;
+every refutation and named risk was re-checked against the spec text and accepted on the fact, and
+applied in the spec body (fourteen corrections listed in its orchestrator's notes, with the tests the
+reviewers supplied placed in §9). Rejected: every prose- or history-pinning test, the network-dependent
+wheel test, the ServeMux simulation, whole-section rewrites where one line was wrong. Re-validated
+after each round: `test_docs_citations.py`, `test_docs_diagrams.py`, `test_specs_index.py`; CI green
+on the branch after the Cursor round and re-run after the Codex round. The spec's operator questions
+(eight, in issue #67) stay open; the review changed none of them.
