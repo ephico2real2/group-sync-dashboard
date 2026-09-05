@@ -8,7 +8,17 @@ lives next to the code and in the design and review records linked here. Changes
 last release sit under `## Unreleased` until the release that carries them replaces that heading —
 which `local-development/prepare-release.py` does when the release is cut.
 
-## Unreleased
+## Chart 0.17.0 — application 0.15.0 — 2026-09-05
+
+- **Off-volume backup CronJob, `backup.offsite` (chart, off by default).** The other half of
+  `config.backup`: a CronJob mounts the data claim read-only, picks the newest `gsd-*.db`,
+  streams it to a second claim (`destination.type: pvc`, no credentials) or stages it for an
+  operator-supplied S3 CLI image (`destination.type: s3`, credentials only from a Secret you
+  create), writes a `.sha256` sidecar, runs `PRAGMA integrity_check` on the copy, prunes the
+  destination to `keep`, and fails loudly otherwise. Under `ReadWriteOnce` the Job is pinned to
+  the dashboard's node; `ReadWriteOncePod` is refused at render. Two alerts on
+  `kube_cronjob_status_last_successful_time` when `monitoring.prometheusRule` is on. Restore and
+  verify: `docs/RUNBOOK_backup_restore.md`. (spec `docs/specs/SPEC_B1_offsite_backup.md`)
 
 - **Every pushed image is signed and attested, and every published chart package is attested.**
   The build script records the digest the registry acknowledged and makes the release aliases as

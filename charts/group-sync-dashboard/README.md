@@ -171,9 +171,53 @@ file that opens without complaint and is missing the newest commits — a backup
 which is the worst kind.
 
 **Half an answer by design.** These land on the *same* volume they protect against, so they
-cover corruption, a bad migration and accidental deletion — not loss of the volume. Ship them
-off it with a CronJob mounting the same PVC read-only; the dashboard deliberately does not
-grow credentials for object storage.
+cover corruption, a bad migration and accidental deletion — not loss of the volume. The other
+half is `backup.offsite` below: a CronJob mounting the same claim read-only. The dashboard
+itself never grows credentials for object storage.
+
+### Off-volume backup — `backup.offsite`
+
+**Off by default** — it needs a destination the chart cannot choose for you. Once on, the copy is
+hashed, opened and integrity-checked before it counts, and the Job fails loudly otherwise.
+Restore and verification: [`docs/RUNBOOK_backup_restore.md`](../../docs/RUNBOOK_backup_restore.md).
+
+| Key | Default | Notes |
+|---|---|---|
+| `backup.offsite.enabled` | `false` | renders a CronJob, a ConfigMap with `scripts/offsite_backup.py`, a grant-less ServiceAccount, and (type `pvc`, no `existingClaim`) a second PVC. **Refused** with `persistence.enabled=false`, `config.backup.enabled=false`, a `config.backup.dir` outside `/data/`, or a `ReadWriteOncePod` data volume |
+| `backup.offsite.schedule` | `"15 */6 * * *"` | cron; match `config.backup.intervalHours`. The app's backups run on a timer from pod start, so there is nothing to align to |
+| `backup.offsite.concurrencyPolicy` | `Forbid` | a slow copy must not overlap the next |
+| `backup.offsite.successfulJobsHistoryLimit` / `failedJobsHistoryLimit` | `3` / `3` | |
+| `backup.offsite.startingDeadlineSeconds` | `900` | a slot missed by more than this is skipped |
+| `backup.offsite.activeDeadlineSeconds` | `1800` | wall clock on the attempt, Pending included |
+| `backup.offsite.backoffLimit` | `1` | the script is idempotent, so a retry is safe |
+| `backup.offsite.resources` | 50m/64Mi – 500m/256Mi | |
+| `backup.offsite.destination.type` | `pvc` | `pvc` \| `s3` |
+| `backup.offsite.destination.pvc.existingClaim` | `""` | empty creates `<fullname>-backup-offsite` with `helm.sh/resource-policy: keep`. **Refused** if it names the data claim |
+| `backup.offsite.destination.pvc.size` | `5Gi` | `keep` × roughly the database size |
+| `backup.offsite.destination.pvc.storageClass` | `""` | use a **different** class from `persistence.storageClass` — a second claim on the same failing storage is not off it |
+| `backup.offsite.destination.pvc.accessMode` | `""` | empty derives `ReadWriteOnce` |
+| `backup.offsite.destination.pvc.keep` | `14` | copies kept at the destination, newest first; `0` keeps everything; sidecars go with their copies |
+| `backup.offsite.destination.s3.existingSecret` | `""` | **required for `s3`.** Keys `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `S3_BUCKET`; optional `S3_ENDPOINT`, `S3_PREFIX`, `AWS_DEFAULT_REGION`, `AWS_CA_BUNDLE`. Give it `PutObject` only and prune with a bucket lifecycle rule — there is deliberately no `keep` for `s3` |
+| `backup.offsite.destination.s3.image.repository` / `.tag` / `.pullPolicy` | `""` / `""` / `IfNotPresent` | **required for `s3`**: an image with an S3 CLI. The default command is for the AWS CLI |
+| `backup.offsite.destination.s3.command` | `[]` | replaces the default upload command; the verified copy and its `.sha256` are under `/stage` |
+| `backup.offsite.destination.s3.stagingSizeLimit` | `2Gi` | the emptyDir between the verify and upload containers |
+
+Under a `ReadWriteOnce` data volume the CronJob pod is pinned to the dashboard's node (required
+`podAffinity`); under `ReadWriteMany` it runs anywhere. The pod does **not** carry the Service's
+selector labels, so it never receives dashboard traffic while it copies. With
+`persistence.existingClaim`, set `persistence.accessMode` to that claim's mode — the chart cannot
+read the live claim and refuses to guess.
+
+**The claim binds at once.** On a `WaitForFirstConsumer` StorageClass a claim stays Pending until a
+pod mounts it, and the CronJob may not run for six hours — so when the chart creates the claim it
+also renders a one-shot **bind Job** (`<fullname>-backup-offsite-bind-<hash>`, the dashboard image,
+mounts the claim and exits) and `helm upgrade --wait` succeeds in seconds. Under Argo CD it is a
+`Sync` hook in the claim's wave (0) with `HookSucceeded` deletion, so the wave turns healthy as soon
+as the claim binds, nothing lingers, and the CronJob follows in wave 1; it re-runs on each full
+sync, a pod for a few seconds. To Helm it is an ordinary resource rather than a hook because
+post-install hooks run only after `--wait` has finished; its name carries a hash of its pod spec so
+an image change makes a new Job instead of patching an immutable one. With
+`destination.pvc.existingClaim` no bind Job renders — the claim is yours.
 
 ### Retention on the history
 
@@ -312,13 +356,14 @@ Grant the wide view through your normal RBAC process, never a chart value:
 | `monitoring.serviceMonitor.enabled` | `false` | needs the Prometheus Operator CRDs (OpenShift ships them; the install fails on the unknown kind where they are absent). Off by default because the reference cluster runs no Prometheus; rendering with it on is verified |
 | `monitoring.serviceMonitor.interval` / `.scrapeTimeout` | `30s` / `10s` | every series is recomputed from SQLite on scrape and each scrape takes a read snapshot. Faster buys no resolution — the data only changes once per poll |
 | `monitoring.serviceMonitor.labels` | `{}` | extra metadata labels. Usually how a cluster's Prometheus selects which ServiceMonitors it owns |
-| `monitoring.prometheusRule.enabled` | `false` | **twelve** alerts — see below |
+| `monitoring.prometheusRule.enabled` | `false` | **twelve** alerts, fourteen with `backup.offsite.enabled` — see below |
 | `monitoring.prometheusRule.labels` | `{}` | as above, for rule selection |
 | `monitoring.prometheusRule.overdueSeconds` | `7200` | a GroupSync has not synced for this long |
 | `monitoring.prometheusRule.notPollingSeconds` | `600` | catches a dead poll loop, which the health endpoints cannot. **Must stay above ~2× `config.pollIntervalSeconds`** or it fires continuously on a healthy deployment |
 | `monitoring.prometheusRule.walMiB` | `256` | MiB. 25% of the default 1Gi PVC. Raise it with `persistence.size` |
 | `monitoring.prometheusRule.captureStalledSeconds` | `1800` | seconds without a successful oauth-log read before login capture counts as stalled. Capture rides the poll thread, so this **must stay well above `config.pollIntervalSeconds`** — same reasoning as `notPollingSeconds` |
 | `monitoring.prometheusRule.backupStaleSeconds` | `43200` | seconds since the newest backup file before the copy counts as stale. Keep at ~2× `config.backupIntervalHours` × 3600 — one missed backup is a blip, two is a broken mechanism |
+| `monitoring.prometheusRule.offsiteBackupStaleSeconds` | `43200` | seconds since the off-volume CronJob last succeeded (`kube_cronjob_status_last_successful_time`, kube-state-metrics). Two slots of `backup.offsite.schedule`. Rendered only with `backup.offsite.enabled` |
 | `monitoring.prometheusRule.for.*` | see below | the `for:` duration on each alert |
 | `monitoring.grafanaDashboard.enabled` | `""` | `""` **follows `monitoring.serviceMonitor.enabled`**; `true`/`false` are explicit; anything else refuses to render. A ConfigMap labelled `grafana_dashboard: "1"` carrying `dashboards/group-sync-dashboard.json` byte-for-byte — no CRD, cannot fail an install |
 | `monitoring.grafanaDashboard.folder` | `""` | written as the `grafana_folder` annotation the sidecar's `folderAnnotation` reads |
@@ -437,7 +482,7 @@ evaluated. That is a statement of intent, not an isolation boundary — OpenShif
 `basic-user` to `system:authenticated`, which already grants `get`/`list` on clusterroles to
 every authenticated identity including this one.
 
-#### The twelve alerts
+#### The twelve alerts (fourteen with `backup.offsite`)
 
 | Alert | Fires on | `for` |
 |---|---|---|
@@ -453,6 +498,8 @@ every authenticated identity including this one.
 | `GroupSyncDashboardVisibilityChecksFailing` | the SubjectAccessReview behind per-user visibility is erroring, so readers are silently served the self view fail-closed | `for.visibilityFailing`, `15m` |
 | `GroupSyncDashboardLoginCaptureStalled` | no successful oauth-log read for `captureStalledSeconds` while capture is enabled — the Logins page silently freezes | `for.captureStalled`, `15m` |
 | `GroupSyncDashboardBackupStale` | the newest file in `backupDir` is older than `backupStaleSeconds` — the only copy of the un-refetchable history has stopped being taken | `for.backupStale`, `30m` |
+| `GroupSyncDashboardOffsiteBackupStale` | *(`backup.offsite.enabled` only)* the CronJob last succeeded more than `offsiteBackupStaleSeconds` ago — nothing newer is off the volume | `for.offsiteBackupStale`, `30m` |
+| `GroupSyncDashboardOffsiteBackupUnobserved` | *(`backup.offsite.enabled` only)* `kube_cronjob_status_last_successful_time` has no series for the CronJob: it has never succeeded, or kube-state-metrics is not scraped here — in which case the stale alert can never fire and this is the only signal | `for.offsiteBackupUnobserved`, `1h` |
 
 The WAL pair and the last three are the ones with no other symptom: the pod stays Ready,
 every other metric looks normal, and the first visible sign is a full volume, a latency

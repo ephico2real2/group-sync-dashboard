@@ -143,7 +143,14 @@ type: application
 # CHART 0.16.0 (2026-09-05), MINOR: appVersion moves to application 0.15.0 (below); Users tab
 # provider allow-list and first login from Identity objects (C2): rbac.identities (a new
 # optional grant, the read switch too) and config.users.providers (a new value).
-version: 0.16.0
+# CHART 0.17.0 (2026-09-05), MINOR: one new module, chart only. `backup.offsite` (OFF) renders a
+# CronJob that mounts the data claim read-only and ships the newest VACUUM INTO copy to a second
+# claim or to object storage through an operator-supplied CLI image, with a stdlib copy script
+# shipped as a ConfigMap (scripts/offsite_backup.py), a dedicated ServiceAccount with no grants,
+# and — under monitoring.prometheusRule — two rules on kube_cronjob_status_last_successful_time.
+# Ten `fail` guards model its interactions with persistence, config.backup and the access mode.
+# Rendered objects for a release that leaves it off are unchanged apart from version labels.
+version: 0.17.0
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,

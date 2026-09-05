@@ -1,0 +1,363 @@
+{{- /*
+Off-volume backup: the other half of config.backup. See values.yaml under `backup:` for the
+decisions; this file models the interactions and renders, when enabled, a ServiceAccount, a
+ConfigMap and a CronJob — plus the destination claim and its one-shot bind Job when the chart
+creates that claim (five objects), none of those two for an existing claim or S3 (three).
+
+The `backup.enabled` guard is OUTSIDE the enabled block on purpose: the mistake it catches is
+setting the wrong key and seeing nothing render.
+*/}}
+{{- if hasKey .Values.backup "enabled" }}
+{{- fail "backup.enabled is not a value. The on-volume backup the dashboard takes is config.backup.enabled (on by default); the off-volume CronJob is backup.offsite.enabled. A key that silently did nothing here would look like a backup that was configured." }}
+{{- end }}
+{{- if .Values.backup.offsite.enabled }}
+{{- $o := .Values.backup.offsite }}
+{{- $mode := include "gsd.accessMode" . }}
+{{- $type := $o.destination.type }}
+{{- $fullname := include "gsd.fullname" . }}
+{{- $dataClaim := .Values.persistence.existingClaim | default (printf "%s-data" $fullname) }}
+{{- $createsClaim := and (eq $type "pvc") (not $o.destination.pvc.existingClaim) }}
+{{- /* The bind Job's name carries a hash of what its pod runs with, because a Job's pod template is
+immutable: an image or resources change must produce a NEW Job (Helm and Argo then create it and
+remove the old one) rather than a patch the API server refuses. */}}
+{{- /* Every field that lands in the pod template is hashed — pullPolicy, pullSecrets, the pod and
+container security contexts, nodeSelector, tolerations — because a change to any of them with a
+stable name is a refused patch, not a no-op; and the chart version, so a change to the template's
+fixed content (the command, the mounts) in a new chart also renames the Job (review of B1, second
+pass, both reviewers). */}}
+{{- $bindHash := printf "%s|%s|%s|%s|%s|%s|%s|%s|%s" .Chart.Version (include "gsd.image" .) .Values.image.pullPolicy (toYaml .Values.image.pullSecrets) (toYaml $o.resources) (toYaml .Values.securityContext) (toYaml .Values.podSecurityContext) (toYaml .Values.nodeSelector) (toYaml .Values.tolerations) | sha256sum | trunc 8 }}
+{{- if not .Values.persistence.enabled }}
+{{- fail "backup.offsite.enabled=true requires persistence.enabled=true. With an emptyDir there is no volume to ship a backup off, and the history it would protect resets on every restart anyway." }}
+{{- end }}
+{{- if not .Values.config.backup.enabled }}
+{{- fail "backup.offsite.enabled=true requires config.backup.enabled=true. The CronJob ships the VACUUM INTO files the dashboard writes under config.backup.dir; with that off there is nothing to ship, and copying the live gsd.db with its WAL would produce a torn file that opens and restores — the worst kind of backup." }}
+{{- end }}
+{{- if or (not (hasPrefix "/data/" .Values.config.backup.dir)) (contains ".." .Values.config.backup.dir) }}
+{{- fail (printf "backup.offsite.enabled=true requires config.backup.dir under /data/ with no '..' (it is %q). The CronJob mounts the data claim at /data, read-only, and reads the backups from there." .Values.config.backup.dir) }}
+{{- end }}
+{{- if and .Values.persistence.existingClaim (not .Values.persistence.accessMode) }}
+{{- fail "backup.offsite.enabled=true with persistence.existingClaim requires persistence.accessMode set to that claim's access mode: helm cannot read the live claim, and an emptied accessMode derives ReadWriteOncePod or ReadWriteMany from replicaCount, which may not be what the claim was created with. ReadWriteOncePod is refused either way." }}
+{{- end }}
+{{- if eq $mode "ReadWriteOncePod" }}
+{{- fail "backup.offsite.enabled=true cannot work with a ReadWriteOncePod data volume: that mode lets exactly ONE pod mount the claim, so the CronJob pod would stay Pending forever. Set persistence.accessMode to ReadWriteOnce (the CronJob is then pinned to the dashboard's node by podAffinity) or ReadWriteMany. accessModes are immutable on an existing claim — docs/RUNBOOK_backup_restore.md covers moving the data to a new one." }}
+{{- end }}
+{{- if not (has $type (list "pvc" "s3")) }}
+{{- fail (printf "backup.offsite.destination.type %q is not a destination. Use pvc (a second claim the chart creates or references, no credentials) or s3 (an operator-supplied Secret and CLI image)." $type) }}
+{{- end }}
+{{- if eq $type "pvc" }}
+{{- if and $o.destination.pvc.existingClaim (eq $o.destination.pvc.existingClaim $dataClaim) }}
+{{- fail (printf "backup.offsite.destination.pvc.existingClaim %q is the data claim itself. A copy on the volume it protects is what config.backup already makes; this CronJob exists to put one somewhere else." $dataClaim) }}
+{{- end }}
+{{- /* A regex, not `int`: Sprig's int of a non-number is 0, which would have let `keep: abc` render and die in the Job's argparse. */}}
+{{- if not (regexMatch "^(0|[1-9][0-9]*)$" (printf "%v" $o.destination.pvc.keep)) }}
+{{- fail (printf "backup.offsite.destination.pvc.keep must be 0 (keep everything) or a positive count, not %v." $o.destination.pvc.keep) }}
+{{- end }}
+{{- end }}
+{{- if eq $type "s3" }}
+{{- if not $o.destination.s3.existingSecret }}
+{{- fail "backup.offsite.destination.type=s3 requires backup.offsite.destination.s3.existingSecret: the chart never embeds object-storage credentials. Create a Secret with AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY and S3_BUCKET (optionally S3_ENDPOINT, S3_PREFIX, AWS_DEFAULT_REGION, AWS_CA_BUNDLE) and name it here." }}
+{{- end }}
+{{- if not $o.destination.s3.image.repository }}
+{{- fail "backup.offsite.destination.type=s3 requires an image with an S3 CLI in backup.offsite.destination.s3.image.repository (and .tag). The dashboard image deliberately ships no aws, mc or rclone (docs/DESIGN_hardened_image.md §10). The default command is written for the AWS CLI; set backup.offsite.destination.s3.command for another tool." }}
+{{- end }}
+{{- end }}
+---
+# No grants at all, and no token: the Job talks to no API server. A dedicated account rather
+# than the dashboard's, so the copy runs with LESS than the dashboard, not the same.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $fullname }}-backup-offsite
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gsd.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backup-offsite
+automountServiceAccountToken: false
+---
+# The copy script, verbatim from scripts/offsite_backup.py. A test holds the two identical.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $fullname }}-backup-offsite
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gsd.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backup-offsite
+data:
+  offsite_backup.py: |
+{{ .Files.Get "scripts/offsite_backup.py" | indent 4 }}
+{{- if and (eq $type "pvc") (not $o.destination.pvc.existingClaim) }}
+---
+# The destination claim. The same survival annotations as the data claim (pvc.yaml): a
+# `helm uninstall` must not take the copies with it.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $fullname }}-backup-offsite
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gsd.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backup-offsite
+  annotations:
+    helm.sh/resource-policy: keep
+    {{- if .Values.argocd.enabled }}
+    # Wave 0 with the bind Job below: Argo applies a wave together and waits for it to be healthy,
+    # and a claim on a WaitForFirstConsumer class is Pending (Progressing) until a pod mounts it —
+    # the bind Job is that pod, so the two must be in ONE wave or the wave never completes.
+    argocd.argoproj.io/sync-wave: "0"
+    {{- end }}
+    {{- if and .Values.argocd.enabled .Values.argocd.preservePVC }}
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false,PruneLast=true
+    {{- end }}
+spec:
+  accessModes: [{{ $o.destination.pvc.accessMode | default "ReadWriteOnce" }}]
+  {{- with $o.destination.pvc.storageClass }}
+  storageClassName: {{ . }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ $o.destination.pvc.size }}
+---
+# THE BIND JOB: a throwaway pod that mounts the new claim once. On a StorageClass with
+# volumeBindingMode WaitForFirstConsumer (the common default) a claim stays Pending until a pod
+# mounts it, and the only consumer here is a CronJob that may not run for six hours — so
+# `helm upgrade --wait` (which waits for claims to bind) timed out, and Argo would show the claim
+# Progressing for a slot. This pod binds it in seconds and exits; it reads nothing but the mount.
+# To HELM it is an ordinary resource, not a hook: post-install hooks run only AFTER --wait has
+# finished, which is a deadlock with the very wait this exists to satisfy; pre-hooks run before
+# the claim exists. To ARGO CD it is a Sync-phase hook in the claim's wave: Argo applies a wave's
+# resources and Sync hooks together (its documented order is phase, wave, kind, name) and moves
+# to the next wave only when everything in it is synced and healthy — a Pending claim is
+# Progressing, a Bound one Healthy — so the hook's pod is what turns the wave green. HookSucceeded
+# removes it afterwards, so no completed Job lingers in the app; BeforeHookCreation clears a failed
+# one before the next sync's; it re-runs on every full sync, a pod for a few seconds. No
+# ttlSecondsAfterFinished: under Helm a Job that deletes itself would be re-created by the next
+# upgrade for nothing.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $fullname }}-backup-offsite-bind-{{ $bindHash }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gsd.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backup-offsite
+  {{- if .Values.argocd.enabled }}
+  annotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/sync-wave: "0"
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+  {{- end }}
+spec:
+  backoffLimit: 0
+  # A claim that can never bind (no provisioner, a class that is not there) fails here, visibly,
+  # rather than leaving a Pending pod forever.
+  activeDeadlineSeconds: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "gsd.name" . }}-backup-offsite
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: backup-offsite
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ $fullname }}-backup-offsite
+      automountServiceAccountToken: false
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext: {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: bind
+          image: {{ include "gsd.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - python3.14
+            - -c
+            - |
+              import os
+              st = os.statvfs("/offsite")
+              print(f"bound: /offsite mounted, {st.f_bavail * st.f_frsize} bytes free")
+          securityContext: {{- toYaml .Values.securityContext | nindent 12 }}
+          resources: {{- toYaml $o.resources | nindent 12 }}
+          volumeMounts:
+            - name: offsite
+              mountPath: /offsite
+      volumes:
+        - name: offsite
+          persistentVolumeClaim:
+            claimName: {{ $fullname }}-backup-offsite
+{{- end }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ $fullname }}-backup-offsite
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gsd.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backup-offsite
+  {{- if .Values.argocd.enabled }}
+  annotations:
+    # After the claim and its bind Job (wave 0): the schedule needs a bound claim.
+    argocd.argoproj.io/sync-wave: "1"
+  {{- end }}
+spec:
+  schedule: {{ $o.schedule | quote }}
+  concurrencyPolicy: {{ $o.concurrencyPolicy }}
+  successfulJobsHistoryLimit: {{ $o.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ $o.failedJobsHistoryLimit }}
+  startingDeadlineSeconds: {{ $o.startingDeadlineSeconds }}
+  jobTemplate:
+    spec:
+      backoffLimit: {{ $o.backoffLimit }}
+      activeDeadlineSeconds: {{ $o.activeDeadlineSeconds }}
+      template:
+        metadata:
+          labels:
+            # NOT gsd.selectorLabels. The Service selects on those, and a Job pod with no
+            # readiness probe is Ready the moment it runs — it would receive dashboard
+            # traffic for the length of the copy. A test holds these apart from the selector.
+            app.kubernetes.io/name: {{ include "gsd.name" . }}-backup-offsite
+            app.kubernetes.io/instance: {{ .Release.Name }}
+            app.kubernetes.io/component: backup-offsite
+        spec:
+          restartPolicy: Never
+          serviceAccountName: {{ $fullname }}-backup-offsite
+          automountServiceAccountToken: false
+          {{- with .Values.image.pullSecrets }}
+          imagePullSecrets: {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext: {{- toYaml .Values.podSecurityContext | nindent 12 }}
+          {{- with .Values.nodeSelector }}
+          nodeSelector: {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.tolerations }}
+          tolerations: {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- if ne $mode "ReadWriteMany" }}
+          # ReadWriteOnce binds the data claim to one NODE. Pods on that node may share it, so
+          # the copy runs beside the dashboard; on any other node it could never mount.
+          affinity:
+            podAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                - topologyKey: kubernetes.io/hostname
+                  labelSelector:
+                    matchLabels: {{- include "gsd.selectorLabels" . | nindent 22 }}
+          {{- end }}
+          {{- if eq $type "s3" }}
+          initContainers:
+            # Select, copy, hash and integrity-check into the staging emptyDir. The upload
+            # container never touches the data claim and never decides what to send.
+            - name: stage
+              image: {{ include "gsd.image" . }}
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              command:
+                - python3.14
+                - /scripts/offsite_backup.py
+                - --source
+                - {{ .Values.config.backup.dir | quote }}
+                - --dest
+                - /stage
+                - --keep
+                - "0"
+              securityContext: {{- toYaml .Values.securityContext | nindent 16 }}
+              resources: {{- toYaml $o.resources | nindent 16 }}
+              volumeMounts:
+                - name: data
+                  mountPath: /data
+                  readOnly: true
+                - name: script
+                  mountPath: /scripts
+                  readOnly: true
+                - name: stage
+                  mountPath: /stage
+          {{- end }}
+          containers:
+            {{- if eq $type "pvc" }}
+            - name: ship
+              image: {{ include "gsd.image" . }}
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              command:
+                - python3.14
+                - /scripts/offsite_backup.py
+                - --source
+                - {{ .Values.config.backup.dir | quote }}
+                - --dest
+                - /offsite
+                - --keep
+                - {{ $o.destination.pvc.keep | quote }}
+              securityContext: {{- toYaml .Values.securityContext | nindent 16 }}
+              resources: {{- toYaml $o.resources | nindent 16 }}
+              volumeMounts:
+                - name: data
+                  mountPath: /data
+                  readOnly: true
+                - name: script
+                  mountPath: /scripts
+                  readOnly: true
+                - name: offsite
+                  mountPath: /offsite
+            {{- else }}
+            - name: upload
+              image: {{ printf "%s:%s" $o.destination.s3.image.repository ($o.destination.s3.image.tag | default "latest") }}
+              imagePullPolicy: {{ $o.destination.s3.image.pullPolicy }}
+              # Credentials come ONLY from the operator's Secret, as environment. The chart
+              # renders none.
+              envFrom:
+                - secretRef:
+                    name: {{ $o.destination.s3.existingSecret }}
+              {{- if $o.destination.s3.command }}
+              command: {{- toYaml $o.destination.s3.command | nindent 16 }}
+              {{- else }}
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -eu
+                  : "${S3_BUCKET:?S3_BUCKET is missing from the Secret}"
+                  ls -l /stage
+                  DEST="s3://${S3_BUCKET}/${S3_PREFIX:-}"
+                  if [ -n "${S3_ENDPOINT:-}" ]; then set -- --endpoint-url "$S3_ENDPOINT"; else set --; fi
+                  aws s3 cp /stage/ "$DEST" --recursive --no-progress "$@"
+                  echo "uploaded to $DEST"
+              {{- end }}
+              securityContext: {{- toYaml .Values.securityContext | nindent 16 }}
+              resources: {{- toYaml $o.resources | nindent 16 }}
+              volumeMounts:
+                - name: stage
+                  mountPath: /stage
+                  readOnly: true
+                # The AWS CLI writes a cache under $HOME; readOnlyRootFilesystem is on.
+                - name: tmp
+                  mountPath: /tmp
+              env:
+                - name: HOME
+                  value: /tmp
+            {{- end }}
+          volumes:
+            - name: data
+              persistentVolumeClaim:
+                claimName: {{ $dataClaim }}
+                readOnly: true
+            - name: script
+              configMap:
+                name: {{ $fullname }}-backup-offsite
+                defaultMode: 0444
+            {{- if eq $type "pvc" }}
+            - name: offsite
+              persistentVolumeClaim:
+                claimName: {{ $o.destination.pvc.existingClaim | default (printf "%s-backup-offsite" $fullname) }}
+            {{- else }}
+            - name: stage
+              emptyDir:
+                sizeLimit: {{ $o.destination.s3.stagingSizeLimit }}
+            - name: tmp
+              emptyDir: {}
+            {{- end }}
+{{- end }}
