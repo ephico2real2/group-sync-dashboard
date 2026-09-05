@@ -143,6 +143,7 @@ container starting, which is a louder failure than the one above but still not a
 | `config.alerts.groupCountCliff.minMembers` / `.dropRatio` / `.windowHours` | `10` / `0.5` / `24` | the floor is what keeps the default quiet — below ten, half is one or two people. Ratio outside `(0, 1]`, floor below 1 or non-positive window refuse the render |
 | `config.alerts.groupCountCliff.silence` | `[]` | exact names or fnmatch globs. Silenced cliffs are still reported (`group_count_cliff_silenced`), dimmed on the Overview. The other silence is the Group annotation `groupsync-dashboard.io/silence-group-count-cliff=true` or `=until=YYYY-MM-DD`, read on every poll, never written |
 | `logLevel` | `INFO` | `DEBUG` \| `INFO` \| `WARNING` \| `ERROR` \| `CRITICAL`, and nothing else — see [Dashboard log verbosity](#dashboard-log-verbosity--loglevel) for what each promises and which look-alike values are refused |
+| `ui.export.enabled` | `true` | CSV/JSON download of the table on screen, built in the browser from what the server served this reader; the file says when the page was partial. Off removes the control |
 | `nameOverride` / `fullnameOverride` | `""` / `""` | standard Helm naming overrides. Changing either after install renames every object, including the PVC — which orphans the accumulated history |
 
 Three values move together and two of them fail loudly if you move only one:

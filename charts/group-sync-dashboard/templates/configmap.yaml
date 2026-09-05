@@ -53,6 +53,9 @@ data:
     userActivityVisibility: {{ .Values.config.userActivity.visibility | quote }}
     userActivityFlushSeconds: {{ .Values.config.userActivity.flushSeconds }}
     userActivityRetentionDays: {{ .Values.config.userActivity.retentionDays }}
+    # The UI modules (values.yaml `ui`). Read at boot from /api/version; a module off here
+    # renders no control at all rather than a disabled one.
+    uiExportEnabled: {{ .Values.ui.export.enabled }}
     # Retention on the irreplaceable history; 0 keeps forever. See values.yaml config.retention.
     membershipEventsRetentionDays: {{ .Values.config.retention.membershipEventsDays }}
     syncEventsRetentionDays: {{ .Values.config.retention.syncEventsDays }}

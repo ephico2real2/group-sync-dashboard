@@ -306,6 +306,13 @@ class Settings:
     # an absolute one without guessing.
     session_cookie_refresh_seconds: int = 0
 
+    # ── OPTIONAL MODULES ───────────────────────────────────────────────────────────────────────────
+    # Each module has its own switch; the default is chosen per module and the values comment
+    # says why. CSV/JSON export (docs/DESIGN_export.md) is ON: it runs in the browser over rows
+    # the server already served this reader, makes no request and needs no grant. Off removes
+    # the control from the filter bar and nothing else changes.
+    ui_export_enabled: bool = True
+
     user_activity_enabled: bool = True
     # "self" | "all". Who may read /api/dashboard/activity. Defaults to self, because the
     # response is identifiable personnel data — who was present, when, and how much — and
@@ -816,6 +823,7 @@ def load_settings(path: str | Path) -> Settings:
         user_activity_enabled=_bool_setting(
             raw, "GSD_USER_ACTIVITY_ENABLED", "userActivityEnabled", True
         ),
+        ui_export_enabled=_bool_setting(raw, "GSD_UI_EXPORT_ENABLED", "uiExportEnabled", True),
         view_restrictions_enabled=_bool_setting(
             raw, "GSD_ENABLE_VIEW_RESTRICTIONS", "visibilityEnabled", True
         ),

@@ -1294,3 +1294,20 @@ class TestGroupCountCliffValues:
         ok, out = render(**{key: value})
         assert not ok
         assert "config.alerts.groupCountCliff" in out
+
+
+class TestUiExportModule:
+    """The export switch threads from values to the ConfigMap key the app reads, in both states.
+
+    Lives here because ci.yml's `chart` job runs this file by name.
+    """
+
+    def test_on_by_default(self):
+        ok, out = render()
+        assert ok, out
+        assert _config_data(out)["uiExportEnabled"] is True
+
+    def test_off_reaches_the_app_as_false(self):
+        ok, out = render(ui__export__enabled="false")
+        assert ok, out
+        assert _config_data(out)["uiExportEnabled"] is False
