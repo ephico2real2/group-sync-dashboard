@@ -107,9 +107,57 @@ applied). Codex's request to rewrite "How to read" and the first orchestrator's 
 rejected in favour of the orchestrator's own text; the substance (no path to the deleted file) is
 applied.
 
+## Second pass — on the corrected head
+
+A ten-claim brief: seven claims that each first-pass correction closed its hole and opened no other,
+three the first pass never attacked (the NetworkPolicy, the `immutable` open against the pruner, the
+catalogue against the operator's monitoring and PDB decisions). Cursor traced; Codex is recorded
+below when its pass lands.
+
+| Claim | Cursor | Decision |
+|---|---|---|
+| C1 the guard helper emits nothing, refusal polarity right | PLAUSIBLE (no render) | — |
+| C2 the ticket module's bounds | PLAUSIBLE (no exec) | — |
+| C3 one 401 reason, `reportFetch` retries once | CONFIRMED | — ; the compared string is byte-identical to the raised message |
+| C4 `is_leader` exists, order preserved | CONFIRMED | — ; `leader.py` `@property is_leader` |
+| C5 nothing still derives from `ReadWriteOnce` | REFUTED | **Accepted** — see below |
+| C6 §10.2 matches the dashboard's gate; `AS pack` exists | CONFIRMED | — |
+| C7 citations resolve | REFUTED | **Accepted** — §7.4 cited `report.py#build` (no such file) and the notes cited the deleted filename in backticks; both reworded; Cursor's prose test rejected |
+| C8 the NetworkPolicy | PLAUSIBLE | **Accepted as a live check** — whether the plugin applies policy to kubelet probes is unmeasured; §12 gains the readiness check with the remedy if it fails |
+| C9 `immutable=1` against the pruner | CONFIRMED | — ; the writer never rewrites a named copy; one open per run |
+| C10 the catalogue against the operator's decisions | CONFIRMED | — |
+
+### C5 — the RWO withdrawal was finished in one place and left open in three
+
+**Finding (Cursor).** Correction 12 refused RWO in the guard and §4.1 but §8.17.1's values comment
+still said the data-claim affinity is "DERIVED", §8.17.8 still branched the affinity stanza on
+`eq $mode "ReadWriteOnce"`, and §9.9 still told the implementer RWO "adds the podAffinity" while the
+Codex test in the same section refuses RWO.
+
+**Re-check.** All three present at the cited lines.
+
+**Decision.** Accepted: comment rewritten, the `$mode` assignment and branch removed (the stanza is
+now `with .Values.reporting.affinity`), §9.9's derivation dropped and RWO added to its refusals.
+Cursor's test on the spec's own text rejected (prose).
+
+### Not asked, second pass
+
+- **N1, §9.9's default report count.** The spec said ten names without `login-activity`; with chart
+  0.14.0's `loginCapture.enabled: true` the follow yields eleven. Accepted; the sentence states both
+  cases, Cursor's env-var test noted for R6.
+- **N2, the refresh fingerprint.** The spec added `reportCatalog` and `reportRuns` payloads to
+  `refresh()` but not to its fingerprint, so an idle cluster's auto-refresh would never re-render the
+  Reports tab. Re-check: the spec had no fingerprint edit. Accepted; §8.15.8 gains the Old/New block
+  and a Playwright test description.
+- **N3, the clock-skew 401's wording.** A re-minted ticket that is still expired paints the generic
+  API-error card. Not a loop (C3). Recorded in §13 as a risk; the dedicated message is a product
+  change left to the operator, as Cursor itself suggested.
+
 ## Outcome
 
-Cursor refuted two claims and marked three plausible; Codex refuted six and marked one plausible;
+First pass: Cursor refuted two claims and marked three plausible; Codex refuted six and marked one
+plausible. Second pass (Cursor): two refuted, one live check added, three volunteered defects
+accepted. In total
 every refutation and named risk was re-checked against the spec text and accepted on the fact, and
 applied in the spec body (fourteen corrections listed in its orchestrator's notes, with the tests the
 reviewers supplied placed in §9). Rejected: every prose- or history-pinning test, the network-dependent

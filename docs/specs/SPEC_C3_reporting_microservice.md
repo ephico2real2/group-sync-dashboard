@@ -16,7 +16,7 @@ Everything under "Design" is the design agent's text and complete code. It super
 
 ## Orchestrator's notes
 
-- Written from the design agent's output of 2026-09-05 (Fable 5.1, 5,393 lines, 90 code blocks), which the operator commissioned to replace the "HTML core + loopback PDF sidecar" body: a report service in its own pods, reached over the internal Service name, with safe read access to the dashboard's database, its usage pulled by the dashboard, and the PDF libraries and report catalogue researched. The file replaces `SPEC_C3_namespace_report.md` (renamed, index row updated); section 15 lists what it drops and what it keeps by name. The design's text was recovered from the agent's transcript after a reviewer task deleted the session scratchpad; the replayed file matches the agent's reported line and block counts exactly.
+- Written from the design agent's output of 2026-09-05 (Fable 5.1, 5,393 lines, 90 code blocks), which the operator commissioned to replace the "HTML core + loopback PDF sidecar" body: a report service in its own pods, reached over the internal Service name, with safe read access to the dashboard's database, its usage pulled by the dashboard, and the PDF libraries and report catalogue researched. The file replaces the predecessor C3 specification (renamed, index row updated); section 15 lists what it drops and what it keeps by name. The design's text was recovered from the agent's transcript after a reviewer task deleted the session scratchpad; the replayed file matches the agent's reported line and block counts exactly.
 - Header aligned with the index row: "app 0.18.0, chart 0.20.0, report image at the same appVersion" — the design's own recommendation (its operator question 1) that the report image shares the application's version and tag scheme replaces the earlier "reporting image 0.1.0"; the operator has not yet confirmed it. The Issue and Status cells carry only what `tests/test_specs_index.py` compares; the re-title and re-body of #67 are done in the issue itself, per section 15.
 - **Deviation to apply at implementation — a PodDisruptionBudget for the report Deployment.** Operator rule (2026-09-05, chart 0.14.0 review): "PDB when enabled only goes on the actual deployments of the group sync dashboard and on the new reporting service deployments only." The design has no budget for the report Deployment; add one, selecting `gsd.reportSelectorLabels` and nothing else (the schedule CronJob pods already carry neither selector set, which is what keeps a Job-owned pod out of the budget — the failure measured on the dashboard's own budget in the 0.14.0 review). Values, under `reporting:` after `networkPolicy:`:
 
@@ -75,6 +75,7 @@ Everything under "Design" is the design agent's text and complete code. It super
 - Schema migration 11 and the version pair are per the index ladder; the body's "migration 11" already agrees.
 - Corrections applied from the spec's adversarial review (PR #76, `docs/REVIEW_C3_spec.md`), in the body itself so the file stays the single source: (1) §8.17.2 `gsd.reportingGuards` included two value-returning helpers and would have printed `pdf/a-2b` and the catalogue list into both Deployment manifests — their output is now assigned away; (2) §8.17.6 the report Service carries `gsd.reportSelectorLabels` as well as `gsd.reportLabels`, because the ServiceMonitor selects Services by metadata labels and `gsd.reportLabels` names the dashboard; (3) §8.17.13's `monitoring.prometheusRule.for.reportPull/reportSnapshot` are written as a values block; (4) §8.7.3 `namespace_access.py` imports `KeyValues` and `Note`, which it constructs; (5) §5.1 states ServeMux's slashless-path redirect, the `-pass-user-headers` default and that `-upstream-ca` is unverified on the shipped tag; (6) §6.1 requires the Hummingbird `dnf list` re-measure at implementation; (7) §9.9/§9.11 name the test helpers that exist (`tests/test_chart_pdb.py` `_render`/`_one`/`_matches`; `test_chart_strategy.render` returns a tuple; no conftest); (8) §11's doc texts cite this file, not the deleted one.
 - Corrections applied from Codex's pass on the same PR (`docs/REVIEW_C3_spec.md`): (9) §8.3 the ticket verifier bounds `iat` (30 s skew) and the lifetime (3600 s) — the original accepted a ticket minted by a clock far ahead for as long as that clock said; (10) §8.15.5 `_after_poll` re-checks leadership before the snapshot and before the usage pull, and §4.1 calls the check admission control, not a fence, which is what `poller.py` says of leadership; (11) §8 `principal()` answers an expired ticket with 401 so the browser's single re-mint (§9.11) works — §9.7 had said 403, contradicting §9.11; (12) the data claim must be `ReadWriteMany`: the RWO pod-affinity derivation is withdrawn (§2 row, §4.1, the guard, the report Deployment) because affinity is ignored after scheduling and a dashboard-only restart could strand the single-node claim with the report pod; the reference cluster's claim is RWX; (13) §10.2 builds and scans the report image's pack stage as the dashboard image's is, and keeps the Hummingbird-blindness check; (14) every code comment and doc text in the body cites this file's name; the predecessor is referred to without a path. The tests Codex supplied for (9)–(13) are in §9.
+- Second review pass on the corrected head (Cursor; Codex recorded in `docs/REVIEW_C3_spec.md`): (15) the RWO withdrawal is finished — §8.17.1's "DERIVED" comment, §8.17.8's `$mode` branch on the affinity stanza and §9.9's "adds the podAffinity" derivation are gone, and §9.9's refusal list names `ReadWriteOnce`; (16) §9.9's default enabled-report count is eleven, because `loginCapture.enabled` defaults on since chart 0.14.0 and `login-activity` follows it; (17) §7.4 no longer cites `report.py#build` (a file that does not exist) and this note no longer cites the deleted filename; (18) §8.15.8 adds `data.reportCatalog` and `data.reportRuns` to `refresh()`'s fingerprint, without which auto-refresh never re-renders the Reports tab; (19) §12 gains the live check that the NetworkPolicy leaves the kubelet's probes through, and §13 records the clock-skew 401 as a risk with the message left to the operator.
 
 ---
 
@@ -342,7 +343,7 @@ Every report shares the **provenance and coverage block** (§7.4). Inputs are ru
 
 ### 7.4 The provenance and coverage block (every report, page one)
 
-Kept and extended from the parked design §6 and the current C3 `report.py#build`: handling marking (`reporting.marking`, default `Handling: internal — access review evidence`; operator question 2); cluster id and API URL; **generated at** (UTC) and **generated by** (the ticket's viewer, "proxy-verified", or `schedule:<name>`); run id; the report service's version and commit (`gsd.__version__`, `GSD_GIT_COMMIT`, `dirty` when the stamp ends `-dirty`) — the same appVersion as the dashboard by construction (§3.3) — and the snapshot's schema level (`PRAGMA user_version`); **data as of** the snapshot stamp and its age at generation; last poll outcome and message (poll-failure banner when not `ok`); freshness split snapshot/accumulated with `history retained since` for the history tables (B2's `history_retained_since` semantics); users source (`ok`/`forbidden`/`pending`); login capture state; namespaces coverage (`ok`/`off`/`forbidden`/`pending`, attests absence only on `ok`); the direct-bindings caveat verbatim; `includes membership rosters: yes/no`; truncation banners; the **sha256 of the canonical data**; PDF variant and font (PDF only); `Page X of Y`.
+Kept and extended from the parked design §6 and the predecessor C3 body's namespace-report builder (deleted; this file is the source): handling marking (`reporting.marking`, default `Handling: internal — access review evidence`; operator question 2); cluster id and API URL; **generated at** (UTC) and **generated by** (the ticket's viewer, "proxy-verified", or `schedule:<name>`); run id; the report service's version and commit (`gsd.__version__`, `GSD_GIT_COMMIT`, `dirty` when the stamp ends `-dirty`) — the same appVersion as the dashboard by construction (§3.3) — and the snapshot's schema level (`PRAGMA user_version`); **data as of** the snapshot stamp and its age at generation; last poll outcome and message (poll-failure banner when not `ok`); freshness split snapshot/accumulated with `history retained since` for the history tables (B2's `history_retained_since` semantics); users source (`ok`/`forbidden`/`pending`); login capture state; namespaces coverage (`ok`/`off`/`forbidden`/`pending`, attests absence only on `ok`); the direct-bindings caveat verbatim; `includes membership rosters: yes/no`; truncation banners; the **sha256 of the canonical data**; PDF variant and font (PDF only); `Page X of Y`.
 
 ### 7.5 Never in a report
 
@@ -3850,6 +3851,25 @@ async function downloadArtifact(runId, format) {
 ```
 (`downloadBlob(text, filename, type)` is C1's; it accepts a Blob as its first argument because it wraps `new Blob([text], {type})`, and a Blob inside a Blob is its bytes. The `render()` focus-restore-by-id edit from the current C3 body is kept, so a Generate click that repaints does not drop the keyboard user.)
 
+**The refresh fingerprint** (added from the spec's second review pass, Cursor): `refresh()` skips `render()` when the fingerprint of the fetched payloads is unchanged, so the two new payloads must be part of it or a run finished in another tab, or a schedule's new row, stays invisible until a click. — Old:
+```javascript
+    const fingerprint = JSON.stringify([
+      data.clusters, data.alerts, data.alertsScope, data.groupsyncs, data.groups,
+      data.groupsMeta, data.group, data.user, data.users, data.events, data.logins, data.access,
+      data.usage, data.findings, data.operatorConfigs, data.userBindings, data.whoami, data.myAccess,
+    ]);
+```
+New:
+```javascript
+    const fingerprint = JSON.stringify([
+      data.clusters, data.alerts, data.alertsScope, data.groupsyncs, data.groups,
+      data.groupsMeta, data.group, data.user, data.users, data.events, data.logins, data.access,
+      data.usage, data.findings, data.operatorConfigs, data.userBindings, data.whoami, data.myAccess,
+      data.reportCatalog, data.reportRuns,
+    ]);
+```
+Test, in `tests/test_ui.py` beside the Reports-tab tests: a run row inserted into the fixture's report service between two auto-refresh ticks appears in the table without a click.
+
 #### 8.15.9 `local-development/gsd/static/app.css` — tokens only
 
 ```css
@@ -4325,8 +4345,8 @@ reporting:
   resources:
     requests: {cpu: 50m, memory: 128Mi}
     limits: {cpu: 500m, memory: 768Mi}
-  # The report pod's own affinity/tolerations/nodeSelector; the data-claim affinity for a
-  # ReadWriteOnce volume is DERIVED and added to whatever is given here.
+  # The report pod's own affinity/tolerations/nodeSelector. Nothing is derived from the data
+  # claim's access mode: reporting requires ReadWriteMany (gsd.reportingGuards refuses the rest).
   nodeSelector: {}
   tolerations: []
   affinity: {}
@@ -4623,7 +4643,6 @@ spec:
 ```yaml
 {{- include "gsd.reportingGuards" . }}
 {{- if eq (include "gsd.reportingEnabled" .) "true" }}
-{{- $mode := include "gsd.accessMode" . }}
 {{- $dataClaim := .Values.persistence.existingClaim | default (printf "%s-data" (include "gsd.fullname" .)) }}
 apiVersion: apps/v1
 kind: Deployment
@@ -4657,9 +4676,9 @@ spec:
       {{- with .Values.reporting.tolerations }}
       tolerations: {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- if or .Values.reporting.affinity (eq $mode "ReadWriteOnce") }}
+      {{- with .Values.reporting.affinity }}
       affinity:
-        {{- with .Values.reporting.affinity }}{{- toYaml . | nindent 8 }}{{- end }}
+        {{- toYaml . | nindent 8 }}
       {{- end }}
       containers:
         - name: report
@@ -5281,9 +5300,9 @@ def test_reporting_tail_rechecks_leadership_after_the_poll():
 ### 9.9 Chart tests — NEW `tests/test_chart_reporting.py`
 
 Reuse `_render`, `_one` and `_matches` from `tests/test_chart_pdb.py` (`_render(*sets: str) -> list[dict]`: helm `--set` strings in, parsed documents out) for every document assertion. `test_chart_strategy.render(**values)` returns `(ok, text)` and takes `__` for dots; use it only where a test needs the raw text — ConfigMap bodies go through `test_chart_strategy._config_data(out)`. `_docs` there is an instance method on its test classes, not a module helper, and there is no `tests/conftest.py`: fixtures live in the test files.
-- Default render: the report Deployment, Service (with `gsd.reportSelectorLabels` on the Service labels), NetworkPolicy, Secret, ServiceAccount, PVC (no `helm.sh/resource-policy`), the proxy args contain `-upstream=https://t-group-sync-dashboard-report.<ns>.svc:8443/report/` and `-upstream-ca=/etc/gsd/service-ca/service-ca.crt`; the ConfigMap has `reportingUrl`, `reportingSnapshotIntervalSeconds: 300`; the report container's `GSD_REPORT_ENABLED_REPORTS` lists ten names (no `login-activity`); the data volume in the report pod is `readOnly: true` at both levels; the report pod labels are not `gsd.selectorLabels`.
-- Refusals, each asserting the message names the key: `oauthProxy.enabled=false`; `persistence.enabled=false`; `replicaCount=2` (with `leaderElection.enabled=false` so the earlier guard does not fire first); `rbac.bindings=false`; `persistence.accessMode=ReadWriteOncePod`; `reporting.snapshot.intervalSeconds=30`; `reporting.ticket.ttlSeconds=10`; `reporting.pdf.variant=pdf/x-1a`; `reporting.reports.loginActivity.enabled=true` with `loginCapture.enabled=false`; `reporting.reports.groups.enabled=maybe`; `reporting.schedules[0].report=nope`.
-- Derivations: `loginCapture.enabled=true` adds `login-activity`; `persistence.accessMode=ReadWriteOnce` adds the podAffinity; `reporting.tls.enabled=false` drops `-upstream-ca`, the `--ssl-*` args, the TLS secret volume and gives `http://` in `reportingUrl` and `reportingCaFile: ""`; `monitoring.serviceMonitor.enabled=true` adds the monitoring ingress rule and the second ServiceMonitor; `monitoring.prometheusRule.enabled=true` adds the two rules, and with `reporting.enabled=false` none of the reporting objects, args, keys, rules or mounts render.
+- Default render: the report Deployment, Service (with `gsd.reportSelectorLabels` on the Service labels), NetworkPolicy, Secret, ServiceAccount, PVC (no `helm.sh/resource-policy`), the proxy args contain `-upstream=https://t-group-sync-dashboard-report.<ns>.svc:8443/report/` and `-upstream-ca=/etc/gsd/service-ca/service-ca.crt`; the ConfigMap has `reportingUrl`, `reportingSnapshotIntervalSeconds: 300`; the report container's `GSD_REPORT_ENABLED_REPORTS` lists eleven names including `login-activity` (it follows `loginCapture.enabled`, default true since chart 0.14.0); with `loginCapture.enabled=false`, ten names and no `login-activity`; the data volume in the report pod is `readOnly: true` at both levels; the report pod labels are not `gsd.selectorLabels`.
+- Refusals, each asserting the message names the key: `oauthProxy.enabled=false`; `persistence.enabled=false`; `replicaCount=2` (with `leaderElection.enabled=false` so the earlier guard does not fire first); `rbac.bindings=false`; `persistence.accessMode=ReadWriteOnce`; `persistence.accessMode=ReadWriteOncePod`; `reporting.snapshot.intervalSeconds=30`; `reporting.ticket.ttlSeconds=10`; `reporting.pdf.variant=pdf/x-1a`; `reporting.reports.loginActivity.enabled=true` with `loginCapture.enabled=false`; `reporting.reports.groups.enabled=maybe`; `reporting.schedules[0].report=nope`.
+- Derivations: `loginCapture.enabled=true` adds `login-activity`; `reporting.tls.enabled=false` drops `-upstream-ca`, the `--ssl-*` args, the TLS secret volume and gives `http://` in `reportingUrl` and `reportingCaFile: ""`; `monitoring.serviceMonitor.enabled=true` adds the monitoring ingress rule and the second ServiceMonitor; `monitoring.prometheusRule.enabled=true` adds the two rules, and with `reporting.enabled=false` none of the reporting objects, args, keys, rules or mounts render.
 - A schedule entry renders one CronJob whose command carries `--report`, `--cluster`, `--schedule`, `--wait`, the params and formats, and whose pod labels carry `component: report-schedule`.
 - `rbac.namespaces=true` adds the core-group rule; false omits it; the ConfigMap key follows it.
 - `tests/test_chart_versions.py`: a new assertion that `reporting.image.tag` is empty or a build of appVersion (the same rule as `image.tag`).
@@ -5557,6 +5576,16 @@ oc exec -n $NS deploy/group-sync-dashboard -c dashboard -- curl -s -H 'X-Forward
 curl -sk https://<route>/report/api/reports                      # -> 302 to login (the proxy fronts it); with a session cookie and no ticket -> 401
 ```
 
+```sh
+# 7. the NetworkPolicy does not block the kubelet's probes (added from the second review pass, Cursor):
+#    with reporting on and the policy applied, the report pod must reach Ready and stay there.
+oc get pods -n group-sync-dashboard -l app.kubernetes.io/component=report \
+  -o jsonpath='{range .items[*]}{.metadata.name} ready={.status.containerStatuses[0].ready} restarts={.status.containerStatuses[0].restartCount}{"\n"}{end}'
+# expected: one pod, ready=true, restarts=0 after five minutes. If it never becomes Ready, the
+# cluster's network plugin applies policy to host-originated probe traffic; add an ingress rule for
+# the node network before shipping, and record which plugin needed it.
+```
+
 ## 13. Risks and closures
 
 | Risk | Closure |
@@ -5572,6 +5601,7 @@ curl -sk https://<route>/report/api/reports                      # -> 302 to log
 | PDF/A that a validator rejects | fpdf2 enforces while writing (measured markers in 9.6); veraPDF validation is in §12; operator question 3 if a records system's validator disagrees. |
 | The token Secret regenerates on upgrade | `lookup` reuses the existing value (8.17.3); a regeneration only invalidates outstanding tickets and one pull until both pods restart. |
 | A default upgrade refuses to render | Deliberate (the guards), each message naming the value and the remedy; the chart README's upgrade note lists the five configurations that need `reporting.enabled=false`. |
+| A re-minted ticket is still expired (the report pod's clock is behind the dashboard's by more than the TTL) | `reportFetch` re-mints once and then throws; the page shows the generic "Dashboard API error: 401 …" card and the report pod logs `ticket has expired`. Not a loop. A dedicated "check time synchronisation" message is a product change left to the operator (second review pass, Cursor N3). |
 | `helm template` under ArgoCD (no cluster) | `lookup` returns empty → a fresh token is rendered each sync; ArgoCD applies it and both pods pick it up on their next restart. Recorded in the chart README's ArgoCD section with the workaround (pre-create the Secret, `ignoreDifferences` on `data.token`) — the same class of note the `oauth-cookie` Secret already carries. |
 
 ## 14. Operator questions
