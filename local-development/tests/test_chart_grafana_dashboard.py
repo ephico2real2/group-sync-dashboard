@@ -139,6 +139,25 @@ class TestTheFile:
         assert "grafana:\n  sidecar:\n    dashboards:\n      searchNamespace: ALL" in section
         assert "allowCrossNamespaceImport: true" in section and "configMapRef:" in section
 
+    def test_every_panel_promql_expression_parses_with_promtool(self):
+        """Grafana macros expanded to representative values, then Prometheus's own parser. Locally
+        the test skips without promtool; CI installs it and must run it (review, PR #74)."""
+        import os
+        promtool = shutil.which("promtool")
+        if promtool is None:
+            if os.environ.get("CI"):
+                pytest.fail("CI must install promtool; PromQL syntax validation must not skip there")
+            pytest.skip("promtool not installed")
+        board = json.loads(DASHBOARD.read_text())
+        exprs = [t["expr"] for p in _walk_panels(board["panels"]) for t in p.get("targets", []) if t.get("expr")]
+        rules = {"groups": [{"name": "grafana-dashboard-promql", "rules": [
+            {"record": f"gsd_dashboard_expr_{i:03d}",
+             "expr": e.replace("$__rate_interval", "5m").replace("$cluster", ".*")}
+            for i, e in enumerate(exprs, start=1)]}]}
+        done = subprocess.run([promtool, "check", "rules", "/dev/stdin"], input=yaml.safe_dump(rules),
+                              capture_output=True, text=True, timeout=120)
+        assert done.returncode == 0, done.stdout + done.stderr
+
     def test_a_cluster_variable_scopes_the_per_cluster_panels(self):
         board = json.loads(DASHBOARD.read_text())
         names = {v["name"] for v in board["templating"]["list"]}
@@ -184,6 +203,13 @@ class TestTheConfigMap:
         cm = _dashboard_configmaps(docs)[0]
         assert cm["metadata"]["annotations"]["grafana_folder"] == "Access"
         assert cm["metadata"]["labels"]["team"] == "platform"
+
+    def test_a_missing_dashboard_map_follows_the_servicemonitor(self):
+        """`--set monitoring.grafanaDashboard=null` died on `.labels` of nil (review, PR #74)."""
+        assert not _dashboard_configmaps(_render("monitoring.grafanaDashboard=null"))
+        docs = _render("monitoring.serviceMonitor.enabled=true", "monitoring.grafanaDashboard=null")
+        cms = _dashboard_configmaps(docs)
+        assert len(cms) == 1 and cms[0]["metadata"]["labels"]["grafana_dashboard"] == "1"
 
     def test_a_colliding_sidecar_label_refuses_the_render(self):
         """Extra labels are for a different key; overwriting grafana_dashboard would drop the

@@ -459,14 +459,17 @@ there when the PVC dies.
 #### The Grafana dashboard
 
 `monitoring.grafanaDashboard` ships `dashboards/group-sync-dashboard.json` as a ConfigMap with the
-`grafana_dashboard: "1"` label that Grafana's dashboard sidecar watches. The sidecar only watches its
-own namespace unless configured otherwise, and a folder annotation or an extra label cannot widen that
-scope — they matter only once the sidecar already sees the ConfigMap. Do one of:
+`grafana_dashboard: "1"` label that Grafana's dashboard sidecar watches. Which namespaces the sidecar
+watches is its `searchNamespace` setting: current kube-prometheus-stack defaults it to `ALL`, older
+releases and the Grafana chart on its own default to the sidecar's own namespace — check your values.
+A folder annotation or an extra label cannot widen that scope; they matter only once the sidecar already
+sees the ConfigMap. If it watches only its own namespace, do one of:
 
 1. install this chart in the same namespace as Grafana;
 2. copy the ConfigMap into Grafana's namespace;
-3. point kube-prometheus-stack's sidecar at every namespace (the Grafana subchart's key, nested under
-   `grafana:` in kube-prometheus-stack):
+3. point the sidecar at every namespace (the Grafana subchart's key, nested under `grafana:` in
+   kube-prometheus-stack). The `folder` value is read only where `sidecar.dashboards.folderAnnotation`
+   is set to `grafana_folder` (and `provider.foldersFromFilesStructure: true`); neither is a default:
 
 ```yaml
 grafana:
