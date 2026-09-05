@@ -216,6 +216,45 @@ class TestPollerPrune:
         assert not [c for c in recording.calls if c.startswith("prune")]
         assert _count(recording, "membership_event") == 5
 
+    def test_membership_prune_does_not_cut_inside_the_cliff_window(self, recording, tmp_path):
+        """A 1-day membership window with a 48h cliff: a drop 30h ago must still be visible to
+        group_count_changes after the prune, or GroupSyncGroupCountCliff goes silent (review, PR #73)."""
+        def _at(hours_ago: float) -> str:
+            return (datetime.now(UTC) - timedelta(hours=hours_ago)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        with recording._write() as conn:
+            conn.executemany(
+                """INSERT INTO membership_event(cluster_id, group_name, user_name, change,
+                       observed_at, group_synced_at) VALUES(?,?,?,'removed',?,NULL)""",
+                [("crc", "g", f"u{i}", _at(30 + i / 3600)) for i in range(12)]
+                + [("crc", "g", f"old{i}", _at(80 + i / 3600)) for i in range(5)],
+            )
+        poller = Poller(recording, _settings(tmp_path, membership_events_retention_days=1,
+                                              sync_events_retention_days=0,
+                                              group_count_cliff_enabled=True,
+                                              group_count_cliff_window_hours=48.0))
+        poller._after_poll(CLUSTER)
+        inside = recording.group_count_changes("crc", _at(48))
+        assert inside.get("g", {}).get("removed") == 12, f"the cliff window went blind: {inside!r}"
+        assert _count(recording, "membership_event") == 12, "rows older than both edges must still go"
+
+    def test_a_user_whose_only_rows_were_pruned_is_unknown(self, tmp_path):
+        """Preservation, labelled: no tombstone (it would be a username oracle), so the 404 is what
+        the store can still say, and the page never receives `retention` — hence the README sentence."""
+        db = str(tmp_path / "gsd.db")
+        s = Store(db)
+        s.upsert_cluster("crc", "https://api.crc.testing:6443", True)
+        with s._write() as conn:
+            conn.execute("""INSERT INTO membership_event(cluster_id, group_name, user_name, change,
+                                observed_at, group_synced_at) VALUES(?,?,?,'removed',?,NULL)""",
+                         ("crc", "g", "ghost", _iso(800)))
+        s.prune_membership_events("crc", _iso(730))
+        s.close()
+        settings = Settings(clusters=[CLUSTER], db_path=db, membership_events_retention_days=365,
+                            sync_events_retention_days=0, view_restrictions_enabled=False)
+        with TestClient(build_app(settings, run_poller=False)) as c:
+            r = c.get("/api/clusters/crc/users/ghost")
+            assert r.status_code == 404 and "retention" not in r.json()
+
     def test_zero_keeps_everything_and_calls_nothing(self, recording, tmp_path):
         _seed(recording, "membership_event", 5, days_ago=5000)
         _seed(recording, "sync_event", 5, days_ago=5000)
@@ -312,6 +351,19 @@ class TestWire:
 
     def test_an_unknown_cluster_is_still_a_404(self, client):
         assert client.get("/api/clusters/nope/membership-changes").status_code == 404
+
+    def test_empty_history_copy_does_not_say_yet_when_a_window_is_on(self):
+        """'No changes yet' beside a retention cut is the false absence retention exists to stop."""
+        html = INDEX.read_text()
+        hist = html[html.index("<h2>History</h2>"):html.index("<h2>History</h2>") + 1200]
+        assert "window_days" in hist and "retained window" in hist
+        grp = html[html.index("const changeBody = changes.length"):]
+        grp = grp[:grp.index("return `<section")]
+        assert "window_days" in grp and "retained window" in grp
+
+    def test_operator_docs_say_what_a_membership_window_costs(self):
+        section = (CHART / "README.md").read_text().split("### Retention on the history")[1].split("\n### ")[0]
+        assert "404" in section and "earlier of the two edges" in section
 
     def test_the_page_renders_the_cut(self):
         html = INDEX.read_text()

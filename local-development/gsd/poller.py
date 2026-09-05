@@ -578,6 +578,13 @@ class Poller:
         cannot hold the single writer; a full batch means more remains and the next cycle
         continues. Counted into gsd_retention_rows_deleted_total{table} from the same number the
         log line reports. Never raises: a prune failure is not a poll failure.
+
+        membership_event is also the group-count cliff's history (Store.group_count_changes). A
+        window shorter than config.alerts.groupCountCliff.windowHours would delete the rows the
+        alert reconstructs `before` from, and GroupSyncGroupCountCliff would read "no drop" on a
+        real one — the false absence this dashboard exists to avoid. The membership cutoff is
+        therefore the EARLIER of the two edges (derive, not refuse; found in review, PR #73).
+        sync_event is not the cliff's table and is unchanged.
         """
         windows = (
             ("membership_event", self.settings.membership_events_retention_days,
@@ -599,6 +606,7 @@ class Poller:
         if self.elector is not None and not self.elector.is_leader:
             return
         try:
+            now = datetime.now(UTC)
             for table, days, prune in windows:
                 if days <= 0:
                     continue
@@ -609,7 +617,11 @@ class Poller:
                     log.warning("%s: retention stopped before pruning %s; leadership was lost",
                                 cluster.name, table)
                     return
-                before = (datetime.now(UTC) - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+                cutoff = now - timedelta(days=days)
+                if table == "membership_event" and getattr(self.settings, "group_count_cliff_enabled", False):
+                    cliff_edge = now - timedelta(hours=self.settings.group_count_cliff_window_hours)
+                    cutoff = min(cutoff, cliff_edge)
+                before = cutoff.strftime("%Y-%m-%dT%H:%M:%SZ")
                 removed = prune(cluster.name, before, max_rows=HISTORY_PRUNE_BATCH)
                 if removed:
                     if self.signals is not None:

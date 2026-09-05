@@ -2115,8 +2115,12 @@ function groupDetail() {
           <td class="mono muted">${esc(c.group_synced_at ? fmtTime(c.group_synced_at) : "—")}</td>
         </tr>`).join("")}</tbody>
       </table></div>`
-    : `<div class="empty-note">No membership changes seen yet. This timeline is accumulated
-        by polling, so it starts when this dashboard does — it is not a history of the group.</div>`;
+    : (d.retention && d.retention.window_days > 0
+        ? `<div class="empty-note">No membership changes in the retained window. Rows older than
+            ${Number(d.retention.window_days)} days were removed by retention — a cut, not "nothing
+            happened".</div>`
+        : `<div class="empty-note">No membership changes seen yet. This timeline is accumulated
+        by polling, so it starts when this dashboard does — it is not a history of the group.</div>`);
 
   return `<section class="card">
     <button class="back" id="back-groups">${backLabel()}</button>
@@ -2253,7 +2257,11 @@ function userDetail() {
     <h2>History</h2>
     ${retentionNote(d.retention)}
     ${(d.changes || []).length === 0
-      ? `<div class="empty-note">No membership changes observed for this user yet.</div>`
+      ? (d.retention && d.retention.window_days > 0
+          ? `<div class="empty-note">No membership changes for this user in the retained window. Rows
+              older than ${Number(d.retention.window_days)} days were removed by retention — a cut, not
+              proof that nothing was ever observed.</div>`
+          : `<div class="empty-note">No membership changes observed for this user yet.</div>`)
       : `<div class="scroll-x"><table>
           <thead><tr><th>Change</th><th>Group</th><th>Observed</th></tr></thead>
           <tbody>${d.changes.map((c) => `<tr class="rowlink" data-group="${esc(c.group_name)}">

@@ -40,6 +40,8 @@ request, with the reason, under "Orchestrator's notes".
 
 - Found in review (PR #73, Codex gpt-5.6-sol xhigh): (1) the body's risk row "A restore of an old copy is immediately pruned … one cycle's warning" is wrong on its closure — the successful post-restore backup emits NO warning and the prune runs in that same cycle (measured: 6001 restored rows → 1001 live after one cycle, the backup copy intact); the closure that exists is the operator setting both windows to 0 BEFORE the restore, now written where a restoring operator reads (chart README, CHANGELOG) and held by a test. (2) Leadership was read once before both tables' deletes; it is re-read before each destructive call, with a test that loses leadership between the gate and the write. Codex's C3 (the R5 guard blind to the helper's store read) matched Cursor's and was already applied.
 
+- Found in the second review pass (PR #73, Cursor Grok 4.6, on the fixed head): (1) a `membershipEventsDays` window shorter than the cliff's `windowHours` would delete the rows `Store.group_count_changes` reconstructs `before` from, and GroupSyncGroupCountCliff would read "no drop" on a real one; modelled as DERIVE, like the backup hold — the membership cutoff is the earlier of the two edges, tested with a 1-day window and a 48-hour cliff. (2) A person whose only rows were pruned is a 404 the page cannot explain; kept (a tombstone would be a username oracle), documented in the chart README, and the group and user pages' empty states no longer say "yet" beside a retention cut.
+
 ## Batch preamble (verbatim from the design)
 
 # DESIGN — B1 off-volume backup CronJob + restore runbook, B2 retention for `membership_event` / `sync_event`

@@ -185,6 +185,12 @@ life — with `config.backup.enabled=false` nothing is ever deleted — 5,000 ro
 API and the page state the cut (`retention.retained_since`), so a timeline that begins at the edge
 is read as cut there, not started there.
 
+A `membershipEventsDays` window shorter than `config.alerts.groupCountCliff.windowHours` does not get to
+delete the rows the cliff still reads: the membership cutoff is the earlier of the two edges. A membership
+window also makes a person who has left every group and never logged in unresolvable — `/users/{name}`
+answers `404 unknown user` once their rows are gone, so `retention` cannot explain that absence. The default
+is forever for both reasons.
+
 **Before you restore an old `gsd-*.db` onto the live claim, set both windows to `0`.** The first
 leader cycle after the new process's first successful backup releases the prune, and the default
 window then deletes `sync_event` rows older than 730 days, 5,000 per cycle. The copy just taken under
