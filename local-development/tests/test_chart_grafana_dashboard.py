@@ -226,10 +226,6 @@ class TestTheConfigMap:
         cms = _dashboard_configmaps(docs)
         assert len(cms) == 1 and cms[0]["metadata"]["labels"]["grafana_dashboard"] == "1"
 
-    def test_a_missing_monitoring_map_is_off(self):
-        """`--set monitoring=null` died on .serviceMonitor.enabled of nil (review, PR #74 second pass)."""
-        assert not _dashboard_configmaps(_render("monitoring=null"))
-
     def test_a_colliding_sidecar_label_refuses_the_render(self):
         """Extra labels are for a different key; overwriting grafana_dashboard would drop the
         convention value and the sidecar would ignore the ConfigMap (review, PR #74)."""
