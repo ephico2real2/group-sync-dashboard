@@ -1,4 +1,4 @@
-"""The exact first login: Identity objects read behind rbac.identities (feature C2).
+"""First login from Identity objects, read behind rbac.identities (feature C2).
 
 `ClusterClient.fetch_identities` returns the earliest Identity creationTimestamp per User, follows the
 API server's continue tokens like every list, skips an Identity naming no User, and answers a 403
@@ -76,9 +76,12 @@ class TestFetchIdentities:
         assert len(identity_calls) == 2, "the continue token must be followed"
         assert identity_calls[1][1].get("continue") == "tok"
 
-    def test_mixed_rfc3339_widths_keep_the_earlier_instant(self):
-        """Review (Cursor): a later instant written with microseconds must not beat an earlier
-        second-precision stamp, which a string minimum would let it do ('.' < 'Z')."""
+    def test_timestamps_are_compared_as_instants_not_strings(self):
+        """Review of C2: Cursor proposed the instant comparison for a mixed-width reason Codex
+        refuted (apimachinery's Time.MarshalJSON writes fixed-width RFC3339 seconds); the comparison
+        stayed as the operation meant, and this holds it: a later instant at another width must not
+        beat an earlier one, which a string minimum would let it do ('.' < 'Z'), and an unparsable
+        stamp is skipped rather than compared."""
         def handle(request):
             if request.url.path.startswith(IDENTITY_API):
                 return httpx.Response(200, json={"kind": "IdentityList", "items": [
@@ -125,7 +128,7 @@ class TestThePollerReadsIdentitiesOnlyWhenGranted:
         finally:
             store.close()
 
-    def test_on_and_allowed_gives_exact_times(self, tmp_path, monkeypatch):
+    def test_on_and_allowed_gives_the_identity_times(self, tmp_path, monkeypatch):
         store = Store(str(tmp_path / "t.db"))
         try:
             _poll(store, monkeypatch, 200, identities_read=True)
@@ -148,9 +151,9 @@ class TestThePollerReadsIdentitiesOnlyWhenGranted:
         finally:
             store.close()
 
-    def test_a_transient_failure_leaves_the_status_and_the_exact_times(self, tmp_path, monkeypatch):
+    def test_a_transient_failure_leaves_the_status_and_the_identity_times(self, tmp_path, monkeypatch):
         """Review (Cursor): a 503 is not a verdict — the status stays `ok` — and the rows must keep
-        their last-known exact times, or the tab's note ("exact") and the chips ("approx.") contradict."""
+        their last-known Identity times rather than all falling back to the User time."""
         store = Store(str(tmp_path / "t.db"))
         try:
             _poll(store, monkeypatch, 200, identities_read=True)
@@ -160,5 +163,30 @@ class TestThePollerReadsIdentitiesOnlyWhenGranted:
             rows = {r["user_name"]: r for r in store.users("c1")}
             assert rows["alice"]["first_login_source"] == "identity"
             assert rows["alice"]["first_login_at"] == "2026-08-10T08:00:00Z"
+        finally:
+            store.close()
+
+    def test_a_user_who_appears_during_a_transient_failure_carries_the_user_time(self, tmp_path, monkeypatch):
+        """Review (Codex): a 503 while a new User appeared. Known rows keep their Identity times, the
+        new row carries the User time with `first_login_source: user`, and the status stays `ok` with
+        the OBSERVED_AT OF THE LAST SUCCESSFUL READ — the mixed page is honest because the note
+        describes the source per row and the chips say which. Codex's alternative, an `error` state
+        that downgrades every row on one 503, was rejected in docs/REVIEW_C2.md."""
+        store = Store(str(tmp_path / "t.db"))
+        try:
+            _poll(store, monkeypatch, 200, identities_read=True)
+            first = store.identities_source("c1")
+            assert first["state"] == "ok"
+            monkeypatch.setitem(USERS, "items", USERS["items"] + [
+                {"metadata": {"name": "new-user", "creationTimestamp": "2026-08-30T00:00:00Z"},
+                 "identities": ["ldap-local:new"]}])
+            _poll(store, monkeypatch, 503, identities_read=True)
+            assert store.identities_source("c1") == first, "the status row is the last successful read's"
+            rows = {r["user_name"]: r for r in store.users("c1")}
+            assert set(rows) == {"alice", "kubeadmin", "new-user"}
+            assert rows["alice"]["first_login_source"] == "identity"
+            assert rows["alice"]["first_login_at"] == "2026-08-10T08:00:00Z"
+            assert rows["new-user"]["first_login_source"] == "user"
+            assert rows["new-user"]["first_login_at"] == "2026-08-30T00:00:00Z"
         finally:
             store.close()

@@ -1254,17 +1254,23 @@ const USERS_RENDER = 1000;
    reader sees the chip on their own row). Names the grant like the users-source banner does. */
 function identitiesNote(d) {
   const s = d.identities_source;
-  if (s === "ok") return `<div class="filterbar-note" id="users-identities-note">First-login times are
-    <strong>exact</strong> (Identity objects read${d.identities_source_observed_at
-      ? ` <span class="mono">${esc(fmtTime(d.identities_source_observed_at))}</span>` : ""}).</div>`;
+  // The `ok` sentence describes the SOURCE of each row's time and never asserts that every row has
+  // the Identity one: a User whose Identity read is missing, or who appeared while a refresh failed,
+  // carries the User time and an "approx." chip on the same page (review of C2, Codex).
+  if (s === "ok") return `<div class="filterbar-note" id="users-identities-note">First-login times are the
+    <strong>Identity object's creation time</strong> where an Identity names the User (read${d.identities_source_observed_at
+      ? ` <span class="mono">${esc(fmtTime(d.identities_source_observed_at))}</span>` : ""}) and the User's
+    creation time (approx.) otherwise. For a provider with <code>mappingMethod: lookup</code> the Identity is
+    created by an administrator before the first login, and the time shown is that create.</div>`;
   if (s === "forbidden") return `<div class="truncation-note" id="users-identities-note">The dashboard is
-    <strong>not permitted to list identities.user.openshift.io</strong>, so first-login times fall back to
-    the User's creation time (approximate). Grant <code>rbac.identities</code> in the chart for exact ones.</div>`;
+    <strong>not permitted to list identities.user.openshift.io</strong>, so first-login times are the User's
+    creation time (approximate). Grant <code>rbac.identities</code> in the chart to read the Identity objects'
+    creation times.</div>`;
   if (s === "pending") return `<div class="filterbar-note" id="users-identities-note">Waiting for the first
-    poll to read identities; first-login times are approximate until then.</div>`;
+    poll to read identities; first-login times are the User's creation time (approximate) until then.</div>`;
   if (s === "off") return `<div class="filterbar-note" id="users-identities-note">First-login times are
-    <strong>approximate</strong> (the User's creation time). Exact times need the Identity read
-    (<code>rbac.identities</code>).</div>`;
+    <strong>approximate</strong> (the User's creation time). The Identity objects' creation times need the
+    Identity read (<code>rbac.identities</code>).</div>`;
   return "";
 }
 
@@ -1322,12 +1328,15 @@ function usersPage() {
   const loggedInNoGroup = loggedIn.filter((u) => (u.group_count || 0) === 0).length;
   const chipBtn = (key, label, title) => `<button type="button" class="chip-btn" data-ufilter="${esc(key)}"
       aria-pressed="${chip === key}"${title ? ` title="${esc(title)}"` : ""}>${esc(label)}</button>`;
-  // `exact` marks an Identity creation time; `approx.` the User's, which precedes the first login
-  // for an account an administrator created ahead of time. Neither word is colour.
+  // `identity` marks an Identity creation time; `approx.` the User's, which precedes the first login
+  // for an account an administrator created ahead of time. Neither word is colour, and neither says
+  // "exact": a lookup-mapped provider's Identity is created by an administrator before the first
+  // login, so the Identity time is the first login for claim/add mapping and the mapping's creation
+  // for lookup (review of C2, Codex).
   const sourceChip = (u) => u.first_login_source === "identity"
-    ? ` <span class="chip" title="Exact: the Identity object's creation time, written by OpenShift at the first successful login through this provider.">exact</span>`
+    ? ` <span class="chip" title="The Identity object's creation time: OpenShift creates it at the first login through this provider (mappingMethod claim or add); for a lookup-mapped provider an administrator creates it beforehand, and this is that create.">identity</span>`
     : u.first_login_source === "user"
-      ? ` <span class="chip" title="Approximate: the User object's creation time. Exact for a provider-created user; earlier than the first login for an account created by hand and linked later.">approx.</span>`
+      ? ` <span class="chip" title="Approximate: the User object's creation time — the first login for a provider-created User, earlier than it for an account created by hand and linked later.">approx.</span>`
       : "";
   const status = (u) => u.logged_in === false
     ? `<span class="muted">manual account · never logged in</span>`

@@ -1329,7 +1329,7 @@ class TestTheIdentitiesGrantIsOffReadOnlyAndCoupled:
         assert ok, out
         assert not [r for r in self._rules(out) if "identities" in (r.get("resources") or [])]
         assert _config_data(out)["identitiesReadEnabled"] is False
-        assert _config_data(out)["usersProviders"] == ""
+        assert _config_data(out)["usersProviders"] == []
 
     def test_on_renders_exactly_get_and_list(self):
         ok, out = render(rbac__identities="true")
@@ -1343,7 +1343,12 @@ class TestTheIdentitiesGrantIsOffReadOnlyAndCoupled:
         ok, out = render(rbac__identities="true", rbac__users="false")
         assert not ok and "rbac.identities=true requires rbac.users=true" in out
 
-    def test_the_allow_list_reaches_the_configmap_as_a_comma_list(self):
-        ok, out = render(**{"config__users__providers[0]": "a", "config__users__providers[1]": "b"})
+    def test_the_allow_list_reaches_the_configmap_as_a_list_without_losing_legal_names(self):
+        """Review (Codex): OpenShift accepts a provider named `a,b` or `a b`; a comma join would
+        split the first. The key is a YAML flow sequence the app reads as a list."""
+        # `--set` splits on a bare comma, so the comma is escaped for helm's parser; the chart
+        # receives the literal `a,b`.
+        ok, out = render(**{"config__users__providers[0]": r"a\,b", "config__users__providers[1]": "a b",
+                            "config__users__providers[2]": "ldap-local"})
         assert ok, out
-        assert _config_data(out)["usersProviders"] == "a,b"
+        assert _config_data(out)["usersProviders"] == ["a,b", "a b", "ldap-local"]

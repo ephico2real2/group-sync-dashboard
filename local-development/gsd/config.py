@@ -657,22 +657,33 @@ def _bool_setting(raw: dict, env_name: str, yaml_key: str, default: bool) -> boo
 # measured 2026-09-05): "a valid path segment: name cannot equal '.' or '..' or contain '/' or '%' or
 # ':'". It prefixes every `identities[]` entry as `<provider>:<id>` and this dashboard splits on the
 # colon. Whitespace is refused as well — a comma-joined list cannot carry it unambiguously.
-_PROVIDER_NAME = re.compile(r"[^:/%\s]+")
+# OpenShift's rule for oauth.spec.identityProviders[].name, and nothing stricter: a path segment
+# (not '.' or '..', no '/' or '%') that also excludes ':'. Spaces, commas, upper case and underscores
+# are legal names (review of C2: a whitespace refusal was rejected as not the API's rule).
+_PROVIDER_NAME = re.compile(r"[^:/%]+")
 
 
 def _providers_setting(raw: dict) -> tuple[str, ...]:
-    """usersProviders: a comma-joined list (the loginCaptureHtpasswdProviders shape). STRICT — a
+    """usersProviders: a LIST of names in the settings file (the chart renders
+    config.users.providers as a YAML flow sequence, so every legal name travels intact), or a
+    comma-separated string (GSD_USERS_PROVIDERS, or a hand-written file) — in that form a name
+    containing a comma cannot be expressed, which is why the file form is a list. STRICT — a
     malformed name is a startup error, because a name that can never match would silently empty
     the Users tab and read as "nobody has logged in"."""
-    source = os.environ.get("GSD_USERS_PROVIDERS")
+    source: object = os.environ.get("GSD_USERS_PROVIDERS")
     if source is None:
         source = raw.get("usersProviders", "") or ""
-    names = tuple(p.strip() for p in str(source).split(",") if p.strip())
+    if isinstance(source, list):
+        if not all(isinstance(p, str) for p in source):
+            raise ConfigError("usersProviders: every entry must be a string (an identity provider's name)")
+        names = tuple(p.strip() for p in source if p.strip())
+    else:
+        names = tuple(p.strip() for p in str(source).split(",") if p.strip())
     for name in names:
         if name in (".", "..") or not _PROVIDER_NAME.fullmatch(name):
             raise ConfigError(
                 f"usersProviders: {name!r} is not an identity-provider name (a path segment: not '.' "
-                f"or '..', no ':', '/', '%' or whitespace) — a name that can never match would list nobody"
+                f"or '..', no ':', '/' or '%') — a name that can never match would list nobody"
             )
     return tuple(dict.fromkeys(names))
 

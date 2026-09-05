@@ -295,7 +295,7 @@ membership is an attribute of a row, not the reason it exists (`docs/DESIGN_user
 ```
 
 Per row: `logged_in` is false only for a `User` created by hand (`oc create user`) with no identity,
-which is listed but is not a login; `first_login_at` is the exact Identity creation time when
+which is listed but is not a login; `first_login_at` is the Identity object's creation time when
 `first_login_source` is `identity` (the chart's `rbac.identities` read), otherwise the User object's
 creation time (`user`), and `null` for a manual account; the envelope's `identities_source` says why
 (`ok` | `forbidden` | `off` | `pending`) and `providers_filter` names the identity providers

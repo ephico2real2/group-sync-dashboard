@@ -3591,14 +3591,19 @@ def providers_server(tmp_path_factory):
     thread.join(timeout=5)
 
 
-class TestExactFirstLogin:
-    """C2: the Users tab says whether a first-login time is exact (Identity) or approximate (User)."""
+class TestIdentityFirstLogin:
+    """C2: the Users tab says whether a first-login time is the Identity's creation (chip `identity`)
+    or the User's (chip `approx.`), and never calls either "exact" — a lookup-mapped provider's
+    Identity predates the first login (review of C2, Codex)."""
 
-    def test_the_status_says_whether_the_first_login_is_exact(self, dash):
+    def test_the_status_says_which_time_the_row_carries(self, dash):
         dash.locator("button[data-nav='users']").click()
         dash.wait_for_selector("tr[data-user='alice']")
-        assert "exact" in dash.locator("tr[data-user='alice']").inner_text()
+        alice = dash.locator("tr[data-user='alice']")
+        assert "identity" in alice.inner_text()
         assert "approx." in dash.locator("tr[data-user='kubeadmin']").inner_text()
+        assert "exact" not in alice.inner_text().lower()
+        assert "lookup" in alice.locator("span.chip").last.get_attribute("title"), "the chip's title states the caveat"
 
     def test_the_identities_note_names_the_state(self, dash):
         dash.locator("button[data-nav='users']").click()
@@ -3609,7 +3614,9 @@ class TestExactFirstLogin:
         assert "not permitted to list identities" in note.inner_text()
         assert "rbac.identities" in note.inner_text()
         dash.evaluate("() => { data.users = Object.assign({}, data.users, { identities_source: 'ok' }); render(); }")
-        assert "exact" in dash.locator("#users-identities-note").inner_text()
+        ok_note = dash.locator("#users-identities-note").inner_text()
+        assert "Identity object's creation time" in ok_note and "otherwise" in ok_note, "a per-row description, not 'all exact'"
+        assert "lookup" in ok_note and "exact" not in ok_note.lower()
         dash.evaluate("() => refresh()")
         dash.wait_for_function("() => data.users && data.users.identities_source === 'off'")
 

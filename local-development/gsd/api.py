@@ -1056,7 +1056,7 @@ def build_app(
         `providers` (identity-provider names), `last_login_at` (the newest successful captured
         login, null when none — read `login_capture` before trusting the null), `full_name`.
         `first_login_source` per row says whether `first_login_at` is the Identity's creation time
-        (exact) or the User's (approximate); `identities_source` says why.
+        (`identity`) or the User's (`user`, approximate); `identities_source` says why.
 
         `total` is every User object under the scope; `logged_in_total` is those with an identity —
         the people who have actually logged in — and is the headline number. They differ by the
@@ -1092,7 +1092,7 @@ def build_app(
             # Applied to `users`, `total` and `logged_in_total`, NOT to never_logged_in_members: a
             # member who logged in through an excluded provider has logged in.
             "providers_filter": list(providers),
-            # Whether first_login_at is exact: ok (Identity objects read), forbidden (rbac.identities
+            # What first_login_at can be: ok (Identity objects read), forbidden (rbac.identities
             # not granted — rows fall back to the User time), off (the read is not switched on),
             # pending (switched on, no poll yet).
             "identities_source": (istatus or {}).get("state")

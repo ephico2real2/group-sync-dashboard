@@ -157,7 +157,7 @@ CREATE TABLE IF NOT EXISTS ocp_user (
     created_at          TEXT,
     providers           TEXT NOT NULL DEFAULT '[]',
     has_identity        INTEGER NOT NULL DEFAULT 0,
-    identity_created_at TEXT,           -- migration 9: the earliest Identity creationTimestamp, exact first login; NULL when not read
+    identity_created_at TEXT,           -- migration 9: the earliest Identity creationTimestamp naming the User; NULL when not read
     observed_at         TEXT NOT NULL,
     PRIMARY KEY(cluster_id, user_name)
 );
@@ -573,7 +573,7 @@ _MIGRATIONS: list[tuple[int, str, list[str]]] = [
     ),
     (
         9,
-        "ocp_user: identity_created_at (exact first login); ocp_identity_status",
+        "ocp_user: identity_created_at (the Identity creation time); ocp_identity_status",
         [
             # Tolerated on replay by _migrate's one allowed error, "duplicate column name".
             "ALTER TABLE ocp_user ADD COLUMN identity_created_at TEXT",
@@ -1477,11 +1477,13 @@ class Store:
         row = dict(row)
         row["providers"] = json.loads(row.pop("providers") or "[]")
         row["logged_in"] = bool(row.pop("has_identity"))
-        exact = row.pop("identity_created_at", None)
-        # The exact Identity time when it was read, the User's creation time otherwise — and the
-        # source says which, so the page never presents an approximation as an exact fact.
-        row["first_login_at"] = (exact or row["created_at"]) if row["logged_in"] else None
-        row["first_login_source"] = ("identity" if exact else "user") if row["logged_in"] else None
+        identity_time = row.pop("identity_created_at", None)
+        # The Identity's creation time when it was read, the User's creation time otherwise — and the
+        # source says which, so the page can say what each time is (an Identity time is the first
+        # login for claim/add mapping and the mapping's creation for lookup; the User time precedes
+        # the first login for an administrator-created account).
+        row["first_login_at"] = (identity_time or row["created_at"]) if row["logged_in"] else None
+        row["first_login_source"] = ("identity" if identity_time else "user") if row["logged_in"] else None
         return row
 
     def count_users(

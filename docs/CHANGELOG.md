@@ -10,12 +10,14 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Application 0.15.0 — chart 0.16.0 — 2026-09-05
 
-- **Users tab: provider allow-list and exact first login.** `config.users.providers` (empty = all)
+- **Users tab: provider allow-list and first login from Identity objects.** `config.users.providers` (empty = all)
   lists only people who logged in through the named identity providers, applied when the tab is read;
   the API carries `providers_filter` and the page says "Showing providers: …"; the never-logged-in line
   is not narrowed. `rbac.identities` (default false — a grant, so off under the 0.14.0 rule) lets the
-  poller read Identity objects, and each row's `first_login_at` becomes the exact Identity creation
-  time with `first_login_source: identity`; without the grant it stays the User's creation time,
+  poller read Identity objects, and each row's `first_login_at` becomes the Identity's creation
+  time with `first_login_source: identity` (the first login for `mappingMethod: claim`/`add`; an
+  administrator's create for `lookup`, which the page states rather than calling the time "exact");
+  without the grant it stays the User's creation time,
   labelled `user` on the wire and "approx." on the page; `identities_source` (`ok`, `forbidden`,
   `off`, `pending`) says why. Schema migration 9 (`ocp_user.identity_created_at`,
   `ocp_identity_status`). The export's users projection gains `first_login_source`. (spec

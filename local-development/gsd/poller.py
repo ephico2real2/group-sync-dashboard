@@ -85,9 +85,11 @@ def ambiguous_attribution(groupsyncs: list[GroupSyncView]) -> list[str]:
     return sorted(name for name, namespaces in seen.items() if len(namespaces) > 1)
 
 
-def _last_known_exact(store: StorageBackend, cluster_name: str) -> dict[str, str]:
-    """The exact first-login times the store already holds, so a cycle that could not re-read the
-    Identity objects does not silently downgrade every row to the User time."""
+def _last_known_identity_times(store: StorageBackend, cluster_name: str) -> dict[str, str]:
+    """The Identity creation times the store already holds, so a cycle that could not re-read the
+    Identity objects does not silently downgrade every row to the User time. A User who appeared
+    during such a cycle has none and carries the User time until the next successful read; the
+    tab's note describes the source per row rather than asserting one for all (review of C2)."""
     return {row["user_name"]: row["first_login_at"]
             for row in store.users(cluster_name, limit=100000)
             if row.get("first_login_source") == "identity" and row.get("first_login_at")}
@@ -169,40 +171,41 @@ def poll_once(
                          "Grant user.openshift.io/users [get,list] (chart: rbac.users) to enable.",
                          cluster.name)
             else:
-                # The exact first logins, read only when granted (rbac.identities). Three outcomes,
-                # each recorded so the tab can say what its timestamps are: a dict (exact, 'ok'), None
-                # (refused, 'forbidden' — rows fall back to the User time), or a raised transient —
-                # then the LAST-KNOWN exact times are kept and the status is left as it was, because
-                # rewriting the rows to the User time while the status still said 'ok' made the tab's
-                # note say "exact" over rows whose chips said "approx." (review of C2).
-                exact: dict[str, str] | None = None
+                # The Identity creation times, read only when granted (rbac.identities). Three
+                # outcomes, each recorded so the tab can say what its timestamps are: a dict ('ok'),
+                # None (refused, 'forbidden' — rows fall back to the User time), or a raised transient
+                # — then the LAST-KNOWN Identity times are kept and the status is left as it was,
+                # because rewriting the rows to the User time while the status still said 'ok'
+                # contradicted the chips (review of C2). Not called "exact": for a lookup-mapped
+                # provider the Identity predates the first login (see kube.fetch_identities).
+                identity_times: dict[str, str] | None = None
                 identity_state: str | None = "off"
                 if identities_read:
                     fetch_identities = getattr(client, "fetch_identities", None)
                     if fetch_identities is None:
                         identity_state = None
-                        exact = _last_known_exact(store, cluster.name)
+                        identity_times = _last_known_identity_times(store, cluster.name)
                     else:
                         try:
-                            exact = fetch_identities()
+                            identity_times = fetch_identities()
                         except ClusterError as exc:
                             log.warning("identity refresh for %s failed: %s — keeping the last-known "
                                         "first-login times this cycle", cluster.name, exc.message)
                             identity_state = None
-                            exact = _last_known_exact(store, cluster.name)
+                            identity_times = _last_known_identity_times(store, cluster.name)
                         else:
-                            identity_state = "ok" if exact is not None else "forbidden"
-                            if exact is None:
+                            identity_state = "ok" if identity_times is not None else "forbidden"
+                            if identity_times is None:
                                 log.info("%s: not permitted to list identities — first-login times "
-                                         "are approximate. Grant user.openshift.io/identities "
-                                         "[get,list] (chart: rbac.identities) for exact ones.",
-                                         cluster.name)
-                store.replace_users(cluster.name, users, observed_at, identity_created=exact)
+                                         "are the User's creation time. Grant user.openshift.io/"
+                                         "identities [get,list] (chart: rbac.identities) to read "
+                                         "the Identity objects' creation times.", cluster.name)
+                store.replace_users(cluster.name, users, observed_at, identity_created=identity_times)
                 if identity_state is not None:
                     store.set_identities_status(cluster.name, identity_state, observed_at)
-                log.info("%s: %d user(s) recorded, %d with a display name, %d with an exact first "
-                         "login", cluster.name, len(users),
-                         sum(1 for u in users if u.get("full_name")), len(exact or {}))
+                log.info("%s: %d user(s) recorded, %d with a display name, %d with an Identity "
+                         "creation time", cluster.name, len(users),
+                         sum(1 for u in users if u.get("full_name")), len(identity_times or {}))
 
     # Steps 3-4: attribute groups to CRs, then record any sync we had not seen before.
     cr_rows = []

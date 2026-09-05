@@ -81,7 +81,7 @@ class TestTheListIsThePeopleWhoHaveLoggedIn:
     def test_each_row_says_whether_and_since_when_the_person_logged_in(self, tmp_path):
         rows = {u["user_name"]: u for u in _client(tmp_path).get("/api/clusters/c1/users", headers=ADMIN).json()["users"]}
         assert rows["alice"]["logged_in"] is True
-        # Since C2 the seed carries alice's Identity time (29 days), which is exact and wins over the
+        # Since C2 the seed carries alice's Identity time (29 days), which wins over the
         # User's creation time (30 days); kubeadmin below has none and keeps the User time.
         assert rows["alice"]["first_login_at"] == _iso(NOW - timedelta(days=29)), "the Identity's creation time"
         assert rows["kubeadmin"]["first_login_at"] == _iso(NOW - timedelta(days=400)), "the User's creation time"
@@ -223,8 +223,8 @@ class TestTheDetailPage:
         assert _client(tmp_path).get("/api/clusters/c1/users/nobody", headers=ADMIN).status_code == 404
 
 
-class TestExactFirstLoginAndTheProviderAllowList:
-    """C2: the Identity time when read (exact), the User time otherwise (approximate), the source on
+class TestIdentityFirstLoginAndTheProviderAllowList:
+    """C2: the Identity time when read, the User time otherwise (approximate), the source on
     the wire; and the provider allow-list applied at read time to the rows and the counts, never to
     the never-logged-in line."""
 
@@ -237,7 +237,7 @@ class TestExactFirstLoginAndTheProviderAllowList:
         assert rows["kubeadmin"]["first_login_at"] == _iso(NOW - timedelta(days=400))
         assert rows["manual"]["first_login_source"] is None and rows["manual"]["first_login_at"] is None
 
-    def test_the_envelope_says_why_times_are_exact_or_not(self, tmp_path):
+    def test_the_envelope_says_which_time_the_rows_carry(self, tmp_path):
         with _client(tmp_path) as c:
             assert c.get("/api/clusters/c1/users", headers=ADMIN).json()["identities_source"] == "off"
         with _client(tmp_path, settings_extra={"identities_read_enabled": True}) as c:

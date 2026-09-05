@@ -1,7 +1,10 @@
 # Design — the Users tab counts people who have logged in
 
-**Status:** implemented in application 0.9.0 / chart 0.9.0 (the PR that follows #46). The open The three open questions were closed in application 0.15.0 / chart 0.16.0 (feature C2, `docs/specs/SPEC_C2_users_tab_providers_identities.md`) — see "Decisions after 0.9.0" at the end.
-questions below were settled as: provider chips rather than an allow-list; the `User` creation time
+**Status:** implemented in application 0.9.0 / chart 0.9.0 (the PR that follows #46). The three open
+questions were closed in application 0.15.0 / chart 0.16.0 (feature C2,
+`docs/specs/SPEC_C2_users_tab_providers_identities.md`) — see "Decisions after 0.9.0" at the end.
+
+The 0.9.0 decisions were: provider chips rather than an allow-list; the `User` creation time
 accepted as first login and labelled "since"; the never-logged-in line stays on the Users tab, with
 the names one click away. The default view is every `User`, with chips to narrow.
 
@@ -199,16 +202,21 @@ The open questions above were closed as follows, each with the code that carries
    says so in `providers_filter`, and the page says "Showing providers: …". The never-logged-in line
    is not narrowed: a member who logged in through an excluded provider has logged in. Manual accounts
    with no identity drop out under any list.
-2. **Which time is the first login?** The Identity object's creation time, exact, when the chart grants
+2. **Which time is the first login?** The Identity object's creation time when the chart grants
    `rbac.identities` (`gsd/kube.py#ClusterClient.fetch_identities` reads them paged, keeps the earliest
    per User, skips an Identity naming no User, and returns None on a 403). Otherwise the User's
    creation time, labelled approximate: `gsd/store.py#Store._user_row` sets `first_login_source` to
-   `identity` or `user`, the page shows an `exact` or `approx.` chip, and `identities_source` on the
-   wire says why (`ok`, `forbidden`, `off`, `pending`). Two caveats the label carries: an identity
-   provider with `mappingMethod: lookup` needs its Identity created by an administrator before the
-   first login, so there the "exact" time is the administrator's create, the same caveat as a
-   pre-created User; and Identity times are compared as instants, because the API server has
-   written both second and microsecond precision across releases (review of C2). A transient failure
-   of the Identity read keeps the last-known exact times rather than downgrading every row to the
-   User time while the status still says `ok`.
+   `identity` or `user`, the page shows an `identity` or `approx.` chip, and `identities_source` on the
+   wire says why (`ok`, `forbidden`, `off`, `pending`). The Identity time is not called "exact"
+   (review of C2, Codex): with `mappingMethod: claim` or `add` OpenShift creates the Identity at the
+   first login, so it is; with `mappingMethod: lookup` an administrator creates the Identity before
+   the first login, so there it is the mapping's creation, the same caveat as a pre-created User —
+   and the page states it. Identity times are compared as instants: metav1.Time marshals fixed-width
+   RFC3339 seconds today, so the string minimum was not wrong, but the instant is the operation meant
+   and holds at any width (Cursor's mixed-width premise was refuted by Codex at the apimachinery
+   source; the comparison stayed). A transient failure of the Identity read keeps the last-known
+   Identity times rather than downgrading every row to the User time while the status still says
+   `ok`; a User who appears during such a cycle carries the User time and its chip until the next
+   successful read, and the tab's note describes the source per row rather than asserting one for
+   all.
 3. **Where does the never-logged-in line live?** On the Users tab, unchanged and unnarrowed.
