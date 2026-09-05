@@ -176,6 +176,39 @@ duplicate Cursor's N1 and N2, already applied. Codex's prose citation test rejec
   API-error card. Not a loop (C3). Recorded in §13 as a risk; the dedicated message is a product
   change left to the operator, as Cursor itself suggested.
 
+## The templates note (PR #80)
+
+The operator's requirement that report generation use dynamic templates was recorded as an
+orchestrator's note and reviewed on its own five-claim brief. Cursor (read-only) refuted four claims;
+Codex is recorded below when its pass lands.
+
+| Claim | Cursor | Decision |
+|---|---|---|
+| C1 the note against the body | REFUTED | **Accepted** — `render_html` is §8.8 and `render_pdf` §8.9; both already have one helper per block kind, so the change is the HTML move to Jinja2 files and the catalogue staying data-only; §8.8's "No template engine" is the superseded sentence; access-certification's decision columns are data, named as such |
+| C2 Jinja2 in the image | PLAUSIBLE | **Accepted** — MarkupSafe is Jinja2's dependency (a C-accelerator wheel, still no `dnf`); the `report` extra, §6.1's inventory, §8.1's "only addition" and `package-data` all follow |
+| C3 autoescaping | REFUTED | **Accepted** — `autoescape=True` (boolean; `select_autoescape` would leave suffix-less override keys unescaped), no `|safe`/`Markup`/`autoescape false` on model values, the `<style>` wrapper not overridable, `write_html` banned on the PDF path |
+| C4 the override ConfigMap | REFUTED | **Accepted** — a default `Environment` reaches `os.environ` and the HMAC token file from a template; `SandboxedEnvironment` with a data-only context is required, and the override ships only if question 9 is answered yes |
+| C5 the tests | REFUTED | **Accepted** — an AST import allow-list replaces the `<`-walk (which false-positives on `n < p.lo` and misses ElementTree or a sidecar file); partial markers plus the §9.6 escape case through an override |
+
+Codex (gpt-5.6-sol, xhigh; read-only, on the head that already carried Cursor's corrections) confirmed
+C1 and refuted C2–C5 with measurements:
+
+| Claim | Codex | Decision |
+|---|---|---|
+| C1 | CONFIRMED at the corrected head | — |
+| C2 | REFUTED — two wheels, one native (MarkupSafe 3.0.3 cp314 manylinux); §6.1, §3.3, §8.16 and §9 still said fpdf2 only | **Accepted** — floors `Jinja2>=3.1.6`, `MarkupSafe>=3.0.3` (both verified on PyPI here), the inventory row, and every fpdf2-only passage corrected |
+| C3 | REFUTED — a marking beginning with a newline closes the CSS string in `@page { content: "…" }`; HTML autoescape is not CSS escaping | **Accepted** — a `css_string` filter (six-digit CSS escapes) for model values inside `<style>`; the `<script>` case confirmed handled by autoescape |
+| C4 | REFUTED — `SandboxedEnvironment` let a template mutate the supplied dict and call public methods; mounted ConfigMaps update live, bypassing a one-time startup check | **Accepted** — `ImmutableSandboxedEnvironment`, cleared globals, `safe` removed, `StrictUndefined`, a detached `json.loads(report.to_json())` context, keys snapshotted at startup into a `DictLoader`, changes need a restart or an atomic swap; ConfigMap writers named trusted authors of report HTML |
+| C5 | REFUTED — `data-gsd-partial` markers are self-reported; an override can omit, rename or duplicate them | **Accepted** — a recording loader asserts the exact templates resolved; the exact module list and the §9.5 `Built` loop kept alongside the AST allow-list |
+
+Codex's "not asked": the issue text said eight operator questions (now nine), and the verification
+output line still names only fpdf2's version — left as it is, because the proof script §8.16 ships
+prints fpdf2's version and the templates add no PDF-side check.
+
+Not asked and accepted: question 9 added to §14 in the same change; §8.1's extra and `package-data`
+updated; the ConfigMap value's shape (a name, default empty) and mount path named; `write_html`
+forbidden by name.
+
 ## Outcome
 
 First pass: Cursor refuted two claims and marked three plausible; Codex refuted six and marked one
