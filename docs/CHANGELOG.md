@@ -8,7 +8,7 @@ lives next to the code and in the design and review records linked here. Changes
 last release sit under `## Unreleased` until the release that carries them replaces that heading —
 which `local-development/prepare-release.py` does when the release is cut.
 
-## Unreleased
+## Application 0.14.0 — chart 0.15.0 — 2026-09-05
 
 - **CSV and JSON export on every table.** Users, Groups, Access granted, Namespace audit and
   Logins gain Export buttons in the filter bar. The file is built in the browser from the rows the
