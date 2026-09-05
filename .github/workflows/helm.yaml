@@ -123,14 +123,15 @@ jobs:
           set -uo pipefail
           CHART=charts/group-sync-dashboard/Chart.yaml
           VALUES=charts/group-sync-dashboard/values.yaml
-          # Exactly the forms prepare-release.py writes and build-and-push-external.sh accepts: a bare
-          # three-part semver, and a double-quoted appVersion with nothing after the quote (review of
-          # A3, routed here; tests/test_workflow_pins.py runs the two patterns through sed). Portable
-          # basic regex on purpose — `[0-9][0-9]*`, not the GNU-only `\+` — because the test runs the
-          # real patterns on macOS (BSD sed) as well as on the Ubuntu runner.
-          CHART_VERSION=$(sed -n 's/^version: \([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)[ \t]*$/\1/p' "$CHART" | head -1)
-          APP_VERSION=$(sed -n 's/^appVersion: "\(..*\)"$/\1/p' "$CHART" | head -1)
-          PINNED=$(sed -n 's/^  tag: "\(.*\)"[ \t]*$/\1/p' "$VALUES" | head -1)
+          # Exactly the forms prepare-release.py writes (SEMVER = three numbers, appVersion quoted):
+          # review of A3, routed here; tests/test_workflow_pins.py runs the real patterns through sed.
+          # Portable basic regex on purpose, because that test runs on macOS (BSD sed) too: `[0-9][0-9]*`
+          # not the GNU-only `\+`, and `[[:blank:]]` not `[ \t]` — BSD sed reads `\t` in a bracket as
+          # a literal `t`, so the old class refused a tab and accepted `1.2.3t`. The appVersion class
+          # is the semver itself, not `..*`, which is greedy and would have captured `0.15.0" garbage`.
+          CHART_VERSION=$(sed -n 's/^version: \([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)[[:blank:]]*$/\1/p' "$CHART" | head -1)
+          APP_VERSION=$(sed -n 's/^appVersion: "\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)"$/\1/p' "$CHART" | head -1)
+          PINNED=$(sed -n 's/^  tag: "\(.*\)"[[:blank:]]*$/\1/p' "$VALUES" | head -1)
           REPO="${REGISTRY}/${REGISTRY_NAMESPACE}/group-sync-dashboard"
 
           if [ -z "${REGISTRY_USERNAME}" ] || [ -z "${REGISTRY_PASSWORD}" ]; then
@@ -146,7 +147,7 @@ jobs:
           SOURCE="${PINNED:-$APP_VERSION}"
           echo "chart ${CHART_VERSION} deploys ${SOURCE}; labelling it"
 
-          if ! skopeo inspect --no-tags "docker://${REPO}:${SOURCE}" >/dev/null 2>&1; then
+          if ! SOURCE_DIGEST=$(skopeo inspect --no-tags --format '{{.Digest}}' "docker://${REPO}:${SOURCE}" 2>/dev/null); then
             echo "::error::${REPO}:${SOURCE} does not exist, so chart ${CHART_VERSION} cannot be"
             echo "::error::labelled. The chart release itself is unaffected and will still publish."
             echo "::error::This means the application release was never published — check the"
@@ -158,9 +159,18 @@ jobs:
           printf '%s' "${REGISTRY_PASSWORD}" \
             | skopeo login --username "${REGISTRY_USERNAME}" --password-stdin "${REGISTRY}" >/dev/null
           # Copy rather than pull-tag-push: skopeo moves the manifest between tags in the registry
-          # without materialising the image on this runner, so it cannot accidentally alter bits.
-          skopeo copy "docker://${REPO}:${SOURCE}" "docker://${REPO}:${CHART_VERSION}"
-          echo "labelled: ${REPO}:${CHART_VERSION} -> ${SOURCE}"
+          # without materialising the image on this runner. --preserve-digests makes "the same bits"
+          # a checked contract rather than skopeo's default "source format, with fallbacks", and the
+          # digest is read back and compared — the same rule as build-and-push-external.sh's aliases,
+          # because this tag is one the signed digest must resolve to (review of A2).
+          skopeo copy --all --preserve-digests "docker://${REPO}:${SOURCE}" "docker://${REPO}:${CHART_VERSION}"
+          ALIAS_DIGEST=$(skopeo inspect --no-tags --format '{{.Digest}}' "docker://${REPO}:${CHART_VERSION}")
+          if [ "${ALIAS_DIGEST}" != "${SOURCE_DIGEST}" ]; then
+            echo "::error::${REPO}:${CHART_VERSION} resolves to ${ALIAS_DIGEST}, not ${SOURCE_DIGEST} — the"
+            echo "::error::alias is not the image ${SOURCE} names. Inspect both before retrying."
+            exit 1
+          fi
+          echo "labelled: ${REPO}:${CHART_VERSION} -> ${SOURCE} (${SOURCE_DIGEST})"
 
       # charts_dir defaults to `charts`, which is where this chart lives, so no configuration is
       # needed. packages_with_index keeps the .tgz next to index.yaml on gh-pages, which is what

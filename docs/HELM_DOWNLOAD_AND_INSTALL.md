@@ -328,7 +328,9 @@ The following checks were performed on each of these signatures:
 The signature is over the **digest**, so it verifies for every tag that resolves to it — on a
 release, `:<appVersion>-<sha>`, `:<appVersion>` and `:<chartVersion>` are one manifest, copied
 server side with the digest preserved (`local-development/build-and-push-external.sh#skopeo copy`). On a mirror, verify the mirrored
-reference the same way; the signature travels with `skopeo copy --all`.
+reference the same way. The signature and the SBOM attestation are OCI referrers of the digest, and
+`skopeo copy --all` copies an image index and its platform images, not a subject's referrers — a
+mirror copies them with `oras cp --recursive` (or re-signs at the destination), then verifies there.
 
 **The SBOM.** Attached to the image as an attestation. Extract it and scan it:
 

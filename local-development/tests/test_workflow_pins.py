@@ -76,12 +76,14 @@ def test_the_chart_version_extractor_accepts_only_a_bare_three_part_semver() -> 
     pat = _sed_pattern("CHART_VERSION")
     assert _sed(pat, "version: 0.16.0\n") == "0.16.0"
     assert _sed(pat, "version: 0.16.0  \n") == "0.16.0", "trailing blanks are tolerated, as the script tolerates them"
-    for bad in ("version: 0.16\n", "version: 0.16.0-rc1\n", "version: v0.16.0\n", "version: 0.16.0.1\n", 'version: "0.16.0"\n'):
+    assert _sed(pat, "version: 0.16.0\t\n") == "0.16.0", "a trailing tab is a blank ([[:blank:]], not [ \\t]: BSD sed reads \\t as t)"
+    for bad in ("version: 0.16\n", "version: 0.16.0-rc1\n", "version: v0.16.0\n", "version: 0.16.0.1\n", 'version: "0.16.0"\n', "version: 0.16.0t\n"):
         assert _sed(pat, bad) == "", bad
 
 
 def test_the_app_version_extractor_accepts_only_a_quoted_value_with_nothing_after_it() -> None:
     pat = _sed_pattern("APP_VERSION")
     assert _sed(pat, 'appVersion: "0.15.0"\n') == "0.15.0"
-    for bad in ("appVersion: 0.15.0\n", 'appVersion: ""\n', 'appVersion: "0.15.0" \n', "appVersion: '0.15.0'\n"):
+    for bad in ("appVersion: 0.15.0\n", 'appVersion: ""\n', 'appVersion: "0.15.0" \n', "appVersion: '0.15.0'\n",
+                'appVersion: "0.15.0" garbage"\n', 'appVersion: "0.15.0-rc1"\n'):
         assert _sed(pat, bad) == "", bad

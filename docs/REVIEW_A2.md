@@ -31,3 +31,37 @@ step's `grep | awk` extractor stays — it must name the file chart-releaser act
 Chart.yaml says, or the attestation would point at a file that does not exist, whereas the label
 step's strict `sed` is about which image an alias may name; `test_workflow_pins.py` stays offline
 (above); `[ \t]` in the bracket class predates this change and prepare-release never writes a tab.
+
+## Verdicts — Codex
+
+Codex (gpt-5.6-sol, xhigh; read-only, on head d0d2985 — the same head Cursor reviewed) ran the
+suites and `bash -n`, read the pinned actions' sources, and measured the sed patterns on BSD sed.
+
+| Claim | Codex | Decision |
+|---|---|---|
+| C1 the digest chain | REFUTED on the same `skopeo copy` default as Cursor | **Accepted** (already applied from Cursor's pass) |
+| C2 the job graph | CONFIRMED | — |
+| C3 cosign 3 against quay.io | CONFIRMED — Sigstore's registry-support page lists Quay.io and Project Quay with OCI 1.1 referrers; a cosign 2.6 consumer must opt in with `--new-bundle-format=true` | — ; agrees with the probe here (HTTP 200 on the referrers endpoint) |
+| C4 provenance | CONFIRMED against the pinned `action.yml`, `gh attestation verify`'s manual and chart-releaser's `cr.sh` | — |
+| C5 sbom-action | REFUTED — the file inside the artifact is named after `artifact-name`; `test -s sbom.spdx.json` fails on the first run | **Accepted** — verified in `SyftGithubAction.ts` at the pinned commit (`${tempDir}/${fileName}` with `fileName = getArtifactName()`); the attest job downloads to a directory and reads `sbom-<sha>`; Codex's test taken. The single most important finding of the review: deterministic, and the in-run proof would have caught it only by failing the first run |
+| C6 pins | REFUTED on wording only — the local reusable workflow is `./…`, which the test exempts by design | — ; the test is correct as written |
+| C7 the sed extractors | REFUTED — `[ \t]` is not portable (BSD sed: literal `t`); `..*` is greedy | **Accepted** — `[[:blank:]]`, semver class for appVersion; the tests gained the tab, `1.2.3t`, extra-quote and rc cases |
+| C8 documentation | REFUTED on three sentences — "travels with `skopeo copy --all`" (referrers are not platforms), "a fork signs as itself" (publish is skipped on forks), D7 (false while C5 stood) | **Accepted** — `oras cp --recursive` named for mirrors, D3 corrected, D7 rewritten under Cursor's pass |
+| C9 fidelity | REFUTED — the two status hunks and the specs index were not named | **Accepted** — deviation (6) names them; Codex's diff-asserting test rejected (it pins a file list that rots at merge) |
+| C10 the first run | REFUTED — C5 plus the alias/identity points Cursor made | **Accepted** as above |
+
+**Not asked.** Accepted: the digest check is `^sha256:[0-9a-f]{64}$` (the glob accepted
+`sha256:aNOT-A-DIGEST`); `helm.yaml`'s label step now copies with `--all --preserve-digests` and
+compares the alias digest (it was an unqualified copy with no check — outside the spec's edits, so a
+recorded deviation). Rejected: gating the `publish` job on `main` — a dispatch from a branch may
+still push an unsigned immutable tag, and the design record now says so; the docs-prose test.
+
+## Outcome
+
+Two reviewers, one head. Cursor refuted three claims and Codex six; between them five accepted
+defects that the first run on `main` would have surfaced as a red job or, worse, a green job whose
+documented command fails: the SBOM filename, the skopeo copy contract, the branch-dispatch
+identity, the unsigned alias in the install guide, and the BSD-sed bracket class. Every accepted
+finding carries the reviewer's test or an adapted one; three snippets were rejected with a measured
+reason (the deprecated legacy bundle flag, gating `publish`, the diff- and prose-asserting tests).
+A second pass by both reviewers ran on the fixed head before merge (recorded below).

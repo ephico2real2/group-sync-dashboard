@@ -380,14 +380,21 @@ jobs:
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: sbom-${{ github.sha }}
+          path: downloaded-sbom
 
       - name: Attach the SBOM as an attestation, and read it back
         if: needs.sbom.result == 'success'
         shell: bash
+        env:
+          # sbom-action names the FILE inside the artifact after `artifact-name`, not after
+          # `output-file` (its uploadSbomArtifact writes `${tempDir}/${artifactName}`), and
+          # download-artifact extracts without renaming — so the file here is `sbom-<sha>`, not
+          # `sbom.spdx.json`. Review of A2 (Codex): the first run would have failed at `test -s`.
+          SBOM_FILE: downloaded-sbom/sbom-${{ github.sha }}
         run: |
           set -euo pipefail
-          test -s sbom.spdx.json
-          cosign attest --yes --type spdxjson --predicate sbom.spdx.json "${IMAGE}@${DIGEST}"
+          test -s "${SBOM_FILE}"
+          cosign attest --yes --type spdxjson --predicate "${SBOM_FILE}" "${IMAGE}@${DIGEST}"
           cosign verify-attestation --type spdxjson \
             --certificate-identity "${IDENTITY}" \
             --certificate-oidc-issuer "${ISSUER}" \

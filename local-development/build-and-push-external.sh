@@ -190,10 +190,12 @@ DIGEST_OUT=$(mktemp)
 podman push --digestfile "${DIGEST_OUT}" "${REF}"
 DIGEST=$(tr -d '\r\n' < "${DIGEST_OUT}")
 rm -f "${DIGEST_OUT}"
-case "${DIGEST}" in
-  sha256:[0-9a-f]*) ;;
-  *) echo "ERROR: podman reported no sha256 digest for ${REF} (got '${DIGEST}')" >&2; exit 1 ;;
-esac
+# Exactly 64 hex digits: a glob `sha256:[0-9a-f]*` would have accepted one hex digit followed by
+# anything, and this value is what gets signed (review of A2).
+if [[ ! "${DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+  echo "ERROR: podman reported no valid sha256 digest for ${REF} (got '${DIGEST}')" >&2
+  exit 1
+fi
 echo "pushed  : ${REF}"
 echo "digest  : ${DIGEST}"
 if [ -n "${DIGEST_FILE:-}" ]; then

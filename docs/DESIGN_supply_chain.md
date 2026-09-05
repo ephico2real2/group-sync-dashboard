@@ -40,7 +40,9 @@ certificate that lives minutes, bound to this repository's workflow by GitHub's 
 the signature recorded in Rekor's public log. The cost is stated rather than hidden: a public
 log entry per signature (repository, workflow, digest — nothing more), and egress to
 `fulcio.sigstore.dev`, `rekor.sigstore.dev` and `tuf-repo-cdn.sigstore.dev` from the runner. A
-fork never gets a token for this identity; it signs as itself, and verifies as itself.
+fork never gets a token for this identity — and under this workflow it does not sign at all: the
+`publish` job is skipped unless `github.repository` is this repository, so a fork that wants signed
+images edits that guard and then verifies against its own identity strings.
 
 **D4 — The chart is attested with the same mechanism, not GPG-signed.** `helm package --sign`
 needs a long-lived private key in a repository secret, a keyring handed to every consumer out of
@@ -56,8 +58,9 @@ provenance for bytes that may differ.
 
 **D5 — The SBOM is attached with cosign, not only stored in GitHub.** `actions/attest-sbom`
 exists and would put the SBOM beside the provenance in GitHub's store. An air-gapped mirror that
-copied the image with `skopeo copy --all` keeps cosign's attestation and loses GitHub's; the
-registry copy is the one that travels. The workflow artifact is the copy for a mirror that did
+copied the image with its referrers (`oras cp --recursive`; `skopeo copy --all` copies an index's
+platform images, not a subject's referrers) keeps cosign's attestation and loses GitHub's; the
+registry copy is the one that can travel. The workflow artifact is the copy for a mirror that did
 not copy referrers. Syft is pinned to the version `image-vulnerability-scan.md` measured
 identifying Hummingbird OS, and a test holds the pin to the document
 (`tests/test_supply_chain.py#test_the_sbom_is_produced_by_the_syft_the_scan_document_measured`):

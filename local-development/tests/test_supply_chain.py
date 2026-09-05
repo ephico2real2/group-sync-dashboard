@@ -73,6 +73,13 @@ class TestTheDigestChain:
         assert "skopeo inspect --no-tags --format '{{.Digest}}'" in code
         assert 'if [ "${ALIAS_DIGEST}" != "${DIGEST}" ]; then' in code
 
+    def test_the_registry_digest_is_exactly_sixty_four_hex_digits(self) -> None:
+        """Review of A2 (Codex): the glob `sha256:[0-9a-f]*` accepted one hex digit followed by
+        anything, and this value is what gets signed."""
+        code = _script_code()
+        assert '[[ ! "${DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]' in code
+        assert "sha256:[0-9a-f]*)" not in code
+
     def test_the_alias_copy_refuses_to_rewrite_the_manifest(self) -> None:
         """Review of A2 (Cursor): skopeo copy's default is the source manifest type WITH FALLBACKS
         (schema or compression conversion rewrites the digest), and without --all a manifest list's
@@ -138,6 +145,27 @@ class TestTheSwitches:
         assert fetch["if"] == "needs.sbom.result == 'success'"
         assert absent["if"] == "needs.sbom.result != 'success'"
         assert "::notice::" in absent["run"]
+
+    def test_the_downloaded_sbom_filename_is_the_one_cosign_reads(self) -> None:
+        """Review of A2 (Codex): sbom-action names the file inside the artifact after `artifact-name`
+        (its uploadSbomArtifact writes `${tempDir}/${artifactName}`), and download-artifact does not
+        rename — `test -s sbom.spdx.json` would have failed the first run."""
+        jobs = _jobs(PUBLISH)
+        artifact = _step(jobs["sbom"], "Catalogue the image")["with"]["artifact-name"]
+        fetch = _step(jobs["attest"], "Fetch the SBOM")
+        attach = _step(jobs["attest"], "Attach the SBOM")
+        assert fetch["with"] == {"name": artifact, "path": "downloaded-sbom"}
+        assert attach["env"]["SBOM_FILE"] == f"downloaded-sbom/{artifact}"
+        assert 'test -s "${SBOM_FILE}"' in attach["run"]
+        assert '--predicate "${SBOM_FILE}"' in attach["run"]
+
+    def test_the_chart_alias_preserves_and_checks_the_source_digest(self) -> None:
+        """Review of A2 (Codex, not asked): helm.yaml's label step made an unqualified copy with no
+        digest comparison — the same alias rule the build script now holds."""
+        run = _step(_jobs(HELM)["release"], "Label the image this chart version deploys")["run"]
+        assert "SOURCE_DIGEST=$(skopeo inspect" in run
+        assert "skopeo copy --all --preserve-digests" in run
+        assert '[ "${ALIAS_DIGEST}" != "${SOURCE_DIGEST}" ]' in run
 
     def test_the_chart_attestation_has_the_same_switch_and_runs_only_for_a_new_release(self) -> None:
         release = _jobs(HELM)["release"]
@@ -229,7 +257,7 @@ class TestWhatIsSignedAndHow:
         assert step["with"]["dependency-snapshot"] is False
         assert step["with"]["image"].endswith("@${{ needs.publish.outputs.digest }}")
         attach = _step(_jobs(PUBLISH)["attest"], "Attach the SBOM")["run"]
-        assert "cosign attest --yes --type spdxjson --predicate sbom.spdx.json" in attach
+        assert 'cosign attest --yes --type spdxjson --predicate "${SBOM_FILE}"' in attach
 
     def test_cosign_is_pinned_to_a_release(self) -> None:
         installer = [s for s in _jobs(PUBLISH)["attest"]["steps"] if "cosign-installer" in (s.get("uses") or "")]
@@ -253,6 +281,8 @@ class TestWhatIsSignedAndHow:
         assert "--certificate-oidc-issuer https://token.actions.githubusercontent.com" in text
         assert "/.github/workflows/publish.yml@refs/heads/main" in text
         assert "/.github/workflows/helm.yaml" in text
+        assert "the signature travels with `skopeo copy --all`" not in text, "skopeo --all copies platforms, not referrers"
+        assert "oras cp --recursive" in text
 
     def test_the_install_guide_verifies_the_tag_a_push_actually_signed(self) -> None:
         """Review of A2 (Cursor): an ordinary merge signs only `:<appVersion>-<sha>`; the alias moves
