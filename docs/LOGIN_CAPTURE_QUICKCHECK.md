@@ -28,9 +28,11 @@ capture can recover it.
 ```bash
 helm upgrade group-sync-dashboard charts/group-sync-dashboard -n group-sync-dashboard \
   -f my-values.yaml \
-  --set authLogLevel.manage=true --set authLogLevel.enabled=true \
-  --set loginCapture.enabled=true
+  --set authLogLevel.manage=true --set authLogLevel.enabled=true
 ```
+
+`loginCapture.enabled` is on by default since chart 0.14.0, so the module half needs no flag unless
+your values file turned it off.
 
 > **Pass your whole value set.** `helm upgrade` with only `--set authLogLevel.*` discards every other
 > user-supplied value. Measured: it silently reverted `oauthProxy.apiTokenAccess.enabled` on this
@@ -202,8 +204,7 @@ ReplicaSet to its Pods and reads each one. Hence both verbs, `pods:list` and `po
 ```bash
 helm upgrade group-sync-dashboard charts/group-sync-dashboard -n group-sync-dashboard \
   -f my-values.yaml \
-  --set authLogLevel.manage=true --set authLogLevel.enabled=false \
-  --set loginCapture.enabled=true
+  --set authLogLevel.manage=true --set authLogLevel.enabled=false
 ```
 
 **Keep `manage=true` for this step.** `manage=false` removes the revert Job along with everything else,

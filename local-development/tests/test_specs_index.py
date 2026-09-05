@@ -56,6 +56,17 @@ def test_the_index_row_matches_the_spec_header(fid: str) -> None:
     assert header["Status"] == row["status"], (fid, header["Status"], row["status"])
 
 
+@pytest.mark.parametrize("fid", sorted(ROWS), ids=sorted(ROWS))
+def test_a_superseding_version_in_the_notes_is_the_header_version(fid: str) -> None:
+    """Chart 0.14.0 moved the ladder after the notes were written; a note that names the
+    superseding chart version must name the one the header now carries."""
+    spec = SPECS / ROWS[fid]["file"]
+    header_chart = re.search(r"chart (\d+\.\d+\.\d+)", ROWS[fid]["version"])
+    for m in re.finditer(r"superseded by chart (\d+\.\d+\.\d+)", spec.read_text()):
+        assert header_chart is not None, (fid, m.group(0))
+        assert m.group(1) == header_chart.group(1), (fid, m.group(0), ROWS[fid]["version"])
+
+
 def test_every_spec_file_has_an_index_row() -> None:
     on_disk = {p.name for p in SPECS.glob("SPEC_*.md")}
     indexed = {row["file"] for row in ROWS.values()}

@@ -246,8 +246,8 @@ about what it trusts, and silently widening it would be the wrong kind of helpfu
 ## Monitoring
 
 `/metrics` serves Prometheus exposition; the chart ships a ServiceMonitor and twelve alerting
-rules, both on by default (they need the Prometheus Operator CRDs, which OpenShift ships; set both
-off on a cluster without them), and a Grafana dashboard (a sidecar-labelled ConfigMap,
+rules, both off by default (they need the Prometheus Operator CRDs, and the reference cluster runs
+no Prometheus), and a Grafana dashboard (a sidecar-labelled ConfigMap,
 `monitoring.grafanaDashboard`) that follows the ServiceMonitor's switch by default — see `docs/specs/SPEC_B3_grafana_dashboard.md`.
 
 Cardinality is bounded deliberately: series are per cluster and per GroupSync CR only, never

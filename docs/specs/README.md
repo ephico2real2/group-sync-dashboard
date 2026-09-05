@@ -92,12 +92,15 @@ say so.
 Chart 0.14.0 sits between R2 and R3 and is not a module: it is the defaults release (operator
 decision, 2026-09-05) that turns every boolean in `values.yaml` on unless the switch costs RBAC
 beyond a namespaced read, a credential, a second image or a cluster-wide write. It moved every
-chart version from C1 onward up by one MINOR; the rows above carry the shifted numbers. The four
+chart version from C1 onward up by one MINOR; the rows above carry the shifted numbers. The seven
 that stay off, with the reason in their values comment: `securityContext.allowPrivilegeEscalation`
 (a hardening posture, not a feature), `trustedCA.existingConfigMap.enabled` (needs a name),
-`ingress.enabled` (exclusive with the Route the chart refuses to render alongside), and
+`ingress.enabled` (exclusive with the Route the chart refuses to render alongside),
 `authLogLevel.manage`/`.enabled` (a cluster-wide write that rolls the OAuth server, and D1's
-audit-log source replaces it as the way login lines are obtained).
+audit-log source replaces it as the way login lines are obtained), `oauthProxy.skipProviderButton`
+(a product choice: people log in from the OpenShift login screen), and
+`monitoring.serviceMonitor.enabled` / `monitoring.prometheusRule.enabled` (the reference cluster
+runs no Prometheus; rendering with both on was verified before the default went back).
 
 ## Definition of done, per issue
 

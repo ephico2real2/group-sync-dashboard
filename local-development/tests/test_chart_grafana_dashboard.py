@@ -186,12 +186,12 @@ class TestTheFile:
 
 @needs_helm
 class TestTheConfigMap:
-    def test_on_by_default_because_the_servicemonitor_is(self):
-        # Chart 0.14.0 turned the ServiceMonitor on; the empty-string default follows it.
-        assert len(_dashboard_configmaps(_render())) == 1
+    def test_off_by_default_because_the_servicemonitor_is(self):
+        # The ServiceMonitor stays off by operator decision (chart 0.14.0); "" follows it.
+        assert not _dashboard_configmaps(_render())
 
-    def test_follows_the_servicemonitor_off_when_left_empty(self):
-        assert not _dashboard_configmaps(_render("monitoring.serviceMonitor.enabled=false"))
+    def test_follows_the_servicemonitor_on_when_left_empty(self):
+        assert len(_dashboard_configmaps(_render("monitoring.serviceMonitor.enabled=true"))) == 1
 
     def test_follows_the_servicemonitor_when_left_empty(self):
         docs = _render("monitoring.serviceMonitor.enabled=true")

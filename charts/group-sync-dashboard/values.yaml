@@ -154,6 +154,8 @@ podSecurityContext:
     type: RuntimeDefault
 
 securityContext:
+  # Stays false under the 0.14.0 on-by-default rule: a hardening posture, not a feature switch.
+  # true would grant the container a privilege; the rule turns features on and relaxes nothing.
   allowPrivilegeEscalation: false
   readOnlyRootFilesystem: true
   capabilities:
@@ -632,6 +634,8 @@ trustedCA:
   #
   # Deliberately NOT templated into the chart: certificates in values.yaml end up in git,
   # in `helm get values`, and in every CI log that echoes them.
+  # Stays false under the 0.14.0 on-by-default rule: this switch needs the name of a ConfigMap you
+  # created, so there is nothing a default could turn on.
   existingConfigMap:
     enabled: false
     name: enterprise-ca
@@ -1244,10 +1248,11 @@ oauthProxy:
   # false shows an explicit Log In button instead. One extra click, and the unauthenticated
   # state is a page that says sign in.
   #
-  # true by default since chart 0.14.0 (the chart's rule: every switch on unless it costs RBAC, a
-  # credential, a second image or a cluster-wide write). Set false to get the explicit button back
-  # and the friendlier failure page with it.
-  skipProviderButton: true
+  # Stays false under the 0.14.0 on-by-default rule by operator decision (2026-09-05): people
+  # should log in from the OpenShift login screen, and the explicit button is the state that
+  # gives them that screen and the friendlier failure page. This is a product choice, not a
+  # feature switch, so the rule does not move it.
+  skipProviderButton: false
   # The proxy logs every request it handles. On by default since 0.14.0; the cost is log volume,
   # and the lines are what shows whether a 403 came from the proxy or from the dashboard.
   requestLogging: true
@@ -1404,13 +1409,16 @@ visibility:
 # ---------------------------------------------------------------------------
 # Monitoring
 # ---------------------------------------------------------------------------
-# Both default ON since chart 0.14.0. They need the Prometheus Operator CRDs, which every
-# OpenShift cluster ships — CRC too, even with monitoring disabled at the CVO level, where the
-# objects are simply inert. On a plain Kubernetes cluster without the operator set both to
-# false, or the install fails outright on the unknown kinds.
+# Both default OFF, by operator decision (2026-09-05) under the chart's on-by-default rule: the
+# reference cluster runs no Prometheus (built-in monitoring disabled to save resources), so a
+# ServiceMonitor and rules there are objects nobody reads, and on a cluster without the
+# Prometheus Operator CRDs applying them fails the install outright. Rendering with both on was
+# verified before the default went back — lint, template, a server-side dry run against the CRDs
+# and a live deploy on the reference cluster (chart 0.14.0 review record) — so turning them on is
+# a values change and nothing else. OpenShift ships the CRDs; set both true where Prometheus runs.
 monitoring:
   serviceMonitor:
-    enabled: true
+    enabled: false
     # 30s: every series is recomputed from SQLite on scrape and each scrape takes the
     # store's lock. Faster buys no resolution — the data only changes once per poll.
     interval: 30s
@@ -1418,7 +1426,7 @@ monitoring:
     labels: {}
 
   prometheusRule:
-    enabled: true
+    enabled: false
     labels: {}
     # Thresholds live here rather than inside the exporter, so they can be seen and tuned.
     # The metric is a unix timestamp, so the rule expresses staleness against real time.

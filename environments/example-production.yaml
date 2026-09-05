@@ -21,10 +21,11 @@
 
 oauthProxy:
   enabled: true
-  # Bearer tokens on /api. Off unless an aggregator needs it. The review demands cluster-wide
-  # RBAC read, which is the honest floor for what /api reports — see docs/api-access.md.
+  # Bearer tokens on /api. On since chart 0.14.0: the proxy's SubjectAccessReview demands
+  # cluster-wide RBAC read, the honest floor for what /api reports, so the switch grants nothing
+  # to a token whose holder lacks it — see docs/api-access.md. false means cookie sessions only.
   apiTokenAccess:
-    enabled: false
+    enabled: true
   # Restrict who may open the UI at all. Worth setting: UI access is equivalent to
   # cluster-wide RBAC read, because the dashboard reports the whole binding surface.
   # sar: '{"resource":"clusterrolebindings","resourceAPIGroup":"rbac.authorization.k8s.io","verb":"list"}'

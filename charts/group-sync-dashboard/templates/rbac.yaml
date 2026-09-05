@@ -121,8 +121,9 @@ subjects:
 # WHY A SEPARATE BINDING TO A STOCK ROLE rather than rules in the chart's own ClusterRole:
 # system:auth-delegator is the role the Kubernetes project defines for exactly this, it grants
 # exactly two verbs, and using it means an auditor recognises the grant instead of reading
-# ours. Bundling it into the reader role would also make it impossible to have API-token
-# access off while the dashboard works, which is the default.
+# ours. Bundling it into the reader role would also make it impossible to turn API-token
+# access off while the dashboard keeps working — still a supported pairing now that both
+# default on: visibility keeps this binding rendered when token access is switched off.
 #
 # WHAT IT GRANTS, PLAINLY: create on tokenreviews and subjectaccessreviews. The proxy needs
 # both to answer "is this bearer token valid, and may that identity do the thing

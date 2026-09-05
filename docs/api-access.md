@@ -11,18 +11,25 @@ https://group-sync-dashboard.apps.<cluster>.<company-domain>/api
 
 Two things have to be true first.
 
-## 1. Enable it on the chart
+## 1. It is on by default since chart 0.14.0
+
+`oauthProxy.apiTokenAccess.enabled` defaults to `true`: a default install already adds
+`-openshift-delegate-urls` for the `/api` prefix and binds `system:auth-delegator` to the
+**proxy's** ServiceAccount — the proxy is the party that calls TokenReview and
+SubjectAccessReview. Callers do not need that role. The switch grants nothing on its own: a
+bearer token reaches `/api` only after the proxy's SubjectAccessReview against the cluster-wide
+read named in `delegateUrls` succeeds, and a token that passes that review is held by someone who
+also passes the wide tier's own review, so it lands on the wide view — there is no cookie-less way
+to reach the narrowed self view. For cookie sessions only:
 
 ```bash
-helm upgrade --install group-sync-dashboard charts/group-sync-dashboard \
-  -n group-sync-dashboard \
-  --set oauthProxy.apiTokenAccess.enabled=true
+helm upgrade group-sync-dashboard charts/group-sync-dashboard \
+  -n group-sync-dashboard -f my-values.yaml \
+  --set oauthProxy.apiTokenAccess.enabled=false
 ```
 
-That adds `-openshift-delegate-urls` for the `/api` prefix and binds `system:auth-delegator` to
-the **proxy's** ServiceAccount — the proxy is the party that calls TokenReview and
-SubjectAccessReview. Callers do not need that role. Without this, the proxy only understands
-browser cookies and a perfectly valid bearer token gets a `403` whose body is the login page.
+With it off, the proxy only understands browser cookies and a perfectly valid bearer token gets a
+`403` whose body is the login page.
 
 ### What the caller must be allowed to do, and why it is not `list groups`
 

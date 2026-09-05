@@ -60,9 +60,10 @@ authLogLevel:
 loginCapture:
   enabled: true
 
-# The reference cluster has no Prometheus Operator, so the ServiceMonitor stays off, but it does run
-# grafana-operator v5 (namespace grafana-test) to validate the shipped dashboard; the ConfigMap is a
-# core resource and costs nothing to render here.
+# The reference cluster runs no Prometheus (built-in monitoring is disabled to save resources), so
+# the ServiceMonitor stays off — the chart default, kept off by operator decision under the 0.14.0
+# rule — but it does run grafana-operator v5 (namespace grafana-test) to validate the shipped
+# dashboard; the ConfigMap is a core resource and costs nothing to render here.
 monitoring:
   grafanaDashboard:
     enabled: true

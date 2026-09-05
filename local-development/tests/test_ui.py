@@ -1702,9 +1702,12 @@ class TestLoginsDisabled:
         body = page.locator("body").inner_text()
         assert "Not being captured" in body
         # BOTH halves, because either one alone records nothing: the module has to run, and the
-        # operand has to be verbose enough to write a username at all.
+        # operand has to be verbose enough to write a username at all. Since chart 0.14.0 the
+        # module is on by default, so the card says that rather than prescribing the default.
+        assert "chart default since 0.14.0 is on" in body
         assert "loginCapture.enabled=true" in body
         assert "Debug" in body
+        assert "audit log" in body
         # And it must not show the seeded rows as though they were live.
         assert "mallory" not in body
 

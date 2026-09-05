@@ -1,6 +1,7 @@
 {{- if .Values.monitoring.serviceMonitor.enabled }}
-# Requires the Prometheus Operator CRDs, which OpenShift ships. On by default since chart 0.14.0;
-# on a cluster without the CRDs set it off, because applying this there fails the whole install.
+# Requires the Prometheus Operator CRDs. Off by default (operator decision, chart 0.14.0): the
+# reference cluster runs no Prometheus, and applying this where the CRDs are absent fails the
+# whole install. Rendering with it on is verified by the chart tests and was applied live once.
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:

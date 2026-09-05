@@ -55,7 +55,7 @@ SubjectAccessReview. There are two independent thresholds:
 
 | threshold | values key | default check | governs |
 |---|---|---|---|
-| **wide tier** | `visibility.adminSar` | `list groups.user.openshift.io` | every cluster-data view |
+| **wide tier** | `visibility.adminSar` | `list clusterrolebindings.rbac.authorization.k8s.io` | every cluster-data view |
 | **usage tier** | `visibility.usageAdminSar` | `update clusterrolebindings.rbac.authorization.k8s.io` | the Usage tab alone |
 
 A SubjectAccessReview **asks whether a subject could perform a verb**. It performs nothing. The
@@ -375,7 +375,7 @@ kind: SubjectAccessReview
 spec:
   user: john.doe
   groups: [system:authenticated, system:authenticated:oauth, app-ocp-rbac-demo-cluster-admin]
-  resourceAttributes: {group: user.openshift.io, resource: groups, verb: list}
+  resourceAttributes: {group: rbac.authorization.k8s.io, resource: clusterrolebindings, verb: list}
 EOF
 ```
 
