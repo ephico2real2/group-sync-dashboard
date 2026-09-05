@@ -102,12 +102,39 @@ main during the pass (the D1 note merged); the C1 content is unchanged by the re
 - **Cursor, the narrowed restore path.** The unknown-tier test used the wide fixture, so it never
   walked the `myAccess` follow-up. Accepted: a narrowed-reader variant added.
 
+### Verdicts — Codex, second pass
+
+Codex pinned to `e2d83cd` and executed what its sandbox allowed: `csvField` on the ten inputs, a Node
+mock of two downloads, the 10,000-row size measurement (CSV 1.39 MiB in 34 ms, pretty JSON 3.55 MiB in
+69 ms), the accessibility suite, `getconf NAME_MAX`, an in-memory scoped API run, and the hunk audit
+(19 files, 38 hunks, all accounted for).
+
+| Claim | Codex | Decision |
+|---|---|---|
+| C1 the tier guard and the other tabs | CONFIRMED | — |
+| C2 `csvField` inputs | REFUTED on the claim's wording | — ; the `u` flag is not what makes BMP escapes match, and `"\n"` is all-whitespace yet correctly prefixed; no code change |
+| C3 `downloadBlob.previous` | PLAUSIBLE (mock only) | — |
+| C4 sort envelopes | REFUTED on the wide Access branch | **Accepted** — the same finding as Cursor's, applied in the Cursor round (`finding,<column>`); Codex's structured `applies_within`/`section_order` shape not adopted, one form is enough |
+| C5 the tests | PLAUSIBLE (no run) | — ; its reversion audit finds each new test tied to its fix |
+| C6 fidelity | CONFIRMED | — |
+| C7 large exports | PLAUSIBLE (Node, not Chromium) | — ; a few MB and tens of milliseconds at `USERS_FETCH` |
+| C8 filenames | REFUTED | **Accepted** — `config.py` accepts a 300-character cluster id and `NAME_MAX` is 255; each filename part is now bounded at 120 characters with an FNV-1a suffix; Codex's test added |
+| C9 accessibility | REFUTED | **Accepted** — the badge amber measured 2.5–2.9:1 against the tinted page; a dedicated `--status-warning-edge` token (`#b45309` light, the badge amber dark) clears 4.1:1 and more on both page stops in both themes; a contrast test added. Changing the global badge token, as Codex proposed, rejected as out of scope |
+| C10 the narrowed Groups export | CONFIRMED by an in-memory scoped run | — |
+
+**Volunteered (Codex): a narrowed session changing user aborts the refresh.** `refresh()` requests the
+previous whoami's `/users/<name>` before the new whoami arrives; when the proxy session becomes another
+user's, that request is a 403 and the shared `Promise.all` rejects before the follow-up can recover.
+Measured in memory by Codex. Pre-existing and not C1's: **routed** to `SPEC_D2_per_cluster_authorization.md`
+(the reader-tier flow's owner) with Codex's helper and Playwright test in its notes.
+
 ## Outcome
 
 Cursor refuted four claims and volunteered three findings; Codex refuted four (two overlapping) and
 volunteered one. Eight findings accepted and applied — the tier guard, the whitespace and full-width
 formula initiators, the timer-free object URL, two honest sort envelopes, the sleep, and two wording
 corrections — three tests rejected as prose or test-source assertions, one nil-safety suggestion
-rejected for consistency with the ConfigMap's other keys. Re-validated after the fixes: the fifteen export
-browser tests (twelve from the spec plus three from the review), `test_export_module.py`, the chart
+rejected for consistency with the ConfigMap's other keys. Second pass: Cursor one refutation and two volunteered points, Codex three refutations and one
+volunteered defect (routed); four more fixes applied. Re-validated after the fixes: the twenty export
+browser tests (twelve from the spec plus eight from the reviews), the accessibility suite, `test_export_module.py`, the chart
 tests, the full suite; CI green on the branch before the fixes and re-run after; CRC redeployed.

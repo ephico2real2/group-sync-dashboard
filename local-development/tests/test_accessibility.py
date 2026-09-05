@@ -149,3 +149,22 @@ def test_visibility_labels_use_only_vetted_tokens():
     assert "#" not in block, "a literal colour crept into the visibility styles; use a token"
     for cls in (".scope-pill", ".scope-banner", ".scope-refusal"):
         assert cls in block, f"{cls} is not styled in the visibility block"
+
+
+def _mix_srgb(foreground: str, background: str, weight: float) -> str:
+    """color-mix(in srgb, fg <weight>, bg) for opaque colours, as the export note's background does."""
+    ch = lambda h: [int(h.lstrip("#")[i:i + 2], 16) for i in (0, 2, 4)]
+    return "#" + "".join(f"{round(f * weight + b * (1 - weight)):02x}" for f, b in zip(ch(foreground), ch(background)))
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+@pytest.mark.parametrize("background", ["page", "page-2"])
+def test_the_partial_export_edge_clears_graphical_contrast_on_the_page(themes, theme, background):
+    """The export note's warning edge (`.export-note.partial`) sits on the page gradient, not on a
+    card, and its background is the badge amber at 8% — so the edge token is measured against that
+    tinted page, where the badge amber itself fell to 2.5:1 (review of C1, second pass, Codex)."""
+    tokens = themes[theme]
+    edge = tokens["status-warning-edge"]
+    tinted = _mix_srgb(tokens["status-warning"], tokens[background], 0.08)
+    got = ratio(edge, tinted)
+    assert got >= AA_LARGE_OR_GRAPHIC, f"{theme}: {edge} on the tinted --{background} {tinted} is {got:.2f}:1"

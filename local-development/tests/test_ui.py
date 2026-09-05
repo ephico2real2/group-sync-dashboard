@@ -3378,6 +3378,22 @@ class TestExport:
         assert findings == sorted(findings, key=["dangling", "unresolved", "unmanaged", "ok"].index)
         assert dl.value.suggested_filename.startswith("gsd_crc-local_access-granted_")
 
+    def test_a_long_cluster_id_still_produces_a_portable_filename(self, dash):
+        """Review pass 2 (Codex): config.py accepts a 300-character cluster id and NAME_MAX is 255;
+        the name is bounded and two ids sharing a prefix stay distinct."""
+        self._users(dash)
+        names = dash.evaluate("""() => {
+            const desc = exportDescriptor(); const old = view.cluster;
+            try {
+              return ["x".repeat(300) + "a", "x".repeat(300) + "b"].map((c) => { view.cluster = c; return exportFilename(desc, "json"); });
+            } finally { view.cluster = old; }
+        }""")
+        import re
+        for name in names:
+            assert len(name.encode("ascii")) <= 255
+            assert re.fullmatch(r"[A-Za-z0-9._-]+", name)
+        assert names[0] != names[1], "truncation must not collide cluster ids that share a prefix"
+
     def test_wide_access_json_names_section_then_column_sort(self, dash):
         """Review pass 2 (Cursor): the file is dangling, unresolved, unmanaged, ok — each sorted by the
         column — so the envelope must not claim a global column sort."""

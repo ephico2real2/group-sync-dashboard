@@ -49,6 +49,9 @@
      and stops reading as a warning at all. */
   --status-good: #0a880a;
   --status-warning: #c48704;
+  /* The partial-export edge sits on the PAGE gradient, not a card; the badge amber is 2.9:1 there,
+     so the edge gets its own darker amber in the light theme (review of C1, second pass). */
+  --status-warning-edge: #b45309;
   --status-critical: #d03b3b;
   --status-unknown: #74726d;
   /* Categorical slots, fixed order. Used for the OWNING CR, not for individual groups:
@@ -143,6 +146,7 @@
     --page-2: #14161c;
     --text-primary: #ffffff;
     --text-secondary: #c3c2b7;
+    --status-warning-edge: #c48704;
     --text-muted: #898781;
     --gridline: #2c2c2a;
     --baseline: #383835;
@@ -182,6 +186,7 @@
   --page-2: #14161c;
   --text-primary: #ffffff;
   --text-secondary: #c3c2b7;
+  --status-warning-edge: #c48704;
   --text-muted: #898781;
   --gridline: #2c2c2a;
   --baseline: #383835;
@@ -831,7 +836,7 @@ td.num.warn { color: var(--warn, #b45309); font-weight: 600; }
 .export-note { font-size: var(--text-sm); color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .export-note.partial {
   color: var(--text-primary); padding: 1px 8px;
-  border-left: 3px solid var(--status-warning);
+  border-left: 3px solid var(--status-warning-edge);
   background: color-mix(in srgb, var(--status-warning) 8%, transparent);
   border-radius: 0 6px 6px 0;
 }

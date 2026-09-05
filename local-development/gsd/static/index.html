@@ -2879,11 +2879,25 @@ function toCsv(columns, rows) {
 }
 
 /* gsd_<cluster>_<tab>[_self][_partial]_<UTC stamp>.<ext>. The cluster id is URL-safe already
-   (config.py refuses a slash) and is reduced to a filename-safe alphabet here anyway. */
+   (config.py refuses a slash) and is reduced to a filename-safe alphabet here anyway. It is also
+   bounded: config.py accepts a long cluster id, filesystems cap a name at 255 bytes, so a part
+   longer than 120 characters is cut and given an FNV-1a suffix of the original, which keeps two
+   ids that share a prefix distinct (review of C1, second pass). */
+function safeFilenamePart(value, maxLength = 120) {
+  const raw = String(value || "");
+  const safe = raw.replace(/[^A-Za-z0-9._-]+/g, "_");
+  if (safe.length <= maxLength) return safe;
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < raw.length; i += 1) {
+    hash ^= raw.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  const suffix = hash.toString(16).padStart(8, "0");
+  return `${safe.slice(0, maxLength - suffix.length - 1)}_${suffix}`;
+}
 function exportFilename(desc, ext) {
-  const safe = (s) => String(s || "").replace(/[^A-Za-z0-9._-]+/g, "_");
   const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
-  return `gsd_${safe(view.cluster)}_${desc.tab}${desc.scope === "self" ? "_self" : ""}`
+  return `gsd_${safeFilenamePart(view.cluster)}_${safeFilenamePart(desc.tab, 48)}${desc.scope === "self" ? "_self" : ""}`
     + `${exportIsPartial(desc) ? "_partial" : ""}_${stamp}.${ext}`;
 }
 

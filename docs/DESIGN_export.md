@@ -50,7 +50,7 @@ narrowed view), nsaudit and logins each name their columns; absent keys export a
 
 ## Filename and the truncation contract
 
-`gsd_<cluster>_<tab>[_self][_partial]_<YYYYMMDDTHHMMSSZ>.<csv|json>`. `_self` when the payload declared
+`gsd_<cluster>_<tab>[_self][_partial]_<YYYYMMDDTHHMMSSZ>.<csv|json>`, each part reduced to `[A-Za-z0-9._-]` and bounded at 120 characters with a hash suffix of the original (filesystems cap a name at 255 bytes; two long ids sharing a prefix stay distinct). `_self` when the payload declared
 `scope: "self"`; `_partial` when the server said the page is a cut of a larger set (`truncated` and
 `total`, the R3 fields already on `/users`, `/bindings/findings`, `/user-bindings` and `/logins`). The
 note beside the buttons says the same before the download, wearing the warning edge, and the JSON
