@@ -177,8 +177,12 @@ def test_the_changelog_heading_names_the_current_release_pair() -> None:
     heading = next(line for line in log.splitlines() if line.startswith("## "))
     app = re.search(r'^version = "(.+?)"', PYPROJECT.read_text(), re.M).group(1)
     chart = re.search(r"^version: (\d+\.\d+\.\d+)", CHART.read_text(), re.M).group(1)
+    # `## Unreleased` carries no date, so the date is taken only from a heading that has one (the
+    # first A2 change landed under `## Unreleased` and found this branch unreachable — the rsplit
+    # raised before the tuple was compared).
+    date = heading.rsplit(" — ", 1)[1] if " — " in heading else ""
     assert heading in (
-        f"## Application {app} — chart {chart} — {heading.rsplit(' — ', 1)[1]}",
-        f"## Chart {chart} — application {app} — {heading.rsplit(' — ', 1)[1]}",
+        f"## Application {app} — chart {chart} — {date}",
+        f"## Chart {chart} — application {app} — {date}",
         "## Unreleased",
     ), f"the changelog's first heading {heading!r} does not name app {app} / chart {chart}"

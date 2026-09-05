@@ -203,6 +203,10 @@ def test_a_dirty_tree_is_refused_and_nothing_is_edited(sandbox: pathlib.Path) ->
     ("--chart", "0.0.1", "does not advance the chart"),
     ("--chart", "99.1.0", "moves MAJOR while leaving MINOR non-zero"),
     ("--app", "9.0.1", "moves MAJOR while leaving PATCH non-zero"),
+    # Review of A2 (Codex): Python's \d accepts these and int() parses them, but helm.yaml's [0-9]
+    # extractors and the build script would refuse the release they name.
+    ("--app", "\u0669.\u0660.\u0660", "Arabic-Indic digits are not the workflows' [0-9]"),
+    ("--chart", "\uff11\uff10.\uff10.\uff10", "full-width digits are not the workflows' [0-9]"),
 ])
 def test_a_version_that_is_not_a_bump_is_refused(sandbox: pathlib.Path, flag: str, value: str, why: str) -> None:
     before = current(sandbox)

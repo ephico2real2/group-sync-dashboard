@@ -8,6 +8,20 @@ lives next to the code and in the design and review records linked here. Changes
 last release sit under `## Unreleased` until the release that carries them replaces that heading —
 which `local-development/prepare-release.py` does when the release is cut.
 
+## Unreleased
+
+- **Every pushed image is signed and attested, and every published chart package is attested.**
+  The build script records the digest the registry acknowledged and makes the release aliases as
+  server-side copies of that manifest, read back and compared, so one digest is every tag. Two new
+  jobs follow the push: an SBOM (Syft 1.51.1, SPDX JSON, a workflow artifact) and a keyless cosign
+  signature under GitHub's OIDC identity with the SBOM attached and SLSA provenance in the
+  repository's attestation store — each read back before the run is green. `helm.yaml` attests the
+  `.tgz` chart-releaser uploaded, for new versions only. No key anywhere; `helm verify` is
+  deliberately not supported. `helm/chart-releaser-action` is pinned by commit like every other
+  action, and a test now holds that rule. Variables `SUPPLY_CHAIN_SBOM` and `SUPPLY_CHAIN_SIGNING`
+  turn the modules off. (design `DESIGN_supply_chain.md`)
+
+
 ## Application 0.15.0 — chart 0.16.0 — 2026-09-05
 
 - **Users tab: provider allow-list and first login from Identity objects.** `config.users.providers` (empty = all)
