@@ -141,7 +141,7 @@ type: application
 # export of the table on screen (C1); ui.export.enabled reaches the ConfigMap as uiExportEnabled and
 # /api/version gains features.
 # CHART 0.16.0 (2026-09-05), MINOR: appVersion moves to application 0.15.0 (below); Users tab
-# provider allow-list and exact first login from Identity objects (C2): rbac.identities (a new
+# provider allow-list and first login from Identity objects (C2): rbac.identities (a new
 # optional grant, the read switch too) and config.users.providers (a new value).
 version: 0.16.0
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
@@ -197,7 +197,7 @@ version: 0.16.0
 # MINOR: additive on the wire, new settings, no shape change.
 # 0.14.0 (2026-09-05). CSV and JSON export of the table on screen (C1); ui.export.enabled reaches
 # the ConfigMap as uiExportEnabled and /api/version gains features. MINOR.
-# 0.15.0 (2026-09-05). Users tab provider allow-list and exact first login from Identity objects
+# 0.15.0 (2026-09-05). Users tab provider allow-list and first login from Identity objects
 # (C2): rbac.identities (a new optional grant, the read switch too) and config.users.providers (a
 # new value). MINOR.
 appVersion: "0.15.0"

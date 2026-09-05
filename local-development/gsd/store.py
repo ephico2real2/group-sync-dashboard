@@ -582,7 +582,7 @@ _MIGRATIONS: list[tuple[int, str, list[str]]] = [
                    state               TEXT NOT NULL,
                    observed_at         TEXT NOT NULL
                )""",
-            # No backfill: exact times arrive with the next poll that may read identities; until then
+            # No backfill: Identity times arrive with the next poll that may read identities; until then
             # every row's source reads `user`, which is the truth about it.
         ],
     ),

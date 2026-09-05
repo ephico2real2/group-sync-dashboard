@@ -319,7 +319,7 @@ class Settings:
     # stored record stays the whole cluster; recorded on the wire as `providers_filter` so the tab
     # can say "showing providers: x, y" instead of quietly listing fewer people.
     users_providers: tuple[str, ...] = ()
-    # Whether the poller reads Identity objects for the exact first login. One wire from the chart's
+    # Whether the poller reads Identity objects for the first-login time. One wire from the chart's
     # rbac.identities, like oauthProxyEnabled: the app cannot see its own RBAC, and trying a read
     # that is refused every poll would put a 403 a minute into the API server's audit log.
     identities_read_enabled: bool = False
@@ -655,11 +655,10 @@ def _bool_setting(raw: dict, env_name: str, yaml_key: str, default: bool) -> boo
 
 # An identity provider's name as OpenShift accepts it (`oc explain oauth.spec.identityProviders.name`,
 # measured 2026-09-05): "a valid path segment: name cannot equal '.' or '..' or contain '/' or '%' or
-# ':'". It prefixes every `identities[]` entry as `<provider>:<id>` and this dashboard splits on the
-# colon. Whitespace is refused as well — a comma-joined list cannot carry it unambiguously.
-# OpenShift's rule for oauth.spec.identityProviders[].name, and nothing stricter: a path segment
-# (not '.' or '..', no '/' or '%') that also excludes ':'. Spaces, commas, upper case and underscores
-# are legal names (review of C2: a whitespace refusal was rejected as not the API's rule).
+# ':'" — and nothing stricter: spaces, commas, upper case and underscores are legal (review of C2: a
+# whitespace refusal was rejected as not the API's rule; the settings file carries a LIST so a comma
+# travels too). It prefixes every `identities[]` entry as `<provider>:<id>` and this dashboard splits
+# on the colon.
 _PROVIDER_NAME = re.compile(r"[^:/%]+")
 
 

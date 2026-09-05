@@ -168,6 +168,26 @@ the list form is the answer. The regex is exactly OpenShift's. Tests: the list f
 - **`docs/DESIGN_users_tab_logins.md`'s opening** read "The open The three open questions…" — my
   first edit landed mid-sentence. Accepted and restored; Codex's test rejected (prose-asserting).
 
+## Second pass — Cursor (on the fixed head)
+
+Read-only (no shell, no network in its sandbox); every verdict re-checked here.
+
+| Claim | Cursor | Decision |
+|---|---|---|
+| C1 the relabel is complete | REFUTED — `rbac.yaml`'s `fail` string and rule comment (emitted into the rendered ClusterRole), both Chart.yaml history lines, a `config.py` and a `store.py` comment still said "exact" | **Accepted** — all fixed, plus `docs/reference-architecture.md`'s RBAC row, which the sweep here found; Cursor's render-based test taken as written (it asserts helm's output, not prose) |
+| C2 the `ok` note per row | CONFIRMED | — |
+| C3 transient failures | CONFIRMED — `identity_state is None` skips the status write, so state and `observed_at` stay; last-known copies only `identity`-sourced rows | — |
+| C4 provider names | CONFIRMED | — |
+| C5 Kubernetes time serialisation | CONFIRMED (could not re-fetch the source; every in-repo statement checked) | — |
+| C6 the design doc | CONFIRMED | — |
+| C7 fidelity of the fix commit | PLAUSIBLE — HEAD was the merge of main, not the fix commit | — ; the fix commit is 895f1f7 and its stat is the twenty files the record names |
+
+Not asked, all accepted: the stale comment above `_PROVIDER_NAME` still said whitespace is refused
+(the old block had been left above the new one); the chart test class docstring said "comma list";
+the chart README's `config.users.providers` row gave a partial rule (`:` and `/` only). Why the
+sweep missed them: the first relabel grep listed files by hand and left out the chart templates,
+Chart.yaml and the reference architecture — this pass swept every tracked file instead.
+
 ## Outcome
 
 Cursor refuted three claims, named one risk and volunteered three findings; six accepted on the fact,

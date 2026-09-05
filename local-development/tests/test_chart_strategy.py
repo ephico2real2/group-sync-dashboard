@@ -1315,7 +1315,7 @@ class TestUiExportModule:
 
 class TestTheIdentitiesGrantIsOffReadOnlyAndCoupled:
     """C2: rbac.identities is both the grant and the read switch; off by default (a grant), get/list
-    only, refused without rbac.users, and the allow-list threads to the ConfigMap as a comma list."""
+    only, refused without rbac.users, and the allow-list threads to the ConfigMap as a YAML list."""
 
     def _docs(self, out):
         import yaml
@@ -1342,6 +1342,19 @@ class TestTheIdentitiesGrantIsOffReadOnlyAndCoupled:
     def test_identities_without_users_is_refused_naming_the_pair(self):
         ok, out = render(rbac__identities="true", rbac__users="false")
         assert not ok and "rbac.identities=true requires rbac.users=true" in out
+
+    def test_the_identities_grant_does_not_tell_an_operator_the_time_is_exact(self):
+        """Review of C2, pass 2 (Cursor): the relabel had left the helm `fail` and the identities
+        rule's comment asserting "the exact first login" — the sentence deviation (14) removed from
+        the page. Helm emits template comments into the rendered ClusterRole, so the manifest is
+        checked as well as the refusal."""
+        ok, refused = render(rbac__identities="true", rbac__users="false")
+        assert not ok
+        assert "rbac.identities=true requires rbac.users=true" in refused
+        assert "exact first login" not in refused.lower(), "the fail names the pair, not a claim about the time"
+        ok, out = render(rbac__identities="true")
+        assert ok, out
+        assert "exact first login" not in out.lower()
 
     def test_the_allow_list_reaches_the_configmap_as_a_list_without_losing_legal_names(self):
         """Review (Codex): OpenShift accepts a provider named `a,b` or `a b`; a comma join would
