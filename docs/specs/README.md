@@ -185,6 +185,16 @@ a foreign Group annotation is **measured** on the reference cluster, not asked),
 exports in activity — default no), C3 (classification marking; a UBI9 fallback for the PDF image;
 `-pass-access-token` later), D1 (the cluster's audit profile; whether to backfill), D2 (one
 identity provider across the fleet; remote ServiceAccount SAR grants).
+- **2026-09-05 — open module questions are settled on "easy to manage, best practice".** The
+  operator delegated the questions still open on the issues to that rule. A2: cosign 3's default
+  bundle layout, consumers on cosign 3.x; the Quay robot's scope proven by the run. B1: the AWS CLI
+  as the default S3 command, `GroupSyncDashboardOffsiteBackupUnobserved` kept. C3: the nine in
+  `SPEC_C3_reporting_microservice.md` §14 — one version for both images, the default marking,
+  `pdf/a-2b` without a veraPDF CI step, store-only delivery, no `rbac.roles`, TLS with a measured
+  HTTP fallback, 90 days / 500 runs, no own-namespace reports, and no template overrides in R6.
+  Questions a later spec still carries (D1's audit profile and backfill, D2's fleet identity) are
+  settled the same way at implementation, with the spec's stated default unless it fails that rule.
+
 
 ## How the specs were produced
 
