@@ -128,7 +128,10 @@ type: application
 # follow monitoring.serviceMonitor.enabled) renders a sidecar-labelled ConfigMap carrying
 # dashboards/group-sync-dashboard.json byte-for-byte; a core resource, no CRD. A default install
 # renders nothing new until the ServiceMonitor is on. appVersion unchanged (0.13.0).
-version: 0.13.0
+# CHART 0.14.0 (2026-09-05), MINOR: every boolean switch on by default unless it costs RBAC, a
+# credential, a second image or a cluster-wide write; authLogLevel stays off as the audit log
+# replaces it.
+version: 0.14.0
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,

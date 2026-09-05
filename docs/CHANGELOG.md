@@ -8,7 +8,7 @@ lives next to the code and in the design and review records linked here. Changes
 last release sit under `## Unreleased` until the release that carries them replaces that heading —
 which `local-development/prepare-release.py` does when the release is cut.
 
-## Unreleased
+## Chart 0.14.0 — application 0.13.0 — 2026-09-05
 
 - **Every switch is on by default unless it costs something the chart cannot grant.** The
   operator's rule for the chart: a boolean defaults to `true` unless the switch needs RBAC beyond a
