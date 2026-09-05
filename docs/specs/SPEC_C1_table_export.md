@@ -25,6 +25,7 @@ request, with the reason, under "Orchestrator's notes".
 ## Orchestrator's notes
 
 - First feature of R3: app 0.14.0, chart 0.15.0; the body's version numbers are superseded. Default answer to the design's question 1: exports are not recorded in `dashboard_user_activity` (client-side action).
+- Applied at implementation (PR #78) with every OLD anchor matching once; no deviation was needed to apply. Deviations from the adversarial review (`docs/REVIEW_C1.md`), applied in the same PR: (1) `exportDescriptor`'s bindings branch returns null when `readerTierKnown()` is false, the same fail-closed `bindingsPage` paints Loading on — the body's version could offer the previous cycle's wide findings after a failed `/api/whoami`; (2) `csvField` tests the formula characters after any leading whitespace run, so `" =cmd"` is prefixed like `"=cmd"`; (3) `downloadBlob` keeps the object URL until the next export replaces it instead of revoking on a one-second timer, which a save dialog can outlive; (4) the narrowed Access granted export's JSON `sort` names the server's order (`binding_kind,binding_namespace,binding_name`) because the page does not re-sort those rows; (5) `test_the_export_makes_no_request` no longer sleeps after the download. Three tests were added for (1), (2) and (4).
 
 ## Batch preamble (verbatim from the design)
 

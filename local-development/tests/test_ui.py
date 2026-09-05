@@ -3384,7 +3384,8 @@ class TestExport:
                       " window.fetch = (...a) => { window.__calls++; return f(...a); }; }")
         with dash.expect_download():
             dash.click("#export-csv")
-        dash.wait_for_timeout(300)
+        # The download finishing is the end of the client work; any request the export made would
+        # already have counted inside expect_download, so there is nothing to wait for.
         assert dash.evaluate("() => window.__calls") == 0
 
     def test_no_control_on_a_drill_down_or_a_loading_page(self, dash):
@@ -3394,6 +3395,31 @@ class TestExport:
         assert dash.locator("#export-csv").count() == 0
         dash.locator("#back-groups").click()
         dash.wait_for_selector("#export-csv")
+
+    def test_no_control_while_the_bindings_tier_is_unknown(self, dash):
+        """Review (Cursor): the page paints Loading when whoami failed, and the export must fail
+        closed the same way rather than offer the previous cycle's wide findings."""
+        dash.locator("button[data-nav='bindings']").click()
+        dash.wait_for_selector("text=grant nobody")
+        dash.wait_for_selector("#export-csv")
+        assert dash.evaluate("() => !!(data.findings && !data.findings.forbidden)") is True
+        dash.evaluate("() => { data.whoami = null; render(); }")
+        assert "Loading" in dash.locator(".empty-note").first.inner_text()
+        assert dash.locator("#export-csv").count() == 0
+        assert dash.evaluate("() => exportDescriptor()") is None
+        dash.evaluate("() => refresh()")
+        dash.wait_for_selector("#export-csv")
+
+    def test_a_leading_space_before_a_formula_is_neutralised(self, dash):
+        got = dash.evaluate("""() => toCsv(["a"], [
+            { a: " =SUM(1)" },
+            { a: -5 },
+            { a: "'=already" },
+        ])""")
+        assert got == ("\ufeffa\r\n"
+                       "' =SUM(1)\r\n"
+                       "-5\r\n"
+                       "'=already\r\n")
 
 
 class TestExportVisibility:
@@ -3427,6 +3453,19 @@ class TestExportVisibility:
         assert rows[0][0] == "via_group"
         names = {r[5] for r in rows[1:]}
         assert names == {"managed-admin-rb", "hand-made-crb"}, names
+
+    def test_narrowed_access_json_says_the_servers_order_not_a_name_sort(self, page, scoped_server):
+        """Review (Cursor): the rows arrive in the store's order and the page does not re-sort
+        them, so the envelope must not claim a sort it did not do."""
+        p = _open_as(page, scoped_server, "alice")
+        p.locator("button[data-nav='bindings']").click()
+        p.wait_for_selector("#export-json")
+        with p.expect_download() as dl:
+            p.click("#export-json")
+        import json
+        doc = json.load(open(dl.value.path()))
+        assert doc["sort"] == {"key": "binding_kind,binding_namespace,binding_name", "dir": "asc"}
+        assert [r["binding_name"] for r in doc["rows"]] == ["hand-made-crb", "managed-admin-rb"]
 
     def test_the_administrator_exports_the_whole_cluster(self, page, scoped_server):
         p = _open_as(page, scoped_server, "root")

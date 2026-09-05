@@ -2792,12 +2792,18 @@ function exportDescriptor() {
              sort: { key: "name", dir: "asc" } };
   }
   if (view.page === "bindings") {
+    // The same fail-closed as bindingsPage: an unknown tier (whoami failed this cycle) paints
+    // Loading and must not offer the previous cycle's findings as a download either — the
+    // follow-up that nulls data.findings only runs when a NEW whoami is narrowed (review, C1).
+    if (!readerTierKnown()) return null;
     if (narrowedReader()) {
       const m = data.myAccess;
       if (!m) return null;
+      // The rows come in the server's order (binding kind, namespace, name) and the page does
+      // not re-sort them, so the envelope says that rather than claiming a name sort.
       return { tab: "access-granted", columns: EXPORT_COLUMNS.myaccess, rows: m.bindings || [],
                served: (m.bindings || []).length, total: null, scope: "self", viewer: m.viewer || null,
-               filter: {}, sort: { key: "binding", dir: "asc" } };
+               filter: {}, sort: { key: "binding_kind,binding_namespace,binding_name", dir: "asc" } };
     }
     const raw = data.findings;
     if (!raw || raw.forbidden) return null;
@@ -2846,7 +2852,9 @@ function csvField(value) {
   if (typeof value === "boolean") return value ? "true" : "false";
   if (typeof value === "number") return String(value);
   let s = String(value);
-  if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+  // Tested after any leading whitespace: an importer that trims before it decides would treat
+  // " =cmd" like "=cmd". The cell keeps its original spaces; this only decides the prefix.
+  if (/^[\t\r\n ]*[=+\-@\t\r]/.test(s)) s = "'" + s;
   if (/[",\r\n]/.test(s)) s = '"' + s.replace(/"/g, '""') + '"';
   return s;
 }
@@ -2868,11 +2876,17 @@ function exportFilename(desc, ext) {
     + `${exportIsPartial(desc) ? "_partial" : ""}_${stamp}.${ext}`;
 }
 
-/* A Blob and an <a download>: no server round trip, no new window. The object URL is revoked
-   after the click has had its tick — revoking synchronously cancels the download in Firefox. */
+/* A Blob and an <a download>: no server round trip, no new window. Revoking the object URL on
+   the click's own turn cancels the download in Firefox, and a timer can fire while a save dialog
+   is still open, so the URL lives until the next export replaces it. */
 function downloadBlob(text, filename, type) {
+  // The previous export's URL is released here, not on a timer: a browser set to ask where to
+  // save can keep its dialog open past any timer, and revoking then loses the file. One object
+  // URL per page lifetime is the cost; unload releases the last one (review, C1).
+  if (downloadBlob.previous) URL.revokeObjectURL(downloadBlob.previous);
   const blob = new Blob([text], { type });
   const url = URL.createObjectURL(blob);
+  downloadBlob.previous = url;
   const a = document.createElement("a");
   a.href = url;
   a.download = filename;
@@ -2880,7 +2894,6 @@ function downloadBlob(text, filename, type) {
   document.body.appendChild(a);
   a.click();
   a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 function runExport(format) {
