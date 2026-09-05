@@ -61,7 +61,7 @@
           "mappings": [
             { "type": "value", "options": { "0": { "text": "DOWN", "color": "red", "index": 0 }, "1": { "text": "UP", "color": "green", "index": 1 } } }
           ],
-          "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ] }
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "text", "value": null }, { "color": "green", "value": 1 } ] }
         },
         "overrides": []
       },
@@ -335,7 +335,7 @@
       "fieldConfig": {
         "defaults": {
           "mappings": [ { "type": "value", "options": { "0": { "text": "OFF", "color": "red", "index": 0 }, "1": { "text": "WAL", "color": "green", "index": 1 } } } ],
-          "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ] }
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "text", "value": null }, { "color": "green", "value": 1 } ] }
         },
         "overrides": []
       },
@@ -352,7 +352,7 @@
         { "refId": "A", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "sum(gsd_leader)", "legendFormat": "leaders", "instant": true }
       ],
       "fieldConfig": {
-        "defaults": { "unit": "none", "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 }, { "color": "red", "value": 2 } ] } },
+        "defaults": { "unit": "none", "thresholds": { "mode": "absolute", "steps": [ { "color": "text", "value": null }, { "color": "red", "value": 0 }, { "color": "green", "value": 1 }, { "color": "red", "value": 2 } ] } },
         "overrides": []
       },
       "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "background", "graphMode": "none", "textMode": "value", "orientation": "auto" }

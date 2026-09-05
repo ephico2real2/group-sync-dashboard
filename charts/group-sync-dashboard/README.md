@@ -460,12 +460,29 @@ there when the PVC dies.
 
 `monitoring.grafanaDashboard` ships `dashboards/group-sync-dashboard.json` as a ConfigMap with the
 `grafana_dashboard: "1"` label that Grafana's dashboard sidecar watches. The sidecar only watches its
-own namespace unless configured otherwise (`sidecar.dashboards.searchNamespace: ALL` in
-kube-prometheus-stack), so either install the chart beside Grafana, set a folder and label your
-sidecar recognises, or copy the ConfigMap. The board's thresholds equal the defaults above and are
-held to them by a test; edit them in Grafana if you tune the rules.
+own namespace unless configured otherwise, and a folder annotation or an extra label cannot widen that
+scope — they matter only once the sidecar already sees the ConfigMap. Do one of:
 
-Running grafana-operator v5? It reads this ConfigMap directly:
+1. install this chart in the same namespace as Grafana;
+2. copy the ConfigMap into Grafana's namespace;
+3. point kube-prometheus-stack's sidecar at every namespace (the Grafana subchart's key, nested under
+   `grafana:` in kube-prometheus-stack):
+
+```yaml
+grafana:
+  sidecar:
+    dashboards:
+      searchNamespace: ALL
+```
+
+The board's thresholds equal the defaults above and are held to them by a test; edit them in Grafana if
+you tune the rules. Panel datasource uids are `${DS_PROMETHEUS}`: Dashboards → Import resolves that
+through `__inputs`; a sidecar or the operator leaves `__inputs` alone and the board's own `DS_PROMETHEUS`
+variable (type datasource) selects a Prometheus datasource instead, so both paths work.
+
+Running grafana-operator v5? It reads this ConfigMap directly. Keep the `GrafanaDashboard` in the
+ConfigMap's namespace; `allowCrossNamespaceImport: true` is what lets it match a Grafana instance in
+another namespace (this is the recipe that was validated on the reference cluster):
 
 ```yaml
 apiVersion: grafana.integreatly.org/v1beta1
@@ -473,6 +490,7 @@ kind: GrafanaDashboard
 metadata:
   name: group-sync-dashboard
 spec:
+  allowCrossNamespaceImport: true
   instanceSelector:
     matchLabels:
       dashboards: grafana        # whatever your Grafana CR is labelled

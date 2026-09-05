@@ -118,6 +118,27 @@ class TestTheFile:
         missing = {a for a in shipped if f"`{a}`" not in text_panel["options"]["content"]}
         assert not missing, f"text panel does not name: {missing}"
 
+    def test_nodata_does_not_use_the_alarm_colour_as_the_base_step(self):
+        """No series is not DOWN / WAL-off / split-brain. The reference cluster's screenshot is the
+        scar: three stats painted red on "No data" (review, PR #74)."""
+        board = json.loads(DASHBOARD.read_text())
+        by_title = {p["title"]: p for p in _walk_panels(board["panels"])}
+        for title in ("Cluster up", "WAL mode", "Leader replicas"):
+            steps = by_title[title]["fieldConfig"]["defaults"]["thresholds"]["steps"]
+            assert steps[0]["value"] is None
+            assert steps[0]["color"] != "red", f"{title} paints No data as alarm-red"
+
+    def test_readme_does_not_treat_folder_as_a_namespace_fix(self):
+        """B3.9: folder/labels cannot fix sidecar namespace scope, and the operator recipe that worked
+        on the reference cluster needed allowCrossNamespaceImport (review, PR #74)."""
+        text = (CHART / "README.md").read_text()
+        start = text.index("#### The Grafana dashboard")
+        section = text[start:text.index("### ArgoCD", start)]
+        assert "set a folder and label your sidecar recognises" not in section
+        assert "cannot widen that" in section
+        assert "grafana:\n  sidecar:\n    dashboards:\n      searchNamespace: ALL" in section
+        assert "allowCrossNamespaceImport: true" in section and "configMapRef:" in section
+
     def test_a_cluster_variable_scopes_the_per_cluster_panels(self):
         board = json.loads(DASHBOARD.read_text())
         names = {v["name"] for v in board["templating"]["list"]}
@@ -163,6 +184,16 @@ class TestTheConfigMap:
         cm = _dashboard_configmaps(docs)[0]
         assert cm["metadata"]["annotations"]["grafana_folder"] == "Access"
         assert cm["metadata"]["labels"]["team"] == "platform"
+
+    def test_a_colliding_sidecar_label_refuses_the_render(self):
+        """Extra labels are for a different key; overwriting grafana_dashboard would drop the
+        convention value and the sidecar would ignore the ConfigMap (review, PR #74)."""
+        args = ["helm", "template", "t", str(CHART), "-n", "x", "--set", "ingress.host=h",
+                "--set", "monitoring.grafanaDashboard.enabled=true",
+                "--set", "monitoring.grafanaDashboard.labels.grafana_dashboard=0"]
+        done = subprocess.run(args, capture_output=True, text=True, timeout=120)
+        assert done.returncode != 0, done.stdout
+        assert "grafana_dashboard" in done.stderr
 
     def test_rendered_configmap_json_is_byte_identical_to_the_file(self):
         """No Helm mangling: the `$cluster` / `{{cluster}}` strings survive, and the block

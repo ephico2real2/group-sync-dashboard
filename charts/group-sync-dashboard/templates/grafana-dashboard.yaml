@@ -27,6 +27,12 @@ monitoring on" is the contract the README documents.
 {{- if not $json }}
 {{- fail "dashboards/group-sync-dashboard.json is missing from the chart package; monitoring.grafanaDashboard cannot render" }}
 {{- end }}
+{{- /* Extra labels are for a sidecar that watches a DIFFERENT key. A colliding grafana_dashboard would
+       overwrite the convention value below (last key wins) and the sidecar would silently ignore the
+       ConfigMap — a board that exists, looks right, and never appears (found in review, PR #74). */ -}}
+{{- if hasKey ((.Values.monitoring.grafanaDashboard | default dict).labels | default dict) "grafana_dashboard" }}
+{{- fail "monitoring.grafanaDashboard.labels must not set grafana_dashboard: the chart writes grafana_dashboard: \"1\" for the sidecar convention; add a different key for a sidecar that watches a non-default label" }}
+{{- end }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
