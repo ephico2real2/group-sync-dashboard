@@ -7,7 +7,7 @@
 | Release | R4 — Supply chain and backup |
 | Version on release | chart 0.17.0 (chart only) |
 | Issue | [#64](https://github.com/ephico2real2/group-sync-dashboard/issues/64) |
-| Status | specified |
+| Status | in progress |
 | Source | design agent output `a7eabba23e10eec8a`; one message; no seam |
 
 ## How to read this spec
@@ -30,6 +30,7 @@ request, with the reason, under "Orchestrator's notes".
 - Ladder inversion found in review (PR #69, C8): the body's chart README old text says "eleven" alerts; after B4 it says "twelve", and B1 makes it fourteen. The count is re-derived from main at implementation.
 
 - Citation corrected when B4 landed (1 occurrence): the design's ground-truth table cited the chart README heading "The eleven alerts"; B4 made it twelve, and the heading is cited by its current text. The count this spec's own edits produce is re-derived from main at implementation, as the notes above already say.
+- Applied at implementation (PR for #64), 2026-09-05, from the body's blocks. Deviations, each with the reason: (1) chart 0.17.0, chart only, per the ladder; the history line is the body's with the B2 half removed (B2 shipped in R2); (2) the CHANGELOG bullet sits under the `## Chart 0.17.0 — application 0.15.0` heading `prepare-release.py` made from `## Unreleased` (A2's bullet moves under it, as the intro's convention says), and cites this spec rather than `DESIGN_backup_offsite_and_retention.md`, which was never written; (3) `docs/reference-architecture.md` gains the body's `### Retention` section too — B2 shipped without it, no retention text existed there, and every symbol the paragraph cites (`Poller._prune_history`, `Store.prune_membership_events`, `prune_sync_events`, `history_retained_since`) exists; its "until 0.12.0" reads "until application 0.13.0", B2's release; (4) the alert counts read twelve → fourteen (the body said eleven → thirteen; B4 landed in between); (5) the runbook's examples name the running application 0.15.0 and `user_version 9` (the latest migration) instead of 0.12.0 and 7; (6) `tests/test_offsite_backup_script.py::test_a_corrupt_copy_fails` asserts `"ERROR:" in err` after one `capsys` read, as the body itself instructs (its `or True` placeholder dropped); (7) `backup.offsite.enabled` joins `tests/test_values_defaults.py`'s stated off-by-default exceptions with its reason (the guard that holds the 0.14.0 rule); (8) operator questions 2 and 3 were unanswered when the PR opened — the body's defaults (the AWS CLI command; the `Unobserved` rule kept) are taken and posted on #64.
 
 ## Batch preamble (verbatim from the design)
 

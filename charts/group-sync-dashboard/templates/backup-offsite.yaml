@@ -1,0 +1,261 @@
+{{- /*
+Off-volume backup: the other half of config.backup. See values.yaml under `backup:` for the
+decisions; this file models the interactions and renders four objects when enabled.
+
+The `backup.enabled` guard is OUTSIDE the enabled block on purpose: the mistake it catches is
+setting the wrong key and seeing nothing render.
+*/}}
+{{- if hasKey .Values.backup "enabled" }}
+{{- fail "backup.enabled is not a value. The on-volume backup the dashboard takes is config.backup.enabled (on by default); the off-volume CronJob is backup.offsite.enabled. A key that silently did nothing here would look like a backup that was configured." }}
+{{- end }}
+{{- if .Values.backup.offsite.enabled }}
+{{- $o := .Values.backup.offsite }}
+{{- $mode := include "gsd.accessMode" . }}
+{{- $type := $o.destination.type }}
+{{- $fullname := include "gsd.fullname" . }}
+{{- $dataClaim := .Values.persistence.existingClaim | default (printf "%s-data" $fullname) }}
+{{- if not .Values.persistence.enabled }}
+{{- fail "backup.offsite.enabled=true requires persistence.enabled=true. With an emptyDir there is no volume to ship a backup off, and the history it would protect resets on every restart anyway." }}
+{{- end }}
+{{- if not .Values.config.backup.enabled }}
+{{- fail "backup.offsite.enabled=true requires config.backup.enabled=true. The CronJob ships the VACUUM INTO files the dashboard writes under config.backup.dir; with that off there is nothing to ship, and copying the live gsd.db with its WAL would produce a torn file that opens and restores — the worst kind of backup." }}
+{{- end }}
+{{- if not (hasPrefix "/data/" .Values.config.backup.dir) }}
+{{- fail (printf "backup.offsite.enabled=true requires config.backup.dir under /data/ (it is %q). The CronJob mounts the data claim at /data, read-only, and reads the backups from there." .Values.config.backup.dir) }}
+{{- end }}
+{{- if eq $mode "ReadWriteOncePod" }}
+{{- fail "backup.offsite.enabled=true cannot work with a ReadWriteOncePod data volume: that mode lets exactly ONE pod mount the claim, so the CronJob pod would stay Pending forever. Set persistence.accessMode to ReadWriteOnce (the CronJob is then pinned to the dashboard's node by podAffinity) or ReadWriteMany. accessModes are immutable on an existing claim — docs/RUNBOOK_backup_restore.md covers moving the data to a new one." }}
+{{- end }}
+{{- if not (has $type (list "pvc" "s3")) }}
+{{- fail (printf "backup.offsite.destination.type %q is not a destination. Use pvc (a second claim the chart creates or references, no credentials) or s3 (an operator-supplied Secret and CLI image)." $type) }}
+{{- end }}
+{{- if eq $type "pvc" }}
+{{- if and $o.destination.pvc.existingClaim (eq $o.destination.pvc.existingClaim $dataClaim) }}
+{{- fail (printf "backup.offsite.destination.pvc.existingClaim %q is the data claim itself. A copy on the volume it protects is what config.backup already makes; this CronJob exists to put one somewhere else." $dataClaim) }}
+{{- end }}
+{{- if lt (int $o.destination.pvc.keep) 0 }}
+{{- fail (printf "backup.offsite.destination.pvc.keep must be 0 (keep everything) or a positive count, not %v." $o.destination.pvc.keep) }}
+{{- end }}
+{{- end }}
+{{- if eq $type "s3" }}
+{{- if not $o.destination.s3.existingSecret }}
+{{- fail "backup.offsite.destination.type=s3 requires backup.offsite.destination.s3.existingSecret: the chart never embeds object-storage credentials. Create a Secret with AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY and S3_BUCKET (optionally S3_ENDPOINT, S3_PREFIX, AWS_DEFAULT_REGION, AWS_CA_BUNDLE) and name it here." }}
+{{- end }}
+{{- if not $o.destination.s3.image.repository }}
+{{- fail "backup.offsite.destination.type=s3 requires an image with an S3 CLI in backup.offsite.destination.s3.image.repository (and .tag). The dashboard image deliberately ships no aws, mc or rclone (docs/DESIGN_hardened_image.md §10). The default command is written for the AWS CLI; set backup.offsite.destination.s3.command for another tool." }}
+{{- end }}
+{{- end }}
+---
+# No grants at all, and no token: the Job talks to no API server. A dedicated account rather
+# than the dashboard's, so the copy runs with LESS than the dashboard, not the same.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $fullname }}-backup-offsite
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gsd.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backup-offsite
+automountServiceAccountToken: false
+---
+# The copy script, verbatim from scripts/offsite_backup.py. A test holds the two identical.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $fullname }}-backup-offsite
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gsd.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backup-offsite
+data:
+  offsite_backup.py: |
+{{ .Files.Get "scripts/offsite_backup.py" | indent 4 }}
+{{- if and (eq $type "pvc") (not $o.destination.pvc.existingClaim) }}
+---
+# The destination claim. The same survival annotations as the data claim (pvc.yaml): a
+# `helm uninstall` must not take the copies with it.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $fullname }}-backup-offsite
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gsd.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backup-offsite
+  annotations:
+    helm.sh/resource-policy: keep
+    {{- if and .Values.argocd.enabled .Values.argocd.preservePVC }}
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false,PruneLast=true
+    {{- end }}
+spec:
+  accessModes: [{{ $o.destination.pvc.accessMode | default "ReadWriteOnce" }}]
+  {{- with $o.destination.pvc.storageClass }}
+  storageClassName: {{ . }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ $o.destination.pvc.size }}
+{{- end }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ $fullname }}-backup-offsite
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gsd.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backup-offsite
+spec:
+  schedule: {{ $o.schedule | quote }}
+  concurrencyPolicy: {{ $o.concurrencyPolicy }}
+  successfulJobsHistoryLimit: {{ $o.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ $o.failedJobsHistoryLimit }}
+  startingDeadlineSeconds: {{ $o.startingDeadlineSeconds }}
+  jobTemplate:
+    spec:
+      backoffLimit: {{ $o.backoffLimit }}
+      activeDeadlineSeconds: {{ $o.activeDeadlineSeconds }}
+      template:
+        metadata:
+          labels:
+            # NOT gsd.selectorLabels. The Service selects on those, and a Job pod with no
+            # readiness probe is Ready the moment it runs — it would receive dashboard
+            # traffic for the length of the copy. A test holds these apart from the selector.
+            app.kubernetes.io/name: {{ include "gsd.name" . }}-backup-offsite
+            app.kubernetes.io/instance: {{ .Release.Name }}
+            app.kubernetes.io/component: backup-offsite
+        spec:
+          restartPolicy: Never
+          serviceAccountName: {{ $fullname }}-backup-offsite
+          automountServiceAccountToken: false
+          {{- with .Values.image.pullSecrets }}
+          imagePullSecrets: {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext: {{- toYaml .Values.podSecurityContext | nindent 12 }}
+          {{- with .Values.nodeSelector }}
+          nodeSelector: {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.tolerations }}
+          tolerations: {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- if ne $mode "ReadWriteMany" }}
+          # ReadWriteOnce binds the data claim to one NODE. Pods on that node may share it, so
+          # the copy runs beside the dashboard; on any other node it could never mount.
+          affinity:
+            podAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                - topologyKey: kubernetes.io/hostname
+                  labelSelector:
+                    matchLabels: {{- include "gsd.selectorLabels" . | nindent 22 }}
+          {{- end }}
+          {{- if eq $type "s3" }}
+          initContainers:
+            # Select, copy, hash and integrity-check into the staging emptyDir. The upload
+            # container never touches the data claim and never decides what to send.
+            - name: stage
+              image: {{ include "gsd.image" . }}
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              command:
+                - python3.14
+                - /scripts/offsite_backup.py
+                - --source
+                - {{ .Values.config.backup.dir | quote }}
+                - --dest
+                - /stage
+                - --keep
+                - "0"
+              securityContext: {{- toYaml .Values.securityContext | nindent 16 }}
+              resources: {{- toYaml $o.resources | nindent 16 }}
+              volumeMounts:
+                - name: data
+                  mountPath: /data
+                  readOnly: true
+                - name: script
+                  mountPath: /scripts
+                  readOnly: true
+                - name: stage
+                  mountPath: /stage
+          {{- end }}
+          containers:
+            {{- if eq $type "pvc" }}
+            - name: ship
+              image: {{ include "gsd.image" . }}
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              command:
+                - python3.14
+                - /scripts/offsite_backup.py
+                - --source
+                - {{ .Values.config.backup.dir | quote }}
+                - --dest
+                - /offsite
+                - --keep
+                - {{ $o.destination.pvc.keep | quote }}
+              securityContext: {{- toYaml .Values.securityContext | nindent 16 }}
+              resources: {{- toYaml $o.resources | nindent 16 }}
+              volumeMounts:
+                - name: data
+                  mountPath: /data
+                  readOnly: true
+                - name: script
+                  mountPath: /scripts
+                  readOnly: true
+                - name: offsite
+                  mountPath: /offsite
+            {{- else }}
+            - name: upload
+              image: {{ printf "%s:%s" $o.destination.s3.image.repository ($o.destination.s3.image.tag | default "latest") }}
+              imagePullPolicy: {{ $o.destination.s3.image.pullPolicy }}
+              # Credentials come ONLY from the operator's Secret, as environment. The chart
+              # renders none.
+              envFrom:
+                - secretRef:
+                    name: {{ $o.destination.s3.existingSecret }}
+              {{- if $o.destination.s3.command }}
+              command: {{- toYaml $o.destination.s3.command | nindent 16 }}
+              {{- else }}
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -eu
+                  : "${S3_BUCKET:?S3_BUCKET is missing from the Secret}"
+                  ls -l /stage
+                  DEST="s3://${S3_BUCKET}/${S3_PREFIX:-}"
+                  if [ -n "${S3_ENDPOINT:-}" ]; then set -- --endpoint-url "$S3_ENDPOINT"; else set --; fi
+                  aws s3 cp /stage/ "$DEST" --recursive --no-progress "$@"
+                  echo "uploaded to $DEST"
+              {{- end }}
+              securityContext: {{- toYaml .Values.securityContext | nindent 16 }}
+              resources: {{- toYaml $o.resources | nindent 16 }}
+              volumeMounts:
+                - name: stage
+                  mountPath: /stage
+                  readOnly: true
+                # The AWS CLI writes a cache under $HOME; readOnlyRootFilesystem is on.
+                - name: tmp
+                  mountPath: /tmp
+              env:
+                - name: HOME
+                  value: /tmp
+            {{- end }}
+          volumes:
+            - name: data
+              persistentVolumeClaim:
+                claimName: {{ $dataClaim }}
+                readOnly: true
+            - name: script
+              configMap:
+                name: {{ $fullname }}-backup-offsite
+                defaultMode: 0444
+            {{- if eq $type "pvc" }}
+            - name: offsite
+              persistentVolumeClaim:
+                claimName: {{ $o.destination.pvc.existingClaim | default (printf "%s-backup-offsite" $fullname) }}
+            {{- else }}
+            - name: stage
+              emptyDir:
+                sizeLimit: {{ $o.destination.s3.stagingSizeLimit }}
+            - name: tmp
+              emptyDir: {}
+            {{- end }}
+{{- end }}

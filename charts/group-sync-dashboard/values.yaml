@@ -733,6 +733,108 @@ persistence:
   existingClaim: ""    # set to reuse a claim instead of creating one
 
 # ---------------------------------------------------------------------------
+# Off-volume backup — the OTHER half of config.backup
+# ---------------------------------------------------------------------------
+# config.backup (under config: above) writes VACUUM INTO copies to the SAME volume they
+# protect. This CronJob mounts that volume read-only and carries the newest copy somewhere
+# else: a second claim, or object storage. Together they are the whole answer; either alone
+# is half. Restore, and how to verify a copy without restoring: docs/RUNBOOK_backup_restore.md.
+#
+# OFF BY DEFAULT because it needs a destination the chart cannot choose for you — a second
+# claim on a DIFFERENT StorageClass, or a bucket and a credential — and a CronJob rendered with
+# nowhere to write is a red Job on every schedule. Nothing else about it is optional once on:
+# the copy is hashed, opened and integrity-checked BEFORE it counts, and the Job exits
+# non-zero on any of those.
+#
+# WHO RUNS IT. The dashboard image, with a Python-stdlib script the chart ships as a
+# ConfigMap (scripts/offsite_backup.py, mounted at /scripts). The image has no tar, rsync or
+# aws on purpose (docs/DESIGN_hardened_image.md §10), and a shell copy could not verify what
+# it copied; the sqlite3 module is exactly what PRAGMA integrity_check needs.
+#
+# MOUNTING THE DATA CLAIM TWICE. The dashboard pod holds it.
+#   ReadWriteMany     the CronJob pod mounts it anywhere; no affinity.
+#   ReadWriteOnce     the claim binds to one NODE, so the chart pins the CronJob pod to the
+#                     dashboard's node with a required podAffinity. A dashboard scaled to zero
+#                     then leaves the Job Pending until activeDeadlineSeconds fails it — the
+#                     honest outcome: no dashboard, no new copy to ship.
+#   ReadWriteOncePod  exactly one pod, ever. The chart REFUSES to render rather than ship a
+#                     Job that can never schedule.
+#
+# ALERTING. The app cannot see this Job. With monitoring.prometheusRule.enabled the chart adds
+# two rules on kube_cronjob_status_last_successful_time (kube-state-metrics): stale, and
+# never-observed. Where kube-state-metrics is not scraped the second one fires and stays
+# firing — an alert that can never fire would be indistinguishable from healthy.
+#
+# NOT `backup.enabled`. That key does not exist and the chart refuses it: the on-volume
+# switch is config.backup.enabled, this one is backup.offsite.enabled.
+backup:
+  offsite:
+    enabled: false
+    # Cron, in the controller manager's time zone. Every six hours, to match
+    # config.backup.intervalHours. There is nothing to align to: the app's backups run on a
+    # timer from pod start, not the clock, so any offset is arbitrary and :15 is as good as any.
+    schedule: "15 */6 * * *"
+    # Forbid: a slow copy must not overlap the next one on the same destination.
+    concurrencyPolicy: Forbid
+    successfulJobsHistoryLimit: 3
+    failedJobsHistoryLimit: 3
+    # A slot missed by more than this is skipped rather than run late into the next one.
+    startingDeadlineSeconds: 900
+    # Wall clock on the whole attempt, Pending included — see the ReadWriteOnce case above.
+    activeDeadlineSeconds: 1800
+    # One retry. The script is idempotent (a copy that already matches its sidecar is skipped).
+    backoffLimit: 1
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi
+    destination:
+      # pvc | s3
+      type: pvc
+      pvc:
+        # Empty: the chart creates <fullname>-backup-offsite with helm.sh/resource-policy: keep
+        # (and the Argo annotations), like the data claim. Set to reuse a claim — one that is
+        # NOT the data claim; the chart refuses that, because it would not be off the volume.
+        existingClaim: ""
+        # keep x (roughly the database size). The data claim is 1Gi and holds the database
+        # plus config.backup.keep copies, so one copy is well under 200Mi in practice.
+        size: 5Gi
+        # A DIFFERENT class from persistence.storageClass is the point: a second claim on the
+        # same failing storage is not off it. "" -> cluster default.
+        storageClass: ""
+        # Empty derives ReadWriteOnce: one Job at a time (concurrencyPolicy) needs no more,
+        # and RWO is what every StorageClass provides.
+        accessMode: ""
+        # Copies kept at the destination, newest first; 0 keeps everything. 14 x 6h = three
+        # and a half days of six-hourly copies. The .sha256 sidecars go with their copies.
+        keep: 14
+      s3:
+        # A Secret YOU create; the chart never renders credentials. Keys:
+        #   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, S3_BUCKET          required
+        #   S3_ENDPOINT (MinIO / ODF / RGW), S3_PREFIX, AWS_DEFAULT_REGION, AWS_CA_BUNDLE   optional
+        # Give the credential PutObject and NOTHING ELSE, and prune with a bucket lifecycle
+        # rule. A write-only credential is what makes a leaked one unable to delete the history
+        # it exists to protect — which is also why the chart does not do S3 in the stdlib script
+        # (pruning would need List and Delete) and why there is no `keep` here.
+        existingSecret: ""
+        # An image with an S3 CLI. The default upload command is written for the AWS CLI
+        # (for example repository: public.ecr.aws/aws-cli/aws-cli); set `command` for mc or
+        # rclone. Refused empty: the dashboard image ships no such tool.
+        image:
+          repository: ""
+          tag: ""
+          pullPolicy: IfNotPresent
+        # Replaces the default upload command (a list). The verified copy and its .sha256
+        # sidecar are under /stage; the Secret's keys are in the environment.
+        command: []
+        # emptyDir holding the verified copy between the two containers. Must exceed one copy,
+        # which persistence.size bounds.
+        stagingSizeLimit: 2Gi
+
+# ---------------------------------------------------------------------------
 # RBAC
 # ---------------------------------------------------------------------------
 serviceAccount:
@@ -1494,6 +1596,10 @@ monitoring:
     # broken mechanism — and this is the only protection for the data that cannot be
     # re-fetched from the cluster.
     backupStaleSeconds: 43200
+    # Seconds since the off-volume CronJob last SUCCEEDED (kube_cronjob_status_last_successful_time
+    # from kube-state-metrics) before the copy counts as stale. Two slots of the default
+    # backup.offsite.schedule (every six hours). Rendered only with backup.offsite.enabled.
+    offsiteBackupStaleSeconds: 43200
     for:
       overdue: 10m
       dangling: 15m
@@ -1507,6 +1613,10 @@ monitoring:
       # The staleness threshold above is already two backup intervals, so the for: only
       # needs to outlast a scrape gap.
       backupStale: 30m
+      offsiteBackupStale: 30m
+      # The series exists only after the FIRST success, so absence means "never succeeded" or
+      # "kube-state-metrics is not in this Prometheus". Both are worth a warning; neither pages.
+      offsiteBackupUnobserved: 1h
       # Long, because a checkpoint legitimately lags behind a burst of reads. Only sustained
       # growth is the starvation case.
       walGrowing: 30m

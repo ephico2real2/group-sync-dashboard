@@ -735,9 +735,31 @@ the newest commits — a backup that restores, which is the worst kind
 Run from the poll thread only, the same rule as the checkpoint. `keep` bounds the directory.
 
 **The honest limit:** backups land on the same PVC they protect. They cover corruption, a bad
-migration and accidental deletion — not loss of the volume. Shipping them off it is a
-CronJob mounting the same claim read-only; the dashboard deliberately does not grow
-credentials for object storage.
+migration and accidental deletion — not loss of the volume. The other half is the chart's
+`backup.offsite` CronJob (`charts/group-sync-dashboard/templates/backup-offsite.yaml`): it mounts
+the same claim read-only, and a stdlib script shipped as a ConfigMap
+(`charts/group-sync-dashboard/scripts/offsite_backup.py#ship`) picks the newest `gsd-*.db` by
+name — the same rule `Store.backup` rotates by — streams it to a second claim or a staging
+directory while hashing it, opens the *copy* with `immutable=1` and runs `PRAGMA
+integrity_check`, then writes a `.sha256` sidecar and prunes to `keep`. Object storage goes
+through an operator-supplied CLI image with a credential the chart never renders; the dashboard
+itself still holds no such credential, and the credential should hold `PutObject` alone so a
+leaked one cannot delete the history (pruning is a bucket lifecycle rule). The app cannot see the
+Job, so two rules on `kube_cronjob_status_last_successful_time` cover it
+(`charts/group-sync-dashboard/templates/monitoring.yaml#GroupSyncDashboardOffsiteBackupStale`).
+Restoring either copy, and verifying one without restoring: `docs/RUNBOOK_backup_restore.md`.
+
+### Retention
+
+`membership_event` and `sync_event` kept everything forever until application 0.13.0. They now have windows
+(`config.retention.membershipEventsDays`, default `0` = forever; `syncEventsDays`, default `730`),
+applied by the leader after each cycle's `_maybe_backup` and never before a backup has succeeded in
+this process's life (`gsd/poller.py#Poller._prune_history`), 5,000 rows per table per cycle through
+the same id-IN-subselect shape as `prune_login_events` (`gsd/store.py#Store.prune_membership_events`,
+`gsd/store.py#Store.prune_sync_events`), served by two `(cluster_id, observed_at)` indexes added to
+`SCHEMA`. The wire says where the cut is: four history responses carry `retention: {window_days,
+retained_since}` (`gsd/store.py#Store.history_retained_since`), and the page renders "history
+retained since …" so a timeline that begins at the edge is read as cut there, not started there.
 
 ---
 
@@ -1133,6 +1155,16 @@ No count in this heading, deliberately. It said "four" while the chart had grown
 | `oauthProxy.cookie.expire` not a Go duration | the proxy parses it at startup and exits, so a typo is a crash-looping pod rather than a rejected value |
 | `oauthProxy.cookie.refresh` set at all | removed, not renamed. Measured on `provider=openshift`: it made the proxy re-issue the cookie on a cadence that logged readers out mid-session |
 | `oauthProxy.skipAuthRegex` no longer covering `/signed-out` while `logoutUrl` is set | sign-out would redirect to a path the proxy then demands a login for, so the reader lands back on the login page and the flow appears broken |
+
+`templates/backup-offsite.yaml` adds its own, all about mounting one claim twice and about where
+the copy goes (`charts/group-sync-dashboard/templates/backup-offsite.yaml#backup.enabled is not a value`):
+
+| Combination | Refused because |
+|---|---|
+| `backup.enabled` set at all | the on-volume switch is `config.backup.enabled`; a key that silently did nothing would look like a backup that was configured |
+| `backup.offsite.enabled` with `persistence.enabled=false`, `config.backup.enabled=false`, or `config.backup.dir` outside `/data/` | nothing to ship, a torn copy of the live file, or a directory the CronJob cannot see |
+| `backup.offsite.enabled` with a `ReadWriteOncePod` data volume | one pod may ever mount it, so the Job could never schedule; `ReadWriteOnce` is derived into a required `podAffinity` instead |
+| `destination.type` not `pvc`/`s3`; `destination.pvc.existingClaim` equal to the data claim; `keep < 0`; `s3` without a Secret or an image | a destination that is not one, a copy on the volume it protects, an unbounded negative, or credentials/tools the chart refuses to invent |
 
 `_helpers.tpl` carries ten more, and they are validation rather than combination: `ingress.host`
 (below), and nine that check the two SAR definitions and the tier TTL are *well-formed* — an API
