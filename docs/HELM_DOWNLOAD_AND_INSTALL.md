@@ -348,7 +348,9 @@ The same file is a workflow artifact named `sbom-<commit>` on the publish run, f
 the image was mirrored without its referrers. It is produced by Syft 1.51.1, the version
 `image-vulnerability-scan.md` measured identifying the hardened base's operating system.
 
-**Build provenance (SLSA).** Recorded in this repository's attestation store:
+**Build provenance (SLSA).** Recorded in this repository's attestation store. `gh` prints the
+result below on a terminal; piped or in a script it prints nothing and exits 0 on success (use
+`--format json` for a machine-readable statement):
 
 ```sh
 gh attestation verify oci://quay.io/ephico2real/group-sync-dashboard:0.15.0-<sha> \
