@@ -200,6 +200,22 @@ class TestPollerPrune:
         poller._prune_history(CLUSTER)
         assert _count(recording, "membership_event") == 5
 
+    def test_leadership_lost_between_the_gate_and_the_write_stops_the_prune(self, recording, tmp_path):
+        """Leader at the outer gate, standby by the time the first table would be deleted: the
+        per-table re-check catches it (review, PR #73). Best-effort, not a fencing token."""
+        class _LosingElector:
+            def __init__(self):
+                self._states = iter((True, False))
+            @property
+            def is_leader(self) -> bool:
+                return next(self._states, False)
+        _seed(recording, "membership_event", 5, days_ago=800)
+        poller = Poller(recording, _settings(tmp_path), elector=_LosingElector())
+        poller._backup_state = "ok"
+        poller._prune_history(CLUSTER)
+        assert not [c for c in recording.calls if c.startswith("prune")]
+        assert _count(recording, "membership_event") == 5
+
     def test_zero_keeps_everything_and_calls_nothing(self, recording, tmp_path):
         _seed(recording, "membership_event", 5, days_ago=5000)
         _seed(recording, "sync_event", 5, days_ago=5000)

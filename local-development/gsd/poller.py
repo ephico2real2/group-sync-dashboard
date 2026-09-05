@@ -602,6 +602,13 @@ class Poller:
             for table, days, prune in windows:
                 if days <= 0:
                     continue
+                # Re-read before EACH destructive call, not once for both tables: the check
+                # above is a table old by the second delete. Still best-effort admission, not
+                # a fencing token (found in review, PR #73).
+                if self.elector is not None and not self.elector.is_leader:
+                    log.warning("%s: retention stopped before pruning %s; leadership was lost",
+                                cluster.name, table)
+                    return
                 before = (datetime.now(UTC) - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
                 removed = prune(cluster.name, before, max_rows=HISTORY_PRUNE_BATCH)
                 if removed:
