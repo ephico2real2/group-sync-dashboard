@@ -140,6 +140,14 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e '.[dev]' || pip install -e .
+      - name: Install promtool, the PromQL parser the dashboard test needs
+        # tests/test_chart_grafana_dashboard.py parses every panel expression of the shipped
+        # Grafana board with promtool. Locally the test skips when promtool is absent; in CI it
+        # must run, so the parser is installed and the test asserts it is there (CI=true).
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -qq --yes prometheus >/dev/null
+          promtool --version
       - name: Unit and integration tests
         # test_ui.py is deselected HERE because it runs in the `ui` job below — once, with a
         # browser — rather than twice across this matrix, whose variable is the interpreter and

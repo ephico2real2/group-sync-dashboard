@@ -8,6 +8,16 @@ lives next to the code and in the design and review records linked here. Changes
 last release sit under `## Unreleased` until the release that carries them replaces that heading —
 which `local-development/prepare-release.py` does when the release is cut.
 
+## Chart 0.13.0 — application 0.13.0 — 2026-09-05
+
+- **A Grafana dashboard ships with the chart.** `monitoring.grafanaDashboard` renders
+  `dashboards/group-sync-dashboard.json` as a ConfigMap labelled `grafana_dashboard: "1"` — the
+  sidecar convention; grafana-operator v5 reads it through `configMapRef` (recipe in the chart
+  README). Default `""` follows `monitoring.serviceMonitor.enabled`. Every panel expression is held
+  to the collector's declared families, the thresholds to `values.yaml`'s defaults, and the rendered
+  JSON to the file byte-for-byte, all by `tests/test_chart_grafana_dashboard.py`.
+  (spec `docs/specs/SPEC_B3_grafana_dashboard.md`)
+
 ## Application 0.13.0 — chart 0.12.0 — 2026-09-05
 
 - **Retention for the accumulated history, `config.retention`.** `membershipEventsDays: 0`

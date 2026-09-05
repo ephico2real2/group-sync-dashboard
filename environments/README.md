@@ -54,6 +54,7 @@ declare — it only *overrides*, and the table says which way:
 | `authLogLevel.manage` / `.enabled` | `false` / `false` | `true` / `true` | lab override |
 | `loginCapture.enabled` | `false` | `true` | lab override |
 | `oauthProxy.apiTokenAccess.enabled` | `false` | `true` | lab override |
+| `monitoring.grafanaDashboard.enabled` | `""` | `true` | lab override: `""` follows the ServiceMonitor, which stays off here (no Prometheus Operator); grafana-operator v5 in namespace `grafana-test` validates the shipped board |
 
 **Read the right-hand column as "why this is not the default".** Every override is fail-closed in
 the chart on purpose, and a plain `helm install` must not do any of it uninvited:

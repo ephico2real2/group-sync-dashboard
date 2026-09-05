@@ -1,0 +1,532 @@
+{
+  "__inputs": [
+    {
+      "name": "DS_PROMETHEUS",
+      "label": "Prometheus",
+      "description": "",
+      "type": "datasource",
+      "pluginId": "prometheus",
+      "pluginName": "Prometheus"
+    }
+  ],
+  "__requires": [
+    { "type": "grafana", "id": "grafana", "name": "Grafana", "version": "10.4.0" },
+    { "type": "datasource", "id": "prometheus", "name": "Prometheus", "version": "1.0.0" },
+    { "type": "panel", "id": "stat", "name": "Stat", "version": "" },
+    { "type": "panel", "id": "timeseries", "name": "Time series", "version": "" },
+    { "type": "panel", "id": "table", "name": "Table", "version": "" },
+    { "type": "panel", "id": "bargauge", "name": "Bar gauge", "version": "" },
+    { "type": "panel", "id": "text", "name": "Text", "version": "" }
+  ],
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "OCP Access Tracking Dashboard (group-sync-dashboard): every family /metrics exports. Gauges are max()ed and counters sum()ed across replicas; per-cluster and per-CR only, never per group or user.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Cluster up",
+      "description": "gsd_cluster_up: 1 if the last poll succeeded. A never-polled cluster is 0 and has no last-poll series.",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "max by (cluster) (gsd_cluster_up{cluster=~\"$cluster\"})",
+          "legendFormat": "{{cluster}}",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "DOWN", "color": "red", "index": 0 }, "1": { "text": "UP", "color": "green", "index": 1 } } }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "text", "value": null }, { "color": "green", "value": 1 } ] }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "background", "graphMode": "none", "textMode": "value_and_name", "orientation": "auto" }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Last poll age",
+      "description": "time() - gsd_cluster_last_poll_timestamp_seconds. Red at monitoring.prometheusRule.notPollingSeconds (600) — GroupSyncDashboardNotPolling.",
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "time() - max by (cluster) (gsd_cluster_last_poll_timestamp_seconds{cluster=~\"$cluster\"})",
+          "legendFormat": "{{cluster}}",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 0,
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "text", "value": null }, { "color": "green", "value": 0 }, { "color": "orange", "value": 300 }, { "color": "red", "value": 600 } ] }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "value", "graphMode": "none", "textMode": "value_and_name", "orientation": "auto" }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Poll duration",
+      "description": "gsd_cluster_poll_duration_seconds, wall time of the most recent poll (leader only). Compare against config.pollIntervalSeconds and requestTimeoutSeconds.",
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "max by (cluster) (gsd_cluster_poll_duration_seconds{cluster=~\"$cluster\"})",
+          "legendFormat": "{{cluster}}",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 1,
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "text", "value": null }, { "color": "green", "value": 0 }, { "color": "orange", "value": 15 }, { "color": "red", "value": 30 } ] }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "value", "graphMode": "area", "textMode": "value_and_name", "orientation": "auto" }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Groups",
+      "description": "gsd_groups_total: Group objects observed on the cluster.",
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "max by (cluster) (gsd_groups_total{cluster=~\"$cluster\"})",
+          "legendFormat": "{{cluster}}",
+          "instant": true
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "none", "thresholds": { "mode": "absolute", "steps": [ { "color": "blue", "value": null } ] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "none", "graphMode": "none", "textMode": "value_and_name", "orientation": "auto" }
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Empty groups",
+      "description": "gsd_groups_empty_total: operator-managed groups with zero members (alert kind empty_group).",
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "max by (cluster) (gsd_groups_empty_total{cluster=~\"$cluster\"})",
+          "legendFormat": "{{cluster}}",
+          "instant": true
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "none", "thresholds": { "mode": "absolute", "steps": [ { "color": "text", "value": null }, { "color": "green", "value": 0 }, { "color": "orange", "value": 1 } ] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "value", "graphMode": "none", "textMode": "value_and_name", "orientation": "auto" }
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Unattributed groups",
+      "description": "gsd_groups_unattributed_total: groups with no sync-provider label, so managed by no GroupSync CR (alert kind unattributed).",
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "max by (cluster) (gsd_groups_unattributed_total{cluster=~\"$cluster\"})",
+          "legendFormat": "{{cluster}}",
+          "instant": true
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "none", "thresholds": { "mode": "absolute", "steps": [ { "color": "text", "value": null }, { "color": "green", "value": 0 }, { "color": "orange", "value": 1 } ] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "value", "graphMode": "none", "textMode": "value_and_name", "orientation": "auto" }
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Groups over time",
+      "description": "Total, empty and unattributed. A step down in total alongside a step up in dangling bindings is a group deletion.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "max by (cluster) (gsd_groups_total{cluster=~\"$cluster\"})", "legendFormat": "{{cluster}} total" },
+        { "refId": "B", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "max by (cluster) (gsd_groups_empty_total{cluster=~\"$cluster\"})", "legendFormat": "{{cluster}} empty" },
+        { "refId": "C", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "max by (cluster) (gsd_groups_unattributed_total{cluster=~\"$cluster\"})", "legendFormat": "{{cluster}} unattributed" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "none", "custom": { "drawStyle": "line", "lineInterpolation": "stepAfter", "fillOpacity": 5, "showPoints": "never" } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "none" } }
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Bindings by finding",
+      "description": "gsd_bindings_total by finding. dangling means the binding grants nobody — DanglingRoleBinding fires on it.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "max by (cluster, finding) (gsd_bindings_total{cluster=~\"$cluster\"})", "legendFormat": "{{cluster}} {{finding}}" }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "none", "custom": { "drawStyle": "line", "lineInterpolation": "stepAfter", "fillOpacity": 10, "showPoints": "never", "stacking": { "mode": "normal", "group": "A" } } },
+        "overrides": [
+          { "matcher": { "id": "byRegexp", "options": ".*dangling" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } } ] }
+        ]
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "none" } }
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "GroupSync last-sync age per CR",
+      "description": "time() - gsd_groupsync_last_sync_timestamp_seconds. Red line at monitoring.prometheusRule.overdueSeconds (7200) — GroupSyncOverdue.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "time() - max by (cluster, groupsync, namespace) (gsd_groupsync_last_sync_timestamp_seconds{cluster=~\"$cluster\"})", "legendFormat": "{{cluster}} {{namespace}}/{{groupsync}}" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": { "drawStyle": "line", "lineInterpolation": "linear", "fillOpacity": 0, "showPoints": "never", "thresholdsStyle": { "mode": "line" } },
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 7200 } ] }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "id": 10,
+      "type": "table",
+      "title": "GroupSync CRs",
+      "description": "Per CR: state (the one series of gsd_groupsync_state that is 1), groups attributed, and whether a ReconcileError is newer than the last success.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "refId": "State", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "max by (cluster, groupsync, namespace, state) (gsd_groupsync_state{cluster=~\"$cluster\"} == 1)", "format": "table", "instant": true },
+        { "refId": "Groups", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "max by (cluster, groupsync, namespace) (gsd_groupsync_groups_total{cluster=~\"$cluster\"})", "format": "table", "instant": true },
+        { "refId": "Error", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "max by (cluster, groupsync, namespace) (gsd_groupsync_reconcile_error_current{cluster=~\"$cluster\"})", "format": "table", "instant": true }
+      ],
+      "transformations": [
+        { "id": "joinByField", "options": { "byField": "groupsync", "mode": "outer" } },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": { "Time": true, "Time 1": true, "Time 2": true, "Time 3": true, "Value #State": true, "cluster 2": true, "cluster 3": true, "namespace 2": true, "namespace 3": true },
+            "renameByName": { "cluster 1": "cluster", "namespace 1": "namespace", "state": "state", "Value #Groups": "groups", "Value #Error": "reconcile error current" }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "custom": { "align": "auto", "cellOptions": { "type": "auto" } } },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "reconcile error current" }, "properties": [ { "id": "mappings", "value": [ { "type": "value", "options": { "0": { "text": "no", "color": "green", "index": 0 }, "1": { "text": "YES", "color": "red", "index": 1 } } } ] }, { "id": "custom.cellOptions", "value": { "type": "color-text" } } ] },
+          { "matcher": { "id": "byName", "options": "state" }, "properties": [ { "id": "mappings", "value": [ { "type": "value", "options": { "ok": { "color": "green", "index": 0 }, "late": { "color": "orange", "index": 1 }, "overdue": { "color": "red", "index": 2 }, "unknown": { "color": "text", "index": 3 } } } ] }, { "id": "custom.cellOptions", "value": { "type": "color-text" } } ] }
+        ]
+      },
+      "options": { "showHeader": true, "cellHeight": "sm", "footer": { "show": false, "reducer": ["sum"], "fields": "" } }
+    },
+    {
+      "id": 11,
+      "type": "bargauge",
+      "title": "Alerts by kind and severity",
+      "description": "gsd_alerts_total as /api/alerts serves them at the wide tier. kind=group_count_cliff_silenced is a cliff an administrator silenced — reported, not hidden.",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 20 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "max by (cluster, kind, severity) (gsd_alerts_total{cluster=~\"$cluster\"})", "legendFormat": "{{cluster}} {{severity}} {{kind}}", "instant": true }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "none", "min": 0, "thresholds": { "mode": "absolute", "steps": [ { "color": "text", "value": null }, { "color": "green", "value": 0 }, { "color": "orange", "value": 1 } ] } },
+        "overrides": [
+          { "matcher": { "id": "byRegexp", "options": ".* critical .*" }, "properties": [ { "id": "thresholds", "value": { "mode": "absolute", "steps": [ { "color": "text", "value": null }, { "color": "green", "value": 0 }, { "color": "red", "value": 1 } ] } } ] },
+          { "matcher": { "id": "byRegexp", "options": ".*_silenced" }, "properties": [ { "id": "thresholds", "value": { "mode": "absolute", "steps": [ { "color": "text", "value": null } ] } } ] }
+        ]
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "orientation": "horizontal", "displayMode": "gradient", "showUnfilled": true, "minVizHeight": 12, "minVizWidth": 0, "namePlacement": "auto", "sizing": "auto", "valueMode": "color" }
+    },
+    {
+      "id": 12,
+      "type": "text",
+      "title": "The twelve shipped alerts (monitoring.prometheusRule)",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 20 },
+      "options": {
+        "mode": "markdown",
+        "content": "| Alert | Severity | Fires on |\n|---|---|---|\n| `GroupSyncOverdue` | warning | `time() - gsd_groupsync_last_sync_timestamp_seconds > overdueSeconds` (7200) |\n| `DanglingRoleBinding` | critical | `gsd_bindings_total{finding=\"dangling\"} > 0` |\n| `GroupSyncDashboardNotPolling` | critical | `time() - gsd_cluster_last_poll_timestamp_seconds > notPollingSeconds` (600) |\n| `GroupSyncClusterUnreachable` | warning | `gsd_cluster_up == 0` |\n| `GroupSyncDashboardDirectUserGrants` | warning | `gsd_alerts_total{kind=\"direct_user_binding\"} > 0` |\n| `GroupSyncDashboardConfigReconcileError` | critical | `gsd_alerts_total{kind=\"config_reconcile_error\"} > 0` |\n| `GroupSyncGroupCountCliff` | warning | `gsd_alerts_total{kind=\"group_count_cliff\"} > 0` — silenced cliffs count under `group_count_cliff_silenced` and do not fire |\n| `GroupSyncDashboardWalGrowing` | warning | `gsd_sqlite_wal_bytes > walMiB` (256 MiB) |\n| `GroupSyncDashboardWalDisabled` | warning | `gsd_sqlite_wal_enabled == 0` |\n| `GroupSyncDashboardVisibilityChecksFailing` | critical | failing outcomes of `gsd_visibility_tier_checks_total` over 15m |\n| `GroupSyncDashboardLoginCaptureStalled` | warning | `time() - gsd_login_capture_last_read_timestamp_seconds > captureStalledSeconds` (1800) while `gsd_login_capture_enabled == 1` |\n| `GroupSyncDashboardBackupStale` | critical | `time() - gsd_backup_last_success_timestamp_seconds > backupStaleSeconds` (43200) |\n\nGauges are per replica: aggregate with `max()`; counters with `sum()`. `/metrics` names no group and no user by design."
+      }
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "SQLite WAL size",
+      "description": "gsd_sqlite_wal_bytes. Red line at monitoring.prometheusRule.walMiB (256 MiB) — GroupSyncDashboardWalGrowing. Sustained growth means checkpoints are starved by open readers.",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 29 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "max(gsd_sqlite_wal_bytes)", "legendFormat": "WAL bytes" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": { "drawStyle": "line", "lineInterpolation": "linear", "fillOpacity": 10, "showPoints": "never", "thresholdsStyle": { "mode": "line" } },
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 268435456 } ] }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "single", "sort": "none" } }
+    },
+    {
+      "id": 14,
+      "type": "timeseries",
+      "title": "Checkpoints refused by a reader",
+      "description": "increase(gsd_sqlite_checkpoint_busy_total). Occasional is normal; a rise every cycle beside a growing WAL is starvation.",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 29 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "sum(increase(gsd_sqlite_checkpoint_busy_total[$__rate_interval]))", "legendFormat": "busy checkpoints" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "none", "custom": { "drawStyle": "bars", "fillOpacity": 60, "showPoints": "never" } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "single", "sort": "none" } }
+    },
+    {
+      "id": 15,
+      "type": "stat",
+      "title": "WAL mode",
+      "description": "gsd_sqlite_wal_enabled. 0 means the filesystem refused WAL and readers block on every write — GroupSyncDashboardWalDisabled.",
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 29 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "min(gsd_sqlite_wal_enabled)", "legendFormat": "WAL", "instant": true }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [ { "type": "value", "options": { "0": { "text": "OFF", "color": "red", "index": 0 }, "1": { "text": "WAL", "color": "green", "index": 1 } } } ],
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "text", "value": null }, { "color": "green", "value": 1 } ] }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "background", "graphMode": "none", "textMode": "value", "orientation": "auto" }
+    },
+    {
+      "id": 16,
+      "type": "stat",
+      "title": "Leader replicas",
+      "description": "sum(gsd_leader). Exactly 1 is healthy; 0 means nobody is polling; 2 means two writers on one database.",
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 29 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "sum(gsd_leader)", "legendFormat": "leaders", "instant": true }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "none", "thresholds": { "mode": "absolute", "steps": [ { "color": "text", "value": null }, { "color": "red", "value": 0 }, { "color": "green", "value": 1 }, { "color": "red", "value": 2 } ] } },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "background", "graphMode": "none", "textMode": "value", "orientation": "auto" }
+    },
+    {
+      "id": 17,
+      "type": "stat",
+      "title": "Build",
+      "description": "gsd_build_info labels: the running version and commit.",
+      "gridPos": { "h": 4, "w": 8, "x": 16, "y": 33 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "max by (version, commit) (gsd_build_info)", "legendFormat": "{{version}} @ {{commit}}", "instant": true }
+      ],
+      "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [ { "color": "text", "value": null } ] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "none", "graphMode": "none", "textMode": "name", "orientation": "auto" }
+    },
+    {
+      "id": 18,
+      "type": "stat",
+      "title": "Backup age",
+      "description": "time() - gsd_backup_last_success_timestamp_seconds. Red at monitoring.prometheusRule.backupStaleSeconds (43200) — GroupSyncDashboardBackupStale. No data means backups are disabled or none exists yet.",
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 37 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "time() - max(gsd_backup_last_success_timestamp_seconds)", "legendFormat": "backup age", "instant": true }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "s", "decimals": 0, "noValue": "no backup", "thresholds": { "mode": "absolute", "steps": [ { "color": "text", "value": null }, { "color": "green", "value": 0 }, { "color": "orange", "value": 21600 }, { "color": "red", "value": 43200 } ] } },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "value", "graphMode": "none", "textMode": "value", "orientation": "auto" }
+    },
+    {
+      "id": 19,
+      "type": "timeseries",
+      "title": "Backup failures",
+      "description": "increase(gsd_backup_failures_total): VACUUM INTO errors or an unwritable backupDir.",
+      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 37 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "sum(increase(gsd_backup_failures_total[$__rate_interval]))", "legendFormat": "failures" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "none", "custom": { "drawStyle": "bars", "fillOpacity": 60, "showPoints": "never" }, "color": { "mode": "fixed", "fixedColor": "red" } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "hidden", "placement": "bottom", "showLegend": false }, "tooltip": { "mode": "single", "sort": "none" } }
+    },
+    {
+      "id": 20,
+      "type": "timeseries",
+      "title": "Retention rows deleted",
+      "description": "increase(gsd_retention_rows_deleted_total) by table. login_event is capped at 5000 per cycle; a rate pinned there means the backlog is not draining.",
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 37 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "sum by (table) (increase(gsd_retention_rows_deleted_total[$__rate_interval]))", "legendFormat": "{{table}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "none", "custom": { "drawStyle": "bars", "fillOpacity": 60, "showPoints": "never", "stacking": { "mode": "normal", "group": "A" } } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "none" } }
+    },
+    {
+      "id": 21,
+      "type": "timeseries",
+      "title": "Visibility: scope decisions served",
+      "description": "rate(gsd_visibility_decisions_total) by threshold and tier. The all:self mix shifting toward self while tier checks fail is the everyone-silently-narrowed signature.",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 43 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "sum by (threshold, tier) (rate(gsd_visibility_decisions_total[$__rate_interval]))", "legendFormat": "{{threshold}} → {{tier}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "drawStyle": "line", "lineInterpolation": "linear", "fillOpacity": 10, "showPoints": "never", "stacking": { "mode": "normal", "group": "A" } } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "none" } }
+    },
+    {
+      "id": 22,
+      "type": "timeseries",
+      "title": "Visibility: tier checks that FAILED",
+      "description": "increase(gsd_visibility_tier_checks_total{outcome=~\"unreachable|auth_failed|forbidden|error\"}). Every failure served the self view fail-closed — GroupSyncDashboardVisibilityChecksFailing.",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 43 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "sum by (threshold, outcome) (increase(gsd_visibility_tier_checks_total{outcome=~\"unreachable|auth_failed|forbidden|error\"}[$__rate_interval]))", "legendFormat": "{{threshold}} {{outcome}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "none", "custom": { "drawStyle": "bars", "fillOpacity": 60, "showPoints": "never", "stacking": { "mode": "normal", "group": "A" } }, "color": { "mode": "palette-classic" } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "none" } }
+    },
+    {
+      "id": 23,
+      "type": "timeseries",
+      "title": "Visibility: administrator-tier refusals",
+      "description": "increase(gsd_visibility_admin_refusals_total): 403s from the administrator gate on the cluster-scoped views. Occasional is a non-admin clicking a tab.",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 43 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "sum(increase(gsd_visibility_admin_refusals_total[$__rate_interval]))", "legendFormat": "refusals" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "none", "custom": { "drawStyle": "bars", "fillOpacity": 60, "showPoints": "never" } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "hidden", "placement": "bottom", "showLegend": false }, "tooltip": { "mode": "single", "sort": "none" } }
+    },
+    {
+      "id": 24,
+      "type": "stat",
+      "title": "Login capture",
+      "description": "gsd_login_capture_enabled. While 1, absence of the last-read series means capture has never once succeeded.",
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 51 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "max(gsd_login_capture_enabled)", "legendFormat": "capture", "instant": true }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [ { "type": "value", "options": { "0": { "text": "OFF", "color": "text", "index": 0 }, "1": { "text": "ON", "color": "green", "index": 1 } } } ],
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "text", "value": null } ] }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "value", "graphMode": "none", "textMode": "value", "orientation": "auto" }
+    },
+    {
+      "id": 25,
+      "type": "stat",
+      "title": "Login capture: last successful read age",
+      "description": "time() - gsd_login_capture_last_read_timestamp_seconds per cluster. Red at monitoring.prometheusRule.captureStalledSeconds (1800) — GroupSyncDashboardLoginCaptureStalled. No data: never read.",
+      "gridPos": { "h": 5, "w": 18, "x": 6, "y": 51 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "time() - max by (cluster) (gsd_login_capture_last_read_timestamp_seconds{cluster=~\"$cluster\"})", "legendFormat": "{{cluster}}", "instant": true }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "s", "decimals": 0, "noValue": "never read", "thresholds": { "mode": "absolute", "steps": [ { "color": "text", "value": null }, { "color": "green", "value": 0 }, { "color": "orange", "value": 900 }, { "color": "red", "value": 1800 } ] } },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "value", "graphMode": "none", "textMode": "value_and_name", "orientation": "auto" }
+    }
+  ],
+  "refresh": "1m",
+  "schemaVersion": 39,
+  "tags": ["openshift", "group-sync", "rbac", "gsd"],
+  "templating": {
+    "list": [
+      {
+        "name": "DS_PROMETHEUS",
+        "label": "Prometheus",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {},
+        "hide": 0,
+        "options": [],
+        "refresh": 1,
+        "regex": ""
+      },
+      {
+        "name": "cluster",
+        "label": "Cluster",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "definition": "label_values(gsd_cluster_up, cluster)",
+        "query": { "query": "label_values(gsd_cluster_up, cluster)", "refId": "PrometheusVariableQueryEditor-VariableQuery" },
+        "current": { "selected": true, "text": ["All"], "value": ["$__all"] },
+        "hide": 0,
+        "includeAll": true,
+        "allValue": ".*",
+        "multi": true,
+        "options": [],
+        "refresh": 2,
+        "regex": "",
+        "sort": 1
+      }
+    ]
+  },
+  "time": { "from": "now-24h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "OCP Access Tracking Dashboard — group sync",
+  "uid": "gsd-group-sync-dashboard",
+  "version": 1,
+  "weekStart": ""
+}

@@ -20,7 +20,7 @@ group membership, so it ships authenticated and you turn the proxy *off* deliber
   `trustedCA.injected.enabled=false` and supply `ingress.host` and `ingress.className` yourself.
 * A default StorageClass, or set `persistence.storageClass` / `persistence.existingClaim`.
 * Cluster admin **once**, to create the ClusterRole. The dashboard needs no admin at runtime.
-* The Prometheus Operator CRDs, only if you enable `monitoring.*`.
+* The Prometheus Operator CRDs, only if you enable `monitoring.serviceMonitor` or `monitoring.prometheusRule`. The Grafana dashboard (`monitoring.grafanaDashboard`) is a plain ConfigMap and needs no CRD.
 
 ## Values
 
@@ -317,6 +317,9 @@ Grant the wide view through your normal RBAC process, never a chart value:
 | `monitoring.prometheusRule.captureStalledSeconds` | `1800` | seconds without a successful oauth-log read before login capture counts as stalled. Capture rides the poll thread, so this **must stay well above `config.pollIntervalSeconds`** — same reasoning as `notPollingSeconds` |
 | `monitoring.prometheusRule.backupStaleSeconds` | `43200` | seconds since the newest backup file before the copy counts as stale. Keep at ~2× `config.backupIntervalHours` × 3600 — one missed backup is a blip, two is a broken mechanism |
 | `monitoring.prometheusRule.for.*` | see below | the `for:` duration on each alert |
+| `monitoring.grafanaDashboard.enabled` | `""` | `""` **follows `monitoring.serviceMonitor.enabled`**; `true`/`false` are explicit; anything else refuses to render. A ConfigMap labelled `grafana_dashboard: "1"` carrying `dashboards/group-sync-dashboard.json` byte-for-byte — no CRD, cannot fail an install |
+| `monitoring.grafanaDashboard.folder` | `""` | written as the `grafana_folder` annotation the sidecar's `folderAnnotation` reads |
+| `monitoring.grafanaDashboard.labels` / `.annotations` | `{}` / `{}` | extra metadata, e.g. a sidecar configured with a non-default label |
 
 ### Dashboard log verbosity — `logLevel`
 
@@ -452,6 +455,61 @@ The WAL pair and the last three are the ones with no other symptom: the pod stay
 every other metric looks normal, and the first visible sign is a full volume, a latency
 cliff, a narrowed view nobody reported, a frozen login record, or a backup that is not
 there when the PVC dies.
+
+#### The Grafana dashboard
+
+`monitoring.grafanaDashboard` ships `dashboards/group-sync-dashboard.json` as a ConfigMap with the
+`grafana_dashboard: "1"` label that Grafana's dashboard sidecar watches. Which namespaces the sidecar
+watches is its `searchNamespace` setting: current kube-prometheus-stack defaults it to `ALL`, older
+releases and the Grafana chart on its own default to the sidecar's own namespace — check your values.
+A folder annotation or an extra label cannot widen that scope; they matter only once the sidecar already
+sees the ConfigMap. If it watches only its own namespace, do one of:
+
+1. install this chart in the same namespace as Grafana;
+2. copy the ConfigMap into Grafana's namespace;
+3. point the sidecar at every namespace (the Grafana subchart's key, nested under `grafana:` in
+   kube-prometheus-stack). The `folder` value is read only where `sidecar.dashboards.folderAnnotation`
+   is set to `grafana_folder` (and `provider.foldersFromFilesStructure: true`); neither is a default:
+
+```yaml
+grafana:
+  sidecar:
+    dashboards:
+      searchNamespace: ALL
+```
+
+The board's thresholds equal the defaults above and are held to them by a test; edit them in Grafana if
+you tune the rules. Panel datasource uids are `${DS_PROMETHEUS}`: Dashboards → Import resolves that
+through `__inputs`; a sidecar or the operator leaves `__inputs` alone and the board's own `DS_PROMETHEUS`
+variable (type datasource) selects a Prometheus datasource instead, so both paths work.
+
+Running grafana-operator v5? It reads this ConfigMap directly. Keep the `GrafanaDashboard` in the
+ConfigMap's namespace; `allowCrossNamespaceImport: true` is what lets it match a Grafana instance in
+another namespace (this is the recipe that was validated on the reference cluster):
+
+```yaml
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: group-sync-dashboard
+spec:
+  allowCrossNamespaceImport: true
+  instanceSelector:
+    matchLabels:
+      dashboards: grafana        # whatever your Grafana CR is labelled
+  configMapRef:
+    name: group-sync-dashboard-grafana-dashboard   # <fullname>-grafana-dashboard
+    key: group-sync-dashboard.json
+  # Bind the board's DS_PROMETHEUS input to YOUR Prometheus datasource by name. Without this the
+  # provisioned board's datasource variable starts empty and Grafana picks the first Prometheus
+  # datasource it has — the wrong one, silently, when there are two.
+  datasources:
+    - inputName: DS_PROMETHEUS
+      datasourceName: Prometheus
+```
+
+The chart does not ship that CR: the operator's CRD has two incompatible API versions in the wild
+and the `instanceSelector` is yours to know.
 
 ### ArgoCD
 
