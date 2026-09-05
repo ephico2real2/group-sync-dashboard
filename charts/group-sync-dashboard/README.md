@@ -185,6 +185,12 @@ life — with `config.backup.enabled=false` nothing is ever deleted — 5,000 ro
 API and the page state the cut (`retention.retained_since`), so a timeline that begins at the edge
 is read as cut there, not started there.
 
+**Before you restore an old `gsd-*.db` onto the live claim, set both windows to `0`.** The first
+leader cycle after the new process's first successful backup releases the prune, and the default
+window then deletes `sync_event` rows older than 730 days, 5,000 per cycle. The copy just taken under
+`config.backup.dir` still holds the pre-prune file; the live API will not, unless the windows stay at
+`0` until you have read what you restored.
+
 ### Dashboard usage tracking
 
 Powers the **Usage** tab and `GET /api/dashboard/activity`.

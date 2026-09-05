@@ -16,7 +16,9 @@ which `local-development/prepare-release.py` does when the release is cut.
   5,000 rows per table per cycle, counted into `gsd_retention_rows_deleted_total{table}`. Four
   history responses gain `retention: {window_days, retained_since}` and the page says "history
   retained since …" where a timeline begins at the cut. First start after upgrade builds the
-  `sync_event_by_time` index. (spec `docs/specs/SPEC_B2_history_retention.md`)
+  `sync_event_by_time` index. **Restoring an old backup to read its history: set both windows to
+  `0` first** — the first successful backup in the new process's life releases the prune.
+  (spec `docs/specs/SPEC_B2_history_retention.md`)
 
 ## Application 0.12.0 — chart 0.11.0 — 2026-09-05
 

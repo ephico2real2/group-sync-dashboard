@@ -185,9 +185,10 @@ CREATE INDEX IF NOT EXISTS membership_event_lookup
     ON membership_event(cluster_id, group_name, id DESC);
 CREATE INDEX IF NOT EXISTS membership_event_by_user
     ON membership_event(cluster_id, user_name, id DESC);
--- The group-count cliff sums a cluster's events inside a time window (Store.group_count_changes);
--- without this the read scans every event the cluster has ever recorded, and the table has no
--- retention by design. Migration 8.
+-- Shared by the group-count cliff (Store.group_count_changes: a window of events) and retention
+-- (prune_membership_events' subselect is a range seek, history_retained_since's MIN an index
+-- seek). Without it both are a scan of every event the cluster has ever recorded. Added by B4
+-- as migration 8; B2 reuses it.
 CREATE INDEX IF NOT EXISTS membership_event_by_time
     ON membership_event(cluster_id, observed_at);
 

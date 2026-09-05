@@ -36,6 +36,8 @@ request, with the reason, under "Orchestrator's notes".
 
 - Deviations recorded at implementation (PR for #59): (1) every "Since 0.12.0" in the body's API.md text and the metrics design's "application 0.12.0" read 0.13.0, the release this spec ships in; (2) `docs/DESIGN_backup_offsite_and_retention.md`, a record never written, is cited as this spec instead; (3) the chart README's insertion anchor is the half-an-answer paragraph's actual last line ("grow credentials for object storage.") — the off-volume section it names does not exist until B1; (4) the body's test harness recomputed "now" after the app started and asserted the newest of three seeded rows where `MIN` returns the oldest: one frozen clock per module, and the oldest row (two seconds older) as the expectation.
 
+- Found in review (PR #73, Cursor Grok 4.6): (1) the body's risk closure "the runbook says to set both windows to 0 first" points at B1's runbook, which does not exist until R4, so no shipped operator page warned that restoring an old backup releases the prune one cycle later; the chart README's retention section and the CHANGELOG bullet now say it, held by a test. (2) `history_retention` read the store itself, hiding the second read from the API contract's R5 store-call count, so a dropped `@consistent` would have passed; the call sites pass `store.history_retained_since(cluster_id)` and a new R5 test counts it. (3) B4's SCHEMA comment above the shared index said the table "has no retention by design"; corrected, held by a test. Also decided: a negative window behaves as 0 (forever), the safe direction, not a refusal.
+
 ## Batch preamble (verbatim from the design)
 
 # DESIGN — B1 off-volume backup CronJob + restore runbook, B2 retention for `membership_event` / `sync_event`

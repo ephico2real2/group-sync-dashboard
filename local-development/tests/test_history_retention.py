@@ -113,6 +113,14 @@ class TestStorePrune:
         assert store.history_retained_since("crc")["membership_event"] == _iso(100)
         assert store.history_retained_since("other") == {"membership_event": None, "sync_event": None}
 
+    def test_the_shared_index_comment_does_not_deny_retention(self):
+        """B4 wrote 'the table has no retention by design' above the index B2 now prunes through."""
+        src = (pathlib.Path(__file__).resolve().parents[1] / "gsd" / "store.py").read_text()
+        start = src.index("CREATE INDEX IF NOT EXISTS membership_event_by_time")
+        comment = src[max(0, start - 500):start]
+        assert "no retention by design" not in comment
+        assert "retention" in comment.lower()
+
     def test_the_retention_indexes_exist(self, store):
         names = {r["name"] for r in store._rows("SELECT name FROM sqlite_master WHERE type='index'")}
         assert {"membership_event_by_time", "sync_event_by_time"} <= names
@@ -236,6 +244,13 @@ class TestDefaults:
         assert (s.membership_events_retention_days, s.sync_events_retention_days) == (30, 0)
         monkeypatch.setenv("GSD_SYNC_EVENTS_RETENTION_DAYS", "90")
         assert load_settings(str(p)).sync_events_retention_days == 90
+
+    def test_operator_docs_say_to_zero_the_windows_before_a_restore(self):
+        """B1's runbook is not in this release; a restoring operator has the chart README and the
+        changelog, and the first successful backup of a new process releases the prune (review, PR #73)."""
+        section = (CHART / "README.md").read_text().split("### Retention on the history")[1].split("\n### ")[0]
+        assert "set both windows to `0`" in section and "restore" in section.lower()
+        assert "set both windows to" in (REPO / "docs" / "CHANGELOG.md").read_text()
 
     @pytest.mark.skipif(shutil.which("helm") is None, reason="helm not installed")
     def test_the_chart_defaults_equal_the_app_defaults(self):
