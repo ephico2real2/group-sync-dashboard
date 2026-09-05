@@ -70,6 +70,38 @@ view's retained sort keys although a narrowed reader's rows are painted as the s
 (cluster-admin first, cluster-scoped first, namespace, user — `store.py` `direct_user_bindings`'s
 `ORDER BY`, verified). The envelope now names that order; Codex's test with the `carol` persona added.
 
+## Second pass — on the fixed head
+
+A ten-claim brief: six claims that the eight first-pass fixes closed their holes and opened no other,
+four the first pass never attacked (large exports, filenames, accessibility, the narrowed Groups
+export). Cursor traced; Codex is recorded below when its pass lands. The branch was rebased onto
+main during the pass (the D1 note merged); the C1 content is unchanged by the rebase.
+
+| Claim | Cursor | Decision |
+|---|---|---|
+| C1 the tier guard, and whether other tabs need it | CONFIRMED | — ; the other tabs' Loading conditions are payload-null and their descriptors already return null on the same predicates, so the guard would be wrong there |
+| C2 `csvField` on ten inputs | CONFIRMED (traced) | — ; the `u` flag is harmless rather than required for BMP escapes, noted |
+| C3 `downloadBlob.previous` | CONFIRMED | — |
+| C4 every `sort` envelope is honest | REFUTED on the wide Access granted branch | **Accepted** — the file is section-then-column; the envelope now says `finding,<column>`; Cursor's test added without its seed-dependent inequality |
+| C5 the seventeen tests | PLAUSIBLE (no run) | — ; measured here: nineteen pass after this round |
+| C6 fidelity | PLAUSIBLE (no diff) | — ; accounted for here |
+| C7 large exports | PLAUSIBLE | — ; an estimate of a few MB at `USERS_FETCH`; accepted as is |
+| C8 filenames | CONFIRMED | — |
+| C9 accessibility | CONFIRMED (names) | — |
+| C10 the narrowed Groups export | CONFIRMED | — ; the projection is the five painted cells |
+
+### Not asked, second pass
+
+- **Cursor, the unpainted columns.** `managed_source`, `exception` (bindings) and `is_platform`
+  (nsaudit) are exported but never painted as cells, which contradicted the design sentence "a payload
+  field the page does not render is not smuggled out". Re-check: none is painted; all three are real
+  store columns and the inputs behind the finding label and the platform toggle, and the spec's NEW
+  block listed them deliberately. Decision: the columns stay (the spec's explicit choice for an
+  access-review file), and the sentence and the module comment now state the actual rule. Cursor's
+  column-dropping snippet and test rejected.
+- **Cursor, the narrowed restore path.** The unknown-tier test used the wide fixture, so it never
+  walked the `myAccess` follow-up. Accepted: a narrowed-reader variant added.
+
 ## Outcome
 
 Cursor refuted four claims and volunteered three findings; Codex refuted four (two overlapping) and

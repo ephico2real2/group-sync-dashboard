@@ -42,8 +42,10 @@ default (specification question 1).
 
 ## Columns per tab
 
-An explicit projection (`EXPORT_COLUMNS` in `index.html`), so a payload field the page does not render
-is not smuggled out: users, groups, bindings (Access granted, wide view), myaccess (Access granted,
+An explicit projection (`EXPORT_COLUMNS` in `index.html`): the cells each table paints, plus the
+classification inputs the page renders as labels rather than cells — `managed_source` and `exception`
+behind a binding's finding label, `is_platform` behind the Namespace audit's platform toggle — and no
+other payload field. Users, groups, bindings (Access granted, wide view), myaccess (Access granted,
 narrowed view), nsaudit and logins each name their columns; absent keys export as `null`.
 
 ## Filename and the truncation contract

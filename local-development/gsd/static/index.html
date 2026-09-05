@@ -2747,8 +2747,9 @@ function sortBy(rows, keyFn, dir) {
    after the page's own filter and sort, read through the same selection functions the tables
    paint from. It makes no request: a server-side export would have to re-implement six
    handlers' scoping and six pages' filters, and could export a set the reader never saw.
-   Columns are an explicit projection per tab, so a payload field the page does not render is
-   not smuggled out either. */
+   Columns are an explicit projection per tab: the cells the table paints plus the classification
+   inputs the page renders as labels rather than cells (managed_source and exception behind the
+   finding label, is_platform behind the platform toggle); no other payload field is written. */
 const EXPORT_COLUMNS = {
   users: ["user_name", "full_name", "logged_in", "first_login_at", "providers", "group_count",
           "last_login_at", "first_seen_at"],
@@ -2814,7 +2815,9 @@ function exportDescriptor() {
              served: BINDING_TIERS.reduce((n, t) => n + (raw[t] || []).length, 0),
              total: num(raw.total), scope: raw.scope || "all", viewer: raw.viewer || null,
              filter: { search: view.bindingSearch || "", show: view.bindingFilter },
-             sort: { key: view.bindingSort, dir: view.bindingDir } };
+             // Section then column, as the page lays it out: naming only the column sort would
+             // claim a global order the concatenated rows do not have (review, C1 pass 2).
+             sort: { key: "finding," + view.bindingSort, dir: view.bindingDir } };
   }
   if (view.page === "nsaudit") {
     const ub = data.userBindings;

@@ -3378,6 +3378,20 @@ class TestExport:
         assert findings == sorted(findings, key=["dangling", "unresolved", "unmanaged", "ok"].index)
         assert dl.value.suggested_filename.startswith("gsd_crc-local_access-granted_")
 
+    def test_wide_access_json_names_section_then_column_sort(self, dash):
+        """Review pass 2 (Cursor): the file is dangling, unresolved, unmanaged, ok — each sorted by the
+        column — so the envelope must not claim a global column sort."""
+        dash.locator("button[data-nav='bindings']").click()
+        dash.wait_for_selector("text=grant nobody")
+        dash.wait_for_selector("#export-json")
+        with dash.expect_download() as dl:
+            dash.click("#export-json")
+        import json
+        doc = json.load(open(dl.value.path()))
+        assert doc["sort"] == {"key": "finding,group", "dir": "asc"}
+        findings = [r["finding"] for r in doc["rows"]]
+        assert findings == sorted(findings, key=["dangling", "unresolved", "unmanaged", "ok"].index)
+
     def test_the_export_makes_no_request(self, dash):
         self._users(dash)
         dash.evaluate("() => { window.__calls = 0; const f = window.fetch;"
@@ -3504,6 +3518,19 @@ class TestExportVisibility:
         assert doc["scope"] == "self"
         assert doc["sort"] == {"key": "cluster_admin_first,cluster_scope_first,binding_namespace,user_name", "dir": "asc"}
         assert [r["binding_name"] for r in doc["rows"]] == ["carol-ca"]
+
+    def test_a_narrowed_reader_gets_the_control_back_after_the_tier_resolves(self, page, scoped_server):
+        """Review pass 2 (Cursor): the restore path for a NARROWED reader — whoami nulled, no control,
+        then refresh() walks the myAccess follow-up and the control returns."""
+        p = _open_as(page, scoped_server, "alice")
+        p.locator("button[data-nav='bindings']").click()
+        p.wait_for_selector(".scope-banner")
+        p.wait_for_selector("#export-csv")
+        p.evaluate("() => { data.whoami = null; render(); }")
+        assert p.locator("#export-csv").count() == 0
+        p.evaluate("() => refresh()")
+        p.wait_for_selector("#export-csv")
+        assert p.evaluate("() => exportDescriptor().scope") == "self"
 
     def test_the_administrator_exports_the_whole_cluster(self, page, scoped_server):
         p = _open_as(page, scoped_server, "root")
