@@ -77,8 +77,9 @@ class TestThePdbSelectsTheDeploymentOnly:
         API server rejected the Deployment and the PDB and Service would have matched no pod.
         Refused by name; a harmless extra label still renders."""
         for key in ("app", "app.kubernetes.io/name", "app.kubernetes.io/instance"):
+            escaped = key.replace(".", "\\.")  # Helm --set: a literal dot inside a key
             args = ["helm", "template", "t", str(CHART), "-n", "x", "--set", "ingress.host=h",
-                    "--set", f"podLabels.{key.replace('.', '\\.')}=x"]
+                    "--set", f"podLabels.{escaped}=x"]
             done = subprocess.run(args, capture_output=True, text=True, timeout=120)
             assert done.returncode != 0, key
             assert "podLabels must not set" in done.stderr and key in done.stderr, done.stderr
