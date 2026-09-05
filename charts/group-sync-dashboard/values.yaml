@@ -1253,9 +1253,13 @@ oauthProxy:
   # gives them that screen and the friendlier failure page. This is a product choice, not a
   # feature switch, so the rule does not move it.
   skipProviderButton: false
-  # The proxy logs every request it handles. On by default since 0.14.0; the cost is log volume,
-  # and the lines are what shows whether a 403 came from the proxy or from the dashboard.
-  requestLogging: true
+  # Stays false under the 0.14.0 on-by-default rule, as a confidentiality cost found in review:
+  # oauth-proxy's request logger writes the complete request URI, query string included, and
+  # excludes nothing (logging_handler.go formats url.RequestURI()), so the OAuth callback's
+  # `?code=…&state=…` and any credential an API client puts in a query parameter land in the pod
+  # log. Authorization and Cookie headers are not printed. Turn it on only where the log pipeline
+  # redacts query strings; the lines then show whether a 403 came from the proxy or the dashboard.
+  requestLogging: false
 
   resources:
     requests: {cpu: 10m, memory: 64Mi}

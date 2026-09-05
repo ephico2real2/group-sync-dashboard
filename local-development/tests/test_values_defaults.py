@@ -21,6 +21,7 @@ KEPT_OFF = {
     "authLogLevel.manage": "a cluster-wide write that rolls the OAuth server; the audit log replaces it",
     "authLogLevel.enabled": "same decision as manage",
     "oauthProxy.skipProviderButton": "operator decision 2026-09-05: people log in from the OpenShift screen",
+    "oauthProxy.requestLogging": "review finding: oauth-proxy logs the full request URI, the OAuth callback code included",
     "monitoring.serviceMonitor.enabled": "operator decision 2026-09-05: the reference cluster runs no Prometheus; needs the Operator CRDs",
     "monitoring.prometheusRule.enabled": "same decision; rendering with both on was verified before the default went back",
 }
@@ -30,7 +31,6 @@ FLIPPED = (
     "podDisruptionBudget.enabled",
     "loginCapture.enabled",
     "oauthProxy.apiTokenAccess.enabled",
-    "oauthProxy.requestLogging",
 )
 
 # Documents an operator follows. Records (reviews, the changelog's history, superseded designs and
@@ -47,14 +47,30 @@ CURRENT_DOCS = (
 
 
 def flatten(data, prefix=""):
+    """Dotted-path leaves, list items included, so a boolean inside `clusters[]` is enumerated too
+    (second-pass review, Cursor: the first version stored a list as one leaf)."""
     out = {}
-    for key, value in (data or {}).items():
+    if isinstance(data, dict):
+        items = data.items()
+    elif isinstance(data, list):
+        items = ((f"[{i}]", v) for i, v in enumerate(data))
+        prefix = prefix.rstrip(".")
+    else:
+        return {prefix.rstrip("."): data}
+    for key, value in items:
         path = f"{prefix}{key}"
-        if isinstance(value, dict):
+        if isinstance(value, (dict, list)):
             out.update(flatten(value, path + "."))
         else:
             out[path] = value
     return out
+
+
+def test_flatten_sees_boolean_leaves_inside_list_items() -> None:
+    values = flatten(yaml.safe_load(VALUES.read_text()))
+    assert values["clusters[0].enabled"] is True
+    planted = flatten({"clusters": [{"name": "x", "enabled": False}], "a": {"b": [True, {"c": False}]}})
+    assert {k for k, v in planted.items() if v is False} == {"clusters[0].enabled", "a.b[1].c"}
 
 
 def test_the_only_false_defaults_are_the_stated_exceptions() -> None:

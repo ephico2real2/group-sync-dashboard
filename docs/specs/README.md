@@ -92,15 +92,18 @@ say so.
 Chart 0.14.0 sits between R2 and R3 and is not a module: it is the defaults release (operator
 decision, 2026-09-05) that turns every boolean in `values.yaml` on unless the switch costs RBAC
 beyond a namespaced read, a credential, a second image or a cluster-wide write. It moved every
-chart version from C1 onward up by one MINOR; the rows above carry the shifted numbers. The seven
-that stay off, with the reason in their values comment: `securityContext.allowPrivilegeEscalation`
-(a hardening posture, not a feature), `trustedCA.existingConfigMap.enabled` (needs a name),
-`ingress.enabled` (exclusive with the Route the chart refuses to render alongside),
-`authLogLevel.manage`/`.enabled` (a cluster-wide write that rolls the OAuth server, and D1's
-audit-log source replaces it as the way login lines are obtained), `oauthProxy.skipProviderButton`
-(a product choice: people log in from the OpenShift login screen), and
-`monitoring.serviceMonitor.enabled` / `monitoring.prometheusRule.enabled` (the reference cluster
-runs no Prometheus; rendering with both on was verified before the default went back).
+chart version from C1 onward up by one MINOR; the rows above carry the shifted numbers. Three
+switches flipped: `podDisruptionBudget.enabled`, `loginCapture.enabled` and
+`oauthProxy.apiTokenAccess.enabled`. Eight switches (nine keys, `authLogLevel` being two) stay off,
+with the reason in their values comment: `securityContext.allowPrivilegeEscalation` (a hardening
+posture, not a feature), `trustedCA.existingConfigMap.enabled` (needs a name), `ingress.enabled`
+(exclusive with the Route the chart refuses to render alongside), `authLogLevel.manage`/`.enabled`
+(a cluster-wide write that rolls the OAuth server, and D1's audit-log source replaces it as the way
+login lines are obtained), `oauthProxy.requestLogging` (the proxy logs the complete request URI,
+the OAuth callback's authorization code included), `oauthProxy.skipProviderButton` (a product
+choice: people log in from the OpenShift login screen), and `monitoring.serviceMonitor.enabled` /
+`monitoring.prometheusRule.enabled` (the reference cluster runs no Prometheus; rendering with both
+on was verified before the default went back). `tests/test_values_defaults.py` holds the two sets.
 
 ## Definition of done, per issue
 
@@ -155,6 +158,24 @@ Recorded 2026-09-04, before implementation:
   `list nodes`; `nodeNames` stays the optional narrowing. The module itself stays off.
 - **A1:** the browser-tests job is a required status check on `main` from its first merge, not after a
   week of green runs: "this is real life testing, so it is needed."
+
+Recorded 2026-09-05, during the chart 0.14.0 defaults release:
+
+- **Defaults:** every boolean switch is on unless it costs RBAC beyond a namespaced read, a credential,
+  a second image or a cluster-wide write, or is a product choice; the exceptions and their reasons are
+  in the ladder section above and in `values.yaml`.
+- **Monitoring, parked:** `monitoring.serviceMonitor.enabled` and `monitoring.prometheusRule.enabled`
+  stay off because the reference cluster runs no Prometheus (built-in monitoring is disabled for
+  resources). Rendering with both on was verified (lint, template, a server-side dry run against the
+  CRDs, a live deploy). The **live** validation of the scrape, the twelve rules and the Grafana board
+  with real series is parked until the reference cluster moves to a machine with more resources; then
+  `openshift-monitoring` and user-workload monitoring are enabled in full and these features are tested
+  there. Nothing in the chart waits on it — the switches exist and are held by tests — so no spec
+  changes; B3's board and B4's rule get their live pass at that point.
+- **Grafana lab:** the grafana-operator lab override in `environments/crc.yaml` was removed with chart
+  0.14.0; nothing on the reference cluster reads the board until the monitoring move above.
+- **PodDisruptionBudget:** a budget covers only the dashboard Deployment's pods and, in C3, the
+  reporting service Deployment's pods; hook Jobs and CronJobs never carry the selector labels.
 
 Questions each design left for the operator are collected in the feature's issue and answered
 before its pull request opens: A1 (when the browser job becomes a required check), A2 (the cosign

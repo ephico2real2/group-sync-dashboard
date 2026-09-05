@@ -1706,6 +1706,8 @@ class TestLoginsDisabled:
         # module is on by default, so the card says that rather than prescribing the default.
         assert "chart default since 0.14.0 is on" in body
         assert "loginCapture.enabled=true" in body
+        assert "config.loginCapture.enabled" not in body, "the old card named a key that does not exist"
+        assert "authLogLevel.manage" in body
         assert "Debug" in body
         assert "audit log" in body
         # And it must not show the seeded rows as though they were live.

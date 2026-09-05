@@ -18,9 +18,13 @@ Two things have to be true first.
 **proxy's** ServiceAccount — the proxy is the party that calls TokenReview and
 SubjectAccessReview. Callers do not need that role. The switch grants nothing on its own: a
 bearer token reaches `/api` only after the proxy's SubjectAccessReview against the cluster-wide
-read named in `delegateUrls` succeeds, and a token that passes that review is held by someone who
-also passes the wide tier's own review, so it lands on the wide view — there is no cookie-less way
-to reach the narrowed self view. For cookie sessions only:
+read named in `delegateUrls` succeeds. The application then repeats that same check as
+`visibility.adminSar`, so a token the proxy admitted normally lands on the wide cluster-data view;
+the two exceptions are the same as for a cookie session — an indeterminate app-side review
+fail-closes to the self view, and the Usage tab asks its own stricter review
+(`visibility.usageAdminSar`, `update clusterrolebindings` by default), so a `cluster-reader` token
+is wide on the cluster data and self on `/api/dashboard/activity`. A token that fails the proxy's
+review never reaches the application. For cookie sessions only:
 
 ```bash
 helm upgrade group-sync-dashboard charts/group-sync-dashboard \
@@ -66,6 +70,15 @@ oc adm policy add-cluster-role-to-group cluster-reader <ldap-group-for-reporting
 # or a service account the aggregator runs as
 oc adm policy add-cluster-role-to-user cluster-reader \
   system:serviceaccount:<namespace>:<name>
+```
+
+For a ServiceAccount use exactly that user form. The dashboard's repeated review sends the identity
+with the OAuth virtual groups only, not `system:serviceaccounts:<namespace>`, so a grant made to the
+ServiceAccount's namespace group passes the proxy and still lands on the self view inside the
+application (recorded in `docs/REVIEW_chart_defaults.md`; carrying ServiceAccount virtual groups is
+routed to `docs/specs/SPEC_D2_per_cluster_authorization.md`, which owns the tier resolver).
+
+```bash
 ```
 
 Verified after tightening: an identity that cannot list ClusterRoleBindings gets `403`, one

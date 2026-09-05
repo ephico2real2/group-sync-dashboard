@@ -72,6 +72,21 @@ class TestThePdbSelectsTheDeploymentOnly:
             assert labels["app.kubernetes.io/instance"] == "t"
             assert labels["app.kubernetes.io/component"].startswith("auth-loglevel")
 
+    def test_a_pod_label_that_collides_with_a_selector_label_is_refused(self):
+        """Second-pass review (Cursor): `podLabels.app=x` used to win by last-key-wins, so the
+        API server rejected the Deployment and the PDB and Service would have matched no pod.
+        Refused by name; a harmless extra label still renders."""
+        for key in ("app", "app.kubernetes.io/name", "app.kubernetes.io/instance"):
+            args = ["helm", "template", "t", str(CHART), "-n", "x", "--set", "ingress.host=h",
+                    "--set", f"podLabels.{key.replace('.', '\\.')}=x"]
+            done = subprocess.run(args, capture_output=True, text=True, timeout=120)
+            assert done.returncode != 0, key
+            assert "podLabels must not set" in done.stderr and key in done.stderr, done.stderr
+        docs = _render("podLabels.team=platform")
+        labels = _one(docs, "Deployment")["spec"]["template"]["metadata"]["labels"]
+        assert labels["team"] == "platform"
+        assert _matches(_one(docs, "PodDisruptionBudget")["spec"]["selector"]["matchLabels"], labels)
+
     def test_the_service_does_not_route_to_a_hook_pod_either(self):
         docs = _render("authLogLevel.manage=true", "authLogLevel.enabled=true")
         selector = _one(docs, "Service", "group-sync-dashboard")["spec"]["selector"]

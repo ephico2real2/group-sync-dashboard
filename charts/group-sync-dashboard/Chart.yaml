@@ -129,8 +129,14 @@ type: application
 # dashboards/group-sync-dashboard.json byte-for-byte; a core resource, no CRD. A default install
 # renders nothing new until the ServiceMonitor is on. appVersion unchanged (0.13.0).
 # CHART 0.14.0 (2026-09-05), MINOR: every boolean switch on by default unless it costs RBAC, a
-# credential, a second image or a cluster-wide write; authLogLevel stays off as the audit log
-# replaces it.
+# credential, a second image or a cluster-wide write. Flipped: podDisruptionBudget.enabled,
+# loginCapture.enabled, oauthProxy.apiTokenAccess.enabled. Kept off: allowPrivilegeEscalation,
+# trustedCA.existingConfigMap.enabled, ingress.enabled, authLogLevel.manage/.enabled (the audit
+# log replaces it), oauthProxy.requestLogging (the proxy logs the full request URI, OAuth code
+# included), and by operator decision oauthProxy.skipProviderButton (OpenShift login screen) and
+# monitoring.serviceMonitor / prometheusRule (no Prometheus on the reference cluster; on-state
+# rendering verified first). Hook Job pods dropped the workload selector labels so the budget
+# cannot match them.
 version: 0.14.0
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,

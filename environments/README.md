@@ -54,7 +54,6 @@ declare — it only *overrides*, and the table says which way:
 | `authLogLevel.manage` / `.enabled` | `false` / `false` | `true` / `true` | lab override |
 | `loginCapture.enabled` | `true` | `true` | redundant — the default since chart 0.14.0 |
 | `oauthProxy.apiTokenAccess.enabled` | `true` | `true` | redundant — the default since chart 0.14.0 |
-| `monitoring.grafanaDashboard.enabled` | `""` | `true` | lab override: `""` follows the ServiceMonitor, which stays off here (no Prometheus on the reference cluster); grafana-operator v5 in namespace `grafana-test` validates the shipped board |
 
 **Read the right-hand column as "why this is not the default".** The overrides that remain are
 fail-closed in the chart on purpose, and a plain `helm install` must not do them uninvited:
@@ -70,8 +69,9 @@ The redundant rows are deliberate, not an oversight: a release file should **sta
 rather than inherit it, so a default that moves later cannot silently change this cluster. Two of
 them became redundant on chart 0.14.0 (`loginCapture`, `apiTokenAccess`) and were kept for exactly
 that reason: the file records what this cluster runs with, whichever way the default moves. That
-costs one line each and buys a diff that shows intent. The Grafana dashboard stays a lab override:
-its `""` default follows the ServiceMonitor, which this cluster keeps off.
+costs one line each and buys a diff that shows intent. The Grafana dashboard override that validated
+B3 through grafana-operator v5 was removed with chart 0.14.0: its `""` default follows the
+ServiceMonitor, which this cluster keeps off, and nothing on the cluster reads the board.
 
 `tests/test_environments_readme.py` holds this table against the real `values.yaml` and `crc.yaml`,
 because a table of defaults is exactly the kind of documentation that rots quietly — it stays

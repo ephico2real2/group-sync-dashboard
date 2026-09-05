@@ -61,9 +61,8 @@ loginCapture:
   enabled: true
 
 # The reference cluster runs no Prometheus (built-in monitoring is disabled to save resources), so
-# the ServiceMonitor stays off — the chart default, kept off by operator decision under the 0.14.0
-# rule — but it does run grafana-operator v5 (namespace grafana-test) to validate the shipped
-# dashboard; the ConfigMap is a core resource and costs nothing to render here.
-monitoring:
-  grafanaDashboard:
-    enabled: true
+# the ServiceMonitor and the rules stay off — the chart default, kept off by operator decision
+# under the 0.14.0 rule — and the Grafana dashboard ConfigMap follows them off. It was forced on
+# here once, to validate B3 through grafana-operator v5 in namespace grafana-test (screenshot
+# docs/screenshots/06-grafana-dashboard-crc.png); that validation is recorded and the override
+# was removed with chart 0.14.0 (operator decision, 2026-09-05: nothing on this cluster reads it).

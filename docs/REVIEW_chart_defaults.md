@@ -11,7 +11,12 @@ defect (C3/C9) before either reviewer reported, and both reviewers named it inde
 Two operator decisions landed during the pass and are folded in below: `oauthProxy.skipProviderButton`
 stays `false` (people log in from the OpenShift login screen), and `monitoring.serviceMonitor.enabled`
 / `monitoring.prometheusRule.enabled` stay `false` (the reference cluster runs no Prometheus), with
-the on-state rendering verified first.
+the on-state rendering verified first. The second pass added one more exception:
+`oauthProxy.requestLogging` stays `false` because oauth-proxy logs the complete request URI, the OAuth
+callback's authorization code included. Final state: three switches flipped
+(`podDisruptionBudget.enabled`, `loginCapture.enabled`, `oauthProxy.apiTokenAccess.enabled`); eight
+switches, nine keys, kept off. The operator also removed the Grafana lab override from
+`environments/crc.yaml` (nothing on the reference cluster reads the board).
 
 ## Verdicts
 
@@ -71,7 +76,7 @@ from oauth-proxy's source and added that the Usage tab still requires its strict
 clusterrolebindings` in `values.yaml`; the rbac condition is `apiTokenAccess OR visibility`.
 
 **Decision.** Accepted. Both files rewritten in the orchestrator's words; the api-access doc now states
-the wide-view consequence and that there is no cookie-less path to the self view. Cursor's rbac-comment
+the wide-view consequence (the first version overclaimed it; the second pass corrected it). Cursor's rbac-comment
 test and Codex's `test_chart_default_documentation.py` rejected as prose tests; the generalised
 `test_no_current_doc_tells_the_operator_to_enable_a_default` covers the `--set` instruction.
 
@@ -151,4 +156,86 @@ superseded. Re-validated after the edits: full suite (2,077 passed before the re
 affected files and the Playwright card test after), `helm lint`, `helm template` in the default state
 and with each flipped switch off, `oc apply --dry-run=server` of the monitoring objects against the
 CRDs, and a live redeploy on the reference cluster with the PDB status read back. The second pass on
-the fixed head is recorded below when it runs.
+the fixed head is recorded below.
+
+## Second pass — on the fixed head `1b19ad1`
+
+Same models, a ten-claim brief: seven claims that each first-pass fix closed its hole, three that the
+first pass never attacked (the upgrade delta, what request logging writes, a colliding `podLabels`
+key). Codex measured with a shell this time (the sandbox again refused the external copy, so it
+rendered from `git show`); Cursor traced.
+
+| Claim | Codex | Cursor | Decision |
+|---|---|---|---|
+| C1 hook pods match no selector in any state | CONFIRMED | CONFIRMED | — |
+| C2 `test_values_defaults.py` enumerates every boolean | REFUTED | REFUTED | **Accepted** — `flatten` stored a list as one leaf, so `clusters[].enabled` was invisible; list-aware now, with the regression test both proposed |
+| C3 values comments claim only what the code does | REFUTED | PLAUSIBLE | **Accepted** — the `requestLogging` comment said "log volume"; see C9 |
+| C4 token-access docs and the wide-view sentence | REFUTED | REFUTED | **Accepted** — the first-pass sentence overclaimed; rewritten (fail-closed path, Usage tier); the ServiceAccount finding routed to D2 |
+| C5 the UI card's statements are true | CONFIRMED | CONFIRMED | — ; Cursor's V1 test hole accepted |
+| C6 the environments table after the monitoring decision | CONFIRMED | CONFIRMED | — ; the Grafana row then removed with the override |
+| C7 the four release records agree | REFUTED | REFUTED | **Accepted** — the Chart.yaml history named the rule, not the release; the index said "seven" while listing eight keys; both rewritten |
+| C8 the 0.13.0 → 0.14.0 upgrade delta | REFUTED | PLAUSIBLE | **Rejected** — the extra delta is the `helm.sh/chart` label and the config checksum, which every chart bump changes; the immutable-Job half confirmed |
+| C9 request logging leaks nothing | REFUTED | PLAUSIBLE | **Accepted** — see below |
+| C10 a colliding `podLabels` key | REFUTED | REFUTED | **Accepted on the fact; Cursor's snippet rejected** — see below |
+
+### C9 — request logging writes the OAuth code to the pod log
+
+**Finding (Codex).** oauth-proxy's `logging_handler.go` formats `url.RequestURI()`, query string
+included, and excludes no path; the callback is `GET /oauth/callback?code=…&state=…` (`oauthproxy.go`
+redeems `req.Form.Get("code")`). `-request-logging=true` therefore writes every authorization code,
+and any credential an API client puts in a query parameter, to the pod log.
+
+**Re-check.** Both files read from upstream master: the format string at `logging_handler.go:117-124`
+carries `url.RequestURI()`; the callback branch at `oauthproxy.go:609/681`. The reference deploy with
+logging on had seen no browser login since the flip, so the log held no such line yet; the source is
+the proof.
+
+**Decision.** Accepted: `requestLogging` back to `false` as a confidentiality exception; comment,
+chart README row, CHANGELOG, Chart.yaml history, index paragraph and the exception list updated; a
+render test holds the default and the explicit `true`. Codex's four replacement texts with "3 flipped
+switches / 9 boolean leaves" wording and the test asserting those phrases across four files rejected
+as prose tests; the sets themselves are held by `test_values_defaults.py`.
+
+### C10 — a `podLabels` key that is also a selector label
+
+**Finding (both).** `podLabels` was rendered after `gsd.selectorLabels`, so `--set podLabels.app=x`
+rewrote the pod's `app` label by YAML last-key-wins. Cursor predicted a silent selector miss and
+proposed reordering the includes; Codex measured the render and proposed refusing the key.
+
+**Re-check.** `oc apply --dry-run=server` on CRC rejected the Deployment: template labels outside
+its selector. So the failure was loud, not silent, and a reorder would have discarded the operator's
+label silently instead.
+
+**Decision.** Accepted on the fact; Cursor's reorder rejected; refused by name with a `fail` that
+says which selector label collided (Codex's shape, applied before its report arrived), with a test
+that every selector key is refused and a harmless label still renders.
+
+### C4 — a ServiceAccount token can be wide at the proxy and self in the app
+
+**Finding (Codex).** The app's repeated review adds only `system:authenticated` and
+`system:authenticated:oauth` to the identity; a ServiceAccount granted through
+`system:serviceaccounts:<ns>` passes the proxy's review (which sees the token's real groups) and
+resolves to self. Codex proposed `_virtual_groups_for(viewer)` in `gsd/kube.py` with a test.
+
+**Re-check.** `kube.py` `TierResolver._resolve_and_cache` sends `[*groups, *VIRTUAL_AUTH_GROUPS]`;
+`docs/api-access.md` documents the user-form grant, which works because the SAR names the user.
+
+**Decision.** Accepted on the fact; routed. This PR is chart-only and the resolver is D2's file, so the
+finding, Codex's helper and its test go into `SPEC_D2_per_cluster_authorization.md`'s orchestrator's
+notes, and `docs/api-access.md` says to grant a ServiceAccount in the user form until then.
+
+### Also in the second pass
+
+- **C2, C7, V1 accepted** as in the table; Codex's `git show`-based historical test and the
+  upgrade-delta test that renders `8cf80bf` rejected (they pin git history into the suite).
+- **Incident.** The Codex task set its scratch variable to the session scratchpad and removed it in an
+  exit trap, deleting every review artefact and the C3 design; the design was rebuilt from its agent's
+  transcript. The brief pattern is corrected in memory: a fresh subdirectory per reviewer, never the
+  parent, and irreplaceable outputs copied out first.
+
+### Outcome of the second pass
+
+Nine of ten claims refuted by at least one reviewer; six accepted (one routed), two rejected with the
+reason above, one confirmed. Re-validated: `test_chart_pdb.py`, `test_values_defaults.py`,
+`test_chart_strategy.py`, the Playwright card test, `helm lint`, the full suite, and a CRC redeploy with
+the proxy's `-request-logging=false` and the PDB status read back.

@@ -50,7 +50,7 @@ group membership, so it ships authenticated and you turn the proxy *off* deliber
 | `oauthProxy.skipAuthRegex` | `^/(healthz\|readyz\|metrics)$` | the health paths **must** stay, or kubelet gets a 302 and kills a healthy pod |
 | `oauthProxy.sar` | `""` | empty = authentication only. Set a SubjectAccessReview to also require a permission |
 | `oauthProxy.skipProviderButton` | `false` | `false` shows an explicit **Log In** button. `true` skips straight to the OAuth server — one fewer click, but any mid-flow failure then lands on the proxy's own page headed "403 Permission Denied", which reads as *you are not allowed in* rather than *your session expired*. Observed here after a rollout landed between redirect and callback |
-| `oauthProxy.requestLogging` | `true` | the proxy logs every request it handles; the cost is log volume |
+| `oauthProxy.requestLogging` | `false` | opt-in: the proxy logs the complete request URI, query string included, so the OAuth callback's authorization code would land in the pod log; enable only behind query-string redaction |
 | `oauthProxy.resources` | 10m/64Mi → 200m/256Mi | |
 | *(no `redirectMode` key)* | — | the ServiceAccount's OAuth callback form follows what exposes the dashboard and cannot be set separately: `oauth-redirectreference` naming the chart's Route with the default `route.enabled`, `oauth-redirecturi` with a literal URL when the Ingress is used instead. A `redirectMode` key existed once, read by nothing; it is gone |
 

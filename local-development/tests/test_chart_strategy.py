@@ -1024,6 +1024,17 @@ class TestVisibilityThreading:
         assert len(delegator_bindings(out)) == 1, "token access alone keeps the one grant"
 
 
+class TestProxyRequestLogging:
+    """Off by default (review of chart 0.14.0, second pass): oauth-proxy's request logger writes the
+    complete request URI, so the OAuth callback's `?code=…` would land in the pod log."""
+
+    def test_off_by_default_and_explicitly_switchable(self):
+        for value, expect in (("false", "-request-logging=false"), ("true", "-request-logging=true")):
+            ok, out = render(oauthProxy__requestLogging=value) if value == "true" else render()
+            assert ok, out
+            assert expect in out and ("-request-logging=" + ("true" if value == "false" else "false")) not in out
+
+
 class TestTheServiceMonitorVerifiesTLS:
     """The scrape must VERIFY the certificate, and the posture must be hard to lose.
 

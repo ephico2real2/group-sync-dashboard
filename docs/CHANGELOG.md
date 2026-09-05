@@ -14,17 +14,18 @@ which `local-development/prepare-release.py` does when the release is cut.
   operator's rule for the chart: a boolean defaults to `true` unless the switch needs RBAC beyond a
   namespaced read, a credential, a second image or a cluster-wide write. Flipped: `podDisruptionBudget.enabled`
   (harmless with `maxUnavailable: 1`), `loginCapture.enabled` (inert until the login lines exist),
-  `oauthProxy.apiTokenAccess.enabled` (the proxy's SubjectAccessReview still gates every token)
-  and `oauthProxy.requestLogging`. Kept off, each with its reason in `values.yaml`:
-  `securityContext.allowPrivilegeEscalation`, `trustedCA.existingConfigMap.enabled`,
-  `ingress.enabled`, `authLogLevel.manage`/`.enabled` — the OAuth Debug level is being retired in
-  favour of the oauth-server audit log as the source of login lines — `oauthProxy.skipProviderButton`,
-  an operator's product choice (people log in from the OpenShift login screen, which the explicit
-  button gives them), and `monitoring.serviceMonitor.enabled` / `monitoring.prometheusRule.enabled`,
-  because the reference cluster runs no Prometheus; rendering with both on was verified (lint,
-  template, server-side dry run against the CRDs, a live deploy) before the default went back, so
-  enabling them is a values change and nothing else. The Grafana dashboard keeps following the
-  ServiceMonitor. An upgrade that relied on a `false` default now needs the value set explicitly.
+  and `oauthProxy.apiTokenAccess.enabled` (the proxy's SubjectAccessReview still gates every
+  token). Kept off, each with its reason in `values.yaml`: `securityContext.allowPrivilegeEscalation`,
+  `trustedCA.existingConfigMap.enabled`, `ingress.enabled`, `authLogLevel.manage`/`.enabled` — the
+  OAuth Debug level is being retired in favour of the oauth-server audit log as the source of login
+  lines — `oauthProxy.skipProviderButton`, an operator's product choice (people log in from the
+  OpenShift login screen, which the explicit button gives them), `monitoring.serviceMonitor.enabled`
+  / `monitoring.prometheusRule.enabled`, because the reference cluster runs no Prometheus (rendering
+  with both on was verified — lint, template, server-side dry run against the CRDs, a live deploy —
+  before the default went back, so enabling them is a values change and nothing else), and
+  `oauthProxy.requestLogging`, which the second review pass showed writes the complete request URI,
+  the OAuth callback's authorization code included, to the pod log. The Grafana dashboard keeps
+  following the ServiceMonitor; the reference values no longer force it on. An upgrade that relied on a `false` default now needs the value set explicitly.
 - **The hook Job pods no longer carry the workload's selector labels.** Found while validating the
   on-by-default budget on the reference cluster: the `authLogLevel` Job pods matched the
   PodDisruptionBudget's selector, the disruption controller failed the budget (`SyncFailed: jobs.batch
