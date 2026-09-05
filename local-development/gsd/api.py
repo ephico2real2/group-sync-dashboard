@@ -1055,6 +1055,8 @@ def build_app(
         `first_login_at` (the User's creation time, when an identity proves a login happened),
         `providers` (identity-provider names), `last_login_at` (the newest successful captured
         login, null when none — read `login_capture` before trusting the null), `full_name`.
+        `first_login_source` per row says whether `first_login_at` is the Identity's creation time
+        (exact) or the User's (approximate); `identities_source` says why.
 
         `total` is every User object under the scope; `logged_in_total` is those with an identity —
         the people who have actually logged in — and is the headline number. They differ by the
@@ -1075,18 +1077,31 @@ def build_app(
         require_cluster(cluster_id)
         viewer, scope = viewer_scope(request)
         who = None if scope == "all" else require_viewer(viewer)
-        rows = store.users(cluster_id, limit=limit, offset=offset, user_name=who)
+        providers = settings.users_providers
+        rows = store.users(cluster_id, limit=limit, offset=offset, user_name=who, providers=providers)
         never = store.synced_members_without_user(cluster_id, user_name=who)
         status = store.users_source(cluster_id)
+        istatus = store.identities_source(cluster_id)
         return {
             "cluster": cluster_id,
             "scope": scope,
             "viewer": viewer,
             "source": (status or {}).get("state") or "pending",
             "source_observed_at": (status or {}).get("observed_at"),
+            # Which provider names the list is narrowed to (config.users.providers); [] means all.
+            # Applied to `users`, `total` and `logged_in_total`, NOT to never_logged_in_members: a
+            # member who logged in through an excluded provider has logged in.
+            "providers_filter": list(providers),
+            # Whether first_login_at is exact: ok (Identity objects read), forbidden (rbac.identities
+            # not granted — rows fall back to the User time), off (the read is not switched on),
+            # pending (switched on, no poll yet).
+            "identities_source": (istatus or {}).get("state")
+                                  or ("pending" if settings.identities_read_enabled else "off"),
+            "identities_source_observed_at": (istatus or {}).get("observed_at"),
             "login_capture": "on" if settings.login_capture_enabled else "off",
-            "total": store.count_users(cluster_id, user_name=who),
-            "logged_in_total": store.count_users(cluster_id, user_name=who, logged_in_only=True),
+            "total": store.count_users(cluster_id, user_name=who, providers=providers),
+            "logged_in_total": store.count_users(cluster_id, user_name=who, logged_in_only=True,
+                                                 providers=providers),
             "offset": offset,
             "limit": limit,
             "count": min(len(rows), limit),
@@ -1140,6 +1155,7 @@ def build_app(
             # row of /users, so the detail page and the list cannot disagree.
             "logged_in": bool(record and record["logged_in"]),
             "first_login_at": record["first_login_at"] if record else None,
+            "first_login_source": record["first_login_source"] if record else None,
             "last_login_at": record["last_login_at"] if record else None,
             "providers": record["providers"] if record else [],
             "login_capture": "on" if settings.login_capture_enabled else "off",

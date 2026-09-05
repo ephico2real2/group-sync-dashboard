@@ -121,7 +121,7 @@ subset. (Access granted has one: a reader's own path, above.)
 |---|---|---|
 | `/api/clusters/{c}/groups` | groups they belong to | all |
 | `/api/clusters/{c}/groups/{name}` | 403 unless a member — **and a member's 200 names the group's bindings**, see below | all |
-| `/api/clusters/{c}/users` | their own row | all |
+| `/api/clusters/{c}/users` | their own row (with `first_login_source`) | all |
 | `/api/clusters/{c}/users/{name}` | 403 unless it is them — **their own 200 names the bindings reaching them**, see below | all |
 | `/api/clusters/{c}/user-bindings` | their own grants | all |
 | `/api/clusters/{c}/membership-changes` | changes affecting them | all |

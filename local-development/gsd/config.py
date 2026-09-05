@@ -313,6 +313,17 @@ class Settings:
     # the control from the filter bar and nothing else changes.
     ui_export_enabled: bool = True
 
+    # ── USERS TAB MODULES (docs/DESIGN_users_tab_logins.md, "Decisions after 0.9.0") ─────────────
+    # Identity-provider names the Users tab lists. EMPTY MEANS ALL — a value that is simply empty
+    # by default. Applied at READ time, never at the poll, so changing it needs no re-poll and the
+    # stored record stays the whole cluster; recorded on the wire as `providers_filter` so the tab
+    # can say "showing providers: x, y" instead of quietly listing fewer people.
+    users_providers: tuple[str, ...] = ()
+    # Whether the poller reads Identity objects for the exact first login. One wire from the chart's
+    # rbac.identities, like oauthProxyEnabled: the app cannot see its own RBAC, and trying a read
+    # that is refused every poll would put a 403 a minute into the API server's audit log.
+    identities_read_enabled: bool = False
+
     user_activity_enabled: bool = True
     # "self" | "all". Who may read /api/dashboard/activity. Defaults to self, because the
     # response is identifiable personnel data — who was present, when, and how much — and
@@ -642,6 +653,28 @@ def _bool_setting(raw: dict, env_name: str, yaml_key: str, default: bool) -> boo
     return default
 
 
+# An identity provider's name as OpenShift accepts it: it prefixes every `identities[]` entry as
+# `<provider>:<id>`, so it can contain neither ':' nor '/', and this dashboard splits on the colon.
+_PROVIDER_NAME = re.compile(r"[^:/\s]+")
+
+
+def _providers_setting(raw: dict) -> tuple[str, ...]:
+    """usersProviders: a comma-joined list (the loginCaptureHtpasswdProviders shape). STRICT — a
+    malformed name is a startup error, because a name that can never match would silently empty
+    the Users tab and read as "nobody has logged in"."""
+    source = os.environ.get("GSD_USERS_PROVIDERS")
+    if source is None:
+        source = raw.get("usersProviders", "") or ""
+    names = tuple(p.strip() for p in str(source).split(",") if p.strip())
+    for name in names:
+        if not _PROVIDER_NAME.fullmatch(name):
+            raise ConfigError(
+                f"usersProviders: {name!r} is not an identity-provider name (no ':' or '/', no "
+                f"whitespace) — a name that can never match would list nobody"
+            )
+    return tuple(dict.fromkeys(names))
+
+
 def _require(raw: dict, key: str, where: str) -> object:
     if key not in raw:
         raise ConfigError(f"{where}: missing required key {key!r}")
@@ -824,6 +857,10 @@ def load_settings(path: str | Path) -> Settings:
             raw, "GSD_USER_ACTIVITY_ENABLED", "userActivityEnabled", True
         ),
         ui_export_enabled=_bool_setting(raw, "GSD_UI_EXPORT_ENABLED", "uiExportEnabled", True),
+        users_providers=_providers_setting(raw),
+        identities_read_enabled=_bool_setting(
+            raw, "GSD_IDENTITIES_READ_ENABLED", "identitiesReadEnabled", False
+        ),
         view_restrictions_enabled=_bool_setting(
             raw, "GSD_ENABLE_VIEW_RESTRICTIONS", "visibilityEnabled", True
         ),

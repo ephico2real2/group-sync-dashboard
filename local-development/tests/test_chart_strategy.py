@@ -1311,3 +1311,39 @@ class TestUiExportModule:
         ok, out = render(ui__export__enabled="false")
         assert ok, out
         assert _config_data(out)["uiExportEnabled"] is False
+
+
+class TestTheIdentitiesGrantIsOffReadOnlyAndCoupled:
+    """C2: rbac.identities is both the grant and the read switch; off by default (a grant), get/list
+    only, refused without rbac.users, and the allow-list threads to the ConfigMap as a comma list."""
+
+    def _docs(self, out):
+        import yaml
+        return [d for d in yaml.safe_load_all(out) if d]
+
+    def _rules(self, out):
+        return [r for d in self._docs(out) if d.get("kind") == "ClusterRole" for r in d.get("rules") or []]
+
+    def test_default_renders_no_identities_rule_and_the_read_off(self):
+        ok, out = render()
+        assert ok, out
+        assert not [r for r in self._rules(out) if "identities" in (r.get("resources") or [])]
+        assert _config_data(out)["identitiesReadEnabled"] is False
+        assert _config_data(out)["usersProviders"] == ""
+
+    def test_on_renders_exactly_get_and_list(self):
+        ok, out = render(rbac__identities="true")
+        assert ok, out
+        rules = [r for r in self._rules(out) if "identities" in (r.get("resources") or [])]
+        assert len(rules) == 1 and sorted(rules[0]["verbs"]) == ["get", "list"]
+        assert rules[0]["apiGroups"] == ["user.openshift.io"]
+        assert _config_data(out)["identitiesReadEnabled"] is True
+
+    def test_identities_without_users_is_refused_naming_the_pair(self):
+        ok, out = render(rbac__identities="true", rbac__users="false")
+        assert not ok and "rbac.identities=true requires rbac.users=true" in out
+
+    def test_the_allow_list_reaches_the_configmap_as_a_comma_list(self):
+        ok, out = render(**{"config__users__providers[0]": "a", "config__users__providers[1]": "b"})
+        assert ok, out
+        assert _config_data(out)["usersProviders"] == "a,b"

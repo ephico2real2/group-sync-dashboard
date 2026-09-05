@@ -1250,6 +1250,24 @@ const USERS_FETCH = 10000;
    typing more of their name, and the cap is stated on the page whenever it bites. */
 const USERS_RENDER = 1000;
 
+/* What the first-login column IS, said once above the table at the wide tier (the narrowed
+   reader sees the chip on their own row). Names the grant like the users-source banner does. */
+function identitiesNote(d) {
+  const s = d.identities_source;
+  if (s === "ok") return `<div class="filterbar-note" id="users-identities-note">First-login times are
+    <strong>exact</strong> (Identity objects read${d.identities_source_observed_at
+      ? ` <span class="mono">${esc(fmtTime(d.identities_source_observed_at))}</span>` : ""}).</div>`;
+  if (s === "forbidden") return `<div class="truncation-note" id="users-identities-note">The dashboard is
+    <strong>not permitted to list identities.user.openshift.io</strong>, so first-login times fall back to
+    the User's creation time (approximate). Grant <code>rbac.identities</code> in the chart for exact ones.</div>`;
+  if (s === "pending") return `<div class="filterbar-note" id="users-identities-note">Waiting for the first
+    poll to read identities; first-login times are approximate until then.</div>`;
+  if (s === "off") return `<div class="filterbar-note" id="users-identities-note">First-login times are
+    <strong>approximate</strong> (the User's creation time). Exact times need the Identity read
+    (<code>rbac.identities</code>).</div>`;
+  return "";
+}
+
 /* The Users tab's row selection — chips, then the free-text box — written once so the table and
    the export (docs/DESIGN_export.md) read the same rows. Only the PAINT is capped (USERS_RENDER);
    this returns every match, which is what an export must carry. */
@@ -1304,10 +1322,17 @@ function usersPage() {
   const loggedInNoGroup = loggedIn.filter((u) => (u.group_count || 0) === 0).length;
   const chipBtn = (key, label, title) => `<button type="button" class="chip-btn" data-ufilter="${esc(key)}"
       aria-pressed="${chip === key}"${title ? ` title="${esc(title)}"` : ""}>${esc(label)}</button>`;
+  // `exact` marks an Identity creation time; `approx.` the User's, which precedes the first login
+  // for an account an administrator created ahead of time. Neither word is colour.
+  const sourceChip = (u) => u.first_login_source === "identity"
+    ? ` <span class="chip" title="Exact: the Identity object's creation time, written by OpenShift at the first successful login through this provider.">exact</span>`
+    : u.first_login_source === "user"
+      ? ` <span class="chip" title="Approximate: the User object's creation time. Exact for a provider-created user; earlier than the first login for an account created by hand and linked later.">approx.</span>`
+      : "";
   const status = (u) => u.logged_in === false
     ? `<span class="muted">manual account · never logged in</span>`
     : u.first_login_at
-      ? `logged in since <span class="mono">${esc(fmtTime(u.first_login_at))}</span> <span class="muted">(${esc(ago(u.first_login_at))})</span>`
+      ? `logged in since <span class="mono">${esc(fmtTime(u.first_login_at))}</span> <span class="muted">(${esc(ago(u.first_login_at))})</span>${sourceChip(u)}`
       : `<span class="muted">logged in</span>`;
   const lastLogin = (u) => !captureOn
     ? `<span class="muted" title="Login capture is off, so the dashboard has not recorded any login.">capture off</span>`
@@ -1336,6 +1361,11 @@ function usersPage() {
       // rows and this timestamp as they were, so the reader can see it is not moving.
       ? `<div class="filterbar-note" id="users-source-age">Users read from the cluster
           <span class="mono">${esc(fmtTime(d.source_observed_at))}</span> <span class="muted">(${esc(ago(d.source_observed_at))})</span>.</div>` : ""}
+    ${(d.providers_filter || []).length
+      ? `<div class="filterbar-note" id="users-provider-filter">Showing providers:
+          <strong>${d.providers_filter.map(esc).join(", ")}</strong>. People who logged in only through
+          another provider are not listed here; their group pages are unchanged.</div>` : ""}
+    ${self ? "" : identitiesNote(d)}
     ${self ? "" : `<div class="kpis">
       <div class="kpi"><div class="label">Have logged in</div><div class="value">${total}</div></div>
       <div class="kpi"><div class="label">In a synced group</div><div class="value">${grouped}</div></div>
@@ -2751,7 +2781,7 @@ function sortBy(rows, keyFn, dir) {
    inputs the page renders as labels rather than cells (managed_source and exception behind the
    finding label, is_platform behind the platform toggle); no other payload field is written. */
 const EXPORT_COLUMNS = {
-  users: ["user_name", "full_name", "logged_in", "first_login_at", "providers", "group_count",
+  users: ["user_name", "full_name", "logged_in", "first_login_at", "first_login_source", "providers", "group_count",
           "last_login_at", "first_seen_at"],
   groups: ["name", "member_count", "sync_provider", "group_synced_at", "ldap_uid"],
   bindings: ["finding", "group_name", "member_count", "logged_in_count", "role_kind", "role_name",

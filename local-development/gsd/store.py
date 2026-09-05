@@ -157,6 +157,7 @@ CREATE TABLE IF NOT EXISTS ocp_user (
     created_at          TEXT,
     providers           TEXT NOT NULL DEFAULT '[]',
     has_identity        INTEGER NOT NULL DEFAULT 0,
+    identity_created_at TEXT,           -- migration 9: the earliest Identity creationTimestamp, exact first login; NULL when not read
     observed_at         TEXT NOT NULL,
     PRIMARY KEY(cluster_id, user_name)
 );
@@ -164,6 +165,14 @@ CREATE TABLE IF NOT EXISTS ocp_user (
 -- Whether the last poll could read the User objects at all. One row per cluster; state is 'ok'
 -- or 'forbidden'. Absent means no poll has reported yet.
 CREATE TABLE IF NOT EXISTS ocp_user_status (
+    cluster_id          TEXT PRIMARY KEY,
+    state               TEXT NOT NULL,
+    observed_at         TEXT NOT NULL
+);
+
+-- Whether the last poll could read the Identity objects (rbac.identities). 'ok' | 'forbidden' |
+-- 'off' (the read is not switched on). Absent means no poll has reported yet.
+CREATE TABLE IF NOT EXISTS ocp_identity_status (
     cluster_id          TEXT PRIMARY KEY,
     state               TEXT NOT NULL,
     observed_at         TEXT NOT NULL
@@ -560,6 +569,21 @@ _MIGRATIONS: list[tuple[int, str, list[str]]] = [
             "ALTER TABLE group_state ADD COLUMN cliff_silence TEXT",
             "CREATE INDEX IF NOT EXISTS membership_event_by_time "
             "ON membership_event(cluster_id, observed_at)",
+        ],
+    ),
+    (
+        9,
+        "ocp_user: identity_created_at (exact first login); ocp_identity_status",
+        [
+            # Tolerated on replay by _migrate's one allowed error, "duplicate column name".
+            "ALTER TABLE ocp_user ADD COLUMN identity_created_at TEXT",
+            """CREATE TABLE IF NOT EXISTS ocp_identity_status (
+                   cluster_id          TEXT PRIMARY KEY,
+                   state               TEXT NOT NULL,
+                   observed_at         TEXT NOT NULL
+               )""",
+            # No backfill: exact times arrive with the next poll that may read identities; until then
+            # every row's source reads `user`, which is the truth about it.
         ],
     ),
 ]
@@ -1394,7 +1418,8 @@ class Store:
         )
 
     def users(
-        self, cluster_id: str, limit: int = 1000, offset: int = 0, user_name: str | None = None
+        self, cluster_id: str, limit: int = 1000, offset: int = 0, user_name: str | None = None,
+        providers: tuple[str, ...] = (),
     ) -> list[dict]:
         """Every person who has logged in to the cluster — one row per User object. BOUNDED.
 
@@ -1417,7 +1442,7 @@ class Store:
         The two joins are to pre-grouped subqueries, so they are 1:1 and cannot multiply rows.
         Ordering stays on the id: it is what an operator matches against `oc`.
         """
-        sql = """SELECT u.user_name, u.full_name, u.created_at, u.providers, u.has_identity,
+        sql = """SELECT u.user_name, u.full_name, u.created_at, u.providers, u.has_identity, u.identity_created_at,
                         COALESCE(g.group_count, 0) AS group_count, g.first_seen_at, l.last_login_at
                    FROM ocp_user u
                    LEFT JOIN (SELECT cluster_id, user_name, COUNT(*) AS group_count,
@@ -1433,6 +1458,13 @@ class Store:
         if user_name:
             sql += " AND u.user_name=?"
             params.append(user_name)
+        if providers:
+            # The allow-list, on the JSON list the row stores: a User qualifies when ANY of its
+            # providers is listed. json_each is SQLite's own JSON1, present in every SQLite this
+            # project ships (the image's 3.53.4; 3.38+ builds it in).
+            sql += (" AND EXISTS (SELECT 1 FROM json_each(u.providers) je WHERE je.value IN ("
+                    + ",".join("?" * len(providers)) + "))")
+            params += list(providers)
         sql += " ORDER BY u.user_name LIMIT ? OFFSET ?"
         params += [limit + 1, offset]
         return [self._user_row(r) for r in self._rows(sql, params)]
@@ -1445,11 +1477,16 @@ class Store:
         row = dict(row)
         row["providers"] = json.loads(row.pop("providers") or "[]")
         row["logged_in"] = bool(row.pop("has_identity"))
-        row["first_login_at"] = row["created_at"] if row["logged_in"] else None
+        exact = row.pop("identity_created_at", None)
+        # The exact Identity time when it was read, the User's creation time otherwise — and the
+        # source says which, so the page never presents an approximation as an exact fact.
+        row["first_login_at"] = (exact or row["created_at"]) if row["logged_in"] else None
+        row["first_login_source"] = ("identity" if exact else "user") if row["logged_in"] else None
         return row
 
     def count_users(
-        self, cluster_id: str, user_name: str | None = None, logged_in_only: bool = False
+        self, cluster_id: str, user_name: str | None = None, logged_in_only: bool = False,
+        providers: tuple[str, ...] = (),
     ) -> int:
         """Whole-set count for the paged list, under the same privacy predicate.
 
@@ -1465,6 +1502,10 @@ class Store:
         if user_name:
             sql += " AND user_name=?"
             params.append(user_name)
+        if providers:
+            sql += (" AND EXISTS (SELECT 1 FROM json_each(ocp_user.providers) je WHERE je.value IN ("
+                    + ",".join("?" * len(providers)) + "))")
+            params += list(providers)
         return int(self._rows(sql, params)[0]["n"])
 
     def synced_members_without_user(
@@ -1728,7 +1769,8 @@ class Store:
                 [{**r, "cluster_id": cluster_id, "observed_at": observed_at} for r in rows],
             )
 
-    def replace_users(self, cluster_id: str, users: list[dict], observed_at: str) -> None:
+    def replace_users(self, cluster_id: str, users: list[dict], observed_at: str,
+                      identity_created: dict[str, str] | None = None) -> None:
         """Replace this cluster's User records wholesale, and record that the read succeeded.
 
         Delete-then-insert rather than upsert, for the same reason replace_group_state gives:
@@ -1743,8 +1785,10 @@ class Store:
             conn.execute("DELETE FROM ocp_user WHERE cluster_id=?", (cluster_id,))
             conn.executemany(
                 """INSERT OR REPLACE INTO ocp_user(
-                       cluster_id, user_name, full_name, created_at, providers, has_identity, observed_at)
-                   VALUES(:cluster_id,:user_name,:full_name,:created_at,:providers,:has_identity,:observed_at)""",
+                       cluster_id, user_name, full_name, created_at, providers, has_identity,
+                       identity_created_at, observed_at)
+                   VALUES(:cluster_id,:user_name,:full_name,:created_at,:providers,:has_identity,
+                          :identity_created_at,:observed_at)""",
                 [
                     {"cluster_id": cluster_id,
                      "user_name": u["user_name"],
@@ -1752,6 +1796,7 @@ class Store:
                      "created_at": u.get("created_at"),
                      "providers": json.dumps(sorted(u.get("providers") or [])),
                      "has_identity": 1 if u.get("has_identity") else 0,
+                     "identity_created_at": (identity_created or {}).get(u["user_name"]),
                      "observed_at": observed_at}
                     for u in users
                 ],
@@ -1761,6 +1806,21 @@ class Store:
                    ON CONFLICT(cluster_id) DO UPDATE SET state='ok', observed_at=excluded.observed_at""",
                 (cluster_id, observed_at),
             )
+
+    def set_identities_status(self, cluster_id: str, state: str, observed_at: str) -> None:
+        """The last poll's verdict on reading Identity objects: ok | forbidden | off."""
+        with self._write() as conn:
+            conn.execute(
+                """INSERT INTO ocp_identity_status(cluster_id, state, observed_at) VALUES(?, ?, ?)
+                   ON CONFLICT(cluster_id) DO UPDATE SET state=excluded.state,
+                                                         observed_at=excluded.observed_at""",
+                (cluster_id, state, observed_at),
+            )
+
+    def identities_source(self, cluster_id: str) -> dict | None:
+        rows = self._rows(
+            "SELECT state, observed_at FROM ocp_identity_status WHERE cluster_id=?", (cluster_id,))
+        return dict(rows[0]) if rows else None
 
     def mark_users_unavailable(self, cluster_id: str, observed_at: str) -> None:
         """The list call was refused. Rows are left as they were; the status says why the tab

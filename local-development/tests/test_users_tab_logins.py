@@ -42,7 +42,7 @@ def _seed(db: str, *, users=True, capture_events=True) -> None:
             _rec("gatekeeper"),
             _rec("kubeadmin", providers=("developer",), created=_iso(NOW - timedelta(days=400))),
             _rec("manual", providers=(), has_identity=False),
-        ], _iso(NOW - timedelta(minutes=1)))
+        ], _iso(NOW - timedelta(minutes=1)), identity_created={"alice": _iso(NOW - timedelta(days=29))})
     if capture_events:
         store.record_login_events("c1", [
             {"pod_name": "oauth-1", "user_name": "alice", "outcome": loginlog.OUTCOME_SUCCESS,
@@ -58,11 +58,12 @@ def _seed(db: str, *, users=True, capture_events=True) -> None:
     store.close()
 
 
-def _client(tmp_path, *, login_capture=True, tier="all", **seed) -> TestClient:
+def _client(tmp_path, *, login_capture=True, tier="all", settings_extra=None, **seed) -> TestClient:
     db = str(tmp_path / "t.db")
     _seed(db, **seed)
     settings = Settings(clusters=[ClusterConfig("c1", "https://x", token_env="T")], db_path=db,
-                        oauth_proxy_enabled=True, login_capture_enabled=login_capture)
+                        oauth_proxy_enabled=True, login_capture_enabled=login_capture,
+                        **(settings_extra or {}))
     return TestClient(build_app(settings, run_poller=False, tier_resolver=lambda viewer: tier))
 
 
@@ -80,7 +81,10 @@ class TestTheListIsThePeopleWhoHaveLoggedIn:
     def test_each_row_says_whether_and_since_when_the_person_logged_in(self, tmp_path):
         rows = {u["user_name"]: u for u in _client(tmp_path).get("/api/clusters/c1/users", headers=ADMIN).json()["users"]}
         assert rows["alice"]["logged_in"] is True
-        assert rows["alice"]["first_login_at"] == _iso(NOW - timedelta(days=30)), "the User's creation time"
+        # Since C2 the seed carries alice's Identity time (29 days), which is exact and wins over the
+        # User's creation time (30 days); kubeadmin below has none and keeps the User time.
+        assert rows["alice"]["first_login_at"] == _iso(NOW - timedelta(days=29)), "the Identity's creation time"
+        assert rows["kubeadmin"]["first_login_at"] == _iso(NOW - timedelta(days=400)), "the User's creation time"
         assert rows["alice"]["providers"] == ["ldap-local"]
         assert rows["kubeadmin"]["providers"] == ["developer"]
         # An account created by hand: a User object, no identity, nobody has ever logged in as it.
@@ -217,3 +221,65 @@ class TestTheDetailPage:
 
     def test_a_name_seen_nowhere_is_still_a_404(self, tmp_path):
         assert _client(tmp_path).get("/api/clusters/c1/users/nobody", headers=ADMIN).status_code == 404
+
+
+class TestExactFirstLoginAndTheProviderAllowList:
+    """C2: the Identity time when read (exact), the User time otherwise (approximate), the source on
+    the wire; and the provider allow-list applied at read time to the rows and the counts, never to
+    the never-logged-in line."""
+
+    def test_the_source_says_which_time_a_row_carries(self, tmp_path):
+        with _client(tmp_path) as c:
+            rows = {u["user_name"]: u for u in c.get("/api/clusters/c1/users", headers=ADMIN).json()["users"]}
+        assert rows["alice"]["first_login_source"] == "identity"
+        assert rows["alice"]["first_login_at"] == _iso(NOW - timedelta(days=29))
+        assert rows["kubeadmin"]["first_login_source"] == "user"
+        assert rows["kubeadmin"]["first_login_at"] == _iso(NOW - timedelta(days=400))
+        assert rows["manual"]["first_login_source"] is None and rows["manual"]["first_login_at"] is None
+
+    def test_the_envelope_says_why_times_are_exact_or_not(self, tmp_path):
+        with _client(tmp_path) as c:
+            assert c.get("/api/clusters/c1/users", headers=ADMIN).json()["identities_source"] == "off"
+        with _client(tmp_path, settings_extra={"identities_read_enabled": True}) as c:
+            assert c.get("/api/clusters/c1/users", headers=ADMIN).json()["identities_source"] == "pending"
+        db = str(tmp_path / "t.db")
+        store = Store(db)
+        store.set_identities_status("c1", "ok", _iso(NOW)); store.close()
+        settings = Settings(clusters=[ClusterConfig("c1", "https://x", token_env="T")], db_path=db,
+                            oauth_proxy_enabled=True, identities_read_enabled=True)
+        with TestClient(build_app(settings, run_poller=False, tier_resolver=lambda v: "all")) as c:
+            body = c.get("/api/clusters/c1/users", headers=ADMIN).json()
+            assert body["identities_source"] == "ok" and body["identities_source_observed_at"] == _iso(NOW)
+        store = Store(db); store.set_identities_status("c1", "forbidden", _iso(NOW)); store.close()
+        with TestClient(build_app(settings, run_poller=False, tier_resolver=lambda v: "all")) as c:
+            assert c.get("/api/clusters/c1/users", headers=ADMIN).json()["identities_source"] == "forbidden"
+
+    def test_the_allow_list_narrows_rows_and_counts_but_not_the_never_logged_in_line(self, tmp_path):
+        with _client(tmp_path, settings_extra={"users_providers": ("ldap-local",)}) as c:
+            resp = c.get("/api/clusters/c1/users", headers=ADMIN)
+        body = resp.json()
+        assert [u["user_name"] for u in body["users"]] == ["alice", "gatekeeper"]
+        assert body["total"] == 2 and body["logged_in_total"] == 2
+        assert body["providers_filter"] == ["ldap-local"]
+        assert body["never_logged_in_members"] == {"count": 1, "names": ["dave"]}
+        assert "kubeadmin" not in resp.text and "manual" not in resp.text
+
+    def test_no_allow_list_means_everyone_and_says_so(self, tmp_path):
+        with _client(tmp_path) as c:
+            body = c.get("/api/clusters/c1/users", headers=ADMIN).json()
+        assert body["providers_filter"] == [] and body["total"] == 4
+
+    def test_a_narrowed_reader_sees_their_own_row_with_its_source_and_nobody_else(self, tmp_path):
+        with _client(tmp_path, tier="self") as c:
+            resp = c.get("/api/clusters/c1/users", headers={"X-Forwarded-User": "alice"})
+        body = resp.json()
+        assert [u["user_name"] for u in body["users"]] == ["alice"]
+        assert body["users"][0]["first_login_source"] == "identity"
+        for other in ("gatekeeper", "kubeadmin", "manual"):
+            assert other not in resp.text
+
+    def test_the_detail_page_keeps_the_whole_truth_under_an_allow_list(self, tmp_path):
+        with _client(tmp_path, settings_extra={"users_providers": ("ldap-local",)}) as c:
+            body = c.get("/api/clusters/c1/users/kubeadmin", headers=ADMIN).json()
+        assert body["first_login_source"] == "user"
+        assert body["first_login_at"] == _iso(NOW - timedelta(days=400))

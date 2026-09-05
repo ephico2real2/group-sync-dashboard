@@ -1,6 +1,6 @@
 # Design — the Users tab counts people who have logged in
 
-**Status:** implemented in application 0.9.0 / chart 0.9.0 (the PR that follows #46). The open
+**Status:** implemented in application 0.9.0 / chart 0.9.0 (the PR that follows #46). The open The three open questions were closed in application 0.15.0 / chart 0.16.0 (feature C2, `docs/specs/SPEC_C2_users_tab_providers_identities.md`) — see "Decisions after 0.9.0" at the end.
 questions below were settled as: provider chips rather than an allow-list; the `User` creation time
 accepted as first login and labelled "since"; the never-logged-in line stays on the Users tab, with
 the names one click away. The default view is every `User`, with chips to narrow.
@@ -187,3 +187,22 @@ Group sync, the `Group` read, group pages and member lists, the access views (`a
 - Chart: the grant stays `get`/`list` and switchable; the README table row matches.
 - Live: CRC after a poll shows 62 rows, 8 with a group count above zero, the members line naming
   the three, and `lateef.o` at the self tier seeing exactly one row.
+
+## Decisions after 0.9.0 (C2, application 0.15.0 / chart 0.16.0)
+
+The open questions above were closed as follows, each with the code that carries the decision.
+
+1. **Chips or an allow-list?** Both. The provider chips stay, and `config.users.providers` (empty by
+   default, meaning every provider) narrows the tab to the named identity providers at READ time
+   (`gsd/config.py#_providers_setting` validates the names at startup; `gsd/store.py#Store.users` and
+   `count_users` apply the list through SQLite's `json_each` on the stored provider list). The wire
+   says so in `providers_filter`, and the page says "Showing providers: …". The never-logged-in line
+   is not narrowed: a member who logged in through an excluded provider has logged in. Manual accounts
+   with no identity drop out under any list.
+2. **Which time is the first login?** The Identity object's creation time, exact, when the chart grants
+   `rbac.identities` (`gsd/kube.py#ClusterClient.fetch_identities` reads them paged, keeps the earliest
+   per User, skips an Identity naming no User, and returns None on a 403). Otherwise the User's
+   creation time, labelled approximate: `gsd/store.py#Store._user_row` sets `first_login_source` to
+   `identity` or `user`, the page shows an `exact` or `approx.` chip, and `identities_source` on the
+   wire says why (`ok`, `forbidden`, `off`, `pending`).
+3. **Where does the never-logged-in line live?** On the Users tab, unchanged and unnarrowed.

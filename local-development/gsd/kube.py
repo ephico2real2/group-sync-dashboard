@@ -44,6 +44,13 @@ GROUP_API = "/apis/user.openshift.io/v1/groups"
 # come from the Group objects above — are unchanged. fullName is still read for every member surface,
 # and its absence is still the ordinary case rendered as the bare id.
 USER_API = "/apis/user.openshift.io/v1/users"
+# The Identity objects: ONE per (provider, id), created by OpenShift at the first successful login
+# through that provider and never before, naming the User it maps to. Its creationTimestamp is
+# therefore the EXACT first login through that provider — where a User's creationTimestamp is only
+# the first login for a User the provider created, and earlier than it for one an administrator
+# made ahead of time (docs/DESIGN_users_tab_logins.md, open question 2). Read only when the chart
+# grants it (rbac.identities → identitiesReadEnabled); a 403 is reported, never fabricated over.
+IDENTITY_API = "/apis/user.openshift.io/v1/identities"
 
 # The cluster's OAuth configuration — the object that holds the identity providers, and the ONLY
 # place the login-gate group is written down. Three similarly named resources exist and only this one
@@ -677,6 +684,32 @@ class ClusterClient:
             sum(1 for r in records if r["full_name"]),
         )
         return records
+
+    def fetch_identities(self) -> dict[str, str] | None:
+        """The exact first login per User — the earliest Identity creationTimestamp naming it — or
+        None when we may not read them. Paged like every list. An Identity with no `user.name`
+        (provisioning in flight, or a lookup-mapped provider before its first mapping) is skipped;
+        two Identities for one User keep the earlier. RFC 3339 UTC strings from the API server
+        share one format, so the string comparison is the time comparison."""
+        with self._client() as client:
+            try:
+                items = self._list_all(client, IDENTITY_API)
+            except ClusterError as exc:
+                if exc.outcome == FORBIDDEN and IDENTITY_API in exc.message:
+                    log.debug("%s: not permitted to list identities — first-login times stay "
+                              "approximate", self.cluster.name)
+                    return None
+                raise
+        earliest: dict[str, str] = {}
+        for obj in items:
+            user = ((obj.get("user") or {}).get("name") or "").strip()
+            created = ((obj.get("metadata") or {}).get("creationTimestamp") or "").strip()
+            if not user or not created:
+                continue
+            if user not in earliest or created < earliest[user]:
+                earliest[user] = created
+        log.debug("fetched exact first logins for %d users from %s", len(earliest), self.cluster.name)
+        return earliest
 
     def fetch_access_group_dn(self) -> str | None:
         """The login-gate group's DN, read out of the OAuth CR, or None if there is none to read.

@@ -156,7 +156,7 @@ def _seed(db_path: str) -> None:
          "providers": ["ldap-local"], "has_identity": True},
         {"user_name": "kubeadmin", "full_name": None, "created_at": _iso(now - timedelta(days=400)),
          "providers": ["developer"], "has_identity": True},
-    ], _iso(now))
+    ], _iso(now), identity_created={"alice": _iso(now - timedelta(days=29))})
 
     # Bindings covering all three finding tiers: one genuinely broken, one that names a
     # group which never existed, and the built-in noise that must not drown them.
@@ -3311,8 +3311,8 @@ class TestExport:
         with dash.expect_download() as dl:
             dash.click("#export-csv")
         rows = self._csv_rows(dl.value)
-        assert rows[0] == ["user_name", "full_name", "logged_in", "first_login_at", "providers",
-                           "group_count", "last_login_at", "first_seen_at"]
+        assert rows[0] == ["user_name", "full_name", "logged_in", "first_login_at", "first_login_source",
+                           "providers", "group_count", "last_login_at", "first_seen_at"]
         assert [r[0] for r in rows[1:]] == ["alice", "gatekeeper", "kubeadmin"]
         assert rows[1][1] == "Alice Cooper" and rows[2][1] == ""
         import re
@@ -3557,3 +3557,68 @@ class TestExportVisibility:
         import json
         doc = json.load(open(dl.value.path()))
         assert doc["scope"] == "all" and doc["count"] == 3
+
+
+@pytest.fixture(scope="module")
+def providers_server(tmp_path_factory):
+    """The Users tab under a provider allow-list (config.users.providers = ldap-local): kubeadmin
+    (developer) is not a row, the note says which providers are shown, and the never-logged-in line
+    is not narrowed."""
+    db = str(tmp_path_factory.mktemp("gsd-prov") / "prov.db")
+    _seed(db)
+    settings = Settings(
+        clusters=[ClusterConfig("crc-local", "https://api.crc.testing:6443", token_env="X")],
+        db_path=db,
+        users_providers=("ldap-local",),
+    )
+    port = _free_port()
+    srv = uvicorn.Server(uvicorn.Config(
+        build_app(settings, run_poller=False), host="127.0.0.1", port=port,
+        log_level="warning"))
+    thread = threading.Thread(target=srv.run, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{port}"
+    for _ in range(100):
+        try:
+            if httpx.get(f"{base}/healthz", timeout=1).status_code == 200:
+                break
+        except httpx.HTTPError:
+            time.sleep(0.1)
+    else:
+        raise RuntimeError("dashboard server did not start")
+    yield base
+    srv.should_exit = True
+    thread.join(timeout=5)
+
+
+class TestExactFirstLogin:
+    """C2: the Users tab says whether a first-login time is exact (Identity) or approximate (User)."""
+
+    def test_the_status_says_whether_the_first_login_is_exact(self, dash):
+        dash.locator("button[data-nav='users']").click()
+        dash.wait_for_selector("tr[data-user='alice']")
+        assert "exact" in dash.locator("tr[data-user='alice']").inner_text()
+        assert "approx." in dash.locator("tr[data-user='kubeadmin']").inner_text()
+
+    def test_the_identities_note_names_the_state(self, dash):
+        dash.locator("button[data-nav='users']").click()
+        dash.wait_for_selector("tr[data-user='alice']")
+        assert "approximate" in dash.locator("#users-identities-note").inner_text()  # off by default
+        dash.evaluate("() => { data.users = Object.assign({}, data.users, { identities_source: 'forbidden' }); render(); }")
+        note = dash.locator("#users-identities-note")
+        assert "not permitted to list identities" in note.inner_text()
+        assert "rbac.identities" in note.inner_text()
+        dash.evaluate("() => { data.users = Object.assign({}, data.users, { identities_source: 'ok' }); render(); }")
+        assert "exact" in dash.locator("#users-identities-note").inner_text()
+        dash.evaluate("() => refresh()")
+        dash.wait_for_function("() => data.users && data.users.identities_source === 'off'")
+
+    def test_the_allow_list_is_said_and_applied(self, page, providers_server):
+        page.goto(providers_server + "#page=users&cluster=crc-local")
+        page.wait_for_selector("tr[data-user='alice']")
+        assert "ldap-local" in page.locator("#users-provider-filter").inner_text()
+        assert page.locator("tr[data-user='kubeadmin']").count() == 0
+        assert page.locator("tr[data-user='gatekeeper']").count() == 1
+        body = page.locator("body").inner_text()
+        assert "kubeadmin" not in body
+        assert "1 synced member" in body or "never logged in" in body

@@ -432,3 +432,37 @@ class TestGroupCountCliff:
             monkeypatch.delenv("GSD_GROUP_COUNT_CLIFF_SILENCE", raising=False)
         assert s.group_count_cliff_enabled is False
         assert s.group_count_cliff_silence == ("a-*", "b")
+
+
+class TestUsersProvidersAndIdentitiesRead:
+    """C2: the allow-list is strict at startup (a name that can never match would list nobody) and
+    the Identity read switch parses like every boolean."""
+
+    BASE = "clusters:\n  - name: c1\n    apiUrl: https://x\n    tokenEnv: T\n"
+
+    def test_a_comma_list_becomes_a_tuple_in_order_without_duplicates(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("GSD_USERS_PROVIDERS", raising=False)
+        p = tmp_path / "c.yaml"; p.write_text(self.BASE + 'usersProviders: "ldap-local, corp,ldap-local"\n')
+        assert load_settings(str(p)).users_providers == ("ldap-local", "corp")
+        p.write_text(self.BASE)
+        assert load_settings(str(p)).users_providers == ()
+
+    def test_a_malformed_name_is_a_startup_error(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("GSD_USERS_PROVIDERS", raising=False)
+        p = tmp_path / "c.yaml"; p.write_text(self.BASE + 'usersProviders: "bad:name"\n')
+        with pytest.raises(ConfigError, match="usersProviders"):
+            load_settings(str(p))
+
+    def test_the_env_var_wins(self, tmp_path, monkeypatch):
+        p = tmp_path / "c.yaml"; p.write_text(self.BASE + 'usersProviders: "ldap-local"\n')
+        monkeypatch.setenv("GSD_USERS_PROVIDERS", "corp")
+        assert load_settings(str(p)).users_providers == ("corp",)
+
+    def test_identities_read_parses_and_defaults_off(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("GSD_IDENTITIES_READ_ENABLED", raising=False)
+        p = tmp_path / "c.yaml"; p.write_text(self.BASE)
+        assert load_settings(str(p)).identities_read_enabled is False
+        p.write_text(self.BASE + "identitiesReadEnabled: true\n")
+        assert load_settings(str(p)).identities_read_enabled is True
+        monkeypatch.setenv("GSD_IDENTITIES_READ_ENABLED", "off")
+        assert load_settings(str(p)).identities_read_enabled is False
