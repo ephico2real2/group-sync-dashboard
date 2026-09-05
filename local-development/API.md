@@ -596,7 +596,8 @@ stay `True` — so new namespaces silently receive no RBAC and drift stops being
 ```json
 {"user": "developer", "email": "developer@cluster.local", "authenticated": true,
  "logout_url": "/oauth/sign_out",
- "session": {"cookie_expire_seconds": 14400, "cookie_refresh_seconds": 0}}
+ "session": {"cookie_expire_seconds": 14400, "cookie_refresh_seconds": 0,
+             "idle_timeout": {"enabled": false}}}
 ```
 
 Reflects the identity the **proxy** asserted, from `X-Forwarded-User`. With the proxy disabled

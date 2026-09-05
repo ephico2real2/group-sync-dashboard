@@ -529,6 +529,25 @@ class TestIdleTimeout:
         s = load_settings(write(tmp_path, BASE + "sessionIdleTimeoutMinutes: 0\n"))
         assert s.session_idle_timeout_seconds == 1800
 
+    def test_a_cap_of_zero_or_below_is_not_a_cap(self, tmp_path, caplog):
+        """Review of C4 (Cursor): a non-positive cap made `seconds >= cap` always true and logged
+        "can never fire" for a window that fires fine."""
+        from gsd.config import _idle_timeout_setting
+        enabled, seconds, warning = _idle_timeout_setting(
+            {"sessionIdleTimeoutEnabled": True, "sessionIdleTimeoutMinutes": 30}, -1)
+        assert (enabled, seconds, warning) == (True, 1800, 60)
+        assert "can never fire" not in caplog.text
+
+    def test_a_fractional_minute_falls_back_rather_than_truncating(self, tmp_path, caplog, monkeypatch):
+        """Review of C4 (Cursor): YAML `1.5` truncated to 1 while the same value from the environment
+        fell back to 30 — one key, two answers. Both fall back now."""
+        monkeypatch.delenv("GSD_SESSION_IDLE_TIMEOUT_MINUTES", raising=False)
+        s = load_settings(write(tmp_path, BASE + "sessionIdleTimeoutMinutes: 1.5\n"))
+        assert s.session_idle_timeout_seconds == 1800
+        assert "not a whole number" in caplog.text
+        monkeypatch.setenv("GSD_SESSION_IDLE_TIMEOUT_MINUTES", "1.5")
+        assert load_settings(write(tmp_path, BASE)).session_idle_timeout_seconds == 1800
+
     def test_an_idle_window_past_the_cap_is_inert_and_logged(self, tmp_path, caplog):
         cfg = BASE + ("oauthProxyEnabled: true\nsessionCookieExpire: 10m\n"
                       "sessionIdleTimeoutEnabled: true\nsessionIdleTimeoutMinutes: 30\n")

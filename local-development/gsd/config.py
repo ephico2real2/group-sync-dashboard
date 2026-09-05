@@ -573,7 +573,18 @@ def _idle_timeout_setting(raw: dict, cookie_expire_seconds: int) -> tuple[bool, 
     absolute cap can never fire, so the module is inert and the log says so.
     """
     enabled = _bool_setting(raw, "GSD_SESSION_IDLE_TIMEOUT_ENABLED", "sessionIdleTimeoutEnabled", False)
-    minutes = _num_setting(raw, "GSD_SESSION_IDLE_TIMEOUT_MINUTES", "sessionIdleTimeoutMinutes", 30, int)
+    # Whole minutes, checked as text: `int(1.5)` from a YAML float would silently truncate to 1
+    # while the same value from the environment falls back to 30 — one key, two answers (review
+    # of C4). Both forms now fall back, with the reason logged.
+    minutes_source = os.environ.get("GSD_SESSION_IDLE_TIMEOUT_MINUTES")
+    if minutes_source is None:
+        minutes_source = raw.get("sessionIdleTimeoutMinutes", 30)
+    minutes_text = str(minutes_source).strip()
+    if not re.fullmatch(r"[0-9]+", minutes_text):
+        log.warning("sessionIdleTimeoutMinutes=%r is not a whole number of minutes; using 30", minutes_source)
+        minutes = 30
+    else:
+        minutes = int(minutes_text)
     if minutes < 1:
         log.warning("sessionIdleTimeoutMinutes=%r is below 1; using 30", minutes)
         minutes = 30
@@ -588,7 +599,8 @@ def _idle_timeout_setting(raw: dict, cookie_expire_seconds: int) -> tuple[bool, 
             "window (%ds); using %d", warning, seconds, fallback,
         )
         warning = fallback
-    if enabled and seconds >= cookie_expire_seconds:
+    # A cap of 0 or below is no cap at all, not a cap the window exceeds (review of C4).
+    if enabled and cookie_expire_seconds > 0 and seconds >= cookie_expire_seconds:
         log.warning(
             "the idle timeout (%ds) is not shorter than the proxy's absolute session cap (%ds), so "
             "it can never fire: the cap ends every session first. Lower sessionIdleTimeoutMinutes "

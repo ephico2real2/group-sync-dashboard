@@ -593,7 +593,8 @@ session:
   idleTimeout:
     # OFF by default: it signs people out, a session policy the platform team chooses (see above).
     enabled: false
-    # Whole minutes of inactivity before the countdown starts. At least 1.
+    # Whole minutes of inactivity before SIGN-OUT; the countdown opens warningSeconds before
+    # that. At least 1, and shorter than oauthProxy.cookie.expire.
     minutes: 30
     # How long the countdown runs. At least 5, and shorter than the idle window.
     warningSeconds: 60

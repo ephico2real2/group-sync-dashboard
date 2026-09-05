@@ -11,7 +11,8 @@ which `local-development/prepare-release.py` does when the release is cut.
 ## Application 0.16.0 — chart 0.18.0 — 2026-09-06
 
 - **Idle timeout with a countdown, as an off-by-default module.** After `session.idleTimeout.minutes`
-  of no pointer, keyboard or tab-visibility activity a `role=dialog` countdown opens (focus trapped
+  of no pointer, keyboard or tab-visibility activity the session is signed out; the last
+  `warningSeconds` of that window are a `role=dialog` countdown (focus trapped
   with `inert`, Escape or Enter to stay, forced-colors border), and at zero the page removes its data
   and sends the browser to the proxy's `sign_out`, which clears the cookie. Enforced by the proxy,
   modelled by the page: nothing is persisted, activity in one tab defers every tab of that browser,

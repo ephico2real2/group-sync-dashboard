@@ -3785,6 +3785,63 @@ class TestIdleTimeout:
         assert p.evaluate("() => idle.state") == "active"
         assert p.locator("#idle-modal").is_hidden()
 
+    def test_sign_out_now_blanks_and_escape_cannot_revive(self, page, idle_server):
+        """Review of C4 (Cursor): "Sign out now" only flipped the state, leaving the rows on screen and
+        Escape able to put the reader back on a live session."""
+        p = _open_idle(page, idle_server)
+        p.evaluate("() => { idle.logoutUrl = null; document.getElementById('idle-signout').href = '#'; }")
+        p.clock.run_for(545_000)
+        assert p.locator("#idle-modal").is_visible()
+        p.locator("#idle-signout").click()
+        assert p.evaluate("() => idle.state") == "expired"
+        assert "Signed out after inactivity" in p.locator("#main").inner_text()
+        assert p.locator("#filters").inner_text() == ""
+        p.keyboard.press("Escape")
+        assert p.evaluate("() => idle.state") == "expired"
+        assert "Signed out after inactivity" in p.locator("#main").inner_text()
+        assert p.evaluate("() => document.querySelector('.hero')") is None
+
+    def test_an_in_flight_refresh_does_not_restore_rows_or_the_ended_panel(self, page, idle_server):
+        """Review of C4 (Cursor): a refresh that started while active could paint rows — or the cap's
+        "session has ended" panel — over the inactivity card after expiry."""
+        p = _open_idle(page, idle_server)
+        p.evaluate("() => { idle.logoutUrl = null; }")
+        held = []
+        p.route("**/api/alerts", lambda route: held.append(route))
+        # Fire and forget: evaluate() would await the promise refresh() returns, and that promise is
+        # held open by the intercepted request above.
+        p.evaluate("() => { refresh({auto: true}); }")
+        p.clock.run_for(601_000)
+        assert p.evaluate("() => idle.state") == "expired"
+        assert "Signed out after inactivity" in p.locator("#main").inner_text()
+        for route in held:
+            route.fallback()
+        p.clock.run_for(1_000)
+        assert "Signed out after inactivity" in p.locator("#main").inner_text()
+        assert "Your session has ended" not in p.locator("#main").inner_text()
+        assert p.evaluate("() => document.querySelector('.hero')") is None
+
+    def test_browser_back_does_not_fetch_during_the_warning(self, page, idle_server):
+        """Review of C4 (Cursor): popstate called refresh() straight — Back is not inert."""
+        p = _open_idle(page, idle_server)
+        p.locator("button[data-nav='groups']").click()
+        p.wait_for_function("() => view.page === 'groups'")
+        p.clock.run_for(545_000)
+        assert p.evaluate("() => idle.state") == "warning"
+        p.evaluate("() => { window.__calls = 0; const f = window.fetch;"
+                   " window.fetch = (...a) => { window.__calls++; return f(...a); }; }")
+        p.go_back()
+        p.clock.run_for(1_000)
+        assert p.evaluate("() => window.__calls") == 0
+
+    def test_the_skip_link_is_inert_while_the_dialog_is_open(self, page, idle_server):
+        """Review of C4 (Cursor): the skip link is a sibling of #wrap, so it stayed reachable."""
+        p = _open_idle(page, idle_server)
+        p.clock.run_for(545_000)
+        assert p.evaluate("() => document.querySelector('a.skip').inert") is True
+        p.keyboard.press("Escape")
+        assert p.evaluate("() => document.querySelector('a.skip').inert") is False
+
     def test_forced_colors_keeps_a_visible_border(self, page, idle_server):
         p = _open_idle(page, idle_server)
         p.emulate_media(forced_colors="active")

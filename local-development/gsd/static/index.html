@@ -262,6 +262,8 @@ function backLabel() {
    edited by hand or the entry predates this feature, so the hash is the fallback — it holds
    the same position, just without the `from` that labels the in-page button. */
 window.addEventListener("popstate", (event) => {
+  // Browser Back is not inert: while the countdown is up it must not fetch (review of C4).
+  if (typeof idleSuspended === "function" && idleSuspended()) return;
   if (event.state && event.state.pos) {           // ordinary Back/Forward
     applyPosition(event.state.pos);
     refresh();
@@ -3540,6 +3542,9 @@ function myAccessFetch(get, base, viewer) {
 }
 
 async function refresh(opts = {}) {
+  // Expired means the page has blanked itself and is leaving: nothing may fetch (a request
+  // would re-stamp a sliding proxy's cookie) and nothing may paint (review of C4).
+  if (idle.state === "expired") return;
   const seq = ++navSeq;
   const superseded = () => seq !== navSeq;
   lastRefreshStartedAt = Date.now();
@@ -3682,6 +3687,7 @@ async function refresh(opts = {}) {
     // One guard now covers every payload, where the serial version could only guard the
     // writes that happened after its own await.
     if (superseded()) return;
+    if (idle.state === "expired") return;
     const got = {};
     keys.forEach((k, i) => { got[k] = values[i]; });
     data.whoami = got.whoami;
@@ -3762,6 +3768,7 @@ async function refresh(opts = {}) {
     render();
   } catch (err) {
     // A dead session is not a fault to report as one — it gets its own honest panel.
+    if (idle.state === "expired") return;
     if (err && err.sessionEnded) { showSessionEnded(); return; }
     // An error must never strand the reader: keep a working Back so a dead link is a
     // detour, not a dead end. This was reported from the field — a 404 on a deleted group
@@ -3877,6 +3884,15 @@ function idleTick() {
   }
 }
 
+/* Everything that is not the dialog: #wrap AND the skip link, which sits outside #wrap. APG modal
+   dialogs want the ENTIRE background inert, and a virtual cursor could otherwise leave the dialog
+   through the skip link (review of C4). */
+function setIdleChrome(open) {
+  $("wrap").inert = open;
+  const skip = document.querySelector("a.skip");
+  if (skip) skip.inert = open;
+}
+
 function idleWarn() {
   idle.state = "warning";
   idle.announced = null;
@@ -3884,7 +3900,7 @@ function idleWarn() {
   $("idle-modal").hidden = false;
   // inert: the background is neither focusable nor read by assistive technology while the
   // dialog is up — the focus trap, done by the platform rather than by a keydown shim.
-  $("wrap").inert = true;
+  setIdleChrome(true);
   $("idle-stay").focus();
 }
 
@@ -3892,10 +3908,13 @@ function idleWarn() {
    interaction-marked refresh re-proves the session the way whoami's docstring prescribes, instead
    of polling whoami. Another tab's activity resets the clock without the extra request. */
 function idleStay(reproveSession) {
+  // Expired is final: "Sign out now" or the timer has already blanked the page, and Escape
+  // arriving a moment later must not revive a session the reader chose to end (review of C4).
+  if (!idle.enabled || idle.state === "expired") return;
   idle.state = "active";
   idle.lastActivityAt = Date.now();
   $("idle-modal").hidden = true;
-  $("wrap").inert = false;
+  setIdleChrome(false);
   $("idle-live").textContent = "";
   const back = idle.restoreFocus;
   idle.restoreFocus = null;
@@ -3911,8 +3930,11 @@ function idleStay(reproveSession) {
 function idleExpire() {
   idle.state = "expired";
   clearInterval(idle.tick);
+  // Supersede any refresh() still in flight: it must not paint rows — or the cap's "session has
+  // ended" panel — over the card below (review of C4). refresh() also checks the state itself.
+  navSeq++;
   $("idle-modal").hidden = true;
-  $("wrap").inert = false;
+  setIdleChrome(false);
   $("logout").hidden = true;
   $("filters").innerHTML = "";
   $("main").innerHTML = `<section class="card">
@@ -3928,7 +3950,9 @@ function idleExpire() {
    "Stay signed in" on open; Tab cycles between the two controls as a backstop to inert. */
 function wireIdleDialog() {
   $("idle-stay").onclick = () => idleStay(true);
-  $("idle-signout").onclick = () => { idle.state = "expired"; clearInterval(idle.tick); };
+  // "Sign out now" is the timer's zero, chosen early: the same blanking, then the navigation
+  // idleExpire performs (preventDefault so the anchor's href does not race location.assign).
+  $("idle-signout").onclick = (e) => { e.preventDefault(); idleExpire(); };
   $("idle-modal").onkeydown = (e) => {
     if (e.key === "Escape") { e.preventDefault(); idleStay(true); return; }
     if (e.key !== "Tab") return;
