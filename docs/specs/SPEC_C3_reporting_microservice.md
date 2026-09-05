@@ -161,7 +161,7 @@ sequenceDiagram
   R-->>B: 202 {id, status:"queued"}
   R->>S: open newest /data/report/gsd-*.db?immutable=1&mode=ro
   R->>R: build model → canonical JSON → sha256 → HTML → PDF(/A)
-  R->>A: write <id>/report.json, report.html, report.pdf, run.json
+  R->>A: write {id}/report.json, report.html, report.pdf, run.json
   B->>P: GET /report/api/runs/{id} (poll until status=done)
   B->>P: GET /report/api/runs/{id}/artifact?format=pdf + ticket
   P->>R: … + X-Forwarded-User
@@ -177,9 +177,9 @@ sequenceDiagram
   participant R as report service
   participant DB as gsd.db (dashboard's writer)
   loop every poll cycle, after the backup, before retention
-    D->>R: GET /report/api/usage?since_id=<watermark>&limit=500  (Authorization: Bearer <report token>)
+    D->>R: GET /report/api/usage?since_id={watermark}&limit=500 (Authorization: Bearer {report token})
     R-->>D: {runs:[{id, report, cluster, generated_by, generated_at, status, sha256, bytes, formats, schedule}], next_since_id}
-    D->>DB: INSERT OR IGNORE INTO report_run … ; watermark = max(id)
+    D->>DB: INSERT OR IGNORE INTO report_run …, then watermark = max(id)
   end
   Note over D,DB: /api/dashboard/reports serves report_run at the USAGE tier (self: own rows).<br/>/metrics: gsd_report_usage_pulls_total{outcome}.
 ```
