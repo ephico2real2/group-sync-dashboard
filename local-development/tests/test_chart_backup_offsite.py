@@ -66,6 +66,7 @@ class TestSwitch:
         docs = _docs(out)
         for kind in ("CronJob", "ConfigMap", "ServiceAccount", "PersistentVolumeClaim"):
             _one(docs, kind)
+        assert len([d for d in docs if d.get("kind") == "Job"]) == 1, "plus the one-shot bind Job"
 
     def test_the_configmap_carries_the_script_verbatim(self):
         ok, out = render(**ON)
@@ -135,6 +136,57 @@ class TestPvcDestination:
         pvc = _one(_docs(out), "PersistentVolumeClaim")
         assert pvc["metadata"]["annotations"]["helm.sh/resource-policy"] == "keep"
         assert pvc["spec"]["accessModes"] == ["ReadWriteOnce"]
+
+    def test_a_bind_job_mounts_the_new_claim_once_so_it_binds_before_the_cronjob_runs(self):
+        """Operator instruction after the CRC run: on a WaitForFirstConsumer class the claim stayed
+        Pending until the first CronJob run and `helm --wait` timed out. A throwaway pod binds it."""
+        ok, out = render(**ON)
+        assert ok, out
+        docs = _docs(out)
+        jobs = [d for d in docs if d.get("kind") == "Job" and "-backup-offsite-bind-" in d["metadata"]["name"]]
+        assert len(jobs) == 1
+        job = jobs[0]
+        pod = job["spec"]["template"]["spec"]
+        (bind,) = pod["containers"]
+        assert [v["name"] for v in pod["volumes"]] == ["offsite"], "only the destination claim, never the data claim"
+        assert pod["volumes"][0]["persistentVolumeClaim"]["claimName"].endswith("-backup-offsite")
+        assert bind["command"][:2] == ["python3.14", "-c"] and "/offsite" in bind["command"][2]
+        assert job["spec"]["backoffLimit"] == 0 and job["spec"]["activeDeadlineSeconds"] == 600
+        assert "ttlSecondsAfterFinished" not in job["spec"], "a self-deleting Job is drift Argo recreates forever"
+        assert "affinity" not in pod
+        assert pod["serviceAccountName"].endswith("-backup-offsite")
+        selector = [d for d in docs if d.get("kind") == "Service"][0]["spec"]["selector"]
+        labels = job["spec"]["template"]["metadata"]["labels"]
+        assert "app" not in labels and labels["app.kubernetes.io/name"] != selector["app.kubernetes.io/name"]
+        assert "helm.sh/hook" not in (job["metadata"].get("annotations") or {}), "a post hook would deadlock --wait"
+
+    def test_the_bind_job_is_renamed_when_its_pod_spec_changes(self):
+        """A Job's pod template is immutable: a new image must be a new Job, not a refused patch."""
+        ok1, out1 = render(**ON, image__tag="1.0.0")
+        ok2, out2 = render(**ON, image__tag="1.0.1")
+        assert ok1 and ok2, out1 + out2
+        name = lambda out: next(d["metadata"]["name"] for d in _docs(out) if d.get("kind") == "Job" and "-bind-" in d["metadata"]["name"])
+        assert name(out1) != name(out2)
+        ok3, out3 = render(**ON, image__tag="1.0.0")
+        assert name(out1) == name(out3), "the same spec renders the same name, so an unchanged upgrade patches nothing"
+
+    def test_argo_waves_order_the_claim_and_bind_job_before_the_cronjob(self):
+        ok, out = render(**ON)
+        assert ok, out
+        docs = _docs(out)
+        wave = lambda kind, frag: next(d for d in docs if d.get("kind") == kind and frag in d["metadata"]["name"])["metadata"]["annotations"]["argocd.argoproj.io/sync-wave"]
+        assert wave("PersistentVolumeClaim", "-backup-offsite") == "0"
+        assert wave("Job", "-backup-offsite-bind-") == "0"
+        assert wave("CronJob", "-backup-offsite") == "1"
+        ok, out = render(**ON, argocd__enabled="false")
+        assert ok, out
+        assert "argocd.argoproj.io/sync-wave" not in out
+
+    def test_no_bind_job_for_an_existing_claim_or_s3(self):
+        for values in ({**ON, "backup__offsite__destination__pvc__existingClaim": "mine"}, S3):
+            ok, out = render(**values)
+            assert ok, out
+            assert not [d for d in _docs(out) if d.get("kind") == "Job"], "nothing of ours to bind"
 
     def test_an_existing_claim_is_referenced_not_created(self):
         ok, out = render(**ON, backup__offsite__destination__pvc__existingClaim="mine")

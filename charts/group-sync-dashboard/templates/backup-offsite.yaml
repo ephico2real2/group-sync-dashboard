@@ -14,6 +14,11 @@ setting the wrong key and seeing nothing render.
 {{- $type := $o.destination.type }}
 {{- $fullname := include "gsd.fullname" . }}
 {{- $dataClaim := .Values.persistence.existingClaim | default (printf "%s-data" $fullname) }}
+{{- $createsClaim := and (eq $type "pvc") (not $o.destination.pvc.existingClaim) }}
+{{- /* The bind Job's name carries a hash of what its pod runs with, because a Job's pod template is
+immutable: an image or resources change must produce a NEW Job (Helm and Argo then create it and
+remove the old one) rather than a patch the API server refuses. */}}
+{{- $bindHash := printf "%s|%s|%s" (include "gsd.image" .) (toYaml $o.resources) (toYaml .Values.securityContext) | sha256sum | trunc 8 }}
 {{- if not .Values.persistence.enabled }}
 {{- fail "backup.offsite.enabled=true requires persistence.enabled=true. With an emptyDir there is no volume to ship a backup off, and the history it would protect resets on every restart anyway." }}
 {{- end }}
@@ -88,6 +93,12 @@ metadata:
     app.kubernetes.io/component: backup-offsite
   annotations:
     helm.sh/resource-policy: keep
+    {{- if .Values.argocd.enabled }}
+    # Wave 0 with the bind Job below: Argo applies a wave together and waits for it to be healthy,
+    # and a claim on a WaitForFirstConsumer class is Pending (Progressing) until a pod mounts it —
+    # the bind Job is that pod, so the two must be in ONE wave or the wave never completes.
+    argocd.argoproj.io/sync-wave: "0"
+    {{- end }}
     {{- if and .Values.argocd.enabled .Values.argocd.preservePVC }}
     argocd.argoproj.io/sync-options: Prune=false,Delete=false,PruneLast=true
     {{- end }}
@@ -99,6 +110,72 @@ spec:
   resources:
     requests:
       storage: {{ $o.destination.pvc.size }}
+---
+# THE BIND JOB: a throwaway pod that mounts the new claim once. On a StorageClass with
+# volumeBindingMode WaitForFirstConsumer (the common default) a claim stays Pending until a pod
+# mounts it, and the only consumer here is a CronJob that may not run for six hours — so
+# `helm upgrade --wait` (which waits for claims to bind) timed out, and Argo would show the claim
+# Progressing for a slot. This pod binds it in seconds and exits; it reads nothing but the mount.
+# An ordinary resource, not a Helm hook: post-install hooks run only AFTER --wait has finished,
+# which is a deadlock with the very wait this exists to satisfy. No ttlSecondsAfterFinished: a
+# Job that deletes itself is a resource Argo sees missing and recreates on every sync.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $fullname }}-backup-offsite-bind-{{ $bindHash }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gsd.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backup-offsite
+  {{- if .Values.argocd.enabled }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  {{- end }}
+spec:
+  backoffLimit: 0
+  # A claim that can never bind (no provisioner, a class that is not there) fails here, visibly,
+  # rather than leaving a Pending pod forever.
+  activeDeadlineSeconds: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "gsd.name" . }}-backup-offsite
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: backup-offsite
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ $fullname }}-backup-offsite
+      automountServiceAccountToken: false
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext: {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: bind
+          image: {{ include "gsd.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - python3.14
+            - -c
+            - |
+              import os
+              st = os.statvfs("/offsite")
+              print(f"bound: /offsite mounted, {st.f_bavail * st.f_frsize} bytes free")
+          securityContext: {{- toYaml .Values.securityContext | nindent 12 }}
+          resources: {{- toYaml $o.resources | nindent 12 }}
+          volumeMounts:
+            - name: offsite
+              mountPath: /offsite
+      volumes:
+        - name: offsite
+          persistentVolumeClaim:
+            claimName: {{ $fullname }}-backup-offsite
 {{- end }}
 ---
 apiVersion: batch/v1
@@ -109,6 +186,11 @@ metadata:
   labels:
     {{- include "gsd.labels" . | nindent 4 }}
     app.kubernetes.io/component: backup-offsite
+  {{- if .Values.argocd.enabled }}
+  annotations:
+    # After the claim and its bind Job (wave 0): the schedule needs a bound claim.
+    argocd.argoproj.io/sync-wave: "1"
+  {{- end }}
 spec:
   schedule: {{ $o.schedule | quote }}
   concurrencyPolicy: {{ $o.concurrencyPolicy }}

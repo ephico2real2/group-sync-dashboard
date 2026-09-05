@@ -18,6 +18,20 @@ run was the idempotent no-op, and a Job running `--check` on the copy reported `
 The failed `--wait` revision left orphans Helm did not own (deviation 9); deleted by label, the
 claim kept. Recorded in the values comment, the chart README and the runbook.
 
+Repeated on the fixed head the way the docs now say: `helm upgrade` without `--wait` → `deployed`;
+a manual Job shipped the newer `gsd-20260905T202405.365178Z.db` (1,224,704 bytes, `integrity_check
+ok`) and the claim went `Bound`; `--set backup.offsite.enabled=false` then removed the CronJob,
+ServiceAccount and ConfigMap — Helm owned them this time — and the claim stayed, holding two
+verified copies.
+
+**The bind Job (operator instruction).** After the finding above the operator asked for a throwaway
+pod that binds the claim, with Argo ordering. Implemented as an ordinary Job in the claim's sync wave
+(deviation 11 explains why not a Helm hook: post hooks run after `--wait`). Proven on CRC with the
+claim deleted first so the bind was a real first bind: `helm upgrade --wait` → `deployed` in 19 s,
+claim `Bound`, `…-backup-offsite-bind-5050820a` Complete (`bound: /offsite mounted, 11415085056 bytes
+free`), a copy run green, and `--set backup.offsite.enabled=false --wait` removed the Job and CronJob
+and kept the claim.
+
 ## Verdicts — Cursor
 
 Read-only (no shell, no network in ask mode); every refutation re-measured here.

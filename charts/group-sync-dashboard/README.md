@@ -208,11 +208,14 @@ selector labels, so it never receives dashboard traffic while it copies. With
 `persistence.existingClaim`, set `persistence.accessMode` to that claim's mode — the chart cannot
 read the live claim and refuses to guess.
 
-**Enable without `--wait`.** On a `WaitForFirstConsumer` StorageClass the destination claim binds
-when the first Job mounts it, up to one schedule slot later; `helm upgrade --wait` times out on
-that, and a timed-out upgrade is a failed revision whose objects Helm does not own until the next
-successful one. Run the copy by hand right after enabling (the runbook's §2) and the claim binds
-in a minute; Argo CD shows it Progressing until then.
+**The claim binds at once.** On a `WaitForFirstConsumer` StorageClass a claim stays Pending until a
+pod mounts it, and the CronJob may not run for six hours — so when the chart creates the claim it
+also renders a one-shot **bind Job** (`<fullname>-backup-offsite-bind-<hash>`, the dashboard image,
+mounts the claim and exits) and `helm upgrade --wait` succeeds in seconds. Under Argo CD the claim
+and the bind Job share sync wave 0 and the CronJob follows in wave 1. The Job is an ordinary
+resource rather than a Helm hook because post-install hooks run only after `--wait` has finished;
+its name carries a hash of its pod spec so an image change makes a new Job instead of patching an
+immutable one. With `destination.pvc.existingClaim` no bind Job renders — the claim is yours.
 
 ### Retention on the history
 

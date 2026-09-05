@@ -63,11 +63,12 @@ same Python snippet with `python3`.
 
 ## 2. Run the off-volume copy by hand
 
-Also the way to bind the destination claim right after enabling the module: on a
-`WaitForFirstConsumer` StorageClass it stays Pending until the first Job mounts it, so do not
-enable with `helm upgrade --wait` (it times out, and a timed-out upgrade is a failed revision whose
-objects Helm does not own until the next successful one — delete them by label,
-`oc delete cronjob,sa,cm -l app.kubernetes.io/component=backup-offsite`, if you need a clean slate).
+The destination claim is bound by the chart's one-shot bind Job when the module is enabled
+(`oc get job -n $NS -l app.kubernetes.io/component=backup-offsite` shows it `Complete`), so
+`helm upgrade --wait` works. If an upgrade ever fails part-way, the objects that revision created
+are not owned by Helm until the next successful one renders them — delete them by label,
+`oc delete cronjob,job,sa,cm -l app.kubernetes.io/component=backup-offsite`, for a clean slate; the
+claim carries `helm.sh/resource-policy: keep` and is never removed that way.
 
 ```sh
 oc create job -n $NS --from=cronjob/$REL-backup-offsite manual-$(date +%s)
