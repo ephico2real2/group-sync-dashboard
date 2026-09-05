@@ -244,7 +244,12 @@ sys.exit('no bare-semver version line in the chart') if not m else print(m.group
   # tag is a refusal here rather than a signature that fails on somebody's cluster.
   for alias in "${VERSION}" "${CHART_VERSION}"; do
     ALIAS_REF="${REGISTRY}/${REGISTRY_NAMESPACE}/${IMAGE_NAME}:${alias}"
-    skopeo copy "docker://${REF}" "docker://${ALIAS_REF}"
+    # --preserve-digests: skopeo's default is "the source manifest type, with fallbacks", and a
+    # fallback (OCI<->Docker schema, gzip<->zstd) rewrites the manifest; with the flag skopeo fails
+    # rather than modifying the image, which is the refusal this block wants, one step earlier.
+    # --all: if podman pushed an index, copy the index and not only the host-arch child — otherwise
+    # --digestfile (the index digest) and inspect (a child's) could never agree (review of A2).
+    skopeo copy --all --preserve-digests "docker://${REF}" "docker://${ALIAS_REF}"
     ALIAS_DIGEST=$(skopeo inspect --no-tags --format '{{.Digest}}' "docker://${ALIAS_REF}")
     if [ "${ALIAS_DIGEST}" != "${DIGEST}" ]; then
       echo "ERROR: ${ALIAS_REF} resolves to ${ALIAS_DIGEST}, not ${DIGEST} — the alias is not the" >&2

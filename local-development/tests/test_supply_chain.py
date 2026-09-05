@@ -65,13 +65,23 @@ class TestTheDigestChain:
         """A second podman push can land a different manifest digest for the same image, and then
         the alias the chart resolves would not be the digest that was signed."""
         code = _script_code()
-        assert 'skopeo copy "docker://${REF}" "docker://${ALIAS_REF}"' in code
+        assert 'skopeo copy --all --preserve-digests "docker://${REF}" "docker://${ALIAS_REF}"' in code
         assert "podman tag" not in code, "the aliases must not be re-pushed from the local store"
 
     def test_an_alias_that_is_not_the_signed_digest_is_refused(self) -> None:
         code = _script_code()
         assert "skopeo inspect --no-tags --format '{{.Digest}}'" in code
         assert 'if [ "${ALIAS_DIGEST}" != "${DIGEST}" ]; then' in code
+
+    def test_the_alias_copy_refuses_to_rewrite_the_manifest(self) -> None:
+        """Review of A2 (Cursor): skopeo copy's default is the source manifest type WITH FALLBACKS
+        (schema or compression conversion rewrites the digest), and without --all a manifest list's
+        host-arch child is copied while --digestfile recorded the list. Both flags, or the digest the
+        script compares can never match for reasons that are not a defect."""
+        code = _script_code()
+        line = next(ln for ln in code.splitlines() if "skopeo copy" in ln)
+        assert "--preserve-digests" in line, line
+        assert "--all" in line, line
 
     def test_a_missing_skopeo_fails_before_the_build(self) -> None:
         code = _script_code()
@@ -188,10 +198,14 @@ class TestWhatIsSignedAndHow:
             "every reference to the image must be by digest"
         )
 
-    def test_the_identity_is_this_workflow_file_at_the_ref_that_ran(self) -> None:
-        env = _jobs(PUBLISH)["attest"]["env"]
-        assert env["IDENTITY"].endswith("/.github/workflows/publish.yml@${{ github.ref }}")
-        assert env["ISSUER"] == "https://token.actions.githubusercontent.com"
+    def test_signing_runs_only_on_main_and_verifies_the_main_identity(self) -> None:
+        """Review of A2 (Cursor): `github.ref` in the identity would let a workflow_dispatch from
+        another branch sign under that branch, pass its own read-back and fail the install guide's
+        command. The job is gated on main and the identity is the string the guide quotes."""
+        attest = _jobs(PUBLISH)["attest"]
+        assert "github.ref == 'refs/heads/main'" in attest["if"]
+        assert attest["env"]["IDENTITY"].endswith("/.github/workflows/publish.yml@refs/heads/main")
+        assert attest["env"]["ISSUER"] == "https://token.actions.githubusercontent.com"
 
     def test_every_artefact_is_read_back_with_the_documented_flags(self) -> None:
         attest = _jobs(PUBLISH)["attest"]
@@ -239,3 +253,12 @@ class TestWhatIsSignedAndHow:
         assert "--certificate-oidc-issuer https://token.actions.githubusercontent.com" in text
         assert "/.github/workflows/publish.yml@refs/heads/main" in text
         assert "/.github/workflows/helm.yaml" in text
+
+    def test_the_install_guide_verifies_the_tag_a_push_actually_signed(self) -> None:
+        """Review of A2 (Cursor): an ordinary merge signs only `:<appVersion>-<sha>`; the alias moves
+        on an application release. The guide's command names the immutable tag and says when the alias
+        verifies too, or the first reader after this lands verifies yesterday's unsigned alias."""
+        section = INSTALL_GUIDE.read_text().split("## 7. Verify what you downloaded", 1)[1].split("## Quick reference", 1)[0]
+        cosign_cmd = section.split("cosign verify \\", 1)[1].split("```", 1)[0]
+        assert "group-sync-dashboard:0.15.0-<sha>" in cosign_cmd, cosign_cmd
+        assert "moves only on an application release" in section

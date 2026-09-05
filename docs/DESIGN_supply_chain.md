@@ -70,7 +70,13 @@ reads GitHub's store either way. One copy, in the place the verifier reads.
 **D7 — Every artefact is read back before the run is green**, with the exact flags the install
 guide gives operators. This repository's workflow defects (#34, #37, the unpinned Grype) were
 all runs that reported success for something nobody could use. If the registry cannot hold the
-bundle format, or an identity string is wrong, the first run on `main` is red.
+bundle format, or an identity string is wrong, the first run on `main` is red. Two limits of that
+proof, stated: the read-back uses the cosign that signed, so it cannot stand in for a consumer on an
+older cosign major (cosign 3 stores signatures as OCI 1.1 referrers, which quay.io serves — measured
+2026-09-05 — and which cosign 2.x cannot read; the operator's question Q2 on #63); and `cosign sign`
+runs before `cosign verify`, so a run that fails at the read-back has already written a Rekor entry
+and, if the push landed, a registry referrer — a signature that verifies only for the identity that
+run used, which is why the job signs only on `main` (D9).
 
 **D8 — Two switches, modelled.** `SUPPLY_CHAIN_SBOM` and `SUPPLY_CHAIN_SIGNING`, both ON unless
 the value is exactly `false`. `attest` depends on `sbom` with `!cancelled()`, attaches the SBOM
@@ -86,4 +92,11 @@ reads the signing switch and the new-release decision. The `publish` job reads n
 - It does not sign the `<appVersion>-<sha>` images of a fork or a laptop build. The DR path
   (`docs/RELEASING.md#When GitHub Actions is unavailable`) publishes an unsigned image and says
   so in its output; signing needs the workflow identity.
+- It does not sign an image a `workflow_dispatch` from another branch pushed (**D9**): the
+  `attest` job runs only for `refs/heads/main`, and the identity it verifies is pinned to that ref,
+  because a signature under `…/publish.yml@refs/heads/<branch>` would pass the run's own read-back
+  and fail the command the install guide gives. Such a dispatch pushes its immutable tag unsigned.
+- It does not sign the `:<appVersion>` alias on an ordinary merge, because nothing moved it: the
+  alias is copied from the signed digest only on an application release, so between releases the
+  documented `cosign verify` is run against the immutable tag the publish log names.
 - It does not attest charts published before it existed.

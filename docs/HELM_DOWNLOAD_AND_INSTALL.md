@@ -302,17 +302,22 @@ below (`.github/workflows/publish.yml#attest`, `.github/workflows/helm.yaml#Atte
 The commands need `cosign` 3.x and `gh` 2.49 or newer; the outputs shown are the tools' own
 wording, with the values that change per release elided as `…`.
 
-**The image signature.** The identity is the workflow file on `main`; the issuer is GitHub's:
+**The image signature.** The identity is the workflow file on `main`; the issuer is GitHub's. The
+signature is over the digest of the image **that run pushed**: an ordinary merge pushes only
+`:<appVersion>-<sha>`, and `:<appVersion>` moves only on an application release
+(`RELEASING.md#The alias the chart actually resolves`), so after a merge that is not a release,
+verify the immutable tag the publish log names; after a release, the alias verifies too, because it
+was copied from the signed digest:
 
 ```sh
 cosign verify \
   --certificate-identity https://github.com/ephico2real2/group-sync-dashboard/.github/workflows/publish.yml@refs/heads/main \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  quay.io/ephico2real/group-sync-dashboard:0.15.0
+  quay.io/ephico2real/group-sync-dashboard:0.15.0-<sha>
 ```
 
 ```text
-Verification for quay.io/ephico2real/group-sync-dashboard:0.15.0 --
+Verification for quay.io/ephico2real/group-sync-dashboard:0.15.0-<sha> --
 The following checks were performed on each of these signatures:
   - The cosign claims were validated
   - Existence of the claims in the transparency log was verified offline
@@ -320,9 +325,9 @@ The following checks were performed on each of these signatures:
 [{"critical":{"identity":{"docker-reference":"quay.io/ephico2real/group-sync-dashboard"},"image":{"docker-manifest-digest":"sha256:…"},"type":"cosign container image signature"},…}]
 ```
 
-The signature is over the **digest**, so it verifies for every tag that resolves to it —
-`:<appVersion>-<sha>`, `:<appVersion>` and `:<chartVersion>` are one manifest, copied server side
-(`local-development/build-and-push-external.sh#skopeo copy`). On a mirror, verify the mirrored
+The signature is over the **digest**, so it verifies for every tag that resolves to it — on a
+release, `:<appVersion>-<sha>`, `:<appVersion>` and `:<chartVersion>` are one manifest, copied
+server side with the digest preserved (`local-development/build-and-push-external.sh#skopeo copy`). On a mirror, verify the mirrored
 reference the same way; the signature travels with `skopeo copy --all`.
 
 **The SBOM.** Attached to the image as an attestation. Extract it and scan it:

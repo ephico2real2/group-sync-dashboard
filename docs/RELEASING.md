@@ -65,7 +65,7 @@ Every merge goes through one gate, then fans out to two independent workflows:
    cannot tell? (workflow_dispatch, first push, unreadable base)
         --> immutable tag only, plus a ::warning:: naming --release-tags
 
-   then, on the digest the registry acknowledged — one digest, every tag:
+   then, on the digest the registry acknowledged — one digest under every tag that run pushed:
    sbom    job   Syft -> SPDX JSON, a workflow artifact                SUPPLY_CHAIN_SBOM
    attest  job   cosign sign (keyless) · SBOM attached · SLSA          SUPPLY_CHAIN_SIGNING
                  provenance in GitHub's store — each read back

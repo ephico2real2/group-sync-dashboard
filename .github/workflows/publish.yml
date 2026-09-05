@@ -325,6 +325,7 @@ jobs:
       && needs.publish.result == 'success'
       && needs.publish.outputs.digest != ''
       && vars.SUPPLY_CHAIN_SIGNING != 'false'
+      && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -335,9 +336,12 @@ jobs:
     env:
       IMAGE: ${{ needs.publish.outputs.image }}
       DIGEST: ${{ needs.publish.outputs.digest }}
-      # The certificate's subject for a GitHub-issued keyless signature: this workflow FILE at
-      # the ref that ran. The install guide quotes this exact string with refs/heads/main.
-      IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/publish.yml@${{ github.ref }}
+      # The certificate's subject for a GitHub-issued keyless signature: this workflow FILE on
+      # main — PINNED, not `github.ref`, and the job runs only on main (the `if` above). A
+      # workflow_dispatch from another branch would otherwise sign under that branch's identity,
+      # pass its own read-back, and fail the one command the install guide gives operators; such a
+      # dispatch now pushes an unsigned image, which the design record states (review of A2).
+      IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/publish.yml@refs/heads/main
       ISSUER: https://token.actions.githubusercontent.com
     steps:
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
