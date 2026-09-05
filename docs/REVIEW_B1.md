@@ -1,8 +1,8 @@
 # Review — PR #84, B1: off-volume backup CronJob and restore runbook
 
 Adversarial second-opinion pass, 2026-09-05, on the ten-claim brief for #84
-(`docs/specs/SPEC_B1_offsite_backup.md` applied; chart 0.17.0, chart only; the spec's eight
-deviations are in its orchestrator's notes). Both the chart's guards (`helm template`) and the copy
+(`docs/specs/SPEC_B1_offsite_backup.md` applied; chart 0.17.0, chart only; the spec's
+deviations — fourteen by the end of the review — are in its orchestrator's notes). Both the chart's guards (`helm template`) and the copy
 script (against real `VACUUM INTO` backups) run locally, so this review could measure rather than
 argue. Cursor (Grok 4.6 high fast, ask mode) and Codex (gpt-5.6-sol, xhigh) are recorded below;
 every verdict was re-checked here before a decision.
@@ -97,3 +97,29 @@ rejected as prose-asserting.
 
 Not asked, noted in deviation 13: a failure on a second re-pick attempt skips that run's prune; a
 hash change while a previous bind Job still runs leaves two bind pods until the older one completes.
+
+## Second pass — Codex (on 6332449; the branch moved to 9c25b7e during its run)
+
+| Claim | Codex | Decision |
+|---|---|---|
+| C1 publication | PLAUSIBLE — no interleaving found that misleads the next run; fault-injection tests could not run in its sandbox | — |
+| C2 the bounded re-pick | REFUTED — it re-picked on any name change, so a vanished pick with an older backup left behind was recopied | **Accepted** — only a name that moved forward is chased; Codex's test taken |
+| C3 sidecar validation | REFUTED — `.split()` accepted a newline-separated digest and name (`sha256sum -c` rejects it) and broke a hand-copied name with a space | **Accepted** — one-line regex parser; Codex's test taken, plus the `-b` binary-marker case |
+| C4 pruning | REFUTED on wording (as Cursor) | already characterised |
+| C5 the bind Job | REFUTED — the hash omitted value-derived fields (as Cursor, already fixed in 9c25b7e) and fixed template content | **Accepted** — `.Chart.Version` joins the hash |
+| C6 the guards | CONFIRMED, measured on Helm 3.14 — `-1`, `abc`, `007`, `1.5` refused in both `--set` and `--set-string`; `0`, `14` accepted | — ; settles Cursor's open `007` point |
+| C7 documentation | REFUTED on three stale sentences — the script's docstring, the template's "four objects", this record's "eight deviations" | **Accepted**, all three corrected; the prose-asserting test rejected |
+| C8 fidelity | CONFIRMED — eleven files, every hunk attributed | — |
+
+## Outcome — final
+
+Four passes over three heads, plus four live runs on the reference cluster and two operator
+instructions (the bind Job; it must work with Argo CD). The findings that changed behaviour: the
+sidecar's durability and the empty-sidecar crash, the destination re-hash, the ordered publication,
+the bounded and forward-only re-pick, strict sidecar parsing, orphan pruning, guards for `..`,
+non-numeric `keep` and an existing claim's mode, the bind Job and its complete hash, and runbook
+commands the image can run. Rejected with a measured reason: the unbounded re-pick (twice), a second
+access-mode value, `clean` and `^[0-9]+$` guard variants, and every prose- or diff-asserting test.
+Proof: 33 chart tests and 22 script tests against real `VACUUM INTO` backups; on CRC, `helm upgrade
+--wait` binding a fresh claim in 18 s, copies verified with `--check`, the idempotent no-op, and a
+clean disable.

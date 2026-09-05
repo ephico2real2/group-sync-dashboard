@@ -190,6 +190,11 @@ class TestPvcDestination:
         assert name(out1) != name(out3)
         ok4, out4 = render(**ON, image__pullPolicy="Always")
         assert name(out1) == name(out4), "the same spec renders the same name"
+        # The chart version is hashed too, so a template change shipped in a new chart renames the
+        # Job even when no value moved (review of B1, second pass, Codex).
+        chart_yaml = (CHART / "Chart.yaml").read_text()
+        assert "$bindHash := printf" in (CHART / "templates" / "backup-offsite.yaml").read_text()
+        assert ".Chart.Version" in (CHART / "templates" / "backup-offsite.yaml").read_text().split("$bindHash", 1)[1].split("\n", 1)[0]
 
     def test_argo_waves_order_the_claim_and_bind_job_before_the_cronjob(self):
         ok, out = render(**ON)

@@ -8,10 +8,13 @@ failing loudly on any of them:
 
   1. pick the newest gsd-*.db under --source, by NAME — the stamp is UTC with microseconds, so
      lexicographic order is chronological, and it is the same rule Store.backup rotates by;
-  2. stream it to --dest as <name>.part, hashing as it goes (one pass, 1 MiB chunks, fsync);
+  2. stream it to --dest as <name>.part, hashing and fsyncing it, then re-hash the .part and
+     refuse publication unless the destination holds exactly the bytes read from the source;
   3. open the COPY with sqlite3 and run PRAGMA integrity_check — `immutable=1` so a WAL-flagged
      header cannot make SQLite want a -shm file it has no business creating here;
-  4. rename .part to <name> and write <name>.sha256 in `sha256sum -c` format;
+  4. write and fsync <name>.sha256.part (`sha256sum -c` format), rename the copy, rename the
+     sidecar, fsync the destination directory — a copy never sits without its sidecar except
+     across a kill between the two renames, which the next run repairs;
   5. prune --dest to --keep copies (0 keeps everything), sidecars with their copies.
 
 Idempotent: a destination copy that already matches its sidecar is left alone and the run still
@@ -32,12 +35,14 @@ from __future__ import annotations
 import argparse
 import hashlib
 import os
+import re
 import sqlite3
 import sys
 from pathlib import Path
 
 CHUNK = 1024 * 1024
 PATTERN = "gsd-*.db"
+SIDECAR_LINE = re.compile(r"([0-9A-Fa-f]{64})[ \t]+(.+?)\r?\n?")
 PART_SUFFIX = ".part"
 SUM_SUFFIX = ".sha256"
 HISTORY_TABLES = ("membership_event", "sync_event")
@@ -119,16 +124,17 @@ def sidecar_expected(sidecar: Path, name: str) -> str | None:
     creating the sidecar and writing it leaves a 0-byte file, and that must mean "copy again",
     never a traceback beside a copy that already verified (review of B1)."""
     try:
-        fields = sidecar.read_text().split()
+        text = sidecar.read_text()
     except OSError as exc:
         raise BackupError(f"cannot read sidecar {sidecar}: {exc}") from exc
-    if len(fields) != 2 or fields[1] != name or len(fields[0]) != 64:
+    # One `sha256sum` line: the digest, horizontal whitespace (sha256sum writes two spaces), the
+    # name — which may contain spaces if a copy was made by hand — and at most one line ending.
+    # Not `.split()`: that accepted a digest and a name on separate lines, which `sha256sum -c`
+    # rejects, and broke a name with a space into two fields (review of B1, second pass).
+    match = SIDECAR_LINE.fullmatch(text)
+    if match is None or match.group(2) != name:
         return None
-    try:
-        int(fields[0], 16)
-    except ValueError:
-        return None
-    return fields[0].lower()
+    return match.group(1).lower()
 
 
 def write_sidecar_part(part: Path, digest: str, name: str) -> None:
@@ -235,7 +241,9 @@ def ship(source: Path, dest: Path, keep: int) -> int:
             later = newest_backup(source)
         except BackupError:
             later = newest
-        if later.name == newest.name:
+        # Re-pick only when the name moved FORWARD: if the picked file vanished and an older one
+        # is now the newest, the copy just published is the most recent this run saw.
+        if later.name <= newest.name:
             break
         if attempt < REPICK_ATTEMPTS:
             print(f"note: {later.name} landed during the copy; shipping it too (attempt {attempt + 1})")

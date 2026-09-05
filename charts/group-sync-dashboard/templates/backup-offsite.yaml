@@ -1,6 +1,8 @@
 {{- /*
 Off-volume backup: the other half of config.backup. See values.yaml under `backup:` for the
-decisions; this file models the interactions and renders four objects when enabled.
+decisions; this file models the interactions and renders, when enabled, a ServiceAccount, a
+ConfigMap and a CronJob — plus the destination claim and its one-shot bind Job when the chart
+creates that claim (five objects), none of those two for an existing claim or S3 (three).
 
 The `backup.enabled` guard is OUTSIDE the enabled block on purpose: the mistake it catches is
 setting the wrong key and seeing nothing render.
@@ -20,8 +22,10 @@ immutable: an image or resources change must produce a NEW Job (Helm and Argo th
 remove the old one) rather than a patch the API server refuses. */}}
 {{- /* Every field that lands in the pod template is hashed — pullPolicy, pullSecrets, the pod and
 container security contexts, nodeSelector, tolerations — because a change to any of them with a
-stable name is a refused patch, not a no-op (review of B1, second pass). */}}
-{{- $bindHash := printf "%s|%s|%s|%s|%s|%s|%s|%s" (include "gsd.image" .) .Values.image.pullPolicy (toYaml .Values.image.pullSecrets) (toYaml $o.resources) (toYaml .Values.securityContext) (toYaml .Values.podSecurityContext) (toYaml .Values.nodeSelector) (toYaml .Values.tolerations) | sha256sum | trunc 8 }}
+stable name is a refused patch, not a no-op; and the chart version, so a change to the template's
+fixed content (the command, the mounts) in a new chart also renames the Job (review of B1, second
+pass, both reviewers). */}}
+{{- $bindHash := printf "%s|%s|%s|%s|%s|%s|%s|%s|%s" .Chart.Version (include "gsd.image" .) .Values.image.pullPolicy (toYaml .Values.image.pullSecrets) (toYaml $o.resources) (toYaml .Values.securityContext) (toYaml .Values.podSecurityContext) (toYaml .Values.nodeSelector) (toYaml .Values.tolerations) | sha256sum | trunc 8 }}
 {{- if not .Values.persistence.enabled }}
 {{- fail "backup.offsite.enabled=true requires persistence.enabled=true. With an emptyDir there is no volume to ship a backup off, and the history it would protect resets on every restart anyway." }}
 {{- end }}

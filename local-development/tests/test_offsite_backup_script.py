@@ -208,6 +208,38 @@ class TestDurability:
         names = sorted(p.name for p in dest.glob("gsd-*.db"))
         assert names[-1] == max(backups.glob("gsd-*.db")).name and len(names) == 2
 
+    def test_the_repick_chases_only_a_newer_name(self, script, source, tmp_path, capsys, monkeypatch):
+        """Review of B1, second pass (Codex): the picked file vanishing with an OLDER backup left
+        behind must not recopy the older one — the copy just published is the newest this run saw."""
+        backups, _ = source
+        picked = max(backups.glob("gsd-*.db"))
+        (backups / "gsd-20000101T000000.000000Z.db").write_bytes(picked.read_bytes())
+        dest = tmp_path / "offsite"
+        real_copy = script.copy_hashed
+        state = {"removed": False}
+        def copy_then_remove_picked(src, dst):
+            out = real_copy(src, dst)
+            if src == picked and not state["removed"]:
+                picked.unlink(); state["removed"] = True
+            return out
+        monkeypatch.setattr(script, "copy_hashed", copy_then_remove_picked)
+        assert script.main(["--source", str(backups), "--dest", str(dest), "--keep", "0"]) == 0
+        assert capsys.readouterr().out.count("copied ") == 1
+        assert [p.name for p in dest.glob("gsd-*.db")] == [picked.name]
+
+    def test_the_sidecar_parser_takes_one_sha256sum_line_and_keeps_spaces_in_a_name(self, script, tmp_path):
+        """Review of B1, second pass (Codex): `.split()` accepted a digest and a name on separate lines
+        (which `sha256sum -c` rejects) and broke a hand-copied name containing a space."""
+        sidecar = tmp_path / "copy.sha256"; digest = "A" * 64; name = "gsd-manual copy.db"
+        sidecar.write_text(f"{digest}  {name}\n")
+        assert script.sidecar_expected(sidecar, name) == digest.lower()
+        sidecar.write_text(f"{digest}\n{name}\n")
+        assert script.sidecar_expected(sidecar, name) is None
+        sidecar.write_text(f"{digest}  {name}\n\n")
+        assert script.sidecar_expected(sidecar, name) is None
+        sidecar.write_text(f"{digest} *{name}\n")
+        assert script.sidecar_expected(sidecar, name) is None, "sha256sum -b's binary marker is not this format"
+
     def test_a_source_that_keeps_moving_stops_after_a_bounded_number_of_attempts(self, script, source, tmp_path, capsys, monkeypatch):
         backups, store = source
         dest = tmp_path / "offsite"
