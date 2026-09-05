@@ -1278,7 +1278,8 @@ function usersPage() {
       the list needs an authenticated identity to scope to.`, false);
   }
   // The row selection is SHARED with the export (usersMatched): the table and the file it
-  // downloads read one function, so they cannot disagree about which rows "shown" means.
+  // downloads read one function, so they cannot disagree about which rows match. Only the PAINT
+  // below is capped at USERS_RENDER; the export carries every match, and its note says so.
   const { all, matched, provs, chip } = usersMatched(d);
   const self = d.scope === "self";
   const never = { count: (d.never_logged_in_members || {}).count || 0,
@@ -2818,11 +2819,16 @@ function exportDescriptor() {
   if (view.page === "nsaudit") {
     const ub = data.userBindings;
     if (!ub || ub.forbidden) return null;
+    // A narrowed reader's rows are painted as the store serves them (cluster-admin first,
+    // cluster-scoped first, then namespace and user); only the wide view re-sorts client-side,
+    // so the envelope names the order that actually applied (review, C1).
+    const self = ub.scope === "self";
     return { tab: "namespace-audit", columns: EXPORT_COLUMNS.nsaudit,
-             rows: ub.scope === "self" ? (ub.bindings || []) : grantsSorted(ub),
+             rows: self ? (ub.bindings || []) : grantsSorted(ub),
              served: (ub.bindings || []).length, total: num(ub.total), scope: ub.scope || null,
              viewer: ub.viewer || null, filter: { namespace: view.nsNamespace },
-             sort: { key: view.nsGrantSort, dir: view.nsGrantDir } };
+             sort: self ? { key: "cluster_admin_first,cluster_scope_first,binding_namespace,user_name", dir: "asc" }
+                        : { key: view.nsGrantSort, dir: view.nsGrantDir } };
   }
   if (view.page === "logins") {
     const d = data.logins;
@@ -2853,8 +2859,10 @@ function csvField(value) {
   if (typeof value === "number") return String(value);
   let s = String(value);
   // Tested after any leading whitespace: an importer that trims before it decides would treat
-  // " =cmd" like "=cmd". The cell keeps its original spaces; this only decides the prefix.
-  if (/^[\t\r\n ]*[=+\-@\t\r]/.test(s)) s = "'" + s;
+  // " =cmd" like "=cmd". The initiators are OWASP's — = + - @, tab, CR, LF — plus their
+  // full-width forms (U+FF1D, U+FF0B, U+FF0D, U+FF20), which some locales' spreadsheets
+  // evaluate too (review, C1). The cell keeps its original text; this only decides the prefix.
+  if (/^[\t\r\n ]*[=+\-@\t\r\n\uFF1D\uFF0B\uFF0D\uFF20]/u.test(s)) s = "'" + s;
   if (/[",\r\n]/.test(s)) s = '"' + s.replace(/"/g, '""') + '"';
   return s;
 }

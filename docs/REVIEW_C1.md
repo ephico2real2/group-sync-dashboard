@@ -48,11 +48,34 @@ deviation in the spec's notes.
 
 ## Verdicts — Codex
 
-Pending; the section is completed when the pass lands.
+Codex pinned its review to the commit it was given (`4fc8e7a`) while the Cursor-round fixes landed
+beside it, and measured with a shell: `helm template` both states, `_bool_setting` behaviour, an
+in-memory `/api/version`, the citation and version tests, and `csvField` on fourteen inputs.
+
+| Claim | Codex | Decision |
+|---|---|---|
+| C1 export reads what the table paints | REFUTED on the Users cap | **Accepted on the wording** — the design doc said "the same arrays the table paints"; it now names the paint cap as the one deliberate difference; Codex's prose test rejected |
+| C2 tier safety | CONFIRMED | — ; it traced the narrowing follow-up in `refresh()` |
+| C3 `csvField` | REFUTED | **Accepted** — OWASP also names LF and the full-width `＝＋－＠` initiators; the guard covers them; Codex's fourteen-case test added (trimmed to the cases that hold across engines) |
+| C4 `downloadBlob` | CONFIRMED | — ; MDN's guidance is that the URL is no longer needed once the download has started. Cursor's opposite risk (a save dialog outliving a timer) was already applied; both agree the change is harmless, so it stands |
+| C5 the control | REFUTED | **Accepted** — the same tier-guard gap Cursor found, applied in the Cursor round |
+| C6 the switch | CONFIRMED by execution | — |
+| C7 wire and docs | CONFIRMED by execution | — ; `features` is the only added key |
+| C8 fidelity | CONFIRMED | — ; 16 files, 31 spec blocks found, the appended tests byte-identical |
+| C9 reference cluster | PLAUSIBLE (sandbox) | — ; measured here (chart 0.15.0, app 0.14.0, `features.export: true`) |
+| C10 flake sources | REFUTED | **Accepted** — the same sleep Cursor found, removed in the Cursor round; Codex's test that parses the test file rejected |
+
+**Volunteered (Codex, accepted):** the narrowed Namespace audit export's JSON `sort` reported the wide
+view's retained sort keys although a narrowed reader's rows are painted as the store serves them
+(cluster-admin first, cluster-scoped first, namespace, user — `store.py` `direct_user_bindings`'s
+`ORDER BY`, verified). The envelope now names that order; Codex's test with the `carol` persona added.
 
 ## Outcome
 
-Cursor refuted four claims and volunteered three findings; five accepted and applied (one as a
-documented exception), two rejected with the reason. Re-validated after the fixes: the fifteen export
+Cursor refuted four claims and volunteered three findings; Codex refuted four (two overlapping) and
+volunteered one. Eight findings accepted and applied — the tier guard, the whitespace and full-width
+formula initiators, the timer-free object URL, two honest sort envelopes, the sleep, and two wording
+corrections — three tests rejected as prose or test-source assertions, one nil-safety suggestion
+rejected for consistency with the ConfigMap's other keys. Re-validated after the fixes: the fifteen export
 browser tests (twelve from the spec plus three from the review), `test_export_module.py`, the chart
 tests, the full suite; CI green on the branch before the fixes and re-run after; CRC redeployed.

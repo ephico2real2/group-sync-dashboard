@@ -16,7 +16,7 @@ the switch off, the filter bar renders no export control and nothing else change
 
 | | Client-side Blob (chosen) | Server-side `GET /api/clusters/{id}/<tab>/export` |
 |---|---|---|
-| Exports "what was served after filter and sort" | Yes by construction: the filter and sort are client-side and the export reads the same arrays the table paints, through the same selection functions (`usersMatched`, `groupsMatched`, `bindingsVisible` and `sortedBindings`, `grantsSorted`). | No: the server does not know the client filter or sort; it would export a different set from the one on screen, or re-implement six filter and sort rules. |
+| Exports "what was served after filter and sort" | Yes by construction: the filter and sort are client-side and the export reads the same selection functions the tables paint from (`usersMatched`, `groupsMatched`, `bindingsVisible` and `sortedBindings`, `grantsSorted`). One deliberate difference: the Users table paints at most `USERS_RENDER` matches for responsiveness while the export carries every match, and the note beside the buttons states the export's count. | No: the server does not know the client filter or sort; it would export a different set from the one on screen, or re-implement six filter and sort rules. |
 | Tier safety | Cannot widen: the browser only holds what `viewer_scope` and `require_admin_tier` served. | A seventh scoping path that must be kept identical to six handlers — the shape `gsd/api.py#SKIP_AUTH_PATHS` records as the one that drifted and was exploitable. |
 | `@consistent` | Not applicable. | Streaming is forbidden inside a snapshot (`gsd/api.py#consistent`), so the CSV would be fully materialised anyway. |
 | Session | No request. | Every request re-stamps the proxy cookie and, with `X-GSD-Interaction`, counts. |
@@ -32,8 +32,9 @@ default (specification question 1).
 - **CSV carries the UTF-8 BOM, JSON does not.** A spreadsheet opened by double-click reads BOM-less
   UTF-8 as the local code page and mangles a non-ASCII display name; every programmatic reader accepts
   `utf-8-sig`. JSON must not carry one (RFC 8259 §8.1).
-- **Formula guard.** A string cell beginning `=`, `+`, `-`, `@`, tab or CR is prefixed with `'` (the
-  OWASP CSV-injection mitigation). Directory-supplied text is already treated as hostile for HTML on
+- **Formula guard.** A string cell beginning — after any leading whitespace — with `=`, `+`, `-`, `@`, tab, CR or LF,
+  or with their full-width forms `＝ ＋ － ＠`, is prefixed with `'` (the OWASP CSV-injection mitigation, widened
+  after review for importers that trim whitespace and for locales whose spreadsheets evaluate the full-width forms). Directory-supplied text is already treated as hostile for HTML on
   the page (`index.html#function esc`); it is the same input here. This is the only transformation;
   numbers and booleans are never touched.
 - **Quoting.** A field holding a quote, a comma or a line break is quoted with doubled quotes; records

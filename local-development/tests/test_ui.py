@@ -3410,6 +3410,28 @@ class TestExport:
         dash.evaluate("() => refresh()")
         dash.wait_for_selector("#export-csv")
 
+    def test_formula_guard_covers_the_owasp_initiators(self, dash):
+        """Review (Codex): LF and the full-width = + - @ are initiators in some locales' spreadsheets;
+        numbers, objects and non-finite values are untouched or stringified as JavaScript does."""
+        got = dash.evaluate("""() => ({
+            apostrophe: csvField("'=already"),
+            leadingSpace: csvField(" =SUM(1)"),
+            lf: csvField("\\n=SUM(1)"),
+            mathematicalMinus: csvField("\\u2212SUM(1)"),
+            fullWidthEquals: csvField("\\uff1dSUM(1)"),
+            fullWidthPlus: csvField("\\uff0b1"),
+            fullWidthMinus: csvField("\\uff0d1"),
+            fullWidthAt: csvField("\\uff20SUM(1)"),
+            negativeNumber: csvField(-7),
+            negativeString: csvField("-7"),
+        })""")
+        assert got == {
+            "apostrophe": "'=already", "leadingSpace": "' =SUM(1)", "lf": "\"'\n=SUM(1)\"",
+            "mathematicalMinus": "\u2212SUM(1)", "fullWidthEquals": "'\uff1dSUM(1)",
+            "fullWidthPlus": "'\uff0b1", "fullWidthMinus": "'\uff0d1", "fullWidthAt": "'\uff20SUM(1)",
+            "negativeNumber": "-7", "negativeString": "'-7",
+        }
+
     def test_a_leading_space_before_a_formula_is_neutralised(self, dash):
         got = dash.evaluate("""() => toCsv(["a"], [
             { a: " =SUM(1)" },
@@ -3466,6 +3488,22 @@ class TestExportVisibility:
         doc = json.load(open(dl.value.path()))
         assert doc["sort"] == {"key": "binding_kind,binding_namespace,binding_name", "dir": "asc"}
         assert [r["binding_name"] for r in doc["rows"]] == ["hand-made-crb", "managed-admin-rb"]
+
+    def test_narrowed_namespace_audit_json_names_the_servers_order(self, page, scoped_server):
+        """Review (Codex): a narrowed reader's rows are painted as served; a sort retained from a former
+        wide view must not be attributed to them."""
+        p = _open_as(page, scoped_server, "carol")
+        p.locator("button[data-nav='nsaudit']").click()
+        p.wait_for_selector(".scope-banner")
+        p.wait_for_selector("#export-json")
+        p.evaluate("() => { view.nsGrantSort = 'person'; view.nsGrantDir = 'desc'; render(); }")
+        with p.expect_download() as dl:
+            p.click("#export-json")
+        import json
+        doc = json.load(open(dl.value.path()))
+        assert doc["scope"] == "self"
+        assert doc["sort"] == {"key": "cluster_admin_first,cluster_scope_first,binding_namespace,user_name", "dir": "asc"}
+        assert [r["binding_name"] for r in doc["rows"]] == ["carol-ca"]
 
     def test_the_administrator_exports_the_whole_cluster(self, page, scoped_server):
         p = _open_as(page, scoped_server, "root")
