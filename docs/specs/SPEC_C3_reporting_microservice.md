@@ -12,7 +12,7 @@
 
 ## How to read this spec
 
-Everything under "Design" is the design agent's text and complete code. It supersedes the "Design (verbatim)" section of the current `docs/specs/SPEC_C3_namespace_report.md` in full, and keeps three things from it by name (the wide-tier gate, the sha256 data provenance, the print stylesheet) — see "Supersedes". Every claim about existing code is cited as `path#anchor`; every claim about a library, a repository or a platform is cited in "Sources" and, where it could be measured on this machine, was measured (the measurement is quoted where it is used). Schema migration numbers, version numbers and the issue text in the header are the orchestrator's; the body uses the ladder's numbers (app 0.18.0, chart 0.20.0, migration 11).
+Everything under "Design" is the design agent's text and complete code. It supersedes the "Design (verbatim)" section of the former `docs/specs/SPEC_C3_namespace_report.md` (replaced by this file) in full, and keeps three things from it by name (the wide-tier gate, the sha256 data provenance, the print stylesheet) — see "Supersedes". Every claim about existing code is cited as `path#anchor`; every claim about a library, a repository or a platform is cited in "Sources" and, where it could be measured on this machine, was measured (the measurement is quoted where it is used). Schema migration numbers, version numbers and the issue text in the header are the orchestrator's; the body uses the ladder's numbers (app 0.18.0, chart 0.20.0, migration 11).
 
 ## Orchestrator's notes
 
@@ -73,6 +73,7 @@ Everything under "Design" is the design agent's text and complete code. It super
   (`_one(docs, "PodDisruptionBudget", "t-group-sync-dashboard")` must be given the exact-name form at implementation if the substring also matches the report budget — adjust the helper to prefer an exact name.)
 - Section 2's default rule already matches chart 0.14.0's: every switch on unless it costs RBAC, a credential, a second image or a cluster-wide write; `rbac.namespaces` is the stated exception. Chart 0.14.0 added two more exceptions the reporting values must not contradict: `monitoring.*` stays off (the reference cluster runs no Prometheus; the report service's ServiceMonitor, if the body adds one, follows `monitoring.serviceMonitor.enabled`), and `oauthProxy.requestLogging` stays off (the proxy logs the full request URI) — the `/report/` upstream adds no logging of its own.
 - Schema migration 11 and the version pair are per the index ladder; the body's "migration 11" already agrees.
+- Corrections applied from the spec's adversarial review (PR #76, `docs/REVIEW_C3_spec.md`), in the body itself so the file stays the single source: (1) §8.17.2 `gsd.reportingGuards` included two value-returning helpers and would have printed `pdf/a-2b` and the catalogue list into both Deployment manifests — their output is now assigned away; (2) §8.17.6 the report Service carries `gsd.reportSelectorLabels` as well as `gsd.reportLabels`, because the ServiceMonitor selects Services by metadata labels and `gsd.reportLabels` names the dashboard; (3) §8.17.13's `monitoring.prometheusRule.for.reportPull/reportSnapshot` are written as a values block; (4) §8.7.3 `namespace_access.py` imports `KeyValues` and `Note`, which it constructs; (5) §5.1 states ServeMux's slashless-path redirect, the `-pass-user-headers` default and that `-upstream-ca` is unverified on the shipped tag; (6) §6.1 requires the Hummingbird `dnf list` re-measure at implementation; (7) §9.9/§9.11 name the test helpers that exist (`tests/test_chart_pdb.py` `_render`/`_one`/`_matches`; `test_chart_strategy.render` returns a tuple; no conftest); (8) §11's doc texts cite this file, not the deleted one.
 
 ---
 
@@ -222,6 +223,8 @@ The report service refuses a snapshot whose `PRAGMA user_version` is **greater**
 
 The report service is **not exposed** by a Route of its own. The dashboard pod's oauth-proxy gains a second upstream: `-upstream=https://<fullname>-report.<namespace>.svc:8443/report/` beside the existing `-upstream=http://127.0.0.1:8080` (`templates/deployment.yaml#-upstream=http://127.0.0.1:8080`). openshift/oauth-proxy routes between upstreams by the **path** the upstream URL carries — measured in its source: `path := u.Path`, then `u.Path = ""` before the reverse proxy is built, `serveMux.Handle(path, proxy)`, and the request path is passed through unchanged (`req.URL.Opaque = req.RequestURI`). Every request the proxy forwards, to either upstream, carries `X-Forwarded-User` / `X-Forwarded-Email` set by the proxy after authentication (`setRequestHeader(req, "X-Forwarded-User", session.User)`). So `/report/**` reaches the report service **only** through the same login the dashboard has, with the same identity header, and the report service's `/report/healthz`, `/report/readyz` and `/report/metrics` are **not** in `oauthProxy.skipAuthRegex` — they are reached on the report Service directly by kubelet and Prometheus, never through the Route.
 
+Routing is Go's `http.ServeMux` (`oauthproxy.go`: `path := u.Path`, `u.Path = ""`, `serveMux.Handle(path, proxy)`): the longer registered pattern wins, so `/report/` beats `/`, and the request path is forwarded unchanged (`req.URL.Opaque = req.RequestURI`), which is why the report process listens on `/report/**`. A request for `/report` **without** the trailing slash is proxied to neither upstream: ServeMux answers `301` to `/report/`, and that follow-up reaches the report Service. `-pass-user-headers` defaults to true in the shipped image (`local-development/gsd/activity.py` records the measurement; the chart passes no flag), so every authenticated upstream request carries `X-Forwarded-User`. `-upstream-ca` is defined on oauth-proxy `master` and is **not** assumed present on `ose-oauth-proxy-rhel9:v4.15` until §12's pre-flight prints the flag; if it does not, `reporting.tls.enabled=false` runs plain HTTP on the pod network behind the NetworkPolicy, ticket unchanged (operator question 6).
+
 ### 5.2 The tier is decided once, by the dashboard, and carried as a ticket
 
 The report service holds **no cluster credential and no RBAC** (its ServiceAccount has no bindings and `automountServiceAccountToken: false`), so it cannot run the SubjectAccessReview that decides the tier (`local-development/gsd/kube.py#TierResolver`) and must not duplicate it. The dashboard decides, the way it already does for `/bindings/findings`, and hands the decision to the browser as a **ticket**:
@@ -271,6 +274,8 @@ glib2.x86_64      2.89.3-1.hum1 public-hummingbird-x86_64-rpms
 harfbuzz.x86_64   14.3.1-1.hum1 public-hummingbird-x86_64-rpms
 $ … dnf -q list --available "pango*" "cairo*" "*fonts*" "fribidi*" "gdk-pixbuf*" "freetype*"
 (no pango, cairo, fribidi or gdk-pixbuf package; the only font packages are xorg-x11-fonts-* bitmap/Type1 sets and langpacks-fonts-* metapackages)
+
+Re-measure on the builder image at implementation with the same command. If `pango` has appeared in the Hummingbird repository, WeasyPrint becomes buildable and the row above must be rewritten; fpdf2 stays the choice unless the re-measure also shows a wheel named in §6.1 absent for the target interpreter, in which case pin the versions `pip download 'fpdf2==2.8.8' --only-binary=:all:` actually writes.
 ```
 
 | Library | Needs at runtime | On Hummingbird | PDF/A | Verdict |
@@ -1509,7 +1514,7 @@ what, findings first, deterministically sorted (docs/namespace-report-design.md 
 
 from __future__ import annotations
 
-from ..model import Section, Table
+from ..model import KeyValues, Note, Section, Table
 from ..snapshot import CLUSTER_SCOPE, Snapshot
 from .common import Built, ParamSpec, ReportSpec, RunContext, cut, finding_label, roster_table
 
@@ -4439,8 +4444,8 @@ args depend on them), so both objects refuse together. Emits nothing.
 {{- if or (lt (int ($t.ttlSeconds | default 300)) 30) (gt (int ($t.ttlSeconds | default 300)) 3600) -}}
 {{- fail (printf "reporting.ticket.ttlSeconds must be between 30 and 3600; got %v" $t.ttlSeconds) -}}
 {{- end -}}
-{{- include "gsd.reportPdfVariant" . -}}
-{{- include "gsd.reportEnabledReports" . -}}
+{{- /* Value-returning helpers validate as a side effect; assign their output so nothing prints. */ -}}
+{{- $_ := include "gsd.reportPdfVariant" . -}}
 {{- $enabled := splitList "," (include "gsd.reportEnabledReports" .) -}}
 {{- range $s := ((.Values.reporting | default dict).schedules | default list) -}}
 {{- if not (has $s.report $enabled) -}}
@@ -4536,7 +4541,13 @@ kind: Service
 metadata:
   name: {{ include "gsd.reportName" . }}
   namespace: {{ .Release.Namespace }}
-  labels: {{- include "gsd.reportLabels" . | nindent 4 }}
+  # The ServiceMonitor selects Services by METADATA labels (templates/service.yaml records the
+  # scrape that silently broke when the dashboard's `app` label was dropped). gsd.reportLabels
+  # carries the dashboard's app.kubernetes.io/name; the monitor selects gsd.reportSelectorLabels,
+  # so both sets are written here.
+  labels:
+    {{- include "gsd.reportLabels" . | nindent 4 }}
+    {{- include "gsd.reportSelectorLabels" . | nindent 4 }}
   {{- if .Values.reporting.tls.enabled }}
   annotations:
     # service-ca issues and rotates the report service's certificate into this Secret; uvicorn
@@ -5051,7 +5062,14 @@ Two rules in the PrometheusRule, under `reporting.enabled`:
             description: "gsd_report_snapshot_age_seconds is above four snapshot intervals; reports would print stale data with an honest 'data as of' line."
         {{- end }}
 ```
-`values.yaml` `monitoring.prometheusRule.for` gains `reportPull: 30m` and `reportSnapshot: 30m`. The chart README's alert count moves from twelve to fourteen (the two render only with reporting on, and the README says so, the B4 precedent).
+`values.yaml` `monitoring.prometheusRule.for` gains two keys (insert after `groupCountCliff: 15m`):
+
+```yaml
+      reportPull: 30m       # GroupSyncReportUsagePullStalled: no successful pull for this long
+      reportSnapshot: 30m   # GroupSyncReportSnapshotStale: the newest VACUUM INTO copy is older than this
+```
+
+ The chart README's alert count moves from twelve to fourteen (the two render only with reporting on, and the README says so, the B4 precedent).
 
 #### 8.17.14 `charts/group-sync-dashboard/templates/NOTES.txt` — append
 
@@ -5208,7 +5226,7 @@ Uses `build_report_app(settings, secret=SECRET, clock=fixed)` with `snapshot_dir
 
 ### 9.9 Chart tests — NEW `tests/test_chart_reporting.py`
 
-Reusing `render()` and `_config_data()` from `test_chart_strategy.py`:
+Reuse `_render`, `_one` and `_matches` from `tests/test_chart_pdb.py` (`_render(*sets: str) -> list[dict]`: helm `--set` strings in, parsed documents out) for every document assertion. `test_chart_strategy.render(**values)` returns `(ok, text)` and takes `__` for dots; use it only where a test needs the raw text — ConfigMap bodies go through `test_chart_strategy._config_data(out)`. `_docs` there is an instance method on its test classes, not a module helper, and there is no `tests/conftest.py`: fixtures live in the test files.
 - Default render: the report Deployment, Service (with `gsd.reportSelectorLabels` on the Service labels), NetworkPolicy, Secret, ServiceAccount, PVC (no `helm.sh/resource-policy`), the proxy args contain `-upstream=https://t-group-sync-dashboard-report.<ns>.svc:8443/report/` and `-upstream-ca=/etc/gsd/service-ca/service-ca.crt`; the ConfigMap has `reportingUrl`, `reportingSnapshotIntervalSeconds: 300`; the report container's `GSD_REPORT_ENABLED_REPORTS` lists ten names (no `login-activity`); the data volume in the report pod is `readOnly: true` at both levels; the report pod labels are not `gsd.selectorLabels`.
 - Refusals, each asserting the message names the key: `oauthProxy.enabled=false`; `persistence.enabled=false`; `replicaCount=2` (with `leaderElection.enabled=false` so the earlier guard does not fire first); `rbac.bindings=false`; `persistence.accessMode=ReadWriteOncePod`; `reporting.snapshot.intervalSeconds=30`; `reporting.ticket.ttlSeconds=10`; `reporting.pdf.variant=pdf/x-1a`; `reporting.reports.loginActivity.enabled=true` with `loginCapture.enabled=false`; `reporting.reports.groups.enabled=maybe`; `reporting.schedules[0].report=nope`.
 - Derivations: `loginCapture.enabled=true` adds `login-activity`; `persistence.accessMode=ReadWriteOnce` adds the podAffinity; `reporting.tls.enabled=false` drops `-upstream-ca`, the `--ssl-*` args, the TLS secret volume and gives `http://` in `reportingUrl` and `reportingCaFile: ""`; `monitoring.serviceMonitor.enabled=true` adds the monitoring ingress rule and the second ServiceMonitor; `monitoring.prometheusRule.enabled=true` adds the two rules, and with `reporting.enabled=false` none of the reporting objects, args, keys, rules or mounts render.
@@ -5223,7 +5241,7 @@ Reusing `render()` and `_config_data()` from `test_chart_strategy.py`:
 
 ### 9.11 `tests/test_ui.py` — the Reports tab (Playwright)
 
-A `reporting_server` fixture that simulates the proxy's path routing **in-process**: one uvicorn serving an ASGI router that sends `/report/*` to `build_report_app(...)` and everything else to the dashboard `build_app(...)` (reporting on, `_TierByName`), adding `X-Forwarded-User` from the browser context's header the way the seeded fixtures already do. Tests:
+A `reporting_server` fixture **in `tests/test_ui.py`** (beside `server`, `scoped_server` and `_TierByName`; there is no conftest) that simulates the proxy's path routing **in-process**: one uvicorn serving an ASGI router that sends `/report/*` to `build_report_app(...)` and everything else to the dashboard `build_app(...)` (reporting on, `_TierByName`), adding `X-Forwarded-User` from the browser context's header the way the seeded fixtures already do. Tests:
 - `root` sees the **Reports** tab; the picker lists eleven entries, `login-activity` disabled with its values key; choosing `namespace-access`, typing `prod-ns` into `namespaces`, clicking **Generate** shows `queued`/`running` then `done` with a sha256 and three download buttons; clicking `.pdf` triggers a download whose bytes start `%PDF`; the recent-runs table gains the row.
 - `alice` sees the Reports tab and the **refusal card** (never a blank), and a direct `fetch("/report/api/reports")` from her page answers 401/403.
 - A ticket aged out (clock advanced past TTL through the fixture's clock) re-mints transparently: one 401, then 200.
@@ -5317,7 +5335,7 @@ Unchanged: the chart release is gated by `ci.yml` through `workflow_call`, which
 ## 11. Docs, changelog, chart
 
 - **`docs/specs/README.md`**: the C3 row's title becomes "reporting as a microservice: the report service, its eleven-report catalogue, and the dashboard's pull of its usage"; "Version on release" becomes `app 0.18.0, chart 0.20.0 (reporting image at appVersion)`; the reconciliation list gains "C3 = migration 11 creates `cluster_namespace`, `cluster_namespace_status` and `report_run`"; the "Decisions the operator has made" gains the 2026-09-05 direction (microservice; every boolean defaults on unless it cannot work without something the chart cannot supply) and the operator's answers to §14.
-- **`docs/namespace-report-design.md`**: the PARKED banner becomes `> **SUPERSEDED — 2026-09-05.** Built as a separate report service: docs/specs/SPEC_C3_namespace_report.md. §1's --openshift-sar answer, §4's argument for a canonical HTML artefact with a sha256, §5's selector and §6's provenance block and caveats are carried into it; §2–3 (the viewer-token authorisation layer) and question E stay not built.` "Status: proposed, not built" → "Status: superseded by the report service; §1, §4–§6 are the record of what it kept".
+- **`docs/namespace-report-design.md`**: the PARKED banner becomes `> **SUPERSEDED — 2026-09-05.** Built as a separate report service: docs/specs/SPEC_C3_reporting_microservice.md. §1's --openshift-sar answer, §4's argument for a canonical HTML artefact with a sha256, §5's selector and §6's provenance block and caveats are carried into it; §2–3 (the viewer-token authorisation layer) and question E stay not built.` "Status: proposed, not built" → "Status: superseded by the report service; §1, §4–§6 are the record of what it kept".
 - **`README.md`**: the docs-table row loses **PARKED** and reads "per-namespace and access-review reports as HTML/PDF from a separate report service; the definitive answer on `--openshift-sar`"; a row for `docs/specs/SPEC_C3_namespace_report.md` is not added (the specs index row covers it); "Not built yet" drops "per-namespace PDF reports (designed and parked …)" and keeps "Effective-permission expansion, log-scrape enrichment, … per-cluster authorization".
 - NEW **`docs/DESIGN_reporting_service.md`**: §§3–7 of this spec (architecture, data path, auth, PDF library, catalogue) as the maintained design record, citing `gsd/reporting/server.py#build_report_app`, `gsd/reporting/snapshot.py#Snapshot`, `gsd/reporting/ticket.py#verify`, `gsd/store.py#Store.snapshot`, `gsd/poller.py#Poller._pull_report_usage`, `charts/group-sync-dashboard/templates/report-deployment.yaml`, `local-development/Containerfile.report`; listed in `docs/reference-architecture.md` §12 and the README docs table.
 - **`docs/reference-architecture.md`**: §8's topology diagram gains the report pod, its Service, PVC, Secret, NetworkPolicy and the proxy's second upstream; §2's module list gains `gsd/reporting/*`; the RBAC table gains `namespaces` (core, only with `rbac.namespaces`); §6 gains a paragraph "The report service reads a copy" beside "WAL, and how it fails"; the `fail` guards section lists the six reporting guards.
@@ -5341,7 +5359,7 @@ Unchanged: the chart release is gated by `ci.yml` through `workflow_call`, which
   refused where it cannot work (proxy off, emptyDir, replicas > 1, RWOP, no bindings grant); TLS via
   service-ca, a NetworkPolicy, an artefact PVC, optional schedules as CronJobs, two new alerts.
   `gsd_report_*` on the report service, `gsd_report_usage_pulls_total` on the dashboard.
-  (spec `docs/specs/SPEC_C3_namespace_report.md`; supersedes the parked namespace-report design)
+  (spec `docs/specs/SPEC_C3_reporting_microservice.md`; supersedes the parked namespace-report design)
 ```
 - **`charts/group-sync-dashboard/Chart.yaml`**: above `version:`:
 ```
