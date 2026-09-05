@@ -171,11 +171,13 @@ Group sync, the `Group` read, group pages and member lists, the access views (`a
 
 1. Should the `ceo_rnd_oim`-style test accounts be filterable out by provider only, or is a
    configurable provider allow-list wanted so a production tab shows one directory's people?
-2. `first_login_at` from `User.creationTimestamp` is exact for provider-created users. A user
-   pre-created by an admin and later linked to an identity has a creation time before their first
-   login; `Identity.metadata.creationTimestamp` would be exact but needs the `identities` grant.
-   Proposed: accept the `User` timestamp, label it "since", and note the edge; revisit only if a
-   real cluster has admin-created users in numbers.
+2. `first_login_at` from `User.creationTimestamp` is the first login for provider-created users. A
+   user pre-created by an admin and later linked to an identity has a creation time before their
+   first login; `Identity.metadata.creationTimestamp` improves on it for `mappingMethod: claim` and
+   `add`, where OpenShift creates the Identity during the login (for `lookup` an administrator
+   creates it beforehand, so it is the mapping's creation time), but needs the `identities` grant.
+   Proposed for 0.9.0: accept the `User` timestamp, label it "since", and note the edge; revisit
+   only if a real cluster has admin-created users in numbers.
 3. Whether the never-logged-in members line belongs on the Users tab or on the cluster-access
    panel, which already reasons about access without login.
 

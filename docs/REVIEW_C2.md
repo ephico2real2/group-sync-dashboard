@@ -188,13 +188,30 @@ the chart README's `config.users.providers` row gave a partial rule (`:` and `/`
 sweep missed them: the first relabel grep listed files by hand and left out the chart templates,
 Chart.yaml and the reference architecture — this pass swept every tracked file instead.
 
+## Second pass — Codex (on the pass-2 head 3c0e660)
+
+| Claim | Codex | Decision |
+|---|---|---|
+| C1, C6 | REFUTED on one sentence — the design's open question 2 still said the Identity time "would be exact" (Cursor had read it as historical) | **Accepted** — the item now states the claim/add and lookup cases; Codex's test rejected (prose-asserting) |
+| C2 the `ok` note | CONFIRMED (rendered and quoted) | — |
+| C3 transient failures | CONFIRMED (its own two-poll harness reproduced the test's result) | — |
+| C4 provider names | CONFIRMED — parser and helm→YAML measured with `a,b`, `a b`, `LDAP`, `foo_bar`, `équipe`; the OpenShift type's rule quoted from source | — |
+| C5 Kubernetes time | CONFIRMED at the source (`t.UTC().AppendFormat(..., time.RFC3339)`) | — |
+| C7 fidelity | CONFIRMED — `_user_row` identical over 108 input combinations before and after the relabel; `poll_once`'s branches and writes preserved | — |
+
+Not asked and accepted: the users endpoint's docstring — the published OpenAPI description — still
+defined `first_login_at` as the User's creation time; it now names both sources and the lookup
+caveat. Codex's OpenAPI-description test rejected (prose-asserting; `docs/API.md`'s contract test
+already holds the envelope's fields).
+
 ## Outcome
 
 Cursor refuted three claims, named one risk and volunteered three findings; six accepted on the fact,
 one snippet rejected for a measured reason (the OAuth CR's actual rule), one suggestion rejected for
 consistency. Codex refuted six; every fact accepted, four snippets rejected with the reason above (the
 feature-removing relabel alternative, the `error` state, the dual-format parser, two prose-asserting
-tests), and one of Cursor's premises retracted at the source. A second pass by both reviewers ran on
-the fixed head before merge (recorded below when it lands). Re-validated after the fixes: `test_identities_read.py`, `test_config.py`,
+tests), and one of Cursor's premises retracted at the source. The second pass (Cursor on the fixed head, Codex on the head that carried
+Cursor's second-pass fixes) found the relabel incomplete in the chart, the design's historical item and
+the OpenAPI description — all wording, all fixed; no behaviour finding survived it. Re-validated after the fixes: `test_identities_read.py`, `test_config.py`,
 `test_migrations.py`, `test_users_tab_logins.py`, `test_api_contract.py`, `helm lint`; CI and the full
 suite re-run on the fixed head; CRC redeployed.

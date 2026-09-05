@@ -1052,8 +1052,11 @@ def build_app(
         number and the names without them inflating the count.
 
         Per row: `logged_in` (false only for an account created by hand that nobody has used),
-        `first_login_at` (the User's creation time, when an identity proves a login happened),
-        `providers` (identity-provider names), `last_login_at` (the newest successful captured
+        `first_login_at` (the Identity object's creation time when `first_login_source` is `identity`,
+        the User's creation time when it is `user`, null when `logged_in` is false; for a provider
+        with `mappingMethod: lookup` an administrator creates the Identity before the first login,
+        so an Identity-sourced time is that create), `providers` (identity-provider names),
+        `last_login_at` (the newest successful captured
         login, null when none — read `login_capture` before trusting the null), `full_name`.
         `first_login_source` per row says whether `first_login_at` is the Identity's creation time
         (`identity`) or the User's (`user`, approximate); `identities_source` says why.
