@@ -53,3 +53,31 @@ Not asked, accepted: the S3 restore order (`-wal`/`-shm` removal first, then the
 selector-label test strengthened. Not asked, noted: `tests/test_metrics.py` renders without the
 module on, so it never parses the two new expressions — they are held by `test_chart_backup_offsite.py`
 instead.
+
+## Verdicts — Codex
+
+Codex (gpt-5.6-sol, xhigh) reviewed the original head 30143b6 while the branch moved; its sandbox
+refused pytest's temp directory, so its measurements were `helm template` renders, shell expansions
+with a stub `aws`, and source reading.
+
+| Claim | Codex | Decision |
+|---|---|---|
+| C1 a faithful, verified copy | REFUTED — the sidecar digest is of the bytes READ, not what the destination persisted; the sidecar was unfsynced and written after the rename; the source can rotate mid-copy | **Accepted** — destination re-hash before publication (Codex's test taken: a same-length value altered on the destination is now refused with nothing published), ordered publication with rollback (test taken), bounded re-pick (see below) |
+| C2 idempotence | REFUTED — the empty-sidecar `IndexError` (as Cursor) | already fixed from Cursor's pass; `sidecar_expected` now also validates the name and the hex |
+| C3 read-only double mount | CONFIRMED | — |
+| C4 access modes | REFUTED — an existing claim's real mode is unknown to the chart; proposed a new `sourceAccessMode` value | **Fact accepted, value rejected** — `persistence.accessMode` is required explicit with `existingClaim` (Cursor's pass); a second key meaning the same thing was not added |
+| C5 the guards | REFUTED — `/data/backup/../..` and `keep=abc` render (measured) | already fixed from Cursor's pass; Codex's `clean` and `^[0-9]+$` variants rejected for the stricter forms |
+| C6 objects and labels | CONFIRMED (the ConfigMap byte-equal to the script, 8,519 bytes) | — |
+| C7 the S3 path | CONFIRMED — the default command expanded with a stub `aws`, prefix and endpoint cases | — |
+| C8 alerts | CONFIRMED — 12 rules, 14 with the module; kube-state-metrics labels checked | — |
+| C9 the runbook | REFUTED — `date` (as Cursor); the `sed` rewrite measured to produce one argument | already fixed from Cursor's pass |
+| C10 fidelity | CONFIRMED narrowly — the spec's notes and the index are the only extra files | — |
+
+**The re-pick, decided across both reviewers.** Cursor proposed an unbounded recursive re-pick,
+Codex an unbounded loop; the first pass here kept the verified copy and logged a note. Both
+reviewers' point stands — the destination should end the run holding the newest when the app
+rotates backups mid-copy — so the run now re-picks up to three times (`REPICK_ATTEMPTS`) and then
+keeps the verified copy and says so, which is the bounded form of what both asked for.
+
+Not asked (Codex): the Grafana panel — already fixed from Cursor's pass; the time-ns runbook test
+rejected as prose-asserting.

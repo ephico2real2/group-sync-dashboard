@@ -129,6 +129,45 @@ class TestDurability:
         assert len(synced) >= 3, "the .part, the sidecar and the directory"
         assert not list(dest.glob("*.sha256.part"))
 
+    def test_the_destination_bytes_are_rehashed_before_publication(self, script, source, tmp_path, monkeypatch, capsys):
+        """Review of B1 (Codex): the sidecar recorded the digest of what was READ; a destination that
+        altered a same-length value is still a valid database and integrity_check passes it."""
+        backups, _ = source
+        dest = tmp_path / "offsite"
+        real_copy = script.copy_hashed
+        def copy_then_alter_the_destination(src, dst):
+            out = real_copy(src, dst)
+            data = dst.read_bytes(); before, after = b"api.crc.testing", b"api.xrc.testing"
+            assert before in data
+            dst.write_bytes(data.replace(before, after, 1))
+            return out
+        monkeypatch.setattr(script, "copy_hashed", copy_then_alter_the_destination)
+        assert script.main(["--source", str(backups), "--dest", str(dest)]) == 1
+        assert "the destination holds sha256" in capsys.readouterr().err
+        assert not list(dest.glob("gsd-*")) and not list(dest.glob("*.part"))
+
+    def test_a_sidecar_write_failure_leaves_no_published_copy(self, script, source, tmp_path, monkeypatch):
+        """Review of B1 (Codex): publication is ordered so a copy never appears without its sidecar."""
+        backups, _ = source
+        dest = tmp_path / "offsite"
+        real_open = pathlib.Path.open
+        def fail_sidecar_open(self, *args, **kwargs):
+            mode = args[0] if args else kwargs.get("mode", "r")
+            if "w" in mode and ".sha256" in self.name:
+                raise OSError("simulated sidecar write failure")
+            return real_open(self, *args, **kwargs)
+        monkeypatch.setattr(pathlib.Path, "open", fail_sidecar_open)
+        assert script.main(["--source", str(backups), "--dest", str(dest)]) == 1
+        assert not list(dest.glob("gsd-*"))
+
+    def test_an_orphan_sidecar_is_pruned_with_the_transients(self, script, source, tmp_path):
+        backups, _ = source
+        dest = tmp_path / "offsite"; dest.mkdir()
+        (dest / "gsd-20200101T000000.000000Z.db.sha256").write_text("0" * 64 + "  gsd-20200101T000000.000000Z.db\n")
+        (dest / "gsd-20200101T000000.000000Z.db.sha256.part").write_text("")
+        assert script.main(["--source", str(backups), "--dest", str(dest)]) == 0
+        assert sorted(p.name for p in dest.iterdir() if "20200101" in p.name) == []
+
     def test_a_stale_part_from_a_killed_run_is_removed(self, script, source, tmp_path):
         backups, _ = source
         dest = tmp_path / "offsite"; dest.mkdir()
@@ -136,23 +175,42 @@ class TestDurability:
         assert script.main(["--source", str(backups), "--dest", str(dest)]) == 0
         assert not list(dest.glob("*.part"))
 
-    def test_a_newer_backup_landing_during_the_copy_is_noted_and_ships_next_run(self, script, source, tmp_path, capsys, monkeypatch):
-        """Store.backup runs on its own timer; the picked file is still a verified backup, one
-        interval old at worst. Noted in the log, shipped next run — no re-pick loop (review of B1)."""
+    def test_a_newer_backup_landing_during_the_copy_is_shipped_in_the_same_run(self, script, source, tmp_path, capsys, monkeypatch):
+        """Review of B1 (both reviewers): Store.backup runs on its own timer and can rotate the picked
+        file away mid-copy (keep=1). The run re-picks, bounded, so the destination ends holding the
+        newest; the first copy stays as a verified older one."""
         backups, store = source
         dest = tmp_path / "offsite"
         real_copy = script.copy_hashed
-        def copy_then_new_backup(src, dst):
+        rotated = {"done": False}
+        def copy_then_rotate(src, dst):
             out = real_copy(src, dst)
-            store.record_sync_event("crc", "corp", "ns", "2026-08-02T12:00:00Z", "2026-08-02T12:00:30Z", "0 * * * *", 1)
-            store.backup(str(backups), keep=10)
+            if not rotated["done"]:
+                rotated["done"] = True
+                store.record_sync_event("crc", "corp", "ns", "2026-08-02T12:00:00Z", "2026-08-02T12:00:30Z", "0 * * * *", 99)
+                assert store.backup(str(backups), keep=1)
             return out
-        monkeypatch.setattr(script, "copy_hashed", copy_then_new_backup)
+        monkeypatch.setattr(script, "copy_hashed", copy_then_rotate)
         assert script.main(["--source", str(backups), "--dest", str(dest)]) == 0
-        assert "landed during the copy; it ships on the next run" in capsys.readouterr().out
-        monkeypatch.setattr(script, "copy_hashed", real_copy)
+        out = capsys.readouterr().out
+        assert "shipping it too (attempt 2)" in out
+        names = sorted(p.name for p in dest.glob("gsd-*.db"))
+        assert names[-1] == max(backups.glob("gsd-*.db")).name and len(names) == 2
+
+    def test_a_source_that_keeps_moving_stops_after_a_bounded_number_of_attempts(self, script, source, tmp_path, capsys, monkeypatch):
+        backups, store = source
+        dest = tmp_path / "offsite"
+        real_copy = script.copy_hashed
+        def copy_then_always_new(src, dst):
+            out = real_copy(src, dst)
+            store.record_sync_event("crc", "corp", "ns", f"2026-08-02T13:{len(list(backups.glob('gsd-*.db'))):02d}:00Z", "2026-08-02T13:00:30Z", "0 * * * *", 1)
+            store.backup(str(backups), keep=20)
+            return out
+        monkeypatch.setattr(script, "copy_hashed", copy_then_always_new)
         assert script.main(["--source", str(backups), "--dest", str(dest)]) == 0
-        assert len(list(dest.glob("gsd-*.db"))) == 2
+        out = capsys.readouterr().out
+        assert out.count("copied ") == script.REPICK_ATTEMPTS
+        assert "it ships on the next run" in out
 
 
 class TestFailures:
@@ -206,7 +264,11 @@ class TestCheck:
         dest = tmp_path / "offsite"
         assert script.main(["--source", str(backups), "--dest", str(dest)]) == 0
         (sidecar,) = dest.glob("*.sha256")
-        sidecar.write_text("0" * 64 + "  x\n")
         (copy,) = dest.glob("gsd-*.db")
+        sidecar.write_text("0" * 64 + f"  {copy.name}\n")
         assert script.main(["--check", str(copy)]) == 1
         assert "does not match sidecar" in capsys.readouterr().err
+        # A sidecar naming another file, or carrying no digest, is malformed rather than a mismatch.
+        sidecar.write_text("0" * 64 + "  x\n")
+        assert script.main(["--check", str(copy)]) == 1
+        assert "empty or malformed" in capsys.readouterr().err

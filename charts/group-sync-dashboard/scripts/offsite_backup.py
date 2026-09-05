@@ -113,89 +113,135 @@ def integrity(path: Path) -> dict:
     return facts
 
 
-def sidecar_expected(sidecar: Path) -> str | None:
-    """The first field of a `sha256sum -c` sidecar, or None when it is empty or malformed — a
-    crash between creating the sidecar and writing it leaves a 0-byte file, and that must mean
-    "copy again", never a traceback beside a copy that already verified (review of B1)."""
-    parts = sidecar.read_text().split()
-    return parts[0] if parts else None
+def sidecar_expected(sidecar: Path, name: str) -> str | None:
+    """The digest a `sha256sum -c` sidecar records for `name`, or None when the sidecar is empty,
+    malformed, names another file or carries something that is not a sha256 — a crash between
+    creating the sidecar and writing it leaves a 0-byte file, and that must mean "copy again",
+    never a traceback beside a copy that already verified (review of B1)."""
+    try:
+        fields = sidecar.read_text().split()
+    except OSError as exc:
+        raise BackupError(f"cannot read sidecar {sidecar}: {exc}") from exc
+    if len(fields) != 2 or fields[1] != name or len(fields[0]) != 64:
+        return None
+    try:
+        int(fields[0], 16)
+    except ValueError:
+        return None
+    return fields[0].lower()
 
 
-def write_sidecar(sidecar: Path, digest: str, name: str) -> None:
-    """Write the sidecar durably: to a temporary name, fsync, rename, fsync the directory — the
-    same care the copy gets, or a crash could leave a good copy beside an empty sidecar."""
-    tmp = sidecar.with_name(sidecar.name + PART_SUFFIX)
-    with tmp.open("w") as fh:
+def write_sidecar_part(part: Path, digest: str, name: str) -> None:
+    """The sidecar's contents, fsynced, under a temporary name; the caller renames it into place
+    beside the copy — the same care the copy gets, or a crash could leave a good copy beside an
+    empty sidecar (review of B1)."""
+    with part.open("w") as fh:
         fh.write(f"{digest}  {name}\n")
         fh.flush()
         os.fsync(fh.fileno())
-    os.replace(tmp, sidecar)
-    dir_fd = os.open(str(sidecar.parent), os.O_RDONLY)
+
+
+def fsync_directory(directory: Path) -> None:
+    fd = os.open(str(directory), os.O_RDONLY)
     try:
-        os.fsync(dir_fd)
+        os.fsync(fd)
     finally:
-        os.close(dir_fd)
+        os.close(fd)
 
 
 def prune(dest: Path, keep: int) -> int:
-    """Store.backup's rule: sorted(glob)[:-keep] goes. 0 keeps everything. Sidecars follow."""
-    if keep <= 0:
-        return 0
+    """Store.backup's rule: sorted(glob)[:-keep] goes. 0 keeps everything. Sidecars follow their
+    copies; a sidecar whose copy is gone, and any .part a killed run left, go too (review of B1)."""
+    for transient in (*dest.glob(PATTERN + PART_SUFFIX), *dest.glob(PATTERN + SUM_SUFFIX + PART_SUFFIX)):
+        transient.unlink(missing_ok=True)
     copies = sorted(p for p in dest.glob(PATTERN) if p.is_file())
-    removed = 0
-    for stale in copies[:-keep]:
+    victims = copies[:-keep] if keep > 0 else []
+    for stale in victims:
         stale.unlink()
         stale.with_name(stale.name + SUM_SUFFIX).unlink(missing_ok=True)
-        removed += 1
-    return removed
+    for orphan in dest.glob(PATTERN + SUM_SUFFIX):
+        if not orphan.with_name(orphan.name[: -len(SUM_SUFFIX)]).is_file():
+            orphan.unlink(missing_ok=True)
+    return len(victims)
+
+
+REPICK_ATTEMPTS = 3
 
 
 def ship(source: Path, dest: Path, keep: int) -> int:
-    newest = newest_backup(source)
     try:
         dest.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
         raise BackupError(f"destination {dest} is not writable: {exc}") from exc
     if dest.resolve() == source.resolve():
         raise BackupError(f"destination {dest} IS the source directory — that is not off the volume")
-    # A SIGKILL mid-copy skips `finally`; whatever .part it left is not a copy and goes now.
-    for stale in dest.glob("*" + PART_SUFFIX):
-        stale.unlink(missing_ok=True)
+    # A SIGKILL mid-copy skips `finally`; whatever .part a killed run left is not a copy and goes now.
+    prune(dest, 0)
 
-    target = dest / newest.name
-    sidecar = dest / (newest.name + SUM_SUFFIX)
-    if target.exists() and sidecar.exists():
-        expected = sidecar_expected(sidecar)
-        if expected is not None and sha256_of(target) == expected:
-            print(f"already shipped: {target} matches its sidecar; nothing to copy")
-            removed = prune(dest, keep)
-            print(f"pruned {removed} older cop{'y' if removed == 1 else 'ies'} (keep={keep})")
-            return 0
-        print(f"{target} exists but does not match its sidecar; copying again", file=sys.stderr)
+    # The app writes backups on its own timer (Store.backup), so the newest file can change while
+    # this one is being copied — the picked file stays readable through its open descriptor, and
+    # the copy is still a verified backup, one interval old. Re-pick a bounded number of times so
+    # the destination ends the run holding the newest; past that, keep the verified copy and say so
+    # in the log rather than chase a source that keeps moving (review of B1, both passes).
+    for attempt in range(1, REPICK_ATTEMPTS + 1):
+        newest = newest_backup(source)
+        target = dest / newest.name
+        sidecar = dest / (newest.name + SUM_SUFFIX)
+        if target.exists() and sidecar.exists():
+            expected = sidecar_expected(sidecar, newest.name)
+            if expected is not None and sha256_of(target) == expected:
+                print(f"already shipped: {target} matches its sidecar; nothing to copy")
+                break
+            print(f"{target} exists but does not match its sidecar; copying again", file=sys.stderr)
 
-    part = dest / (newest.name + PART_SUFFIX)
-    try:
-        digest, size = copy_hashed(newest, part)
-        facts = integrity(part)
-        os.replace(part, target)
-        write_sidecar(sidecar, digest, newest.name)
-    except OSError as exc:
-        raise BackupError(f"copying {newest} to {dest} failed: {exc}") from exc
-    finally:
-        part.unlink(missing_ok=True)
+        part = dest / (newest.name + PART_SUFFIX)
+        sidecar_part = dest / (newest.name + SUM_SUFFIX + PART_SUFFIX)
+        published = False
+        try:
+            source_digest, size = copy_hashed(newest, part)
+            # Verify what the DESTINATION persisted, not only what was read: a copy the storage
+            # altered by a same-length value is still a structurally valid database, so
+            # integrity_check alone would pass it (review of B1, Codex).
+            digest = sha256_of(part)
+            if digest != source_digest:
+                raise BackupError(f"{part}: the destination holds sha256 {digest}, the source read "
+                                  f"{source_digest} — the copy is not the bytes that were read")
+            facts = integrity(part)
+            # Publish in an order that never leaves a copy without its sidecar: the sidecar's
+            # contents are durable under a temporary name first, then both are renamed into place.
+            write_sidecar_part(sidecar_part, digest, newest.name)
+            os.replace(part, target)
+            published = True
+            os.replace(sidecar_part, sidecar)
+            fsync_directory(dest)
+        except BackupError:
+            if published:
+                target.unlink(missing_ok=True)
+                sidecar.unlink(missing_ok=True)
+            raise
+        except OSError as exc:
+            if published:
+                target.unlink(missing_ok=True)
+                sidecar.unlink(missing_ok=True)
+            raise BackupError(f"copying {newest} to {dest} failed: {exc}") from exc
+        finally:
+            part.unlink(missing_ok=True)
+            sidecar_part.unlink(missing_ok=True)
 
-    print(f"copied {newest} -> {target} ({size} bytes, sha256 {digest})")
-    print(f"integrity_check ok; user_version {facts['user_version']}; "
-          + "; ".join(f"{t} rows {facts[t]}" for t in HISTORY_TABLES))
-    # The app may have written a newer backup while this one copied (Store.backup runs on its own
-    # timer). The copy above is still a verified backup; the newer one ships on the next run, and
-    # the log says so rather than looping here (review of B1).
-    try:
-        later = newest_backup(source)
-    except BackupError:
-        later = newest
-    if later.name != newest.name:
-        print(f"note: {later.name} landed during the copy; it ships on the next run")
+        print(f"copied {newest} -> {target} ({size} bytes, sha256 {digest})")
+        print(f"integrity_check ok; user_version {facts['user_version']}; "
+              + "; ".join(f"{t} rows {facts[t]}" for t in HISTORY_TABLES))
+        try:
+            later = newest_backup(source)
+        except BackupError:
+            later = newest
+        if later.name == newest.name:
+            break
+        if attempt < REPICK_ATTEMPTS:
+            print(f"note: {later.name} landed during the copy; shipping it too (attempt {attempt + 1})")
+        else:
+            print(f"note: {later.name} landed during the copy; it ships on the next run")
+
     removed = prune(dest, keep)
     print(f"pruned {removed} older cop{'y' if removed == 1 else 'ies'} (keep={keep})")
     return 0
@@ -210,7 +256,9 @@ def check(path: Path) -> int:
     print(f"{path}: integrity_check ok")
     print(f"sha256 {digest}")
     if sidecar.exists():
-        expected = sidecar.read_text().split()[0]
+        expected = sidecar_expected(sidecar, path.name)
+        if expected is None:
+            raise BackupError(f"{path}: sidecar {sidecar} is empty or malformed")
         if expected != digest:
             raise BackupError(f"{path}: sha256 {digest} does not match sidecar {expected}")
         print("sidecar matches")
