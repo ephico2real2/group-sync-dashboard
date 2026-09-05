@@ -281,6 +281,18 @@ class TestPollerPrune:
         poller._after_poll(CLUSTER)
         assert signals.snapshot()["retention"]["membership_event"] == HISTORY_PRUNE_BATCH + 7
 
+    def test_an_exact_full_batch_does_not_claim_more_remain(self, recording, tmp_path, caplog):
+        """Exactly one batch of eligible rows: the log said "more remain" when nothing did (review, PR #73)."""
+        _seed(recording, "membership_event", HISTORY_PRUNE_BATCH, days_ago=800)
+        poller = Poller(recording, _settings(tmp_path, membership_events_retention_days=365,
+                                              sync_events_retention_days=0))
+        poller._backup_state = "ok"
+        caplog.set_level("INFO", logger="gsd.poller")
+        poller._prune_history(CLUSTER)
+        assert _count(recording, "membership_event") == 0
+        assert "more remain; continuing next cycle)" not in caplog.text.replace("may remain", "")
+        assert "batch limit reached; more may remain" in caplog.text
+
     def test_the_metric_family_declares_both_tables(self):
         assert {"membership_event", "sync_event"} <= set(RETENTION_TABLES)
 

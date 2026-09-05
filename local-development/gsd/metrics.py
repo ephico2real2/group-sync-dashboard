@@ -520,9 +520,11 @@ class DashboardCollector:
         retention = CounterMetricFamily(
             "gsd_retention_rows_deleted_total",
             "Rows removed by retention, by table. login_event, membership_event and "
-            "sync_event deletes are bounded at 5000/cycle, so a rate pinned at that ceiling "
-            "means the backlog is not draining; membership_event and sync_event prune only "
-            "after a successful backup in the leader's life. Per replica (leader): sum().",
+            "sync_event deletes are bounded at 5000/cycle; a full-batch increase is "
+            "consistent with a backlog but one batch cannot distinguish rows still remaining "
+            "from exactly 5000 eligible rows — a rate pinned at the ceiling over several "
+            "cycles is the backlog signal. membership_event and sync_event prune only after a "
+            "successful backup in the leader's life. Per replica (leader): sum().",
             labels=["table"],
         )
         backup_failures = CounterMetricFamily(

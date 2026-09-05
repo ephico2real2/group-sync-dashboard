@@ -48,6 +48,18 @@ destructive call costs nothing. **Applied**, with Codex's losing-elector test.
 Nothing outright. Codex's C3 variant (an optional `retained` argument keeping the helper's own read for other handlers)
 was not taken: one shape, the read always at the call site, is what the guard can count everywhere.
 
+## Second pass, on the fixed head, with the same models
+
+| Finding | Cursor | Codex | Decision |
+|---|---|---|---|
+| The four first-pass fixes close their holes | CONFIRMED ×4 | CONFIRMED ×4 (Store probes) | — |
+| A `membershipEventsDays` window shorter than the cliff's `windowHours` blinds `GroupSyncGroupCountCliff` | PLAUSIBLE → derive | REFUTED → refuse | **Accepted as DERIVE**: the membership cutoff is the earlier of the two edges; refuse rejected (documented, bounded, and it would break a legal config on upgrade) |
+| A person whose only rows were pruned is a 404 the page cannot explain | REFUTED → document, honest empty states, keep the 404 | REFUTED → 200 with a flag | **Accepted Cursor's**: a 200 for any name while a window is on is a username oracle; empty states say "cut", README says what a window costs |
+| A degraded cluster's history is pruned like a healthy one's | CONFIRMED (not a gate) | REFUTED → hold it | **Rejected**: age-based retention does not depend on reachability; the backup hold is the safety |
+| An exactly-full batch logs "more remain"; HELP infers backlog from one batch | CONFIRMED (a pinned rate is the signal) | REFUTED | **Accepted as wording**: log and HELP say what one batch can and cannot show |
+| The version test does not hold the CHANGELOG heading to the pair | CONFIRMED (files agree) | REFUTED | **Accepted**: a new test in `test_chart_versions.py` |
+| Release pair 0.13.0 / 0.12.0 everywhere | CONFIRMED | CONFIRMED | — |
+
 ## Live, on CRC (measured here)
 
 `/api/version` 0.13.0; `membership-changes` → `{window_days: 0, retained_since: 2026-08-02T04:00:33Z}`; the CR events

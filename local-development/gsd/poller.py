@@ -626,9 +626,11 @@ class Poller:
                 if removed:
                     if self.signals is not None:
                         self.signals.note_retention(table, removed)
+                    # A full batch cannot tell "more remain" from "exactly the batch was
+                    # eligible"; say what is known (found in review, PR #73).
                     log.info("%s: pruned %d %s row(s) older than %s%s", cluster.name, removed,
                              table, before,
-                             " (more remain; continuing next cycle)"
+                             " (batch limit reached; more may remain; continuing next cycle)"
                              if removed >= HISTORY_PRUNE_BATCH else "")
         except Exception:  # noqa: BLE001 - retention must never stop the poll
             log.exception("%s: retention prune failed; the poll continues", cluster.name)
