@@ -543,6 +543,24 @@ logLevel: INFO
 # UTC — a New York label over UTC times.
 timezone: "America/New_York"
 
+# ---------------------------------------------------------------------------
+# Dashboard UI modules
+# ---------------------------------------------------------------------------
+# Each optional module has its own switch. The default is chosen per module — on when it is
+# cheap, safe and needs nothing extra; off when it needs a grant, another image, or is a
+# policy the platform team should choose — and the comment on each says which.
+ui:
+  export:
+    # CSV and JSON download of the table on screen: Users, Groups, Access granted, Namespace
+    # audit and Logins. Built IN THE BROWSER from the rows the server already served this
+    # reader, after the page's own filter and sort, so it can never contain a row the reader's
+    # tier withheld; it makes no request and needs no grant, which is why it defaults ON. The
+    # file names the cluster, tab, tier and UTC time, and says when the page was a cut of a
+    # larger set (`_partial` in the name, `truncated` in the JSON) so a spreadsheet never implies
+    # completeness. Exports are not recorded: the Usage tab counts interactions per day, not
+    # actions (docs/DESIGN_export.md). Set false to keep the control off the page.
+    enabled: true
+
 # Clusters to observe. The default observes the cluster the pod runs on, using its own
 # projected ServiceAccount token — which kubelet rotates and the app re-reads every poll, so
 # there is no long-lived credential to mint or expire.

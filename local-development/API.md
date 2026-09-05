@@ -702,7 +702,7 @@ stale by definition and would report yesterday's state as today's.
 |---|---|
 | `GET /healthz` | liveness. Unconditional |
 | `GET /readyz` | readiness. **Not** gated on a reachable cluster — an unreachable cluster is a thing this dashboard exists to display, so failing readiness for one would take it down exactly when it has something to report |
-| `GET /api/version` | `{version, commit, branch, dirty, timezone}` from the build stamp. `dirty: true` means no commit reproduces the running image. `timezone` is `{name, abbrev, utc_offset}` for the **container**, which the browser needs because it can only discover its own |
+| `GET /api/version` | `{version, commit, branch, dirty, features, timezone}` from the build stamp. `features` names the optional modules switched on for this deployment (`export`); the page renders a control only where its flag is `true`. `dirty: true` means no commit reproduces the running image. `timezone` is `{name, abbrev, utc_offset}` for the **container**, which the browser needs because it can only discover its own |
 | `GET /metrics` | Prometheus exposition. Unauthenticated so a ServiceMonitor can scrape it, which is why it emits counts and states only — never a group or user name |
 | `GET /signed-out` | the proxy's `-logout-url` landing page. Static, script-free, unauthenticated (it renders at the exact moment the cookie died), and worded to be true whether or not the revocation above happened |
 | `GET /static/index.html`, `GET /static/signed-out.html` | the same two pages, rendered. The `/static` mount would otherwise serve the source files with the dashboard's name unfilled, so these routes shadow them. Not in the OpenAPI schema |

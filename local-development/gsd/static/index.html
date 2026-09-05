@@ -795,6 +795,7 @@ function renderFilters() {
         <option value="unattributed"${view.groupFilter === "unattributed" ? " selected" : ""}>unattributed</option>
       </select>`;
   }
+  html += exportControlHtml();
   // aria-current, not just a class: it is what tells a screen reader which section is
   // open. The visual bar and the bolder label are the sighted half of the same signal.
   //
@@ -866,6 +867,10 @@ function renderFilters() {
   // reason the namespace picker refetches.
   const of = $("f-outcome");
   if (of) of.onchange = (e) => { view.loginOutcome = e.target.value; refresh(); };
+  const ec = $("export-csv");
+  if (ec) ec.onclick = () => runExport("csv");
+  const ej = $("export-json");
+  if (ej) ej.onclick = () => runExport("json");
   if (restore) {
     const el = $(restore.id);
     if (el) {
@@ -1162,6 +1167,12 @@ function matchesSearch(fields, query) {
   return terms.every((t) => haystack.includes(t));
 }
 
+/* The Groups tab's row selection, shared with the export for the same reason as usersMatched. */
+function groupsMatched() {
+  const all = data.groups || [];
+  return { all, rows: all.filter((g) => matchesSearch([g.name], view.groupSearch)) };
+}
+
 function groupsPage() {
   // null = not fetched for this cluster yet (first visit, or a cluster switch dropped it).
   // Same Loading state as every other tab; [] is a real answer and falls through.
@@ -1175,7 +1186,7 @@ function groupsPage() {
   // guess — the search-box scar, applied to a security label.
   const meta = data.groupsMeta || {};
   const self = meta.scope === "self";
-  const rows = all.filter((g) => matchesSearch([g.name], view.groupSearch));
+  const rows = groupsMatched().rows;
   const searching = (view.groupSearch || "").trim().length > 0;
   const note = {
     empty: "Zero members, so the group grants nobody. On an operator-synced group that usually means an LDAP-side problem — a member DN that does not resolve. Includes hand-made groups, which also appear under unattributed.",
@@ -1239,24 +1250,12 @@ const USERS_FETCH = 10000;
    typing more of their name, and the cap is stated on the page whenever it bites. */
 const USERS_RENDER = 1000;
 
-function usersPage() {
-  const d = data.users;
-  if (!d) return `<section class="card"><div class="empty-note">Loading…</div></section>`;
-  // The endpoint refuses a reader with no verified identity (proxy on, no header): there is no
-  // "own row" to scope to. Named, like every other refusal, never rendered as an empty cluster.
-  if (d.forbidden) {
-    return refusalCard("Users", `Every row here is a person who has logged in to this cluster, so
-      the list needs an authenticated identity to scope to.`, false);
-  }
+/* The Users tab's row selection — chips, then the free-text box — written once so the table and
+   the export (docs/DESIGN_export.md) read the same rows. Only the PAINT is capped (USERS_RENDER);
+   this returns every match, which is what an export must carry. */
+function usersMatched(d) {
   const all = d.users || [];
-  const self = d.scope === "self";
-  const never = { count: (d.never_logged_in_members || {}).count || 0,
-                  names: Array.isArray((d.never_logged_in_members || {}).names) ? d.never_logged_in_members.names : [] };
   const provs = (u) => Array.isArray(u.providers) ? u.providers : [];
-  const captureOn = d.login_capture !== "off";
-  // Chips: a whole-row predicate; the search box narrows further. Provider chips come from the
-  // rows themselves, so a cluster with one identity provider shows one.
-  const providers = [...new Set(all.flatMap(provs))].sort();
   const chip = view.userFilter || "all";
   const byChip = (u) => chip === "all" ? true
     : chip === "grouped" ? (u.group_count || 0) > 0
@@ -1266,6 +1265,29 @@ function usersPage() {
   // Both fields, so a reader who knows only the display name still finds the id — which is what
   // they need next, because the id is what `oc` and the group members answer to.
   const matched = all.filter((u) => byChip(u) && matchesSearch([u.user_name, u.full_name], view.userSearch));
+  return { all, matched, provs, chip };
+}
+
+function usersPage() {
+  const d = data.users;
+  if (!d) return `<section class="card"><div class="empty-note">Loading…</div></section>`;
+  // The endpoint refuses a reader with no verified identity (proxy on, no header): there is no
+  // "own row" to scope to. Named, like every other refusal, never rendered as an empty cluster.
+  if (d.forbidden) {
+    return refusalCard("Users", `Every row here is a person who has logged in to this cluster, so
+      the list needs an authenticated identity to scope to.`, false);
+  }
+  // The row selection is SHARED with the export (usersMatched): the table and the file it
+  // downloads read one function, so they cannot disagree about which rows match. Only the PAINT
+  // below is capped at USERS_RENDER; the export carries every match, and its note says so.
+  const { all, matched, provs, chip } = usersMatched(d);
+  const self = d.scope === "self";
+  const never = { count: (d.never_logged_in_members || {}).count || 0,
+                  names: Array.isArray((d.never_logged_in_members || {}).names) ? d.never_logged_in_members.names : [] };
+  const captureOn = d.login_capture !== "off";
+  // Chips: a whole-row predicate; the search box narrows further. Provider chips come from the
+  // rows themselves, so a cluster with one identity provider shows one.
+  const providers = [...new Set(all.flatMap(provs))].sort();
   const rows = matched.slice(0, USERS_RENDER);
   const searching = (view.userSearch || "").trim().length > 0;
   const q = (view.userSearch || "").trim();
@@ -2319,6 +2341,31 @@ function bindingMatches(r, q) {
   return matchesSearch([r.group_name, r.role_name, r.binding_namespace, r.binding_name], q);
 }
 
+/* Which binding rows the Access granted tab paints: every tier filtered by the Find box, and the
+   tiers the "Show" filter admits, in the order the page lays them out. Shared with the export. */
+const BINDING_TIERS = ["ok", "dangling", "unresolved", "built_in", "unmanaged"];
+function bindingsVisible(raw) {
+  const q = view.bindingSearch || "";
+  const f = Object.fromEntries(BINDING_TIERS.map((t) =>
+    [t, (raw[t] || []).filter((r) => bindingMatches(r, q))]));
+  // Which tiers the selected filter paints — the search note's denominator, so it never
+  // counts a match the reader cannot see (Built-in is hidden on the default view).
+  const visible = ({ review: ["dangling", "unresolved", "unmanaged", "ok"], ok: ["ok"],
+                     built_in: ["built_in"], unmanaged: ["unmanaged"] })[view.bindingFilter]
+                  || ["dangling", "unresolved", "unmanaged", "ok", "built_in"];
+  return { f, visible };
+}
+
+/* One sort for the binding table and its export. Rows with no Group object have nothing to say
+   in Reaches; whichever way the column is sorted they go last, so a descending sort still starts
+   with the biggest real group. */
+function sortedBindings(rows) {
+  const key = view.bindingSort, dir = view.bindingDir;
+  let sorted = sortBy(rows, BIND_SORT[key] || BIND_SORT.group, dir);
+  if (key === "reaches") sorted = sorted.filter((r) => r.member_count != null).concat(sorted.filter((r) => r.member_count == null));
+  return sorted;
+}
+
 function bindingsPage() {
   // The tier is unknown until whoami answers — and unknown again if a later whoami fails.
   // Neither the cached wide payload nor the cached own path is truthful then, so this fails
@@ -2345,14 +2392,8 @@ function bindingsPage() {
   // `raw` keeps the whole-cluster counts for the header, which the search must not move.
   const q = view.bindingSearch || "";
   const searching = q.trim().length > 0;
-  const f = raw && !raw.forbidden ? Object.fromEntries(
-    ["ok", "dangling", "unresolved", "built_in", "unmanaged"].map((t) =>
-      [t, (raw[t] || []).filter((r) => bindingMatches(r, q))])) : null;
-  // Which tiers the selected filter paints — the search note's denominator, so it never
-  // counts a match the reader cannot see (Built-in is hidden on the default view).
-  const visible = ({ review: ["dangling", "unresolved", "unmanaged", "ok"], ok: ["ok"],
-                     built_in: ["built_in"], unmanaged: ["unmanaged"] })[view.bindingFilter]
-                  || ["dangling", "unresolved", "unmanaged", "ok", "built_in"];
+  // The filtered tiers and which of them this filter paints, shared with the export.
+  const { f, visible } = raw && !raw.forbidden ? bindingsVisible(raw) : { f: null, visible: [] };
   const d = raw;
   // A DESIGNED 403 (the binding surface is the administrator tier), phrased — never the
   // generic error card, and never a blank that reads as a healthy cluster.
@@ -2513,10 +2554,7 @@ function groupNameCell(r) {
 
 function bindingTable(rows) {
   const key = view.bindingSort, dir = view.bindingDir;
-  let sorted = sortBy(rows, BIND_SORT[key] || BIND_SORT.group, dir);
-  // Rows with no Group object have nothing to say in Reaches; whichever way the column is
-  // sorted they go last, so a descending sort still starts with the biggest real group.
-  if (key === "reaches") sorted = sorted.filter((r) => r.member_count != null).concat(sorted.filter((r) => r.member_count == null));
+  const sorted = sortedBindings(rows);
   const th = (label, k, extra) => sortableTh(label, k, key, dir, "bind", extra);
   return `<div class="scroll-x"><table>
       <thead><tr>${th("Group named by the binding", "group")}
@@ -2660,6 +2698,19 @@ function whoCell(row) {
 const PRIVILEGE_NAME = { 4: "cluster-admin", 3: "admin", 2: "edit", 1: "view" };
 const PRIVILEGE_RANK = { "cluster-admin": 4, admin: 3, edit: 2, view: 1 };
 
+/* The flat grant list's sort, at module scope so the table and its export share it. */
+const GRANT_SORT = {
+  person: (b) => b.user_name,
+  // Sort the ROLE by privilege, not alphabetically: "admin" < "edit" < "view" as text
+  // puts the dangerous grants in the middle, which is the opposite of useful.
+  risk: (b) => (PRIVILEGE_RANK[b.role_name] || 0) * 10 + (b.binding_namespace ? 0 : 1),
+  scope: (b) => b.binding_namespace || "",
+  binding: (b) => b.binding_name,
+};
+function grantsSorted(ub) {
+  return sortBy(ub.bindings || [], GRANT_SORT[view.nsGrantSort] || GRANT_SORT.risk, view.nsGrantDir);
+}
+
 /* How many grants the detail list asks for. Not a display cap — the server applies it, so
    the rows never cross the wire. 200 is well past what anyone reads in one sitting and
    still small enough to render instantly; the server orders worst-first before limiting,
@@ -2691,6 +2742,240 @@ function sortBy(rows, keyFn, dir) {
    focusable and not announced as actionable, so header sorting becomes mouse-only. The
    arrow is text rather than a glyph so it survives forced-colors, and aria-sort tells a
    screen reader which column is ordering the table and in which direction. */
+/* ── Export: what was served, and nothing more (docs/DESIGN_export.md) ────────────────────
+   The file is built HERE, from `data` — the rows the server served THIS reader at THEIR tier —
+   after the page's own filter and sort, read through the same selection functions the tables
+   paint from. It makes no request: a server-side export would have to re-implement six
+   handlers' scoping and six pages' filters, and could export a set the reader never saw.
+   Columns are an explicit projection per tab: the cells the table paints plus the classification
+   inputs the page renders as labels rather than cells (managed_source and exception behind the
+   finding label, is_platform behind the platform toggle); no other payload field is written. */
+const EXPORT_COLUMNS = {
+  users: ["user_name", "full_name", "logged_in", "first_login_at", "providers", "group_count",
+          "last_login_at", "first_seen_at"],
+  groups: ["name", "member_count", "sync_provider", "group_synced_at", "ldap_uid"],
+  bindings: ["finding", "group_name", "member_count", "logged_in_count", "role_kind", "role_name",
+             "binding_kind", "binding_namespace", "binding_name", "managed_source", "exception"],
+  myaccess: ["via_group", "role_kind", "role_name", "binding_kind", "binding_namespace", "binding_name"],
+  nsaudit: ["user_name", "role_kind", "role_name", "binding_kind", "binding_namespace", "binding_name",
+            "is_platform"],
+  logins: ["at", "user_name", "full_name", "outcome", "provider", "ldap_result_code", "detail",
+           "pod_name", "known_user", "has_history", "in_access_group", "refusal_reason", "break_glass"],
+};
+
+function exportEnabled() {
+  const v = data.version;
+  return !!(v && v.features && v.features.export === true);
+}
+
+/* The table the current page holds, or null when the page has no exportable table (a drill-down,
+   a refusal, a Loading state). `served` is how many rows the server sent; `total` the whole set
+   it described (R3), or null when the endpoint does not page. rows < total is what "partial"
+   means, and the note, the filename and the JSON all say it. */
+function exportDescriptor() {
+  if (!view.cluster) return null;
+  const num = (x) => (typeof x === "number" ? x : null);
+  if (view.page === "users" && !view.user) {
+    const d = data.users;
+    if (!d || d.forbidden) return null;
+    return { tab: "users", columns: EXPORT_COLUMNS.users, rows: usersMatched(d).matched,
+             served: (d.users || []).length, total: num(d.total), scope: d.scope || null,
+             viewer: d.viewer || null,
+             filter: { search: view.userSearch || "", chip: view.userFilter || "all" },
+             sort: { key: "user_name", dir: "asc" } };
+  }
+  if (view.page === "groups" && !view.group && !view.user) {
+    if (!data.groups) return null;
+    const meta = data.groupsMeta || {};
+    const { all, rows } = groupsMatched();
+    return { tab: "groups", columns: EXPORT_COLUMNS.groups, rows, served: all.length, total: null,
+             scope: meta.scope || null, viewer: meta.viewer || null,
+             filter: { search: view.groupSearch || "", state: view.groupFilter },
+             sort: { key: "name", dir: "asc" } };
+  }
+  if (view.page === "bindings") {
+    // The same fail-closed as bindingsPage: an unknown tier (whoami failed this cycle) paints
+    // Loading and must not offer the previous cycle's findings as a download either — the
+    // follow-up that nulls data.findings only runs when a NEW whoami is narrowed (review, C1).
+    if (!readerTierKnown()) return null;
+    if (narrowedReader()) {
+      const m = data.myAccess;
+      if (!m) return null;
+      // The rows come in the server's order (binding kind, namespace, name) and the page does
+      // not re-sort them, so the envelope says that rather than claiming a name sort.
+      return { tab: "access-granted", columns: EXPORT_COLUMNS.myaccess, rows: m.bindings || [],
+               served: (m.bindings || []).length, total: null, scope: "self", viewer: m.viewer || null,
+               filter: {}, sort: { key: "binding_kind,binding_namespace,binding_name", dir: "asc" } };
+    }
+    const raw = data.findings;
+    if (!raw || raw.forbidden) return null;
+    const { f, visible } = bindingsVisible(raw);
+    return { tab: "access-granted", columns: EXPORT_COLUMNS.bindings,
+             rows: visible.flatMap((t) => sortedBindings(f[t])),
+             served: BINDING_TIERS.reduce((n, t) => n + (raw[t] || []).length, 0),
+             total: num(raw.total), scope: raw.scope || "all", viewer: raw.viewer || null,
+             filter: { search: view.bindingSearch || "", show: view.bindingFilter },
+             // Section then column, as the page lays it out: naming only the column sort would
+             // claim a global order the concatenated rows do not have (review, C1 pass 2).
+             sort: { key: "finding," + view.bindingSort, dir: view.bindingDir } };
+  }
+  if (view.page === "nsaudit") {
+    const ub = data.userBindings;
+    if (!ub || ub.forbidden) return null;
+    // A narrowed reader's rows are painted as the store serves them (cluster-admin first,
+    // cluster-scoped first, then namespace and user); only the wide view re-sorts client-side,
+    // so the envelope names the order that actually applied (review, C1).
+    const self = ub.scope === "self";
+    return { tab: "namespace-audit", columns: EXPORT_COLUMNS.nsaudit,
+             rows: self ? (ub.bindings || []) : grantsSorted(ub),
+             served: (ub.bindings || []).length, total: num(ub.total), scope: ub.scope || null,
+             viewer: ub.viewer || null, filter: { namespace: view.nsNamespace },
+             sort: self ? { key: "cluster_admin_first,cluster_scope_first,binding_namespace,user_name", dir: "asc" }
+                        : { key: view.nsGrantSort, dir: view.nsGrantDir } };
+  }
+  if (view.page === "logins") {
+    const d = data.logins;
+    if (!d || !d.enabled) return null;
+    const rows = d.attempts || [];
+    return { tab: "logins", columns: EXPORT_COLUMNS.logins, rows, served: rows.length,
+             total: num(d.total), scope: d.scope || null, viewer: d.viewer || null,
+             filter: { outcome: view.loginOutcome }, sort: { key: "at", dir: "desc" } };
+  }
+  return null;
+}
+
+function exportIsPartial(desc) {
+  return desc.total !== null && desc.served < desc.total;
+}
+
+/* RFC 4180: a field is quoted when it holds a quote, a comma or a line break, quotes are
+   doubled, records end in CRLF. Arrays (providers) join with "; " — a semicolon can never be
+   the delimiter of this file, so it is unambiguous. A string that a spreadsheet would EVALUATE
+   (leading = + - @ tab CR) is prefixed with an apostrophe so it stays text: directory-supplied
+   names are hostile input for HTML on this page (esc) and they are the same input here. Numbers
+   and booleans are never touched. */
+const CSV_BOM = "\ufeff";
+function csvField(value) {
+  if (value === null || value === undefined) return "";
+  if (Array.isArray(value)) value = value.join("; ");
+  if (typeof value === "boolean") return value ? "true" : "false";
+  if (typeof value === "number") return String(value);
+  let s = String(value);
+  // Tested after any leading whitespace: an importer that trims before it decides would treat
+  // " =cmd" like "=cmd". The initiators are OWASP's — = + - @, tab, CR, LF — plus their
+  // full-width forms (U+FF1D, U+FF0B, U+FF0D, U+FF20), which some locales' spreadsheets
+  // evaluate too (review, C1). The cell keeps its original text; this only decides the prefix.
+  if (/^[\t\r\n ]*[=+\-@\t\r\n\uFF1D\uFF0B\uFF0D\uFF20]/u.test(s)) s = "'" + s;
+  if (/[",\r\n]/.test(s)) s = '"' + s.replace(/"/g, '""') + '"';
+  return s;
+}
+/* The BOM is deliberate for CSV and absent from JSON (RFC 8259 §8.1): a spreadsheet opened from
+   a double-click reads BOM-less UTF-8 as the local code page and mangles a non-ASCII display
+   name, while every programmatic reader accepts utf-8-sig. */
+function toCsv(columns, rows) {
+  const lines = [columns.map(csvField).join(",")];
+  for (const r of rows) lines.push(columns.map((c) => csvField(r[c])).join(","));
+  return CSV_BOM + lines.join("\r\n") + "\r\n";
+}
+
+/* gsd_<cluster>_<tab>[_self][_partial]_<UTC stamp>.<ext>. The cluster id is URL-safe already
+   (config.py refuses a slash) and is reduced to a filename-safe alphabet here anyway. It is also
+   bounded: config.py accepts a long cluster id, filesystems cap a name at 255 bytes, so a part
+   longer than 120 characters is cut and given an FNV-1a suffix of the original, which keeps two
+   ids that share a prefix distinct (review of C1, second pass). */
+function safeFilenamePart(value, maxLength = 120) {
+  const raw = String(value || "");
+  const safe = raw.replace(/[^A-Za-z0-9._-]+/g, "_");
+  if (safe.length <= maxLength) return safe;
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < raw.length; i += 1) {
+    hash ^= raw.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  const suffix = hash.toString(16).padStart(8, "0");
+  return `${safe.slice(0, maxLength - suffix.length - 1)}_${suffix}`;
+}
+function exportFilename(desc, ext) {
+  const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+  return `gsd_${safeFilenamePart(view.cluster)}_${safeFilenamePart(desc.tab, 48)}${desc.scope === "self" ? "_self" : ""}`
+    + `${exportIsPartial(desc) ? "_partial" : ""}_${stamp}.${ext}`;
+}
+
+/* A Blob and an <a download>: no server round trip, no new window. Revoking the object URL on
+   the click's own turn cancels the download in Firefox, and a timer can fire while a save dialog
+   is still open, so the URL lives until the next export replaces it. */
+function downloadBlob(text, filename, type) {
+  // The previous export's URL is released here, not on a timer: a browser set to ask where to
+  // save can keep its dialog open past any timer, and revoking then loses the file. One object
+  // URL per page lifetime is the cost; unload releases the last one (review, C1).
+  if (downloadBlob.previous) URL.revokeObjectURL(downloadBlob.previous);
+  const blob = new Blob([text], { type });
+  const url = URL.createObjectURL(blob);
+  downloadBlob.previous = url;
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.rel = "noopener";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+function runExport(format) {
+  const desc = exportDescriptor();
+  if (!desc) return;
+  const partial = exportIsPartial(desc);
+  // A projection into NEW objects: exactly the declared columns, absent keys as null.
+  const rows = desc.rows.map((r) => Object.fromEntries(
+    desc.columns.map((c) => [c, r[c] === undefined ? null : r[c]])));
+  if (format === "csv") {
+    downloadBlob(toCsv(desc.columns, rows), exportFilename(desc, "csv"), "text/csv;charset=utf-8");
+    return;
+  }
+  const v = data.version || {};
+  const doc = {
+    exported_at: new Date().toISOString(),
+    dashboard: { version: v.version || null, commit: v.commit || null },
+    cluster: view.cluster,
+    tab: desc.tab,
+    scope: desc.scope,
+    viewer: desc.viewer,
+    filter: desc.filter,
+    sort: desc.sort,
+    count: rows.length,
+    served: desc.served,
+    total: desc.total,
+    truncated: partial,
+    note: partial
+      ? `partial: the page held ${desc.served} of ${desc.total} rows the server described; `
+        + `rows past the page were never loaded and are not here`
+      : "every row the server served for this view, after the page's own filter and sort",
+    columns: desc.columns,
+    rows,
+  };
+  downloadBlob(JSON.stringify(doc, null, 2), exportFilename(desc, "json"), "application/json");
+}
+
+/* The filter-bar control. Rendered by renderFilters when the module is on and the page holds an
+   exportable table; the note states the row count and wears the truncation edge when the page
+   is partial, so "partial" is read before the download rather than discovered after it. */
+function exportControlHtml() {
+  if (!exportEnabled()) return "";
+  const desc = exportDescriptor();
+  if (!desc) return "";
+  const partial = exportIsPartial(desc);
+  const n = desc.rows.length;
+  const help = "Downloads exactly the rows this page holds, after the filter and sort — never more than the server served you.";
+  return `<span class="export" role="group" aria-label="Export this table">
+      <span class="export-label" id="export-label">Export</span>
+      <button type="button" id="export-csv" title="${esc(help)}" aria-describedby="export-note">CSV</button>
+      <button type="button" id="export-json" title="${esc(help)}" aria-describedby="export-note">JSON</button>
+      <span id="export-note" class="export-note${partial ? " partial" : ""}">${partial
+        ? `${n} row${n === 1 ? "" : "s"} · partial: ${desc.served} of ${desc.total} loaded`
+        : `${n} row${n === 1 ? "" : "s"}`}</span>
+    </span>`;
+}
+
 function sortableTh(label, key, activeKey, dir, group, extraClass) {
   const active = key === activeKey;
   const next = active && dir === "desc" ? "asc" : "desc";
@@ -2736,17 +3021,8 @@ function directUserGrants(ub) {
     people: (r) => r.distinct_users || 0,
     grants: (r) => r.bindings || 0,
   };
-  const GRANT_SORT = {
-    person: (b) => b.user_name,
-    // Sort the ROLE by privilege, not alphabetically: "admin" < "edit" < "view" as text
-    // puts the dangerous grants in the middle, which is the opposite of useful.
-    risk: (b) => (PRIVILEGE_RANK[b.role_name] || 0) * 10 + (b.binding_namespace ? 0 : 1),
-    scope: (b) => b.binding_namespace || "",
-    binding: (b) => b.binding_name,
-  };
   const sorted = sortBy(rows, NS_SORT[view.nsSort] || NS_SORT.risk, view.nsDir);
-  const sortedGrants = sortBy(
-    bindings, GRANT_SORT[view.nsGrantSort] || GRANT_SORT.risk, view.nsGrantDir);
+  const sortedGrants = grantsSorted(ub);
 
   if (!rows.length) {
     return `<section class="card">

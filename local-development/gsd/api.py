@@ -1910,13 +1910,26 @@ def build_app(
             "activity": rows,
         }
 
+    def feature_flags() -> dict:
+        """Which optional modules this deployment switched on, for the page to show or hide.
+
+        The page reads this ONCE at boot beside `timezone`, exactly as it learns the display
+        zone: a fact about the deployment, not about the reader. A module absent from this
+        dict on an older build renders nothing — every check on the page is `=== true`.
+        Session-shaped modules (the idle timeout) ride /api/whoami's `session` instead,
+        because they only exist when there is a session.
+        """
+        return {"export": settings.ui_export_enabled}
+
     @app.get("/api/version")
     def version() -> dict:
         """What is actually running, provable back to a commit.
 
         Stamped into the image at build time. `dirty: true` means the build included
         uncommitted changes, so no commit reproduces it — which is the honest answer when
-        someone asks "is my fix in there?".
+        someone asks "is my fix in there?". `features` names the optional modules switched on
+        for this deployment (docs/DESIGN_export.md), so the page renders a control only where
+        the operator enabled it.
         """
         commit = os.environ.get("GSD_GIT_COMMIT", "unknown")
         # The timezone the CONTAINER is running in, so the browser can render timestamps in
@@ -1934,6 +1947,7 @@ def build_app(
             "commit": commit,
             "branch": os.environ.get("GSD_GIT_BRANCH", "unknown"),
             "dirty": commit.endswith("-dirty"),
+            "features": feature_flags(),
             "timezone": {
                 # None when TZ is unset: the browser then falls back to UTC rather than
                 # guessing, because a wrong zone is worse than an explicit one.

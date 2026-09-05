@@ -8,6 +8,19 @@ lives next to the code and in the design and review records linked here. Changes
 last release sit under `## Unreleased` until the release that carries them replaces that heading —
 which `local-development/prepare-release.py` does when the release is cut.
 
+## Application 0.14.0 — chart 0.15.0 — 2026-09-05
+
+- **CSV and JSON export on every table.** Users, Groups, Access granted, Namespace audit and
+  Logins gain Export buttons in the filter bar. The file is built in the browser from the rows the
+  server served this reader — after the page's own filter and sort, at the reader's own tier — so it
+  can never hold a row the tier withheld. RFC 4180 with a UTF-8 BOM (spreadsheets), JSON without one
+  (RFC 8259), a formula-looking cell prefixed with an apostrophe, the file named for the cluster, tab,
+  tier and UTC time, and `_partial` in the name plus `truncated` in the JSON when the page was a cut
+  of a larger set. Not recorded in Usage: an export makes no request, and the activity table counts
+  interactions per day, not actions. `/api/version` gains `features`. (design `DESIGN_export.md`,
+  spec `docs/specs/SPEC_C1_table_export.md`)
+- **Chart:** `ui.export.enabled` (default true) → `uiExportEnabled`.
+
 ## Chart 0.14.0 — application 0.13.0 — 2026-09-05
 
 - **Every switch is on by default unless it costs something the chart cannot grant.** The

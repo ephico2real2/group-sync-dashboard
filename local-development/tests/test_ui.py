@@ -1668,6 +1668,9 @@ def quiet_server(tmp_path_factory):
         clusters=[ClusterConfig("crc-local", "https://api.crc.testing:6443", token_env="X")],
         db_path=db,
         login_capture_enabled=False,
+        # The export module OFF, so the shared fixtures can keep the default (on) and the
+        # absent-control state still has a server to assert against.
+        ui_export_enabled=False,
     )
     port = _free_port()
     srv = uvicorn.Server(uvicorn.Config(
@@ -3264,3 +3267,293 @@ class TestGroupCountCliffOnTheOverview:
         labels = {page.locator(".alert-row .badge").nth(i).inner_text().strip()
                   for i in range(page.locator(".alert-row .badge").count())}
         assert labels <= {"critical", "warning"}, "silenced is a tag, not a severity"
+
+
+class TestExport:
+    """CSV/JSON export of the table on screen (docs/DESIGN_export.md).
+
+    The file is built in the browser from `data`, so what these prove is the correspondence:
+    the download holds exactly the rows the table shows, after the filter and sort, says when
+    the page was a cut of a larger set, and never makes a request.
+    """
+
+    def _users(self, dash):
+        dash.locator("button[data-nav='users']").click()
+        dash.wait_for_selector("tr[data-user]")
+        dash.wait_for_selector("#export-csv")
+
+    @staticmethod
+    def _csv_rows(download):
+        import csv
+        import io
+        raw = open(download.path(), "rb").read()
+        assert raw.startswith("\ufeff".encode("utf-8")), "the CSV must carry the UTF-8 BOM"
+        text = raw.decode("utf-8-sig")
+        assert "\r\n" in text, "records end in CRLF (RFC 4180)"
+        return list(csv.reader(io.StringIO(text, newline="")))
+
+    def test_the_control_is_absent_when_the_module_is_off(self, page, quiet_server):
+        page.goto(quiet_server + "#page=users&cluster=crc-local")
+        page.wait_for_selector("tr[data-user]")
+        assert page.locator("#export-csv").count() == 0
+        assert page.evaluate("() => data.version.features.export") is False
+
+    def test_the_buttons_are_real_buttons_in_the_filter_bar_and_keep_focus_across_the_poll(self, dash):
+        self._users(dash)
+        el = dash.locator("#filters #export-csv")
+        assert el.evaluate("el => el.tagName") == "BUTTON"
+        dash.focus("#export-csv")
+        dash.evaluate("() => render()")  # the 60s poll
+        assert dash.evaluate("() => document.activeElement.id") == "export-csv"
+
+    def test_the_csv_holds_the_rows_shown_with_the_declared_columns(self, dash):
+        self._users(dash)
+        with dash.expect_download() as dl:
+            dash.click("#export-csv")
+        rows = self._csv_rows(dl.value)
+        assert rows[0] == ["user_name", "full_name", "logged_in", "first_login_at", "providers",
+                           "group_count", "last_login_at", "first_seen_at"]
+        assert [r[0] for r in rows[1:]] == ["alice", "gatekeeper", "kubeadmin"]
+        assert rows[1][1] == "Alice Cooper" and rows[2][1] == ""
+        import re
+        assert re.fullmatch(r"gsd_crc-local_users_\d{8}T\d{6}Z\.csv", dl.value.suggested_filename)
+
+    def test_the_export_follows_the_filter_and_the_chip(self, dash):
+        self._users(dash)
+        dash.fill("#f-user-search", "gate")
+        dash.wait_for_function("() => view.userSearch === 'gate'")
+        assert "1 row" in dash.locator("#export-note").inner_text()
+        with dash.expect_download() as dl:
+            dash.click("#export-json")
+        import json
+        doc = json.load(open(dl.value.path()))
+        assert [r["user_name"] for r in doc["rows"]] == ["gatekeeper"]
+        assert doc["filter"] == {"search": "gate", "chip": "all"}
+        assert doc["scope"] == "all" and doc["truncated"] is False and doc["count"] == 1
+        assert doc["cluster"] == "crc-local" and doc["tab"] == "users"
+        assert set(doc["rows"][0]) == set(doc["columns"])
+        dash.locator("#f-user-search").press("Escape")
+
+    def test_a_partial_page_is_said_in_the_note_the_filename_and_the_json(self, dash):
+        self._users(dash)
+        dash.evaluate("() => { data.users = Object.assign({}, data.users, { truncated: true, total: 50 }); render(); }")
+        note = dash.locator("#export-note")
+        assert "partial" in note.inner_text() and "3 of 50" in note.inner_text()
+        assert "partial" in (note.get_attribute("class") or "")
+        with dash.expect_download() as dl:
+            dash.click("#export-json")
+        assert "_partial_" in dl.value.suggested_filename
+        import json
+        doc = json.load(open(dl.value.path()))
+        assert doc["truncated"] is True and doc["served"] == 3 and doc["total"] == 50
+        assert "partial" in doc["note"]
+        dash.evaluate("() => refresh()")
+        dash.wait_for_function("() => data.users && data.users.truncated === false")
+
+    def test_the_csv_helper_quotes_per_rfc_4180_and_neutralises_formulas(self, dash):
+        """The helper, exercised directly: the one place quoting lives."""
+        got = dash.evaluate("""() => toCsv(["a", "b"], [
+            { a: "x,y", b: 'he said "hi"' },
+            { a: "line\\nbreak", b: null },
+            { a: "=SUM(1)", b: ["p", "q"] },
+            { a: 3, b: true },
+        ])""")
+        assert got == ("\ufeffa,b\r\n"
+                       '"x,y","he said ""hi"""\r\n'
+                       '"line\nbreak",\r\n'
+                       "'=SUM(1),p; q\r\n"
+                       "3,true\r\n")
+
+    def test_access_granted_exports_the_visible_sections_in_page_order_and_sort(self, dash):
+        dash.locator("button[data-nav='bindings']").click()
+        dash.wait_for_selector("text=grant nobody")
+        dash.wait_for_selector("#export-csv")
+        with dash.expect_download() as dl:
+            dash.click("#export-csv")
+        rows = self._csv_rows(dl.value)
+        assert rows[0][0] == "finding"
+        findings = [r[0] for r in rows[1:]]
+        # The default view paints dangling, unresolved, unmanaged, then granted — never built-in.
+        assert "built_in" not in findings
+        assert findings == sorted(findings, key=["dangling", "unresolved", "unmanaged", "ok"].index)
+        assert dl.value.suggested_filename.startswith("gsd_crc-local_access-granted_")
+
+    def test_a_long_cluster_id_still_produces_a_portable_filename(self, dash):
+        """Review pass 2 (Codex): config.py accepts a 300-character cluster id and NAME_MAX is 255;
+        the name is bounded and two ids sharing a prefix stay distinct."""
+        self._users(dash)
+        names = dash.evaluate("""() => {
+            const desc = exportDescriptor(); const old = view.cluster;
+            try {
+              return ["x".repeat(300) + "a", "x".repeat(300) + "b"].map((c) => { view.cluster = c; return exportFilename(desc, "json"); });
+            } finally { view.cluster = old; }
+        }""")
+        import re
+        for name in names:
+            assert len(name.encode("ascii")) <= 255
+            assert re.fullmatch(r"[A-Za-z0-9._-]+", name)
+        assert names[0] != names[1], "truncation must not collide cluster ids that share a prefix"
+
+    def test_wide_access_json_names_section_then_column_sort(self, dash):
+        """Review pass 2 (Cursor): the file is dangling, unresolved, unmanaged, ok — each sorted by the
+        column — so the envelope must not claim a global column sort."""
+        dash.locator("button[data-nav='bindings']").click()
+        dash.wait_for_selector("text=grant nobody")
+        dash.wait_for_selector("#export-json")
+        with dash.expect_download() as dl:
+            dash.click("#export-json")
+        import json
+        doc = json.load(open(dl.value.path()))
+        assert doc["sort"] == {"key": "finding,group", "dir": "asc"}
+        findings = [r["finding"] for r in doc["rows"]]
+        assert findings == sorted(findings, key=["dangling", "unresolved", "unmanaged", "ok"].index)
+
+    def test_the_export_makes_no_request(self, dash):
+        self._users(dash)
+        dash.evaluate("() => { window.__calls = 0; const f = window.fetch;"
+                      " window.fetch = (...a) => { window.__calls++; return f(...a); }; }")
+        with dash.expect_download():
+            dash.click("#export-csv")
+        # The download finishing is the end of the client work; any request the export made would
+        # already have counted inside expect_download, so there is nothing to wait for.
+        assert dash.evaluate("() => window.__calls") == 0
+
+    def test_no_control_on_a_drill_down_or_a_loading_page(self, dash):
+        self._users(dash)
+        dash.locator("tr[data-user='alice']").click()
+        dash.wait_for_selector("#back-groups")
+        assert dash.locator("#export-csv").count() == 0
+        dash.locator("#back-groups").click()
+        dash.wait_for_selector("#export-csv")
+
+    def test_no_control_while_the_bindings_tier_is_unknown(self, dash):
+        """Review (Cursor): the page paints Loading when whoami failed, and the export must fail
+        closed the same way rather than offer the previous cycle's wide findings."""
+        dash.locator("button[data-nav='bindings']").click()
+        dash.wait_for_selector("text=grant nobody")
+        dash.wait_for_selector("#export-csv")
+        assert dash.evaluate("() => !!(data.findings && !data.findings.forbidden)") is True
+        dash.evaluate("() => { data.whoami = null; render(); }")
+        assert "Loading" in dash.locator(".empty-note").first.inner_text()
+        assert dash.locator("#export-csv").count() == 0
+        assert dash.evaluate("() => exportDescriptor()") is None
+        dash.evaluate("() => refresh()")
+        dash.wait_for_selector("#export-csv")
+
+    def test_formula_guard_covers_the_owasp_initiators(self, dash):
+        """Review (Codex): LF and the full-width = + - @ are initiators in some locales' spreadsheets;
+        numbers, objects and non-finite values are untouched or stringified as JavaScript does."""
+        got = dash.evaluate("""() => ({
+            apostrophe: csvField("'=already"),
+            leadingSpace: csvField(" =SUM(1)"),
+            lf: csvField("\\n=SUM(1)"),
+            mathematicalMinus: csvField("\\u2212SUM(1)"),
+            fullWidthEquals: csvField("\\uff1dSUM(1)"),
+            fullWidthPlus: csvField("\\uff0b1"),
+            fullWidthMinus: csvField("\\uff0d1"),
+            fullWidthAt: csvField("\\uff20SUM(1)"),
+            negativeNumber: csvField(-7),
+            negativeString: csvField("-7"),
+        })""")
+        assert got == {
+            "apostrophe": "'=already", "leadingSpace": "' =SUM(1)", "lf": "\"'\n=SUM(1)\"",
+            "mathematicalMinus": "\u2212SUM(1)", "fullWidthEquals": "'\uff1dSUM(1)",
+            "fullWidthPlus": "'\uff0b1", "fullWidthMinus": "'\uff0d1", "fullWidthAt": "'\uff20SUM(1)",
+            "negativeNumber": "-7", "negativeString": "'-7",
+        }
+
+    def test_a_leading_space_before_a_formula_is_neutralised(self, dash):
+        got = dash.evaluate("""() => toCsv(["a"], [
+            { a: " =SUM(1)" },
+            { a: -5 },
+            { a: "'=already" },
+        ])""")
+        assert got == ("\ufeffa\r\n"
+                       "' =SUM(1)\r\n"
+                       "-5\r\n"
+                       "'=already\r\n")
+
+
+class TestExportVisibility:
+    """A narrowed reader's export is their own rows and nothing else — by construction, because
+    the file is built from the payload the server served them, but pinned anyway."""
+
+    def test_a_narrowed_readers_users_export_is_their_own_row_and_says_self(self, page, scoped_server):
+        p = _open_as(page, scoped_server, "alice")
+        p.locator("button[data-nav='users']").click()
+        p.wait_for_selector("tr[data-user='alice']")
+        p.wait_for_selector("#export-json")
+        with p.expect_download() as dl:
+            p.click("#export-json")
+        import json
+        doc = json.load(open(dl.value.path()))
+        assert doc["scope"] == "self" and doc["viewer"] == "alice"
+        assert [r["user_name"] for r in doc["rows"]] == ["alice"]
+        assert "_self_" in dl.value.suggested_filename
+        text = open(dl.value.path()).read()
+        for other in ("gatekeeper", "kubeadmin", "dave"):
+            assert other not in text
+
+    def test_a_narrowed_readers_access_export_is_their_own_path(self, page, scoped_server):
+        p = _open_as(page, scoped_server, "alice")
+        p.locator("button[data-nav='bindings']").click()
+        p.wait_for_selector(".scope-banner")
+        p.wait_for_selector("#export-csv")
+        with p.expect_download() as dl:
+            p.click("#export-csv")
+        rows = TestExport._csv_rows(dl.value)
+        assert rows[0][0] == "via_group"
+        names = {r[5] for r in rows[1:]}
+        assert names == {"managed-admin-rb", "hand-made-crb"}, names
+
+    def test_narrowed_access_json_says_the_servers_order_not_a_name_sort(self, page, scoped_server):
+        """Review (Cursor): the rows arrive in the store's order and the page does not re-sort
+        them, so the envelope must not claim a sort it did not do."""
+        p = _open_as(page, scoped_server, "alice")
+        p.locator("button[data-nav='bindings']").click()
+        p.wait_for_selector("#export-json")
+        with p.expect_download() as dl:
+            p.click("#export-json")
+        import json
+        doc = json.load(open(dl.value.path()))
+        assert doc["sort"] == {"key": "binding_kind,binding_namespace,binding_name", "dir": "asc"}
+        assert [r["binding_name"] for r in doc["rows"]] == ["hand-made-crb", "managed-admin-rb"]
+
+    def test_narrowed_namespace_audit_json_names_the_servers_order(self, page, scoped_server):
+        """Review (Codex): a narrowed reader's rows are painted as served; a sort retained from a former
+        wide view must not be attributed to them."""
+        p = _open_as(page, scoped_server, "carol")
+        p.locator("button[data-nav='nsaudit']").click()
+        p.wait_for_selector(".scope-banner")
+        p.wait_for_selector("#export-json")
+        p.evaluate("() => { view.nsGrantSort = 'person'; view.nsGrantDir = 'desc'; render(); }")
+        with p.expect_download() as dl:
+            p.click("#export-json")
+        import json
+        doc = json.load(open(dl.value.path()))
+        assert doc["scope"] == "self"
+        assert doc["sort"] == {"key": "cluster_admin_first,cluster_scope_first,binding_namespace,user_name", "dir": "asc"}
+        assert [r["binding_name"] for r in doc["rows"]] == ["carol-ca"]
+
+    def test_a_narrowed_reader_gets_the_control_back_after_the_tier_resolves(self, page, scoped_server):
+        """Review pass 2 (Cursor): the restore path for a NARROWED reader — whoami nulled, no control,
+        then refresh() walks the myAccess follow-up and the control returns."""
+        p = _open_as(page, scoped_server, "alice")
+        p.locator("button[data-nav='bindings']").click()
+        p.wait_for_selector(".scope-banner")
+        p.wait_for_selector("#export-csv")
+        p.evaluate("() => { data.whoami = null; render(); }")
+        assert p.locator("#export-csv").count() == 0
+        p.evaluate("() => refresh()")
+        p.wait_for_selector("#export-csv")
+        assert p.evaluate("() => exportDescriptor().scope") == "self"
+
+    def test_the_administrator_exports_the_whole_cluster(self, page, scoped_server):
+        p = _open_as(page, scoped_server, "root")
+        p.locator("button[data-nav='users']").click()
+        p.wait_for_selector("tr[data-user='kubeadmin']")
+        with p.expect_download() as dl:
+            p.click("#export-json")
+        import json
+        doc = json.load(open(dl.value.path()))
+        assert doc["scope"] == "all" and doc["count"] == 3
