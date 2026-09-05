@@ -388,8 +388,7 @@ Loaded 1 attestation from GitHub API
 
 There is no GPG signature and `helm verify` is not supported — deliberately; the reasoning is in
 `DESIGN_supply_chain.md`. Charts published before this attestation existed (0.16.0 and earlier) have
-none, and `gh` reports `no attestations found` for them; the first attested chart is the next version
-`helm.yaml` publishes.
+none, and `gh` reports `no attestations found` for them; 0.17.0 is the first attested chart.
 
 **Forks do not sign under this workflow.** The `publish` job is skipped unless `github.repository`
 is `ephico2real2/group-sync-dashboard`; a fork that edits that guard and publishes signed images
