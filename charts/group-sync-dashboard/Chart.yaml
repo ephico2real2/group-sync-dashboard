@@ -140,7 +140,10 @@ type: application
 # CHART 0.15.0 (2026-09-05), MINOR: appVersion moves to application 0.14.0 (below); CSV and JSON
 # export of the table on screen (C1); ui.export.enabled reaches the ConfigMap as uiExportEnabled and
 # /api/version gains features.
-version: 0.15.0
+# CHART 0.16.0 (2026-09-05), MINOR: appVersion moves to application 0.15.0 (below); Users tab
+# provider allow-list and exact first login from Identity objects (C2): rbac.identities (a new
+# optional grant, the read switch too) and config.users.providers (a new value).
+version: 0.16.0
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,
@@ -194,7 +197,10 @@ version: 0.15.0
 # MINOR: additive on the wire, new settings, no shape change.
 # 0.14.0 (2026-09-05). CSV and JSON export of the table on screen (C1); ui.export.enabled reaches
 # the ConfigMap as uiExportEnabled and /api/version gains features. MINOR.
-appVersion: "0.14.0"
+# 0.15.0 (2026-09-05). Users tab provider allow-list and exact first login from Identity objects
+# (C2): rbac.identities (a new optional grant, the read switch too) and config.users.providers (a
+# new value). MINOR.
+appVersion: "0.15.0"
 
 keywords: [openshift, ldap, rbac, groupsync, observability]
 home: https://github.com/ephico2real2/group-sync-dashboard

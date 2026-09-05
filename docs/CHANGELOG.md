@@ -8,7 +8,7 @@ lives next to the code and in the design and review records linked here. Changes
 last release sit under `## Unreleased` until the release that carries them replaces that heading —
 which `local-development/prepare-release.py` does when the release is cut.
 
-## Unreleased
+## Application 0.15.0 — chart 0.16.0 — 2026-09-05
 
 - **Users tab: provider allow-list and exact first login.** `config.users.providers` (empty = all)
   lists only people who logged in through the named identity providers, applied when the tab is read;
