@@ -153,6 +153,8 @@ class TestTheFile:
         assert "cannot widen that" in section
         assert "grafana:\n  sidecar:\n    dashboards:\n      searchNamespace: ALL" in section
         assert "allowCrossNamespaceImport: true" in section and "configMapRef:" in section
+        # the operator recipe binds the datasource input; otherwise Grafana picks the first Prometheus
+        assert "inputName: DS_PROMETHEUS" in section and "datasourceName:" in section
 
     def test_every_panel_promql_expression_parses_with_promtool(self):
         """Grafana macros expanded to representative values, then Prometheus's own parser. Locally

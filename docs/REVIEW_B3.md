@@ -46,6 +46,18 @@ Codex's version of the label-collision test asserted the word "reserved" in the 
 set" and the test asserts the key name instead. Codex's copy-the-chart test for the two `end` forms was not taken:
 the byte-identity test already holds the form the chart uses, and the corrected comment records the measurement.
 
+## Second pass, on the fixed head, with the same models
+
+| Finding | Cursor | Codex | Decision |
+|---|---|---|---|
+| The six accepted fixes close their holes | CONFIRMED ×6 | CONFIRMED ×9 (renders) | — |
+| Six more stat/bar-gauge panels paint "No data" healthy green | REFUTED (from the screenshot) | REFUTED (`verdict_coloured_base_steps=8`) | **Accepted**: every coloured panel's base step is neutral; one general test replaces the three-title one |
+| `--set monitoring=null` dies in the helper | PLAUSIBLE → nil-safe | — | **Rejected as unreachable**: `monitoring.yaml` requires the map first; the helper's nil-safe read kept as harmless |
+| The operator recipe binds no datasource; two Prometheus datasources → the first is picked | — | REFUTED | **Accepted**: the recipe carries the `datasources` input mapping |
+| schemaVersion 39 imports on 10.4 and 12 | CONFIRMED (traced) | PLAUSIBLE (no Grafana locally) | — (validated live on the operator's Grafana 13.0.1) |
+| promtool accepts every expanded expression | CONFIRMED (traced) | PLAUSIBLE (no promtool locally) | — (runs in CI) |
+| `fullnameOverride`, ConfigMap size, upgrade from 0.12.0, the release tuple | CONFIRMED | CONFIRMED | — |
+
 ## Live, on CRC
 
 grafana-operator v5.24 installed from Community Operators into `grafana-test`; a `Grafana` labelled

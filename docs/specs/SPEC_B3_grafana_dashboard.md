@@ -35,6 +35,8 @@ request, with the reason, under "Orchestrator's notes".
 
 - Found in the second review pass (PR #74, Cursor Grok 4.6, on the fixed head): (1) six more stat and bar-gauge panels painted "No data" healthy GREEN (Last poll age, Poll duration, Empty groups, Unattributed groups, Backup age, Login capture read age, Alerts by kind) — the same class as the red ones with the other colour; every coloured panel's base step is neutral now and a real zero earns green from the next step, held by one general test. (2) `--set monitoring=null` — rejected as unreachable: `templates/monitoring.yaml` dereferences the `monitoring` map itself, so a null map fails the render there before the dashboard helper runs; the helper's nil-safe read of that map is kept as harmless, without a test.
 
+- Second review pass (PR #74, Codex gpt-5.6-sol xhigh, on the fixed head): fifteen of seventeen items confirmed with renders and probes; the green-base finding matched Cursor's and was already applied; new: the operator recipe bound no datasource, so a Grafana with two Prometheus datasources would pick the first option for `DS_PROMETHEUS` — the README recipe carries grafana-operator's `datasources` input mapping, held by the README test. Environment-limited (no promtool, no Grafana locally): the PromQL parse runs in CI, the schema 39 import is within Grafana 12's migration range.
+
 ## Batch preamble (verbatim from the design)
 
 I have read everything the design needs. Here is the complete design document.

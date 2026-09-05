@@ -500,6 +500,12 @@ spec:
   configMapRef:
     name: group-sync-dashboard-grafana-dashboard   # <fullname>-grafana-dashboard
     key: group-sync-dashboard.json
+  # Bind the board's DS_PROMETHEUS input to YOUR Prometheus datasource by name. Without this the
+  # provisioned board's datasource variable starts empty and Grafana picks the first Prometheus
+  # datasource it has — the wrong one, silently, when there are two.
+  datasources:
+    - inputName: DS_PROMETHEUS
+      datasourceName: Prometheus
 ```
 
 The chart does not ship that CR: the operator's CRD has two incompatible API versions in the wild
