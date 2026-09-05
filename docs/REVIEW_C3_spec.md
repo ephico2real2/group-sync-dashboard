@@ -176,6 +176,24 @@ duplicate Cursor's N1 and N2, already applied. Codex's prose citation test rejec
   API-error card. Not a loop (C3). Recorded in §13 as a risk; the dedicated message is a product
   change left to the operator, as Cursor itself suggested.
 
+## The templates note (PR #80)
+
+The operator's requirement that report generation use dynamic templates was recorded as an
+orchestrator's note and reviewed on its own five-claim brief. Cursor (read-only) refuted four claims;
+Codex is recorded below when its pass lands.
+
+| Claim | Cursor | Decision |
+|---|---|---|
+| C1 the note against the body | REFUTED | **Accepted** — `render_html` is §8.8 and `render_pdf` §8.9; both already have one helper per block kind, so the change is the HTML move to Jinja2 files and the catalogue staying data-only; §8.8's "No template engine" is the superseded sentence; access-certification's decision columns are data, named as such |
+| C2 Jinja2 in the image | PLAUSIBLE | **Accepted** — MarkupSafe is Jinja2's dependency (a C-accelerator wheel, still no `dnf`); the `report` extra, §6.1's inventory, §8.1's "only addition" and `package-data` all follow |
+| C3 autoescaping | REFUTED | **Accepted** — `autoescape=True` (boolean; `select_autoescape` would leave suffix-less override keys unescaped), no `|safe`/`Markup`/`autoescape false` on model values, the `<style>` wrapper not overridable, `write_html` banned on the PDF path |
+| C4 the override ConfigMap | REFUTED | **Accepted** — a default `Environment` reaches `os.environ` and the HMAC token file from a template; `SandboxedEnvironment` with a data-only context is required, and the override ships only if question 9 is answered yes |
+| C5 the tests | REFUTED | **Accepted** — an AST import allow-list replaces the `<`-walk (which false-positives on `n < p.lo` and misses ElementTree or a sidecar file); partial markers plus the §9.6 escape case through an override |
+
+Not asked and accepted: question 9 added to §14 in the same change; §8.1's extra and `package-data`
+updated; the ConfigMap value's shape (a name, default empty) and mount path named; `write_html`
+forbidden by name.
+
 ## Outcome
 
 First pass: Cursor refuted two claims and marked three plausible; Codex refuted six and marked one
