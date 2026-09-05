@@ -81,3 +81,28 @@ A second pass by both reviewers ran on the fixed head before merge (below).
 
 Not asked: `--signer-workflow` without `@ref` is weaker than the cosign identity — noted, harmless
 while only `main` signs (the record says so under D9).
+
+## Second pass — Codex (on cd92020; the branch had moved to 4ea833a during its run)
+
+| Claim | Codex | Decision |
+|---|---|---|
+| C1 the SBOM handoff | CONFIRMED against both actions' sources at the pinned commits and cosign's predicate map | — |
+| C2 signing only on main | CONFIRMED against Fulcio's identity template (`{{ .url }}/{{ .job_workflow_ref }}`) | — |
+| C3 the alias copies | REFUTED on the label step's missing `-e` — measured with a fake skopeo whose `copy` returned 17: the step exited 0 | **Accepted** (already in 4ea833a from Cursor's pass; Codex's own measurement confirms the fix's necessity) |
+| C4 the digest check | CONFIRMED (bash 5.2, five inputs; podman writes the bare digest) | — |
+| C5 the extractors | REFUTED — `prepare-release.py`'s `\d` accepts Arabic-Indic and full-width digits the workflows' `[0-9]` refuse | **Accepted** — `SEMVER` is `[0-9]` with `re.ASCII`; two cases added to the script's refusal test (the script runs for real in a sandbox) |
+| C6 documentation | REFUTED — "A fork verifies against its own identity" contradicts the repository guard and D3; the opening sentence | **Accepted** — the fork paragraph rewritten; the opening sentence was already fixed in 4ea833a |
+| C7 fidelity | REFUTED — the range includes the merge of `origin/main` with C2's status hunk | **Accepted as a record** — deviation (10) names the merge and what it carried; the diff-asserting test rejected as before |
+| C8 the first run | REFUTED on the two §7 commands | **Accepted** (already in 4ea833a) |
+
+## Outcome — final
+
+Four passes over two heads. Accepted and applied: the SBOM filename, the skopeo copy contract with
+`--all --preserve-digests` in both places, `-e` on the label step, signing only on `main` with the
+identity pinned, all three image commands in the guide on the immutable tag, the D9 caveat and the
+fork paragraph, portable and strict sed extractors, ASCII semver in the release script, the 64-hex
+digest check, and the referrers/mirror sentence. Rejected with a measured reason: the deprecated
+legacy bundle flag, gating `publish` on `main`, the `--raw \| sha256` inspect (the list digest is what
+`{{.Digest}}` already prints), and every diff- or prose-asserting test. The proof of the module is
+the first `publish` run on `main` after the merge: `attest` must be green and the guide's commands
+must succeed against the immutable tag it names.

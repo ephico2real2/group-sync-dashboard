@@ -389,8 +389,10 @@ There is no GPG signature and `helm verify` is not supported — deliberately; t
 none, and `gh` reports `no attestations found` for them; the first attested chart is the next version
 `helm.yaml` publishes.
 
-**A fork verifies against its own identity.** Replace the repository in `--certificate-identity`,
-`--repo` and `--signer-workflow`; the workflow file names are the same. Repository variables
+**Forks do not sign under this workflow.** The `publish` job is skipped unless `github.repository`
+is `ephico2real2/group-sync-dashboard`; a fork that edits that guard and publishes signed images
+replaces the repository in `--certificate-identity`, `--repo` and `--signer-workflow` — the workflow
+file names are the same. Repository variables
 `SUPPLY_CHAIN_SIGNING=false` and `SUPPLY_CHAIN_SBOM=false` turn the two modules off for a runner
 that cannot reach the registry or the Sigstore services.
 

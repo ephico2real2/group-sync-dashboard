@@ -50,7 +50,10 @@ CHART = REPO / "charts" / "group-sync-dashboard" / "Chart.yaml"
 CHANGELOG = REPO / "docs" / "CHANGELOG.md"
 VERSION_TEST = HERE / "tests" / "test_chart_versions.py"
 
-SEMVER = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
+# ASCII digits, not `\d`: Python's `\d` also matches Arabic-Indic and full-width digits, which
+# `int()` happily parses — and which helm.yaml's `[0-9]` extractors and the build script would then
+# refuse, so a release could be cut that the workflows cannot label (review of A2, second pass).
+SEMVER = re.compile(r"^([0-9]+)\.([0-9]+)\.([0-9]+)$", re.ASCII)
 # Chart.yaml's comments are written to this width; a generated line should read like its neighbours.
 COMMENT_WIDTH = 100
 

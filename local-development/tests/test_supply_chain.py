@@ -297,3 +297,5 @@ class TestWhatIsSignedAndHow:
             assert "group-sync-dashboard:0.15.0 " not in block and "group-sync-dashboard:0.15.0\n" not in block, verb
         assert "moves only on an application release" in section
         assert "Every image `publish.yml` pushes is signed" not in section, "a branch dispatch pushes unsigned (D9)"
+        assert "A fork verifies against its own identity" not in section, "publish is skipped on forks"
+        assert "Forks do not sign under this workflow" in section
