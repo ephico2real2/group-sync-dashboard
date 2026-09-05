@@ -22,6 +22,13 @@ which `local-development/prepare-release.py` does when the release is cut.
   `trustedCA.existingConfigMap.enabled`, `ingress.enabled`, and `authLogLevel.manage`/`.enabled` —
   the OAuth Debug level is being retired in favour of the oauth-server audit log as the source of
   login lines. An upgrade that relied on a `false` default now needs the value set explicitly.
+- **The hook Job pods no longer carry the workload's selector labels.** Found while validating the
+  on-by-default budget on the reference cluster: the `authLogLevel` Job pods matched the
+  PodDisruptionBudget's selector, the disruption controller failed the budget (`SyncFailed: jobs.batch
+  does not implement the scale subresource`, `DisruptionAllowed=False`) and every drain would have
+  been blocked; the same labels made the Service match a running hook pod. The hook pods keep
+  `app.kubernetes.io/name`, `instance` and `component` and drop the `app` label;
+  `tests/test_chart_pdb.py` holds both selectors to the Deployment's pod template alone.
 
 ## Chart 0.13.0 — application 0.13.0 — 2026-09-05
 

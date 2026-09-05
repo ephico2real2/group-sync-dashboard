@@ -707,7 +707,11 @@ no second pod to keep serving:
 | `minAvailable: 1` | the drain **blocks indefinitely** — one replica can never satisfy it. Cluster admins hit this during maintenance and cannot see whose workload is stalling them |
 
 Choose `minAvailable` only if a human must be involved before this pod moves, and tell
-whoever operates the cluster. Kubernetes reports `DisruptionAllowed=False` when it is
+whoever operates the cluster. The budget's selector matches the Deployment's pods only: the
+`authLogLevel` hook Job pods carry `app.kubernetes.io/name`, `instance` and `component` but not
+the `app` selector label, because a matched pod whose owner has no scale subresource fails the
+whole budget (`SyncFailed`, `DisruptionAllowed=False`, every drain blocked — measured on the
+reference cluster before the labels were split). Kubernetes reports `DisruptionAllowed=False` when it is
 blocking.
 
 ## Storage

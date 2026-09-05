@@ -106,6 +106,9 @@ replicaCount: 1
 # On by default since chart 0.14.0 (the chart's rule since 0.14.0: every switch is on unless it costs RBAC, a credential,
 # a second image or a cluster-wide write): with maxUnavailable: 1 the object costs nothing on one
 # replica and a drain still proceeds. Only minAvailable turns it into something that blocks a human.
+# One more thing can block it, and the chart guards against it: a pod the selector matches whose
+# owner has no scale subresource (a Job) fails the budget with DisruptionAllowed=False. The hook
+# Jobs therefore do not carry the selector labels — see templates/pdb.yaml.
 podDisruptionBudget:
   enabled: true
   maxUnavailable: 1

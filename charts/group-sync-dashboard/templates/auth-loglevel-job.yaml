@@ -72,7 +72,13 @@ spec:
   template:
     metadata:
       labels:
-        {{- include "gsd.selectorLabels" . | nindent 8 }}
+      # NOT gsd.selectorLabels. Those are the Service's and the PodDisruptionBudget's selector, and
+      # a hook pod carrying them is matched by both: the Service routes to it while it runs (a pod
+      # with no readiness probe is Ready as soon as its container starts), and the disruption
+      # controller fails the PDB outright — measured on the reference cluster: "jobs.batch does not
+      # implement the scale subresource", DisruptionAllowed=False, every drain blocked.
+        app.kubernetes.io/name: {{ include "gsd.name" . }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: auth-loglevel
     spec:
       restartPolicy: Never
