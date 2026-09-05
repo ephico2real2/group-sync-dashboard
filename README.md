@@ -246,7 +246,9 @@ about what it trusts, and silently widening it would be the wrong kind of helpfu
 ## Monitoring
 
 `/metrics` serves Prometheus exposition; the chart ships a ServiceMonitor and twelve alerting
-rules, both off by default because they need the Prometheus Operator CRDs.
+rules, both off by default because they need the Prometheus Operator CRDs, and a Grafana
+dashboard (a sidecar-labelled ConfigMap, `monitoring.grafanaDashboard`) that follows the
+ServiceMonitor's switch by default — see `docs/specs/SPEC_B3_grafana_dashboard.md`.
 
 Cardinality is bounded deliberately: series are per cluster and per GroupSync CR only, never
 per group or per user. That is a scale concern — 500 groups must not mean 500 series — and a

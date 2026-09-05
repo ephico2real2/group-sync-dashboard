@@ -471,3 +471,20 @@ fire is refused here rather than discovered as silence. Emits nothing; include i
 {{- fail (printf "config.alerts.groupCountCliff.windowHours must cover at least one poll interval; got %v hours with config.pollIntervalSeconds=%v" $c.windowHours .Values.config.pollIntervalSeconds) -}}
 {{- end -}}
 {{- end -}}
+{{/*
+monitoring.grafanaDashboard.enabled is a tri-state: "" follows monitoring.serviceMonitor.enabled,
+true/false are explicit. Anything else refuses the render — a misspelt "ture" must not
+silently become "off". Returns the string "true" or "false".
+*/}}
+{{- define "gsd.grafanaDashboardEnabled" -}}
+{{- $raw := ((.Values.monitoring | default dict).grafanaDashboard | default dict).enabled -}}
+{{- if or (kindIs "invalid" $raw) (eq (toString $raw) "") -}}
+{{- toString .Values.monitoring.serviceMonitor.enabled -}}
+{{- else if eq (toString $raw) "true" -}}
+true
+{{- else if eq (toString $raw) "false" -}}
+false
+{{- else -}}
+{{- fail (printf "monitoring.grafanaDashboard.enabled must be true, false or \"\" (follow the ServiceMonitor); got %q" (toString $raw)) -}}
+{{- end -}}
+{{- end -}}

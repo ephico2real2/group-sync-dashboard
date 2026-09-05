@@ -20,7 +20,7 @@ group membership, so it ships authenticated and you turn the proxy *off* deliber
   `trustedCA.injected.enabled=false` and supply `ingress.host` and `ingress.className` yourself.
 * A default StorageClass, or set `persistence.storageClass` / `persistence.existingClaim`.
 * Cluster admin **once**, to create the ClusterRole. The dashboard needs no admin at runtime.
-* The Prometheus Operator CRDs, only if you enable `monitoring.*`.
+* The Prometheus Operator CRDs, only if you enable `monitoring.serviceMonitor` or `monitoring.prometheusRule`. The Grafana dashboard (`monitoring.grafanaDashboard`) is a plain ConfigMap and needs no CRD.
 
 ## Values
 
@@ -317,6 +317,9 @@ Grant the wide view through your normal RBAC process, never a chart value:
 | `monitoring.prometheusRule.captureStalledSeconds` | `1800` | seconds without a successful oauth-log read before login capture counts as stalled. Capture rides the poll thread, so this **must stay well above `config.pollIntervalSeconds`** — same reasoning as `notPollingSeconds` |
 | `monitoring.prometheusRule.backupStaleSeconds` | `43200` | seconds since the newest backup file before the copy counts as stale. Keep at ~2× `config.backupIntervalHours` × 3600 — one missed backup is a blip, two is a broken mechanism |
 | `monitoring.prometheusRule.for.*` | see below | the `for:` duration on each alert |
+| `monitoring.grafanaDashboard.enabled` | `""` | `""` **follows `monitoring.serviceMonitor.enabled`**; `true`/`false` are explicit; anything else refuses to render. A ConfigMap labelled `grafana_dashboard: "1"` carrying `dashboards/group-sync-dashboard.json` byte-for-byte — no CRD, cannot fail an install |
+| `monitoring.grafanaDashboard.folder` | `""` | written as the `grafana_folder` annotation the sidecar's `folderAnnotation` reads |
+| `monitoring.grafanaDashboard.labels` / `.annotations` | `{}` / `{}` | extra metadata, e.g. a sidecar configured with a non-default label |
 
 ### Dashboard log verbosity — `logLevel`
 
@@ -452,6 +455,34 @@ The WAL pair and the last three are the ones with no other symptom: the pod stay
 every other metric looks normal, and the first visible sign is a full volume, a latency
 cliff, a narrowed view nobody reported, a frozen login record, or a backup that is not
 there when the PVC dies.
+
+#### The Grafana dashboard
+
+`monitoring.grafanaDashboard` ships `dashboards/group-sync-dashboard.json` as a ConfigMap with the
+`grafana_dashboard: "1"` label that Grafana's dashboard sidecar watches. The sidecar only watches its
+own namespace unless configured otherwise (`sidecar.dashboards.searchNamespace: ALL` in
+kube-prometheus-stack), so either install the chart beside Grafana, set a folder and label your
+sidecar recognises, or copy the ConfigMap. The board's thresholds equal the defaults above and are
+held to them by a test; edit them in Grafana if you tune the rules.
+
+Running grafana-operator v5? It reads this ConfigMap directly:
+
+```yaml
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: group-sync-dashboard
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: grafana        # whatever your Grafana CR is labelled
+  configMapRef:
+    name: group-sync-dashboard-grafana-dashboard   # <fullname>-grafana-dashboard
+    key: group-sync-dashboard.json
+```
+
+The chart does not ship that CR: the operator's CRD has two incompatible API versions in the wild
+and the `instanceSelector` is yours to know.
 
 ### ArgoCD
 

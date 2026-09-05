@@ -7,7 +7,7 @@
 | Release | R2 — Alerts, retention, Grafana |
 | Version on release | app 0.13.0, chart 0.12.0 |
 | Issue | [#59](https://github.com/ephico2real2/group-sync-dashboard/issues/59) |
-| Status | in progress |
+| Status | released |
 | Source | design agent output `a7eabba23e10eec8a`; one message; no seam |
 
 ## How to read this spec

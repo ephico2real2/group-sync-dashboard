@@ -1,0 +1,50 @@
+{{- /*
+Grafana dashboard, delivered the way Grafana sidecars expect it: a ConfigMap carrying the
+`grafana_dashboard: "1"` label (kube-prometheus-stack, the community OpenShift Grafana
+deployments, and grafana-operator v5's sidecar mode all watch for it). grafana-operator v5
+can also point a GrafanaDashboard CR at this ConfigMap by name (spec.configMapRef) — the
+chart README shows the ten-line CR. No CR is shipped here on purpose: a ConfigMap is a core
+resource that cannot fail an install or an Argo dry-run, while the CR has two incompatible
+API versions in the wild and needs an instanceSelector the chart cannot know.
+
+THE JSON IS A PLAIN FILE, loaded with .Files.Get, and that placement is load-bearing. Helm
+runs the template engine over templates/ only; a file read with .Files.Get is returned
+verbatim, so the Grafana templating the JSON carries — $cluster, ${DS_PROMETHEUS},
+$__rate_interval, and {{cluster}} legend formats — is never mistaken for a Helm action. The
+same JSON inlined in this file would fail the render on its first `{{`.
+
+Embedded as a literal block scalar. `indent` turns the file's final newline into a
+whitespace-only last line, which YAML's clip chomping folds away, so the ConfigMap value is
+byte-identical to the file — tests/test_chart_grafana_dashboard.py holds that against a
+real `helm template`.
+
+DEFAULT FOLLOWS THE SERVICEMONITOR (values.yaml, monitoring.grafanaDashboard.enabled: "").
+A board over metrics nobody scrapes is a wall of "No data", and "one switch turns
+monitoring on" is the contract the README documents.
+*/ -}}
+{{- if eq (include "gsd.grafanaDashboardEnabled" .) "true" }}
+{{- $json := .Files.Get "dashboards/group-sync-dashboard.json" }}
+{{- if not $json }}
+{{- fail "dashboards/group-sync-dashboard.json is missing from the chart package; monitoring.grafanaDashboard cannot render" }}
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "gsd.fullname" . }}-grafana-dashboard
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gsd.labels" . | nindent 4 }}
+    grafana_dashboard: "1"
+    {{- with .Values.monitoring.grafanaDashboard.labels }}{{- toYaml . | nindent 4 }}{{- end }}
+  {{- if or .Values.monitoring.grafanaDashboard.folder .Values.monitoring.grafanaDashboard.annotations }}
+  annotations:
+    {{- with .Values.monitoring.grafanaDashboard.folder }}
+    # The sidecar's folderAnnotation default. A Grafana without that setting ignores it.
+    grafana_folder: {{ . | quote }}
+    {{- end }}
+    {{- with .Values.monitoring.grafanaDashboard.annotations }}{{- toYaml . | nindent 4 }}{{- end }}
+  {{- end }}
+data:
+  group-sync-dashboard.json: |
+{{ $json | indent 4 }}
+{{ end }}

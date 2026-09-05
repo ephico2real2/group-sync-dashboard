@@ -1,0 +1,175 @@
+"""The shipped Grafana dashboard: parses, references only metrics the collector declares,
+carries the shipped alert thresholds, and reaches the cluster byte-identical.
+
+Why byte-identity is asserted against a real `helm template` rather than assumed: the JSON
+contains `$cluster`, `${DS_PROMETHEUS}`, `$__rate_interval` and `{{cluster}}` legend
+formats — everything Helm would mangle if the file were inlined into a template. It is
+loaded with .Files.Get, which Helm never templates; this file is what proves that stays true.
+"""
+
+from __future__ import annotations
+
+import json
+import pathlib
+import re
+import shutil
+import subprocess
+from datetime import timedelta
+
+import pytest
+import yaml
+from prometheus_client import CollectorRegistry, generate_latest
+
+from gsd.metrics import DashboardCollector
+from gsd.store import Store
+
+REPO = pathlib.Path(__file__).resolve().parents[2]
+CHART = REPO / "charts" / "group-sync-dashboard"
+DASHBOARD = CHART / "dashboards" / "group-sync-dashboard.json"
+VALUES = CHART / "values.yaml"
+
+needs_helm = pytest.mark.skipif(shutil.which("helm") is None, reason="helm not installed")
+
+
+def _render(*sets: str) -> list[dict]:
+    args = ["helm", "template", "t", str(CHART), "-n", "x", "--set", "ingress.host=h"]
+    for s in sets:
+        args += ["--set", s]
+    done = subprocess.run(args, capture_output=True, text=True, timeout=120)
+    assert done.returncode == 0, done.stderr
+    return [d for d in yaml.safe_load_all(done.stdout) if d]
+
+
+def _dashboard_configmaps(docs: list[dict]) -> list[dict]:
+    return [d for d in docs
+            if d.get("kind") == "ConfigMap" and d["metadata"]["name"].endswith("-grafana-dashboard")]
+
+
+def _walk_panels(panels: list[dict]):
+    for p in panels:
+        yield p
+        yield from _walk_panels(p.get("panels", []))
+
+
+def _exprs(board: dict) -> list[str]:
+    out = []
+    for p in _walk_panels(board["panels"]):
+        for t in p.get("targets", []):
+            if t.get("expr"):
+                out.append(t["expr"])
+    for v in board["templating"]["list"]:
+        q = v.get("query")
+        if isinstance(q, dict):
+            q = q.get("query")
+        if isinstance(q, str) and "gsd_" in q:
+            out.append(q)
+    return out
+
+
+class TestTheFile:
+    def test_parses_and_is_canonically_formatted(self):
+        text = DASHBOARD.read_text()
+        board = json.loads(text)
+        assert board["uid"] == "gsd-group-sync-dashboard", "the uid is what makes re-imports update in place"
+        assert board["schemaVersion"] >= 39
+        assert "\t" not in text
+        assert not [ln for ln in text.splitlines() if ln != ln.rstrip()], "trailing whitespace would survive `indent` and break byte-identity"
+        assert text.endswith("}\n") and not text.endswith("\n\n")
+
+    def test_every_metric_referenced_is_declared_by_the_collector(self):
+        """The rule tests' guard, applied to panels: a panel over a metric nobody emits is
+        a permanent 'No data' that reads as an outage."""
+        referenced = set()
+        for expr in _exprs(json.loads(DASHBOARD.read_text())):
+            referenced |= set(re.findall(r"\bgsd_[a-z0-9_]+", expr))
+        assert referenced, "no gsd_ metrics found in any expr; the probe itself is broken"
+
+        store = Store(":memory:")
+        try:
+            registry = CollectorRegistry()
+            registry.register(DashboardCollector(store, timedelta(seconds=120), None))
+            text = generate_latest(registry).decode()
+        finally:
+            store.close()
+        declared = {line.split()[2] for line in text.splitlines() if line.startswith("# HELP")}
+        assert not (referenced - declared), f"dashboard references undeclared metrics: {referenced - declared}"
+
+    def test_panel_thresholds_equal_the_shipped_alert_thresholds(self):
+        """The board hard-codes values.yaml's prometheusRule defaults; this holds them together."""
+        rule = yaml.safe_load(VALUES.read_text())["monitoring"]["prometheusRule"]
+        board = json.loads(DASHBOARD.read_text())
+        by_title = {p["title"]: p for p in _walk_panels(board["panels"])}
+
+        def red_step(title: str) -> float:
+            steps = by_title[title]["fieldConfig"]["defaults"]["thresholds"]["steps"]
+            return next(s["value"] for s in steps if s["color"] == "red")
+
+        assert red_step("Last poll age") == rule["notPollingSeconds"]
+        assert red_step("GroupSync last-sync age per CR") == rule["overdueSeconds"]
+        assert red_step("SQLite WAL size") == rule["walMiB"] * 1024 * 1024
+        assert red_step("Login capture: last successful read age") == rule["captureStalledSeconds"]
+        assert red_step("Backup age") == rule["backupStaleSeconds"]
+
+    def test_the_text_panel_names_every_shipped_alert(self):
+        monitoring = (CHART / "templates" / "monitoring.yaml").read_text()
+        shipped = set(re.findall(r"- alert: (\w+)", monitoring))
+        board = json.loads(DASHBOARD.read_text())
+        text_panel = next(p for p in _walk_panels(board["panels"]) if p["type"] == "text")
+        missing = {a for a in shipped if f"`{a}`" not in text_panel["options"]["content"]}
+        assert not missing, f"text panel does not name: {missing}"
+
+    def test_a_cluster_variable_scopes_the_per_cluster_panels(self):
+        board = json.loads(DASHBOARD.read_text())
+        names = {v["name"] for v in board["templating"]["list"]}
+        assert {"DS_PROMETHEUS", "cluster"} <= names
+        cluster_var = next(v for v in board["templating"]["list"] if v["name"] == "cluster")
+        assert "label_values(gsd_cluster_up, cluster)" in json.dumps(cluster_var)
+        assert cluster_var["includeAll"] and cluster_var["multi"]
+
+
+@needs_helm
+class TestTheConfigMap:
+    def test_off_by_default_because_the_servicemonitor_is(self):
+        assert not _dashboard_configmaps(_render())
+
+    def test_follows_the_servicemonitor_when_left_empty(self):
+        docs = _render("monitoring.serviceMonitor.enabled=true")
+        cms = _dashboard_configmaps(docs)
+        assert len(cms) == 1
+        assert cms[0]["metadata"]["labels"]["grafana_dashboard"] == "1"
+        assert "grafana_folder" not in (cms[0]["metadata"].get("annotations") or {})
+
+    def test_explicit_true_ships_it_without_the_servicemonitor(self):
+        docs = _render("monitoring.grafanaDashboard.enabled=true")
+        assert _dashboard_configmaps(docs)
+        assert not [d for d in docs if d.get("kind") == "ServiceMonitor"]
+
+    def test_explicit_false_withholds_it_with_the_servicemonitor_on(self):
+        docs = _render("monitoring.serviceMonitor.enabled=true",
+                       "monitoring.grafanaDashboard.enabled=false")
+        assert not _dashboard_configmaps(docs)
+
+    def test_a_typo_refuses_the_render(self):
+        args = ["helm", "template", "t", str(CHART), "-n", "x", "--set", "ingress.host=h",
+                "--set-string", "monitoring.grafanaDashboard.enabled=ture"]
+        done = subprocess.run(args, capture_output=True, text=True, timeout=120)
+        assert done.returncode != 0
+        assert "monitoring.grafanaDashboard.enabled" in done.stderr
+
+    def test_folder_and_extra_labels_land(self):
+        docs = _render("monitoring.grafanaDashboard.enabled=true",
+                       "monitoring.grafanaDashboard.folder=Access",
+                       "monitoring.grafanaDashboard.labels.team=platform")
+        cm = _dashboard_configmaps(docs)[0]
+        assert cm["metadata"]["annotations"]["grafana_folder"] == "Access"
+        assert cm["metadata"]["labels"]["team"] == "platform"
+
+    def test_rendered_configmap_json_is_byte_identical_to_the_file(self):
+        """No Helm mangling: the `$cluster` / `{{cluster}}` strings survive, and the block
+        scalar's chomping reproduces the file's single trailing newline exactly. If this
+        ever fails on the final newline alone, switch the template to `| quote` — Go %q
+        into a YAML double-quoted scalar is also lossless for this file."""
+        cm = _dashboard_configmaps(_render("monitoring.grafanaDashboard.enabled=true"))[0]
+        rendered = cm["data"]["group-sync-dashboard.json"]
+        assert rendered == DASHBOARD.read_text()
+        assert json.loads(rendered)["uid"] == "gsd-group-sync-dashboard"

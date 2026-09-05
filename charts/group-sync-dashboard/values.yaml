@@ -1440,3 +1440,31 @@ monitoring:
       # Long: this is a migration backlog, not an incident. It should be visible and
       # tracked, never paging anyone at 3am.
       directUserGrants: 1h
+
+  # A Grafana dashboard over every family /metrics exports, delivered as a ConfigMap with the
+  # `grafana_dashboard: "1"` label the Grafana sidecar watches (kube-prometheus-stack, the
+  # community OpenShift Grafana deployments, grafana-operator v5 in sidecar mode). A core
+  # resource: it needs no CRD and cannot fail an install, unlike the two objects above.
+  #
+  # DEFAULT: "" — FOLLOW monitoring.serviceMonitor.enabled. The board is only useful once the
+  # scrape exists, and one switch should turn monitoring on. Set true to ship it with the
+  # ServiceMonitor off (a hand-written scrape_config), false to withhold it with the
+  # ServiceMonitor on (no Grafana). Anything other than true / false / "" refuses to render.
+  #
+  # Thresholds in the panels equal the prometheusRule defaults above (600, 7200, 256 MiB,
+  # 1800, 43200) and a test holds them together. The board is editable in Grafana; the JSON
+  # is deliberately not templated, so it renders byte-identical to
+  # dashboards/group-sync-dashboard.json.
+  #
+  # NOT SHIPPED: a GrafanaDashboard CR. grafana-operator v5 reads this ConfigMap through
+  # spec.configMapRef — the chart README carries the CR. Shipping one would pick between two
+  # incompatible CR API versions and need an instanceSelector the chart cannot know.
+  grafanaDashboard:
+    enabled: ""
+    # Extra metadata labels, e.g. a sidecar configured with a non-default label.
+    labels: {}
+    # Extra annotations. `folder` below is the common one and has its own key.
+    annotations: {}
+    # Grafana folder, written as the `grafana_folder` annotation the sidecar's
+    # folderAnnotation setting reads. Empty writes no annotation.
+    folder: ""

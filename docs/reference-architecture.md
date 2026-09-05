@@ -1111,6 +1111,10 @@ flowchart TB
   dep -.->|renews| lease
 ```
 
+A third optional monitoring object, the Grafana dashboard ConfigMap
+(`charts/group-sync-dashboard/templates/grafana-dashboard.yaml`), is a core resource and follows the
+ServiceMonitor's switch by default.
+
 ### The `fail` guards
 
 No count in this heading, deliberately. It said "four" while the chart had grown to seven in
