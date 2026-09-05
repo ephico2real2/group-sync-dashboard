@@ -41,19 +41,33 @@ and row counts that are plausible for the age of the copy.
 In the CronJob's image the same check is one flag, and it also compares the sidecar:
 
 ```sh
-oc create job -n $NS --from=cronjob/$REL-backup-offsite verify-$(date +%s) --dry-run=client -o yaml \
-  | sed 's#--source#--check\n                - /offsite/gsd-20260904T061500.123456Z.db\n                - --source#' \
-  | oc apply -f -
+oc create job -n $NS --from=cronjob/$REL-backup-offsite verify-$(date +%s) --dry-run=client -o json \
+  | python3 -c '
+import json, sys
+job = json.load(sys.stdin)
+job["metadata"].pop("ownerReferences", None)
+c = job["spec"]["template"]["spec"]["containers"][0]
+c["command"] = ["python3.14", "/scripts/offsite_backup.py", "--check", "/offsite/gsd-20260904T061500.123456Z.db"]
+json.dump(job, sys.stdout)
+' | oc apply -f -
+oc wait -n $NS --for=condition=complete job/verify-<stamp> --timeout=180s && oc logs -n $NS job/verify-<stamp>
 ```
 
-(Simpler: `oc debug` a pod from the CronJob's pod template and run
-`python3.14 /scripts/offsite_backup.py --check /offsite/<file>`.) Expected: `integrity_check ok`,
-`sha256 …`, `sidecar matches`, `user_version …`, row counts.
+(`date` and `python3` here run on your workstation, not in the pod. With the `s3` destination
+the CronJob's only container that runs the script is the init container, whose copy is under
+`/stage` and is gone when the Job ends — verify an S3 copy after downloading it, §3.) Expected:
+`integrity_check ok`, `sha256 …`, `sidecar matches`, `user_version …`, row counts.
 
 Outside the cluster, with the copy downloaded (see §3): `sha256sum -c gsd-….db.sha256` and the
 same Python snippet with `python3`.
 
 ## 2. Run the off-volume copy by hand
+
+Also the way to bind the destination claim right after enabling the module: on a
+`WaitForFirstConsumer` StorageClass it stays Pending until the first Job mounts it, so do not
+enable with `helm upgrade --wait` (it times out, and a timed-out upgrade is a failed revision whose
+objects Helm does not own until the next successful one — delete them by label,
+`oc delete cronjob,sa,cm -l app.kubernetes.io/component=backup-offsite`, if you need a clean slate).
 
 ```sh
 oc create job -n $NS --from=cronjob/$REL-backup-offsite manual-$(date +%s)
@@ -114,7 +128,14 @@ oc debug -n $NS deploy/$REL -c dashboard -- sh -c '
 set -e
 ls -l /data /data/backup
 python3.14 -c "import sqlite3,sys; c=sqlite3.connect(\"file:\" + sys.argv[1] + \"?immutable=1\", uri=True); print(c.execute(\"PRAGMA integrity_check\").fetchone()[0])" /data/backup/gsd-….db
-mkdir -p /data/pre-restore && cat /data/gsd.db > /data/pre-restore/gsd.db.$(date +%s) 2>/dev/null || true
+python3.14 -c "
+import pathlib, time
+live = pathlib.Path(\"/data/gsd.db\")
+if live.is_file():
+    keep = pathlib.Path(\"/data/pre-restore\"); keep.mkdir(parents=True, exist_ok=True)
+    (keep / (\"gsd.db.\" + str(int(time.time())))).write_bytes(live.read_bytes())
+    print(\"kept the live file under /data/pre-restore\")
+"
 rm -f /data/gsd.db-wal /data/gsd.db-shm
 cat /data/backup/gsd-….db > /data/gsd.db
 chgrp 0 /data/gsd.db && chmod g=u /data/gsd.db
@@ -172,9 +193,11 @@ chgrp 0 /data/gsd.db && chmod g=u /data/gsd.db
 oc delete -n $NS pod/gsd-restore
 ```
 
-For an S3 copy: download it (§3), then stream it in through the helper pod —
-`cat gsd-….db | oc exec -i -n $NS gsd-restore -- sh -c 'cat > /data/gsd.db'` — and apply the
-same `rm -f` and ownership lines.
+For an S3 copy: download it (§3), then, in the helper pod, run the `rm -f /data/gsd.db-wal
+/data/gsd.db-shm` line FIRST, stream the copy in —
+`cat gsd-….db | oc exec -i -n $NS gsd-restore -- sh -c 'cat > /data/gsd.db'` — and finish with
+the ownership lines. The order matters: a `-wal` that outlives the file it belonged to would be
+replayed into the restored database.
 
 **Both claims RWO on different nodes?** The helper pod needs both attached; if it stays Pending,
 the offsite claim is attached elsewhere (a Job still running — wait for it) or the classes are

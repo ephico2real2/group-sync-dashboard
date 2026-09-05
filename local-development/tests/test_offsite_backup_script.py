@@ -103,6 +103,58 @@ class TestShip:
         assert len(list(dest.glob("gsd-*.db"))) == 3
 
 
+class TestDurability:
+    def test_an_empty_sidecar_beside_a_good_copy_means_copy_again_not_a_traceback(self, script, source, tmp_path, capsys):
+        """Review of B1 (Cursor): a crash between creating and writing the sidecar leaves a 0-byte
+        file; `split()[0]` raised IndexError, and every later Job failed beside a verified copy."""
+        backups, _ = source
+        dest = tmp_path / "offsite"
+        assert script.main(["--source", str(backups), "--dest", str(dest)]) == 0
+        (copy,) = dest.glob("gsd-*.db")
+        sidecar = dest / (copy.name + ".sha256")
+        sidecar.write_text("")
+        assert script.main(["--source", str(backups), "--dest", str(dest)]) == 0
+        digest, name = sidecar.read_text().split()
+        assert name == copy.name and digest == _sha(copy)
+        assert "copying again" in capsys.readouterr().err
+
+    def test_the_sidecar_is_written_through_a_temporary_name_and_fsynced(self, script, source, tmp_path, monkeypatch):
+        """The sidecar gets the same durability as the copy: a temp file, fsync, rename, directory fsync."""
+        backups, _ = source
+        dest = tmp_path / "offsite"
+        synced: list[int] = []
+        real_fsync = script.os.fsync
+        monkeypatch.setattr(script.os, "fsync", lambda fd: (synced.append(fd), real_fsync(fd)))
+        assert script.main(["--source", str(backups), "--dest", str(dest)]) == 0
+        assert len(synced) >= 3, "the .part, the sidecar and the directory"
+        assert not list(dest.glob("*.sha256.part"))
+
+    def test_a_stale_part_from_a_killed_run_is_removed(self, script, source, tmp_path):
+        backups, _ = source
+        dest = tmp_path / "offsite"; dest.mkdir()
+        (dest / "gsd-20200101T000000.000000Z.db.part").write_bytes(b"half")
+        assert script.main(["--source", str(backups), "--dest", str(dest)]) == 0
+        assert not list(dest.glob("*.part"))
+
+    def test_a_newer_backup_landing_during_the_copy_is_noted_and_ships_next_run(self, script, source, tmp_path, capsys, monkeypatch):
+        """Store.backup runs on its own timer; the picked file is still a verified backup, one
+        interval old at worst. Noted in the log, shipped next run — no re-pick loop (review of B1)."""
+        backups, store = source
+        dest = tmp_path / "offsite"
+        real_copy = script.copy_hashed
+        def copy_then_new_backup(src, dst):
+            out = real_copy(src, dst)
+            store.record_sync_event("crc", "corp", "ns", "2026-08-02T12:00:00Z", "2026-08-02T12:00:30Z", "0 * * * *", 1)
+            store.backup(str(backups), keep=10)
+            return out
+        monkeypatch.setattr(script, "copy_hashed", copy_then_new_backup)
+        assert script.main(["--source", str(backups), "--dest", str(dest)]) == 0
+        assert "landed during the copy; it ships on the next run" in capsys.readouterr().out
+        monkeypatch.setattr(script, "copy_hashed", real_copy)
+        assert script.main(["--source", str(backups), "--dest", str(dest)]) == 0
+        assert len(list(dest.glob("gsd-*.db"))) == 2
+
+
 class TestFailures:
     def test_a_copy_that_is_not_a_database_fails_and_leaves_nothing(self, script, tmp_path, capsys):
         backups = tmp_path / "backup"

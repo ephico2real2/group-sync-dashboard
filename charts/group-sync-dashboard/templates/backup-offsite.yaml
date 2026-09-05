@@ -20,8 +20,11 @@ setting the wrong key and seeing nothing render.
 {{- if not .Values.config.backup.enabled }}
 {{- fail "backup.offsite.enabled=true requires config.backup.enabled=true. The CronJob ships the VACUUM INTO files the dashboard writes under config.backup.dir; with that off there is nothing to ship, and copying the live gsd.db with its WAL would produce a torn file that opens and restores — the worst kind of backup." }}
 {{- end }}
-{{- if not (hasPrefix "/data/" .Values.config.backup.dir) }}
-{{- fail (printf "backup.offsite.enabled=true requires config.backup.dir under /data/ (it is %q). The CronJob mounts the data claim at /data, read-only, and reads the backups from there." .Values.config.backup.dir) }}
+{{- if or (not (hasPrefix "/data/" .Values.config.backup.dir)) (contains ".." .Values.config.backup.dir) }}
+{{- fail (printf "backup.offsite.enabled=true requires config.backup.dir under /data/ with no '..' (it is %q). The CronJob mounts the data claim at /data, read-only, and reads the backups from there." .Values.config.backup.dir) }}
+{{- end }}
+{{- if and .Values.persistence.existingClaim (not .Values.persistence.accessMode) }}
+{{- fail "backup.offsite.enabled=true with persistence.existingClaim requires persistence.accessMode set to that claim's access mode: helm cannot read the live claim, and an emptied accessMode derives ReadWriteOncePod or ReadWriteMany from replicaCount, which may not be what the claim was created with. ReadWriteOncePod is refused either way." }}
 {{- end }}
 {{- if eq $mode "ReadWriteOncePod" }}
 {{- fail "backup.offsite.enabled=true cannot work with a ReadWriteOncePod data volume: that mode lets exactly ONE pod mount the claim, so the CronJob pod would stay Pending forever. Set persistence.accessMode to ReadWriteOnce (the CronJob is then pinned to the dashboard's node by podAffinity) or ReadWriteMany. accessModes are immutable on an existing claim — docs/RUNBOOK_backup_restore.md covers moving the data to a new one." }}
@@ -33,7 +36,8 @@ setting the wrong key and seeing nothing render.
 {{- if and $o.destination.pvc.existingClaim (eq $o.destination.pvc.existingClaim $dataClaim) }}
 {{- fail (printf "backup.offsite.destination.pvc.existingClaim %q is the data claim itself. A copy on the volume it protects is what config.backup already makes; this CronJob exists to put one somewhere else." $dataClaim) }}
 {{- end }}
-{{- if lt (int $o.destination.pvc.keep) 0 }}
+{{- /* A regex, not `int`: Sprig's int of a non-number is 0, which would have let `keep: abc` render and die in the Job's argparse. */}}
+{{- if not (regexMatch "^(0|[1-9][0-9]*)$" (printf "%v" $o.destination.pvc.keep)) }}
 {{- fail (printf "backup.offsite.destination.pvc.keep must be 0 (keep everything) or a positive count, not %v." $o.destination.pvc.keep) }}
 {{- end }}
 {{- end }}

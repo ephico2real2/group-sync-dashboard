@@ -113,6 +113,30 @@ def integrity(path: Path) -> dict:
     return facts
 
 
+def sidecar_expected(sidecar: Path) -> str | None:
+    """The first field of a `sha256sum -c` sidecar, or None when it is empty or malformed — a
+    crash between creating the sidecar and writing it leaves a 0-byte file, and that must mean
+    "copy again", never a traceback beside a copy that already verified (review of B1)."""
+    parts = sidecar.read_text().split()
+    return parts[0] if parts else None
+
+
+def write_sidecar(sidecar: Path, digest: str, name: str) -> None:
+    """Write the sidecar durably: to a temporary name, fsync, rename, fsync the directory — the
+    same care the copy gets, or a crash could leave a good copy beside an empty sidecar."""
+    tmp = sidecar.with_name(sidecar.name + PART_SUFFIX)
+    with tmp.open("w") as fh:
+        fh.write(f"{digest}  {name}\n")
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(tmp, sidecar)
+    dir_fd = os.open(str(sidecar.parent), os.O_RDONLY)
+    try:
+        os.fsync(dir_fd)
+    finally:
+        os.close(dir_fd)
+
+
 def prune(dest: Path, keep: int) -> int:
     """Store.backup's rule: sorted(glob)[:-keep] goes. 0 keeps everything. Sidecars follow."""
     if keep <= 0:
@@ -134,12 +158,15 @@ def ship(source: Path, dest: Path, keep: int) -> int:
         raise BackupError(f"destination {dest} is not writable: {exc}") from exc
     if dest.resolve() == source.resolve():
         raise BackupError(f"destination {dest} IS the source directory — that is not off the volume")
+    # A SIGKILL mid-copy skips `finally`; whatever .part it left is not a copy and goes now.
+    for stale in dest.glob("*" + PART_SUFFIX):
+        stale.unlink(missing_ok=True)
 
     target = dest / newest.name
     sidecar = dest / (newest.name + SUM_SUFFIX)
     if target.exists() and sidecar.exists():
-        expected = sidecar.read_text().split()[0]
-        if sha256_of(target) == expected:
+        expected = sidecar_expected(sidecar)
+        if expected is not None and sha256_of(target) == expected:
             print(f"already shipped: {target} matches its sidecar; nothing to copy")
             removed = prune(dest, keep)
             print(f"pruned {removed} older cop{'y' if removed == 1 else 'ies'} (keep={keep})")
@@ -151,7 +178,7 @@ def ship(source: Path, dest: Path, keep: int) -> int:
         digest, size = copy_hashed(newest, part)
         facts = integrity(part)
         os.replace(part, target)
-        sidecar.write_text(f"{digest}  {newest.name}\n")
+        write_sidecar(sidecar, digest, newest.name)
     except OSError as exc:
         raise BackupError(f"copying {newest} to {dest} failed: {exc}") from exc
     finally:
@@ -160,6 +187,15 @@ def ship(source: Path, dest: Path, keep: int) -> int:
     print(f"copied {newest} -> {target} ({size} bytes, sha256 {digest})")
     print(f"integrity_check ok; user_version {facts['user_version']}; "
           + "; ".join(f"{t} rows {facts[t]}" for t in HISTORY_TABLES))
+    # The app may have written a newer backup while this one copied (Store.backup runs on its own
+    # timer). The copy above is still a verified backup; the newer one ships on the next run, and
+    # the log says so rather than looping here (review of B1).
+    try:
+        later = newest_backup(source)
+    except BackupError:
+        later = newest
+    if later.name != newest.name:
+        print(f"note: {later.name} landed during the copy; it ships on the next run")
     removed = prune(dest, keep)
     print(f"pruned {removed} older cop{'y' if removed == 1 else 'ies'} (keep={keep})")
     return 0

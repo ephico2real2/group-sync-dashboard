@@ -204,7 +204,15 @@ Restore and verification: [`docs/RUNBOOK_backup_restore.md`](../../docs/RUNBOOK_
 
 Under a `ReadWriteOnce` data volume the CronJob pod is pinned to the dashboard's node (required
 `podAffinity`); under `ReadWriteMany` it runs anywhere. The pod does **not** carry the Service's
-selector labels, so it never receives dashboard traffic while it copies.
+selector labels, so it never receives dashboard traffic while it copies. With
+`persistence.existingClaim`, set `persistence.accessMode` to that claim's mode — the chart cannot
+read the live claim and refuses to guess.
+
+**Enable without `--wait`.** On a `WaitForFirstConsumer` StorageClass the destination claim binds
+when the first Job mounts it, up to one schedule slot later; `helm upgrade --wait` times out on
+that, and a timed-out upgrade is a failed revision whose objects Helm does not own until the next
+successful one. Run the copy by hand right after enabling (the runbook's §2) and the claim binds
+in a minute; Argo CD shows it Progressing until then.
 
 ### Retention on the history
 

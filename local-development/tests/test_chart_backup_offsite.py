@@ -124,6 +124,10 @@ class TestPvcDestination:
         selector = [d for d in docs if d.get("kind") == "Service"][0]["spec"]["selector"]
         labels = _pod(_one(docs, "CronJob"))["metadata"]["labels"]
         assert any(labels.get(k) != v for k, v in selector.items())
+        # Stronger than "one label differs": the two keys that would route traffic are absent or
+        # different, so adding `app:` by mistake would fail here (review of B1).
+        assert "app" not in labels
+        assert labels["app.kubernetes.io/name"] != selector["app.kubernetes.io/name"]
 
     def test_the_destination_claim_survives_uninstall(self):
         ok, out = render(**ON)
@@ -148,6 +152,12 @@ class TestPvcDestination:
 
     def test_negative_keep_is_refused(self):
         ok, out = render(**ON, backup__offsite__destination__pvc__keep="-1")
+        assert not ok and "keep" in out
+
+    def test_non_numeric_keep_is_refused(self):
+        """Review of B1 (Cursor): Sprig's `int "abc"` is 0, so the old `lt … 0` guard let it render
+        and the Job died in argparse."""
+        ok, out = render(**ON, backup__offsite__destination__pvc__keep="abc")
         assert not ok and "keep" in out
 
 
@@ -188,6 +198,19 @@ class TestPrerequisites:
     def test_a_backup_dir_outside_data_is_refused(self):
         ok, out = render(**ON, config__backup__dir="/backup")
         assert not ok and "under /data/" in out
+
+    def test_a_backup_dir_that_walks_out_of_data_is_refused(self):
+        """Review of B1 (Cursor): hasPrefix alone accepted /data/backup/../.., which is / in the pod."""
+        ok, out = render(**ON, config__backup__dir="/data/backup/../..")
+        assert not ok and "under /data/" in out
+
+    def test_an_existing_data_claim_without_an_explicit_access_mode_is_refused(self):
+        """Review of B1 (Cursor): the chart cannot read a live claim's mode, and an emptied
+        accessMode derives one from replicaCount, which may not be the claim's."""
+        ok, out = render(**ON, persistence__existingClaim="already-there", persistence__accessMode="")
+        assert not ok and "cannot read the live claim" in out
+        ok, out = render(**ON, persistence__existingClaim="already-there", persistence__accessMode="ReadWriteOnce")
+        assert ok, out
 
     def test_an_unknown_destination_is_refused(self):
         ok, out = render(**ON, backup__offsite__destination__type="nfs")

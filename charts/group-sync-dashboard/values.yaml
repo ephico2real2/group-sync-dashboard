@@ -767,6 +767,14 @@ persistence:
 #
 # NOT `backup.enabled`. That key does not exist and the chart refuses it: the on-volume
 # switch is config.backup.enabled, this one is backup.offsite.enabled.
+#
+# THE CLAIM BINDS AT THE FIRST JOB. On a StorageClass with volumeBindingMode
+# WaitForFirstConsumer (the common default) the destination claim stays Pending until the first
+# Job mounts it — up to one schedule slot. `helm upgrade --wait` waits for claims to bind and
+# times out; a timed-out upgrade is a FAILED revision whose objects Helm no longer owns until the
+# next successful one renders them again (measured on the reference cluster, 2026-09-05). Enable
+# without --wait, or run the copy by hand right after (docs/RUNBOOK_backup_restore.md §2), which
+# binds the claim in a minute. Argo CD shows the claim Progressing until then.
 backup:
   offsite:
     enabled: false
