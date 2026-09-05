@@ -40,7 +40,17 @@ class TestWhoamiSession:
             assert body["session"] == {
                 "cookie_expire_seconds": 14400,
                 "cookie_refresh_seconds": 0,
+                "idle_timeout": {"enabled": False},
             }
+
+    def test_the_idle_timeout_is_restated_when_on_and_never_a_deadline(self, tmp_path):
+        """Inputs to the page's model, like the cap: seconds and the warning, no expiry instant."""
+        with _client(tmp_path, oauth_proxy_enabled=True, session_idle_timeout_enabled=True,
+                     session_idle_timeout_seconds=900, session_idle_timeout_warning_seconds=45) as c:
+            body = c.get("/api/whoami", headers={"X-Forwarded-User": "alice"}).json()
+            assert body["session"]["idle_timeout"] == {
+                "enabled": True, "seconds": 900, "warning_seconds": 45}
+            assert body["logout_url"] == "/oauth/sign_out", "the URL the countdown ends at"
 
     def test_the_dead_session_exit_follows_the_configured_prefix(self, tmp_path):
         """The proxy's routes hang off --proxy-prefix, so the dead-session exit is composed
@@ -61,6 +71,7 @@ class TestWhoamiSession:
             assert body["session"] == {
                 "cookie_expire_seconds": 600,
                 "cookie_refresh_seconds": 60,
+                "idle_timeout": {"enabled": False},
             }
 
     def test_nothing_is_offered_when_the_proxy_is_off(self, tmp_path):

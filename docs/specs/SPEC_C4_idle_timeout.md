@@ -7,7 +7,7 @@
 | Release | R5 — Sessions and login source |
 | Version on release | app 0.16.0, chart 0.18.0 |
 | Issue | [#65](https://github.com/ephico2real2/group-sync-dashboard/issues/65) |
-| Status | specified |
+| Status | in progress |
 | Source | design agent output `a836ef1bc0058551a`; two messages; the first ended inside a ```sh fence and the second began with two fence lines (a closer and a stray duplicate), so one duplicate fence line was dropped |
 
 ## How to read this spec
@@ -25,6 +25,7 @@ request, with the reason, under "Orchestrator's notes".
 ## Orchestrator's notes
 
 - First feature of R5: app 0.16.0, chart 0.18.0; the body's version numbers are superseded.
+- Applied at implementation (PR for #65), 2026-09-06, from the body's blocks. Deviations, each with the reason: (1) `gsd.idleTimeout` ends in `| toYaml`: `include` returns TEXT, and the body's bare map printed as text is Go's `map[k:v]`, which `fromYaml` cannot read — every caller saw an empty map and the defaults, so `--set session.idleTimeout.*` was silently lost (four chart tests red at first run); (2) the body's `_idle_timeout_setting` is inserted before the comment block that precedes `_SAR_FIELD_PATTERNS` (the body's anchor assumed two blank lines there); (3) `tests/test_ui.py::test_the_poll_is_suspended_while_the_warning_is_up_and_resumes_after_stay` resets its fetch counter once the warning is up: the nine legitimate polls before the warning were being counted as "the poll ran under the countdown"; (4) the body's CHANGELOG and Chart.yaml texts name 0.13.0 / 0.12.0 — the ladder's pair is used, and the changelog heading is the one `prepare-release.py` writes; (5) the design doc's rewrite is authored from the body's prose (it describes the section rather than writing it) and cites the helper, the setting function, `idleExpire` and `autoRefresh`; (6) `session.idleTimeout.enabled` joins `tests/test_values_defaults.py`'s stated off-by-default exceptions with its reason; (7) the body's four closing questions are batch C's and were settled on 2026-09-05 (exports not recorded; the C3 marking, PDF base and own-namespace questions in `SPEC_C3_reporting_microservice.md` §14).
 
 ## Batch preamble (verbatim from the design)
 

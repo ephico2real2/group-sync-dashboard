@@ -45,6 +45,9 @@ group membership, so it ships authenticated and you turn the proxy *off* deliber
 | `oauthProxy.port` | `8443` | |
 | `oauthProxy.cookieSecret` | `""` | generated once and reused across upgrades |
 | `oauthProxy.cookie.expire` | `4h` | absolute session cap, a Go duration. There is deliberately no `refresh` key: measured on `provider=openshift`, `-cookie-refresh` force-clears the session at every interval instead of sliding it, so the chart refuses a values file that sets it |
+| `session.idleTimeout.enabled` | `false` | signs people out after inactivity: the page counts pointer, keyboard and tab-visibility activity, shows a countdown, and at zero sends the browser to the proxy's `sign_out`, which ends the session. Off because it is a session policy. Refused without `oauthProxy.enabled` |
+| `session.idleTimeout.minutes` | `30` | whole minutes of inactivity before the countdown; must be shorter than `oauthProxy.cookie.expire` or the render is refused (the cap would end every session first) |
+| `session.idleTimeout.warningSeconds` | `60` | how long the countdown runs; at least 5 and shorter than the window |
 | `oauthProxy.proxyPrefix` | `/oauth` | the prefix everything the proxy serves lives under; the app composes its sign-out link from it |
 | `oauthProxy.logoutUrl` | `""` | where the browser lands after sign-out; empty means this dashboard's own unauthenticated `/signed-out` page |
 | `oauthProxy.skipAuthRegex` | `^/(healthz\|readyz\|metrics)$` | the health paths **must** stay, or kubelet gets a 302 and kills a healthy pod |

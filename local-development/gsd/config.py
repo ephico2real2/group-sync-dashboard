@@ -306,6 +306,17 @@ class Settings:
     # an absolute one without guessing.
     session_cookie_refresh_seconds: int = 0
 
+    # ── IDLE TIMEOUT (docs/DESIGN_session_and_signout.md, "Idle timeout") ──────────────────────────
+    # OFF by default: it signs people out, which is a session policy the platform team chooses.
+    # Its OWN keys, never derived from the cookie pair — the cookie does not slide, so an idle
+    # window computed from `expire - refresh` is meaningless here (the first lesson recorded there).
+    # Seconds internally; the chart speaks in minutes. The page enforces nothing itself: at zero it
+    # sends the browser to the proxy's sign_out, and the proxy's absolute cap remains the guarantee
+    # for a tab that never gets there.
+    session_idle_timeout_enabled: bool = False
+    session_idle_timeout_seconds: int = 1800
+    session_idle_timeout_warning_seconds: int = 60
+
     # ── OPTIONAL MODULES ───────────────────────────────────────────────────────────────────────────
     # Each module has its own switch; the default is chosen per module and the values comment
     # says why. CSV/JSON export (docs/DESIGN_export.md) is ON: it runs in the browser over rows
@@ -550,6 +561,42 @@ def _duration_setting(raw: dict, env_name: str, yaml_key: str, default: int) -> 
         log.warning("%s=%r is not a Go duration; using %r seconds", env_name, source, default)
         return default
     return int(total)
+
+
+def _idle_timeout_setting(raw: dict, cookie_expire_seconds: int) -> tuple[bool, int, int]:
+    """(enabled, seconds, warning_seconds). Env wins over the ConfigMap; a bad number falls back.
+
+    The chart refuses these shapes at render time; this is the second boundary, for a hand-written
+    config. Falling back with a WARNING rather than raising, because a wrong warning length is not
+    grounds for an outage — but the fallback is always the SHORTER, safer window, never a longer one.
+    The one thing that does raise nothing and only warns: an idle window at or beyond the proxy's
+    absolute cap can never fire, so the module is inert and the log says so.
+    """
+    enabled = _bool_setting(raw, "GSD_SESSION_IDLE_TIMEOUT_ENABLED", "sessionIdleTimeoutEnabled", False)
+    minutes = _num_setting(raw, "GSD_SESSION_IDLE_TIMEOUT_MINUTES", "sessionIdleTimeoutMinutes", 30, int)
+    if minutes < 1:
+        log.warning("sessionIdleTimeoutMinutes=%r is below 1; using 30", minutes)
+        minutes = 30
+    seconds = minutes * 60
+    warning = _num_setting(
+        raw, "GSD_SESSION_IDLE_TIMEOUT_WARNING_SECONDS", "sessionIdleTimeoutWarningSeconds", 60, int
+    )
+    if not 5 <= warning < seconds:
+        fallback = min(60, max(5, seconds // 2))
+        log.warning(
+            "sessionIdleTimeoutWarningSeconds=%r must be at least 5 and shorter than the idle "
+            "window (%ds); using %d", warning, seconds, fallback,
+        )
+        warning = fallback
+    if enabled and seconds >= cookie_expire_seconds:
+        log.warning(
+            "the idle timeout (%ds) is not shorter than the proxy's absolute session cap (%ds), so "
+            "it can never fire: the cap ends every session first. Lower sessionIdleTimeoutMinutes "
+            "or raise oauthProxy.cookie.expire", seconds, cookie_expire_seconds,
+        )
+    return enabled, seconds, warning
+
+
 # What each field of a visibility SubjectAccessReview may contain. RBAC matching is exact and
 # lowercase, so a miscased or misspelt field would not error — it would answer allowed=false for
 # every viewer and silently demote every administrator. The chart refuses these shapes at render
@@ -811,6 +858,8 @@ def load_settings(path: str | Path) -> Settings:
 
     admin_sar = _visibility_sar_setting(raw)
     usage_admin_sar = _usage_visibility_sar_setting(raw)
+    cookie_expire = _duration_setting(raw, "GSD_SESSION_COOKIE_EXPIRE", "sessionCookieExpire", 14400)
+    idle_enabled, idle_seconds, idle_warning = _idle_timeout_setting(raw, cookie_expire)
     return Settings(
         clusters=clusters,
         poll_interval_seconds=int(raw.get("pollIntervalSeconds", 60)),
@@ -859,9 +908,10 @@ def load_settings(path: str | Path) -> Settings:
         oauth_proxy_prefix=_path_setting(
             raw, "GSD_OAUTH_PROXY_PREFIX", "oauthProxyPrefix", "/oauth"
         ),
-        session_cookie_expire_seconds=_duration_setting(
-            raw, "GSD_SESSION_COOKIE_EXPIRE", "sessionCookieExpire", 14400
-        ),
+        session_cookie_expire_seconds=cookie_expire,
+        session_idle_timeout_enabled=idle_enabled,
+        session_idle_timeout_seconds=idle_seconds,
+        session_idle_timeout_warning_seconds=idle_warning,
         session_cookie_refresh_seconds=_duration_setting(
             raw, "GSD_SESSION_COOKIE_REFRESH", "sessionCookieRefresh", 0
         ),

@@ -1810,7 +1810,8 @@ def build_app(
         remains is enough: the proxy clears its own cookie and re-entry demands credentials,
         measured on the reference cluster.
 
-        `session` carries the CONFIGURED durations, never a deadline. The session cookie is
+        `session` carries the CONFIGURED durations, never a deadline. Its `idle_timeout` is the same
+        kind of thing — inputs to a model the browser runs, never a deadline the server knows. The session cookie is
         HttpOnly and the proxy forwards no session-age header, so the true expiry is not
         observable from here; these numbers are trustworthy only because the ConfigMap
         renders them from the same chart values as the proxy's own flags. The browser owns
@@ -1841,6 +1842,19 @@ def build_app(
                 {
                     "cookie_expire_seconds": settings.session_cookie_expire_seconds,
                     "cookie_refresh_seconds": settings.session_cookie_refresh_seconds,
+                    # The idle-timeout MODEL's inputs, restated like the cap above and enforced
+                    # here just as little: the page counts, and at zero sends the browser to
+                    # logout_url. Present in both states so an operator can read the module's
+                    # state off the wire; the page acts only on `enabled: true`.
+                    "idle_timeout": (
+                        {
+                            "enabled": True,
+                            "seconds": settings.session_idle_timeout_seconds,
+                            "warning_seconds": settings.session_idle_timeout_warning_seconds,
+                        }
+                        if settings.session_idle_timeout_enabled
+                        else {"enabled": False}
+                    ),
                 }
                 if authenticated
                 else None

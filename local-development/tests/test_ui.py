@@ -3629,3 +3629,165 @@ class TestIdentityFirstLogin:
         body = page.locator("body").inner_text()
         assert "kubeadmin" not in body
         assert "1 synced member" in body or "never logged in" in body
+
+
+@pytest.fixture(scope="module")
+def idle_server(tmp_path_factory):
+    """Proxy on, idle timeout ON at 600 s with a 60 s warning, restrictions off so the seeded wide
+    page renders for any name. Real seconds are never waited for: page.clock drives the model."""
+    db = str(tmp_path_factory.mktemp("gsd-idle") / "ui.db")
+    _seed(db)
+    settings = Settings(
+        clusters=[ClusterConfig("crc-local", "https://api.crc.testing:6443", token_env="X")],
+        db_path=db, oauth_proxy_enabled=True, view_restrictions_enabled=False,
+        session_idle_timeout_enabled=True, session_idle_timeout_seconds=600,
+        session_idle_timeout_warning_seconds=60,
+    )
+    port = _free_port()
+    srv = uvicorn.Server(uvicorn.Config(
+        build_app(settings, run_poller=False), host="127.0.0.1", port=port, log_level="warning"))
+    thread = threading.Thread(target=srv.run, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{port}"
+    for _ in range(100):
+        try:
+            if httpx.get(f"{base}/healthz", timeout=1).status_code == 200:
+                break
+        except httpx.HTTPError:
+            time.sleep(0.1)
+    else:
+        raise RuntimeError("dashboard server did not start")
+    yield base
+    srv.should_exit = True
+    thread.join(timeout=5)
+
+
+def _open_idle(page, base):
+    """A clocked page: Date.now and every timer are the test's to advance."""
+    page.clock.install()
+    page.set_extra_http_headers({"X-Forwarded-User": "alice"})
+    page.goto(base)
+    page.wait_for_selector(".hero .value", timeout=10_000)
+    page.wait_for_function("() => idle.enabled === true", timeout=10_000)
+    return page
+
+
+class TestIdleTimeout:
+    """The countdown dialog and what it enforces (docs/DESIGN_session_and_signout.md)."""
+
+    def test_the_module_off_starts_no_model(self, browser, proxied_server):
+        ctx = browser.new_context(extra_http_headers={"X-Forwarded-User": "alice"})
+        p = ctx.new_page()
+        try:
+            p.goto(proxied_server)
+            p.wait_for_selector("#main .card", timeout=10_000)
+            p.wait_for_function("() => sessionCapNote !== ''")
+            assert p.evaluate("() => idle.enabled") is False
+            assert p.locator("#idle-modal").is_hidden()
+        finally:
+            ctx.close()
+
+    def test_the_dialog_opens_at_the_warning_moment_traps_focus_and_counts(self, page, idle_server):
+        p = _open_idle(page, idle_server)
+        p.clock.run_for(539_000)
+        assert p.locator("#idle-modal").is_hidden()
+        p.clock.run_for(2_000)
+        assert p.locator("#idle-modal").is_visible()
+        dlg = p.locator("#idle-modal [role='dialog']")
+        assert dlg.get_attribute("aria-modal") == "true"
+        assert dlg.get_attribute("aria-labelledby") == "idle-title"
+        assert p.evaluate("() => document.activeElement.id") == "idle-stay"
+        assert p.evaluate("() => document.getElementById('wrap').inert") is True
+        left = int(p.locator("#idle-countdown").inner_text())
+        assert 55 <= left <= 59, left
+        p.clock.run_for(10_000)
+        assert int(p.locator("#idle-countdown").inner_text()) == left - 10
+
+    def test_escape_keeps_the_session_and_restores_focus(self, page, idle_server):
+        p = _open_idle(page, idle_server)
+        p.focus("button[data-nav='groups']")
+        p.clock.run_for(545_000)
+        assert p.locator("#idle-modal").is_visible()
+        p.keyboard.press("Escape")
+        assert p.locator("#idle-modal").is_hidden()
+        assert p.evaluate("() => idle.state") == "active"
+        assert p.evaluate("() => document.getElementById('wrap').inert") is False
+        assert p.evaluate("() => document.activeElement.dataset.nav") == "groups"
+        p.clock.run_for(300_000)
+        assert p.locator("#idle-modal").is_hidden(), "the clock restarted"
+
+    def test_enter_on_the_default_button_keeps_the_session(self, page, idle_server):
+        p = _open_idle(page, idle_server)
+        p.clock.run_for(545_000)
+        p.keyboard.press("Enter")
+        assert p.locator("#idle-modal").is_hidden()
+
+    def test_tab_cycles_inside_the_dialog(self, page, idle_server):
+        p = _open_idle(page, idle_server)
+        p.clock.run_for(545_000)
+        p.keyboard.press("Tab")
+        assert p.evaluate("() => document.activeElement.id") == "idle-signout"
+        p.keyboard.press("Tab")
+        assert p.evaluate("() => document.activeElement.id") == "idle-stay"
+        p.keyboard.press("Shift+Tab")
+        assert p.evaluate("() => document.activeElement.id") == "idle-signout"
+
+    def test_the_poll_is_suspended_while_the_warning_is_up_and_resumes_after_stay(self, page, idle_server):
+        p = _open_idle(page, idle_server)
+        p.evaluate("() => { window.__calls = 0; const f = window.fetch;"
+                   " window.fetch = (...a) => { window.__calls++; return f(...a); }; }")
+        p.clock.run_for(545_000)
+        # The nine polls BEFORE the warning (one a minute while active) are legitimate and counted
+        # above; the assertion is about the poll under the countdown, so the counter starts here.
+        assert p.evaluate("() => idle.state") == "warning"
+        p.evaluate("() => { window.__calls = 0; }")
+        p.evaluate("() => autoRefresh()")
+        assert p.evaluate("() => window.__calls") == 0, "the poll ran under the countdown"
+        p.keyboard.press("Escape")
+        p.wait_for_function("() => window.__calls > 0", timeout=10_000)  # the re-proof refresh
+        before = p.evaluate("() => window.__calls")
+        p.evaluate("() => autoRefresh()")
+        p.wait_for_function(f"() => window.__calls > {before}", timeout=10_000)
+
+    def test_expiry_blanks_the_page_and_navigates_to_the_proxys_sign_out(self, page, idle_server):
+        p = _open_idle(page, idle_server)
+        p.route("**/oauth/sign_out", lambda route: route.fulfill(
+            status=200, content_type="text/html", body="<html><body>stub sign_out</body></html>"))
+        p.clock.run_for(601_000)
+        p.wait_for_url("**/oauth/sign_out", timeout=10_000)
+
+    def test_activity_in_another_tab_defers_this_tabs_timeout(self, browser, idle_server):
+        ctx = browser.new_context(extra_http_headers={"X-Forwarded-User": "alice"})
+        a, b = ctx.new_page(), ctx.new_page()
+        try:
+            a.clock.install()
+            a.goto(idle_server)
+            a.wait_for_function("() => idle.enabled === true", timeout=10_000)
+            b.goto(idle_server)
+            b.wait_for_function("() => idle.enabled === true", timeout=10_000)
+            a.clock.run_for(400_000)
+            b.keyboard.press("ArrowDown")           # activity in the OTHER tab
+            a.wait_for_function("() => Date.now() - idle.lastActivityAt < 1000", timeout=5_000)
+            a.clock.run_for(300_000)                 # 300 s since the other tab's activity
+            assert a.locator("#idle-modal").is_hidden()
+            a.clock.run_for(300_000)                 # now 600 s: it fires
+            assert a.locator("#idle-modal").is_visible() or "sign_out" in a.url
+        finally:
+            ctx.close()
+
+    def test_nothing_is_persisted_across_a_reload(self, page, idle_server):
+        """The localStorage trap: an origin recorded there outlives the session and fires early."""
+        p = _open_idle(page, idle_server)
+        p.clock.run_for(545_000)
+        assert p.evaluate("() => localStorage.length") == 0
+        p.reload()
+        p.wait_for_function("() => idle.enabled === true", timeout=10_000)
+        assert p.evaluate("() => idle.state") == "active"
+        assert p.locator("#idle-modal").is_hidden()
+
+    def test_forced_colors_keeps_a_visible_border(self, page, idle_server):
+        p = _open_idle(page, idle_server)
+        p.emulate_media(forced_colors="active")
+        p.clock.run_for(545_000)
+        width = p.evaluate("() => getComputedStyle(document.querySelector('.idle-dialog')).borderTopWidth")
+        assert width == "2px", width

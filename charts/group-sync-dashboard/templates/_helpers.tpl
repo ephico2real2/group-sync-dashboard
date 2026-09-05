@@ -490,3 +490,42 @@ false
 {{- fail (printf "monitoring.grafanaDashboard.enabled must be true, false or \"\" (follow the ServiceMonitor); got %q" (toString $raw)) -}}
 {{- end -}}
 {{- end -}}
+
+# ── Idle timeout ──────────────────────────────────────────────────────────────────────
+# Nil-safe like the cookie helpers: commenting out the sub-keys leaves `session:` or
+# `idleTimeout:` present-but-nil, which a bare field access panics on. Each value is validated
+# where it is resolved, so a values file that could never work fails at `helm template` with the
+# rule named, rather than reaching the app's fallback and describing a countdown it is not running.
+{{- define "gsd.idleTimeout" -}}
+{{- /* toYaml, not the bare map: `include` returns TEXT, and a map printed as text is Go's
+     `map[k:v]`, which fromYaml cannot read — every caller would silently see an empty map and
+     the defaults (found at implementation: the spec's form lost every --set). */ -}}
+{{- ((.Values.session | default dict).idleTimeout) | default dict | toYaml -}}
+{{- end -}}
+
+{{- define "gsd.idleTimeoutEnabled" -}}
+{{- $t := include "gsd.idleTimeout" . | fromYaml -}}
+{{- if eq (toString ($t.enabled | default false)) "true" -}}true{{- else -}}false{{- end -}}
+{{- end -}}
+
+{{- define "gsd.idleTimeoutMinutes" -}}
+{{- $t := include "gsd.idleTimeout" . | fromYaml -}}
+{{- $m := toString ($t.minutes | default 30) -}}
+{{- if not (regexMatch "^[1-9][0-9]*$" $m) -}}
+{{- fail (printf "session.idleTimeout.minutes %q is not a whole number of minutes >= 1." $m) -}}
+{{- end -}}
+{{- $m -}}
+{{- end -}}
+
+{{- define "gsd.idleTimeoutWarningSeconds" -}}
+{{- $t := include "gsd.idleTimeout" . | fromYaml -}}
+{{- $w := toString ($t.warningSeconds | default 60) -}}
+{{- if not (regexMatch "^[0-9]+$" $w) -}}
+{{- fail (printf "session.idleTimeout.warningSeconds %q is not a whole number of seconds." $w) -}}
+{{- end -}}
+{{- $m := include "gsd.idleTimeoutMinutes" . | int -}}
+{{- if or (lt (int $w) 5) (ge (int $w) (mul $m 60)) -}}
+{{- fail (printf "session.idleTimeout.warningSeconds %s must be at least 5 and shorter than the idle window (%d minutes = %d seconds): a countdown longer than the window it warns about is a contradiction the page cannot render." $w $m (mul $m 60)) -}}
+{{- end -}}
+{{- $w -}}
+{{- end -}}

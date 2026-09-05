@@ -11,6 +11,7 @@ is implemented; the last section names what deliberately is not, so nobody rebui
 | sign-out | header link to the proxy's own `sign_out` | hidden until `/api/whoami` reports a session |
 | landing page | `/signed-out`, unauthenticated and script-free | states what ended and what did not |
 | end-of-session panel | `api()` recognises an auth redirect | replaces a JSON parse error with an explanation |
+| idle timeout (module, off by default) | the page's idle model → the proxy's `sign_out` | `session.idleTimeout.{minutes,warningSeconds}` |
 
 The cap is **absolute, measured from login, and does not slide**. An active reader is signed out at
 four hours too. That is a consequence of the next section rather than a choice, and the lever is the
@@ -137,24 +138,31 @@ reports the opposite of the truth; chart tests parse arg lines instead.
 
 ## Deliberately not implemented
 
-**A 30-minute page-enforced idle timeout with a countdown modal.** Designed in full, reviewed
-adversarially, and deferred rather than built: it was the largest and most fragile part of the
-original plan and where a review found most of its findings. Four hours plus a working sign-out was
-worth having first.
+**A page-enforced idle timeout with a countdown** — designed in full, reviewed adversarially,
+deferred at first because it was the largest and most fragile part of the original plan, and now
+built as an off-by-default module (application 0.16.0, `session.idleTimeout`,
+`docs/specs/SPEC_C4_idle_timeout.md`), applying the three lessons that were recorded here for
+exactly this:
 
-If it is picked up later, two things from that work are worth carrying and one is a trap:
-
-- The idle timeout cannot be derived from the cookie pair. The original design computed it as
-  `expire - refresh .. expire`, which is sound only while the cookie slides — and it does not. It
-  needs its own configuration keys.
-- The page cannot observe its own session deadline. The cookie is HttpOnly and the proxy forwards no
-  session-age header, so any countdown is a *model*. Enforcement must key off detection of the server
-  event (a request that comes back as an auth redirect), never off a client timer: `localStorage`
-  persists **across** sessions, so an origin recorded there is routinely older than the current
-  session and a timer counting from it fires early — instantly, and repeatedly, after a re-login.
-- The poll must suspend on real inactivity, or the timeout is unreachable. `setInterval(refresh,
-  30000)` makes a request every 30 seconds for as long as a tab is open, and every request re-stamps
-  the cookie.
+- **The idle timeout cannot be derived from the cookie pair.** The original design computed it as
+  `expire - refresh .. expire`, which is sound only while the cookie slides — and it does not. *Met:*
+  the module has its own three keys, rendered beside `sessionCookieExpire`, validated at render
+  (`charts/group-sync-dashboard/templates/_helpers.tpl#gsd.idleTimeoutMinutes`) and at load
+  (`gsd/config.py#_idle_timeout_setting`); the chart refuses a window at or beyond the cap, which
+  could never fire.
+- **The page cannot observe its own session deadline.** The cookie is HttpOnly and the proxy forwards
+  no session-age header, so any countdown is a *model*. `localStorage` persists **across** sessions,
+  so an origin recorded there is routinely older than the current session and a timer counting from
+  it fires early — instantly, and repeatedly, after a re-login. *Met:* the page persists nothing; at
+  zero it removes the data from the screen and sends the browser to the proxy's `sign_out`, and the
+  proxy clears the cookie (`gsd/static/index.html#function idleExpire`). The "session has ended" panel
+  still comes only from a request that came back as an auth redirect, never from the timer. Activity
+  is shared across a browser's tabs over a `BroadcastChannel`, which is ephemeral, so an idle tab
+  cannot sign out a colleague working in another. A tab that never reaches `sign_out` (a closed
+  laptop) is still ended by the absolute cap.
+- **The poll must suspend on real inactivity, or the timeout is unreachable.** *Met:* every automatic
+  refresh passes one gate, `gsd/static/index.html#function autoRefresh`, which returns while the
+  countdown is up or expired; "Stay signed in" resumes with one interaction-marked refresh.
 
 **Token revocation, `-pass-access-token`, a `POST` to the OAuth server's `/logout`, and an
 `OAuthClient` of our own.** Each was designed and each is refuted or made unnecessary by a

@@ -499,3 +499,38 @@ class TestUsersProvidersAndIdentitiesRead:
         assert load_settings(str(p)).identities_read_enabled is True
         monkeypatch.setenv("GSD_IDENTITIES_READ_ENABLED", "off")
         assert load_settings(str(p)).identities_read_enabled is False
+
+
+class TestIdleTimeout:
+    """Its own keys, never the cookie pair; a bad number falls back to the SHORTER window."""
+
+    def test_off_by_default_with_the_documented_numbers(self, tmp_path, monkeypatch):
+        for var in ("GSD_SESSION_IDLE_TIMEOUT_ENABLED", "GSD_SESSION_IDLE_TIMEOUT_MINUTES",
+                    "GSD_SESSION_IDLE_TIMEOUT_WARNING_SECONDS"):
+            monkeypatch.delenv(var, raising=False)
+        s = load_settings(write(tmp_path, BASE))
+        assert (s.session_idle_timeout_enabled, s.session_idle_timeout_seconds,
+                s.session_idle_timeout_warning_seconds) == (False, 1800, 60)
+
+    def test_the_configmap_keys_are_read_in_minutes_and_served_in_seconds(self, tmp_path):
+        cfg = BASE + ("sessionIdleTimeoutEnabled: true\nsessionIdleTimeoutMinutes: 15\n"
+                      "sessionIdleTimeoutWarningSeconds: 90\n")
+        s = load_settings(write(tmp_path, cfg))
+        assert (s.session_idle_timeout_enabled, s.session_idle_timeout_seconds,
+                s.session_idle_timeout_warning_seconds) == (True, 900, 90)
+
+    def test_a_warning_longer_than_the_window_falls_back_to_a_shorter_one(self, tmp_path, caplog):
+        cfg = BASE + "sessionIdleTimeoutMinutes: 1\nsessionIdleTimeoutWarningSeconds: 120\n"
+        s = load_settings(write(tmp_path, cfg))
+        assert s.session_idle_timeout_seconds == 60 and s.session_idle_timeout_warning_seconds == 30
+        assert "must be at least 5 and shorter" in caplog.text
+
+    def test_zero_minutes_falls_back_to_thirty(self, tmp_path):
+        s = load_settings(write(tmp_path, BASE + "sessionIdleTimeoutMinutes: 0\n"))
+        assert s.session_idle_timeout_seconds == 1800
+
+    def test_an_idle_window_past_the_cap_is_inert_and_logged(self, tmp_path, caplog):
+        cfg = BASE + ("oauthProxyEnabled: true\nsessionCookieExpire: 10m\n"
+                      "sessionIdleTimeoutEnabled: true\nsessionIdleTimeoutMinutes: 30\n")
+        load_settings(write(tmp_path, cfg))
+        assert "can never fire" in caplog.text

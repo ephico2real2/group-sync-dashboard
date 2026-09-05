@@ -1365,3 +1365,41 @@ class TestTheIdentitiesGrantIsOffReadOnlyAndCoupled:
                             "config__users__providers[2]": "ldap-local"})
         assert ok, out
         assert _config_data(out)["usersProviders"] == ["a,b", "a b", "ldap-local"]
+
+
+class TestIdleTimeoutThreading:
+    """The three idle keys reach the ConfigMap only with the proxy on, and impossible values are
+    refused at render rather than left for the app to fall back from."""
+
+    def test_off_by_default_and_the_keys_still_render_beside_the_cap(self):
+        ok, out = render()
+        assert ok, out
+        cfg = _config_data(out)
+        assert cfg["sessionIdleTimeoutEnabled"] is False
+        assert cfg["sessionIdleTimeoutMinutes"] == 30 and cfg["sessionIdleTimeoutWarningSeconds"] == 60
+
+    def test_the_configured_numbers_thread_through(self):
+        ok, out = render(session__idleTimeout__enabled="true", session__idleTimeout__minutes="20",
+                         session__idleTimeout__warningSeconds="30")
+        assert ok, out
+        cfg = _config_data(out)
+        assert (cfg["sessionIdleTimeoutEnabled"], cfg["sessionIdleTimeoutMinutes"],
+                cfg["sessionIdleTimeoutWarningSeconds"]) == (True, 20, 30)
+
+    def test_absent_with_the_proxy_off(self):
+        ok, out = render(oauthProxy__enabled="false", visibility__enabled="false")
+        assert ok, out
+        assert "sessionIdleTimeoutEnabled" not in _config_data(out)
+
+    def test_enabled_without_the_proxy_is_refused(self):
+        ok, out = render(oauthProxy__enabled="false", visibility__enabled="false",
+                         session__idleTimeout__enabled="true")
+        assert not ok and "no session to end" in out
+
+    def test_a_window_past_the_cap_is_refused(self):
+        ok, out = render(session__idleTimeout__enabled="true", session__idleTimeout__minutes="240")
+        assert not ok and "could never fire" in out
+
+    def test_a_warning_longer_than_the_window_is_refused(self):
+        ok, out = render(session__idleTimeout__minutes="1", session__idleTimeout__warningSeconds="60")
+        assert not ok and "shorter than the idle window" in out
