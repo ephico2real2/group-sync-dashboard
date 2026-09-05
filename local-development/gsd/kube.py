@@ -7,6 +7,7 @@ are a CRD and an OpenShift type, and both are simple to read directly.
 
 from __future__ import annotations
 
+from datetime import datetime
 import logging
 import re
 import threading
@@ -686,11 +687,19 @@ class ClusterClient:
         return records
 
     def fetch_identities(self) -> dict[str, str] | None:
-        """The exact first login per User — the earliest Identity creationTimestamp naming it — or
-        None when we may not read them. Paged like every list. An Identity with no `user.name`
-        (provisioning in flight, or a lookup-mapped provider before its first mapping) is skipped;
-        two Identities for one User keep the earlier. RFC 3339 UTC strings from the API server
-        share one format, so the string comparison is the time comparison."""
+        """The earliest Identity creationTimestamp naming each User, or None when we may not read
+        them. Paged like every list. An Identity with no `user.name` is skipped.
+
+        Timestamps are compared as INSTANTS, not strings: metav1.Time has marshalled both
+        `2006-01-02T15:04:05Z` and the microsecond form across releases, and a string minimum
+        between the two widths picks the later instant (review of C2). The stored value stays the
+        API server's original string.
+
+        This is the Identity object's creation time, which is the first login for a claim/add/
+        generate provider that created the object. A `mappingMethod: lookup` provider needs its
+        Identity created by an administrator BEFORE the first login, so there the time is the
+        admin's create and `_user_row` still labels it `identity` — the same caveat the docs give
+        a pre-created User (docs/DESIGN_users_tab_logins.md, "Decisions after 0.9.0")."""
         with self._client() as client:
             try:
                 items = self._list_all(client, IDENTITY_API)
@@ -701,12 +710,18 @@ class ClusterClient:
                     return None
                 raise
         earliest: dict[str, str] = {}
+        earliest_at: dict[str, datetime] = {}
         for obj in items:
             user = ((obj.get("user") or {}).get("name") or "").strip()
             created = ((obj.get("metadata") or {}).get("creationTimestamp") or "").strip()
             if not user or not created:
                 continue
-            if user not in earliest or created < earliest[user]:
+            try:
+                instant = datetime.fromisoformat(created.replace("Z", "+00:00"))
+            except ValueError:
+                continue
+            if user not in earliest_at or instant < earliest_at[user]:
+                earliest_at[user] = instant
                 earliest[user] = created
         log.debug("fetched exact first logins for %d users from %s", len(earliest), self.cluster.name)
         return earliest

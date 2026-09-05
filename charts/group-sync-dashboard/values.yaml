@@ -386,6 +386,16 @@ config:
     # Resolutions are never capped — a closed finding must not queue behind new ones.
     maxPerCycle: 20
 
+  users:
+    # Identity-provider NAMES the Users tab lists. EMPTY means every provider — a value that is
+    # simply empty by default. Set it to show one directory's people on a cluster that also carries
+    # test or break-glass providers (measured: 49 `ceo_rnd_oim` accounts beside 8 LDAP users). Applied
+    # when the tab is read, not at the poll; the tab says "showing providers: …"; the never-logged-in
+    # line is not narrowed (a member who logged in through another provider has logged in); manual
+    # accounts with no identity drop out under any list. Names must match the identity provider's
+    # `name:` in oauth.config.openshift.io/cluster, and cannot contain ':' or '/'.
+    providers: []
+
   # Who used the dashboard. Requires oauthProxy.enabled — with the proxy off there is no
   # authentication, X-Forwarded-User would be whatever the caller typed, and recording it
   # would manufacture an audit trail rather than keep one. Nothing is recorded in that mode
@@ -418,16 +428,6 @@ config:
   # requests it served, into its own database. So /api/dashboard/activity answers for whichever
   # pod served the request, and there is no cluster-wide total — adding the pods' figures would
   # double-count anyone who hit more than one.
-  users:
-    # Identity-provider NAMES the Users tab lists. EMPTY means every provider — a value that is
-    # simply empty by default. Set it to show one directory's people on a cluster that also carries
-    # test or break-glass providers (measured: 49 `ceo_rnd_oim` accounts beside 8 LDAP users). Applied
-    # when the tab is read, not at the poll; the tab says "showing providers: …"; the never-logged-in
-    # line is not narrowed (a member who logged in through another provider has logged in); manual
-    # accounts with no identity drop out under any list. Names must match the identity provider's
-    # `name:` in oauth.config.openshift.io/cluster, and cannot contain ':' or '/'.
-    providers: []
-
   userActivity:
     enabled: true
     # self | all.

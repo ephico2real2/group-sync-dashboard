@@ -653,9 +653,11 @@ def _bool_setting(raw: dict, env_name: str, yaml_key: str, default: bool) -> boo
     return default
 
 
-# An identity provider's name as OpenShift accepts it: it prefixes every `identities[]` entry as
-# `<provider>:<id>`, so it can contain neither ':' nor '/', and this dashboard splits on the colon.
-_PROVIDER_NAME = re.compile(r"[^:/\s]+")
+# An identity provider's name as OpenShift accepts it (`oc explain oauth.spec.identityProviders.name`,
+# measured 2026-09-05): "a valid path segment: name cannot equal '.' or '..' or contain '/' or '%' or
+# ':'". It prefixes every `identities[]` entry as `<provider>:<id>` and this dashboard splits on the
+# colon. Whitespace is refused as well — a comma-joined list cannot carry it unambiguously.
+_PROVIDER_NAME = re.compile(r"[^:/%\s]+")
 
 
 def _providers_setting(raw: dict) -> tuple[str, ...]:
@@ -667,10 +669,10 @@ def _providers_setting(raw: dict) -> tuple[str, ...]:
         source = raw.get("usersProviders", "") or ""
     names = tuple(p.strip() for p in str(source).split(",") if p.strip())
     for name in names:
-        if not _PROVIDER_NAME.fullmatch(name):
+        if name in (".", "..") or not _PROVIDER_NAME.fullmatch(name):
             raise ConfigError(
-                f"usersProviders: {name!r} is not an identity-provider name (no ':' or '/', no "
-                f"whitespace) — a name that can never match would list nobody"
+                f"usersProviders: {name!r} is not an identity-provider name (a path segment: not '.' "
+                f"or '..', no ':', '/', '%' or whitespace) — a name that can never match would list nobody"
             )
     return tuple(dict.fromkeys(names))
 

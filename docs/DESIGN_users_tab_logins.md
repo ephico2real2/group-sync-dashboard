@@ -204,5 +204,11 @@ The open questions above were closed as follows, each with the code that carries
    per User, skips an Identity naming no User, and returns None on a 403). Otherwise the User's
    creation time, labelled approximate: `gsd/store.py#Store._user_row` sets `first_login_source` to
    `identity` or `user`, the page shows an `exact` or `approx.` chip, and `identities_source` on the
-   wire says why (`ok`, `forbidden`, `off`, `pending`).
+   wire says why (`ok`, `forbidden`, `off`, `pending`). Two caveats the label carries: an identity
+   provider with `mappingMethod: lookup` needs its Identity created by an administrator before the
+   first login, so there the "exact" time is the administrator's create, the same caveat as a
+   pre-created User; and Identity times are compared as instants, because the API server has
+   written both second and microsecond precision across releases (review of C2). A transient failure
+   of the Identity read keeps the last-known exact times rather than downgrading every row to the
+   User time while the status still says `ok`.
 3. **Where does the never-logged-in line live?** On the Users tab, unchanged and unnarrowed.

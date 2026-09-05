@@ -76,6 +76,25 @@ class TestFetchIdentities:
         assert len(identity_calls) == 2, "the continue token must be followed"
         assert identity_calls[1][1].get("continue") == "tok"
 
+    def test_mixed_rfc3339_widths_keep_the_earlier_instant(self):
+        """Review (Cursor): a later instant written with microseconds must not beat an earlier
+        second-precision stamp, which a string minimum would let it do ('.' < 'Z')."""
+        def handle(request):
+            if request.url.path.startswith(IDENTITY_API):
+                return httpx.Response(200, json={"kind": "IdentityList", "items": [
+                    {"metadata": {"name": "ldap-local:new", "creationTimestamp": "2026-08-10T08:00:00.100000Z"},
+                     "user": {"name": "alice"}},
+                    {"metadata": {"name": "ldap-local:old", "creationTimestamp": "2026-08-10T08:00:00Z"},
+                     "user": {"name": "alice"}},
+                    {"metadata": {"name": "ldap-local:junk", "creationTimestamp": "not a time"},
+                     "user": {"name": "alice"}},
+                ]})
+            return httpx.Response(404, json={"kind": "Status"})
+        cluster = ClusterConfig("c1", "https://x", token_env="T")
+        client = ClusterClient(cluster, timeout=5)
+        client._client = lambda: httpx.Client(transport=httpx.MockTransport(handle), base_url="https://x")
+        assert client.fetch_identities() == {"alice": "2026-08-10T08:00:00Z"}
+
     def test_a_403_is_none_not_an_error(self):
         assert _client(403).fetch_identities() is None
 
@@ -129,7 +148,9 @@ class TestThePollerReadsIdentitiesOnlyWhenGranted:
         finally:
             store.close()
 
-    def test_a_transient_failure_leaves_the_status_as_it_was(self, tmp_path, monkeypatch):
+    def test_a_transient_failure_leaves_the_status_and_the_exact_times(self, tmp_path, monkeypatch):
+        """Review (Cursor): a 503 is not a verdict — the status stays `ok` — and the rows must keep
+        their last-known exact times, or the tab's note ("exact") and the chips ("approx.") contradict."""
         store = Store(str(tmp_path / "t.db"))
         try:
             _poll(store, monkeypatch, 200, identities_read=True)
@@ -137,6 +158,7 @@ class TestThePollerReadsIdentitiesOnlyWhenGranted:
             _poll(store, monkeypatch, 503, identities_read=True)
             assert store.identities_source("c1")["state"] == "ok", "a 503 is not a verdict"
             rows = {r["user_name"]: r for r in store.users("c1")}
-            assert rows["alice"]["first_login_source"] == "user", "this cycle's rows carry the User time"
+            assert rows["alice"]["first_login_source"] == "identity"
+            assert rows["alice"]["first_login_at"] == "2026-08-10T08:00:00Z"
         finally:
             store.close()

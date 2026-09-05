@@ -284,17 +284,23 @@ membership is an attribute of a row, not the reason it exists (`docs/DESIGN_user
 ```json
 {"cluster": "crc", "scope": "all", "viewer": "kubeadmin",
  "source": "ok", "source_observed_at": "2026-09-03T17:52:38Z", "login_capture": "on",
+ "providers_filter": [], "identities_source": "off", "identities_source_observed_at": null,
  "total": 62, "logged_in_total": 61, "offset": 0, "limit": 1000, "count": 62, "truncated": false,
  "never_logged_in_members": {"count": 3, "names": ["bob.wilson", "charlie.brown", "hello1"]},
  "users": [{"user_name": "alice.cooper", "full_name": "Alice Cooper",
-            "logged_in": true, "first_login_at": "2026-08-05T16:14:16Z", "providers": ["ldap-local"],
+            "logged_in": true, "first_login_at": "2026-08-05T16:14:16Z", "first_login_source": "user",
+            "providers": ["ldap-local"],
             "last_login_at": null, "created_at": "2026-08-05T16:14:16Z",
             "group_count": 7, "first_seen_at": "2026-08-05T16:20:01Z"}, ...]}
 ```
 
 Per row: `logged_in` is false only for a `User` created by hand (`oc create user`) with no identity,
-which is listed but is not a login; `first_login_at` is the object's creation time when an identity
-proves a login happened; `providers` are the identity-provider names from the object's `identities`;
+which is listed but is not a login; `first_login_at` is the exact Identity creation time when
+`first_login_source` is `identity` (the chart's `rbac.identities` read), otherwise the User object's
+creation time (`user`), and `null` for a manual account; the envelope's `identities_source` says why
+(`ok` | `forbidden` | `off` | `pending`) and `providers_filter` names the identity providers
+`config.users.providers` narrowed the list, `total` and `logged_in_total` to (`[]` = all; the
+never-logged-in line is never narrowed); `providers` are the identity-provider names from the object's `identities`;
 `last_login_at` is the newest **successful** captured login, `null` when none — read `login_capture`
 before trusting the null, since nothing before capture began was ever recorded; `group_count` may be
 0 (logged in, no synced access); `first_seen_at` is when the dashboard first saw them in any group,

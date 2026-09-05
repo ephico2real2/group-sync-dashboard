@@ -458,6 +458,25 @@ class TestUsersProvidersAndIdentitiesRead:
         monkeypatch.setenv("GSD_USERS_PROVIDERS", "corp")
         assert load_settings(str(p)).users_providers == ("corp",)
 
+    def test_the_names_openshift_refuses_are_startup_errors_and_the_ones_it_accepts_pass(self, tmp_path, monkeypatch):
+        """`oc explain oauth.spec.identityProviders.name`: a path segment, not '.' or '..', no '/', '%'
+        or ':'. Review of C2 proposed DNS-1123 instead; the API's own rule is wider (upper case and
+        underscores are legal), so that stricter form was rejected."""
+        monkeypatch.delenv("GSD_USERS_PROVIDERS", raising=False)
+        p = tmp_path / "c.yaml"
+        for bad in (".", "..", "a/b", "a%b", "a b", "bad:name"):
+            p.write_text(self.BASE + f'usersProviders: "{bad}"\n')
+            with pytest.raises(ConfigError, match="usersProviders"):
+                load_settings(str(p))
+        for ok in ("LDAP", "foo_bar", "ldap-local", "corp.example"):
+            p.write_text(self.BASE + f'usersProviders: "{ok}"\n')
+            assert load_settings(str(p)).users_providers == (ok,)
+
+    def test_an_empty_env_var_means_all_providers_not_an_empty_name(self, tmp_path, monkeypatch):
+        p = tmp_path / "c.yaml"; p.write_text(self.BASE + 'usersProviders: "ldap-local"\n')
+        monkeypatch.setenv("GSD_USERS_PROVIDERS", "")
+        assert load_settings(str(p)).users_providers == ()
+
     def test_identities_read_parses_and_defaults_off(self, tmp_path, monkeypatch):
         monkeypatch.delenv("GSD_IDENTITIES_READ_ENABLED", raising=False)
         p = tmp_path / "c.yaml"; p.write_text(self.BASE)

@@ -153,7 +153,7 @@ def test_migration_9_adds_the_identity_time_and_status_table_to_an_older_databas
         assert store._conn.execute("SELECT identity_created_at FROM ocp_user").fetchone()[0] is None
         tables = {r[0] for r in store._conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         assert "ocp_identity_status" in tables
-        assert store._conn.execute("PRAGMA user_version").fetchone()[0] == max(t for t, _, _ in _MIGRATIONS) == 9
+        assert store._conn.execute("PRAGMA user_version").fetchone()[0] == max(t for t, _, _ in _MIGRATIONS) >= 9
         # And the row reads back as approximate, which is the truth about it.
         assert store.users("crc")[0]["first_login_source"] == "user"
     finally:

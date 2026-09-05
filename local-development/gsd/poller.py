@@ -85,6 +85,14 @@ def ambiguous_attribution(groupsyncs: list[GroupSyncView]) -> list[str]:
     return sorted(name for name, namespaces in seen.items() if len(namespaces) > 1)
 
 
+def _last_known_exact(store: StorageBackend, cluster_name: str) -> dict[str, str]:
+    """The exact first-login times the store already holds, so a cycle that could not re-read the
+    Identity objects does not silently downgrade every row to the User time."""
+    return {row["user_name"]: row["first_login_at"]
+            for row in store.users(cluster_name, limit=100000)
+            if row.get("first_login_source") == "identity" and row.get("first_login_at")}
+
+
 def poll_once(
     store: StorageBackend,
     cluster: ClusterConfig,
@@ -163,21 +171,25 @@ def poll_once(
             else:
                 # The exact first logins, read only when granted (rbac.identities). Three outcomes,
                 # each recorded so the tab can say what its timestamps are: a dict (exact, 'ok'), None
-                # (refused, 'forbidden' — rows fall back to the User time), or a raised transient
-                # (this cycle's rows carry the User time and the status is left as it was).
+                # (refused, 'forbidden' — rows fall back to the User time), or a raised transient —
+                # then the LAST-KNOWN exact times are kept and the status is left as it was, because
+                # rewriting the rows to the User time while the status still said 'ok' made the tab's
+                # note say "exact" over rows whose chips said "approx." (review of C2).
                 exact: dict[str, str] | None = None
                 identity_state: str | None = "off"
                 if identities_read:
                     fetch_identities = getattr(client, "fetch_identities", None)
                     if fetch_identities is None:
                         identity_state = None
+                        exact = _last_known_exact(store, cluster.name)
                     else:
                         try:
                             exact = fetch_identities()
                         except ClusterError as exc:
-                            log.warning("identity refresh for %s failed: %s — first-login times are "
-                                        "approximate this cycle", cluster.name, exc.message)
+                            log.warning("identity refresh for %s failed: %s — keeping the last-known "
+                                        "first-login times this cycle", cluster.name, exc.message)
                             identity_state = None
+                            exact = _last_known_exact(store, cluster.name)
                         else:
                             identity_state = "ok" if exact is not None else "forbidden"
                             if exact is None:

@@ -299,3 +299,12 @@ def test_r5_sees_the_history_retention_store_call():
         decorated = any("consistent" in ast.unparse(d) for d in node.decorator_list)
         assert calls > 1, f"{name} has {calls} store call(s) in its body; history_retained_since must be at the call site"
         assert decorated, f"{name} must stay @consistent"
+
+
+def test_api_md_names_the_users_envelope_fields_c2_added():
+    """The contract doc must carry the fields a client would otherwise not know exist (review of C2)."""
+    api_md = pathlib.Path(__file__).resolve().parents[1] / "API.md"
+    text = api_md.read_text()
+    users = text.split("### `GET /api/clusters/{cluster_id}/users`", 1)[1].split("\n### ", 1)[0]
+    for key in ("first_login_source", "providers_filter", "identities_source", "identities_source_observed_at"):
+        assert key in users, f"API.md's users section omits {key}"
