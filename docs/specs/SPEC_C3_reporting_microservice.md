@@ -76,6 +76,7 @@ Everything under "Design" is the design agent's text and complete code. It super
 - Corrections applied from the spec's adversarial review (PR #76, `docs/REVIEW_C3_spec.md`), in the body itself so the file stays the single source: (1) §8.17.2 `gsd.reportingGuards` included two value-returning helpers and would have printed `pdf/a-2b` and the catalogue list into both Deployment manifests — their output is now assigned away; (2) §8.17.6 the report Service carries `gsd.reportSelectorLabels` as well as `gsd.reportLabels`, because the ServiceMonitor selects Services by metadata labels and `gsd.reportLabels` names the dashboard; (3) §8.17.13's `monitoring.prometheusRule.for.reportPull/reportSnapshot` are written as a values block; (4) §8.7.3 `namespace_access.py` imports `KeyValues` and `Note`, which it constructs; (5) §5.1 states ServeMux's slashless-path redirect, the `-pass-user-headers` default and that `-upstream-ca` is unverified on the shipped tag; (6) §6.1 requires the Hummingbird `dnf list` re-measure at implementation; (7) §9.9/§9.11 name the test helpers that exist (`tests/test_chart_pdb.py` `_render`/`_one`/`_matches`; `test_chart_strategy.render` returns a tuple; no conftest); (8) §11's doc texts cite this file, not the deleted one.
 - Corrections applied from Codex's pass on the same PR (`docs/REVIEW_C3_spec.md`): (9) §8.3 the ticket verifier bounds `iat` (30 s skew) and the lifetime (3600 s) — the original accepted a ticket minted by a clock far ahead for as long as that clock said; (10) §8.15.5 `_after_poll` re-checks leadership before the snapshot and before the usage pull, and §4.1 calls the check admission control, not a fence, which is what `poller.py` says of leadership; (11) §8 `principal()` answers an expired ticket with 401 so the browser's single re-mint (§9.11) works — §9.7 had said 403, contradicting §9.11; (12) the data claim must be `ReadWriteMany`: the RWO pod-affinity derivation is withdrawn (§2 row, §4.1, the guard, the report Deployment) because affinity is ignored after scheduling and a dashboard-only restart could strand the single-node claim with the report pod; the reference cluster's claim is RWX; (13) §10.2 builds and scans the report image's pack stage as the dashboard image's is, and keeps the Hummingbird-blindness check; (14) every code comment and doc text in the body cites this file's name; the predecessor is referred to without a path. The tests Codex supplied for (9)–(13) are in §9.
 - Second review pass on the corrected head (Cursor; Codex recorded in `docs/REVIEW_C3_spec.md`): (15) the RWO withdrawal is finished — §8.17.1's "DERIVED" comment, §8.17.8's `$mode` branch on the affinity stanza and §9.9's "adds the podAffinity" derivation are gone, and §9.9's refusal list names `ReadWriteOnce`; (16) §9.9's default enabled-report count is eleven, because `loginCapture.enabled` defaults on since chart 0.14.0 and `login-activity` follows it; (17) §7.4 no longer cites `report.py#build` (a file that does not exist) and this note no longer cites the deleted filename; (18) §8.15.8 adds `data.reportCatalog` and `data.reportRuns` to `refresh()`'s fingerprint, without which auto-refresh never re-renders the Reports tab; (19) §12 gains the live check that the NetworkPolicy leaves the kubelet's probes through, and §13 records the clock-skew 401 as a risk with the message left to the operator.
+- Second review pass, Codex (executed §8.3, §8.15.5 and §8's JavaScript, confirming the ticket bounds, the leadership re-checks and the single 401 retry): (20) `gsd.reportLabels` no longer includes `gsd.labels` — the first-pass Service fix had put the dashboard's `app.kubernetes.io/name` and the report's in one mapping, duplicate YAML keys with different values; the helper now carries the report selector keys exactly once, the Service uses it alone, and CronJobs get `gsd.reportScheduleLabels`; (21) §8.17.7's monitoring peers select Prometheus pods (`app.kubernetes.io/name: prometheus`) inside the named namespaces — a `namespaceSelector` alone admitted every pod in `openshift-monitoring`; (22) §8.5 `Snapshot.info()` derives the size from `PRAGMA page_count * page_size` on the open connection instead of `os.path.getsize`, which raised `FileNotFoundError` when the pruner unlinked the copy after the open (SQLite's descriptor survives the unlink; the pathname does not). Codex's tests for (20)–(22) are in §9.3 and §9.9; its prose citation test rejected. Codex confirmed items (9)–(11) by execution.
 
 ---
 
@@ -776,7 +777,12 @@ class Snapshot:
         self.close()
 
     def info(self) -> SnapshotInfo:
-        return SnapshotInfo(self.path, self.stamp, self.schema_version, os.path.getsize(self.path))
+        # From the open connection, never a second pathname lookup: the writer may prune this copy
+        # while a run reads it, and Linux keeps the inode alive for our descriptor but not its name
+        # (second review pass, Codex: a pruned-after-open snapshot raised FileNotFoundError here).
+        page_count = int(self._conn.execute("PRAGMA page_count").fetchone()[0])
+        page_size = int(self._conn.execute("PRAGMA page_size").fetchone()[0])
+        return SnapshotInfo(self.path, self.stamp, self.schema_version, page_count * page_size)
 
     def has_table(self, name: str) -> bool:
         return name in self._tables
@@ -4269,7 +4275,9 @@ reporting:
     enabled: true
 
   # Restrict ingress to the report pod: the dashboard pod (its proxy makes the connection), the
-  # schedule Jobs, and — only with monitoring.serviceMonitor.enabled — the monitoring namespaces.
+  # schedule Jobs, and — only with monitoring.serviceMonitor.enabled — Prometheus pods
+  # (app.kubernetes.io/name: prometheus, the label both OpenShift monitoring stacks carry) in the
+  # configured monitoring namespaces. Kubelet probes come from the pod's own node and stay admitted.
   # A core object every OpenShift CNI enforces (OVN-Kubernetes). Off where the CNI does not.
   networkPolicy:
     enabled: true
@@ -4381,9 +4389,24 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 app.kubernetes.io/component: report
 {{- end -}}
 
+{{/* Full report-object labels: the report's selector keys exactly once, never gsd.selectorLabels (which
+     carries the dashboard's app.kubernetes.io/name and its `app` key — a second review pass found the
+     earlier form produced duplicate YAML keys with different values). */}}
 {{- define "gsd.reportLabels" -}}
-{{ include "gsd.labels" . }}
-app.kubernetes.io/component: report
+helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
+{{ include "gsd.reportSelectorLabels" . }}
+app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end -}}
+
+{{/* CronJob object labels; the schedule pods use the same identity explicitly in report-cronjob.yaml. */}}
+{{- define "gsd.reportScheduleLabels" -}}
+helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
+app.kubernetes.io/name: {{ include "gsd.name" . }}-report-schedule
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/component: report-schedule
+app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
 {{/* The image, resolved exactly like gsd.image: digest, then tag, then Chart.AppVersion. */}}
@@ -4574,11 +4597,9 @@ metadata:
   namespace: {{ .Release.Namespace }}
   # The ServiceMonitor selects Services by METADATA labels (templates/service.yaml records the
   # scrape that silently broke when the dashboard's `app` label was dropped). gsd.reportLabels
-  # carries the dashboard's app.kubernetes.io/name; the monitor selects gsd.reportSelectorLabels,
-  # so both sets are written here.
-  labels:
-    {{- include "gsd.reportLabels" . | nindent 4 }}
-    {{- include "gsd.reportSelectorLabels" . | nindent 4 }}
+  # contains the report selector labels exactly once, so the monitor finds this Service without
+  # duplicate YAML keys and without the dashboard workload's `app` label.
+  labels: {{- include "gsd.reportLabels" . | nindent 4 }}
   {{- if .Values.reporting.tls.enabled }}
   annotations:
     # service-ca issues and rotates the report service's certificate into this Secret; uvicorn
@@ -4601,8 +4622,11 @@ spec:
 {{- if and (eq (include "gsd.reportingEnabled" .) "true") .Values.reporting.networkPolicy.enabled }}
 # Who may open a connection to the report pod's port: the dashboard pod (its oauth-proxy container
 # routes /report/** here, and its dashboard container pulls the usage feed), the schedule Jobs, and
-# the monitoring namespaces when scraping is on. Nothing else — a self-tier reader's own workloads
-# cannot reach the internal name at all, whatever headers they send.
+# Prometheus pods in the configured monitoring namespaces when scraping is on (a namespaceSelector
+# alone would admit EVERY pod in those namespaces — second review pass). Kubelet probes come from the
+# pod's own node, which NetworkPolicy admits independently. Nothing else — a self-tier reader's own
+# workloads cannot reach the internal name at all, whatever headers they send. This is L3/L4
+# isolation; the ticket and the service token still guard every /report/api path.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -4630,6 +4654,9 @@ spec:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: {{ . }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
         {{- end }}
       ports:
         - port: 8443
@@ -4824,8 +4851,7 @@ kind: CronJob
 metadata:
   name: {{ include "gsd.reportName" $ }}-{{ $s.name }}
   namespace: {{ $.Release.Namespace }}
-  labels:
-    {{- include "gsd.reportLabels" $ | nindent 4 }}
+  labels: {{- include "gsd.reportScheduleLabels" $ | nindent 4 }}
     app.kubernetes.io/component: report-schedule
 spec:
   schedule: {{ $s.schedule | quote }}
@@ -5219,6 +5245,23 @@ Seeds a `Store` (the writer) with groups, members, bindings, a User, a gate grou
 - `access_without_login`/`login_without_access` return `[]` with no gate and the same rows as `Store.access_without_login` with one.
 - `rejected_attempts` carries `in_access_group` None when no gate is known.
 
+
+Added from the spec's second review pass (Codex): an open snapshot survives its own pruning.
+
+```python
+def test_an_open_snapshot_survives_the_writer_pruning_its_path(tmp_path):
+    path = tmp_path / "gsd-20260905T120000.000000Z.db"
+    w = sqlite3.connect(path)
+    w.execute("CREATE TABLE proof(value TEXT NOT NULL)"); w.execute("INSERT INTO proof(value) VALUES('still readable')")
+    w.execute(f"PRAGMA user_version = {KNOWN_SCHEMA_VERSION}"); w.commit(); w.close()
+    expected_bytes = path.stat().st_size
+    with Snapshot(path) as snapshot:
+        path.unlink()
+        assert not path.exists()
+        assert snapshot.info().bytes == expected_bytes
+        assert snapshot._rows("SELECT value FROM proof") == [{"value": "still readable"}]
+```
+
 ### 9.4 NEW `tests/test_reporting_model.py`
 
 `Report.seal()` hashes the canonical data only: two reports differing in `generated_at`, `generated_by` and `run_id` share a sha256; two differing in one table cell do not. `to_json()` round-trips through `json.loads` and carries `sha256`. `Table`/`KeyValues`/`Note` serialise with `kind`.
@@ -5356,6 +5399,61 @@ def test_default_reporting_render_is_yaml_and_all_selectors_match_only_their_wor
 ```
 
 (A first render must parse as YAML at all — the guard helper used to print its validation helpers' output; `_render` fails on non-YAML, which is the test.)
+
+
+Added from the spec's second review pass (Codex): strict-YAML uniqueness of labels, the monitoring peers, no affinity derivation.
+
+```python
+class UniqueKeyLoader(yaml.SafeLoader):
+    """Reject duplicate mapping keys instead of silently taking the last value."""
+
+
+def _construct_unique_mapping(loader, node, deep=False):
+    loader.flatten_mapping(node); result = {}
+    for key_node, value_node in node.value:
+        key = loader.construct_object(key_node, deep=deep)
+        if key in result:
+            raise yaml.constructor.ConstructorError("while constructing a mapping", node.start_mark,
+                                                    f"duplicate YAML key {key!r}", key_node.start_mark)
+        result[key] = loader.construct_object(value_node, deep=deep)
+    return result
+
+
+UniqueKeyLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _construct_unique_mapping)
+
+
+def test_report_manifests_have_unique_labels_and_the_service_monitor_selector_matches():
+    done = subprocess.run(["helm", "template", "t", str(CHART), "-n", "x", "--set", "ingress.host=h",
+                           "--set", "reporting.enabled=true", "--set", "monitoring.serviceMonitor.enabled=true",
+                           "--set", "reporting.schedules[0].name=weekly", "--set", "reporting.schedules[0].schedule=0 6 * * 1",
+                           "--set", "reporting.schedules[0].report=access-matrix"], capture_output=True, text=True, timeout=120)
+    assert done.returncode == 0, done.stderr
+    docs = [d for d in yaml.load_all(done.stdout, Loader=UniqueKeyLoader) if d]  # raises on any duplicate key
+    service = next(d for d in docs if d.get("kind") == "Service" and d["metadata"]["name"].endswith("-report"))
+    labels = service["metadata"]["labels"]
+    assert all(labels.get(k) == v for k, v in service["spec"]["selector"].items())
+    assert labels["app.kubernetes.io/name"].endswith("-report") and "app" not in labels
+    cron = next(d for d in docs if d.get("kind") == "CronJob")
+    assert cron["metadata"]["labels"]["app.kubernetes.io/component"] == "report-schedule"
+
+
+def test_monitoring_ingress_admits_only_prometheus_pods_in_the_configured_namespaces():
+    docs = _render("reporting.enabled=true", "monitoring.serviceMonitor.enabled=true")
+    policy = _exact(docs, "NetworkPolicy", "t-group-sync-dashboard-report")
+    assert policy["spec"]["policyTypes"] == ["Ingress"] and "egress" not in policy["spec"]
+    rules = policy["spec"]["ingress"]; assert len(rules) == 2
+    peers = rules[1]["from"]
+    assert {p["namespaceSelector"]["matchLabels"]["kubernetes.io/metadata.name"] for p in peers} == {"openshift-monitoring", "openshift-user-workload-monitoring"}
+    for p in peers:
+        assert p["podSelector"] == {"matchLabels": {"app.kubernetes.io/name": "prometheus"}}
+
+
+def test_report_deployment_does_not_derive_affinity_from_the_data_access_mode():
+    template = (CHART / "templates" / "report-deployment.yaml").read_text()
+    assert "$mode" not in template and "ReadWriteOnce" not in template
+    report = _exact(_render("reporting.enabled=true"), "Deployment", "t-group-sync-dashboard-report")
+    assert "affinity" not in report["spec"]["template"]["spec"]
+```
 
 ### 9.10 Image and workflow tests
 
@@ -5601,7 +5699,7 @@ oc get pods -n group-sync-dashboard -l app.kubernetes.io/component=report \
 | PDF/A that a validator rejects | fpdf2 enforces while writing (measured markers in 9.6); veraPDF validation is in §12; operator question 3 if a records system's validator disagrees. |
 | The token Secret regenerates on upgrade | `lookup` reuses the existing value (8.17.3); a regeneration only invalidates outstanding tickets and one pull until both pods restart. |
 | A default upgrade refuses to render | Deliberate (the guards), each message naming the value and the remedy; the chart README's upgrade note lists the five configurations that need `reporting.enabled=false`. |
-| A re-minted ticket is still expired (the report pod's clock is behind the dashboard's by more than the TTL) | `reportFetch` re-mints once and then throws; the page shows the generic "Dashboard API error: 401 …" card and the report pod logs `ticket has expired`. Not a loop. A dedicated "check time synchronisation" message is a product change left to the operator (second review pass, Cursor N3). |
+| A re-minted ticket is still expired (the report pod's clock is AHEAD of the dashboard's by at least the TTL — `verify` refuses when its own `now >= exp` — or the request itself was delayed by the TTL) | `reportFetch` re-mints once and then throws; the page shows the generic "Dashboard API error: 401 …" card and the report pod logs `ticket has expired`. Not a loop. A dedicated "check time synchronisation" message is a product change left to the operator (second review pass, Cursor N3). |
 | `helm template` under ArgoCD (no cluster) | `lookup` returns empty → a fresh token is rendered each sync; ArgoCD applies it and both pods pick it up on their next restart. Recorded in the chart README's ArgoCD section with the workaround (pre-create the Secret, `ignoreDifferences` on `data.token`) — the same class of note the `oauth-cookie` Secret already carries. |
 
 ## 14. Operator questions

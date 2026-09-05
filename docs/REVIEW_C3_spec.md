@@ -111,8 +111,9 @@ applied.
 
 A ten-claim brief: seven claims that each first-pass correction closed its hole and opened no other,
 three the first pass never attacked (the NetworkPolicy, the `immutable` open against the pruner, the
-catalogue against the operator's monitoring and PDB decisions). Cursor traced; Codex is recorded
-below when its pass lands.
+catalogue against the operator's monitoring and PDB decisions). Cursor traced; Codex executed the
+ticket module, the poll tail and the JavaScript retry, pinned to the head it was given (`6a9c99e`)
+while the Cursor-round commit landed beside it.
 
 | Claim | Cursor | Decision |
 |---|---|---|
@@ -140,6 +141,28 @@ Codex test in the same section refuses RWO.
 now `with .Values.reporting.affinity`), §9.9's derivation dropped and RWO added to its refusals.
 Cursor's test on the spec's own text rejected (prose).
 
+### Verdicts — Codex, second pass
+
+| Claim | Codex | Decision |
+|---|---|---|
+| C1 guard emits nothing | PLAUSIBLE (sandbox refused the render) | — |
+| C2 ticket bounds | CONFIRMED by execution — eight cases, all as claimed | — |
+| C3 one 401, one retry | CONFIRMED by execution (`401 then 200` returns, `401 then 401` throws, `403` throws) | — ; its note that a still-expired fresh ticket means the report clock is **ahead** corrected §13's direction |
+| C4 `is_leader`, order | CONFIRMED by execution of §8.15.5 with §9.8's construction | — |
+| C5 RWO leftovers | REFUTED | **Accepted** — the same three sites Cursor found, fixed in the Cursor round |
+| C6 §10.2 matches the gate | CONFIRMED | — |
+| C7 citations | REFUTED | **Accepted** — the same two dead citations Cursor found, fixed in the Cursor round; the suite ran green for Codex (961 passed) |
+| C8 the NetworkPolicy | REFUTED | **Accepted** — the monitoring peer had only a `namespaceSelector`, admitting every pod in both monitoring namespaces; it now also selects `app.kubernetes.io/name: prometheus`; Codex's test in §9.9 |
+| C9 `immutable` against the pruner | REFUTED | **Accepted** — `Snapshot.info()` called `os.path.getsize` after the open; Codex reproduced `FileNotFoundError` on a pruned copy; the size now comes from `PRAGMA page_count * page_size` on the open connection; Codex's test in §9.3 |
+| C10 catalogue vs operator decisions | CONFIRMED | — |
+
+**Volunteered (Codex N1, accepted):** the first-pass Service fix wrote `gsd.reportLabels` (which
+included `gsd.labels`, the dashboard's name and `app`) *and* `gsd.reportSelectorLabels` into one
+mapping — duplicate YAML keys with different values, working only by last-key-wins. `gsd.reportLabels`
+now carries the report's selector keys exactly once, the Service uses it alone, CronJobs get their own
+`gsd.reportScheduleLabels`, and a strict-YAML test in §9.9 refuses any duplicate key. Codex's N2 and N3
+duplicate Cursor's N1 and N2, already applied. Codex's prose citation test rejected.
+
 ### Not asked, second pass
 
 - **N1, §9.9's default report count.** The spec said ten names without `login-activity`; with chart
@@ -156,8 +179,9 @@ Cursor's test on the spec's own text rejected (prose).
 ## Outcome
 
 First pass: Cursor refuted two claims and marked three plausible; Codex refuted six and marked one
-plausible. Second pass (Cursor): two refuted, one live check added, three volunteered defects
-accepted. In total
+plausible. Second pass: Cursor two refuted, one live check added, three volunteered defects accepted; Codex
+four refuted (two overlapping Cursor's), one volunteered defect in a first-pass fix accepted, three
+claims confirmed by execution. In total
 every refutation and named risk was re-checked against the spec text and accepted on the fact, and
 applied in the spec body (fourteen corrections listed in its orchestrator's notes, with the tests the
 reviewers supplied placed in §9). Rejected: every prose- or history-pinning test, the network-dependent
