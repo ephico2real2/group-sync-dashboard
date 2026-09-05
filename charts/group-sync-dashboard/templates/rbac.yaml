@@ -45,6 +45,18 @@ rules:
     resources: ["users"]
     verbs: ["get", "list"]
   {{- end }}
+  {{- if .Values.rbac.identities }}
+  {{- if not .Values.rbac.users }}
+  {{- fail "rbac.identities=true requires rbac.users=true: the Identity read names Users, so the dashboard must also be able to read them." }}
+  {{- end }}
+  # Identity objects: one per (provider, id). With mappingMethod claim or add OpenShift creates it
+  # at the first successful login through that provider; with lookup an administrator creates it
+  # beforehand. Read: its creationTimestamp and the User it names. get/list only. The page labels
+  # the time `identity`, never "exact".
+  - apiGroups: ["user.openshift.io"]
+    resources: ["identities"]
+    verbs: ["get", "list"]
+  {{- end }}
   {{- if .Values.clusterAccess.discoverFromOAuth }}
   # Discover the login-gate group from the identity provider's search filter. ONE object, and
   # resourceNames confines the grant to it — Kubernetes honours resourceNames for `get`, which is why

@@ -24,6 +24,7 @@ KEPT_OFF = {
     "oauthProxy.requestLogging": "review finding: oauth-proxy logs the full request URI, the OAuth callback code included",
     "monitoring.serviceMonitor.enabled": "operator decision 2026-09-05: the reference cluster runs no Prometheus; needs the Operator CRDs",
     "monitoring.prometheusRule.enabled": "same decision; rendering with both on was verified before the default went back",
+    "rbac.identities": "C2: a grant (get/list identities.user.openshift.io) the chart does not otherwise need, so off under the 0.14.0 rule",
 }
 
 # Switches the release flipped; the docs below must not describe them as off.

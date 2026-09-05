@@ -85,11 +85,22 @@ def ambiguous_attribution(groupsyncs: list[GroupSyncView]) -> list[str]:
     return sorted(name for name, namespaces in seen.items() if len(namespaces) > 1)
 
 
+def _last_known_identity_times(store: StorageBackend, cluster_name: str) -> dict[str, str]:
+    """The Identity creation times the store already holds, so a cycle that could not re-read the
+    Identity objects does not silently downgrade every row to the User time. A User who appeared
+    during such a cycle has none and carries the User time until the next successful read; the
+    tab's note describes the source per row rather than asserting one for all (review of C2)."""
+    return {row["user_name"]: row["first_login_at"]
+            for row in store.users(cluster_name, limit=100000)
+            if row.get("first_login_source") == "identity" and row.get("first_login_at")}
+
+
 def poll_once(
     store: StorageBackend,
     cluster: ClusterConfig,
     timeout: float = 15.0,
     access_group_dn: str = "",
+    identities_read: bool = False,
 ) -> str:
     """One poll of one cluster. Returns the outcome string (PLAN §12 step 7).
 
@@ -98,6 +109,8 @@ def poll_once(
     dashboard (PLAN §5).
 
     `access_group_dn` is the configured login-gate group. Empty means discover it from the OAuth CR.
+    `identities_read` is the chart's rbac.identities, threaded like access_group_dn: one value, not
+    the whole Settings.
     A parameter rather than a Settings argument because this function takes one cluster and a timeout
     and nothing else — threading the whole Settings through it to read one string would make every
     test that calls it build one.
@@ -158,9 +171,41 @@ def poll_once(
                          "Grant user.openshift.io/users [get,list] (chart: rbac.users) to enable.",
                          cluster.name)
             else:
-                store.replace_users(cluster.name, users, observed_at)
-                log.info("%s: %d user(s) recorded, %d with a display name", cluster.name,
-                         len(users), sum(1 for u in users if u.get("full_name")))
+                # The Identity creation times, read only when granted (rbac.identities). Three
+                # outcomes, each recorded so the tab can say what its timestamps are: a dict ('ok'),
+                # None (refused, 'forbidden' — rows fall back to the User time), or a raised transient
+                # — then the LAST-KNOWN Identity times are kept and the status is left as it was,
+                # because rewriting the rows to the User time while the status still said 'ok'
+                # contradicted the chips (review of C2). Not called "exact": for a lookup-mapped
+                # provider the Identity predates the first login (see kube.fetch_identities).
+                identity_times: dict[str, str] | None = None
+                identity_state: str | None = "off"
+                if identities_read:
+                    fetch_identities = getattr(client, "fetch_identities", None)
+                    if fetch_identities is None:
+                        identity_state = None
+                        identity_times = _last_known_identity_times(store, cluster.name)
+                    else:
+                        try:
+                            identity_times = fetch_identities()
+                        except ClusterError as exc:
+                            log.warning("identity refresh for %s failed: %s — keeping the last-known "
+                                        "first-login times this cycle", cluster.name, exc.message)
+                            identity_state = None
+                            identity_times = _last_known_identity_times(store, cluster.name)
+                        else:
+                            identity_state = "ok" if identity_times is not None else "forbidden"
+                            if identity_times is None:
+                                log.info("%s: not permitted to list identities — first-login times "
+                                         "are the User's creation time. Grant user.openshift.io/"
+                                         "identities [get,list] (chart: rbac.identities) to read "
+                                         "the Identity objects' creation times.", cluster.name)
+                store.replace_users(cluster.name, users, observed_at, identity_created=identity_times)
+                if identity_state is not None:
+                    store.set_identities_status(cluster.name, identity_state, observed_at)
+                log.info("%s: %d user(s) recorded, %d with a display name, %d with an Identity "
+                         "creation time", cluster.name, len(users),
+                         sum(1 for u in users if u.get("full_name")), len(identity_times or {}))
 
     # Steps 3-4: attribute groups to CRs, then record any sync we had not seen before.
     cr_rows = []
@@ -670,7 +715,8 @@ class Poller:
             try:
                 poll_started = time.monotonic()
                 poll_once(self.store, cluster, self.settings.request_timeout_seconds,
-                          access_group_dn=self.settings.cluster_access_group)
+                          access_group_dn=self.settings.cluster_access_group,
+                          identities_read=self.settings.identities_read_enabled)
                 if self.signals is not None:
                     # The whole poll, success or degraded — a poll that needs the full
                     # timeout to fail is the one worth seeing. Set only by the replica

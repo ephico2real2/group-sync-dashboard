@@ -754,6 +754,7 @@ elect a leader:
 | `redhatcop.redhat.io` | `namespaceconfigs`, `groupconfigs` | get, list |
 | `user.openshift.io` | `groups` | get, list |
 | `user.openshift.io` | `users` | get, list — only when `rbac.users` |
+| `user.openshift.io` | `identities` | get, list — only when `rbac.identities` (the first-login time from Identity objects) |
 | `rbac.authorization.k8s.io` | `rolebindings`, `clusterrolebindings` | get, list — only when `rbac.bindings` |
 | `coordination.k8s.io` | `leases` | get, create, update — only when `leaderElection.enabled` |
 

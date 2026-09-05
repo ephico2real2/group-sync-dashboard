@@ -1311,3 +1311,57 @@ class TestUiExportModule:
         ok, out = render(ui__export__enabled="false")
         assert ok, out
         assert _config_data(out)["uiExportEnabled"] is False
+
+
+class TestTheIdentitiesGrantIsOffReadOnlyAndCoupled:
+    """C2: rbac.identities is both the grant and the read switch; off by default (a grant), get/list
+    only, refused without rbac.users, and the allow-list threads to the ConfigMap as a YAML list."""
+
+    def _docs(self, out):
+        import yaml
+        return [d for d in yaml.safe_load_all(out) if d]
+
+    def _rules(self, out):
+        return [r for d in self._docs(out) if d.get("kind") == "ClusterRole" for r in d.get("rules") or []]
+
+    def test_default_renders_no_identities_rule_and_the_read_off(self):
+        ok, out = render()
+        assert ok, out
+        assert not [r for r in self._rules(out) if "identities" in (r.get("resources") or [])]
+        assert _config_data(out)["identitiesReadEnabled"] is False
+        assert _config_data(out)["usersProviders"] == []
+
+    def test_on_renders_exactly_get_and_list(self):
+        ok, out = render(rbac__identities="true")
+        assert ok, out
+        rules = [r for r in self._rules(out) if "identities" in (r.get("resources") or [])]
+        assert len(rules) == 1 and sorted(rules[0]["verbs"]) == ["get", "list"]
+        assert rules[0]["apiGroups"] == ["user.openshift.io"]
+        assert _config_data(out)["identitiesReadEnabled"] is True
+
+    def test_identities_without_users_is_refused_naming_the_pair(self):
+        ok, out = render(rbac__identities="true", rbac__users="false")
+        assert not ok and "rbac.identities=true requires rbac.users=true" in out
+
+    def test_the_identities_grant_does_not_tell_an_operator_the_time_is_exact(self):
+        """Review of C2, pass 2 (Cursor): the relabel had left the helm `fail` and the identities
+        rule's comment asserting "the exact first login" — the sentence deviation (14) removed from
+        the page. Helm emits template comments into the rendered ClusterRole, so the manifest is
+        checked as well as the refusal."""
+        ok, refused = render(rbac__identities="true", rbac__users="false")
+        assert not ok
+        assert "rbac.identities=true requires rbac.users=true" in refused
+        assert "exact first login" not in refused.lower(), "the fail names the pair, not a claim about the time"
+        ok, out = render(rbac__identities="true")
+        assert ok, out
+        assert "exact first login" not in out.lower()
+
+    def test_the_allow_list_reaches_the_configmap_as_a_list_without_losing_legal_names(self):
+        """Review (Codex): OpenShift accepts a provider named `a,b` or `a b`; a comma join would
+        split the first. The key is a YAML flow sequence the app reads as a list."""
+        # `--set` splits on a bare comma, so the comma is escaped for helm's parser; the chart
+        # receives the literal `a,b`.
+        ok, out = render(**{"config__users__providers[0]": r"a\,b", "config__users__providers[1]": "a b",
+                            "config__users__providers[2]": "ldap-local"})
+        assert ok, out
+        assert _config_data(out)["usersProviders"] == ["a,b", "a b", "ldap-local"]

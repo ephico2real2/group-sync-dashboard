@@ -124,6 +124,37 @@ def test_migration_8_adds_cliff_silence_and_the_time_index_to_an_older_database(
         assert store._conn.execute("SELECT cliff_silence FROM group_state").fetchone()[0] is None
         indexes = {r[1] for r in store._conn.execute("PRAGMA index_list(membership_event)")}
         assert "membership_event_by_time" in indexes
-        assert store._conn.execute("PRAGMA user_version").fetchone()[0] == max(t for t, _, _ in _MIGRATIONS) == 8
+        assert store._conn.execute("PRAGMA user_version").fetchone()[0] == max(t for t, _, _ in _MIGRATIONS) >= 8
+    finally:
+        store.close()
+
+
+def test_migration_9_adds_the_identity_time_and_status_table_to_an_older_database(tmp_path):
+    """A pre-0.15 ocp_user has no identity_created_at and no ocp_identity_status table; opening it
+    must add both (NULL for every existing row — nothing is backfilled) and land on the latest version."""
+    path = str(tmp_path / "old.db")
+    conn = sqlite3.connect(path)
+    conn.executescript("""
+        CREATE TABLE ocp_user (
+            cluster_id TEXT NOT NULL, user_name TEXT NOT NULL, full_name TEXT, created_at TEXT,
+            providers TEXT NOT NULL DEFAULT '[]', has_identity INTEGER NOT NULL DEFAULT 0,
+            observed_at TEXT NOT NULL, PRIMARY KEY(cluster_id, user_name));
+        INSERT INTO ocp_user VALUES ('crc','alice','Alice','2026-08-05T16:14:16Z','["ldap-local"]',1,'2026-09-01T00:00:00Z');
+        PRAGMA user_version = 8;
+    """)
+    conn.commit()
+    conn.close()
+
+    from gsd.store import _MIGRATIONS
+    store = Store(path)
+    try:
+        cols = {r[1] for r in store._conn.execute("PRAGMA table_info(ocp_user)")}
+        assert "identity_created_at" in cols
+        assert store._conn.execute("SELECT identity_created_at FROM ocp_user").fetchone()[0] is None
+        tables = {r[0] for r in store._conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        assert "ocp_identity_status" in tables
+        assert store._conn.execute("PRAGMA user_version").fetchone()[0] == max(t for t, _, _ in _MIGRATIONS) >= 9
+        # And the row reads back as approximate, which is the truth about it.
+        assert store.users("crc")[0]["first_login_source"] == "user"
     finally:
         store.close()

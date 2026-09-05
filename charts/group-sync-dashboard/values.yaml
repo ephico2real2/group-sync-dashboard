@@ -386,6 +386,18 @@ config:
     # Resolutions are never capped — a closed finding must not queue behind new ones.
     maxPerCycle: 20
 
+  users:
+    # Identity-provider NAMES the Users tab lists. EMPTY means every provider — a value that is
+    # simply empty by default. Set it to show one directory's people on a cluster that also carries
+    # test or break-glass providers (measured: 49 `ceo_rnd_oim` accounts beside 8 LDAP users). Applied
+    # when the tab is read, not at the poll; the tab says "showing providers: …"; the never-logged-in
+    # line is not narrowed (a member who logged in through another provider has logged in); manual
+    # accounts with no identity drop out under any list. Names must match the identity provider's
+    # `name:` in oauth.config.openshift.io/cluster — OpenShift's rule and nothing stricter: not '.'
+    # or '..', no ':', '/' or '%'; spaces, commas, upper case and underscores are legal, and the
+    # chart carries them intact (the ConfigMap key is a list, not a comma-joined string).
+    providers: []
+
   # Who used the dashboard. Requires oauthProxy.enabled — with the proxy off there is no
   # authentication, X-Forwarded-User would be whatever the caller typed, and recording it
   # would manufacture an audit trail rather than keep one. Nothing is recorded in that mode
@@ -753,6 +765,17 @@ rbac:
   # source and says so by name ("not permitted to list users.user.openshift.io"), rather than
   # showing an empty list that would read as "nobody has logged in". Members still show bare ids.
   users: true
+  # Identity objects: one per (provider, id). With mappingMethod claim or add OpenShift creates it
+  # at the first successful login through that provider, so its creation time IS that first login,
+  # where the User's is only the first login for a provider-created User; with mappingMethod lookup
+  # an administrator creates it beforehand, and the page says so (the chip reads "identity", never
+  # "exact"). OFF by default: it is a grant the chart does not otherwise
+  # need (the 0.14.0 rule keeps RBAC-costing switches off), and the Users tab is honest without it
+  # (it labels the User time "approx."). This value is BOTH the grant and the read switch
+  # (identitiesReadEnabled in the ConfigMap): the app cannot see its own RBAC, and a refused read
+  # every poll would put a 403 a minute in the audit log. Requires rbac.users. With
+  # rbac.create=false it is only the read switch.
+  identities: false
 
 # ---------------------------------------------------------------------------
 # Login capture  (reads the oauth-server's logs)

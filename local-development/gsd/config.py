@@ -313,6 +313,17 @@ class Settings:
     # the control from the filter bar and nothing else changes.
     ui_export_enabled: bool = True
 
+    # ── USERS TAB MODULES (docs/DESIGN_users_tab_logins.md, "Decisions after 0.9.0") ─────────────
+    # Identity-provider names the Users tab lists. EMPTY MEANS ALL — a value that is simply empty
+    # by default. Applied at READ time, never at the poll, so changing it needs no re-poll and the
+    # stored record stays the whole cluster; recorded on the wire as `providers_filter` so the tab
+    # can say "showing providers: x, y" instead of quietly listing fewer people.
+    users_providers: tuple[str, ...] = ()
+    # Whether the poller reads Identity objects for the first-login time. One wire from the chart's
+    # rbac.identities, like oauthProxyEnabled: the app cannot see its own RBAC, and trying a read
+    # that is refused every poll would put a 403 a minute into the API server's audit log.
+    identities_read_enabled: bool = False
+
     user_activity_enabled: bool = True
     # "self" | "all". Who may read /api/dashboard/activity. Defaults to self, because the
     # response is identifiable personnel data — who was present, when, and how much — and
@@ -642,6 +653,40 @@ def _bool_setting(raw: dict, env_name: str, yaml_key: str, default: bool) -> boo
     return default
 
 
+# An identity provider's name as OpenShift accepts it (`oc explain oauth.spec.identityProviders.name`,
+# measured 2026-09-05): "a valid path segment: name cannot equal '.' or '..' or contain '/' or '%' or
+# ':'" — and nothing stricter: spaces, commas, upper case and underscores are legal (review of C2: a
+# whitespace refusal was rejected as not the API's rule; the settings file carries a LIST so a comma
+# travels too). It prefixes every `identities[]` entry as `<provider>:<id>` and this dashboard splits
+# on the colon.
+_PROVIDER_NAME = re.compile(r"[^:/%]+")
+
+
+def _providers_setting(raw: dict) -> tuple[str, ...]:
+    """usersProviders: a LIST of names in the settings file (the chart renders
+    config.users.providers as a YAML flow sequence, so every legal name travels intact), or a
+    comma-separated string (GSD_USERS_PROVIDERS, or a hand-written file) — in that form a name
+    containing a comma cannot be expressed, which is why the file form is a list. STRICT — a
+    malformed name is a startup error, because a name that can never match would silently empty
+    the Users tab and read as "nobody has logged in"."""
+    source: object = os.environ.get("GSD_USERS_PROVIDERS")
+    if source is None:
+        source = raw.get("usersProviders", "") or ""
+    if isinstance(source, list):
+        if not all(isinstance(p, str) for p in source):
+            raise ConfigError("usersProviders: every entry must be a string (an identity provider's name)")
+        names = tuple(p.strip() for p in source if p.strip())
+    else:
+        names = tuple(p.strip() for p in str(source).split(",") if p.strip())
+    for name in names:
+        if name in (".", "..") or not _PROVIDER_NAME.fullmatch(name):
+            raise ConfigError(
+                f"usersProviders: {name!r} is not an identity-provider name (a path segment: not '.' "
+                f"or '..', no ':', '/' or '%') — a name that can never match would list nobody"
+            )
+    return tuple(dict.fromkeys(names))
+
+
 def _require(raw: dict, key: str, where: str) -> object:
     if key not in raw:
         raise ConfigError(f"{where}: missing required key {key!r}")
@@ -824,6 +869,10 @@ def load_settings(path: str | Path) -> Settings:
             raw, "GSD_USER_ACTIVITY_ENABLED", "userActivityEnabled", True
         ),
         ui_export_enabled=_bool_setting(raw, "GSD_UI_EXPORT_ENABLED", "uiExportEnabled", True),
+        users_providers=_providers_setting(raw),
+        identities_read_enabled=_bool_setting(
+            raw, "GSD_IDENTITIES_READ_ENABLED", "identitiesReadEnabled", False
+        ),
         view_restrictions_enabled=_bool_setting(
             raw, "GSD_ENABLE_VIEW_RESTRICTIONS", "visibilityEnabled", True
         ),

@@ -56,6 +56,12 @@ data:
     # The UI modules (values.yaml `ui`). Read at boot from /api/version; a module off here
     # renders no control at all rather than a disabled one.
     uiExportEnabled: {{ .Values.ui.export.enabled }}
+    # The Users tab's provider allow-list (values.yaml config.users.providers, empty = all) and the
+    # Identity read switch, which is the same value as the grant (rbac.identities). The list is
+    # rendered as a YAML flow sequence, not comma-joined: a provider name may legally contain a
+    # comma or a space (review of C2), and the app accepts the list form as it is.
+    usersProviders: {{ .Values.config.users.providers | toJson }}
+    identitiesReadEnabled: {{ .Values.rbac.identities }}
     # Retention on the irreplaceable history; 0 keeps forever. See values.yaml config.retention.
     membershipEventsRetentionDays: {{ .Values.config.retention.membershipEventsDays }}
     syncEventsRetentionDays: {{ .Values.config.retention.syncEventsDays }}

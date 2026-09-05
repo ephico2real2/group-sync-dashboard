@@ -7,6 +7,7 @@ are a CRD and an OpenShift type, and both are simple to read directly.
 
 from __future__ import annotations
 
+from datetime import datetime
 import logging
 import re
 import threading
@@ -44,6 +45,16 @@ GROUP_API = "/apis/user.openshift.io/v1/groups"
 # come from the Group objects above — are unchanged. fullName is still read for every member surface,
 # and its absence is still the ordinary case rendered as the bare id.
 USER_API = "/apis/user.openshift.io/v1/users"
+# The Identity objects: ONE per (provider, id), naming the User it maps to. With mappingMethod
+# claim or add (the default and the common case) OpenShift creates it at the first successful login
+# through that provider and never before, so its creationTimestamp IS that first login — where a
+# User's creationTimestamp is only the first login for a User the provider created, and earlier
+# than it for one an administrator made ahead of time (docs/DESIGN_users_tab_logins.md, open
+# question 2). With mappingMethod lookup an administrator creates the Identity BEFORE the first
+# login, so there it is the mapping's creation; the page says so and never calls the time "exact"
+# (review of C2, Codex). Read only when the chart grants it (rbac.identities →
+# identitiesReadEnabled); a 403 is reported, never fabricated over.
+IDENTITY_API = "/apis/user.openshift.io/v1/identities"
 
 # The cluster's OAuth configuration — the object that holds the identity providers, and the ONLY
 # place the login-gate group is written down. Three similarly named resources exist and only this one
@@ -677,6 +688,48 @@ class ClusterClient:
             sum(1 for r in records if r["full_name"]),
         )
         return records
+
+    def fetch_identities(self) -> dict[str, str] | None:
+        """The earliest Identity creationTimestamp naming each User, or None when we may not read
+        them. Paged like every list. An Identity with no `user.name` is skipped.
+
+        Timestamps are compared as INSTANTS, not strings. metav1.Time marshals as fixed-width
+        RFC3339 seconds (apimachinery `Time.MarshalJSON`), so a string minimum would be right for
+        what the API server writes today; comparing instants is the operation the code means and
+        holds if a stamp ever arrives at another width or offset (review of C2: proposed for a
+        mixed-width reason Codex refuted at the source; kept as the correct operation). The stored
+        value stays the API server's original string; an unparsable stamp is skipped.
+
+        This is the Identity object's creation time, which is the first login for a claim/add/
+        generate provider that created the object. A `mappingMethod: lookup` provider needs its
+        Identity created by an administrator BEFORE the first login, so there the time is the
+        admin's create; `_user_row` labels every Identity time `identity`, never "exact", and the
+        page states the lookup caveat (docs/DESIGN_users_tab_logins.md, "Decisions after 0.9.0")."""
+        with self._client() as client:
+            try:
+                items = self._list_all(client, IDENTITY_API)
+            except ClusterError as exc:
+                if exc.outcome == FORBIDDEN and IDENTITY_API in exc.message:
+                    log.debug("%s: not permitted to list identities — first-login times stay the "
+                              "User's creation time", self.cluster.name)
+                    return None
+                raise
+        earliest: dict[str, str] = {}
+        earliest_at: dict[str, datetime] = {}
+        for obj in items:
+            user = ((obj.get("user") or {}).get("name") or "").strip()
+            created = ((obj.get("metadata") or {}).get("creationTimestamp") or "").strip()
+            if not user or not created:
+                continue
+            try:
+                instant = datetime.fromisoformat(created.replace("Z", "+00:00"))
+            except ValueError:
+                continue
+            if user not in earliest_at or instant < earliest_at[user]:
+                earliest_at[user] = instant
+                earliest[user] = created
+        log.debug("fetched Identity creation times for %d users from %s", len(earliest), self.cluster.name)
+        return earliest
 
     def fetch_access_group_dn(self) -> str | None:
         """The login-gate group's DN, read out of the OAuth CR, or None if there is none to read.
