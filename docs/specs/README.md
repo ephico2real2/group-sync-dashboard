@@ -59,7 +59,7 @@ Two consequences for the tooling:
 | B1 | [`SPEC_B1_offsite_backup.md`](SPEC_B1_offsite_backup.md) — off-volume backup CronJob and restore runbook | B — operations | R4 | chart 0.17.0 (chart only) | [#64](https://github.com/ephico2real2/group-sync-dashboard/issues/64) | specified |
 | C4 | [`SPEC_C4_idle_timeout.md`](SPEC_C4_idle_timeout.md) — idle timeout with countdown | C — product | R5 | app 0.16.0, chart 0.18.0 | [#65](https://github.com/ephico2real2/group-sync-dashboard/issues/65) | specified |
 | D1 | [`SPEC_D1_audit_log_login_capture.md`](SPEC_D1_audit_log_login_capture.md) — login capture from the oauth-server audit log | D — architecture | R5 | app 0.17.0, chart 0.19.0 | [#66](https://github.com/ephico2real2/group-sync-dashboard/issues/66) | specified |
-| C3 | [`SPEC_C3_namespace_report.md`](SPEC_C3_namespace_report.md) — namespace access report, HTML core and optional PDF image | C — product | R6 | app 0.18.0, chart 0.20.0, reporting image 0.1.0 | [#67](https://github.com/ephico2real2/group-sync-dashboard/issues/67) | specified |
+| C3 | [`SPEC_C3_reporting_microservice.md`](SPEC_C3_reporting_microservice.md) — reporting as a microservice: the report service, its catalogue, the dashboard's pull of its usage | C — product | R6 | app 0.18.0, chart 0.20.0, report image at the same appVersion | [#67](https://github.com/ephico2real2/group-sync-dashboard/issues/67) | specified |
 | D2 | [`SPEC_D2_per_cluster_authorization.md`](SPEC_D2_per_cluster_authorization.md) — per-cluster authorization for the multi-cluster case | D — architecture | R7 | app 0.19.0, chart 0.21.0 | [#68](https://github.com/ephico2real2/group-sync-dashboard/issues/68) | specified |
 
 The rows are in **implementation order**, which is also the version ladder. Status moves
