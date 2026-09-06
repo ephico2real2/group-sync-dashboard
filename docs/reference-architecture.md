@@ -780,6 +780,12 @@ elect a leader:
 | `rbac.authorization.k8s.io` | `rolebindings`, `clusterrolebindings` | get, list — only when `rbac.bindings` |
 | `coordination.k8s.io` | `leases` | get, create, update — only when `leaderElection.enabled` |
 
+A third role, on the dashboard's own ServiceAccount and only when `loginCapture.source: audit-log`
+(`charts/group-sync-dashboard/templates/login-capture-rbac.yaml#nodes/proxy`): `get nodes/proxy`
+(optionally `resourceNames`) and `list nodes`. Read-only and cluster-wide — read access to everything
+the kubelet serves over GET on those nodes — which is why it is the one grant in this chart whose
+default is off for breadth rather than for writing.
+
 A **separate** ClusterRole, on a ServiceAccount the dashboard never uses, is created only when
 `authLogLevel.manage=true`:
 

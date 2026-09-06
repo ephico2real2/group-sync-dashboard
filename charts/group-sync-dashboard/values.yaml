@@ -943,6 +943,59 @@ rbac:
 loginCapture:
   enabled: true
 
+  # WHICH LOG TO READ. Two sources, and the whole point of the second is what it does not need:
+  #
+  #   pod-log     (default) the oauth-server pods' logs, through a Role in openshift-authentication
+  #               on `pods` and `pods/log`. Names a person ONLY at spec.logLevel: Debug on the
+  #               authentication operator CR (authLogLevel below), which rolls the OAuth server —
+  #               a login outage at one replica — and history dies with every pod. What it has that
+  #               the audit log does not: the LDAP result code and AD sub-code behind a refusal.
+  #   audit-log   /var/log/oauth-server/audit.log on the control-plane nodes, read through the API
+  #               server's node proxy (what `oc adm node-logs --path=oauth-server/audit.log` does).
+  #               Written at every audit profile but None, at the DEFAULT verbosity: no Debug, no
+  #               roll, no outage, and a first read backfills as far back as the rotated files
+  #               reach (audit-log-maxsize 100 MB x maxbackup 10 — by volume, not by days; one lab
+  #               cluster held sixteen months). It records allow/deny/error and the username,
+  #               never a cause. The identity provider is on the path for browser logins and is
+  #               resolved from the User's Identity otherwise, so a CLI kubeadmin login is still
+  #               labelled break-glass through htpasswdProviders.
+  #
+  # THE COST OF audit-log, STATED: the grant is a ClusterRole with `get` on `nodes/proxy`, which
+  # is READ ACCESS TO EVERYTHING THE KUBELET SERVES OVER GET on those nodes — every container's
+  # logs on them (/containerLogs), the kube-apiserver and openshift-apiserver audit logs, the
+  # journal — and `list nodes` to find the control-plane nodes. That is categorically wider than
+  # a namespaced pods/log Role and it is a standing capability, which is why this defaults to
+  # pod-log despite the audit log being the better source in every other respect. Narrow it with
+  # auditLog.nodeNames below (resourceNames on nodes/proxy, and no list at all).
+  #
+  # HOW IT MEETS authLogLevel: with source audit-log, Debug is unnecessary. The chart REFUSES
+  # source=audit-log together with authLogLevel.enabled=true — it will not roll the OAuth server
+  # as a side effect of a read setting — and the retirement order is the README's two-step:
+  #   1. loginCapture.source=audit-log  authLogLevel.manage=true   authLogLevel.enabled=false
+  #      (the Job converges the cluster to Normal; one last roll)
+  #   2. authLogLevel.manage=false once the rollout has finished.
+  # The audit log is the authoritative record from then on; pod-log rows already stored are kept,
+  # and an audit event that corresponds to one is linked to it rather than recorded twice.
+  source: pod-log
+
+  auditLog:
+    # Which nodes hold the file: the control-plane nodes. A label selector, listed each cycle.
+    nodeSelector: "node-role.kubernetes.io/master="
+    # OR the names, pinned. Set this and the chart grants nodes/proxy on exactly these names and
+    # drops the list grant. Names are cluster-specific, so it cannot be a default:
+    #   nodeNames: [master-0, master-1, master-2]
+    nodeNames: []
+    # Which identity providers a typed username may resolve to (identity_match on each row). Empty:
+    # every provider configured on oauth.config.openshift.io/cluster, read each cycle — so an
+    # Identity left behind by a provider since removed from the CR does not count as a match.
+    providers: []
+    # Identities that are not people, matched case-insensitively against the Identity's
+    # providerUserName and the decoded suffix of its name (an LDAP provider encodes the DN there).
+    # Measured on the reference cluster: an LDAP bind service account in ou=TrustedApplications
+    # produced allows and denies through the challenging client; a service identity's failures are
+    # not personnel events either, so the whole identity is dropped, every decision of it.
+    ignoreIdentityPatterns: ["ou=TrustedApplications"]
+
   # Where the oauth-server runs. Only change this if your cluster is unusual; it is the fixed
   # namespace OpenShift installs the OAuth server into.
   namespace: openshift-authentication

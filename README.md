@@ -67,8 +67,10 @@ of an id or a name to filter; chips narrow by membership and by provider.
 ![Users tab](docs/screenshots/03-users.png)
 
 **Logins** — every login attempt against the cluster's own OAuth server: who, when, and why a
-failure failed. Read from the oauth-server pod log, which names the person only at Debug
-verbosity, so the tab says what period it can account for rather than implying it saw everything.
+failure failed. Read from the oauth-server pod log (which names the person only at Debug
+verbosity) or, with `loginCapture.source: audit-log`, from the oauth-server audit log on the
+control-plane nodes — no Debug, and history back to the rotated files; either way the tab says what
+period it can account for rather than implying it saw everything.
 
 ![Logins tab](docs/screenshots/07-logins.png)
 

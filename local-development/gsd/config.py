@@ -208,6 +208,24 @@ class Settings:
     # generous — over a year — and the prune is bounded per cycle so a long backlog cannot hold the
     # single writer.
     login_retention_days: int = 400
+    # WHICH LOG. `pod-log` reads the oauth-server pods' logs, which name a person only at
+    # spec.logLevel: Debug on the authentication operator CR. `audit-log` reads
+    # /var/log/oauth-server/audit.log on the control-plane nodes through the API server's node
+    # proxy: no Debug, no OAuth roll, history back to the rotated files — and a cluster-wide read
+    # grant, which is why the chart defaults it off. Anything unrecognised is pod-log: the
+    # shipped default, and inert rather than wide.
+    login_capture_source: str = "pod-log"
+    # Which nodes hold the audit log: the control-plane ones, by selector — or by name, in which
+    # case no node is ever listed and the nodes/proxy grant is pinned to those names.
+    login_capture_audit_node_selector: str = "node-role.kubernetes.io/master="
+    login_capture_audit_node_names: tuple[str, ...] = ()
+    # Which identity providers a login's username may resolve to (identity_match): empty means
+    # every provider configured on oauth.config.openshift.io/cluster, read each cycle. And which
+    # identities are not people: patterns matched case-insensitively against the Identity's
+    # providerUserName and the decoded suffix of its name — service identities such as an LDAP bind
+    # account in `ou=TrustedApplications` produce allows and denies that are not personnel events.
+    login_capture_audit_providers: tuple[str, ...] = ()
+    login_capture_audit_ignore_identity_patterns: tuple[str, ...] = ("ou=TrustedApplications",)
     # ── THE LOGIN-GATE GROUP ───────────────────────────────────────────────────────────────────────
     # The FULL DN of the group whose membership is required to authenticate at all — the clause the
     # identity provider's search filter carries. Set it, and the dashboard can answer the question the
@@ -495,6 +513,19 @@ def _audit_mode_setting(raw: dict) -> str:
         return "log"
     log.warning("unmanagedAuditMode=%r is not off/log; using 'off'", source)
     return "off"
+
+
+def _login_capture_source_setting(raw: dict) -> str:
+    """pod-log | audit-log. Fail SAFE to pod-log: it is the shipped default and needs nothing
+    the audit source needs; a typo must not be what widens the read."""
+    source = os.environ.get("GSD_LOGIN_CAPTURE_SOURCE")
+    if source is None:
+        source = raw.get("loginCaptureSource", "pod-log")
+    word = str(source).strip().lower()
+    if word in ("pod-log", "audit-log"):
+        return word
+    log.warning("loginCaptureSource=%r is not pod-log/audit-log; using 'pod-log'", source)
+    return "pod-log"
 
 
 def _visibility_setting(raw: dict) -> str:
@@ -892,6 +923,22 @@ def load_settings(path: str | Path) -> Settings:
             if p.strip()
         ),
         login_retention_days=int(raw.get("loginRetentionDays", 400)),
+        login_capture_source=_login_capture_source_setting(raw),
+        login_capture_audit_node_selector=str(
+            raw.get("loginCaptureAuditNodeSelector") or "node-role.kubernetes.io/master="
+        ).strip(),
+        login_capture_audit_node_names=tuple(
+            n.strip() for n in str(raw.get("loginCaptureAuditNodeNames", "") or "").split(",")
+            if n.strip()
+        ),        login_capture_audit_providers=tuple(
+            n.strip() for n in str(raw.get("loginCaptureAuditProviders", "") or "").split(",")
+            if n.strip()
+        ),
+        login_capture_audit_ignore_identity_patterns=tuple(
+            n.strip() for n in str(
+                raw.get("loginCaptureAuditIgnoreIdentityPatterns", "ou=TrustedApplications") or ""
+            ).split(",") if n.strip()
+        ),
         # Stripped, because a DN pasted out of `ldapsearch` output arrives with trailing whitespace
         # often enough to matter, and it is compared for exact equality against a Group's ldap.uid.
         cluster_access_group=str(raw.get("clusterAccessGroup", "") or "").strip(),

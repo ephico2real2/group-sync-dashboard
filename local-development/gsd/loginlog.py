@@ -100,6 +100,16 @@ indistinguishable in the data as well as in the log. It also stays the place a g
 cause would surface, which is a signal that the grammar has grown a case worth adding.
 """
 
+OUTCOME_PROVIDER_ERROR = "provider_error"
+"""The identity provider could not answer — the audit log's `decision: error`.
+
+Only the AUDIT source produces it (gsd/auditlog.py): the oauth-server annotates a request `error`
+when an identity provider failed rather than refused — a directory that would not bind, a
+timeout — which is an operational action (fix the provider) and not a person's mistake. Distinct
+from `failed` because folding it in would report a directory outage as a run of wrong passwords.
+The pod log has no equivalent line at any verbosity, so this never arrives from that source.
+"""
+
 # The kubelet's RFC3339 prefix, present because the reader passes `?timestamps=true`. THIS is the
 # timestamp to keep. klog's own stamp on the same line (`I0807 16:15:27.435262`) carries no year and no
 # timezone, so it cannot be resolved to an instant without guessing both.

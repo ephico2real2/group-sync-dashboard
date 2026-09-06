@@ -73,6 +73,21 @@ OAUTH_API = "/apis/config.openshift.io/v1/oauths/cluster"
 # the chart creates is a Role in that one namespace.
 POD_API_TMPL = "/api/v1/namespaces/%s/pods"
 
+# The nodes and the kubelet's file server behind them, for the oauth-server AUDIT log
+# (docs/DESIGN_login_capture.md, "The oauth-server AUDIT LOG"). `oc adm node-logs <node>
+# --path=oauth-server/audit.log` is GET /api/v1/nodes/<node>/proxy/logs/oauth-server/audit.log —
+# the API server authorises it as `get nodes/proxy` and forwards it to the kubelet, which serves
+# /var/log through Go's http.FileServer (kubelet.go: `http.StripPrefix("/logs/",
+# http.FileServer(http.Dir(nodeLogDir)))`). A directory path answers an HTML listing; a file
+# path answers the bytes, and honours Range so a byte cursor can resume server-side.
+NODE_API = "/api/v1/nodes"
+NODE_LOG_PROXY_TMPL = "/api/v1/nodes/%s/proxy/logs/%s"
+
+# One audit-file read's byte budget per cycle. The same figure as the pod-log cap and for the
+# same reason — a bounded transfer on the poll thread — and it is what bounds a backfill:
+# ten rotated files of 100 MB drain at this rate over cycles, not in one.
+AUDIT_READ_MAX_BYTES = 8 * 1024 * 1024
+
 # The namespace-configuration-operator's CRs — SAME API group as GroupSync, different
 # CRDs. Cluster-scoped. These template out the RoleBindings that grant the synced groups
 # their access, so they are the other half of the pipeline this dashboard watches.
@@ -406,6 +421,28 @@ class UserBindingView:
     of what it excluded — silently dropping rows is how a tool loses trust."""
 
 
+
+def _content_range_total(header: str | None) -> int | None:
+    """The complete length from a Content-Range header (`bytes 0-1023/27804760`, or the 416
+    form `bytes */27804760`), or None when absent or unparseable."""
+    if not header:
+        return None
+    m = re.match(r"^\s*bytes\s+(?:\d+-\d+|\*)/(\d+)\s*$", header)
+    return int(m.group(1)) if m else None
+
+
+@dataclass
+class NodeLogRead:
+    """One bounded read of a file under /var/log on a node — see ClusterClient.fetch_node_log_file."""
+
+    data: bytes
+    offset: int
+    """Where `data` starts, as the caller asked; the cursor advances by the bytes it consumes."""
+    truncated: bool
+    """More remains after `data` (byte cap or wall-clock budget); read again next cycle."""
+    rotated: bool
+    """The file is now shorter than `offset`: it was rotated away and a fresh one started."""
+
 @dataclass
 class OperatorConfigView:
     """A NamespaceConfig or GroupConfig CR — reconcile health only, per the design scope.
@@ -680,6 +717,11 @@ class ClusterClient:
                 "created_at": meta.get("creationTimestamp"),
                 "providers": sorted({i.split(":", 1)[0] for i in identities}),
                 "has_identity": bool(identities),
+                # The raw Identity names, `<provider>:<providerUserName>` — for an LDAP provider the
+                # second part is the base64url-encoded DN. The audit-log source (gsd/auditlog.py)
+                # resolves a login's identity through these, case-insensitively, and drops service
+                # identities by a pattern over the decoded DN (D1, grounding note).
+                "identities": sorted(identities),
             })
         log.debug(
             "fetched %d users from %s, %d with an identity, %d with a display name",
@@ -782,6 +824,29 @@ class ClusterClient:
                           self.cluster.name, idp.get("name"), dn)
                 return dn
         return None
+
+    def fetch_oauth_providers(self) -> list[str] | None:
+        """The identity providers configured on oauth.config.openshift.io/cluster, by name, or None
+        when the CR cannot be read (the optional oauths/cluster grant declined, or no OAuth CR).
+
+        For the audit-log login source: a login's username is resolved to a CONFIGURED provider
+        through the User's Identity, so an Identity left behind by a provider that has since been
+        removed from the CR does not count as a match (the reference cluster carries Identities for
+        three providers that are no longer configured). None means "cannot narrow", not "no rows".
+        """
+        with self._client() as client:
+            try:
+                oauth = self._get(client, OAUTH_API, {})
+            except ClusterError as exc:
+                if exc.outcome == FORBIDDEN and OAUTH_API in exc.message:
+                    return None
+                if exc.message.startswith(f"HTTP 404 on {OAUTH_API}"):
+                    return None
+                raise
+        return sorted(
+            name for idp in ((oauth.get("spec") or {}).get("identityProviders") or [])
+            if (name := (idp.get("name") or "").strip())
+        )
 
     def fetch_oauth_pods(self, namespace: str) -> list[str] | None:
         """Names of the Running oauth-server pods, or None when we may not list them.
@@ -971,6 +1036,197 @@ class ClusterClient:
         # Everything else — an unexpected 400 included — is surfaced rather than swallowed.
         log.warning("%s: unexpected HTTP %d reading %s log (reason=%s): %s",
                     self.cluster.name, code, pod_name, reason or "-", message[:200])
+        return None
+
+    def fetch_nodes(self, label_selector: str) -> list[str] | None:
+        """Names of the nodes matching a label selector, or None when we may not list them.
+
+        For the audit-log source: the oauth-server writes its audit log to a hostPath on whichever
+        control-plane node runs it, so the nodes to read are the control-plane nodes — by
+        selector, not by asking the oauth pods where they are, because a drained node's file still
+        holds history and a pod list would never name it. `loginCapture.auditLog.nodeNames` is the
+        no-list alternative: with names pinned this is never called.
+
+        None means FORBIDDEN, distinct from [] (permitted, no node matched): the grant is optional
+        and an image upgraded without re-applying RBAC must degrade, not fail the poll.
+        """
+        with self._client() as client:
+            try:
+                items = self._list_all_with(client, NODE_API, {"labelSelector": label_selector})
+            except ClusterError as exc:
+                if exc.outcome == FORBIDDEN and NODE_API in exc.message:
+                    log.debug("%s: forbidden listing nodes; returning no nodes", self.cluster.name)
+                    return None
+                raise
+        return sorted(
+            name for obj in items if (name := (obj.get("metadata") or {}).get("name"))
+        )
+
+    def _list_all_with(self, client: httpx.Client, path: str, extra: dict[str, Any]) -> list[dict]:
+        """_list_all with extra query parameters carried through every page."""
+        items: list[dict] = []
+        params: dict[str, Any] = {"limit": PAGE_SIZE, **extra}
+        while True:
+            payload = self._get(client, path, params)
+            if "items" not in payload:
+                raise ClusterError(
+                    UNREACHABLE,
+                    f"{path} returned HTTP 200 without an 'items' field "
+                    f"(kind={payload.get('kind')!r}) — refusing to treat this as an empty "
+                    f"collection",
+                )
+            page = payload.get("items")
+            if page is not None and not isinstance(page, list):
+                raise ClusterError(
+                    UNREACHABLE, f"{path} returned 'items' of type {type(page).__name__}"
+                )
+            items.extend(page or [])
+            token = (payload.get("metadata") or {}).get("continue")
+            if not token:
+                return items
+            params = {"limit": PAGE_SIZE, "continue": token, **extra}
+
+    def list_node_log_files(self, node: str, directory: str) -> list[str] | None:
+        """File names under /var/log/<directory>/ on one node, or None when it cannot be read.
+
+        The kubelet's file server answers a directory with an HTML listing — one `<a href="...">`
+        per entry — which is what `oc adm node-logs --path=oauth-server/` turns into text. Names
+        only: no size, no mtime, which is why the audit cursor is by name and byte offset.
+
+        None for 403 (WARNING: permanent, and silence here looks like "no history") and 404 (the
+        directory does not exist on this node — it never ran the oauth-server, or the cluster's
+        audit profile is None, which switches the oauth-server's audit log off entirely; DEBUG).
+        """
+        path = NODE_LOG_PROXY_TMPL % (node, directory.rstrip("/") + "/")
+        try:
+            with self._client() as client:
+                response = client.get(path)
+        except httpx.HTTPError as exc:
+            log.info("%s: could not list %s on %s (%s: %s)",
+                     self.cluster.name, directory, node, type(exc).__name__, exc)
+            return None
+        if response.status_code == 403:
+            log.warning(
+                "%s: FORBIDDEN reading node logs on %s — audit-log capture will record nothing "
+                "until this is fixed. The chart grants it with loginCapture.source=audit-log "
+                "(a ClusterRole on nodes/proxy).", self.cluster.name, node,
+            )
+            return None
+        if response.status_code == 404:
+            log.debug("%s: no %s directory on %s", self.cluster.name, directory, node)
+            return None
+        if response.status_code == 401:
+            raise ClusterError(AUTH_FAILED, f"401 Unauthorized listing node logs on {node}")
+        if response.status_code >= 400:
+            log.warning("%s: unexpected HTTP %d listing %s on %s: %s", self.cluster.name,
+                        response.status_code, directory, node, response.text[:200])
+            return None
+        names = []
+        for href in re.findall(r'href="([^"?#]+)"', response.text):
+            name = unquote(href).rstrip("/").rsplit("/", 1)[-1]
+            if name and name not in names:
+                names.append(name)
+        return names
+
+    def fetch_node_log_file(
+        self, node: str, path: str, offset: int = 0, max_bytes: int = AUDIT_READ_MAX_BYTES,
+        *, ranged: bool = True,
+    ) -> NodeLogRead | None:
+        """Up to `max_bytes` of /var/log/<path> on one node from byte `offset`, or None if unreadable.
+
+        RESUMABLE BY BYTE OFFSET, and correct whether or not the server honours it. A `Range`
+        header asks the file server to start at the offset; a 206 means it did. A 200 means
+        something in the path ignored the header, and the first `offset` bytes are discarded
+        from the stream instead — same result, more bytes on the wire, never a wrong cursor.
+
+        A SHRUNKEN FILE IS DETECTED HERE, not guessed at. A Range whose first byte is AT OR PAST
+        the end is unsatisfiable (RFC 9110 §14.1.2) and the kubelet answers 416 with
+        `Content-Range: bytes */<size>` — measured on the reference cluster: a Range exactly at
+        the size (the idle case, nothing new since the last read) and one past it both return
+        416 with the true size. So a 416 alone is NOT rotation: the size decides. Equal to the
+        cursor means nothing new; below it means the file is shorter than what was read — it was
+        rotated and a new one started — and `rotated` is set. A 200 whose body ends before
+        `offset` bytes were skipped means the same. A 416 without the size (a proxy that strips
+        it) falls back to one unranged read, which the 200 path settles the same way. The caller
+        confirms rotation against the file's head fingerprint (gsd/auditlog.py) before acting;
+        this flag is the cheap first signal. HEAD is not used: the node proxy answers it 405.
+
+        Bounded in bytes and in wall-clock (LOG_READ_BUDGET_SECONDS), like fetch_pod_log, and a
+        truncated read keeps the OLDEST bytes for the same reason it does there: the cursor
+        advances only through bytes actually returned.
+        """
+        url = NODE_LOG_PROXY_TMPL % (node, path)
+        headers = {"Range": f"bytes={offset}-"} if offset > 0 and ranged else {}
+        chunks: list[bytes] = []
+        size = 0
+        skip = offset if offset > 0 and not ranged else 0
+        truncated = False
+        started = time.monotonic()
+        try:
+            with self._client() as client:
+                with client.stream("GET", url, headers=headers) as response:
+                    if response.status_code == 416:
+                        total = _content_range_total(response.headers.get("content-range"))
+                        if total is None:
+                            log.debug("%s: 416 without a size for %s on %s; reading unranged",
+                                      self.cluster.name, path, node)
+                            return self.fetch_node_log_file(node, path, offset, max_bytes,
+                                                            ranged=False)
+                        return NodeLogRead(data=b"", offset=offset, truncated=False,
+                                           rotated=total < offset)
+                    if response.status_code >= 400:
+                        response.read()
+                        return self._node_log_refused(response, node, path)
+                    if response.status_code == 200 and offset > 0:
+                        skip = offset
+                        length = response.headers.get("content-length")
+                        if length is not None and int(length) < offset:
+                            return NodeLogRead(data=b"", offset=offset, truncated=False,
+                                               rotated=True)
+                    for chunk in response.iter_bytes(chunk_size=64 * 1024):
+                        if time.monotonic() - started > LOG_READ_BUDGET_SECONDS:
+                            truncated = True
+                            break
+                        if skip:
+                            take = min(skip, len(chunk))
+                            skip -= take
+                            chunk = chunk[take:]
+                            if not chunk:
+                                continue
+                        room = max_bytes - size
+                        if len(chunk) >= room:
+                            chunks.append(chunk[:room])
+                            size = max_bytes
+                            truncated = True
+                            break
+                        chunks.append(chunk)
+                        size += len(chunk)
+        except httpx.HTTPError as exc:
+            log.info("%s: could not read %s on %s (%s: %s)",
+                     self.cluster.name, path, node, type(exc).__name__, exc)
+            return None
+        if skip:
+            # The whole body was shorter than the cursor: rotated.
+            return NodeLogRead(data=b"", offset=offset, truncated=False, rotated=True)
+        return NodeLogRead(data=b"".join(chunks), offset=offset, truncated=truncated,
+                           rotated=False)
+
+    def _node_log_refused(self, response: httpx.Response, node: str, path: str) -> None:
+        if response.status_code == 404:
+            log.debug("%s: %s is gone on %s (rotated away between listing and reading)",
+                      self.cluster.name, path, node)
+            return None
+        if response.status_code == 403:
+            log.warning(
+                "%s: FORBIDDEN reading %s on %s — audit-log capture will record nothing until "
+                "this is fixed (loginCapture.source=audit-log renders the nodes/proxy grant)",
+                self.cluster.name, path, node,
+            )
+            return None
+        if response.status_code == 401:
+            raise ClusterError(AUTH_FAILED, f"401 Unauthorized reading {path} on {node}")
+        log.warning("%s: unexpected HTTP %d reading %s on %s: %s", self.cluster.name,
+                    response.status_code, path, node, response.text[:200])
         return None
 
     def fetch_bindings(self) -> list[BindingView]:

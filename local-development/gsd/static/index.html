@@ -1899,7 +1899,7 @@ function captureSection(d, access) {
            whole record, not this view.</div>`
       : `<div class="scroll-x"><table>
           <thead><tr><th>When</th><th>User</th><th>Outcome</th><th>Provider</th>
-            <th>Detail</th><th>Replica</th></tr></thead>
+            <th>Detail</th><th>${d.source === "audit-log" ? "Node" : "Replica"}</th></tr></thead>
           <tbody>${rows.map((r) => `<tr>
             <td class="mono" style="white-space:nowrap">${esc(fmtTime(r.at))}</td>
             <td>${loginUser(r)}${r.in_access_group === false && !r.break_glass

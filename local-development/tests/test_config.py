@@ -568,3 +568,39 @@ class TestIdleTimeout:
                       "sessionIdleTimeoutEnabled: true\nsessionIdleTimeoutMinutes: 30\n")
         load_settings(write(tmp_path, cfg))
         assert "can never fire" in caplog.text
+
+
+class TestLoginCaptureSource:
+    """D1: the source is a two-value enum with a safe fallback, and the audit settings are lists."""
+
+    def test_the_default_is_pod_log_with_the_measured_defaults(self, tmp_path):
+        s = load_settings(write(tmp_path, BASE))
+        assert s.login_capture_source == "pod-log"
+        assert s.login_capture_audit_node_selector == "node-role.kubernetes.io/master="
+        assert s.login_capture_audit_node_names == ()
+        assert s.login_capture_audit_providers == ()
+        assert s.login_capture_audit_ignore_identity_patterns == ("ou=TrustedApplications",)
+
+    def test_audit_log_parses_and_its_lists_split_on_commas(self, tmp_path):
+        cfg = BASE + ("loginCaptureSource: audit-log\n"
+                      "loginCaptureAuditNodeSelector: 'node-role.kubernetes.io/control-plane='\n"
+                      "loginCaptureAuditNodeNames: ' master-0, master-1 ,'\n"
+                      "loginCaptureAuditProviders: 'ldap-local,developer'\n"
+                      "loginCaptureAuditIgnoreIdentityPatterns: ''\n")
+        s = load_settings(write(tmp_path, cfg))
+        assert s.login_capture_source == "audit-log"
+        assert s.login_capture_audit_node_selector == "node-role.kubernetes.io/control-plane="
+        assert s.login_capture_audit_node_names == ("master-0", "master-1")
+        assert s.login_capture_audit_providers == ("ldap-local", "developer")
+        assert s.login_capture_audit_ignore_identity_patterns == ()
+
+    def test_junk_falls_back_to_pod_log_with_a_warning(self, tmp_path, caplog):
+        import logging
+        with caplog.at_level(logging.WARNING):
+            s = load_settings(write(tmp_path, BASE + "loginCaptureSource: both\n"))
+        assert s.login_capture_source == "pod-log"
+        assert "loginCaptureSource" in caplog.text and "both" in caplog.text
+
+    def test_the_environment_wins_over_the_file(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("GSD_LOGIN_CAPTURE_SOURCE", "audit-log")
+        assert load_settings(write(tmp_path, BASE)).login_capture_source == "audit-log"

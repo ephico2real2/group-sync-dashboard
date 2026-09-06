@@ -364,9 +364,37 @@ In the order worth checking:
 | `403` reading `pods/log` | the RoleBinding names the wrong ServiceAccount, or the wrong namespace on the subject |
 | a login you just made is missing | it landed during the oauth roll — the pod serving it was replaced, and **logs die with the pod** |
 | the level flipped back on its own | somebody ran `helm upgrade` without `-f`, reverting `authLogLevel.enabled` to the chart default |
+| `source` is `audit-log` and every node reports no audit files | `apiserver.config.openshift.io/cluster` `spec.audit.profile` is `None`, which switches the oauth-server's audit log off |
 
 **Logs die with the pod, and this is the limitation to state out loud rather than design around.** A
 capture that reads pod logs can only see what the *current* pods still hold. Every oauth roll — every
 cluster upgrade, every node drain, every one of these level toggles — starts the window again. A
 continuous reader accumulates its own durable record going forward, but the record before capture was
 enabled does not exist and cannot be reconstructed.
+
+## 6. The audit-log source, in three commands
+
+With `loginCapture.source: audit-log` there is no Debug to turn on. The same five logins appear in the
+oauth-server's audit log on the control-plane node, at the default verbosity:
+
+```sh
+oc adm node-logs --role=master --path=oauth-server/            # expect audit.log and rotated audit-<stamp>.log names
+oc adm node-logs <node> --path=oauth-server/audit.log \
+  | jq 'select(.annotations["authentication.openshift.io/username"] != null)
+        | {t: .stageTimestamp, u: .annotations["authentication.openshift.io/username"],
+           d: .annotations["authentication.openshift.io/decision"], uri: .requestURI}'
+```
+
+Expect the five test logins: a `POST /login/<idp>` per browser attempt (`allow` or `deny`), a
+`GET /oauth/authorize?client_id=openshift-challenging-client…` per CLI attempt, and — after each
+successful browser login — a `GET /oauth/authorize?client_id=<the client>` that is the session
+re-authorising, which the dashboard records as kind `session`. The ServiceAccount's own read, with
+the token the pod holds:
+
+```sh
+curl -sk -H "Authorization: Bearer $TOK" -H 'Range: bytes=0-999' \
+  "$API/api/v1/nodes/<node>/proxy/logs/oauth-server/audit.log" -o /dev/null -w '%{http_code}\n'
+# expect 206 (the kubelet honoured the Range) or 200 (something in the path did not; both are handled)
+oc auth can-i get nodes --subresource=proxy --as=$SA          # yes with source=audit-log
+oc auth can-i list pods -n openshift-authentication --as=$SA  # no: the pod-log Role is not rendered
+```

@@ -80,7 +80,7 @@ the dashboard by anyone who passes the wide check:
 | view | reproducible with `oc`? |
 |---|---|
 | Groups, Access granted, RBAC policy, Namespace audit | yes — `oc get groups`, `oc get clusterrolebindings`, `oc get rolebindings -A`; Access granted's "Reaches" column (members, and members who have logged in) also needs `oc get users` |
-| Logins | yes — `cluster-reader` holds `get,list,watch` on `pods/log` cluster-wide, so `oc logs` on the oauth-server pod yields the same records |
+| Logins | yes — `cluster-reader` holds `get,list,watch` on `pods/log` cluster-wide, so `oc logs` on the oauth-server pod yields the same records; with `loginCapture.source: audit-log`, `oc adm node-logs --path=oauth-server/audit.log`, which needs `get nodes/proxy` (cluster-admin / node-admin) — still nothing the wide tier's `cluster-reader` cannot read |
 | **Usage** | **no** — it exists only in the dashboard's own `dashboard_user_activity` table |
 
 So `cluster-reader` seeing the audit views grants it nothing new, and that persona is deliberate: a

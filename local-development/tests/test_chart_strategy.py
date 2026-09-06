@@ -217,8 +217,10 @@ class TestLoginCaptureReadsOneNamespaceOnly:
         assert "login-capture" not in out, "the log read renders after being disabled"
 
     def test_the_log_read_is_never_cluster_scoped(self):
-        """The whole point. A ClusterRole here reads every pod's logs on the cluster."""
-        for extra in ({}, self.ON, {**self.ON, "authLogLevel__manage": "true"}):
+        """The whole point. A ClusterRole here reads every pod's logs on the cluster — with either
+        source: the audit-log branch grants nodes/proxy, never pods/log."""
+        for extra in ({}, self.ON, {**self.ON, "authLogLevel__manage": "true"},
+                      {**self.ON, "loginCapture__source": "audit-log"}):
             ok, out = render(**extra)
             assert ok, out
             for d in self._docs(out):
@@ -1415,3 +1417,79 @@ class TestIdleTimeoutThreading:
     def test_a_warning_longer_than_the_window_is_refused(self):
         ok, out = render(session__idleTimeout__minutes="1", session__idleTimeout__warningSeconds="60")
         assert not ok and "shorter than the idle window" in out
+
+
+class TestAuditLogSource:
+    """D1: `loginCapture.source: audit-log` swaps the namespaced pod-log Role for a ClusterRole on
+    the node proxy — read-only, cluster-wide, off by default for its breadth — and refuses to
+    coexist with the Debug roll it exists to retire."""
+
+    AUDIT = {"loginCapture__source": "audit-log"}
+
+    def _docs(self, out):
+        import yaml
+        return [d for d in yaml.safe_load_all(out) if d]
+
+    def _rules(self, out, kind, name_part):
+        for d in self._docs(out):
+            if d.get("kind") == kind and name_part in d["metadata"]["name"]:
+                return [(tuple(r.get("resources") or []), tuple(r.get("verbs") or []),
+                         tuple(r.get("resourceNames") or [])) for r in d["rules"]]
+        return None
+
+    def test_the_default_renders_no_audit_grant_and_the_pod_log_role(self):
+        ok, out = render()
+        assert ok, out
+        assert "login-capture-audit" not in out
+        assert self._rules(out, "Role", "login-capture") is not None
+        assert 'loginCaptureSource: "pod-log"' in out
+
+    def test_audit_log_renders_the_cluster_role_instead_of_the_role(self):
+        ok, out = render(**self.AUDIT)
+        assert ok, out
+        rules = self._rules(out, "ClusterRole", "login-capture-audit")
+        assert rules == [(("nodes/proxy",), ("get",), ()), (("nodes",), ("list",), ())], rules
+        assert self._rules(out, "Role", "login-capture") is None, "the pod-log Role must not render too"
+        roles_in_auth = [d for d in self._docs(out) if d.get("kind") == "Role"
+                         and d["metadata"].get("namespace") == "openshift-authentication"]
+        assert roles_in_auth == []
+        binding = next(d for d in self._docs(out) if d.get("kind") == "ClusterRoleBinding"
+                       and "login-capture-audit" in d["metadata"]["name"])
+        assert binding["roleRef"]["kind"] == "ClusterRole"
+        assert 'loginCaptureSource: "audit-log"' in out
+
+    def test_node_names_pin_the_grant_and_drop_the_list(self):
+        ok, out = render(**self.AUDIT, **{"loginCapture__auditLog__nodeNames[0]": "master-0",
+                                          "loginCapture__auditLog__nodeNames[1]": "master-1"})
+        assert ok, out
+        rules = self._rules(out, "ClusterRole", "login-capture-audit")
+        assert rules == [(("nodes/proxy",), ("get",), ("master-0", "master-1"))], rules
+        assert 'loginCaptureAuditNodeNames: "master-0,master-1"' in out
+
+    def test_the_audit_settings_reach_the_configmap(self):
+        ok, out = render(**self.AUDIT, **{"loginCapture__auditLog__providers[0]": "ldap-local",
+                                          "loginCapture__auditLog__ignoreIdentityPatterns[0]": "ou=Robots"})
+        assert ok, out
+        assert 'loginCaptureAuditNodeSelector: "node-role.kubernetes.io/master="' in out
+        assert 'loginCaptureAuditProviders: "ldap-local"' in out
+        assert 'loginCaptureAuditIgnoreIdentityPatterns: "ou=Robots"' in out
+
+    def test_audit_log_with_debug_on_is_refused(self):
+        ok, out = render(**self.AUDIT, authLogLevel__manage="true", authLogLevel__enabled="true")
+        assert not ok and "contradict" in out, out
+
+    def test_audit_log_with_the_manager_retiring_debug_renders_normal(self):
+        ok, out = render(**self.AUDIT, authLogLevel__manage="true", authLogLevel__enabled="false")
+        assert ok, out
+        assert "WANT=Normal" in out or 'WANT="Normal"' in out or "Normal" in out
+        assert "retire" in out.lower() or "Debug" in out
+
+    def test_unknown_and_both_sources_are_refused(self):
+        for value in ("both", "pod-logs", "AUDIT-LOG"):
+            ok, out = render(loginCapture__source=value)
+            assert not ok and "loginCapture.source" in out, (value, out)
+
+    def test_source_is_moot_when_capture_is_off(self):
+        ok, out = render(**self.AUDIT, loginCapture__enabled="false")
+        assert ok, out
+        assert "login-capture" not in out

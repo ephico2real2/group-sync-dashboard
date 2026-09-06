@@ -283,3 +283,69 @@ class TestIdentityFirstLoginAndTheProviderAllowList:
             body = c.get("/api/clusters/c1/users/kubeadmin", headers=ADMIN).json()
         assert body["first_login_source"] == "user"
         assert body["first_login_at"] == _iso(NOW - timedelta(days=400))
+
+
+class TestTheLoginsEnvelopeNamesItsSource:
+    """D1: the same /logins endpoint serves either source; the envelope says which, what the
+    source can and cannot say, and which kinds of attempt the rows are."""
+
+    def _audit_rows(self, db):
+        from gsd.auditlog import audit_event_dict, parse_audit_line
+        import json
+        store = Store(db)
+        def rec(user, decision, uri, audit_id, at):
+            return json.dumps({
+                "kind": "Event", "apiVersion": "audit.k8s.io/v1", "level": "Metadata", "auditID": audit_id,
+                "stage": "ResponseComplete", "requestURI": uri,
+                "verb": "post" if uri.startswith("/login") else "get",
+                "user": {"username": "system:anonymous"}, "sourceIPs": ["10.0.0.1"], "userAgent": "curl/8",
+                "responseStatus": {"metadata": {}, "code": 302},
+                "requestReceivedTimestamp": _iso(at), "stageTimestamp": _iso(at),
+                "annotations": {"authentication.openshift.io/decision": decision,
+                                "authentication.openshift.io/username": user},
+            })
+        rows = [audit_event_dict(parse_audit_line(rec(*a)), "master-0", _iso(NOW)) for a in (
+            ("alice", "allow", "/login/ldap-local", "a1", NOW - timedelta(minutes=30)),
+            ("alice", "allow", "/oauth/authorize?client_id=console&state=s", "a2", NOW - timedelta(minutes=29)),
+            ("dave", "deny", "/oauth/authorize?client_id=openshift-challenging-client", "a3", NOW - timedelta(minutes=20)),
+            ("dave", "error", "/login/ldap-local", "a4", NOW - timedelta(minutes=10)),
+        )]
+        store.record_audit_login_events("c1", rows)
+        store.close()
+
+    def test_pod_log_is_the_default_source_and_says_what_it_cannot_see(self, tmp_path):
+        body = _client(tmp_path).get("/api/clusters/c1/logins", headers=ADMIN).json()
+        assert body["source"] == "pod-log"
+        assert body["kinds"] == ["credential", "cli"]
+        assert "since capture began" in body["note"] and "audit log" not in body["note"]
+        assert all(r["source"] == "pod-log" and r["kind"] == "credential" for r in body["attempts"])
+
+    def test_audit_log_source_shows_credential_and_cli_by_default_and_session_on_request(self, tmp_path):
+        client = _client(tmp_path, capture_events=False,
+                         settings_extra={"login_capture_source": "audit-log"})
+        self._audit_rows(str(tmp_path / "t.db"))
+        body = client.get("/api/clusters/c1/logins", headers=ADMIN).json()
+        assert body["source"] == "audit-log" and "audit log" in body["note"]
+        assert body["kinds"] == ["credential", "cli"]
+        assert sorted(r["kind"] for r in body["attempts"]) == ["cli", "credential", "credential"]
+        cli = next(r for r in body["attempts"] if r["kind"] == "cli")
+        assert cli["client_id"] == "openshift-challenging-client" and cli["outcome"] == "failed"
+        assert "state=" not in str(body), "only client_id survives the query string"
+        every = client.get("/api/clusters/c1/logins?kind=all", headers=ADMIN).json()
+        assert every["kinds"] == ["credential", "cli", "session"]
+        assert sorted(r["kind"] for r in every["attempts"]) == ["cli", "credential", "credential", "session"]
+        session = next(r for r in every["attempts"] if r["kind"] == "session")
+        assert session["client_id"] == "console" and session["pod_name"] == "master-0"
+        only = client.get("/api/clusters/c1/logins?kind=session", headers=ADMIN).json()
+        assert [r["kind"] for r in only["attempts"]] == ["session"] and only["kinds"] == ["session"]
+
+    def test_provider_error_is_a_queryable_outcome_and_kind_is_validated(self, tmp_path):
+        client = _client(tmp_path, capture_events=False,
+                         settings_extra={"login_capture_source": "audit-log"})
+        self._audit_rows(str(tmp_path / "t.db"))
+        r = client.get("/api/clusters/c1/logins?outcome=provider_error", headers=ADMIN)
+        assert r.status_code == 200
+        assert [a["user_name"] for a in r.json()["attempts"]] == ["dave"]
+        assert r.json()["attempts"][0]["detail"].startswith("audit: credential error via /login/ldap-local (the audit log records no cause)")
+        assert client.get("/api/clusters/c1/logins?kind=bogus", headers=ADMIN).status_code == 422
+        assert client.get("/api/clusters/c1/logins?kind=cli,", headers=ADMIN).status_code == 422

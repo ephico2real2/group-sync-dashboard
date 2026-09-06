@@ -1200,6 +1200,15 @@ def build_app(
             description="Only attempts for this exact username — the login that was TYPED, which "
                         "may match no User object and no group member. That mismatch is a finding, "
                         "not an error."),
+        kind: str = Query(
+            default="credential,cli",
+            pattern=r"^(credential|cli|session|all)(,(credential|cli|session|all))*$",
+            description="Which kinds of attempt, comma-separated: credential (the interactive "
+                        "form — every pod-log row is one), cli (`oc login` and other "
+                        "openshift-challenging-client logins), session (an existing session "
+                        "re-authorising to a client such as the console or this dashboard — the "
+                        "audit-log source only), or all. Default credential,cli: sessions are "
+                        "not new logins and are shown on request."),
         limit: int = Query(
             default=200, ge=1, le=2000,
             description="Maximum attempts returned, newest first. `truncated` says whether older "
@@ -1207,6 +1216,12 @@ def build_app(
                         "retained record, never this page."),
     ) -> dict:
         """Login attempts against this cluster's oauth-server: who, when, and why it failed.
+
+        Rows carry `source` (pod-log or audit-log), `kind`, and — from the audit-log source — the
+        OAuth `client_id` a cli/session row authorised to, `identity_match` (the configured
+        provider the typed name resolves to through the User's Identity, or null: kept, visibly
+        unmatched), and what the record says about a failure: `status_code` and `error_message`
+        (the audit log records no cause beyond those; a browser failure is a 302 back to the form).
 
         THE RECORD IS A WINDOW, and both of its edges are carried as data rather than implied.
         `capture_started_at` is when watching began and is stable; `retained_since` is the oldest
@@ -1252,7 +1267,9 @@ def build_app(
         )
         # limit + 1 to learn whether more exist — the list_users idiom. `summary` carries the exact
         # whole-record numbers, so no headline figure is ever computed from this page.
-        rows = store.login_events(cluster_id, user_name=user, outcome=outcome, limit=limit + 1)
+        kinds = None if "all" in kind.split(",") else tuple(dict.fromkeys(kind.split(",")))
+        rows = store.login_events(cluster_id, user_name=user, outcome=outcome, limit=limit + 1,
+                                  kinds=kinds)
         truncated = len(rows) > limit
         attempts = rows[:limit]
 
@@ -1282,9 +1299,24 @@ def build_app(
             "scope": scope,
             "viewer": viewer,
             "enabled": settings.login_capture_enabled,
-            "note": "read from the oauth-server log at Debug verbosity; covers only the period "
-                    "since capture began — earlier logins were never recorded and cannot be "
-                    "fetched, and rows older than the configured retention age out",
+            # Which log the rows come from, and what that source can and cannot say — the two
+            # differ in exactly the ways a reader of this page needs to know (no cause from the
+            # audit log; no history from the pod log).
+            "source": settings.login_capture_source,
+            "kinds": list(kinds) if kinds else ["credential", "cli", "session"],
+            "note": (
+                "read from the oauth-server audit log on the control-plane nodes: no Debug "
+                "verbosity needed, and history back to the oldest rotated audit file on a first "
+                "read. Every attempt is a row — credential logins, CLI logins and, on request, "
+                "session re-authorisations — with the identity provider the typed name resolves "
+                "to. The audit log records no cause for a refusal beyond the HTTP status and, "
+                "for CLI failures, 'Authentication failed'; rows older than the configured "
+                "retention age out"
+                if settings.login_capture_source == "audit-log" else
+                "read from the oauth-server log at Debug verbosity; covers only the period "
+                "since capture began — earlier logins were never recorded and cannot be "
+                "fetched, and rows older than the configured retention age out"
+            ),
             # Set once by the capture loop's first successful read. Falls back to the oldest retained
             # attempt for the one-cycle window after a crash before that row exists — an honest floor
             # rather than null, which the UI would have to render as "unknown".
