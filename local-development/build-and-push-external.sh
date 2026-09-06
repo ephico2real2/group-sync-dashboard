@@ -82,9 +82,17 @@ if [ -f .env ]; then
       \"*\") value=${value#\"}; value=${value%\"} ;;
       \'*\') value=${value#\'}; value=${value%\'} ;;
     esac
-    export "$key=$value"
+    # THE ENVIRONMENT WINS OVER .env. A variable already set by the caller is left alone: the
+    # report image's wrapper (build-and-push-report.sh) sets IMAGE_NAME and CONTAINERFILE in the
+    # environment, and a .env that named the dashboard image used to override it — measured
+    # 2026-09-06: `build-and-push-report.sh --build-only` tagged the report image
+    # group-sync-dashboard:<tag>, and with --release-tags it would have pushed it over the
+    # dashboard's published aliases. .env supplies defaults; it does not overrule an explicit value.
+    if [ -z "${!key+x}" ]; then
+      export "$key=$value"
+    fi
   done < .env
-  echo "config  : .env"
+  echo "config  : .env (environment wins where both set a value)"
 else
   echo "config  : environment only (no .env found — copy .env.example if you need one)"
 fi
