@@ -192,7 +192,7 @@ def parse_audit_line(line: str) -> AuditLogin | None:
     kind: str | None = None
     provider: str | None = None
     client_id: str | None = None
-    if verb == "post" and (path == "/login" or path.startswith("/login/")):
+    if verb == "post" and (path == "/login" or re.fullmatch(r"/login/[^/]+", path)):
         kind = KIND_CREDENTIAL
         if path.startswith("/login/") and len(path) > len("/login/"):
             provider = path[len("/login/"):].split("/", 1)[0] or None
@@ -237,32 +237,40 @@ def decode_identity_suffix(identity_name: str) -> str:
 
 
 def identity_match_for(
-    user_name: str, identities: list[str], configured_providers: set[str] | frozenset[str],
+    user_name: str, identities: list[str], configured_providers: set[str] | frozenset[str] | None,
 ) -> str | None:
     """The configured provider a login's username resolves to through a User's Identity names, or
     None. Case-insensitive on the username — the audit log records what was TYPED, and a failed
     attempt for `LATEEF.O` belongs to the person `lateef.o` (grounding note). `identities` are the
     User's Identity names, `<provider>:<providerUserName>`; the first whose provider is configured
-    wins, in the order given (sorted by the poller)."""
+    wins, in the order given (sorted by the poller). `configured_providers` is None when the
+    OAuth CR could not be read — then any provider an Identity names counts, and the loop says so
+    at WARNING — and a SET otherwise, an empty one meaning the CR lists no provider at all, so no
+    Identity can be current and nothing matches (Codex, review D1)."""
     del user_name  # the caller already selected the User whose identities these are
     for identity in identities:
         provider = identity.split(":", 1)[0]
-        if not configured_providers or provider in configured_providers:
+        if configured_providers is None or provider in configured_providers:
             return provider
     return None
 
 
-def ignored_identity(identities: list[str], patterns: tuple[str, ...]) -> bool:
+def ignored_identity(
+    identities: list[str], patterns: tuple[str, ...], plain_suffix_providers: tuple[str, ...] = (),
+) -> bool:
     """Whether any of a User's identities matches an ignore pattern — case-insensitively, against
     the decoded suffix of the Identity name (the DN for an LDAP provider). Measured: the LDAP bind
     service account's Identity decodes to `cn=…,ou=TrustedApplications,dc=…`, so the OU is the
-    data-derived discriminator; an HTPasswd identity's suffix is the bare username and can never
-    match an `ou=`."""
+    data-derived discriminator. An identity of a provider in `plain_suffix_providers` (the
+    HTPasswd providers, `loginCapture.htpasswdProviders`) is compared as written and never
+    decoded: its suffix is the bare username, and a username that happens to be valid base64url
+    of a DN fragment must not be dropped for what it decodes to (Codex, review D1)."""
     if not patterns:
         return False
     lowered = [p.lower() for p in patterns if p]
     for identity in identities:
-        text = decode_identity_suffix(identity).lower()
+        provider, _, suffix = identity.partition(":")
+        text = (suffix if provider in plain_suffix_providers else decode_identity_suffix(identity)).lower()
         if any(p in text for p in lowered):
             return True
     return False
@@ -273,13 +281,14 @@ class IdentityIndex:
     capture pass from the store's last User read (rbac.users). Empty when the Users tab has no
     source — then every row is `identity_match=None`, which the log says once."""
 
-    def __init__(self, user_identities: dict[str, list[str]], configured: set[str],
-                 ignore_patterns: tuple[str, ...]):
+    def __init__(self, user_identities: dict[str, list[str]], configured: set[str] | None,
+                 ignore_patterns: tuple[str, ...], plain_suffix_providers: tuple[str, ...] = ()):
         self._by_lower: dict[str, list[str]] = {}
         for name, identities in user_identities.items():
             self._by_lower.setdefault(name.lower(), identities)
         self.configured = configured
         self.ignore_patterns = ignore_patterns
+        self.plain_suffix_providers = plain_suffix_providers
 
     def identities(self, user_name: str) -> list[str]:
         return self._by_lower.get(user_name.lower(), [])
@@ -288,7 +297,8 @@ class IdentityIndex:
         return identity_match_for(user_name, self.identities(user_name), self.configured)
 
     def ignored(self, user_name: str) -> bool:
-        return ignored_identity(self.identities(user_name), self.ignore_patterns)
+        return ignored_identity(self.identities(user_name), self.ignore_patterns,
+                                self.plain_suffix_providers)
 
 
 def audit_event_dict(login: AuditLogin, node: str, observed_at: str, index: IdentityIndex | None = None) -> dict:
@@ -354,14 +364,15 @@ def complete_lines(data: bytes) -> tuple[list[str], int]:
     return data[:cut].decode("utf-8", errors="replace").split("\n"), cut + 1
 
 
-def _configured_providers(client: ClusterClient, cluster: ClusterConfig, settings: Settings) -> set[str]:
+def _configured_providers(client: ClusterClient, cluster: ClusterConfig, settings: Settings) -> set[str] | None:
     """The providers a username may resolve to: the values list when set, else every identity
-    provider on the OAuth CR (read each pass; a 403 there means 'no narrowing', not 'no rows')."""
+    provider on the OAuth CR, read each pass. None when the CR cannot be read ('no narrowing',
+    said at WARNING); an empty set when it was read and lists none."""
     if settings.login_capture_audit_providers:
         return set(settings.login_capture_audit_providers)
     fetch = getattr(client, "fetch_oauth_providers", None)
     if fetch is None:
-        return set()
+        return None
     try:
         names = fetch()
     except ClusterError as exc:
@@ -374,7 +385,7 @@ def _configured_providers(client: ClusterClient, cluster: ClusterConfig, setting
         log.warning("%s: the OAuth CR's identity providers could not be read; identity_match is "
                     "computed against every provider an Identity names, not the CR's list "
                     "(loginCapture.auditLog.providers pins it)", cluster.name)
-        return set()
+        return None
     return set(names)
 
 
@@ -446,7 +457,8 @@ def capture_once(
 
     identities = store.user_identities(cluster.name)
     index = IdentityIndex(identities, _configured_providers(client, cluster, settings),
-                          tuple(settings.login_capture_audit_ignore_identity_patterns))
+                          tuple(settings.login_capture_audit_ignore_identity_patterns),
+                          tuple(settings.login_capture_htpasswd_providers))
     if not identities:
         log.info("%s: no User records to resolve identities against (rbac.users off, or no poll "
                  "yet); audit rows are recorded with identity_match unset", cluster.name)
@@ -528,6 +540,7 @@ def capture_once(
                 read = client.fetch_node_log_file(node, path, offset=0, max_bytes=budget)
                 if read is None:
                     continue
+                read_ok = True
             lines, consumed = complete_lines(read.data)
             if name != AUDIT_FILE and not read.truncated and consumed < len(read.data):
                 # A ROTATED file is closed: nothing will ever append the newline its last line

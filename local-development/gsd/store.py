@@ -2083,7 +2083,16 @@ class Store:
                      "status_code": None, "error_message": None, "user_agent": None,
                      **e, "cluster_id": cluster_id},
                 )
-                inserted += conn.total_changes - before
+                added = conn.total_changes - before
+                inserted += added
+                if not added:
+                    # The pod-log UNIQUE key (cluster, pod/node, user, at, outcome) ignored a row
+                    # whose auditID is new: two responses for one person on one node in the same
+                    # microsecond with the same outcome. Never observed (zero same-user same-stamp
+                    # pairs in the reference cluster's 49,360 records); said here rather than
+                    # rebuilt around, so it is a log line and not a silent loss if it ever happens.
+                    log.warning("%s: audit event %s ignored — a row with the same node, user, "
+                                "stamp and outcome already exists", cluster_id, e["audit_id"])
         return inserted, linked
 
     def audit_cursors(self, cluster_id: str, node_name: str) -> dict[str, dict]:

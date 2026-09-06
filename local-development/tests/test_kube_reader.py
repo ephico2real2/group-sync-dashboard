@@ -185,6 +185,22 @@ class TestNodeLogRangeReads:
         self._client(monkeypatch, handler0).fetch_node_log_file("crc", "oauth-server/audit.log", offset=0)
         assert seen[-1] is None
 
+    def test_both_node_log_calls_accept_anything(self, monkeypatch):
+        """Measured on the reference cluster: the API server's node proxy answers 406 to an explicit
+        Accept of application/json, text/html or text/plain, and 200 only to */* (or none). The
+        client's default is application/json, so the first deploy of the audit source read nothing."""
+        seen = []
+        def handler(request):
+            seen.append(request.headers.get("accept"))
+            if request.url.path.endswith("/"):
+                return httpx.Response(200, content=b'<a href="audit.log">audit.log</a>', request=request)
+            return httpx.Response(200, content=b"x\n", request=request)
+        client = self._client(monkeypatch, handler)
+        assert client.list_node_log_files("crc", "oauth-server") == ["audit.log"]
+        client.fetch_node_log_file("crc", "oauth-server/audit.log", offset=0)
+        client.fetch_node_log_file("crc", "oauth-server/audit.log", offset=1)
+        assert seen == ["*/*", "*/*", "*/*"], seen
+
     def test_content_range_total_parses_both_forms(self):
         from gsd.kube import _content_range_total
         assert _content_range_total("bytes */27804760") == 27804760

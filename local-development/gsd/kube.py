@@ -422,6 +422,14 @@ class UserBindingView:
 
 
 
+# The client's default `Accept: application/json` is right for every API object and WRONG for the
+# node-log proxy: the API server negotiates the proxied response against it and answers
+# `406 Not Acceptable` — measured on the reference cluster for application/json, text/html AND
+# text/plain alike; only `*/*` (or no Accept at all) returns the kubelet's HTML listing and the
+# file bytes. The first deploy of the audit source read nothing for exactly this reason.
+NODE_LOG_HEADERS = {"Accept": "*/*"}
+
+
 def _content_range_total(header: str | None) -> int | None:
     """The complete length from a Content-Range header (`bytes 0-1023/27804760`, or the 416
     form `bytes */27804760`), or None when absent or unparseable."""
@@ -1100,7 +1108,7 @@ class ClusterClient:
         path = NODE_LOG_PROXY_TMPL % (node, directory.rstrip("/") + "/")
         try:
             with self._client() as client:
-                response = client.get(path)
+                response = client.get(path, headers=NODE_LOG_HEADERS)
         except httpx.HTTPError as exc:
             log.info("%s: could not list %s on %s (%s: %s)",
                      self.cluster.name, directory, node, type(exc).__name__, exc)
@@ -1156,7 +1164,9 @@ class ClusterClient:
         advances only through bytes actually returned.
         """
         url = NODE_LOG_PROXY_TMPL % (node, path)
-        headers = {"Range": f"bytes={offset}-"} if offset > 0 and ranged else {}
+        headers = dict(NODE_LOG_HEADERS)
+        if offset > 0 and ranged:
+            headers["Range"] = f"bytes={offset}-"
         chunks: list[bytes] = []
         size = 0
         skip = offset if offset > 0 and not ranged else 0

@@ -101,6 +101,10 @@ class TestTheParserOnMeasuredRecords:
         assert parse_audit_line(_event("alice", "allow", at, uri="/oauth/authorize")) is None
         assert parse_audit_line(_event("alice", "allow", at, uri="/oauth/authorize?client_id=")) is None
         assert parse_audit_line(_event("alice", "allow", at, uri="/oauth/authorize?client_id=console&state=s")).kind == KIND_SESSION
+        # Codex, review D1: /login/<idp> is exactly one segment (measured: 147 credential records,
+        # depths /login and /login/<idp> only); an extra segment is not a login path.
+        assert parse_audit_line(_event("alice", "allow", at, uri="/login/developer/extra")) is None
+        assert parse_audit_line(_event("alice", "allow", at, uri="/login/developer")).provider == "developer"
 
     def test_the_username_comes_from_the_annotation_never_from_user(self):
         login = parse_audit_line(FIXTURES["credential_allow_idp"])
@@ -136,7 +140,9 @@ class TestIdentityClassification:
         assert index.match("nosuchperson") is None
         stale = IdentityIndex({"old.example": ["ceo_rnd_oim:x"]}, {"developer", "ldap-local"}, ())
         assert stale.match("old.example") is None, "a provider no longer on the OAuth CR is not a match"
-        assert identity_match_for("x", ["developer:kubeadmin"], set()) == "developer", "empty configured = any"
+        assert identity_match_for("x", ["developer:kubeadmin"], None) == "developer", "unknown (CR unreadable) = any"
+        assert identity_match_for("x", ["developer:kubeadmin"], set()) is None, "the CR lists no provider = nothing is current (Codex, review D1)"
+        assert IdentityIndex({"kubeadmin": ["developer:kubeadmin"]}, None, ()).match("kubeadmin") == "developer"
 
     def test_a_cli_login_resolves_its_provider_from_the_identity(self):
         """Grounding note: the challenging client names no provider; the User's Identity does, so a
@@ -156,6 +162,12 @@ class TestIdentityClassification:
         assert ignored_identity([f"ldap-local:{suffix}"], ("ou=TrustedApplications",)) is True
         assert ignored_identity(["developer:kubeadmin"], ("ou=TrustedApplications",)) is False
         assert ignored_identity([f"ldap-local:{suffix}"], ()) is False
+        # Codex, review D1: an HTPasswd username that happens to be valid base64url of a DN fragment
+        # is compared as written, never decoded.
+        bare = base64.urlsafe_b64encode(b"ou=TrustedApplications").decode().rstrip("=")
+        assert ignored_identity([f"developer:{bare}"], ("ou=TrustedApplications",), ("developer",)) is False
+        assert ignored_identity([f"developer:{bare}"], ("ou=TrustedApplications",), ()) is True, "without the hint it decodes"
+        assert IdentityIndex({"u": [f"developer:{bare}"]}, None, ("ou=TrustedApplications",), ("developer",)).ignored("u") is False
 
     def test_an_unmatched_failure_is_still_a_row(self):
         index = IdentityIndex({}, {"developer"}, ())
@@ -476,6 +488,28 @@ class TestCorrespondenceWithThePodLog:
         rows = store.login_events(CLUSTER.name)
         assert len(rows) == 2 and {r["audit_id"] for r in rows} == {None, "retry-1"}
         assert {r["source"] for r in rows} == {"pod-log", "audit-log"}
+
+    def test_two_audit_events_in_the_same_microsecond_are_said_not_silently_dropped(self, store, caplog):
+        """Codex and Cursor, review D1: the table's pod-log UNIQUE key also binds audit rows, so two
+        distinct auditIDs for one person, node, stamp and outcome collapse. Rejected as a table
+        rebuild (zero same-user same-stamp pairs in 49,360 measured records); made visible instead."""
+        at = datetime.now(UTC) - timedelta(minutes=5)
+        rows = [audit_event_dict(parse_audit_line(_event("bob", "deny", at, uri="/login", audit_id=a)), NODE, "x")
+                for a in ("same-a", "same-b")]
+        with caplog.at_level(logging.WARNING):
+            assert store.record_audit_login_events(CLUSTER.name, rows, 0.25) == (1, 0)
+        assert "same-b" in caplog.text and "ignored" in caplog.text
+        assert "bob" not in caplog.text, "no username in the log line"
+
+    def test_an_unreadable_oauth_cr_is_said_and_widens_the_match(self, store, settings, install, caplog):
+        client = install(FakeNodeClient(files={NODE: {AUDIT_FILE: _file(_event("kubeadmin", "allow", datetime.now(UTC)))}}))
+        client.fetch_oauth_providers = lambda: None
+        store.replace_users(CLUSTER.name, [{"user_name": "kubeadmin", "identities": ["developer:kubeadmin"],
+                                           "providers": ["developer"], "has_identity": True}], "2026-09-05T00:00:00Z")
+        with caplog.at_level(logging.WARNING):
+            assert capture_once(store, CLUSTER, settings) == 1
+        assert "could not be read" in caplog.text
+        assert store.login_events(CLUSTER.name)[0]["identity_match"] == "developer"
 
     def test_two_real_attempts_on_one_path_stay_two(self, store):
         at = datetime.now(UTC) - timedelta(minutes=5)

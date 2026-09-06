@@ -109,5 +109,5 @@ control-plane nodes through the API server's node proxy — a ClusterRole with `
 which is read access to everything the kubelet serves on those nodes. No Debug verbosity is
 needed; if authLogLevel.manage is still true with enabled=false, the Job is converging the
 cluster back to Normal and you can set manage=false once the rollout has finished.
-First read backfills as far as the rotated audit files reach, {{ .Values.loginCapture.retentionDays }} days at most.
+First read backfills as far as the rotated audit files reach{{ if gt (int .Values.loginCapture.retentionDays) 0 }}, {{ .Values.loginCapture.retentionDays }} days at most{{ else }} (retentionDays is 0: no age limit){{ end }}.
 {{- end }}
