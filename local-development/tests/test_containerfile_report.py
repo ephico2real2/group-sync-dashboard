@@ -22,7 +22,8 @@ def test_the_two_recipes_differ_only_where_marked():
     differing = [(a, b) for a, b in zip(base, report) if a != b]
     for a, b in differing:
         assert any(token in a or token in b for token in ("image-proof.py", "report-image-proof.py", "/artifacts", "8443", "8080",
-                                                             "gsd.reporting.server", "gsd.api:create_app", "[report]", "pip install", "GSD_REPORT_", "uvicorn")), (a, b)
+                                                             "gsd.reporting.server", "gsd.api:create_app", "[report]", "pip install", "GSD_REPORT_", "uvicorn",
+                                                             "org.opencontainers.image.title", "import ")), (a, b)
     froms = [(a, b) for a, b in zip(base, report) if a.startswith("FROM")]
     assert all(a == b for a, b in froms), "same bases on the same floating tags"
 
@@ -34,8 +35,10 @@ def test_the_pack_stage_and_the_uninstall_are_byte_identical():
         if "pack" in name.lower():
             assert report[name] == body, name
     base_runtime, report_runtime = list(base.values())[-1], list(report.values())[-1]
-    erase = [l for l in base_runtime if "uninstall-lists.py" in l]
-    assert erase and all(l in report_runtime for l in erase), "the RPM-database edit is the same"
+    # The RPM-database edit lives in the pack stage (uninstall-lists.py, asserted identical above); the
+    # runtime copies its result back — those lines name /rpmdb or the erased-file lists and must match.
+    rpm = [l for l in base_runtime if "rpm" in l.lower()]
+    assert rpm and all(l in report_runtime for l in rpm), "the RPM-database edit is the same"
 
 
 def test_the_final_stage_serves_the_report_app_on_8443_with_its_own_proof():

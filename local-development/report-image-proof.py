@@ -16,6 +16,7 @@ import sys
 
 import croniter, fastapi, gsd, httpx, prometheus_client, uvicorn, yaml  # noqa: E401,F401
 import fpdf, PIL, fontTools  # noqa: E401,F401
+import jinja2, markupsafe  # noqa: E401,F401 — the HTML templates' engine and its escaping
 from gsd.reporting import ticket  # noqa: F401 — importable without opening anything
 
 REMOVED = ("/usr/lib64/libuuid.so.1", "/usr/share/python-wheels", "/usr/lib/python3.14/site-packages/pip",

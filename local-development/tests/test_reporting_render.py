@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from gsd.reporting.model import Note, Report, Section, Table
+from gsd.reporting.model import KeyValues, Note, Report, Section, Table
 from gsd.reporting.render_html import render_html
 
 GSD = Path(__file__).resolve().parents[1] / "gsd"
@@ -26,7 +26,7 @@ def _report(group_name="team-a") -> Report:
                   generated_by="root", generated_by_note="proxy-verified", run_id="20260906T000000.000000Z-ab12",
                   params={}, coverage={}, provenance={"marking": "Handling: internal", "report_service_version": "0.18.0"},
                   totals={}, truncated=False, include_members=False,
-                  sections=[Section("Inventory", [Table("Groups", ["group", "members"], [[group_name, 3]]), Note("a note", "caveat")])]).seal()
+                  sections=[Section("Inventory", [Table("Groups", ["group", "members"], [[group_name, 3]]), KeyValues("Totals", [("groups", 1)]), Note("a note", "caveat")])]).seal()
 
 
 def _need_fonts():
@@ -51,6 +51,77 @@ class TestHtml:
         css = (GSD / "reporting" / "report.css").read_text()
         colours = {c.lower() for c in re.findall(r"#[0-9a-fA-F]{3,6}\b", css)}
         assert colours <= {"#000", "#fff", "#555"}, colours
+
+    def test_exactly_the_shipped_partials_are_resolved_for_a_report_with_every_block_kind(self):
+        """The dynamic-templates note (d): a RECORDING loader around the environment, asserting the
+        exact set of templates a synthetic report resolves — not markers a template could omit."""
+        from jinja2 import PackageLoader
+        from gsd.reporting.render_html import TEMPLATES, build_environment
+        seen: list[str] = []
+        class Recording(PackageLoader):
+            def get_source(self, environment, template):
+                seen.append(template)
+                return super().get_source(environment, template)
+        env = build_environment(Recording("gsd.reporting", "templates"))
+        seen.clear()
+        render_html(_report(), "T", env=env)
+        assert set(seen) == set(TEMPLATES), (sorted(set(seen)), sorted(TEMPLATES))
+
+    def test_a_marking_with_a_newline_cannot_close_the_css_string(self):
+        """Measured while the note was written: a marking beginning with a newline closed the CSS
+        string and the @page rule. css_string encodes every code point as a six-digit escape."""
+        from gsd.reporting.render_html import css_string
+        report = _report()
+        report.provenance["marking"] = "\nHandling: \"internal\"; } body { display: none } /*"
+        html = render_html(report, "T")
+        style = html[html.index("<style>"):html.index("</style>")]
+        assert "\nHandling" not in style and "} body { display: none }" not in style
+        assert css_string("\n") == "\\00000a" and css_string("a") == "\\000061"
+        assert "\\00000a\\000048" in style       # the escaped newline then "H"
+
+    @pytest.mark.parametrize("source", ['{{ x|safe }}', '{{ Markup(x) }}', '{% autoescape false %}{{ x }}{% endautoescape %}'])
+    def test_the_three_escape_bypasses_are_refused_before_render(self, source):
+        from jinja2 import DictLoader
+        from gsd.reporting.render_html import TEMPLATES, TemplateRefused, build_environment
+        shipped = {name: (GSD / "reporting" / "templates" / name).read_text() for name in TEMPLATES}
+        with pytest.raises(TemplateRefused):
+            build_environment(DictLoader({**shipped, "block_note.html": source}))
+
+    def test_the_sandbox_refuses_environment_reads_callables_and_mutation(self):
+        """The note's measurements, re-run: no globals, no callable on the context's values (the
+        context is detached JSON, so there is nothing with a method worth calling), and the immutable
+        sandbox refuses a mutation even on a dict."""
+        from jinja2 import DictLoader, StrictUndefined
+        from jinja2.exceptions import SecurityError, UndefinedError
+        from gsd.reporting.render_html import TEMPLATES, build_environment, context
+        shipped = {name: (GSD / "reporting" / "templates" / name).read_text() for name in TEMPLATES}
+        ctx = context(_report(), "T")
+        def render(src):
+            env = build_environment(DictLoader({**shipped, "probe": src}))
+            return env.get_template("probe").render(**ctx)
+        for hostile in ("{{ cycler.__init__.__globals__.os.environ }}", "{{ self._TemplateReference__context.environment.loader }}",
+                        "{{ report.canonical() }}", "{{ report.to_json() }}", "{{ report.provenance.update({'marking': 'x'}) }}",
+                        "{{ report.__class__ }}", "{{ ''.__class__.__mro__ }}"):
+            with pytest.raises((SecurityError, UndefinedError, TypeError, AttributeError)):
+                render(hostile)
+        assert render("{{ report.provenance.marking }}") == "Handling: internal"
+        assert ctx["report"]["provenance"]["marking"] == "Handling: internal", "the supplied dict was not mutated"
+
+    def test_the_catalogue_never_imports_a_renderer_or_markup(self):
+        """The note's AST allow-list: catalogue modules return data, never markup — they may import the
+        stdlib, gsd.state, gsd.reporting.config/model/snapshot and catalogue.common; never render_html,
+        render_pdf, jinja2, fpdf, xml.etree or html."""
+        forbidden = {"render_html", "render_pdf", "jinja2", "fpdf", "xml", "html", "markupsafe"}
+        for path in sorted((GSD / "reporting" / "catalogue").glob("*.py")):
+            tree = ast.parse(path.read_text())
+            for node in ast.walk(tree):
+                names = []
+                if isinstance(node, ast.Import):
+                    names = [a.name for a in node.names]
+                elif isinstance(node, ast.ImportFrom):
+                    names = [node.module or ""] + [f"{node.module or ''}.{a.name}" for a in node.names]
+                for n in names:
+                    assert not ({p for p in n.split(".")} & forbidden), (path.name, n)
 
 
 class TestPdf:

@@ -30,7 +30,7 @@ RUN python3.14 -m pip install --no-cache-dir --upgrade pip build \
  && python3.14 -m build --wheel --outdir /wheels \
  && python3.14 -m pip install --no-cache-dir --prefix=/install "$(ls /wheels/*.whl)[report]" \
  && PYTHONPATH=/install/lib/python3.14/site-packages:/install/lib64/python3.14/site-packages \
-    python3.14 -c "import gsd, gsd.reporting, fastapi, uvicorn, httpx, yaml, croniter, prometheus_client, fpdf, PIL, fontTools; \
+    python3.14 -c "import gsd, gsd.reporting, fastapi, uvicorn, httpx, yaml, croniter, prometheus_client, fpdf, PIL, fontTools, jinja2, markupsafe; \
                    print('report wheel tree imports under the builder')"
 
 # ---------------------------------------------------------------------------------------------

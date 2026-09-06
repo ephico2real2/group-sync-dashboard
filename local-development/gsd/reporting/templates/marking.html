@@ -1,0 +1,8 @@
+{#- The fixed header: marking, title, who/when, and the sha256 of the data. -#}
+<header>
+  <p class="marking">{{ marking }}</p>
+  <h1>{{ report.title }}</h1>
+  <p class="sub">{{ product_title }} · cluster <strong>{{ report.cluster }}</strong> · generated {{ report.generated_at }} by {{ report.generated_by }} ({{ report.generated_by_note }})</p>
+  <p class="sha">sha256 of the report data: <code>{{ report.sha256 }}</code></p>
+  <button class="no-print" onclick="window.print()">Print / Save as PDF</button>
+</header>

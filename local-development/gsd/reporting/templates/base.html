@@ -1,0 +1,17 @@
+{#- The one layout every report renders through (docs/specs/SPEC_C3_reporting_microservice.md, the
+    dynamic-templates note). Autoescape is ON for every value; `css` is the package's own stylesheet,
+    handed in pre-marked as safe by the renderer, never a template decision. The marking and the page furniture
+    land INSIDE <style>, where HTML escaping is the wrong escaping — they go through css_string. -#}
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<title>{{ report.title }} — {{ report.cluster }} — {{ product_title }}</title>
+<meta name="generator" content="{{ product_title }} report service {{ report.provenance.report_service_version }}">
+<meta name="gsd-sha256" content="{{ report.sha256 }}">
+<style>{{ css }}
+{% include "furniture.css" %}
+</style></head>
+<body>
+{% include "marking.html" %}
+<main>{% for section in report.sections %}{% include "section.html" %}{% endfor %}</main>
+<footer><p>{{ product_title }} — {{ report.title }} — run {{ report.run_id }} — this document is a rendering of the report data whose sha256 is printed above; the .json artefact of the same run carries the data.</p></footer>
+</body></html>

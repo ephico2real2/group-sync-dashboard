@@ -1,0 +1,3 @@
+{#- Page furniture for a printed copy: the marking top-left, the sha256 and the run id bottom-left.
+    CSS strings, not HTML: css_string escapes every code point (a newline would end the string). -#}
+@page { @top-left { content: "{{ marking | css_string }}"; } @bottom-left { content: "{{ furniture | css_string }}"; } }

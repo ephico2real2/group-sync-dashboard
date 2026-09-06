@@ -1,66 +1,87 @@
-"""The HTML rendering of a Report: one self-contained document, escaped throughout."""
+"""The HTML rendering of a Report: one self-contained document, from Jinja2 partials in an IMMUTABLE
+sandbox (docs/specs/SPEC_C3_reporting_microservice.md, the dynamic-templates note).
+
+WHY A SANDBOX FOR OUR OWN TEMPLATES. The templates ship in the wheel today, and the note keeps the door
+open for operator-supplied partials later; the environment is built as if every template were untrusted,
+so that later step changes a loader, not the trust model. Measured while the note was written: the plain
+SandboxedEnvironment let a template call `report.provenance.update({...})` on the supplied dictionary, and a
+default Environment reaches `os.environ` and the token both pods mount. So: ImmutableSandboxedEnvironment,
+globals cleared, the `safe` filter removed, autoescape on, StrictUndefined, no reload — and a DETACHED
+context of dicts, lists and scalars (`json.loads(report.to_json())`), never the live Report, settings or
+paths. Every template is parsed at import and refused if it uses `|safe`, `Markup` or `{% autoescape
+false %}`. The one value that is not escaped is the package's own stylesheet, which the RENDERER marks
+safe — a template cannot.
+
+The marking and the page furniture land inside <style>, where HTML escaping is the wrong escaping: a
+marking that began with a newline closed the CSS string and the rule (measured; CSS Values §3.3). They go
+through `css_string`, which encodes every code point as a six-digit CSS escape.
+"""
 
 from __future__ import annotations
 
-import html
+import json
+import re
 from importlib import resources
 
-from .model import KeyValues, Note, Report, Section, Table
+from jinja2 import PackageLoader, StrictUndefined
+from jinja2.sandbox import ImmutableSandboxedEnvironment
+from markupsafe import Markup
+
+from .model import Report
+
+#: The partials the base layout resolves for any report, plus one per block kind the model names.
+#: tests/test_reporting_render.py holds the EXACT set resolved for a synthetic report to this.
+TEMPLATES = ("base.html", "furniture.css", "marking.html", "section.html", "block_table.html", "block_kv.html", "block_note.html")
+#: Constructs no template may use: each defeats autoescaping.
+FORBIDDEN = (re.compile(r"\|\s*safe\b"), re.compile(r"\bMarkup\b"), re.compile(r"\{%-?\s*autoescape\s+false"))
 
 _CSS = resources.files(__package__).joinpath("report.css").read_text(encoding="utf-8")
 
 
-def _e(value) -> str:
-    return html.escape("" if value is None else str(value), quote=True)
+class TemplateRefused(ValueError):
+    """A template uses a construct that would bypass escaping."""
 
 
-def _table(t: Table) -> str:
-    if not t.rows:
-        body = f'<p class="empty">{_e(t.empty_text)}</p>'
-    else:
-        head = "".join(f"<th>{_e(c)}</th>" for c in t.columns)
-        rows = "".join("<tr>" + "".join(f"<td>{_e(v)}</td>" for v in r) + "</tr>" for r in t.rows)
-        body = f"<table><thead><tr>{head}</tr></thead><tbody>{rows}</tbody></table>"
-    note = f'<p class="note">{_e(t.note)}</p>' if t.note else ""
-    return f'<div class="block"><h3>{_e(t.title)}</h3>{body}{note}</div>'
+def css_string(value) -> str:
+    """Every code point as a six-digit CSS escape, so no character can end the string or the rule."""
+    return "".join(f"\\{ord(ch):06x}" for ch in ("" if value is None else str(value)))
 
 
-def _kv(k: KeyValues) -> str:
-    rows = "".join(f"<tr><th>{_e(a)}</th><td>{_e(b)}</td></tr>" for a, b in k.items)
-    return f'<div class="block"><h3>{_e(k.title)}</h3><table class="kv">{rows}</table></div>'
+def check_template_source(name: str, source: str) -> None:
+    for pattern in FORBIDDEN:
+        if pattern.search(source):
+            raise TemplateRefused(f"template {name} uses {pattern.pattern!r}, which bypasses escaping")
 
 
-def _note(n: Note) -> str:
-    return f'<p class="note {_e(n.level)}">{_e(n.text)}</p>'
+def build_environment(loader=None) -> ImmutableSandboxedEnvironment:
+    env = ImmutableSandboxedEnvironment(loader=loader or PackageLoader("gsd.reporting", "templates"),
+                                        autoescape=True, undefined=StrictUndefined, auto_reload=False)
+    env.globals.clear()
+    env.filters.pop("safe", None)
+    env.filters["css_string"] = css_string
+    for name in TEMPLATES:
+        source, _, _ = env.loader.get_source(env, name)
+        check_template_source(name, source)
+    return env
 
 
-def _section(s: Section) -> str:
-    cls = ' class="break"' if s.page_break else ""
-    blocks = "".join(_table(b) if isinstance(b, Table) else _kv(b) if isinstance(b, KeyValues) else _note(b) for b in s.blocks)
-    return f"<section{cls}><h2>{_e(s.title)}</h2>{blocks}</section>"
+_ENV = build_environment()
 
 
-def render_html(report: Report, product_title: str) -> str:
-    """The whole document. The sha256 sits in the header AND the footer margin box so a printed
-    page carries it whatever page the reader photographs."""
-    marking = report.provenance.get("marking", "")
-    return f"""<!doctype html>
-<html lang="en"><head><meta charset="utf-8">
-<title>{_e(report.title)} — {_e(report.cluster)} — {_e(product_title)}</title>
-<meta name="generator" content="{_e(product_title)} report service {_e(report.provenance.get('report_service_version'))}">
-<meta name="gsd-sha256" content="{_e(report.sha256)}">
-<style>{_CSS}
-@page {{ @top-left {{ content: "{_e(marking)}"; }} @bottom-left {{ content: "sha256 {_e(report.sha256[:16])}… · run {_e(report.run_id)}"; }} }}
-</style></head>
-<body>
-<header>
-  <p class="marking">{_e(marking)}</p>
-  <h1>{_e(report.title)}</h1>
-  <p class="sub">{_e(product_title)} · cluster <strong>{_e(report.cluster)}</strong> · generated {_e(report.generated_at)} by {_e(report.generated_by)} ({_e(report.generated_by_note)})</p>
-  <p class="sha">sha256 of the report data: <code>{_e(report.sha256)}</code></p>
-  <button class="no-print" onclick="window.print()">Print / Save as PDF</button>
-</header>
-<main>{''.join(_section(s) for s in report.sections)}</main>
-<footer><p>{_e(product_title)} — {_e(report.title)} — run {_e(report.run_id)} — this document is a rendering of the report data whose sha256 is printed above; the .json artefact of the same run carries the data.</p></footer>
-</body></html>
-"""
+def context(report: Report, product_title: str) -> dict:
+    """The detached context: the report's own JSON round-tripped (dicts, lists, scalars — nothing with a
+    method worth calling), the product title, the marking, the page furniture, and the stylesheet."""
+    data = json.loads(report.to_json())
+    return {
+        "report": data,
+        "product_title": product_title,
+        "marking": (data.get("provenance") or {}).get("marking", ""),
+        "furniture": f"sha256 {report.sha256[:16]}… · run {report.run_id}",
+        "css": Markup(_CSS),
+    }
+
+
+def render_html(report: Report, product_title: str, env: ImmutableSandboxedEnvironment | None = None) -> str:
+    """The whole document. The sha256 sits in the header AND the footer margin box so a printed page
+    carries it whatever page the reader photographs."""
+    return (env or _ENV).get_template("base.html").render(**context(report, product_title))
