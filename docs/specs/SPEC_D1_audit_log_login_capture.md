@@ -7,7 +7,7 @@
 | Release | R5 — Sessions and login source |
 | Version on release | app 0.17.0, chart 0.19.0 |
 | Issue | [#66](https://github.com/ephico2real2/group-sync-dashboard/issues/66) |
-| Status | in progress |
+| Status | released |
 | Source | design agent output `a1c16fd988d22c70e`; three messages; the first ended mid-token (`"nodes/` | `proxy"]`) and is joined to the second with nothing between; the third is the agent's confirmation reply summarising D2 and is not design text, so it is omitted |
 
 ## How to read this spec
