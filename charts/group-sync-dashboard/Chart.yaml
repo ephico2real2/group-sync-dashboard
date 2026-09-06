@@ -162,7 +162,12 @@ type: application
 # `loginCapture.auditLog.{nodeSelector,nodeNames,providers,ignoreIdentityPatterns}` to the
 # ConfigMap. Refused together with `authLogLevel.enabled=true`: the chart will not roll the OAuth
 # server as a side effect of a read setting; the NOTES say how to retire the Debug Jobs.
-version: 0.19.0
+# CHART 0.20.0 (2026-09-06), MINOR: a new module ON BY DEFAULT that adds a second Deployment,
+# Service, Secret, ServiceAccount, PVC and NetworkPolicy, a second upstream and a CA mount on the
+# oauth-proxy, seven ConfigMap keys, six render guards and two optional alerts; appVersion moves to
+# application 0.18.0. A default upgrade therefore gains a report pod and a /report/ route behind the
+# proxy — or refuses, naming the value, where the release cannot host one.
+version: 0.20.0
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,
@@ -232,7 +237,11 @@ version: 0.19.0
 # and file, exact de-duplication by auditID, an audit event linked to its pod-log twin instead of
 # doubled, three kinds of attempt (credential, cli, session) and the provider the typed name
 # resolves to. Schema migration 10; new outcome provider_error; three metric families. MINOR: additive.
-appVersion: "0.17.0"
+# 0.18.0 (2026-09-06). The report service and its eleven-report catalogue (gsd.reporting, its own
+# image on the same version); GET /api/report/ticket and GET /api/dashboard/reports; feature flag
+# `reporting`; schema migration 11 (cluster_namespace, cluster_namespace_status, report_run); the
+# poller writes a VACUUM INTO copy for the report pod and pulls its usage. Additive on the wire. MINOR.
+appVersion: "0.18.0"
 
 keywords: [openshift, ldap, rbac, groupsync, observability]
 home: https://github.com/ephico2real2/group-sync-dashboard
