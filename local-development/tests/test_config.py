@@ -624,3 +624,28 @@ class TestLoginCaptureSource:
     def test_the_environment_wins_over_the_file(self, tmp_path, monkeypatch):
         monkeypatch.setenv("GSD_LOGIN_CAPTURE_SOURCE", "audit-log")
         assert load_settings(write(tmp_path, BASE)).login_capture_source == "audit-log"
+
+    def test_audit_lists_preserve_commas_through_the_rendered_chart(self, tmp_path):
+        """Codex, review D1: the ConfigMap the chart renders, loaded by the application itself.
+        Lives here, not in test_chart_strategy.py: CI's chart job runs that file WITHOUT the
+        application installed, by design, and this test needs both helm and gsd."""
+        import yaml
+        from test_chart_strategy import render
+        ok, out = render(loginCapture__source="audit-log", **{
+            "loginCapture__auditLog__providers[0]": r"a\,b",
+            "loginCapture__auditLog__ignoreIdentityPatterns[0]": r"cn=service\,ou=TrustedApplications"})
+        assert ok, out
+        raw = None
+        for doc in yaml.safe_load_all(out):
+            if doc and doc.get("kind") == "ConfigMap":
+                for value in (doc.get("data") or {}).values():
+                    if "loginCaptureSource" in value:
+                        raw = yaml.safe_load(value)
+        assert raw is not None, "no ConfigMap carries the settings file"
+        raw["clusters"] = [{"name": "c", "apiUrl": "https://x", "tokenEnv": "T"}]
+        path = tmp_path / "clusters.yaml"
+        path.write_text(yaml.safe_dump(raw))
+        s = load_settings(str(path))
+        assert s.login_capture_source == "audit-log"
+        assert s.login_capture_audit_providers == ("a,b",)
+        assert s.login_capture_audit_ignore_identity_patterns == ("cn=service,ou=TrustedApplications",)

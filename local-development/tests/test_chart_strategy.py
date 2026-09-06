@@ -1498,23 +1498,6 @@ class TestAuditLogSource:
         assert cfg["loginCaptureAuditIgnoreIdentityPatterns"] == ["ou=TrustedApplications,dc=example,dc=com"]
         assert cfg["loginCaptureAuditProviders"] == ["a,b", "ldap-local"]
 
-    def test_audit_lists_preserve_commas_through_the_application_config(self, tmp_path):
-        """Codex, review D1: the rendered settings file, loaded by the application itself."""
-        import yaml
-        from gsd.config import load_settings
-        ok, out = render(**self.AUDIT, **{
-            "loginCapture__auditLog__providers[0]": r"a\,b",
-            "loginCapture__auditLog__ignoreIdentityPatterns[0]": r"cn=service\,ou=TrustedApplications"})
-        assert ok, out
-        raw = self._config_data(out)
-        raw["clusters"] = [{"name": "c", "apiUrl": "https://x", "tokenEnv": "T"}]
-        path = tmp_path / "clusters.yaml"
-        path.write_text(yaml.safe_dump(raw))
-        settings = load_settings(str(path))
-        assert settings.login_capture_audit_providers == ("a,b",)
-        assert settings.login_capture_audit_ignore_identity_patterns == ("cn=service,ou=TrustedApplications",)
-        assert settings.login_capture_source == "audit-log"
-
     def test_the_debug_contradiction_is_moot_when_capture_is_off(self):
         """Cursor, review D1: with loginCapture.enabled=false no RBAC renders and no log is read,
         so a leftover source=audit-log must not refuse a render that keeps Debug on."""
