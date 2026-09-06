@@ -8,6 +8,21 @@ lives next to the code and in the design and review records linked here. Changes
 last release sit under `## Unreleased` until the release that carries them replaces that heading —
 which `local-development/prepare-release.py` does when the release is cut.
 
+## Application 0.16.0 — chart 0.18.0 — 2026-09-06
+
+- **Idle timeout with a countdown, as an off-by-default module.** After `session.idleTimeout.minutes`
+  of no pointer, keyboard or tab-visibility activity the session is signed out; the last
+  `warningSeconds` of that window are a `role=dialog` countdown (focus trapped
+  with `inert`, Escape or Enter to stay, forced-colors border), and at zero the page removes its data
+  and sends the browser to the proxy's `sign_out`, which clears the cookie. Enforced by the proxy,
+  modelled by the page: nothing is persisted, activity in one tab defers every tab of that browser,
+  and the 60 s poll is suspended while the countdown is up so an unattended tab cannot keep a
+  session alive. The absolute cap stays the guarantee for a tab that never gets there. `/api/whoami`
+  `session` gains `idle_timeout`. (design `DESIGN_session_and_signout.md`, spec
+  `docs/specs/SPEC_C4_idle_timeout.md`)
+- **Chart 0.18.0:** `session.idleTimeout.{enabled,minutes,warningSeconds}`; refused without the proxy,
+  and refused when the window is not shorter than `oauthProxy.cookie.expire`.
+
 ## Chart 0.17.0 — application 0.15.0 — 2026-09-05
 
 - **Off-volume backup CronJob, `backup.offsite` (chart, off by default).** The other half of

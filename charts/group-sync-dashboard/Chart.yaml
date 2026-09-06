@@ -150,7 +150,11 @@ type: application
 # and — under monitoring.prometheusRule — two rules on kube_cronjob_status_last_successful_time.
 # Ten `fail` guards model its interactions with persistence, config.backup and the access mode.
 # Rendered objects for a release that leaves it off are unchanged apart from version labels.
-version: 0.17.0
+# CHART 0.18.0 (2026-09-06), MINOR: appVersion moves to application 0.16.0 (below); three new
+# values under session.idleTimeout (enabled OFF, minutes, warningSeconds) render into the ConfigMap
+# when the proxy is on, and two new render guards: enabled without the proxy, and a window not
+# shorter than oauthProxy.cookie.expire (it could never fire). Rendered objects otherwise unchanged.
+version: 0.18.0
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,
@@ -207,7 +211,13 @@ version: 0.17.0
 # 0.15.0 (2026-09-05). Users tab provider allow-list and first login from Identity objects
 # (C2): rbac.identities (a new optional grant, the read switch too) and config.users.providers (a
 # new value). MINOR.
-appVersion: "0.15.0"
+# 0.16.0 (2026-09-06). Idle timeout with a countdown, as an off-by-default module (C4): after
+# session.idleTimeout.minutes without pointer, keyboard or tab-visibility activity the page opens a
+# role=dialog countdown (focus trapped with inert, Escape or Enter to stay), and at zero removes its
+# data and sends the browser to the proxy's sign_out, which clears the cookie. Modelled by the page,
+# enforced by the proxy; nothing persisted; activity shared across a browser's tabs; the poll
+# suspended while the countdown is up. /api/whoami's session gains idle_timeout. MINOR: additive.
+appVersion: "0.16.0"
 
 keywords: [openshift, ldap, rbac, groupsync, observability]
 home: https://github.com/ephico2real2/group-sync-dashboard

@@ -840,3 +840,27 @@ td.num.warn { color: var(--warn, #b45309); font-weight: 600; }
   background: color-mix(in srgb, var(--status-warning) 8%, transparent);
   border-radius: 0 6px 6px 0;
 }
+
+/* ---- Idle timeout (docs/DESIGN_session_and_signout.md) --------------------------------
+   A dialog over a page-toned wash. Tokens only. Under forced-colors the wash is stripped by the
+   platform, so the dialog keeps a real border in the system text colour — the one channel that
+   survives there. */
+.idle-backdrop {
+  position: fixed; inset: 0; z-index: 200;
+  display: flex; align-items: center; justify-content: center;
+  background: color-mix(in srgb, var(--page) 72%, transparent);
+}
+.idle-backdrop[hidden] { display: none; }
+.idle-dialog {
+  background: var(--surface-1); color: var(--text-primary);
+  border: 1px solid var(--border); border-left: 4px solid var(--status-warning);
+  border-radius: 10px; padding: 18px 20px; max-width: 460px; margin: 16px;
+  box-shadow: var(--elev-1);
+}
+.idle-dialog h2 { margin-bottom: 8px; }
+.idle-dialog p { margin: 0 0 12px; font-size: var(--text-base); color: var(--text-secondary); }
+.idle-dialog strong { color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.idle-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+@media (forced-colors: active) {
+  .idle-dialog { border: 2px solid CanvasText; }
+}

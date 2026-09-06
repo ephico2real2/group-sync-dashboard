@@ -38,6 +38,11 @@ data:
     # no render guard standing in front of it.
     oauthProxyPrefix: {{ .Values.oauthProxy.proxyPrefix | quote }}
     sessionCookieExpire: {{ include "gsd.cookieExpire" . | quote }}
+    # The idle timeout's OWN keys (values.yaml `session.idleTimeout`), never derived from the
+    # cookie cap, and inside this block because with no proxy there is no session to time out.
+    sessionIdleTimeoutEnabled: {{ include "gsd.idleTimeoutEnabled" . }}
+    sessionIdleTimeoutMinutes: {{ include "gsd.idleTimeoutMinutes" . }}
+    sessionIdleTimeoutWarningSeconds: {{ include "gsd.idleTimeoutWarningSeconds" . }}
     {{- end }}
     unmanagedAuditMode: {{ .Values.config.unmanagedAudit.mode | quote }}
     unmanagedAuditMaxPerCycle: {{ .Values.config.unmanagedAudit.maxPerCycle }}

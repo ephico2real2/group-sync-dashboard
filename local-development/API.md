@@ -596,7 +596,8 @@ stay `True` — so new namespaces silently receive no RBAC and drift stops being
 ```json
 {"user": "developer", "email": "developer@cluster.local", "authenticated": true,
  "logout_url": "/oauth/sign_out",
- "session": {"cookie_expire_seconds": 14400, "cookie_refresh_seconds": 0}}
+ "session": {"cookie_expire_seconds": 14400, "cookie_refresh_seconds": 0,
+             "idle_timeout": {"enabled": false}}}
 ```
 
 Reflects the identity the **proxy** asserted, from `X-Forwarded-User`. With the proxy disabled
@@ -611,8 +612,11 @@ failing, and removed — the console can revoke because its tokens carry scope `
 this chart authenticates through a ServiceAccount whose tokens carry `user:info` and
 `user:check-access`, so the API refuses the delete whatever the RBAC says. `session` restates the
 **configured** cookie lifetimes in seconds — never a live deadline, which an HttpOnly cookie
-makes unobservable. Fetched once at page load; never poll it, because the request itself
-would re-stamp the session cookie.
+makes unobservable. The page reads it at load for the sign-out link, the cap note and
+the idle model, and again on every ordinary data refresh so `visibility` can follow a grant that
+changes while the tab is open. There is no session-only timer: the request itself re-stamps the
+session cookie, and the automatic refresh is suspended while the idle model is warning or expired,
+so an unattended tab does not keep its own session alive.
 
 ### `GET /api/dashboard/activity`
 
