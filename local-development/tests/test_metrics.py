@@ -418,6 +418,8 @@ class TestVisibilitySignals:
             "gsd_backup_failures_total", "gsd_cluster_poll_duration_seconds",
             "gsd_login_capture_enabled", "gsd_backup_last_success_timestamp_seconds",
             "gsd_login_capture_last_read_timestamp_seconds",
+            "gsd_login_capture_source_info", "gsd_login_capture_audit_settled_timestamp_seconds",
+            "gsd_login_capture_unmatched_total",
         ):
             assert f"# HELP {family} " in text, f"{family} not declared"
             assert series(text, family) == {}, f"{family} claims samples while unwired"
@@ -514,6 +516,68 @@ class TestCaptureAndBackupGauges:
             assert series(text, "gsd_login_capture_last_read_timestamp_seconds")[
                 'gsd_login_capture_last_read_timestamp_seconds{cluster="crc"}'
             ] > 1_700_000_000
+        finally:
+            store.close()
+
+    def test_the_capture_source_is_an_info_gauge_only_while_capture_is_on(self):
+        from types import SimpleNamespace
+        store = Store(":memory:")
+        try:
+            store.upsert_cluster("crc", "https://x", True)
+            for source in ("pod-log", "audit-log"):
+                settings = SimpleNamespace(backup_dir="", login_capture_enabled=True,
+                                           login_capture_source=source)
+                text = generate_latest(build_registry(store, GRACE, settings=settings)).decode()
+                assert series(text, "gsd_login_capture_source_info") == {
+                    f'gsd_login_capture_source_info{{cluster="crc",source="{source}"}}': 1}, text
+            settings = SimpleNamespace(backup_dir="", login_capture_enabled=False,
+                                       login_capture_source="audit-log")
+            text = generate_latest(build_registry(store, GRACE, settings=settings)).decode()
+            assert "gsd_login_capture_source_info{" not in text
+        finally:
+            store.close()
+
+    def test_audit_settled_is_per_node_from_the_cursors(self):
+        """The newest event stamp each node's cursors have settled through; absent until a
+        cursor exists — a node that reports no files never shows a stale zero."""
+        from types import SimpleNamespace
+        store = Store(":memory:")
+        try:
+            store.upsert_cluster("crc", "https://x", True)
+            settings = SimpleNamespace(backup_dir="", login_capture_enabled=True,
+                                       login_capture_source="audit-log")
+            text = generate_latest(build_registry(store, GRACE, settings=settings)).decode()
+            assert "gsd_login_capture_audit_settled_timestamp_seconds{" not in text
+            store.set_audit_cursor("crc", "master-0", "audit.log", 10, "2026-09-06T10:00:00.000000Z", "x")
+            store.set_audit_cursor("crc", "master-0", "audit-2026-09-01T00-00-00.000.log", 99,
+                                   "2026-08-31T23:59:59.000000Z", "x", complete=True)
+            store.set_audit_cursor("crc", "master-1", "audit.log", 10, "2026-09-06T11:00:00.000000Z", "x")
+            text = generate_latest(build_registry(store, GRACE, settings=settings)).decode()
+            got = series(text, "gsd_login_capture_audit_settled_timestamp_seconds")
+            assert got == {
+                'gsd_login_capture_audit_settled_timestamp_seconds{cluster="crc",node="master-0"}':
+                    datetime(2026, 9, 6, 10, tzinfo=UTC).timestamp(),
+                'gsd_login_capture_audit_settled_timestamp_seconds{cluster="crc",node="master-1"}':
+                    datetime(2026, 9, 6, 11, tzinfo=UTC).timestamp(),
+            }, got
+            assert 'user' not in text.split("gsd_login_capture_audit_settled")[1][:200]
+        finally:
+            store.close()
+
+    def test_unmatched_is_a_counter_by_outcome_never_by_name(self):
+        from gsd.metrics import RuntimeSignals
+        signals = RuntimeSignals()
+        signals.note_audit_unmatched("crc", "failed", 3)
+        signals.note_audit_unmatched("crc", "failed", 2)
+        signals.note_audit_unmatched("crc", "success", 1)
+        store = Store(":memory:")
+        try:
+            store.upsert_cluster("crc", "https://x", True)
+            text = generate_latest(build_registry(store, GRACE, signals=signals)).decode()
+            got = series(text, "gsd_login_capture_unmatched_total")
+            assert got == {'gsd_login_capture_unmatched_total{cluster="crc",outcome="failed"}': 5,
+                           'gsd_login_capture_unmatched_total{cluster="crc",outcome="success"}': 1}, got
+            assert 'decision=' not in text, "the label is named for the vocabulary it carries (Cursor, review D1)"
         finally:
             store.close()
 

@@ -8,6 +8,41 @@ lives next to the code and in the design and review records linked here. Changes
 last release sit under `## Unreleased` until the release that carries them replaces that heading —
 which `local-development/prepare-release.py` does when the release is cut.
 
+## Application 0.17.0 — chart 0.19.0 — 2026-09-06
+
+- **Login capture from the oauth-server audit log, as a second source.** `loginCapture.source:
+  audit-log` reads `/var/log/oauth-server/audit.log` on the control-plane nodes through the API
+  server's node proxy — what `oc adm node-logs --path=oauth-server/audit.log` does — at the
+  default audit verbosity, so the `authLogLevel` Jobs and the OAuth roll they cause can be
+  retired, and a first read backfills as far as the rotated files reach (bounded by
+  `loginCapture.retentionDays`, drained at 8 MiB per node per cycle). Every attempt is a row of
+  its kind: `credential` (the login form), `cli` (`oc login`'s challenging client) and, on
+  request (`?kind=`), `session` (an existing session re-authorising to a client). Each row
+  carries its `auditID`, so de-duplication is exact; an event that corresponds to a pod-log row
+  already stored is linked to it rather than recorded beside it, and that row keeps its LDAP
+  cause. The typed name is classified, not filtered: `identity_match` is the configured provider
+  it resolves to through the User's Identity, or null — an unmatched failure stays a row and is
+  counted on `/metrics` by outcome. Identities that are not people
+  (`loginCapture.auditLog.ignoreIdentityPatterns`, default an LDAP bind service account's OU)
+  are dropped on every decision. The audit log records no cause for a refusal beyond the HTTP
+  status and, for CLI failures, "Authentication failed"; the Logins tab and the `/logins`
+  envelope say so, and the envelope names its `source`. A resume is safe against rotation by a
+  head fingerprint per cursor — measured on the reference cluster, a Range exactly at the file's
+  size answers 416 like a Range past it, so the size alone cannot tell "nothing new" from
+  "rotated". New outcome `provider_error`. Schema migration 10 (`login_event.source`, `audit_id`,
+  `kind`, `client_id`, `identity_match`, `status_code`, `error_message`, `user_agent`;
+  `login_audit_cursor`; `ocp_user.identities`). Metric families
+  `gsd_login_capture_source_info{cluster,source}`,
+  `gsd_login_capture_audit_settled_timestamp_seconds{cluster,node}` and
+  `gsd_login_capture_unmatched_total{cluster,outcome}`; the stalled alert and its gauge are
+  untouched. (spec `specs/SPEC_D1_audit_log_login_capture.md`, design `DESIGN_login_capture.md`)
+- **Chart 0.19.0:** `loginCapture.source` and `loginCapture.auditLog.{nodeSelector,nodeNames,
+  providers,ignoreIdentityPatterns}`. With `audit-log` a ClusterRole on `get nodes/proxy` (+
+  `list nodes`, or `resourceNames`) renders instead of the namespaced pod-log Role — read-only,
+  cluster-wide, off by default for its breadth, which the values comment states.
+  `source=audit-log` with `authLogLevel.enabled=true` is refused: the chart will not roll the
+  OAuth server as a side effect of a read setting. Default renders are unchanged.
+
 ## Application 0.16.0 — chart 0.18.0 — 2026-09-06
 
 - **Idle timeout with a countdown, as an off-by-default module.** After `session.idleTimeout.minutes`

@@ -98,6 +98,15 @@ data:
     # /api/.../logins answered `enabled: false` on a release built from `enabled: true`.
     loginCaptureEnabled: {{ .Values.loginCapture.enabled }}
     loginCaptureNamespace: {{ .Values.loginCapture.namespace | quote }}
+    # Which log capture reads. Through the helper, which is also where source=audit-log and
+    # authLogLevel.enabled=true are refused as a contradiction.
+    loginCaptureSource: {{ include "gsd.loginCaptureSource" . | quote }}
+    loginCaptureAuditNodeSelector: {{ .Values.loginCapture.auditLog.nodeSelector | quote }}
+    # Lists, as JSON, never comma-joined: an ignore pattern is a DN fragment and OpenShift accepts a
+    # provider named `a,b` — the same reason usersProviders above is a list.
+    loginCaptureAuditNodeNames: {{ .Values.loginCapture.auditLog.nodeNames | toJson }}
+    loginCaptureAuditProviders: {{ .Values.loginCapture.auditLog.providers | toJson }}
+    loginCaptureAuditIgnoreIdentityPatterns: {{ .Values.loginCapture.auditLog.ignoreIdentityPatterns | toJson }}
     # Which provider NAMES are local HTPasswd accounts. The log carries the provider name and
     # nothing about its type, so a success on `developer` is indistinguishable from a directory
     # login without this list — and these are break-glass accounts, not people to offboard.

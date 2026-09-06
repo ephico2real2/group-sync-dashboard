@@ -89,6 +89,7 @@ class RuntimeSignals:
         self._retention: dict[str, int] = {}
         self._backup_failures = 0
         self._poll_seconds: dict[str, float] = {}
+        self._audit_unmatched: dict[tuple[str, str], int] = {}
 
     def note_tier_check(self, threshold: str, outcome: str) -> None:
         with self._lock:
@@ -118,6 +119,16 @@ class RuntimeSignals:
         with self._lock:
             self._poll_seconds[cluster] = seconds
 
+    def note_audit_unmatched(self, cluster: str, outcome: str, count: int) -> None:
+        """Audit-log attempts whose typed username resolved to no configured identity — kept as
+        rows, visibly unmatched (D1). By outcome, so a burst of failures against names that do
+        not exist is its own signal."""
+        if count <= 0:
+            return
+        with self._lock:
+            key = (cluster, outcome)
+            self._audit_unmatched[key] = self._audit_unmatched.get(key, 0) + count
+
     def snapshot(self) -> dict:
         """One consistent copy for the collector — a scrape never reads a half-updated dict."""
         with self._lock:
@@ -128,6 +139,7 @@ class RuntimeSignals:
                 "retention": dict(self._retention),
                 "backup_failures": self._backup_failures,
                 "poll_seconds": dict(self._poll_seconds),
+                "audit_unmatched": dict(self._audit_unmatched),
             }
 
 
@@ -346,6 +358,22 @@ class DashboardCollector:
             "group_count_cliff.",
             labels=["cluster", "kind", "severity"],
         )
+        capture_source = GaugeMetricFamily(
+            "gsd_login_capture_source_info",
+            "Always 1; `source` is which log login capture reads for this cluster (pod-log or "
+            "audit-log). Join it onto gsd_login_capture_last_read_timestamp_seconds with "
+            "on(cluster) group_left(source) — a separate family so that series keeps its "
+            "identity and the stalled alert keeps firing across the switch. Absent when "
+            "capture is off.",
+            labels=["cluster", "source"],
+        )
+        audit_settled = GaugeMetricFamily(
+            "gsd_login_capture_audit_settled_timestamp_seconds",
+            "Unix time of the newest audit-log event read from this node, audit-log source "
+            "only. One control-plane node lagging the others while last_read advances is a "
+            "node whose file cannot be read. Absent until the node's file has been read once.",
+            labels=["cluster", "node"],
+        )
         capture_last_read = GaugeMetricFamily(
             "gsd_login_capture_last_read_timestamp_seconds",
             "Unix time of the last successful oauth-log read for this cluster; advanced "
@@ -383,6 +411,14 @@ class DashboardCollector:
                 read_ts = _epoch((status or {}).get("last_read_at"))
                 if read_ts is not None:
                     capture_last_read.add_metric([cluster], read_ts)
+                if self.settings is not None and getattr(self.settings, "login_capture_enabled", False):
+                    source = getattr(self.settings, "login_capture_source", "pod-log")
+                    capture_source.add_metric([cluster, source], 1)
+                    if source == "audit-log":
+                        for node, settled in sorted(self.store.audit_settled_by_node(cluster).items()):
+                            settled_ts = _epoch(settled)
+                            if settled_ts is not None:
+                                audit_settled.add_metric([cluster, node], settled_ts)
 
                 counts = self.store.group_counts(cluster)
                 groups.add_metric([cluster], counts["total"])
@@ -474,6 +510,7 @@ class DashboardCollector:
         yield from (
             up, last_poll, groups, empty, unattributed, bindings,
             cr_last_sync, cr_state, cr_groups, cr_error, alerts, capture_last_read,
+            capture_source, audit_settled,
         )
         yield from self._event_families()
 
@@ -534,6 +571,14 @@ class DashboardCollector:
             "breaking, the timestamp says how stale the last good copy already is.",
             labels=[],
         )
+        audit_unmatched = CounterMetricFamily(
+            "gsd_login_capture_unmatched_total",
+            "Audit-log login attempts whose typed username resolved to no configured identity "
+            "provider (identity_match null), by outcome. Kept as rows, visibly unmatched: a "
+            "failure against a name that does not exist is still an attempt, and a burst of "
+            "them is its own signal. Audit-log source only. Per replica: sum().",
+            labels=["cluster", "outcome"],
+        )
         poll_duration = GaugeMetricFamily(
             "gsd_cluster_poll_duration_seconds",
             "Wall time of the most recent poll of this cluster, successful or not. "
@@ -557,10 +602,12 @@ class DashboardCollector:
             for table in RETENTION_TABLES:
                 retention.add_metric([table], snap["retention"].get(table, 0))
             backup_failures.add_metric([], snap["backup_failures"])
+            for (cluster, outcome), count in sorted(snap["audit_unmatched"].items()):
+                audit_unmatched.add_metric([cluster, outcome], count)
             for cluster, seconds in sorted(snap["poll_seconds"].items()):
                 poll_duration.add_metric([cluster], seconds)
 
-        yield from (checks, decisions, refusals, retention, backup_failures, poll_duration)
+        yield from (checks, decisions, refusals, retention, backup_failures, audit_unmatched, poll_duration)
 
         capture_enabled = GaugeMetricFamily(
             "gsd_login_capture_enabled",

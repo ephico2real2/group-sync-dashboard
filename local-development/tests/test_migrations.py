@@ -10,6 +10,7 @@ which is what this file does.
 
 from __future__ import annotations
 
+import re
 import sqlite3
 
 import pytest
@@ -158,3 +159,90 @@ def test_migration_9_adds_the_identity_time_and_status_table_to_an_older_databas
         assert store.users("crc")[0]["first_login_source"] == "user"
     finally:
         store.close()
+
+
+_V9_DDL = """
+CREATE TABLE login_event (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    cluster_id          TEXT NOT NULL,
+    pod_name            TEXT NOT NULL,
+    user_name           TEXT NOT NULL,
+    outcome             TEXT NOT NULL,
+    at                  TEXT NOT NULL,
+    provider            TEXT,
+    ldap_result_code    INTEGER,
+    detail              TEXT,
+    observed_at         TEXT NOT NULL,
+    UNIQUE(cluster_id, pod_name, user_name, at, outcome)
+);
+CREATE TABLE ocp_user (
+    cluster_id          TEXT NOT NULL,
+    user_name           TEXT NOT NULL,
+    full_name           TEXT,
+    created_at          TEXT,
+    providers           TEXT NOT NULL DEFAULT '[]',
+    has_identity        INTEGER NOT NULL DEFAULT 0,
+    identity_created_at TEXT,           -- migration 9: the earliest Identity creationTimestamp naming the User; NULL when not read
+    observed_at         TEXT NOT NULL,
+    PRIMARY KEY(cluster_id, user_name)
+);
+        INSERT INTO login_event(cluster_id, pod_name, user_name, outcome, at, provider,
+                                ldap_result_code, detail, observed_at)
+        VALUES ('crc','oauth-pod','alice','success','2026-08-01T12:00:00.000000Z','developer',NULL,'ok',
+                '2026-08-01T12:00:01Z');
+        INSERT INTO ocp_user(cluster_id, user_name, full_name, created_at, providers, has_identity,
+                             identity_created_at, observed_at)
+        VALUES ('crc','alice','Alice','2026-08-05T16:14:16Z','["ldap-local"]',1,NULL,'2026-09-01T00:00:00Z');
+        PRAGMA user_version = 9;
+    """
+
+
+@pytest.mark.parametrize("version", [5, 8, 9])
+def test_migration_10_opens_a_v9_database_and_matches_a_fresh_one(tmp_path, version):
+    """Cursor, review D1 — and the reference cluster, which crashed on exactly this: SCHEMA runs
+    before _migrate, so an index in SCHEMA on a column only migration 10 adds raised
+    "no such column: audit_id" and no 0.16 database could be opened. The tables below are the
+    0.16.0 definitions copied from that release's SCHEMA (login_event from migration 5's shape,
+    ocp_user with migration 9's identity_created_at)."""
+    path = str(tmp_path / "v9.db")
+    conn = sqlite3.connect(path)
+    ddl = _V9_DDL
+    if version == 8:
+        # migration 9 had not run: no identity_created_at column, and the seed row omits it
+        ddl = "\n".join(l for l in ddl.splitlines() if "identity_created_at TEXT" not in l)
+        ddl = ddl.replace("identity_created_at, observed_at)", "observed_at)").replace("1,NULL,'2026-09-01T00:00:00Z'", "1,'2026-09-01T00:00:00Z'")
+    if version == 5:
+        # no ocp_user table at all before migration 4's Users read; keep every other statement
+        ddl = re.sub(r"CREATE TABLE ocp_user \(.*?\);\n", "", ddl, flags=re.S)
+        ddl = re.sub(r"INSERT INTO ocp_user\(.*?\);\n", "", ddl, flags=re.S)
+    conn.executescript(ddl.replace("PRAGMA user_version = 9;", f"PRAGMA user_version = {version};"))
+    conn.commit()
+    conn.close()
+    from gsd.store import _MIGRATIONS
+    upgraded = Store(path)
+    fresh = Store(str(tmp_path / "fresh.db"))
+    try:
+        def cols(store, table):
+            # As a set by name: ALTER TABLE appends, so a migrated table's column ORDER differs
+            # from a fresh one's (migration 9's identity_created_at already did), and nothing
+            # here selects by position.
+            return sorted((r[1], r[2].upper(), r[3], r[4], r[5]) for r in store._conn.execute(f"PRAGMA table_info({table})"))
+        for table in ("login_event", "login_audit_cursor", "ocp_user"):
+            assert cols(upgraded, table) == cols(fresh, table), table
+        def indexes(store, table):
+            return sorted(r[1] for r in store._conn.execute(f"PRAGMA index_list({table})") if r[3] == "c")
+        assert indexes(upgraded, "login_event") == indexes(fresh, "login_event")
+        assert "login_event_by_audit_id" in indexes(upgraded, "login_event")
+        row = upgraded._conn.execute("SELECT source, kind, audit_id FROM login_event").fetchone()
+        assert tuple(row) == ("pod-log", "credential", None)
+        if version >= 8:
+            assert upgraded._conn.execute("SELECT identities FROM ocp_user").fetchone()[0] == "[]"
+        for u in ("u1", "u2"):
+            upgraded._conn.execute(
+                "INSERT INTO login_event(cluster_id,pod_name,user_name,outcome,at,detail,observed_at)"
+                " VALUES('crc','p',?,'failed','t','d','o')", (u,))
+        assert upgraded._conn.execute("SELECT count(*) FROM login_event WHERE audit_id IS NULL").fetchone()[0] == 3
+        assert upgraded._conn.execute("PRAGMA user_version").fetchone()[0] == max(t for t, _, _ in _MIGRATIONS) == 10
+    finally:
+        upgraded.close()
+        fresh.close()

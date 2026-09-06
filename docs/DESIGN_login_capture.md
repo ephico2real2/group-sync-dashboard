@@ -254,6 +254,8 @@ arbitration is in `REVIEW_login_capture_seams.md`.
 - **The raw line.** `ldap.go` embeds the full bind filter and the user's DN, which disclose the gate
   group's DN and the directory's layout — more sensitive than the username the row is keyed on.
 - **Any invented timestamp.** A line without the kubelet prefix is skipped rather than guessed at.
+- **The audit event's query string** — `redirect_uri`, `state`, the PKCE challenge — beyond the one
+  `client_id` that tells a CLI login from a session re-authorisation.
 - **Anything in `/metrics`.** It is unauthenticated by design, so no username may become a label.
   `openshift_auth_basic_password_count_result` already gives count-only success/error with no
   usernames, and is the right shape for a metric.
@@ -264,13 +266,20 @@ arbitration is in `REVIEW_login_capture_seams.md`.
 upgrade, node drain, or a toggle of this very setting — starts the window again. The reader accumulates
 a durable record *going forward*; the past is not recoverable. This is inherent to the source, not a
 problem to be solved, and `login_capture_status.started_at` exists so the UI can say when watching
-began rather than letting an empty table read as "nobody logged in".
+began rather than letting an empty table read as "nobody logged in". That limitation is the
+pod-log source's. The audit source backfills to the oldest rotated file on first read, bounded by
+`loginRetentionDays` and drained at `gsd/kube.py#AUDIT_READ_MAX_BYTES` per node per cycle.
 
-## The oauth-server AUDIT LOG — a better source, not used
+## The oauth-server AUDIT LOG — the second source (application 0.17.0)
 
-Found after the design was written, measured on the live cluster, and **parked rather than adopted**.
-It is recorded here because it is a better source in most respects and somebody will find it again; the
-reason it was not chosen is a security trade-off, not an oversight.
+Found after the design was written, measured on the live cluster, parked for a release because of the
+grant it needs, and adopted in application 0.17.0 as `loginCapture.source: audit-log` — opt-in, for
+exactly that reason. The reader is `gsd/kube.py#ClusterClient.fetch_node_log_file` (byte cursor,
+Range, rotation detection), the front end is `gsd/auditlog.py#parse_audit_line`, the loop is
+`gsd/auditlog.py#capture_once`, and the link to pod-log rows is
+`gsd/store.py#Store.record_audit_login_events`. What follows is the measurement that justified it;
+`docs/specs/SPEC_D1_audit_log_login_capture.md`'s grounding note has the shapes counted on the
+reference cluster's whole log.
 
 `oc adm node-logs <node> --path=oauth-server/audit.log` returns structured JSON with authentication
 annotations. Measured on this cluster: **36,568 events, 369 carrying
@@ -302,17 +311,24 @@ needs **`nodes/proxy`** — and that path reads *any* file in the node's log dir
 reachable through the same grant: `kube-apiserver/` audit logs (every API request on the cluster) and
 the kubelet journal. That is categorically wider than `pods/log` in one namespace, and unlike the Debug
 toggle it is a **standing** capability rather than a one-off write. For an application whose defining
-invariant is that it reads narrowly and writes nothing, that is the wrong trade.
+invariant is that it reads narrowly and writes nothing, that is a trade the operator makes, not the
+chart: default off, the blast radius stated in values.yaml, narrowable to named nodes.
 
 **It also carries no cause.** `allow`/`deny` only. The `password_expired`, `account_locked`,
 `must_change_password` and wrong-password distinctions exist only in the pod log's LDAP result codes
 and AD sub-codes. So the two sources are **complementary, not substitutes**.
 
-**If it is ever revisited**, the dedup key changes: `pod_name` is pod-log-specific, while an audit
-event carries `auditID`, unique per request, which makes deduplication trivial and removes the
-cross-replica same-instant reasoning entirely. The parser gains a second front end rather than a
-rewrite. The most likely shape is **both** — the audit log as the authoritative who/when/allow-deny
-with real history, and the pod log consulted for the LDAP cause when Debug happens to be on.
+**As built.** The dedup key is the `auditID`, unique per cluster
+(`gsd/store.py#login_event_by_audit_id`); `pod_name` carries the node the file was read from; an
+audit credential event that corresponds to a pod-log row for the same user and success class within
+`gsd/auditlog.py#CORRESPONDENCE_SECONDS` is linked to that row rather than recorded beside it, so the
+row keeps its LDAP cause. Every annotated request that names a person and is one of three shapes is a
+row of its kind — `credential` (the form), `cli` (the challenging client) or `session` (an existing
+session re-authorising to a client); consent decisions are not logins. The identity is classified,
+not filtered: the row's `identity_match` is the configured provider the typed name resolves to
+through the User's Identity, case-insensitively, or null. **The audit log is authoritative once
+selected; the pod log is not read at all in that mode, and `both` is deliberately not offered because
+it would keep the Debug roll the audit source exists to retire.**
 
 ## Reading the logs: the RBAC shape, and why it stays narrow
 

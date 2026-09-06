@@ -21,7 +21,7 @@ import json
 import sqlite3
 import threading
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Iterator
 
@@ -158,6 +158,7 @@ CREATE TABLE IF NOT EXISTS ocp_user (
     providers           TEXT NOT NULL DEFAULT '[]',
     has_identity        INTEGER NOT NULL DEFAULT 0,
     identity_created_at TEXT,           -- migration 9: the earliest Identity creationTimestamp naming the User; NULL when not read
+    identities          TEXT NOT NULL DEFAULT '[]',  -- migration 10: the raw Identity names (`<provider>:<providerUserName>`), for the audit-log source's identity match
     observed_at         TEXT NOT NULL,
     PRIMARY KEY(cluster_id, user_name)
 );
@@ -353,10 +354,61 @@ CREATE TABLE IF NOT EXISTS login_event (
     ldap_result_code    INTEGER,
     detail              TEXT,
     observed_at         TEXT NOT NULL,
+    -- 'pod-log' or 'audit-log' (migration 10). For an audit row pod_name carries the NODE the
+    -- file was read from: the same "unit of log" role in the dedup key.
+    source              TEXT NOT NULL DEFAULT 'pod-log',
+    -- The audit event's own per-request id. Unique per cluster where present, so a re-read is
+    -- free; SET on a pod-log row when an audit event corresponds to it, so one login read from
+    -- both sources is one row that keeps its LDAP cause.
+    audit_id            TEXT,
+    -- What KIND of attempt the audit log recorded (migration 10; docs/specs/SPEC_D1 grounding note):
+    -- credential (POST /login[/<idp>] — the interactive form), cli (GET /oauth/authorize with
+    -- client_id=openshift-challenging-client — `oc login`), session (GET /oauth/authorize by any
+    -- other client — an existing session re-authorising to the console, this dashboard, GitOps).
+    -- Pod-log rows are credential attempts by construction.
+    kind                TEXT NOT NULL DEFAULT 'credential',
+    -- The OAuth client a cli/session row authorised to — the one query parameter kept.
+    client_id           TEXT,
+    -- The configured identity provider the username resolves to through its Identity object,
+    -- matched case-insensitively; NULL for a name that resolves to nothing (kept, visibly
+    -- unmatched: a failed attempt against a name that does not exist is still an attempt).
+    identity_match      TEXT,
+    -- What the audit record carries about a failure, and nothing invented: the HTTP status and the
+    -- response message when there is one ("Authentication failed, attempted: basic" on CLI failures;
+    -- browser failures are a 302 back to the form with no message).
+    status_code         INTEGER,
+    error_message       TEXT,
+    user_agent          TEXT,
     UNIQUE(cluster_id, pod_name, user_name, at, outcome)
 );
 CREATE INDEX IF NOT EXISTS login_event_lookup ON login_event(cluster_id, at DESC);
 CREATE INDEX IF NOT EXISTS login_event_by_user ON login_event(cluster_id, user_name, at DESC);
+-- login_event_by_audit_id (UNIQUE on cluster_id, audit_id WHERE audit_id IS NOT NULL) is created by
+-- migration 10 ONLY, not here: SCHEMA runs before _migrate, and on a database from before 0.17.0 the
+-- column does not exist yet, so an index on it here raised "no such column: audit_id" and aborted
+-- the whole script — the pod could not start on the one upgrade path that matters. Measured on the
+-- reference cluster, 2026-09-06. A fresh database gets the index when migration 10 replays.
+
+-- Where each audit FILE on each node has been read to, in bytes. Per file because rotation
+-- renames the current file and starts a new one; the cursor follows the bytes, not the name.
+-- settled_through is the newest event stamp read from that file — the per-node liveness that
+-- gsd_login_capture_audit_settled_timestamp_seconds exports. complete=1 marks a rotated file
+-- read to its end (immutable from then on); byte_offset=-1 marks one skipped by retention.
+-- head_sha256/head_len fingerprint the file's first bytes so a resume can tell the file it read
+-- from a new one under the same name (gsd/auditlog.py#FINGERPRINT_BYTES): audit.log after
+-- rotation, with the size alone unable to say so once the new file has grown past the cursor.
+CREATE TABLE IF NOT EXISTS login_audit_cursor (
+    cluster_id          TEXT NOT NULL,
+    node_name           TEXT NOT NULL,
+    file_name           TEXT NOT NULL,
+    byte_offset         INTEGER NOT NULL,
+    head_sha256         TEXT,
+    head_len            INTEGER NOT NULL DEFAULT 0,
+    settled_through     TEXT,
+    complete            INTEGER NOT NULL DEFAULT 0,
+    updated_at          TEXT NOT NULL,
+    PRIMARY KEY(cluster_id, node_name, file_name)
+);
 
 -- How far each POD's log has been settled. Per pod because pods are read independently and every roll
 -- replaces them; one cluster-wide value would let a lagging pod hold back the others, or a fast pod
@@ -554,9 +606,11 @@ _MIGRATIONS: list[tuple[int, str, list[str]]] = [
                    state               TEXT NOT NULL,
                    observed_at         TEXT NOT NULL
                )""",
-            # On a FRESH database SCHEMA has already created both tables in this shape; the DROP then
-            # removes an empty table and the CREATE puts it back, which is harmless and keeps the
-            # replay idempotent (_migrate tolerates exactly one error, and this raises none).
+            # On a FRESH database SCHEMA has already created both tables — in the CURRENT shape,
+            # later than v7's (identity_created_at, identities). The DROP removes an empty table and
+            # the CREATE puts back the v7 shape, which migrations 9 and 10 then extend again by
+            # ALTER (those do not raise, because the columns are absent at that point). Harmless,
+            # and the replay stays idempotent (_migrate tolerates exactly one error; this raises none).
         ],
     ),
     (
@@ -584,6 +638,40 @@ _MIGRATIONS: list[tuple[int, str, list[str]]] = [
                )""",
             # No backfill: Identity times arrive with the next poll that may read identities; until then
             # every row's source reads `user`, which is the truth about it.
+        ],
+    ),
+    (
+        10,
+        "login_event: source, audit_id, kind, client_id, identity_match, status_code, error_message, "
+        "user_agent; login_audit_cursor; ocp_user.identities — the audit-log login source (D1)",
+        [
+            "ALTER TABLE login_event ADD COLUMN source TEXT NOT NULL DEFAULT 'pod-log'",
+            "ALTER TABLE login_event ADD COLUMN audit_id TEXT",
+            "ALTER TABLE login_event ADD COLUMN kind TEXT NOT NULL DEFAULT 'credential'",
+            "ALTER TABLE login_event ADD COLUMN client_id TEXT",
+            "ALTER TABLE login_event ADD COLUMN identity_match TEXT",
+            "ALTER TABLE login_event ADD COLUMN status_code INTEGER",
+            "ALTER TABLE login_event ADD COLUMN error_message TEXT",
+            "ALTER TABLE login_event ADD COLUMN user_agent TEXT",
+            """CREATE UNIQUE INDEX IF NOT EXISTS login_event_by_audit_id
+                   ON login_event(cluster_id, audit_id) WHERE audit_id IS NOT NULL""",
+            """CREATE TABLE IF NOT EXISTS login_audit_cursor (
+                   cluster_id          TEXT NOT NULL,
+                   node_name           TEXT NOT NULL,
+                   file_name           TEXT NOT NULL,
+                   byte_offset         INTEGER NOT NULL,
+                   head_sha256         TEXT,
+                   head_len            INTEGER NOT NULL DEFAULT 0,
+                   settled_through     TEXT,
+                   complete            INTEGER NOT NULL DEFAULT 0,
+                   updated_at          TEXT NOT NULL,
+                   PRIMARY KEY(cluster_id, node_name, file_name)
+               )""",
+            "ALTER TABLE ocp_user ADD COLUMN identities TEXT NOT NULL DEFAULT '[]'",
+            # Every existing login row is a pod-log credential attempt, which the DEFAULTs state.
+            # No backfill of audit_id: the correspondence is established when the audit source
+            # first reads — a backfill that walks past every row already here. ocp_user's
+            # identities fill at the next poll (replace_users rewrites every row).
         ],
     ),
 ]
@@ -1788,9 +1876,9 @@ class Store:
             conn.executemany(
                 """INSERT OR REPLACE INTO ocp_user(
                        cluster_id, user_name, full_name, created_at, providers, has_identity,
-                       identity_created_at, observed_at)
+                       identity_created_at, identities, observed_at)
                    VALUES(:cluster_id,:user_name,:full_name,:created_at,:providers,:has_identity,
-                          :identity_created_at,:observed_at)""",
+                          :identity_created_at,:identities,:observed_at)""",
                 [
                     {"cluster_id": cluster_id,
                      "user_name": u["user_name"],
@@ -1799,6 +1887,7 @@ class Store:
                      "providers": json.dumps(sorted(u.get("providers") or [])),
                      "has_identity": 1 if u.get("has_identity") else 0,
                      "identity_created_at": (identity_created or {}).get(u["user_name"]),
+                     "identities": json.dumps(sorted(u.get("identities") or [])),
                      "observed_at": observed_at}
                     for u in users
                 ],
@@ -1868,10 +1957,15 @@ class Store:
             conn.executemany(
                 """INSERT OR IGNORE INTO login_event(
                        cluster_id, pod_name, user_name, outcome, at,
-                       provider, ldap_result_code, detail, observed_at)
+                       provider, ldap_result_code, detail, observed_at, source, audit_id, kind,
+                       client_id, identity_match, status_code, error_message, user_agent)
                    VALUES(:cluster_id,:pod_name,:user_name,:outcome,:at,
-                          :provider,:ldap_result_code,:detail,:observed_at)""",
-                [{**e, "cluster_id": cluster_id} for e in events],
+                          :provider,:ldap_result_code,:detail,:observed_at,:source,:audit_id,:kind,
+                          :client_id,:identity_match,:status_code,:error_message,:user_agent)""",
+                [{"source": "pod-log", "audit_id": None, "kind": "credential", "client_id": None,
+                  "identity_match": None, "status_code": None, "error_message": None,
+                  "user_agent": None, **e, "cluster_id": cluster_id}
+                 for e in events],
             )
             return conn.total_changes - before
 
@@ -1929,6 +2023,158 @@ class Store:
             )
             return conn.total_changes - before
 
+
+    # ── The audit-log login source (gsd/auditlog.py; D1) ─────────────────────────────────────────
+
+    def record_audit_login_events(
+        self, cluster_id: str, events: list[dict], correspondence_seconds: float = 0.25
+    ) -> tuple[int, int]:
+        """Insert audit-source attempts, LINKING one to an existing pod-log row where the two
+        describe the same login. Returns (inserted, linked).
+
+        Two checks per event, in order, each one index-served:
+          1. its auditID is already stored — a re-read; nothing to do.
+          2. a pod-log row for the same user, same success class, within the window and not yet
+             linked — the same login seen from the other source: set audit_id on that row and
+             keep it, because it carries the cause the audit log cannot.
+        Otherwise it is a new row. There is deliberately NO coalescing of a browser login's two
+        annotated requests: they are different KINDS (credential, then session) and each is its own
+        row (the grounding note measured 133 session re-authorisations, every one with an earlier
+        credential allow, up to 21 s apart — a 1 s window would have hidden 77 and left 56 as
+        spurious logins). Per event rather than one executemany because check 2 reads before it
+        writes; batches are bounded by the byte budget upstream.
+        """
+        inserted = linked = 0
+        stamp = "%Y-%m-%dT%H:%M:%S.%fZ"
+        with self._write() as conn:
+            for e in events:
+                if conn.execute(
+                    "SELECT 1 FROM login_event WHERE cluster_id=? AND audit_id=?",
+                    (cluster_id, e["audit_id"]),
+                ).fetchone():
+                    continue
+                if e.get("kind", "credential") == "credential":
+                    at = datetime.fromisoformat(e["at"].replace("Z", "+00:00"))
+                    lo = (at - timedelta(seconds=correspondence_seconds)).strftime(stamp)
+                    hi = (at + timedelta(seconds=correspondence_seconds)).strftime(stamp)
+                    success = 1 if e["outcome"] == "success" else 0
+                    twin = conn.execute(
+                        """SELECT id FROM login_event
+                            WHERE cluster_id=? AND user_name=? COLLATE NOCASE AND source='pod-log'
+                              AND audit_id IS NULL AND at BETWEEN ? AND ?
+                              AND (outcome='success') = ?
+                            ORDER BY abs(julianday(at) - julianday(?)) LIMIT 1""",
+                        (cluster_id, e["user_name"], lo, hi, success, e["at"]),
+                    ).fetchone()
+                    if twin:
+                        conn.execute("UPDATE login_event SET audit_id=? WHERE id=?",
+                                     (e["audit_id"], twin["id"]))
+                        linked += 1
+                        continue
+                before = conn.total_changes
+                conn.execute(
+                    """INSERT OR IGNORE INTO login_event(
+                           cluster_id, pod_name, user_name, outcome, at,
+                           provider, ldap_result_code, detail, observed_at, source, audit_id, kind,
+                           client_id, identity_match, status_code, error_message, user_agent)
+                       VALUES(:cluster_id,:pod_name,:user_name,:outcome,:at,
+                              :provider,:ldap_result_code,:detail,:observed_at,:source,:audit_id,
+                              :kind,:client_id,:identity_match,:status_code,:error_message,
+                              :user_agent)""",
+                    {"ldap_result_code": None, "client_id": None, "identity_match": None,
+                     "status_code": None, "error_message": None, "user_agent": None,
+                     **e, "cluster_id": cluster_id},
+                )
+                added = conn.total_changes - before
+                inserted += added
+                if not added:
+                    # The pod-log UNIQUE key (cluster, pod/node, user, at, outcome) ignored a row
+                    # whose auditID is new: two responses for one person on one node in the same
+                    # microsecond with the same outcome. Never observed (zero same-user same-stamp
+                    # pairs in the reference cluster's 49,360 records); said here rather than
+                    # rebuilt around, so it is a log line and not a silent loss if it ever happens.
+                    log.warning("%s: audit event %s ignored — a row with the same node, user, "
+                                "stamp and outcome already exists", cluster_id, e["audit_id"])
+        return inserted, linked
+
+    def audit_cursors(self, cluster_id: str, node_name: str) -> dict[str, dict]:
+        """{file_name: {byte_offset, head, settled_through, complete}} for one node; `head` is
+        (sha256 hex, byte count) of the file's first bytes, or None when never fingerprinted."""
+        return {
+            r["file_name"]: {"byte_offset": r["byte_offset"],
+                             "head": ((r["head_sha256"], r["head_len"])
+                                      if r["head_sha256"] else None),
+                             "settled_through": r["settled_through"],
+                             "complete": bool(r["complete"])}
+            for r in self._rows(
+                """SELECT file_name, byte_offset, head_sha256, head_len, settled_through, complete
+                     FROM login_audit_cursor WHERE cluster_id=? AND node_name=?""",
+                (cluster_id, node_name),
+            )
+        }
+
+    def set_audit_cursor(
+        self, cluster_id: str, node_name: str, file_name: str, byte_offset: int,
+        settled_through: str | None, updated_at: str, *, complete: bool = False,
+        head: tuple[str, int] | None = None,
+    ) -> None:
+        """Write one file's cursor. A plain assignment, not a max(): rotation legitimately moves
+        audit.log's cursor BACK to 0, and a late write from a demoted leader is harmless here
+        because auditID makes a re-read free — the opposite trade from the pod-log watermark.
+        `head` is assigned as given too, so a reset to byte 0 clears the fingerprint."""
+        with self._write() as conn:
+            conn.execute(
+                """INSERT INTO login_audit_cursor(
+                       cluster_id, node_name, file_name, byte_offset, head_sha256, head_len,
+                       settled_through, complete, updated_at)
+                   VALUES(?,?,?,?,?,?,?,?,?)
+                   ON CONFLICT(cluster_id, node_name, file_name) DO UPDATE SET
+                       byte_offset     = excluded.byte_offset,
+                       head_sha256     = excluded.head_sha256,
+                       head_len        = excluded.head_len,
+                       settled_through = COALESCE(excluded.settled_through, settled_through),
+                       complete        = excluded.complete,
+                       updated_at      = excluded.updated_at""",
+                (cluster_id, node_name, file_name, byte_offset,
+                 head[0] if head else None, head[1] if head else 0,
+                 settled_through, int(complete), updated_at),
+            )
+
+    def prune_audit_cursors(self, cluster_id: str, node_name: str, live_files: list[str]) -> int:
+        """Forget cursors for files that rotated away (audit-log-maxbackup=10 deletes the oldest).
+        An empty list removes nothing, for the reason prune_login_watermarks gives."""
+        if not live_files:
+            return 0
+        with self._write() as conn:
+            before = conn.total_changes
+            conn.execute(
+                "DELETE FROM login_audit_cursor WHERE cluster_id=? AND node_name=? "
+                "AND file_name NOT IN (%s)" % ",".join("?" * len(live_files)),
+                (cluster_id, node_name, *live_files),
+            )
+            return conn.total_changes - before
+
+    def audit_settled_by_node(self, cluster_id: str) -> dict[str, str]:
+        """{node: newest settled_through across its files} — the per-node liveness the metrics export."""
+        return {
+            r["node_name"]: r["settled"]
+            for r in self._rows(
+                """SELECT node_name, MAX(settled_through) AS settled
+                     FROM login_audit_cursor WHERE cluster_id=? AND settled_through IS NOT NULL
+                    GROUP BY node_name""",
+                (cluster_id,),
+            )
+        }
+
+    def user_identities(self, cluster_id: str) -> dict[str, list[str]]:
+        """{user_name: [Identity names]} for every User the last poll read — the join the audit-log
+        source resolves a login's identity through (case-insensitively, by the caller)."""
+        return {
+            r["user_name"]: json.loads(r["identities"] or "[]")
+            for r in self._rows(
+                "SELECT user_name, identities FROM ocp_user WHERE cluster_id=?", (cluster_id,)
+            )
+        }
     def prune_login_events(self, cluster_id: str, before_at: str, max_rows: int = 5000) -> int:
         """Delete events older than `before_at`, at most `max_rows` per call. Returns rows deleted.
 
@@ -2051,8 +2297,13 @@ class Store:
         outcome: str | None = None,
         since: str | None = None,
         limit: int = 200,
+        kinds: tuple[str, ...] | None = None,
     ) -> list[dict]:
         """Login attempts, newest first, enriched with what the dashboard already knows about the user.
+
+        `kinds` narrows to the audit-log source's kinds (credential, cli, session); None means every
+        row. Pod-log rows are `credential` by construction, so the default view (credential + cli)
+        shows them as before and hides only the audit log's session re-authorisations.
 
         `full_name` comes from ocp_user, which exists only for people who have logged in — the same
         source the member lists use, so one person reads the same way on both pages.
@@ -2075,13 +2326,17 @@ class Store:
         if outcome:
             where.append("e.outcome = ?")
             params.append(outcome)
+        if kinds:
+            where.append("e.kind IN (%s)" % ",".join("?" * len(kinds)))
+            params.extend(kinds)
         if since:
             where.append("e.at >= ?")
             params.append(since)
         params.append(limit)
         return self._rows(
             """SELECT e.user_name, e.outcome, e.at, e.provider, e.ldap_result_code, e.detail,
-                      e.pod_name, e.observed_at,
+                      e.pod_name, e.observed_at, e.source, e.audit_id, e.kind, e.client_id,
+                      e.identity_match, e.status_code, e.error_message, e.user_agent,
                       u.full_name,
                       EXISTS(SELECT 1 FROM group_member m
                               WHERE m.cluster_id = e.cluster_id

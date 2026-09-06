@@ -184,6 +184,13 @@ def capture_once(
                   "tab will stay empty; set loginCapture.enabled=true to change that", cluster.name)
         return 0
 
+    if settings.login_capture_source == "audit-log":
+        # The second source (docs/DESIGN_login_capture.md): same store, same status row, same
+        # retention, a different reader. Dispatched here so the poller keeps one call site and
+        # the never-take-the-poll-down contract is one contract.
+        from .auditlog import capture_once as capture_audit_once
+        return capture_audit_once(store, cluster, settings, elector, timeout, signals)
+
     ns = settings.login_capture_namespace
     client = ClusterClient(cluster, timeout=timeout)
 

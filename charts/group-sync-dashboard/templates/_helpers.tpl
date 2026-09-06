@@ -536,3 +536,20 @@ false
 {{- end -}}
 {{- $w -}}
 {{- end -}}
+
+# ── Login capture source ──────────────────────────────────────────────────────────────────
+# pod-log | audit-log, validated where it is resolved, and the ONE place the two switches that
+# interact are reconciled: audit-log makes Debug unnecessary, so a render that asks for both is a
+# contradiction and is refused — never resolved by quietly rolling the OAuth server.
+{{- define "gsd.loginCaptureSource" -}}
+{{- $lc := .Values.loginCapture | default dict -}}
+{{- $s := "pod-log" -}}
+{{- if and (hasKey $lc "source") (not (kindIs "invalid" $lc.source)) -}}{{- $s = trim (toString $lc.source) -}}{{- end -}}
+{{- if not (has $s (list "pod-log" "audit-log")) -}}
+{{- fail (printf "loginCapture.source %q is not one of pod-log, audit-log." $s) -}}
+{{- end -}}
+{{- if and (eq $s "audit-log") ($lc.enabled) ((.Values.authLogLevel | default dict).enabled) -}}
+{{- fail "loginCapture.source=audit-log and authLogLevel.enabled=true contradict each other: the audit log names every login at the DEFAULT verbosity, so Debug on the authentication operator CR buys nothing and costs an OAuth roll. The chart will not roll the OAuth server as a side effect of a read setting. Retire Debug in order:\n  1. --set loginCapture.source=audit-log --set authLogLevel.manage=true --set authLogLevel.enabled=false   (converges the cluster to Normal; one last roll — a login outage at one replica)\n  2. --set authLogLevel.manage=false once the rollout has finished.\nPass your whole values file each time (see the chart README)." -}}
+{{- end -}}
+{{- $s -}}
+{{- end -}}
