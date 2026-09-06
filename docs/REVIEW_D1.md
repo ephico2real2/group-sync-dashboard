@@ -8,7 +8,28 @@ before a decision, and every accepted finding came with a test that failed befor
 
 ## Live run on the reference cluster
 
-_(filled from the CRC deploy of this head with `loginCapture.source: audit-log`)_
+Three deploys of the branch to CRC with `environments/crc.yaml` switched to `loginCapture.source:
+audit-log` and `authLogLevel.enabled: false` (manager left on). The first crashed on open —
+`sqlite3.OperationalError: no such column: audit_id` — which is Cursor's C10 below. The second opened
+the database ("schema migration 10 applied"), rendered the ClusterRole and retired Debug, and read
+nothing: 406 from the proxy, the section after Codex's verdicts. The third, head 3282d9e, is the one
+this record describes:
+
+| Measured | Value |
+|---|---|
+| audit.log on the node | 27,825,157 bytes, never rotated; drained in four cycles under the 8 MiB budget |
+| cursor after the drain | offset 27,825,157, fingerprint of the first 1,024 bytes, settled through the newest event |
+| audit rows recorded | 280 — credential 42 (37 success, 5 failed), cli 101 (83 success, 18 failed), session 137 |
+| pod-log rows linked to their audit twin | 110 of 129, at a 0.25 s window |
+| `identity_match` | developer 185, ldap-local 82, unmatched 13 |
+| two fresh `oc login` attempts (wrong then right password, developer) | both rows within two minutes: `cli failed 401 "Authentication failed, attempted: basic"` and `cli success 302`, provider `developer` resolved through the User's Identity — the break-glass label the pod-log source could never give a CLI login |
+| `/metrics` | `gsd_login_capture_source_info{source="audit-log"} 1`, `gsd_login_capture_audit_settled_timestamp_seconds{node="crc"}`, last-read advancing; no name in any label |
+| `/logins` envelope | `source: audit-log`, `kinds` `[credential, cli]` by default and all three on `?kind=all`, `retained_since` 2025-08-08 (the backfill), `?outcome=provider_error` accepted |
+| RBAC | `oc auth can-i get nodes --subresource=proxy --as=<SA>` yes; `list pods -n openshift-authentication` no; no pod-log Role rendered |
+| operator CR | `spec.logLevel` back to `Normal` by the manager's Job |
+
+Usernames were not copied out of the cluster for this record; the counts above come from grouped
+queries run inside the pod.
 
 ## Verdicts — Cursor
 
