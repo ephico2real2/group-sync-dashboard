@@ -154,7 +154,15 @@ type: application
 # values under session.idleTimeout (enabled OFF, minutes, warningSeconds) render into the ConfigMap
 # when the proxy is on, and two new render guards: enabled without the proxy, and a window not
 # shorter than oauthProxy.cookie.expire (it could never fire). Rendered objects otherwise unchanged.
-version: 0.18.0
+# CHART 0.19.0 (2026-09-06), MINOR: appVersion moves to application 0.17.0 (below). One new
+# module setting, `loginCapture.source` (pod-log, the default, renders as before): `audit-log`
+# renders a ClusterRole on `get nodes/proxy` + `list nodes` (or `resourceNames` from
+# `loginCapture.auditLog.nodeNames`) bound to the dashboard's ServiceAccount INSTEAD of the
+# namespaced pod-log Role — read-only, cluster-wide, its breadth stated in values — and carries
+# `loginCapture.auditLog.{nodeSelector,nodeNames,providers,ignoreIdentityPatterns}` to the
+# ConfigMap. Refused together with `authLogLevel.enabled=true`: the chart will not roll the OAuth
+# server as a side effect of a read setting; the NOTES say how to retire the Debug Jobs.
+version: 0.19.0
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,
@@ -217,7 +225,14 @@ version: 0.18.0
 # data and sends the browser to the proxy's sign_out, which clears the cookie. Modelled by the page,
 # enforced by the proxy; nothing persisted; activity shared across a browser's tabs; the poll
 # suspended while the countdown is up. /api/whoami's session gains idle_timeout. MINOR: additive.
-appVersion: "0.16.0"
+# 0.17.0 (2026-09-06). Login capture from the oauth-server AUDIT LOG as a second, opt-in source:
+# /var/log/oauth-server/audit.log on the control-plane nodes through the API server's node proxy
+# (what `oc adm node-logs --path=oauth-server/audit.log` does), at the default verbosity, with
+# history back to the rotated files on a first read. A byte cursor and a head fingerprint per node
+# and file, exact de-duplication by auditID, an audit event linked to its pod-log twin instead of
+# doubled, three kinds of attempt (credential, cli, session) and the provider the typed name
+# resolves to. Schema migration 10; new outcome provider_error; three metric families. MINOR: additive.
+appVersion: "0.17.0"
 
 keywords: [openshift, ldap, rbac, groupsync, observability]
 home: https://github.com/ephico2real2/group-sync-dashboard
