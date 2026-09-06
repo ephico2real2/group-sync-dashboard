@@ -515,6 +515,26 @@ def _audit_mode_setting(raw: dict) -> str:
     return "off"
 
 
+def _string_list_setting(raw: dict, key: str, default: tuple[str, ...]) -> tuple[str, ...]:
+    """A list of strings from the settings file (the chart renders these keys with `toJson`), or a
+    comma-separated string from a hand-written file. A LIST IS NEVER SPLIT: an ignore pattern is a
+    DN fragment (`ou=TrustedApplications,dc=example,dc=com`) and OpenShift accepts a provider named
+    `a,b`; splitting either on commas turned one pattern into three, and `dc=com` then matched every
+    person in the directory. A missing or null key is the default; an explicit empty list or empty
+    string is "none"."""
+    if key not in raw or raw[key] is None:
+        return default
+    source = raw[key]
+    if isinstance(source, list):
+        for item in source:
+            if not isinstance(item, str):
+                raise ConfigError(f"{key}: every entry must be a string, got {item!r}")
+        return tuple(item.strip() for item in source if item.strip())
+    if isinstance(source, str):
+        return tuple(item.strip() for item in source.split(",") if item.strip())
+    raise ConfigError(f"{key}: expected a list of strings or a comma-separated string, got {source!r}")
+
+
 def _login_capture_source_setting(raw: dict) -> str:
     """pod-log | audit-log. Fail SAFE to pod-log: it is the shipped default and needs nothing
     the audit source needs; a typo must not be what widens the read."""
@@ -927,18 +947,10 @@ def load_settings(path: str | Path) -> Settings:
         login_capture_audit_node_selector=str(
             raw.get("loginCaptureAuditNodeSelector") or "node-role.kubernetes.io/master="
         ).strip(),
-        login_capture_audit_node_names=tuple(
-            n.strip() for n in str(raw.get("loginCaptureAuditNodeNames", "") or "").split(",")
-            if n.strip()
-        ),        login_capture_audit_providers=tuple(
-            n.strip() for n in str(raw.get("loginCaptureAuditProviders", "") or "").split(",")
-            if n.strip()
-        ),
-        login_capture_audit_ignore_identity_patterns=tuple(
-            n.strip() for n in str(
-                raw.get("loginCaptureAuditIgnoreIdentityPatterns", "ou=TrustedApplications") or ""
-            ).split(",") if n.strip()
-        ),
+        login_capture_audit_node_names=_string_list_setting(raw, "loginCaptureAuditNodeNames", ()),
+        login_capture_audit_providers=_string_list_setting(raw, "loginCaptureAuditProviders", ()),
+        login_capture_audit_ignore_identity_patterns=_string_list_setting(
+            raw, "loginCaptureAuditIgnoreIdentityPatterns", ("ou=TrustedApplications",)),
         # Stripped, because a DN pasted out of `ldapsearch` output arrives with trailing whitespace
         # often enough to matter, and it is compared for exact equality against a Group's ldap.uid.
         cluster_access_group=str(raw.get("clusterAccessGroup", "") or "").strip(),

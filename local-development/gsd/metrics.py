@@ -119,14 +119,14 @@ class RuntimeSignals:
         with self._lock:
             self._poll_seconds[cluster] = seconds
 
-    def note_audit_unmatched(self, cluster: str, decision: str, count: int) -> None:
+    def note_audit_unmatched(self, cluster: str, outcome: str, count: int) -> None:
         """Audit-log attempts whose typed username resolved to no configured identity — kept as
         rows, visibly unmatched (D1). By outcome, so a burst of failures against names that do
         not exist is its own signal."""
         if count <= 0:
             return
         with self._lock:
-            key = (cluster, decision)
+            key = (cluster, outcome)
             self._audit_unmatched[key] = self._audit_unmatched.get(key, 0) + count
 
     def snapshot(self) -> dict:
@@ -574,10 +574,10 @@ class DashboardCollector:
         audit_unmatched = CounterMetricFamily(
             "gsd_login_capture_unmatched_total",
             "Audit-log login attempts whose typed username resolved to no configured identity "
-            "provider (identity_match null), by decision. Kept as rows, visibly unmatched: a "
+            "provider (identity_match null), by outcome. Kept as rows, visibly unmatched: a "
             "failure against a name that does not exist is still an attempt, and a burst of "
             "them is its own signal. Audit-log source only. Per replica: sum().",
-            labels=["cluster", "decision"],
+            labels=["cluster", "outcome"],
         )
         poll_duration = GaugeMetricFamily(
             "gsd_cluster_poll_duration_seconds",
@@ -602,8 +602,8 @@ class DashboardCollector:
             for table in RETENTION_TABLES:
                 retention.add_metric([table], snap["retention"].get(table, 0))
             backup_failures.add_metric([], snap["backup_failures"])
-            for (cluster, decision), count in sorted(snap["audit_unmatched"].items()):
-                audit_unmatched.add_metric([cluster, decision], count)
+            for (cluster, outcome), count in sorted(snap["audit_unmatched"].items()):
+                audit_unmatched.add_metric([cluster, outcome], count)
             for cluster, seconds in sorted(snap["poll_seconds"].items()):
                 poll_duration.add_metric([cluster], seconds)
 

@@ -1430,6 +1430,15 @@ class TestAuditLogSource:
         import yaml
         return [d for d in yaml.safe_load_all(out) if d]
 
+    def _config_data(self, out):
+        import yaml
+        for d in self._docs(out):
+            if d.get("kind") == "ConfigMap":
+                for value in (d.get("data") or {}).values():
+                    if "loginCaptureSource" in value:
+                        return yaml.safe_load(value)
+        raise AssertionError("no ConfigMap carries the settings file")
+
     def _rules(self, out, kind, name_part):
         for d in self._docs(out):
             if d.get("kind") == kind and name_part in d["metadata"]["name"]:
@@ -1464,15 +1473,37 @@ class TestAuditLogSource:
         assert ok, out
         rules = self._rules(out, "ClusterRole", "login-capture-audit")
         assert rules == [(("nodes/proxy",), ("get",), ("master-0", "master-1"))], rules
-        assert 'loginCaptureAuditNodeNames: "master-0,master-1"' in out
+        assert self._config_data(out)["loginCaptureAuditNodeNames"] == ["master-0", "master-1"]
 
     def test_the_audit_settings_reach_the_configmap(self):
         ok, out = render(**self.AUDIT, **{"loginCapture__auditLog__providers[0]": "ldap-local",
                                           "loginCapture__auditLog__ignoreIdentityPatterns[0]": "ou=Robots"})
         assert ok, out
-        assert 'loginCaptureAuditNodeSelector: "node-role.kubernetes.io/master="' in out
-        assert 'loginCaptureAuditProviders: "ldap-local"' in out
-        assert 'loginCaptureAuditIgnoreIdentityPatterns: "ou=Robots"' in out
+        cfg = self._config_data(out)
+        assert cfg["loginCaptureAuditNodeSelector"] == "node-role.kubernetes.io/master="
+        assert cfg["loginCaptureAuditProviders"] == ["ldap-local"]
+        assert cfg["loginCaptureAuditIgnoreIdentityPatterns"] == ["ou=Robots"]
+        assert self._config_data(render()[1])["loginCaptureAuditIgnoreIdentityPatterns"] == ["ou=TrustedApplications"]
+
+    def test_a_comma_in_an_ignore_pattern_or_a_provider_name_is_one_entry(self):
+        """Cursor, review D1: an ignore pattern is a DN fragment and OpenShift accepts a provider
+        named `a,b`; comma-joining either turned one pattern into three, and `dc=com` then matched
+        every person in the directory. Lists travel as JSON, as usersProviders already does."""
+        ok, out = render(**self.AUDIT, **{
+            "loginCapture__auditLog__ignoreIdentityPatterns[0]": r"ou=TrustedApplications\,dc=example\,dc=com",
+            "loginCapture__auditLog__providers[0]": r"a\,b",
+            "loginCapture__auditLog__providers[1]": "ldap-local"})
+        assert ok, out
+        cfg = self._config_data(out)
+        assert cfg["loginCaptureAuditIgnoreIdentityPatterns"] == ["ou=TrustedApplications,dc=example,dc=com"]
+        assert cfg["loginCaptureAuditProviders"] == ["a,b", "ldap-local"]
+
+    def test_the_debug_contradiction_is_moot_when_capture_is_off(self):
+        """Cursor, review D1: with loginCapture.enabled=false no RBAC renders and no log is read,
+        so a leftover source=audit-log must not refuse a render that keeps Debug on."""
+        ok, out = render(**self.AUDIT, loginCapture__enabled="false",
+                         authLogLevel__manage="true", authLogLevel__enabled="true")
+        assert ok, out
 
     def test_audit_log_with_debug_on_is_refused(self):
         ok, out = render(**self.AUDIT, authLogLevel__manage="true", authLogLevel__enabled="true")

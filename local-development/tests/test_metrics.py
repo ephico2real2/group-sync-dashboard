@@ -575,8 +575,9 @@ class TestCaptureAndBackupGauges:
             store.upsert_cluster("crc", "https://x", True)
             text = generate_latest(build_registry(store, GRACE, signals=signals)).decode()
             got = series(text, "gsd_login_capture_unmatched_total")
-            assert got == {'gsd_login_capture_unmatched_total{cluster="crc",decision="failed"}': 5,
-                           'gsd_login_capture_unmatched_total{cluster="crc",decision="success"}': 1}, got
+            assert got == {'gsd_login_capture_unmatched_total{cluster="crc",outcome="failed"}': 5,
+                           'gsd_login_capture_unmatched_total{cluster="crc",outcome="success"}': 1}, got
+            assert 'decision=' not in text, "the label is named for the vocabulary it carries (Cursor, review D1)"
         finally:
             store.close()
 

@@ -594,6 +594,26 @@ class TestLoginCaptureSource:
         assert s.login_capture_audit_providers == ("ldap-local", "developer")
         assert s.login_capture_audit_ignore_identity_patterns == ()
 
+    def test_a_list_is_never_split_on_commas(self, tmp_path):
+        """Cursor, review D1: the chart renders these as JSON lists precisely so a DN fragment or a
+        provider named `a,b` survives; a comma string is the hand-written-file form only."""
+        from gsd.auditlog import ignored_identity
+        cfg = BASE + ('loginCaptureAuditIgnoreIdentityPatterns: ["ou=TrustedApplications,dc=example,dc=com"]\n'
+                      'loginCaptureAuditProviders: ["a,b", " ldap-local "]\n'
+                      'loginCaptureAuditNodeNames: []\n')
+        s = load_settings(write(tmp_path, cfg))
+        assert s.login_capture_audit_ignore_identity_patterns == ("ou=TrustedApplications,dc=example,dc=com",)
+        assert s.login_capture_audit_providers == ("a,b", "ldap-local")
+        assert s.login_capture_audit_node_names == ()
+        import base64
+        def ident(dn):
+            return "ldap-local:" + base64.urlsafe_b64encode(dn.encode()).decode().rstrip("=")
+        assert ignored_identity([ident("cn=alice,ou=People,dc=example,dc=com")], s.login_capture_audit_ignore_identity_patterns) is False
+        assert ignored_identity([ident("cn=bind,ou=TrustedApplications,dc=example,dc=com")], s.login_capture_audit_ignore_identity_patterns) is True
+        with pytest.raises(ConfigError, match="loginCaptureAuditProviders"):
+            load_settings(write(tmp_path, BASE + "loginCaptureAuditProviders: [1, 2]\n"))
+        assert load_settings(write(tmp_path, BASE + "loginCaptureAuditIgnoreIdentityPatterns: ''\n")).login_capture_audit_ignore_identity_patterns == ()
+
     def test_junk_falls_back_to_pod_log_with_a_warning(self, tmp_path, caplog):
         import logging
         with caplog.at_level(logging.WARNING):

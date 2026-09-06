@@ -34,7 +34,7 @@ which `local-development/prepare-release.py` does when the release is cut.
   `login_audit_cursor`; `ocp_user.identities`). Metric families
   `gsd_login_capture_source_info{cluster,source}`,
   `gsd_login_capture_audit_settled_timestamp_seconds{cluster,node}` and
-  `gsd_login_capture_unmatched_total{cluster,decision}`; the stalled alert and its gauge are
+  `gsd_login_capture_unmatched_total{cluster,outcome}`; the stalled alert and its gauge are
   untouched. (spec `specs/SPEC_D1_audit_log_login_capture.md`, design `DESIGN_login_capture.md`)
 - **Chart 0.19.0:** `loginCapture.source` and `loginCapture.auditLog.{nodeSelector,nodeNames,
   providers,ignoreIdentityPatterns}`. With `audit-log` a ClusterRole on `get nodes/proxy` (+

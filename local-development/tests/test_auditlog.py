@@ -94,6 +94,14 @@ class TestTheParserOnMeasuredRecords:
         assert parse_audit_line("not json") is None
         assert parse_audit_line(json.dumps({"kind": "Status"})) is None
 
+    def test_authorize_without_a_client_id_is_not_a_login(self):
+        """Cursor, review D1: a fourth admitted shape hid here. Measured: all 259 username-annotated
+        authorize records on the reference cluster named a client."""
+        at = datetime.now(UTC)
+        assert parse_audit_line(_event("alice", "allow", at, uri="/oauth/authorize")) is None
+        assert parse_audit_line(_event("alice", "allow", at, uri="/oauth/authorize?client_id=")) is None
+        assert parse_audit_line(_event("alice", "allow", at, uri="/oauth/authorize?client_id=console&state=s")).kind == KIND_SESSION
+
     def test_the_username_comes_from_the_annotation_never_from_user(self):
         login = parse_audit_line(FIXTURES["credential_allow_idp"])
         assert login.user_name == "user2.example", "user.username is system:anonymous on a login request"
@@ -353,17 +361,25 @@ class TestTheCursor:
         assert all(r[2] in (0, len(data)) for r in client.reads)
         assert sum(1 for r in client.reads if r[2] == 0) == 1 + 3, "one first read, then one 1 KiB probe per cycle"
 
-    def test_a_rotated_file_whose_head_changed_is_re_read_from_zero(self, store, settings, install, caplog):
+    def test_a_rotated_file_whose_head_changed_is_re_read_from_zero(self, store, settings, install, caplog, monkeypatch):
+        """A rotated file still in progress (the byte budget left it incomplete) whose head no
+        longer matches its fingerprint is not the file the cursor was read from: re-read from 0."""
         now = datetime.now(UTC)
         rotated = (now - timedelta(days=1)).strftime("audit-%Y-%m-%dT%H-%M-%S.000.log")
-        big = _file(*[_event(f"u{i}", "allow", now - timedelta(days=2, seconds=i)) for i in range(4)])
-        client = install(FakeNodeClient(files={NODE: {rotated: big + b'{"tail', AUDIT_FILE: b""}}))
-        assert capture_once(store, CLUSTER, settings) == 4
-        assert store.audit_cursors(CLUSTER.name, NODE)[rotated]["complete"] is False, "a partial last line keeps it open"
+        events = [_event(f"u{i}", "allow", now - timedelta(days=2, seconds=i)) for i in range(4)]
+        big = _file(*events)
+        monkeypatch.setattr(auditlog, "AUDIT_READ_MAX_BYTES", len(_file(*events[:2])) + 10)
+        client = install(FakeNodeClient(files={NODE: {rotated: big, AUDIT_FILE: b""}}))
+        assert capture_once(store, CLUSTER, settings) == 2
+        assert store.audit_cursors(CLUSTER.name, NODE)[rotated]["complete"] is False, "the budget left it open"
         client.files[NODE][rotated] = _file(_event("other", "allow", now - timedelta(days=2))) + big
         with caplog.at_level(logging.WARNING):
-            assert capture_once(store, CLUSTER, settings) == 1
+            first = capture_once(store, CLUSTER, settings)
         assert "not the file its cursor was read from" in caplog.text
+        total = first
+        for _ in range(5):
+            total += capture_once(store, CLUSTER, settings)
+        assert total == 3, "u0 and u1 were already rows; other, u2 and u3 are new"
         assert {r["user_name"] for r in store.login_events(CLUSTER.name)} == {"u0", "u1", "u2", "u3", "other"}
 
     def test_the_byte_budget_defers_rather_than_drops(self, store, settings, install, monkeypatch):
@@ -377,6 +393,34 @@ class TestTheCursor:
         for _ in range(10):
             total += capture_once(store, CLUSTER, settings)
         assert total == 20
+
+    def test_a_successful_probe_with_a_failed_body_read_does_not_advance_last_read(self, store, settings, install):
+        """Cursor, review D1: the stalled alert watches last_read_at; a fingerprint probe that
+        succeeds while the resume itself fails must not count as a read."""
+        now = datetime.now(UTC)
+        data = _file(_event("a", "allow", now))
+        client = install(FakeNodeClient(files={NODE: {AUDIT_FILE: data}}))
+        assert capture_once(store, CLUSTER, settings) == 1
+        before = store.login_capture_status(CLUSTER.name)["last_read_at"]
+        real = client.fetch_node_log_file
+        def flaky(node, path, offset=0, max_bytes=8 << 20):
+            return None if offset > 0 else real(node, path, offset, max_bytes)
+        client.fetch_node_log_file = flaky
+        import time; time.sleep(0.01)
+        assert capture_once(store, CLUSTER, settings) == 0
+        assert store.login_capture_status(CLUSTER.name)["last_read_at"] == before
+
+    def test_a_rotated_file_whose_last_line_lacks_a_newline_still_completes(self, store, settings, install):
+        """Cursor, review D1: a closed file never gains the newline a crash mid-write withheld;
+        without this the cursor sat on that tail forever."""
+        now = datetime.now(UTC)
+        rotated = (now - timedelta(days=1)).strftime("audit-%Y-%m-%dT%H-%M-%S.000.log")
+        whole = _event("a", "allow", now - timedelta(days=2))
+        tail = _event("b", "allow", now - timedelta(days=2, seconds=-5))
+        install(FakeNodeClient(files={NODE: {rotated: whole.encode() + b"\n" + tail.encode(), AUDIT_FILE: b""}}))
+        assert capture_once(store, CLUSTER, settings) == 2
+        assert store.audit_cursors(CLUSTER.name, NODE)[rotated]["complete"] is True
+        assert {r["user_name"] for r in store.login_events(CLUSTER.name)} == {"a", "b"}
 
     def test_stale_cursors_are_pruned_and_last_read_advances(self, store, settings, install):
         client = install(FakeNodeClient(files={NODE: {"audit-2025-01-01T00-00-00.000.log": b"", AUDIT_FILE: b""}}))
@@ -417,6 +461,21 @@ class TestCorrespondenceWithThePodLog:
         assert rows[1]["client_id"] == "system:serviceaccount:gsd:dash"
         assert "redirect_uri" not in json.dumps(rows[1]) and "code_challenge" not in json.dumps(rows[1])
         assert store.record_audit_login_events(CLUSTER.name, rows, 2) == (2, 0)
+
+    def test_a_retry_one_second_later_is_not_the_same_login(self, store):
+        """Cursor, review D1. Measured on the reference cluster: a pod-log row and its audit twin
+        are 16 ms apart; the closest same-user credential retry is 3.6 s. A quarter-second window
+        links the former and never the latter."""
+        at = datetime.now(UTC) - timedelta(minutes=5)
+        store.record_login_events(CLUSTER.name, [event_dict(
+            LoginAttempt("jane", loginlog.OUTCOME_BAD_PASSWORD, at, provider="ldap-local", ldap_result_code=49),
+            "oauth-openshift-aaa", "x")])
+        retry = audit_event_dict(parse_audit_line(_event("jane", "deny", at + timedelta(seconds=1),
+                                                         uri="/login/ldap-local", audit_id="retry-1")), NODE, "x")
+        assert store.record_audit_login_events(CLUSTER.name, [retry], auditlog.CORRESPONDENCE_SECONDS) == (1, 0)
+        rows = store.login_events(CLUSTER.name)
+        assert len(rows) == 2 and {r["audit_id"] for r in rows} == {None, "retry-1"}
+        assert {r["source"] for r in rows} == {"pod-log", "audit-log"}
 
     def test_two_real_attempts_on_one_path_stay_two(self, store):
         at = datetime.now(UTC) - timedelta(minutes=5)

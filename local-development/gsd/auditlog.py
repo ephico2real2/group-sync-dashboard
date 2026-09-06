@@ -90,8 +90,12 @@ AUDIT_FILE = "audit.log"
 ROTATED = re.compile(r"^audit-(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})\.(\d+)\.log$")
 
 # A pod-log row and an audit event for ONE login sit this close: measured 16 ms apart on the
-# reference cluster. Two seconds absorbs a slow directory without reaching the next human retry.
-CORRESPONDENCE_SECONDS = 2
+# reference cluster — the same process stamps both, the audit record after the directory has
+# answered, so no directory latency sits between them. A quarter second is fifteen times that.
+# The closest same-user credential retry in the cluster's 49,360-record log was 3.6 s apart
+# (133 pairs, none under 2 s), so the earlier 2 s window never reached a retry there; it is
+# narrowed anyway so a busier cluster's retry cannot be linked to a previous attempt's row.
+CORRESPONDENCE_SECONDS = 0.25
 
 # A cursor row that marks a rotated file as skipped by retention: nothing to read, ever.
 SKIPPED = -1
@@ -194,6 +198,11 @@ def parse_audit_line(line: str) -> AuditLogin | None:
             provider = path[len("/login/"):].split("/", 1)[0] or None
     elif verb == "get" and path == "/oauth/authorize":
         client_id = (parse_qs(query).get("client_id") or [None])[0] or None
+        if not client_id:
+            # An authorize request that names no client is not a login to anything; every one of
+            # the 259 username-annotated authorize records measured on the reference cluster named
+            # its client, so this is a malformed request, not a fourth shape.
+            return None
         kind = KIND_CLI if client_id == CHALLENGING_CLIENT else KIND_SESSION
     if kind is None:
         return None
@@ -356,10 +365,17 @@ def _configured_providers(client: ClusterClient, cluster: ClusterConfig, setting
     try:
         names = fetch()
     except ClusterError as exc:
-        log.debug("%s: could not read the OAuth CR's providers (%s); identity_match uses every "
-                  "discovered provider", cluster.name, exc.message)
+        names = None
+        log.debug("%s: could not read the OAuth CR's providers (%s)", cluster.name, exc.message)
+    if names is None:
+        # The chart grants `get oauths` (templates/rbac.yaml), so this is an install that removed
+        # it. Said at WARNING, once per cycle: identity_match then means "some provider", not
+        # "one the OAuth CR still lists", which is weaker than the row's column name promises.
+        log.warning("%s: the OAuth CR's identity providers could not be read; identity_match is "
+                    "computed against every provider an Identity names, not the CR's list "
+                    "(loginCapture.auditLog.providers pins it)", cluster.name)
         return set()
-    return set(names or [])
+    return set(names)
 
 
 def _hand_over(store, client, cluster, node, order, cursors, offset, head, cur) -> None:
@@ -487,7 +503,8 @@ def capture_once(
                 probe = client.fetch_node_log_file(node, path, offset=0, max_bytes=head[1])
                 if probe is None:
                     continue
-                read_ok = True
+                # Deliberately not `read_ok = True` here: a probe that succeeds while every body
+                # read fails must not advance the last-read stamp the stalled alert watches.
                 same_file = fingerprint(probe.data[:head[1]]) == head
             if same_file is False:
                 read = None
@@ -512,6 +529,12 @@ def capture_once(
                 if read is None:
                     continue
             lines, consumed = complete_lines(read.data)
+            if name != AUDIT_FILE and not read.truncated and consumed < len(read.data):
+                # A ROTATED file is closed: nothing will ever append the newline its last line
+                # lacks (a crash mid-write leaves one). Take the tail as the final line — the
+                # parser rejects it if it is not whole JSON — or the cursor would sit on it forever.
+                lines.append(read.data[consumed:].decode("utf-8", errors="replace"))
+                consumed = len(read.data)
             if offset == 0 and consumed:
                 head = fingerprint(read.data[:consumed])
             budget -= len(read.data)

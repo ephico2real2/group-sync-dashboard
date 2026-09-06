@@ -383,8 +383,11 @@ CREATE TABLE IF NOT EXISTS login_event (
 );
 CREATE INDEX IF NOT EXISTS login_event_lookup ON login_event(cluster_id, at DESC);
 CREATE INDEX IF NOT EXISTS login_event_by_user ON login_event(cluster_id, user_name, at DESC);
-CREATE UNIQUE INDEX IF NOT EXISTS login_event_by_audit_id
-    ON login_event(cluster_id, audit_id) WHERE audit_id IS NOT NULL;
+-- login_event_by_audit_id (UNIQUE on cluster_id, audit_id WHERE audit_id IS NOT NULL) is created by
+-- migration 10 ONLY, not here: SCHEMA runs before _migrate, and on a database from before 0.17.0 the
+-- column does not exist yet, so an index on it here raised "no such column: audit_id" and aborted
+-- the whole script — the pod could not start on the one upgrade path that matters. Measured on the
+-- reference cluster, 2026-09-06. A fresh database gets the index when migration 10 replays.
 
 -- Where each audit FILE on each node has been read to, in bytes. Per file because rotation
 -- renames the current file and starts a new one; the cursor follows the bytes, not the name.
