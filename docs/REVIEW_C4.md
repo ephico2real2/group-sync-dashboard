@@ -81,3 +81,32 @@ apply the position and skip only the `refresh()` while suspended — the same sh
 already had. Noted, not changed: `refresh()` is gated for `expired`, not `warning`; during the
 warning the callers and `inert` are the gate, and a forced click on an inert control is not a user
 path.
+
+## Second pass — Codex (on 82a3efb; the branch moved to d888987 during its run)
+
+| Claim | Codex | Decision |
+|---|---|---|
+| C1 expiry final | CONFIRMED — every `api(` site traced; no post-expiry fetch or paint | — |
+| C2 the warning state | PLAUSIBLE (its sandbox could not run Playwright) | — ; the 15 idle tests run here |
+| C3 the server side | CONFIRMED — nine probe inputs incl. env precedence; `TestClient` shapes for anonymous/off/on | — |
+| C4 the chart | CONFIRMED for `4h`, `90m`, `1h30m`, nil cookie, and `0` in both `--set` forms; found the alias gap below | — |
+| C5 documentation | REFUTED — the same two blocks Cursor found (`API.md`, the values block) | already fixed in d888987 |
+| C6 tests | REFUTED — Back restored no position (as Cursor) | already fixed in d888987 |
+| C7 fidelity | CONFIRMED — seventeen files, every hunk attributed; `git diff --check` clean | — |
+
+**Finding 3 (its most important).** The zero-cap refusal compared the typed text with `"0"`, so
+`0s`, `0.0s` and `0h0m` rendered `-cookie-expire=0s` and friends (measured). **Accepted** — the
+deployment compares the resolved seconds, so every spelling of zero the duration grammar accepts is
+refused by name; the chart test covers them. Codex's documentation test was offered as a reproducer
+and, as it said itself, not as a merge recommendation; rejected like the others.
+
+## Outcome — final
+
+Four passes over three heads, one live run. The behaviour findings that mattered: expiry being final
+and complete (the in-flight refresh, "Sign out now", Back and hash navigation, the header after
+expiry, the skip link), the whole-number rule for both idle settings, the exact whoami consumers,
+Helm's numeric zero and every other spelling of a zero cap, and Back applying its position while
+suspended. Wording: whoami is fetched by every data refresh and never on a session-only timer; the
+sign-out link is the proxy's, with no revocation; `minutes` is the whole window. Rejected: every
+prose-asserting test. Proof: 15 Playwright tests on a faked clock, the config/whoami/chart tests, and
+the CRC run — dialog at 29.4 s, sign-out at 59.4 s, credentials demanded on re-entry.
