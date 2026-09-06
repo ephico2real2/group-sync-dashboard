@@ -38,6 +38,7 @@ import yaml
 REPO = pathlib.Path(__file__).resolve().parents[2]
 WORKFLOW = REPO / ".github" / "workflows" / "publish.yml"
 CONTAINERFILE = REPO / "local-development" / "Containerfile"
+CONTAINERFILE_REPORT = REPO / "local-development" / "Containerfile.report"   # the report image (C3)
 
 #: The Containerfile's build context, as the build script invokes it: `podman build … .` from
 #: local-development/. So a COPY source is relative to that directory.
@@ -64,7 +65,7 @@ def _copied_sources() -> list[str]:
     so it is not an input a push could change.
     """
     sources: list[str] = []
-    text = re.sub(r"\\\n", " ", CONTAINERFILE.read_text())   # join continued lines first
+    text = "\n".join(re.sub(r"\\\n", " ", cf.read_text()) for cf in (CONTAINERFILE, CONTAINERFILE_REPORT))   # join continued lines first; both images
     for line in text.splitlines():
         stripped = line.strip()
         verb = stripped.split(" ", 1)[0].upper() if " " in stripped else ""
@@ -215,3 +216,25 @@ def test_a_directory_source_is_matched_recursively_or_not_at_all() -> None:
     # A file source is the other way round: exact is correct and sufficient.
     assert _covers("local-development/pyproject.toml", "local-development/pyproject.toml",
                    is_dir=False)
+
+
+def test_the_report_image_is_built_by_the_same_publish_run_and_gated_by_ci() -> None:
+    """C3: the second image is built from the same commit in the same publish run (its release
+    aliases move exactly when the dashboard's do), and ci.yml scans BOTH of its stages the way it
+    scans the dashboard's (review of the spec, Codex)."""
+    publish = (REPO / ".github" / "workflows" / "publish.yml").read_text()
+    assert "- name: Build and push the report image" in publish
+    assert "./build-and-push-report.sh --release-tags" in publish and "./build-and-push-report.sh\n" in publish
+    for path in ("local-development/Containerfile.report", "local-development/report-image-proof.py", "local-development/build-and-push-report.sh"):
+        assert _matches(_publish_paths(), path), path
+
+
+def test_report_final_and_pack_stages_are_built_and_gated_independently():
+    workflow = (REPO / ".github" / "workflows" / "ci.yml").read_text()
+    assert "docker build -f Containerfile.report -t gsd-report:ci ." in workflow
+    assert "docker build -f Containerfile.report --target pack -t gsd-report:pack ." in workflow
+    assert workflow.count("image: gsd-report:pack") >= 2
+    assert "output-file: report-pack-inventory.json" in workflow
+    region = workflow[workflow.index("- name: Build the report image"):]
+    assert region.count("anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439") >= 4
+    assert region.count("only-fixed: true") >= 2

@@ -27,6 +27,7 @@ KEPT_OFF = {
     "rbac.identities": "C2: a grant (get/list identities.user.openshift.io) the chart does not otherwise need, so off under the 0.14.0 rule",
     "backup.offsite.enabled": "B1: needs a destination the chart cannot choose (a second claim or a bucket and a credential); a CronJob with nowhere to write is a red Job every six hours",
     "session.idleTimeout.enabled": "C4: it signs people out — a session policy the platform team chooses",
+    "rbac.namespaces": "C3: a grant (get/list namespaces, core group) the chart does not otherwise need — off under the 0.14.0 rule; the namespace report attests absence only with it",
 }
 
 # Switches the release flipped; the docs below must not describe them as off.

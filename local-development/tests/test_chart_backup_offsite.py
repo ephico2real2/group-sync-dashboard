@@ -266,7 +266,7 @@ class TestAccessModes:
 
 class TestPrerequisites:
     def test_no_persistence_is_refused(self):
-        ok, out = render(**ON, persistence__enabled="false")
+        ok, out = render(**ON, persistence__enabled="false", reporting__enabled="false")   # reporting refuses an emptyDir first (C3)
         assert not ok and "persistence.enabled=true" in out
 
     def test_no_on_volume_backup_is_refused(self):

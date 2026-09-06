@@ -362,6 +362,7 @@ def refresh_bindings(
     timeout: float,
     audit_mode: str = "off",
     audit_max_per_cycle: int = 20,
+    namespaces_read: bool = False,
 ) -> str:
     """Re-read RoleBindings/ClusterRoleBindings for one cluster.
 
@@ -419,6 +420,30 @@ def refresh_bindings(
         people = sum(1 for u in user_rows if not u.is_platform)
         log.info("%s: %d direct-user binding(s), %d naming a person",
                  cluster.name, len(user_rows), people)
+
+    # Namespace objects, on the binding cadence, only when the chart granted the read
+    # (rbac.namespaces → namespacesReadEnabled). They exist so the report service's namespace
+    # report can attest ABSENCE — "this namespace exists and has no grants" — instead of "none
+    # observed" (docs/specs/SPEC_C3_reporting_microservice.md §7). A refusal is RECORDED, like the
+    # users read, so the report's coverage block can say why absence is not attested; a
+    # transient failure keeps last cycle's rows and says nothing new.
+    if namespaces_read:
+        fetch_namespaces = getattr(client, "fetch_namespaces", None)
+        if fetch_namespaces is not None:
+            try:
+                namespaces = fetch_namespaces()
+            except ClusterError as exc:
+                log.warning("namespace refresh for %s failed: %s — the namespace report keeps "
+                            "last cycle's coverage", cluster.name, exc.message)
+            else:
+                if namespaces is None:
+                    store.mark_namespaces_unavailable(cluster.name, now_iso())
+                    log.info("%s: not permitted to list namespaces — the namespace report cannot "
+                             "attest absence. Grant namespaces [get,list] (chart: rbac.namespaces).",
+                             cluster.name)
+                else:
+                    store.replace_namespaces(cluster.name, namespaces, now_iso())
+                    log.debug("%s: %d namespace(s) recorded", cluster.name, len(namespaces))
 
     # The policy operator's CR health rides the SAME cadence, for the same reason: these
     # CRs change on administrative action, not on a schedule, and they are the source of
@@ -567,6 +592,10 @@ class Poller:
         # 0 so the first cycle after start takes one immediately: a pod that
         # has just come up is exactly when you want a copy on disk.
         self._next_backup = 0.0
+        self._next_report_snapshot = 0.0
+        # The report service's usage is pulled once per cycle when reporting is on; a failure is
+        # counted (gsd_report_usage_pulls_total{outcome}) and never stops the poll.
+        self._report_client = None
         # pending | ok | failed — what the LAST backup attempt in this process did. Retention
         # reads it: nothing is deleted until a backup has succeeded here, so a broken backup
         # holds the prune instead of the prune quietly outrunning it.
@@ -691,6 +720,74 @@ class Poller:
         self.store.maintain()
         self._maybe_backup()
         self._prune_history(cluster)
+        # Reporting rides the same tail: the snapshot after the checkpoint (so the copy is the
+        # smallest it can be), the usage pull after that. _run_cluster's leadership check is a
+        # cycle old after the poll's network I/O, so re-check before each operation. Both checks are
+        # best-effort admission control, not a fence (poller.py says so of leadership itself); the
+        # one-replica Recreate deployment is the actual single-writer guarantee.
+        if self.elector is not None and not self.elector.is_leader:
+            log.warning("%s: reporting tail skipped; leadership was lost during the poll", cluster.name)
+            return
+        self._maybe_report_snapshot()
+        if self.elector is not None and not self.elector.is_leader:
+            log.warning("%s: report usage pull skipped; leadership was lost after the snapshot", cluster.name)
+            return
+        self._pull_report_usage()
+
+    def _maybe_report_snapshot(self) -> None:
+        """A fresh read-only copy for the report pod, at most every reporting_snapshot_interval_seconds.
+
+        Leader-and-poll-thread only, like _maybe_backup: VACUUM INTO holds a read transaction for the
+        copy. Not the retention gate's copy — see Store.snapshot. Off when reporting is off.
+        """
+        if not self.settings.reporting_url:
+            return
+        now = time.monotonic()
+        if now < self._next_report_snapshot:
+            return
+        self._next_report_snapshot = now + self.settings.reporting_snapshot_interval_seconds
+        try:
+            if self.store.snapshot(self.settings.reporting_snapshot_dir, keep=self.settings.reporting_snapshot_keep) is None:
+                log.warning("report snapshot was not written; the report service keeps reading the previous copy")
+        except Exception:  # noqa: BLE001 — never stop the poll for a report copy
+            log.exception("report snapshot failed; the poll continues")
+
+    def _pull_report_usage(self) -> None:
+        """GET /report/api/usage from the report service and record it — the PULL that keeps the
+        dashboard's API GET-only while still knowing who generated what."""
+        if not self.settings.reporting_url:
+            return
+        outcome = "ok"
+        try:
+            import httpx
+            if self._report_client is None:
+                with open(self.settings.reporting_token_file, "rb") as fh:
+                    token = fh.read().strip().decode("utf-8")
+                self._report_client = httpx.Client(
+                    base_url=self.settings.reporting_url, headers={"Authorization": f"Bearer {token}"},
+                    verify=self.settings.reporting_ca_file or True, timeout=self.settings.request_timeout_seconds)
+            since = self.store.report_runs_watermark()
+            for _ in range(20):                      # bounded: a huge backlog drains over cycles
+                r = self._report_client.get("/report/api/usage", params={"since_id": since, "limit": 500} if since else {"limit": 500})
+                if r.status_code != 200:
+                    outcome = "refused" if r.status_code in (401, 403) else "error"
+                    log.warning("report usage pull answered %s: %s", r.status_code, r.text[:200])
+                    break
+                body = r.json()
+                added = self.store.record_report_runs(body.get("runs") or [], now_iso())
+                if added:
+                    log.debug("recorded %d report run(s) from the report service", added)
+                if not body.get("truncated"):
+                    break
+                since = body.get("next_since_id") or since
+        except OSError as exc:
+            outcome = "error"
+            log.warning("report usage pull: cannot read the token: %s", exc)
+        except Exception as exc:  # noqa: BLE001 — httpx errors and JSON errors alike
+            outcome = "unreachable"
+            log.warning("report usage pull failed: %s: %s", type(exc).__name__, exc)
+        if self.signals is not None:
+            self.signals.note_report_usage_pull(outcome)
 
     def _run_cluster(self, cluster: ClusterConfig) -> None:
         # Poll immediately on start rather than sleeping first: a restarted dashboard that
@@ -777,6 +874,7 @@ class Poller:
                         self.store, cluster, self.settings.request_timeout_seconds,
                         audit_mode=self.settings.unmanaged_audit_mode,
                         audit_max_per_cycle=self.settings.unmanaged_audit_max_per_cycle,
+                        namespaces_read=self.settings.namespaces_read_enabled,
                     )
                 except Exception:  # noqa: BLE001
                     log.exception("unhandled error refreshing bindings for %s", cluster.name)

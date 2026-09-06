@@ -1,0 +1,168 @@
+{{- include "gsd.reportingGuards" . }}
+{{- if eq (include "gsd.reportingEnabled" .) "true" }}
+{{- $dataClaim := .Values.persistence.existingClaim | default (printf "%s-data" (include "gsd.fullname" .)) }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "gsd.reportName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "gsd.reportLabels" . | nindent 4 }}
+spec:
+  replicas: 1
+  # Recreate: one artefact store, one index, one worker. Two report pods on one RWO claim would
+  # never schedule, and on RWX would race on the run index.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels: {{- include "gsd.reportSelectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "gsd.reportSelectorLabels" . | nindent 8 }}
+      annotations:
+        checksum/reporting: {{ toYaml .Values.reporting | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "gsd.reportName" . }}
+      automountServiceAccountToken: false
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext: {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- with .Values.reporting.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.reporting.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.reporting.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: report
+          image: {{ include "gsd.reportImage" . }}
+          imagePullPolicy: {{ .Values.reporting.image.pullPolicy }}
+          {{- if .Values.reporting.tls.enabled }}
+          command:
+            - python3.14
+            - -m
+            - uvicorn
+            - gsd.reporting.server:create_report_app
+            - --factory
+            - --host
+            - 0.0.0.0
+            - --port
+            - "8443"
+            - --workers
+            - "1"
+            - --ssl-certfile
+            - /etc/gsd/report-tls/tls.crt
+            - --ssl-keyfile
+            - /etc/gsd/report-tls/tls.key
+          {{- end }}
+          ports:
+            - name: https
+              containerPort: 8443
+          env:
+            - name: GSD_LOG_LEVEL
+              value: {{ include "gsd.logLevel" . | quote }}
+            - name: GSD_REPORT_SNAPSHOT_DIR
+              value: /data/report
+            - name: GSD_REPORT_ARTIFACT_DIR
+              value: /artifacts
+            - name: GSD_REPORT_TOKEN_FILE
+              value: /etc/gsd/report/token
+            - name: GSD_REPORT_PDF_ENABLED
+              value: {{ .Values.reporting.pdf.enabled | quote }}
+            - name: GSD_REPORT_PDF_VARIANT
+              value: {{ include "gsd.reportPdfVariant" . | quote }}
+            - name: GSD_REPORT_RETENTION_DAYS
+              value: {{ .Values.reporting.retention.days | quote }}
+            - name: GSD_REPORT_RETENTION_MAX_RUNS
+              value: {{ .Values.reporting.retention.maxRuns | quote }}
+            - name: GSD_REPORT_MARKING
+              value: {{ .Values.reporting.marking | quote }}
+            - name: GSD_REPORT_ENABLED_REPORTS
+              value: {{ include "gsd.reportEnabledReports" . | quote }}
+            # Facts about the DASHBOARD's configuration the coverage block must state and a
+            # snapshot cannot carry: whether capture and the namespaces read are on, the cadence.
+            - name: GSD_REPORT_LOGIN_CAPTURE_ENABLED
+              value: {{ .Values.loginCapture.enabled | quote }}
+            - name: GSD_REPORT_NAMESPACES_READ_ENABLED
+              value: {{ .Values.rbac.namespaces | quote }}
+            - name: GSD_REPORT_BINDING_INTERVAL_SECONDS
+              value: {{ .Values.config.bindingIntervalSeconds | quote }}
+            {{- with .Values.timezone }}
+            - name: TZ
+              value: {{ . | quote }}
+            {{- end }}
+            {{- if .Values.reporting.tls.enabled }}
+            - name: GSD_REPORT_TLS_CERT
+              value: /etc/gsd/report-tls/tls.crt
+            - name: GSD_REPORT_TLS_KEY
+              value: /etc/gsd/report-tls/tls.key
+            {{- end }}
+          securityContext: {{- toYaml .Values.securityContext | nindent 12 }}
+          volumeMounts:
+            # THE DATA CLAIM, READ-ONLY, TWICE OVER: at the claim and at the mount. The report
+            # service opens /data/report/gsd-*.db with immutable=1 and never the live gsd.db;
+            # the read-only mount is what makes "never" a property of the pod, not of the code.
+            - name: data
+              mountPath: /data
+              readOnly: true
+            - name: artifacts
+              mountPath: /artifacts
+            - name: report-token
+              mountPath: /etc/gsd/report
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+            {{- if .Values.reporting.tls.enabled }}
+            - name: report-tls
+              mountPath: /etc/gsd/report-tls
+              readOnly: true
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /report/healthz
+              port: https
+              scheme: {{ ternary "HTTPS" "HTTP" .Values.reporting.tls.enabled }}
+            initialDelaySeconds: 10
+            periodSeconds: 60
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /report/readyz
+              port: https
+              scheme: {{ ternary "HTTPS" "HTTP" .Values.reporting.tls.enabled }}
+            initialDelaySeconds: 5
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources: {{- toYaml .Values.reporting.resources | nindent 12 }}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ $dataClaim }}
+            readOnly: true
+        - name: artifacts
+          {{- if .Values.reporting.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ .Values.reporting.persistence.existingClaim | default (printf "%s-artifacts" (include "gsd.reportName" .)) }}
+          {{- else }}
+          # Artefacts reset on every restart; every one is regenerable from a snapshot.
+          emptyDir: {}
+          {{- end }}
+        - name: report-token
+          secret:
+            secretName: {{ include "gsd.reportName" . }}-token
+            defaultMode: 288
+        - name: tmp
+          emptyDir: {}
+        {{- if .Values.reporting.tls.enabled }}
+        - name: report-tls
+          secret:
+            secretName: {{ include "gsd.reportName" . }}-tls
+            defaultMode: 288
+        {{- end }}
+{{- end }}

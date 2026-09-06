@@ -298,6 +298,52 @@ plus one in-flight page.
 
 Grant the wide view through your normal RBAC process, never a chart value:
 
+### Reporting — the report service
+
+A second pod on its own image renders eleven evidence reports (docs/DESIGN_reporting_service.md) —
+the namespace access report, an access matrix, privileged access, binding findings, groups, users,
+login activity, dormant access, GroupSync health, a compliance snapshot and an access-certification
+pack — as self-contained HTML and PDF/A, from a **read-only copy** of the dashboard's database that
+the dashboard's leader writes under `/data/report`. Reached through the proxy under `/report/` with
+the same login; administrators (the wide tier) generate from the **Reports** tab. Every value is
+`reporting.*`; the refuse/derive column says what happens when switches meet.
+
+| Value | Default | Meaning | Refuse / derive |
+|---|---|---|---|
+| `reporting.enabled` | `true` | the module | **refused** with `oauthProxy.enabled=false`, `persistence.enabled=false`, `replicaCount>1`, `rbac.bindings=false`, or a data claim that is not `ReadWriteMany` (each message names the value and the remedy) |
+| `reporting.image.repository` / `.tag` / `.digest` / `.pullPolicy` | `quay.io/ephico2real/group-sync-dashboard-report` / `""` / `""` / `Always` | the report image; an empty tag resolves the chart's `appVersion`, like `image.tag` — the same version as the dashboard, deliberately | digest wins over tag; a malformed digest is refused |
+| `reporting.tls.enabled` | `true` | HTTPS between the proxy and the report pod and between the poller and it, with the service-ca certificate; the proxy verifies with `-upstream-ca` | independent; the pre-flight below |
+| `reporting.networkPolicy.enabled` / `.monitoringNamespaces` | `true` / `[openshift-user-workload-monitoring, openshift-monitoring]` | ingress to the report pod only from the dashboard pod, the schedule Jobs and — with `monitoring.serviceMonitor.enabled` — Prometheus pods in the named namespaces | the monitoring rule is **derived** from the ServiceMonitor switch |
+| `reporting.pdf.enabled` / `.variant` | `true` / `pdf/a-2b` | PDF output and its archival profile (`""`, `pdf/a-1b`, `pdf/a-2b`, `pdf/a-2u`, `pdf/a-3b`, `pdf/a-3u`, `pdf/a-4`); `3b` embeds the canonical `.json` in the PDF | an unknown variant is refused; a variant with pdf off is ignored (NOTES say so) |
+| `reporting.persistence.enabled` / `.size` / `.storageClass` / `.accessMode` / `.existingClaim` | `true` / `2Gi` / `""` / `ReadWriteOnce` / `""` | where artefacts live; **no** keep annotation — every artefact is regenerable. Off = emptyDir | independent |
+| `reporting.snapshot.intervalSeconds` / `.keep` | `300` / `2` | how often the leader writes the read-only copy and how many it keeps | below `60` refused (a `VACUUM INTO` holds a read transaction) |
+| `reporting.retention.days` / `.maxRuns` | `90` / `500` | artefact retention, whichever bound is hit first; `0` disables a bound | — |
+| `reporting.ticket.ttlSeconds` | `300` | how long a minted ticket is valid; the page re-mints on expiry | outside `30..3600` refused |
+| `reporting.marking` | `Handling: internal — access review evidence` | the first line of every report and the PDF's running header | — |
+| `reporting.reports.<name>.enabled` | `true` for nine; `loginActivity` `""` | one switch per report; `loginActivity` **follows `loginCapture.enabled`** by default | `loginActivity=true` with capture off is refused; anything but `true`/`false` (or `""` for loginActivity) is refused |
+| `reporting.schedules` | `[]` | unattended runs: one CronJob per entry (`name`, `schedule`, `report`, `cluster`, `params`, `formats`) posting with the service token; nothing is mailed | `report` must be an enabled catalogue name; `name` a DNS label |
+| `reporting.podDisruptionBudget.enabled` / `.maxUnavailable` / `.minAvailable` | `true` / `1` / `""` | the report Deployment's own budget; same semantics as the dashboard's | selects the report pods only, never the schedule Jobs |
+| `reporting.resources` / `.nodeSelector` / `.tolerations` / `.affinity` | requests `50m`/`128Mi`, limits `500m`/`768Mi` / `{}` / `[]` / `{}` | the report pod's own scheduling; nothing is derived from the data claim's access mode | — |
+
+**Pre-flight for TLS between the pods.** The shipped proxy must know `-upstream-ca`:
+
+```sh
+oc exec -n <ns> deploy/<release> -c oauth-proxy -- /usr/bin/oauth-proxy --help 2>&1 | grep upstream-ca
+```
+
+Measured on `ose-oauth-proxy-rhel9:v4.15`: the flag is present. If a proxy image lacks it, set
+`reporting.tls.enabled=false` (plain HTTP on the pod network; the ticket and the NetworkPolicy still
+hold) until the image moves.
+
+**Upgrading to 0.20.0.** Reporting is **on by default**. A default upgrade gains a second Deployment,
+Service, Secret, ServiceAccount, PVC and NetworkPolicy, a second upstream and a CA mount on the proxy.
+A values file that cannot host it — the proxy off, `persistence.enabled=false`, more than one replica,
+a `ReadWriteOnce`/`ReadWriteOncePod` data claim, or `rbac.bindings=false` — is **refused by `helm
+upgrade` with the value named**; set `reporting.enabled=false` explicitly to keep such an install as
+it is. The token Secret is generated once and reused (the `oauth-cookie` pattern); under ArgoCD
+(`helm template` has no cluster) pre-create it and add `data.token` to `ignoreDifferences`, as the
+ArgoCD section explains for the cookie.
+
 ### Workload
 
 | Key | Default | Notes |
@@ -365,10 +411,11 @@ Grant the wide view through your normal RBAC process, never a chart value:
 | `authLogLevel.waitSeconds` / `.activeDeadlineSeconds` / `.revertDeadlineSeconds` | `180` / `300` / `120` | the Job polls the Deployment's `observedGeneration` rather than using `oc rollout status`, which returned success ~30s **before** the rollout began. A wait timeout is not a failure — the patch has landed |
 | `rbac.users` | `true` | adds `get`/`list` on `users`. The User objects are the **source of the Users tab**: OpenShift creates one at first login, so the tab counts people who have logged in, with group membership as an attribute. Also supplies `fullName` for every member surface. Switchable off; the poll still succeeds, but the Users tab then has no source and says so by name rather than showing an empty list |
 | `rbac.identities` | `false` | adds `get`/`list` on `identities.user.openshift.io` — one Identity per (provider, id), created by OpenShift at the first successful login for `mappingMethod: claim`/`add` (by an administrator beforehand for `lookup`), so its creation time is the first login where the User's is approximate; the page labels it `identity`, never "exact". Also the app's read switch (`identitiesReadEnabled`). Requires `rbac.users`; the chart refuses the pair otherwise. Off by default: a grant the chart does not otherwise need |
+| `rbac.namespaces` | `false` | adds `get`/`list` on `namespaces` (core group). Lets the report service's namespace report attest **absence** — "this namespace exists and has no grants" — instead of "none observed". Off by default: extra RBAC |
 | `monitoring.serviceMonitor.enabled` | `false` | needs the Prometheus Operator CRDs (OpenShift ships them; the install fails on the unknown kind where they are absent). Off by default because the reference cluster runs no Prometheus; rendering with it on is verified |
 | `monitoring.serviceMonitor.interval` / `.scrapeTimeout` | `30s` / `10s` | every series is recomputed from SQLite on scrape and each scrape takes a read snapshot. Faster buys no resolution — the data only changes once per poll |
 | `monitoring.serviceMonitor.labels` | `{}` | extra metadata labels. Usually how a cluster's Prometheus selects which ServiceMonitors it owns |
-| `monitoring.prometheusRule.enabled` | `false` | **twelve** alerts, fourteen with `backup.offsite.enabled` — see below |
+| `monitoring.prometheusRule.enabled` | `false` | **fourteen** alerts — two of them render only with `reporting.enabled` (the default) — sixteen with `backup.offsite.enabled`; see below |
 | `monitoring.prometheusRule.labels` | `{}` | as above, for rule selection |
 | `monitoring.prometheusRule.overdueSeconds` | `7200` | a GroupSync has not synced for this long |
 | `monitoring.prometheusRule.notPollingSeconds` | `600` | catches a dead poll loop, which the health endpoints cannot. **Must stay above ~2× `config.pollIntervalSeconds`** or it fires continuously on a healthy deployment |
@@ -494,7 +541,7 @@ evaluated. That is a statement of intent, not an isolation boundary — OpenShif
 `basic-user` to `system:authenticated`, which already grants `get`/`list` on clusterroles to
 every authenticated identity including this one.
 
-#### The twelve alerts (fourteen with `backup.offsite`)
+#### The fourteen alerts (sixteen with `backup.offsite`)
 
 | Alert | Fires on | `for` |
 |---|---|---|
@@ -510,6 +557,8 @@ every authenticated identity including this one.
 | `GroupSyncDashboardVisibilityChecksFailing` | the SubjectAccessReview behind per-user visibility is erroring, so readers are silently served the self view fail-closed | `for.visibilityFailing`, `15m` |
 | `GroupSyncDashboardLoginCaptureStalled` | no successful oauth-log read for `captureStalledSeconds` while capture is enabled — the Logins page silently freezes | `for.captureStalled`, `15m` |
 | `GroupSyncDashboardBackupStale` | the newest file in `backupDir` is older than `backupStaleSeconds` — the only copy of the un-refetchable history has stopped being taken | `for.backupStale`, `30m` |
+| `GroupSyncDashboardReportUsagePullFailing` | the dashboard's poller could not pull the report service's usage feed (token mismatch, Service/TLS, or a shape change) and has not succeeded in the window — runs are not lost, the Usage tab's Reports table stops advancing. Rendered only with `reporting.enabled` | `for.reportPull`, `30m` |
+| `GroupSyncDashboardReportSnapshotStale` | `gsd_report_snapshot_age_seconds` above four snapshot intervals — the dashboard's leader is not writing copies, so a report would print stale data with an honest "data as of" line. Rendered only with `reporting.enabled` | `for.reportSnapshot`, `30m` |
 | `GroupSyncDashboardOffsiteBackupStale` | *(`backup.offsite.enabled` only)* the CronJob last succeeded more than `offsiteBackupStaleSeconds` ago — nothing newer is off the volume | `for.offsiteBackupStale`, `30m` |
 | `GroupSyncDashboardOffsiteBackupUnobserved` | *(`backup.offsite.enabled` only)* `kube_cronjob_status_last_successful_time` has no series for the CronJob: it has never succeeded, or kube-state-metrics is not scraped here — in which case the stale alert can never fire and this is the only signal | `for.offsiteBackupUnobserved`, `1h` |
 

@@ -1,0 +1,28 @@
+/* The report stylesheet, inlined into every HTML artefact. Print-first: A4, 18 mm margins,
+   "Page X of Y" in the margin box (Chromium ≥ 131 renders @page margin boxes with page counters),
+   tables that break across pages without splitting a row, one section per page where the model
+   asks for it. Three colours only — #000, #fff, #555 — because a report is read on paper as
+   often as on a screen and a 7.5:1 contrast survives a photocopier. */
+:root { color: #000; background: #fff; font: 11pt/1.4 "DejaVu Sans", "Liberation Sans", Arial, Helvetica, sans-serif; }
+body { margin: 0 auto; max-width: 190mm; padding: 12mm; }
+header, footer { border-bottom: 1px solid #000; padding-bottom: 6pt; margin-bottom: 10pt; }
+footer { border: 0; border-top: 1px solid #000; margin-top: 14pt; font-size: 9pt; color: #555; }
+h1 { font-size: 20pt; margin: 4pt 0; }
+h2 { font-size: 14pt; margin: 14pt 0 6pt; border-bottom: 1px solid #555; }
+h3 { font-size: 11pt; margin: 10pt 0 4pt; }
+.marking { font-size: 9pt; letter-spacing: .04em; text-transform: uppercase; color: #555; margin: 0; }
+.sub, .sha { font-size: 9.5pt; color: #555; margin: 2pt 0; }
+code { font-family: "DejaVu Sans Mono", "JetBrains Mono", monospace; font-size: 9pt; }
+table { border-collapse: collapse; width: 100%; page-break-inside: auto; font-size: 9.5pt; }
+tr { page-break-inside: avoid; }
+th, td { border: 1px solid #555; padding: 2pt 4pt; text-align: left; vertical-align: top; }
+thead th { background: #fff; border-bottom: 2px solid #000; }
+table.kv th { width: 34%; font-weight: normal; color: #555; }
+.empty { color: #555; font-style: italic; margin: 2pt 0 6pt; }
+.note { font-size: 9.5pt; color: #555; margin: 4pt 0 8pt; }
+.note.warning { color: #000; border-left: 3px solid #000; padding-left: 6pt; font-weight: bold; }
+.note.caveat { color: #000; border-left: 3px solid #555; padding-left: 6pt; }
+.block { margin-bottom: 8pt; }
+button.no-print { font: inherit; padding: 4pt 10pt; border: 1px solid #000; background: #fff; cursor: pointer; }
+@page { size: A4; margin: 18mm; @bottom-right { content: "Page " counter(page) " of " counter(pages); } }
+@media print { .no-print { display: none; } section.break { page-break-before: always; } body { padding: 0; max-width: none; } }

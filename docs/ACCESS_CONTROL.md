@@ -97,6 +97,7 @@ diverge, so Usage gets the higher bar.
 | Namespace audit | grants affecting them | all | all |
 | Logins | their own attempts | all | all |
 | Usage | their own activity | **their own activity** | all |
+| Reports | *For administrators only* | all | all |
 | Overview | *For administrators only* | all | all |
 | Access granted | their own grants, via their groups | all | all |
 | RBAC policy | *For administrators only* | all | all |
@@ -129,6 +130,9 @@ subset. (Access granted has one: a reader's own path, above.)
 | `/api/clusters/{c}/cluster-access` | their own gate status | all |
 | `/api/alerts` | filtered to `SELF_ALERT_KINDS`; the `reconcile_error` detail is replaced with a generic sentence | all kinds, full detail |
 | `/api/dashboard/activity` | their own rows | all — **usage tier only** |
+| `/api/report/ticket` | **403** | a signed ticket for the report service, bound to this viewer |
+| `/api/dashboard/reports` | their own runs | all — **usage tier only**, like activity |
+| `/report/**` | the report service's API behind the same proxy, admitted only by a ticket (viewer) or the service token; a viewer without a ticket gets 401, a ticket for another identity 403 | — |
 | `/api/clusters/{c}/bindings/findings` | **403** | all |
 | `/api/clusters/{c}/operator-configs` | **403** | all |
 | `/api/clusters` | reachable; cluster-wide `operator_configs` withheld | full card |
@@ -204,7 +208,7 @@ narrower tier, because a tier that hides the reader's own access path has nothin
     │     resolver answers exactly "all"?       ──────────►  "all"
     │
     ├─ require_admin_tier(request)              api.py:340   403 unless scope == "all"
-    │     used by: bindings/findings, operator-configs
+    │     used by: bindings/findings, operator-configs, mint ticket (/api/report/ticket)
     │
     ├─ usage_scope(request)                     api.py:284   the SECOND, independent tier
     │     userActivity.visibility == all?       ──────────►  "all"   (blunt override, wins)

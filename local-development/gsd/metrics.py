@@ -62,6 +62,8 @@ ALERT_KINDS = (
 # and a typo'd label value fails loudly in tests instead of minting a new series.
 TIER_THRESHOLDS = ("admin", "usage")
 TIER_CHECK_OUTCOMES = ("allowed", "denied", "unreachable", "auth_failed", "forbidden", "error")
+# The poller's pulls of the report service's usage feed (docs/specs/SPEC_C3_reporting_microservice.md §3.2).
+REPORT_PULL_OUTCOMES = ("ok", "refused", "unreachable", "error")
 TIERS = ("all", "self")
 RETENTION_TABLES = ("login_event", "dashboard_user_activity", "membership_event", "sync_event")
 
@@ -90,6 +92,7 @@ class RuntimeSignals:
         self._backup_failures = 0
         self._poll_seconds: dict[str, float] = {}
         self._audit_unmatched: dict[tuple[str, str], int] = {}
+        self._report_pulls: dict[str, int] = {}
 
     def note_tier_check(self, threshold: str, outcome: str) -> None:
         with self._lock:
@@ -129,6 +132,10 @@ class RuntimeSignals:
             key = (cluster, outcome)
             self._audit_unmatched[key] = self._audit_unmatched.get(key, 0) + count
 
+    def note_report_usage_pull(self, outcome: str) -> None:
+        with self._lock:
+            self._report_pulls[outcome] = self._report_pulls.get(outcome, 0) + 1
+
     def snapshot(self) -> dict:
         """One consistent copy for the collector — a scrape never reads a half-updated dict."""
         with self._lock:
@@ -140,6 +147,7 @@ class RuntimeSignals:
                 "backup_failures": self._backup_failures,
                 "poll_seconds": dict(self._poll_seconds),
                 "audit_unmatched": dict(self._audit_unmatched),
+                "report_pulls": dict(self._report_pulls),
             }
 
 
@@ -162,6 +170,9 @@ class DashboardCollector:
         # but claims no measurements it never took.
         self.signals = signals
         self.settings = settings
+        # Whether the report service is configured: the usage-pull family is declared only then,
+        # pre-seeded to zero (docs/specs/SPEC_C3_reporting_microservice.md §8.15.6).
+        self.reporting_enabled = False
 
     def collect(self):
         """Materialise the whole exposition inside ONE snapshot, then yield it.
@@ -609,6 +620,22 @@ class DashboardCollector:
 
         yield from (checks, decisions, refusals, retention, backup_failures, audit_unmatched, poll_duration)
 
+        report_pulls = CounterMetricFamily(
+            "gsd_report_usage_pulls_total",
+            "Pulls of the report service's usage feed by the poller, by outcome. `refused` is the "
+            "shared token disagreeing between the two pods; `unreachable` is the Service or its TLS; "
+            "a rising `error` with a green report pod is the feed's shape changing. Pre-seeded to 0 "
+            "so increase() has a baseline; absent entirely when reporting is off.",
+            labels=["outcome"],
+        )
+        # DECLARED whenever reporting is on (the rule that references it renders then), sampled
+        # only when the process seam exists — the declared-even-unwired rule every family follows.
+        if self.reporting_enabled or (snap is not None and snap["report_pulls"]):
+            if snap is not None:
+                for o in REPORT_PULL_OUTCOMES:
+                    report_pulls.add_metric([o], snap["report_pulls"].get(o, 0))
+            yield report_pulls
+
         capture_enabled = GaugeMetricFamily(
             "gsd_login_capture_enabled",
             "1 when login capture is configured on. While this is 1, absence of "
@@ -646,10 +673,12 @@ class DashboardCollector:
 
 
 def build_registry(store: StorageBackend, grace: timedelta, elector=None,
-                   signals: RuntimeSignals | None = None, settings=None) -> CollectorRegistry:
+                   signals: RuntimeSignals | None = None, settings=None,
+                   reporting_enabled: bool = False) -> CollectorRegistry:
     """A dedicated registry — the default one carries process/GC collectors we do not want
     duplicated per app instance, and tests build several apps in one interpreter."""
     registry = CollectorRegistry()
-    registry.register(DashboardCollector(store, grace, elector,
-                                         signals=signals, settings=settings))
+    collector = DashboardCollector(store, grace, elector, signals=signals, settings=settings)
+    collector.reporting_enabled = reporting_enabled
+    registry.register(collector)
     return registry

@@ -68,6 +68,41 @@ spec:
       {{- end }}
       interval: {{ .Values.monitoring.serviceMonitor.interval }}
       scrapeTimeout: {{ .Values.monitoring.serviceMonitor.scrapeTimeout }}
+{{- if eq (include "gsd.reportingEnabled" .) "true" }}
+---
+# The report service's own exposition (gsd_report_*), scraped on its Service. Same CA and
+# serverName rule as above; /report/metrics is unauthenticated on the Service and reachable from
+# the monitoring namespaces through the NetworkPolicy.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "gsd.reportName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gsd.reportLabels" . | nindent 4 }}
+    {{- with .Values.monitoring.serviceMonitor.labels }}{{- toYaml . | nindent 4 }}{{- end }}
+  {{- if .Values.argocd.enabled }}
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+  {{- end }}
+spec:
+  selector:
+    matchLabels: {{- include "gsd.reportSelectorLabels" . | nindent 6 }}
+  endpoints:
+    - port: https
+      path: /report/metrics
+      {{- if .Values.reporting.tls.enabled }}
+      scheme: https
+      tlsConfig:
+        ca:
+          configMap:
+            name: openshift-service-ca.crt
+            key: service-ca.crt
+        serverName: {{ include "gsd.reportName" . }}.{{ .Release.Namespace }}.svc
+      {{- end }}
+      interval: {{ .Values.monitoring.serviceMonitor.interval }}
+      scrapeTimeout: {{ .Values.monitoring.serviceMonitor.scrapeTimeout }}
+{{- end }}
 {{- end }}
 {{- if .Values.monitoring.prometheusRule.enabled }}
 ---
@@ -295,5 +330,28 @@ spec:
               completed (it exists only after the first success), or kube-state-metrics is not
               scraped into this Prometheus — in which case the stale alert above can never fire
               and this one is the only signal.
+        {{- end }}
+        {{- if eq (include "gsd.reportingEnabled" .) "true" }}
+        # The dashboard's poller could not pull the report service's usage feed for three
+        # consecutive scrapes' worth of cycles: token mismatch (refused), Service/TLS (unreachable),
+        # or a shape change (error). Runs are not lost — the feed is pulled from a watermark — but
+        # the Usage tab's "Reports" table stops advancing.
+        - alert: GroupSyncDashboardReportUsagePullFailing
+          expr: increase(gsd_report_usage_pulls_total{outcome!="ok"}[15m]) > 0 and increase(gsd_report_usage_pulls_total{outcome="ok"}[15m]) == 0
+          for: {{ .Values.monitoring.prometheusRule.for.reportPull }}
+          labels: {severity: warning}
+          annotations:
+            summary: "the dashboard cannot pull the report service's usage feed"
+            description: "Check the report pod, the -report-token Secret in both pods, and TLS (oc logs deploy/{{ include "gsd.fullname" . }} -c dashboard | grep 'report usage pull')."
+        # The newest snapshot the report service would render from is older than four snapshot
+        # intervals: the dashboard's leader is not writing copies (reporting off on one side, the
+        # data claim not mounted, or a VACUUM INTO failing — see the dashboard log).
+        - alert: GroupSyncDashboardReportSnapshotStale
+          expr: gsd_report_snapshot_age_seconds > {{ mul 4 .Values.reporting.snapshot.intervalSeconds }}
+          for: {{ .Values.monitoring.prometheusRule.for.reportSnapshot }}
+          labels: {severity: warning}
+          annotations:
+            summary: "the report service's data copy is stale"
+            description: "gsd_report_snapshot_age_seconds is above four snapshot intervals; reports would print stale data with an honest 'data as of' line."
         {{- end }}
 {{- end }}

@@ -1,0 +1,16 @@
+{{- if and (include "gsd.reportingEnabled" . | eq "true") .Values.reporting.podDisruptionBudget.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "gsd.reportName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "gsd.reportLabels" . | nindent 4 }}
+spec:
+  {{- if .Values.reporting.podDisruptionBudget.minAvailable }}
+  minAvailable: {{ .Values.reporting.podDisruptionBudget.minAvailable }}
+  {{- else }}
+  maxUnavailable: {{ .Values.reporting.podDisruptionBudget.maxUnavailable | default 1 }}
+  {{- end }}
+  selector:
+    matchLabels: {{- include "gsd.reportSelectorLabels" . | nindent 6 }}
+{{- end }}

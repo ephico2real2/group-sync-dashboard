@@ -24,8 +24,11 @@ from gsd.store import Store
 
 GSD = pathlib.Path(__file__).resolve().parents[1] / "gsd"
 
-# The ONLY module allowed to know what the engine is.
-BACKEND = "store.py"
+# The modules allowed to know what the engine is: the writer, and the report service's READ-ONLY
+# view over a VACUUM INTO copy (gsd/reporting/snapshot.py) — the second pod cannot share the first's
+# WAL, so it gets its own backend, and its docstring says why. Nothing else.
+BACKENDS = {"store.py", "reporting/snapshot.py"}
+BACKEND = "store.py"     # the writer; the Protocol tests below are about it
 
 # Anything that names a specific engine or speaks its dialect.
 ENGINE_IMPORTS = {
@@ -54,7 +57,7 @@ def modules():
     rglob, not glob: a subpackage such as gsd/db/queries.py would otherwise never be
     looked at, and "put the SQL in a subdirectory" is the first thing anyone tries.
     """
-    return [p for p in sorted(GSD.rglob("*.py")) if p.name != BACKEND]
+    return [p for p in sorted(GSD.rglob("*.py")) if str(p.relative_to(GSD)) not in BACKENDS]
 
 
 @pytest.mark.parametrize("path", modules(), ids=lambda p: p.name)
@@ -349,3 +352,23 @@ class TestHealthIsNamespaced:
             assert store.maintain() is None
         finally:
             store.close()
+
+
+def test_the_snapshot_backend_is_read_only_by_construction():
+    """It may import sqlite3 and speak SQL — and it must never write: no INSERT/UPDATE/DELETE/
+    CREATE shape anywhere in it, and every connect() names immutable=1&mode=ro."""
+    src = (GSD / "reporting" / "snapshot.py").read_text()
+    tree = ast.parse(src)
+    # Docstrings may NAME the statements they forbid (the module's opening line says what a
+    # VACUUM INTO copy is); only string constants that could reach sqlite are held to the rule.
+    docstrings = set()
+    for scope in ast.walk(tree):
+        if isinstance(scope, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            body = getattr(scope, "body", [])
+            if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
+                docstrings.add(id(body[0].value))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in docstrings:
+            up = " ".join(node.value.upper().split())
+            assert not _re.search(r"\b(INSERT\s+INTO|UPDATE\s+\w+\s+SET|DELETE\s+FROM|CREATE\s+TABLE|VACUUM)\b", up), node.value[:60]
+    assert "immutable=1&mode=ro" in src

@@ -411,3 +411,66 @@ jobs:
             echo "::error::Grype did not identify the pack stage as Hummingbird OS (got '${distro:-<none>}'); the scans above matched no OS package and prove nothing"
             exit 1
           fi
+
+      # Build and scan BOTH report stages, the way the image job already does for gsd:pack:
+      # the final image proves what ships; the pack stage proves the RPM-installed tools copied
+      # into it were assessed, and its inventory feeds the Hummingbird-blindness check.
+      - name: Build the report image
+        working-directory: local-development
+        run: docker build -f Containerfile.report -t gsd-report:ci .
+
+      - name: Build the report pack stage
+        working-directory: local-development
+        run: docker build -f Containerfile.report --target pack -t gsd-report:pack .
+
+      - name: Scan the report image for FIXABLE vulnerabilities
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        with:
+          image: gsd-report:ci
+          grype-version: v0.118.0
+          fail-build: true
+          only-fixed: true
+          severity-cutoff: high
+          output-format: table
+
+      - name: Scan the report pack stage for FIXABLE vulnerabilities
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        with:
+          image: gsd-report:pack
+          grype-version: v0.118.0
+          fail-build: true
+          only-fixed: true
+          severity-cutoff: high
+          output-format: table
+
+      - name: Full inventory, report image
+        if: always()
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        with:
+          image: gsd-report:ci
+          grype-version: v0.118.0
+          fail-build: false
+          severity-cutoff: medium
+          output-format: table
+
+      - name: Full inventory, report pack stage
+        if: always()
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        with:
+          image: gsd-report:pack
+          grype-version: v0.118.0
+          fail-build: false
+          severity-cutoff: medium
+          output-format: json
+          output-file: report-pack-inventory.json
+
+      - name: Grype identified the report pack stage distribution
+        if: always()
+        run: |
+          distro=$(jq -r '.distro.name // ""' report-pack-inventory.json)
+          echo "report pack distro: ${distro:-<none>} $(jq -r '.distro.version // ""' report-pack-inventory.json)"
+          jq -r '[.matches[] | .vulnerability.severity] | group_by(.) | map("\(.[0]): \(length)") | join(", ")' report-pack-inventory.json
+          if [ "$distro" != "hummingbird" ]; then
+            echo "::error::Grype did not identify the report pack stage as Hummingbird OS; the report scans proved nothing"
+            exit 1
+          fi

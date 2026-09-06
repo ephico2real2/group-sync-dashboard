@@ -111,3 +111,18 @@ needed; if authLogLevel.manage is still true with enabled=false, the Job is conv
 cluster back to Normal and you can set manage=false once the rollout has finished.
 First read backfills as far as the rotated audit files reach{{ if gt (int .Values.loginCapture.retentionDays) 0 }}, {{ .Values.loginCapture.retentionDays }} days at most{{ else }} (retentionDays is 0: no age limit){{ end }}.
 {{- end }}
+{{- if eq (include "gsd.reportingEnabled" .) "true" }}
+
+Reporting is ON: the report service runs as deploy/{{ include "gsd.reportName" . }} on
+{{ include "gsd.reportImage" . }}, reached through the dashboard's proxy under /report/. Administrators
+(the wide tier) generate reports from the Reports tab; the Usage tab records who generated what.
+{{- if not .Values.reporting.persistence.enabled }}
+NOTE: reporting.persistence is off — artefacts are lost when the report pod restarts (each is
+regenerable from a snapshot).
+{{- end }}
+{{- if and (not .Values.reporting.pdf.enabled) (ne (include "gsd.reportPdfVariant" .) "") }}
+NOTE: reporting.pdf.variant is set but reporting.pdf.enabled is false; the variant is ignored.
+{{- end }}
+Pre-flight for TLS between the pods (reporting.tls.enabled):
+  oc exec -n {{ .Release.Namespace }} deploy/{{ include "gsd.fullname" . }} -c oauth-proxy -- /usr/bin/oauth-proxy --help 2>&1 | grep upstream-ca
+{{- end }}

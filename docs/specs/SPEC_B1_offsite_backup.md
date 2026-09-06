@@ -64,7 +64,7 @@ Everything below is grounded in files read during this pass; each claim is cited
 | The chart's Job precedent uses an operator-supplied image for a CLI the dashboard image lacks | `charts/group-sync-dashboard/templates/auth-loglevel-job.yaml#authLogLevel.image` |
 | The pod has sh, curl, jq, ls, cat, base64, mkdir, chgrp, chmod, rm, rmdir, python3.14 — no tar/gzip/rsync/aws/head/wc/grep; the interpreter is `python3.14`; `PYTHONDONTWRITEBYTECODE=1` | `docs/DESIGN_hardened_image.md#What it changed for operators`, `local-development/Containerfile#PYTHONDONTWRITEBYTECODE` |
 | Alert-rule tests extract only `gsd_*` names from `expr`, so a `kube_*` metric in a rule does not need a collector HELP line | `tests/test_metrics.py` (`test_every_metric_an_alert_references_is_declared_by_the_collector`) |
-| README and chart README both say "eleven" alerts | `README.md#eleven alerting`, `charts/group-sync-dashboard/README.md#The twelve alerts` |
+| README and chart README both say "eleven" alerts | `README.md#eleven alerting`, `charts/group-sync-dashboard/README.md#The fourteen alerts` |
 | The `helm template` test helper is `render(**values)` with `__` → `.` | `tests/test_chart_strategy.py#render` |
 
 ---

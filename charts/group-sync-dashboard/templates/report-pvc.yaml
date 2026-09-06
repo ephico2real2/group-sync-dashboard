@@ -1,0 +1,18 @@
+{{- if and (eq (include "gsd.reportingEnabled" .) "true") .Values.reporting.persistence.enabled (not .Values.reporting.persistence.existingClaim) }}
+# Artefacts. No helm.sh/resource-policy: keep — unlike the data claim, nothing here is irreplaceable;
+# every document can be regenerated from a snapshot, and a stale artefact store is not history.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "gsd.reportName" . }}-artifacts
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "gsd.reportLabels" . | nindent 4 }}
+spec:
+  accessModes: [{{ .Values.reporting.persistence.accessMode | default "ReadWriteOnce" }}]
+  {{- with .Values.reporting.persistence.storageClass }}
+  storageClassName: {{ . }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.reporting.persistence.size }}
+{{- end }}

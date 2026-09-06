@@ -3871,3 +3871,181 @@ class TestIdleTimeout:
         p.clock.run_for(545_000)
         width = p.evaluate("() => getComputedStyle(document.querySelector('.idle-dialog')).borderTopWidth")
         assert width == "2px", width
+
+
+# ──────────────────────────────────────────────────────────────────────────────────────────────────
+# The Reports tab (docs/specs/SPEC_C3_reporting_microservice.md §9.11). The proxy's path routing is
+# simulated IN-PROCESS: one uvicorn serving an ASGI router that sends /report/* to the report
+# service and everything else to the dashboard, both trusting the X-Forwarded-User the browser
+# context sends — the way scoped_server already simulates the proxy.
+# ──────────────────────────────────────────────────────────────────────────────────────────────────
+
+REPORT_SECRET = b"u" * 48
+
+
+@pytest.fixture(scope="module")
+def reporting_server(tmp_path_factory):
+    from datetime import UTC as _UTC, datetime as _dt
+    from gsd.reporting.config import REPORT_NAMES, ReportSettings
+    from gsd.reporting.server import build_report_app
+    from gsd.store import Store as _Store
+
+    root = tmp_path_factory.mktemp("gsd-report")
+    db = str(root / "ui.db")
+    _seed(db)
+    snapshots, artifacts, token = root / "snapshots", root / "artifacts", root / "token"
+    snapshots.mkdir(); artifacts.mkdir(); token.write_bytes(REPORT_SECRET)
+    writer = _Store(db)
+    assert writer.snapshot(str(snapshots), keep=2)
+    writer.close()
+    from pathlib import Path
+    vendor = Path(__file__).resolve().parents[1] / "gsd" / "static" / "vendor"
+    clock = {"now": _dt.now(_UTC)}
+    report_settings = ReportSettings(snapshot_dir=str(snapshots), artifact_dir=str(artifacts), pdf_enabled=True, pdf_variant="pdf/a-2b",
+                                     font_regular=str(vendor / "DejaVuSans.ttf"), font_bold=str(vendor / "DejaVuSans-Bold.ttf"),
+                                     enabled_reports=tuple(n for n in REPORT_NAMES if n != "login-activity"),
+                                     login_capture_enabled=False)
+    report_app = build_report_app(report_settings, secret=REPORT_SECRET, clock=lambda: clock["now"])
+    settings = Settings(
+        clusters=[ClusterConfig("crc-local", "https://api.crc.testing:6443", token_env="X")],
+        db_path=db, login_capture_enabled=True, oauth_proxy_enabled=True,
+        reporting_url="http://127.0.0.1:1/unused", reporting_token_file=str(token), reporting_ticket_ttl_seconds=120,
+    )
+    dash_app = build_app(settings, run_poller=False)
+    dash_app.state.tier_resolver = _TierByName()
+
+    async def router(scope, receive, send):
+        if scope["type"] == "lifespan":
+            # uvicorn runs with lifespan off (below); the report worker is started by hand.
+            return
+        target = report_app if scope.get("path", "").startswith("/report") else dash_app
+        await target(scope, receive, send)
+
+    report_app.state.runs.start()
+    port = _free_port()
+    srv = uvicorn.Server(uvicorn.Config(router, host="127.0.0.1", port=port, log_level="warning", lifespan="off"))
+    thread = threading.Thread(target=srv.run, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{port}"
+    for _ in range(100):
+        try:
+            if httpx.get(f"{base}/healthz", timeout=1).status_code == 200:
+                break
+        except httpx.HTTPError:
+            time.sleep(0.1)
+    else:
+        raise RuntimeError("reporting dashboard server did not start")
+    yield base, clock, report_app
+    srv.should_exit = True
+    thread.join(timeout=5)
+    report_app.state.runs.stop()
+
+
+def _reports_page(browser, base, user, fake_clock=False):
+    ctx = browser.new_context(extra_http_headers={"X-Forwarded-User": user, "X-Forwarded-Email": f"{user}@example.com"}, accept_downloads=True)
+    page = ctx.new_page()
+    errors: list[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    if fake_clock:
+        page.clock.install()          # before navigation, so the page's own timers are the fake clock's
+    page.goto(base)
+    page.wait_for_selector('button.tab:text-is("Overview")', timeout=10_000)   # the nav renders for every tier
+    return ctx, page, errors
+
+
+class TestReportsTab:
+    def test_the_administrator_generates_a_report_and_downloads_the_pdf(self, browser, reporting_server):
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.click('button.tab:text-is("Reports")')
+            page.wait_for_selector("#report-picker")
+            entries = page.locator(".report-pick")
+            assert entries.count() == 11
+            login = page.locator("#report-pick-login-activity")
+            assert login.is_disabled() and "reporting.reports.loginActivity.enabled" in login.inner_text()
+            page.click("#report-pick-namespace-access")
+            page.fill("#report-param-namespace-access-namespaces", "prod-ns")
+            page.locator("#report-param-namespace-access-namespaces").dispatch_event("change")
+            gen = page.locator("#report-generate")
+            gen.focus()
+            gen.click()
+            page.wait_for_selector("#report-status:has-text('done')", timeout=30_000)
+            assert page.evaluate("document.activeElement && document.activeElement.id") == "report-generate", "focus survives the repaints"
+            status = page.locator("#report-status").inner_text()
+            assert "sha256" in status and "data as of" in status
+            buttons = page.locator("#report-status [data-artifact]")
+            assert sorted(buttons.evaluate_all("els => els.map(e => e.dataset.format)")) == ["html", "json", "pdf"]
+            with page.expect_download() as dl:
+                page.click('#report-status [data-artifact][data-format="pdf"]')
+            path = dl.value.path()
+            from pathlib import Path
+            assert Path(path).read_bytes().startswith(b"%PDF") and dl.value.suggested_filename.endswith(".pdf")
+            page.wait_for_selector("#report-runs tbody tr")
+            assert "namespace-access" in page.locator("#report-runs").inner_text() and "root" in page.locator("#report-runs").inner_text()
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_a_narrowed_reader_sees_the_refusal_card_never_a_blank(self, browser, reporting_server):
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "alice")
+        try:
+            page.click('button.tab:text-is("Reports")')
+            page.wait_for_selector(".refusal, .card:has-text('For administrators only')", timeout=10_000)
+            body = page.locator("main").inner_text()
+            assert "Reports" in body and "administrators" in body.lower()
+            status = page.evaluate("fetch('/report/api/reports').then(r => r.status)")
+            assert status in (401, 403)
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_an_aged_ticket_is_reminted_transparently_once(self, browser, reporting_server):
+        base, clock, _ = reporting_server
+        from datetime import timedelta as _td
+        ctx, page, errors = _reports_page(browser, base, "root")
+        statuses: list[tuple[str, int]] = []
+        page.on("response", lambda r: statuses.append((r.url, r.status)) if "/report/api/" in r.url else None)
+        try:
+            page.click('button.tab:text-is("Reports")')
+            page.wait_for_selector("#report-picker")
+            # Age the ticket the PAGE holds (the report service's clock is left alone, so a fresh
+            # ticket is accepted): a well-formed ticket minted five minutes ago, which the page still
+            # believes valid — exactly a tab left open past the TTL.
+            from gsd.reporting.ticket import mint as _mint
+            import time as _time
+            stale = _mint(REPORT_SECRET, "root", "all", 120, now=_time.time() - 300)
+            page.evaluate("t => { data.reportTicket = { ticket: t, expiresAt: Date.now() + 100000, prefix: '/report' }; }", stale)
+            statuses.clear()
+            body = page.evaluate("reportGet('/api/reports')")
+            assert body["reports"] and len(body["reports"]) == 11
+            codes = [s for u, s in statuses if "/report/api/reports" in u]
+            assert codes == [401, 200], codes
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_a_run_finished_elsewhere_appears_on_the_next_auto_refresh(self, browser, reporting_server):
+        base, _, report_app = reporting_server
+        from gsd.reporting.artifacts import Run
+        ctx, page, errors = _reports_page(browser, base, "root", fake_clock=True)
+        try:
+            page.click('button.tab:text-is("Reports")')
+            page.wait_for_selector("#report-runs")
+            before = page.locator("#report-runs tbody tr").count()
+            run = Run(id="20990101T000000.000000Z-ffff", report="groups", cluster="crc-local", params={}, formats=["html"],
+                      generated_by="schedule:weekly", generated_by_note="unattended", schedule="weekly",
+                      requested_at="2099-01-01T00:00:00Z", status="done", finished_at="2099-01-01T00:00:01Z", sha256="cd" * 32)
+            report_app.state.store.create(run)
+            page.clock.fast_forward(61_000)
+            page.wait_for_function(f"document.querySelectorAll('#report-runs tbody tr').length > {before}", timeout=10_000)
+            assert "schedule:weekly" in page.locator("#report-runs").inner_text()
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+
+def test_no_reports_tab_when_the_feature_is_off(dash):
+    assert dash.locator('button.tab:text-is("Reports")').count() == 0
+    assert dash.evaluate("fetch('/api/report/ticket').then(r => r.status)") == 404

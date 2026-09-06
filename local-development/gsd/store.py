@@ -451,6 +451,45 @@ CREATE TABLE IF NOT EXISTS cluster_access_group (
     group_name          TEXT,                   -- the synced Group whose ldap_uid matches, if any
     observed_at         TEXT NOT NULL
 );
+
+-- Namespace objects (rbac.namespaces), for the report service's namespace report: knowing a
+-- namespace EXISTS lets it attest absence. Replaced on the binding cadence. Migration 11.
+CREATE TABLE IF NOT EXISTS cluster_namespace (
+    cluster_id          TEXT NOT NULL,
+    name                TEXT NOT NULL,
+    created_at          TEXT,
+    phase               TEXT,
+    observed_at         TEXT NOT NULL,
+    PRIMARY KEY(cluster_id, name)
+);
+CREATE TABLE IF NOT EXISTS cluster_namespace_status (
+    cluster_id          TEXT PRIMARY KEY,
+    state               TEXT NOT NULL,      -- ok | forbidden
+    observed_at         TEXT NOT NULL
+);
+-- What the report service published about itself, PULLED by the poller from GET /report/api/usage
+-- (the dashboard's API stays GET-only). One row per finished run; the id is the service's and is
+-- the pull watermark. Personnel data — who generated which report — served at the USAGE tier like
+-- dashboard_user_activity. No error text: a run's `error` stays on the report service.
+CREATE TABLE IF NOT EXISTS report_run (
+    id                  TEXT PRIMARY KEY,
+    report              TEXT NOT NULL,
+    cluster_id          TEXT NOT NULL,
+    generated_by        TEXT NOT NULL,
+    generated_by_note   TEXT NOT NULL,
+    schedule            TEXT,
+    status              TEXT NOT NULL,      -- done | failed
+    requested_at        TEXT NOT NULL,
+    finished_at         TEXT,
+    sha256              TEXT,
+    snapshot_stamp      TEXT,
+    formats             TEXT NOT NULL,      -- JSON list
+    bytes_total         INTEGER NOT NULL DEFAULT 0,
+    pdf_variant         TEXT,
+    pulled_at           TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS report_run_by_time ON report_run(requested_at DESC);
+CREATE INDEX IF NOT EXISTS report_run_by_user ON report_run(generated_by, requested_at DESC);
 """
 
 
@@ -672,6 +711,52 @@ _MIGRATIONS: list[tuple[int, str, list[str]]] = [
             # No backfill of audit_id: the correspondence is established when the audit source
             # first reads — a backfill that walks past every row already here. ocp_user's
             # identities fill at the next poll (replace_users rewrites every row).
+        ],
+    ),
+    (
+        11,
+        "reporting: Namespace objects for absence attestation, and the runs the report service published",
+        [
+            # Namespace objects (rbac.namespaces), replaced on the binding cadence. Exists only to let
+            # the namespace report attest absence — "this namespace exists and has no grants" —
+            # rather than "none observed". Kept from the first C3 design.
+            """CREATE TABLE IF NOT EXISTS cluster_namespace (
+                   cluster_id          TEXT NOT NULL,
+                   name                TEXT NOT NULL,
+                   created_at          TEXT,
+                   phase               TEXT,
+                   observed_at         TEXT NOT NULL,
+                   PRIMARY KEY(cluster_id, name)
+               )""",
+            """CREATE TABLE IF NOT EXISTS cluster_namespace_status (
+                   cluster_id          TEXT PRIMARY KEY,
+                   state               TEXT NOT NULL,      -- ok | forbidden
+                   observed_at         TEXT NOT NULL
+               )""",
+            # What the report service published about itself, PULLED by the poller from
+            # GET /report/api/usage (the dashboard's API stays GET-only). One row per finished run;
+            # the id is the service's (chronologically sortable) and is the pull watermark. Personnel
+            # data — who generated which report — so it is served at the USAGE tier, like
+            # dashboard_user_activity. No error text: a run's `error` stays on the report service.
+            """CREATE TABLE IF NOT EXISTS report_run (
+                   id                  TEXT PRIMARY KEY,
+                   report              TEXT NOT NULL,
+                   cluster_id          TEXT NOT NULL,
+                   generated_by        TEXT NOT NULL,
+                   generated_by_note   TEXT NOT NULL,
+                   schedule            TEXT,
+                   status              TEXT NOT NULL,      -- done | failed
+                   requested_at        TEXT NOT NULL,
+                   finished_at         TEXT,
+                   sha256              TEXT,
+                   snapshot_stamp      TEXT,
+                   formats             TEXT NOT NULL,      -- JSON list
+                   bytes_total         INTEGER NOT NULL DEFAULT 0,
+                   pdf_variant         TEXT,
+                   pulled_at           TEXT NOT NULL
+               )""",
+            "CREATE INDEX IF NOT EXISTS report_run_by_time ON report_run(requested_at DESC)",
+            "CREATE INDEX IF NOT EXISTS report_run_by_user ON report_run(generated_by, requested_at DESC)",
         ],
     ),
 ]
@@ -1090,39 +1175,135 @@ class Store:
         so they are the first half of the answer, not the whole one — a CronJob shipping
         them off the volume is the other half.
         """
+        return self._vacuum_into(directory, keep, what="backup")
+
+    def snapshot(self, directory: str, keep: int = 2) -> str | None:
+        """A consistent copy for the REPORT SERVICE, on its own cadence and in its own directory.
+
+        The same VACUUM INTO as backup() — a consistent single-file snapshot while the poller
+        writes — and NOT a backup: it is not the retention gate's copy (poller._prune_history reads
+        _backup_state, which only _maybe_backup sets), it is overwritten every few minutes, and it
+        exists so a second POD can read this database without ever opening the live WAL file
+        (docs/specs/SPEC_C3_reporting_microservice.md §4). Written under a `.tmp` name and renamed, so a
+        reader listing the directory never opens a half-written file. Logged at DEBUG: every five
+        minutes at INFO would bury the log.
+        """
+        return self._vacuum_into(directory, keep, what="report snapshot")
+
+    def _vacuum_into(self, directory: str, keep: int, *, what: str) -> str | None:
         if self.path == ":memory:":
             return None
         target_dir = Path(directory)
         # Sub-second precision, unlike now_iso(). VACUUM INTO refuses to overwrite —
-        # "output file already exists" — so two backups inside the same second collide and
+        # "output file already exists" — so two copies inside the same second collide and
         # the second one fails. now_iso() is deliberately second-resolution because the
         # store relies on its fixed width for lexicographic ordering; a filename has no
         # such constraint and needs the extra digits.
         stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S.%fZ")
         target = target_dir / f"gsd-{stamp}.db"
+        tmp = target_dir / f"gsd-{stamp}.db.tmp"
         try:
-            # Inside the try: an unwritable or read-only backup directory must return None
-            # like every other failure here, not raise into the poll thread. The method
-            # promises "None on failure" and mkdir was the one path that broke that.
+            # Inside the try: an unwritable or read-only directory must return None like every
+            # other failure here, not raise into the poll thread.
             target_dir.mkdir(parents=True, exist_ok=True)
             with self._lock:
                 # A bound parameter is not accepted for the VACUUM target, so the path is
                 # interpolated. It is built here from a timestamp and an operator-supplied
                 # directory, never from request input; the quote-doubling is belt to that
-                # brace rather than the only protection.
-                self._conn.execute(f"VACUUM INTO '{str(target).replace(chr(39), chr(39) * 2)}'")
+                # brace rather than the only protection. Written to a .tmp name and renamed:
+                # a reader listing gsd-*.db never sees a file VACUUM INTO has not finished.
+                self._conn.execute(f"VACUUM INTO '{str(tmp).replace(chr(39), chr(39) * 2)}'")
+            os.replace(tmp, target)
         except (sqlite3.Error, OSError):
-            log.exception("backup to %s failed; the history is still only on the PVC", target)
+            log.exception("%s to %s failed; the history is still only on the PVC", what, target)
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
             return None
-
         existing = sorted(target_dir.glob("gsd-*.db"))
         for stale in existing[:-keep] if keep > 0 else []:
             try:
                 stale.unlink()
             except OSError:
-                log.warning("could not remove old backup %s", stale)
-        log.info("backed up to %s (%d kept)", target, min(len(existing), keep or len(existing)))
+                log.warning("could not remove old %s %s", what, stale)
+        (log.info if what == "backup" else log.debug)("%s written to %s (%d kept)", what, target,
+                                                      min(len(existing), keep or len(existing)))
         return str(target)
+
+    # -- namespaces (the report's coverage; rbac.namespaces) -----------------------------------
+    def replace_namespaces(self, cluster_id: str, rows: list[dict], observed_at: str) -> None:
+        with self._write() as conn:
+            conn.execute("DELETE FROM cluster_namespace WHERE cluster_id=?", (cluster_id,))
+            conn.executemany(
+                """INSERT OR REPLACE INTO cluster_namespace(cluster_id, name, created_at, phase, observed_at)
+                   VALUES(:cluster_id,:name,:created_at,:phase,:observed_at)""",
+                [{**r, "cluster_id": cluster_id, "observed_at": observed_at} for r in rows])
+            conn.execute(
+                """INSERT INTO cluster_namespace_status(cluster_id, state, observed_at) VALUES(?, 'ok', ?)
+                   ON CONFLICT(cluster_id) DO UPDATE SET state='ok', observed_at=excluded.observed_at""",
+                (cluster_id, observed_at))
+
+    def mark_namespaces_unavailable(self, cluster_id: str, observed_at: str) -> None:
+        with self._write() as conn:
+            conn.execute(
+                """INSERT INTO cluster_namespace_status(cluster_id, state, observed_at) VALUES(?, 'forbidden', ?)
+                   ON CONFLICT(cluster_id) DO UPDATE SET state='forbidden', observed_at=excluded.observed_at""",
+                (cluster_id, observed_at))
+
+    def namespaces_source(self, cluster_id: str) -> dict | None:
+        return self._row("SELECT state, observed_at FROM cluster_namespace_status WHERE cluster_id=?", (cluster_id,))
+
+    # -- report runs, pulled from the report service ------------------------------------------
+    def report_runs_watermark(self) -> str | None:
+        """The newest run id recorded, which is exactly what /report/api/usage?since_id wants."""
+        row = self._row("SELECT MAX(id) AS id FROM report_run")
+        return row["id"] if row else None
+
+    def record_report_runs(self, runs: list[dict], pulled_at: str) -> int:
+        """Insert what the pull returned; a run already known is ignored (the service is the
+        source of truth and a run never changes once finished)."""
+        if not runs:
+            return 0
+        with self._write() as conn:
+            before = conn.total_changes
+            conn.executemany(
+                """INSERT OR IGNORE INTO report_run(id, report, cluster_id, generated_by, generated_by_note, schedule,
+                                                    status, requested_at, finished_at, sha256, snapshot_stamp, formats,
+                                                    bytes_total, pdf_variant, pulled_at)
+                   VALUES(:id,:report,:cluster,:generated_by,:generated_by_note,:schedule,:status,:requested_at,
+                          :finished_at,:sha256,:snapshot_stamp,:formats,:bytes_total,:pdf_variant,:pulled_at)""",
+                [{"id": r["id"], "report": r["report"], "cluster": r["cluster"], "generated_by": r["generated_by"],
+                  "generated_by_note": r.get("generated_by_note") or "", "schedule": r.get("schedule"),
+                  "status": r["status"], "requested_at": r["requested_at"], "finished_at": r.get("finished_at"),
+                  "sha256": r.get("sha256"), "snapshot_stamp": r.get("snapshot_stamp"),
+                  "formats": json.dumps(sorted(r.get("formats") or [])),
+                  "bytes_total": sum((r.get("bytes") or {}).values()), "pdf_variant": r.get("pdf_variant"),
+                  "pulled_at": pulled_at} for r in runs])
+            return conn.total_changes - before
+
+    def report_runs(self, *, user_name: str | None, limit: int, offset: int = 0) -> list[dict]:
+        """Newest first; `user_name` is the privacy scope (the user_activity contract)."""
+        sql = """SELECT id, report, cluster_id, generated_by, generated_by_note, schedule, status, requested_at,
+                        finished_at, sha256, snapshot_stamp, formats, bytes_total, pdf_variant
+                   FROM report_run"""
+        params: list = []
+        if user_name:
+            sql += " WHERE generated_by = ?"
+            params.append(user_name)
+        sql += " ORDER BY requested_at DESC LIMIT ? OFFSET ?"
+        params += [limit, offset]
+        rows = self._rows(sql, params)
+        for r in rows:
+            r["formats"] = json.loads(r["formats"] or "[]")
+        return rows
+
+    def count_report_runs(self, *, user_name: str | None) -> int:
+        sql, params = "SELECT COUNT(*) AS n FROM report_run", []
+        if user_name:
+            sql += " WHERE generated_by = ?"
+            params.append(user_name)
+        return int(self._rows(sql, params)[0]["n"])
 
     def maintain(self) -> None:
         """Periodic upkeep after a write cycle. For SQLite, a WAL checkpoint.

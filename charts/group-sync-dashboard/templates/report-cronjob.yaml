@@ -1,0 +1,98 @@
+{{- if eq (include "gsd.reportingEnabled" .) "true" }}
+{{- range $s := .Values.reporting.schedules }}
+---
+# One CronJob per reporting.schedules[] entry: the report image's trigger module POSTs a run with
+# the service token and waits, so the Job's status IS the run's status.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "gsd.reportName" $ }}-{{ $s.name }}
+  namespace: {{ $.Release.Namespace }}
+  labels: {{- include "gsd.reportScheduleLabels" $ | nindent 4 }}
+spec:
+  schedule: {{ $s.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  startingDeadlineSeconds: 600
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 900
+      template:
+        metadata:
+          labels:
+            # NOT gsd.selectorLabels and NOT gsd.reportSelectorLabels: neither Service may pick
+            # this pod up. The NetworkPolicy admits it by instance + component.
+            app.kubernetes.io/name: {{ include "gsd.name" $ }}-report-schedule
+            app.kubernetes.io/instance: {{ $.Release.Name }}
+            app.kubernetes.io/component: report-schedule
+        spec:
+          restartPolicy: Never
+          serviceAccountName: {{ include "gsd.reportName" $ }}
+          automountServiceAccountToken: false
+          {{- with $.Values.image.pullSecrets }}
+          imagePullSecrets: {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext: {{- toYaml $.Values.podSecurityContext | nindent 12 }}
+          containers:
+            - name: trigger
+              image: {{ include "gsd.reportImage" $ }}
+              imagePullPolicy: {{ $.Values.reporting.image.pullPolicy }}
+              command:
+                - python3.14
+                - -m
+                - gsd.reporting.trigger
+                - --url
+                - {{ include "gsd.reportUrl" $ }}
+                - --report
+                - {{ $s.report | quote }}
+                - --cluster
+                - {{ $s.cluster | quote }}
+                - --schedule
+                - {{ $s.name | quote }}
+                - --wait
+                {{- range $k, $v := ($s.params | default dict) }}
+                - --param
+                - {{ printf "%s=%v" $k $v | quote }}
+                {{- end }}
+                {{- range $f := ($s.formats | default (list "html" "pdf")) }}
+                - --format
+                - {{ $f | quote }}
+                {{- end }}
+                {{- if $.Values.reporting.tls.enabled }}
+                - --ca-file
+                - /etc/gsd/service-ca/service-ca.crt
+                {{- end }}
+              env:
+                - name: GSD_REPORT_TOKEN_FILE
+                  value: /etc/gsd/report/token
+              securityContext: {{- toYaml $.Values.securityContext | nindent 16 }}
+              volumeMounts:
+                - name: report-token
+                  mountPath: /etc/gsd/report
+                  readOnly: true
+                - name: tmp
+                  mountPath: /tmp
+                {{- if $.Values.reporting.tls.enabled }}
+                - name: service-ca
+                  mountPath: /etc/gsd/service-ca
+                  readOnly: true
+                {{- end }}
+              resources:
+                requests: {cpu: 10m, memory: 64Mi}
+                limits: {cpu: 200m, memory: 128Mi}
+          volumes:
+            - name: report-token
+              secret:
+                secretName: {{ include "gsd.reportName" $ }}-token
+                defaultMode: 288
+            - name: tmp
+              emptyDir: {}
+            {{- if $.Values.reporting.tls.enabled }}
+            - name: service-ca
+              configMap:
+                name: openshift-service-ca.crt
+            {{- end }}
+{{- end }}
+{{- end }}

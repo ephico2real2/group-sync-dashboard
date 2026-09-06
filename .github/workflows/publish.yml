@@ -77,6 +77,9 @@ on:
       - 'local-development/Containerfile'              # the recipe
       - 'local-development/.containerignore'           # filters what every COPY is allowed to see
       - 'local-development/build-and-push-external.sh' # the tag scheme and the stamp check
+      - 'local-development/Containerfile.report'        # the report image's recipe
+      - 'local-development/report-image-proof.py'       # COPY report-image-proof.py (report proof)
+      - 'local-development/build-and-push-report.sh'    # the wrapper that names the second image
       - '.github/workflows/publish.yml'                # this file
   # The escape hatch the filter makes necessary. A rebuild is occasionally wanted for a reason the
   # paths cannot see — a base-image CVE, a registry that lost a tag, a stamp to re-verify.
@@ -276,6 +279,28 @@ jobs:
     permissions:
       contents: read
     steps:
+      # THE SECOND IMAGE, SAME RUN, SAME DECISION. The report image is built from the same commit
+      # and tagged <appVersion>-<sha>; its release aliases move exactly when the dashboard's do
+      # (steps.release decided that once, above), so the two images a chart resolves by appVersion
+      # are always the same source. The wrapper sets IMAGE_NAME/CONTAINERFILE and refuses the two
+      # flags that target the dashboard's values.
+      - name: Build and push the report image
+        if: steps.creds.outputs.configured == 'true'
+        shell: bash
+        working-directory: local-development
+        env:
+          REGISTRY: ${{ vars.REGISTRY || 'quay.io' }}
+          REGISTRY_NAMESPACE: ${{ vars.REGISTRY_NAMESPACE || 'ephico2real' }}
+          REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+          REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
+          IS_RELEASE: ${{ steps.release.outputs.is_release }}
+        run: |
+          set -euo pipefail
+          if [ "${IS_RELEASE}" = "true" ]; then
+            ./build-and-push-report.sh --release-tags
+          else
+            ./build-and-push-report.sh
+          fi
       - name: Catalogue the image, by digest
         uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
         with:

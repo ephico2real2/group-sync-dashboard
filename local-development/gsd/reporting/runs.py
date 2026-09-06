@@ -1,0 +1,127 @@
+"""Rendering, one run at a time, on a worker thread with a bounded queue.
+
+ONE WORKER, ON PURPOSE. A render is CPU and memory (fpdf2 lays out the whole document before
+writing); two at once double the peak and the pod's memory limit is what ends a render that
+grows too large. A bounded queue answers 429 rather than accepting work it will hold for minutes.
+The dashboard is never on this path — the browser polls GET /report/api/runs/{id}.
+"""
+
+from __future__ import annotations
+
+import logging
+import queue
+import threading
+import time
+import traceback
+from datetime import UTC, datetime
+
+from .. import TITLE
+from .artifacts import ArtifactStore, Run
+from .catalogue import REGISTRY, RunContext, ValidationError, validate_params
+from .config import ReportSettings
+from .render_html import render_html
+from .snapshot import Snapshot, SnapshotError, newest_snapshot
+
+log = logging.getLogger(__name__)
+
+
+class QueueFull(Exception):
+    pass
+
+
+class RunManager:
+    def __init__(self, settings: ReportSettings, store: ArtifactStore, metrics, *, clock=None):
+        self.settings = settings
+        self.store = store
+        self.metrics = metrics
+        self._clock = clock or (lambda: datetime.now(UTC))
+        self._queue: queue.Queue[str] = queue.Queue(maxsize=settings.max_queued_runs)
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._loop, name="report-worker", daemon=True)
+        self._last_prune = 0.0
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        self._thread.join(timeout=5)
+
+    def submit(self, run: Run) -> Run:
+        self.store.create(run)
+        try:
+            self._queue.put_nowait(run.id)
+        except queue.Full:
+            run.status, run.error = "failed", "the render queue is full; try again shortly"
+            self.store.update(run)
+            raise QueueFull()
+        self.metrics.note_submitted(run.report)
+        return run
+
+    def queued(self) -> int:
+        return self._queue.qsize()
+
+    def _loop(self) -> None:
+        while not self._stop.is_set():
+            try:
+                run_id = self._queue.get(timeout=0.5)
+            except queue.Empty:
+                self._maybe_prune()
+                continue
+            run = self.store.get(run_id)
+            if run is None:
+                continue
+            self._render(run)
+            self._maybe_prune()
+
+    def _maybe_prune(self) -> None:
+        now = time.monotonic()
+        if now - self._last_prune < 3600:
+            return
+        self._last_prune = now
+        try:
+            self.store.prune(days=self.settings.retention_days, max_runs=self.settings.retention_max_runs, now=self._clock())
+        except Exception:  # noqa: BLE001 — retention must never stop rendering
+            log.exception("artifact prune failed")
+
+    def _render(self, run: Run) -> None:
+        run.status, run.started_at = "running", self._clock().strftime("%Y-%m-%dT%H:%M:%SZ")
+        self.store.update(run)
+        started = time.perf_counter()
+        try:
+            spec, build = REGISTRY[run.report]
+            params = validate_params(spec, run.params)
+            path = newest_snapshot(self.settings.snapshot_dir)
+            with Snapshot(path) as snap:
+                info = snap.info()
+                cluster = snap.cluster(run.cluster)
+                if cluster is None:
+                    raise ValidationError(f"unknown cluster {run.cluster!r} in the snapshot")
+                now = self._clock()
+                ctx = RunContext(settings=self.settings, cluster=cluster, now=now, run_id=run.id,
+                                 generated_by=run.generated_by, generated_by_note=run.generated_by_note,
+                                 snapshot_stamp=info.stamp, snapshot_age_seconds=info.age_seconds(now),
+                                 schema_version=info.schema_version)
+                from .catalogue.common import assemble
+                report = assemble(spec, snap, ctx, params, build(snap, ctx, params))
+            run.snapshot_stamp, run.sha256 = info.stamp, report.sha256
+            canonical = report.to_json().encode("utf-8")
+            run.bytes["json"] = self.store.write(run.id, "json", canonical)
+            if "html" in run.formats:
+                run.bytes["html"] = self.store.write(run.id, "html", render_html(report, TITLE).encode("utf-8"))
+            if "pdf" in run.formats:
+                from .render_pdf import render_pdf
+                run.pdf_variant = self.settings.pdf_variant
+                run.bytes["pdf"] = self.store.write(run.id, "pdf", render_pdf(
+                    report, TITLE, self.settings.pdf_variant, self.settings.font_regular, self.settings.font_bold, canonical))
+            run.status = "done"
+        except (ValidationError, SnapshotError) as exc:
+            run.status, run.error = "failed", str(exc)
+        except Exception as exc:  # noqa: BLE001 — the trace goes to the log, a sentence to the run
+            log.error("run %s failed:\n%s", run.id, traceback.format_exc())
+            run.status, run.error = "failed", f"render failed: {type(exc).__name__}"
+        finally:
+            run.render_seconds = round(time.perf_counter() - started, 3)
+            run.finished_at = self._clock().strftime("%Y-%m-%dT%H:%M:%SZ")
+            self.store.update(run)
+            self.metrics.note_finished(run.report, run.status, run.render_seconds, sum(run.bytes.values()))

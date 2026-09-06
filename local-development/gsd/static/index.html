@@ -63,6 +63,7 @@ const STATES = {
 };
 
 const view = { page: "overview", cluster: null, groupsync: null, groupFilter: "all", bindingFilter: "review",
+                reportPick: null, reportForm: {}, reportRun: null, reportSubmitting: false,
                 /* Free-text group search. A FILTER, so it lives here rather than in POSITION_KEYS —
                    same reasoning as groupFilter: it narrows what a page shows, it is not a place, and
                    a history entry per keystroke would bury every position Back exists to reach. */
@@ -237,6 +238,7 @@ function goBack() {
 const PAGE_LABEL = {
   overview: "overview", groups: "all groups", users: "all users", bindings: "access granted",
   policy: "RBAC policy", nsaudit: "namespace audit", logins: "logins", usage: "usage",
+  reports: "reports",
 };
 
 function backLabel() {
@@ -310,6 +312,7 @@ window.addEventListener("hashchange", () => {
 // flash "No groups match this filter" for the length of the fetch, a false claim about a
 // cluster nobody had asked yet.
 let data = { clusters: [], alerts: [], groupsyncs: null, groups: null, events: null,
+             reportCatalog: null, reportRuns: null, reportTicket: null,
              group: null, user: null, logins: null, access: null,
              /* The /users envelope whole — rows, scope, viewer, truncated, limit — because the
                 Users tab states the truncation and renders the banner from the wire's fields. */
@@ -838,6 +841,7 @@ function renderFilters() {
       ${tab("nsaudit", "Namespace audit")}
       ${tab("logins", "Logins")}
       ${tab("usage", "Usage")}
+      ${reportingEnabled() ? tab("reports", "Reports") : ""}
     </nav>`;
   // FOCUS AND CARET SURVIVE THE REBUILD, and this is load-bearing rather than polish. This function
   // replaces the whole bar's innerHTML, render() calls it before every repaint, and the page repaints
@@ -1674,6 +1678,193 @@ const REFUSAL = {
     cls: "critical",
   },
 };
+
+/* ── Reports (docs/specs/SPEC_C3_reporting_microservice.md) ────────────────────────────────────────
+   The report service is another pod behind the same proxy, under /report. The dashboard decides
+   the tier and mints a ticket (GET /api/report/ticket); every call below carries it in a custom
+   header, which is also what makes the POST non-simple (CSRF). Downloads go through fetch() and
+   downloadBlob() (C1) rather than an <a href>, because a link cannot carry the header and a ticket
+   in a URL would land in history and logs. */
+function reportingEnabled() {
+  const v = data.version;
+  return !!(v && v.features && v.features.reporting === true);
+}
+
+async function reportTicket(force) {
+  const t = data.reportTicket;
+  if (!force && t && t.expiresAt - Date.now() > 20_000) return t.ticket;
+  const fresh = await api("/api/report/ticket");
+  data.reportTicket = { ticket: fresh.ticket, expiresAt: Date.now() + fresh.expires_in * 1000, prefix: fresh.prefix };
+  return fresh.ticket;
+}
+
+/* One fetch shape for the report service. A 401 re-mints once (the ticket aged out between two
+   polls); a 403 propagates as the designed refusal guard403 absorbs. Never follows a redirect
+   silently: the dead-session rule from api() applies here too. */
+async function reportFetch(path, init = {}, retried = false) {
+  const ticket = await reportTicket(retried);
+  const prefix = (data.reportTicket && data.reportTicket.prefix) || "/report";
+  const headers = Object.assign({ Accept: "application/json", "X-GSD-Report-Ticket": ticket }, init.headers || {});
+  const res = await fetch(prefix + path, Object.assign({}, init, { headers }));
+  if (res.redirected) { const err = new Error("the dashboard session has ended"); err.sessionEnded = true; throw err; }
+  if (res.status === 401 && !retried) return reportFetch(path, init, true);
+  if (!res.ok) { const err = new Error(`${res.status} ${res.statusText} on ${prefix + path}`); err.status = res.status; throw err; }
+  return res;
+}
+async function reportGet(path) { return (await reportFetch(path)).json(); }
+
+function reportsPage() {
+  if (!reportingEnabled()) return `<section class="card"><div class="empty-note">Reporting is not enabled on this deployment.</div></section>`;
+  if (!readerTierKnown()) return `<section class="card"><div class="empty-note">Loading…</div></section>`;
+  if (narrowedReader()) return refusalCard("Reports",
+    `Reports are documents about the cluster's own RBAC surface, its groups and its users.`);
+  const cat = data.reportCatalog;
+  if (!cat) return `<section class="card"><div class="empty-note">Loading…</div></section>`;
+  if (cat.forbidden) return refusalCard("Reports", `Reports are documents about the cluster's own RBAC surface, its groups and its users.`);
+  const reports = cat.reports || [];
+  const pick = reports.find((r) => r.name === view.reportPick) || reports.find((r) => r.enabled) || reports[0];
+  return `${reportPickerCard(reports, pick, cat)}${pick ? reportFormCard(pick, cat) : ""}${reportRunsCard()}`;
+}
+
+function reportPickerCard(reports, pick, cat) {
+  return `<section class="card" id="report-picker">
+    <h2>Reports</h2>
+    <div class="filterbar-note">Generated by the report service from a read-only copy of this dashboard's data
+      (${cat.pdf && cat.pdf.enabled ? `PDF ${esc(cat.pdf.variant || "plain")} and HTML` : "HTML only"}). Every document
+      carries the sha256 of its data, the snapshot it was built from, and who generated it.</div>
+    <ul class="switch-list" role="listbox" aria-label="Reports">
+      ${reports.map((r) => `<li><button type="button" class="linkish report-pick${pick && r.name === pick.name ? " current" : ""}"
+          id="report-pick-${esc(r.name)}" data-report="${esc(r.name)}"${r.enabled ? "" : " disabled"} role="option"
+          aria-selected="${pick && r.name === pick.name}">
+          <span class="mono">${esc(r.title)}</span>
+          <span class="muted"> — ${esc(r.summary)}${r.enabled ? "" : ` <em>(off: ${esc(r.values_key)})</em>`}</span>
+        </button></li>`).join("")}
+    </ul>
+  </section>`;
+}
+
+function reportFormCard(spec, cat) {
+  const form = view.reportForm[spec.name] || {};
+  const field = (p) => {
+    const id = `report-param-${spec.name}-${p.name}`;
+    const val = form[p.name] !== undefined ? form[p.name] : (Array.isArray(p.default) ? p.default.join(",") : (p.default === null ? "" : p.default));
+    const label = `<label for="${id}">${esc(p.name)}${p.required ? " *" : ""}</label>`;
+    let input;
+    if (p.type === "bool") input = `<input id="${id}" type="checkbox" data-param="${esc(p.name)}"${val === true || val === "true" ? " checked" : ""}>`;
+    else if (p.type === "enum") input = `<select id="${id}" data-param="${esc(p.name)}">${p.choices.map((c) => `<option value="${esc(c)}"${c === val ? " selected" : ""}>${esc(c)}</option>`).join("")}</select>`;
+    else if (p.type === "int") input = `<input id="${id}" type="number" data-param="${esc(p.name)}" value="${esc(val)}"${p.lo != null ? ` min="${p.lo}"` : ""}${p.hi != null ? ` max="${p.hi}"` : ""}>`;
+    else if (p.type === "date") input = `<input id="${id}" type="date" data-param="${esc(p.name)}" value="${esc(val)}">`;
+    else input = `<input id="${id}" type="text" data-param="${esc(p.name)}" value="${esc(val)}" autocomplete="off" spellcheck="false">`;
+    return `<div class="report-field">${label}${input}<span class="muted">${esc(p.help)}</span></div>`;
+  };
+  const run = view.reportRun;
+  const status = run ? reportRunStatus(run) : "";
+  return `<section class="card" id="report-form">
+    <h3>${esc(spec.title)}</h3>
+    <div class="filterbar-note">${esc(spec.summary)}</div>
+    <div class="report-fields">${spec.params.map(field).join("")}
+      <div class="report-field"><label for="report-cluster">cluster</label>
+        <input id="report-cluster" type="text" value="${esc(view.cluster || "")}" readonly><span class="muted">The cluster selected above.</span></div>
+    </div>
+    <div class="ns-controls" style="margin-top:8px">
+      <button type="button" class="btn" id="report-generate"${view.reportSubmitting || !view.cluster ? " disabled" : ""}>Generate</button>
+      ${cat.pdf && cat.pdf.enabled ? `<label class="filterbar-note"><input type="checkbox" id="report-want-pdf" checked> PDF</label>` : ""}
+      <label class="filterbar-note"><input type="checkbox" id="report-want-html" checked> HTML</label>
+    </div>
+    ${status}
+  </section>`;
+}
+
+function reportRunStatus(run) {
+  const done = run.status === "done";
+  const failed = run.status === "failed";
+  const links = done ? (run.formats || []).concat(["json"]).map((f) =>
+    `<button type="button" class="btn" data-artifact="${esc(run.id)}" data-format="${esc(f)}">Download .${esc(f)}</button>`).join(" ") : "";
+  return `<div class="report-status" id="report-status" role="status">
+    <strong>Run ${esc(run.id)}</strong> — ${esc(run.status)}${failed ? `: ${esc(run.error || "")}` : ""}
+    ${done ? ` · sha256 <code>${esc((run.sha256 || "").slice(0, 16))}…</code> · data as of ${esc(run.snapshot_stamp || "")}` : ""}
+    <div class="ns-controls" style="margin-top:6px">${links}</div>
+  </div>`;
+}
+
+function reportRunsCard() {
+  const r = data.reportRuns;
+  if (!r || r.forbidden) return "";
+  const rows = r.runs || [];
+  return `<section class="card" id="report-runs">
+    <h3>Recent runs</h3>
+    ${rows.length === 0 ? `<div class="empty-note">No report has been generated yet.</div>` : `<table>
+      <thead><tr><th>requested</th><th>report</th><th>cluster</th><th>by</th><th>status</th><th>sha256</th><th></th></tr></thead>
+      <tbody>${rows.map((x) => `<tr>
+        <td class="mono">${esc(x.requested_at)}</td><td>${esc(x.report)}</td><td>${esc(x.cluster)}</td>
+        <td>${esc(x.generated_by)}</td><td>${esc(x.status)}</td><td class="mono">${esc((x.sha256 || "").slice(0, 12))}</td>
+        <td>${x.status === "done" ? (x.formats || []).concat(["json"]).map((f) =>
+          `<button type="button" class="linkish" data-artifact="${esc(x.id)}" data-format="${esc(f)}">.${esc(f)}</button>`).join(" ") : ""}</td>
+      </tr>`).join("")}</tbody></table>`}
+    ${r.truncated ? `<div class="truncation-note">Showing ${rows.length} of ${r.total} runs.</div>` : ""}
+  </section>`;
+}
+
+function wireReports() {
+  document.querySelectorAll(".report-pick").forEach((el) => {
+    el.onclick = () => { view.reportPick = el.dataset.report; view.reportRun = null; render(); };
+  });
+  document.querySelectorAll("[data-param]").forEach((el) => {
+    const spec = view.reportPick || (data.reportCatalog && data.reportCatalog.reports.find((r) => r.enabled) || {}).name;
+    el.onchange = () => {
+      const f = view.reportForm[spec] || (view.reportForm[spec] = {});
+      f[el.dataset.param] = el.type === "checkbox" ? el.checked : el.value;
+    };
+  });
+  const gen = $("report-generate");
+  // Whether the click came from the keyboard-focused button matters at the END: the button is
+  // disabled while the run is submitted (a disabled element cannot hold focus, so render()'s
+  // by-id restore has nothing to restore), and the reader who pressed Enter on it should find
+  // focus back on it when it re-enables.
+  if (gen) gen.onclick = () => generateReport(document.activeElement === gen);
+  document.querySelectorAll("[data-artifact]").forEach((el) => {
+    el.onclick = () => downloadArtifact(el.dataset.artifact, el.dataset.format);
+  });
+}
+
+async function generateReport(refocus = false) {
+  const cat = data.reportCatalog;
+  const spec = cat.reports.find((r) => r.name === view.reportPick) || cat.reports.find((r) => r.enabled);
+  if (!spec || !view.cluster) return;
+  const params = Object.assign({}, view.reportForm[spec.name] || {});
+  const formats = [];
+  if ($("report-want-html") && $("report-want-html").checked) formats.push("html");
+  if ($("report-want-pdf") && $("report-want-pdf").checked) formats.push("pdf");
+  view.reportSubmitting = true; view.reportRun = null; render();
+  try {
+    const res = await reportFetch("/api/runs", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ report: spec.name, cluster: view.cluster, params, formats }),
+    });
+    view.reportRun = await res.json();
+    render();
+    // Poll the run, not the page: a render is seconds, and the 60 s repaint is the wrong clock.
+    while (view.reportRun && (view.reportRun.status === "queued" || view.reportRun.status === "running")) {
+      await new Promise((r) => setTimeout(r, 1500));
+      view.reportRun = await reportGet(`/api/runs/${encodeURIComponent(view.reportRun.id)}`);
+      render();
+    }
+    data.reportRuns = await guard403(reportGet("/api/runs?limit=50"));
+  } catch (e) {
+    view.reportRun = { id: "—", status: "failed", error: e.status === 422 ? "the parameters were refused (see the fields)" : e.message };
+  } finally {
+    view.reportSubmitting = false; render();
+    if (refocus) { const g = $("report-generate"); if (g) g.focus({ preventScroll: true }); }
+  }
+}
+
+async function downloadArtifact(runId, format) {
+  const res = await reportFetch(`/api/runs/${encodeURIComponent(runId)}/artifact?format=${encodeURIComponent(format)}`);
+  const disposition = res.headers.get("Content-Disposition") || "";
+  const m = /filename="([^"]+)"/.exec(disposition);
+  const blob = await res.blob();
+  downloadBlob(blob, m ? m[1] : `report.${format}`, blob.type);
+}
 
 function refusalBadge(reason) {
   const r = REFUSAL[reason];
@@ -3309,6 +3500,11 @@ function configHealth(oc) {
 }
 
 function render() {
+  // Captured by id before the repaint, restored after it: main.innerHTML replaces every node, so a
+  // keyboard user's focus — on Generate while a report renders, on a table's control — would fall to
+  // <body> on every poll. The filter bar restores its own (renderFilters); this is the same rule for
+  // the page (the C3 report tab's Generate button is where a repaint happens WHILE the reader waits).
+  const focusedId = document.activeElement && document.activeElement.id;
   renderFilters();
   const main = $("main");
   if (view.page === "nsaudit") {
@@ -3323,6 +3519,9 @@ function render() {
     // group tables drill into, through the same navigate() call, so Back behaves identically
     // whichever table the reader arrived from.
     wireDrilldown();
+  } else if (view.page === "reports") {
+    main.innerHTML = reportsPage();
+    wireReports();
   } else if (view.page === "usage") {
     main.innerHTML = usagePage();
   } else if (view.page === "bindings") {
@@ -3399,6 +3598,10 @@ function render() {
   // within one paint.
   renderScopePill();
   main.classList.remove("stale");
+  if (focusedId && document.activeElement !== document.getElementById(focusedId)) {
+    const el = document.getElementById(focusedId);
+    if (el && main.contains(el)) el.focus({ preventScroll: true });
+  }
 }
 
 /* Namespace-audit controls: sort, namespace selector, and the detail-list disclosure.
@@ -3671,6 +3874,12 @@ async function refresh(opts = {}) {
     }
     // Not cluster-scoped: this is who used the DASHBOARD, which has no cluster dimension.
     // Fetched only on its own tab, so the other pages do not pay for it.
+    if (view.page === "reports" && reportingEnabled() && !narrowedReader()) {
+      // Through the proxy to the REPORT SERVICE, with the ticket the dashboard minted. A 403 here
+      // is the same designed refusal as everywhere else and renders as the same card.
+      want.reportCatalog = guard403(reportGet("/api/reports"));
+      want.reportRuns = guard403(reportGet("/api/runs?limit=50"));
+    }
     if (view.page === "usage") {
       // 403 is the DESIGNED answer when the OAuth proxy is off: there is no authenticated
       // identity to scope personnel data to. Letting it fall to the catch below replaced
@@ -3741,6 +3950,8 @@ async function refresh(opts = {}) {
     }
     if ("logins" in got) { data.logins = got.logins; data.access = got.access; }
     if ("usage" in got) data.usage = got.usage;
+    if ("reportCatalog" in got) data.reportCatalog = got.reportCatalog;
+    if ("reportRuns" in got) data.reportRuns = got.reportRuns;
     if ("operatorConfigs" in got) data.operatorConfigs = got.operatorConfigs;
     if ("userBindings" in got) data.userBindings = got.userBindings;
     // An AUTOMATIC refresh that changed nothing must not touch the DOM. render() replaces #main
@@ -3758,6 +3969,7 @@ async function refresh(opts = {}) {
       data.clusters, data.alerts, data.alertsScope, data.groupsyncs, data.groups,
       data.groupsMeta, data.group, data.user, data.users, data.events, data.logins, data.access,
       data.usage, data.findings, data.operatorConfigs, data.userBindings, data.whoami, data.myAccess,
+      data.reportCatalog, data.reportRuns,
     ]);
     if (opts.auto && fingerprint === lastFingerprint) {
       // Still say so. Leaving the clock frozen would read as "the dashboard has stopped",

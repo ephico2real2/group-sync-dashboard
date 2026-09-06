@@ -107,7 +107,7 @@ class TestStillRenders:
         """Each pod owns /data/$POD_NAME/gsd.db up there, so overlap is harmless — and
         Recreate at 3 replicas would take the whole deployment down on every upgrade,
         removing the only reason to scale."""
-        ok, out = render(replicaCount=3, leaderElection__enabled=False,
+        ok, out = render(replicaCount=3, leaderElection__enabled=False, reporting__enabled="false",   # reporting refuses >1 replica by design (C3)
                          strategy="RollingUpdate")
         assert ok, out
         assert "value: /data/$(POD_NAME)/gsd.db" in out
@@ -120,7 +120,7 @@ class TestStillRenders:
         assert ok, out
 
     def test_derived_strategy_above_one_replica_is_rollingupdate(self):
-        ok, out = render(replicaCount=2, leaderElection__enabled=False)
+        ok, out = render(replicaCount=2, leaderElection__enabled=False, reporting__enabled="false")   # reporting refuses >1 replica by design (C3)
         assert ok, out
         assert "type: RollingUpdate" in out
 

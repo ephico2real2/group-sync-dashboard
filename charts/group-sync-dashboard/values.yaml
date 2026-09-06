@@ -872,6 +872,146 @@ backup:
         stagingSizeLimit: 2Gi
 
 # ---------------------------------------------------------------------------
+# Reporting — the report service (docs/specs/SPEC_C3_reporting_microservice.md)
+# ---------------------------------------------------------------------------
+# A SECOND POD, on its own image, that renders evidence documents — the namespace access report
+# and ten more (users, groups, bindings, privileged access, dormant access, login activity,
+# GroupSync health, a compliance snapshot, an access-certification pack) — as self-contained HTML
+# and PDF/A, from a READ-ONLY COPY of this dashboard's database that the dashboard's leader writes
+# every `snapshot.intervalSeconds` under /data/report (a `VACUUM INTO`, the backup mechanism on a
+# report cadence). Never the live gsd.db: SQLite's WAL is one host's shared memory and cannot be
+# shared across pods (values.yaml under `persistence`, "WATCH THE FILESYSTEM UNDERNEATH").
+#
+# HOW A READER REACHES IT. The oauth-proxy in the dashboard pod gains a second upstream routed by
+# path: /report/** goes to the report Service, with the same login and the same X-Forwarded-User.
+# The dashboard decides the tier (the wide tier, the same SubjectAccessReview as /bindings/findings)
+# and hands the browser a short-lived signed ticket (GET /api/report/ticket); the report service
+# verifies the ticket against the token both pods mount and binds it to the proxy's identity
+# header. The report service holds NO cluster credential and NO RBAC.
+#
+# HOW THE DASHBOARD LEARNS WHAT WAS GENERATED. It PULLS GET /report/api/usage on its poll thread
+# with the same token and records the runs (Usage tab → "Reports", the usage tier). The
+# dashboard's API stays GET-only.
+#
+# DEFAULT ON. The chart supplies everything: the image (same appVersion as image.*, published by
+# the same workflow), a PVC for artefacts, the token Secret (generated once, reused), the Service,
+# the NetworkPolicy, the TLS certificate (service-ca). Refused at render with oauthProxy.enabled=false
+# (no proxy, no route in, no trusted identity), persistence.enabled=false (nothing a second pod can
+# mount), replicaCount>1 (each replica holds its own history), rbac.bindings=false (nine of eleven
+# reports are the binding surface) and a ReadWriteOncePod data claim (the report pod cannot mount it).
+reporting:
+  enabled: true
+
+  image:
+    repository: quay.io/ephico2real/group-sync-dashboard-report
+    tag: ""        # empty resolves Chart.appVersion — the dashboard's version, deliberately (§3.3)
+    digest: ""     # wins over tag, like image.digest
+    pullPolicy: Always
+
+  # HTTPS between the proxy and the report pod, and between the dashboard's poller and it, with the
+  # service-ca certificate (the same mechanism as the proxy's own -tls-cert). The proxy verifies
+  # with -upstream-ca against the openshift-service-ca.crt ConfigMap, which every OpenShift
+  # namespace carries and the ServiceMonitor already trusts. Off = plain HTTP on the pod network;
+  # the ticket and the NetworkPolicy still hold. PRE-FLIGHT: the shipped ose-oauth-proxy must have
+  # -upstream-ca (`oauth-proxy --help | grep upstream-ca`); if it does not, set this false.
+  tls:
+    enabled: true
+
+  # Restrict ingress to the report pod: the dashboard pod (its proxy makes the connection), the
+  # schedule Jobs, and — only with monitoring.serviceMonitor.enabled — Prometheus pods
+  # (app.kubernetes.io/name: prometheus, the label both OpenShift monitoring stacks carry) in the
+  # configured monitoring namespaces. Kubelet probes come from the pod's own node and stay admitted.
+  # A core object every OpenShift CNI enforces (OVN-Kubernetes). Off where the CNI does not.
+  networkPolicy:
+    enabled: true
+    monitoringNamespaces: [openshift-user-workload-monitoring, openshift-monitoring]
+
+  pdf:
+    enabled: true
+    # "" plain PDF | pdf/a-1b | pdf/a-2b | pdf/a-2u | pdf/a-3b | pdf/a-3u | pdf/a-4. The
+    # archival default is 2b; 3b embeds the report's canonical .json inside the PDF. Refused at
+    # render for any other value. Validate a produced file with veraPDF if a records system
+    # demands proof of conformance — fpdf2 ENFORCES the profile while writing, it does not certify.
+    variant: pdf/a-2b
+
+  # Where artefacts live. A PVC from the default StorageClass; NO keep annotation, unlike the
+  # data claim — every artefact is regenerable from a snapshot. Off = emptyDir (lost on restart).
+  persistence:
+    enabled: true
+    size: 2Gi
+    storageClass: ""
+    accessMode: ReadWriteOnce
+    existingClaim: ""
+
+  # The read-only copy for the report pod: how often the dashboard's leader writes it under
+  # /data/report and how many to keep (the newest is read; the previous covers the moment a new
+  # one is being written). 300 = the binding cadence. Below 60 refuses the render: a VACUUM INTO
+  # holds a read transaction for its duration (3.2 s measured on a 61 MB, 520k-row store).
+  snapshot:
+    intervalSeconds: 300
+    keep: 2
+
+  # Artefact retention: whichever bound is hit first; 0 disables a bound.
+  retention:
+    days: 90
+    maxRuns: 500
+
+  # How long a minted ticket is valid; the page re-mints on expiry. 30..3600.
+  ticket:
+    ttlSeconds: 300
+
+  # Printed as the first line of every report and in the PDF's running header.
+  marking: "Handling: internal — access review evidence"
+
+  # A budget on the one report replica governs drains, not availability, exactly as the dashboard's
+  # (see podDisruptionBudget above): maxUnavailable: 1 lets a drain proceed; minAvailable: 1 blocks it.
+  # Selects the report Deployment's pods only — never the schedule CronJob pods, whose owner has no
+  # scale subresource and would fail the budget (SyncFailed, DisruptionAllowed=False).
+  podDisruptionBudget:
+    enabled: true
+    maxUnavailable: 1
+    minAvailable: ""
+
+  # Each report is a module. Nine need nothing but the snapshot and are on. loginActivity FOLLOWS
+  # loginCapture.enabled by default ("" = follow); `true` with capture off is refused — a report
+  # over a table nothing writes. dormantAccess works without capture (User objects) and gains a
+  # last-login column with it.
+  reports:
+    namespaceAccess: {enabled: true}
+    accessMatrix: {enabled: true}
+    privilegedAccess: {enabled: true}
+    bindingFindings: {enabled: true}
+    groups: {enabled: true}
+    users: {enabled: true}
+    loginActivity: {enabled: ""}
+    dormantAccess: {enabled: true}
+    groupsyncHealth: {enabled: true}
+    complianceSnapshot: {enabled: true}
+    accessCertification: {enabled: true}
+
+  # Unattended runs. Each entry is a CronJob on the report image that POSTs one run with the
+  # service token and waits for it (exit status = run status). Nothing is mailed; the artefact
+  # lands in the artefact store like any other. `report` must be an enabled catalogue name.
+  # e.g.
+  # schedules:
+  #   - name: weekly-compliance
+  #     schedule: "0 6 * * 1"
+  #     report: compliance-snapshot
+  #     cluster: crc-local
+  #     params: {}
+  #     formats: [html, pdf]
+  schedules: []
+
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {cpu: 500m, memory: 768Mi}
+  # The report pod's own affinity/tolerations/nodeSelector. Nothing is derived from the data
+  # claim's access mode: reporting requires ReadWriteMany (gsd.reportingGuards refuses the rest).
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# ---------------------------------------------------------------------------
 # RBAC
 # ---------------------------------------------------------------------------
 serviceAccount:
@@ -904,6 +1044,11 @@ rbac:
   # source and says so by name ("not permitted to list users.user.openshift.io"), rather than
   # showing an empty list that would read as "nobody has logged in". Members still show bare ids.
   users: true
+  # Namespace objects, get/list, core group. OFF by default: extra RBAC. On, the poller reads them
+  # on the binding cadence and the namespace report can say "this namespace exists and has no
+  # grants" (attesting ABSENCE) and "this namespace no longer exists". Off, every report's coverage
+  # block says absence is not attested.
+  namespaces: false
   # Identity objects: one per (provider, id). With mappingMethod claim or add OpenShift creates it
   # at the first successful login through that provider, so its creation time IS that first login,
   # where the User's is only the first login for a provider-created User; with mappingMethod lookup
@@ -1719,6 +1864,8 @@ monitoring:
       # A cliff is a completed event, not a transient: the window is a day, so fifteen
       # minutes only has to outlast a scrape gap.
       groupCountCliff: 15m
+      reportPull: 30m       # GroupSyncDashboardReportUsagePullFailing: no successful pull for this long
+      reportSnapshot: 30m   # GroupSyncDashboardReportSnapshotStale: the newest VACUUM INTO copy is older than this
       # Long: this is a migration backlog, not an incident. It should be visible and
       # tracked, never paging anyone at 3am.
       directUserGrants: 1h
