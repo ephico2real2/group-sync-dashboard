@@ -22,7 +22,7 @@ which `local-development/prepare-release.py` does when the release is cut.
   already stored is linked to it rather than recorded beside it, and that row keeps its LDAP
   cause. The typed name is classified, not filtered: `identity_match` is the configured provider
   it resolves to through the User's Identity, or null — an unmatched failure stays a row and is
-  counted on `/metrics` by decision. Identities that are not people
+  counted on `/metrics` by outcome. Identities that are not people
   (`loginCapture.auditLog.ignoreIdentityPatterns`, default an LDAP bind service account's OU)
   are dropped on every decision. The audit log records no cause for a refusal beyond the HTTP
   status and, for CLI failures, "Authentication failed"; the Logins tab and the `/logins`

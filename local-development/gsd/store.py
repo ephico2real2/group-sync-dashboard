@@ -606,9 +606,11 @@ _MIGRATIONS: list[tuple[int, str, list[str]]] = [
                    state               TEXT NOT NULL,
                    observed_at         TEXT NOT NULL
                )""",
-            # On a FRESH database SCHEMA has already created both tables in this shape; the DROP then
-            # removes an empty table and the CREATE puts it back, which is harmless and keeps the
-            # replay idempotent (_migrate tolerates exactly one error, and this raises none).
+            # On a FRESH database SCHEMA has already created both tables — in the CURRENT shape,
+            # later than v7's (identity_created_at, identities). The DROP removes an empty table and
+            # the CREATE puts back the v7 shape, which migrations 9 and 10 then extend again by
+            # ALTER (those do not raise, because the columns are absent at that point). Harmless,
+            # and the replay stays idempotent (_migrate tolerates exactly one error; this raises none).
         ],
     ),
     (
@@ -2025,7 +2027,7 @@ class Store:
     # ── The audit-log login source (gsd/auditlog.py; D1) ─────────────────────────────────────────
 
     def record_audit_login_events(
-        self, cluster_id: str, events: list[dict], correspondence_seconds: int = 2
+        self, cluster_id: str, events: list[dict], correspondence_seconds: float = 0.25
     ) -> tuple[int, int]:
         """Insert audit-source attempts, LINKING one to an existing pod-log row where the two
         describe the same login. Returns (inserted, linked).

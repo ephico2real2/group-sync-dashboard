@@ -146,3 +146,28 @@ def test_the_wide_tier_check_in_the_docs_is_the_one_values_yaml_ships() -> None:
     chart_readme = (REPO / "charts" / "group-sync-dashboard" / "README.md").read_text()
     assert (f"| `visibility.adminSar.apiGroup` / `.resource` / `.verb` | `{sar['apiGroup']}` / "
             f"`{sar['resource']}` / `{sar['verb']}` |") in chart_readme
+
+
+def test_the_chart_readme_login_capture_cells_are_the_values_defaults() -> None:
+    """Cursor pass 2 of review D1: the README's `loginCapture.*` default cells are the values file's
+    defaults, every one — the spec body listed `loginCapture.enabled` as `false` (it has been `true`
+    since chart 0.14.0), and only the boolean check above caught it. Same contract as that check,
+    for the whole block."""
+    import yaml
+    values = yaml.safe_load((REPO / "charts" / "group-sync-dashboard" / "values.yaml").read_text())
+    readme = (REPO / "charts" / "group-sync-dashboard" / "README.md").read_text()
+    rows = {m[1]: m[2] for m in re.finditer(r"^\| `(loginCapture\.[^`]+)` \| `([^`]*)` \|", readme, re.M)}
+    assert len(rows) >= 9, sorted(rows)
+
+    def shown(value):
+        if isinstance(value, bool):
+            return "true" if value else "false"
+        if isinstance(value, list):
+            return "[" + ", ".join(f'"{x}"' if any(c in x for c in "=,") else x for x in value) + "]" if value else "[]"
+        return str(value)
+
+    for key, cell in rows.items():
+        node = values
+        for part in key.split("."):
+            node = node[part]
+        assert cell == shown(node), (key, cell, shown(node))

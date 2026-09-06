@@ -196,10 +196,30 @@ class TestNodeLogRangeReads:
                 return httpx.Response(200, content=b'<a href="audit.log">audit.log</a>', request=request)
             return httpx.Response(200, content=b"x\n", request=request)
         client = self._client(monkeypatch, handler)
+        # The real _client() carries `Accept: application/json` as a DEFAULT header; the request
+        # header must REPLACE it (httpx merges by popping the key), not join it as a second value.
+        cluster = ClusterConfig("c", "https://api.example", token_env="X")
+        monkeypatch.setenv("X", "a-token")
+        real_default = ClusterClient(cluster)._client().headers.get("accept")
+        assert real_default == "application/json", real_default
+        transport = httpx.MockTransport(handler)
+        monkeypatch.setattr(client, "_client", lambda: httpx.Client(
+            transport=transport, base_url="https://api.example", headers={"Accept": real_default}))
         assert client.list_node_log_files("crc", "oauth-server") == ["audit.log"]
         client.fetch_node_log_file("crc", "oauth-server/audit.log", offset=0)
         client.fetch_node_log_file("crc", "oauth-server/audit.log", offset=1)
         assert seen == ["*/*", "*/*", "*/*"], seen
+
+    def test_oauth_cr_with_no_providers_is_an_empty_list_not_none(self, monkeypatch):
+        """Cursor pass 2: the CR read successfully and listing no provider must reach
+        _configured_providers as an EMPTY SET (nothing is current), not None (unknown: any)."""
+        import json
+        for spec in ({"identityProviders": []}, {}):
+            body = json.dumps({"kind": "OAuth", "spec": spec}).encode()
+            handler = lambda request, body=body: httpx.Response(200, content=body, request=request)
+            assert self._client(monkeypatch, handler).fetch_oauth_providers() == []
+        handler403 = lambda request: httpx.Response(403, content=b"{}", request=request)
+        assert self._client(monkeypatch, handler403).fetch_oauth_providers() is None
 
     def test_content_range_total_parses_both_forms(self):
         from gsd.kube import _content_range_total

@@ -10,6 +10,7 @@ which is what this file does.
 
 from __future__ import annotations
 
+import re
 import sqlite3
 
 import pytest
@@ -160,15 +161,7 @@ def test_migration_9_adds_the_identity_time_and_status_table_to_an_older_databas
         store.close()
 
 
-def test_migration_10_opens_a_v9_database_and_matches_a_fresh_one(tmp_path):
-    """Cursor, review D1 — and the reference cluster, which crashed on exactly this: SCHEMA runs
-    before _migrate, so an index in SCHEMA on a column only migration 10 adds raised
-    "no such column: audit_id" and no 0.16 database could be opened. The tables below are the
-    0.16.0 definitions copied from that release's SCHEMA (login_event from migration 5's shape,
-    ocp_user with migration 9's identity_created_at)."""
-    path = str(tmp_path / "v9.db")
-    conn = sqlite3.connect(path)
-    conn.executescript("""
+_V9_DDL = """
 CREATE TABLE login_event (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
     cluster_id          TEXT NOT NULL,
@@ -201,7 +194,28 @@ CREATE TABLE ocp_user (
                              identity_created_at, observed_at)
         VALUES ('crc','alice','Alice','2026-08-05T16:14:16Z','["ldap-local"]',1,NULL,'2026-09-01T00:00:00Z');
         PRAGMA user_version = 9;
-    """)
+    """
+
+
+@pytest.mark.parametrize("version", [5, 8, 9])
+def test_migration_10_opens_a_v9_database_and_matches_a_fresh_one(tmp_path, version):
+    """Cursor, review D1 — and the reference cluster, which crashed on exactly this: SCHEMA runs
+    before _migrate, so an index in SCHEMA on a column only migration 10 adds raised
+    "no such column: audit_id" and no 0.16 database could be opened. The tables below are the
+    0.16.0 definitions copied from that release's SCHEMA (login_event from migration 5's shape,
+    ocp_user with migration 9's identity_created_at)."""
+    path = str(tmp_path / "v9.db")
+    conn = sqlite3.connect(path)
+    ddl = _V9_DDL
+    if version == 8:
+        # migration 9 had not run: no identity_created_at column, and the seed row omits it
+        ddl = "\n".join(l for l in ddl.splitlines() if "identity_created_at TEXT" not in l)
+        ddl = ddl.replace("identity_created_at, observed_at)", "observed_at)").replace("1,NULL,'2026-09-01T00:00:00Z'", "1,'2026-09-01T00:00:00Z'")
+    if version == 5:
+        # no ocp_user table at all before migration 4's Users read; keep every other statement
+        ddl = re.sub(r"CREATE TABLE ocp_user \(.*?\);\n", "", ddl, flags=re.S)
+        ddl = re.sub(r"INSERT INTO ocp_user\(.*?\);\n", "", ddl, flags=re.S)
+    conn.executescript(ddl.replace("PRAGMA user_version = 9;", f"PRAGMA user_version = {version};"))
     conn.commit()
     conn.close()
     from gsd.store import _MIGRATIONS
@@ -221,7 +235,8 @@ CREATE TABLE ocp_user (
         assert "login_event_by_audit_id" in indexes(upgraded, "login_event")
         row = upgraded._conn.execute("SELECT source, kind, audit_id FROM login_event").fetchone()
         assert tuple(row) == ("pod-log", "credential", None)
-        assert upgraded._conn.execute("SELECT identities FROM ocp_user").fetchone()[0] == "[]"
+        if version >= 8:
+            assert upgraded._conn.execute("SELECT identities FROM ocp_user").fetchone()[0] == "[]"
         for u in ("u1", "u2"):
             upgraded._conn.execute(
                 "INSERT INTO login_event(cluster_id,pod_name,user_name,outcome,at,detail,observed_at)"

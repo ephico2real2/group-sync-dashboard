@@ -31,6 +31,25 @@ this record describes:
 Usernames were not copied out of the cluster for this record; the counts above come from grouped
 queries run inside the pod.
 
+## Second pass — Cursor
+
+Head 3282d9e (the pass-1 fixes), ten claims on the fixes themselves. All ten CONFIRMED, with a
+traced table for every `continue` in the capture loop (no path leaves `read_ok` wrong except a
+one-cycle case where a 416-rotation read counts as a body and the from-0 re-read then fails — the
+next cycle is honest, and the definition of "body read" includes that 416 on purpose) and a check of
+httpx 0.28.1's header merge from the installed wheel (a request header REPLACES the client default;
+it does not join it). Its residuals, all taken: tests for the re-read after a fingerprint mismatch
+advancing last-read, for an OAuth CR that lists no provider (`identityProviders: []` and the field
+absent) reaching `_configured_providers` as an empty set, for the newline-less tail counting in the
+fingerprint and a truncated tailless rotated file staying open, for opening v5 and v8 databases (not
+only v9), for the 16 ms pairing at the production window, for the NOTES sentence at retentionDays 0
+and 400, and for every `loginCapture.*` README cell against values.yaml; the Accept test now runs
+against the client's real `application/json` default; the stale `correspondence_seconds: int = 2`
+hint, migration 7's comment about SCHEMA's shape, the CHANGELOG's "by decision" and the README's
+unqualified "refused together with `authLogLevel.enabled=true`" are corrected. Its one accepted
+limitation: an audit list set with `--set-string` arrives as a string and takes the comma-split
+hand-written path — the list path is the chart's, and the values comment says lists.
+
 ## Verdicts — Cursor
 
 Read-only (ask mode blocked execution; every proposed test was run here). Head reviewed: d2f2e5b50e.

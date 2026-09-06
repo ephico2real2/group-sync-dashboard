@@ -394,6 +394,21 @@ class TestTheCursor:
         assert total == 3, "u0 and u1 were already rows; other, u2 and u3 are new"
         assert {r["user_name"] for r in store.login_events(CLUSTER.name)} == {"u0", "u1", "u2", "u3", "other"}
 
+    def test_the_re_read_after_a_mismatch_counts_as_a_read(self, store, settings, install, monkeypatch):
+        """Codex pass 1, pinned by Cursor pass 2: the cycle that re-reads a changed file from 0
+        DID read a body, so last_read_at advances (the stalled alert must not fire on it)."""
+        now = datetime.now(UTC)
+        rotated = (now - timedelta(days=1)).strftime("audit-%Y-%m-%dT%H-%M-%S.000.log")
+        events = [_event(f"u{i}", "allow", now - timedelta(days=2, seconds=i)) for i in range(4)]
+        monkeypatch.setattr(auditlog, "AUDIT_READ_MAX_BYTES", len(_file(*events[:2])) + 10)
+        client = install(FakeNodeClient(files={NODE: {rotated: _file(*events), AUDIT_FILE: b""}}))
+        capture_once(store, CLUSTER, settings)
+        before = store.login_capture_status(CLUSTER.name)["last_read_at"]
+        client.files[NODE][rotated] = _file(_event("other", "allow", now - timedelta(days=2)), *events)
+        monkeypatch.setattr(auditlog, "now_iso", lambda: "2030-01-01T00:00:00Z")   # the stamp is whole seconds
+        capture_once(store, CLUSTER, settings)
+        assert before < store.login_capture_status(CLUSTER.name)["last_read_at"] == "2030-01-01T00:00:00Z"
+
     def test_the_byte_budget_defers_rather_than_drops(self, store, settings, install, monkeypatch):
         now = datetime.now(UTC)
         events = [_event(f"u{i}", "allow", now - timedelta(seconds=100 - i)) for i in range(20)]
@@ -429,10 +444,29 @@ class TestTheCursor:
         rotated = (now - timedelta(days=1)).strftime("audit-%Y-%m-%dT%H-%M-%S.000.log")
         whole = _event("a", "allow", now - timedelta(days=2))
         tail = _event("b", "allow", now - timedelta(days=2, seconds=-5))
-        install(FakeNodeClient(files={NODE: {rotated: whole.encode() + b"\n" + tail.encode(), AUDIT_FILE: b""}}))
+        data = whole.encode() + b"\n" + tail.encode()
+        install(FakeNodeClient(files={NODE: {rotated: data, AUDIT_FILE: b""}}))
         assert capture_once(store, CLUSTER, settings) == 2
-        assert store.audit_cursors(CLUSTER.name, NODE)[rotated]["complete"] is True
+        cur = store.audit_cursors(CLUSTER.name, NODE)[rotated]
+        assert cur["complete"] is True and cur["byte_offset"] == len(data)
+        assert cur["head"] == fingerprint(data), "the tail counts in the fingerprint when read from 0"
         assert {r["user_name"] for r in store.login_events(CLUSTER.name)} == {"a", "b"}
+
+    def test_a_truncated_read_of_a_tailless_rotated_file_stays_open(self, store, settings, install, monkeypatch):
+        """Cursor pass 2: the tail is taken only when the read was NOT truncated — a budget cut
+        mid-file is not the end of the file."""
+        now = datetime.now(UTC)
+        rotated = (now - timedelta(days=1)).strftime("audit-%Y-%m-%dT%H-%M-%S.000.log")
+        events = [_event(f"u{i}", "allow", now - timedelta(days=2, seconds=i)) for i in range(3)]
+        data = _file(*events[:2]) + events[2].encode()          # last line without a newline
+        monkeypatch.setattr(auditlog, "AUDIT_READ_MAX_BYTES", len(_file(*events[:1])) + 10)
+        install(FakeNodeClient(files={NODE: {rotated: data, AUDIT_FILE: b""}}))
+        assert capture_once(store, CLUSTER, settings) == 1
+        assert store.audit_cursors(CLUSTER.name, NODE)[rotated]["complete"] is False
+        total = 1
+        for _ in range(4):
+            total += capture_once(store, CLUSTER, settings)
+        assert total == 3 and store.audit_cursors(CLUSTER.name, NODE)[rotated]["complete"] is True
 
     def test_stale_cursors_are_pruned_and_last_read_advances(self, store, settings, install):
         client = install(FakeNodeClient(files={NODE: {"audit-2025-01-01T00-00-00.000.log": b"", AUDIT_FILE: b""}}))
@@ -450,7 +484,7 @@ class TestCorrespondenceWithThePodLog:
             LoginAttempt("jane", loginlog.OUTCOME_BAD_PASSWORD, at, provider="ldap-local", ldap_result_code=49),
             "oauth-openshift-aaa", "x")])
         row = audit_event_dict(parse_audit_line(_event("jane", "deny", at + timedelta(milliseconds=16), audit_id="aud-1")), NODE, "x")
-        assert store.record_audit_login_events(CLUSTER.name, [row], 2) == (0, 1)
+        assert store.record_audit_login_events(CLUSTER.name, [row], auditlog.CORRESPONDENCE_SECONDS) == (0, 1)
         rows = store.login_events(CLUSTER.name)
         assert len(rows) == 1 and rows[0]["audit_id"] == "aud-1"
         assert rows[0]["outcome"] == loginlog.OUTCOME_BAD_PASSWORD, "the pod-log row keeps its cause"
@@ -500,6 +534,14 @@ class TestCorrespondenceWithThePodLog:
             assert store.record_audit_login_events(CLUSTER.name, rows, 0.25) == (1, 0)
         assert "same-b" in caplog.text and "ignored" in caplog.text
         assert "bob" not in caplog.text, "no username in the log line"
+
+    def test_an_oauth_cr_listing_no_provider_matches_nothing(self, store, settings, install):
+        """Cursor pass 2: a CR that was READ and lists none is an empty set — no Identity is current."""
+        client = install(FakeNodeClient(files={NODE: {AUDIT_FILE: _file(_event("kubeadmin", "allow", datetime.now(UTC)))}}, providers=()))
+        store.replace_users(CLUSTER.name, [{"user_name": "kubeadmin", "identities": ["developer:kubeadmin"],
+                                           "providers": ["developer"], "has_identity": True}], "2026-09-05T00:00:00Z")
+        assert capture_once(store, CLUSTER, settings) == 1
+        assert store.login_events(CLUSTER.name)[0]["identity_match"] is None
 
     def test_an_unreadable_oauth_cr_is_said_and_widens_the_match(self, store, settings, install, caplog):
         client = install(FakeNodeClient(files={NODE: {AUDIT_FILE: _file(_event("kubeadmin", "allow", datetime.now(UTC)))}}))

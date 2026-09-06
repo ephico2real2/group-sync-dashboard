@@ -1498,6 +1498,23 @@ class TestAuditLogSource:
         assert cfg["loginCaptureAuditIgnoreIdentityPatterns"] == ["ou=TrustedApplications,dc=example,dc=com"]
         assert cfg["loginCaptureAuditProviders"] == ["a,b", "ldap-local"]
 
+    def test_the_notes_state_the_backfill_bound_or_its_absence(self, tmp_path):
+        """Codex pass 1 / Cursor pass 2: retentionDays 0 means no age limit, and the NOTES said
+        "0 days at most". Rendered through test_chart_route's NOTES probe (helm template drops NOTES)."""
+        import subprocess
+        from test_chart_route import _notes_probe_chart
+        probe = _notes_probe_chart(tmp_path)
+        def notes(*extra):
+            done = subprocess.run(["helm", "template", "group-sync-dashboard", str(probe), "-n", "group-sync-dashboard",
+                                   "-s", "templates/notes-probe.yaml", "--set", "loginCapture.source=audit-log", *extra],
+                                  capture_output=True, text=True)
+            assert done.returncode == 0, done.stdout + done.stderr
+            import yaml
+            return next(d for d in yaml.safe_load_all(done.stdout) if d and d.get("kind") == "ConfigMap")["data"]["notes"]
+        assert "400 days at most" in notes()
+        zero = notes("--set", "loginCapture.retentionDays=0")
+        assert "no age limit" in zero and "0 days at most" not in zero
+
     def test_the_debug_contradiction_is_moot_when_capture_is_off(self):
         """Cursor, review D1: with loginCapture.enabled=false no RBAC renders and no log is read,
         so a leftover source=audit-log must not refuse a render that keeps Debug on."""

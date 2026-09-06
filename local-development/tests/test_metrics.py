@@ -564,7 +564,7 @@ class TestCaptureAndBackupGauges:
         finally:
             store.close()
 
-    def test_unmatched_is_a_counter_by_decision_never_by_name(self):
+    def test_unmatched_is_a_counter_by_outcome_never_by_name(self):
         from gsd.metrics import RuntimeSignals
         signals = RuntimeSignals()
         signals.note_audit_unmatched("crc", "failed", 3)
