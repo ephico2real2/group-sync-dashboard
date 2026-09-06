@@ -529,6 +529,17 @@ class TestIdleTimeout:
         s = load_settings(write(tmp_path, BASE + "sessionIdleTimeoutMinutes: 0\n"))
         assert s.session_idle_timeout_seconds == 1800
 
+    def test_negative_minutes_fall_back_and_the_environment_wins(self, tmp_path, caplog, monkeypatch):
+        """Second pass (Cursor): `-5` passes the whole-number regex and is caught by the `< 1` clamp;
+        and an environment value beats a valid ConfigMap value."""
+        monkeypatch.delenv("GSD_SESSION_IDLE_TIMEOUT_MINUTES", raising=False)
+        s = load_settings(write(tmp_path, BASE + "sessionIdleTimeoutMinutes: -5\n"))
+        assert s.session_idle_timeout_seconds == 1800 and "below 1" in caplog.text
+        monkeypatch.setenv("GSD_SESSION_IDLE_TIMEOUT_MINUTES", "-5")
+        assert load_settings(write(tmp_path, BASE + "sessionIdleTimeoutMinutes: 15\n")).session_idle_timeout_seconds == 1800
+        monkeypatch.setenv("GSD_SESSION_IDLE_TIMEOUT_MINUTES", "20")
+        assert load_settings(write(tmp_path, BASE + "sessionIdleTimeoutMinutes: 15\n")).session_idle_timeout_seconds == 1200
+
     def test_a_cap_of_zero_or_below_is_not_a_cap(self, tmp_path, caplog):
         """Review of C4 (Cursor): a non-positive cap made `seconds >= cap` always true and logged
         "can never fire" for a window that fires fine."""

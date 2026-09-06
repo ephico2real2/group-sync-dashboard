@@ -3833,10 +3833,29 @@ class TestIdleTimeout:
         p.go_back()
         p.clock.run_for(1_000)
         assert p.evaluate("() => window.__calls") == 0
+        # Second pass (Cursor): Back must still APPLY the position it moved to — the first gate
+        # returned before applyPosition and left the view on Groups under an Overview URL.
+        assert p.evaluate("() => view.page") == "overview"
         # A hash edit reaches the hashchange handler by another path (review of C4, Codex).
         p.evaluate("() => { location.hash = '#page=users'; }")
         p.clock.run_for(1_000)
         assert p.evaluate("() => window.__calls") == 0
+
+    def test_header_refresh_after_sign_out_now_does_not_restore_rows(self, page, idle_server):
+        """Second pass (Cursor): after expiry #wrap is not inert (the "Sign in again" link must work),
+        so the header's Refresh reaches refresh() — whose early return is what keeps the card."""
+        p = _open_idle(page, idle_server)
+        p.evaluate("() => { idle.logoutUrl = null; document.getElementById('idle-signout').href = '#'; }")
+        p.clock.run_for(545_000)
+        p.locator("#idle-signout").click()
+        assert p.evaluate("() => idle.state") == "expired"
+        p.evaluate("() => { window.__calls = 0; const f = window.fetch;"
+                   " window.fetch = (...a) => { window.__calls++; return f(...a); }; }")
+        p.locator("#refresh").click()
+        p.clock.run_for(1_000)
+        assert p.evaluate("() => window.__calls") == 0
+        assert "Signed out after inactivity" in p.locator("#main").inner_text()
+        assert p.evaluate("() => document.querySelector('.hero')") is None
 
     def test_the_skip_link_is_inert_while_the_dialog_is_open(self, page, idle_server):
         """Review of C4 (Cursor): the skip link is a sibling of #wrap, so it stayed reachable."""

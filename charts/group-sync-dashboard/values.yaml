@@ -576,9 +576,10 @@ ui:
 # ---------------------------------------------------------------------------
 # Session idle timeout
 # ---------------------------------------------------------------------------
-# OFF by default: it signs people out, which is a policy the platform team chooses. When on, the
-# page shows a countdown after `minutes` without pointer, keyboard or tab-visibility activity, and
-# at zero sends the browser to the proxy's sign_out — the proxy clears the cookie, and re-entry
+# OFF by default: it signs people out, which is a policy the platform team chooses. When on,
+# `minutes` is the whole window of inactivity (no pointer, keyboard or tab-visibility activity)
+# before sign-out; the last `warningSeconds` of that window are a countdown on screen, and at
+# zero the page sends the browser to the proxy's sign_out — the proxy clears the cookie, and re-entry
 # demands credentials (measured; docs/DESIGN_session_and_signout.md). Its OWN keys: the cookie does
 # not slide, so nothing here is derived from `oauthProxy.cookie.expire`, and that cap remains the
 # guarantee for a tab that never reaches sign_out (a closed laptop). Activity in one tab of the

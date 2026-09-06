@@ -262,11 +262,13 @@ function backLabel() {
    edited by hand or the entry predates this feature, so the hash is the fallback — it holds
    the same position, just without the `from` that labels the in-page button. */
 window.addEventListener("popstate", (event) => {
-  // Browser Back is not inert: while the countdown is up it must not fetch (review of C4).
-  if (typeof idleSuspended === "function" && idleSuspended()) return;
+  // Browser Back is not inert: while the countdown is up or the page has expired it must not
+  // fetch (review of C4) — but it MUST still apply the position the browser moved to, or the
+  // view stays on one page while the address bar names another (review of C4, second pass).
+  const suspended = typeof idleSuspended === "function" && idleSuspended();
   if (event.state && event.state.pos) {           // ordinary Back/Forward
     applyPosition(event.state.pos);
-    refresh();
+    if (!suspended) refresh();
     return;
   }
   // No state: either an entry predating this feature, or an IN-PAGE ANCHOR. Setting location.hash
@@ -277,7 +279,7 @@ window.addEventListener("popstate", (event) => {
   const pos = positionFromHash();
   if (location.hash && Object.keys(pos).length === 0) return;
   applyPosition(pos);
-  refresh();
+  if (!suspended) refresh();
 });
 
 /* A hash typed or pasted into the URL bar of a tab already showing this page is a SAME-DOCUMENT

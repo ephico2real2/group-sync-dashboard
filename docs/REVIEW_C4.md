@@ -61,3 +61,23 @@ plus the whole-number rule for the idle settings, the exact whoami consumers, He
 and three stale sentences about whoami polling. Rejected: the prose-asserting tests. Live on CRC
 before the reviews: the countdown at 29.4 s, expiry at 59.4 s, credentials demanded on re-entry. A
 second pass by both reviewers runs on the fixed head before merge.
+
+## Second pass — Cursor (on 82a3efb)
+
+| Claim | Cursor | Decision |
+|---|---|---|
+| C1 expiry final | CONFIRMED — every `api()` caller traced; `refresh()`'s early return covers the header after expiry | — |
+| C2 the warning state | CONFIRMED | — |
+| C3 the server side | CONFIRMED (`-5` reaches the `< 1` clamp) | — |
+| C4 the chart | CONFIRMED — every `gsd.cookieExpire` caller traced | — |
+| C5 documentation | REFUTED — `API.md` still said "never poll it"; the values block comment still said "countdown after `minutes`" | **Accepted**, both corrected; the file-contract tests rejected (prose-asserting) |
+| C6 tests | REFUTED — Back during warning restored no position and the test would not see it; header Refresh after expiry, `-5`, env-wins untested | **Accepted** — the `popstate` fix below, and the four tests |
+| C7 fidelity | PLAUSIBLE | — |
+
+**The `popstate` gate.** The first pass gated the whole handler; Cursor showed (new evidence) that it
+returned before `applyPosition`, so Back during the countdown left `view.page` on Groups while the
+URL named Overview, and "Stay" then refreshed Groups under that URL. Both `popstate` branches now
+apply the position and skip only the `refresh()` while suspended — the same shape `hashchange`
+already had. Noted, not changed: `refresh()` is gated for `expired`, not `warning`; during the
+warning the callers and `inert` are the gate, and a forced click on an inert control is not a user
+path.
