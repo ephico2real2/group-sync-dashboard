@@ -73,6 +73,21 @@ if [ "$STAMPED" != "$COMMIT" ]; then
   exit 1
 fi
 echo "built   : ${IMAGE}:${TAG} (stamp verified)"
+# THE REPORT IMAGE, same commit, same tag (C3, docs/specs/SPEC_C3_reporting_microservice.md §3.3): the
+# chart resolves reporting.image.* at the dashboard's appVersion, so the lab release must ship both
+# images from one build or the report pod would pull a tag this registry does not hold.
+REPORT_IMAGE="${IMAGE}-report"
+podman build \
+  --build-arg "GIT_COMMIT=${COMMIT}" \
+  --build-arg "GIT_BRANCH=${BRANCH}" \
+  --build-arg "BUILD_VERSION=${VERSION}" \
+  -t "${REPORT_IMAGE}:${TAG}" -f Containerfile.report . >/dev/null
+STAMPED=$(podman run --rm --entrypoint sh "${REPORT_IMAGE}:${TAG}" -c 'echo "$GSD_GIT_COMMIT"')
+if [ "$STAMPED" != "$COMMIT" ]; then
+  echo "ERROR: report image reports commit '${STAMPED}', expected '${COMMIT}'" >&2
+  exit 1
+fi
+echo "built   : ${REPORT_IMAGE}:${TAG} (stamp verified)"
 
 if [ "$BUILD_ONLY" = true ]; then exit 0; fi
 
@@ -87,8 +102,13 @@ fi
 podman tag "${IMAGE}:${TAG}" "${REF}"
 podman push --tls-verify=false "${REF}" >/dev/null
 echo "pushed  : ${REF}"
+REPORT_REF="${REGISTRY}/${NAMESPACE}/${REPORT_IMAGE}:${TAG}"
+podman tag "${REPORT_IMAGE}:${TAG}" "${REPORT_REF}"
+podman push --tls-verify=false "${REPORT_REF}" >/dev/null
+echo "pushed  : ${REPORT_REF}"
 
 INTERNAL="image-registry.openshift-image-registry.svc:5000/${NAMESPACE}/${IMAGE}:${TAG}"
+REPORT_INTERNAL="image-registry.openshift-image-registry.svc:5000/${NAMESPACE}/${REPORT_IMAGE}:${TAG}"
 
 # Deploy through the chart, which is the only place RBAC, config and probes are defined.
 #
@@ -129,8 +149,13 @@ helm upgrade --install "${IMAGE}" ../charts/group-sync-dashboard \
   --namespace "${NAMESPACE}" --create-namespace \
   -f "$RELEASE_VALUES" \
   --set image.repository="${INTERNAL%:*}" \
-  --set image.tag="${TAG}"
+  --set image.tag="${TAG}" \
+  --set reporting.image.repository="${REPORT_INTERNAL%:*}" \
+  --set reporting.image.tag="${TAG}"
 oc rollout status "deploy/${IMAGE}" -n "${NAMESPACE}" --timeout=300s
+if oc get "deploy/${IMAGE}-report" -n "${NAMESPACE}" >/dev/null 2>&1; then
+  oc rollout status "deploy/${IMAGE}-report" -n "${NAMESPACE}" --timeout=300s
+fi
 
 # Prove the running pod is the build we just made, not a cached older one.
 sleep 5
