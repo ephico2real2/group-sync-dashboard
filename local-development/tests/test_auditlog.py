@@ -437,6 +437,26 @@ class TestTheCursor:
         assert capture_once(store, CLUSTER, settings) == 0
         assert store.login_capture_status(CLUSTER.name)["last_read_at"] == before
 
+    def test_rotation_then_a_failed_re_read_does_not_advance_last_read(self, store, settings, install, monkeypatch):
+        """Codex, review D1 pass 2: the resume answers rotated (a 416 with a smaller size — no body)
+        and the re-read from 0 then fails; nothing was read, so last_read_at must not move."""
+        data = _file(_event("a", "allow", datetime.now(UTC)))
+        client = install(FakeNodeClient(files={NODE: {AUDIT_FILE: data}}))
+        capture_once(store, CLUSTER, settings)
+        before = store.login_capture_status(CLUSTER.name)["last_read_at"]
+        real = client.fetch_node_log_file
+        zero_reads = 0
+        def flaky(node, path, offset=0, max_bytes=8 << 20):
+            nonlocal zero_reads
+            if offset > 0:
+                return NodeLogRead(b"", offset, truncated=False, rotated=True)
+            zero_reads += 1
+            return real(node, path, offset, max_bytes) if zero_reads == 1 else None   # the probe, then failure
+        client.fetch_node_log_file = flaky
+        monkeypatch.setattr(auditlog, "now_iso", lambda: "2030-01-01T00:00:00Z")
+        capture_once(store, CLUSTER, settings)
+        assert store.login_capture_status(CLUSTER.name)["last_read_at"] == before
+
     def test_a_rotated_file_whose_last_line_lacks_a_newline_still_completes(self, store, settings, install):
         """Cursor, review D1: a closed file never gains the newline a crash mid-write withheld;
         without this the cursor sat on that tail forever."""

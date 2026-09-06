@@ -524,7 +524,10 @@ def capture_once(
                 read = client.fetch_node_log_file(node, path, offset=offset, max_bytes=budget)
                 if read is None:
                     continue
-                read_ok = True
+                if not read.rotated:
+                    # A "rotated" answer carried no body; the re-read from 0 below is the read
+                    # that counts, and only if it succeeds (Codex, review D1 pass 2).
+                    read_ok = True
             if read is None or read.rotated:
                 # The file under this name is not the one the cursor was read from: its head
                 # changed, or it is shorter than the cursor (kube.py#fetch_node_log_file).

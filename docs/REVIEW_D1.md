@@ -50,6 +50,22 @@ unqualified "refused together with `authLogLevel.enabled=true`" are corrected. I
 limitation: an audit list set with `--set-string` arrives as a string and takes the comma-split
 hand-written path — the list path is the chart's, and the values comment says lists.
 
+## Second pass — Codex
+
+Same head, 3282d9e, with inline execution of the migration upgrades from v5, v7 and v8 shapes, the
+YAML edge cases, the header merge against the real `application/json` default and the correspondence
+boundary (±250,000 µs linked, ±250,001 µs inserted). Nine claims confirmed or plausible; **P4
+REFUTED** with a race Cursor's pass had graded a one-cycle residual: the resume can answer "rotated"
+(a 416 whose size is below the cursor — no body) after a probe that matched, and `read_ok` was set
+before `rotated` was inspected, so if the re-read from 0 then failed, `last_read_at` advanced on a
+cycle that read nothing. **Accepted**: the flag is set only by a resume that carried a body or by the
+re-read from 0 that succeeded; Codex's failing test is taken. Its P10 list of accepted findings
+whose tests did not exercise the behaviour is Cursor's list and was closed in the same commit as
+Cursor's pass; its P8 note that `test_values_defaults.py` did not yet hold the README cells was true
+of 3282d9e and is closed there too. Both reviewers named the same three stale texts (the
+`correspondence_seconds: int = 2` hint, "by decision" in the CHANGELOG, the unqualified README
+refusal); all three are corrected.
+
 ## Verdicts — Cursor
 
 Read-only (ask mode blocked execution; every proposed test was run here). Head reviewed: d2f2e5b50e.
