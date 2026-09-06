@@ -116,7 +116,7 @@ class TestStillRenders:
         """No PVC means no shared file: each pod gets its own emptyDir, so an overlapping
         rollout cannot collide. Ephemeral, but not corrupting."""
         ok, out = render(replicaCount=1, strategy="RollingUpdate",
-                         persistence__enabled=False)
+                         persistence__enabled=False, reporting__enabled="false")
         assert ok, out
 
     def test_derived_strategy_above_one_replica_is_rollingupdate(self):
@@ -804,7 +804,7 @@ class TestSessionCookieLifetime:
         declining it is the only renderable way to run without the proxy. Asserted from the
         other side by TestVisibilityThreading.test_visibility_without_the_proxy_is_refused.
         """
-        ok, out = render(oauthProxy__enabled="false", visibility__enabled="false",
+        ok, out = render(oauthProxy__enabled="false", reporting__enabled="false", visibility__enabled="false",
                          oauthProxy__cookie__expire="4hr")
         assert ok, out
         assert "-cookie-expire" not in out
@@ -888,12 +888,12 @@ class TestVisibilityThreading:
     def test_visibility_without_the_proxy_is_refused(self):
         """No proxy means no trusted identity: X-Forwarded-User is whatever the caller
         typed, so the control cannot work and must not pretend to."""
-        ok, out = render(oauthProxy__enabled="false")
+        ok, out = render(oauthProxy__enabled="false", reporting__enabled="false")
         assert not ok, "a per-user control rendered with no authenticated identity"
         assert "requires oauthProxy.enabled=true" in out
 
     def test_declining_both_is_a_renderable_deliberate_choice(self):
-        ok, out = render(oauthProxy__enabled="false", visibility__enabled="false")
+        ok, out = render(oauthProxy__enabled="false", reporting__enabled="false", visibility__enabled="false")
         assert ok, out
 
     def test_the_sar_grant_is_present_on_a_default_install(self):
@@ -1093,7 +1093,7 @@ class TestTheServiceMonitorVerifiesTLS:
         """With no proxy the Service port targets the app, which speaks plain http — a scheme
         or tlsConfig here would fail every scrape on a deployment that never had TLS."""
         ok, out = render(monitoring__serviceMonitor__enabled=True,
-                         oauthProxy__enabled=False, visibility__enabled=False)
+                         oauthProxy__enabled=False, visibility__enabled=False, reporting__enabled="false")
         assert ok, out
         ep = self._endpoint(out)
         assert "scheme" not in ep and "tlsConfig" not in ep
@@ -1389,12 +1389,12 @@ class TestIdleTimeoutThreading:
                 cfg["sessionIdleTimeoutWarningSeconds"]) == (True, 20, 30)
 
     def test_absent_with_the_proxy_off(self):
-        ok, out = render(oauthProxy__enabled="false", visibility__enabled="false")
+        ok, out = render(oauthProxy__enabled="false", reporting__enabled="false", visibility__enabled="false")
         assert ok, out
         assert "sessionIdleTimeoutEnabled" not in _config_data(out)
 
     def test_enabled_without_the_proxy_is_refused(self):
-        ok, out = render(oauthProxy__enabled="false", visibility__enabled="false",
+        ok, out = render(oauthProxy__enabled="false", reporting__enabled="false", visibility__enabled="false",
                          session__idleTimeout__enabled="true")
         assert not ok and "no session to end" in out
 

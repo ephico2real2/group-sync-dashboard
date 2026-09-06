@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import sqlite3
 import threading
 import time
 from datetime import UTC, datetime
@@ -212,3 +213,73 @@ class TestTheArtifactStore:
         assert reloaded.prune(days=90, max_runs=0, now=now) == 1        # the January run
         assert reloaded.prune(days=0, max_runs=2, now=now) == 1         # keep the newest two
         assert {r.id[:8] for r, in [(x,) for x in reloaded.list()[0]]} == {"20260905", "20260906"}
+
+    def test_prune_does_not_delete_a_queued_run_still_in_the_index(self, tmp_path):
+        """Cursor, review C3: finish order is not id order. A 202'd run that is still queued must
+        survive prune — deleting its directory made GET /runs/{id} a 404 and the worker skip it."""
+        store = ArtifactStore(str(tmp_path))
+        now = datetime(2026, 9, 6, 12, 0, tzinfo=UTC)
+        def make(run_id, status):
+            return Run(id=run_id, report="groups", cluster="c1", params={}, formats=["html"], generated_by="root",
+                       generated_by_note="n", schedule=None, requested_at="2026-09-06T12:00:00Z", status=status)
+        queued, done = make("20260906T120000.000000Z-0001", "queued"), make("20260906T120001.000000Z-0002", "done")
+        store.create(queued); store.create(done)
+        store.prune(days=0, max_runs=1, now=now)
+        assert store.get(queued.id) is not None and store.get(done.id) is not None
+        assert store.write(queued.id, "html", b"<p>") == 3, "write recreates a directory prune may have taken"
+
+    def test_usage_does_not_advance_past_an_in_flight_older_run(self, tmp_path):
+        """Cursor, review C3: a QueueFull failure has the newest id and finishes at once; publishing it
+        while older runs are in flight moved the dashboard's MAX(id) watermark past them for ever."""
+        from gsd.store import Store
+        arts = ArtifactStore(str(tmp_path / "a"))
+        def make(run_id, status, error=None):
+            return Run(id=run_id, report="groups", cluster="c1", params={}, formats=["html"], generated_by="root",
+                       generated_by_note="n", schedule=None, requested_at="2026-09-06T12:00:00Z", status=status, error=error,
+                       finished_at="2026-09-06T12:00:01Z" if status == "failed" else None)
+        older = make("20260906T120000.000000Z-0001", "queued")
+        newer = make("20260906T120001.000000Z-0002", "failed", "the render queue is full; try again shortly")
+        arts.create(older); arts.create(newer)
+        assert [r.id for r in arts.since(None, 500)] == [], "a finished run newer than an in-flight run is not visible yet"
+        db = Store(str(tmp_path / "w.db"))
+        db.record_report_runs([r.public() for r in arts.since(None, 500)], "2026-09-06T12:00:02Z")
+        assert db.report_runs_watermark() is None
+        older.status, older.finished_at = "done", "2026-09-06T12:00:10Z"
+        arts.update(older)
+        page = arts.since(None, 500)
+        assert [r.id for r in page] == [older.id, newer.id]
+        db.record_report_runs([r.public() for r in page], "2026-09-06T12:00:11Z")
+        assert db.report_runs_watermark() == newer.id
+        db.close()
+
+
+class TestRequestHygiene:
+    def test_a_cluster_id_that_could_inject_a_header_is_refused(self, service):
+        """Cursor, review C3: the artefact's Content-Disposition carries the cluster id; a quote or a
+        newline in it is header injection unless the id is constrained. It is."""
+        client, _, _ = service
+        for bad in ('crc"; x="y', "crc\r\nX-Injected: 1", "", "a" * 64, "/etc"):
+            r = client.post(f"{REPORT_PREFIX}/api/runs", json={"report": "groups", "cluster": bad, "formats": ["html"]}, headers=_viewer())
+            assert r.status_code == 422, (bad, r.status_code)
+
+    def test_probes_close_the_snapshot_they_open(self, service):
+        """Cursor, review C3: an open copy pins the file the writer wants to prune; the probes open
+        and close within the request."""
+        import gc
+        from gsd.reporting import snapshot as snapmod
+        client, _, _ = service
+        opened = []
+        real_init = snapmod.Snapshot.__init__
+        def counting_init(self, path):
+            real_init(self, path); opened.append(self)
+        snapmod.Snapshot.__init__ = counting_init
+        try:
+            assert client.get(f"{REPORT_PREFIX}/readyz").status_code == 200
+            assert client.get(f"{REPORT_PREFIX}/api/snapshot", headers=_viewer()).status_code == 200
+            assert client.get(f"{REPORT_PREFIX}/metrics").status_code == 200
+        finally:
+            snapmod.Snapshot.__init__ = real_init
+        assert len(opened) >= 3
+        for snap in opened:
+            with pytest.raises(sqlite3.ProgrammingError):        # closed connection
+                snap._conn.execute("SELECT 1")

@@ -103,6 +103,7 @@ class ArtifactStore:
         if fmt not in FORMATS:
             raise ValueError(fmt)
         d = self._dir(run_id)
+        d.mkdir(parents=True, exist_ok=True)      # belt: a run directory pruned mid-render is recreated, not a crash
         tmp = d / f"report.{fmt}.tmp"
         tmp.write_bytes(data)
         os.replace(tmp, d / f"report.{fmt}")
@@ -127,17 +128,32 @@ class ArtifactStore:
         return runs[offset:offset + limit], len(runs)
 
     def since(self, since_id: str | None, limit: int) -> list[Run]:
-        """Runs with id > since_id, oldest first — the dashboard's usage pull."""
+        """Finished runs with id > since_id, oldest first — the dashboard's usage pull.
+
+        NEVER a finished run whose id is greater than any queued or running id. The dashboard
+        watermarks at MAX(id) of what it recorded, and finish order is not id order: a QueueFull
+        failure has the newest id and is finished at once, so publishing it while older runs are
+        still in flight would move the watermark past them and hide them from every later pull
+        (review of C3, Cursor). The page stops at the oldest in-flight id and resumes when it settles.
+        """
         with self._lock:
-            runs = sorted((r for r in self._runs.values() if r.status in ("done", "failed") and (since_id is None or r.id > since_id)),
+            unfinished = [r.id for r in self._runs.values() if r.status in ("queued", "running")]
+            cap = min(unfinished) if unfinished else None
+            runs = sorted((r for r in self._runs.values()
+                           if r.status in ("done", "failed") and (since_id is None or r.id > since_id)
+                           and (cap is None or r.id < cap)),
                           key=lambda r: r.id)
         return runs[:limit]
 
     def prune(self, *, days: int, max_runs: int, now: datetime) -> int:
-        """Remove runs older than `days` and beyond the newest `max_runs`; 0 disables either bound.
-        Deletion is by run directory, so the index and the disk cannot disagree for long."""
+        """Remove FINISHED runs older than `days` and beyond the newest `max_runs`; 0 disables either
+        bound. Deletion is by run directory, so the index and the disk cannot disagree for long.
+        Queued and running runs are never doomed: they are still in the worker's queue, and deleting
+        their directory made GET /runs/{id} a 404 after a 202 while the worker skipped them silently
+        (review of C3, Cursor)."""
         with self._lock:
-            runs = sorted(self._runs.values(), key=lambda r: r.id, reverse=True)
+            runs = sorted((r for r in self._runs.values() if r.status in ("done", "failed")),
+                          key=lambda r: r.id, reverse=True)
             doomed: list[Run] = []
             if max_runs > 0:
                 doomed += runs[max_runs:]

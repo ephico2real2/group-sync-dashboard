@@ -48,7 +48,7 @@ class Principal(BaseModel):
 
 class RunRequest(BaseModel):
     report: str = Field(description="A catalogue name, e.g. namespace-access.")
-    cluster: str = Field(description="The cluster id as the dashboard names it.")
+    cluster: str = Field(description="The cluster id as the dashboard names it.", pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$")
     params: dict = Field(default_factory=dict, description="Parameters per the report's spec; unknown keys are refused.")
     formats: list[str] = Field(default_factory=lambda: ["html", "pdf"], description="Subset of html, pdf; json is always written.")
     schedule: str | None = Field(default=None, description="Service callers only: the schedule name this run is for.")
@@ -63,7 +63,8 @@ def build_report_app(settings: ReportSettings, *, secret: bytes | None = None, c
 
     def snapshot_age() -> float | None:
         try:
-            return Snapshot(newest_snapshot(settings.snapshot_dir)).info().age_seconds(now())
+            with Snapshot(newest_snapshot(settings.snapshot_dir)) as snap:      # closed at once: an open
+                return snap.info().age_seconds(now())                            # copy pins a file prune wants
         except (SnapshotError, OSError):
             return None
 
@@ -134,7 +135,8 @@ def build_report_app(settings: ReportSettings, *, secret: bytes | None = None, c
         except OSError as exc:
             raise HTTPException(status_code=503, detail=f"artifact volume not writable: {exc}") from exc
         try:
-            info = Snapshot(newest_snapshot(settings.snapshot_dir)).info()
+            with Snapshot(newest_snapshot(settings.snapshot_dir)) as snap:
+                info = snap.info()
         except SnapshotError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         return {"status": "ready", "snapshot": info.stamp, "schema": info.schema_version}
@@ -162,7 +164,8 @@ def build_report_app(settings: ReportSettings, *, secret: bytes | None = None, c
     def snapshot_info(p: Principal = Depends(principal)) -> dict:
         """The snapshot a run started now would read: its stamp, age and schema level, or why there is none."""
         try:
-            info = Snapshot(newest_snapshot(settings.snapshot_dir)).info()
+            with Snapshot(newest_snapshot(settings.snapshot_dir)) as snap:
+                info = snap.info()
         except SnapshotError as exc:
             return {"available": False, "reason": str(exc)}
         return {"available": True, "stamp": info.stamp, "age_seconds": round(info.age_seconds(now())),

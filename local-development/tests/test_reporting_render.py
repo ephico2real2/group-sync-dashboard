@@ -55,23 +55,20 @@ class TestHtml:
 
 class TestPdf:
     def test_fpdf_is_imported_lazily_and_the_package_imports_without_it(self):
+        """The dashboard image ships gsd.reporting without the `report` extra: importing the package
+        and the ticket module must not need fpdf. Checked in a SUBPROCESS with fpdf blocked — mutating
+        sys.modules in this process left every other test holding stale module objects (a TicketError
+        raised by a re-imported module is not the TicketError a test imported), which is how a first
+        version of this test failed 33 unrelated tests under the full suite."""
+        import subprocess, sys
         tree = ast.parse((GSD / "reporting" / "render_pdf.py").read_text())
         top = [n for n in tree.body if isinstance(n, (ast.Import, ast.ImportFrom))]
         assert all("fpdf" not in ast.dump(n) for n in top), "fpdf must be imported inside a function"
-        blocked = {k: v for k, v in sys.modules.items() if k == "fpdf" or k.startswith("fpdf.")}
-        for k in blocked:
-            sys.modules[k] = None  # type: ignore[assignment]
-        try:
-            for mod in list(sys.modules):
-                if mod.startswith("gsd.reporting"):
-                    del sys.modules[mod]
-            import gsd.reporting  # noqa: F401
-            import gsd.reporting.ticket  # noqa: F401
-            import gsd.reporting.render_pdf  # noqa: F401  — importable; only render_pdf() needs fpdf
-        finally:
-            for k in blocked:
-                sys.modules.pop(k, None)
-            sys.modules.update(blocked)
+        probe = ("import sys; sys.modules['fpdf'] = None; sys.modules['fpdf.enums'] = None; sys.modules['fpdf.fonts'] = None; "
+                 "import gsd.reporting, gsd.reporting.ticket, gsd.reporting.render_pdf; "
+                 "from gsd.reporting.render_pdf import render_pdf; print('ok')")
+        done = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, cwd=str(GSD.parent), timeout=60)
+        assert done.returncode == 0 and done.stdout.strip() == "ok", done.stderr
 
     def test_the_vendored_faces_hash_to_the_lock(self):
         _need_fonts()
