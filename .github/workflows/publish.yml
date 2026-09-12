@@ -330,6 +330,11 @@ jobs:
   sbom:
     name: SBOM of the ${{ matrix.name }} image
     needs: publish
+    # No status function in this condition, so GitHub applies its default `success()`: a red
+    # publish job — a report build that failed after the dashboard's push — skips this job (the
+    # expressions reference: "A default status check of success() is applied unless you include
+    # one of these functions"). Adding `!cancelled()` here would change that; the test that pins
+    # this line is the guard.
     if: needs.publish.outputs.digest != '' && vars.SUPPLY_CHAIN_SBOM != 'false'
     runs-on: ubuntu-latest
     permissions:

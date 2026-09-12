@@ -774,7 +774,14 @@ class Poller:
                     log.warning("report usage pull answered %s: %s", r.status_code, r.text[:200])
                     break
                 body = r.json()
-                added = self.store.record_report_runs(body.get("runs") or [], now_iso())
+                # The feed's shape, not just JSON: a 200 carrying `{}` recorded nothing and counted
+                # `ok` — a proxy's JSON error page or a report service of another version would
+                # have been a silently empty Usage tab (review of C3, second pass, Cursor).
+                if not isinstance(body, dict) or not isinstance(body.get("runs"), list):
+                    outcome = "error"
+                    log.warning("report usage pull: a 200 whose body is not the usage feed: %s", r.text[:200])
+                    break
+                added = self.store.record_report_runs(body["runs"], now_iso())
                 if added:
                     log.debug("recorded %d report run(s) from the report service", added)
                 if not body.get("truncated"):
@@ -785,8 +792,8 @@ class Poller:
             log.warning("report usage pull: cannot read the token: %s", exc)
         except Exception as exc:  # noqa: BLE001 — never stop the poll
             # `unreachable` is the Service, TLS or a dropped connection (httpx's TransportError);
-            # a reachable service answering 200 with a body that is not the feed's shape is `error`,
-            # which is what the alert's description promises (review of C3, Codex).
+            # a reachable service answering 200 with a body that is not JSON is `error`, which is
+            # what the alert's description promises (review of C3, Codex).
             import httpx as _httpx
             outcome = "unreachable" if isinstance(exc, _httpx.TransportError) else "error"
             log.warning("report usage pull failed: %s: %s", type(exc).__name__, exc)

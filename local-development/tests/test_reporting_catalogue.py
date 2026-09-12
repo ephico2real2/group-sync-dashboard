@@ -96,14 +96,20 @@ class TestParameters:
         with pytest.raises(ValidationError, match="roles"):
             validate_params(priv, {"roles": [1, 2]})
         groups, _ = REGISTRY["groups"]
-        for bad in (True, 1.5, [30]):
+        # Cursor, second pass: int() itself accepts " 1", "1_000" and "\t1\n", so a padded or
+        # underscored string was an integer while every other wrong shape was a 422.
+        for bad in (True, 1.5, [30], " 1", "1_000", "\t1\n", "1.0"):
             with pytest.raises(ValidationError, match="integer"):
                 validate_params(groups, {"window_days": bad})
+        assert validate_params(groups, {"window_days": "7"})["window_days"] == 7
+        assert validate_params(groups, {"window_days": 7})["window_days"] == 7
+        assert validate_params(groups, {"window_days": ""})["window_days"] == 30   # "" is not provided: the default
         cert, _ = REGISTRY["access-certification"]
         with pytest.raises(ValidationError, match="real date"):
             validate_params(cert, {"campaign": "x", "due": "2026-99-99", "reviewer": "r"})
-        with pytest.raises(ValidationError, match="must be a string"):
-            validate_params(cert, {"campaign": ["x"], "due": "2026-10-01", "reviewer": "r"})
+        for bad in (["x"], 1, 1.5, {"x": 1}):      # a string is a string; a number was stringified before
+            with pytest.raises(ValidationError, match="must be a string"):
+                validate_params(cert, {"campaign": bad, "due": "2026-10-01", "reviewer": "r"})
         assert validate_params(cert, {"campaign": "x", "due": "2026-10-01", "reviewer": "r"})["due"] == "2026-10-01"
 
     def test_namespaces_share_the_parser_rules(self):

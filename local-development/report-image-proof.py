@@ -37,8 +37,11 @@ def main() -> None:
     for path in REMOVED:
         if os.path.lexists(path):
             sys.exit(f"still present: {path}")
-    if sorted(os.listdir("/usr/lib/sysimage/rpm")) != [".rpm.lock", "rpmdb.sqlite"]:
-        sys.exit("the RPM database directory does not hold the base's two files")
+    # The same rule as image-proof.py: rpmdb.sqlite and rpm's own dot-lock files, nothing else.
+    listing = sorted(os.listdir("/usr/lib/sysimage/rpm"))
+    locks = [name for name in listing if name.startswith(".") and name.endswith(".lock")]
+    if "rpmdb.sqlite" not in listing or sorted(locks + ["rpmdb.sqlite"]) != listing:
+        sys.exit(f"the RPM database directory holds {listing}, not rpmdb.sqlite and rpm's lock files")
 
     # A PDF/A-2b document from the vendored font, under this interpreter.
     from fpdf import FPDF

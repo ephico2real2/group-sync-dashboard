@@ -20,14 +20,18 @@ _VARIANTS = {"pdf/a-1b": "PDFA_1B", "pdf/a-2b": "PDFA_2B", "pdf/a-2u": "PDFA_2U"
              "pdf/a-3b": "PDFA_3B", "pdf/a-3u": "PDFA_3U", "pdf/a-4": "PDFA_4"}
 _FONT = "Body"
 _MONO_FALLBACK = _FONT   # one face family; monospace is a screen nicety the PDF does without
-#: The longest text one table cell draws. fpdf2 refuses a row taller than a page ("cannot fit on a
-#: page"), which turned one 10,000-character value into a failed run (review of C3, Codex). A report
-#: cell holds names and labels; the HTML and the JSON carry the whole value, the PDF says it was cut.
+#: The longest text one table cell draws, AFTER its whitespace is collapsed. fpdf2 refuses a row
+#: taller than a page ("cannot be rendered on a single page"), which turned one 10,000-character
+#: value into a failed run (review of C3, Codex) — and a character cap alone left 600 newlines a
+#: 600-line row, still taller than a page (second pass, Cursor; measured). A report cell holds names
+#: and labels, so runs of whitespace become one space and the cell wraps as one run of text; the
+#: HTML and the JSON carry the whole value, the PDF says it was cut. Measured at 600: a cell of
+#: `W`, of full-width `Ｗ` and of `@` all render.
 CELL_MAX_CHARS = 600
 
 
 def _cell_text(value) -> str:
-    text = "" if value is None else str(value)
+    text = " ".join(("" if value is None else str(value)).split())
     return text if len(text) <= CELL_MAX_CHARS else text[:CELL_MAX_CHARS - 1] + "…"
 
 

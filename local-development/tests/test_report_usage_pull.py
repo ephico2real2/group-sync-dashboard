@@ -125,6 +125,19 @@ class TestThePull:
         finally:
             store.close()
 
+    @pytest.mark.parametrize("payload", [{}, {"foo": 1}, {"runs": "none", "truncated": False}, [], "text"])
+    def test_a_200_that_is_json_but_not_the_feed_is_an_error(self, tmp_path, monkeypatch, payload):
+        """Cursor, review C3 second pass: a 200 carrying JSON without the feed's keys recorded nothing
+        and counted `ok` — a silently empty Usage tab. The feed is a dict whose `runs` is a list."""
+        poller, store = _poller(tmp_path)
+        _mock_service(monkeypatch, lambda request: httpx.Response(200, json=payload))
+        try:
+            poller._pull_report_usage()
+            assert poller.signals.snapshot()["report_pulls"] == {"error": 1}
+            assert store.count_report_runs(user_name=None) == 0
+        finally:
+            store.close()
+
     def test_a_missing_token_is_an_error_not_a_crash(self, tmp_path, monkeypatch):
         poller, store = _poller(tmp_path)
         (tmp_path / "token").unlink()

@@ -12,7 +12,7 @@ rather than assumed:
   directory, pip's site-packages, the libuuid library, a completion shim) must be gone — a spot
   check of the historically missed paths, not the full lists, which the uninstall step itself
   verifies one by one before this runs;
-* the RPM database directory holds exactly the two files the base shipped.
+* the RPM database directory holds rpmdb.sqlite and rpm's own lock files, nothing else.
 
 The script is staged in the build stage and bind-mounted into this one step, never copied into a
 layer of the shipped image, and removes what it created under /data; nothing of it ships, in the
@@ -59,9 +59,14 @@ def main() -> None:
     for path in REMOVED:
         if os.path.lexists(path):
             sys.exit(f"still present: {path}")
+    # rpmdb.sqlite and rpm's own dot-lock files, nothing else — no WAL side files, no leftover
+    # Packages. Not an exact listing: the base floats, and on 2026-09-09 its rpm began leaving
+    # `.keyring.lock` beside `.rpm.lock` after the pack stage's erase, which failed this proof
+    # against a list of two names (measured in CI on 2026-09-11).
     listing = sorted(os.listdir("/usr/lib/sysimage/rpm"))
-    if listing != [".rpm.lock", "rpmdb.sqlite"]:
-        sys.exit(f"the RPM database directory holds {listing}, not the base's two files")
+    locks = [name for name in listing if name.startswith(".") and name.endswith(".lock")]
+    if "rpmdb.sqlite" not in listing or sorted(locks + ["rpmdb.sqlite"]) != listing:
+        sys.exit(f"the RPM database directory holds {listing}, not rpmdb.sqlite and rpm's lock files")
 
     db = "/data/.build-proof.db"
     conn = sqlite3.connect(db)

@@ -176,6 +176,18 @@ class TestPdf:
         assert out.startswith(b"%PDF") and CELL_MAX_CHARS < 10_000
         assert "x" * 10_000 in render_html(report, "T")
 
+    def test_a_cell_of_newlines_renders_in_the_pdf_and_is_whole_in_the_html(self):
+        """Cursor, review C3 second pass: the character cap alone let 600 newlines through as a
+        600-line row — fpdf2 raised "cannot be rendered on a single page" and the run failed
+        (measured on the first-pass head). Whitespace is collapsed before the cap; the HTML keeps it."""
+        _need_fonts()
+        from gsd.reporting.render_pdf import render_pdf
+        for raw in ("\n" * 600, "a\n" * 400, "W" * 600, "Ｗ" * 600):
+            report = _report(raw)
+            out = render_pdf(report, "T", "pdf/a-2b", str(REGULAR), str(BOLD))
+            assert out.startswith(b"%PDF"), repr(raw[:8])
+            assert raw in render_html(report, "T"), repr(raw[:8])
+
     def test_an_unknown_variant_is_refused(self):
         from gsd.reporting.render_pdf import render_pdf
         with pytest.raises(ValueError):

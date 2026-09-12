@@ -16,6 +16,7 @@ from ..snapshot import CLUSTER_SCOPE, Snapshot
 MAX_NAMESPACES = 50
 _LABEL = re.compile(r"^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$")
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_INT = re.compile(r"-?[0-9]+")        # what an integer parameter may spell when it arrives as a string
 #: Tables longer than this are cut and the report says so — R3's rule, applied to a document:
 #: a PDF that silently drops rows cannot be told apart from a complete one.
 ROW_LIMIT = 5000
@@ -135,6 +136,11 @@ def validate_params(spec: ReportSpec, raw: dict | None) -> dict:
         elif p.type == "int":
             if isinstance(value, bool) or isinstance(value, float) or not isinstance(value, (int, str)):
                 raise ValidationError(f"{p.name} must be an integer")
+            # A string spells digits and nothing else: int() itself also takes " 1", "1_000" and
+            # "\t1\n", so a padded or underscored value would have been accepted as an integer
+            # while every other wrong shape is a 422 (review of C3, second pass, Cursor).
+            if isinstance(value, str) and not _INT.fullmatch(value):
+                raise ValidationError(f"{p.name} must be an integer")
             try:
                 n = int(value)
             except (TypeError, ValueError) as exc:
@@ -157,9 +163,11 @@ def validate_params(spec: ReportSpec, raw: dict | None) -> dict:
         elif p.type == "csv":
             out[p.name] = [t.strip() for t in _string_items(value, p.name) if t.strip()]
         else:  # "str"
-            if not isinstance(value, (str, int, float)) or isinstance(value, bool):
+            # A string is a string: a number was stringified here while the record said "strings
+            # must be strings" (review of C3, second pass, Cursor).
+            if not isinstance(value, str):
                 raise ValidationError(f"{p.name} must be a string")
-            s = str(value)
+            s = value
             if len(s) > 200:
                 raise ValidationError(f"{p.name} is longer than 200 characters")
             out[p.name] = s

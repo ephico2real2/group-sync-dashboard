@@ -104,3 +104,36 @@ chart version. Found beside it, by the full suite: three report-server tests bui
 clock while the module mints tickets at import time, so a suite that reaches the module after the 300 s
 TTL answered 401 — reproduced by shifting the mint time, fixed by giving every app the fixture's frozen
 clock.
+
+## Second pass — head 18438c5, 2026-09-11
+
+A twelve-claim brief on the fixed head: each accepted first-pass fix, then what the first pass never
+named — the merge as a release push, two invocations in a row, the registry side. Cursor (ask mode, no
+shell: it read the head and the installed packages and marked what it could not run) and Codex
+(gpt-5.6-sol, xhigh, a shell). Every verdict re-checked here before a decision; every accepted finding
+measured first.
+
+| Claim | Cursor | Codex | Decision |
+|---|---|---|---|
+| C1 the ticket's one spelling | CONFIRMED — and a refused ticket is a **403** (`principal` maps every `TicketError` but expiry to 403; only "ticket has expired" is the 401) | _(pending)_ | — ; the brief's "401" was the brief's error, corrected here |
+| C2 regular-file snapshots | CONFIRMED; a hard link IS a regular file and would pass — defence in depth only, since planting one needs write on the volume the report mount does not have | _(pending)_ | recorded, no change |
+| C3 every wrong shape is a 422 | REFUTED — `int()` accepts `" 1"`, `"1_000"`, `"\t1\n"`; a `str` parameter stringified a number | _(pending)_ | **Accepted** — an integer string must spell `-?[0-9]+`; a string is a string. Cursor's snippet taken in substance; the test extends the first pass's, with `""` asserted as the default it deliberately is |
+| C4 no cell fails a run | REFUTED — 600 newlines is a 600-line row, "cannot be rendered on a single page" | _(pending)_ | **Accepted on the fact, snippet in part** — measured on the first-pass head: 600 and 700 newlines fail; `W`×600, full-width `Ｗ`×600, `@`×600 and CJK×600 render. Whitespace is collapsed before the cap; the cap stays at 600 (Cursor's 240 was reasoned from column width, not measured, and every wide-glyph case measured at 600 renders). The HTML and JSON keep the raw value |
+| C5 pull outcomes | REFUTED — a 200 carrying JSON without `runs` recorded nothing and counted `ok` | _(pending)_ | **Accepted** — the body must be a dict whose `runs` is a list, else `error`; five wrong shapes tested |
+| C6 prune / since / write | CONFIRMED; a run that stays `running` delays later runs (the watermark holds below it), never skips them; a restart marks it failed and the feed resumes | _(pending)_ | recorded |
+| C7 the release push | PLAUSIBLE — and volunteered: `sbom`'s `if` names no `success()`, so a red publish "still runs" the catalogue | _(pending)_ | **Rejected** — GitHub's expressions reference: "A default status check of `success()` is applied unless you include one of these functions"; the `sbom` condition has none, so a red publish skips it (the first pass quoted the same line; actionlint models it). A comment on the condition now says so, and the test that pins the line is the guard. The registry finding (a new repository is created private) was already on the head in `RELEASING.md` — Cursor's quotation of that row inverted "private" to "public"; the file says private |
+| C8 the wrapper's `--release-tags` | CONFIRMED (traced, not run) | _(pending)_ | — |
+| C9 the frozen clock | CONFIRMED (every `build_report_app(` passes `clock=`) | _(pending)_ | — |
+| C10 the references test | CONFIRMED; exclude-only keys are not definitions | _(pending)_ | — |
+| C11 the docs | REFUTED on one D10 sentence ("withholds both images' catalogue") | _(pending)_ | **Rejected** with C7: the sentence is true of the YAML under the implied `success()` |
+| C12 the next real use | PLAUSIBLE (not run) | _(pending)_ | the suite and the chart's switch states ran here (below) |
+
+**Found by CI on this head, not by a reviewer.** The `image` job went red at the dashboard image's
+build-time proof: the RPM database directory held `['.keyring.lock', '.rpm.lock', 'rpmdb.sqlite']`,
+"not the base's two files". Nothing in the PR touches the recipe; both `hi/python:3.14` tags were
+rebuilt on 2026-09-09 (3.14.7, measured with `skopeo inspect`), after the last green run on 2026-09-06,
+and the builder's rpm now leaves `.keyring.lock` after the pack stage's erase. Both proofs now hold the
+rule — `rpmdb.sqlite` plus rpm's dot-lock files and nothing else — instead of a list of two names;
+the pinning test, the recipe's comment and `DESIGN_hardened_image.md` say so. The rule was exercised
+against six listings (the old pair, the new triple, a WAL side file, a leftover `Packages`, a missing
+database, a stray dotfile): the first two pass, the rest are refused.
