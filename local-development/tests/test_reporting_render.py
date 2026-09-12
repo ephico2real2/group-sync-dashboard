@@ -166,6 +166,16 @@ class TestPdf:
         two_b = render_pdf(_report(), "T", "pdf/a-2b", str(REGULAR), str(BOLD), canonical)
         assert b"/EmbeddedFile" not in two_b, "2b forbids attachments; the renderer embeds only under 3b/3u"
 
+    def test_a_giant_cell_is_cut_in_the_pdf_and_whole_in_the_html(self):
+        """Codex, review C3: fpdf2 refuses a row taller than a page, which failed the whole run on one
+        10,000-character value. The PDF bounds a cell and marks the cut; the HTML carries it all."""
+        _need_fonts()
+        from gsd.reporting.render_pdf import CELL_MAX_CHARS, render_pdf
+        report = _report("x" * 10_000)
+        out = render_pdf(report, "T", "pdf/a-2b", str(REGULAR), str(BOLD))
+        assert out.startswith(b"%PDF") and CELL_MAX_CHARS < 10_000
+        assert "x" * 10_000 in render_html(report, "T")
+
     def test_an_unknown_variant_is_refused(self):
         from gsd.reporting.render_pdf import render_pdf
         with pytest.raises(ValueError):

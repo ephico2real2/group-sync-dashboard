@@ -297,11 +297,18 @@ build it deploys, and rewriting it decouples the chart from the image it was pub
 ## 7. Verify what you downloaded
 
 Every image `publish.yml` pushes from `main` is signed and attested (a `workflow_dispatch` from
-another branch pushes its immutable tag unsigned — `DESIGN_supply_chain.md`, D9), and every chart
+another branch pushes its immutable tags unsigned — `DESIGN_supply_chain.md`, D9), and every chart
 `helm.yaml` publishes as a new version is attested, with GitHub's OIDC identity — no key to fetch, nothing to trust but the identity strings
 below (`.github/workflows/publish.yml#attest`, `.github/workflows/helm.yaml#Attest the provenance of the packaged chart`).
 The commands need `cosign` 3.x and `gh` 2.49 or newer; the outputs shown are the tools' own
 wording, with the values that change per release elided as `…`.
+
+**Two images per push since application 0.18.0.** The report service runs on its own image,
+`quay.io/ephico2real/group-sync-dashboard-report`, built by the same publish run from the same commit
+and tagged `<appVersion>-<sha>` like the dashboard's (`DESIGN_reporting_service.md#3.3 Two images, one version`).
+It is catalogued, signed and attested by the same jobs under the same identity
+(`DESIGN_supply_chain.md#D10`), so every command below verifies it too — substitute its reference for the
+dashboard's. Its SBOM is the workflow artifact `sbom-report-<commit>`, beside the dashboard's `sbom-<commit>`.
 
 **The image signature.** The identity is the workflow file on `main`; the issuer is GitHub's. The
 signature is over the digest of the image **that run pushed**: an ordinary merge pushes only

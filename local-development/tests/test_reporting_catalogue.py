@@ -85,6 +85,27 @@ class TestParameters:
         with pytest.raises(ValidationError, match="one of"):
             validate_params(cert, {"campaign": "x", "due": "2026-10-01", "reviewer": "r", "scope": "everything"})
 
+    def test_wrong_shapes_are_422s_not_500s_and_dates_are_real(self):
+        """Codex, review C3: an integer where a list of names was expected raised TypeError — a 500 —
+        and 2026-99-99 passed the date regex."""
+        spec, _ = REGISTRY["namespace-access"]
+        for bad in (7, ["prod-ns", 7], {"prod-ns": 1}, True):
+            with pytest.raises(ValidationError, match="namespaces"):
+                validate_params(spec, {"namespaces": bad})
+        priv, _ = REGISTRY["privileged-access"]
+        with pytest.raises(ValidationError, match="roles"):
+            validate_params(priv, {"roles": [1, 2]})
+        groups, _ = REGISTRY["groups"]
+        for bad in (True, 1.5, [30]):
+            with pytest.raises(ValidationError, match="integer"):
+                validate_params(groups, {"window_days": bad})
+        cert, _ = REGISTRY["access-certification"]
+        with pytest.raises(ValidationError, match="real date"):
+            validate_params(cert, {"campaign": "x", "due": "2026-99-99", "reviewer": "r"})
+        with pytest.raises(ValidationError, match="must be a string"):
+            validate_params(cert, {"campaign": ["x"], "due": "2026-10-01", "reviewer": "r"})
+        assert validate_params(cert, {"campaign": "x", "due": "2026-10-01", "reviewer": "r"})["due"] == "2026-10-01"
+
     def test_namespaces_share_the_parser_rules(self):
         assert parse_namespaces("prod-ns, prod-ns,(cluster-scoped)") == ["prod-ns", CLUSTER_SCOPE]
         with pytest.raises(ValidationError, match="not a namespace name"):

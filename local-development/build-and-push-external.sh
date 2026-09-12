@@ -17,9 +17,11 @@
 #                                                      # :<appVersion> and :<chartVersion>
 #
 # THIS SCRIPT IS THE DISASTER-RECOVERY PATH. With --release-tags it does everything the publish
-# workflow does, so a laptop can cut a release on the day GitHub Actions is unavailable. Nothing
-# here depends on CI, and CI depends on this — .github/workflows/publish.yml calls this same file
-# rather than reimplementing the tag scheme.
+# workflow does FOR THIS IMAGE, so a laptop can cut a release on the day GitHub Actions is
+# unavailable — and since C3 a release is two images, so that day also runs
+# ./build-and-push-report.sh --release-tags, the wrapper that names the report image through this
+# same script. Nothing here depends on CI, and CI depends on this — .github/workflows/publish.yml
+# calls this same file rather than reimplementing the tag scheme.
 #
 # TWO KINDS OF TAG, and the difference matters:
 #   <appVersion>-<sha>  IMMUTABLE. Always pushed. A given tag always means the same source.

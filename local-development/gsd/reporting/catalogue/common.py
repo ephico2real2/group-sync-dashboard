@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from ... import __version__
@@ -96,6 +96,17 @@ def parse_namespaces(raw: str) -> list[str]:
     return names
 
 
+def _string_items(value: object, name: str) -> list[str]:
+    """A comma string or a list of strings — nothing else. An integer or a list holding one raised
+    a TypeError that surfaced as a 500 instead of the 422 every other bad parameter gets (review of
+    C3, Codex)."""
+    if isinstance(value, str):
+        return [t for t in value.split(",")]
+    if isinstance(value, list) and all(isinstance(item, str) for item in value):
+        return list(value)
+    raise ValidationError(f"{name} must be a comma-separated string or a list of strings")
+
+
 def validate_params(spec: ReportSpec, raw: dict | None) -> dict:
     """The one place a request's parameters are checked and defaulted. Unknown keys are refused:
     a misspelt parameter that silently fell back to a default would produce a report that says
@@ -113,7 +124,7 @@ def validate_params(spec: ReportSpec, raw: dict | None) -> dict:
             out[p.name] = p.default
             continue
         if p.type == "namespaces":
-            out[p.name] = parse_namespaces(value if isinstance(value, str) else ",".join(value))
+            out[p.name] = parse_namespaces(",".join(_string_items(value, p.name)))
         elif p.type == "bool":
             if isinstance(value, bool):
                 out[p.name] = value
@@ -122,6 +133,8 @@ def validate_params(spec: ReportSpec, raw: dict | None) -> dict:
             else:
                 raise ValidationError(f"{p.name} must be true or false")
         elif p.type == "int":
+            if isinstance(value, bool) or isinstance(value, float) or not isinstance(value, (int, str)):
+                raise ValidationError(f"{p.name} must be an integer")
             try:
                 n = int(value)
             except (TypeError, ValueError) as exc:
@@ -134,13 +147,18 @@ def validate_params(spec: ReportSpec, raw: dict | None) -> dict:
                 raise ValidationError(f"{p.name} must be one of {list(p.choices)}")
             out[p.name] = str(value)
         elif p.type == "date":
-            if not _DATE.match(str(value)):
+            if not isinstance(value, str) or not _DATE.match(value):
                 raise ValidationError(f"{p.name} must be YYYY-MM-DD")
-            out[p.name] = str(value)
+            try:
+                date.fromisoformat(value)               # a real calendar date, not just the shape
+            except ValueError as exc:
+                raise ValidationError(f"{p.name} must be a real date (YYYY-MM-DD)") from exc
+            out[p.name] = value
         elif p.type == "csv":
-            items = [t.strip() for t in (value if isinstance(value, str) else ",".join(value)).split(",") if t.strip()]
-            out[p.name] = items
+            out[p.name] = [t.strip() for t in _string_items(value, p.name) if t.strip()]
         else:  # "str"
+            if not isinstance(value, (str, int, float)) or isinstance(value, bool):
+                raise ValidationError(f"{p.name} must be a string")
             s = str(value)
             if len(s) > 200:
                 raise ValidationError(f"{p.name} is longer than 200 characters")

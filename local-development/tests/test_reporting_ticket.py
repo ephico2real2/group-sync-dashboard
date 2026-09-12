@@ -53,3 +53,16 @@ def test_small_clock_skew_is_tolerated_but_exact_expiry_is_not():
     assert verify(SECRET, ticket, "root", now=1_000)["iat"] == 1_020
     with pytest.raises(TicketError, match="expired"):
         verify(SECRET, ticket, "root", now=1_320)
+
+
+def test_a_ticket_has_exactly_one_spelling():
+    """Codex, review C3: Python's permissive decoder dropped characters it did not know, so a ticket
+    with `!!!!` spliced in still yielded the signed bytes and verified — one credential, many spellings.
+    Strict alphabet, a producible length, and a canonical re-encoding, or it is malformed."""
+    ticket = mint(SECRET, "root", "all", 300, now=1_000)
+    body, sig = ticket.split(".")
+    for malformed in (body[:4] + "!!!!" + body[4:] + "." + sig, body + "." + sig[:4] + "!!!!" + sig[4:],
+                      body + "=" + "." + sig, body[:-1] + ("A" if body[-1] != "A" else "B") + "." + sig):
+        with pytest.raises(TicketError):
+            verify(SECRET, malformed, "root", now=1_100)
+    assert verify(SECRET, ticket, "root", now=1_100)["viewer"] == "root"

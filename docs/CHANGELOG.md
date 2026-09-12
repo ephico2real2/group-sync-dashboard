@@ -25,7 +25,9 @@ which `local-development/prepare-release.py` does when the release is cut.
   refused where it cannot work (proxy off, emptyDir, replicas > 1, RWOP, no bindings grant); TLS via
   service-ca, a NetworkPolicy, an artefact PVC, optional schedules as CronJobs, two new alerts.
   `gsd_report_*` on the report service, `gsd_report_usage_pulls_total` on the dashboard.
-  Also `rbac.namespaces` (off), so the namespace report can attest absence. The spec's body was applied with fourteen recorded deviations, chiefly fpdf2 2.8.8's required table heading style and the npm package version that carries DejaVu Sans. (spec `docs/specs/SPEC_C3_reporting_microservice.md`, design `DESIGN_reporting_service.md`; supersedes the parked namespace-report design)
+  Also `rbac.namespaces` (off), so the namespace report can attest absence. The report image is
+  published by the same run as the dashboard's and catalogued, signed and attested the same way
+  (`DESIGN_supply_chain.md` D10; its SBOM is the artifact `sbom-report-<commit>`). The spec's body was applied with nineteen recorded deviations, chiefly fpdf2 2.8.8's required table heading style and the npm package version that carries DejaVu Sans. (spec `docs/specs/SPEC_C3_reporting_microservice.md`, design `DESIGN_reporting_service.md`; supersedes the parked namespace-report design)
 
 ## Application 0.17.0 — chart 0.19.0 — 2026-09-06
 

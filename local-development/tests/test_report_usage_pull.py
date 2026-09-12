@@ -114,6 +114,17 @@ class TestThePull:
         finally:
             store.close()
 
+    def test_a_reachable_service_answering_garbage_is_an_error_not_unreachable(self, tmp_path, monkeypatch):
+        """Codex, review C3: `unreachable` is the Service or TLS; a 200 whose body is not the feed's shape
+        is `error`, as the alert's description promises."""
+        poller, store = _poller(tmp_path)
+        _mock_service(monkeypatch, lambda request: httpx.Response(200, content=b"{not-json"))
+        try:
+            poller._pull_report_usage()
+            assert poller.signals.snapshot()["report_pulls"] == {"error": 1}
+        finally:
+            store.close()
+
     def test_a_missing_token_is_an_error_not_a_crash(self, tmp_path, monkeypatch):
         poller, store = _poller(tmp_path)
         (tmp_path / "token").unlink()

@@ -245,12 +245,19 @@ The script CI calls is the same one you run by hand, which is the point:
 cd local-development
 ./build-and-push-external.sh                  # immutable sha tag only
 ./build-and-push-external.sh --release-tags    # ALSO the appVersion and chartVersion aliases
+./build-and-push-report.sh --release-tags      # the report image, same flag: a release is two images
 ```
 
 `--release-tags` is what makes a laptop a complete substitute for the pipeline. It is **off by
 default** because a routine local build pushing `:<appVersion>` would quietly become the image every
 consumer runs on their next restart. It **refuses a dirty tree**: the sha tag is honest about being
-unreproducible, and an alias named for a version cannot be.
+unreproducible, and an alias named for a version cannot be. Since application 0.18.0 a release is
+**two images** — the chart resolves the dashboard's and the report service's at one appVersion
+(`DESIGN_reporting_service.md#3.3 Two images, one version`) — so the wrapper runs with the same flag;
+a release that moves one image's aliases and not the other's leaves the report pod pulling a tag that
+does not exist. The same two commands are the recovery `publish.yml` names when it cannot decide
+whether a push was a release, and when a release push built the dashboard image but not the report
+image (`DESIGN_supply_chain.md#D10`).
 
 `--update-values` is the other local path, and it is unrelated to releasing. It writes a pin into
 your working copy of `values.yaml`, which is what you want when you build into your own registry — a
@@ -263,10 +270,11 @@ uses it.
 
 | symptom | cause | fix |
 |---|---|---|
-| chart release run is red at "Label the image this chart version deploys" | the image the chart resolves was never published, so there is nothing to retag | run `./build-and-push-external.sh --release-tags` from a clean checkout, then re-run the release |
+| chart release run is red at "Label the image this chart version deploys" | the image the chart resolves was never published, so there is nothing to retag | run `./build-and-push-external.sh --release-tags` and `./build-and-push-report.sh --release-tags` from a clean checkout, then re-run the release |
 | `helm search repo` shows the old chart after a merge | `Chart.yaml` `version` was not bumped, so chart-releaser skipped it | bump it. `ci.yml`'s version-bump check exists to stop this reaching main |
 | a new pod runs different bits than its neighbour | somebody republished an alias between the two container creations | pin `image.tag` to the sha form |
-| `ImagePullBackOff` on a fresh install | the `:<appVersion>` alias does not exist for the chart's declared appVersion | the app release was never published. Check `publish.yml`, then use `--release-tags` |
+| `ImagePullBackOff` on a fresh install | the `:<appVersion>` alias does not exist for the chart's declared appVersion — for the dashboard image, or (report pod only) for the report image | the app release was never published, or half of it was. Check `publish.yml`, then use `--release-tags` on both scripts |
+| the first publish of a NEW image name (the report image was the first, 0.18.0) is red at its push, or green and then every fresh install pulls `unauthorized` for that image | quay.io creates a repository on push only if the pushing account may create one in the namespace, and creates it **private**; the chart pulls anonymously | create the repository in the quay.io UI **public**, grant the robot account write on it, then publish. Measured 2026-09-11: `group-sync-dashboard-report` did not exist before 0.18.0's first publish |
 
 **The historical failures are worth knowing, because two of them reported success.** #34 published a
 chart pinning an image two merges old — including a release that was missing a data-exposure fix.

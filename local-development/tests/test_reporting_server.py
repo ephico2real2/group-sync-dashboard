@@ -24,7 +24,12 @@ from reporting_seed import CLUSTER, seeded_dirs
 SECRET = b"s" * 48
 VENDOR = Path(__file__).resolve().parents[1] / "gsd" / "static" / "vendor"
 FONTS = (str(VENDOR / "DejaVuSans.ttf"), str(VENDOR / "DejaVuSans-Bold.ttf"))
-T0 = int(time.time())          # tickets are minted 'now'; the fixture's clock is frozen just after
+# Tickets are minted at T0, and EVERY app under test runs on a clock frozen at T0 + 10 — the fixture's
+# and the ad-hoc ones alike. Measured 2026-09-11: the full suite collects this module at session start
+# and reaches it after the 300 s ticket TTL, and the three tests that built their app on the real
+# clock then answered 401 to every request (a KeyError on "id"), green whenever the module ran alone.
+T0 = int(time.time())
+FROZEN = datetime.fromtimestamp(T0 + 10, UTC)
 
 
 def _settings(snapshots, artifacts, **over) -> ReportSettings:
@@ -37,7 +42,7 @@ def _settings(snapshots, artifacts, **over) -> ReportSettings:
 @pytest.fixture()
 def service(tmp_path):
     snapshots, artifacts = seeded_dirs(tmp_path)
-    clock = {"now": datetime.fromtimestamp(T0 + 10, UTC)}
+    clock = {"now": FROZEN}
     app = build_report_app(_settings(snapshots, artifacts), secret=SECRET, clock=lambda: clock["now"])
     with TestClient(app) as client:
         yield client, app, clock
@@ -138,7 +143,7 @@ class TestRuns:
 
     def test_a_disabled_report_and_a_disabled_pdf_are_refused_by_name(self, tmp_path):
         snapshots, artifacts = seeded_dirs(tmp_path)
-        app = build_report_app(_settings(snapshots, artifacts, pdf_enabled=False, pdf_variant="", enabled_reports=("groups",)), secret=SECRET)
+        app = build_report_app(_settings(snapshots, artifacts, pdf_enabled=False, pdf_variant="", enabled_reports=("groups",)), secret=SECRET, clock=lambda: FROZEN)
         with TestClient(app) as client:
             r = client.post(f"{REPORT_PREFIX}/api/runs", json={"report": "users", "cluster": CLUSTER, "formats": ["html"]}, headers=_viewer())
             assert r.status_code == 404 and "not enabled" in r.json()["detail"]
@@ -156,7 +161,7 @@ class TestRuns:
             gate.wait(timeout=20)
             return real_render(self, run)
         monkeypatch.setattr(RunManager, "_render", blocking)
-        app = build_report_app(_settings(snapshots, artifacts, max_queued_runs=1), secret=SECRET)
+        app = build_report_app(_settings(snapshots, artifacts, max_queued_runs=1), secret=SECRET, clock=lambda: FROZEN)
         body = {"report": "groups", "cluster": CLUSTER, "formats": ["html"]}
         with TestClient(app) as client:
             first = client.post(f"{REPORT_PREFIX}/api/runs", json=body, headers=_viewer())
@@ -184,12 +189,12 @@ class TestRuns:
     def test_readiness_and_metrics(self, tmp_path):
         snapshots, artifacts = tmp_path / "s", tmp_path / "a"
         snapshots.mkdir(); artifacts.mkdir()
-        app = build_report_app(_settings(snapshots, artifacts), secret=SECRET)
+        app = build_report_app(_settings(snapshots, artifacts), secret=SECRET, clock=lambda: FROZEN)
         with TestClient(app) as client:
             assert client.get(f"{REPORT_PREFIX}/readyz").status_code == 503
         (tmp_path / "two").mkdir()
         snapshots2, artifacts2 = seeded_dirs(tmp_path / "two")
-        app = build_report_app(_settings(snapshots2, artifacts2), secret=SECRET)
+        app = build_report_app(_settings(snapshots2, artifacts2), secret=SECRET, clock=lambda: FROZEN)
         with TestClient(app) as client:
             assert client.get(f"{REPORT_PREFIX}/readyz").status_code == 200
             r = client.post(f"{REPORT_PREFIX}/api/runs", json={"report": "namespace-access", "cluster": CLUSTER, "params": {"namespaces": "prod-ns"}, "formats": ["html"]}, headers=_viewer())

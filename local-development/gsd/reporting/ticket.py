@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import re
 import hashlib
 import hmac
 import json
@@ -25,10 +26,20 @@ def _b64(raw: bytes) -> str:
     return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
 
 
-def _unb64(text: str) -> bytes:
-    pad = "=" * (-len(text) % 4)
-    return base64.urlsafe_b64decode(text + pad)
+_B64URL = re.compile(r"^[A-Za-z0-9_-]+$")
 
+
+def _unb64(text: str) -> bytes:
+    """Strict, canonical base64url. Python's decoder discards characters it does not know, so a ticket
+    with `!!!!` spliced in still yielded the signed bytes and verified — one credential, many
+    spellings (review of C3, Codex). Refused: any character outside the alphabet, a length no
+    encoding produces, and a non-canonical form (re-encoding must give the input back)."""
+    if not _B64URL.fullmatch(text) or len(text) % 4 == 1:
+        raise ValueError("invalid base64url")
+    raw = base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
+    if _b64(raw) != text:
+        raise ValueError("non-canonical base64url")
+    return raw
 
 def _sign(secret: bytes, payload: bytes) -> bytes:
     return hmac.new(secret, payload, hashlib.sha256).digest()

@@ -783,8 +783,12 @@ class Poller:
         except OSError as exc:
             outcome = "error"
             log.warning("report usage pull: cannot read the token: %s", exc)
-        except Exception as exc:  # noqa: BLE001 — httpx errors and JSON errors alike
-            outcome = "unreachable"
+        except Exception as exc:  # noqa: BLE001 — never stop the poll
+            # `unreachable` is the Service, TLS or a dropped connection (httpx's TransportError);
+            # a reachable service answering 200 with a body that is not the feed's shape is `error`,
+            # which is what the alert's description promises (review of C3, Codex).
+            import httpx as _httpx
+            outcome = "unreachable" if isinstance(exc, _httpx.TransportError) else "error"
             log.warning("report usage pull failed: %s: %s", type(exc).__name__, exc)
         if self.signals is not None:
             self.signals.note_report_usage_pull(outcome)

@@ -61,4 +61,46 @@ block asks for it by name.
 
 ## Verdicts — Codex
 
-_(pending)_
+Codex (gpt-5.6-sol, xhigh) reviewed head 7f4825e with a read-only sandbox that could run `helm template`
+(defaults, strict duplicate-key parsing, all ten guard probes) and the temp-directory-free tests, but not
+the file-backed suites. Two of its refutations (C4, C8) are Cursor's, already applied; the rest:
+
+| Claim | Codex | Decision |
+|---|---|---|
+| C1 never the live DB | REFUTED — a symlink named like a copy under `/data/report` would be accepted by name and followed into `/data/gsd.db` (the report pod mounts the whole claim), and `immutable=1` on a changing file returns wrong results | **Accepted** — regular files only, judged with `lstat` at listing AND at open; a link or a directory under a copy's name is refused by name. Whoever could plant such a link already writes the volume, so this is defence in depth, and cheap |
+| C2 classification | CONFIRMED | — |
+| C3 the ticket | REFUTED — `urlsafe_b64decode` discards characters it does not know, so `!!!!` spliced into a ticket still yielded the signed bytes: one credential, many spellings | **Accepted** — strict alphabet, a producible length, and a canonical re-encoding; not an escalation (the signed bytes were unchanged), but a malformed token is refused as the contract says |
+| C4 run lifecycle | REFUTED (as Cursor) | applied under Cursor's pass |
+| C5 nothing secret or personal | REFUTED — `full_name` is selected and printed in the users report and the rosters | **Rejected** — the brief's "beyond the username" was its own imprecision: a display name is what an access-review document carries (§7.3's rosters name "member, name"), §7.5's list of what never enters a report does not include it, and Cursor read the same code the same way. The brief, not the code, is corrected |
+| C6 parameters and the PDF | REFUTED — an integer where a list of names was expected raised `TypeError` (a 500, not a 422); `2026-99-99` passed the date regex; a 10,000-character cell raised fpdf2's "cannot fit on a page" and failed the run; a glyph DejaVu lacks is drawn as the missing-glyph box | **Accepted in part** — `_string_items` makes every wrong shape a `ValidationError`, `date.fromisoformat` makes a date real, integers refuse booleans and floats, strings must be strings; the PDF bounds a cell at `CELL_MAX_CHARS` and marks the cut while the HTML and JSON carry the whole value. **Rejected**: failing a run over one uncovered glyph — measured, fpdf2 substitutes and logs; a document with one boxed emoji is evidence, a failed run is not |
+| C7 the chart | CONFIRMED (helm renders and every guard probe executed) | — |
+| C8 the dashboard side | REFUTED (the watermark, as Cursor) and: every pull exception was `unreachable`, including a 200 with a body that is not JSON | **Accepted** — `httpx.TransportError` is `unreachable`; anything else on a reachable service is `error`, as the alert's description promises |
+| C9 the UI | CONFIRMED | — |
+| C10 images and workflows | REFUTED — **the report-image publish step had landed under the `sbom` job** while reading `steps.creds` and `steps.release`, which exist only in `publish`: step outputs are job-local, so its condition could never hold and the report image would never have been pushed by CI; the image proofs lacked `jinja2`/`markupsafe` | **Accepted** — the step is in `publish`, after the dashboard's build, with its own `DIGEST_FILE` and a second pair of job outputs; and, beyond the brief's claim, the report image now gets the same SBOM and keyless attestation as the dashboard's (Codex's additional finding: it had "no equivalent digest/SBOM/attestation path") — `sbom` and `attest` are a two-leg matrix over the two `<image, digest>` pairs, one definition for both (`DESIGN_supply_chain.md` D10; the report SBOM is `sbom-report-<sha>`). A workflow-semantics test holds every `steps.<id>.`, `needs.<job>.outputs.<name>` and `matrix.<key>` reference in the three workflows to a definition — GitHub resolves an unknown one to an empty string, not an error. actionlint 1.7.12 with shellcheck passes the file. The proofs import `jinja2` and `markupsafe` |
+
+Codex's other additional findings were Cursor's (the cluster id in `Content-Disposition`, the probes'
+unclosed `Snapshot`), applied there; its reading of `test_containerfile_report.py`'s wrong marker was
+right and is fixed.
+
+## The orchestrator's verification of the publish-job fix, 2026-09-11
+
+The C10 fix (the two-image `publish.yml`) was verified before commit by three independent passes over
+the working tree — GitHub Actions semantics against the official contexts, syntax and expressions
+references and the pinned actions' sources; behaviour preservation through ten failure scenarios traced
+in the YAML; and a mutation harness running the new tests against eleven reintroduced defects on an
+isolated copy — each finding then judged by two further skeptics. Measured: all eleven mutations were
+killed by the test whose message names the defect, actionlint 1.7.12 with shellcheck passes the file, and
+the contexts table settles that `matrix` is not readable by a job-level `if`. Accepted from that pass:
+the manual release route (the release decision's warning, `helm.yaml`'s label error, the script header,
+`RELEASING.md`) named one script where a release is now two images; on a release push the dashboard's
+aliases move before the report build, so a failed report build leaves them on a digest the run never
+signs and a dispatch cannot move them — D10 now states the case and the recovery; the reference test's
+docstring claimed YAML comments were searched (they are dropped by the loader; shell comments inside
+`run:` are held — measured); `strategy.get("fail-fast")` so an absent key, GitHub's default, is the same
+defect as `true`. Recorded, not changed: `needs.sbom.result` for a matrix job is one result per job by
+the documented model, confirmed only by GitHub's community answer — to be confirmed on the first run
+with a red leg; the two job display names changed with the matrix; nothing labels the report image by
+chart version. Found beside it, by the full suite: three report-server tests built their app on the real
+clock while the module mints tickets at import time, so a suite that reaches the module after the 300 s
+TTL answered 401 — reproduced by shifting the mint time, fixed by giving every app the fixture's frozen
+clock.

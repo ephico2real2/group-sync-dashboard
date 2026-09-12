@@ -20,6 +20,15 @@ _VARIANTS = {"pdf/a-1b": "PDFA_1B", "pdf/a-2b": "PDFA_2B", "pdf/a-2u": "PDFA_2U"
              "pdf/a-3b": "PDFA_3B", "pdf/a-3u": "PDFA_3U", "pdf/a-4": "PDFA_4"}
 _FONT = "Body"
 _MONO_FALLBACK = _FONT   # one face family; monospace is a screen nicety the PDF does without
+#: The longest text one table cell draws. fpdf2 refuses a row taller than a page ("cannot fit on a
+#: page"), which turned one 10,000-character value into a failed run (review of C3, Codex). A report
+#: cell holds names and labels; the HTML and the JSON carry the whole value, the PDF says it was cut.
+CELL_MAX_CHARS = 600
+
+
+def _cell_text(value) -> str:
+    text = "" if value is None else str(value)
+    return text if len(text) <= CELL_MAX_CHARS else text[:CELL_MAX_CHARS - 1] + "…"
 
 
 def _pdf_class(variant: str):
@@ -125,7 +134,7 @@ def _table(pdf, t: Table) -> None:
             for r in t.rows:
                 row = table.row()
                 for v in r:
-                    row.cell("" if v is None else str(v))
+                    row.cell(_cell_text(v))
     if t.note:
         _note(pdf, Note(t.note))
     pdf.ln(2)
@@ -138,8 +147,8 @@ def _kv(pdf, k: KeyValues) -> None:
     with pdf.table(first_row_as_headings=False, col_widths=(34, 66), line_height=4.4, padding=(0.6, 1.2)) as table:
         for a, b in k.items:
             row = table.row()
-            row.cell(str(a))
-            row.cell("" if b is None else str(b))
+            row.cell(_cell_text(a))
+            row.cell(_cell_text(b))
     pdf.ln(2)
 
 

@@ -26,6 +26,7 @@ import logging
 import os
 import re
 import sqlite3
+import stat
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -63,7 +64,10 @@ def newest_snapshot(directory: str) -> Path:
     d = Path(directory)
     if not d.is_dir():
         raise SnapshotError(f"snapshot directory {directory} does not exist — the dashboard has not written a copy yet, or the volume is not mounted")
-    candidates = sorted(p for p in d.iterdir() if _STAMP.match(p.name))
+    # Regular files only, judged WITHOUT following links: the report pod mounts the whole data claim
+    # read-only, so a symlink named like a copy could point at the live gsd.db — and immutable=1 on a
+    # file that changes returns wrong results (review of C3, Codex).
+    candidates = sorted(p for p in d.iterdir() if _STAMP.match(p.name) and stat.S_ISREG(p.lstat().st_mode))
     if not candidates:
         raise SnapshotError(f"no snapshot in {directory} yet — the dashboard's leader writes one every reporting.snapshot.intervalSeconds")
     return candidates[-1]
@@ -80,6 +84,11 @@ class Snapshot:
             raise SnapshotError(f"{path.name} is not a snapshot file")
         raw = m.group(1)
         self.stamp = f"{raw[0:4]}-{raw[4:6]}-{raw[6:8]}T{raw[9:11]}:{raw[11:13]}:{raw[13:15]}{raw[15:]}"
+        try:
+            if not stat.S_ISREG(path.lstat().st_mode):
+                raise SnapshotError(f"{path.name} is not a regular snapshot file (a link or a directory under the name of a copy)")
+        except OSError as exc:
+            raise SnapshotError(f"cannot inspect snapshot {path.name}: {exc}") from exc
         uri = f"file:{path}?immutable=1&mode=ro"
         self._conn = sqlite3.connect(uri, uri=True, check_same_thread=False)
         _harden(self._conn)

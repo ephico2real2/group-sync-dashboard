@@ -45,6 +45,23 @@ class TestWhichCopy:
 
 
 class TestReadOnlyByConstruction:
+    def test_a_link_named_like_a_copy_is_refused_at_listing_and_at_open(self, tmp_path):
+        """Codex, review C3: the report pod mounts the whole data claim read-only, so a symlink named
+        like a copy could point at the live gsd.db — and immutable=1 on a changing file returns wrong
+        results. Regular files only, judged without following links."""
+        live = tmp_path / "gsd.db"
+        w = sqlite3.connect(live); w.execute("PRAGMA journal_mode=WAL"); w.execute("CREATE TABLE proof(v TEXT)"); w.commit(); w.close()
+        d = tmp_path / "report"; d.mkdir()
+        link = d / "gsd-20260906T120000.000000Z.db"; link.symlink_to(live)
+        with pytest.raises(SnapshotError, match="reporting.snapshot.intervalSeconds"):
+            newest_snapshot(str(d))                        # the link is not a candidate
+        with pytest.raises(SnapshotError, match="not a regular snapshot file"):
+            Snapshot(link)                                 # and not openable by name either
+        (d / "gsd-20260906T120001.000000Z.db").mkdir()
+        with pytest.raises(SnapshotError):
+            Snapshot(d / "gsd-20260906T120001.000000Z.db")
+
+
     def test_the_copy_is_rollback_journal_and_refuses_a_write(self, seeded):
         _, _, path = seeded
         with Snapshot(path) as snap:
