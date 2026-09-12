@@ -13,4 +13,8 @@ for arg in "$@"; do
       exit 2 ;;
   esac
 done
-IMAGE_NAME="${IMAGE_NAME:-group-sync-dashboard-report}" CONTAINERFILE=Containerfile.report exec ./build-and-push-external.sh "$@"
+# FORCED, not defaulted. `${IMAGE_NAME:-…}` let an ambient IMAGE_NAME=group-sync-dashboard — a shell
+# that had exported the dashboard's .env — tag the REPORT recipe under the dashboard's name and, with
+# --release-tags, move the dashboard's aliases onto report bytes (review of C3, second pass, Codex).
+# Deviation 15 stopped the .env file overriding this; the environment could still.
+IMAGE_NAME=group-sync-dashboard-report CONTAINERFILE=Containerfile.report exec ./build-and-push-external.sh "$@"

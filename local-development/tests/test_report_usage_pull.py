@@ -125,10 +125,14 @@ class TestThePull:
         finally:
             store.close()
 
-    @pytest.mark.parametrize("payload", [{}, {"foo": 1}, {"runs": "none", "truncated": False}, [], "text"])
+    @pytest.mark.parametrize("payload", [{}, {"foo": 1}, {"runs": "none", "truncated": False}, [], "text",
+                                         {"runs": [], "truncated": True, "next_since_id": None},      # a page that cannot advance
+                                         {"runs": [], "truncated": "false", "next_since_id": None}])   # a string is truthy: the same
     def test_a_200_that_is_json_but_not_the_feed_is_an_error(self, tmp_path, monkeypatch, payload):
         """Cursor, review C3 second pass: a 200 carrying JSON without the feed's keys recorded nothing
-        and counted `ok` — a silently empty Usage tab. The feed is a dict whose `runs` is a list."""
+        and counted `ok` — a silently empty Usage tab. The feed is a dict whose `runs` is a list; and
+        (Codex) a truncated page whose next_since_id does not move would re-read one page twenty
+        times a cycle."""
         poller, store = _poller(tmp_path)
         _mock_service(monkeypatch, lambda request: httpx.Response(200, json=payload))
         try:

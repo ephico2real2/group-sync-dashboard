@@ -112,6 +112,28 @@ class TestParameters:
                 validate_params(cert, {"campaign": bad, "due": "2026-10-01", "reviewer": "r"})
         assert validate_params(cert, {"campaign": "x", "due": "2026-10-01", "reviewer": "r"})["due"] == "2026-10-01"
 
+    @pytest.mark.parametrize("kind,default,choices,bad", [
+        ("namespaces", ["prod-ns"], (), (1, 1.5, True, {}, [], [["prod-ns"]], [1])),
+        ("bool", False, (), (1, 1.0, [], {}, [["true"]], [1], "yes")),
+        ("int", 30, (), (True, 1.0, [], {}, [[1]], [1], "1.0", " 1", "1_000")),
+        ("enum", "all", ("all", "groups", "users"), (1, 1.0, True, [], {}, [["all"]], [1])),
+        ("date", "2026-10-01", (), (1, 1.0, True, [], {}, [["2026-10-01"]], [1], "2026-02-30", "2026-13-01")),
+        ("csv", ["admin"], (), (1, 1.0, True, {}, [["admin"]], [1])),
+        ("str", "default", (), (1, 1.0, True, [], {}, [["x"]], [1])),
+    ])
+    def test_every_parameter_type_refuses_every_wrong_json_shape(self, kind, default, choices, bad):
+        """Codex, review C3 second pass: the matrix, one probe spec per type, so a new arm cannot
+        quietly accept a shape the others refuse. Not in the lists on purpose: None and "" are "not
+        provided" and take the default; an empty list is a legitimate empty csv."""
+        from gsd.reporting.catalogue.common import ParamSpec, ReportSpec
+        spec = ReportSpec(name="probe", title="Probe", summary="Probe", values_key="probe",
+                          params=(ParamSpec("value", kind, default, "probe", choices=choices),))
+        for value in bad:
+            with pytest.raises(ValidationError):
+                validate_params(spec, {"value": value})
+        assert validate_params(spec, {"value": None})["value"] == default
+        assert validate_params(spec, {})["value"] == default
+
     def test_namespaces_share_the_parser_rules(self):
         assert parse_namespaces("prod-ns, prod-ns,(cluster-scoped)") == ["prod-ns", CLUSTER_SCOPE]
         with pytest.raises(ValidationError, match="not a namespace name"):

@@ -25,9 +25,12 @@ _MONO_FALLBACK = _FONT   # one face family; monospace is a screen nicety the PDF
 #: value into a failed run (review of C3, Codex) — and a character cap alone left 600 newlines a
 #: 600-line row, still taller than a page (second pass, Cursor; measured). A report cell holds names
 #: and labels, so runs of whitespace become one space and the cell wraps as one run of text; the
-#: HTML and the JSON carry the whole value, the PDF says it was cut. Measured at 600: a cell of
-#: `W`, of full-width `Ｗ` and of `@` all render.
-CELL_MAX_CHARS = 600
+#: HTML and the JSON carry the whole value, the PDF says it was cut. THE BOUND IS THE NARROWEST
+#: COLUMN, not the page: measured with the widest glyph, `W`×600 renders in a two-column table and
+#: fails in the catalogue's six-column groups table; at nine columns (the widest table, "Group
+#: bindings") ×400 fails and ×300 renders, at ten columns the same. 240 leaves a margin for a
+#: wider table and a wider glyph.
+CELL_MAX_CHARS = 240
 
 
 def _cell_text(value) -> str:

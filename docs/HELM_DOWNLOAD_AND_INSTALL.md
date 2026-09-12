@@ -296,8 +296,9 @@ build it deploys, and rewriting it decouples the chart from the image it was pub
 
 ## 7. Verify what you downloaded
 
-Every image `publish.yml` pushes from `main` is signed and attested (a `workflow_dispatch` from
-another branch pushes its immutable tags unsigned — `DESIGN_supply_chain.md`, D9), and every chart
+With the two supply-chain switches at their defaults (`SUPPLY_CHAIN_SIGNING`, `SUPPLY_CHAIN_SBOM`;
+`DESIGN_supply_chain.md`, D8), every image `publish.yml` pushes from `main` is signed and attested (a
+`workflow_dispatch` from another branch pushes its immutable tags unsigned — D9), and every chart
 `helm.yaml` publishes as a new version is attested, with GitHub's OIDC identity — no key to fetch, nothing to trust but the identity strings
 below (`.github/workflows/publish.yml#attest`, `.github/workflows/helm.yaml#Attest the provenance of the packaged chart`).
 The commands need `cosign` 3.x and `gh` 2.49 or newer; the outputs shown are the tools' own

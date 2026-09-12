@@ -204,6 +204,42 @@ class TestRuns:
             assert "root" not in text and "gsd_report_snapshot_age_seconds" in text
 
 
+class TestCellBounds:
+    @pytest.mark.parametrize("group_name", ["\n" * 600, "界" * 600, "x" * 600, "W" * 600])
+    def test_a_run_finishes_on_a_group_name_no_cell_can_draw_and_the_other_formats_are_lossless(self, tmp_path, group_name):
+        """Codex and Cursor, review C3 second pass, through the catalogue rather than the renderer: a
+        600-newline group name failed the run on the first-pass head (a 600-line row). The PDF renders,
+        and the HTML and the JSON carry the name whole."""
+        from reporting_seed import NOW, _iso, seed_store, write_snapshot
+        snapshots, artifacts = tmp_path / "s", tmp_path / "a"
+        snapshots.mkdir(); artifacts.mkdir()
+        writer = seed_store(str(tmp_path / "writer.db"))
+        try:
+            writer.replace_group_state(CLUSTER, [{"name": group_name, "member_count": 0, "sync_provider": "corp_ldap",
+                                                  "group_synced_at": _iso(NOW), "ldap_uid": None}], _iso(NOW))
+            write_snapshot(writer, snapshots)
+        finally:
+            writer.close()
+        app = build_report_app(_settings(snapshots, artifacts), secret=SECRET, clock=lambda: FROZEN)
+        with TestClient(app) as client:
+            r = client.post(f"{REPORT_PREFIX}/api/runs", json={"report": "groups", "cluster": CLUSTER, "formats": ["html", "pdf"]}, headers=_viewer())
+            assert r.status_code == 202, r.text
+            run = _wait_done(client, r.json()["id"], _viewer())
+            assert run["status"] == "done", run.get("error")
+            got = {fmt: client.get(f"{REPORT_PREFIX}/api/runs/{run['id']}/artifact", params={"format": fmt}, headers=_viewer()) for fmt in ("json", "html", "pdf")}
+            assert all(g.status_code == 200 for g in got.values()), {k: v.status_code for k, v in got.items()}
+            assert got["pdf"].content.startswith(b"%PDF")
+            assert group_name in got["html"].text
+            # The JSON escapes newlines and non-ASCII, so look for the value, not its spelling.
+            def holds(node, needle) -> bool:
+                if node == needle:
+                    return True
+                if isinstance(node, dict):
+                    return any(holds(v, needle) for v in node.values())
+                return isinstance(node, list) and any(holds(v, needle) for v in node)
+            assert holds(got["json"].json(), group_name)
+
+
 class TestTheArtifactStore:
     def test_a_running_manifest_is_failed_on_restart_and_prune_honours_both_bounds(self, tmp_path):
         store = ArtifactStore(str(tmp_path / "a"))

@@ -188,6 +188,22 @@ class TestPdf:
             assert out.startswith(b"%PDF"), repr(raw[:8])
             assert raw in render_html(report, "T"), repr(raw[:8])
 
+    def test_the_cap_fits_the_widest_glyph_in_a_wider_table_than_the_catalogue_has(self):
+        """The bound is the narrowest column, not the page: `W`×600 rendered in the two-column
+        helper table and failed in the six-column groups table, and at nine columns (the widest
+        catalogue table) ×400 fails while ×300 renders — measured. Ten columns here, one more than
+        the catalogue's widest, so a new column does not move the run past the page."""
+        _need_fonts()
+        from gsd.reporting.render_pdf import CELL_MAX_CHARS, render_pdf
+        headers = [f"c{i}" for i in range(10)]
+        for glyph in ("W", "Ｗ", "@"):
+            report = Report(name="groups", title="Groups", cluster="crc", api_url="https://x", generated_at="2026-09-06T00:00:00Z",
+                            generated_by="root", generated_by_note="n", run_id="20260906T000000.000000Z-ab12", params={}, coverage={},
+                            provenance={"marking": "m", "report_service_version": "0.18.0"}, totals={}, truncated=False,
+                            include_members=False,
+                            sections=[Section("S", [Table("T", headers, [[glyph * (CELL_MAX_CHARS + 400)] + ["x"] * 9])])]).seal()
+            assert render_pdf(report, "T", "pdf/a-2b", str(REGULAR), str(BOLD)).startswith(b"%PDF"), glyph
+
     def test_an_unknown_variant_is_refused(self):
         from gsd.reporting.render_pdf import render_pdf
         with pytest.raises(ValueError):

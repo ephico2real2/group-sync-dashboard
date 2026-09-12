@@ -136,11 +136,12 @@ class TestTheDigestChain:
         code = "\n".join(ln for ln in report["run"].splitlines() if not ln.strip().startswith("#"))
         assert "./build-and-push-report.sh --release-tags" in code and "./build-and-push-report.sh\n" in code
         assert 'echo "digest=${digest}" >> "$GITHUB_OUTPUT"' in code
-        # The output names the wrapper's default IMAGE_NAME — read from the wrapper, so renaming
-        # the image there without touching the workflow fails here rather than in the registry.
-        default = re.search(r'IMAGE_NAME="\$\{IMAGE_NAME:-([^}]+)\}"', REPORT_WRAPPER.read_text())
-        assert default, "build-and-push-report.sh no longer defaults IMAGE_NAME the way this test reads"
-        assert f'echo "image=${{REGISTRY}}/${{REGISTRY_NAMESPACE}}/{default.group(1)}" >> "$GITHUB_OUTPUT"' in code
+        # The output names the IMAGE_NAME the wrapper FORCES (second pass, Codex: a default from the
+        # environment let an ambient dashboard name in) — read from the wrapper, so renaming the
+        # image there without touching the workflow fails here rather than in the registry.
+        forced = re.search(r'^IMAGE_NAME=([A-Za-z0-9._-]+) CONTAINERFILE=Containerfile\.report exec', REPORT_WRAPPER.read_text(), re.M)
+        assert forced, "build-and-push-report.sh no longer forces IMAGE_NAME the way this test reads"
+        assert f'echo "image=${{REGISTRY}}/${{REGISTRY_NAMESPACE}}/{forced.group(1)}" >> "$GITHUB_OUTPUT"' in code
 
 
 # ── The switches, and how they interact ───────────────────────────────────────────────────────
@@ -322,6 +323,10 @@ class TestWhatIsSignedAndHow:
         section = text.split("## 7. Verify what you downloaded", 1)[1].split("## Quick reference", 1)[0]
         assert "group-sync-dashboard-report" in section
         assert "`sbom-report-<commit>`" in section and "`sbom-<commit>`" in section
+        # Codex, second pass: "every image is signed" holds only with both switches at their defaults,
+        # and the sentence that says so names them (D8), before the first command.
+        opening = section.split("**The image signature.**", 1)[0]
+        assert "SUPPLY_CHAIN_SIGNING" in opening and "SUPPLY_CHAIN_SBOM" in opening and "D8" in opening
 
 
 # ── Two images, one chain (C3) ───────────────────────────────────────────────────────────────

@@ -786,7 +786,13 @@ class Poller:
                     log.debug("recorded %d report run(s) from the report service", added)
                 if not body.get("truncated"):
                     break
-                since = body.get("next_since_id") or since
+                # A truncated page must move the cursor, or the bounded loop spends its remaining
+                # calls re-reading one page every cycle (second pass, Codex).
+                if not body.get("next_since_id") or body.get("next_since_id") == since:
+                    outcome = "error"
+                    log.warning("report usage pull: a truncated page did not advance next_since_id")
+                    break
+                since = body["next_since_id"]
         except OSError as exc:
             outcome = "error"
             log.warning("report usage pull: cannot read the token: %s", exc)
