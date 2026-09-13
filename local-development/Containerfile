@@ -250,7 +250,8 @@ USER 65532
 # Prove the image from the outside, as the runtime user. image-proof.py: every module stage 1
 # proved imports under THIS interpreter; SQLite works in WAL mode on /data; zoneinfo resolves;
 # uuid works while _uuid must FAIL to import (the libuuid removal, observed); pip is not
-# importable; the removed paths are gone; the database directory holds the base's two files.
+# importable; the removed paths are gone; the database directory holds rpmdb.sqlite and rpm's
+# lock files only.
 RUN --mount=type=bind,from=build,source=/image-proof.py,target=/tmp/image-proof.py \
     python3.14 /tmp/image-proof.py
 

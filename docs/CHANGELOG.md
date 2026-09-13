@@ -8,6 +8,27 @@ lives next to the code and in the design and review records linked here. Changes
 last release sit under `## Unreleased` until the release that carries them replaces that heading —
 which `local-development/prepare-release.py` does when the release is cut.
 
+## Application 0.18.0 — chart 0.20.0 — 2026-09-06
+
+- **Reporting, as a separate service.** A second pod on its own image (`group-sync-dashboard-report`,
+  same appVersion) renders eleven evidence reports — the namespace access report, an access matrix,
+  privileged access, binding findings, groups, users, login activity, dormant access, GroupSync
+  health, a compliance snapshot and an access-certification pack — as self-contained HTML and
+  PDF/A-2b (fpdf2, pure Python: the hardened base has no pango) from a read-only `VACUUM INTO` copy
+  the dashboard's leader writes every 300 s under `/data/report`; never the live database. Reached
+  through the oauth-proxy's path-routed `/report/` upstream; the dashboard decides the wide tier and
+  mints a signed ticket (`GET /api/report/ticket`), the report service verifies it against a shared
+  token and binds it to the proxy's identity. The dashboard's API stays GET-only: it PULLS
+  `/report/api/usage` on the poll thread into `report_run` (migration 11, with `cluster_namespace`
+  for `rbac.namespaces`) and serves it at the usage tier (`GET /api/dashboard/reports`, Usage tab).
+  New Reports tab (wide tier; a named refusal below it). Chart `reporting.*` — **on by default**,
+  refused where it cannot work (proxy off, emptyDir, replicas > 1, RWOP, no bindings grant); TLS via
+  service-ca, a NetworkPolicy, an artefact PVC, optional schedules as CronJobs, two new alerts.
+  `gsd_report_*` on the report service, `gsd_report_usage_pulls_total` on the dashboard.
+  Also `rbac.namespaces` (off), so the namespace report can attest absence. The report image is
+  published by the same run as the dashboard's and catalogued, signed and attested the same way
+  (`DESIGN_supply_chain.md` D10; its SBOM is the artifact `sbom-report-<commit>`). The spec's body was applied with nineteen recorded deviations, chiefly fpdf2 2.8.8's required table heading style and the npm package version that carries DejaVu Sans. (spec `docs/specs/SPEC_C3_reporting_microservice.md`, design `DESIGN_reporting_service.md`; supersedes the parked namespace-report design)
+
 ## Application 0.17.0 — chart 0.19.0 — 2026-09-06
 
 - **Login capture from the oauth-server audit log, as a second source.** `loginCapture.source:

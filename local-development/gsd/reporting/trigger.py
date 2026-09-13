@@ -1,0 +1,66 @@
+"""The schedule Job's one command: POST a run with the service token, optionally wait for it.
+
+    python3.14 -m gsd.reporting.trigger --url https://<svc>:8443 --report compliance-snapshot \
+        --cluster crc-local [--param window_days=30]... [--format pdf --format html] --schedule weekly --wait
+
+Exit 0 when the run finished `done`, 1 on any refusal or a `failed` run — so the Job's status is
+the run's status and kube_job_status_failed can alert on it.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+import time
+
+import httpx
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(prog="gsd.reporting.trigger")
+    ap.add_argument("--url", required=True, help="the report Service, e.g. https://gsd-report.ns.svc:8443")
+    ap.add_argument("--report", required=True)
+    ap.add_argument("--cluster", required=True)
+    ap.add_argument("--param", action="append", default=[], help="k=v, repeatable")
+    ap.add_argument("--format", action="append", default=[], choices=["html", "pdf"])
+    ap.add_argument("--schedule", required=True, help="the schedule's name, recorded as generated_by=schedule:<name>")
+    ap.add_argument("--token-file", default=os.environ.get("GSD_REPORT_TOKEN_FILE", "/etc/gsd/report/token"))
+    ap.add_argument("--ca-file", default=os.environ.get("GSD_REPORT_CA_FILE", ""), help="PEM bundle for the Service certificate; empty = system trust")
+    ap.add_argument("--wait", action="store_true", help="poll until the run finishes; exit 1 if it failed")
+    ap.add_argument("--timeout", type=int, default=600)
+    a = ap.parse_args(argv)
+    params = {}
+    for kv in a.param:
+        k, _, v = kv.partition("=")
+        params[k] = v
+    with open(a.token_file, "rb") as fh:
+        token = fh.read().strip().decode("utf-8")
+    headers = {"Authorization": f"Bearer {token}"}
+    verify = a.ca_file or True
+    body = {"report": a.report, "cluster": a.cluster, "params": params,
+            "formats": a.format or ["html", "pdf"], "schedule": a.schedule}
+    with httpx.Client(base_url=a.url, headers=headers, verify=verify, timeout=30.0) as c:
+        r = c.post("/report/api/runs", json=body)
+        if r.status_code != 202:
+            print(f"refused: {r.status_code} {r.text}", file=sys.stderr)
+            return 1
+        run = r.json()
+        print(json.dumps({"submitted": run["id"], "report": a.report}))
+        if not a.wait:
+            return 0
+        deadline = time.monotonic() + a.timeout
+        while time.monotonic() < deadline:
+            time.sleep(2)
+            run = c.get(f"/report/api/runs/{run['id']}").json()
+            if run["status"] in ("done", "failed"):
+                print(json.dumps({"id": run["id"], "status": run["status"], "sha256": run.get("sha256"),
+                                  "bytes": run.get("bytes"), "error": run.get("error")}))
+                return 0 if run["status"] == "done" else 1
+    print("timed out waiting for the run", file=sys.stderr)
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

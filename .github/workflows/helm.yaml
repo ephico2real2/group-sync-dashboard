@@ -156,6 +156,7 @@ jobs:
             echo "::error::This means the application release was never published — check the"
             echo "::error::publish workflow, then from a clean checkout run:"
             echo "::error::  cd local-development && ./build-and-push-external.sh --release-tags"
+            echo "::error::  cd local-development && ./build-and-push-report.sh --release-tags"
             exit 1
           fi
 

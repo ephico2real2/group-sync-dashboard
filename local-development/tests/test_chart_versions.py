@@ -186,3 +186,16 @@ def test_the_changelog_heading_names_the_current_release_pair() -> None:
         f"## Chart {chart} — application {app} — {date}",
         "## Unreleased",
     ), f"the changelog's first heading {heading!r} does not name app {app} / chart {chart}"
+
+
+def test_the_report_image_tag_follows_the_same_rule() -> None:
+    """C3: the report image is resolved exactly like the dashboard's (`gsd.reportImage` falls back to
+    Chart.appVersion), and the two must be the SAME version — the report service reads the dashboard's
+    schema (docs/specs/SPEC_C3_reporting_microservice.md §3.3). Empty ships; a deliberate pin must be a
+    build of appVersion."""
+    tag = yaml.safe_load(VALUES.read_text())["reporting"]["image"]["tag"]
+    app = _chart()["appVersion"]
+    if tag:
+        assert tag == app or tag.startswith(f"{app}-"), (
+            f"reporting.image.tag {tag!r} is not a build of appVersion {app!r}; the report image ships at the "
+            f"application's version so its snapshot reader matches the dashboard's schema")

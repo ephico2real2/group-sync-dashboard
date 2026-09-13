@@ -228,10 +228,22 @@ class TestSqliteMetrics:
         store = Store(":memory:")
         try:
             registry = CollectorRegistry()
-            registry.register(DashboardCollector(store, timedelta(seconds=120), None))
+            collector = DashboardCollector(store, timedelta(seconds=120), None)
+            # The reporting families are declared only when the module is on — the rules that
+            # reference them render only then too (templates/monitoring.yaml, reportingEnabled).
+            collector.reporting_enabled = True
+            registry.register(collector)
             text = generate_latest(registry).decode()
         finally:
             store.close()
+        # The REPORT SERVICE's own exposition (gsd_report_*, scraped on its Service by the second
+        # ServiceMonitor) is a second registry; a rule may reference either. Built bare, like the
+        # dashboard's: HELP lines are declared without a snapshot or a store.
+        from gsd.reporting.metrics import ReportSignals, build_report_registry
+        from types import SimpleNamespace
+        report_registry = build_report_registry(ReportSignals(), SimpleNamespace(disk_bytes=lambda: 0),
+                                                SimpleNamespace(queued=lambda: 0), "/nonexistent", lambda: None)
+        text += generate_latest(report_registry).decode()
         # Declared, not emitted: a per-cluster family yields no series until a cluster is
         # configured, so presence of the HELP line is the right assertion.
         declared = {line.split()[2] for line in text.splitlines() if line.startswith("# HELP")}
@@ -420,6 +432,9 @@ class TestVisibilitySignals:
             "gsd_login_capture_last_read_timestamp_seconds",
             "gsd_login_capture_source_info", "gsd_login_capture_audit_settled_timestamp_seconds",
             "gsd_login_capture_unmatched_total",
+            # gsd_report_usage_pulls_total is the one CONDITIONAL family: declared only with reporting
+            # on, because the rule that references it renders only then (SPEC_C3 §8.15.6);
+            # test_the_usage_pull_family_is_declared_only_with_reporting_on_and_preseeded holds that.
         ):
             assert f"# HELP {family} " in text, f"{family} not declared"
             assert series(text, family) == {}, f"{family} claims samples while unwired"
@@ -578,6 +593,23 @@ class TestCaptureAndBackupGauges:
             assert got == {'gsd_login_capture_unmatched_total{cluster="crc",outcome="failed"}': 5,
                            'gsd_login_capture_unmatched_total{cluster="crc",outcome="success"}': 1}, got
             assert 'decision=' not in text, "the label is named for the vocabulary it carries (Cursor, review D1)"
+        finally:
+            store.close()
+
+    def test_the_usage_pull_family_is_declared_only_with_reporting_on_and_preseeded(self):
+        """C3: absent entirely when reporting is off (no rule references it then); with it on, all
+        four outcomes at zero before any pull so increase() has a baseline."""
+        from gsd.metrics import REPORT_PULL_OUTCOMES, RuntimeSignals
+        store = Store(":memory:")
+        try:
+            store.upsert_cluster("crc", "https://x", True)
+            off = generate_latest(build_registry(store, GRACE, signals=RuntimeSignals(), reporting_enabled=False)).decode()
+            assert "gsd_report_usage_pulls_total" not in off
+            on = generate_latest(build_registry(store, GRACE, signals=RuntimeSignals(), reporting_enabled=True)).decode()
+            assert series(on, "gsd_report_usage_pulls_total") == {f'gsd_report_usage_pulls_total{{outcome="{o}"}}': 0 for o in REPORT_PULL_OUTCOMES}
+            signals = RuntimeSignals(); signals.note_report_usage_pull("refused")
+            text = generate_latest(build_registry(store, GRACE, signals=signals, reporting_enabled=True)).decode()
+            assert series(text, "gsd_report_usage_pulls_total")['gsd_report_usage_pulls_total{outcome="refused"}'] == 1
         finally:
             store.close()
 

@@ -246,7 +246,7 @@ class TestAccessModes:
         assert "affinity" not in _pod(_one(_docs(out), "CronJob"))["spec"]
 
     def test_rwo_pins_the_job_to_the_dashboards_node(self):
-        ok, out = render(**ON, persistence__accessMode="ReadWriteOnce")
+        ok, out = render(**ON, persistence__accessMode="ReadWriteOnce", reporting__enabled="false")   # reporting refuses RWO first (C3)
         assert ok, out
         docs = _docs(out)
         pod = _pod(_one(docs, "CronJob"))
@@ -256,7 +256,7 @@ class TestAccessModes:
         assert term["labelSelector"]["matchLabels"] == selector
 
     def test_rwop_is_refused(self):
-        ok, out = render(**ON, persistence__accessMode="ReadWriteOncePod")
+        ok, out = render(**ON, persistence__accessMode="ReadWriteOncePod", reporting__enabled="false")   # reporting refuses RWOP first (C3)
         assert not ok and "ReadWriteOncePod" in out and "Pending forever" in out
 
     def test_derived_rwop_at_one_replica_is_refused_too(self):
@@ -266,7 +266,7 @@ class TestAccessModes:
 
 class TestPrerequisites:
     def test_no_persistence_is_refused(self):
-        ok, out = render(**ON, persistence__enabled="false")
+        ok, out = render(**ON, persistence__enabled="false", reporting__enabled="false")   # reporting refuses an emptyDir first (C3)
         assert not ok and "persistence.enabled=true" in out
 
     def test_no_on_volume_backup_is_refused(self):
@@ -285,9 +285,9 @@ class TestPrerequisites:
     def test_an_existing_data_claim_without_an_explicit_access_mode_is_refused(self):
         """Review of B1 (Cursor): the chart cannot read a live claim's mode, and an emptied
         accessMode derives one from replicaCount, which may not be the claim's."""
-        ok, out = render(**ON, persistence__existingClaim="already-there", persistence__accessMode="")
+        ok, out = render(**ON, persistence__existingClaim="already-there", persistence__accessMode="", reporting__enabled="false")
         assert not ok and "cannot read the live claim" in out
-        ok, out = render(**ON, persistence__existingClaim="already-there", persistence__accessMode="ReadWriteOnce")
+        ok, out = render(**ON, persistence__existingClaim="already-there", persistence__accessMode="ReadWriteOnce", reporting__enabled="false")
         assert ok, out
 
     def test_an_unknown_destination_is_refused(self):

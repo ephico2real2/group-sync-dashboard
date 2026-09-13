@@ -38,6 +38,7 @@ import yaml
 REPO = pathlib.Path(__file__).resolve().parents[2]
 WORKFLOW = REPO / ".github" / "workflows" / "publish.yml"
 CONTAINERFILE = REPO / "local-development" / "Containerfile"
+CONTAINERFILE_REPORT = REPO / "local-development" / "Containerfile.report"   # the report image (C3)
 
 #: The Containerfile's build context, as the build script invokes it: `podman build … .` from
 #: local-development/. So a COPY source is relative to that directory.
@@ -64,7 +65,7 @@ def _copied_sources() -> list[str]:
     so it is not an input a push could change.
     """
     sources: list[str] = []
-    text = re.sub(r"\\\n", " ", CONTAINERFILE.read_text())   # join continued lines first
+    text = "\n".join(re.sub(r"\\\n", " ", cf.read_text()) for cf in (CONTAINERFILE, CONTAINERFILE_REPORT))   # join continued lines first; both images
     for line in text.splitlines():
         stripped = line.strip()
         verb = stripped.split(" ", 1)[0].upper() if " " in stripped else ""
@@ -215,3 +216,75 @@ def test_a_directory_source_is_matched_recursively_or_not_at_all() -> None:
     # A file source is the other way round: exact is correct and sufficient.
     assert _covers("local-development/pyproject.toml", "local-development/pyproject.toml",
                    is_dir=False)
+
+
+def test_the_report_image_is_built_by_the_same_publish_run_and_gated_by_ci() -> None:
+    """C3: the second image is built from the same commit in the same publish run (its release
+    aliases move exactly when the dashboard's do), and ci.yml scans BOTH of its stages the way it
+    scans the dashboard's (review of the spec, Codex)."""
+    publish = (REPO / ".github" / "workflows" / "publish.yml").read_text()
+    assert "- name: Build and push the report image" in publish
+    assert "./build-and-push-report.sh --release-tags" in publish and "./build-and-push-report.sh\n" in publish
+    for path in ("local-development/Containerfile.report", "local-development/report-image-proof.py", "local-development/build-and-push-report.sh"):
+        assert _matches(_publish_paths(), path), path
+
+
+def test_report_final_and_pack_stages_are_built_and_gated_independently():
+    workflow = (REPO / ".github" / "workflows" / "ci.yml").read_text()
+    assert "docker build -f Containerfile.report -t gsd-report:ci ." in workflow
+    assert "docker build -f Containerfile.report --target pack -t gsd-report:pack ." in workflow
+    assert workflow.count("image: gsd-report:pack") >= 2
+    assert "output-file: report-pack-inventory.json" in workflow
+    region = workflow[workflow.index("- name: Build the report image"):]
+    assert region.count("anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439") >= 4
+    assert region.count("only-fixed: true") >= 2
+
+
+def test_workflow_references_resolve_to_something_defined():
+    """Codex, review C3: the report-image step had landed under the `sbom` job while reading
+    `steps.creds` and `steps.release`, which exist only in `publish` — GitHub Actions step outputs are
+    job-local, so its condition could never be true.
+
+    THE FAILURE IS SILENT, which is why this is held: a reference GitHub cannot resolve is an empty
+    string, not an error, so a misspelt output lands as an empty digest in an image reference and a
+    condition that is never true skips its step with a green run. Every reference is therefore held
+    to a definition: `steps.<id>.` to a step defined EARLIER in the same job (a job's `outputs` may
+    name any step of that job); `needs.<job>.outputs.<name>` to an output the named job declares,
+    in a job that lists it under `needs`; `matrix.<key>` to a key the job's own matrix defines.
+    The text searched is the PARSED workflow, so a shell comment inside a `run:` block is part of it
+    and must not spell a reference it does not mean; a YAML `#` comment is dropped by the loader and
+    is not held (measured: a YAML comment naming `steps.nonexistent.outputs.x` passed, the same
+    words inside `run:` failed)."""
+    import json as _json
+    import yaml as _yaml
+    step_ref = re.compile(r"\bsteps\.([A-Za-z0-9_-]+)\.")
+    needs_ref = re.compile(r"\bneeds\.([A-Za-z0-9_-]+)\.outputs\.([A-Za-z0-9_-]+)")
+    matrix_ref = re.compile(r"\bmatrix\.([A-Za-z0-9_-]+)")
+    for name in ("publish.yml", "ci.yml", "helm.yaml"):
+        jobs = _yaml.safe_load((REPO / ".github" / "workflows" / name).read_text()).get("jobs", {})
+        for job_name, job in jobs.items():
+            seen: set[str] = set()
+            for step in job.get("steps", []):
+                referenced = set(step_ref.findall(_json.dumps(step)))
+                assert referenced <= seen, (name, job_name, step.get("name"), sorted(referenced - seen))
+                if step.get("id"):
+                    seen.add(step["id"])
+            in_outputs = set(step_ref.findall(_json.dumps(job.get("outputs") or {})))
+            assert in_outputs <= seen, (name, job_name, "outputs", sorted(in_outputs - seen))
+
+            needs = job.get("needs") or []
+            needs = [needs] if isinstance(needs, str) else list(needs)
+            text = _json.dumps(job)
+            for upstream, output in set(needs_ref.findall(text)):
+                assert upstream in needs, (name, job_name, f"needs.{upstream} is not a dependency")
+                assert output in (jobs.get(upstream) or {}).get("outputs", {}), (name, job_name, upstream, output)
+
+            matrix = (job.get("strategy") or {}).get("matrix")
+            if isinstance(matrix, dict):     # an expression-valued matrix cannot be read here
+                keys = {k for k in matrix if k not in ("include", "exclude")}
+                for entry in matrix.get("include") or []:
+                    keys |= set(entry)
+                unknown = set(matrix_ref.findall(text)) - keys
+                assert not unknown, (name, job_name, sorted(unknown))
+            else:
+                assert not matrix_ref.search(text), (name, job_name, "matrix reference without a matrix")

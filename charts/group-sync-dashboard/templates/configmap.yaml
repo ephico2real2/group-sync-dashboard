@@ -91,6 +91,19 @@ data:
     # Unquoted: the app casts this with int(), and a quoted value would still parse but the
     # other numeric keys here are unquoted and one convention is worth keeping.
     visibilityTierTtlSeconds: {{ include "gsd.visibilityTierTtl" . }}
+    {{- if eq (include "gsd.reportingEnabled" .) "true" }}
+    # Reporting (values.yaml `reporting`). reportingUrl is the module switch for the app: set, the
+    # dashboard mints tickets, writes snapshots under reportingSnapshotDir and pulls the usage feed.
+    reportingUrl: {{ include "gsd.reportUrl" . | quote }}
+    reportingTokenFile: /etc/gsd/report/token
+    reportingCaFile: {{ ternary "/etc/gsd/service-ca/service-ca.crt" "" .Values.reporting.tls.enabled | quote }}
+    reportingSnapshotDir: /data/report
+    reportingSnapshotIntervalSeconds: {{ .Values.reporting.snapshot.intervalSeconds }}
+    reportingSnapshotKeep: {{ .Values.reporting.snapshot.keep }}
+    reportingTicketTtlSeconds: {{ .Values.reporting.ticket.ttlSeconds }}
+    {{- end }}
+    # Whether the poller reads Namespace objects (rbac.namespaces) — the namespace report's coverage.
+    namespacesReadEnabled: {{ .Values.rbac.namespaces }}
     # THE GRANT AND THE MODULE ARE TWO DIFFERENT THINGS, and until now only the grant was wired.
     # `loginCapture.enabled` rendered the Role that lets the pod read oauth-server logs, and nothing
     # told the application to read them: the setting the code looks for is this ConfigMap key, so

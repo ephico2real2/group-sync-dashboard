@@ -28,6 +28,7 @@ It refused those renders with a message about a volume that did not exist.
 {{- if and (eq (include "gsd.visibilityEnabled" .) "true") (not .Values.oauthProxy.enabled) }}
 {{- fail "visibility.enabled=true requires oauthProxy.enabled=true. The per-user tiers scope data to X-Forwarded-User, which is trustworthy only when the oauth-proxy sets it; with the proxy off the header is whatever the caller typed, so the control cannot work. Turn the proxy on, or set visibility.enabled=false to accept — deliberately and on the record — that every reader of an unauthenticated route sees everything." }}
 {{- end }}
+{{- include "gsd.reportingGuards" . }}
 {{- if .Values.oauthProxy.enabled }}
 {{- $cookie := (.Values.oauthProxy | default dict).cookie | default dict }}
 {{- /*
@@ -233,6 +234,18 @@ spec:
             - name: curlrc
               mountPath: /etc/curl
               readOnly: true
+            {{- if eq (include "gsd.reportingEnabled" .) "true" }}
+            # The shared report token (signs tickets, authenticates the usage pull) and, with TLS,
+            # the service-ca bundle the poller verifies the report Service with.
+            - name: report-token
+              mountPath: /etc/gsd/report
+              readOnly: true
+            {{- if .Values.reporting.tls.enabled }}
+            - name: service-ca
+              mountPath: /etc/gsd/service-ca
+              readOnly: true
+            {{- end }}
+            {{- end }}
             {{- if .Values.trustedCA.injected.enabled }}
             - name: trusted-ca-injected
               mountPath: {{ .Values.trustedCA.mountPath }}/injected
@@ -320,6 +333,18 @@ spec:
             - -http-address=
             - -email-domain=*
             - -upstream=http://127.0.0.1:8080
+            {{- if eq (include "gsd.reportingEnabled" .) "true" }}
+            # THE SECOND UPSTREAM, routed by PATH: openshift/oauth-proxy maps each upstream URL's
+            # path to a mux entry and forwards the request path unchanged, so /report/** reaches
+            # the report Service with the same login and the same X-Forwarded-User as /api/**.
+            # The trailing slash is the mux subtree; without it only the exact path would match.
+            - -upstream={{ include "gsd.reportUrl" . }}/report/
+            {{- if .Values.reporting.tls.enabled }}
+            # Verify the report Service's service-ca certificate. Passing -upstream-ca REPLACES the
+            # system trust store for upstreams, which is fine: the loopback upstream is plain HTTP.
+            - -upstream-ca=/etc/gsd/service-ca/service-ca.crt
+            {{- end }}
+            {{- end }}
             - -tls-cert=/etc/tls/private/tls.crt
             - -tls-key=/etc/tls/private/tls.key
             - -cookie-secret-file=/etc/proxy/secrets/session_secret
@@ -400,6 +425,11 @@ spec:
             - name: oauth-cookie
               mountPath: /etc/proxy/secrets
               readOnly: true
+            {{- if and (eq (include "gsd.reportingEnabled" .) "true") .Values.reporting.tls.enabled }}
+            - name: service-ca
+              mountPath: /etc/gsd/service-ca
+              readOnly: true
+            {{- end }}
             #
             # The same volumes the dashboard mounts. They already existed at pod level; only
             # this container lacked them. Must stay paired with the -openshift-ca paths above:
@@ -452,6 +482,21 @@ spec:
             name: {{ .Values.trustedCA.existingConfigMap.name }}
         {{- end }}
         {{- if .Values.oauthProxy.enabled }}
+        {{- if eq (include "gsd.reportingEnabled" .) "true" }}
+        - name: report-token
+          secret:
+            secretName: {{ include "gsd.reportName" . }}-token
+            defaultMode: 288
+        {{- if .Values.reporting.tls.enabled }}
+        # The service-ca bundle every OpenShift namespace carries (the ServiceMonitor already trusts
+        # it, templates/monitoring.yaml). Not optional: with TLS on, a pod without it cannot verify
+        # the report Service and would be a proxy that answers 502 on /report with nothing in
+        # `helm upgrade` to say why.
+        - name: service-ca
+          configMap:
+            name: openshift-service-ca.crt
+        {{- end }}
+        {{- end }}
         - name: oauth-tls
           secret:
             secretName: {{ include "gsd.fullname" . }}-tls

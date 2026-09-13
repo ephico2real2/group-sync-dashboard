@@ -33,7 +33,7 @@ CHART = pathlib.Path(__file__).resolve().parents[2] / "charts" / "group-sync-das
 pytestmark = pytest.mark.skipif(shutil.which("helm") is None, reason="helm not installed")
 
 INGRESS_ONLY = ("--set", "route.enabled=false", "--set", "ingress.enabled=true")
-PROXY_OFF = ("--set", "oauthProxy.enabled=false", "--set", "visibility.enabled=false")
+PROXY_OFF = ("--set", "oauthProxy.enabled=false", "--set", "visibility.enabled=false", "--set", "reporting.enabled=false")   # reporting needs the proxy (C3)
 
 
 def render(*extra: str, release: str = "group-sync-dashboard", namespace: str = "group-sync-dashboard"):
@@ -52,7 +52,10 @@ def kinds(out: str) -> list[str]:
 
 
 def one(out: str, kind: str) -> dict:
-    found = [o for o in objects(out) if o["kind"] == kind]
+    """The dashboard's own object of `kind`. Since chart 0.20.0 the report service adds a second
+    Service, ServiceAccount, Deployment and PDB, all named `…-report`; these tests are about the
+    dashboard's, so the report service's are set aside first (C3)."""
+    found = [o for o in objects(out) if o["kind"] == kind and not o["metadata"]["name"].endswith("-report")]
     assert len(found) == 1, f"expected exactly one {kind}, found {len(found)}"
     return found[0]
 
@@ -186,7 +189,10 @@ class TestTheServiceAccountFollowsTheExposure:
     def test_no_service_account_means_no_reference_and_the_route_still_renders(self):
         ok, out = render("--set", "serviceAccount.create=false")
         assert ok, out
-        assert "ServiceAccount" not in kinds(out) and "Route" in kinds(out)
+        # The DASHBOARD's ServiceAccount: the report service keeps its own (no grants, no token
+        # mounted — templates/report-serviceaccount.yaml), which this switch does not govern (C3).
+        dashboard_sas = [o for o in objects(out) if o["kind"] == "ServiceAccount" and not o["metadata"]["name"].endswith("-report")]
+        assert not dashboard_sas and "Route" in kinds(out)
 
     def test_with_the_proxy_off_neither_annotation_is_emitted(self):
         ok, out = render(*PROXY_OFF)

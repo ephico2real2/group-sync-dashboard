@@ -1,0 +1,5 @@
+<div class="block"><h3>{{ block.title }}</h3>
+{%- if block.rows %}<table><thead><tr>{% for c in block.columns %}<th>{{ c }}</th>{% endfor %}</tr></thead>
+<tbody>{% for row in block.rows %}<tr>{% for v in row %}<td>{% if v is not none %}{{ v }}{% endif %}</td>{% endfor %}</tr>{% endfor %}</tbody></table>
+{%- else %}<p class="empty">{{ block.empty_text }}</p>{% endif %}
+{%- if block.note %}<p class="note">{{ block.note }}</p>{% endif %}</div>

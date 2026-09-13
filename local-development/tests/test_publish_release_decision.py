@@ -148,6 +148,10 @@ def test_an_unreadable_base_fails_closed_and_says_so(repo: pathlib.Path, before:
     assert "--release-tags" in result.stdout, (
         f"{why}: the warning must name the manual route, or a missed release has no recovery"
     )
+    # C3: a release is two images, and the chart resolves both at one appVersion — a route that
+    # names one script publishes half a release.
+    assert "./build-and-push-external.sh --release-tags" in result.stdout, why
+    assert "./build-and-push-report.sh --release-tags" in result.stdout, why
 
 
 def test_an_unreadable_version_at_head_is_a_hard_error(repo: pathlib.Path) -> None:

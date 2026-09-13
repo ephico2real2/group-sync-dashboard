@@ -212,7 +212,10 @@ class TestRuntimeStageOrder:
             'must_not_import("_uuid"',              # libuuid removal, observed
             'must_not_import("pip"',                # pip removal, observed
             '"/usr/share/python-wheels"',           # the wheel the first cut left behind
-            '[".rpm.lock", "rpmdb.sqlite"]',        # the database directory, exactly
+            # The database directory: rpmdb.sqlite plus rpm's dot-lock files and nothing else — not
+            # an exact two-name listing, which the base's rpm broke on 2026-09-09 (`.keyring.lock`).
+            'name.startswith(".") and name.endswith(".lock")',
+            '"rpmdb.sqlite" not in listing',
             'pragma journal_mode=wal',              # the store's mode, on /data
             'os.remove(os.path.join("/data", name))',  # nothing of the proof ships
         ):

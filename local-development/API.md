@@ -663,6 +663,59 @@ Requires `oauthProxy.enabled` **and** `config.userActivity.enabled`. Without the
 no authentication, so nothing is recorded whatever the setting says, and the endpoint returns
 `403` rather than trusting a caller-supplied name.
 
+### `GET /api/report/ticket`
+
+A short-lived, signed ticket that lets THIS reader call the report service — minted only at the
+administrator tier (`require_admin_tier`, the same SubjectAccessReview as `/bindings/findings`), and
+bound to the proxy's `X-Forwarded-User`. 404 when reporting is off; 403 with the gate's own sentence
+below the wide tier. A GET that does no work: nothing is stored, rendered or fetched.
+
+```json
+{"ticket": "eyJ2IjoxLCJ2aWV3ZXIiOiJyb290Ii4uLg.5kZ…", "expires_in": 300, "prefix": "/report", "viewer": "root"}
+```
+
+The browser sends the ticket on every request to `/report/**` as `X-GSD-Report-Ticket`; the report
+service verifies the signature (HMAC-SHA256 with the token both pods mount), the expiry, the tier and
+that `viewer` equals the `X-Forwarded-User` the proxy stamped on that request. Expiry is a 401 (the
+page mints once more); every other refusal is a 403.
+
+### `GET /api/dashboard/reports`
+
+Who generated which report, when — pulled from the report service by the poller (`/report/api/usage`,
+with the shared token) and recorded in `report_run`. **Usage tier**, like `/api/dashboard/activity`:
+`scope` is `all` only for that tier; everyone else sees their own runs. `enabled` is false when
+reporting is off; 403 without the proxy.
+
+```json
+{
+  "enabled": true, "scope": "self", "viewer": "developer", "total": 1, "limit": 200, "truncated": false,
+  "runs": [{"id": "20260906T120001.000000Z-1a2b", "report": "namespace-access", "cluster_id": "crc-local",
+            "generated_by": "developer", "generated_by_note": "proxy-verified, ticket from the dashboard",
+            "schedule": null, "status": "done", "requested_at": "2026-09-06T12:00:01Z",
+            "finished_at": "2026-09-06T12:00:03Z", "sha256": "…", "snapshot_stamp": "2026-09-06T11:58:00.123456Z",
+            "formats": ["html", "pdf"], "bytes_total": 48211, "pdf_variant": "pdf/a-2b"}]
+}
+```
+
+Query: `limit` (1–5000, default 200), `offset`.
+
+## The report service's API
+
+Everything under `/report` is served by the **report service**, a second pod behind the same
+oauth-proxy (path-routed upstream), not by the dashboard. It is documented by the service's own
+`/report/api/openapi.json`; every route needs a dashboard-minted ticket or the service token, except
+the three probe paths, which are reachable only on the report Service. One line each:
+
+| Method and path | Who | What |
+|---|---|---|
+| `GET /report/healthz`, `GET /report/readyz`, `GET /report/metrics` | none (Service only) | liveness; readiness (artefact volume writable, a snapshot exists); Prometheus exposition (`gsd_report_*`, no names) |
+| `GET /report/api/reports` | ticket | the catalogue: each report, whether enabled, its values key and parameter specs |
+| `GET /report/api/snapshot` | ticket or token | the copy a run would read now: stamp, age, schema, bytes |
+| `POST /report/api/runs` | ticket or token | queue one run (`report`, `cluster`, `params`, `formats`); 202 with the run id — **the one write in either service's API, deliberately not on the dashboard** |
+| `GET /report/api/runs`, `GET /report/api/runs/{id}` | ticket or token | runs newest first; one run's status, timings, sha256 and artefact sizes |
+| `GET /report/api/runs/{id}/artifact?format=json\|html\|pdf` | ticket or token | the artefact, `Cache-Control: no-store`, `X-GSD-Report-SHA256`, as an attachment |
+| `GET /report/api/usage?since_id=&limit=` | **token only** | finished runs for the dashboard's pull; viewers read them from the dashboard at the usage tier |
+
 ## Alerts
 
 ### `GET /api/alerts`

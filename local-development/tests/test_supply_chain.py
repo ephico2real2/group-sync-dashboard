@@ -29,6 +29,7 @@ REPO = pathlib.Path(__file__).resolve().parents[2]
 PUBLISH = REPO / ".github" / "workflows" / "publish.yml"
 HELM = REPO / ".github" / "workflows" / "helm.yaml"
 SCRIPT = REPO / "local-development" / "build-and-push-external.sh"
+REPORT_WRAPPER = REPO / "local-development" / "build-and-push-report.sh"   # the report image (C3)
 SCAN_DOC = REPO / "docs" / "image-vulnerability-scan.md"
 INSTALL_GUIDE = REPO / "docs" / "HELM_DOWNLOAD_AND_INSTALL.md"
 
@@ -109,7 +110,38 @@ class TestTheDigestChain:
         assert publish["outputs"] == {
             "digest": "${{ steps.build.outputs.digest }}",
             "image": "${{ steps.build.outputs.image }}",
+            "report_digest": "${{ steps.build-report.outputs.digest }}",
+            "report_image": "${{ steps.build-report.outputs.image }}",
         }
+
+    def test_the_report_build_step_is_the_dashboards_applied_to_the_second_image(self) -> None:
+        """Review of C3 (Codex): the report image's step had landed under `sbom`, where
+        `steps.creds` and `steps.release` do not exist, and it recorded no digest at all — so
+        nothing downstream could have catalogued or signed it. It is the dashboard's step applied
+        to the second image: the same job, right after the dashboard's push, the same condition and
+        release decision, its own DIGEST_FILE, its own pair of outputs."""
+        publish = _jobs(PUBLISH)["publish"]
+        names = [s.get("name") for s in publish["steps"]]
+        assert "Build and push the report image" in names, "the report step must be in the publish job"
+        assert names.index("Build and push the report image") == names.index("Build and push the image") + 1
+        build = _step(publish, "Build and push the image")
+        report = _step(publish, "Build and push the report image")
+        assert report.get("id") == "build-report"
+        assert report["if"] == build["if"]
+        assert report["env"]["IS_RELEASE"] == build["env"]["IS_RELEASE"]
+        assert report["env"]["DIGEST_FILE"] != build["env"]["DIGEST_FILE"], (
+            "the script overwrites whatever DIGEST_FILE names; sharing the dashboard's file would "
+            "hand the report digest on as the dashboard's"
+        )
+        code = "\n".join(ln for ln in report["run"].splitlines() if not ln.strip().startswith("#"))
+        assert "./build-and-push-report.sh --release-tags" in code and "./build-and-push-report.sh\n" in code
+        assert 'echo "digest=${digest}" >> "$GITHUB_OUTPUT"' in code
+        # The output names the IMAGE_NAME the wrapper FORCES (second pass, Codex: a default from the
+        # environment let an ambient dashboard name in) — read from the wrapper, so renaming the
+        # image there without touching the workflow fails here rather than in the registry.
+        forced = re.search(r'^IMAGE_NAME=([A-Za-z0-9._-]+) CONTAINERFILE=Containerfile\.report exec', REPORT_WRAPPER.read_text(), re.M)
+        assert forced, "build-and-push-report.sh no longer forces IMAGE_NAME the way this test reads"
+        assert f'echo "image=${{REGISTRY}}/${{REGISTRY_NAMESPACE}}/{forced.group(1)}" >> "$GITHUB_OUTPUT"' in code
 
 
 # ── The switches, and how they interact ───────────────────────────────────────────────────────
@@ -166,6 +198,9 @@ class TestTheSwitches:
         assert "SOURCE_DIGEST=$(skopeo inspect" in run
         assert "skopeo copy --all --preserve-digests" in run
         assert '[ "${ALIAS_DIGEST}" != "${SOURCE_DIGEST}" ]' in run
+        # C3: a release is two images, so the remedy the error names is two commands.
+        assert "./build-and-push-external.sh --release-tags" in run
+        assert "./build-and-push-report.sh --release-tags" in run
 
     def test_the_chart_attestation_has_the_same_switch_and_runs_only_for_a_new_release(self) -> None:
         release = _jobs(HELM)["release"]
@@ -255,7 +290,7 @@ class TestWhatIsSignedAndHow:
         assert step["with"]["upload-artifact"] is True
         assert step["with"]["upload-release-assets"] is False
         assert step["with"]["dependency-snapshot"] is False
-        assert step["with"]["image"].endswith("@${{ needs.publish.outputs.digest }}")
+        assert step["with"]["image"] == "${{ matrix.image }}@${{ matrix.digest }}"
         attach = _step(_jobs(PUBLISH)["attest"], "Attach the SBOM")["run"]
         assert 'cosign attest --yes --type spdxjson --predicate "${SBOM_FILE}"' in attach
 
@@ -283,6 +318,75 @@ class TestWhatIsSignedAndHow:
         assert "/.github/workflows/helm.yaml" in text
         assert "the signature travels with `skopeo copy --all`" not in text, "skopeo --all copies platforms, not referrers"
         assert "oras cp --recursive" in text
+        # C3: the report image is a second subject of the same chain, and the guide says which
+        # reference to substitute and which artifact holds its SBOM.
+        section = text.split("## 7. Verify what you downloaded", 1)[1].split("## Quick reference", 1)[0]
+        assert "group-sync-dashboard-report" in section
+        assert "`sbom-report-<commit>`" in section and "`sbom-<commit>`" in section
+        # Codex, second pass: "every image is signed" holds only with both switches at their defaults,
+        # and the sentence that says so names them (D8), before the first command.
+        opening = section.split("**The image signature.**", 1)[0]
+        assert "SUPPLY_CHAIN_SIGNING" in opening and "SUPPLY_CHAIN_SBOM" in opening and "D8" in opening
+
+
+# ── Two images, one chain (C3) ───────────────────────────────────────────────────────────────
+
+
+class TestTwoImagesOneChain:
+    """The report image gets the dashboard's catalogue, signature and provenance through the same
+    definition — a two-leg matrix on `sbom` and `attest`, each leg the <image, digest> pair the
+    publish job reported — rather than a second copy of the steps that could drift."""
+
+    LEGS = {
+        "dashboard": {
+            "image": "${{ needs.publish.outputs.image }}",
+            "digest": "${{ needs.publish.outputs.digest }}",
+            "artifact": "sbom-${{ github.sha }}",           # the name the install guide gives, unchanged
+        },
+        "report": {
+            "image": "${{ needs.publish.outputs.report_image }}",
+            "digest": "${{ needs.publish.outputs.report_digest }}",
+            "artifact": "sbom-report-${{ github.sha }}",
+        },
+    }
+
+    @staticmethod
+    def _legs(job: dict) -> dict:
+        strategy = job["strategy"]
+        # `.get`: an absent key is GitHub's default, fail-fast ON — the same defect as `true`.
+        assert strategy.get("fail-fast") is False, "one image's failure must not cancel the other's leg"
+        assert set(strategy["matrix"]) == {"include"}, "explicit legs only; a cross product would multiply them"
+        legs = {entry["name"]: {k: v for k, v in entry.items() if k != "name"} for entry in strategy["matrix"]["include"]}
+        assert len(legs) == len(strategy["matrix"]["include"]), "leg names must be distinct"
+        return legs
+
+    def test_sbom_and_attest_run_one_leg_per_pushed_image_from_the_same_definition(self) -> None:
+        jobs = _jobs(PUBLISH)
+        assert self._legs(jobs["sbom"]) == self.LEGS
+        assert self._legs(jobs["attest"]) == self.LEGS, (
+            "the attest job downloads the artifact the sbom job named; the two matrices must be identical"
+        )
+
+    def test_each_leg_catalogues_signs_and_attests_its_own_digest(self) -> None:
+        jobs = _jobs(PUBLISH)
+        catalogue = _step(jobs["sbom"], "Catalogue the image")["with"]
+        assert catalogue["image"] == "${{ matrix.image }}@${{ matrix.digest }}"
+        assert catalogue["artifact-name"] == "${{ matrix.artifact }}"
+        assert jobs["attest"]["env"]["IMAGE"] == "${{ matrix.image }}"
+        assert jobs["attest"]["env"]["DIGEST"] == "${{ matrix.digest }}"
+
+    def test_the_job_level_conditions_do_not_read_the_matrix(self) -> None:
+        """GitHub's context-availability table: `matrix` is readable by a job's `name`, `env`,
+        `strategy` and its steps, but NOT by the job-level `if` — a reference there is an empty
+        string, not an error, and an empty digest in a condition is a job that silently skips."""
+        for name in ("sbom", "attest"):
+            assert "matrix." not in _jobs(PUBLISH)[name]["if"], name
+
+    def test_the_two_artifact_names_are_distinct(self) -> None:
+        """A run holds one artifact per name, and sbom-action names the file inside after the
+        artifact — two legs sharing `sbom-<sha>` would fail the second upload."""
+        artifacts = [leg["artifact"] for leg in self._legs(_jobs(PUBLISH)["sbom"]).values()]
+        assert len(set(artifacts)) == len(artifacts), artifacts
 
     def test_the_install_guide_verifies_the_tag_a_push_actually_signed(self) -> None:
         """Review of A2 (Cursor): an ordinary merge signs only `:<appVersion>-<sha>`; the alias moves

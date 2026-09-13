@@ -9,12 +9,13 @@ from each. The commands are in `HELM_DOWNLOAD_AND_INSTALL.md#7. Verify what you 
 
 | Artefact | Mechanism | Where it lives | Check |
 |---|---|---|---|
-| image, by digest | cosign keyless signature (Fulcio certificate, Rekor entry) | beside the image in the registry | `cosign verify` |
-| image SBOM | Syft 1.51.1, SPDX JSON, attached with `cosign attest --type spdxjson` | beside the image; also a workflow artifact | `cosign verify-attestation` |
-| image provenance | SLSA build provenance from `actions/attest-build-provenance` | this repository's attestation store | `gh attestation verify oci://…` |
+| each image, by digest | cosign keyless signature (Fulcio certificate, Rekor entry) | beside the image in the registry | `cosign verify` |
+| each image's SBOM | Syft 1.51.1, SPDX JSON, attached with `cosign attest --type spdxjson` | beside the image; also a workflow artifact | `cosign verify-attestation` |
+| each image's provenance | SLSA build provenance from `actions/attest-build-provenance` | this repository's attestation store | `gh attestation verify oci://…` |
 | chart package | SLSA build provenance of the `.tgz` chart-releaser uploaded | this repository's attestation store | `gh attestation verify <file>` |
 
-One identity for all four: the workflow file that ran, on `main`, issued by
+"Each image" is two since application 0.18.0: the dashboard's and the report service's (D10). One
+identity for all of it: the workflow file that ran, on `main`, issued by
 `https://token.actions.githubusercontent.com`. There is no signing key anywhere.
 
 ## Decisions
@@ -86,6 +87,41 @@ the value is exactly `false`. `attest` depends on `sbom` with `!cancelled()`, at
 only when that job succeeded, and prints a notice naming the other outcome; the chart attestation
 reads the signing switch and the new-release decision. The `publish` job reads neither.
 
+**D10 — The report image is a second subject of the same chain, not a second chain.** C3 added a
+second image (`DESIGN_reporting_service.md#3.3 Two images, one version`). It is built in the same
+`publish` job right after the dashboard's push, by the same script through its wrapper, under the
+same credential check and the same release decision, and it records its own digest through its own
+`DIGEST_FILE` as a second pair of job outputs (`.github/workflows/publish.yml#build-report`). The
+`sbom` and `attest` jobs then run as a two-leg matrix whose `include` reads those outputs — one
+definition of the catalogue, the signature, the SBOM attestation and the provenance, applied to
+two `<image, digest>` pairs — rather than a copy of the steps that could drift to a weaker chain for
+the second image. Two consequences, stated: the job-level switches key on the dashboard's digest
+alone, because `matrix` is not a context a job-level `if` may read and the report digest is written
+under the same condition in the same job; and GitHub reports one `needs.<job>.result` per job, not
+per leg (the contexts reference documents nothing finer; with fail-fast off a failed leg makes it
+`failure`), so if either image's catalogue fails, neither leg attaches an SBOM and both say so by
+name — chosen over a per-leg artifact probe, and to be confirmed on the first run with a red leg.
+The report image's SBOM is the artifact `sbom-report-<sha>`, beside `sbom-<sha>`; a run holds one
+artifact per name, and sbom-action names the file inside after the artifact. A report build that
+fails leaves the dashboard's immutable tag pushed and the job red, which withholds both images'
+catalogue and signatures: the run is the unit. On an ordinary merge a `workflow_dispatch` rebuilds
+both. On a release push the dashboard's `:<appVersion>` and `:<chartVersion>` aliases have already
+moved — its step ran `--release-tags` before the report step — to a digest that run never signs, and
+a dispatch cannot move them (the release decision fails closed without a `before`); the recovery is a
+corrective application release (a version bump, which moves both images' aliases to signed digests)
+or the two-script route the release decision's warning names
+(`docs/RELEASING.md#When GitHub Actions is unavailable`), which publishes unsigned aliases. A release
+is two images now, and every statement of the manual route names both scripts. What nothing does:
+label or resolve the report image by chart version —
+`.github/workflows/helm.yaml#Label the image this chart version deploys` names the dashboard
+repository only, and the chart resolves the report image at appVersion, so
+`group-sync-dashboard-report:<chartVersion>` exists only from application releases. The first
+version of this step sat under `sbom` reading
+`steps.creds` and `steps.release`, which exist only in `publish` — step outputs are job-local, so it
+could never have run (review of C3, Codex); `tests/test_publish_paths.py` now holds every step,
+output and matrix reference in the three workflows to a definition, because GitHub resolves an
+unknown reference to an empty string rather than an error.
+
 ## What this does not do
 
 - It does not verify on the cluster. OpenShift's `ImagePolicy` expresses Fulcio identities as an
@@ -98,7 +134,8 @@ reads the signing switch and the new-release decision. The `publish` job reads n
 - It does not sign an image a `workflow_dispatch` from another branch pushed (**D9**): the
   `attest` job runs only for `refs/heads/main`, and the identity it verifies is pinned to that ref,
   because a signature under `…/publish.yml@refs/heads/<branch>` would pass the run's own read-back
-  and fail the command the install guide gives. Such a dispatch pushes its immutable tag unsigned.
+  and fail the command the install guide gives. Such a dispatch pushes its immutable tags unsigned
+  (both images, since D10).
 - It does not sign the `:<appVersion>` alias on an ordinary merge, because nothing moved it: the
   alias is copied from the signed digest only on an application release, so between releases the
   documented `cosign verify` is run against the immutable tag the publish log names.

@@ -45,6 +45,7 @@ GROUP_API = "/apis/user.openshift.io/v1/groups"
 # come from the Group objects above — are unchanged. fullName is still read for every member surface,
 # and its absence is still the ordinary case rendered as the bare id.
 USER_API = "/apis/user.openshift.io/v1/users"
+NAMESPACE_API = "/api/v1/namespaces"
 # The Identity objects: ONE per (provider, id), naming the User it maps to. With mappingMethod
 # claim or add (the default and the common case) OpenShift creates it at the first successful login
 # through that provider and never before, so its creationTimestamp IS that first login — where a
@@ -669,6 +670,41 @@ class ClusterClient:
                 out.extend(_user_binding_views(obj, "ClusterRoleBinding"))
         log.debug("fetched %d direct-user binding rows from %s", len(out), self.cluster.name)
         return out
+
+    def fetch_namespaces(self) -> list[dict] | None:
+        """Every Namespace on the cluster, or None when we may not list them (rbac.namespaces off).
+
+        One list call, for the report service's namespace report only: knowing a namespace EXISTS
+        lets that report attest absence — "this namespace exists and has no grants" — instead of
+        "none observed" (docs/specs/SPEC_C3_reporting_microservice.md §7). Per record: `name`,
+        `created_at` (metadata.creationTimestamp) and `phase` (status.phase, Active/Terminating).
+
+        None means FORBIDDEN and is distinct from [] for the same reason fetch_users draws the
+        line: the grant is optional in the chart, and a 403 must not fail the poll — the caller
+        records it (store.mark_namespaces_unavailable) and the report's coverage note says so.
+        """
+        with self._client() as client:
+            try:
+                items = self._list_all(client, NAMESPACE_API)
+            except ClusterError as exc:
+                if exc.outcome == FORBIDDEN and NAMESPACE_API in exc.message:
+                    log.debug("%s: not permitted to list namespaces — the namespace report cannot "
+                              "attest absence", self.cluster.name)
+                    return None
+                raise
+        records: list[dict] = []
+        for obj in items:
+            meta = obj.get("metadata") or {}
+            name = meta.get("name")
+            if not name:
+                continue
+            records.append({
+                "name": name,
+                "created_at": meta.get("creationTimestamp"),
+                "phase": (obj.get("status") or {}).get("phase"),
+            })
+        log.debug("fetched %d namespaces from %s", len(records), self.cluster.name)
+        return records
 
     def fetch_users(self) -> list[dict] | None:
         """Every User object on the cluster, or None when we may not read them.

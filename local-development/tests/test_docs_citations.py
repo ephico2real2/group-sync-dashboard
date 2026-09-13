@@ -129,6 +129,7 @@ REVIEW_ARTIFACTS = (
     "REVIEW_B1.md",
     "REVIEW_C4.md",
     "REVIEW_D1.md",
+    "REVIEW_C3.md",
     # The log-level contract review. Same reason, plus a worked example of why the exemption is
     # right: it cites `README.md#Configuration`, a heading that does not exist — and the finding
     # attached to that citation was correct and was applied. Rewriting the citation would not make

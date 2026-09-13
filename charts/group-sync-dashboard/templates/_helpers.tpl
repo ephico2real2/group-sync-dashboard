@@ -553,3 +553,144 @@ false
 {{- end -}}
 {{- $s -}}
 {{- end -}}
+
+{{/*
+Reporting (docs/specs/SPEC_C3_reporting_microservice.md). Nil-safe like every helper here.
+*/}}
+{{- define "gsd.reportingEnabled" -}}
+{{- if eq (toString ((.Values.reporting | default dict).enabled)) "true" -}}true{{- else -}}false{{- end -}}
+{{- end -}}
+
+{{- define "gsd.reportName" -}}
+{{- printf "%s-report" (include "gsd.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{/* Labels for the report pod: NOT gsd.selectorLabels — the dashboard Service selects on those. */}}
+{{- define "gsd.reportSelectorLabels" -}}
+app.kubernetes.io/name: {{ include "gsd.name" . }}-report
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/component: report
+{{- end -}}
+
+{{/* Full report-object labels: the report's selector keys exactly once, never gsd.selectorLabels (which
+     carries the dashboard's app.kubernetes.io/name and its `app` key — a second review pass found the
+     earlier form produced duplicate YAML keys with different values). */}}
+{{- define "gsd.reportLabels" -}}
+helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
+{{ include "gsd.reportSelectorLabels" . }}
+app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end -}}
+
+{{/* CronJob object labels; the schedule pods use the same identity explicitly in report-cronjob.yaml. */}}
+{{- define "gsd.reportScheduleLabels" -}}
+helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
+app.kubernetes.io/name: {{ include "gsd.name" . }}-report-schedule
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/component: report-schedule
+app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end -}}
+
+{{/* The image, resolved exactly like gsd.image: digest, then tag, then Chart.AppVersion. */}}
+{{- define "gsd.reportImage" -}}
+{{- $img := (.Values.reporting | default dict).image | default dict -}}
+{{- $digest := default "" $img.digest -}}
+{{- if $digest -}}
+{{- if not (regexMatch "^sha256:[a-f0-9]{64}$" $digest) -}}
+{{- fail (printf "reporting.image.digest %q is not a digest (sha256: + 64 lowercase hex). Leave it empty to deploy reporting.image.tag, or the chart's appVersion when that is empty too." $digest) -}}
+{{- end -}}
+{{- printf "%s@%s" $img.repository $digest -}}
+{{- else -}}
+{{- printf "%s:%s" $img.repository (default .Chart.AppVersion $img.tag) -}}
+{{- end -}}
+{{- end -}}
+
+{{/* The in-cluster URL the proxy and the poller use. */}}
+{{- define "gsd.reportUrl" -}}
+{{- $tls := eq (toString (((.Values.reporting | default dict).tls | default dict).enabled)) "true" -}}
+{{- printf "%s://%s.%s.svc:8443" (ternary "https" "http" $tls) (include "gsd.reportName" .) .Release.Namespace -}}
+{{- end -}}
+
+{{- define "gsd.reportPdfVariant" -}}
+{{- $v := toString (((.Values.reporting | default dict).pdf | default dict).variant) -}}
+{{- if eq $v "<nil>" -}}{{- $v = "" -}}{{- end -}}
+{{- if not (has $v (list "" "pdf/a-1b" "pdf/a-2b" "pdf/a-2u" "pdf/a-3b" "pdf/a-3u" "pdf/a-4")) -}}
+{{- fail (printf "reporting.pdf.variant %q is not a PDF variant. Use \"\" (plain), pdf/a-1b, pdf/a-2b, pdf/a-2u, pdf/a-3b, pdf/a-3u or pdf/a-4 — the profiles fpdf2 enforces." $v) -}}
+{{- end -}}
+{{- $v -}}
+{{- end -}}
+
+{{/*
+The catalogue names this deployment enables, comma-joined for GSD_REPORT_ENABLED_REPORTS. Each
+switch is a boolean; loginActivity is a tri-state ("" follows loginCapture.enabled). Misspelt values
+refuse, and loginActivity=true with capture off refuses — a report over a table nothing writes.
+*/}}
+{{- define "gsd.reportEnabledReports" -}}
+{{- $r := (.Values.reporting | default dict).reports | default dict -}}
+{{- $names := dict "namespaceAccess" "namespace-access" "accessMatrix" "access-matrix" "privilegedAccess" "privileged-access" "bindingFindings" "binding-findings" "groups" "groups" "users" "users" "dormantAccess" "dormant-access" "groupsyncHealth" "groupsync-health" "complianceSnapshot" "compliance-snapshot" "accessCertification" "access-certification" -}}
+{{- $out := list -}}
+{{- range $key, $name := $names -}}
+{{- $raw := toString ((get $r $key | default dict).enabled) -}}
+{{- if or (eq $raw "true") (eq $raw "<nil>") -}}{{- $out = append $out $name -}}
+{{- else if ne $raw "false" -}}
+{{- fail (printf "reporting.reports.%s.enabled must be true or false; got %q" $key $raw) -}}
+{{- end -}}
+{{- end -}}
+{{- $la := toString ((get $r "loginActivity" | default dict).enabled) -}}
+{{- if or (eq $la "") (eq $la "<nil>") -}}
+{{- if $.Values.loginCapture.enabled -}}{{- $out = append $out "login-activity" -}}{{- end -}}
+{{- else if eq $la "true" -}}
+{{- if not $.Values.loginCapture.enabled -}}
+{{- fail "reporting.reports.loginActivity.enabled=true requires loginCapture.enabled=true: the report reads login_event, which nothing writes without capture. Leave it \"\" to follow the capture switch." -}}
+{{- end -}}
+{{- $out = append $out "login-activity" -}}
+{{- else if ne $la "false" -}}
+{{- fail (printf "reporting.reports.loginActivity.enabled must be true, false or \"\" (follow loginCapture.enabled); got %q" $la) -}}
+{{- end -}}
+{{- join "," (sortAlpha $out) -}}
+{{- end -}}
+
+{{/*
+The render guards for reporting, included by report-deployment.yaml AND deployment.yaml (the proxy
+args depend on them), so both objects refuse together. Emits nothing.
+*/}}
+{{- define "gsd.reportingGuards" -}}
+{{- if eq (include "gsd.reportingEnabled" .) "true" -}}
+{{- if not .Values.oauthProxy.enabled -}}
+{{- fail "reporting.enabled=true requires oauthProxy.enabled=true. The report service is reached only through the proxy's path-routed /report/ upstream, and its tickets are bound to the identity the proxy stamps; without the proxy there is no way in and no identity to bind to. Set reporting.enabled=false to run without the proxy." -}}
+{{- end -}}
+{{- if not .Values.persistence.enabled -}}
+{{- fail "reporting.enabled=true requires persistence.enabled=true. The report pod reads a VACUUM INTO copy the dashboard writes under /data/report on the data claim; an emptyDir cannot be mounted by a second pod. Set reporting.enabled=false for an ephemeral install." -}}
+{{- end -}}
+{{- if gt (int .Values.replicaCount) 1 -}}
+{{- fail "reporting.enabled=true requires replicaCount 1. Above one replica each pod holds its own database and history (templates/deployment.yaml, PER-POD database file), so a report would be built from an arbitrary replica's copy. docs/reference-architecture.md explains why scaling is not the answer; set reporting.enabled=false if you must scale." -}}
+{{- end -}}
+{{- if not .Values.rbac.bindings -}}
+{{- fail "reporting.enabled=true requires rbac.bindings=true: nine of the eleven reports are the RBAC binding surface, which the dashboard does not read without that grant." -}}
+{{- end -}}
+{{- $mode := include "gsd.accessMode" . -}}
+{{- if ne $mode "ReadWriteMany" -}}
+{{- fail (printf "reporting.enabled=true requires persistence.accessMode=ReadWriteMany; got %s. ReadWriteOncePod admits one pod only. ReadWriteOnce is refused too: the two pods restart independently, inter-pod affinity is ignored once a pod is scheduled, so replacing only the dashboard can leave the report pod holding the single-node claim on the old node while the new dashboard pod lands on another and cannot attach it. Use ReadWriteMany (the default) or set reporting.enabled=false. accessModes are immutable on an existing claim — docs/RUNBOOK_backup_restore.md §5 covers moving the data." $mode) -}}
+{{- end -}}
+{{- $snap := (.Values.reporting | default dict).snapshot | default dict -}}
+{{- if lt (int ($snap.intervalSeconds | default 300)) 60 -}}
+{{- fail (printf "reporting.snapshot.intervalSeconds must be at least 60; got %v. A VACUUM INTO holds a read transaction for its duration." $snap.intervalSeconds) -}}
+{{- end -}}
+{{- $t := (.Values.reporting | default dict).ticket | default dict -}}
+{{- if or (lt (int ($t.ttlSeconds | default 300)) 30) (gt (int ($t.ttlSeconds | default 300)) 3600) -}}
+{{- fail (printf "reporting.ticket.ttlSeconds must be between 30 and 3600; got %v" $t.ttlSeconds) -}}
+{{- end -}}
+{{- /* Value-returning helpers validate as a side effect; assign their output so nothing prints. */ -}}
+{{- $_ := include "gsd.reportPdfVariant" . -}}
+{{- $enabled := splitList "," (include "gsd.reportEnabledReports" .) -}}
+{{- range $s := ((.Values.reporting | default dict).schedules | default list) -}}
+{{- if not (has $s.report $enabled) -}}
+{{- fail (printf "reporting.schedules[%s].report %q is not an enabled catalogue name (enabled: %s)" $s.name $s.report (join ", " $enabled)) -}}
+{{- end -}}
+{{- if not (regexMatch "^[a-z0-9]([-a-z0-9]{0,40}[a-z0-9])?$" (toString $s.name)) -}}
+{{- fail (printf "reporting.schedules[].name %q must be a short DNS label (it names a CronJob)" (toString $s.name)) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}

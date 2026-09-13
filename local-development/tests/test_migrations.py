@@ -227,12 +227,13 @@ def test_migration_10_opens_a_v9_database_and_matches_a_fresh_one(tmp_path, vers
             # from a fresh one's (migration 9's identity_created_at already did), and nothing
             # here selects by position.
             return sorted((r[1], r[2].upper(), r[3], r[4], r[5]) for r in store._conn.execute(f"PRAGMA table_info({table})"))
-        for table in ("login_event", "login_audit_cursor", "ocp_user"):
-            assert cols(upgraded, table) == cols(fresh, table), table
+        for table in ("login_event", "login_audit_cursor", "ocp_user", "cluster_namespace", "cluster_namespace_status", "report_run"):
+            assert cols(upgraded, table) == cols(fresh, table), table   # migrations 10 and 11
         def indexes(store, table):
             return sorted(r[1] for r in store._conn.execute(f"PRAGMA index_list({table})") if r[3] == "c")
         assert indexes(upgraded, "login_event") == indexes(fresh, "login_event")
         assert "login_event_by_audit_id" in indexes(upgraded, "login_event")
+        assert {"report_run_by_time", "report_run_by_user"} <= set(indexes(upgraded, "report_run")) == set(indexes(fresh, "report_run"))
         row = upgraded._conn.execute("SELECT source, kind, audit_id FROM login_event").fetchone()
         assert tuple(row) == ("pod-log", "credential", None)
         if version >= 8:
@@ -242,7 +243,7 @@ def test_migration_10_opens_a_v9_database_and_matches_a_fresh_one(tmp_path, vers
                 "INSERT INTO login_event(cluster_id,pod_name,user_name,outcome,at,detail,observed_at)"
                 " VALUES('crc','p',?,'failed','t','d','o')", (u,))
         assert upgraded._conn.execute("SELECT count(*) FROM login_event WHERE audit_id IS NULL").fetchone()[0] == 3
-        assert upgraded._conn.execute("PRAGMA user_version").fetchone()[0] == max(t for t, _, _ in _MIGRATIONS) == 10
+        assert upgraded._conn.execute("PRAGMA user_version").fetchone()[0] == max(t for t, _, _ in _MIGRATIONS) == 11
     finally:
         upgraded.close()
         fresh.close()

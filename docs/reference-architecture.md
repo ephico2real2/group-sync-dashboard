@@ -203,6 +203,7 @@ coordination object — not anything it reports on. Every arrow to the observed 
 | `gsd/timeutil.py` | `now_iso()`, and nothing else. Split out of `store.py` because four modules importing it from there quietly made "what time is it" part of the storage contract |
 | `gsd/metrics.py` | Prometheus collector; reads the store at scrape time |
 | `gsd/api.py` | FastAPI routes, the `@consistent` decorator, app assembly |
+| `gsd/reporting/*` | The report service: its own FastAPI app (`server.py`), a read-only view over a `VACUUM INTO` copy (`snapshot.py`, the second and last module allowed to speak SQL), the ticket (`ticket.py`), the catalogue of eleven reports (`catalogue/`), the HTML and PDF renderers, the artefact store and the worker. Runs in its own pod on its own image; the dashboard imports only `ticket` and the prefix |
 | `gsd/static/index.html` | The entire frontend — one file, no build step, strict CSP |
 
 `gsd/state.py` and `gsd/audit.py` are deliberately I/O-free so their invariants are plain
@@ -709,6 +710,17 @@ So the poller forces `wal_checkpoint(TRUNCATE)` past `walCheckpointMb`, from the
 only, and counts busy results (`gsd/store.py#Store._reader`). A busy result every cycle is the
 starvation case; `gsd_sqlite_checkpoint_busy_total` is how you would ever notice.
 
+### The report service reads a copy
+
+The report pod never opens `gsd.db`. A WAL database is one host's shared memory (the `-shm` file), so a
+second pod cannot share it, and `immutable=1` on a file that changes returns wrong results or
+`SQLITE_CORRUPT`. Instead the dashboard's leader writes a consistent `VACUUM INTO` copy under
+`/data/report` every `reporting.snapshot.intervalSeconds` (`gsd/store.py#Store.snapshot`, the backup
+mechanism on a report cadence, written to a `.tmp` name and renamed), and the report service opens the
+newest copy with `file:…?immutable=1&mode=ro` (`gsd/reporting/snapshot.py#Snapshot`): rollback-journal
+mode, no lock, a write refused. The copy is not a backup — it takes no part in the retention gate — and
+a report prints the copy's stamp and age on page one. docs/DESIGN_reporting_service.md §4.
+
 ### Schema migrations
 
 The implicit mechanism silently does nothing: the schema is applied with
@@ -778,6 +790,7 @@ elect a leader:
 | `user.openshift.io` | `users` | get, list — only when `rbac.users` |
 | `user.openshift.io` | `identities` | get, list — only when `rbac.identities` (the first-login time from Identity objects) |
 | `rbac.authorization.k8s.io` | `rolebindings`, `clusterrolebindings` | get, list — only when `rbac.bindings` |
+| core (`""`) | `namespaces` | get, list — only when `rbac.namespaces` (the namespace report attests absence with it) |
 | `coordination.k8s.io` | `leases` | get, create, update — only when `leaderElection.enabled` |
 
 A third role, on the dashboard's own ServiceAccount and only when `loginCapture.source: audit-log`
@@ -1132,12 +1145,23 @@ flowchart TB
     lease["Lease<br/>coordination.k8s.io"]
     pdb["PodDisruptionBudget<br/>optional"]
     sm["ServiceMonitor + PrometheusRule<br/>optional"]
+    rdep["Deployment -report<br/>replicas 1, Recreate (default on)"]
+    rsvc["Service -report :8443<br/>service-ca certificate"]
+    rpvc["PVC -report-artifacts<br/>no keep annotation"]
+    rsec["Secret -report-token<br/>generated once, mounted in both pods"]
+    rnp["NetworkPolicy -report<br/>ingress: dashboard pod, schedule Jobs, monitoring"]
   end
   dep --> cm & tca & sec & tls & pvc & sa
   svc --> dep
   ing --> svc
   sm --> svc
   dep -.->|renews| lease
+  dep -->|"-upstream=…-report…/report/ (proxy, path-routed)"| rsvc
+  rsvc --> rdep
+  rdep --> rpvc & rsec
+  rdep -.->|"reads /data/report copies, read-only"| pvc
+  dep --> rsec
+  rnp -.-> rdep
 ```
 
 A third optional monitoring object, the Grafana dashboard ConfigMap
@@ -1160,6 +1184,12 @@ No count in this heading, deliberately. It said "four" while the chart had grown
 | `visibility.enabled=true` with `oauthProxy.enabled=false` | the per-user tiers scope every read to `X-Forwarded-User`, and that header is trustworthy only because the proxy sets it and the app binds `127.0.0.1`. With the proxy off it is whatever the caller typed, so the access control cannot work — §7.5. Turn the proxy on, or set `visibility.enabled=false` to accept on the record that every reader sees everything |
 | `oauthProxy.cookie.expire` not a Go duration | the proxy parses it at startup and exits, so a typo is a crash-looping pod rather than a rejected value |
 | `oauthProxy.cookie.refresh` set at all | removed, not renamed. Measured on `provider=openshift`: it made the proxy re-issue the cookie on a cadence that logged readers out mid-session |
+| `reporting.enabled=true` with `oauthProxy.enabled=false` | the report service is reached only through the proxy's path-routed `/report/` upstream and its tickets are bound to the identity the proxy stamps |
+| `reporting.enabled=true` with `persistence.enabled=false` | the report pod reads a copy the dashboard writes on the data claim; an emptyDir cannot be mounted by a second pod |
+| `reporting.enabled=true` with `replicaCount > 1` | each replica holds its own history, so a report would be built from an arbitrary replica's copy |
+| `reporting.enabled=true` with `rbac.bindings=false` | nine of the eleven reports are the binding surface |
+| `reporting.enabled=true` with a data claim that is not `ReadWriteMany` | `ReadWriteOncePod` admits one pod; `ReadWriteOnce` one node, and the two pods restart independently |
+| `reporting.snapshot.intervalSeconds < 60`, `reporting.ticket.ttlSeconds` outside `30..3600`, an unknown `reporting.pdf.variant`, a misspelt per-report switch, `loginActivity=true` with capture off, a schedule naming a report that is not enabled | each names the value and the remedy (`templates/_helpers.tpl`, `gsd.reportingGuards`) |
 | `oauthProxy.skipAuthRegex` no longer covering `/signed-out` while `logoutUrl` is set | sign-out would redirect to a path the proxy then demands a login for, so the reader lands back on the login page and the flow appears broken |
 
 `templates/backup-offsite.yaml` adds its own, all about mounting one claim twice and about where
@@ -1649,6 +1679,7 @@ the default Route with no flags; with `--set ingress.enabled=true` it also needs
 | [`REQUIREMENTS_per_user_visibility.md`](REQUIREMENTS_per_user_visibility.md) | what that tier had to achieve, before any design existed |
 | [`SPEC_usage_admin_tier.md`](SPEC_usage_admin_tier.md) | the second, stricter tier, and why the Usage dataset does not fall to the wide one |
 | [`DESIGN_login_capture.md`](DESIGN_login_capture.md) | reading login attempts out of the oauth-server's logs, and every rule the parser applies |
+| [`DESIGN_reporting_service.md`](DESIGN_reporting_service.md) | the report service: architecture, the read-only data path, the ticket between the pods, the PDF library and the eleven-report catalogue |
 | [`LOGIN_CAPTURE_QUICKCHECK.md`](LOGIN_CAPTURE_QUICKCHECK.md) | the short version: is capture working on this cluster, and how to tell |
 | [`DESIGN_session_and_signout.md`](DESIGN_session_and_signout.md) | cookie lifetime, sign-out, and the `/signed-out` path the chart guards |
 | [`DESIGN_metrics_refresh.md`](DESIGN_metrics_refresh.md) | what `/metrics` emits now, what was added, and the dedicated-listener design that is deliberately **not** applied |

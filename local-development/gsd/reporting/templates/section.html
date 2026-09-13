@@ -1,0 +1,9 @@
+{#- One section: a heading and its blocks, each dispatched on `kind` to its own partial. A new block
+    kind is one new partial here and one drawing routine in render_pdf — never a branch per report. -#}
+<section{% if section.page_break %} class="break"{% endif %}><h2>{{ section.title }}</h2>
+{%- for block in section.blocks %}
+{%- if block.kind == "table" %}{% include "block_table.html" %}
+{%- elif block.kind == "kv" %}{% include "block_kv.html" %}
+{%- elif block.kind == "note" %}{% include "block_note.html" %}
+{%- endif %}
+{%- endfor %}</section>

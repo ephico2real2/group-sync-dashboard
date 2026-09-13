@@ -455,6 +455,24 @@ class Settings:
     # to the resolver, the resolver fell back to its own identical 60, and every test that
     # exercised the default agreed with the bug.
     visibility_tier_ttl_seconds: int = VISIBILITY_TIER_TTL_DEFAULT
+    # ── REPORTING (docs/specs/SPEC_C3_reporting_microservice.md) ─────────────────────────────────────
+    # The report service's Service URL inside the cluster, e.g. https://gsd-report.ns.svc:8443.
+    # Empty means the module is off: no ticket endpoint, no snapshot, no usage pull, no tab.
+    reporting_url: str = ""
+    # The shared token both pods mount: signs tickets here, authenticates the usage pull there.
+    reporting_token_file: str = "/etc/gsd/report/token"
+    # The CA the report Service's certificate chains to (openshift-service-ca.crt); "" = system trust.
+    reporting_ca_file: str = ""
+    # Where the leader writes VACUUM INTO copies for the report pod, and how often. Under /data so
+    # the report pod's read-only mount of the data claim sees it; never the live gsd.db (§4).
+    reporting_snapshot_dir: str = "/data/report"
+    reporting_snapshot_interval_seconds: int = 300
+    reporting_snapshot_keep: int = 2
+    # How long a minted ticket lives. The page re-mints on a 401/403 from the report service.
+    reporting_ticket_ttl_seconds: int = 300
+    # Whether the poller reads Namespace objects (rbac.namespaces) — lets the namespace report
+    # attest ABSENCE. Kept from the first C3 body.
+    namespaces_read_enabled: bool = False
 
     def cluster(self, name: str) -> ClusterConfig | None:
         for c in self.clusters:
@@ -931,6 +949,11 @@ def load_settings(path: str | Path) -> Settings:
     usage_admin_sar = _usage_visibility_sar_setting(raw)
     cookie_expire = _duration_setting(raw, "GSD_SESSION_COOKIE_EXPIRE", "sessionCookieExpire", 14400)
     idle_enabled, idle_seconds, idle_warning = _idle_timeout_setting(raw, cookie_expire)
+    if raw.get("reportingUrl") and int(_num_setting(raw, "GSD_REPORTING_SNAPSHOT_INTERVAL_SECONDS", "reportingSnapshotIntervalSeconds", 300, int)) < 60:
+        # A VACUUM INTO holds a read transaction for its duration (measured 3.2 s on a 61 MB store);
+        # more often than once a minute is a load the poll thread should not carry. The chart refuses
+        # the same value at render; this is the second boundary, for a hand-written config.
+        raise ConfigError("reportingSnapshotIntervalSeconds must be at least 60")
     return Settings(
         clusters=clusters,
         poll_interval_seconds=int(raw.get("pollIntervalSeconds", 60)),
@@ -1019,6 +1042,14 @@ def load_settings(path: str | Path) -> Settings:
             raw, "GSD_VISIBILITY_TIER_TTL_SECONDS", "visibilityTierTtlSeconds",
             VISIBILITY_TIER_TTL_DEFAULT, int
         ),
+        reporting_url=(os.environ.get("GSD_REPORTING_URL") or str(raw.get("reportingUrl", "") or "")).rstrip("/"),
+        reporting_token_file=_path_setting(raw, "GSD_REPORTING_TOKEN_FILE", "reportingTokenFile", "/etc/gsd/report/token"),
+        reporting_ca_file=os.environ.get("GSD_REPORTING_CA_FILE") or str(raw.get("reportingCaFile", "") or ""),
+        reporting_snapshot_dir=_path_setting(raw, "GSD_REPORTING_SNAPSHOT_DIR", "reportingSnapshotDir", "/data/report"),
+        reporting_snapshot_interval_seconds=_num_setting(raw, "GSD_REPORTING_SNAPSHOT_INTERVAL_SECONDS", "reportingSnapshotIntervalSeconds", 300, int),
+        reporting_snapshot_keep=_num_setting(raw, "GSD_REPORTING_SNAPSHOT_KEEP", "reportingSnapshotKeep", 2, int),
+        reporting_ticket_ttl_seconds=_num_setting(raw, "GSD_REPORTING_TICKET_TTL_SECONDS", "reportingTicketTtlSeconds", 300, int),
+        namespaces_read_enabled=_bool_setting(raw, "GSD_NAMESPACES_READ_ENABLED", "namespacesReadEnabled", False),
         user_activity_visibility=_visibility_setting(raw),
         user_activity_flush_seconds=_num_setting(
             raw, "GSD_USER_ACTIVITY_FLUSH_SECONDS", "userActivityFlushSeconds", 60, int

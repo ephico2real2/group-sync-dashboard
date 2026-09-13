@@ -32,6 +32,8 @@ from .kube import TIER_ALL, TIER_SELF, TierResolver
 from .leader import LeaderElector
 from .metrics import RuntimeSignals, build_registry
 from .poller import Poller
+from .reporting import REPORT_PREFIX
+from .reporting.ticket import TicketError, load_secret, mint
 from .storage import StorageBackend, open_backend
 from . import loginlog
 
@@ -332,6 +334,16 @@ def build_app(
     # before anything that carries it.
     signals = RuntimeSignals()
     poller = Poller(store, settings, elector, signals=signals)
+    # The report service (docs/specs/SPEC_C3_reporting_microservice.md). The token is read ONCE at
+    # startup: the same bytes the report pod verifies with, so a ticket minted here is accepted
+    # there. Missing or short when reporting is on is a startup failure — a module that is on and
+    # cannot work is the state this repository refuses to run in.
+    report_secret: bytes | None = None
+    if settings.reporting_url:
+        try:
+            report_secret = load_secret(settings.reporting_token_file)
+        except (OSError, TicketError) as exc:
+            raise RuntimeError(f"reporting is on (reportingUrl set) but the token is unusable: {exc}") from exc
     grace = timedelta(seconds=settings.schedule_grace_seconds)
 
     # Both conditions, not either: the setting is the operator's choice, the proxy flag is
@@ -1803,7 +1815,8 @@ def build_app(
         }
 
     metrics_registry = build_registry(store, grace, elector,
-                                      signals=signals, settings=settings)
+                                      signals=signals, settings=settings,
+                                      reporting_enabled=bool(settings.reporting_url))
 
     @app.get("/metrics")
     def metrics() -> Response:
@@ -1986,7 +1999,55 @@ def build_app(
         Session-shaped modules (the idle timeout) ride /api/whoami's `session` instead,
         because they only exist when there is a session.
         """
-        return {"export": settings.ui_export_enabled}
+        return {"export": settings.ui_export_enabled,
+                "reporting": bool(settings.reporting_url), "reporting_prefix": REPORT_PREFIX}
+
+    @app.get("/api/report/ticket")
+    def report_ticket(request: Request) -> dict:
+        """A short-lived, signed ticket that lets THIS reader call the report service — minted only at the administrator tier.
+
+        The report service holds no cluster credential, so the tier is decided HERE
+        (require_admin_tier, the same SubjectAccessReview every gated view uses) and carried to it
+        signed: HMAC-SHA256 with the token both pods mount, bound to the proxy's X-Forwarded-User
+        and to an expiry. A GET, and deliberately no work: nothing is stored, rendered or fetched —
+        the ticket is a pure function of the request, like /api/whoami's tier. 404 when reporting is
+        off; 403 with the gate's own sentence below the wide tier.
+        """
+        if not settings.reporting_url or report_secret is None:
+            raise HTTPException(status_code=404, detail="reporting is not enabled on this deployment")
+        require_admin_tier(request)
+        viewer = trusted_viewer(request)
+        if not viewer:
+            raise HTTPException(status_code=403, detail="a ticket needs an authenticated viewer, and there is none")
+        return {"ticket": mint(report_secret, viewer, TIER_ALL, settings.reporting_ticket_ttl_seconds),
+                "expires_in": settings.reporting_ticket_ttl_seconds, "prefix": REPORT_PREFIX, "viewer": viewer}
+
+    @app.get("/api/dashboard/reports")
+    @consistent
+    def dashboard_reports(
+        request: Request,
+        limit: int = Query(200, ge=1, le=5000, description="Maximum runs to return, newest first. `total` describes the whole set."),
+        offset: int = Query(0, ge=0, description="Page offset."),
+    ) -> dict:
+        """Who generated which report, when — pulled from the report service by the poller and recorded here.
+
+        USAGE TIER, like /api/dashboard/activity: this is personnel data (a person's use of a
+        governance tool) that exists only in the dashboard's own database. `scope` is `all` only for
+        the usage tier; everyone else sees their own runs. `enabled` false when reporting is off.
+        """
+        if not settings.reporting_url:
+            return {"enabled": False, "scope": "self", "viewer": trusted_viewer(request), "total": 0, "limit": limit, "truncated": False, "runs": []}
+        if not settings.oauth_proxy_enabled:
+            raise HTTPException(status_code=403, detail="report usage requires the OAuth proxy; without it there is no authenticated identity to scope this to")
+        viewer = request.headers.get(USER_HEADER)
+        if not viewer:
+            raise HTTPException(status_code=403, detail="no authenticated identity")
+        _, scope = usage_scope(request)
+        scope_to = None if scope == "all" else viewer
+        total = store.count_report_runs(user_name=scope_to)
+        rows = store.report_runs(user_name=scope_to, limit=limit, offset=offset)
+        return {"enabled": True, "scope": scope, "viewer": viewer, "total": total, "limit": limit,
+                "truncated": offset + len(rows) < total, "runs": rows}
 
     @app.get("/api/version")
     def version() -> dict:

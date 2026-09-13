@@ -29,14 +29,20 @@
 # in CI. It remains the disaster-recovery path — a laptop can do everything this workflow does,
 # which matters on the day Actions is down.
 #
-# TWO JOBS FOLLOW THE PUSH, and neither touches this repository either. `sbom` catalogues the
-# pushed image by digest (Syft, SPDX JSON, kept as a workflow artifact); `attest` signs that digest
+# TWO IMAGES FROM ONE PUSH. The dashboard image and the report image (C3) are built from the same
+# commit, tagged <appVersion>-<sha>, and their release aliases move on the same decision; each
+# build step records the digest the registry acknowledged as a job output of its own.
+#
+# TWO JOBS FOLLOW THE PUSH, and neither touches this repository either. `sbom` catalogues each
+# pushed image by digest (Syft, SPDX JSON, kept as a workflow artifact); `attest` signs each digest
 # keyless with cosign through GitHub's OIDC identity, attaches the SBOM as an attestation, records
 # SLSA build provenance in GitHub's attestation store, and READS EACH ONE BACK with the commands
-# the install guide gives operators, so a signature nobody could verify is a red run here. They
-# are separate jobs so that `publish` keeps holding exactly `contents: read` — the property
-# tests/test_publish_release_decision.py calls load-bearing — while only `attest` holds
-# `id-token: write`. Each has a repository-variable switch, documented on the job.
+# the install guide gives operators, so a signature nobody could verify is a red run here. Both
+# run as a two-leg matrix over the two images — one definition, so the report image cannot drift
+# to a weaker chain than the dashboard's. They are separate jobs so that `publish` keeps holding
+# exactly `contents: read` — the property tests/test_publish_release_decision.py calls
+# load-bearing — while only `attest` holds `id-token: write`. Each has a repository-variable
+# switch, documented on the job.
 name: publish
 
 on:
@@ -77,6 +83,9 @@ on:
       - 'local-development/Containerfile'              # the recipe
       - 'local-development/.containerignore'           # filters what every COPY is allowed to see
       - 'local-development/build-and-push-external.sh' # the tag scheme and the stamp check
+      - 'local-development/Containerfile.report'        # the report image's recipe
+      - 'local-development/report-image-proof.py'       # COPY report-image-proof.py (report proof)
+      - 'local-development/build-and-push-report.sh'    # the wrapper that names the second image
       - '.github/workflows/publish.yml'                # this file
   # The escape hatch the filter makes necessary. A rebuild is occasionally wanted for a reason the
   # paths cannot see — a base-image CVE, a registry that lost a tag, a stamp to re-verify.
@@ -100,11 +109,13 @@ jobs:
     #              fail the run. Skipping is the honest outcome there.
     if: github.repository == 'ephico2real2/group-sync-dashboard'
     runs-on: ubuntu-latest
-    # What the two jobs below need: the digest the registry acknowledged and the repository it
-    # lives in. Empty when nothing was pushed, and both jobs key on that.
+    # What the two jobs below need, one pair per image: the digest the registry acknowledged and
+    # the repository it lives in. Empty when nothing was pushed, and both jobs key on that.
     outputs:
       digest: ${{ steps.build.outputs.digest }}
       image: ${{ steps.build.outputs.image }}
+      report_digest: ${{ steps.build-report.outputs.digest }}
+      report_image: ${{ steps.build-report.outputs.image }}
 
     permissions:
       # READ ONLY, and that is the point of this whole change. This job writes to the registry and
@@ -204,9 +215,11 @@ jobs:
           if [ -z "${BEFORE}" ] || [ "${BEFORE}" = "0000000000000000000000000000000000000000" ] \
              || ! git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
             echo "::warning::cannot read the previous commit (${BEFORE:-unset}), so this run will"
-            echo "::warning::NOT move the :${NOW} release alias. The immutable tag is still"
-            echo "::warning::published. If this WAS an application release, publish the alias from"
-            echo "::warning::a checkout with: ./build-and-push-external.sh --release-tags"
+            echo "::warning::NOT move the :${NOW} release aliases. The immutable tags are still"
+            echo "::warning::published. If this WAS an application release, publish the aliases of"
+            echo "::warning::BOTH images from a clean checkout of this commit:"
+            echo "::warning::  ./build-and-push-external.sh --release-tags"
+            echo "::warning::  ./build-and-push-report.sh --release-tags"
             echo "is_release=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -256,6 +269,52 @@ jobs:
           echo "digest=${digest}" >> "$GITHUB_OUTPUT"
           echo "image=${REGISTRY}/${REGISTRY_NAMESPACE}/group-sync-dashboard" >> "$GITHUB_OUTPUT"
 
+      # THE SECOND IMAGE, SAME RUN, SAME DECISION. The report image is built from the same commit
+      # and tagged <appVersion>-<sha>; its release aliases move exactly when the dashboard's do
+      # (steps.release decided that once, above), so the two images a chart resolves by appVersion
+      # are always the same source. The wrapper sets IMAGE_NAME/CONTAINERFILE and refuses the two
+      # flags that target the dashboard's values.
+      #
+      # IN THIS JOB, NOT A LATER ONE. The first version of this step sat under `sbom`, reading
+      # `steps.creds` and `steps.release` — which exist only here: step outputs are job-local, so
+      # its condition could never hold and CI would never have pushed the report image (review of
+      # C3, Codex). tests/test_publish_paths.py holds every `steps.<id>.` reference to a step
+      # defined earlier in the same job.
+      #
+      # AFTER the dashboard's push. A report build that fails here leaves the dashboard's
+      # immutable tag in the registry and this job red — which withholds BOTH images' catalogue
+      # and signatures, because the two jobs below key on this job's result: the run is the unit,
+      # and a half-signed pair would be a run that looks finished. On an ordinary merge a
+      # workflow_dispatch rebuilds both. On a RELEASE push the dashboard's aliases have already
+      # moved (its step ran --release-tags before this one) to a digest this run never signs, and
+      # a dispatch cannot move them (no `before`, so the release decision fails closed): the
+      # recovery is a corrective application release, or the two-script route that decision's
+      # warning names, which publishes unsigned aliases. docs/DESIGN_supply_chain.md D10.
+      - name: Build and push the report image
+        id: build-report
+        if: steps.creds.outputs.configured == 'true'
+        shell: bash
+        working-directory: local-development
+        env:
+          # Its own file, never the dashboard's: the script overwrites whatever DIGEST_FILE names.
+          DIGEST_FILE: ${{ runner.temp }}/pushed-report.digest
+          REGISTRY: ${{ vars.REGISTRY || 'quay.io' }}
+          REGISTRY_NAMESPACE: ${{ vars.REGISTRY_NAMESPACE || 'ephico2real' }}
+          REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+          REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
+          IS_RELEASE: ${{ steps.release.outputs.is_release }}
+        run: |
+          set -euo pipefail
+          if [ "${IS_RELEASE}" = "true" ]; then
+            ./build-and-push-report.sh --release-tags
+          else
+            ./build-and-push-report.sh
+          fi
+          digest=$(tr -d '\r\n' < "${DIGEST_FILE}")
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+          # The wrapper's default IMAGE_NAME, and a test holds the two strings together.
+          echo "image=${REGISTRY}/${REGISTRY_NAMESPACE}/group-sync-dashboard-report" >> "$GITHUB_OUTPUT"
+
   # ── The SBOM ─────────────────────────────────────────────────────────────────────────────────
   #
   # SWITCH: repository variable SUPPLY_CHAIN_SBOM; anything but 'false' runs it. ON by default: it
@@ -269,25 +328,54 @@ jobs:
   # not recognise the base produces an SBOM with no OS packages in it — a document that is
   # complete-looking and wrong, the failure this repo has met with Trivy and with Grype's default.
   sbom:
-    name: SBOM of the pushed image
+    name: SBOM of the ${{ matrix.name }} image
     needs: publish
+    # No status function in this condition, so GitHub applies its default `success()`: a red
+    # publish job — a report build that failed after the dashboard's push — skips this job (the
+    # expressions reference: "A default status check of success() is applied unless you include
+    # one of these functions"). Adding `!cancelled()` here would change that; the test that pins
+    # this line is the guard.
     if: needs.publish.outputs.digest != '' && vars.SUPPLY_CHAIN_SBOM != 'false'
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    # ONE LEG PER IMAGE, ONE DEFINITION. `include` reads the publish job's outputs — the `needs`
+    # context is one a job's `strategy` may read — so each leg is exactly the <image, digest>
+    # pair the registry acknowledged, never a tag. The job-level `if` above keys on the
+    # dashboard's digest alone, because `matrix` is not a context a job-level `if` can read
+    # (GitHub's context-availability table); the report digest is written by the same job under
+    # the same condition, so one being present means both are. fail-fast is off so that one
+    # image's failed catalogue never cancels the other's.
+    #
+    # The two legs are repeated verbatim on `attest`, and a test holds the two matrices equal —
+    # the artifact name in particular, which is also the file name the attest job reads.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: dashboard
+            image: ${{ needs.publish.outputs.image }}
+            digest: ${{ needs.publish.outputs.digest }}
+            artifact: sbom-${{ github.sha }}
+          - name: report
+            image: ${{ needs.publish.outputs.report_image }}
+            digest: ${{ needs.publish.outputs.report_digest }}
+            artifact: sbom-report-${{ github.sha }}
     steps:
       - name: Catalogue the image, by digest
         uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
         with:
           # The action prefixes `registry:` itself when a username is given, so Syft reads the
           # registry directly — there is no daemon on this runner holding the image.
-          image: ${{ needs.publish.outputs.image }}@${{ needs.publish.outputs.digest }}
+          image: ${{ matrix.image }}@${{ matrix.digest }}
           registry-username: ${{ secrets.REGISTRY_USERNAME }}
           registry-password: ${{ secrets.REGISTRY_PASSWORD }}
           syft-version: v1.51.1
           format: spdx-json
           output-file: sbom.spdx.json
-          artifact-name: sbom-${{ github.sha }}
+          # Also the FILE name inside the artifact (see the attest job), and a run holds one
+          # artifact per name — so the two legs cannot share `sbom-<sha>`.
+          artifact-name: ${{ matrix.artifact }}
           upload-artifact: true
           upload-artifact-retention: 90
           # A push has no release to attach assets to, and the dependency graph is for source
@@ -318,7 +406,7 @@ jobs:
   # operators. If the registry cannot hold the bundle, or the identity string is wrong, this run
   # is red — not a consumer's `cosign verify` on a cluster.
   attest:
-    name: Sign the image and attest its provenance
+    name: Sign the ${{ matrix.name }} image and attest its provenance
     needs: [publish, sbom]
     if: >-
       !cancelled()
@@ -333,9 +421,28 @@ jobs:
       id-token: write
       # To store the provenance statement in this repository's attestation store.
       attestations: write
+    # THE SAME TWO LEGS as `sbom`, from the same outputs. GitHub reports one `needs.<job>.result`
+    # per job, not per leg (the contexts reference documents nothing finer), and with fail-fast
+    # off a failed leg makes that one result `failure` — so if either image's catalogue failed,
+    # neither leg attaches an SBOM and both say so. A stated outcome, chosen over a per-leg
+    # artifact probe that would make "signed, no SBOM" depend on a download error's wording; to
+    # be confirmed on the first run with a red sbom leg. fail-fast is off so that one image's
+    # failed signature never cancels the other's.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: dashboard
+            image: ${{ needs.publish.outputs.image }}
+            digest: ${{ needs.publish.outputs.digest }}
+            artifact: sbom-${{ github.sha }}
+          - name: report
+            image: ${{ needs.publish.outputs.report_image }}
+            digest: ${{ needs.publish.outputs.report_digest }}
+            artifact: sbom-report-${{ github.sha }}
     env:
-      IMAGE: ${{ needs.publish.outputs.image }}
-      DIGEST: ${{ needs.publish.outputs.digest }}
+      IMAGE: ${{ matrix.image }}
+      DIGEST: ${{ matrix.digest }}
       # The certificate's subject for a GitHub-issued keyless signature: this workflow FILE on
       # main — PINNED, not `github.ref`, and the job runs only on main (the `if` above). A
       # workflow_dispatch from another branch would otherwise sign under that branch's identity,
@@ -379,7 +486,7 @@ jobs:
         if: needs.sbom.result == 'success'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: sbom-${{ github.sha }}
+          name: ${{ matrix.artifact }}
           path: downloaded-sbom
 
       - name: Attach the SBOM as an attestation, and read it back
@@ -388,9 +495,10 @@ jobs:
         env:
           # sbom-action names the FILE inside the artifact after `artifact-name`, not after
           # `output-file` (its uploadSbomArtifact writes `${tempDir}/${artifactName}`), and
-          # download-artifact extracts without renaming — so the file here is `sbom-<sha>`, not
-          # `sbom.spdx.json`. Review of A2 (Codex): the first run would have failed at `test -s`.
-          SBOM_FILE: downloaded-sbom/sbom-${{ github.sha }}
+          # download-artifact extracts without renaming — so the file here is `sbom-<sha>` (or
+          # `sbom-report-<sha>` on the report leg), not `sbom.spdx.json`. Review of A2 (Codex):
+          # the first run would have failed at `test -s`.
+          SBOM_FILE: downloaded-sbom/${{ matrix.artifact }}
         run: |
           set -euo pipefail
           test -s "${SBOM_FILE}"
@@ -407,7 +515,7 @@ jobs:
         env:
           SBOM_RESULT: ${{ needs.sbom.result }}
         run: |
-          echo "::notice::the sbom job's result is '${SBOM_RESULT}' (SUPPLY_CHAIN_SBOM off, or it failed),"
+          echo "::notice::the sbom job's result is '${SBOM_RESULT}' (SUPPLY_CHAIN_SBOM off, or one of its legs failed),"
           echo "::notice::so ${IMAGE}@${DIGEST} is signed and its provenance attested, with no SBOM attached."
 
       - name: Attest build provenance (SLSA)

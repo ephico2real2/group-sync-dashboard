@@ -119,9 +119,12 @@ Then each package is erased with `rpm -e --justdb --nodeps` — `--justdb` edits
 only, `--nodeps` because `python3-libs` names `libuuid` and the fallback makes that optional —
 **per package and only if it is recorded**, because the base floats. A check fails the build if
 any of the three is still recorded; the database is checkpointed explicitly (rpm 6 keeps it in
-SQLite WAL mode) and the `-shm`/`-wal` side files are removed last, so what ships is the two
-files the base shipped: `rpmdb.sqlite` and its `.rpm.lock`. The shipped database records, on
-purpose, one dependency it cannot satisfy: `python3-libs` on `libuuid`.
+SQLite WAL mode) and the `-shm`/`-wal` side files are removed last, so what ships is
+`rpmdb.sqlite` and rpm's own dot-lock files — `.rpm.lock`, and since the base's rebuild of
+2026-09-09 (3.14.7) also `.keyring.lock`, which the builder's rpm leaves after the erase. The proof
+holds that rule, not an exact list of names: the list of two it first held went red in CI on
+2026-09-11 with no change to the recipe (measured; the base floats). The shipped database records,
+on purpose, one dependency it cannot satisfy: `python3-libs` on `libuuid`.
 
 ### 4.4 `final` — the image that ships
 
@@ -144,7 +147,7 @@ purpose, one dependency it cannot satisfy: `python3-libs` on `libuuid`.
 
 | Proof | What it establishes |
 |---|---|
-| `image-proof.py`, bind-mounted from the build stage under `/tmp` | Every module the build stage proved imports under the runtime's interpreter; SQLite works in WAL mode on `/data`; zoneinfo resolves; `uuid` works while `_uuid` must *fail* to import (the libuuid removal, observed); `pip` is not importable; the paths the uninstall once missed are gone; the database directory holds exactly the base's two files. It cleans `/data` after itself and is in no layer. |
+| `image-proof.py`, bind-mounted from the build stage under `/tmp` | Every module the build stage proved imports under the runtime's interpreter; SQLite works in WAL mode on `/data`; zoneinfo resolves; `uuid` works while `_uuid` must *fail* to import (the libuuid removal, observed); `pip` is not importable; the paths the uninstall once missed are gone; the database directory holds `rpmdb.sqlite` and rpm's lock files, nothing else. It cleans `/data` after itself and is in no layer. |
 | `ld.so --list` of every packed binary | Every library resolves, asked of the dynamic loader itself; a missing one reads "not found". `--version` only exercises what a binary loads on the way to printing a string. x86-64 loader path: the image is built for linux/amd64 only. |
 | One unit of work per tool | jq evaluates JSON, base64 round-trips, sh, ls, cat and curl run. |
 

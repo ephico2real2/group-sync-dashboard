@@ -69,6 +69,15 @@ ASSETS=(
   "@fontsource/space-grotesk:package/files/space-grotesk-latin-400-normal.woff2:space-grotesk-400.woff2"
   "@fontsource/space-grotesk:package/files/space-grotesk-latin-500-normal.woff2:space-grotesk-500.woff2"
   "@fontsource/space-grotesk:package/files/space-grotesk-latin-700-normal.woff2:space-grotesk-700.woff2"
+
+  # The PDF's embedded typeface. PDF/A requires embedded fonts and the hardened base ships
+  # none (measured: no font package in the Hummingbird repository but xorg bitmap sets), so the
+  # report service carries its own. DejaVu Sans 2.37, regular and bold — the bold face is not
+  # optional: fpdf2 sets table headings in bold and refuses a family without that face
+  # registered. TrueType, because fpdf2 reads TTF/OTF and not woff2. Bitstream Vera licence:
+  # free to embed and redistribute. ~1.4 MB in git, once.
+  "dejavu-fonts-ttf:package/ttf/DejaVuSans.ttf:DejaVuSans.ttf"
+  "dejavu-fonts-ttf:package/ttf/DejaVuSans-Bold.ttf:DejaVuSans-Bold.ttf"
 )
 
 # sha256sum on Linux, shasum on macOS. Neither is present on both, and this script is run

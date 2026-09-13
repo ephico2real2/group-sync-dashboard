@@ -1,19 +1,12 @@
 # Namespace access report + PDF — design, for approval
 
-> **PARKED — 2026-08-02.** Not rejected and not scheduled. The analysis is finished and the
-> five open questions in §9 are still the gate; nothing here proceeds until they are
-> answered. Kept because the expensive part is already done: the `--openshift-sar` answer in
-> §1 is definitive, and the measurements behind §2 (no groups-forwarding in the proxy,
-> `-pass-access-token` present, SA cannot create SARs) were taken off the shipped binary and
-> the live cluster. Re-verify those three before building — a proxy upgrade could move them.
->
-> **Re-verified 2026-08-02 on `ose-oauth-proxy-rhel9:v4.15`**, after the chart moved off the
-> cluster's internal `oauth-proxy:v4.4` imagestream. All three still hold: `-pass-access-token`
-> is present, there is still no groups-forwarding flag of any kind, and the SA still cannot
-> create `subjectaccessreviews`. §2's conclusion is unchanged on the newer proxy.
+> **SUPERSEDED — 2026-09-05.** Built as a separate report service: docs/specs/SPEC_C3_reporting_microservice.md
+> (the maintained record is docs/DESIGN_reporting_service.md). §1's `--openshift-sar` answer, §4's
+> argument for a canonical HTML artefact with a sha256, §5's selector and §6's provenance block and
+> caveats are carried into it; §2–3 (the viewer-token authorisation layer) and question E stay not
+> built.
 
-**Status: proposed, not built.** Nothing in this document is implemented. It exists to be
-approved, amended or rejected first.
+**Status: superseded by the report service; §1, §4–§6 are the record of what it kept.**
 
 The ask: *a tab where a user can run a namespace report that generates a PDF, protected with
 `--openshift-sar` so a user can only report on their own namespaces, with a namespace selector
