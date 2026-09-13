@@ -7,7 +7,7 @@
 | Release | R6 — Reporting |
 | Version on release | app 0.18.0, chart 0.20.0, report image at the same appVersion |
 | Issue | [#67](https://github.com/ephico2real2/group-sync-dashboard/issues/67) |
-| Status | in progress |
+| Status | released |
 | Source | design agent output, this session; written incrementally to one file, no seam |
 
 ## How to read this spec
