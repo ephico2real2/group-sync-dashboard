@@ -132,6 +132,55 @@ Codex's sandbox refused the scratch directory the brief named, so it ran nothing
 findings were static, and the one that mattered most (C8) was the one static reading could see. Its
 codex-rescue run was cut short once mid-review; the answer came from the retry.
 
+## Live run on the fixed head, 2026-09-13
+
+Head cc98c82 (both passes applied), built locally by both wrappers (`--build-only`: "runtime proof OK;
+sqlite 3.53.4", "report image proof OK; fpdf2 2.8.8 sqlite 3.53.4 pdf bytes 13248", both stamps
+verified; the pack stage's RPM directory listed `.keyring.lock`, `.rpm.lock`, `rpmdb.sqlite`, the
+three the proof's rule now allows), then deployed by `release-crc.sh` with `environments/crc.yaml`
+unchanged — both deployments rolled out, `running : cc98c820ac — verified in-pod`. The lab had been
+stopped for two days; Kyverno's admission webhooks (`failurePolicy: Fail`) admitted every object.
+
+| Measured | Value |
+|---|---|
+| pods | dashboard `2/2 Running`, report `1/1 Running`, restarts 0; both on `…:0.18.0-cc98c820ac`; the report image pulled in 38.8 s (243,763,063 bytes) |
+| `/api/version` | `0.18.0`, commit `cc98c820ac`, branch `feat/c3-reporting-service`, `dirty: false`, `reporting: true` |
+| proxy | `-upstream=https://group-sync-dashboard-report.group-sync-dashboard.svc:8443/report/` and `-upstream-ca=/etc/gsd/service-ca/service-ca.crt` beside the loopback upstream |
+| snapshot | the leader wrote `gsd-20260913T231851.744405Z.db` (1,470,464 bytes) 27 s after the dashboard came up; the 2026-09-06 copy kept beside it (`keep: 2`) |
+| ticket | `kubeadmin` mints (`expires_in: 300`, `prefix: /report`, 174 characters); `lateef.o` → 403 |
+| report service | `/report/readyz` 200 in 26 ms over TLS; `/report/api/snapshot` → `available: true, age_seconds: 47, schema_version: 11` |
+| a run | `namespace-access` for `group-sync-dashboard,openshift-authentication` through the service principal (`generated_by: service`, "unattended (service token)"): `done`, sha256 `e857314d89e7`, json 8,532 / html 8,328 / pdf 32,642 bytes, data as of the snapshot 48 s earlier |
+| the PDF | pulled to the laptop: `PDF document, version 1.7, 3 pages`; `%PDF-`, `pdfaid:part>2`, `pdfaid:conformance>B`, `/OutputIntent`, `/FontFile2` and `DejaVu` all present — the PDF/A-2b markers §6.2 measured |
+| the JSON | the run's sha256; sections `Provenance and coverage`, one per namespace; `attests_absence: false` (`rbac.namespaces` is off in the lab) |
+| the second pass's fixes, live | `namespaces: 7` → 422; `window_days: " 1"` → 422; a ticket with `!!!!` spliced in → 403 |
+| the usage pull | `gsd_report_usage_pulls_total{outcome="ok"} 1`, the other three outcomes 0; `/api/dashboard/reports` at the usage tier: `scope: all, total: 4`, the service run listed first, the three 2026-09-06 runs behind it |
+| the route | anonymous `GET /` and `GET /report/api/reports` on `group-sync-dashboard.apps-crc.testing` answer the proxy's own sign-in page (HTTP 403, an HTML "Log In" body, the session cookie cleared); `/oauth/start` → 302 to `oauth-openshift.apps-crc.testing/oauth/authorize`. §12's "302 to login" was imprecise: the proxy serves its page with 403 and redirects from its button |
+| node | `cpu 4592m (95 %) requests` with both pods up — the lab's ceiling, as the first run found |
+
+Two of the spec's §12 commands assume tools the hardened image does not ship: `head` and `grep` are not
+in the runtime (the pack stage packs `curl`, `jq`, `ls`, `rm`, `rmdir`, `sh`), so the PDF's markers are
+read on the laptop after `oc exec … curl` streams the file out; and the Route's host is the router's,
+in `status.ingress[0].host`, not `spec.host`. Not run: `verapdf` (not installed; the markers stand in,
+as in the first run) and a browser login (the Reports tab was exercised by the first run and by the UI
+suite on this head).
+
+## Outcome
+
+Two passes, twenty-two claims. First pass: Cursor refuted two (C4, C8) and Codex six (C1, C3, C4,
+C6, C8, C10), all accepted in whole or part; two Codex snippets rejected (a failed run for one
+uncovered glyph, `full_name` as personal data). Second pass on the fixed head: both reviewers refuted
+the same three holes in first-pass fixes (a padded integer string, a page-tall cell of newlines, a
+non-feed 200 counted `ok`), Codex found the pass's most severe defect by reading alone (the wrapper's
+inherited `IMAGE_NAME`), and Cursor's `sbom`-condition refutation was rejected on GitHub's documented
+`success()` default. Four snippets rejected with reasons (a 422 for `null`, a required
+`service_version`, an ellipsis on whitespace-only normalisation, a registry preflight requiring a
+public repository). The publish-job fix was verified before commit by three independent passes and a
+mutation harness; CI found the base image had moved underneath the image proof. Re-validated on
+cc98c82: the full hermetic suite 2759 passed / 14 skipped, the browser suite green in CI, chart lint
+and every switch state per §12, both images built locally with their proofs, deployed to the reference
+cluster and the live checks above. The report image's quay.io repository was created public with the
+robot granted write before the merge.
+
 **Found by CI on this head, not by a reviewer.** The `image` job went red at the dashboard image's
 build-time proof: the RPM database directory held `['.keyring.lock', '.rpm.lock', 'rpmdb.sqlite']`,
 "not the base's two files". Nothing in the PR touches the recipe; both `hi/python:3.14` tags were
