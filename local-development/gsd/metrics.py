@@ -407,6 +407,10 @@ class DashboardCollector:
             rows = []
 
         for row in rows:
+            # A retired cluster (removed from config, enabled=0) stops emitting: its frozen snapshot
+            # must not keep exporting a healthy-looking up=1 or a stale last_poll (#96).
+            if not row["enabled"]:
+                continue
             cluster = row["id"]
             try:
                 up.add_metric([cluster], 1 if row["status"] == "ok" else 0)

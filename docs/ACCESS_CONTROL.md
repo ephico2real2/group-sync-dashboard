@@ -443,6 +443,14 @@ and never names the value that would change it; `/api/clusters/{id}/groupsyncs`,
 `/api/alerts` is filtered per cluster in that cluster's tier, and its `scope` is the narrowest served:
 `all` only when every served cluster is wide for this reader.
 
+A cluster **removed from `clusters:`** (or one with `enabled: false`) is **retired**, not deleted (#96):
+the poller marks its stored row `enabled = 0` at the start of every cycle — a config change rolls the
+pod, so add/remove takes effect on the next start — and every surfacing path (`/api/clusters`,
+`/api/alerts`, `/metrics`, and a direct `/api/clusters/{id}/…`, which answers the same 404 as an unknown
+id) skips it. Its history and snapshot rows stay in the store, so an already-generated report is still
+readable, but it no longer appears as `ok` with frozen data or raises stale "overdue" alerts. This
+supersedes the earlier behaviour where a removed cluster resolved to `inherit` and lingered in the list.
+
 **How `remote-sar` decides.** One `gsd/kube.py#TierResolver` per remote-sar cluster, constructed on
 that cluster's `ClusterConfig`, so the review is created on the remote API with the remote token and
 `gsd/kube.py#ClusterClient.fetch_groups_of_user` reads the **remote's** Group objects — the

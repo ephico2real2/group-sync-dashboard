@@ -1418,6 +1418,21 @@ class Store:
                 ORDER BY c.id"""
         )
 
+    def retire_absent_clusters(self, configured_ids: list[str]) -> int:
+        """Retire — never delete — every stored cluster the configuration no longer names: set
+        enabled=0 so its history and snapshot rows stay, but it leaves the served/active set (#96).
+        A cluster disabled in config is already enabled=0 through upsert_cluster; this catches the
+        ones the config dropped entirely. Returns how many rows it retired."""
+        ids = list(configured_ids)
+        with self._tx() as conn:
+            if ids:
+                marks = ",".join("?" for _ in ids)
+                cur = conn.execute(
+                    f"UPDATE cluster SET enabled=0 WHERE enabled=1 AND id NOT IN ({marks})", ids)
+            else:
+                cur = conn.execute("UPDATE cluster SET enabled=0 WHERE enabled=1")
+            return cur.rowcount
+
     # -- poll results ------------------------------------------------------------------
 
     def record_poll(self, cluster_id: str, status: str, message: str | None) -> None:

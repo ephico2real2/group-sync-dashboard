@@ -262,9 +262,14 @@ class TestInheritIsTheHostsDecidedTier:
             assert who["scope"] == "self"
             assert who["clusters"]["east"] == {"policy": "inherit", "identity": "none", "scope": "self"}
 
-    def test_no_enabled_cluster_fails_closed_on_the_headline(self, db):
+    def test_no_enabled_cluster_fails_closed_on_the_headline(self, tmp_path):
         """Cursor, second pass: with every entry disabled there is no host, and the nameless
-        question fell through to the host resolver — `all` above rows that all said `self`."""
+        question fell through to the host resolver — `all` above rows that all said `self`.
+
+        Its own db, not the module-scoped one: build_app's lifespan upserts these disabled clusters
+        (run_poller=False still records them), and once list_clusters skips enabled=0 (the #96 retire
+        rule) that would leak host/east=disabled into the shared-db tests that follow."""
+        db = str(tmp_path / "no-enabled.db")
         settings = Settings(clusters=[
             ClusterConfig("host", "https://api.host.example:6443", token_env="X", enabled=False),
             ClusterConfig("east", "https://api.east.example:6443", token_env="X", enabled=False),

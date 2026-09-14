@@ -827,11 +827,13 @@ def build_app(
         return wrapper
 
     def require_cluster(cluster_id: str):
-        """The cluster, or a 404 — the SAME 404 for an id that does not exist and for one whose
-        policy is `hidden`, so the response is not an oracle over which clusters this instance
-        watches. Hidden applies whatever the tier: it is a serving rule, not a tier."""
+        """The cluster, or a 404 — the SAME 404 for an id that does not exist, one whose policy is
+        `hidden`, and one that is disabled/retired (removed from config), so the response is not an
+        oracle over which clusters this instance watches. A retired cluster keeps its history but is
+        not served (#96); hidden and disabled apply whatever the tier: they are serving rules."""
         cluster = settings.cluster(cluster_id)
-        if cluster is None or settings.cluster_policy(cluster_id)[0] == VISIBILITY_HIDDEN:
+        if (cluster is None or not cluster.enabled
+                or settings.cluster_policy(cluster_id)[0] == VISIBILITY_HIDDEN):
             raise HTTPException(status_code=404, detail=f"unknown cluster {cluster_id!r}")
         return cluster
 
@@ -898,6 +900,11 @@ def build_app(
         """
         out = []
         for row in store.clusters():
+            # A retired cluster (removed from config, marked enabled=0 at poll start) or one disabled
+            # in config is not served: its history is kept but it leaves the selector, so it never
+            # shows as `ok` with frozen data or stale alerts (#96).
+            if not row["enabled"]:
+                continue
             policy, _ = settings.cluster_policy(row["id"])
             if policy == VISIBILITY_HIDDEN:
                 continue
@@ -1857,6 +1864,10 @@ def build_app(
         scope = TIER_ALL
         for row in store.clusters():
             cluster_id = row["id"]
+            # A retired/disabled cluster's frozen snapshot must not keep producing "overdue" alerts
+            # (#96): it is not served, so it does not contribute to the feed.
+            if not row["enabled"]:
+                continue
             policy, _ = settings.cluster_policy(cluster_id)
             if policy == VISIBILITY_HIDDEN:
                 continue
