@@ -100,7 +100,9 @@ follows a value end to end; give it the venv interpreter path.
 - **A backgrounded `codex exec` must have stdin closed, or it waits forever.** Launched from a
   backgrounded shell without `< /dev/null`, it sits at "Reading additional input from stdin..." at 0 %
   CPU with no session file and an empty answer: when stdin is not a TTY, `codex exec` appends whatever
-  stdin carries to the prompt and waits for EOF, and a backgrounded shell's stdin never closes. That
+  stdin carries to the prompt and waits for EOF (`codex exec --help`, v0.144.1: "If stdin is piped and a
+  prompt is also provided, stdin is appended as a <stdin> block"), and a backgrounded shell's stdin
+  never closes. That
   cost 4 h 16 min on D2's second pass (2026-09-14) before it was caught. Always `< /dev/null`; then read
   the first stderr bytes — the "OpenAI Codex … workdir: … model: …" header means it is working, the
   stdin line alone means it is not — and `ps -o etime,%cpu` on the pid after twenty seconds.
@@ -127,13 +129,21 @@ accepted / accepted on the fact but snippet rejected (say why) / rejected (say w
 ## Step 4 — apply, then build, test, validate
 
 Apply accepted fixes surgically, with the deviation recorded in the spec's notes. Then, in order:
-the affected test file; the full suite (`local-development/.venv/bin/python -m pytest tests -q
---ignore=tests/test_ui.py`, and `tests/test_ui.py` with the exact CI flags when the page changed);
-`helm lint` and `helm template` for every switch state the spec names; the image built locally when
-anything reaches it; `release-crc.sh` and the spec's live checks; the spec's own verification commands
-repeated (a dry run undone, a probe, a count read back from the CI log). "Compiles" or "looks right" is
-not validation. Commit with a message that names the review, push, comment on the PR with the decisions
-and the re-validation, and wait for CI green on that commit.
+the affected test file; the full hermetic suite, from `local-development/` — the directory CI runs it
+in; from the repository root the same words collect nothing (measured 2026-09-14: "no tests
+collected"):
+
+```sh
+cd local-development && .venv/bin/python -m pytest tests -q \
+  --deselect tests/test_ui.py --deselect tests/test_live_smoke.py
+```
+
+and `tests/test_ui.py` with the exact CI flags when the page changed; `helm lint` and
+`helm template` for every switch state the spec names; the image built locally when anything reaches
+it; `local-development/release-crc.sh` and the spec's live checks; the spec's own verification
+commands repeated (a dry run undone, a probe, a count read back from the CI log). "Compiles" or
+"looks right" is not validation. Commit with a message that names the review, push, comment on the PR
+with the decisions and the re-validation, and wait for CI green on that commit.
 
 ## Step 5 — the record and the memory
 
@@ -141,7 +151,7 @@ and the re-validation, and wait for CI green on that commit.
 finding with Finding / Re-check / Decision; a "Not asked" section for what a reviewer volunteered; an
 Outcome paragraph. Add the file to `REVIEW_ARTIFACTS` in `local-development/tests/test_docs_citations.py`
 — the record deliberately quotes wrong anchors and old lines, and that is the point of a record. Add one
-dated data point to the memory `adversarial-review-before-shipping.md`: what each reviewer got right,
+dated data point to the memory note *adversarial-review-before-shipping*: what each reviewer got right,
 what it got wrong, what generalises. `record-template.md` beside this file is the skeleton.
 
 ## Step 6 — the second pass
