@@ -568,6 +568,55 @@ poll does not capture).
 pod, `local-development/gsd/reporting/config.py`) reads `GSD_REPORT_NS_SELECTOR_LABEL` (`""` allowed).
 `runs.py`'s render passes it into `RunContext.namespace_selector_label` so `build` expands on the right key.
 
+### 3.9 Auto-discovery in the report forms (round-2 enhancement)
+
+The operator's later ask: *the reviewer should be auto-discovered, and namespaces auto-discovered too,
+with an option to type; keep the current format but make it strict.* Two form assists, both fed by data
+the catalogue can already reach, both keeping the free-type path and tightening validation. Neither
+changes a report's output or the tier — they change how the form is filled.
+
+**The discovery source, per cluster, in the catalogue.** The catalogue call already opens the snapshot
+(B3) and already returns `viewer` (the ticket identity — the person generating the report). It gains two
+bounded, per-cluster lists a wide-tier reader may already see on the Users and Namespace tabs:
+
+```python
+# reporting/server.py, list_reports — beside the per-cluster namespaceSelectors (B3):
+discovery[row["id"]] = {
+    "namespaces": [r["name"] for r in snap.cluster_namespaces(row["id"])],   # for the <datalist>
+    "users": [u["user_name"] for u in snap.users(row["id"])][:2000],         # reviewer autocomplete, capped
+}
+# … and the payload keeps "viewer": p.name (the reviewer default). Snapshot errors already swallowed.
+```
+
+**Reviewer — auto-discovered, typeable, strict on non-empty (access-certification).** The `reviewer`
+parameter stays `str` and required. The GUI pre-fills it with `cat.viewer` (you, the person generating
+the pack) when the field is empty, and backs the text input with a `<datalist>` of the cluster's known
+users, so a different reviewer autocompletes to a real identity. Free-type is retained (an external
+auditor is a valid reviewer), so "strict" here is: required, non-empty, trimmed; the pack still records
+"printed, not verified" in its provenance. A hard "must be a known user" mode is available behind a
+values flag but is **not** the default, because a reviewer outside the cluster is legitimate — this is
+the one decision flagged for the operator.
+
+**Namespaces — auto-discovered, typeable, strict on format (namespace-access).** The current
+comma-separated **format is retained** (the operator's "retain current format"). The explicit-names field
+is backed by a `<datalist>` of the cluster's known namespace names plus the `(cluster-scoped)` sentinel,
+so the user selects discovered names or types. "Strict" is per-entry **format** validation — each token
+must be a valid DNS-1123 namespace name or the sentinel — which `parse_namespaces` already enforces; the
+datalist steers to real ones. Unknown-but-valid names are still accepted on purpose: the report exists in
+part to attest **absence** ("this namespace does NOT exist on the cluster"), so hard-rejecting an unknown
+name would remove a feature. The strict, discovered-by-label path (the mnemonic multi-select, B3) remains
+the recommended default; the datalist is the assisted form of the advanced names path.
+
+```javascript
+// index.html reportFormCard(): a text input backed by a datalist (discovered names), still comma-format.
+const disc = (cat.discovery && cat.discovery[view.cluster]) || {namespaces: [], users: []};
+// namespaces field (advanced): <input list="ns-list" …>  + <datalist id="ns-list">{names + (cluster-scoped)}</datalist>
+// reviewer field: value defaults to (form.reviewer ?? cat.viewer ?? ""); <input list="user-list" …> + <datalist id="user-list">{users}</datalist>
+```
+
+This is a catalogue-and-GUI change (Issue B4 in §7); it needs the per-cluster catalogue shape B3
+introduces, and the namespace list needs `rbac.namespaces` on (the same dependency as the mnemonic).
+
 ---
 
 ## 4. What stays out of scope (stated so a reviewer holds me to it)
@@ -619,7 +668,7 @@ pod, `local-development/gsd/reporting/config.py`) reads `GSD_REPORT_NS_SELECTOR_
 Ordered by dependency (round 1 reworked the boundaries per N5); Extension A is independent and can land
 first, Extension B is a chain B1 → B2 → B3.
 
-Cut as issues after round 1: **A = #100**, **B1 = #101**, **B2 = #102 (needs #101)**, **B3 = #103 (needs #102)**. Each is its own PR, re-reviewed on real code at implementation.
+Cut as issues after round 1: **A = #100**, **B1 = #101**, **B2 = #102 (needs #101)**, **B3 = #103 (needs #102)**, **B4 = #104 (needs #103)** — the §3.9 auto-discovery form assists. Each is its own PR, re-reviewed on real code at implementation.
 
 1. **Issue A — chart: `rbacAuditors` stanza** (Extension A, no app code). The values stanza, the
    round-1-corrected `templates/rbac-auditors.yaml` (helpers, guards, hashed CRB name, no `users:`), the
@@ -644,9 +693,16 @@ Cut as issues after round 1: **A = #100**, **B1 = #101**, **B2 = #102 (needs #10
    `readParamEl` array serialisation (keeping the advanced explicit-names field and its test id);
    `test_ui.py` for the multi-select posting an array and the per-cluster values. Depends on B2.
 
+5. **Issue B4 — auto-discovery in the report forms** (§3.9). `list_reports` adds per-cluster `discovery`
+   (namespace names + a capped users list) beside `namespaceSelectors`; the GUI pre-fills `reviewer`
+   with the viewer and backs it with a users `<datalist>`, and backs the advanced namespaces field with a
+   names `<datalist>` (comma-format retained, format-strict); `test_ui.py`. Depends on B3 (the per-cluster
+   catalogue shape). The one operator decision: whether reviewer is free-type (default) or must be a
+   known user.
+
 Each issue is scoped to pass CI on its own and leaves no half-wired state on main: B1 captures behind the
-default-off values; B2's report accepts `mnemonics` and validates before any GUI sends it; B3 surfaces it.
-Because the defaults are off, none of the three changes a default install's behaviour.
+default-off values; B2's report accepts `mnemonics` and validates before any GUI sends it; B3 surfaces it;
+B4 assists the form. Because the defaults are off, none of them changes a default install's behaviour.
 
 ---
 
