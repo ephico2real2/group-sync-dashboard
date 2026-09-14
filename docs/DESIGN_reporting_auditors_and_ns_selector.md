@@ -570,10 +570,10 @@ pod, `local-development/gsd/reporting/config.py`) reads `GSD_REPORT_NS_SELECTOR_
 
 ### 3.9 Auto-discovery in the report forms (round-2 enhancement)
 
-The operator's later ask: *the reviewer should be auto-discovered, and namespaces auto-discovered too,
-with an option to type; keep the current format but make it strict.* Two form assists, both fed by data
-the catalogue can already reach, both keeping the free-type path and tightening validation. Neither
-changes a report's output or the tier — they change how the form is filled.
+The operator's later asks, reconciled: *strict applies only to namespace discovery — the reviewer stays
+free-type. Namespaces are a drop-down where you check multiple auto-discovered namespaces, like an
+existing tab; free-form search / type / pattern-match are now the optional secondary paths.* Both assists
+are fed by data the catalogue already reaches, and neither changes a report's output or the tier.
 
 **The discovery source, per cluster, in the catalogue.** The catalogue call already opens the snapshot
 (B3) and already returns `viewer` (the ticket identity — the person generating the report). It gains two
@@ -582,40 +582,51 @@ bounded, per-cluster lists a wide-tier reader may already see on the Users and N
 ```python
 # reporting/server.py, list_reports — beside the per-cluster namespaceSelectors (B3):
 discovery[row["id"]] = {
-    "namespaces": [r["name"] for r in snap.cluster_namespaces(row["id"])],   # for the <datalist>
+    "namespaces": [r["name"] for r in snap.cluster_namespaces(row["id"])],   # the checkable list
     "users": [u["user_name"] for u in snap.users(row["id"])][:2000],         # reviewer autocomplete, capped
 }
 # … and the payload keeps "viewer": p.name (the reviewer default). Snapshot errors already swallowed.
 ```
 
-**Reviewer — auto-discovered, typeable, strict on non-empty (access-certification).** The `reviewer`
-parameter stays `str` and required. The GUI pre-fills it with `cat.viewer` (you, the person generating
-the pack) when the field is empty, and backs the text input with a `<datalist>` of the cluster's known
-users, so a different reviewer autocompletes to a real identity. Free-type is retained (an external
-auditor is a valid reviewer), so "strict" here is: required, non-empty, trimmed; the pack still records
-"printed, not verified" in its provenance. A hard "must be a known user" mode is available behind a
-values flag but is **not** the default, because a reviewer outside the cluster is legitimate — this is
-the one decision flagged for the operator.
+**Reviewer — auto-discovered, NOT strict (access-certification).** Resolved with the operator: strict is
+for namespaces only. The `reviewer` parameter stays `str` and required; the GUI pre-fills it with
+`cat.viewer` (you, the person generating the pack) when empty, and backs the text input with a
+`<datalist>` of known users so a different reviewer autocompletes. **Free-type is the default** — an
+external auditor is a valid reviewer who is not a cluster user — so the only validation is required,
+non-empty, trimmed; the pack still records "printed, not verified". No hard "must be a known user" mode.
 
-**Namespaces — auto-discovered, typeable, strict on format (namespace-access).** The current
-comma-separated **format is retained** (the operator's "retain current format"). The explicit-names field
-is backed by a `<datalist>` of the cluster's known namespace names plus the `(cluster-scoped)` sentinel,
-so the user selects discovered names or types. "Strict" is per-entry **format** validation — each token
-must be a valid DNS-1123 namespace name or the sentinel — which `parse_namespaces` already enforces; the
-datalist steers to real ones. Unknown-but-valid names are still accepted on purpose: the report exists in
-part to attest **absence** ("this namespace does NOT exist on the cluster"), so hard-rejecting an unknown
-name would remove a feature. The strict, discovered-by-label path (the mnemonic multi-select, B3) remains
-the recommended default; the datalist is the assisted form of the advanced names path.
+**Namespaces — a checkable multi-select of auto-discovered namespaces, strict (namespace-access).** The
+primary control becomes a drop-down where the user **checks multiple** discovered namespaces — the same
+shape as the Namespace-audit tab's namespace picker (`gsd/static/index.html`, `#ns-pick`), made `multiple`
+and fed from the catalogue's per-cluster `discovery.namespaces` plus the `(cluster-scoped)` sentinel. This
+is the **strict** path: every selected value is a real, discovered namespace, and the report receives them
+as the existing `namespaces` array — the wire contract (B2) is unchanged, the multi-select is a GUI
+affordance over it. A small **search box filters the list** as the user types (client-side, over the
+discovered names). The mnemonic multi-select (B3) sits above it as a one-click grouping that pre-checks
+the namespaces carrying a label value.
+
+**The free-form paths are now optional.** Typing a name the discovery did not list, or a prefix / glob
+pattern, is a secondary affordance behind an "advanced" toggle, not the default. It keeps the current
+comma-separated **format** and its per-entry format validation (`parse_namespaces`), and — because the
+report exists in part to attest **absence** ("this namespace does NOT exist on the cluster") — an
+unknown-but-valid name is still accepted there rather than rejected. Pattern/glob expansion, if wanted, is
+a later follow-up; the strict default is the checkable discovered list.
 
 ```javascript
-// index.html reportFormCard(): a text input backed by a datalist (discovered names), still comma-format.
+// index.html reportFormCard(), namespace-access: the strict checkable multi-select (modelled on #ns-pick).
 const disc = (cat.discovery && cat.discovery[view.cluster]) || {namespaces: [], users: []};
-// namespaces field (advanced): <input list="ns-list" …>  + <datalist id="ns-list">{names + (cluster-scoped)}</datalist>
-// reviewer field: value defaults to (form.reviewer ?? cat.viewer ?? ""); <input list="user-list" …> + <datalist id="user-list">{users}</datalist>
+const nsOptions = ["(cluster-scoped)", ...disc.namespaces];
+// <input type="search" id="ns-filter" placeholder="filter…">   // optional, client-side narrows the list
+// <select id="report-param-namespace-access-namespaces" data-param="namespaces" multiple size="10">
+//   {nsOptions.filter(byFilter).map(n => `<option value="${esc(n)}">${esc(n)}</option>`)}   // checked = selected
+// wireReports()'s readParamEl returns Array.from(el.selectedOptions).map(o=>o.value) for a multiple select.
+// Advanced (optional) toggle reveals the comma-format text input (the old free-form path) for a name not listed.
+// reviewer field (access-certification): value defaults to (form.reviewer ?? cat.viewer ?? ""); <input list="user-list">.
 ```
 
 This is a catalogue-and-GUI change (Issue B4 in §7); it needs the per-cluster catalogue shape B3
-introduces, and the namespace list needs `rbac.namespaces` on (the same dependency as the mnemonic).
+introduces, and the discovered-namespace list needs `rbac.namespaces` on (the same dependency as the
+mnemonic). When the list is empty (the grant is off), the form falls back to the optional free-form field.
 
 ---
 
@@ -694,11 +705,11 @@ Cut as issues after round 1: **A = #100**, **B1 = #101**, **B2 = #102 (needs #10
    `test_ui.py` for the multi-select posting an array and the per-cluster values. Depends on B2.
 
 5. **Issue B4 — auto-discovery in the report forms** (§3.9). `list_reports` adds per-cluster `discovery`
-   (namespace names + a capped users list) beside `namespaceSelectors`; the GUI pre-fills `reviewer`
-   with the viewer and backs it with a users `<datalist>`, and backs the advanced namespaces field with a
-   names `<datalist>` (comma-format retained, format-strict); `test_ui.py`. Depends on B3 (the per-cluster
-   catalogue shape). The one operator decision: whether reviewer is free-type (default) or must be a
-   known user.
+   (namespace names + a capped users list) beside `namespaceSelectors`; the namespace-access form gets a
+   **checkable multi-select of discovered namespaces** (strict; modelled on `#ns-pick`) with a client-side
+   filter, and the free-form comma-format field moves behind an optional advanced toggle; the
+   access-certification `reviewer` pre-fills with the viewer and gets a known-users `<datalist>`, free-type
+   (not strict). `test_ui.py`. Depends on B3 (the per-cluster catalogue shape).
 
 Each issue is scoped to pass CI on its own and leaves no half-wired state on main: B1 captures behind the
 default-off values; B2's report accepts `mnemonics` and validates before any GUI sends it; B3 surfaces it;
