@@ -1845,6 +1845,25 @@ visibility:
     namespace: ""
 
 # ---------------------------------------------------------------------------
+# Reporting auditors (docs/DESIGN_reporting_auditors_and_ns_selector.md §2)
+# ---------------------------------------------------------------------------
+# Put a chosen group over the report gate without making anyone a cluster admin. Members can review
+# users, groups and bindings in OpenShift directly AND run reports in the dashboard — read-only, no
+# workload access, no Usage tab. OFF by default (opt-in): an install that does not ask for auditors
+# renders no Group, Role or Binding.
+rbacAuditors:
+  enabled: false
+  # The ClusterRole to bind. Default: the chart renders its own least-privilege read-only audit role
+  # (§2.1). Set `existingClusterRole` to bind one you made elsewhere (e.g. via the namespace-config
+  # operator) instead — the chart then renders no Role and only the Binding.
+  createClusterRole: true
+  existingClusterRole: ""          # non-empty => bind this instead of the chart-rendered role
+  # The groups to grant it. Each is bound by NAME, so a synced group and a local group work the same.
+  groups: []
+  # - name: app-ocp-rbac-groupsync-ns-auditor
+  #   createLocal: false           # false: an LDAP sync owns the Group. true: the chart creates a local Group.
+
+# ---------------------------------------------------------------------------
 # Monitoring
 # ---------------------------------------------------------------------------
 # Both default OFF, by operator decision (2026-09-05) under the chart's on-by-default rule: the

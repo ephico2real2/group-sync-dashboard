@@ -135,6 +135,9 @@ REVIEW_ARTIFACTS = (
     # PR #95's record (the change-log folder, the skills and settings into git): quotes the
     # skill's old Step 4 command and the log's old heading verbatim, which is the point.
     "REVIEW_session_tooling.md",
+    # PR #110 rbacAuditors implementation review: quotes the template line numbers and the old
+    # single-verb assertion verbatim.
+    "REVIEW_rbacAuditors_impl.md",
     # PR #111 namespace-metadata capture review: cites the implementation line numbers verbatim.
     "REVIEW_ns_metadata_capture_impl.md",
     "REVIEW_ns_selector_impl.md",
