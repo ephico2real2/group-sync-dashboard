@@ -406,6 +406,11 @@ class DashboardCollector:
             log.exception("metrics: cluster listing failed; exposing build info only")
             rows = []
 
+        # The active set: process-local signal series (poll duration, unmatched audit) are keyed by
+        # cluster and must not outlive a retirement either (#96, review) — a retired id is gone from
+        # every /metrics family, not only the store-backed ones below.
+        enabled_ids = {row["id"] for row in rows if row["enabled"]}
+
         for row in rows:
             # A retired cluster (removed from config, enabled=0) stops emitting: its frozen snapshot
             # must not keep exporting a healthy-looking up=1 or a stale last_poll (#96).
@@ -527,9 +532,9 @@ class DashboardCollector:
             cr_last_sync, cr_state, cr_groups, cr_error, alerts, capture_last_read,
             capture_source, audit_settled,
         )
-        yield from self._event_families()
+        yield from self._event_families(enabled_ids)
 
-    def _event_families(self):
+    def _event_families(self, enabled_ids: set[str]):
         """Families whose source is the process or the filesystem, not the store.
 
         Always DECLARED (HELP/TYPE), even when there is nothing to say: the alert-rule
@@ -618,9 +623,11 @@ class DashboardCollector:
                 retention.add_metric([table], snap["retention"].get(table, 0))
             backup_failures.add_metric([], snap["backup_failures"])
             for (cluster, outcome), count in sorted(snap["audit_unmatched"].items()):
-                audit_unmatched.add_metric([cluster, outcome], count)
+                if cluster in enabled_ids:
+                    audit_unmatched.add_metric([cluster, outcome], count)
             for cluster, seconds in sorted(snap["poll_seconds"].items()):
-                poll_duration.add_metric([cluster], seconds)
+                if cluster in enabled_ids:
+                    poll_duration.add_metric([cluster], seconds)
 
         yield from (checks, decisions, refusals, retention, backup_failures, audit_unmatched, poll_duration)
 

@@ -446,8 +446,9 @@ and never names the value that would change it; `/api/clusters/{id}/groupsyncs`,
 A cluster **removed from `clusters:`** (or one with `enabled: false`) is **retired**, not deleted (#96):
 the poller marks its stored row `enabled = 0` at the start of every cycle — a config change rolls the
 pod, so add/remove takes effect on the next start — and every surfacing path (`/api/clusters`,
-`/api/alerts`, `/metrics`, and a direct `/api/clusters/{id}/…`, which answers the same 404 as an unknown
-id) skips it. Its history and snapshot rows stay in the store, so an already-generated report is still
+`/api/whoami`, `/api/alerts`, `/metrics`, and a direct `/api/clusters/{id}/…`, which answers the same 404
+as an unknown id) skips it. With no served cluster at all, `/api/alerts` fails closed to `scope: self`
+(an empty feed is never the wide `all` view), matching `/api/whoami`. Its history and snapshot rows stay in the store, so an already-generated report is still
 readable, but it no longer appears as `ok` with frozen data or raises stale "overdue" alerts. This
 supersedes the earlier behaviour where a removed cluster resolved to `inherit` and lingered in the list.
 

@@ -1862,6 +1862,7 @@ def build_app(
         # when every served cluster is wide for this reader. A feed that said "all" while one
         # cluster's rows were filtered would be the quiet-drop the response exists to name.
         scope = TIER_ALL
+        served = False
         for row in store.clusters():
             cluster_id = row["id"]
             # A retired/disabled cluster's frozen snapshot must not keep producing "overdue" alerts
@@ -1871,6 +1872,7 @@ def build_app(
             policy, _ = settings.cluster_policy(cluster_id)
             if policy == VISIBILITY_HIDDEN:
                 continue
+            served = True
             _, cscope = viewer_scope(request, cluster_id)
             if cscope != TIER_ALL:
                 scope = TIER_SELF
@@ -1938,6 +1940,11 @@ def build_app(
             # Filtered PER CLUSTER, in the cluster's own tier: a host administrator's feed
             # carries a self-only remote's alerts at the self kinds only.
             alerts.extend(found if cscope == TIER_ALL else _alerts_for_self(found))
+        # Zero served clusters is NOT a wide feed: with everything retired/disabled/hidden the fold
+        # never ran, so `all` here would say "you are wide and the estate is green" while whoami
+        # correctly reads `self` — the exact quiet-drop this feed's scope exists to name (#96, review).
+        if not served:
+            scope = TIER_SELF
         severity_rank = {"critical": 0, "warning": 1}
         alerts.sort(key=lambda a: (severity_rank.get(a["severity"], 9), a["cluster"], a["kind"]))
         return {

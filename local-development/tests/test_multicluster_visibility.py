@@ -282,6 +282,10 @@ class TestInheritIsTheHostsDecidedTier:
             # #96: a disabled cluster is not served, so every-entry-disabled serves NOTHING — the rows
             # are empty rather than a wall of `self` clusters the selector would never offer.
             assert who["clusters"] == {}
+            # And the alert feed must agree: zero served clusters is not a wide `all` view above an
+            # empty list ("you are wide and the estate is green") — it fails closed to self (review).
+            assert c.get("/api/alerts", headers=ROOT).json() == {
+                "scope": "self", "viewer": "root", "count": 0, "alerts": []}
 
     def test_an_inherit_host_still_decides_by_its_resolver(self, client):
         assert client.get("/api/whoami", headers=ROOT).json()["visibility"]["scope"] == "all"

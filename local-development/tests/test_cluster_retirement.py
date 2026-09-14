@@ -96,6 +96,36 @@ class TestRetiredClusterIsNotServed:
         assert 'cluster="gone"' not in text
         assert 'cluster="crc"' in text
 
+    def test_retired_cluster_absent_from_whoami(self, client):
+        who = client.get("/api/whoami", headers=ROOT).json()["visibility"]
+        assert set(who["clusters"]) == {"crc"}
+
+
+class TestRetiredClusterLeavesTheMetricRegistry:
+    """The process-local signal series (poll duration, unmatched audit) are cluster-keyed and, before
+    the #96 review fix, outlived a retirement in the SAME registry — every /metrics family must drop a
+    retired id, not only the store-backed ones."""
+
+    def test_process_signal_series_disappear_when_retired(self, tmp_path):
+        from datetime import timedelta
+
+        from prometheus_client import generate_latest
+
+        from gsd.metrics import RuntimeSignals, build_registry
+
+        signals = RuntimeSignals()
+        signals.note_poll_duration("gone", 1.25)
+        signals.note_audit_unmatched("gone", "failed", 4)
+        store = Store(str(tmp_path / "m.db"))
+        try:
+            store.upsert_cluster("gone", "https://gone:6443", True)
+            reg = build_registry(store, timedelta(seconds=120), signals=signals)
+            assert 'cluster="gone"' in generate_latest(reg).decode()
+            store.retire_absent_clusters([])            # gone -> enabled=0
+            assert 'cluster="gone"' not in generate_latest(reg).decode()
+        finally:
+            store.close()
+
 
 class TestDisabledClusterIsAlsoNotServed:
     @pytest.fixture
@@ -103,9 +133,10 @@ class TestDisabledClusterIsAlsoNotServed:
         # crc enabled, off disabled in config — the poller upserts off as enabled=0.
         db = str(tmp_path / "d.db")
         store = Store(db)
-        for cid, en in (("crc", True), ("off", False)):
-            store.upsert_cluster(cid, f"https://api.{cid}:6443", en)
-            store.record_poll(cid, "ok", None)
+        store.upsert_cluster("crc", "https://api.crc:6443", True)
+        store.record_poll("crc", "ok", None)
+        store.upsert_cluster("off", "https://api.off:6443", False)
+        store.record_poll("off", "unreachable", "the disabled remote timed out")   # would alert if served
         store.close()
         settings = Settings(clusters=[
             ClusterConfig("crc", "https://api.crc:6443", token_env="X"),
@@ -127,3 +158,9 @@ class TestDisabledClusterIsAlsoNotServed:
         # selector and every tab omit.
         who = client.get("/api/whoami", headers=ROOT).json()["visibility"]
         assert set(who["clusters"]) == {"crc"}
+
+    def test_disabled_cluster_raises_no_alert_and_no_metric(self, client):
+        alerts = client.get("/api/alerts", headers=ROOT).json()["alerts"]
+        assert all(a["cluster"] != "off" for a in alerts)     # its stale unreachable is not fed
+        text = client.get("/metrics").text
+        assert 'cluster="off"' not in text
