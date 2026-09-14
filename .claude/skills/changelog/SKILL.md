@@ -15,7 +15,7 @@ claim was measured. The two never merge.
 
 `docs/session-changelogs/YYYY-MM-DD_<slug>.md` — one file per session, named by the date the session
 started and a two- or three-word slug of its subject (`2026-09-11_c3-d2-release.md`). A session that
-spans midnight keeps its start date. The folder's `README.md` lists the convention; do not edit it per
+spans midnight keeps its start date. `docs/session-changelogs/README.md` lists the convention; do not edit it per
 session.
 
 ## When — three moments, never before validation
@@ -91,8 +91,8 @@ Outcome in one line: **…**
 - **Bold the decision words**, never whole sentences: **Found by CI**, **Accepted**, **Rejected**.
 - **Commit SHAs in backticks, PRs and issues as `#n`**, times as the git author time in the
   operator's zone (America/Chicago on this machine).
-- **Citation-safe.** The folder is scanned by `local-development/tests/test_docs_citations.py`: a
-  backticked `path.md` or `path.py#anchor` must resolve in the repository. Name memory notes and
+- **Citation-safe.** The folder is scanned by `local-development/tests/test_docs_citations.py`: every
+  backticked repository path, with or without a `#anchor`, must resolve in the repository. Name memory notes and
   the untracked skills (frontend-design, the vendored design set) in plain words (the memory note
   *c3-resume-point*), never as backticked paths — they are not in the repository and the test
   fails on them. The tracked skills are cited by their full path from the repository root

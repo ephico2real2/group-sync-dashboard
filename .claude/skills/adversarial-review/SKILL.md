@@ -48,6 +48,21 @@ Without the flags the plugin leaves model and effort UNSET and Cursor runs on `a
 first passes on #69–#71 ran on, and the operator noticed. Probe both with a one-line prompt before a
 review if anything about the environment changed (login, plugin update, model list).
 
+## Prerequisites — a clone does not provide them
+
+The invocations above need tools the tree does not ship, and the first sentence that fails a reader on a
+fresh clone is Step 2's `codex exec` (no login), then Step 4's `.venv/bin/python` (no environment):
+
+- The Cursor CLI, logged in (`cursor agent login` once; `cursor agent models` must list
+  `cursor-grok-4.6-high-fast`), and the Codex CLI, logged in (`codex login status` must say logged in)
+  or the `codex:codex-rescue` plugin agent. `~/.codex/sessions` is where the probe's effort is verified;
+  `git clone` does not create it.
+- The virtualenv under `local-development/`, created once from that directory with the recipe in
+  `local-development/README.md`: `python3 -m venv .venv && ./.venv/bin/pip install -e ".[dev]"`, plus
+  `./.venv/bin/python -m playwright install chromium` for the browser tests. Step 4 uses that interpreter.
+- Nothing under `.agents/` — that tree is third-party skill installs and is ignored; this pass does not
+  read it.
+
 ## Step 1 — the brief (never "review this")
 
 One numbered claim per thing you want confirmed or refuted, each naming the exact file, symbol and
@@ -101,7 +116,7 @@ follows a value end to end; give it the venv interpreter path.
   backgrounded shell without `< /dev/null`, it sits at "Reading additional input from stdin..." at 0 %
   CPU with no session file and an empty answer: when stdin is not a TTY, `codex exec` appends whatever
   stdin carries to the prompt and waits for EOF (`codex exec --help`, v0.144.1: "If stdin is piped and a
-  prompt is also provided, stdin is appended as a <stdin> block"), and a backgrounded shell's stdin
+  prompt is also provided, stdin is appended as a `<stdin>` block"), and a backgrounded shell's stdin
   never closes. That
   cost 4 h 16 min on D2's second pass (2026-09-14) before it was caught. Always `< /dev/null`; then read
   the first stderr bytes — the "OpenAI Codex … workdir: … model: …" header means it is working, the
@@ -130,8 +145,8 @@ accepted / accepted on the fact but snippet rejected (say why) / rejected (say w
 
 Apply accepted fixes surgically, with the deviation recorded in the spec's notes. Then, in order:
 the affected test file; the full hermetic suite, from `local-development/` — the directory CI runs it
-in; from the repository root the same words collect nothing (measured 2026-09-14: "no tests
-collected"):
+in. The pytest invocation without the `cd`, run from the repository root, collects nothing (measured
+2026-09-14: "no tests collected"):
 
 ```sh
 cd local-development && .venv/bin/python -m pytest tests -q \

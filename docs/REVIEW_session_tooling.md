@@ -93,3 +93,48 @@ Step 5 memory wording, the help-text quote in the gotcha. Re-validated after the
 check (ok), the docs tests on the tree (`test_docs_citations.py`, `test_docs_diagrams.py`,
 `test_prepare_release.py`), and CI on the pushed head. A second pass on the fixed head follows in the
 same PR.
+
+## Second pass — head `b5efde0`, same models
+
+| Claim | Codex | Cursor | Decision |
+|---|---|---|---|
+| C1 Step 4's command runs | CONFIRMED (2853 collected; CI's deselects; `-x`) | PLAUSIBLE | — |
+| C2 the Part 3 heading closes at its last phase | REFUTED — Part 2 has the same defect | CONFIRMED for Part 3; Part 2 flagged under "not asked" | **Accepted** (Part 2 → 03:15) |
+| C3 Step 5 in plain words; skill `.md` citations resolve | REFUTED — `path.md` in the citation rule's example | CONFIRMED; `path.md` and the ambiguous `README.md` listed, not elevated | **Accepted** both |
+| C4 the help quote is verbatim | REFUTED — the CLI's sentence has backticks around `<stdin>` | PLAUSIBLE | **Accepted** |
+| C5 the record is exempt; docs clean | CONFIRMED (893 passed) | PLAUSIBLE | — |
+| C6 the fixes stayed in purpose | CONFIRMED | REFUTED — Step 4's lead-in contradicted its own fence | **Accepted** |
+| Not asked: a fresh clone's first failure | prerequisites section | prerequisites section | **Accepted; wording mine** |
+
+**Part 2's heading (both).** "2026-09-13 evening → 2026-09-14 02:48" while the Release phase ends 03:15.
+Re-check: Codex's date-aware check (heading end vs the max of `MM-DD HH:MM` subsection ends) — before
+02:48 ≠ 03:15, after 03:15 = 03:15. Cursor's check was rejected as a check: it compares `HH:MM` strings
+without dates, so for a part that crosses midnight it reports the 20:48 phase as the maximum and fails
+on the corrected heading too. The fix is the same one-line heading from both; applied.
+
+**`path.md` and the folder's `README.md` in the changelog skill (Codex; Cursor listed both).** The
+citation rule's own example named a metasyntactic file, and "the folder's `README.md`" is an ambiguous
+basename to the resolver (five README files). Skill files are outside the test's scan, so neither fails
+CI; both fail the rule the skill states. Accepted: the rule now says "every backticked repository path,
+with or without a `#anchor`"; the README is cited by its exact path.
+
+**The help quote (Codex).** `codex exec --help` prints "… appended as a `<stdin>` block" with backticks;
+the skill had dropped them, and a bare `<stdin>` is an HTML tag to a Markdown renderer. Accepted, quoted
+verbatim; Codex's check (the sentence found in both the help output and the skill) passes after.
+
+**Step 4's lead-in (Cursor).** The fix had put `cd local-development &&` into the fence and left the
+sentence "from the repository root the same words collect nothing" — now false of the fenced words.
+Accepted with Cursor's sentence: the invocation *without the `cd`* is what collects nothing; Cursor's
+check (the sentence and a fence starting with `cd` must not both be present) passes after.
+
+**Prerequisites (both, "not asked").** A fresh clone has no `.venv`, no Cursor or Codex login; the first
+sentence that fails a reader is Step 2's `codex exec`, then Step 4's interpreter. Neither skill nor the
+root README said so. Accepted on the fact; the section is written here with the recipe from
+`local-development/README.md` (venv, `pip install -e ".[dev]"`, `playwright install chromium`) and the
+two logins; Codex's snippet (`.venv/bin/python -m pip install -e`) and Cursor's were both rejected as
+text because neither cited the Playwright install the browser tests need.
+
+**Outcome of the second pass.** Five accepted fixes, all documentation; one reviewer check rejected
+(Cursor's string comparison across midnight). Re-validated: Codex's date-aware heading check, Codex's
+citation-resolve check on both skills (no unresolved path), Cursor's Step 4 check, the help-quote check,
+`test_docs_citations.py` 893 passed, 10 skipped; CI on the pushed head.
