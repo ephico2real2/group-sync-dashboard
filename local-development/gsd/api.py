@@ -827,11 +827,13 @@ def build_app(
         return wrapper
 
     def require_cluster(cluster_id: str):
-        """The cluster, or a 404 — the SAME 404 for an id that does not exist and for one whose
-        policy is `hidden`, so the response is not an oracle over which clusters this instance
-        watches. Hidden applies whatever the tier: it is a serving rule, not a tier."""
+        """The cluster, or a 404 — the SAME 404 for an id that does not exist, one whose policy is
+        `hidden`, and one that is disabled/retired (removed from config), so the response is not an
+        oracle over which clusters this instance watches. A retired cluster keeps its history but is
+        not served (#96); hidden and disabled apply whatever the tier: they are serving rules."""
         cluster = settings.cluster(cluster_id)
-        if cluster is None or settings.cluster_policy(cluster_id)[0] == VISIBILITY_HIDDEN:
+        if (cluster is None or not cluster.enabled
+                or settings.cluster_policy(cluster_id)[0] == VISIBILITY_HIDDEN):
             raise HTTPException(status_code=404, detail=f"unknown cluster {cluster_id!r}")
         return cluster
 
@@ -898,6 +900,11 @@ def build_app(
         """
         out = []
         for row in store.clusters():
+            # A retired cluster (removed from config, marked enabled=0 at poll start) or one disabled
+            # in config is not served: its history is kept but it leaves the selector, so it never
+            # shows as `ok` with frozen data or stale alerts (#96).
+            if not row["enabled"]:
+                continue
             policy, _ = settings.cluster_policy(row["id"])
             if policy == VISIBILITY_HIDDEN:
                 continue
@@ -1855,11 +1862,17 @@ def build_app(
         # when every served cluster is wide for this reader. A feed that said "all" while one
         # cluster's rows were filtered would be the quiet-drop the response exists to name.
         scope = TIER_ALL
+        served = False
         for row in store.clusters():
             cluster_id = row["id"]
+            # A retired/disabled cluster's frozen snapshot must not keep producing "overdue" alerts
+            # (#96): it is not served, so it does not contribute to the feed.
+            if not row["enabled"]:
+                continue
             policy, _ = settings.cluster_policy(cluster_id)
             if policy == VISIBILITY_HIDDEN:
                 continue
+            served = True
             _, cscope = viewer_scope(request, cluster_id)
             if cscope != TIER_ALL:
                 scope = TIER_SELF
@@ -1927,6 +1940,11 @@ def build_app(
             # Filtered PER CLUSTER, in the cluster's own tier: a host administrator's feed
             # carries a self-only remote's alerts at the self kinds only.
             alerts.extend(found if cscope == TIER_ALL else _alerts_for_self(found))
+        # Zero served clusters is NOT a wide feed: with everything retired/disabled/hidden the fold
+        # never ran, so `all` here would say "you are wide and the estate is green" while whoami
+        # correctly reads `self` — the exact quiet-drop this feed's scope exists to name (#96, review).
+        if not served:
+            scope = TIER_SELF
         severity_rank = {"critical": 0, "warning": 1}
         alerts.sort(key=lambda a: (severity_rank.get(a["severity"], 9), a["cluster"], a["kind"]))
         return {
@@ -2042,6 +2060,10 @@ def build_app(
             host = settings.host_cluster()
             scope = None
             for c in settings.clusters:
+                # A disabled cluster is not served (#96): it must not appear in visibility.clusters
+                # either, or whoami would name a cluster the selector and every tab omit.
+                if not c.enabled:
+                    continue
                 policy, identity = settings.cluster_policy(c.name)
                 if policy == VISIBILITY_HIDDEN:
                     continue

@@ -516,9 +516,11 @@ class Settings:
     def cluster_policy(self, name: str) -> tuple[str, str]:
         """(visibility, identity) for one cluster id, defaults resolved.
 
-        A cluster the store still holds but the config no longer names — removed from values
-        after it was polled — resolves to inherit/same-as-host: today's behaviour for its
-        stale rows, and not wider than it. Deleting the rows is a data decision, not a tier one.
+        A cluster the config no longer names is RETIRED (enabled=0 at poll start, #96) and the
+        surfacing endpoints skip it before consulting this — so the inherit/same-as-host resolved
+        for an unconfigured id here is a defensive default, not the served behaviour it once was
+        (a retired cluster no longer appears at all). Retiring keeps the history; not a tier
+        decision.
         """
         host = self.host_cluster()
         cluster = self.cluster(name)

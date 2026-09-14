@@ -8,6 +8,17 @@ lives next to the code and in the design and review records linked here. Changes
 last release sit under `## Unreleased` until the release that carries them replaces that heading —
 which `local-development/prepare-release.py` does when the release is cut.
 
+## Unreleased
+
+- **Retire clusters removed from the configuration (#96).** A cluster dropped from `clusters:` (or one
+  with `enabled: false`) no longer lingers in the UI as `ok` with frozen data and stale "overdue" alerts.
+  The poller marks its stored row `enabled = 0` at the start of every cycle (a config change rolls the
+  pod, so add/remove takes effect on the next start), and `/api/clusters`, `/api/whoami`, `/api/alerts`,
+  `/metrics` and a direct `/api/clusters/{id}/…` (which 404s like an unknown id) all skip it (with no
+  served cluster at all, `/api/alerts` fails closed to `scope: self` like `/api/whoami`). Its history and snapshot rows
+  stay, so an already-generated report still reads them (docs/ACCESS_CONTROL.md §11). Supersedes the D2
+  behaviour where a removed cluster resolved to `inherit` and stayed in the list.
+
 ## Application 0.19.0 — chart 0.25.0 — 2026-09-14
 
 - **Reporting auditors: default the auditor group and guard the `createLocal` collision.** `values.yaml`
