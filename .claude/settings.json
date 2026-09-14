@@ -1,0 +1,37 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(oc get *)",
+      "Bash(oc logs *)",
+      "Bash(oc describe *)",
+      "Bash(oc explain *)",
+      "Bash(oc whoami *)",
+      "Bash(oc auth can-i *)",
+      "Bash(oc rollout status *)",
+      "Bash(helm template *)",
+      "Bash(helm lint *)",
+      "Bash(helm list *)",
+      "Bash(helm get *)",
+      "Bash(helm history *)",
+      "Bash(helm search *)",
+      "Bash(podman images *)",
+      "Bash(podman inspect *)",
+      "Bash(trivy image *)",
+      "Bash(crc status *)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r \".tool_input.command // \\\"\\\"\" | grep -qE \"git( -c [^ ]+)* commit\" && printf \"%s\" \"{\\\"hookSpecificOutput\\\":{\\\"hookEventName\\\":\\\"PostToolUse\\\",\\\"additionalContext\\\":\\\"A commit just landed. Per the /changelog skill: once this commit has passed its tests and review, append it to the current session changelog under docs/session-changelogs/ with the measurement behind each line; do not log it before it is validated.\\\"}}\" || true",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
