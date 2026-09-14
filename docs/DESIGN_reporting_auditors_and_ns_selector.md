@@ -619,6 +619,8 @@ pod, `local-development/gsd/reporting/config.py`) reads `GSD_REPORT_NS_SELECTOR_
 Ordered by dependency (round 1 reworked the boundaries per N5); Extension A is independent and can land
 first, Extension B is a chain B1 → B2 → B3.
 
+Cut as issues after round 1: **A = #100**, **B1 = #101**, **B2 = #102 (needs #101)**, **B3 = #103 (needs #102)**. Each is its own PR, re-reviewed on real code at implementation.
+
 1. **Issue A — chart: `rbacAuditors` stanza** (Extension A, no app code). The values stanza, the
    round-1-corrected `templates/rbac-auditors.yaml` (helpers, guards, hashed CRB name, no `users:`), the
    `rbacAuditors.enabled` entry in `KEPT_OFF`, the chart README rows, a `test_chart_strategy.py` class
