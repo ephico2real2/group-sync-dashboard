@@ -689,7 +689,8 @@ args depend on them), so both objects refuse together. Emits nothing.
 {{- if and (gt (len $nsLabels) 0) (not .Values.rbac.namespaces) -}}
 {{- fail "reporting.namespaceMetadata.labels is set but rbac.namespaces is false: the poll never lists Namespace objects, so the mnemonic selector would always be empty. Set rbac.namespaces=true (the extra RBAC is the 0.14.0 exception the namespace report already needs) or clear the labels list." -}}
 {{- end -}}
-{{- $nsSel := trim (toString ((.Values.reporting | default dict).namespaceSelector | default dict).label | default "") -}}
+{{- $nsSelector := (.Values.reporting | default dict).namespaceSelector | default dict -}}
+{{- $nsSel := trim (toString ($nsSelector.label | default "")) -}}
 {{- if and (ne $nsSel "") (not (has $nsSel $nsLabels)) -}}
 {{- fail (printf "reporting.namespaceSelector.label %q is not in reporting.namespaceMetadata.labels %v. The poll would never capture it, so the selector would always be empty." $nsSel $nsLabels) -}}
 {{- end -}}

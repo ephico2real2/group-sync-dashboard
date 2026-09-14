@@ -140,6 +140,7 @@ REVIEW_ARTIFACTS = (
     "REVIEW_rbacAuditors_impl.md",
     # PR #111 namespace-metadata capture review: cites the implementation line numbers verbatim.
     "REVIEW_ns_metadata_capture_impl.md",
+    "REVIEW_ns_selector_impl.md",
     # The reporting-extension design round 1: its findings quote the design's old snippets
     # (ReportError, NS_CAP, the wrong-pod env) verbatim, which is the point of a review record.
     "REVIEW_reporting_ext_design.md",

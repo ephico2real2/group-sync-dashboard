@@ -8,6 +8,14 @@ lives next to the code and in the design and review records linked here. Changes
 last release sit under `## Unreleased` until the release that carries them replaces that heading —
 which `local-development/prepare-release.py` does when the release is cut.
 
+## Application 0.19.0 — chart 0.24.0 — 2026-09-14
+
+- **Reporting: select a report's namespaces by the estate's grouping label.** The namespace-access
+  report gains a `mnemonics` parameter that expands the configured `reporting.namespaceSelector.label`
+  values (captured in 0.22.0) to their namespaces; the explicit-names path stays as the advanced
+  fallback, and choosing both is refused. The report pod reads the selector key from
+  `GSD_REPORT_NS_SELECTOR_LABEL`. No default-install change (docs/DESIGN_reporting_auditors_and_ns_selector.md §3).
+
 ## Application 0.19.0 — chart 0.23.0 — 2026-09-14
 
 - **Reporting: opt-in auditor groups (chart).** A new `rbacAuditors` stanza binds a chosen group

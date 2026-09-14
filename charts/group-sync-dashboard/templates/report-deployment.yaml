@@ -91,6 +91,10 @@ spec:
               value: {{ .Values.rbac.namespaces | quote }}
             - name: GSD_REPORT_BINDING_INTERVAL_SECONDS
               value: {{ .Values.config.bindingIntervalSeconds | quote }}
+            # The captured Namespace-metadata key the namespace-access report selects on (B2). The
+            # report pod reads this; the dashboard poller captures under reporting.namespaceMetadata.labels.
+            - name: GSD_REPORT_NS_SELECTOR_LABEL
+              value: {{ (((.Values.reporting | default dict).namespaceSelector) | default dict).label | default "" | quote }}
             {{- with .Values.timezone }}
             - name: TZ
               value: {{ . | quote }}
