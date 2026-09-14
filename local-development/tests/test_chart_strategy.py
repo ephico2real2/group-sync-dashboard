@@ -1665,3 +1665,92 @@ class TestPerClusterVisibility:
         done = subprocess.run(args, capture_output=True, text=True)
         assert done.returncode == 0, done.stdout + done.stderr
         assert "east: visibility hidden" in done.stdout and "host: visibility inherit (host)" in done.stdout
+
+
+
+
+def _auditor_docs(**values):
+    """Render ONLY templates/rbac-auditors.yaml and parse its YAML documents, so an assertion reads
+    a document's `kind`/`apiVersion`/`rules`/`subjects` rather than string-matching (a `kind: Group`
+    also appears as the Binding's SUBJECT, a `kind: ClusterRole` as its roleRef). `--show-only`
+    errors when the file renders nothing (auditors off), so the off case uses render() instead.
+    Returns (ok, docs, out)."""
+    args = ["helm", "template", "t", str(CHART), "--set", "ingress.host=t.example.com",
+            "--show-only", "templates/rbac-auditors.yaml"]
+    for key, value in values.items():
+        args += ["--set", f"{key}={value}"]
+    done = subprocess.run(args, capture_output=True, text=True)
+    out = done.stdout + done.stderr
+    docs = [d for d in yaml.safe_load_all(done.stdout) if d] if done.returncode == 0 else []
+    return done.returncode == 0, docs, out
+
+
+class TestReportingAuditors:
+    """rbacAuditors (docs/DESIGN_reporting_auditors_and_ns_selector.md #2): an opt-in read-only
+    auditor ClusterRole and a name-based ClusterRoleBinding per group, with render guards. Each
+    render state is asserted so a future edit that breaks one is caught."""
+
+    def test_off_by_default_renders_no_auditor_objects(self):
+        ok, out = render()                                   # full chart: the auditor file is empty when off
+        assert ok, out[-800:]
+        assert "report-auditor" not in out and "-ra-" not in out, out[-800:]
+
+    def test_synced_group_renders_role_and_binding_no_group(self):
+        ok, docs, out = _auditor_docs(**{"rbacAuditors.enabled": "true",
+                                         "rbacAuditors.groups[0].name": "app-ocp-rbac-groupsync-ns-auditor",
+                                         "rbacAuditors.groups[0].createLocal": "false"})
+        assert ok, out[-800:]
+        assert sorted(d["kind"] for d in docs) == ["ClusterRole", "ClusterRoleBinding"], docs
+        assert not any(d["kind"] == "Group" for d in docs), "a synced group must not be created locally"
+
+    def test_local_group_renders_role_binding_and_group(self):
+        ok, docs, out = _auditor_docs(**{"rbacAuditors.enabled": "true",
+                                         "rbacAuditors.groups[0].name": "local-auditors",
+                                         "rbacAuditors.groups[0].createLocal": "true"})
+        assert ok, out[-800:]
+        assert sorted(d["kind"] for d in docs) == ["ClusterRole", "ClusterRoleBinding", "Group"], docs
+        group = next(d for d in docs if d["kind"] == "Group")
+        assert group["apiVersion"] == "user.openshift.io/v1"
+        assert "users" not in group, "a Helm-managed Group must not template users (upgrade wipes them)"
+
+    def test_existing_role_renders_binding_only(self):
+        ok, docs, out = _auditor_docs(**{"rbacAuditors.enabled": "true",
+                                         "rbacAuditors.createClusterRole": "false",
+                                         "rbacAuditors.existingClusterRole": "platform-reader",
+                                         "rbacAuditors.groups[0].name": "auditors"})
+        assert ok, out[-800:]
+        assert [d["kind"] for d in docs] == ["ClusterRoleBinding"], "existingClusterRole must render no chart Role"
+        assert docs[0]["roleRef"]["name"] == "platform-reader"
+
+    def test_read_only_role_has_no_write_verb(self):
+        ok, docs, out = _auditor_docs(**{"rbacAuditors.enabled": "true", "rbacAuditors.groups[0].name": "auditors"})
+        assert ok, out[-800:]
+        role = next(d for d in docs if d["kind"] == "ClusterRole")
+        verbs = {v for rule in role["rules"] for v in rule["verbs"]}
+        assert verbs == {"get", "list"}, f"the read-only audit role must grant only get/list, not {verbs}"
+
+    def test_ldap_dn_group_name_is_hashed_into_the_binding_name(self):
+        ok, docs, out = _auditor_docs(**{"rbacAuditors.enabled": "true",
+                                         "rbacAuditors.groups[0].name": r"cn=Auditors\,ou=Groups"})
+        assert ok, out[-800:]
+        binding = next(d for d in docs if d["kind"] == "ClusterRoleBinding")
+        assert "-ra-" in binding["metadata"]["name"]                     # a DNS-1123 hashed name
+        assert binding["subjects"][0]["name"] == "cn=Auditors,ou=Groups"  # the real name only in subjects[]
+
+    def test_retuned_adminsar_outside_the_audit_set_fails_the_render(self):
+        ok, out = render(**{"rbacAuditors.enabled": "true", "rbacAuditors.groups[0].name": "auditors",
+                            "visibility.adminSar.resource": "pods"})
+        assert not ok
+        assert "not covered by the read-only audit role" in out, out[-800:]
+
+    def test_write_verb_adminsar_fails_the_render(self):
+        ok, out = render(**{"rbacAuditors.enabled": "true", "rbacAuditors.groups[0].name": "auditors",
+                            "visibility.adminSar.verb": "update"})
+        assert not ok
+        assert "non-read verb the read-only audit role will never grant" in out, out[-800:]
+
+    def test_create_role_false_without_existing_fails(self):
+        ok, out = render(**{"rbacAuditors.enabled": "true", "rbacAuditors.createClusterRole": "false",
+                            "rbacAuditors.groups[0].name": "auditors"})
+        assert not ok
+        assert "requires rbacAuditors.existingClusterRole" in out, out[-800:]
