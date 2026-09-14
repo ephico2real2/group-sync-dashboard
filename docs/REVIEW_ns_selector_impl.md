@@ -105,3 +105,23 @@ unconfigured deployment fails with the right message. Two new tests cover the 60
 present, no Truncation note, `truncated` False, 50 sections) and the not-configured guard. F2 is the
 review's headline result — a helm-only bug that the shell-less reviewer traced past. A second pass on
 the fixed head follows, per the skill's confirmation step.
+
+## Second pass (fixed head 3851996)
+
+Same two models on the head with the three fixes applied, verifying each fix closed its hole and opened
+no other, and attacking what the first pass did not (the both-caps-together case, the next real use, two
+runs in a row, boundary values). Both reviewers: **no new code finding.**
+
+| Claim | Codex | Cursor |
+|---|---|---|
+| SC1 selector cap records only in Coverage; `truncated` is a pure ROW_LIMIT signal; the two are independent | CONFIRMED (ran it — `REAL_SC1A`: 60→50, Coverage/no Truncation, `truncated` False; `REAL_SC1B`: a 5001-binding namespace among the first 50 → BOTH Coverage and Truncation) | CONFIRMED (source; independence table) |
+| SC2 render nil-safe across every `namespaceSelector` state; behaviour unchanged when set | CONFIRMED (full helm matrix: default/`=null`/`.label=null` → `""`; undeclared label still exit 1; declared → value; whitespace `"  "` renders literally then `.strip()`s to `""` in app config) | PLAUSIBLE (no shell) |
+| SC3 the not-configured guard fires only on the mnemonic path | CONFIRMED (`REAL_SC3_EXPLICIT` succeeds; `REAL_SC3_MNEMONIC` names the config problem) | CONFIRMED |
+| SC4 no shared mutable state across two runs; JSON `params` carries `namespaces=None` not `[]` | PLAUSIBLE (the sandbox denied every temp dir, so the full-suite-twice run could not start; `REAL_SC4` state-isolation passed: params + RunContext unchanged, `namespaces: None`) | PLAUSIBLE |
+| SC5 boundary values (50/51 mnemonics; 50/51 expanded; comma/unicode; the `(cluster-scoped)` sentinel) | CONFIRMED (none mis-caps, double-counts or crashes; comma/unicode label values are invalid in real Kubernetes so only arise in corrupt data, and the sentinel can't come from an RFC-1123 Namespace name — both handled safely) | CONFIRMED |
+
+**Outcome.** The fixes hold. Codex executed the independence case (`REAL_SC1B`) that Cursor could only
+reason about, confirming a report that both selector-caps and row-truncates carries both notes and
+neither suppresses the other — so the untested combination Cursor flagged as "a gap, not a hole" is now
+demonstrated safe by a real run (no dedicated regression added: the two flags are provably independent
+in source, and a 5001-row fixture is disproportionate — review-fixes-stay-simple). CI green on 3851996.
