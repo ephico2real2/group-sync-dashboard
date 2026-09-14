@@ -90,6 +90,40 @@ defect, written into the skill — and was relaunched with stdin closed).
 | C10 helm.yaml and the release | PLAUSIBLE — the recovery after a lost race is a re-run of the chart workflow | PLAUSIBLE — the same; the workflows are independent, `validate` orders nothing | recorded |
 | C11 the next real use | PLAUSIBLE — adding an entry with `--set` must pass every entry | CONFIRMED — the seven renders and four refusals as intended; the full suite 2819 + 1 (the export lacked `.git`, a sandbox artefact); no hand-fix beyond the upgrade note | **Accepted** (Cursor's clause in the upgrade note) |
 
+## Live run on the fixed head, 2026-09-14
+
+Head 3629c8c (both passes applied), built by both wrappers and deployed by `release-crc.sh`
+(`running : 3629c8ca27 — verified in-pod`), then the two-cluster check again with `prod-east` at the
+defaults, hidden, refused at render, and the release put back:
+
+| Measured | Value |
+|---|---|
+| startup | `prod-east: per-cluster visibility policy self-only, identity none` — once |
+| `/api/whoami`, kubeadmin | `scope: all`; `clusters: {crc-local: {inherit, same-as-host, all}, prod-east: {self-only, none, self}}` — the headline is the host row's decision, decided once |
+| `/api/clusters` rows | `crc-local {inherit, all}`, `prod-east {self-only, self}` — prod-east now polled `ok` |
+| person-scoped views on prod-east | `groups` → 403 with the §11 sentence; `bindings/findings` → 403; `groupsyncs` → 200; the host's `groups` → 200 |
+| `/api/alerts` | `scope: self`; administrator-tier kinds from `crc-local` only |
+| prod-east `hidden` | the same `unknown cluster` sentence as an unknown id; absent from the three lists; 37 series on `/metrics` |
+| `remote-sar` without `same-as-host` | refused at render |
+| the release put back | one cluster, `scope: all`, both pods Running with 0 restarts — the `auth-loglevel` hook completed inside its deadline this time (the first run's timeout was the node's capacity, not a code path) |
+
+## Outcome
+
+Two passes, twenty-three claims. First pass: Cursor refuted three, Codex six (two of them rejected on
+consequence); Cursor's most important finding — `inherit` was the host's resolver, not its decided
+tier — was real and the spec's own block had it. Second pass on the fixed head: Cursor found that my
+pass-1 fix had refused a self reader on an inherit remote under a self-only host (the case my own test
+did not cover), and that whoami and alerts decided the host twice; Codex found that a quoted
+`enabled: "false"` made a disabled entry the host in the guard, NOTES and the app alike, and that the
+Reports tab lagged a cycle behind a mid-session promotion. Ten snippets rejected with reasons
+(byte-identical 404s, DNS-1123 on ServiceAccount names, a chart-workflow wait loop, a test rendering
+`git archive main`, a nine-site `=== "self"` refactor, a policy badge on the Overview card, and the
+prose-keyword tests). Two operator-facing defects the reviewers did not find came from the tooling:
+CI's chart job runs without the application (a test split across two modules) and the two-cluster live
+check itself (Helm's padded-null list entry). Re-validated on 3629c8c: the full hermetic suite 2839
+passed / 14 skipped, the browser subset 42 passed, helm lint and actionlint clean, both images built
+locally with their proofs, deployed to the reference cluster and the live checks above.
+
 **Not asked, Codex.** `refresh()` chose its report requests on the PREVIOUS cycle's host tier, so a
 reader promoted mid-session saw "Loading…" on the Reports tab for a whole cycle (measured: zero
 report calls on the promoting refresh) and a demoted one kept the catalogue. **Accepted** — the same
