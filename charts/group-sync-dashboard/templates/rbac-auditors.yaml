@@ -62,6 +62,19 @@ rules:
 {{-   $_ := set $seen $g.name true }}
 {{-   if and (hasKey $g "createLocal") (not (kindIs "bool" $g.createLocal)) }}{{ fail (printf "rbacAuditors.groups[%s].createLocal must be true or false" $g.name) }}{{ end }}
 {{-   if $g.createLocal }}
+{{-     $existingGroup := lookup "user.openshift.io/v1" "Group" "" $g.name }}
+{{-     if $existingGroup }}
+{{-       $annotations := $existingGroup.metadata.annotations | default dict }}
+{{-       $labels := $existingGroup.metadata.labels | default dict }}
+{{-       $ownerName := index $annotations "meta.helm.sh/release-name" | default "" }}
+{{-       $ownerNamespace := index $annotations "meta.helm.sh/release-namespace" | default "" }}
+{{-       $managedBy := index $labels "app.kubernetes.io/managed-by" | default "" }}
+{{-       $ownedByThisRelease := and (eq $ownerName $.Release.Name) (eq $ownerNamespace $.Release.Namespace) (eq $managedBy "Helm") }}
+{{-       if not $ownedByThisRelease }}
+{{-         $ldapHost := index $labels "openshift.io/ldap.host" | default "" }}
+{{-         fail (printf "rbacAuditors: Group %q already exists on the cluster%s and is not owned by this Helm release. Creating a local Group here would collide with it (and, for an LDAP-synced group, break the whole sync). Set rbacAuditors.groups[] createLocal=false for %q so the chart binds the existing group by name instead of re-creating it. See docs/TROUBLESHOOTING_auditor_groups.md." $g.name (ternary (printf " (LDAP-synced from %s)" $ldapHost) "" (ne $ldapHost "")) $g.name) }}
+{{-       end }}
+{{-     end }}
 ---
 apiVersion: user.openshift.io/v1
 kind: Group

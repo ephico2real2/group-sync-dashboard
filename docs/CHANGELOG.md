@@ -8,6 +8,16 @@ lives next to the code and in the design and review records linked here. Changes
 last release sit under `## Unreleased` until the release that carries them replaces that heading —
 which `local-development/prepare-release.py` does when the release is cut.
 
+## Application 0.19.0 — chart 0.25.0 — 2026-09-14
+
+- **Reporting auditors: default the auditor group and guard the `createLocal` collision.** `values.yaml`
+  now ships `rbacAuditors.groups` defaulting to `app-ocp-rbac-groupsync-ns-auditor` with
+  `createLocal: false` (opt-in via `rbacAuditors.enabled`, still off). A render-time guard refuses
+  `createLocal: true` for a group name that already exists under another owner (e.g. an LDAP sync),
+  failing the install with the one-line remedy instead of Helm's ownership error and preventing the
+  group-family sync from wedging (docs/TROUBLESHOOTING_auditor_groups.md,
+  docs/FINDINGS_auditor_group_ldap_sync_interaction.md).
+
 ## Application 0.19.0 — chart 0.24.0 — 2026-09-14
 
 - **Reporting: select a report's namespaces by the estate's grouping label.** The namespace-access

@@ -1859,9 +1859,15 @@ rbacAuditors:
   createClusterRole: true
   existingClusterRole: ""          # non-empty => bind this instead of the chart-rendered role
   # The groups to grant it. Each is bound by NAME, so a synced group and a local group work the same.
-  groups: []
-  # - name: app-ocp-rbac-groupsync-ns-auditor
-  #   createLocal: false           # false: an LDAP sync owns the Group. true: the chart creates a local Group.
+  # The default names the estate's auditor group with createLocal:false — an LDAP sync (or the
+  # namespace-config operator) owns the Group; this chart only binds it. Keep createLocal:false for any
+  # group a directory syncs: a local Group of a synced name collides and can wedge the whole sync
+  # (docs/TROUBLESHOOTING_auditor_groups.md). The feature stays opt-in via `enabled` above.
+  groups:
+    - name: app-ocp-rbac-groupsync-ns-auditor
+      # createLocal omitted => false: an LDAP sync (or the namespace-config operator) owns the Group and
+      # this chart only binds it. Set createLocal: true ONLY for a group name no sync filter matches — a
+      # local group of a synced name collides and can wedge the sync (docs/TROUBLESHOOTING_auditor_groups.md).
 
 # ---------------------------------------------------------------------------
 # Monitoring
