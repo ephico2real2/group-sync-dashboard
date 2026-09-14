@@ -45,6 +45,10 @@ def build(snap: Snapshot, ctx: RunContext, params: dict) -> Built:
     if mnemonics:
         # The snapshot-dependent expansion: a mnemonic matching nothing is a failed run (it needs the
         # snapshot), not a 422 — the cross-parameter check already ran at the endpoint.
+        if not ctx.namespace_selector_label:
+            raise ValidationError(
+                "mnemonic namespace selection is not configured on this deployment; set "
+                "reporting.namespaceSelector.label or use explicit namespace names")
         names = snap.namespaces_for_metadata(cid, ctx.namespace_selector_label, mnemonics)
         if not names:
             raise ValidationError(
@@ -99,4 +103,7 @@ def build(snap: Snapshot, ctx: RunContext, params: dict) -> Built:
             f"{MAX_NAMESPACES} in name order. Narrow the mnemonic selection for a complete listing.",
             "warning")]))
     totals = {"namespaces": len(names), "group_bindings": len(groups), "user_bindings": len(users)}
-    return Built(sections, totals, truncated or selector_capped, include_members)
+    # `truncated` is a ROW_LIMIT cut only — assemble()'s Truncation note says exactly that, and a
+    # selector cap is neither a row cut nor a wrong `totals`. The Coverage section above is the cap
+    # record (design §3.6), so the selector cap does not set `truncated` (review #112, F1).
+    return Built(sections, totals, truncated, include_members)

@@ -95,3 +95,47 @@ class TestBuildExpandsMnemonics:
             p = validate_params(spec, {"mnemonics": "nope"})
             with pytest.raises(ValidationError, match="no namespace carries the selector label"):
                 build(snap, self._ctx(snap), p)
+
+
+class TestSelectorCapAndGuards:
+    """F1/F3 from review #112: a selector cap is recorded in Coverage, NOT as a row-cut Truncation
+    note; a mnemonic with no selector key configured is a clear 422, not 'no namespace carries…'."""
+
+    def _big_snap(self, tmp_path: Path, count: int) -> Snapshot:
+        store = Store(str(tmp_path / "big.db"))
+        store.upsert_cluster(CLUSTER, "https://k8s", True)
+        store.replace_namespaces(CLUSTER, [
+            {"name": f"cap-{i:03d}", "created_at": None, "phase": "Active", "metadata": {LABEL: "big"}}
+            for i in range(count)
+        ], "2026-09-14T00:00:00Z")
+        path = store.snapshot(str(tmp_path), keep=2); store.close()
+        return Snapshot(Path(path))
+
+    def _ctx(self, snap, label=LABEL):
+        info = snap.info()
+        return RunContext(settings=ReportSettings(), cluster=snap.cluster(CLUSTER),
+                          now=__import__("datetime").datetime(2026, 9, 14), run_id="r",
+                          generated_by="root", generated_by_note="n", snapshot_stamp=info.stamp,
+                          snapshot_age_seconds=0.0, schema_version=info.schema_version,
+                          namespace_selector_label=label)
+
+    def test_over_50_is_a_coverage_note_not_a_truncation_note(self, tmp_path):
+        with self._big_snap(tmp_path, 60) as snap:
+            spec, build = REGISTRY["namespace-access"]
+            p = validate_params(spec, {"mnemonics": "big"})
+            built = build(snap, self._ctx(snap), p)
+            # A 60→50 selector cap is not a ROW_LIMIT cut: `totals` is honest, so no Truncation note.
+            assert built.truncated is False
+            report = assemble(spec, snap, self._ctx(snap), p, built)
+            titles = [s.title for s in report.sections]
+            assert "Coverage" in titles
+            assert "Truncation" not in titles
+            # 50 namespace sections + the one Coverage section.
+            assert sum(1 for t in titles if t.startswith("Namespace: ")) == 50
+
+    def test_mnemonic_with_no_selector_configured_is_a_clear_422(self, tmp_path):
+        with _snap(tmp_path) as snap:
+            spec, build = REGISTRY["namespace-access"]
+            p = validate_params(spec, {"mnemonics": "beta"})
+            with pytest.raises(ValidationError, match="not configured"):
+                build(snap, self._ctx(snap, label=""), p)
