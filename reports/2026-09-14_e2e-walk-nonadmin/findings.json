@@ -1,0 +1,8 @@
+[
+  {"title": "the removed cluster prod-east is still offered and 404s when selected (issue #96)",
+   "severity": "defect",
+   "text": "The self-tier walk hit the same lingering cluster the admin walk did: selecting prod-east renders \"Dashboard API error: 404 Not Found on /api/clusters/prod-east/groupsyncs\". prod-east was removed from the configuration during the D2 live check; the live ConfigMap lists only crc-local. Filed 2026-09-14 as #96."},
+  {"title": "the report pod returned 502 for a wide-tier reader mid-walk (issue #97)",
+   "severity": "note",
+   "text": "An earlier admin-tier walk this session caught the Reports tab showing \"Dashboard API error: 502 Bad Gateway on /report/api/reports\": the report pod had just been preempted on the saturated CRC node and was restarting. A self-tier reader like jane.smith never calls the report service (the refusal is client-side), so this did not affect the jane.smith walk. Filed 2026-09-14 as #97 (expose priorityClassName)."}
+]

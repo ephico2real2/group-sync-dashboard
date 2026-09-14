@@ -1,0 +1,97 @@
+{
+  "finished": "2026-09-14T12:03:51Z",
+  "steps": [
+    {
+      "t": "2026-09-14T12:03:30Z",
+      "step": "open the route",
+      "ok": true,
+      "detail": "https://group-sync-dashboard.apps-crc.testing \u2192 https://group-sync-dashboard.apps-crc.testing/",
+      "screenshot": "01-oauth-proxy-interstitial.png"
+    },
+    {
+      "t": "2026-09-14T12:03:31Z",
+      "step": "identity-provider chooser",
+      "ok": true,
+      "detail": "offered: developer, ldap-local; picked ldap-local",
+      "screenshot": "02-openshift-idp-chooser.png"
+    },
+    {
+      "t": "2026-09-14T12:03:32Z",
+      "step": "OpenShift login form",
+      "ok": true,
+      "detail": "username filled: jane.smith",
+      "screenshot": "03-openshift-login-form.png"
+    },
+    {
+      "t": "2026-09-14T12:03:38Z",
+      "step": "login",
+      "ok": true,
+      "detail": "dashboard rendered at https://group-sync-dashboard.apps-crc.testing/#page=overview&cluster=crc-local",
+      "screenshot": null
+    },
+    {
+      "t": "2026-09-14T12:03:38Z",
+      "step": "cluster selector options",
+      "ok": true,
+      "detail": "crc-local \u2014 your view, prod-east \u2014 your view",
+      "screenshot": null
+    },
+    {
+      "t": "2026-09-14T12:03:39Z",
+      "step": "switch cluster to crc-local \u2014 your view",
+      "ok": true,
+      "detail": "heading: Overview; url https://group-sync-dashboard.apps-crc.testing/#page=overview&cluster=crc-local",
+      "screenshot": "04-overview-cluster-crc-local \u2014 your view.png"
+    },
+    {
+      "t": "2026-09-14T12:03:41Z",
+      "step": "Reports tab on crc-local \u2014 your view",
+      "ok": true,
+      "detail": "no report form; the card says: Skip to main content OCP Access Tracking Dashboard - crc-local Your view \u2014 jane.smith v0.19.0 \u00b7 3629c8ca27 updated 08:03:39 EDT Refresh Sign out Cluster crc-local \u2014 your view prod-east \u2014 your view Overview Groups Users Access granted RBAC policy Namespace audit Logins Usage Reports Reports Withheld,",
+      "screenshot": "05-reports-cluster-crc-local \u2014 your view.png"
+    },
+    {
+      "t": "2026-09-14T12:03:41Z",
+      "step": "scope pill",
+      "ok": true,
+      "detail": "Your view \u2014 jane.smith",
+      "screenshot": null
+    },
+    {
+      "t": "2026-09-14T12:03:42Z",
+      "step": "open the route",
+      "ok": true,
+      "detail": "https://group-sync-dashboard.apps-crc.testing \u2192 https://group-sync-dashboard.apps-crc.testing/",
+      "screenshot": "06-oauth-proxy-interstitial.png"
+    },
+    {
+      "t": "2026-09-14T12:03:43Z",
+      "step": "identity-provider chooser",
+      "ok": true,
+      "detail": "offered: developer, ldap-local; picked ldap-local",
+      "screenshot": "07-openshift-idp-chooser.png"
+    },
+    {
+      "t": "2026-09-14T12:03:45Z",
+      "step": "OpenShift login form",
+      "ok": true,
+      "detail": "username filled: jane.smith",
+      "screenshot": "08-openshift-login-form.png"
+    },
+    {
+      "t": "2026-09-14T12:03:50Z",
+      "step": "login",
+      "ok": true,
+      "detail": "dashboard rendered at https://group-sync-dashboard.apps-crc.testing/#page=overview&cluster=crc-local",
+      "screenshot": null
+    },
+    {
+      "t": "2026-09-14T12:03:50Z",
+      "step": "light theme Overview",
+      "ok": true,
+      "detail": "prefers-color-scheme: light",
+      "screenshot": "09-overview-light-theme.png"
+    }
+  ],
+  "pdf_page1": []
+}
