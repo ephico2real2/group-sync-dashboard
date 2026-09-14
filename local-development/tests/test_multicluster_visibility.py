@@ -278,8 +278,10 @@ class TestInheritIsTheHostsDecidedTier:
         app.state.tier_resolver = _Map({"root": "all"})
         with TestClient(app) as c:
             who = c.get("/api/whoami", headers=ROOT).json()["visibility"]
-            assert who["scope"] == "self"
-            assert {v["scope"] for v in who["clusters"].values()} == {"self"}
+            assert who["scope"] == "self"          # the nameless headline fails closed with no host
+            # #96: a disabled cluster is not served, so every-entry-disabled serves NOTHING — the rows
+            # are empty rather than a wall of `self` clusters the selector would never offer.
+            assert who["clusters"] == {}
 
     def test_an_inherit_host_still_decides_by_its_resolver(self, client):
         assert client.get("/api/whoami", headers=ROOT).json()["visibility"]["scope"] == "all"
