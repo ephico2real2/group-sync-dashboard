@@ -75,27 +75,45 @@ nohup cursor agent -p --mode ask --output-format text --trust --model cursor-gro
   "$(cat "$S/review_brief_<id>.md")" > "$S/review_cursor_<id>.txt" 2> "$S/review_cursor_<id>.err" &
 ```
 
-and, in the same turn, the `codex:codex-rescue` agent with: the brief path, "pass its ENTIRE contents
-verbatim", `--model gpt-5.6-sol --effort xhigh`, a scratchpad directory for copies (its own sandbox
-`/tmp` may be read-only), "write Codex's complete unedited answer to `$S/review_codex_<id>.txt`
-yourself", and "wait until the task is COMPLETELY finished".
+and, in the same turn, Codex — either the `codex:codex-rescue` agent with: the brief path, "pass its
+ENTIRE contents verbatim", `--model gpt-5.6-sol --effort xhigh`, a scratchpad directory for copies (its
+own sandbox `/tmp` may be read-only), "write Codex's complete unedited answer to
+`$S/review_codex_<id>.txt` yourself", and "wait until the task is COMPLETELY finished"; or the CLI
+directly, on a `git archive` export of the head in the reviewer's own scratch subdirectory, **with stdin
+closed** — this is the line that worked on D2's second pass (2026-09-14), after the one without
+`< /dev/null` hung for 4 h 16 min:
+
+```sh
+W="$S/review_<id>_codex"            # its own subdirectory; the export of HEAD lives in "$W/head"
+cd "$W" && nohup codex exec --skip-git-repo-check -m gpt-5.6-sol -c model_reasoning_effort="xhigh" \
+  -s workspace-write -C "$W" "$(cat "$W/brief.md")" < /dev/null \
+  > "$S/review_codex_<id>.txt" 2> "$S/review_codex_<id>.err" &
+sleep 20; head -c 400 "$S/review_codex_<id>.err"   # must show "OpenAI Codex … model: …", not only "Reading additional input from stdin..."
+```
 
 What each can and cannot do: Cursor in ask mode has NO shell and no network — it traces from source and
 must mark what it cannot measure PLAUSIBLE, not CONFIRMED. Codex has a shell and is the reviewer that
 follows a value end to end; give it the venv interpreter path.
 
-Known failure modes, all seen: Cursor's run dies silently with a 0-byte output — relaunch, the second
-run works. `codex exec … &` launched from a backgrounded shell HANGS FOREVER at "Reading additional
-input from stdin..." (0 % CPU, no session file, an empty answer — 4 h 16 min lost on D2's second pass,
-2026-09-14): when stdin is not a TTY, `codex exec` appends whatever stdin carries to the prompt and waits
-for EOF, and a backgrounded shell's stdin never closes. Always launch it with `< /dev/null`; the first
-stderr lines must show the "OpenAI Codex … workdir: … model: …" header, not the stdin line alone. The codex-rescue agent can report "complete, tree clean" while its Codex task is STILL
-running and writing probe artefacts INSIDE the repo (`.a3-adv-sandbox/`, a fake gitconfig, a hooks
-dir); a sandbox copy of `Chart.yaml`/`values.yaml` made every basename citation ambiguous and failed the
-resolver test. After a Codex pass: wait until no shell with `CODEX_COMPANION_SESSION_ID` is alive
-(`pgrep -f CODEX_COMPANION_SESSION_ID`), then `git status --short` and remove untracked reviewer
-artefacts BEFORE running the suite. Two reviewers writing into one file clobber each other — never share
-an output file.
+### Gotchas — all seen, all measured; read before every launch
+
+- **A backgrounded `codex exec` must have stdin closed, or it waits forever.** Launched from a
+  backgrounded shell without `< /dev/null`, it sits at "Reading additional input from stdin..." at 0 %
+  CPU with no session file and an empty answer: when stdin is not a TTY, `codex exec` appends whatever
+  stdin carries to the prompt and waits for EOF, and a backgrounded shell's stdin never closes. That
+  cost 4 h 16 min on D2's second pass (2026-09-14) before it was caught. Always `< /dev/null`; then read
+  the first stderr bytes — the "OpenAI Codex … workdir: … model: …" header means it is working, the
+  stdin line alone means it is not — and `ps -o etime,%cpu` on the pid after twenty seconds.
+- **Cursor's run can die silently with a 0-byte output.** Relaunch; the second run works.
+- **The codex-rescue agent can report "complete, tree clean" while its Codex task is STILL running**
+  and writing probe artefacts INSIDE the repo (`.a3-adv-sandbox/`, a fake gitconfig, a hooks dir); a
+  sandbox copy of `Chart.yaml`/`values.yaml` made every basename citation ambiguous and failed the
+  resolver test. After a Codex pass: wait until no shell with `CODEX_COMPANION_SESSION_ID` is alive
+  (`pgrep -f CODEX_COMPANION_SESSION_ID`), then `git status --short` and remove untracked reviewer
+  artefacts BEFORE running the suite.
+- **Two reviewers writing into one file clobber each other** — never share an output file, and never
+  give a reviewer the scratchpad root: a Codex exit trap once deleted the whole session directory. Each
+  reviewer gets its own subdirectory and irreplaceable outputs are copied out first.
 
 ## Step 3 — decide, in writing, before applying
 
@@ -138,7 +156,8 @@ confirmation pass and it still finds things (Cursor found the all-dots reason af
 1. Local tests, spec verification and CI green BEFORE the review; PR open early with `Closes #N`.
 2. Brief written to a file: numbered claims, exact locations, artefact demanded, snippet + failing test
    demanded for refutations, constraints stated.
-3. Probe both models if anything changed; launch both with the exact invocations above, own output files.
+3. Probe both models if anything changed; launch both with the exact invocations above, own output
+   files, own subdirectories, Codex with stdin closed (`< /dev/null`) and its stderr header read back.
 4. Wait for both; wait for the Codex process to actually exit; `git status`; remove reviewer artefacts.
 5. Re-check every verdict yourself; decide each in writing with the reason; route out-of-scope findings.
 6. Apply; deviations into the spec's notes; rebuild if the image is touched; full suite; helm; CRC; live
