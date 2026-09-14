@@ -135,6 +135,9 @@ REVIEW_ARTIFACTS = (
     # PR #95's record (the change-log folder, the skills and settings into git): quotes the
     # skill's old Step 4 command and the log's old heading verbatim, which is the point.
     "REVIEW_session_tooling.md",
+    # PR #110 rbacAuditors implementation review: quotes the template line numbers and the old
+    # single-verb assertion verbatim.
+    "REVIEW_rbacAuditors_impl.md",
     # The log-level contract review. Same reason, plus a worked example of why the exemption is
     # right: it cites `README.md#Configuration`, a heading that does not exist — and the finding
     # attached to that citation was correct and was applied. Rewriting the citation would not make

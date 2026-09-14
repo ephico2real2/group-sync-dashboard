@@ -4,9 +4,11 @@
   createLocal is true (a synced group is owned by the group-sync operator; co-creating it locally
   would fight the sync). YAML comments use '#'.
 */ -}}
+{{- if and (hasKey .Values.rbacAuditors "enabled") (not (kindIs "bool" .Values.rbacAuditors.enabled)) }}{{ fail "rbacAuditors.enabled must be true or false" }}{{ end }}
 {{- if .Values.rbacAuditors.enabled }}
-{{- if not (kindIs "bool" .Values.rbacAuditors.enabled) }}{{ fail "rbacAuditors.enabled must be true or false" }}{{ end }}
 {{- $createRole := .Values.rbacAuditors.createClusterRole }}
+{{- if and (hasKey .Values.rbacAuditors "createClusterRole") (not (kindIs "bool" $createRole)) }}{{ fail "rbacAuditors.createClusterRole must be true or false" }}{{ end }}
+{{- if not (gt (len (.Values.rbacAuditors.groups | default list)) 0) }}{{ fail "rbacAuditors.enabled=true requires at least one rbacAuditors.groups entry" }}{{ end }}
 {{- $existing := trim (toString (.Values.rbacAuditors.existingClusterRole | default "")) }}
 {{- if and (not $createRole) (eq $existing "") }}
 {{-   fail "rbacAuditors.createClusterRole=false requires rbacAuditors.existingClusterRole (otherwise the Binding names a ClusterRole this chart does not render)." }}

@@ -1728,6 +1728,14 @@ class TestReportingAuditors:
         role = next(d for d in docs if d["kind"] == "ClusterRole")
         verbs = {v for rule in role["rules"] for v in rule["verbs"]}
         assert verbs == {"get", "list"}, f"the read-only audit role must grant only get/list, not {verbs}"
+        # Pin the resource set too (Cursor, #110): a future rule adding a workload resource with get/list
+        # would pass the verb check but widen the role. The auditor role is identities + RBAC only.
+        granted = {(g, r) for rule in role["rules"] for g in rule["apiGroups"] for r in rule["resources"]}
+        assert granted == {
+            ("user.openshift.io", "users"), ("user.openshift.io", "groups"),
+            ("rbac.authorization.k8s.io", "roles"), ("rbac.authorization.k8s.io", "rolebindings"),
+            ("rbac.authorization.k8s.io", "clusterroles"), ("rbac.authorization.k8s.io", "clusterrolebindings"),
+        }, f"the audit role must read only identities and RBAC, got {granted}"
 
     def test_ldap_dn_group_name_is_hashed_into_the_binding_name(self):
         ok, docs, out = _auditor_docs(**{"rbacAuditors.enabled": "true",
@@ -1754,3 +1762,23 @@ class TestReportingAuditors:
                             "rbacAuditors.groups[0].name": "auditors"})
         assert not ok
         assert "requires rbacAuditors.existingClusterRole" in out, out[-800:]
+
+    def test_enabled_true_with_no_groups_fails(self):
+        ok, out = render(**{"rbacAuditors.enabled": "true"})
+        assert not ok
+        assert "requires at least one rbacAuditors.groups entry" in out, out[-800:]
+
+    def test_a_string_enabled_is_rejected(self):
+        # `enabled: "true"`/"false" (a string) is truthy in Helm; a string "false" would silently
+        # render. The type is validated before truthiness decides.
+        args = ["helm", "template", "t", str(CHART), "--set", "ingress.host=t.example.com",
+                "--set-string", "rbacAuditors.enabled=true", "--set", "rbacAuditors.groups[0].name=a"]
+        done = subprocess.run(args, capture_output=True, text=True)
+        assert done.returncode != 0 and "enabled must be true or false" in done.stdout + done.stderr
+
+    def test_a_string_createclusterrole_is_rejected(self):
+        args = ["helm", "template", "t", str(CHART), "--set", "ingress.host=t.example.com",
+                "--set", "rbacAuditors.enabled=true", "--set-string", "rbacAuditors.createClusterRole=false",
+                "--set", "rbacAuditors.groups[0].name=a"]
+        done = subprocess.run(args, capture_output=True, text=True)
+        assert done.returncode != 0 and "createClusterRole must be true or false" in done.stdout + done.stderr

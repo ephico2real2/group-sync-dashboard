@@ -8,6 +8,15 @@ lives next to the code and in the design and review records linked here. Changes
 last release sit under `## Unreleased` until the release that carries them replaces that heading —
 which `local-development/prepare-release.py` does when the release is cut.
 
+## Application 0.19.0 — chart 0.22.0 — 2026-09-14
+
+- **Reporting: opt-in auditor groups (chart).** A new `rbacAuditors` stanza binds a chosen group
+  to a least-privilege, read-only ClusterRole (get/list on users, groups and the RBAC objects) so a
+  non-developer can run reports and review identities and RBAC in OpenShift directly — no workload
+  access, no Usage tab. Render guards ensure the role covers the report gate and refuse an unsafe
+  configuration; the ClusterRoleBinding name is a hash of the group (LDAP DNs are not DNS-1123).
+  Off by default (docs/DESIGN_reporting_auditors_and_ns_selector.md §2).
+
 ## Application 0.19.0 — chart 0.21.0 — 2026-09-13
 
 - **Per-cluster authorization for the multi-cluster case.** A reader is authenticated by the
