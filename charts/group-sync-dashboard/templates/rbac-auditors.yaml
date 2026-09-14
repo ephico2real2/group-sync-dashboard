@@ -1,0 +1,100 @@
+{{- /*
+  Reporting auditors (docs/DESIGN_reporting_auditors_and_ns_selector.md §2). Opt-in read-only
+  identity+RBAC role, and a ClusterRoleBinding per configured group. The Group is created only when
+  createLocal is true (a synced group is owned by the group-sync operator; co-creating it locally
+  would fight the sync). YAML comments use '#'.
+*/ -}}
+{{- /* Type guards, in dependency order (review #110 pass 2, F2): a value must be the right TYPE
+   before it is used, or a null/bool/number reaches Go and prints a raw error instead of the remedy.
+   `enabled`/`createClusterRole` are checked with kindIs (a YAML null is invalid — the values.yaml
+   default already supplies the bool), and `groups` is checked to be a list BEFORE `len`. */ -}}
+{{- $auditors := .Values.rbacAuditors }}
+{{- if not (kindIs "map" $auditors) }}{{ fail "rbacAuditors must be a map" }}{{ end }}
+{{- if not (kindIs "bool" $auditors.enabled) }}{{ fail "rbacAuditors.enabled must be true or false" }}{{ end }}
+{{- if $auditors.enabled }}
+{{- $createRole := $auditors.createClusterRole }}
+{{- if not (kindIs "bool" $createRole) }}{{ fail "rbacAuditors.createClusterRole must be true or false" }}{{ end }}
+{{- $groups := $auditors.groups }}
+{{- if not (kindIs "slice" $groups) }}{{ fail "rbacAuditors.groups must be a list" }}{{ end }}
+{{- if eq (len $groups) 0 }}{{ fail "rbacAuditors.enabled=true requires at least one rbacAuditors.groups entry" }}{{ end }}
+{{- $existing := trim (toString ($auditors.existingClusterRole | default "")) }}
+{{- if and (not $createRole) (eq $existing "") }}
+{{-   fail "rbacAuditors.createClusterRole=false requires rbacAuditors.existingClusterRole (otherwise the Binding names a ClusterRole this chart does not render)." }}
+{{- end }}
+{{- if and $createRole (ne $existing "") }}
+{{-   fail "rbacAuditors.createClusterRole=true and rbacAuditors.existingClusterRole are mutually exclusive: either render the chart role, or bind one you made elsewhere." }}
+{{- end }}
+{{- if $createRole }}
+{{-   $g := include "gsd.visibilitySarApiGroup" . }}
+{{-   $r := include "gsd.visibilitySarResource" . }}
+{{-   $v := include "gsd.visibilitySarVerb" . }}
+{{-   $covered := dict
+        "rbac.authorization.k8s.io/roles" true "rbac.authorization.k8s.io/rolebindings" true
+        "rbac.authorization.k8s.io/clusterroles" true "rbac.authorization.k8s.io/clusterrolebindings" true
+        "user.openshift.io/users" true "user.openshift.io/groups" true }}
+{{-   $key := printf "%s/%s" $g $r }}
+{{-   if not (hasKey $covered $key) }}
+{{-     fail (printf "rbacAuditors.createClusterRole=true but visibility.adminSar (%s, verb %s) is not covered by the read-only audit role. Set rbacAuditors.existingClusterRole to a role that grants it, or add it to templates/rbac-auditors.yaml and this guard." $key $v) }}
+{{-   end }}
+{{-   if not (or (eq $v "get") (eq $v "list")) }}
+{{-     fail (printf "rbacAuditors: visibility.adminSar.verb is %q, a non-read verb the read-only audit role will never grant. Retune adminSar to a read verb or use rbacAuditors.existingClusterRole." $v) }}
+{{-   end }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ printf "%s-report-auditor" (include "gsd.fullname" .) | trunc 253 | trimSuffix "-" }}
+  labels:
+    {{- include "gsd.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["user.openshift.io"]
+    resources: ["users", "groups"]
+    verbs: ["get", "list"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["roles", "rolebindings", "clusterroles", "clusterrolebindings"]
+    verbs: ["get", "list"]
+{{- end }}
+{{- $roleName := $existing | default (printf "%s-report-auditor" (include "gsd.fullname" .) | trunc 253 | trimSuffix "-") }}
+{{- $seen := dict }}
+{{- range $i, $g := $groups }}
+{{-   if not (kindIs "map" $g) }}{{ fail (printf "rbacAuditors.groups[%d] must be a map" $i) }}{{ end }}
+{{-   if or (not (hasKey $g "name")) (not (kindIs "string" $g.name)) (eq (trim $g.name) "") }}{{ fail (printf "rbacAuditors.groups[%d].name must be a non-empty string" $i) }}{{ end }}
+{{-   if hasKey $seen $g.name }}{{ fail (printf "rbacAuditors.groups[%d].name %q is duplicated; configure each group once" $i $g.name) }}{{ end }}
+{{-   $_ := set $seen $g.name true }}
+{{-   if and (hasKey $g "createLocal") (not (kindIs "bool" $g.createLocal)) }}{{ fail (printf "rbacAuditors.groups[%s].createLocal must be true or false" $g.name) }}{{ end }}
+{{-   if $g.createLocal }}
+---
+apiVersion: user.openshift.io/v1
+kind: Group
+metadata:
+  name: {{ $g.name | quote }}
+  labels:
+    {{- include "gsd.labels" $ | nindent 4 }}
+  annotations:
+    # Membership is NOT in this manifest. Do not set createLocal on a group-sync-operator group —
+    # the next sync overwrites the object and Helm reports drift.
+    group-sync-dashboard/managed: local
+# users omitted on purpose: a templated `users: []` is reset on every helm upgrade.
+{{-   end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  # CRB names are DNS-1123 (253); group names are not (LDAP DNs, underscores), so hash them. Hash the
+  # ROLE too (review #110 pass 2, F1): roleRef is IMMUTABLE, so switching from the chart role to an
+  # existingClusterRole must produce a DIFFERENT binding name — Helm then replaces the binding instead
+  # of attempting an immutable patch that the API server rejects on upgrade.
+  name: {{ printf "%s-ra-%s" (include "gsd.fullname" $) (list $g.name $roleName | toJson | sha256sum | trunc 12) | trunc 253 | trimSuffix "-" }}
+  labels:
+    {{- include "gsd.labels" $ | nindent 4 }}
+  annotations:
+    group-sync-dashboard/auditor-group: {{ $g.name | quote }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $roleName | quote }}
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: Group
+    name: {{ $g.name | quote }}
+{{- end }}
+{{- end }}
