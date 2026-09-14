@@ -52,6 +52,9 @@ class ReportSpec:
     #: Which dashboard facilities the report needs beyond the snapshot, for the catalogue's
     #: "why is this report greyed out" line. "loginCapture" is the only one today.
     needs: tuple[str, ...] = ()
+    #: An optional cross-parameter check run at the endpoint (a 422 on bad input), for rules a single
+    #: ParamSpec cannot express — e.g. "exactly one of two parameters". Runs on the validated dict.
+    validator: object = None
 
     def as_json(self, enabled: bool) -> dict:
         return {"name": self.name, "title": self.title, "summary": self.summary, "enabled": enabled,
@@ -70,6 +73,8 @@ class RunContext:
     snapshot_stamp: str
     snapshot_age_seconds: float
     schema_version: int
+    #: The captured namespace-metadata key the namespace-access report selects on (B2). "" = no selector.
+    namespace_selector_label: str = ""
 
 
 @dataclass
@@ -171,6 +176,8 @@ def validate_params(spec: ReportSpec, raw: dict | None) -> dict:
             if len(s) > 200:
                 raise ValidationError(f"{p.name} is longer than 200 characters")
             out[p.name] = s
+    if spec.validator is not None:
+        spec.validator(out)                       # a cross-parameter check → 422 at the endpoint
     return out
 
 

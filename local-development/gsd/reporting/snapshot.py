@@ -161,6 +161,24 @@ class Snapshot:
             return []
         return self._rows("SELECT name, created_at, phase FROM cluster_namespace WHERE cluster_id = ? ORDER BY name", (cluster_id,))
 
+    def namespace_metadata_values(self, cluster_id: str, key: str) -> list[str]:
+        """Distinct values captured for one metadata key, for the GUI's multi-select. Empty when the
+        table is absent (pre-migration snapshot), the key is not captured, or no namespace carries it."""
+        if not key or not self.has_table("cluster_namespace_label"):
+            return []
+        return [r["value"] for r in self._rows(
+            "SELECT DISTINCT value FROM cluster_namespace_label "
+            "WHERE cluster_id=? AND key=? ORDER BY value", (cluster_id, key))]
+
+    def namespaces_for_metadata(self, cluster_id: str, key: str, values: list[str]) -> list[str]:
+        """Namespace names whose metadata `key` is one of `values`. The strict selector's expansion."""
+        if not key or not values or not self.has_table("cluster_namespace_label"):
+            return []
+        marks = ",".join("?" for _ in values)
+        return [r["name"] for r in self._rows(
+            f"SELECT name FROM cluster_namespace_label WHERE cluster_id=? AND key=? AND value IN ({marks}) "
+            "ORDER BY name", (cluster_id, key, *values))]
+
     def login_capture_status(self, cluster_id: str) -> dict | None:
         return self._row("SELECT started_at, last_read_at FROM login_capture_status WHERE cluster_id = ?", (cluster_id,))
 
