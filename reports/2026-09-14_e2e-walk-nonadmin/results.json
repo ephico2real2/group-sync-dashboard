@@ -1,0 +1,242 @@
+{
+  "started": "2026-09-14T12:03:04Z",
+  "finished": "2026-09-14T12:03:27Z",
+  "base": "https://group-sync-dashboard.apps-crc.testing",
+  "login_user": "jane.smith",
+  "theme": "dark",
+  "steps": [
+    {
+      "t": "2026-09-14T12:03:05Z",
+      "step": "open the route",
+      "ok": true,
+      "detail": "https://group-sync-dashboard.apps-crc.testing \u2192 https://group-sync-dashboard.apps-crc.testing/",
+      "screenshot": "01-oauth-proxy-interstitial.png"
+    },
+    {
+      "t": "2026-09-14T12:03:07Z",
+      "step": "identity-provider chooser",
+      "ok": true,
+      "detail": "offered: developer, ldap-local; picked ldap-local",
+      "screenshot": "02-openshift-idp-chooser.png"
+    },
+    {
+      "t": "2026-09-14T12:03:09Z",
+      "step": "OpenShift login form",
+      "ok": true,
+      "detail": "username filled: jane.smith",
+      "screenshot": "03-openshift-login-form.png"
+    },
+    {
+      "t": "2026-09-14T12:03:15Z",
+      "step": "login",
+      "ok": true,
+      "detail": "dashboard rendered at https://group-sync-dashboard.apps-crc.testing/#page=overview&cluster=crc-local",
+      "screenshot": null
+    },
+    {
+      "t": "2026-09-14T12:03:15Z",
+      "step": "GET /api/whoami",
+      "ok": true,
+      "detail": "HTTP 200",
+      "screenshot": null,
+      "api": {
+        "user": "jane.smith",
+        "email": "jane.smith@cluster.local",
+        "authenticated": true,
+        "logout_url": "/oauth/sign_out",
+        "session": {
+          "cookie_expire_seconds": 14400,
+          "cookie_refresh_seconds": 0,
+          "idle_timeout": {
+            "enabled": false
+          }
+        },
+        "visibility": {
+          "scope": "self",
+          "enabled": true,
+          "clusters": {
+            "crc-local": {
+              "policy": "inherit",
+              "identity": "same-as-host",
+              "scope": "self"
+            }
+          }
+        }
+      }
+    },
+    {
+      "t": "2026-09-14T12:03:15Z",
+      "step": "GET /api/version",
+      "ok": true,
+      "detail": "HTTP 200",
+      "screenshot": null,
+      "api": {
+        "leader": true,
+        "version": "0.19.0",
+        "commit": "3629c8ca27",
+        "branch": "feat/d2-per-cluster-authorization",
+        "dirty": false,
+        "features": {
+          "export": true,
+          "reporting": true,
+          "reporting_prefix": "/report"
+        },
+        "timezone": {
+          "name": "America/New_York",
+          "abbrev": "EDT",
+          "utc_offset": "-0400"
+        }
+      }
+    },
+    {
+      "t": "2026-09-14T12:03:15Z",
+      "step": "GET /api/clusters",
+      "ok": true,
+      "detail": "HTTP 200",
+      "screenshot": null,
+      "api": [
+        {
+          "id": "crc-local",
+          "api_url": "https://kubernetes.default.svc",
+          "enabled": true,
+          "reachable": true,
+          "status": "ok",
+          "last_poll": "2026-09-14T12:03:05Z",
+          "error": null,
+          "groupsync_count": 3,
+          "groupsync_operator_present": true,
+          "group_count": 66,
+          "empty_groups": 1,
+          "unattributed_groups": 2,
+          "oldest_last_sync": "2026-09-14T12:00:00Z",
+          "operator_configs": null,
+          "visibility": {
+            "policy": "inherit",
+            "scope": "self"
+          },
+          "dangling_bindings": 0,
+          "unresolved_bindings": 6,
+          "builtin_bindings": 157
+        },
+        {
+          "id": "prod-east",
+          "api_url": "https://kubernetes.default.svc",
+          "enabled": true,
+          "reachable": true,
+          "status": "ok",
+          "last_poll": "2026-09-14T07:33:36Z",
+          "error": null,
+          "groupsync_count": 3,
+          "groupsync_operator_present": true,
+          "group_count": 66,
+          "empty_groups": 1,
+          "unattributed_groups": 2,
+          "oldest_last_sync": "2026-09-14T06:00:10Z",
+          "operator_configs": null,
+          "visibility": {
+            "policy": "inherit",
+            "scope": "self"
+          },
+          "dangling_bindings": 0,
+          "unresolved_bindings": 6,
+          "builtin_bindings": 157
+        }
+      ]
+    },
+    {
+      "t": "2026-09-14T12:03:15Z",
+      "step": "GET /report/healthz",
+      "ok": true,
+      "detail": "HTTP 200",
+      "screenshot": null,
+      "api": {
+        "status": "ok"
+      }
+    },
+    {
+      "t": "2026-09-14T12:03:15Z",
+      "step": "GET /report/readyz",
+      "ok": true,
+      "detail": "HTTP 200",
+      "screenshot": null,
+      "api": {
+        "status": "ready",
+        "snapshot": "2026-09-14T12:00:08.441212Z",
+        "schema": 11
+      }
+    },
+    {
+      "t": "2026-09-14T12:03:15Z",
+      "step": "tab strip",
+      "ok": true,
+      "detail": "9 tabs: Overview, Groups, Users, Access granted, RBAC policy, Namespace audit, Logins, Usage, Reports",
+      "screenshot": null
+    },
+    {
+      "t": "2026-09-14T12:03:16Z",
+      "step": "tab Overview",
+      "ok": true,
+      "detail": "heading: Overview",
+      "screenshot": "04-tab-overview.png"
+    },
+    {
+      "t": "2026-09-14T12:03:18Z",
+      "step": "tab Groups",
+      "ok": true,
+      "detail": "heading: Groups \u00b7 17 shown",
+      "screenshot": "05-tab-groups.png"
+    },
+    {
+      "t": "2026-09-14T12:03:19Z",
+      "step": "tab Users",
+      "ok": true,
+      "detail": "heading: Users \u00b7 1 shown",
+      "screenshot": "06-tab-users.png"
+    },
+    {
+      "t": "2026-09-14T12:03:20Z",
+      "step": "tab Access granted",
+      "ok": true,
+      "detail": "heading: Access granted",
+      "screenshot": "07-tab-access-granted.png"
+    },
+    {
+      "t": "2026-09-14T12:03:21Z",
+      "step": "tab RBAC policy",
+      "ok": true,
+      "detail": "heading: RBAC policy",
+      "screenshot": "08-tab-rbac-policy.png"
+    },
+    {
+      "t": "2026-09-14T12:03:23Z",
+      "step": "tab Namespace audit",
+      "ok": true,
+      "detail": "heading: Namespace audit",
+      "screenshot": "09-tab-namespace-audit.png"
+    },
+    {
+      "t": "2026-09-14T12:03:24Z",
+      "step": "tab Logins",
+      "ok": true,
+      "detail": "heading: Login attempts",
+      "screenshot": "10-tab-logins.png"
+    },
+    {
+      "t": "2026-09-14T12:03:26Z",
+      "step": "tab Usage",
+      "ok": true,
+      "detail": "heading: Dashboard usage",
+      "screenshot": "11-tab-usage.png"
+    },
+    {
+      "t": "2026-09-14T12:03:27Z",
+      "step": "Reports tab (narrowed reader)",
+      "ok": true,
+      "detail": "reporting is refused for this reader: Withheld, not empty. Reports are documents about the cluster's own RBAC surface, its groups and its users. For administrators only. Nothing on this page is broken and nothing is missing from the clust",
+      "screenshot": "12-reports-refused.png",
+      "refused": true
+    }
+  ],
+  "passed": 19,
+  "failed": 0
+}
