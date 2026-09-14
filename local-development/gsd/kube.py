@@ -692,18 +692,23 @@ class ClusterClient:
         log.debug("fetched %d direct-user binding rows from %s", len(out), self.cluster.name)
         return out
 
-    def fetch_namespaces(self) -> list[dict] | None:
+    def fetch_namespaces(self, label_keys: list[str] | None = None) -> list[dict] | None:
         """Every Namespace on the cluster, or None when we may not list them (rbac.namespaces off).
 
         One list call, for the report service's namespace report only: knowing a namespace EXISTS
         lets that report attest absence — "this namespace exists and has no grants" — instead of
         "none observed" (docs/specs/SPEC_C3_reporting_microservice.md §7). Per record: `name`,
-        `created_at` (metadata.creationTimestamp) and `phase` (status.phase, Active/Terminating).
+        `created_at` (metadata.creationTimestamp), `phase` (status.phase, Active/Terminating) and
+        `metadata` — a {key: value} of exactly the configured `label_keys` that are present on the
+        namespace, never the whole label map, so the namespace-access report can group namespaces
+        by them (docs/DESIGN_reporting_auditors_and_ns_selector.md §3.3). The keys are a PARAMETER:
+        ClusterClient holds no Settings, so the poller passes the configured labels in.
 
         None means FORBIDDEN and is distinct from [] for the same reason fetch_users draws the
         line: the grant is optional in the chart, and a 403 must not fail the poll — the caller
         records it (store.mark_namespaces_unavailable) and the report's coverage note says so.
         """
+        keys = list(label_keys or ())
         with self._client() as client:
             try:
                 items = self._list_all(client, NAMESPACE_API)
@@ -719,10 +724,14 @@ class ClusterClient:
             name = meta.get("name")
             if not name:
                 continue
+            labels = meta.get("labels") or {}
             records.append({
                 "name": name,
                 "created_at": meta.get("creationTimestamp"),
                 "phase": (obj.get("status") or {}).get("phase"),
+                # Only the CONFIGURED keys that are present — bounded and predictable; adding a key is
+                # a values change, no migration. The whole label map is never stored.
+                "metadata": {k: labels[k] for k in keys if k in labels},
             })
         log.debug("fetched %d namespaces from %s", len(records), self.cluster.name)
         return records

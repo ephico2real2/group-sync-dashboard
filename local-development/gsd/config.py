@@ -496,6 +496,11 @@ class Settings:
     # Whether the poller reads Namespace objects (rbac.namespaces) — lets the namespace report
     # attest ABSENCE. Kept from the first C3 body.
     namespaces_read_enabled: bool = False
+    # The Namespace label keys the poll captures per namespace, so the namespace-access report
+    # can select on them (docs/DESIGN_reporting_auditors_and_ns_selector.md §3). Bounded — only
+    # these keys, never the whole label map; default () is off. Read from the ConfigMap key
+    # `namespaceMetadataLabels` (rendered with toJson), the same convention as the audit lists.
+    namespace_metadata_labels: tuple[str, ...] = ()
 
     def cluster(self, name: str) -> ClusterConfig | None:
         for c in self.clusters:
@@ -1148,6 +1153,7 @@ def load_settings(path: str | Path) -> Settings:
         reporting_snapshot_keep=_num_setting(raw, "GSD_REPORTING_SNAPSHOT_KEEP", "reportingSnapshotKeep", 2, int),
         reporting_ticket_ttl_seconds=_num_setting(raw, "GSD_REPORTING_TICKET_TTL_SECONDS", "reportingTicketTtlSeconds", 300, int),
         namespaces_read_enabled=_bool_setting(raw, "GSD_NAMESPACES_READ_ENABLED", "namespacesReadEnabled", False),
+        namespace_metadata_labels=_string_list_setting(raw, "namespaceMetadataLabels", ()),
         user_activity_visibility=_visibility_setting(raw),
         user_activity_flush_seconds=_num_setting(
             raw, "GSD_USER_ACTIVITY_FLUSH_SECONDS", "userActivityFlushSeconds", 60, int

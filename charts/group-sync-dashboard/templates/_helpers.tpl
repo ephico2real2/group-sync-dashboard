@@ -681,6 +681,18 @@ args depend on them), so both objects refuse together. Emits nothing.
 {{- if or (lt (int ($t.ttlSeconds | default 300)) 30) (gt (int ($t.ttlSeconds | default 300)) 3600) -}}
 {{- fail (printf "reporting.ticket.ttlSeconds must be between 30 and 3600; got %v" $t.ttlSeconds) -}}
 {{- end -}}
+{{- /* Namespace-selection guards (docs/DESIGN_reporting_auditors_and_ns_selector.md §3, round 1 N1):
+   capture rides the optional rbac.namespaces grant, and the selector must name a captured key, or it
+   would be silently empty. `| default` on every hop so a commented-out stanza never panics. */ -}}
+{{- $nsMeta := (.Values.reporting | default dict).namespaceMetadata | default dict -}}
+{{- $nsLabels := $nsMeta.labels | default list -}}
+{{- if and (gt (len $nsLabels) 0) (not .Values.rbac.namespaces) -}}
+{{- fail "reporting.namespaceMetadata.labels is set but rbac.namespaces is false: the poll never lists Namespace objects, so the mnemonic selector would always be empty. Set rbac.namespaces=true (the extra RBAC is the 0.14.0 exception the namespace report already needs) or clear the labels list." -}}
+{{- end -}}
+{{- $nsSel := trim (toString ((.Values.reporting | default dict).namespaceSelector | default dict).label | default "") -}}
+{{- if and (ne $nsSel "") (not (has $nsSel $nsLabels)) -}}
+{{- fail (printf "reporting.namespaceSelector.label %q is not in reporting.namespaceMetadata.labels %v. The poll would never capture it, so the selector would always be empty." $nsSel $nsLabels) -}}
+{{- end -}}
 {{- /* Value-returning helpers validate as a side effect; assign their output so nothing prints. */ -}}
 {{- $_ := include "gsd.reportPdfVariant" . -}}
 {{- $enabled := splitList "," (include "gsd.reportEnabledReports" .) -}}
