@@ -121,3 +121,9 @@ class TestDisabledClusterIsAlsoNotServed:
         ids = [c["id"] for c in client.get("/api/clusters", headers=ROOT).json()]
         assert ids == ["crc"]
         assert client.get("/api/clusters/off/groupsyncs", headers=ROOT).status_code == 404
+
+    def test_disabled_cluster_is_absent_from_whoami(self, client):
+        # A disabled cluster must not appear in visibility.clusters either (#96) — no cluster the
+        # selector and every tab omit.
+        who = client.get("/api/whoami", headers=ROOT).json()["visibility"]
+        assert set(who["clusters"]) == {"crc"}

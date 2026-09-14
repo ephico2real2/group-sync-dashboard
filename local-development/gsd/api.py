@@ -2053,6 +2053,10 @@ def build_app(
             host = settings.host_cluster()
             scope = None
             for c in settings.clusters:
+                # A disabled cluster is not served (#96): it must not appear in visibility.clusters
+                # either, or whoami would name a cluster the selector and every tab omit.
+                if not c.enabled:
+                    continue
                 policy, identity = settings.cluster_policy(c.name)
                 if policy == VISIBILITY_HIDDEN:
                     continue
