@@ -1592,6 +1592,38 @@ class TestPerClusterVisibility:
         assert row.get("visibility") is None and row.get("identity") is None
         assert "visibility" not in row and "identity" not in row
 
+    @pytest.mark.parametrize("disabled", (False, "false"))
+    def test_a_boolean_and_a_quoted_false_choose_the_same_host_everywhere(self, tmp_path, tmp_path_factory, disabled):
+        """Codex, review D2 second pass: a quoted `enabled: "false"` in a values file is a non-empty
+        string — truthy in Go and in `bool()` — so the guard, NOTES and load_settings all made the
+        disabled entry the host. All three now read the word."""
+        import yaml
+        from gsd.config import load_settings
+        from test_chart_route import _notes_probe_chart
+        values = tmp_path / "values.yaml"
+        values.write_text(yaml.safe_dump({"clusters": [
+            {"name": "first", "apiUrl": "https://first", "tokenEnv": "X", "enabled": disabled},
+            {"name": "host", "apiUrl": "https://host", "tokenEnv": "X", "enabled": True},
+        ]}, sort_keys=False))
+        done = subprocess.run(["helm", "template", "t", str(CHART), "-f", str(values)], capture_output=True, text=True)
+        assert done.returncode == 0, done.stdout + done.stderr
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(yaml.safe_dump(_config_data(done.stdout)))
+        settings = load_settings(config_file)
+        assert settings.host_cluster().name == "host"
+        assert settings.cluster_policy("first") == ("self-only", "none")
+        probe = _notes_probe_chart(tmp_path_factory.mktemp(f"notes-{type(disabled).__name__}"))
+        noted = subprocess.run(["helm", "template", "t", str(probe), "-s", "templates/notes-probe.yaml", "-f", str(values)],
+                               capture_output=True, text=True)
+        assert noted.returncode == 0, noted.stdout + noted.stderr
+        lines = [l.strip() for l in noted.stdout.splitlines() if l.strip().startswith(("first:", "host:"))]
+        assert lines == ["host: visibility inherit (host), identity same-as-host (host)",
+                         "first: visibility self-only (default), identity none (default)"], lines
+
+    def test_a_garbage_enabled_word_is_refused_at_render(self):
+        ok, out = self._render(**{"clusters[0].enabled": "maybe"})
+        assert not ok and "enabled must be true or false" in out
+
     def test_notes_name_the_first_enabled_entry_as_host_and_print_it_first(self, tmp_path_factory):
         """Both reviewers of D2: NOTES took index 0 as the host, while the guard and load_settings
         take the first ENABLED entry — a disabled first entry was printed as the host."""

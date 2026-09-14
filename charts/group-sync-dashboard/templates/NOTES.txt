@@ -98,7 +98,7 @@ they see about each of the others is that entry's own policy (docs/ACCESS_CONTRO
        load_settings share; it is printed first (review of D2, both reviewers). */ -}}
 {{- $hostIndex := -1 }}
 {{- range $i, $c := .Values.clusters }}
-{{- $enabled := true }}{{- if hasKey $c "enabled" }}{{- $enabled = $c.enabled }}{{- end }}
+{{- $enabled := true }}{{- if hasKey $c "enabled" }}{{- $enabled = eq (trim (toString $c.enabled)) "true" }}{{- end }}
 {{- if and $enabled (lt $hostIndex 0) }}{{- $hostIndex = $i }}{{- end }}
 {{- end }}
 {{- range $pass := list 0 1 }}

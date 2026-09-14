@@ -714,7 +714,16 @@ args depend on them), so both objects refuse together. Emits nothing.
 {{- if and $id (not (has $id (list "same-as-host" "none"))) -}}
 {{- fail (printf "clusters[%d] (%s): identity %q is not one of same-as-host, none." $i $name $id) -}}
 {{- end -}}
-{{- $enabled := true -}}{{- if hasKey $c "enabled" -}}{{- $enabled = $c.enabled -}}{{- end -}}
+{{- /* A word, not truthiness: a quoted "false" is a non-empty string and truthy in Go, and the
+       first ENABLED entry is the host (review of D2, second pass, Codex). */ -}}
+{{- $enabled := true -}}
+{{- if hasKey $c "enabled" -}}
+{{- $enabledWord := trim (toString $c.enabled) -}}
+{{- if not (has $enabledWord (list "true" "false")) -}}
+{{- fail (printf "clusters[%d] (%s): enabled must be true or false." $i $name) -}}
+{{- end -}}
+{{- $enabled = eq $enabledWord "true" -}}
+{{- end -}}
 {{- if and $enabled (eq $host "") -}}
 {{- $host = $name -}}
 {{- if has $vis (list "hidden" "remote-sar") -}}

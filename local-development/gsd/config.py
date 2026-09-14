@@ -984,7 +984,16 @@ def load_settings(path: str | Path) -> Settings:
                 f"{where}: insecureSkipVerify and caBundleFile are mutually exclusive"
             )
 
-        enabled = bool(entry.get("enabled", True))
+        # A word, not truthiness: `bool("false")` is True, so a quoted `enabled: "false"` — what
+        # a templating system emits — enabled the cluster, and since D2 the first ENABLED entry
+        # is the authorization host (review of D2, second pass, Codex; measured).
+        raw_enabled = entry.get("enabled", True)
+        if isinstance(raw_enabled, bool):
+            enabled = raw_enabled
+        elif isinstance(raw_enabled, str) and raw_enabled.strip() in ("true", "false"):
+            enabled = raw_enabled.strip() == "true"
+        else:
+            raise ConfigError(f"{where}: enabled must be true or false")
         # Strict, like every other cluster key: a typo here ("self_only", "Hidden") must not
         # silently become the default, in either direction.
         # Blank and whitespace-only are "unset" — the chart's guard tolerates them and renders

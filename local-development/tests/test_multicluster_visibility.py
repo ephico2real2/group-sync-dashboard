@@ -353,6 +353,25 @@ def test_access_control_section_11_names_only_routes_the_app_serves():
     assert not unknown, f"§11 names routes the app does not serve: {sorted(unknown)}"
 
 
+def test_access_control_decision_diagram_cites_definitions_not_line_numbers():
+    """Codex, review D2 second pass: §5's diagram still wrote `api.py:244` beside functions that
+    had moved hundreds of lines — the line-number rot the citation rule exists to end, surviving
+    inside a code block the rule does not scan. Every anchor in the diagram is a definition."""
+    import pathlib
+    import re
+    root = pathlib.Path(__file__).resolve().parents[2]
+    text = (root / "docs" / "ACCESS_CONTROL.md").read_text()
+    section = text.split("## 5. How a request becomes a decision", 1)[1].split("\n## ", 1)[0]
+    diagram = section.split("```", 2)[1]          # the fenced decision diagram alone
+    assert not re.findall(r"\b(?:api|config)\.py:\d+\b", diagram), "a line-number citation is back"
+    cited = re.findall(r"gsd/(api|config)\.py#([A-Za-z_.]+)", diagram)
+    assert len(cited) >= 6, cited
+    for module, symbol in cited:
+        source = (root / "local-development" / "gsd" / f"{module}.py").read_text()
+        name = symbol.rsplit(".", 1)[-1]
+        assert re.search(rf"^\s*def {re.escape(name)}\(", source, re.M), f"{module}.py has no def {name}"
+
+
 class TestConfigValidation:
     BASE = """
 clusters:
@@ -399,6 +418,25 @@ clusters:
         settings = self._load(tmp_path, self.BASE + f"    {key}: {yaml_value}\n")
         assert settings.cluster_policy("east") == ("self-only", "none")
         assert getattr(settings.cluster("east"), key) is None
+
+    @pytest.mark.parametrize("spelling", ("false", '"false"', "'false'", " false "))
+    def test_enabled_is_a_word_so_a_quoted_false_disables(self, tmp_path, spelling):
+        """Codex, review D2 second pass (its most important finding): `bool("false")` is True, so a
+        quoted `enabled: "false"` — what a templating system emits — enabled the entry, and since
+        D2 the first ENABLED entry is the authorization host. Measured: the quoted first entry
+        became the host."""
+        text = self.BASE.replace("    tokenEnv: X\n  - name: east", f"    tokenEnv: X\n    enabled: {spelling}\n  - name: east", 1)
+        s = self._load(tmp_path, text)
+        assert s.cluster("host").enabled is False
+        assert s.host_cluster().name == "east"
+
+    @pytest.mark.parametrize("bad", ("maybe", "1", "0", '"yes"', "[true]", "{a: 1}"))
+    def test_enabled_refuses_every_other_spelling_by_name(self, tmp_path, bad):
+        """(An unquoted `yes` is a YAML 1.1 boolean and arrives as True — the loader's doing, not
+        a spelling this parser sees.)"""
+        text = self.BASE.replace("    tokenEnv: X\n  - name: east", f"    tokenEnv: X\n    enabled: {bad}\n  - name: east", 1)
+        with pytest.raises(ConfigError, match="enabled must be true or false"):
+            self._load(tmp_path, text)
 
     def test_a_disabled_first_entry_is_not_the_host(self, tmp_path):
         text = self.BASE.replace("    tokenEnv: X\n  - name: east",

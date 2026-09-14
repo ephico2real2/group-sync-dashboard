@@ -3989,6 +3989,23 @@ async function refresh(opts = {}) {
     if ("usage" in got) data.usage = got.usage;
     if ("reportCatalog" in got) data.reportCatalog = got.reportCatalog;
     if ("reportRuns" in got) data.reportRuns = got.reportRuns;
+    // The report requests above were chosen on the PREVIOUS cycle's host tier, before this
+    // cycle's whoami arrived — the same race the Access granted tab reconciles below. A reader
+    // promoted mid-session otherwise saw "Loading…" for a whole cycle; a demoted one must not
+    // keep the catalogue, nor lend a ticket minted under the old identity (review of D2, second
+    // pass, Codex; measured: zero report calls on the promoting refresh).
+    if (view.page === "reports" && reportingEnabled() && got.whoami) {
+      if (narrowedOnHost()) {
+        data.reportCatalog = null; data.reportRuns = null; data.reportTicket = null;
+      } else if (got.whoami.authenticated && !("reportCatalog" in got)) {
+        data.reportTicket = null;
+        const [catalog, runs] = await Promise.all([
+          guard403(reportGet("/api/reports")), guard403(reportGet("/api/runs?limit=50")),
+        ]);
+        if (superseded()) return;
+        data.reportCatalog = catalog; data.reportRuns = runs;
+      }
+    }
     if ("operatorConfigs" in got) data.operatorConfigs = got.operatorConfigs;
     if ("userBindings" in got) data.userBindings = got.userBindings;
     // An AUTOMATIC refresh that changed nothing must not touch the DOM. render() replaces #main

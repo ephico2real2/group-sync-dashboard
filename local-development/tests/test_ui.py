@@ -3050,6 +3050,28 @@ class TestAccessGrantedSelfTier:
         assert 'view.page === "reports" && reportingEnabled() && !narrowedOnHost()' in src
         assert 'view.page === "reports" && reportingEnabled() && !narrowedReader()' not in src
 
+    def test_reports_catch_up_on_the_refresh_that_promotes_the_host_tier(self, page, scoped_server):
+        """Codex, review D2 second pass: refresh() chose its report requests on the PREVIOUS
+        cycle's host tier, so a reader promoted mid-session saw "Loading…" for a whole cycle
+        (measured: zero report calls on the promoting refresh). The same catch-up as the Access
+        granted tab: reconcile against the whoami that just arrived."""
+        p = _open_as(page, scoped_server, "alice")
+        p.evaluate("""() => {
+          view.page = "reports";
+          data.version.features.reporting = true;
+          data.reportCatalog = null; data.reportRuns = null;
+          window.__reportGets = [];
+          window.reportGet = async (path) => { window.__reportGets.push(path); return path === "/api/reports" ? { reports: [] } : { runs: [] }; };
+          render();
+        }""")
+        assert p.evaluate("() => narrowedOnHost()") is True
+        p.set_extra_http_headers({"X-Forwarded-User": "root"})
+        p.evaluate("() => refresh()")
+        p.wait_for_function("() => data.whoami && data.whoami.visibility && data.whoami.visibility.scope === 'all'", timeout=10_000)
+        p.wait_for_function("() => window.__reportGets.length >= 2", timeout=10_000)
+        assert p.evaluate("() => window.__reportGets") == ["/api/reports", "/api/runs?limit=50"]
+        assert p.evaluate("() => data.reportCatalog !== null") is True
+
     def test_reports_follow_the_hosts_headline_not_the_selected_remote(self, page, scoped_server):
         """Cursor, review D2: reports are documents over the whole snapshot, minted on the host's
         tier by /api/report/ticket; the tab read the SELECTED cluster's decision, so a host

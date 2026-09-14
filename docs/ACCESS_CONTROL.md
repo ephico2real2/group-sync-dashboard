@@ -199,25 +199,25 @@ narrower tier, because a tier that hides the reader's own access path has nothin
 ```
   request
     │
-    ├─ trusted_viewer(request)                  api.py:244   the header, or None
+    ├─ gsd/api.py#trusted_viewer                       the header, or None
     │
-    ├─ settings.cluster_policy(cluster)         config.py    inherit | self-only | hidden | remote-sar
+    ├─ gsd/config.py#Settings.cluster_policy           inherit | self-only | hidden | remote-sar
     │
-    ├─ viewer_scope(request, cluster_id)        api.py:254   -> (viewer, "all" | "self")
+    ├─ gsd/api.py#viewer_scope  (request, cluster_id)  -> (viewer, "all" | "self")
     │     restrictions off?                     ──────────►  "all"
     │     no viewer / no resolver?              ──────────►  "self"
     │     resolver raises or answers junk?      ──────────►  "self"
     │     resolver answers exactly "all"?       ──────────►  "all"
     │
-    ├─ require_admin_tier(request, cluster_id)  api.py:340   403 unless scope == "all"
+    ├─ gsd/api.py#require_admin_tier  (request, cluster_id)   403 unless scope == "all"
     │     used by: bindings/findings, operator-configs, mint ticket (/api/report/ticket)
     │
-    ├─ usage_scope(request)                     api.py:284   the SECOND, independent tier
+    ├─ gsd/api.py#usage_scope                          the SECOND, independent tier
     │     userActivity.visibility == all?       ──────────►  "all"   (blunt override, wins)
     │     usage resolver answers "all"?         ──────────►  "all"
     │     anything else                         ──────────►  "self"
     │
-    └─ require_viewer(viewer)                   api.py:325   403 when there is no identity
+    └─ gsd/api.py#require_viewer  (viewer, cluster_id)  403 when there is no identity
 ```
 
 **Only the exact string `"all"` widens anything.** Every other outcome is `self`. That is the whole
