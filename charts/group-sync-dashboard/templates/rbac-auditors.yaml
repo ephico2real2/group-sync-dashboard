@@ -4,12 +4,20 @@
   createLocal is true (a synced group is owned by the group-sync operator; co-creating it locally
   would fight the sync). YAML comments use '#'.
 */ -}}
-{{- if and (hasKey .Values.rbacAuditors "enabled") (not (kindIs "bool" .Values.rbacAuditors.enabled)) }}{{ fail "rbacAuditors.enabled must be true or false" }}{{ end }}
-{{- if .Values.rbacAuditors.enabled }}
-{{- $createRole := .Values.rbacAuditors.createClusterRole }}
-{{- if and (hasKey .Values.rbacAuditors "createClusterRole") (not (kindIs "bool" $createRole)) }}{{ fail "rbacAuditors.createClusterRole must be true or false" }}{{ end }}
-{{- if not (gt (len (.Values.rbacAuditors.groups | default list)) 0) }}{{ fail "rbacAuditors.enabled=true requires at least one rbacAuditors.groups entry" }}{{ end }}
-{{- $existing := trim (toString (.Values.rbacAuditors.existingClusterRole | default "")) }}
+{{- /* Type guards, in dependency order (review #110 pass 2, F2): a value must be the right TYPE
+   before it is used, or a null/bool/number reaches Go and prints a raw error instead of the remedy.
+   `enabled`/`createClusterRole` are checked with kindIs (a YAML null is invalid — the values.yaml
+   default already supplies the bool), and `groups` is checked to be a list BEFORE `len`. */ -}}
+{{- $auditors := .Values.rbacAuditors }}
+{{- if not (kindIs "map" $auditors) }}{{ fail "rbacAuditors must be a map" }}{{ end }}
+{{- if not (kindIs "bool" $auditors.enabled) }}{{ fail "rbacAuditors.enabled must be true or false" }}{{ end }}
+{{- if $auditors.enabled }}
+{{- $createRole := $auditors.createClusterRole }}
+{{- if not (kindIs "bool" $createRole) }}{{ fail "rbacAuditors.createClusterRole must be true or false" }}{{ end }}
+{{- $groups := $auditors.groups }}
+{{- if not (kindIs "slice" $groups) }}{{ fail "rbacAuditors.groups must be a list" }}{{ end }}
+{{- if eq (len $groups) 0 }}{{ fail "rbacAuditors.enabled=true requires at least one rbacAuditors.groups entry" }}{{ end }}
+{{- $existing := trim (toString ($auditors.existingClusterRole | default "")) }}
 {{- if and (not $createRole) (eq $existing "") }}
 {{-   fail "rbacAuditors.createClusterRole=false requires rbacAuditors.existingClusterRole (otherwise the Binding names a ClusterRole this chart does not render)." }}
 {{- end }}
@@ -46,9 +54,12 @@ rules:
     verbs: ["get", "list"]
 {{- end }}
 {{- $roleName := $existing | default (printf "%s-report-auditor" (include "gsd.fullname" .) | trunc 253 | trimSuffix "-") }}
-{{- if not (kindIs "slice" (.Values.rbacAuditors.groups | default list)) }}{{ fail "rbacAuditors.groups must be a list" }}{{ end }}
-{{- range $g := .Values.rbacAuditors.groups }}
-{{-   if or (not (kindIs "map" $g)) (not $g.name) (eq (trim (toString $g.name)) "") }}{{ fail "rbacAuditors.groups[]: every entry needs a non-empty name" }}{{ end }}
+{{- $seen := dict }}
+{{- range $i, $g := $groups }}
+{{-   if not (kindIs "map" $g) }}{{ fail (printf "rbacAuditors.groups[%d] must be a map" $i) }}{{ end }}
+{{-   if or (not (hasKey $g "name")) (not (kindIs "string" $g.name)) (eq (trim $g.name) "") }}{{ fail (printf "rbacAuditors.groups[%d].name must be a non-empty string" $i) }}{{ end }}
+{{-   if hasKey $seen $g.name }}{{ fail (printf "rbacAuditors.groups[%d].name %q is duplicated; configure each group once" $i $g.name) }}{{ end }}
+{{-   $_ := set $seen $g.name true }}
 {{-   if and (hasKey $g "createLocal") (not (kindIs "bool" $g.createLocal)) }}{{ fail (printf "rbacAuditors.groups[%s].createLocal must be true or false" $g.name) }}{{ end }}
 {{-   if $g.createLocal }}
 ---
@@ -68,8 +79,11 @@ metadata:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  # CRB names are DNS-1123 (253). Group names are not (LDAP DNs, underscores). Hash the group.
-  name: {{ printf "%s-ra-%s" (include "gsd.fullname" $) (sha256sum $g.name | trunc 12) | trunc 253 | trimSuffix "-" }}
+  # CRB names are DNS-1123 (253); group names are not (LDAP DNs, underscores), so hash them. Hash the
+  # ROLE too (review #110 pass 2, F1): roleRef is IMMUTABLE, so switching from the chart role to an
+  # existingClusterRole must produce a DIFFERENT binding name — Helm then replaces the binding instead
+  # of attempting an immutable patch that the API server rejects on upgrade.
+  name: {{ printf "%s-ra-%s" (include "gsd.fullname" $) (list $g.name $roleName | toJson | sha256sum | trunc 12) | trunc 253 | trimSuffix "-" }}
   labels:
     {{- include "gsd.labels" $ | nindent 4 }}
   annotations:

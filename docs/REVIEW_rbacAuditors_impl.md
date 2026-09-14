@@ -64,3 +64,29 @@ deliberate). Two "not asked" findings (the type guards, the empty-groups guard) 
 implementation matches the reviewed design; the corrections harden the input validation and the test.
 Re-validated: `helm lint`; the twenty-case `TestReportingAuditors`; `test_chart_versions`. A second pass
 on the fixed head follows.
+
+## Second pass — the fixed head, same models
+
+Cursor confirmed the round-1 fixes hold (a byte-identical default render but the chart-version label, the
+padded-`groups[1]` case fails cleanly, the string cases fail). Codex requested changes and found a
+genuinely new high-severity defect that pass 1 missed:
+
+- **F1 (High) — the binding name hashed only the group, so `roleRef` (immutable) changed on a role
+  switch and broke `helm upgrade`.** Moving from the chart role to an `existingClusterRole` kept the same
+  binding `metadata.name` while changing `roleRef` from `<fullname>-report-auditor` to the external role;
+  the API server rejects an immutable-field patch, so the upgrade fails. **Accepted:** the name now hashes
+  the group AND the role (`list $g.name $roleName | toJson | sha256sum | trunc 12`), so a role change
+  yields a new name and Helm replaces the binding. Tested (`test_switching_to_an_external_role_changes_the_binding_name`).
+- **F2 (Medium) — the type guards ran in the wrong order and mishandled null.** The empty-groups `len`
+  ran before the list-type check (a `groups: true` printed a raw Go `len of type bool` error), and null
+  values bypassed the guards. **Accepted:** a clean cascade — `rbacAuditors` is a map, `enabled` a bool
+  (a YAML null is invalid; the values default supplies the bool), `createClusterRole` a bool, `groups` a
+  list *before* `len`, then the empty check.
+- **F3 (Medium) — duplicate group names rendered two identically-named bindings.** **Accepted:** a `$seen`
+  dict rejects a repeated name with its index.
+- **F4 (Medium) — the resource pin did not reject an `aggregationRule`,** whose controller can replace the
+  pinned rules. **Accepted:** the test now asserts no `aggregationRule`.
+- **F5 (Low) — the class had 12 cases, not the 13 I claimed.** It now has 14 with the additions above.
+
+Every fix carries a render or test check. The second pass earned its keep: F1 is an upgrade-blocking
+defect neither pass 1 nor the author caught.

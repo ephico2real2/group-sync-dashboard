@@ -1736,6 +1736,8 @@ class TestReportingAuditors:
             ("rbac.authorization.k8s.io", "roles"), ("rbac.authorization.k8s.io", "rolebindings"),
             ("rbac.authorization.k8s.io", "clusterroles"), ("rbac.authorization.k8s.io", "clusterrolebindings"),
         }, f"the audit role must read only identities and RBAC, got {granted}"
+        assert "aggregationRule" not in role, ("the fixed auditor role must not aggregate — an "
+            "aggregationRule lets a controller replace these pinned rules with wider selected ones")
 
     def test_ldap_dn_group_name_is_hashed_into_the_binding_name(self):
         ok, docs, out = _auditor_docs(**{"rbacAuditors.enabled": "true",
@@ -1782,3 +1784,27 @@ class TestReportingAuditors:
                 "--set", "rbacAuditors.groups[0].name=a"]
         done = subprocess.run(args, capture_output=True, text=True)
         assert done.returncode != 0 and "createClusterRole must be true or false" in done.stdout + done.stderr
+
+    def test_switching_to_an_external_role_changes_the_binding_name(self):
+        # roleRef is IMMUTABLE (#110 pass 2, F1): the binding name hashes the role too, so moving from
+        # the chart role to an existingClusterRole yields a NEW name — Helm replaces, not patches.
+        _, chart_docs, _ = _auditor_docs(**{"rbacAuditors.enabled": "true", "rbacAuditors.groups[0].name": "a"})
+        _, ext_docs, _ = _auditor_docs(**{"rbacAuditors.enabled": "true", "rbacAuditors.createClusterRole": "false",
+                                          "rbacAuditors.existingClusterRole": "platform-reader",
+                                          "rbacAuditors.groups[0].name": "a"})
+        chart_name = next(d for d in chart_docs if d["kind"] == "ClusterRoleBinding")["metadata"]["name"]
+        ext_name = next(d for d in ext_docs if d["kind"] == "ClusterRoleBinding")["metadata"]["name"]
+        assert chart_name != ext_name, "the binding name must change with the role (roleRef is immutable)"
+
+    def test_a_non_list_groups_and_bad_entries_reach_the_specific_guard(self):
+        cases = [
+            ({"enabled": True, "groups": True}, "rbacAuditors.groups must be a list"),
+            ({"enabled": True, "groups": [{"name": 123}]}, "must be a non-empty string"),
+            ({"enabled": True, "groups": [{"name": "same"}, {"name": "same"}]}, "is duplicated"),
+            ({"enabled": None}, "enabled must be true or false"),
+        ]
+        for auditors, message in cases:
+            done = subprocess.run(
+                ["helm", "template", "t", str(CHART), "--set", "ingress.host=t.example.com", "-f", "-"],
+                input=yaml.safe_dump({"rbacAuditors": auditors}), capture_output=True, text=True)
+            assert done.returncode != 0 and message in done.stdout + done.stderr, (auditors, done.stdout + done.stderr)[-1][-400:]
