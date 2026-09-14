@@ -135,6 +135,9 @@ REVIEW_ARTIFACTS = (
     # PR #95's record (the change-log folder, the skills and settings into git): quotes the
     # skill's old Step 4 command and the log's old heading verbatim, which is the point.
     "REVIEW_session_tooling.md",
+    # The reporting-extension design round 1: its findings quote the design's old snippets
+    # (ReportError, NS_CAP, the wrong-pod env) verbatim, which is the point of a review record.
+    "REVIEW_reporting_ext_design.md",
     # The log-level contract review. Same reason, plus a worked example of why the exemption is
     # right: it cites `README.md#Configuration`, a heading that does not exist — and the finding
     # attached to that citation was correct and was applied. Rewriting the citation would not make

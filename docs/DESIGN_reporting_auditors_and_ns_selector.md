@@ -1,8 +1,10 @@
 # Reporting extension — auditor groups and namespace-mnemonic selection (design + technical spec)
 
-**Status: proposed (design round 1).** A feature request that **extends** the existing reporting and
-access-control design; it is not a new module. It reads on top of, and defers to, two maintained
-records:
+**Status: proposed — round 1 reviewed, corrections folded in.** The round-1 adversarial review record is
+`docs/REVIEW_reporting_ext_design.md` (both reviewers, every load-bearing claim re-checked against the
+code). The snippets below are the corrected versions; where a correction is load-bearing it says
+"(round 1: …)". A feature request that **extends** the existing reporting and access-control design; it
+is not a new module. It reads on top of, and defers to, two maintained records:
 
 - `docs/DESIGN_reporting_service.md` — the two-pod report service, the ticket, the snapshot, the
   catalogue. Unchanged by this feature except where §3 and §4 below say so.
@@ -158,41 +160,52 @@ rbacAuditors:
   #   createLocal: false           # false: an LDAP sync owns the Group. true: the chart creates a local Group.
 ```
 
-### 2.3 templates/rbac-auditors.yaml (new file — full)
+### 2.3 templates/rbac-auditors.yaml (new file — full, round-1 corrected)
+
+Round 1 corrections, all accepted: read the gate through the chart's nil-safe SAR helpers, not bare
+`.Values.visibility.adminSar` (a present-but-nil `adminSar:` panics); guard the no-role case
+(`createClusterRole=false` with an empty `existingClusterRole` would bind a role the chart does not
+render); the ClusterRoleBinding `metadata.name` must be DNS-1123 while a group name is not (LDAP DNs,
+underscores), so **hash the group** into the name and keep the real name only in `subjects[]`; and **omit
+`users:`** on a `createLocal` Group (a templated `users: []` is reset on every `helm upgrade`, wiping any
+membership). YAML comments use `#`, per the chart's convention.
 
 ```yaml
 {{- /*
   Reporting auditors (docs/DESIGN_reporting_auditors_and_ns_selector.md §2). Opt-in read-only
   identity+RBAC role, and a ClusterRoleBinding per configured group. The Group is created only when
   createLocal is true (a synced group is owned by the group-sync operator; co-creating it locally
-  would fight the sync). YAML comments use '#', per the chart's convention (memory: yaml-comments-use-hash).
+  would fight the sync). YAML comments use '#'.
 */ -}}
 {{- if .Values.rbacAuditors.enabled }}
-{{- $admin := .Values.visibility.adminSar }}
-{{- /*
-  The audit role MUST cover the report gate, or members are bound but cannot run reports. Assert it
-  before rendering. The rendered role grants list+get on rbac.authorization.k8s.io/{roles,rolebindings,
-  clusterroles,clusterrolebindings} and user.openshift.io/{users,groups}; the default adminSar
-  (list clusterrolebindings) is covered. If an operator retunes adminSar to something outside this set,
-  fail the render with the remedy rather than shipping a group that silently cannot report.
-*/ -}}
-{{- if .Values.rbacAuditors.createClusterRole }}
+{{- if not (kindIs "bool" .Values.rbacAuditors.enabled) }}{{ fail "rbacAuditors.enabled must be true or false" }}{{ end }}
+{{- $createRole := .Values.rbacAuditors.createClusterRole }}
+{{- $existing := trim (toString (.Values.rbacAuditors.existingClusterRole | default "")) }}
+{{- if and (not $createRole) (eq $existing "") }}
+{{-   fail "rbacAuditors.createClusterRole=false requires rbacAuditors.existingClusterRole (otherwise the Binding names a ClusterRole this chart does not render)." }}
+{{- end }}
+{{- if and $createRole (ne $existing "") }}
+{{-   fail "rbacAuditors.createClusterRole=true and rbacAuditors.existingClusterRole are mutually exclusive: either render the chart role, or bind one you made elsewhere." }}
+{{- end }}
+{{- if $createRole }}
+{{-   $g := include "gsd.visibilitySarApiGroup" . }}
+{{-   $r := include "gsd.visibilitySarResource" . }}
+{{-   $v := include "gsd.visibilitySarVerb" . }}
 {{-   $covered := dict
         "rbac.authorization.k8s.io/roles" true "rbac.authorization.k8s.io/rolebindings" true
         "rbac.authorization.k8s.io/clusterroles" true "rbac.authorization.k8s.io/clusterrolebindings" true
         "user.openshift.io/users" true "user.openshift.io/groups" true }}
-{{-   $key := printf "%s/%s" (trim (toString $admin.apiGroup)) (trim (toString $admin.resource)) }}
-{{-   $verb := trim (toString $admin.verb) }}
+{{-   $key := printf "%s/%s" $g $r }}
 {{-   if not (hasKey $covered $key) }}
-{{-     fail (printf "rbacAuditors.createClusterRole=true but visibility.adminSar (%s, verb %s) is not covered by the read-only audit role. Either set rbacAuditors.existingClusterRole to a role that grants it, or add it to templates/rbac-auditors.yaml and this guard." $key $verb) }}
+{{-     fail (printf "rbacAuditors.createClusterRole=true but visibility.adminSar (%s, verb %s) is not covered by the read-only audit role. Set rbacAuditors.existingClusterRole to a role that grants it, or add it to templates/rbac-auditors.yaml and this guard." $key $v) }}
 {{-   end }}
-{{-   if not (or (eq $verb "get") (eq $verb "list")) }}
-{{-     fail (printf "rbacAuditors: visibility.adminSar.verb is %q, a non-read verb the read-only audit role will never grant. Retune adminSar to a read verb or use rbacAuditors.existingClusterRole." $verb) }}
+{{-   if not (or (eq $v "get") (eq $v "list")) }}
+{{-     fail (printf "rbacAuditors: visibility.adminSar.verb is %q, a non-read verb the read-only audit role will never grant. Retune adminSar to a read verb or use rbacAuditors.existingClusterRole." $v) }}
 {{-   end }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: {{ include "gsd.fullname" . }}-report-auditor
+  name: {{ printf "%s-report-auditor" (include "gsd.fullname" .) | trunc 253 | trimSuffix "-" }}
   labels:
     {{- include "gsd.labels" . | nindent 4 }}
 rules:
@@ -203,41 +216,50 @@ rules:
     resources: ["roles", "rolebindings", "clusterroles", "clusterrolebindings"]
     verbs: ["get", "list"]
 {{- end }}
-{{- $roleName := .Values.rbacAuditors.existingClusterRole | default (printf "%s-report-auditor" (include "gsd.fullname" .)) }}
+{{- $roleName := $existing | default (printf "%s-report-auditor" (include "gsd.fullname" .) | trunc 253 | trimSuffix "-") }}
+{{- if not (kindIs "slice" (.Values.rbacAuditors.groups | default list)) }}{{ fail "rbacAuditors.groups must be a list" }}{{ end }}
 {{- range $g := .Values.rbacAuditors.groups }}
-{{-   if not $g.name }}{{ fail "rbacAuditors.groups[]: every entry needs a name" }}{{ end }}
+{{-   if or (not (kindIs "map" $g)) (not $g.name) (eq (trim (toString $g.name)) "") }}{{ fail "rbacAuditors.groups[]: every entry needs a non-empty name" }}{{ end }}
+{{-   if and (hasKey $g "createLocal") (not (kindIs "bool" $g.createLocal)) }}{{ fail (printf "rbacAuditors.groups[%s].createLocal must be true or false" $g.name) }}{{ end }}
 {{-   if $g.createLocal }}
 ---
 apiVersion: user.openshift.io/v1
 kind: Group
 metadata:
-  name: {{ $g.name }}
+  name: {{ $g.name | quote }}
   labels:
     {{- include "gsd.labels" $ | nindent 4 }}
   annotations:
-    # A placeholder membership managed outside the chart. Do NOT set createLocal on a group the
-    # group-sync operator syncs — the sync would overwrite this object and Helm would see drift.
-    "group-sync-dashboard/managed": "local"
-users: []
+    # Membership is NOT in this manifest. Do not set createLocal on a group-sync-operator group —
+    # the next sync overwrites the object and Helm reports drift.
+    group-sync-dashboard/managed: local
+# users omitted on purpose: a templated `users: []` is reset on every helm upgrade.
 {{-   end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: {{ include "gsd.fullname" $ }}-report-auditor-{{ $g.name }}
+  # CRB names are DNS-1123 (253). Group names are not (LDAP DNs, underscores). Hash the group.
+  name: {{ printf "%s-ra-%s" (include "gsd.fullname" $) (sha256sum $g.name | trunc 12) | trunc 253 | trimSuffix "-" }}
   labels:
     {{- include "gsd.labels" $ | nindent 4 }}
+  annotations:
+    group-sync-dashboard/auditor-group: {{ $g.name | quote }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: {{ $roleName }}
+  name: {{ $roleName | quote }}
 subjects:
   - apiGroup: rbac.authorization.k8s.io
     kind: Group
-    name: {{ $g.name }}
+    name: {{ $g.name | quote }}
 {{- end }}
 {{- end }}
 ```
+
+Note for Issue A: `rbacAuditors.enabled: false` is a new `false` default, so it joins `KEPT_OFF` in
+`local-development/tests/test_values_defaults.py` (that test asserts the false-default set exactly) with a
+reason, and gets a chart README row. There is no `values.schema.json` in the tree.
 
 ### 2.4 What this does NOT change
 
@@ -273,11 +295,11 @@ the one extra guard they need (size).
 ### 3.2 The flow (ASCII)
 
 ```
- Helm: reporting.namespaceMetadata.labels = [company.net/mnemonic, …]   (captured keys)
-       reporting.namespaceSelector.label   = company.net/mnemonic       (the selector's key)
-        │  (GSD_NS_METADATA_LABELS + GSD_NS_SELECTOR_LABEL on the Deployment; Settings reads them)
+ Helm: reporting.namespaceMetadata.labels = [company.net/mnemonic, …]   (captured keys — DASHBOARD pod)
+       reporting.namespaceSelector.label   = company.net/mnemonic       (selector key — REPORT pod)
+        │  (GSD_NS_METADATA_LABELS on the dashboard Deployment; GSD_REPORT_NS_SELECTOR_LABEL on the report Deployment)
         ▼
- poller.fetch_namespaces  ──reads metadata.labels for each CAPTURED key──▶  store.replace_namespaces
+ poller.fetch_namespaces(label_keys)  ──reads metadata.labels for each CAPTURED key──▶  store.replace_namespaces
         │                                                            │  child table cluster_namespace_label(name,key,value)
         ▼                                                            ▼    replaced whole each cycle, beside cluster_namespace
  dashboard app                                            report snapshot copy (VACUUM INTO, unchanged)
@@ -302,20 +324,47 @@ the one extra guard they need (size).
 `metadata` dict of `{key: value}` for exactly the configured keys that are present — never the whole
 label map. Full replacement of the per-record mapping:
 
+Round 1: `ClusterClient` has **no `self.settings`** (`__init__(cluster, timeout=15.0)`), so the keys are a
+**parameter**, threaded from `Settings.namespace_metadata_labels` through `refresh_bindings` to the call.
+The method builds `records` with `records.append`, skipping nameless items:
+
 ```python
-# in PollClient.fetch_namespaces (local-development/gsd/kube.py), where each item is mapped:
-#   OLD: {"name": …, "created_at": …, "phase": …}
-keys = self.settings.namespace_metadata_labels        # e.g. ["company.net/mnemonic"]; [] disables capture
-labels = (obj.get("metadata") or {}).get("labels") or {}
-rows.append({
-    "name": (obj.get("metadata") or {}).get("name"),
-    "created_at": (obj.get("metadata") or {}).get("creationTimestamp"),
-    "phase": (obj.get("status") or {}).get("phase"),
-    # Only the CONFIGURED keys that are present, so the captured set is bounded and predictable. Adding
-    # a key is a values change, no migration. Annotations, when enabled, are merged the same way with a
-    # length guard (they can be large; a label is capped at 63 chars by the API, an annotation is not).
-    "metadata": {k: labels[k] for k in keys if k in labels},
-})
+# local-development/gsd/kube.py — ClusterClient.fetch_namespaces gains a label_keys argument:
+def fetch_namespaces(self, label_keys: list[str] | None = None) -> list[dict] | None:
+    keys = list(label_keys or ())
+    with self._client() as client:
+        try:
+            items = self._list_all(client, NAMESPACE_API)
+        except ClusterError as exc:
+            if exc.outcome == FORBIDDEN and NAMESPACE_API in exc.message:
+                log.debug("%s: not permitted to list namespaces — the namespace report cannot "
+                          "attest absence", self.cluster.name)
+                return None
+            raise
+    records: list[dict] = []
+    for obj in items:
+        meta = obj.get("metadata") or {}
+        name = meta.get("name")
+        if not name:
+            continue
+        labels = meta.get("labels") or {}
+        # Only the CONFIGURED keys that are present — bounded and predictable; adding a key is a
+        # values change, no migration. (Annotations, when later enabled, merge the same way.)
+        records.append({
+            "name": name,
+            "created_at": meta.get("creationTimestamp"),
+            "phase": (obj.get("status") or {}).get("phase"),
+            "metadata": {k: labels[k] for k in keys if k in labels},
+        })
+    log.debug("fetched %d namespaces from %s", len(records), self.cluster.name)
+    return records
+
+# local-development/gsd/poller.py — refresh_bindings threads the keys (it has no Settings):
+def refresh_bindings(store, cluster, timeout, audit_mode="off", audit_max_per_cycle=20,
+                     namespaces_read=False, namespace_metadata_labels=None):
+    ...
+    namespaces = fetch_namespaces(namespace_metadata_labels)   # was fetch_namespaces()
+# and the Poller call site passes namespace_metadata_labels=self.settings.namespace_metadata_labels
 ```
 
 ### 3.4 Data path — store the metadata key/value (store.py, one new table)
@@ -323,28 +372,35 @@ rows.append({
 A child table keyed by `(cluster_id, name, key)` — extensible to any captured key with no further
 migration, and it replaces whole each cycle alongside `cluster_namespace`:
 
-```python
-# schema (store.py, beside cluster_namespace):
+Round 1: `replace_namespaces` **already** wraps its DELETE+INSERT+status in one `with self._write()`, so
+the child-table SQL goes **inside that same block** — not a second transaction — or a report can read a
+namespace whose metadata was deleted but not yet re-inserted. The table ships both as module-level schema
+and as a new numbered `_MIGRATIONS` entry (12), idempotent (`CREATE TABLE IF NOT EXISTS`, no `ALTER`).
+
+```sql
+-- store.py, module schema and migration 12:
 CREATE TABLE IF NOT EXISTS cluster_namespace_label (
     cluster_id TEXT NOT NULL,
     name       TEXT NOT NULL,
     key        TEXT NOT NULL,
     value      TEXT NOT NULL,
-    PRIMARY KEY (cluster_id, name, key)
+    PRIMARY KEY (cluster_id, name, key),
+    FOREIGN KEY(cluster_id, name) REFERENCES cluster_namespace(cluster_id, name) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_cnl_key_value ON cluster_namespace_label(cluster_id, key, value);
+```
 
-# replace_namespaces: after replacing cluster_namespace, replace this cluster's label rows in the SAME
-# transaction, so a report never sees a namespace with stale metadata or a half-written cycle:
+```python
+# store.py — replace_namespaces, the child rows INSIDE the existing `with self._write() as conn:`
 conn.execute("DELETE FROM cluster_namespace_label WHERE cluster_id=?", (cluster_id,))
 conn.executemany(
     "INSERT INTO cluster_namespace_label(cluster_id, name, key, value) VALUES(?,?,?,?)",
     [(cluster_id, n["name"], k, v)
-     for n in namespaces for k, v in (n.get("metadata") or {}).items() if v is not None and v != ""])
+     for n in rows for k, v in (n.get("metadata") or {}).items() if v is not None and v != ""])
 ```
 
-The migration is only the `CREATE TABLE`/`CREATE INDEX` (idempotent); no `ALTER`, and an old snapshot
-without the table degrades to "no values" rather than crashing (§3.5 guards with `has_table`).
+An old snapshot without the table degrades to "no values" rather than crashing (§3.5 guards with
+`has_table`, which exists; `has_column` is neither present nor needed).
 
 ### 3.5 Snapshot — expose the values and the expansion (reporting/snapshot.py)
 
@@ -383,89 +439,134 @@ params=(
               required=False),
     ParamSpec("include_members", "bool", False, "Expand group rosters. Off by default …"),
 )
+```
 
-# build(): resolve names from mnemonics first, else the explicit list; exactly one must be non-empty.
+Round 1, the validation-timing correctness point: the endpoint documents a **422** for bad params, but
+validation inside `build()` runs after the 202 (it becomes a *failed run*). So the pure-input checks move
+to a **ReportSpec `validator` hook** run in `validate_params` at the endpoint (422); only the
+snapshot-dependent check (a mnemonic expanding to nothing) stays in `build()`. `ReportError` does not
+exist — the type is `ValidationError` (`catalogue/common.py`); the cap constant is `MAX_NAMESPACES`;
+`RunContext` gains `namespace_selector_label` (and `ReportSettings` supplies it — §3.8).
+
+```python
+# namespace_access.py — the validator runs at the endpoint (422 on bad input):
+def _validate_selection(params: dict) -> None:
+    mnemonics = params.get("mnemonics") or []
+    names = params.get("namespaces") or []
+    if mnemonics and names:
+        raise ValidationError("choose namespaces by mnemonic OR by explicit name, not both")
+    if not mnemonics and not names:
+        raise ValidationError("select at least one namespace, by mnemonic or by explicit name")
+    if len(mnemonics) > MAX_NAMESPACES:
+        raise ValidationError(f"at most {MAX_NAMESPACES} mnemonic values per report")
+# SPEC = ReportSpec(..., validator=_validate_selection); validate_params calls spec.validator(out).
+
+# build(): the snapshot-dependent expansion; a failed run (needs the snapshot) is correct here.
 def build(snap, ctx, params):
     cid = ctx.cluster["id"]
     mnemonics = params.get("mnemonics") or []
     names = params.get("namespaces") or []
-    if mnemonics and names:
-        raise ReportError("choose namespaces by mnemonic OR by explicit name, not both")
     if mnemonics:
         names = snap.namespaces_for_metadata(cid, ctx.namespace_selector_label, mnemonics)
         if not names:
-            raise ReportError(f"no namespace carries the selector label with value(s) {', '.join(mnemonics)}")
-    if not names:
-        raise ReportError("select at least one namespace (by mnemonic or by name)")
-    names, capped = (names[:NS_CAP], len(names) > NS_CAP)   # NS_CAP = 50; coverage note when capped
-    # …the rest of build() is unchanged; `capped` is recorded in the coverage block.
+            raise ValidationError(f"no namespace carries the selector label with value(s) {', '.join(mnemonics)}")
+    capped = len(names) > MAX_NAMESPACES
+    names = names[:MAX_NAMESPACES]              # cap AFTER expansion; a coverage note when capped
+    # …the rest of build() is unchanged; `capped` is recorded in the coverage/truncation block.
 ```
+
+The `type: "namespaces"` parser errors on `[]`, so the empty advanced field must arrive omitted/`None`
+(which `validate_params` treats as "not provided"), never as `[]`; `parse_namespaces` is unchanged (a
+test asserts it still errors at 51 explicit names).
 
 ### 3.7 The GUI — a multi-select of the values (index.html, server.py)
 
 The report catalogue response gains, per cluster, the selector label and its values, so the form can
 render the control from data it already fetches:
 
+Round 1: `list_reports` is **global** today (no cluster, no snapshot); it must open the snapshot and key
+values **by cluster** (the install is multi-cluster), swallowing snapshot errors so a missing first
+snapshot never 500s the Reports tab. And the GUI `onchange` serialises with `el.value`, which for a
+`<select multiple>` is the **first** option — a `readParamEl` helper returns an array.
+
 ```python
-# reporting/server.py, GET /report/api/reports (catalogue): add the selector to the payload. The
-# selector key must be one of the captured keys, else its values are always empty — the render guard
-# in the chart (§3.8) enforces that at install; here it degrades to an empty list, hiding the control.
-"namespaceSelector": {
-    "label": settings.namespace_selector_label,
-    "values": snap.namespace_metadata_values(cluster_id, settings.namespace_selector_label),
-},
+# reporting/server.py, list_reports: open the snapshot, key selector values by cluster id.
+selectors: dict[str, dict] = {}
+try:
+    with Snapshot(newest_snapshot(settings.snapshot_dir)) as snap:
+        label = settings.namespace_selector_label
+        for row in snap.clusters():
+            selectors[row["id"]] = {"label": label,
+                                    "values": snap.namespace_metadata_values(row["id"], label) if label else []}
+except (SnapshotError, OSError):
+    selectors = {}          # a missing first snapshot must not 500 the catalogue; the UI hides the control
+# … return {..., "namespaceSelectors": selectors}
 ```
 
 ```javascript
-// index.html reportFormCard(): for the namespace-access report, render the mnemonic multi-select from
-// data.reportCatalog.namespaceSelector, ahead of the advanced explicit-names input.
-const sel = cat.namespaceSelector;
-const mnem = spec.name === "namespace-access" && sel && sel.values.length ? `
+// index.html reportFormCard(): the mnemonic multi-select for THIS cluster, ahead of the advanced names input.
+const sel = (cat.namespaceSelectors && cat.namespaceSelectors[view.cluster]) || {label: "", values: []};
+const mnem = spec.name === "namespace-access" && sel.values.length ? `
   <div class="report-field"><label for="report-mnemonics">${esc(sel.label)}</label>
     <select id="report-mnemonics" data-param="mnemonics" multiple size="6">
       ${sel.values.map((v) => `<option value="${esc(v)}">${esc(v)}</option>`).join("")}
     </select>
     <span class="muted">Select one or more; the report expands each to the namespaces carrying that label.</span>
   </div>` : "";
-// the existing explicit-names field is kept under a "// advanced" note; generateReport() sends
-// mnemonics as an array when any option is selected, else falls back to the names field.
+
+// wireReports()'s data-param onchange must read a multiple select as an ARRAY:
+function readParamEl(el) {
+  if (el.type === "checkbox") return el.checked;
+  if (el.tagName === "SELECT" && el.multiple) return Array.from(el.selectedOptions).map((o) => o.value);
+  return el.value;
+}
+// f[el.dataset.param] = readParamEl(el);   // the id #report-param-namespace-access-namespaces stays (test_ui fills it)
 ```
 
 ### 3.8 Chart wiring (values + deployment env)
 
+Round 1, two corrections. **(a) The default is OFF, not the mnemonic.** Capture rides `if namespaces_read`,
+and `rbac.namespaces` is `false` by default (the chart's 0.14.0 "no RBAC you don't need" rule, enforced by
+`KEPT_OFF`). Defaulting the label to `company.net/mnemonic` while the grant is off would make the selector
+always empty and would trip the render guard on a default `helm template`. So the feature is opt-in like
+the read it depends on: `labels: []` and `selector.label: ""` by default; the operator enables three
+values plus the grant. This also reconciles §4 (the mechanism is a bounded list; the default is empty).
+**(b) The selector lives in the REPORT pod, not the dashboard.** The catalogue and the expansion run in
+`gsd.reporting.server`/`ReportSettings`; only the poller (dashboard) captures. So two envs on two pods.
+
 ```yaml
-# values.yaml, under reporting:
+# values.yaml, under reporting. Both empty by default; enabling needs rbac.namespaces=true as well.
 reporting:
-  # Namespace metadata capture and selection (docs …§3).
   namespaceMetadata:
-    # The label keys the poll captures per namespace (bounded — only these, never the whole map).
-    # Add keys here (environment, owner, cost-centre) with no migration. [] disables capture.
-    labels:
-      - company.net/mnemonic
-    # annotations: []          # same shape, off by default; large-value guard applies (§3.3)
+    # Label keys the poll captures per namespace (bounded — only these, never the whole map). Add keys
+    # (environment, owner, cost-centre) with no migration. Enabling needs rbac.namespaces=true.
+    labels: []                       # e.g. [company.net/mnemonic]
   namespaceSelector:
-    # The captured key the namespace-access report selects on. MUST be one of namespaceMetadata.labels,
-    # or its value list is always empty. Override at install; "" hides the selector (names only).
-    label: company.net/mnemonic
+    # The captured key the namespace-access report selects on. MUST be one of namespaceMetadata.labels.
+    # "" hides the selector (explicit names only).
+    label: ""                        # e.g. company.net/mnemonic
 ```
 
-A chart render guard asserts `reporting.namespaceSelector.label` is either empty or a member of
-`reporting.namespaceMetadata.labels`, failing with the remedy — the selector can never point at a key
-the poll does not capture.
+A `gsd.reportingGuards` helper (in `_helpers.tpl`) asserts, with `| default list` so a commented-out
+stanza never panics `join`: (1) if `namespaceMetadata.labels` is non-empty while `rbac.namespaces` is
+false → fail (the poll never lists namespaces, so the selector is always empty); (2) if
+`namespaceSelector.label` is set but not among `namespaceMetadata.labels` → fail (it points at a key the
+poll does not capture).
 
 ```yaml
-# templates/deployment.yaml, dashboard container env (the poller reads both; the report service reads
-# the selector value from the catalogue call, not the env):
+# templates/deployment.yaml — DASHBOARD container (the poller captures):
 - name: GSD_NS_METADATA_LABELS
-  value: {{ join "," .Values.reporting.namespaceMetadata.labels | quote }}
-- name: GSD_NS_SELECTOR_LABEL
-  value: {{ .Values.reporting.namespaceSelector.label | quote }}
+  value: {{ join "," (((.Values.reporting | default dict).namespaceMetadata).labels | default list) | quote }}
+
+# templates/report-deployment.yaml — REPORT container (the catalogue + build expand):
+- name: GSD_REPORT_NS_SELECTOR_LABEL
+  value: {{ (((.Values.reporting | default dict).namespaceSelector).label | default "") | quote }}
 ```
 
-`Settings.namespace_metadata_labels` reads `GSD_NS_METADATA_LABELS` (comma-split, `[]` when empty) and
-`Settings.namespace_selector_label` reads `GSD_NS_SELECTOR_LABEL` (default `company.net/mnemonic`, `""`
-allowed), beside the other `GSD_*` settings in `local-development/gsd/config.py`. `RunContext` carries
-`namespace_selector_label` to `build` so the report expands on the right key.
+`Settings.namespace_metadata_labels` (dashboard, `local-development/gsd/config.py`) reads
+`GSD_NS_METADATA_LABELS` (comma-split, `[]` when empty); `ReportSettings.namespace_selector_label` (report
+pod, `local-development/gsd/reporting/config.py`) reads `GSD_REPORT_NS_SELECTOR_LABEL` (`""` allowed).
+`runs.py`'s render passes it into `RunContext.namespace_selector_label` so `build` expands on the right key.
 
 ---
 
@@ -474,7 +575,10 @@ allowed), beside the other `GSD_*` settings in `local-development/gsd/config.py`
 - No change to the tier model, the ticket, the snapshot mechanism, the artefact store, or the report
   gate SAR. Extension A only supplies a group over the existing gate; Extension B only changes how the
   one per-namespace report chooses namespaces.
-- No label capture beyond the single configured selector label. The whole label map is not stored.
+- **Capture is a bounded, configured list, never the whole label map** (round 1 reconciled §3 and this
+  section): the *mechanism* is a list of keys, so it extends to environment or owner labels later; the
+  *default* is empty, and only the explicitly configured keys are stored. The whole label map is never
+  persisted.
 - No per-namespace *tier* (an auditor scoped to only their namespaces) — that remains the larger change
   §5 of `docs/ACCESS_CONTROL.md` would own, and is explicitly not this feature.
 
@@ -512,25 +616,35 @@ allowed), beside the other `GSD_*` settings in `local-development/gsd/config.py`
 
 ## 7. Proposed issue order (finalised after review round 1 — each issue is its own PR)
 
-Ordered by dependency; Extension B's issues are a chain, Extension A is independent and can land first.
+Ordered by dependency (round 1 reworked the boundaries per N5); Extension A is independent and can land
+first, Extension B is a chain B1 → B2 → B3.
 
 1. **Issue A — chart: `rbacAuditors` stanza** (Extension A, no app code). The values stanza, the
-   `templates/rbac-auditors.yaml`, the render guard, the chart README rows, the `test_chart_strategy.py`
-   class. Independent; can merge first. Chart minor bump.
-2. **Issue B1 — data path: capture configured namespace metadata** (Extension B, foundation). `config.py`
-   (`namespace_metadata_labels`, `namespace_selector_label`), `kube.py` `fetch_namespaces`, the `store.py`
-   `cluster_namespace_label` table and `replace_namespaces`, the chart env wiring
-   (`GSD_NS_METADATA_LABELS`), the poller test. No user-visible change yet. Depends on nothing.
-3. **Issue B2 — snapshot + report: the mnemonic selector** (Extension B). `snapshot.py`
-   `namespace_metadata_values`/`namespaces_for_metadata`, `RunContext.namespace_selector_label`,
-   `namespace_access.py` params and `build`, the report tests. Depends on B1 (needs the stored rows).
-4. **Issue B3 — GUI + catalogue + chart value: surface the selector** (Extension B). `server.py`
-   catalogue payload, `index.html` multi-select, the `reporting.namespaceSelector.label` value, the
-   selector-in-captured-set render guard, `test_ui.py`. Depends on B2 (needs the report to accept
-   `mnemonics`).
+   round-1-corrected `templates/rbac-auditors.yaml` (helpers, guards, hashed CRB name, no `users:`), the
+   `rbacAuditors.enabled` entry in `KEPT_OFF`, the chart README rows, a `test_chart_strategy.py` class
+   covering each render state (off; synced group → Binding only; local group → Group+Binding;
+   `existingClusterRole` → no Role; a retuned/non-read `adminSar` → fail). Independent. Chart minor bump.
+2. **Issue B1 — data path + capture value + the reporting guards** (Extension B, foundation).
+   `config.py` `Settings.namespace_metadata_labels`; `kube.py` `fetch_namespaces(label_keys=…)`;
+   `poller.py` threading; `store.py` `cluster_namespace_label` (module schema + migration 12) and the
+   child rows inside the existing `replace_namespaces` transaction; the values `reporting.namespaceMetadata.labels`
+   (default `[]`) and `reporting.namespaceSelector.label` (default `""`); `GSD_NS_METADATA_LABELS` on the
+   **dashboard** Deployment; the `gsd.reportingGuards` render guards (labels-need-rbac.namespaces;
+   selector-in-labels); the poller/store tests. No report or GUI change. Depends on nothing.
+3. **Issue B2 — snapshot + report + the report-pod selector env** (Extension B). `snapshot.py`
+   `namespace_metadata_values`/`namespaces_for_metadata` (guarded by `has_table`); `RunContext` and
+   `ReportSettings` gain `namespace_selector_label`; `GSD_REPORT_NS_SELECTOR_LABEL` on the **report**
+   Deployment; `runs.py` passes it to `RunContext`; `namespace_access.py` params, the `_validate_selection`
+   validator (422 at the endpoint) and `build` (expansion + cap); the report tests. Depends on B1 (needs
+   the stored rows). The API accepts `mnemonics` here, before any GUI sends it.
+4. **Issue B3 — catalogue + GUI** (Extension B). `server.py` `list_reports` opens the snapshot and returns
+   `namespaceSelectors` keyed by cluster (errors swallowed); `index.html` the multi-select and the
+   `readParamEl` array serialisation (keeping the advanced explicit-names field and its test id);
+   `test_ui.py` for the multi-select posting an array and the per-cluster values. Depends on B2.
 
-Each issue is scoped to pass CI on its own (B1 and B2 ship behind the not-yet-wired GUI; the report
-accepts `mnemonics` before the GUI sends it). The order guarantees no half-wired state on main.
+Each issue is scoped to pass CI on its own and leaves no half-wired state on main: B1 captures behind the
+default-off values; B2's report accepts `mnemonics` and validates before any GUI sends it; B3 surfaces it.
+Because the defaults are off, none of the three changes a default install's behaviour.
 
 ---
 
