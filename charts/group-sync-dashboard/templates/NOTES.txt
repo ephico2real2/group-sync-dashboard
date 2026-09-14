@@ -94,10 +94,22 @@ Restore the old everyone-sees-everything behaviour only as a deliberate choice:
 
 Several clusters are configured. The reader was authenticated by the FIRST enabled one; what
 they see about each of the others is that entry's own policy (docs/ACCESS_CONTROL.md §11):
+{{- /* The host is the FIRST ENABLED entry, not index 0 — the rule gsd.validateClusters and
+       load_settings share; it is printed first (review of D2, both reviewers). */ -}}
+{{- $hostIndex := -1 }}
 {{- range $i, $c := .Values.clusters }}
-{{- $vis := "" }}{{- if and (hasKey $c "visibility") (not (kindIs "invalid" $c.visibility)) }}{{- $vis = toString $c.visibility }}{{- end }}
-{{- $id := "" }}{{- if and (hasKey $c "identity") (not (kindIs "invalid" $c.identity)) }}{{- $id = toString $c.identity }}{{- end }}
-  {{ $c.name }}: visibility {{ if $vis }}{{ $vis }}{{ else if eq $i 0 }}inherit (host){{ else }}self-only (default){{ end }}, identity {{ if eq $i 0 }}same-as-host (host){{ else if $id }}{{ $id }}{{ else }}none (default){{ end }}
+{{- $enabled := true }}{{- if hasKey $c "enabled" }}{{- $enabled = $c.enabled }}{{- end }}
+{{- if and $enabled (lt $hostIndex 0) }}{{- $hostIndex = $i }}{{- end }}
+{{- end }}
+{{- range $pass := list 0 1 }}
+{{- range $i, $c := $.Values.clusters }}
+{{- $isHost := eq $i $hostIndex }}
+{{- if or (and (eq $pass 0) $isHost) (and (eq $pass 1) (not $isHost)) }}
+{{- $vis := "" }}{{- if and (hasKey $c "visibility") (not (kindIs "invalid" $c.visibility)) }}{{- $vis = trim (toString $c.visibility) }}{{- end }}
+{{- $id := "" }}{{- if and (hasKey $c "identity") (not (kindIs "invalid" $c.identity)) }}{{- $id = trim (toString $c.identity) }}{{- end }}
+  {{ $c.name }}: visibility {{ if $vis }}{{ $vis }}{{ else if $isHost }}inherit (host){{ else }}self-only (default){{ end }}, identity {{ if $isHost }}same-as-host (host){{ else if $id }}{{ $id }}{{ else }}none (default){{ end }}
+{{- end }}
+{{- end }}
 {{- end }}
 {{- end }}
 {{- else }}

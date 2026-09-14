@@ -3014,6 +3014,39 @@ class TestAccessGrantedSelfTier:
         assert p.evaluate("() => data.findings") is None
         assert p.evaluate("() => data.whoami.user") == "bob"
 
+    def test_a_silent_selected_cluster_scope_stays_narrowed_in_the_pill(self, page, scoped_server):
+        """Codex, review D2: the pill tested `=== "self"` while every narrowing helper tests
+        `!== "all"`, so a missing or junk scope painted "Full view" above a layout that stayed
+        narrowed. Same fail-closed rule everywhere now."""
+        p = _open_as(page, scoped_server, "alice")
+        p.wait_for_selector("#scope-pill:not([hidden])")
+        p.evaluate("""() => {
+          delete data.whoami.visibility.scope;
+          const c = data.whoami.visibility.clusters;
+          if (c && view.cluster && c[view.cluster]) delete c[view.cluster].scope;
+          render();
+        }""")
+        assert p.evaluate("() => narrowedReader()") is True
+        assert p.locator("#scope-pill").inner_text().startswith("Your view")
+        assert "self" in (p.locator("#scope-pill").get_attribute("class") or "")
+
+    def test_reports_follow_the_hosts_headline_not_the_selected_remote(self, page, scoped_server):
+        """Cursor, review D2: reports are documents over the whole snapshot, minted on the host's
+        tier by /api/report/ticket; the tab read the SELECTED cluster's decision, so a host
+        administrator with a narrowed remote selected was refused a report the API would mint."""
+        p = _open_as(page, scoped_server, "root")
+        p.evaluate("""() => {
+          data.whoami.visibility.clusters = Object.assign({}, data.whoami.visibility.clusters,
+            { east: { policy: "self-only", identity: "none", scope: "self" } });
+          data.clusters = (data.clusters || []).concat([{ id: "east", visibility: { policy: "self-only", scope: "self" } }]);
+          view.cluster = "east";
+          render();
+        }""")
+        assert p.evaluate("() => narrowedReader()") is True, "the selected remote is narrowed for root"
+        assert p.evaluate("() => narrowedOnHost()") is False, "root is wide on the host"
+        assert p.evaluate("() => reportsPage().includes('scope-refusal')") is False, \
+            "the Reports tab must not refuse a host administrator over the selected remote"
+
     def test_an_unknown_tier_paints_neither_tiers_payload(self, page, scoped_server):
         """A whoami that fails on a later cycle leaves the tier indeterminate. The cached wide
         payload is not the reader's to see then, and the own path is not a claim either: the tab

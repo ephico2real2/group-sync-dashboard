@@ -18,8 +18,8 @@ which `local-development/prepare-release.py` does when the release is cut.
   RBAC decides through the same SubjectAccessReview on its own API with its own Group objects,
   cached per reader and cluster, every failure self) — and `identity` — `none` (the host's
   username is nobody there; person-scoped views answer 403, health still shows) or
-  `same-as-host`. Defaults are the safe direction: the first entry `inherit`/`same-as-host`, every
-  other `self-only`/`none`. `/api/whoami` gains `visibility.clusters`, `/api/clusters` rows gain
+  `same-as-host`. Defaults are the safe direction: the first enabled entry `inherit`/`same-as-host`,
+  every other `self-only`/`none`. `/api/whoami` gains `visibility.clusters`, `/api/clusters` rows gain
   `visibility`, `/api/alerts` filters per cluster in that cluster's tier and reports the narrowest
   scope served; the cluster selector marks a narrowed cluster and the header pill follows the
   selected one. (`ACCESS_CONTROL.md` §11)

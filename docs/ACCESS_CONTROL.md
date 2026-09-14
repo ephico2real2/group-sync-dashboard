@@ -423,22 +423,23 @@ never vouched for. Two keys per entry now say, per cluster, what a reader may se
 
 | key | values | default | meaning |
 |---|---|---|---|
-| `clusters[].visibility` | `inherit` | the first enabled entry | the host's tier decides — the old behaviour, and the host's own default; on a remote an explicit choice that the host's RBAC governs that cluster's data too |
+| `clusters[].visibility` | `inherit` | the first enabled entry | the host's DECIDED tier — the old behaviour, and the host's own default; on a remote an explicit choice that the host's RBAC governs that cluster's data too (a `self-only` host is self on every cluster it governs), with identity not consulted: a self reader is keyed by the host's username there, as before 0.19.0 |
 | | `self-only` | every other entry | nobody is ever wide on this cluster; it costs no RBAC, no credential and no cluster call, and can only narrow |
 | | `hidden` | | polled and alerted on (`/metrics`, the pod log) but never served through `/api`; refused on the host entry |
 | | `remote-sar` | | that cluster's own RBAC decides: the same SubjectAccessReview as `visibility.adminSar`, created on the remote API with that entry's token, naming the reader and the Group memberships read from the remote; refused on the host entry, and needs `identity: same-as-host` |
 | `clusters[].identity` | `none` | every other entry | the host's username is not treated as anyone on this cluster: person-scoped views answer 403 there, cluster-level health still shows |
-| | `same-as-host` | the first entry, forced | the clusters share an identity provider and its username mapping, so the reader's self views apply to this cluster too |
+| | `same-as-host` | the first enabled entry, forced | the clusters share an identity provider and its username mapping, so the reader's self views apply to this cluster too |
 
 **What each endpoint does.** Every `/api/clusters/{id}/…` handler calls `require_cluster` first: a
-`hidden` cluster answers the same 404, with the same sentence, as an id that does not exist, so the
-response is not an oracle over which clusters this instance watches; `hidden` clusters are absent
-from `/api/clusters`, `/api/whoami` and `/api/alerts` too. On a `self-only` cluster the tier is
-`self` for every reader. With `identity: none` the viewer is withheld on purpose, so a person-scoped
-endpoint (groups, users, logins, grants, membership changes, cluster access) answers 403 with exactly
-this sentence — *this data is scoped to a viewer, and this cluster does not treat your identity as
-one of its own; only cluster-level health is shown for it* — and never names the value that would
-change it; `/api/clusters/{id}/groupsyncs`, `/api/events` and the self kinds of alerts still serve.
+`hidden` cluster answers the same 404, with the same sentence naming the id the caller sent, as an id
+that does not exist, so the response is not an oracle over which clusters this instance watches;
+`hidden` clusters are absent from `/api/clusters`, `/api/whoami` and `/api/alerts` too. On a
+`self-only` cluster the tier is `self` for every reader, and with `identity: none` the viewer is
+withheld on purpose, so a person-scoped endpoint (groups, users, logins, grants, membership changes,
+cluster access) answers 403 with exactly this sentence — *this data is scoped to a viewer, and this
+cluster does not treat your identity as one of its own; only cluster-level health is shown for it* —
+and never names the value that would change it; `/api/clusters/{id}/groupsyncs`,
+`/api/clusters/{id}/groupsyncs/{name}/events` and the self kinds of alerts still serve.
 `/api/alerts` is filtered per cluster in that cluster's tier, and its `scope` is the narrowest served:
 `all` only when every served cluster is wide for this reader.
 
@@ -460,10 +461,11 @@ on two clusters is two people. That is why `identity` is stated per entry, why `
 and fails closed, and why `remote-sar` refuses to render or start without `same-as-host`.
 
 **On the wire.** `/api/whoami` carries `visibility.clusters[id] = {policy, identity, scope}` for every
-served cluster beside the headline `scope`; each `/api/clusters` row carries
+served cluster beside the headline `scope`, which is the host's decision (a `self-only` host makes it
+`self` for everyone, and with it the report ticket); each `/api/clusters` row carries
 `visibility = {policy, scope}` for this reader; `/api/alerts` reports the narrowest `scope` served.
-The UI renders these — the selector marks a narrowed cluster and the header pill follows the selected
-one — and never derives them (§7).
+The UI renders these — the selector marks a narrowed cluster, the header pill and the cluster-scoped
+tabs follow the selected one, the Reports tab follows the host's headline — and never derives them (§7).
 
 **The other posture.** One dashboard per cluster and a fleet report reading each one's API with a
 token from that cluster (`docs/reference-architecture.md` §8a, `local-development/cluster-report.py`)

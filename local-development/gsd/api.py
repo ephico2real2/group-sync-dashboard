@@ -542,8 +542,17 @@ def build_app(
         viewer = trusted_viewer(request)
         if not restrict:
             return viewer, TIER_ALL
+        # "The host decides" means the host's DECIDED tier, and the host's own policy is part of
+        # that decision: with no cluster named the question is the host's, and an `inherit`
+        # remote under a `self-only` host is self — the host resolver alone would have widened
+        # a remote the host itself refuses to widen (review of D2, Cursor).
+        host = settings.host_cluster()
+        if cluster_id is None:
+            cluster_id = host.name if host is not None else None
         policy, identity = (settings.cluster_policy(cluster_id) if cluster_id is not None
                             else (VISIBILITY_INHERIT, IDENTITY_SAME_AS_HOST))
+        if policy == VISIBILITY_INHERIT and host is not None and cluster_id != host.name:
+            policy = settings.cluster_policy(host.name)[0]
         if policy == VISIBILITY_SELF_ONLY:
             signals.note_decision("admin", TIER_SELF)
             return (viewer if identity == IDENTITY_SAME_AS_HOST else None), TIER_SELF
@@ -1849,6 +1858,10 @@ def build_app(
                         "subject": cluster_id,
                         "detail": row["message"] or "cluster poll failed",
                         "severity": "critical",
+                        # The two silence fields every alert carries (gsd/state.py#Alert);
+                        # SPEC_D2's block predated B4 and dropped them (review of D2, Codex).
+                        "silenced": False,
+                        "silenced_by": None,
                     }
                 )
                 # A degraded cluster's cached rows are stale by definition; computing
@@ -1893,6 +1906,8 @@ def build_app(
                             f"manage and no longer exists — this binding now grants nobody"
                         ),
                         "severity": "critical",
+                        "silenced": False,
+                        "silenced_by": None,
                     }
                 )
             # Filtered PER CLUSTER, in the cluster's own tier: a host administrator's feed

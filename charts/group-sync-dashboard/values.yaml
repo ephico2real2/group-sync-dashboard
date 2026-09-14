@@ -613,13 +613,16 @@ session:
 # (docs/ACCESS_CONTROL.md §11):
 #
 #   visibility:   inherit     the host's tier decides — the old behaviour, and the host's own
-#                             default. On a remote it is an explicit choice: "the host's RBAC
-#                             governs this cluster's data too".
+#                             default (the host is the FIRST ENABLED entry). On a remote it is
+#                             an explicit choice: "the host's RBAC governs this cluster's data
+#                             too" — a self-only host is self on every cluster it governs, and
+#                             identity is not consulted: a self reader is keyed by the host's
+#                             username there, as before 0.19.0.
 #                 self-only   nobody is ever wide on this cluster. THE DEFAULT FOR EVERY ENTRY
-#                             BUT THE FIRST, because it costs no RBAC, no credential and no
-#                             cluster call, and can only narrow. On upgrade from chart 0.10.x a
-#                             multi-cluster install's remotes become self-only; set inherit to
-#                             restore what you had.
+#                             BUT THE FIRST ENABLED ONE, because it costs no RBAC, no credential
+#                             and no cluster call, and can only narrow. On upgrade from chart
+#                             0.20.x a multi-cluster install's remotes become self-only; set
+#                             inherit to restore what you had.
 #                 hidden      polled and alerted on (/metrics, the pod log) but never served
 #                             through /api: 404, identical to an unknown cluster id, absent from
 #                             the selector. For watching sync health across a fleet without
@@ -631,18 +634,19 @@ session:
 #                             every failure is the self tier. Needs `create subjectaccessreviews`
 #                             on the remote (bind system:auth-delegator to the remote
 #                             ServiceAccount by hand — this chart manages no remote RBAC) and
-#                             identity: same-as-host below. Not allowed on the first entry.
+#                             identity: same-as-host below. Not allowed on the first enabled
+#                             entry.
 #
 #   identity:     none          THE DEFAULT for a remote. The host's username is not treated as
-#                               anyone on this cluster: person-scoped views (groups, users,
-#                               logins, grants) answer 403 there; cluster-level health still
-#                               shows. Fail-closed, because "same username, same person" is a
+#                               anyone on this cluster: under self-only, person-scoped views
+#                               (groups, users, logins, grants) answer 403 there; cluster-level
+#                               health still shows. Fail-closed, because "same username, same person" is a
 #                               claim about the two clusters' identity providers that this
 #                               chart cannot check — an htpasswd `developer` on two clusters is
 #                               two people.
 #                 same-as-host  the clusters share an identity provider and its username
 #                               mapping, so the reader's self views apply to this cluster too.
-#                               Required by remote-sar.
+#                               Required by remote-sar; forced on the first enabled entry.
 #
 # The alternative posture — one dashboard per cluster and a fleet report reading each one's
 # API with a token from THAT cluster — needs none of this and is still the recommendation

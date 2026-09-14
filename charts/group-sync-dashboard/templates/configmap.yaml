@@ -131,7 +131,5 @@ data:
     leaderElection: {{ .Values.leaderElection.enabled }}
     leaderLeaseName: {{ .Values.leaderElection.leaseName | quote }}
     {{- include "gsd.validateClusters" . }}
-    # Per-entry `visibility` and `identity` travel through unchanged; the app validates them a
-    # second time at startup (gsd/config.py) and resolves the per-entry defaults.
     clusters:
       {{- toYaml .Values.clusters | nindent 6 }}

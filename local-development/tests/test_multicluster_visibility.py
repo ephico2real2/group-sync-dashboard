@@ -134,6 +134,10 @@ class TestSelfOnlyNeverWidens:
         assert all("ldap_filter" not in cr for cr in crs.json())
 
 
+CLUSTER_ENDPOINTS = ("groupsyncs", "groupsyncs/x/events", "groups", "groups/x", "users", "users/x", "logins",
+                     "cluster-access", "bindings/findings", "user-bindings", "operator-configs", "membership-changes")
+
+
 class TestHiddenIsNotAnOracle:
     def test_hidden_and_unknown_are_the_same_404(self, client):
         for headers in (ROOT, ALICE):
@@ -141,6 +145,17 @@ class TestHiddenIsNotAnOracle:
             b = client.get("/api/clusters/no-such/groups", headers=headers)
             assert a.status_code == b.status_code == 404
             assert a.json()["detail"].replace("dark", "X") == b.json()["detail"].replace("no-such", "X")
+
+    @pytest.mark.parametrize("suffix", CLUSTER_ENDPOINTS)
+    def test_every_cluster_handler_answers_hidden_like_unknown(self, client, suffix):
+        """Codex, review D2: the twelve `/api/clusters/{id}/…` handlers, each measured — the same
+        status and the same sentence, differing only by the id the caller sent (which is the
+        caller's own input, not information about the server)."""
+        for headers in (ROOT, ALICE):
+            a = client.get(f"/api/clusters/dark/{suffix}", headers=headers)
+            b = client.get(f"/api/clusters/no-such/{suffix}", headers=headers)
+            assert a.status_code == b.status_code == 404, suffix
+            assert a.json()["detail"].replace("dark", "X") == b.json()["detail"].replace("no-such", "X"), suffix
 
     def test_hidden_is_absent_from_the_lists(self, client):
         ids = {c["id"] for c in client.get("/api/clusters", headers=ROOT).json()}
@@ -203,6 +218,56 @@ class TestTheWireSaysSo:
         assert {a["cluster"] for a in alice["alerts"] if a["kind"] == "dangling_binding"} == {"west"}
 
 
+class TestInheritIsTheHostsDecidedTier:
+    """Cursor, review D2 (its most important finding): `inherit` meant the host's RESOLVER, so a
+    `self-only` host with an `inherit` remote — legal per the guard — served the remote wide to a
+    reader the host itself refused to widen, and the whoami headline said `all` above a host row
+    that said `self`. Measured before the fix: host self, east all, findings 200."""
+
+    def test_a_self_only_host_does_not_leave_an_inherit_remote_wide(self, db):
+        settings = Settings(clusters=[
+            ClusterConfig("host", "https://api.host.example:6443", token_env="X", visibility="self-only"),
+            ClusterConfig("east", "https://api.east.example:6443", token_env="X",
+                          visibility="inherit", identity="same-as-host"),
+        ], db_path=db, oauth_proxy_enabled=True)
+        app = build_app(settings, run_poller=False)
+        app.state.tier_resolver = _Map({"root": "all"})
+        with TestClient(app) as c:
+            assert c.get("/api/clusters/host/groups", headers=ROOT).json()["scope"] == "self"
+            assert c.get("/api/clusters/east/groups", headers=ROOT).json()["scope"] == "self", \
+                "inherit must not outrun a self-only host"
+            assert c.get("/api/clusters/east/bindings/findings", headers=ROOT).status_code == 403
+            who = c.get("/api/whoami", headers=ROOT).json()["visibility"]
+            assert who["scope"] == "self", "the headline is the host's decision, and the host is self-only"
+            assert c.get("/api/clusters/host/bindings/findings", headers=ROOT).status_code == 403
+
+    def test_an_inherit_host_still_decides_by_its_resolver(self, client):
+        assert client.get("/api/whoami", headers=ROOT).json()["visibility"]["scope"] == "all"
+        assert client.get("/api/whoami", headers=ALICE).json()["visibility"]["scope"] == "self"
+
+
+def test_manual_alerts_keep_the_common_silence_fields(tmp_path):
+    """Codex, review D2: the poll-failure and dangling-binding alerts are built by hand in
+    list_alerts and, since D2's block predated B4, lost the `silenced`/`silenced_by` every alert
+    carries (gsd/state.py#Alert) — measured against main's wire."""
+    db = str(tmp_path / "alerts.db")
+    _seed(db)
+    store = Store(db)
+    store.record_poll("host", "unreachable", "remote API timed out")
+    store.close()
+    settings = Settings(clusters=[
+        ClusterConfig("host", "https://api.host.example:6443", token_env="X"),
+        ClusterConfig("east", "https://api.east.example:6443", token_env="X", visibility="inherit"),
+    ], db_path=db, oauth_proxy_enabled=True)
+    app = build_app(settings, run_poller=False, tier_resolver=lambda viewer: "all")
+    with TestClient(app) as c:
+        alerts = c.get("/api/alerts", headers=ROOT).json()["alerts"]
+    manual = [a for a in alerts if a["kind"] in {"unreachable", "dangling_binding"}]
+    assert {a["kind"] for a in manual} == {"unreachable", "dangling_binding"}
+    for a in manual:
+        assert a["silenced"] is False and a["silenced_by"] is None, a
+
+
 class TestRestrictionsOff:
     def test_off_is_off_for_every_policy_but_hidden(self, db):
         app = build_app(_settings(db, view_restrictions_enabled=False), run_poller=False)
@@ -210,6 +275,24 @@ class TestRestrictionsOff:
             for cid in ("host", "east", "west", "far"):
                 assert c.get(f"/api/clusters/{cid}/groups", headers=ALICE).json()["scope"] == "all"
             assert c.get("/api/clusters/dark/groups", headers=ALICE).status_code == 404
+
+
+def test_access_control_section_11_names_only_routes_the_app_serves():
+    """Both reviewers of D2: §11 named `/api/events`, a route that does not exist (the events
+    handler is under `/api/clusters/{id}/groupsyncs/{name}/events`). Every `/api/…` path the
+    section names is held to the app's route table, with `{id}`/`{name}` as the placeholders."""
+    import pathlib
+    import re
+    text = (pathlib.Path(__file__).resolve().parents[2] / "docs" / "ACCESS_CONTROL.md").read_text()
+    section = text.split("## 11. Several clusters in one instance", 1)[1].split("\n## ", 1)[0]
+    app = build_app(Settings(clusters=[ClusterConfig("h", "https://h", token_env="X")], oauth_proxy_enabled=True),
+                    run_poller=False)
+    routes = {getattr(r, "path", "").replace("{cluster_id}", "{id}") for r in app.routes}
+    named = set(re.findall(r"`(/api/[A-Za-z0-9_{}/.-]*?)`", section))
+    named = {n.rstrip("/") for n in named if "…" not in n and "{name}" not in n or n.endswith("/events")}
+    assert named, "the section names no route at all"
+    unknown = {n for n in named if n not in routes and not any(r.startswith(n + "/") for r in routes)}
+    assert not unknown, f"§11 names routes the app does not serve: {sorted(unknown)}"
 
 
 class TestConfigValidation:
@@ -248,6 +331,16 @@ clusters:
                                      f"    tokenEnv: X\n    visibility: {policy}\n  - name: east", 1)
             with pytest.raises(ConfigError, match="hosting cluster"):
                 self._load(tmp_path, text)
+
+    @pytest.mark.parametrize("key", ("visibility", "identity"))
+    @pytest.mark.parametrize("yaml_value", ('""', "'   '"))
+    def test_blank_policy_values_are_unset_like_the_chart_says(self, tmp_path, key, yaml_value):
+        """Codex, review D2 (its most important finding): the chart's guard tolerates a blank or
+        whitespace value as unset and renders it through, and load_settings refused it — a pod
+        that crashed at startup after a green `helm upgrade`. Measured: `visibility: ""` → ConfigError."""
+        settings = self._load(tmp_path, self.BASE + f"    {key}: {yaml_value}\n")
+        assert settings.cluster_policy("east") == ("self-only", "none")
+        assert getattr(settings.cluster("east"), key) is None
 
     def test_a_disabled_first_entry_is_not_the_host(self, tmp_path):
         text = self.BASE.replace("    tokenEnv: X\n  - name: east",

@@ -987,18 +987,21 @@ def load_settings(path: str | Path) -> Settings:
         enabled = bool(entry.get("enabled", True))
         # Strict, like every other cluster key: a typo here ("self_only", "Hidden") must not
         # silently become the default, in either direction.
+        # Blank and whitespace-only are "unset" — the chart's guard tolerates them and renders
+        # them through, so refusing them here was a pod that crashed after a green upgrade
+        # (review of D2, Codex). Every non-empty word stays strict and case-sensitive.
         visibility = entry.get("visibility")
         if visibility is not None:
-            visibility = str(visibility).strip()
-            if visibility not in CLUSTER_VISIBILITIES:
+            visibility = str(visibility).strip() or None
+            if visibility is not None and visibility not in CLUSTER_VISIBILITIES:
                 raise ConfigError(
                     f"{where}: visibility {visibility!r} is not one of "
                     f"{', '.join(CLUSTER_VISIBILITIES)}"
                 )
         identity = entry.get("identity")
         if identity is not None:
-            identity = str(identity).strip()
-            if identity not in CLUSTER_IDENTITIES:
+            identity = str(identity).strip() or None
+            if identity is not None and identity not in CLUSTER_IDENTITIES:
                 raise ConfigError(
                     f"{where}: identity {identity!r} is not one of {', '.join(CLUSTER_IDENTITIES)}"
                 )

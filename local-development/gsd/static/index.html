@@ -520,7 +520,9 @@ function renderScopePill() {
   // The SELECTED cluster's decision when whoami carries one, the headline otherwise: the
   // pill sits above a cluster-scoped page and must describe that cluster's view.
   const forCluster = vis.clusters && view.cluster && vis.clusters[view.cluster];
-  const self = (forCluster ? forCluster.scope : vis.scope) === "self";
+  // `!== "all"`, the same fail-closed rule as narrowedFor: a missing or junk scope painted
+  // "Full view" above a layout that was narrowed (review of D2, Codex).
+  const self = (forCluster ? forCluster.scope : vis.scope) !== "all";
   pill.hidden = false;
   pill.classList.toggle("self", self);
   pill.classList.toggle("full", !self);
@@ -599,6 +601,14 @@ function narrowedReader() {
   const w = data.whoami;
   if (!w || !w.authenticated) return false;
   return scopeFor(w, view.cluster) !== "all";
+}
+/* The HOST's decision, whatever cluster is selected: reports are documents over the whole
+   snapshot, minted by /api/report/ticket on the host's tier — so the Reports tab must not refuse a
+   host administrator who happens to have a narrowed remote selected (review of D2, Cursor). */
+function narrowedOnHost() {
+  const w = data.whoami;
+  if (!w || !w.authenticated) return false;
+  return scopeFor(w, null) !== "all";
 }
 
 /* A withheld view is a NAMED refusal, never a blank: an empty audit tab reads as a healthy
@@ -1731,7 +1741,7 @@ async function reportGet(path) { return (await reportFetch(path)).json(); }
 function reportsPage() {
   if (!reportingEnabled()) return `<section class="card"><div class="empty-note">Reporting is not enabled on this deployment.</div></section>`;
   if (!readerTierKnown()) return `<section class="card"><div class="empty-note">Loading…</div></section>`;
-  if (narrowedReader()) return refusalCard("Reports",
+  if (narrowedOnHost()) return refusalCard("Reports",
     `Reports are documents about the cluster's own RBAC surface, its groups and its users.`);
   const cat = data.reportCatalog;
   if (!cat) return `<section class="card"><div class="empty-note">Loading…</div></section>`;
@@ -3896,7 +3906,7 @@ async function refresh(opts = {}) {
     }
     // Not cluster-scoped: this is who used the DASHBOARD, which has no cluster dimension.
     // Fetched only on its own tab, so the other pages do not pay for it.
-    if (view.page === "reports" && reportingEnabled() && !narrowedReader()) {
+    if (view.page === "reports" && reportingEnabled() && !narrowedOnHost()) {
       // Through the proxy to the REPORT SERVICE, with the ticket the dashboard minted. A 403 here
       // is the same designed refusal as everywhere else and renders as the same card.
       want.reportCatalog = guard403(reportGet("/api/reports"));

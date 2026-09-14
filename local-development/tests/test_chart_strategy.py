@@ -1582,11 +1582,30 @@ class TestPerClusterVisibility:
         assert not ok and "hosting cluster" in out
 
     def test_the_default_single_cluster_render_is_unchanged(self):
+        """Both reviewers of D2: the spec's version of this test ended in `or True` and could not
+        fail, and the ConfigMap had gained two comment lines inside the config the pod reads — so
+        a 0.20.0 → 0.21.0 default render was not byte-identical apart from versions."""
         ok, out = render()
         assert ok, out
-        assert "visibility:" not in "\n".join(
-            l for l in out.splitlines() if l.startswith("      ")) or True
-        assert _config_data(out)["clusters"][0].get("visibility") is None
+        assert "Per-entry `visibility` and `identity`" not in out, "a template comment landed in the config data"
+        row = _config_data(out)["clusters"][0]
+        assert row.get("visibility") is None and row.get("identity") is None
+        assert "visibility" not in row and "identity" not in row
+
+    def test_notes_name_the_first_enabled_entry_as_host_and_print_it_first(self, tmp_path_factory):
+        """Both reviewers of D2: NOTES took index 0 as the host, while the guard and load_settings
+        take the first ENABLED entry — a disabled first entry was printed as the host."""
+        from test_chart_route import _notes_probe_chart
+        probe = _notes_probe_chart(tmp_path_factory.mktemp("d2-notes-host"))
+        args = ["helm", "template", "t", str(probe), "-s", "templates/notes-probe.yaml",
+                "--set", "ingress.host=t.example.com"]
+        for key, value in {**self.TWO, "clusters[0].enabled": "false", "clusters[1].visibility": " self-only "}.items():
+            args += ["--set", f"{key}={value}"]
+        done = subprocess.run(args, capture_output=True, text=True)
+        assert done.returncode == 0, done.stdout + done.stderr
+        lines = [l.strip() for l in done.stdout.splitlines() if l.strip().startswith(("host:", "east:"))]
+        assert lines == ["east: visibility self-only, identity same-as-host (host)",
+                         "host: visibility self-only (default), identity none (default)"], lines
 
     def test_a_padded_null_entry_is_refused_by_name_not_by_a_nil_pointer(self):
         """Found by the D2 live check: Helm never merges lists and pads an index set beyond the
