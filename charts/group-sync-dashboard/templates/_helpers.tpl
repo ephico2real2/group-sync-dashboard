@@ -702,6 +702,9 @@ args depend on them), so both objects refuse together. Emits nothing.
 {{- define "gsd.validateClusters" -}}
 {{- $host := "" -}}
 {{- range $i, $c := (.Values.clusters | default list) -}}
+{{- if or (kindIs "invalid" $c) (not (kindIs "map" $c)) -}}
+{{- fail (printf "clusters[%d] is not a cluster entry (it is %s). Helm pads a list index set beyond the list's length with null and never merges lists, so `--set clusters[1].name=…` on a values file that does not define clusters[0] yields [null, {…}]: pass every entry, clusters[0] included, or put the whole list in a values file." $i (kindOf $c)) -}}
+{{- end -}}
 {{- $name := toString ($c.name | default (printf "clusters[%d]" $i)) -}}
 {{- $vis := "" -}}{{- if and (hasKey $c "visibility") (not (kindIs "invalid" $c.visibility)) -}}{{- $vis = trim (toString $c.visibility) -}}{{- end -}}
 {{- $id := "" -}}{{- if and (hasKey $c "identity") (not (kindIs "invalid" $c.identity)) -}}{{- $id = trim (toString $c.identity) -}}{{- end -}}

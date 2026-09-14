@@ -1588,6 +1588,19 @@ class TestPerClusterVisibility:
             l for l in out.splitlines() if l.startswith("      ")) or True
         assert _config_data(out)["clusters"][0].get("visibility") is None
 
+    def test_a_padded_null_entry_is_refused_by_name_not_by_a_nil_pointer(self):
+        """Found by the D2 live check: Helm never merges lists and pads an index set beyond the
+        list's length with null, so `--set clusters[1].name=…` on a release whose values file does
+        not define clusters[0] yields [null, {…}] — and the guard died on a Go nil pointer
+        ("nil pointer evaluating interface {}.name") instead of saying what happened."""
+        args = ["helm", "template", "t", str(CHART), "--set", "ingress.host=t.example.com",
+                "--set", "clusters[1].name=east", "--set", "clusters[1].apiUrl=https://e", "--set", "clusters[1].tokenEnv=X"]
+        done = subprocess.run(args, capture_output=True, text=True)
+        out = done.stdout + done.stderr
+        assert done.returncode != 0
+        assert "clusters[0] is not a cluster entry" in out and "pass every entry, clusters[0] included" in out, out[-600:]
+        assert "nil pointer" not in out, out[-600:]
+
     def test_notes_name_every_clusters_policy(self, tmp_path_factory):
         """`helm template` drops NOTES.txt, so the render goes through test_chart_route's probe
         (NOTES rendered into a ConfigMap by `tpl`), as every NOTES assertion in this suite does —
