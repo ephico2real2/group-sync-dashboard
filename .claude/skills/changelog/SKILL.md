@@ -104,5 +104,7 @@ Outcome in one line: **…**
 
 `.claude/settings.json` carries a `PostToolUse` hook on `Bash` that, when the command contained
 `git commit`, injects a one-line reminder to append the commit once it is validated. It reminds; it
-does not write. If the reminder stops appearing after a Claude Code update, `/hooks` shows whether
-the hook is loaded.
+does not write. The match is on the command's text, so a heredoc or a commit message that mentions
+`git commit` also triggers it — a false reminder costs nothing, a missed one is what the hook exists to
+prevent. If the reminder stops appearing after a Claude Code update, `/hooks` shows whether the hook
+is loaded.

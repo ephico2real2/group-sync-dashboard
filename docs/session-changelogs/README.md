@@ -1,6 +1,7 @@
 # Session change logs
 
-One file per working session, in the format the `changelog` project skill defines: what the session
+One file per working session, in the format the `changelog` project skill
+(`.claude/skills/changelog/SKILL.md`) defines: what the session
 did, in order, with the commit, PR or measurement behind each line. This is the **session** record;
 `../CHANGELOG.md` is the product record an operator reads per release, and the two never merge.
 
