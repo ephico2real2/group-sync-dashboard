@@ -130,6 +130,8 @@ REVIEW_ARTIFACTS = (
     "REVIEW_C4.md",
     "REVIEW_D1.md",
     "REVIEW_C3.md",
+    # D2's record: the live run's measurements and the two passes; quotes the head's lines.
+    "REVIEW_D2.md",
     # The log-level contract review. Same reason, plus a worked example of why the exemption is
     # right: it cites `README.md#Configuration`, a heading that does not exist — and the finding
     # attached to that citation was correct and was applied. Rewriting the citation would not make

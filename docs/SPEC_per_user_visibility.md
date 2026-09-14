@@ -1,5 +1,8 @@
 # Spec — per-user visibility
 
+> 2026-09-13: risk (7) below — "per-remote-cluster tiers are out of scope" — is closed by
+> `docs/ACCESS_CONTROL.md` §11 (application 0.19.0). The rest of this record is unchanged.
+
 Written against `REQUIREMENTS_per_user_visibility.md`. **Spec only; no code.** Three lenses specified
 independently, then an arbitration section recording what was verified, what was refuted, and the one
 door that turned out to be closed.

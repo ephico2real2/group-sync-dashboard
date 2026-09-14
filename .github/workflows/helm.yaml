@@ -152,7 +152,8 @@ jobs:
 
           if ! SOURCE_DIGEST=$(skopeo inspect --no-tags --format '{{.Digest}}' "docker://${REPO}:${SOURCE}" 2>/dev/null); then
             echo "::error::${REPO}:${SOURCE} does not exist, so chart ${CHART_VERSION} cannot be"
-            echo "::error::labelled. The chart release itself is unaffected and will still publish."
+            echo "::error::labelled, and this job stops here: the chart is NOT published until the"
+            echo "::error::image exists (re-run this workflow once it does)."
             echo "::error::This means the application release was never published — check the"
             echo "::error::publish workflow, then from a clean checkout run:"
             echo "::error::  cd local-development && ./build-and-push-external.sh --release-tags"

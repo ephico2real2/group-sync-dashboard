@@ -625,6 +625,29 @@ class TestLoginCaptureSource:
         monkeypatch.setenv("GSD_LOGIN_CAPTURE_SOURCE", "audit-log")
         assert load_settings(write(tmp_path, BASE)).login_capture_source == "audit-log"
 
+    @pytest.mark.parametrize("disabled", (False, "false"))
+    def test_a_quoted_false_reaches_the_application_as_disabled_through_the_rendered_chart(self, tmp_path, disabled):
+        """Codex, review D2 second pass: the chart renders a quoted `enabled: "false"` through
+        unchanged, and `bool("false")` is True — so the application made that entry the host.
+        Here, not in test_chart_strategy.py, for the reason the test below states."""
+        import yaml
+        from test_chart_strategy import _config_data, render
+        values = tmp_path / "values.yaml"
+        values.write_text(yaml.safe_dump({"clusters": [
+            {"name": "first", "apiUrl": "https://first", "tokenEnv": "X", "enabled": disabled},
+            {"name": "host", "apiUrl": "https://host", "tokenEnv": "X", "enabled": True},
+        ]}, sort_keys=False))
+        import subprocess
+        from test_chart_strategy import CHART
+        done = subprocess.run(["helm", "template", "t", str(CHART), "-f", str(values)], capture_output=True, text=True)
+        assert done.returncode == 0, done.stdout + done.stderr
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(yaml.safe_dump(_config_data(done.stdout)))
+        s = load_settings(str(config_file))
+        assert s.cluster("first").enabled is False
+        assert s.host_cluster().name == "host"
+        assert s.cluster_policy("first") == ("self-only", "none")
+
     def test_audit_lists_preserve_commas_through_the_rendered_chart(self, tmp_path):
         """Codex, review D1: the ConfigMap the chart renders, loaded by the application itself.
         Lives here, not in test_chart_strategy.py: CI's chart job runs that file WITHOUT the

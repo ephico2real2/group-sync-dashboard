@@ -168,8 +168,9 @@ class TestTrustBoundary:
                             "idle_timeout": {"enabled": False}},
                 # The tier rides on whoami so the UI can label itself from the wire. With
                 # no cluster behind this test app the review fails, and the answer fails
-                # CLOSED: self, never all.
-                "visibility": {"scope": "self", "enabled": True},
+                # CLOSED: self, never all. `clusters` (D2) carries one decision per served
+                # cluster — none here, because this app has no cluster configured.
+                "visibility": {"scope": "self", "enabled": True, "clusters": {}},
             }
     def test_interactions_are_captured_and_survive_shutdown(self, tmp_path):
         """The buffer is memory-only, so a graceful shutdown must flush it."""

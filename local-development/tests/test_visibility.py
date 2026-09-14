@@ -168,8 +168,10 @@ def _settings(db: str, **kw) -> Settings:
     kw.setdefault("oauth_proxy_enabled", True)
     kw.setdefault("login_capture_enabled", True)
     return Settings(
+        # c2 inherits explicitly: since D2 a second cluster is self-only by default, and these
+        # tests pin the HOST tier's behaviour on every cluster (SPEC_D2 §D2.6 names this fixture).
         clusters=[ClusterConfig("c1", "https://api.c1.example.com:6443", token_env="X"),
-                  ClusterConfig("c2", "https://api.c2.example.com:6443", token_env="Y")],
+                  ClusterConfig("c2", "https://api.c2.example.com:6443", token_env="Y", visibility="inherit")],
         db_path=db, **kw)
 
 
@@ -310,7 +312,11 @@ class TestTwoTiersPerEndpoint:
         clusters: suppressing behind login what the pod serves without login is theatre."""
         mine = client.get("/api/clusters", headers=H("alice")).json()
         wide = client.get("/api/clusters", headers=H("root")).json()
-        assert mine == wide
+        # D2: every row carries the decision for THIS reader, and nothing else may differ.
+        assert [{k: v for k, v in r.items() if k != "visibility"} for r in mine] == \
+               [{k: v for k, v in r.items() if k != "visibility"} for r in wide]
+        assert {r["visibility"]["scope"] for r in mine} == {"self"}
+        assert {r["visibility"]["scope"] for r in wide} == {"all"}
 
     def test_groupsyncs_omit_directory_detail_at_self(self, client):
         """CR health is governance data and stays visible; ldap_filter and error_message
@@ -508,9 +514,13 @@ class TestWireContract:
 
     def test_whoami_reports_the_tier_so_the_ui_never_guesses(self, client):
         mine = client.get("/api/whoami", headers=H("alice")).json()
-        assert mine["visibility"] == {"scope": "self", "enabled": True}
+        assert mine["visibility"]["scope"] == "self" and mine["visibility"]["enabled"] is True
         wide = client.get("/api/whoami", headers=H("root")).json()
-        assert wide["visibility"] == {"scope": "all", "enabled": True}
+        assert wide["visibility"]["scope"] == "all" and wide["visibility"]["enabled"] is True
+        # D2: one decision per served cluster rides beside the headline, in the same vocabulary.
+        for body, scope in ((mine, "self"), (wide, "all")):
+            assert set(body["visibility"]["clusters"]) == {"c1", "c2"}
+            assert {c["scope"] for c in body["visibility"]["clusters"].values()} == {scope}
 
     def test_whoami_carries_no_visibility_claim_without_an_identity(self, client):
         body = client.get("/api/whoami").json()

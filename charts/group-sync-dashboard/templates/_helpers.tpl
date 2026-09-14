@@ -694,3 +694,43 @@ args depend on them), so both objects refuse together. Emits nothing.
 {{- end -}}
 {{- end -}}
 {{- end -}}
+
+# ── Per-cluster authorization ────────────────────────────────────────────────────────────
+# The same closed vocabulary the app enforces (gsd/config.py CLUSTER_VISIBILITIES), refused at
+# render so a typo'd policy fails `helm template` rather than the pod's startup. Nil-safe on
+# every hop for the usual reason. Called from configmap.yaml, which always renders.
+{{- define "gsd.validateClusters" -}}
+{{- $host := "" -}}
+{{- range $i, $c := (.Values.clusters | default list) -}}
+{{- if or (kindIs "invalid" $c) (not (kindIs "map" $c)) -}}
+{{- fail (printf "clusters[%d] is not a cluster entry (it is %s). Helm pads a list index set beyond the list's length with null and never merges lists, so `--set clusters[1].name=…` on a values file that does not define clusters[0] yields [null, {…}]: pass every entry, clusters[0] included, or put the whole list in a values file." $i (kindOf $c)) -}}
+{{- end -}}
+{{- $name := toString ($c.name | default (printf "clusters[%d]" $i)) -}}
+{{- $vis := "" -}}{{- if and (hasKey $c "visibility") (not (kindIs "invalid" $c.visibility)) -}}{{- $vis = trim (toString $c.visibility) -}}{{- end -}}
+{{- $id := "" -}}{{- if and (hasKey $c "identity") (not (kindIs "invalid" $c.identity)) -}}{{- $id = trim (toString $c.identity) -}}{{- end -}}
+{{- if and $vis (not (has $vis (list "inherit" "self-only" "hidden" "remote-sar"))) -}}
+{{- fail (printf "clusters[%d] (%s): visibility %q is not one of inherit, self-only, hidden, remote-sar. See the clusters comment in values.yaml." $i $name $vis) -}}
+{{- end -}}
+{{- if and $id (not (has $id (list "same-as-host" "none"))) -}}
+{{- fail (printf "clusters[%d] (%s): identity %q is not one of same-as-host, none." $i $name $id) -}}
+{{- end -}}
+{{- /* A word, not truthiness: a quoted "false" is a non-empty string and truthy in Go, and the
+       first ENABLED entry is the host (review of D2, second pass, Codex). */ -}}
+{{- $enabled := true -}}
+{{- if hasKey $c "enabled" -}}
+{{- $enabledWord := trim (toString $c.enabled) -}}
+{{- if not (has $enabledWord (list "true" "false")) -}}
+{{- fail (printf "clusters[%d] (%s): enabled must be true or false." $i $name) -}}
+{{- end -}}
+{{- $enabled = eq $enabledWord "true" -}}
+{{- end -}}
+{{- if and $enabled (eq $host "") -}}
+{{- $host = $name -}}
+{{- if has $vis (list "hidden" "remote-sar") -}}
+{{- fail (printf "clusters[%d] (%s) is the hosting cluster — the first enabled entry, the one the oauth-proxy authenticates against — and visibility %q makes no sense there: hidden would hide the login cluster, remote-sar would review the host against itself. Use inherit (the default) or self-only." $i $name $vis) -}}
+{{- end -}}
+{{- else if and (eq $vis "remote-sar") (ne $id "same-as-host") -}}
+{{- fail (printf "clusters[%d] (%s): visibility remote-sar needs identity: same-as-host. The review names the host's username on that cluster, which only means something if both clusters share an identity provider — say so explicitly." $i $name) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}

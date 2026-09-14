@@ -130,5 +130,6 @@ data:
     clusterAccessGroup: {{ .Values.clusterAccess.group | quote }}
     leaderElection: {{ .Values.leaderElection.enabled }}
     leaderLeaseName: {{ .Values.leaderElection.leaseName | quote }}
+    {{- include "gsd.validateClusters" . }}
     clusters:
       {{- toYaml .Values.clusters | nindent 6 }}

@@ -1541,3 +1541,127 @@ class TestAuditLogSource:
         ok, out = render(**self.AUDIT, loginCapture__enabled="false")
         assert ok, out
         assert "login-capture" not in out
+
+
+class TestPerClusterVisibility:
+    """clusters[].visibility / identity: refused at render on the same vocabulary the app enforces."""
+
+    TWO = {
+        "clusters[0].name": "host", "clusters[0].apiUrl": "https://h", "clusters[0].tokenEnv": "X",
+        "clusters[1].name": "east", "clusters[1].apiUrl": "https://e", "clusters[1].tokenEnv": "X",
+    }
+
+    def _render(self, **extra):
+        values = {**self.TWO, **extra}
+        args = ["helm", "template", "t", str(CHART), "--set", "ingress.host=t.example.com"]
+        for key, value in values.items():
+            args += ["--set", f"{key}={value}"]
+        done = subprocess.run(args, capture_output=True, text=True)
+        return done.returncode == 0, done.stdout + done.stderr
+
+    def test_the_keys_pass_through_to_the_configmap(self):
+        ok, out = self._render(**{"clusters[1].visibility": "self-only",
+                                   "clusters[1].identity": "same-as-host"})
+        assert ok, out
+        east = [c for c in _config_data(out)["clusters"] if c["name"] == "east"][0]
+        assert east["visibility"] == "self-only" and east["identity"] == "same-as-host"
+
+    def test_an_unknown_policy_is_refused(self):
+        ok, out = self._render(**{"clusters[1].visibility": "self_only"})
+        assert not ok and "not one of inherit, self-only, hidden, remote-sar" in out
+
+    def test_remote_sar_without_same_as_host_is_refused(self):
+        ok, out = self._render(**{"clusters[1].visibility": "remote-sar"})
+        assert not ok and "needs identity: same-as-host" in out
+        ok, _ = self._render(**{"clusters[1].visibility": "remote-sar",
+                                "clusters[1].identity": "same-as-host"})
+        assert ok
+
+    def test_hidden_on_the_host_is_refused(self):
+        ok, out = self._render(**{"clusters[0].visibility": "hidden"})
+        assert not ok and "hosting cluster" in out
+
+    def test_the_default_single_cluster_render_is_unchanged(self):
+        """Both reviewers of D2: the spec's version of this test ended in `or True` and could not
+        fail, and the ConfigMap had gained two comment lines inside the config the pod reads — so
+        a 0.20.0 → 0.21.0 default render was not byte-identical apart from versions."""
+        ok, out = render()
+        assert ok, out
+        assert "Per-entry `visibility` and `identity`" not in out, "a template comment landed in the config data"
+        row = _config_data(out)["clusters"][0]
+        assert row.get("visibility") is None and row.get("identity") is None
+        assert "visibility" not in row and "identity" not in row
+
+    @pytest.mark.parametrize("disabled", (False, "false"))
+    def test_a_boolean_and_a_quoted_false_choose_the_same_host_in_the_guard_and_notes(self, tmp_path, tmp_path_factory, disabled):
+        """Codex, review D2 second pass: a quoted `enabled: "false"` in a values file is a non-empty
+        string — truthy in Go and in `bool()` — so the guard, NOTES and load_settings all made the
+        disabled entry the host. The chart's two halves here; the application's half lives in
+        test_config.py, because CI's chart job runs this file WITHOUT the application installed."""
+        import yaml
+        from test_chart_route import _notes_probe_chart
+        values = tmp_path / "values.yaml"
+        values.write_text(yaml.safe_dump({"clusters": [
+            {"name": "first", "apiUrl": "https://first", "tokenEnv": "X", "enabled": disabled},
+            {"name": "host", "apiUrl": "https://host", "tokenEnv": "X", "enabled": True, "visibility": "hidden"},
+        ]}, sort_keys=False))
+        # The guard: `host` is the host in both spellings, so `hidden` on it is refused by name.
+        done = subprocess.run(["helm", "template", "t", str(CHART), "-f", str(values)], capture_output=True, text=True)
+        assert done.returncode != 0 and "clusters[1] (host) is the hosting cluster" in done.stdout + done.stderr
+        values.write_text(yaml.safe_dump({"clusters": [
+            {"name": "first", "apiUrl": "https://first", "tokenEnv": "X", "enabled": disabled},
+            {"name": "host", "apiUrl": "https://host", "tokenEnv": "X", "enabled": True},
+        ]}, sort_keys=False))
+        probe = _notes_probe_chart(tmp_path_factory.mktemp(f"notes-{type(disabled).__name__}"))
+        noted = subprocess.run(["helm", "template", "t", str(probe), "-s", "templates/notes-probe.yaml", "-f", str(values)],
+                               capture_output=True, text=True)
+        assert noted.returncode == 0, noted.stdout + noted.stderr
+        lines = [l.strip() for l in noted.stdout.splitlines() if l.strip().startswith(("first:", "host:"))]
+        assert lines == ["host: visibility inherit (host), identity same-as-host (host)",
+                         "first: visibility self-only (default), identity none (default)"], lines
+
+    def test_a_garbage_enabled_word_is_refused_at_render(self):
+        ok, out = self._render(**{"clusters[0].enabled": "maybe"})
+        assert not ok and "enabled must be true or false" in out
+
+    def test_notes_name_the_first_enabled_entry_as_host_and_print_it_first(self, tmp_path_factory):
+        """Both reviewers of D2: NOTES took index 0 as the host, while the guard and load_settings
+        take the first ENABLED entry — a disabled first entry was printed as the host."""
+        from test_chart_route import _notes_probe_chart
+        probe = _notes_probe_chart(tmp_path_factory.mktemp("d2-notes-host"))
+        args = ["helm", "template", "t", str(probe), "-s", "templates/notes-probe.yaml",
+                "--set", "ingress.host=t.example.com"]
+        for key, value in {**self.TWO, "clusters[0].enabled": "false", "clusters[1].visibility": " self-only "}.items():
+            args += ["--set", f"{key}={value}"]
+        done = subprocess.run(args, capture_output=True, text=True)
+        assert done.returncode == 0, done.stdout + done.stderr
+        lines = [l.strip() for l in done.stdout.splitlines() if l.strip().startswith(("host:", "east:"))]
+        assert lines == ["east: visibility self-only, identity same-as-host (host)",
+                         "host: visibility self-only (default), identity none (default)"], lines
+
+    def test_a_padded_null_entry_is_refused_by_name_not_by_a_nil_pointer(self):
+        """Found by the D2 live check: Helm never merges lists and pads an index set beyond the
+        list's length with null, so `--set clusters[1].name=…` on a release whose values file does
+        not define clusters[0] yields [null, {…}] — and the guard died on a Go nil pointer
+        ("nil pointer evaluating interface {}.name") instead of saying what happened."""
+        args = ["helm", "template", "t", str(CHART), "--set", "ingress.host=t.example.com",
+                "--set", "clusters[1].name=east", "--set", "clusters[1].apiUrl=https://e", "--set", "clusters[1].tokenEnv=X"]
+        done = subprocess.run(args, capture_output=True, text=True)
+        out = done.stdout + done.stderr
+        assert done.returncode != 0
+        assert "clusters[0] is not a cluster entry" in out and "pass every entry, clusters[0] included" in out, out[-600:]
+        assert "nil pointer" not in out, out[-600:]
+
+    def test_notes_name_every_clusters_policy(self, tmp_path_factory):
+        """`helm template` drops NOTES.txt, so the render goes through test_chart_route's probe
+        (NOTES rendered into a ConfigMap by `tpl`), as every NOTES assertion in this suite does —
+        the spec's plain render could never have seen the text (deviation recorded in SPEC_D2)."""
+        from test_chart_route import _notes_probe_chart
+        probe = _notes_probe_chart(tmp_path_factory.mktemp("d2-notes"))
+        args = ["helm", "template", "t", str(probe), "-s", "templates/notes-probe.yaml",
+                "--set", "ingress.host=t.example.com"]
+        for key, value in {**self.TWO, "clusters[1].visibility": "hidden"}.items():
+            args += ["--set", f"{key}={value}"]
+        done = subprocess.run(args, capture_output=True, text=True)
+        assert done.returncode == 0, done.stdout + done.stderr
+        assert "east: visibility hidden" in done.stdout and "host: visibility inherit (host)" in done.stdout

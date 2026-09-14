@@ -517,7 +517,12 @@ function renderScopePill() {
   const w = data.whoami;
   const vis = w && w.authenticated && w.visibility;
   if (!vis) { pill.hidden = true; pill.textContent = ""; return; }
-  const self = vis.scope === "self";
+  // The SELECTED cluster's decision when whoami carries one, the headline otherwise: the
+  // pill sits above a cluster-scoped page and must describe that cluster's view.
+  const forCluster = vis.clusters && view.cluster && vis.clusters[view.cluster];
+  // `!== "all"`, the same fail-closed rule as narrowedFor: a missing or junk scope painted
+  // "Full view" above a layout that was narrowed (review of D2, Codex).
+  const self = (forCluster ? forCluster.scope : vis.scope) !== "all";
   pill.hidden = false;
   pill.classList.toggle("self", self);
   pill.classList.toggle("full", !self);
@@ -579,16 +584,31 @@ function readerTierKnown() {
    tier; calling that narrowed would hide the Overview on a deployment that never restricted
    anything. Once authenticated, only an explicit scope=all may widen the layout — silence or
    junk from an authenticated response stays narrowed. */
+/* Per cluster when the wire says so: whoami's `visibility.clusters[id].scope` is the decision
+   for THAT cluster, and a reader wide on the host may be narrow on a remote. Silence or a
+   missing entry stays narrowed, as before. */
+function scopeFor(w, cluster) {
+  const vis = w && w.visibility;
+  if (!vis) return null;
+  const c = vis.clusters && cluster && vis.clusters[cluster];
+  return c ? c.scope : vis.scope;
+}
 function narrowedFor(w) {
   if (!w || !w.authenticated) return false;
-  const vis = w.visibility;
-  return !vis || vis.scope !== "all";
+  return scopeFor(w, view.cluster) !== "all";
 }
 function narrowedReader() {
   const w = data.whoami;
   if (!w || !w.authenticated) return false;
-  const vis = w.visibility;
-  return !vis || vis.scope !== "all";
+  return scopeFor(w, view.cluster) !== "all";
+}
+/* The HOST's decision, whatever cluster is selected: reports are documents over the whole
+   snapshot, minted by /api/report/ticket on the host's tier — so the Reports tab must not refuse a
+   host administrator who happens to have a narrowed remote selected (review of D2, Cursor). */
+function narrowedOnHost() {
+  const w = data.whoami;
+  if (!w || !w.authenticated) return false;
+  return scopeFor(w, null) !== "all";
 }
 
 /* A withheld view is a NAMED refusal, never a blank: an empty audit tab reads as a healthy
@@ -771,8 +791,14 @@ function wireSearchBox(key) {
 
 function renderFilters() {
   const clusters = data.clusters;
+  // The selector says when a cluster is narrowed for THIS reader — read off the row's
+  // server-decided `visibility`, never derived here (docs/ACCESS_CONTROL.md §11). A reader who
+  // is wide on the host and narrow on a remote would otherwise switch clusters and see the
+  // table shrink with nothing to say why. `!== "all"`, the same fail-closed rule as the pill
+  // and the narrowing helpers (review of D2, second pass).
   const opts = clusters.map((c) =>
-    `<option value="${esc(c.id)}"${c.id === view.cluster ? " selected" : ""}>${esc(c.id)}</option>`).join("");
+    `<option value="${esc(c.id)}"${c.id === view.cluster ? " selected" : ""}>${esc(c.id)}${
+      c.visibility && c.visibility.scope !== "all" ? " — your view" : ""}</option>`).join("");
   // Usage is a property of the DASHBOARD, not of a cluster. Leaving the cluster selector
   // up would say these numbers are scoped to crc-local, and changing it would appear to
   // filter them while silently doing nothing.
@@ -1716,7 +1742,7 @@ async function reportGet(path) { return (await reportFetch(path)).json(); }
 function reportsPage() {
   if (!reportingEnabled()) return `<section class="card"><div class="empty-note">Reporting is not enabled on this deployment.</div></section>`;
   if (!readerTierKnown()) return `<section class="card"><div class="empty-note">Loading…</div></section>`;
-  if (narrowedReader()) return refusalCard("Reports",
+  if (narrowedOnHost()) return refusalCard("Reports",
     `Reports are documents about the cluster's own RBAC surface, its groups and its users.`);
   const cat = data.reportCatalog;
   if (!cat) return `<section class="card"><div class="empty-note">Loading…</div></section>`;
@@ -3737,11 +3763,18 @@ let lastRefreshStartedAt = Date.now();
    store has never seen — in no group, no history, no User object — which is an empty state,
    not a fault; every other error is still one. The stand-in declares scope so the banner
    renders from the wire's vocabulary, as scopeBanner requires. */
-function myAccessFetch(get, base, viewer) {
+function myAccessFetch(get, base, viewer, { allowStaleViewer = false } = {}) {
   // `get` is refresh()'s own fetcher (it stamps the interaction), handed in rather than reached
   // for: it is a local of refresh, and a module-level reference to it was a ReferenceError
   // that the error card swallowed — caught by the self-tier UI tests, not by the parser.
+  //
+  // allowStaleViewer: the SPECULATIVE call refresh() makes for the previous cycle's viewer,
+  // before the new whoami arrives. If the session changed hands meanwhile (Alice's tab is now
+  // Bob's), that call asks for Alice's path as Bob and the API answers 403 — which is not a
+  // fault, only a stale guess: it resolves to null and the follow-up fetches the reader's own
+  // path once whoami names them (C1 review, Codex; routed to SPEC_D2).
   return get(`${base}/users/${encodeURIComponent(viewer)}`).catch((e) => {
+    if (allowStaleViewer && e.status === 403) return null;
     if (e.status !== 404) throw e;
     return { scope: "self", viewer, user: viewer, bindings: [], unseen: true };
   });
@@ -3823,7 +3856,7 @@ async function refresh(opts = {}) {
         want.findings = guard403(get(`${base}/bindings/findings?limit=${FINDINGS_PAGE}`));
       }
       if (view.page === "bindings" && narrowedReader() && data.whoami && data.whoami.user) {
-        want.myAccess = myAccessFetch(get, base, data.whoami.user);
+        want.myAccess = myAccessFetch(get, base, data.whoami.user, { allowStaleViewer: true });
       }
       if (view.page === "groups" || view.page === "users") {
         // The SAME order render() dispatches in, so what is fetched is what is painted. A pasted
@@ -3874,7 +3907,7 @@ async function refresh(opts = {}) {
     }
     // Not cluster-scoped: this is who used the DASHBOARD, which has no cluster dimension.
     // Fetched only on its own tab, so the other pages do not pay for it.
-    if (view.page === "reports" && reportingEnabled() && !narrowedReader()) {
+    if (view.page === "reports" && reportingEnabled() && !narrowedOnHost()) {
       // Through the proxy to the REPORT SERVICE, with the ticket the dashboard minted. A 403 here
       // is the same designed refusal as everywhere else and renders as the same card.
       want.reportCatalog = guard403(reportGet("/api/reports"));
@@ -3924,7 +3957,11 @@ async function refresh(opts = {}) {
       const base = `/api/clusters/${encodeURIComponent(view.cluster)}`;
       const w = got.whoami;
       if (narrowedFor(w)) {
-        if (!data.myAccess && w.user) {
+        // Whatever is held must be THIS reader's: the speculative call above was made for the
+        // previous cycle's viewer, so after a session change it holds the old viewer's path (or
+        // the null its 403 resolved to). Fetch the reader's own path whenever the held one is
+        // missing or names somebody else (C1 review, Codex; routed to SPEC_D2).
+        if (w.user && (!data.myAccess || data.myAccess.viewer !== w.user)) {
           const own = await myAccessFetch(get, base, w.user);
           if (superseded()) return;
           data.myAccess = own;
@@ -3952,6 +3989,23 @@ async function refresh(opts = {}) {
     if ("usage" in got) data.usage = got.usage;
     if ("reportCatalog" in got) data.reportCatalog = got.reportCatalog;
     if ("reportRuns" in got) data.reportRuns = got.reportRuns;
+    // The report requests above were chosen on the PREVIOUS cycle's host tier, before this
+    // cycle's whoami arrived — the same race the Access granted tab reconciles below. A reader
+    // promoted mid-session otherwise saw "Loading…" for a whole cycle; a demoted one must not
+    // keep the catalogue, nor lend a ticket minted under the old identity (review of D2, second
+    // pass, Codex; measured: zero report calls on the promoting refresh).
+    if (view.page === "reports" && reportingEnabled() && got.whoami) {
+      if (narrowedOnHost()) {
+        data.reportCatalog = null; data.reportRuns = null; data.reportTicket = null;
+      } else if (got.whoami.authenticated && !("reportCatalog" in got)) {
+        data.reportTicket = null;
+        const [catalog, runs] = await Promise.all([
+          guard403(reportGet("/api/reports")), guard403(reportGet("/api/runs?limit=50")),
+        ]);
+        if (superseded()) return;
+        data.reportCatalog = catalog; data.reportRuns = runs;
+      }
+    }
     if ("operatorConfigs" in got) data.operatorConfigs = got.operatorConfigs;
     if ("userBindings" in got) data.userBindings = got.userBindings;
     // An AUTOMATIC refresh that changed nothing must not touch the DOM. render() replaces #main

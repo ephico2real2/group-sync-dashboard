@@ -72,11 +72,13 @@ oc adm policy add-cluster-role-to-user cluster-reader \
   system:serviceaccount:<namespace>:<name>
 ```
 
-For a ServiceAccount use exactly that user form. The dashboard's repeated review sends the identity
-with the OAuth virtual groups only, not `system:serviceaccounts:<namespace>`, so a grant made to the
-ServiceAccount's namespace group passes the proxy and still lands on the self view inside the
-application (recorded in `docs/REVIEW_chart_defaults.md`; carrying ServiceAccount virtual groups is
-routed to `docs/specs/SPEC_D2_per_cluster_authorization.md`, which owns the tier resolver).
+For a ServiceAccount either form works since application 0.19.0: the dashboard's repeated review
+names the groups a ServiceAccount's token carries — `system:serviceaccounts`,
+`system:serviceaccounts:<namespace>` and `system:authenticated` — derived from the identity's shape
+(`gsd/kube.py#_virtual_groups_for`), so a grant made to the namespace group admits it in the
+application exactly as it does at the proxy. Before 0.19.0 only the user form reached the wide view
+(recorded in `docs/REVIEW_chart_defaults.md`; the fix was routed to
+`docs/specs/SPEC_D2_per_cluster_authorization.md`, which owns the tier resolver).
 
 ```bash
 ```

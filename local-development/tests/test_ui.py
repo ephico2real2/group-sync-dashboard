@@ -2996,6 +2996,99 @@ class TestAccessGrantedSelfTier:
         assert "reaches alice" in body and "grant nobody" not in body, body[:300]
         assert p.evaluate("() => data.findings") is None, "the wide payload is not this reader's to paint"
 
+    def test_a_session_that_changes_hands_refetches_the_new_readers_own_path(self, page, scoped_server):
+        """Codex, C1 review, routed to SPEC_D2: refresh() made its speculative own-path request for
+        the PREVIOUS cycle's viewer, so when Alice's tab became Bob's session the request was
+        /users/alice as Bob — a 403 that rejected the shared Promise.all and left the generic API
+        error card until a reload. The speculative call now resolves that 403 to null, and the
+        follow-up fetches whoever whoami names."""
+        p = self._open(page, scoped_server, "alice")
+        p.wait_for_selector(".scope-banner")
+        assert "reaches alice" in p.locator("#main").inner_text()
+        p.set_extra_http_headers({"X-Forwarded-User": "bob"})
+        p.evaluate("() => refresh()")
+        p.wait_for_function("() => data.myAccess && data.myAccess.viewer === 'bob'", timeout=10_000)
+        body = p.locator("#main").inner_text()
+        assert "Dashboard API error" not in body, body[:300]
+        assert "reaches alice" not in body, body[:300]
+        assert p.evaluate("() => data.findings") is None
+        assert p.evaluate("() => data.whoami.user") == "bob"
+
+    def test_a_silent_selected_cluster_scope_stays_narrowed_in_the_pill(self, page, scoped_server):
+        """Codex, review D2: the pill tested `=== "self"` while every narrowing helper tests
+        `!== "all"`, so a missing or junk scope painted "Full view" above a layout that stayed
+        narrowed. Same fail-closed rule everywhere now."""
+        p = _open_as(page, scoped_server, "alice")
+        p.wait_for_selector("#scope-pill:not([hidden])")
+        p.evaluate("""() => {
+          delete data.whoami.visibility.scope;
+          const c = data.whoami.visibility.clusters;
+          if (c && view.cluster && c[view.cluster]) delete c[view.cluster].scope;
+          render();
+        }""")
+        assert p.evaluate("() => narrowedReader()") is True
+        assert p.locator("#scope-pill").inner_text().startswith("Your view")
+        assert "self" in (p.locator("#scope-pill").get_attribute("class") or "")
+
+    def test_the_selector_stays_narrowed_when_the_row_scope_is_silent(self, page, scoped_server):
+        """Cursor, second pass: the selector still tested `=== "self"` after the pill moved to
+        `!== "all"` — a silent row scope dropped " — your view" while the page stayed narrowed."""
+        p = _open_as(page, scoped_server, "alice")
+        p.wait_for_selector("#f-cluster")
+        p.evaluate("""() => {
+          (data.clusters || []).forEach((c) => { c.visibility = Object.assign({}, c.visibility || {}, { scope: undefined }); });
+          render();
+        }""")
+        assert "your view" in p.locator("#f-cluster").inner_text()
+
+    def test_reports_refresh_fetches_on_the_hosts_headline(self, page, scoped_server):
+        """Cursor, second pass: the Reports test asserted reportsPage() only, so the catalogue
+        fetch guard in refresh() could drift back to the selected cluster and paint a form that
+        never loads. Both guards read the host's headline."""
+        p = _open_as(page, scoped_server, "root")
+        src = p.evaluate("() => refresh.toString()")
+        assert 'view.page === "reports" && reportingEnabled() && !narrowedOnHost()' in src
+        assert 'view.page === "reports" && reportingEnabled() && !narrowedReader()' not in src
+
+    def test_reports_catch_up_on_the_refresh_that_promotes_the_host_tier(self, page, scoped_server):
+        """Codex, review D2 second pass: refresh() chose its report requests on the PREVIOUS
+        cycle's host tier, so a reader promoted mid-session saw "Loading…" for a whole cycle
+        (measured: zero report calls on the promoting refresh). The same catch-up as the Access
+        granted tab: reconcile against the whoami that just arrived."""
+        p = _open_as(page, scoped_server, "alice")
+        p.evaluate("""() => {
+          view.page = "reports";
+          data.version.features.reporting = true;
+          data.reportCatalog = null; data.reportRuns = null;
+          window.__reportGets = [];
+          window.reportGet = async (path) => { window.__reportGets.push(path); return path === "/api/reports" ? { reports: [] } : { runs: [] }; };
+          render();
+        }""")
+        assert p.evaluate("() => narrowedOnHost()") is True
+        p.set_extra_http_headers({"X-Forwarded-User": "root"})
+        p.evaluate("() => refresh()")
+        p.wait_for_function("() => data.whoami && data.whoami.visibility && data.whoami.visibility.scope === 'all'", timeout=10_000)
+        p.wait_for_function("() => window.__reportGets.length >= 2", timeout=10_000)
+        assert p.evaluate("() => window.__reportGets") == ["/api/reports", "/api/runs?limit=50"]
+        assert p.evaluate("() => data.reportCatalog !== null") is True
+
+    def test_reports_follow_the_hosts_headline_not_the_selected_remote(self, page, scoped_server):
+        """Cursor, review D2: reports are documents over the whole snapshot, minted on the host's
+        tier by /api/report/ticket; the tab read the SELECTED cluster's decision, so a host
+        administrator with a narrowed remote selected was refused a report the API would mint."""
+        p = _open_as(page, scoped_server, "root")
+        p.evaluate("""() => {
+          data.whoami.visibility.clusters = Object.assign({}, data.whoami.visibility.clusters,
+            { east: { policy: "self-only", identity: "none", scope: "self" } });
+          data.clusters = (data.clusters || []).concat([{ id: "east", visibility: { policy: "self-only", scope: "self" } }]);
+          view.cluster = "east";
+          render();
+        }""")
+        assert p.evaluate("() => narrowedReader()") is True, "the selected remote is narrowed for root"
+        assert p.evaluate("() => narrowedOnHost()") is False, "root is wide on the host"
+        assert p.evaluate("() => reportsPage().includes('scope-refusal')") is False, \
+            "the Reports tab must not refuse a host administrator over the selected remote"
+
     def test_an_unknown_tier_paints_neither_tiers_payload(self, page, scoped_server):
         """A whoami that fails on a later cycle leaves the tier indeterminate. The cached wide
         payload is not the reader's to see then, and the own path is not a claim either: the tab
