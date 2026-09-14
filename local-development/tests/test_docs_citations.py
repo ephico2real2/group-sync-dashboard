@@ -135,6 +135,8 @@ REVIEW_ARTIFACTS = (
     # PR #95's record (the change-log folder, the skills and settings into git): quotes the
     # skill's old Step 4 command and the log's old heading verbatim, which is the point.
     "REVIEW_session_tooling.md",
+    # PR #111 namespace-metadata capture review: cites the implementation line numbers verbatim.
+    "REVIEW_ns_metadata_capture_impl.md",
     # The reporting-extension design round 1: its findings quote the design's old snippets
     # (ReportError, NS_CAP, the wrong-pod env) verbatim, which is the point of a review record.
     "REVIEW_reporting_ext_design.md",

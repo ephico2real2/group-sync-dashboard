@@ -945,6 +945,19 @@ backup:
 reporting:
   enabled: true
 
+  # Namespace metadata capture and selection (docs/DESIGN_reporting_auditors_and_ns_selector.md §3).
+  # BOTH empty by default, and enabling them also needs rbac.namespaces=true (the poll only lists
+  # Namespace objects with that grant). The render refuses a selector that names a key the poll does
+  # not capture, and labels set while the grant is off.
+  namespaceMetadata:
+    # Label keys the poll captures per namespace (bounded — only these, never the whole label map).
+    # Add keys (environment, owner, cost-centre) with no migration. e.g. [company.net/mnemonic]
+    labels: []
+  namespaceSelector:
+    # The captured key the namespace-access report selects on; MUST be one of namespaceMetadata.labels.
+    # "" hides the selector. e.g. company.net/mnemonic
+    label: ""
+
   image:
     repository: quay.io/ephico2real/group-sync-dashboard-report
     tag: ""        # empty resolves Chart.appVersion — the dashboard's version, deliberately (§3.3)

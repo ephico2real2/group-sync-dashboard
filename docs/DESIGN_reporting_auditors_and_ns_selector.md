@@ -564,6 +564,15 @@ poll does not capture).
   value: {{ (((.Values.reporting | default dict).namespaceSelector).label | default "") | quote }}
 ```
 
+**Implementation note (B1, #101): the labels reach the dashboard through the ConfigMap key**
+`namespaceMetadataLabels` (rendered with `toJson`, read by `_string_list_setting`), not a
+`GSD_NS_METADATA_LABELS` env — that is the codebase convention for list settings
+(`loginCaptureAuditProviders`, `loginCaptureAuditNodeNames`), and the round-1 env wording did not
+check it. The report-pod SELECTOR (B2) still uses `GSD_REPORT_NS_SELECTOR_LABEL`, since the report
+service reads env, not the ConfigMap. The render guards were folded into the EXISTING
+`gsd.reportingGuards` helper (a define of that name already exists, included by both Deployments),
+not a new define.
+
 `Settings.namespace_metadata_labels` (dashboard, `local-development/gsd/config.py`) reads
 `GSD_NS_METADATA_LABELS` (comma-split, `[]` when empty); `ReportSettings.namespace_selector_label` (report
 pod, `local-development/gsd/reporting/config.py`) reads `GSD_REPORT_NS_SELECTOR_LABEL` (`""` allowed).

@@ -363,6 +363,7 @@ def refresh_bindings(
     audit_mode: str = "off",
     audit_max_per_cycle: int = 20,
     namespaces_read: bool = False,
+    namespace_metadata_labels: list[str] | None = None,
 ) -> str:
     """Re-read RoleBindings/ClusterRoleBindings for one cluster.
 
@@ -431,7 +432,7 @@ def refresh_bindings(
         fetch_namespaces = getattr(client, "fetch_namespaces", None)
         if fetch_namespaces is not None:
             try:
-                namespaces = fetch_namespaces()
+                namespaces = fetch_namespaces(namespace_metadata_labels)
             except ClusterError as exc:
                 log.warning("namespace refresh for %s failed: %s — the namespace report keeps "
                             "last cycle's coverage", cluster.name, exc.message)
@@ -892,6 +893,7 @@ class Poller:
                         audit_mode=self.settings.unmanaged_audit_mode,
                         audit_max_per_cycle=self.settings.unmanaged_audit_max_per_cycle,
                         namespaces_read=self.settings.namespaces_read_enabled,
+                        namespace_metadata_labels=self.settings.namespace_metadata_labels,
                     )
                 except Exception:  # noqa: BLE001
                     log.exception("unhandled error refreshing bindings for %s", cluster.name)

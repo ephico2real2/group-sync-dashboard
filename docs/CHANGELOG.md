@@ -8,6 +8,17 @@ lives next to the code and in the design and review records linked here. Changes
 last release sit under `## Unreleased` until the release that carries them replaces that heading —
 which `local-development/prepare-release.py` does when the release is cut.
 
+## Application 0.19.0 — chart 0.22.0 — 2026-09-14
+
+- **Reporting: opt-in auditor groups and namespace-metadata capture (chart + poller).** A new
+  `rbacAuditors` stanza binds a chosen group to a least-privilege read-only ClusterRole so a
+  non-developer can run reports and review identities and RBAC in OpenShift directly, with render
+  guards and a hashed binding name. The poller now captures a bounded, configured set of Namespace
+  labels (`reporting.namespaceMetadata.labels`, default off, needs `rbac.namespaces`) into a child
+  table, the foundation for selecting a report's namespaces by the estate's grouping label. Both
+  default off; a default install renders and behaves exactly as before
+  (docs/DESIGN_reporting_auditors_and_ns_selector.md).
+
 ## Application 0.19.0 — chart 0.21.0 — 2026-09-13
 
 - **Per-cluster authorization for the multi-cluster case.** A reader is authenticated by the
