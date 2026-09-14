@@ -24,7 +24,9 @@ which `local-development/prepare-release.py` does when the release is cut.
   scope served; the cluster selector marks a narrowed cluster and the header pill follows the
   selected one. (`ACCESS_CONTROL.md` §11)
 - **Upgrade note for multi-cluster installs:** remotes become `self-only` on chart 0.21.0. Set
-  `clusters[].visibility: inherit` to keep the old view, deliberately.
+  `clusters[].visibility: inherit` to keep the old view, deliberately. Helm never merges lists: when
+  adding an entry with `--set`, pass every entry, `clusters[0]` included, or the render refuses the
+  padded `null` by name.
 - **Chart 0.21.0:** the two values, a render guard on their vocabulary (unknown policy,
   `hidden`/`remote-sar` on the host entry, `remote-sar` without `identity: same-as-host`), NOTES
   naming every cluster's effective policy, and the stale `docs/PLAN_oauth_proxy.md` reference in

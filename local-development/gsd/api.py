@@ -548,14 +548,26 @@ def build_app(
         # a remote the host itself refuses to widen (review of D2, Cursor).
         host = settings.host_cluster()
         if cluster_id is None:
-            cluster_id = host.name if host is not None else None
-        policy, identity = (settings.cluster_policy(cluster_id) if cluster_id is not None
-                            else (VISIBILITY_INHERIT, IDENTITY_SAME_AS_HOST))
+            if host is None:
+                # No enabled entry: there is no decided host tier to inherit. Fail closed
+                # rather than answer `inherit` from the resolver of a cluster that is not
+                # hosting anyone (review of D2, second pass, Cursor).
+                signals.note_decision("admin", TIER_SELF)
+                return viewer, TIER_SELF
+            cluster_id = host.name
+        policy, identity = settings.cluster_policy(cluster_id)
+        # `inherit` follows the host's decided POLICY; the remote's identity is consulted only
+        # under its own `self-only` — under inherit a self reader is keyed by the host's
+        # username, as before 0.19.0 (docs/ACCESS_CONTROL.md §11). The first-pass remap applied
+        # the remote's default `identity: none` after the remap and refused what §11 promised
+        # (review of D2, second pass, Cursor).
+        own_policy = policy
         if policy == VISIBILITY_INHERIT and host is not None and cluster_id != host.name:
             policy = settings.cluster_policy(host.name)[0]
         if policy == VISIBILITY_SELF_ONLY:
             signals.note_decision("admin", TIER_SELF)
-            return (viewer if identity == IDENTITY_SAME_AS_HOST else None), TIER_SELF
+            keep = own_policy == VISIBILITY_INHERIT or identity == IDENTITY_SAME_AS_HOST
+            return (viewer if keep else None), TIER_SELF
         if policy == VISIBILITY_REMOTE_SAR:
             # Read off app.state PER REQUEST, the published seam, so a test can substitute one
             # remote's decision without a cluster. No build-time fallback: a remote cluster
@@ -1830,7 +1842,9 @@ def build_app(
         list this used to be, so `scope` and `viewer` ride the wire (the activity
         contract).
         """
-        viewer, _ = viewer_scope(request)
+        # The envelope's viewer is the name; the decisions are made per cluster below, so a
+        # nameless decision here only counted the host twice (review of D2, second pass).
+        viewer = trusted_viewer(request)
         now = datetime.now(UTC)
         # B4's cliff policy, kept through the per-cluster rewrite: SPEC_D2's block predates it
         # (deviation recorded there). Named `cliff`, because the loop below binds `policy` to
@@ -2019,17 +2033,24 @@ def build_app(
             # The tier from the SAME decision path the data handlers use — viewer_scope
             # reads the app.state seam per request and never raises — so the pill can
             # never disagree with the pages it sits above. An indeterminate tier is SELF.
-            _, scope = viewer_scope(request)
-            # And PER CLUSTER, the same way, so the cluster selector can say which clusters
-            # this reader sees narrowed (docs/ACCESS_CONTROL.md §11). Hidden clusters are
-            # absent, as they are from /api/clusters — listing them here would undo the 404.
+            # PER CLUSTER, so the cluster selector can say which clusters this reader sees
+            # narrowed (docs/ACCESS_CONTROL.md §11). Hidden clusters are absent, as they are
+            # from /api/clusters — listing them here would undo the 404. The headline IS the
+            # host row's decision: deciding it nameless and then again for the host counted
+            # the host twice on gsd_visibility_decisions_total (review of D2, second pass).
             clusters: dict[str, dict] = {}
+            host = settings.host_cluster()
+            scope = None
             for c in settings.clusters:
                 policy, identity = settings.cluster_policy(c.name)
                 if policy == VISIBILITY_HIDDEN:
                     continue
                 _, cscope = viewer_scope(request, c.name)
                 clusters[c.name] = {"policy": policy, "identity": identity, "scope": cscope}
+                if host is not None and c.name == host.name:
+                    scope = cscope
+            if scope is None:            # no enabled cluster: the nameless question, fail-closed
+                _, scope = viewer_scope(request)
             out["visibility"] = {
                 "scope": scope,
                 "enabled": settings.view_restrictions_enabled,

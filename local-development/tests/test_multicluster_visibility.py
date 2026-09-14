@@ -241,9 +241,67 @@ class TestInheritIsTheHostsDecidedTier:
             assert who["scope"] == "self", "the headline is the host's decision, and the host is self-only"
             assert c.get("/api/clusters/host/bindings/findings", headers=ROOT).status_code == 403
 
+    def test_inherit_under_a_self_only_host_keeps_the_username_at_identity_none(self, db):
+        """Cursor, review D2 second pass (its most important finding): the first-pass remap
+        applied the remote's default `identity: none` AFTER remapping inherit onto the host's
+        self-only, and withheld the viewer — §11 says identity is not consulted under inherit.
+        The first-pass test hid it by setting same-as-host."""
+        settings = Settings(clusters=[
+            ClusterConfig("host", "https://api.host.example:6443", token_env="X", visibility="self-only"),
+            ClusterConfig("east", "https://api.east.example:6443", token_env="X", visibility="inherit"),
+        ], db_path=db, oauth_proxy_enabled=True)
+        app = build_app(settings, run_poller=False)
+        app.state.tier_resolver = _Map({"root": "all"})
+        with TestClient(app) as c:
+            body = c.get("/api/clusters/east/groups", headers=ROOT)
+            assert body.status_code == 200, body.json()
+            assert body.json()["scope"] == "self" and body.json()["viewer"] == "root"
+            alice = c.get("/api/clusters/east/groups", headers=ALICE).json()
+            assert alice["viewer"] == "alice" and [g["name"] for g in alice["groups"]] == ["east-admins"]
+            who = c.get("/api/whoami", headers=ROOT).json()["visibility"]
+            assert who["scope"] == "self"
+            assert who["clusters"]["east"] == {"policy": "inherit", "identity": "none", "scope": "self"}
+
+    def test_no_enabled_cluster_fails_closed_on_the_headline(self, db):
+        """Cursor, second pass: with every entry disabled there is no host, and the nameless
+        question fell through to the host resolver — `all` above rows that all said `self`."""
+        settings = Settings(clusters=[
+            ClusterConfig("host", "https://api.host.example:6443", token_env="X", enabled=False),
+            ClusterConfig("east", "https://api.east.example:6443", token_env="X", enabled=False),
+        ], db_path=db, oauth_proxy_enabled=True)
+        app = build_app(settings, run_poller=False)
+        app.state.tier_resolver = _Map({"root": "all"})
+        with TestClient(app) as c:
+            who = c.get("/api/whoami", headers=ROOT).json()["visibility"]
+            assert who["scope"] == "self"
+            assert {v["scope"] for v in who["clusters"].values()} == {"self"}
+
     def test_an_inherit_host_still_decides_by_its_resolver(self, client):
         assert client.get("/api/whoami", headers=ROOT).json()["visibility"]["scope"] == "all"
         assert client.get("/api/whoami", headers=ALICE).json()["visibility"]["scope"] == "self"
+
+
+def _admin_decisions(text: str) -> int:
+    return int(sum(float(line.rsplit(" ", 1)[1]) for line in text.splitlines()
+                   if line.startswith('gsd_visibility_decisions_total{threshold="admin"')))
+
+
+def test_whoami_and_alerts_note_one_decision_per_served_cluster(client):
+    """Cursor, second pass: whoami and alerts decided the host twice — once nameless for the
+    headline, once as a row — so gsd_visibility_decisions_total counted five for four served
+    clusters (measured: 2 after one whoami on a one-cluster app). The headline is the host row."""
+    before = _admin_decisions(client.get("/metrics").text)
+    client.get("/api/whoami", headers=ROOT)
+    after_who = _admin_decisions(client.get("/metrics").text)
+    assert after_who - before == 4, (before, after_who)
+    client.get("/api/clusters", headers=ROOT)
+    after_cl = _admin_decisions(client.get("/metrics").text)
+    assert after_cl - after_who == 4
+    client.get("/api/alerts", headers=ROOT)
+    after_al = _admin_decisions(client.get("/metrics").text)
+    assert after_al - after_cl == 4
+    client.get("/api/clusters/host/groups", headers=ROOT)
+    assert _admin_decisions(client.get("/metrics").text) - after_al == 1
 
 
 def test_manual_alerts_keep_the_common_silence_fields(tmp_path):

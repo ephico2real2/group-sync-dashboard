@@ -3030,6 +3030,26 @@ class TestAccessGrantedSelfTier:
         assert p.locator("#scope-pill").inner_text().startswith("Your view")
         assert "self" in (p.locator("#scope-pill").get_attribute("class") or "")
 
+    def test_the_selector_stays_narrowed_when_the_row_scope_is_silent(self, page, scoped_server):
+        """Cursor, second pass: the selector still tested `=== "self"` after the pill moved to
+        `!== "all"` — a silent row scope dropped " — your view" while the page stayed narrowed."""
+        p = _open_as(page, scoped_server, "alice")
+        p.wait_for_selector("#f-cluster")
+        p.evaluate("""() => {
+          (data.clusters || []).forEach((c) => { c.visibility = Object.assign({}, c.visibility || {}, { scope: undefined }); });
+          render();
+        }""")
+        assert "your view" in p.locator("#f-cluster").inner_text()
+
+    def test_reports_refresh_fetches_on_the_hosts_headline(self, page, scoped_server):
+        """Cursor, second pass: the Reports test asserted reportsPage() only, so the catalogue
+        fetch guard in refresh() could drift back to the selected cluster and paint a form that
+        never loads. Both guards read the host's headline."""
+        p = _open_as(page, scoped_server, "root")
+        src = p.evaluate("() => refresh.toString()")
+        assert 'view.page === "reports" && reportingEnabled() && !narrowedOnHost()' in src
+        assert 'view.page === "reports" && reportingEnabled() && !narrowedReader()' not in src
+
     def test_reports_follow_the_hosts_headline_not_the_selected_remote(self, page, scoped_server):
         """Cursor, review D2: reports are documents over the whole snapshot, minted on the host's
         tier by /api/report/ticket; the tab read the SELECTED cluster's decision, so a host

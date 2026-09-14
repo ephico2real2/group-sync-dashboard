@@ -794,10 +794,11 @@ function renderFilters() {
   // The selector says when a cluster is narrowed for THIS reader — read off the row's
   // server-decided `visibility`, never derived here (docs/ACCESS_CONTROL.md §11). A reader who
   // is wide on the host and narrow on a remote would otherwise switch clusters and see the
-  // table shrink with nothing to say why.
+  // table shrink with nothing to say why. `!== "all"`, the same fail-closed rule as the pill
+  // and the narrowing helpers (review of D2, second pass).
   const opts = clusters.map((c) =>
     `<option value="${esc(c.id)}"${c.id === view.cluster ? " selected" : ""}>${esc(c.id)}${
-      c.visibility && c.visibility.scope === "self" ? " — your view" : ""}</option>`).join("");
+      c.visibility && c.visibility.scope !== "all" ? " — your view" : ""}</option>`).join("");
   // Usage is a property of the DASHBOARD, not of a cluster. Leaving the cluster selector
   // up would say these numbers are scoped to crc-local, and changing it would appear to
   // filter them while silently doing nothing.

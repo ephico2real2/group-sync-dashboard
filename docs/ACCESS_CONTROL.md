@@ -209,7 +209,7 @@ narrower tier, because a tier that hides the reader's own access path has nothin
     │     resolver raises or answers junk?      ──────────►  "self"
     │     resolver answers exactly "all"?       ──────────►  "all"
     │
-    ├─ require_admin_tier(request)              api.py:340   403 unless scope == "all"
+    ├─ require_admin_tier(request, cluster_id)  api.py:340   403 unless scope == "all"
     │     used by: bindings/findings, operator-configs, mint ticket (/api/report/ticket)
     │
     ├─ usage_scope(request)                     api.py:284   the SECOND, independent tier

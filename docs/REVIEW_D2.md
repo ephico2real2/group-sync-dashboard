@@ -66,3 +66,26 @@ under `self-only` only — so an `inherit` remote at the default `identity: none
 the host's username, exactly as before 0.19.0. §11's table and the values comment now say so; the
 alternative (identity biting under every policy) would make "set `inherit` to keep the old view" false
 for self readers, and the upgrade note is the promise that matters.
+
+## Second pass — head 91c5554, 2026-09-14
+
+An eleven-claim brief on the fixed head: each accepted fix, then the matrix, the decision counts, the
+no-host case, the chart's agreement with the app, the byte-identical render, the page's every scope
+consumer, the alert wire shape, the docs, the mutations, and the release. Cursor (ask mode, source only —
+it enumerated the matrix from the code and marked the runs it could not make PLAUSIBLE); Codex (a shell
+on a pristine export; its first launch hung 4 h 16 min on stdin from a backgrounded shell — a launch
+defect, written into the skill — and was relaunched with stdin closed).
+
+| Claim | Cursor | Codex | Decision |
+|---|---|---|---|
+| C1 the matrix | REFUTED — the pass-1 remap copies the host's POLICY and then applies the remote's default `identity: none`, withholding the viewer on an `inherit` remote under a `self-only` host — the very clause §11 states the other way; the pass-1 test hid it with `same-as-host`. And with NO enabled cluster the nameless question fell through to the host resolver: `all` above rows all `self` | _(pending)_ | **Accepted, both** — under inherit the viewer is kept whatever the remote's identity (the cluster's OWN policy decides whether identity is consulted); no host means fail closed. Cursor's snippet taken in substance; both tests taken. The pass-1 hole was mine: a fix that made a doc sentence true for the case its test covered and false for the default |
+| C2 decision counts | REFUTED — whoami and alerts decided the host twice (nameless, then as a row): 5 notes for 4 served clusters | _(pending)_ | **Accepted** — measured: 2 notes after one whoami on a one-cluster app. The whoami headline IS the host row's decision; alerts take the envelope's viewer from `trusted_viewer`. Cursor's metrics-delta test taken |
+| C3 blank → unset | PLAUSIBLE (traced; the non-string shapes all reach the membership check as `str(...)`, a ConfigError naming the key) | _(pending)_ | — |
+| C4 guard / NOTES / load_settings agree | PLAUSIBLE (traced; noted that `--set-string enabled=false` would be truthy in all three — an operator misuse, not a disagreement) | _(pending)_ | — |
+| C5 byte-identical default render | PLAUSIBLE (the comment lines are gone; could not diff) | _(pending)_ | — |
+| C6 the page's scope consumers | REFUTED — the selector still tested `=== "self"` (the pill's pass-1 class); the Overview card does not render `visibility` | _(pending)_ | **Accepted** (the selector: the same fail-closed rule, Playwright test taken). **Rejected** (the card): the brief's own claim overreached — the spec marks a narrowed cluster in the selector and the pill; the card is the cluster's health |
+| C7 alert key sets | PLAUSIBLE (traced) | _(pending)_ | — |
+| C8 the docs | REFUTED — the §11 clause "identity not consulted under inherit" was false of the head (C1) | _(pending)_ | closed by C1's fix; the §5 diagram's `require_admin_tier` line gains `cluster_id` |
+| C9 the pass-1 tests | PLAUSIBLE — named the test per mutation; observed that the Reports Playwright test pinned `reportsPage()` only, not the fetch guard | _(pending)_ | **Accepted** — a second Playwright test holds `refresh()`'s guard to `narrowedOnHost` |
+| C10 helm.yaml and the release | PLAUSIBLE — the label-step text is now true; if the race were lost the recovery is a re-run of the chart workflow, which the two `--release-tags` lines do not say | _(pending)_ | recorded; the error text already ends "re-run this workflow once it does" |
+| C11 the next real use | PLAUSIBLE — one hand-fix beyond the upgrade note: adding an entry with `--set` must pass every entry (the padded-null guard) | _(pending)_ | **Accepted** — one clause in the CHANGELOG's upgrade note |
