@@ -1,6 +1,6 @@
 # Reporting extension — CSV, change diffs, delivery, and preview counts (design + technical spec)
 
-**Status: proposed (round 1 pending).** Four features from `docs/REPORTING_ENHANCEMENTS.md`, taken forward
+**Status: proposed — round 1 reviewed, corrections folded in.** Record: `docs/REVIEW_reporting_output_delivery.md`. Four features from `docs/REPORTING_ENHANCEMENTS.md`, taken forward
 together because they share the run/render/artefact machinery. Like the auditor/mnemonic work
 (`docs/DESIGN_reporting_auditors_and_ns_selector.md`), this **extends** the reporting design and defers to
 `docs/DESIGN_reporting_service.md`; it changes no tier, no ticket, no snapshot mechanism, no report gate.
@@ -71,6 +71,18 @@ over the same `Report`.
 bad = sorted(set(body.formats) - {"html", "pdf", "csv"})
 ```
 
+Round 1 — `csv` must also join **two** places or the run raises: `ArtifactStore.FORMATS` (`write` raises
+`ValueError` on an unknown format) and the artefact endpoint's `Query` pattern + MIME/filename:
+
+```python
+# artifacts.py: FORMATS = ("json", "html", "pdf", "csv")   # write() guards on this tuple
+# server.py get_artifact: format: str = Query(default="pdf", pattern="^(json|html|pdf|csv)$", …)
+#   and the media/filename map gains  "csv": ("text/csv", "…​.csv")
+```
+
+CSV is **opt-in, default off**, so `test_ui.py`'s `["html","json","pdf"]` and `test_reporting_server.py`'s
+`{"json","html","pdf"}` stay green; a new test seeds `csv`.
+
 ```python
 # runs.py _render, after the json write (csv needs only the Report, no fonts, no snapshot):
 if "csv" in run.formats:
@@ -135,8 +147,10 @@ a **stored run** of a synthetic report id `report-diff`, sealed and downloadable
 
 ### 3.2 Snippets
 
+Round 1, the ordering bug: `report-diff` is **not** in `REGISTRY`, so `create_run`'s `if body.report not in REGISTRY: 404` and `_render`'s `REGISTRY[run.report]` both fire before any special-case. The branch must come **first** in each, and `report-diff` stays **out of the catalogue** (`test_ui.py` asserts exactly 11 reports). `build_diff` must be fully defined (the `_diff_report` helper included) and the diff `Report` sealed with `assemble`-style provenance; the diff run is counted in the render metrics like any other.
+
 ```python
-# server.py create_run: report-diff is a first-class report id with its own validation (before REGISTRY check)
+# server.py create_run — BEFORE the `if body.report not in REGISTRY` check:
 if body.report == "report-diff":
     base, head = body.params.get("base"), body.params.get("head")
     b, h = runs.store.get(base), runs.store.get(head)   # ArtifactStore.get(run_id) -> Run | None
@@ -243,10 +257,16 @@ reporting:
         attach: none                  # none | pdf | html | csv
 ```
 
-The chart's report NetworkPolicy is unchanged (ingress-only to the report pod); the **Job**'s egress to the
-webhook host is a new, documented allowance rendered only when `deliver.kind != none`. The webhook URL is a
-Secret, mounted, never in argv or the CronJob spec. A delivery failure fails the Job (a red Job is the
-signal a scheduled report did not reach its destination).
+Round 1 corrections: the chart schedule key is `schedule:` (not `cron:` — `report-cronjob.yaml`);
+`trigger.py` uses `print`, not `log` (the snippet's `log.info` is undefined) and the poll loop is refactored
+so the run id and status are in scope after `--wait`; a delivery failure logs the **status code only**,
+never the URL — `str(httpx.HTTPStatusError)` includes the request URL and a Slack/Teams webhook carries its
+secret in the path. **No egress NetworkPolicy in v1:** a Kubernetes egress NP cannot match a hostname hidden
+in a Secret, and a webhook-only rule would break the Job's own `POST /report/api/runs` (it must still reach
+DNS and the report Service :8443). So egress is **documented**, not rendered — matching the existing
+report-pod comment that its egress policy is documentation, not control. The webhook URL is a mounted
+Secret, never in argv; the POST has a timeout; a delivery failure fails the Job (a red Job is the signal a
+scheduled report did not reach its destination).
 
 ---
 
@@ -295,9 +315,18 @@ def preview_run(body: RunRequest, p: Principal = Depends(principal)) -> dict:
             "sections": len(built.sections), "rows": sum(_row_count(s) for s in built.sections)}
 ```
 
-Preview reuses `validate_params`, so a bad parameter shows the same 422 message the user would get on
-Generate — the form can surface it early. It never writes a run, so it does not appear in the runs table or
-count toward retention.
+Round 1 corrections: the snippet supplied **false** snapshot facts (`snapshot_stamp=""`,
+`schema_version=0`) — it must reuse `snap.info()` the way `_render` does, so a report whose `build` reads the
+stamp/schema behaves; `_row_count` must be defined (the sum of `Table.rows` lengths in a section). **The
+one-write contract:** `test_reporting_server.py` asserts the report service's only non-GET is `create_run`.
+Preview needs a request body, so it stays a **POST that writes nothing**, and the contract test is updated to
+assert the only **state-changing** endpoint is `create_run` while permitting a documented read-only preview
+POST — the invariant is "one write", not "one non-GET". **OOM guard:** `build()` is real work; preview must
+share the render worker's concurrency limit (a 429 when busy) so a debounced keystroke cannot overlap a
+`render_pdf` and spike memory; the GUI debounces (~400ms).
+
+Preview reuses `validate_params`, so a bad parameter shows the same 422 the user would get on Generate. It
+never writes a run, so it does not appear in the runs table or count toward retention.
 
 ---
 
@@ -309,6 +338,9 @@ count toward retention.
 - Delivery v1 is a webhook; SMTP and object-store are the next destinations behind the same `deliver.kind`.
 - The report service still makes no outbound call — only the schedule Job does, and only when `deliver.kind`
   is set.
+- The report service's one-write contract holds: `create_run` stays the only state-changing endpoint; the
+  preview POST writes nothing and is added to the contract test as a documented read-only exception. Delivery
+  egress is documented, not enforced by a NetworkPolicy (a hostname in a Secret cannot be matched by one).
 
 ---
 
