@@ -130,3 +130,72 @@ folded into the design (the snippets, §4's reconciliation, §5's tests, §7's i
 then cut from the corrected §7, each implemented and reviewed as its own PR — where the reviewers' full
 corrected snippets (in the scratchpad review outputs) become the starting point and are re-attacked on
 real code.
+
+---
+
+## Round 2 — the §3.9 auto-discovery content, same models
+
+After the §3.9 enhancement (reviewer prefill; a checkable namespace multi-select) a second pass on the
+same head. Both reviewers converged again; every load-bearing claim re-checked here.
+
+| Claim | Codex | Cursor | Decision |
+|---|---|---|---|
+| C1 the catalogue `discovery` payload is sound and safe | REFUTED | REFUTED | **Accepted — do not put usernames on the catalogue at all** |
+| C2 the namespace multi-select preserves the wire contract | REFUTED | REFUTED | **Accepted** — new id for the select, keep the text id, never POST `[]` |
+| C3 the sentinel and empty-list fallback | PLAUSIBLE | REFUTED | **Accepted** — fallback on `disc.namespaces.length`, not `nsOptions.length` |
+| C4 the reviewer prefill is free-type and does not break the report | REFUTED | REFUTED | **Accepted** — seed `reportForm` so Generate posts it; trim required strings |
+| C5 the report-pod boundary and per-cluster catalogue held | CONFIRMED | CONFIRMED | — |
+| C6 defaults stay off | REFUTED | REFUTED | **Accepted** — §3.1/§4 stale text fixed; B4 changes reporting-enabled installs, honestly stated |
+
+**C1 — the username dump (the biggest).** §3.9 called `snap.users(cluster_id)` on the catalogue and
+sliced `[:2000]`. Re-checked: `Snapshot.users` (`snapshot.py:276`) is an unpaged join over `ocp_user`,
+`group_member` and `user_binding` with `json.loads` on `providers` — it materialises the whole user
+table on every Reports-tab load, and its `sqlite3.Error` is not in B3's `except (SnapshotError, OSError)`.
+Decision (Cursor's, the cleaner): **the catalogue's `discovery` carries only `namespaces`** (from
+`cluster_namespaces`, already simple, inside B3's existing try — no new error surface). The reviewer
+`<datalist>` sources from the dashboard's own paged `/api/clusters/{id}/users` (`api.py:1153`), which the
+wide-tier reader already has, not from the report catalogue. This also settles the disclosure question in
+scope: the fix is "do not dump users on the catalogue", not a new tier.
+
+**C2 — the namespace multi-select.** A `<select multiple>`'s empty selection serialises to `[]`, which
+`parse_namespaces` rejects — so `readParamEl` returning `[]` must **delete** the param, never post it.
+The existing `test_ui.py:4061` fills `#report-param-namespace-access-namespaces` as a **text** input, so
+that id stays on the advanced text field and the discovered multi-select gets a **new** id
+(`#report-ns-discovered`); the generic `field()` renderer skips `namespaces` so only one
+`data-param="namespaces"` control exists. The client filter hides options (`option.hidden`), never
+rebuilds `innerHTML` (which would drop a selected-but-filtered name).
+
+**C3 — the fallback.** `nsOptions` always contains the `(cluster-scoped)` sentinel, so a
+`nsOptions.length` test never falls back; the branch keys on `disc.namespaces.length`. Sentinel confirmed
+`(cluster-scoped)` → `""` in `build`.
+
+**C4 — the reviewer prefill would not post.** `generateReport` reads `view.reportForm[spec.name]`
+(`index.html:1860`), not the DOM, and a painted `value=cat.viewer` never writes `reportForm` nor fires
+`onchange` — so an untouched prefill sends nothing and the required field 422s. Decision: seed
+`view.reportForm["access-certification"].reviewer = cat.viewer` when the key was never touched (a cleared
+field stays cleared and correctly 422s); and the `str` validator trims a whitespace-only required value.
+`cat.viewer` is `null` for a service-token run — the `??` handles it.
+
+**C6 and the honest scope.** §3.1 still carried round-1's pre-correction "on-defaults" wording, and §4
+claimed "none changes a default install" — but reporting defaults on, so B4's form assists (an empty
+`discovery`, the reviewer prefill) do touch a reporting-enabled install. Both fixed: B4 is stated as form
+assists on reporting-enabled installs that add no RBAC, tier, ticket, snapshot or gate. With C1's fix
+(namespaces only, empty when the grant is off) the default-install delta is minimal and honest.
+
+**Not asked — accepted:** the §3.2 ASCII still showed round-1's singular `namespaceSelector` and `NS_CAP`
+(fixed to `namespaceSelectors[clusterId]` and `MAX_NAMESPACES`); >50 discovered selections are a 422, not
+a silent truncation (a client note at 50, `parse_namespaces` unchanged); the mnemonic control cannot
+"pre-check" namespaces (the catalogue has no value→namespace map) — it is an independent alternative that
+XOR-clears `namespaces`; form state is keyed by report, so a namespace picked on one cluster must be
+dropped on a cluster switch.
+
+**Rejected:** Codex's dedicated `discovery_user_names` snapshot method (it still puts usernames on the
+catalogue — Cursor's "use the dashboard Users API" avoids the disclosure and the new query entirely);
+Codex's `renderedReportParams()` reading the DOM (the seed-`reportForm` approach matches the existing
+Generate path and is smaller).
+
+**Outcome of round 2.** Five of six claims refuted, all as defects in the §3.9 additions; C5 (the round-1
+pod split and per-cluster catalogue) held. All corrections folded into §3.9 and the stale §3.1/§3.2/§4
+text; issue #104 updated. The auto-discovery is the right B4 — the snippets as first written would have
+422'd the main path, broken the one UI test that generates a report, and queried the user table on a
+default install.

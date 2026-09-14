@@ -1,8 +1,8 @@
 # Reporting extension — auditor groups and namespace-mnemonic selection (design + technical spec)
 
-**Status: proposed — round 1 reviewed, corrections folded in.** The round-1 adversarial review record is
-`docs/REVIEW_reporting_ext_design.md` (both reviewers, every load-bearing claim re-checked against the
-code). The snippets below are the corrected versions; where a correction is load-bearing it says
+**Status: proposed — rounds 1 and 2 reviewed, corrections folded in.** The review record is
+`docs/REVIEW_reporting_ext_design.md` (both reviewers each round, every load-bearing claim re-checked
+against the code; round 2 attacked the §3.9 auto-discovery additions). The snippets below are the corrected versions; where a correction is load-bearing it says
 "(round 1: …)". A feature request that **extends** the existing reporting and access-control design; it
 is not a new module. It reads on top of, and defers to, two maintained records:
 
@@ -281,16 +281,17 @@ today takes free-typed names, which drift and force the auditor to know the name
 and be strict — a namespace without the label is outside the audit model. Keep explicit names as an
 advanced fallback (operator's later note); page or raise the 50-cap when a mnemonic expands past it.
 
-**Capture is extensible, not single-label.** The operator asked that the poll be extended to capture
-*more* namespace metadata over time, not one hard-wired label. So the design is a **configurable,
-bounded capture set**: `reporting.namespaceMetadata.labels` is a list of label keys to persist (default
-`[company.net/mnemonic]`), stored key/value in a child table so adding a key is a values change and no
-migration. The report's *selector* defaults to one of the captured keys
-(`reporting.namespaceSelector.label`, default `company.net/mnemonic`). Bounded on purpose: only the
-configured keys are stored, never the whole label map — that keeps out data the feature does not use and
-that could be sensitive, while leaving the door open to environment, owner or cost-centre labels next.
-Annotations are the same shape when wanted (`namespaceMetadata.annotations`), off by default; §3.3 notes
-the one extra guard they need (size).
+**Capture is extensible, not single-label — and off by default (round 1).** The operator asked that the
+poll be extended to capture *more* namespace metadata over time, not one hard-wired label. So the design
+is a **configurable, bounded capture set**: `reporting.namespaceMetadata.labels` is a list of label keys
+to persist, stored key/value in a child table so adding a key is a values change and no migration. Both
+it and the report's selector (`reporting.namespaceSelector.label`) default to **empty**, because the
+capture rides the optional `rbac.namespaces` grant (off by default); enabling mnemonic selection is three
+explicit operator choices — `rbac.namespaces=true`, the key in `namespaceMetadata.labels`, and the same
+key in `namespaceSelector.label` (the recommended value is `company.net/mnemonic`). Bounded on purpose:
+only the configured keys are stored, never the whole label map — leaving the door open to environment,
+owner or cost-centre labels next. Annotations are the same shape when wanted
+(`namespaceMetadata.annotations`), off by default; §3.3 notes the one extra guard they need (size).
 
 ### 3.2 The flow (ASCII)
 
@@ -307,14 +308,14 @@ the one extra guard they need (size).
         │                                                 Snapshot.namespaces_for_metadata(cid, key, ["beta"]) → ["beta-prod","beta-rnd",…]
         ▼
  GUI Reports tab: the namespace-access form shows a MULTI-SELECT of the selector key's values
-   (data.reportCatalog.namespaceSelector = {label, values:[…]})           │
+   (data.reportCatalog.namespaceSelectors[clusterId] = {label, values:[…]})  │
         │  user picks {beta, demo}  OR (advanced) explicit names
         ▼
  POST /report/api/runs {report:"namespace-access", params:{mnemonics:["beta","demo"]}}
         ▼
  namespace_access.build: expand mnemonics → names via snap.namespaces_for_metadata(cid, selector_key, mnemonics)
    (explicit `namespaces` still accepted; `mnemonics` is the strict, default path)
-        ▼  ≤ NS_CAP names, else paged with a coverage note
+        ▼  ≤ MAX_NAMESPACES names, else a coverage note (mnemonic expansion caps in build; explicit >50 is a 422)
  report renders per-namespace sections exactly as today
 ```
 
@@ -575,58 +576,67 @@ free-type. Namespaces are a drop-down where you check multiple auto-discovered n
 existing tab; free-form search / type / pattern-match are now the optional secondary paths.* Both assists
 are fed by data the catalogue already reaches, and neither changes a report's output or the tier.
 
-**The discovery source, per cluster, in the catalogue.** The catalogue call already opens the snapshot
-(B3) and already returns `viewer` (the ticket identity — the person generating the report). It gains two
-bounded, per-cluster lists a wide-tier reader may already see on the Users and Namespace tabs:
+**The discovery source, per cluster, in the catalogue (round 2: namespaces only).** The catalogue call
+already opens the snapshot (B3) and already returns `viewer` (the ticket identity — the person generating
+the report). It gains **one** bounded, per-cluster list inside B3's existing try, and deliberately **not**
+a user list: `Snapshot.users` is an unpaged join with `json.loads` that would materialise the whole user
+table on every Reports-tab load. The reviewer datalist instead sources from the dashboard's own paged
+`/api/clusters/{id}/users`, which the wide-tier reader already has.
 
 ```python
-# reporting/server.py, list_reports — beside the per-cluster namespaceSelectors (B3):
-discovery[row["id"]] = {
-    "namespaces": [r["name"] for r in snap.cluster_namespaces(row["id"])],   # the checkable list
-    "users": [u["user_name"] for u in snap.users(row["id"])][:2000],         # reviewer autocomplete, capped
-}
-# … and the payload keeps "viewer": p.name (the reviewer default). Snapshot errors already swallowed.
+# reporting/server.py, list_reports — beside the per-cluster namespaceSelectors (B3), same try:
+discovery[row["id"]] = {"namespaces": [r["name"] for r in snap.cluster_namespaces(row["id"])]}
+# … the payload keeps "viewer": p.name (the reviewer default). No usernames on the catalogue.
 ```
 
 **Reviewer — auto-discovered, NOT strict (access-certification).** Resolved with the operator: strict is
-for namespaces only. The `reviewer` parameter stays `str` and required; the GUI pre-fills it with
-`cat.viewer` (you, the person generating the pack) when empty, and backs the text input with a
-`<datalist>` of known users so a different reviewer autocompletes. **Free-type is the default** — an
-external auditor is a valid reviewer who is not a cluster user — so the only validation is required,
-non-empty, trimmed; the pack still records "printed, not verified". No hard "must be a known user" mode.
+for namespaces only. The `reviewer` parameter stays `str` and required. Round 2: `generateReport` posts
+from `view.reportForm[spec.name]`, **not** the DOM, so a painted `value=cat.viewer` would never be sent —
+the form **seeds** `reportForm["access-certification"].reviewer = cat.viewer` when the key was never
+touched (a cleared field stays cleared and correctly 422s). The text input carries a `<datalist>` of known
+users from the dashboard Users API. **Free-type is the default** (an external auditor is a valid reviewer)
+so the only validation is required, non-empty, **trimmed** (the `str` validator now rejects a
+whitespace-only required value). `cat.viewer` is `null` for a service-token run — the `??` handles it.
 
 **Namespaces — a checkable multi-select of auto-discovered namespaces, strict (namespace-access).** The
-primary control becomes a drop-down where the user **checks multiple** discovered namespaces — the same
-shape as the Namespace-audit tab's namespace picker (`gsd/static/index.html`, `#ns-pick`), made `multiple`
-and fed from the catalogue's per-cluster `discovery.namespaces` plus the `(cluster-scoped)` sentinel. This
-is the **strict** path: every selected value is a real, discovered namespace, and the report receives them
-as the existing `namespaces` array — the wire contract (B2) is unchanged, the multi-select is a GUI
-affordance over it. A small **search box filters the list** as the user types (client-side, over the
-discovered names). The mnemonic multi-select (B3) sits above it as a one-click grouping that pre-checks
-the namespaces carrying a label value.
+primary control is a list box where the user **checks multiple** discovered namespaces, fed from the
+catalogue's per-cluster `discovery.namespaces` plus the `(cluster-scoped)` sentinel. Round 2, three
+corrections that keep it working:
 
-**The free-form paths are now optional.** Typing a name the discovery did not list, or a prefix / glob
-pattern, is a secondary affordance behind an "advanced" toggle, not the default. It keeps the current
-comma-separated **format** and its per-entry format validation (`parse_namespaces`), and — because the
-report exists in part to attest **absence** ("this namespace does NOT exist on the cluster") — an
-unknown-but-valid name is still accepted there rather than rejected. Pattern/glob expansion, if wanted, is
-a later follow-up; the strict default is the checkable discovered list.
+- The discovered `<select multiple>` gets a **new** id (`#report-ns-discovered`); the id
+  `#report-param-namespace-access-namespaces` **stays on the advanced text field**, because a `test_ui.py`
+  fixture fills it as a text input. The generic `field()` renderer **skips** `namespaces`, so only one
+  `data-param="namespaces"` control exists at a time.
+- An empty multi-select serialises to `[]`, which `parse_namespaces` rejects — so `readParamEl` returning
+  `[]` **deletes** the param; `namespaces` is never posted empty.
+- The search box **hides** filtered options (`option.hidden`), never rebuilds `innerHTML` (which would drop
+  a selected-but-filtered name). Selecting more than 50 is a **422** at the endpoint (a client note at 50);
+  `parse_namespaces` is unchanged.
+
+The mnemonic multi-select (B3) is an **independent alternative**, not a pre-check: the catalogue exposes no
+label-value→namespace map, so a mnemonic cannot tick individual namespaces. Selecting a mnemonic clears
+`namespaces`; selecting namespaces clears `mnemonics`; the report's XOR validator holds.
+
+**The free-form path is optional.** Typing a name the discovery did not list, or a prefix/glob pattern,
+lives behind an "advanced" toggle (the retained comma-format text field on the kept id). Because the
+report attests **absence** ("this namespace does NOT exist on the cluster"), an unknown-but-valid name is
+accepted there. Pattern/glob expansion is a later follow-up.
 
 ```javascript
-// index.html reportFormCard(), namespace-access: the strict checkable multi-select (modelled on #ns-pick).
-const disc = (cat.discovery && cat.discovery[view.cluster]) || {namespaces: [], users: []};
-const nsOptions = ["(cluster-scoped)", ...disc.namespaces];
-// <input type="search" id="ns-filter" placeholder="filter…">   // optional, client-side narrows the list
-// <select id="report-param-namespace-access-namespaces" data-param="namespaces" multiple size="10">
-//   {nsOptions.filter(byFilter).map(n => `<option value="${esc(n)}">${esc(n)}</option>`)}   // checked = selected
-// wireReports()'s readParamEl returns Array.from(el.selectedOptions).map(o=>o.value) for a multiple select.
-// Advanced (optional) toggle reveals the comma-format text input (the old free-form path) for a name not listed.
-// reviewer field (access-certification): value defaults to (form.reviewer ?? cat.viewer ?? ""); <input list="user-list">.
+// index.html reportFormCard(), namespace-access: the strict checkable multi-select + advanced text.
+const disc = (cat.discovery && cat.discovery[view.cluster]) || {namespaces: []};
+// fallback keys on disc.namespaces.length (NOT a list that always holds the sentinel):
+// if disc.namespaces.length: <select id="report-ns-discovered" data-param="namespaces" multiple size="10">
+//     option (cluster-scoped) + discovered names; a search box hides options via option.hidden;
+//     an <details>Advanced</details> holds <input id="report-param-namespace-access-namespaces" type="text"> (no data-param here)
+// else: the text field IS #report-param-namespace-access-namespaces with data-param (the free-form primary)
+// wireReports(): readParamEl → array for a multiple select; an empty array deletes the param;
+//   picking namespaces deletes mnemonics and vice-versa; a cluster switch drops namespaces/mnemonics for the report.
 ```
 
 This is a catalogue-and-GUI change (Issue B4 in §7); it needs the per-cluster catalogue shape B3
-introduces, and the discovered-namespace list needs `rbac.namespaces` on (the same dependency as the
-mnemonic). When the list is empty (the grant is off), the form falls back to the optional free-form field.
+introduces, and the discovered-namespace list needs `rbac.namespaces` on. When the list is empty (the
+grant is off), the form falls back to the free-form text field (the kept id) as the primary control.
 
 ---
 
@@ -641,6 +651,10 @@ mnemonic). When the list is empty (the grant is off), the form falls back to the
   persisted.
 - No per-namespace *tier* (an auditor scoped to only their namespaces) — that remains the larger change
   §5 of `docs/ACCESS_CONTROL.md` would own, and is explicitly not this feature.
+- **B4's form assists touch a reporting-enabled install** (reporting defaults on): the catalogue gains an
+  empty-until-granted `discovery` and the reviewer field prefills from the ticket viewer. They add no
+  RBAC grant, tier, ticket, snapshot mechanism or report gate — only how a form is filled. Extensions A
+  and B1–B3 change nothing on a default install (their values default off).
 
 ---
 
@@ -705,11 +719,14 @@ Cut as issues after round 1: **A = #100**, **B1 = #101**, **B2 = #102 (needs #10
    `test_ui.py` for the multi-select posting an array and the per-cluster values. Depends on B2.
 
 5. **Issue B4 — auto-discovery in the report forms** (§3.9). `list_reports` adds per-cluster `discovery`
-   (namespace names + a capped users list) beside `namespaceSelectors`; the namespace-access form gets a
-   **checkable multi-select of discovered namespaces** (strict; modelled on `#ns-pick`) with a client-side
-   filter, and the free-form comma-format field moves behind an optional advanced toggle; the
-   access-certification `reviewer` pre-fills with the viewer and gets a known-users `<datalist>`, free-type
-   (not strict). `test_ui.py`. Depends on B3 (the per-cluster catalogue shape).
+   (namespace names **only** — no usernames on the catalogue) beside `namespaceSelectors`, inside B3's try.
+   The namespace-access form gets a **checkable `<select multiple>` of discovered namespaces** (strict) on a
+   new id, keeping `#report-param-namespace-access-namespaces` on the advanced text field; the generic
+   `field()` skips `namespaces`; `readParamEl` returns an array and an empty array deletes the param; the
+   filter hides options; picking namespaces/mnemonics XOR-clears; a cluster switch drops both. The
+   access-certification `reviewer` **seeds** `reportForm` from `cat.viewer` (so Generate posts it) and gets a
+   `<datalist>` from the dashboard `/api/clusters/{id}/users`; the `str` validator trims required values.
+   `test_ui.py`. Depends on B3 (the per-cluster catalogue shape).
 
 Each issue is scoped to pass CI on its own and leaves no half-wired state on main: B1 captures behind the
 default-off values; B2's report accepts `mnemonics` and validates before any GUI sends it; B3 surfaces it;
