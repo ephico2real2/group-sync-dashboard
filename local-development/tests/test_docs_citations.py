@@ -138,6 +138,11 @@ REVIEW_ARTIFACTS = (
     # PR #110 rbacAuditors implementation review: quotes the template line numbers and the old
     # single-verb assertion verbatim.
     "REVIEW_rbacAuditors_impl.md",
+    # PR #111 namespace-metadata capture review: cites the implementation line numbers verbatim.
+    "REVIEW_ns_metadata_capture_impl.md",
+    # The reporting-extension design round 1: its findings quote the design's old snippets
+    # (ReportError, NS_CAP, the wrong-pod env) verbatim, which is the point of a review record.
+    "REVIEW_reporting_ext_design.md",
     # The log-level contract review. Same reason, plus a worked example of why the exemption is
     # right: it cites `README.md#Configuration`, a heading that does not exist — and the finding
     # attached to that citation was correct and was applied. Rewriting the citation would not make
