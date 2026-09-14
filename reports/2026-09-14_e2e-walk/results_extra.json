@@ -1,0 +1,241 @@
+{
+  "finished": "2026-09-14T11:17:00Z",
+  "steps": [
+    {
+      "t": "2026-09-14T11:16:21Z",
+      "step": "open the route",
+      "ok": true,
+      "detail": "https://group-sync-dashboard.apps-crc.testing \u2192 https://group-sync-dashboard.apps-crc.testing/",
+      "screenshot": "01-oauth-proxy-interstitial.png"
+    },
+    {
+      "t": "2026-09-14T11:16:23Z",
+      "step": "identity-provider chooser",
+      "ok": true,
+      "detail": "offered: developer, ldap-local; picked developer",
+      "screenshot": "02-openshift-idp-chooser.png"
+    },
+    {
+      "t": "2026-09-14T11:16:24Z",
+      "step": "OpenShift login form",
+      "ok": true,
+      "detail": "username filled: kubeadmin",
+      "screenshot": "03-openshift-login-form.png"
+    },
+    {
+      "t": "2026-09-14T11:16:29Z",
+      "step": "login",
+      "ok": true,
+      "detail": "dashboard rendered at https://group-sync-dashboard.apps-crc.testing/#page=overview&cluster=crc-local",
+      "screenshot": null
+    },
+    {
+      "t": "2026-09-14T11:16:29Z",
+      "step": "cluster selector options",
+      "ok": true,
+      "detail": "crc-local, prod-east",
+      "screenshot": null
+    },
+    {
+      "t": "2026-09-14T11:16:30Z",
+      "step": "switch cluster to prod-east",
+      "ok": false,
+      "detail": "heading: Still there?; url https://group-sync-dashboard.apps-crc.testing/#page=overview&cluster=prod-east",
+      "screenshot": "04-overview-cluster-prod-east.png"
+    },
+    {
+      "t": "2026-09-14T11:16:32Z",
+      "step": "Reports tab on prod-east",
+      "ok": true,
+      "detail": "no report form; the card says: Skip to main content OCP Access Tracking Dashboard - prod-east Full view \u2014 you are seeing everything v0.19.0 \u00b7 3629c8ca27 updated 07:16:30 EDT Refresh Sign out Cluster crc-local prod-east Overview Groups Users Access granted RBAC policy Namespace audit Logins Usage Reports \u2190 overview Dashboard API e",
+      "screenshot": "05-reports-cluster-prod-east.png"
+    },
+    {
+      "t": "2026-09-14T11:16:32Z",
+      "step": "scope pill",
+      "ok": true,
+      "detail": "Full view \u2014 you are seeing everything",
+      "screenshot": null
+    },
+    {
+      "t": "2026-09-14T11:16:33Z",
+      "step": "open the route",
+      "ok": true,
+      "detail": "https://group-sync-dashboard.apps-crc.testing \u2192 https://group-sync-dashboard.apps-crc.testing/",
+      "screenshot": "06-oauth-proxy-interstitial.png"
+    },
+    {
+      "t": "2026-09-14T11:16:35Z",
+      "step": "identity-provider chooser",
+      "ok": true,
+      "detail": "offered: developer, ldap-local; picked developer",
+      "screenshot": "07-openshift-idp-chooser.png"
+    },
+    {
+      "t": "2026-09-14T11:16:36Z",
+      "step": "OpenShift login form",
+      "ok": true,
+      "detail": "username filled: kubeadmin",
+      "screenshot": "08-openshift-login-form.png"
+    },
+    {
+      "t": "2026-09-14T11:16:41Z",
+      "step": "login",
+      "ok": true,
+      "detail": "dashboard rendered at https://group-sync-dashboard.apps-crc.testing/#page=overview&cluster=crc-local",
+      "screenshot": null
+    },
+    {
+      "t": "2026-09-14T11:16:41Z",
+      "step": "light theme Overview",
+      "ok": true,
+      "detail": "prefers-color-scheme: light",
+      "screenshot": "09-overview-light-theme.png"
+    },
+    {
+      "t": "2026-09-14T11:16:47Z",
+      "step": "HTML report access-certification opens",
+      "ok": true,
+      "detail": "title: Access certification pack \u2014 crc-local \u2014 OCP Access Tracking Dashboard; 115031 bytes",
+      "screenshot": "10-html-report-access-certification.png"
+    },
+    {
+      "t": "2026-09-14T11:16:49Z",
+      "step": "HTML report access-matrix opens",
+      "ok": true,
+      "detail": "title: Access matrix \u2014 crc-local \u2014 OCP Access Tracking Dashboard; 62834 bytes",
+      "screenshot": "11-html-report-access-matrix.png"
+    },
+    {
+      "t": "2026-09-14T11:16:50Z",
+      "step": "HTML report binding-findings opens",
+      "ok": true,
+      "detail": "title: RBAC binding findings \u2014 crc-local \u2014 OCP Access Tracking Dashboard; 12455 bytes",
+      "screenshot": "12-html-report-binding-findings.png"
+    },
+    {
+      "t": "2026-09-14T11:16:51Z",
+      "step": "HTML report compliance-snapshot opens",
+      "ok": true,
+      "detail": "title: Compliance snapshot \u2014 crc-local \u2014 OCP Access Tracking Dashboard; 11047 bytes",
+      "screenshot": "13-html-report-compliance-snapshot.png"
+    },
+    {
+      "t": "2026-09-14T11:16:51Z",
+      "step": "HTML report dormant-access opens",
+      "ok": true,
+      "detail": "title: Dormant and unusable access \u2014 crc-local \u2014 OCP Access Tracking Dashboard; 9447 bytes",
+      "screenshot": "14-html-report-dormant-access.png"
+    },
+    {
+      "t": "2026-09-14T11:16:52Z",
+      "step": "HTML report groups opens",
+      "ok": true,
+      "detail": "title: Groups and membership changes \u2014 crc-local \u2014 OCP Access Tracking Dashboard; 17800 bytes",
+      "screenshot": "15-html-report-groups.png"
+    },
+    {
+      "t": "2026-09-14T11:16:53Z",
+      "step": "HTML report groupsync-health opens",
+      "ok": true,
+      "detail": "title: GroupSync and policy-operator health \u2014 crc-local \u2014 OCP Access Tracking Dashboard; 8633 bytes",
+      "screenshot": "16-html-report-groupsync-health.png"
+    },
+    {
+      "t": "2026-09-14T11:16:54Z",
+      "step": "HTML report login-activity opens",
+      "ok": true,
+      "detail": "title: Login activity \u2014 crc-local \u2014 OCP Access Tracking Dashboard; 8114 bytes",
+      "screenshot": "17-html-report-login-activity.png"
+    },
+    {
+      "t": "2026-09-14T11:16:55Z",
+      "step": "HTML report namespace-access opens",
+      "ok": true,
+      "detail": "title: Namespace access report \u2014 crc-local \u2014 OCP Access Tracking Dashboard; 8346 bytes",
+      "screenshot": "18-html-report-namespace-access.png"
+    },
+    {
+      "t": "2026-09-14T11:16:55Z",
+      "step": "HTML report privileged-access opens",
+      "ok": true,
+      "detail": "title: Privileged access review \u2014 crc-local \u2014 OCP Access Tracking Dashboard; 13222 bytes",
+      "screenshot": "19-html-report-privileged-access.png"
+    },
+    {
+      "t": "2026-09-14T11:16:56Z",
+      "step": "HTML report users opens",
+      "ok": true,
+      "detail": "title: Users \u2014 crc-local \u2014 OCP Access Tracking Dashboard; 15011 bytes",
+      "screenshot": "20-html-report-users.png"
+    }
+  ],
+  "pdf_page1": [
+    {
+      "report": "access-certification",
+      "ok": true,
+      "png": "pdf-page1-access-certification.png",
+      "err": ""
+    },
+    {
+      "report": "access-matrix",
+      "ok": true,
+      "png": "pdf-page1-access-matrix.png",
+      "err": ""
+    },
+    {
+      "report": "binding-findings",
+      "ok": true,
+      "png": "pdf-page1-binding-findings.png",
+      "err": ""
+    },
+    {
+      "report": "compliance-snapshot",
+      "ok": true,
+      "png": "pdf-page1-compliance-snapshot.png",
+      "err": ""
+    },
+    {
+      "report": "dormant-access",
+      "ok": true,
+      "png": "pdf-page1-dormant-access.png",
+      "err": ""
+    },
+    {
+      "report": "groups",
+      "ok": true,
+      "png": "pdf-page1-groups.png",
+      "err": ""
+    },
+    {
+      "report": "groupsync-health",
+      "ok": true,
+      "png": "pdf-page1-groupsync-health.png",
+      "err": ""
+    },
+    {
+      "report": "login-activity",
+      "ok": true,
+      "png": "pdf-page1-login-activity.png",
+      "err": ""
+    },
+    {
+      "report": "namespace-access",
+      "ok": true,
+      "png": "pdf-page1-namespace-access.png",
+      "err": ""
+    },
+    {
+      "report": "privileged-access",
+      "ok": true,
+      "png": "pdf-page1-privileged-access.png",
+      "err": ""
+    },
+    {
+      "report": "users",
+      "ok": true,
+      "png": "pdf-page1-users.png",
+      "err": ""
+    }
+  ]
+}
