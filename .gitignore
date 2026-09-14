@@ -33,11 +33,22 @@ auth.json
 RESUME.md
 ideas-multipods.md
 
-# Vendored UI/UX Pro Max skill (~2.8M of CSV design data + scripts), installed by
-# `npm i -g ui-ux-pro-max-cli && uipro init --ai claude`. Ignored rather than committed:
-# it is reinstallable in one command and is tooling, not product. Track it instead if the
-# team should share a pinned copy.
-.claude/
+# The project's Claude Code directory. TRACKED: the three hand-written project skills — the
+# adversarial review pass, the session change log, the end-to-end walk — and the project settings that carry the
+# change-log hook and the read-only permission rules; the operator's process lives in them
+# (2026-09-14). IGNORED: everything else under .claude/ — the vendored UI/UX Pro Max skill set
+# (~2.8M of CSV design data + scripts, installed by
+# `npm i -g ui-ux-pro-max-cli && uipro init --ai claude`), reinstallable in one command and
+# tooling, not product; the frontend-design symlink, which points into the ignored .agents/ tree
+# below and is recreated by the `npx skills add` there; and settings.local.json, personal by
+# definition.
+.claude/*
+!.claude/settings.json
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/adversarial-review/
+!.claude/skills/changelog/
+!.claude/skills/e2e-walk/
 
 # Rendered chart output (local-development/render-manifests.sh). Generated, never authored:
 # it is the chart rendered for inspection and testing. Two reasons it must not be committed —
