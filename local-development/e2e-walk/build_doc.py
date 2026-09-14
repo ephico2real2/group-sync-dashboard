@@ -65,11 +65,14 @@ version = by_step["GET /api/version"]["api"]
 clusters = by_step["GET /api/clusters"]["api"]
 tabs = [s for s in steps if s["step"].startswith("tab ") and s["step"] != "tab strip"]
 tab_strip = by_step["tab strip"]["detail"]
-reports_step = by_step["Reports tab"]
-catalogue = reports_step["catalogue"]
+# A narrowed (non-admin) reader is refused reporting: the step is recorded under a different name
+# and carries no catalogue. `reports_refused` drives the whole reporting section.
+reports_step = by_step.get("Reports tab") or by_step.get("Reports tab (narrowed reader)") or {}
+reports_refused = "Reports tab (narrowed reader)" in by_step or reports_step.get("refused") is True
+catalogue = reports_step.get("catalogue", [])
 gen = [s for s in steps if s["step"].endswith(": generate")]
 dl = [s for s in steps if ": download ." in s["step"]]
-recent = by_step["Recent runs table"]
+recent = by_step.get("Recent runs table")
 passed, failed = res["passed"], res["failed"]
 xpassed = sum(1 for s in extra["steps"] if s["ok"]); xtotal = len(extra["steps"])
 pdf_ok = sum(1 for p in extra["pdf_page1"] if p["ok"])
@@ -117,11 +120,17 @@ P(f"<p class='lede'>Application {e(version['version'])} (commit {e(version['comm
   f"downloaded artefacts; nothing is typed in from memory.</p>")
 
 verdict = "PASS" if failed == 0 else "FAIL"
+scope = whoami["visibility"]["scope"]
+reader_line = (f"This walk is a <b>{e(scope)}-scope</b> reader ({e(whoami['user'])}), a non-administrator: "
+               "reporting is for administrators only, so the Reports tab is refused and no report is generated. "
+               "The value of this walk is what a narrowed reader is shown and withheld."
+               if reports_refused else
+               f"All {len(catalogue)} reports in the catalogue generated as PDF and HTML; {len(dl)} artefacts downloaded through the page's own download path; "
+               f"{sum(1 for i in integrity if all((i['recomputed_matches'], i['run_matches'], i['sha_in_pdf_metadata'], i['sha_in_html'])))} of {len(integrity)} "
+               "reports passed the four-way integrity check.")
 P(f"<div class='outcome'><b>Outcome: {verdict}.</b> {passed} of {passed + failed} scripted steps passed in the main walk; "
   f"{xpassed} of {xtotal} in the second pass" + (" (every failure is discussed in §9)" if xpassed < xtotal else "") + ". "
-  f"All {len(catalogue)} reports in the catalogue generated as PDF and HTML; {len(dl)} artefacts downloaded through the page's own download path; "
-  f"{sum(1 for i in integrity if all((i['recomputed_matches'], i['run_matches'], i['sha_in_pdf_metadata'], i['sha_in_html'])))} of {len(integrity)} "
-  f"reports passed the four-way integrity check.</div>")
+  f"{reader_line}</div>")
 
 P("<h2 class='first'>1. What was measured</h2>")
 P("<table><tr><th>Measure</th><th>Value</th></tr>")
@@ -134,10 +143,13 @@ for k, v in [
     ("Pods", ENV["pods"]),
     ("Images", ENV["images"]),
     ("Tabs offered", tab_strip),
-    ("Reports in the catalogue", f"{len(catalogue)} ({sum(1 for c in catalogue if c['enabled'])} enabled); PDF variant {reports_step['detail'].split('variant ')[-1] if 'variant' in reports_step['detail'] else 'n/a'}"),
-    ("Report runs, generation time", f"min {min(g['elapsed_s'] for g in gen)} s · max {max(g['elapsed_s'] for g in gen)} s · all {sum(1 for g in gen if g['ok'])}/{len(gen)} done"),
+    ("Reader scope", f"{whoami['visibility']['scope']}" + (" — reporting refused (non-administrator)" if reports_refused else "")),
+] + ([] if reports_refused else [
+    ("Reports in the catalogue", f"{len(catalogue)} ({sum(1 for c in catalogue if c['enabled'])} enabled); PDF variant {reports_step['detail'].split('variant ')[-1] if 'variant' in reports_step.get('detail', '') else 'n/a'}"),
+    ("Report runs, generation time", f"min {min(g['elapsed_s'] for g in gen)} s · max {max(g['elapsed_s'] for g in gen)} s · all {sum(1 for g in gen if g['ok'])}/{len(gen)} done" if gen else "none generated"),
     ("Artefacts downloaded", f"{len(dl)} files, {total_artefact_bytes:,} bytes"),
-    ("Recent-runs table", recent["detail"]),
+    ("Recent-runs table", recent["detail"] if recent else "n/a"),
+]) + [
     ("Scripted steps", f"main walk {passed} passed / {failed} failed; second pass {xpassed} / {xtotal}; PDF first pages rendered {pdf_ok} / {len(extra['pdf_page1'])}"),
 ]:
     P(f"<tr><td>{e(k)}</td><td>{e(v)}</td></tr>")
@@ -169,18 +181,31 @@ P("<p>Each tab is clicked, the page waits for the tab to report <span class='mon
 for s in tabs:
     P(figure(RUN / s["screenshot"], f"{s['step']} — {s['detail']}"))
 
-P("<h2>5. Reports — the catalogue</h2>")
-P(f"<p>{e(reports_step['detail'])}.</p>")
-P(figure(RUN / reports_step["screenshot"], "The Reports tab: the catalogue, the form for the selected report, and the recent runs"))
-P("<table><tr><th>Report</th><th>Title</th><th>Enabled</th></tr>")
-for c in catalogue:
-    P(f"<tr><td class='mono'>{e(c['name'])}</td><td>{e(c['title'])}</td><td>{e(c['enabled'])}</td></tr>")
-P("</table>")
+if reports_refused:
+    P("<h2>5. Reports — refused for this reader</h2>")
+    P(f"<p>{e(reports_step.get('detail', 'Reporting is refused for this reader.'))}</p>")
+    if reports_step.get("screenshot"):
+        P(figure(RUN / reports_step["screenshot"], "The Reports tab as a non-administrator: withheld, not empty"))
+    P("<p>A report is a document about the cluster's whole RBAC surface — every group, every user, every "
+      "binding — which cannot be scoped to one reader's own access the way a membership list can. So the "
+      "dashboard refuses to mint a report ticket for a non-administrator (a 403 at "
+      "<span class='mono'>/api/report/ticket</span> with the sentence “For administrators only”), and the "
+      "Reports tab shows the refusal rather than a broken or empty page. No report was generated; §6 and §7 "
+      "do not apply to this walk.</p>")
+else:
+    P("<h2>5. Reports — the catalogue</h2>")
+    P(f"<p>{e(reports_step.get('detail', ''))}.</p>")
+    P(figure(RUN / reports_step["screenshot"], "The Reports tab: the catalogue, the form for the selected report, and the recent runs"))
+    P("<table><tr><th>Report</th><th>Title</th><th>Enabled</th></tr>")
+    for c in catalogue:
+        P(f"<tr><td class='mono'>{e(c['name'])}</td><td>{e(c['title'])}</td><td>{e(c['enabled'])}</td></tr>")
+    P("</table>")
 
-P("<h2>6. Reports — every report generated, downloaded and opened</h2>")
-P("<p>For each report: the form (required parameters filled where the report has no default), Generate with PDF and HTML both ticked, "
-  "the run polled to a terminal state, the three artefacts downloaded through the page's own buttons, the PDF's first page rendered, and the HTML opened in a browser.</p>")
-for g in gen:
+if not reports_refused:
+  P("<h2>6. Reports — every report generated, downloaded and opened</h2>")
+  P("<p>For each report: the form (required parameters filled where the report has no default), Generate with PDF and HTML both ticked, "
+    "the run polled to a terminal state, the three artefacts downloaded through the page's own buttons, the PDF's first page rendered, and the HTML opened in a browser.</p>")
+  for g in gen:
     name = g["step"].split(" ")[1].rstrip(":")
     form = by_step[f"report {name}: form"]
     files = {s["step"].split(".")[-1]: s for s in dl if s["step"].startswith(f"report {name}: ")}
@@ -206,17 +231,19 @@ for g in gen:
         P(figure(RUN / "extra" / hx["screenshot"], f"The HTML artefact opened in Chromium — {hx['detail']}", width=700, max_height=1400))
     P("</div>")
 
-P("<h2>7. Integrity of the artefacts</h2>")
-P("<p>Every report is sealed with the sha256 of its canonical data (name, cluster, params, coverage, totals, truncated, include_members, sections; "
-  "sorted keys, compact separators). Four independent checks per report: the hash recomputed from the downloaded JSON equals the JSON's own "
-  "<span class='mono'>sha256</span> field; the run record the page polled reports the same hash; the PDF's metadata carries "
-  "<span class='mono'>sha256 &lt;hash&gt;</span>; the HTML carries the hash prefix. The PDF/A marker (<span class='mono'>pdfaid:part</span>) is also checked.</p>")
-P("<table><tr><th>Report</th><th>sha256</th><th>Recomputed = field</th><th>= run record</th><th>In PDF metadata</th><th>In HTML</th><th>PDF/A marker</th></tr>")
-for i in integrity:
+if not reports_refused:
+  P("<h2>7. Integrity of the artefacts</h2>")
+  P("<p>Every report is sealed with the sha256 of its canonical data (name, cluster, params, coverage, totals, truncated, include_members, sections; "
+    "sorted keys, compact separators). Four independent checks per report: the hash recomputed from the downloaded JSON equals the JSON's own "
+    "<span class='mono'>sha256</span> field; the run record the page polled reports the same hash; the PDF's metadata carries "
+    "<span class='mono'>sha256 &lt;hash&gt;</span>; the HTML carries the hash prefix. The PDF/A marker (<span class='mono'>pdfaid:part</span>) is also checked.</p>")
+  P("<table><tr><th>Report</th><th>sha256</th><th>Recomputed = field</th><th>= run record</th><th>In PDF metadata</th><th>In HTML</th><th>PDF/A marker</th></tr>")
+  for i in integrity:
     cell = lambda b: f"<td class='{'ok' if b else 'bad'}'>{'yes' if b else 'NO'}</td>"  # noqa: E731
     P(f"<tr><td class='mono'>{e(i['name'])}</td><td class='mono'>{e(i['sha256'][:24])}…</td>{cell(i['recomputed_matches'])}{cell(i['run_matches'])}{cell(i['sha_in_pdf_metadata'])}{cell(i['sha_in_html'])}{cell(i['pdfa_marker'])}</tr>")
-P("</table>")
-P(figure(RUN / recent["screenshot"], f"Recent runs after the walk — {recent['detail']}"))
+  P("</table>")
+  if recent and recent.get("screenshot"):
+    P(figure(RUN / recent["screenshot"], f"Recent runs after the walk — {recent['detail']}"))
 
 P("<h2>8. Second cluster, light theme</h2>")
 sw = next((s for s in extra["steps"] if s["step"].startswith("switch cluster to ")), None)

@@ -157,12 +157,21 @@ def walk_reports(w: Walk, required: dict[str, dict[str, str]]):
     page.click('button.tab:text-is("Reports")')
     page.wait_for_selector('button.tab[aria-current="page"]:text-is("Reports")', timeout=15_000)
     page.wait_for_load_state("networkidle")
+    # A wide-tier reader gets the picker; a narrowed (non-admin) reader gets a refusal card
+    # ("Withheld, not empty … For administrators only"), which is not a failure — it is what that
+    # reader is meant to see. Wait for either, and branch.
     try:
-        page.wait_for_selector("#report-picker", timeout=20_000)
+        page.wait_for_selector("#report-picker, #reports .scope-refusal, .scope-refusal", timeout=20_000)
     except PWTimeout:
-        w.record("Reports tab", False, "the picker never rendered", w.shot("reports-missing"))
+        w.record("Reports tab", False, "neither the picker nor a refusal rendered", w.shot("reports-missing"))
         return
     page.wait_for_timeout(600)
+    if not page.locator("#report-picker").count():
+        refusal = " ".join(page.locator(".scope-refusal").first.inner_text().split())
+        shot = w.shot("reports-refused")
+        w.record("Reports tab (narrowed reader)", w.page_clean() is None,
+                 f"reporting is refused for this reader: {refusal[:200]}", shot, refused=True)
+        return
     cat = page.evaluate("data.reportCatalog")
     reports = cat.get("reports", [])
     enabled = [r for r in reports if r.get("enabled")]

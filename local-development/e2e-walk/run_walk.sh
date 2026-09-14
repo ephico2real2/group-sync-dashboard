@@ -13,8 +13,12 @@
 # Exit 0 only if every scripted step and every integrity check passed. The document is built
 # either way, so a failing walk still leaves the evidence of what failed.
 set -euo pipefail
+# Location-independent: everything resolves from the script's own path, so a fresh clone can run
+# this from any working directory (`.../e2e-walk/run_walk.sh`, or via $PATH). No cwd assumption.
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo="$(git -C "${here}" rev-parse --show-toplevel 2>/dev/null || printf '%s' "${here%/local-development/e2e-walk}")"
 py="${here}/../.venv/bin/python"
+[ -x "${py}" ] || py="${repo}/local-development/.venv/bin/python"
 base=""; user=""; provider="developer"; out=""; ns="group-sync-dashboard"; rel="group-sync-dashboard"; namespaces=""; skip_env=0
 while [ $# -gt 0 ]; do
   case "$1" in
