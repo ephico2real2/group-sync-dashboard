@@ -1778,10 +1778,20 @@ class TestReportingAuditors:
     def test_enabled_true_uses_the_default_auditor_group(self):
         # The default groups names the estate's auditor group with createLocal omitted (bind-only):
         # enabling with no override binds THAT group to the read-only role and renders no local Group.
-        ok, out = render(**{"rbacAuditors.enabled": "true"})
+        # Structural, not substring (review #113, Codex C5): a wrong-subject render must fail this.
+        group_name = "app-ocp-rbac-groupsync-ns-auditor"
+        ok, docs, out = _auditor_docs(**{"rbacAuditors.enabled": "true"})
         assert ok, out[-800:]
-        assert "app-ocp-rbac-groupsync-ns-auditor" in out, out[-800:]
-        assert "\nkind: Group\n" not in out, "the default auditor group is bind-only; expected no local Group object"
+        # Bind-only: the ClusterRole and its ClusterRoleBinding, and NO local Group object.
+        assert sorted(d["kind"] for d in docs) == ["ClusterRole", "ClusterRoleBinding"], docs
+        role = next(d for d in docs if d["kind"] == "ClusterRole")
+        binding = next(d for d in docs if d["kind"] == "ClusterRoleBinding")
+        assert binding["subjects"] == [{
+            "apiGroup": "rbac.authorization.k8s.io", "kind": "Group", "name": group_name}], binding
+        assert binding["metadata"]["annotations"]["group-sync-dashboard/auditor-group"] == group_name
+        assert binding["roleRef"] == {
+            "apiGroup": "rbac.authorization.k8s.io", "kind": "ClusterRole",
+            "name": role["metadata"]["name"]}, binding
 
     def test_a_string_enabled_is_rejected(self):
         # `enabled: "true"`/"false" (a string) is truthy in Helm; a string "false" would silently
