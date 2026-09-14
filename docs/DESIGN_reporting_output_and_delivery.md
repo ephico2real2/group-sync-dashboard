@@ -379,5 +379,4 @@ the chart's network posture. Each is its own PR with its own two-reviewer pass o
 
 ---
 
-*Round 1 of review runs on THIS document. The reviewers' edits, full snippets and gotchas are folded in;
-then the issues above are cut in the settled order.*
+Cut as issues after round 1: **C1 CSV = #106**, **C2 preview = #107**, **C3 diff = #108** (benefits from #106), **C4 delivery = #109**. Each is its own PR, re-reviewed on real code at implementation.
