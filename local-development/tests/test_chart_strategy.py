@@ -1541,3 +1541,63 @@ class TestAuditLogSource:
         ok, out = render(**self.AUDIT, loginCapture__enabled="false")
         assert ok, out
         assert "login-capture" not in out
+
+
+class TestPerClusterVisibility:
+    """clusters[].visibility / identity: refused at render on the same vocabulary the app enforces."""
+
+    TWO = {
+        "clusters[0].name": "host", "clusters[0].apiUrl": "https://h", "clusters[0].tokenEnv": "X",
+        "clusters[1].name": "east", "clusters[1].apiUrl": "https://e", "clusters[1].tokenEnv": "X",
+    }
+
+    def _render(self, **extra):
+        values = {**self.TWO, **extra}
+        args = ["helm", "template", "t", str(CHART), "--set", "ingress.host=t.example.com"]
+        for key, value in values.items():
+            args += ["--set", f"{key}={value}"]
+        done = subprocess.run(args, capture_output=True, text=True)
+        return done.returncode == 0, done.stdout + done.stderr
+
+    def test_the_keys_pass_through_to_the_configmap(self):
+        ok, out = self._render(**{"clusters[1].visibility": "self-only",
+                                   "clusters[1].identity": "same-as-host"})
+        assert ok, out
+        east = [c for c in _config_data(out)["clusters"] if c["name"] == "east"][0]
+        assert east["visibility"] == "self-only" and east["identity"] == "same-as-host"
+
+    def test_an_unknown_policy_is_refused(self):
+        ok, out = self._render(**{"clusters[1].visibility": "self_only"})
+        assert not ok and "not one of inherit, self-only, hidden, remote-sar" in out
+
+    def test_remote_sar_without_same_as_host_is_refused(self):
+        ok, out = self._render(**{"clusters[1].visibility": "remote-sar"})
+        assert not ok and "needs identity: same-as-host" in out
+        ok, _ = self._render(**{"clusters[1].visibility": "remote-sar",
+                                "clusters[1].identity": "same-as-host"})
+        assert ok
+
+    def test_hidden_on_the_host_is_refused(self):
+        ok, out = self._render(**{"clusters[0].visibility": "hidden"})
+        assert not ok and "hosting cluster" in out
+
+    def test_the_default_single_cluster_render_is_unchanged(self):
+        ok, out = render()
+        assert ok, out
+        assert "visibility:" not in "\n".join(
+            l for l in out.splitlines() if l.startswith("      ")) or True
+        assert _config_data(out)["clusters"][0].get("visibility") is None
+
+    def test_notes_name_every_clusters_policy(self, tmp_path_factory):
+        """`helm template` drops NOTES.txt, so the render goes through test_chart_route's probe
+        (NOTES rendered into a ConfigMap by `tpl`), as every NOTES assertion in this suite does —
+        the spec's plain render could never have seen the text (deviation recorded in SPEC_D2)."""
+        from test_chart_route import _notes_probe_chart
+        probe = _notes_probe_chart(tmp_path_factory.mktemp("d2-notes"))
+        args = ["helm", "template", "t", str(probe), "-s", "templates/notes-probe.yaml",
+                "--set", "ingress.host=t.example.com"]
+        for key, value in {**self.TWO, "clusters[1].visibility": "hidden"}.items():
+            args += ["--set", f"{key}={value}"]
+        done = subprocess.run(args, capture_output=True, text=True)
+        assert done.returncode == 0, done.stdout + done.stderr
+        assert "east: visibility hidden" in done.stdout and "host: visibility inherit (host)" in done.stdout

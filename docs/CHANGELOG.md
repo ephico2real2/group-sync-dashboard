@@ -8,6 +8,30 @@ lives next to the code and in the design and review records linked here. Changes
 last release sit under `## Unreleased` until the release that carries them replaces that heading —
 which `local-development/prepare-release.py` does when the release is cut.
 
+## Application 0.19.0 — chart 0.21.0 — 2026-09-13
+
+- **Per-cluster authorization for the multi-cluster case.** A reader is authenticated by the
+  hosting cluster only, and the tier that cluster decided used to gate every cluster's rows. Two
+  keys per `clusters[]` entry now say what a reader may see about each other cluster:
+  `visibility` — `inherit` (the host decides), `self-only` (nobody is wide there), `hidden`
+  (polled, never served through `/api`; 404 like an unknown id), `remote-sar` (that cluster's own
+  RBAC decides through the same SubjectAccessReview on its own API with its own Group objects,
+  cached per reader and cluster, every failure self) — and `identity` — `none` (the host's
+  username is nobody there; person-scoped views answer 403, health still shows) or
+  `same-as-host`. Defaults are the safe direction: the first entry `inherit`/`same-as-host`, every
+  other `self-only`/`none`. `/api/whoami` gains `visibility.clusters`, `/api/clusters` rows gain
+  `visibility`, `/api/alerts` filters per cluster in that cluster's tier and reports the narrowest
+  scope served; the cluster selector marks a narrowed cluster and the header pill follows the
+  selected one. (`ACCESS_CONTROL.md` §11)
+- **Upgrade note for multi-cluster installs:** remotes become `self-only` on chart 0.21.0. Set
+  `clusters[].visibility: inherit` to keep the old view, deliberately.
+- **Chart 0.21.0:** the two values, a render guard on their vocabulary (unknown policy,
+  `hidden`/`remote-sar` on the host entry, `remote-sar` without `identity: same-as-host`), NOTES
+  naming every cluster's effective policy, and the stale `docs/PLAN_oauth_proxy.md` reference in
+  the `clusters` comment replaced.
+
+- **Per-cluster authorization for the multi-cluster case: clusters[].visibility and clusters[].identity (D2).**
+
 ## Application 0.18.0 — chart 0.20.0 — 2026-09-06
 
 - **Reporting, as a separate service.** A second pod on its own image (`group-sync-dashboard-report`,

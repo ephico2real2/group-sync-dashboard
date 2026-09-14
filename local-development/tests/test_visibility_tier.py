@@ -172,6 +172,37 @@ class TestTheReviewCarriesTheGroups:
         assert "subresource" not in fake.sar_bodies[0]["spec"]["resourceAttributes"]
 
 
+class TestTheVirtualGroupsFollowTheIdentitysShape:
+    """Routed from the chart 0.14.0 review to SPEC_D2: a ServiceAccount's token carries
+    `system:serviceaccounts` and `system:serviceaccounts:<ns>` (the apiserver's serviceaccount
+    authenticator), so a grant made to the namespace group admits it at the proxy — and the
+    repeated review here must name the same groups, or the identity lands on the self view."""
+
+    def test_a_namespace_group_grant_admits_a_serviceaccount(self, monkeypatch):
+        fake = FakeCluster(groups=[], allowed=True)
+        resolver = _resolver(monkeypatch, fake)
+        assert resolver.tier_for("system:serviceaccount:tools:reader") == TIER_ALL
+        spec = fake.sar_bodies[0]["spec"]
+        assert spec["user"] == "system:serviceaccount:tools:reader"
+        assert spec["groups"] == ["system:serviceaccounts", "system:serviceaccounts:tools", "system:authenticated"]
+        assert "system:authenticated:oauth" not in spec["groups"], "an OAuth group a ServiceAccount token never carries"
+
+    def test_a_person_still_carries_the_oauth_groups(self, monkeypatch):
+        fake = FakeCluster(groups=[], allowed=True)
+        resolver = _resolver(monkeypatch, fake)
+        resolver.tier_for("john.doe")
+        assert fake.sar_bodies[0]["spec"]["groups"] == list(VIRTUAL_AUTH_GROUPS)
+
+    def test_a_malformed_serviceaccount_name_keeps_the_oauth_groups(self, monkeypatch):
+        """`system:serviceaccount:` with no namespace or no name is not a ServiceAccount the
+        apiserver would have issued; the review names it as given and carries no namespace group."""
+        for name in ("system:serviceaccount:tools", "system:serviceaccount::reader", "system:serviceaccount:tools:"):
+            fake = FakeCluster(groups=[], allowed=True)
+            resolver = _resolver(monkeypatch, fake)
+            resolver.tier_for(name)
+            assert fake.sar_bodies[0]["spec"]["groups"] == list(VIRTUAL_AUTH_GROUPS), name
+
+
 class TestFailClosed:
     def test_a_clean_denial_is_the_self_tier(self, monkeypatch):
         fake = FakeCluster(groups=[], allowed=False)

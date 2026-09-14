@@ -694,3 +694,31 @@ args depend on them), so both objects refuse together. Emits nothing.
 {{- end -}}
 {{- end -}}
 {{- end -}}
+
+# ── Per-cluster authorization ────────────────────────────────────────────────────────────
+# The same closed vocabulary the app enforces (gsd/config.py CLUSTER_VISIBILITIES), refused at
+# render so a typo'd policy fails `helm template` rather than the pod's startup. Nil-safe on
+# every hop for the usual reason. Called from configmap.yaml, which always renders.
+{{- define "gsd.validateClusters" -}}
+{{- $host := "" -}}
+{{- range $i, $c := (.Values.clusters | default list) -}}
+{{- $name := toString ($c.name | default (printf "clusters[%d]" $i)) -}}
+{{- $vis := "" -}}{{- if and (hasKey $c "visibility") (not (kindIs "invalid" $c.visibility)) -}}{{- $vis = trim (toString $c.visibility) -}}{{- end -}}
+{{- $id := "" -}}{{- if and (hasKey $c "identity") (not (kindIs "invalid" $c.identity)) -}}{{- $id = trim (toString $c.identity) -}}{{- end -}}
+{{- if and $vis (not (has $vis (list "inherit" "self-only" "hidden" "remote-sar"))) -}}
+{{- fail (printf "clusters[%d] (%s): visibility %q is not one of inherit, self-only, hidden, remote-sar. See the clusters comment in values.yaml." $i $name $vis) -}}
+{{- end -}}
+{{- if and $id (not (has $id (list "same-as-host" "none"))) -}}
+{{- fail (printf "clusters[%d] (%s): identity %q is not one of same-as-host, none." $i $name $id) -}}
+{{- end -}}
+{{- $enabled := true -}}{{- if hasKey $c "enabled" -}}{{- $enabled = $c.enabled -}}{{- end -}}
+{{- if and $enabled (eq $host "") -}}
+{{- $host = $name -}}
+{{- if has $vis (list "hidden" "remote-sar") -}}
+{{- fail (printf "clusters[%d] (%s) is the hosting cluster — the first enabled entry, the one the oauth-proxy authenticates against — and visibility %q makes no sense there: hidden would hide the login cluster, remote-sar would review the host against itself. Use inherit (the default) or self-only." $i $name $vis) -}}
+{{- end -}}
+{{- else if and (eq $vis "remote-sar") (ne $id "same-as-host") -}}
+{{- fail (printf "clusters[%d] (%s): visibility remote-sar needs identity: same-as-host. The review names the host's username on that cluster, which only means something if both clusters share an identity provider — say so explicitly." $i $name) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}

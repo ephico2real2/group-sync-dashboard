@@ -604,10 +604,49 @@ session:
 # projected ServiceAccount token — which kubelet rotates and the app re-reads every poll, so
 # there is no long-lived credential to mint or expire.
 #
-# Adding entries here enables multi-cluster, but note the authorization caveat in
-# docs/PLAN_oauth_proxy.md: OAuth authenticates against the HOSTING cluster only, so one
-# instance holding several clusters' data can show a user membership from a cluster they
-# have no rights on.
+# ── SEVERAL CLUSTERS IN ONE INSTANCE: who may see what, PER CLUSTER ─────────────────────────
+# The oauth-proxy authenticates a reader against THIS cluster only — the first enabled entry,
+# the hosting cluster. What that reader may see ABOUT ANOTHER cluster is therefore a decision
+# this file has to make, per entry, and it used to make it silently: the host's tier gated
+# every cluster's rows, so a host cluster-admin saw a remote cluster's membership, bindings and
+# login failures whether or not they held anything there. Two keys per entry now model it
+# (docs/ACCESS_CONTROL.md §11):
+#
+#   visibility:   inherit     the host's tier decides — the old behaviour, and the host's own
+#                             default. On a remote it is an explicit choice: "the host's RBAC
+#                             governs this cluster's data too".
+#                 self-only   nobody is ever wide on this cluster. THE DEFAULT FOR EVERY ENTRY
+#                             BUT THE FIRST, because it costs no RBAC, no credential and no
+#                             cluster call, and can only narrow. On upgrade from chart 0.10.x a
+#                             multi-cluster install's remotes become self-only; set inherit to
+#                             restore what you had.
+#                 hidden      polled and alerted on (/metrics, the pod log) but never served
+#                             through /api: 404, identical to an unknown cluster id, absent from
+#                             the selector. For watching sync health across a fleet without
+#                             exposing membership.
+#                 remote-sar  that cluster's OWN RBAC decides: the same SubjectAccessReview as
+#                             visibility.adminSar, created on the remote API with this entry's
+#                             token, naming the reader and the reader's Group memberships READ
+#                             FROM THE REMOTE. Cached per (reader, cluster) for tierTtlSeconds;
+#                             every failure is the self tier. Needs `create subjectaccessreviews`
+#                             on the remote (bind system:auth-delegator to the remote
+#                             ServiceAccount by hand — this chart manages no remote RBAC) and
+#                             identity: same-as-host below. Not allowed on the first entry.
+#
+#   identity:     none          THE DEFAULT for a remote. The host's username is not treated as
+#                               anyone on this cluster: person-scoped views (groups, users,
+#                               logins, grants) answer 403 there; cluster-level health still
+#                               shows. Fail-closed, because "same username, same person" is a
+#                               claim about the two clusters' identity providers that this
+#                               chart cannot check — an htpasswd `developer` on two clusters is
+#                               two people.
+#                 same-as-host  the clusters share an identity provider and its username
+#                               mapping, so the reader's self views apply to this cluster too.
+#                               Required by remote-sar.
+#
+# The alternative posture — one dashboard per cluster and a fleet report reading each one's
+# API with a token from THAT cluster — needs none of this and is still the recommendation
+# where trust boundaries differ: docs/reference-architecture.md §8a.
 clusters:
   - name: crc-local
     apiUrl: https://kubernetes.default.svc

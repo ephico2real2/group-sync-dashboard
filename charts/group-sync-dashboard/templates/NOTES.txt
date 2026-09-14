@@ -90,6 +90,16 @@ Grant the wide view through normal RBAC, never a chart value:
 An indeterminate review (API error, timeout) yields the narrow view, never the wide one.
 Restore the old everyone-sees-everything behaviour only as a deliberate choice:
   --set visibility.enabled=false
+{{- if gt (len .Values.clusters) 1 }}
+
+Several clusters are configured. The reader was authenticated by the FIRST enabled one; what
+they see about each of the others is that entry's own policy (docs/ACCESS_CONTROL.md §11):
+{{- range $i, $c := .Values.clusters }}
+{{- $vis := "" }}{{- if and (hasKey $c "visibility") (not (kindIs "invalid" $c.visibility)) }}{{- $vis = toString $c.visibility }}{{- end }}
+{{- $id := "" }}{{- if and (hasKey $c "identity") (not (kindIs "invalid" $c.identity)) }}{{- $id = toString $c.identity }}{{- end }}
+  {{ $c.name }}: visibility {{ if $vis }}{{ $vis }}{{ else if eq $i 0 }}inherit (host){{ else }}self-only (default){{ end }}, identity {{ if eq $i 0 }}same-as-host (host){{ else if $id }}{{ $id }}{{ else }}none (default){{ end }}
+{{- end }}
+{{- end }}
 {{- else }}
 
 Visibility: WIDE (visibility.enabled=false). Every admitted reader sees the full RBAC

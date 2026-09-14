@@ -906,9 +906,15 @@ clusterrolebindings` told it *no*. Treat UI access as equivalent to cluster-wide
 `/api` prefix, and its review demands `list clusterrolebindings` cluster-wide. See
 [`api-access.md`](api-access.md).
 
-**The multi-cluster caveat** is not solved: OAuth authenticates against the *hosting* cluster
-only, so one instance holding several clusters' data can show a user membership from a
-cluster they have no rights on.
+**The multi-cluster caveat is modelled, not assumed away.** A viewer is authenticated by the hosting
+cluster only, so what they may see about another cluster is that entry's own policy
+(`clusters[].visibility`, `clusters[].identity`; `gsd/config.py#Settings.cluster_policy`,
+`gsd/api.py#viewer_scope`): a second cluster is `self-only` with no identity by default, may be
+hidden from the API entirely, may inherit the host's tier as an explicit choice, or may be decided
+by its own RBAC through the same review on its own API (`remote-sar`). `docs/ACCESS_CONTROL.md` §11
+tabulates it. What is still not solved — and cannot be from one instance — is identity equivalence
+across identity providers, which is why `identity` is a stated assumption and why §8a remains the
+recommendation where trust boundaries differ.
 
 Three paths bypass the proxy by design — `/healthz`, `/readyz`, `/metrics`
 (`oauthProxy.skipAuthRegex`). The health paths must be there or kubelet receives a 302 to the
@@ -1441,7 +1447,8 @@ into the content.
 
 **Why this beats one instance watching many clusters.** A single instance authenticates against
 its *hosting* cluster's OAuth only, so it can show a user membership from a cluster they hold no
-rights on — the unsolved caveat in §7. Per-cluster deployment plus API aggregation removes it:
+rights on — the caveat §7.2 now models per cluster, and which per-cluster deployment removes rather
+than manages. Per-cluster deployment plus API aggregation removes it:
 each cluster authorises its own readers, and the aggregator never sees more than the caller is
 entitled to on that cluster.
 

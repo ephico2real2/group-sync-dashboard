@@ -36,6 +36,23 @@ log = logging.getLogger(__name__)
 # said the same thing. Two literals that must agree will eventually disagree; one cannot.
 VISIBILITY_TIER_TTL_DEFAULT = 60
 
+# ── Per-cluster authorization (docs/ACCESS_CONTROL.md §11) ─────────────────────────────────────
+# The oauth-proxy authenticates a viewer against the HOSTING cluster only, so what a viewer may see
+# ABOUT ANOTHER cluster is a per-cluster decision. Four policies, and the words are the wire
+# vocabulary (/api/whoami and /api/clusters carry them), so they are declared once, here.
+VISIBILITY_INHERIT = "inherit"        # the host's tier decides — today's behaviour
+VISIBILITY_SELF_ONLY = "self-only"    # every viewer is the self tier on this cluster
+VISIBILITY_HIDDEN = "hidden"          # polled, never served through /api
+VISIBILITY_REMOTE_SAR = "remote-sar"  # this cluster's own RBAC decides, by SubjectAccessReview
+CLUSTER_VISIBILITIES = (
+    VISIBILITY_INHERIT, VISIBILITY_SELF_ONLY, VISIBILITY_HIDDEN, VISIBILITY_REMOTE_SAR,
+)
+# Whether the host's username means the same person on this cluster. A claim about the two
+# clusters' identity providers, which this chart cannot check — so it is stated, never assumed.
+IDENTITY_SAME_AS_HOST = "same-as-host"
+IDENTITY_NONE = "none"
+CLUSTER_IDENTITIES = (IDENTITY_SAME_AS_HOST, IDENTITY_NONE)
+
 
 class ConfigError(Exception):
     """Raised for a malformed or unusable cluster configuration."""
@@ -106,6 +123,12 @@ class ClusterConfig:
     ca_bundle_file: str | None = None
     insecure_skip_verify: bool = False
     enabled: bool = True
+    # None means "not set", resolved by Settings.cluster_policy: the host is inherit/same-as-host
+    # (its viewer IS a host identity), every other cluster is self-only/none. Resolved there and
+    # not here so a hand-built Settings and a chart-rendered one agree on what a second cluster
+    # serves by default — the direction that matters is that it never widens.
+    visibility: str | None = None
+    identity: str | None = None
 
     def resolve_token(self) -> str:
         """Read the token at the moment it is needed.
@@ -479,6 +502,31 @@ class Settings:
             if c.name == name:
                 return c
         return None
+
+    def host_cluster(self) -> ClusterConfig | None:
+        """The cluster the oauth-proxy authenticates against: the FIRST enabled entry, which is
+        the one the chart writes for the pod's own cluster (values.yaml `clusters[0]`)."""
+        return next((c for c in self.clusters if c.enabled), None)
+
+    def cluster_policy(self, name: str) -> tuple[str, str]:
+        """(visibility, identity) for one cluster id, defaults resolved.
+
+        A cluster the store still holds but the config no longer names — removed from values
+        after it was polled — resolves to inherit/same-as-host: today's behaviour for its
+        stale rows, and not wider than it. Deleting the rows is a data decision, not a tier one.
+        """
+        host = self.host_cluster()
+        cluster = self.cluster(name)
+        if cluster is None:
+            return VISIBILITY_INHERIT, IDENTITY_SAME_AS_HOST
+        is_host = host is not None and cluster.name == host.name
+        if is_host:
+            # identity is forced, not defaulted: the host's viewer is a host identity by
+            # construction, and a values file saying otherwise would be describing a control
+            # that cannot mean anything.
+            return cluster.visibility or VISIBILITY_INHERIT, IDENTITY_SAME_AS_HOST
+        return (cluster.visibility or VISIBILITY_SELF_ONLY,
+                cluster.identity or IDENTITY_NONE)
 
 
 def _num_setting(raw: dict, env_name: str, yaml_key: str, default, cast):
@@ -899,10 +947,13 @@ def load_settings(path: str | Path) -> Settings:
         "caBundleFile",
         "insecureSkipVerify",
         "enabled",
+        "visibility",
+        "identity",
     }
 
     clusters: list[ClusterConfig] = []
     seen: set[str] = set()
+    host_name: str | None = None
     for i, entry in enumerate(entries):
         where = f"{path}: clusters[{i}]"
         if not isinstance(entry, dict):
@@ -933,6 +984,39 @@ def load_settings(path: str | Path) -> Settings:
                 f"{where}: insecureSkipVerify and caBundleFile are mutually exclusive"
             )
 
+        enabled = bool(entry.get("enabled", True))
+        # Strict, like every other cluster key: a typo here ("self_only", "Hidden") must not
+        # silently become the default, in either direction.
+        visibility = entry.get("visibility")
+        if visibility is not None:
+            visibility = str(visibility).strip()
+            if visibility not in CLUSTER_VISIBILITIES:
+                raise ConfigError(
+                    f"{where}: visibility {visibility!r} is not one of "
+                    f"{', '.join(CLUSTER_VISIBILITIES)}"
+                )
+        identity = entry.get("identity")
+        if identity is not None:
+            identity = str(identity).strip()
+            if identity not in CLUSTER_IDENTITIES:
+                raise ConfigError(
+                    f"{where}: identity {identity!r} is not one of {', '.join(CLUSTER_IDENTITIES)}"
+                )
+        is_host = enabled and host_name is None
+        if is_host:
+            host_name = name
+            if visibility in (VISIBILITY_HIDDEN, VISIBILITY_REMOTE_SAR):
+                raise ConfigError(
+                    f"{where}: visibility {visibility!r} is not allowed on the hosting cluster "
+                    f"(the first enabled entry) — it is the cluster the viewer logged in to"
+                )
+        elif visibility == VISIBILITY_REMOTE_SAR and (identity or IDENTITY_NONE) != IDENTITY_SAME_AS_HOST:
+            raise ConfigError(
+                f"{where}: visibility remote-sar needs identity: same-as-host — the review names "
+                f"the host's username on this cluster, which only means something if the two "
+                f"clusters share an identity provider"
+            )
+
         clusters.append(
             ClusterConfig(
                 name=name,
@@ -941,7 +1025,9 @@ def load_settings(path: str | Path) -> Settings:
                 token_file=entry.get("tokenFile"),
                 ca_bundle_file=entry.get("caBundleFile"),
                 insecure_skip_verify=insecure,
-                enabled=bool(entry.get("enabled", True)),
+                enabled=enabled,
+                visibility=visibility,
+                identity=identity,
             )
         )
 

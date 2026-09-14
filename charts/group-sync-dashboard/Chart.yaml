@@ -167,7 +167,9 @@ type: application
 # oauth-proxy, seven ConfigMap keys, six render guards and two optional alerts; appVersion moves to
 # application 0.18.0. A default upgrade therefore gains a report pod and a /report/ route behind the
 # proxy — or refuses, naming the value, where the release cannot host one.
-version: 0.20.0
+# CHART 0.21.0 (2026-09-13), MINOR: appVersion moves to application 0.19.0 (below); Per-cluster
+# authorization for the multi-cluster case: clusters[].visibility and clusters[].identity (D2).
+version: 0.21.0
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,
@@ -241,7 +243,9 @@ version: 0.20.0
 # image on the same version); GET /api/report/ticket and GET /api/dashboard/reports; feature flag
 # `reporting`; schema migration 11 (cluster_namespace, cluster_namespace_status, report_run); the
 # poller writes a VACUUM INTO copy for the report pod and pulls its usage. Additive on the wire. MINOR.
-appVersion: "0.18.0"
+# 0.19.0 (2026-09-13). Per-cluster authorization for the multi-cluster case: clusters[].visibility
+# and clusters[].identity (D2). MINOR.
+appVersion: "0.19.0"
 
 keywords: [openshift, ldap, rbac, groupsync, observability]
 home: https://github.com/ephico2real2/group-sync-dashboard

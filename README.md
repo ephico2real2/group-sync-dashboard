@@ -447,8 +447,8 @@ read. Recipes for `curl` and Postman: [`docs/api-access.md`](docs/api-access.md)
 
 ## Not built yet
 
-Effective-permission expansion, log-scrape enrichment,
-and per-cluster authorization for the multi-cluster case: OAuth authenticates against the
-hosting cluster only, so one instance holding several clusters' data can show a user
-membership from a cluster they have no rights on. Deploying per cluster and aggregating
-through the API, as above, avoids that entirely.
+Effective-permission expansion and log-scrape enrichment.
+
+Per-cluster authorization for the multi-cluster case shipped in 0.19.0 as `clusters[].visibility` /
+`clusters[].identity` (`docs/ACCESS_CONTROL.md` §11); deploying per cluster and aggregating through
+the API, as above, still removes the identity question rather than answering it.

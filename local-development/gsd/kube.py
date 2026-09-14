@@ -128,6 +128,27 @@ TIER_ALL = "all"
 # login's token carries both, so supplying both keeps the review's input equal to the viewer's
 # true token identity rather than a subset of it.
 VIRTUAL_AUTH_GROUPS = ("system:authenticated", "system:authenticated:oauth")
+#: The groups every token of a ServiceAccount carries, by construction: the apiserver's
+#: serviceaccount authenticator issues `system:serviceaccounts` and `system:serviceaccounts:<ns>`
+#: (pkg/serviceaccount MakeGroupNames) and `system:authenticated`; an OAuth token's
+#: `system:authenticated:oauth` is not among them.
+SERVICEACCOUNT_PREFIX = "system:serviceaccount:"
+
+
+def _virtual_groups_for(viewer: str) -> tuple[str, ...]:
+    """The virtual groups this identity's token carries, from the identity's SHAPE.
+
+    The repeated review here must name what the proxy's review saw, or the two disagree: a
+    ServiceAccount granted the threshold through `system:serviceaccounts:<ns>` passed the proxy
+    and, with only the OAuth groups sent, landed on the self view (chart 0.14.0 review, Codex;
+    routed to SPEC_D2). A malformed name in the prefix keeps the OAuth groups — the review then
+    answers for the name as given, which is a denial, never a grant.
+    """
+    if viewer.startswith(SERVICEACCOUNT_PREFIX):
+        parts = viewer.split(":")
+        if len(parts) == 4 and parts[2] and parts[3]:
+            return ("system:serviceaccounts", f"system:serviceaccounts:{parts[2]}", "system:authenticated")
+    return VIRTUAL_AUTH_GROUPS
 
 # Re-exported from gsd.config, which is the ONE place the number is written. Kept under this
 # name because the comments and docstrings in this module refer to it, and because a reader
@@ -1598,7 +1619,7 @@ class TierResolver:
         try:
             groups = self._kube.fetch_groups_of_user(viewer)
             allowed = self._kube.create_subject_access_review(
-                viewer, [*groups, *VIRTUAL_AUTH_GROUPS], self._attributes
+                viewer, [*groups, *_virtual_groups_for(viewer)], self._attributes
             )
         except ClusterError as exc:
             # EVERY failure — unreachable, timeout, 401, 403, malformed — is the self tier,

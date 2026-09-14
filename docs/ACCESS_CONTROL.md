@@ -201,7 +201,9 @@ narrower tier, because a tier that hides the reader's own access path has nothin
     │
     ├─ trusted_viewer(request)                  api.py:244   the header, or None
     │
-    ├─ viewer_scope(request)                    api.py:254   -> (viewer, "all" | "self")
+    ├─ settings.cluster_policy(cluster)         config.py    inherit | self-only | hidden | remote-sar
+    │
+    ├─ viewer_scope(request, cluster_id)        api.py:254   -> (viewer, "all" | "self")
     │     restrictions off?                     ──────────►  "all"
     │     no viewer / no resolver?              ──────────►  "self"
     │     resolver raises or answers junk?      ──────────►  "self"
@@ -408,3 +410,62 @@ this document deliberately carries no passwords.
 
 Narrow the threshold and you narrow who is an administrator; you do not narrow what the wide view
 contains. If you want less in the wide view, change the view.
+
+## 11. Several clusters in one instance
+
+The oauth-proxy authenticates a reader against the **hosting** cluster only — the first enabled
+entry of `clusters`, the cluster the pod runs on. Before application 0.19.0 the tier that cluster
+decided gated every cluster's rows, so a host `cluster-admin` was served a remote cluster's
+membership, bindings and login failures with no standing there, and a reader who was nobody on the
+host but an administrator of the remote got the self view there, keyed by a username the remote had
+never vouched for. Two keys per entry now say, per cluster, what a reader may see about it
+(`gsd/config.py#Settings.cluster_policy`, `gsd/api.py#viewer_scope`).
+
+| key | values | default | meaning |
+|---|---|---|---|
+| `clusters[].visibility` | `inherit` | the first enabled entry | the host's tier decides — the old behaviour, and the host's own default; on a remote an explicit choice that the host's RBAC governs that cluster's data too |
+| | `self-only` | every other entry | nobody is ever wide on this cluster; it costs no RBAC, no credential and no cluster call, and can only narrow |
+| | `hidden` | | polled and alerted on (`/metrics`, the pod log) but never served through `/api`; refused on the host entry |
+| | `remote-sar` | | that cluster's own RBAC decides: the same SubjectAccessReview as `visibility.adminSar`, created on the remote API with that entry's token, naming the reader and the Group memberships read from the remote; refused on the host entry, and needs `identity: same-as-host` |
+| `clusters[].identity` | `none` | every other entry | the host's username is not treated as anyone on this cluster: person-scoped views answer 403 there, cluster-level health still shows |
+| | `same-as-host` | the first entry, forced | the clusters share an identity provider and its username mapping, so the reader's self views apply to this cluster too |
+
+**What each endpoint does.** Every `/api/clusters/{id}/…` handler calls `require_cluster` first: a
+`hidden` cluster answers the same 404, with the same sentence, as an id that does not exist, so the
+response is not an oracle over which clusters this instance watches; `hidden` clusters are absent
+from `/api/clusters`, `/api/whoami` and `/api/alerts` too. On a `self-only` cluster the tier is
+`self` for every reader. With `identity: none` the viewer is withheld on purpose, so a person-scoped
+endpoint (groups, users, logins, grants, membership changes, cluster access) answers 403 with exactly
+this sentence — *this data is scoped to a viewer, and this cluster does not treat your identity as
+one of its own; only cluster-level health is shown for it* — and never names the value that would
+change it; `/api/clusters/{id}/groupsyncs`, `/api/events` and the self kinds of alerts still serve.
+`/api/alerts` is filtered per cluster in that cluster's tier, and its `scope` is the narrowest served:
+`all` only when every served cluster is wide for this reader.
+
+**How `remote-sar` decides.** One `gsd/kube.py#TierResolver` per remote-sar cluster, constructed on
+that cluster's `ClusterConfig`, so the review is created on the remote API with the remote token and
+`gsd/kube.py#ClusterClient.fetch_groups_of_user` reads the **remote's** Group objects — the
+group-resolution trap handled by construction. Cached per (reader, cluster) for
+`visibility.tierTtlSeconds`; every failure (a 403 because the remote ServiceAccount lacks the
+review, unreachable, junk) is the self tier and is not cached. Failures count under the same signal
+as the host's (`gsd_visibility_tier_checks_total`), so
+`templates/monitoring.yaml#GroupSyncDashboardVisibilityChecksFailing` fires exactly as for the host.
+The remote RBAC is the operator's, by hand — this chart manages no remote RBAC: a
+`ClusterRoleBinding` of `system:auth-delegator` to the remote ServiceAccount grants
+`create subjectaccessreviews`.
+
+**Identity equivalence is a claim, not a fact.** "Same username, same person" holds only when both
+clusters' identity providers and their `mappingMethod` agree; an htpasswd `developer` or `kubeadmin`
+on two clusters is two people. That is why `identity` is stated per entry, why `none` is the default
+and fails closed, and why `remote-sar` refuses to render or start without `same-as-host`.
+
+**On the wire.** `/api/whoami` carries `visibility.clusters[id] = {policy, identity, scope}` for every
+served cluster beside the headline `scope`; each `/api/clusters` row carries
+`visibility = {policy, scope}` for this reader; `/api/alerts` reports the narrowest `scope` served.
+The UI renders these — the selector marks a narrowed cluster and the header pill follows the selected
+one — and never derives them (§7).
+
+**The other posture.** One dashboard per cluster and a fleet report reading each one's API with a
+token from that cluster (`docs/reference-architecture.md` §8a, `local-development/cluster-report.py`)
+needs none of this and remains the recommendation where trust boundaries differ: each cluster
+authorises its own readers, and the identity question is removed rather than answered.

@@ -137,7 +137,9 @@ container starting, which is a louder failure than the one above but still not a
 
 | Key | Default | Notes |
 |---|---|---|
-| `clusters` | the local cluster | add entries for multi-cluster |
+| `clusters` | the local cluster | add entries for multi-cluster. The reader is authenticated by the **first enabled** entry only; each other entry says what that reader may see about it, below |
+| `clusters[].visibility` | `inherit` on the first entry, `self-only` on the rest | `inherit` — the host's tier decides (the old behaviour); `self-only` — nobody is wide on this cluster; `hidden` — polled and alerted on, never served through `/api` (404 like an unknown id); `remote-sar` — that cluster's own RBAC decides through the same SubjectAccessReview, created on the remote with its token and its Group objects, cached per reader and cluster; every failure is the self tier. `hidden`/`remote-sar` are refused on the first entry. **Upgrade note:** a multi-cluster install's remotes become `self-only` on chart 0.21.0; set `inherit` to keep the old view |
+| `clusters[].identity` | `none` on every entry but the first | whether the host's username is the same person on this cluster. `none` fails closed: person-scoped views answer 403 there, cluster health still shows. `same-as-host` when the clusters share an identity provider; required by `remote-sar`. The first entry is always `same-as-host` |
 | `config.pollIntervalSeconds` | `60` | also the error bar on "when did this person lose access?" — a membership change has no upstream timestamp, so `observed_at` is ours |
 | `config.scheduleGraceSeconds` | `120` | stops the state flapping `late` every cycle. Must stay **above** `pollIntervalSeconds` |
 | `config.bindingIntervalSeconds` | `300` | bindings are listed across every namespace, so deliberately slower. Must stay above the group poll |

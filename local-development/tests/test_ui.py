@@ -2996,6 +2996,24 @@ class TestAccessGrantedSelfTier:
         assert "reaches alice" in body and "grant nobody" not in body, body[:300]
         assert p.evaluate("() => data.findings") is None, "the wide payload is not this reader's to paint"
 
+    def test_a_session_that_changes_hands_refetches_the_new_readers_own_path(self, page, scoped_server):
+        """Codex, C1 review, routed to SPEC_D2: refresh() made its speculative own-path request for
+        the PREVIOUS cycle's viewer, so when Alice's tab became Bob's session the request was
+        /users/alice as Bob — a 403 that rejected the shared Promise.all and left the generic API
+        error card until a reload. The speculative call now resolves that 403 to null, and the
+        follow-up fetches whoever whoami names."""
+        p = self._open(page, scoped_server, "alice")
+        p.wait_for_selector(".scope-banner")
+        assert "reaches alice" in p.locator("#main").inner_text()
+        p.set_extra_http_headers({"X-Forwarded-User": "bob"})
+        p.evaluate("() => refresh()")
+        p.wait_for_function("() => data.myAccess && data.myAccess.viewer === 'bob'", timeout=10_000)
+        body = p.locator("#main").inner_text()
+        assert "Dashboard API error" not in body, body[:300]
+        assert "reaches alice" not in body, body[:300]
+        assert p.evaluate("() => data.findings") is None
+        assert p.evaluate("() => data.whoami.user") == "bob"
+
     def test_an_unknown_tier_paints_neither_tiers_payload(self, page, scoped_server):
         """A whoami that fails on a later cycle leaves the tier indeterminate. The cached wide
         payload is not the reader's to see then, and the own path is not a claim either: the tab

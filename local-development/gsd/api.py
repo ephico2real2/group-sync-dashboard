@@ -27,7 +27,10 @@ from fastapi.staticfiles import StaticFiles
 from . import TITLE, __version__
 from . import state as st
 from .activity import EMAIL_HEADER, INTERACTION_HEADER, USER_HEADER, ActivityRecorder
-from .config import Settings, load_settings
+from .config import (
+    IDENTITY_NONE, IDENTITY_SAME_AS_HOST, VISIBILITY_HIDDEN, VISIBILITY_INHERIT,
+    VISIBILITY_REMOTE_SAR, VISIBILITY_SELF_ONLY, Settings, load_settings,
+)
 from .kube import TIER_ALL, TIER_SELF, TierResolver
 from .leader import LeaderElector
 from .metrics import RuntimeSignals, build_registry
@@ -407,6 +410,47 @@ def build_app(
             # failure must not be read as the wide tier breaking, or vice versa.
             observe=functools.partial(signals.note_tier_check, "usage"),
         )
+    # ── Per-cluster authorization (docs/ACCESS_CONTROL.md §11) ──────────────────────────
+    # One resolver PER remote cluster whose policy is remote-sar, constructed on THAT cluster's
+    # ClusterConfig — so the review is created on the remote API with the remote token, and
+    # fetch_groups_of_user reads the REMOTE's Group objects. That is the group-resolution trap
+    # handled by construction rather than by feeding the store's snapshot, which would add
+    # pollIntervalSeconds to the fail-open window. Same SAR shape as the host's (the operator
+    # chose one threshold), same TTL, its own cache: per (viewer, cluster) by construction.
+    # Reported under the "admin" threshold label: a failing remote review is the same
+    # everyone-silently-narrowed signature the alert already watches for.
+    remote_resolvers: dict[str, TierResolver] = {}
+    if settings.view_restrictions_enabled:
+        for c in settings.clusters:
+            if not c.enabled or c is local_cluster:
+                continue
+            if settings.cluster_policy(c.name)[0] != VISIBILITY_REMOTE_SAR:
+                continue
+            remote_resolvers[c.name] = TierResolver(
+                c,
+                verb=settings.visibility_admin_sar_verb,
+                resource=settings.visibility_admin_sar_resource,
+                api_group=settings.visibility_admin_sar_api_group,
+                namespace=settings.visibility_admin_sar_namespace,
+                subresource=settings.visibility_admin_sar_subresource,
+                ttl_seconds=float(settings.visibility_tier_ttl_seconds),
+                observe=functools.partial(signals.note_tier_check, "admin"),
+            )
+    for c in settings.clusters:
+        policy, identity = settings.cluster_policy(c.name)
+        if c is local_cluster or policy == VISIBILITY_INHERIT:
+            continue
+        # INFO once at startup, so "why is prod-east narrow for an administrator" is answered in
+        # the pod log rather than by reading the values file.
+        log.info("%s: per-cluster visibility policy %s, identity %s", c.name, policy, identity)
+    if not settings.view_restrictions_enabled and any(
+        settings.cluster_policy(c.name)[0] in (VISIBILITY_SELF_ONLY, VISIBILITY_REMOTE_SAR)
+        for c in settings.clusters
+    ):
+        log.warning(
+            "clusters[].visibility policies are set but view restrictions are OFF, so every "
+            "reader sees every cluster in full; only `hidden` still applies"
+        )
     if not settings.view_restrictions_enabled:
         # WARNING rather than INFO: this is the one switch that restores the measured exposure
         # (every authenticated reader sees the full RBAC surface and the login record), and the
@@ -456,44 +500,61 @@ def build_app(
             return None
         return request.headers.get(USER_HEADER) or None
 
-    def viewer_scope(request: Request) -> tuple[str | None, str]:
-        """Resolve this request to (viewer, scope). The failure direction IS the control.
+    def _decide(viewer: str | None, resolver_obj, fallback: Callable[[str], str] | None
+                ) -> tuple[str | None, str]:
+        """One threshold's decision for one viewer: the fail-closed core viewer_scope always had.
 
-        `scope` is "all" only when restrictions are off, or when the tier resolver
-        POSITIVELY answers "all" for this viewer. Everything else — no viewer, no
-        resolver wired, a resolver error or timeout, an unrecognised answer — lands on
-        "self", never on the wide view (requirements §5.4, decision D1).
+        `scope` is "all" only when the resolver POSITIVELY answers "all". No viewer, no
+        resolver, an error, a junk answer — all "self" (requirements §5.4, decision D1).
+        """
+        if not viewer or (resolver_obj is None and fallback is None):
+            signals.note_decision("admin", TIER_SELF)
+            return viewer, TIER_SELF
+        try:
+            tier = (resolver_obj.resolve(viewer) if resolver_obj is not None
+                    else fallback(viewer))
+        except Exception:  # noqa: BLE001
+            log.exception("tier resolution failed for %r; serving the self view", viewer)
+            signals.note_decision("admin", TIER_SELF)
+            return viewer, TIER_SELF
+        scope = TIER_ALL if tier == TIER_ALL else TIER_SELF
+        signals.note_decision("admin", scope)
+        return viewer, scope
+
+    def viewer_scope(request: Request, cluster_id: str | None = None) -> tuple[str | None, str]:
+        """Resolve this request to (viewer, scope) — FOR ONE CLUSTER when one is named.
+
+        `scope` is "all" only when restrictions are off, or when the deciding resolver
+        POSITIVELY answers "all" for this viewer. Everything else — no viewer, no resolver
+        wired, a resolver error or timeout, an unrecognised answer — lands on "self", never on
+        the wide view (requirements §5.4, decision D1).
+
+        WHICH RESOLVER DECIDES is the cluster's policy (docs/ACCESS_CONTROL.md §11):
+          inherit     the host's resolver — the viewer's identity is the host's
+          self-only   nobody decides; "self", and the VIEWER IS None when the cluster does not
+                      treat the host's username as its own (identity: none), so a self-scoped
+                      handler refuses rather than keying rows on a name nobody vouched for
+          remote-sar  that cluster's own resolver, on its own API, with its own groups
+          hidden      never reaches here: require_cluster answers 404 first
+        With no cluster named — /api/whoami's headline, the Usage tab — the host decides.
+        Restrictions off means off for every policy but `hidden`, which is a serving rule.
         """
         viewer = trusted_viewer(request)
         if not restrict:
             return viewer, TIER_ALL
-        # Read off app.state PER REQUEST — the published seam (see app.state.tier_resolver
-        # below), so a test-substituted resolver is honoured by every handler. The
-        # build-time `tier_resolver` callable is the fallback for an app built with an
-        # injected decision and nothing published.
+        policy, identity = (settings.cluster_policy(cluster_id) if cluster_id is not None
+                            else (VISIBILITY_INHERIT, IDENTITY_SAME_AS_HOST))
+        if policy == VISIBILITY_SELF_ONLY:
+            signals.note_decision("admin", TIER_SELF)
+            return (viewer if identity == IDENTITY_SAME_AS_HOST else None), TIER_SELF
+        if policy == VISIBILITY_REMOTE_SAR:
+            # Read off app.state PER REQUEST, the published seam, so a test can substitute one
+            # remote's decision without a cluster. No build-time fallback: a remote cluster
+            # with no resolver is a remote cluster nobody may see wide.
+            remotes = getattr(app.state, "remote_tier_resolvers", None) or {}
+            return _decide(viewer, remotes.get(cluster_id), None)
         state_resolver = getattr(app.state, "tier_resolver", None)
-        if not viewer or (state_resolver is None and tier_resolver is None):
-            # Counted like every decision below; only the restrictions-off return above is
-            # not a decision. gsd_visibility_decisions_total is what makes the served
-            # all:self mix visible — the everyone-silently-narrowed signature.
-            signals.note_decision("admin", TIER_SELF)
-            return viewer, TIER_SELF
-        try:
-            tier = (state_resolver.resolve(viewer) if state_resolver is not None
-                    else tier_resolver(viewer))
-        except Exception:  # noqa: BLE001
-            # Logged with the trace, served as self: an API-server blip degrades the VIEW,
-            # never the availability — the reader sees their own data, not an error page.
-            log.exception("tier resolution failed for %r; serving the self view", viewer)
-            signals.note_decision("admin", TIER_SELF)
-            return viewer, TIER_SELF
-        # Only the exact string "all" widens — the _visibility_setting discipline applied
-        # to the resolver's answer, so a buggy resolver cannot widen by returning junk.
-        # Compared against TIER_ALL (the producer's vocabulary) and emitted as that same
-        # constant, so the wire `scope` cannot drift from what TierResolver returns.
-        scope = TIER_ALL if tier == TIER_ALL else TIER_SELF
-        signals.note_decision("admin", scope)
-        return viewer, scope
+        return _decide(viewer, state_resolver, tier_resolver)
 
     def usage_scope(request: Request) -> tuple[str | None, str]:
         """Resolve this request to (viewer, scope) for the USAGE tab specifically.
@@ -546,14 +607,27 @@ def build_app(
         signals.note_decision("usage", scope)
         return viewer, scope
 
-    def require_viewer(viewer: str | None) -> str:
+    def require_viewer(viewer: str | None, cluster_id: str | None = None) -> str:
         """Self-scoped data needs a name to scope to; without one it is refused.
 
         The /api/dashboard/activity rule: when no proxy fronts the app (or the proxy sent
         no identity header), X-Forwarded-User is whatever the caller typed, and honouring
         it would let anyone read anyone by asserting a name.
+
+        A SECOND reason for no name, when a cluster is named: that cluster's identity policy is
+        `none`, so viewer_scope withheld the host's username on purpose (docs/ACCESS_CONTROL.md
+        §11). Said in its own words, and — like every refusal here — without naming the value
+        that would change it: this sentence reaches the person being refused.
         """
         if not viewer:
+            if (cluster_id is not None and restrict
+                    and settings.cluster_policy(cluster_id)[1] == IDENTITY_NONE):
+                raise HTTPException(
+                    status_code=403,
+                    detail="this data is scoped to a viewer, and this cluster does not treat "
+                           "your identity as one of its own; only cluster-level health is "
+                           "shown for it",
+                )
             raise HTTPException(
                 status_code=403,
                 detail="this data is scoped to the authenticated viewer, and there is no "
@@ -561,7 +635,7 @@ def build_app(
             )
         return viewer
 
-    def require_admin_tier(request: Request) -> str:
+    def require_admin_tier(request: Request, cluster_id: str | None = None) -> str:
         """The administrator tier, or a refusal that names itself as one.
 
         For the views that are ABOUT THE CLUSTER rather than about the reader: its whole RBAC
@@ -609,7 +683,7 @@ def build_app(
         the operator's to choose, so what this function guarantees is the REVIEW, not a particular
         resource; `config.py#Settings` carries the default and the measurement behind it.
         """
-        _, scope = viewer_scope(request)
+        _, scope = viewer_scope(request, cluster_id)
         if scope != "all":
             # Counted before the raise: a refusal that leaves no trace anywhere is how a
             # gate that broke for everyone stays indistinguishable from one nobody hit.
@@ -732,8 +806,11 @@ def build_app(
         return wrapper
 
     def require_cluster(cluster_id: str):
+        """The cluster, or a 404 — the SAME 404 for an id that does not exist and for one whose
+        policy is `hidden`, so the response is not an oracle over which clusters this instance
+        watches. Hidden applies whatever the tier: it is a serving rule, not a tier."""
         cluster = settings.cluster(cluster_id)
-        if cluster is None:
+        if cluster is None or settings.cluster_policy(cluster_id)[0] == VISIBILITY_HIDDEN:
             raise HTTPException(status_code=404, detail=f"unknown cluster {cluster_id!r}")
         return cluster
 
@@ -798,9 +875,14 @@ def build_app(
         pattern /logins and /cluster-access already use — while everything with a public
         analogue stays full.
         """
-        _, scope = viewer_scope(request)
         out = []
         for row in store.clusters():
+            policy, _ = settings.cluster_policy(row["id"])
+            if policy == VISIBILITY_HIDDEN:
+                continue
+            # Decided PER CLUSTER (docs/ACCESS_CONTROL.md §11): a host administrator is not an
+            # administrator of a self-only remote, and the card must not say otherwise.
+            _, scope = viewer_scope(request, row["id"])
             counts = store.group_counts(row["id"])
             crs = store.groupsyncs(row["id"])
             out.append(
@@ -830,6 +912,10 @@ def build_app(
                     # nothing on the card, which is the right outcome for each.
                     "operator_configs": (
                         _config_summary(row["id"]) if scope == "all" else None),
+                    # The policy this instance applies to the cluster and what it decided for
+                    # THIS reader, so the selector can label a cluster it narrows. The UI
+                    # renders these; it never derives them (docs/ACCESS_CONTROL.md §7).
+                    "visibility": {"policy": policy, "scope": scope},
                     # Surfaced on the landing page so binding problems are discoverable
                     # without knowing to navigate anywhere. `unresolved` does not alert
                     # (it cannot be told from a not-yet-synced group), so without a count
@@ -878,7 +964,7 @@ def build_app(
         truthy object whose `.length` is undefined, while CRs exist.
         """
         require_cluster(cluster_id)
-        _, scope = viewer_scope(request)
+        _, scope = viewer_scope(request, cluster_id)
         now = datetime.now(UTC)
         rows = [enrich(cr, now, grace) for cr in store.groupsyncs(cluster_id)]
         if scope == "self":
@@ -957,10 +1043,10 @@ def build_app(
         the UI never has to derive the tier — the activity-endpoint contract.
         """
         require_cluster(cluster_id)
-        viewer, scope = viewer_scope(request)
+        viewer, scope = viewer_scope(request, cluster_id)
         rows = store.groups(
             cluster_id, state,
-            user_name=None if scope == "all" else require_viewer(viewer),
+            user_name=None if scope == "all" else require_viewer(viewer, cluster_id),
         )
         return {
             "cluster": cluster_id,
@@ -988,9 +1074,9 @@ def build_app(
         closed rather than resurrecting history for an ex-member.
         """
         require_cluster(cluster_id)
-        viewer, scope = viewer_scope(request)
+        viewer, scope = viewer_scope(request, cluster_id)
         if scope == "self" and not store.is_group_member(
-            cluster_id, name, require_viewer(viewer)
+            cluster_id, name, require_viewer(viewer, cluster_id)
         ):
             raise HTTPException(
                 status_code=403,
@@ -1090,8 +1176,8 @@ def build_app(
         the same way, so a narrowed reader learns nothing about anyone else.
         """
         require_cluster(cluster_id)
-        viewer, scope = viewer_scope(request)
-        who = None if scope == "all" else require_viewer(viewer)
+        viewer, scope = viewer_scope(request, cluster_id)
+        who = None if scope == "all" else require_viewer(viewer, cluster_id)
         providers = settings.users_providers
         rows = store.users(cluster_id, limit=limit, offset=offset, user_name=who, providers=providers)
         never = store.synced_members_without_user(cluster_id, user_name=who)
@@ -1138,8 +1224,8 @@ def build_app(
         byte-identical — otherwise this endpoint is a username oracle.
         """
         require_cluster(cluster_id)
-        viewer, scope = viewer_scope(request)
-        if scope == "self" and name != require_viewer(viewer):
+        viewer, scope = viewer_scope(request, cluster_id)
+        if scope == "self" and name != require_viewer(viewer, cluster_id):
             raise HTTPException(
                 status_code=403,
                 detail="user profiles other than your own need the wide tier",
@@ -1255,9 +1341,9 @@ def build_app(
         # the wide tier only. A COLLATE NOCASE match was measured to degrade the query to
         # the cluster-wide index scan AND would cross-leak between two OpenShift Users
         # differing only by case — User names are case-sensitive.
-        viewer, scope = viewer_scope(request)
+        viewer, scope = viewer_scope(request, cluster_id)
         if scope == "self":
-            me = require_viewer(viewer)
+            me = require_viewer(viewer, cluster_id)
             if user is not None and user != me:
                 raise HTTPException(
                     status_code=403,
@@ -1392,7 +1478,7 @@ def build_app(
         findings — it is no data, and the two must never look alike.
         """
         require_cluster(cluster_id)
-        viewer, scope = viewer_scope(request)
+        viewer, scope = viewer_scope(request, cluster_id)
         access = store.cluster_access_group(cluster_id)
         if scope == "self":
             # THE VIEWER'S OWN GATE STATUS and nothing about anyone else. The DN, the
@@ -1402,7 +1488,7 @@ def build_app(
             # reader who cannot know it was narrowed. `in_access_group` is None when no
             # synced gate group exists to compare against — "we cannot tell" is a
             # different statement from "not a member", same contract as the logins rows.
-            me = require_viewer(viewer)
+            me = require_viewer(viewer, cluster_id)
             gated = bool(access)
             synced = bool(access and access["group_name"])
             membership = store.is_in_access_group(cluster_id, [me])
@@ -1528,7 +1614,7 @@ def build_app(
         nobody today. A binding that names a role is not access until someone is in the group.
         """
         require_cluster(cluster_id)
-        require_admin_tier(request)
+        require_admin_tier(request, cluster_id)
         # Every binding, including the ones that resolve normally. A view labelled
         # "bindings" that omitted the healthy majority (74 of 228 here) misrepresented the
         # cluster; the caller filters, rather than the API deciding what is worth seeing.
@@ -1624,8 +1710,8 @@ def build_app(
         # platform count aggregate OTHER people's grants, so at self they are withheld as
         # None — never recomputed over one person (a one-row "worklist" would relabel the
         # migration effort as the viewer's) and never fabricated zeros.
-        viewer, scope = viewer_scope(request)
-        me = None if scope == "all" else require_viewer(viewer)
+        viewer, scope = viewer_scope(request, cluster_id)
+        me = None if scope == "all" else require_viewer(viewer, cluster_id)
         total = store.count_direct_user_bindings(
             cluster_id, include_platform=include_platform, namespace=namespace,
             user_name=me)
@@ -1665,7 +1751,7 @@ def build_app(
         both of which are the administrator tier now.
         """
         require_cluster(cluster_id)
-        require_admin_tier(request)
+        require_admin_tier(request, cluster_id)
         return {
             "cluster": cluster_id,
             "scope": "all",
@@ -1694,13 +1780,13 @@ def build_app(
         takes user_name as the privacy scope (membership_event_by_user serves it).
         """
         require_cluster(cluster_id)
-        viewer, scope = viewer_scope(request)
+        viewer, scope = viewer_scope(request, cluster_id)
         # limit + 1, as in list_events — see docs/api-contract.md R3. This log previously
         # cut off at 100 with nothing saying so, which on an audit trail reads as "no
         # further changes" rather than "not shown".
         rows = store.membership_events(
             cluster_id,
-            user_name=None if scope == "all" else require_viewer(viewer),
+            user_name=None if scope == "all" else require_viewer(viewer, cluster_id),
             limit=limit + 1,
         )
         truncated = len(rows) > limit
@@ -1735,28 +1821,39 @@ def build_app(
         list this used to be, so `scope` and `viewer` ride the wire (the activity
         contract).
         """
-        viewer, scope = viewer_scope(request)
+        viewer, _ = viewer_scope(request)
         now = datetime.now(UTC)
-        # The cliff policy, or None with the module off. Kept in step with the metrics
-        # collector's call (gsd/metrics.py#DashboardCollector._gather) — the parity contract.
-        policy = st.cliff_policy(settings)
+        # B4's cliff policy, kept through the per-cluster rewrite: SPEC_D2's block predates it
+        # (deviation recorded there). Named `cliff`, because the loop below binds `policy` to
+        # each cluster's visibility policy.
+        cliff = st.cliff_policy(settings)
         alerts: list[dict] = []
+        # The feed's scope is the NARROWEST decision across the clusters it carries: "all" only
+        # when every served cluster is wide for this reader. A feed that said "all" while one
+        # cluster's rows were filtered would be the quiet-drop the response exists to name.
+        scope = TIER_ALL
         for row in store.clusters():
             cluster_id = row["id"]
+            policy, _ = settings.cluster_policy(cluster_id)
+            if policy == VISIBILITY_HIDDEN:
+                continue
+            _, cscope = viewer_scope(request, cluster_id)
+            if cscope != TIER_ALL:
+                scope = TIER_SELF
+            found: list[dict] = []
             if row["status"] and row["status"] != "ok":
-                alerts.append(
+                found.append(
                     {
                         "cluster": cluster_id,
                         "kind": row["status"],
                         "subject": cluster_id,
                         "detail": row["message"] or "cluster poll failed",
                         "severity": "critical",
-                        "silenced": False,
-                        "silenced_by": None,
                     }
                 )
                 # A degraded cluster's cached rows are stale by definition; computing
                 # group-level alerts from them would report yesterday's state as today's.
+                alerts.extend(found if cscope == TIER_ALL else _alerts_for_self(found))
                 continue
             computed = st.compute_alerts(
                 cluster=cluster_id,
@@ -1768,43 +1865,39 @@ def build_app(
                 now=now,
                 grace=grace,
                 count_changes=(
-                    store.group_count_changes(cluster_id, policy.since(now)) if policy else None
+                    store.group_count_changes(cluster_id, cliff.since(now)) if cliff else None
                 ),
-                cliff=policy,
+                cliff=cliff,
             )
-            alerts.extend(a.as_dict() for a in computed)
+            found.extend(a.as_dict() for a in computed)
 
             # Only the `dangling` tier alerts. `built_in` is normal, and `unresolved`
             # cannot be distinguished from a group that simply has not synced yet, so
             # alerting on either would produce noise that trains people to ignore this.
-            for row in store.binding_findings(cluster_id):
-                if row["finding"] != "dangling":
+            for binding in store.binding_findings(cluster_id):
+                if binding["finding"] != "dangling":
                     continue
-                # `where`, not `scope`: this handler's `scope` is the visibility tier, and
-                # a loop-local rebinding here once disabled the self filter below — the
-                # feed failed OPEN on exactly the clusters that had a dangling finding.
                 where = (
-                    f"namespace {row['binding_namespace']}"
-                    if row["binding_namespace"]
+                    f"namespace {binding['binding_namespace']}"
+                    if binding["binding_namespace"]
                     else "cluster-wide"
                 )
-                alerts.append(
+                found.append(
                     {
                         "cluster": cluster_id,
                         "kind": "dangling_binding",
-                        "subject": row["binding_name"],
+                        "subject": binding["binding_name"],
                         "detail": (
-                            f"{row['binding_kind']} grants {row['role_name']} {where} to "
-                            f"group {row['group_name']!r}, which the operator used to "
+                            f"{binding['binding_kind']} grants {binding['role_name']} {where} to "
+                            f"group {binding['group_name']!r}, which the operator used to "
                             f"manage and no longer exists — this binding now grants nobody"
                         ),
                         "severity": "critical",
-                        "silenced": False,
-                        "silenced_by": None,
                     }
                 )
-        if scope == "self":
-            alerts = _alerts_for_self(alerts)
+            # Filtered PER CLUSTER, in the cluster's own tier: a host administrator's feed
+            # carries a self-only remote's alerts at the self kinds only.
+            alerts.extend(found if cscope == TIER_ALL else _alerts_for_self(found))
         severity_rank = {"critical": 0, "warning": 1}
         alerts.sort(key=lambda a: (severity_rank.get(a["severity"], 9), a["cluster"], a["kind"]))
         return {
@@ -1912,7 +2005,21 @@ def build_app(
             # reads the app.state seam per request and never raises — so the pill can
             # never disagree with the pages it sits above. An indeterminate tier is SELF.
             _, scope = viewer_scope(request)
-            out["visibility"] = {"scope": scope, "enabled": settings.view_restrictions_enabled}
+            # And PER CLUSTER, the same way, so the cluster selector can say which clusters
+            # this reader sees narrowed (docs/ACCESS_CONTROL.md §11). Hidden clusters are
+            # absent, as they are from /api/clusters — listing them here would undo the 404.
+            clusters: dict[str, dict] = {}
+            for c in settings.clusters:
+                policy, identity = settings.cluster_policy(c.name)
+                if policy == VISIBILITY_HIDDEN:
+                    continue
+                _, cscope = viewer_scope(request, c.name)
+                clusters[c.name] = {"policy": policy, "identity": identity, "scope": cscope}
+            out["visibility"] = {
+                "scope": scope,
+                "enabled": settings.view_restrictions_enabled,
+                "clusters": clusters,
+            }
         return out
 
     @app.get("/api/dashboard/activity")
@@ -2271,6 +2378,10 @@ def build_app(
     # instance: usage_scope reads only this one, so a test (and the live app) can hold a
     # cluster-reader at scope=all on the wide tier and scope=self on Usage in the same request.
     app.state.usage_tier_resolver = usage_resolver
+    # One resolver per remote-sar cluster, keyed by cluster id — the per-cluster seam. A test
+    # installs `{"prod-east": stub}` here to decide a remote without a cluster; a remote with
+    # no entry is never wide.
+    app.state.remote_tier_resolvers = remote_resolvers
     return app
 
 
