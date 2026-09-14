@@ -1765,10 +1765,23 @@ class TestReportingAuditors:
         assert not ok
         assert "requires rbacAuditors.existingClusterRole" in out, out[-800:]
 
-    def test_enabled_true_with_no_groups_fails(self):
-        ok, out = render(**{"rbacAuditors.enabled": "true"})
-        assert not ok
+    def test_enabled_true_with_empty_groups_fails(self):
+        # values.yaml now DEFAULTS groups to the auditor group, so the "no groups" failure needs a
+        # deployment that explicitly clears the list (--set-json, which --set cannot express).
+        args = ["helm", "template", "t", str(CHART), "--set", "ingress.host=t.example.com",
+                "--set", "rbacAuditors.enabled=true", "--set-json", "rbacAuditors.groups=[]"]
+        done = subprocess.run(args, capture_output=True, text=True)
+        out = done.stdout + done.stderr
+        assert done.returncode != 0
         assert "requires at least one rbacAuditors.groups entry" in out, out[-800:]
+
+    def test_enabled_true_uses_the_default_auditor_group(self):
+        # The default groups names the estate's auditor group with createLocal omitted (bind-only):
+        # enabling with no override binds THAT group to the read-only role and renders no local Group.
+        ok, out = render(**{"rbacAuditors.enabled": "true"})
+        assert ok, out[-800:]
+        assert "app-ocp-rbac-groupsync-ns-auditor" in out, out[-800:]
+        assert "\nkind: Group\n" not in out, "the default auditor group is bind-only; expected no local Group object"
 
     def test_a_string_enabled_is_rejected(self):
         # `enabled: "true"`/"false" (a string) is truthy in Helm; a string "false" would silently
