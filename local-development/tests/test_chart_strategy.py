@@ -1593,25 +1593,25 @@ class TestPerClusterVisibility:
         assert "visibility" not in row and "identity" not in row
 
     @pytest.mark.parametrize("disabled", (False, "false"))
-    def test_a_boolean_and_a_quoted_false_choose_the_same_host_everywhere(self, tmp_path, tmp_path_factory, disabled):
+    def test_a_boolean_and_a_quoted_false_choose_the_same_host_in_the_guard_and_notes(self, tmp_path, tmp_path_factory, disabled):
         """Codex, review D2 second pass: a quoted `enabled: "false"` in a values file is a non-empty
         string — truthy in Go and in `bool()` — so the guard, NOTES and load_settings all made the
-        disabled entry the host. All three now read the word."""
+        disabled entry the host. The chart's two halves here; the application's half lives in
+        test_config.py, because CI's chart job runs this file WITHOUT the application installed."""
         import yaml
-        from gsd.config import load_settings
         from test_chart_route import _notes_probe_chart
         values = tmp_path / "values.yaml"
         values.write_text(yaml.safe_dump({"clusters": [
             {"name": "first", "apiUrl": "https://first", "tokenEnv": "X", "enabled": disabled},
+            {"name": "host", "apiUrl": "https://host", "tokenEnv": "X", "enabled": True, "visibility": "hidden"},
+        ]}, sort_keys=False))
+        # The guard: `host` is the host in both spellings, so `hidden` on it is refused by name.
+        done = subprocess.run(["helm", "template", "t", str(CHART), "-f", str(values)], capture_output=True, text=True)
+        assert done.returncode != 0 and "clusters[1] (host) is the hosting cluster" in done.stdout + done.stderr
+        values.write_text(yaml.safe_dump({"clusters": [
+            {"name": "first", "apiUrl": "https://first", "tokenEnv": "X", "enabled": disabled},
             {"name": "host", "apiUrl": "https://host", "tokenEnv": "X", "enabled": True},
         ]}, sort_keys=False))
-        done = subprocess.run(["helm", "template", "t", str(CHART), "-f", str(values)], capture_output=True, text=True)
-        assert done.returncode == 0, done.stdout + done.stderr
-        config_file = tmp_path / "config.yaml"
-        config_file.write_text(yaml.safe_dump(_config_data(done.stdout)))
-        settings = load_settings(config_file)
-        assert settings.host_cluster().name == "host"
-        assert settings.cluster_policy("first") == ("self-only", "none")
         probe = _notes_probe_chart(tmp_path_factory.mktemp(f"notes-{type(disabled).__name__}"))
         noted = subprocess.run(["helm", "template", "t", str(probe), "-s", "templates/notes-probe.yaml", "-f", str(values)],
                                capture_output=True, text=True)
