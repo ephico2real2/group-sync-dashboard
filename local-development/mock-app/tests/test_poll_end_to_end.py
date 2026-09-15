@@ -20,18 +20,27 @@ def store(tmp_path):
     return s
 
 
-def test_poll_once_records_ok(mock_cluster, store):
+def test_poll_once_persists_the_reference_rows(mock_cluster, store):
+    # "ok" is satisfied by valid-but-empty responses (review #118 C5); assert the rows actually landed.
     cfg = mock_cluster.cluster_config(name="mock")
-    outcome = poll_once(store, cfg, timeout=5.0, identities_read=True)
-    assert outcome == "ok"
+    assert poll_once(store, cfg, timeout=5.0, identities_read=True) == "ok"
+    assert store.groupsync_present("mock") is True
+    assert [g["name"] for g in store.groupsyncs("mock")] == ["ldap-sync"]
+    assert {g["name"] for g in store.groups("mock")} == {
+        "app-ocp-rbac-demo-cluster-admin", "cluster-readers", "platform-team-cluster-admin",
+        "acme-app-viewers", "empty-team", "legacy-ops"}
+    assert [m["user_name"] for m in store.group_members("mock", "app-ocp-rbac-demo-cluster-admin")] == ["kubeadmin"]
+    assert {u["user_name"] for u in store.users("mock")} == {"kubeadmin", "dana.lee", "lateef.o", "jane.smith"}
 
 
-def test_refresh_bindings_runs(mock_cluster, store):
+def test_refresh_bindings_persists_the_feeds(mock_cluster, store):
     cfg = mock_cluster.cluster_config(name="mock")
-    poll_once(store, cfg, timeout=5.0)
-    # namespaces_read on to exercise fetch_namespaces through the mock as well.
-    refresh_bindings(store, cfg, timeout=5.0, namespaces_read=True,
-                     namespace_metadata_labels=["team"])
+    assert poll_once(store, cfg, timeout=5.0) == "ok"
+    assert refresh_bindings(store, cfg, timeout=5.0, namespaces_read=True,
+                            namespace_metadata_labels=["team"]) == "ok"
+    assert "app-ocp-rbac-demo-cluster-admin" in {row["group_name"] for row in store.all_bindings("mock")}
+    assert store.namespaces_source("mock")["state"] == "ok"
+    assert store.operator_configs("mock")["present"] is True
 
 
 def _resolver(cfg, verb: str) -> TierResolver:

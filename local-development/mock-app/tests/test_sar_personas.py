@@ -49,3 +49,23 @@ def test_decoy_group_name_grants_nothing(mock_cluster):
     groups = groups_for_user(mock_cluster.fixture, "jane.smith")
     assert "platform-team-cluster-admin" in groups        # she IS in the admin-named group
     assert client.create_subject_access_review("jane.smith", groups, WIDE) is False
+
+
+def test_service_account_subject_matches_the_canonical_user():
+    # review #118 C3: a ClusterRoleBinding to kind: ServiceAccount authorizes system:serviceaccount:<ns>:<name>.
+    from mock_app.fixture import Fixture
+    from mock_app.sar import SarAuthorizer
+    fixture = Fixture.from_dict({
+        "meta": {"token": "t"},
+        "roles": {"clusterRoles": [{"name": "reader", "rules": [{
+            "verbs": ["list"], "apiGroups": ["rbac.authorization.k8s.io"],
+            "resources": ["clusterrolebindings"]}]}]},
+        "bindings": {"clusterRoleBindings": [{
+            "name": "service-account-reader", "roleRef": {"kind": "ClusterRole", "name": "reader"},
+            "subjects": [{"kind": "ServiceAccount", "namespace": "dashboard", "name": "gsd"}]}]},
+    })
+    allowed = SarAuthorizer(fixture).review(
+        "system:serviceaccount:dashboard:gsd",
+        ["system:serviceaccounts", "system:serviceaccounts:dashboard", "system:authenticated"],
+        {"verb": "list", "group": "rbac.authorization.k8s.io", "resource": "clusterrolebindings"})
+    assert allowed is True

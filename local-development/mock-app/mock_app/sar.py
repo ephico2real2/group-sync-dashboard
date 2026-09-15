@@ -76,10 +76,12 @@ class SarAuthorizer:
                 return True
             if s.kind == "Group" and s.name in group_set:
                 return True
-            # A ServiceAccount subject can also be reached as a virtual group
-            # (system:serviceaccounts[:ns]) which arrives as a Group in spec.groups; a literal
-            # ServiceAccount subject matches only its fully-qualified system: name, which the
-            # client would have placed in spec.groups/user — so no extra handling is needed.
+            # A ServiceAccount subject is written as kind: ServiceAccount (name + namespace), NOT as a
+            # User of its system: name — so it must be expanded to the canonical username the SA
+            # authenticates as. Real RBAC binds `system:serviceaccount:<ns>:<name>` (review #118 C3).
+            if s.kind == "ServiceAccount" and s.namespace and s.name:
+                if user == f"system:serviceaccount:{s.namespace}:{s.name}":
+                    return True
         return False
 
     def _resolve_role(self, binding: Binding, binding_kind: str, namespace: str | None) -> Role | None:

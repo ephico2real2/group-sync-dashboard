@@ -25,10 +25,7 @@ except ModuleNotFoundError:  # fall back to a sibling source tree
         candidates.append(Path(os.environ["GSD_LOCAL_DEV"]))
     # committed layout: local-development/mock-app/tests/ → local-development/
     candidates.append(Path(__file__).resolve().parents[2])
-    # scratchpad layout: point at the repo's local-development explicitly if present
-    candidates.append(
-        Path("/Users/olasumbo/gitRepos/group-sync-dashboard/local-development")
-    )
+    # (a copy in some other tree can point at its source with GSD_LOCAL_DEV — no machine path here.)
     for c in candidates:
         if (c / "gsd" / "__init__.py").exists():
             sys.path.insert(0, str(c))
@@ -50,7 +47,7 @@ class MockHandle:
     server: MockClusterServer
     fixture: Fixture
 
-    def cluster_config(self, name: str = "mock", *, token_env: str = "GSD_MOCK_TOKEN",
+    def cluster_config(self, name: str = "mock", *, token_env: str | None = None,
                        insecure: bool = False, use_trusted_ca_env: bool = False,
                        ca_bundle: str | None = "__default__") -> ClusterConfig:
         """Build a ClusterConfig pointed at this mock.
@@ -58,13 +55,18 @@ class MockHandle:
         Default: mode-2 trust (``ca_bundle_file`` = the ephemeral CA). Pass ``insecure=True`` for
         the verify-off escape hatch, or ``use_trusted_ca_env=True`` + set ``GSD_TRUSTED_CA_FILE``
         for the mode-3 enterprise fallback (then pass ``ca_bundle=None``).
+
+        The token env is PER HANDLE by default (review #118 C6): two servers in one process must not
+        share ``GSD_MOCK_TOKEN`` — the second handle's write would make the first authenticate with
+        the wrong token (a 401). Pass ``token_env`` to pin a name.
         """
-        os.environ[token_env] = self.token
+        selected_token_env = token_env or f"GSD_MOCK_TOKEN_{id(self):x}"
+        os.environ[selected_token_env] = self.token
         bundle = self.ca_file if ca_bundle == "__default__" else ca_bundle
         return ClusterConfig(
             name=name,
             api_url=self.base_url,
-            token_env=token_env,
+            token_env=selected_token_env,
             ca_bundle_file=None if (insecure or use_trusted_ca_env) else bundle,
             insecure_skip_verify=insecure,
         )

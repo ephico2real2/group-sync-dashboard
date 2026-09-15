@@ -9,17 +9,20 @@ on:
     paths:
       - 'local-development/gsd/kube.py'
       - 'local-development/gsd/config.py'
+      - 'local-development/gsd/poller.py'
+      - 'local-development/gsd/store.py'
       - 'local-development/mock-app/**'
       - '.github/workflows/mock-cluster.yml'
   push:
     branches: [main]
+  workflow_dispatch:        # the container-smoke job (form B) is manual
 
 jobs:
   mock-cluster:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@<checkout-release-tag-commit-sha>
-      - uses: actions/setup-python@<setup-python-release-tag-commit-sha>
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.12'
       - name: Install the dashboard (gsd) + the mock
@@ -38,7 +41,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@<checkout-release-tag-commit-sha>
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Build and smoke-test the image
         working-directory: local-development/mock-app
         run: |

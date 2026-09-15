@@ -61,8 +61,8 @@ def generate_ca_and_leaf(sans: list[str]) -> CaLeaf:
         raise ValueError("at least one SAN is required so hostname verification can pass")
 
     now = _dt.datetime.now(_dt.timezone.utc)
-    not_before = now - _dt.timedelta(hours=1)
-    not_after = now + _dt.timedelta(days=1)
+    not_before = now - _dt.timedelta(days=1)      # backdate a day: tolerate a runner clock behind
+    not_after = now + _dt.timedelta(days=30)      # 30 days: survive a long-running Form B lab
 
     # ── CA ────────────────────────────────────────────────────────────────────────────────
     ca_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)

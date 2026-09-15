@@ -151,6 +151,9 @@ REVIEW_ARTIFACTS = (
     # attached to that citation was correct and was applied. Rewriting the citation would not make
     # the record truer, and refusing the record over it would have cost a real finding.
     "REVIEW_log_level_contract.md",
+    # PR #118 (mock-app) review: cites the workflow lines and mock_app symbols the findings refuse
+    # or replace (placeholder SHAs, the SA-subject SAR gap, the apiVersion envelope).
+    "REVIEW_mock_cluster.md",
 )
 
 

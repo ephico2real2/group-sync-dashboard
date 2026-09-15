@@ -37,6 +37,21 @@ UNMANAGED_EXCEPTION_ANNOTATION = "rbac.ocp.io/unmanaged-exception"
 # ── Envelope + paging ─────────────────────────────────────────────────────────────────────
 
 
+# The real apiVersion each List envelope carries (review #118 C4). gsd.kube ignores the envelope
+# version today, but a faithful mock must not emit a literal "unknown" — a future consumer that reads
+# it, or a copy of a real capture, would diverge.
+_LIST_API_VERSIONS = {
+    "List": "v1", "NamespaceList": "v1", "NodeList": "v1", "PodList": "v1",
+    "GroupSyncList": "redhatcop.redhat.io/v1alpha1",
+    "NamespaceConfigList": "redhatcop.redhat.io/v1alpha1",
+    "GroupConfigList": "redhatcop.redhat.io/v1alpha1",
+    "GroupList": "user.openshift.io/v1", "UserList": "user.openshift.io/v1",
+    "IdentityList": "user.openshift.io/v1",
+    "RoleBindingList": "rbac.authorization.k8s.io/v1",
+    "ClusterRoleBindingList": "rbac.authorization.k8s.io/v1",
+}
+
+
 def k8s_list(items: list[dict], kind: str = "List", continue_token: str | None = None) -> dict:
     """A Kubernetes List envelope. ``items`` is ALWAYS present (kube.py rejects a 200 without it).
 
@@ -46,8 +61,12 @@ def k8s_list(items: list[dict], kind: str = "List", continue_token: str | None =
     metadata: dict[str, Any] = {}
     if continue_token:
         metadata["continue"] = continue_token
+    try:
+        api_version = _LIST_API_VERSIONS[kind]
+    except KeyError as exc:      # a List kind with no known group is a fixture/wiring bug, fail loud
+        raise ValueError(f"unknown Kubernetes List kind {kind!r}") from exc
     return {
-        "apiVersion": "v1" if kind in {"NamespaceList", "NodeList", "PodList"} else "unknown",
+        "apiVersion": api_version,
         "kind": kind,
         "metadata": metadata,
         "items": items,

@@ -183,3 +183,17 @@ def test_wrong_token_is_auth_failed(mock_cluster):
     with pytest.raises(ClusterError) as exc:
         client.fetch()
     assert exc.value.outcome == AUTH_FAILED
+
+
+@pytest.mark.parametrize(("kind", "api_version"), [
+    ("GroupSyncList", "redhatcop.redhat.io/v1alpha1"), ("GroupList", "user.openshift.io/v1"),
+    ("UserList", "user.openshift.io/v1"), ("IdentityList", "user.openshift.io/v1"),
+    ("NamespaceList", "v1"), ("RoleBindingList", "rbac.authorization.k8s.io/v1"),
+    ("ClusterRoleBindingList", "rbac.authorization.k8s.io/v1"),
+    ("NamespaceConfigList", "redhatcop.redhat.io/v1alpha1"),
+    ("GroupConfigList", "redhatcop.redhat.io/v1alpha1"), ("NodeList", "v1"), ("PodList", "v1"),
+])
+def test_list_envelope_carries_the_real_api_version(kind, api_version):
+    # review #118 C4: no literal "unknown".
+    from mock_app.responses import k8s_list
+    assert k8s_list([], kind=kind)["apiVersion"] == api_version

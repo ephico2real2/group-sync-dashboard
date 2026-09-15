@@ -55,3 +55,15 @@ def test_insecure_skip_verify_reachable(mock_cluster):
     client = ClusterClient(cfg, timeout=5.0)
     _, groups = client.fetch()
     assert groups
+
+
+def test_generated_leaf_survives_a_long_running_form_b():
+    # review #118 C1: a 1-day leaf failed a >24h Form B lab or a >1h-behind runner clock.
+    import datetime as dt
+    from cryptography import x509
+    from mock_app.tls import default_sans, generate_ca_and_leaf
+    now = dt.datetime.now(dt.timezone.utc)
+    pair = generate_ca_and_leaf(default_sans("0.0.0.0"))
+    leaf = x509.load_pem_x509_certificate(pair.leaf_cert_pem)
+    assert leaf.not_valid_before_utc <= now - dt.timedelta(hours=23)
+    assert leaf.not_valid_after_utc >= now + dt.timedelta(days=29, hours=23)
