@@ -1,0 +1,177 @@
+# reference.yaml — a small reference cluster that reproduces the four measured personas.
+#
+# The SAR oracle (DESIGN §5.4), which test_sar_personas.py asserts:
+#
+#   persona      fixture RBAC                                   list crb (wide)  update crb (usage)
+#   kubeadmin    cluster-admin CRB                              ALLOW            ALLOW
+#   dana.lee     cluster-reader CRB (read verbs, no update)     ALLOW            DENY
+#   lateef.o     no admin CRB                                   DENY             DENY
+#   jane.smith   in a group NAMED "...-cluster-admin" but with  DENY             DENY
+#                NO ClusterRoleBinding behind it (the decoy)
+#
+# The decoy is the point: a suggestively-named group must NOT grant the tier — only a real
+# (Cluster)RoleBinding reaching one of spec.groups/spec.user does.
+
+meta:
+  clusterName: mock-openshift
+  token: "mock-token-reference"
+
+groupsyncs:
+  - name: ldap-sync
+    namespace: group-sync-operator
+    generation: 3
+    schedule: "*/30 * * * *"
+    providers:
+      - {name: acme-ldap, kind: rfc2307, filter: "(objectClass=groupOfNames)"}
+    lastSyncSuccessTime: "2026-09-14T08:00:00Z"
+    conditions:
+      - {type: ReconcileSuccess, lastTransitionTime: "2026-09-14T08:00:00Z"}
+  - crdAbsent: false
+
+groups:
+  # Bound to cluster-admin via cluster-admin-crb → grants kubeadmin the wide + usage tiers.
+  - name: app-ocp-rbac-demo-cluster-admin
+    syncProvider: acme-ldap
+    syncTime: "2026-09-14T08:00:00Z"
+    ldapUid: "cn=ocp-admins,ou=Groups,dc=acme,dc=com"
+    users: [kubeadmin]
+  # Bound to cluster-reader via cluster-reader-crb → dana.lee gets wide but not usage.
+  - name: cluster-readers
+    syncProvider: acme-ldap
+    syncTime: "2026-09-14T08:00:00Z"
+    users: [dana.lee]
+  # THE DECOY: name ends "-cluster-admin" but nothing binds it. jane.smith must stay self.
+  - name: platform-team-cluster-admin
+    syncProvider: acme-ldap
+    syncTime: "2026-09-14T08:00:00Z"
+    users: [jane.smith]
+  # An ordinary application group with a namespaced viewer grant to a direct user.
+  - name: acme-app-viewers
+    syncProvider: acme-ldap
+    syncTime: "2026-09-14T08:00:00Z"
+    users: [lateef.o]
+  # An empty group (the API returns users: null) — exercises the null-users branch.
+  - name: empty-team
+    syncProvider: acme-ldap
+    users: null
+  # A legacy group carrying a non-person service account; the target of the hand-made
+  # (unmanaged) binding below. Deliberately holds NO persona, so it cannot perturb the oracle.
+  - name: legacy-ops
+    syncProvider: acme-ldap
+    users: [svc-legacy]
+
+users:
+  entries:
+    - {name: kubeadmin,  fullName: "Cluster Admin", creationTimestamp: "2026-01-01T00:00:00Z",
+       identities: []}
+    - {name: dana.lee,   fullName: "Dana Lee",      creationTimestamp: "2026-01-02T00:00:00Z",
+       identities: ["acme-ldap:dana.lee"]}
+    - {name: lateef.o,   fullName: "Lateef O.",     creationTimestamp: "2026-01-03T00:00:00Z",
+       identities: ["acme-ldap:lateef.o"]}
+    - {name: jane.smith, fullName: "Jane Smith",    creationTimestamp: "2026-01-04T00:00:00Z",
+       identities: ["acme-ldap:jane.smith"]}
+  forbidden: false
+
+identities:
+  entries:
+    - {userName: dana.lee,   creationTimestamp: "2026-01-02T00:00:00Z", providerPrefix: acme-ldap}
+    - {userName: lateef.o,   creationTimestamp: "2026-01-03T00:00:00Z", providerPrefix: acme-ldap}
+    - {userName: jane.smith, creationTimestamp: "2026-01-04T00:00:00Z", providerPrefix: acme-ldap}
+  forbidden: false
+
+namespaces:
+  entries:
+    - {name: acme-app, phase: Active, creationTimestamp: "2026-01-02T00:00:00Z",
+       labels: {"team": "acme", "kubernetes.io/metadata.name": "acme-app"}}
+    - {name: group-sync-operator, phase: Active, creationTimestamp: "2026-01-01T00:00:00Z",
+       labels: {"team": "platform"}}
+  forbidden: false
+
+roles:
+  clusterRoles:
+    - name: cluster-admin
+      rules:
+        - {verbs: ["*"], apiGroups: ["*"], resources: ["*"]}
+    - name: cluster-reader
+      rules:
+        # Read verbs only — deliberately NO `update`, which is what excludes the auditor
+        # (dana.lee) from the write-verb usage tier.
+        - {verbs: [get, list, watch], apiGroups: ["*"], resources: ["*"]}
+  namespacedRoles:
+    - namespace: acme-app
+      name: viewer
+      rules:
+        - {verbs: [get, list], apiGroups: [""], resources: [pods]}
+
+bindings:
+  clusterRoleBindings:
+    - name: cluster-admin-crb
+      roleRef: {kind: ClusterRole, name: cluster-admin}
+      subjects: [{kind: Group, name: app-ocp-rbac-demo-cluster-admin}]
+      labels: {"rbac.ocp.io/config-source": "gitops"}
+    - name: cluster-reader-crb
+      roleRef: {kind: ClusterRole, name: cluster-reader}
+      subjects: [{kind: Group, name: cluster-readers}]
+      labels: {"rbac.ocp.io/config-source": "gitops"}
+    # A hand-made grant with no config-source label → the `unmanaged` finding the dashboard
+    # exists to surface; carries an operator-acknowledged exception annotation.
+    - name: handmade-reader-crb
+      roleRef: {kind: ClusterRole, name: cluster-reader}
+      subjects: [{kind: Group, name: legacy-ops}]
+      annotations: {"rbac.ocp.io/unmanaged-exception": "reviewed 2026-09-10, temporary"}
+  roleBindings:
+    - namespace: acme-app
+      name: viewer-rb
+      roleRef: {kind: Role, name: viewer}
+      subjects: [{kind: User, name: lateef.o}]
+
+operatorConfigs:
+  namespaceConfigs:
+    - name: acme-nsconfig
+      conditions:
+        - {type: ReconcileSuccess, lastTransitionTime: "2026-09-14T08:00:00Z"}
+  groupConfigs: []
+  namespaceConfigsCrdAbsent: false
+  groupConfigsCrdAbsent: false
+
+nodes:
+  entries:
+    - {name: master-0, labels: {"node-role.kubernetes.io/master": "", "node-role.kubernetes.io/control-plane": ""}}
+    - {name: master-1, labels: {"node-role.kubernetes.io/master": ""}}
+    - {name: worker-0, labels: {"node-role.kubernetes.io/worker": ""}}
+  forbidden: false
+
+oauth:
+  identityProviders:
+    - name: acme-ldap
+      ldapUrl: "ldaps://openldap.acme.svc:636/dc=acme,dc=com?uid?sub?(&(uid=*)(memberOf=cn=ocp-admins,ou=Groups,dc=acme,dc=com))"
+  forbidden: false
+  crdAbsent: false
+
+oauthPods:
+  namespace: openshift-authentication
+  entries:
+    - {name: oauth-openshift-6d8f9c7b4-abcde, phase: Running}
+    - {name: oauth-openshift-6d8f9c7b4-fghij, phase: Running}
+    - {name: oauth-openshift-6d8f9c7b4-pending, phase: Pending}
+  forbidden: false
+
+auditLog:
+  node: master-0
+  dir: oauth-server
+  malformed416: false
+  files:
+    - name: "audit-2026-09-01T00-00-00.000.log"     # a rotated backup (lumberjack form)
+      lines:
+        - {kind: session, decision: allow, user: dana.lee, at: "2026-09-01T09:00:00.000000Z", code: 302}
+    - name: audit.log                                # the live file
+      lines:
+        - {kind: credential, decision: allow, user: jane.smith, at: "2026-09-03T10:15:27.234567Z", code: 302, provider: acme-ldap}
+        - {kind: cli,        decision: deny,  user: lateef.o,   at: "2026-09-03T10:16:01.000000Z", code: 401}
+        - {kind: session,    decision: allow, user: dana.lee,   at: "2026-09-03T10:17:44.500000Z", code: 302}
+
+podLog:
+  namespace: openshift-authentication
+  lines:
+    - '2026-09-03T10:15:27.234567Z I0903 10:15:27.234567 1 login.go:191] Login with provider "acme-ldap" succeeded for "jane.smith"'
+    - '2026-09-03T10:16:01.000000Z I0903 10:16:01.000000 1 basicauth.go:48] Login with provider "acme-ldap" failed for login "lateef.o"'
