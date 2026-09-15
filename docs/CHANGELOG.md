@@ -8,7 +8,7 @@ lives next to the code and in the design and review records linked here. Changes
 last release sit under `## Unreleased` until the release that carries them replaces that heading —
 which `local-development/prepare-release.py` does when the release is cut.
 
-## Unreleased
+## Application 0.20.0 — chart 0.26.0 — 2026-09-14
 
 - **Retire clusters removed from the configuration (#96).** A cluster dropped from `clusters:` (or one
   with `enabled: false`) no longer lingers in the UI as `ok` with frozen data and stale "overdue" alerts.
@@ -18,6 +18,13 @@ which `local-development/prepare-release.py` does when the release is cut.
   served cluster at all, `/api/alerts` fails closed to `scope: self` like `/api/whoami`). Its history and snapshot rows
   stay, so an already-generated report still reads them (docs/ACCESS_CONTROL.md §11). Supersedes the D2
   behaviour where a removed cluster resolved to `inherit` and stayed in the list.
+- **Reporting: a mnemonic multi-select on the namespace-access form (#103, B3).** The report catalogue
+  (`/report/api/reports`) now returns per-cluster `namespaceSelectors` — the configured selector label and
+  its captured values, opened best-effort from the snapshot (a missing, unreadable or corrupt snapshot
+  returns an empty map, never a 500 — the catalogue degrades, the Reports tab does not fault). The Reports
+  form renders a checkable multi-select of those values ahead of the advanced
+  explicit-names field, and a `readParamEl` helper serialises a `<select multiple>` as the full array (its
+  `value` is only the first option). Completes Extension B: capture (0.22.0) → API (0.24.0) → GUI here.
 
 ## Application 0.19.0 — chart 0.25.0 — 2026-09-14
 

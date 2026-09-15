@@ -187,6 +187,10 @@ function applyPosition(pos) {
       // empty state would blame the chip, but the reader never chose it here. Reset, like
       // memberSearch on a group change; the free-text search is a person, and persists.
       view.userFilter = "all"; view.showNeverNames = false;
+      // The mnemonic selection is THIS cluster's captured label values (B3, review #117 C4): carried
+      // across, a cluster-A mnemonic would be posted against cluster B — a failed run, or a hidden XOR
+      // 422 if the reader then typed explicit names. Drop it; the explicit names are the reader's text.
+      if (view.reportForm["namespace-access"]) delete view.reportForm["namespace-access"].mnemonics;
       // Same reasoning for the Access granted search: it names this cluster's groups and
       // namespaces. The sort is a preference, not a cluster fact, and stays.
       view.bindingSearch = "";
@@ -1771,7 +1775,21 @@ function reportPickerCard(reports, pick, cat) {
 
 function reportFormCard(spec, cat) {
   const form = view.reportForm[spec.name] || {};
+  // The mnemonic selector (B3, §3.7): per-cluster label + captured values from the catalogue. Empty when
+  // the deployment configures no selector or the snapshot has none — the control then hides.
+  const sel = (cat.namespaceSelectors && cat.namespaceSelectors[view.cluster]) || { label: "", values: [] };
   const field = (p) => {
+    // namespace-access selects by mnemonic OR by explicit name. Render `mnemonics` as a multi-select of
+    // the cluster's captured values, ahead of the advanced explicit-names input; hide it (explicit names
+    // only) where no selector is configured or no value was captured. Selection preserved across renders.
+    if (p.name === "mnemonics" && spec.name === "namespace-access") {
+      if (!sel.values.length) return "";
+      return `<div class="report-field"><label for="report-mnemonics">${esc(sel.label)}</label>
+        <select id="report-mnemonics" data-param="mnemonics" multiple size="6">
+          ${sel.values.map((v) => `<option value="${esc(v)}"${(form.mnemonics || []).includes(v) ? " selected" : ""}>${esc(v)}</option>`).join("")}
+        </select>
+        <span class="muted">Select one or more; the report expands each to the namespaces carrying that label.</span></div>`;
+    }
     const id = `report-param-${spec.name}-${p.name}`;
     const val = form[p.name] !== undefined ? form[p.name] : (Array.isArray(p.default) ? p.default.join(",") : (p.default === null ? "" : p.default));
     const label = `<label for="${id}">${esc(p.name)}${p.required ? " *" : ""}</label>`;
@@ -1831,6 +1849,14 @@ function reportRunsCard() {
   </section>`;
 }
 
+// A <select multiple> serialises its `value` as the FIRST option only; a report param that takes a list
+// (mnemonics) needs every selected value, so read the element by kind (B3, §3.7).
+function readParamEl(el) {
+  if (el.type === "checkbox") return el.checked;
+  if (el.tagName === "SELECT" && el.multiple) return Array.from(el.selectedOptions).map((o) => o.value);
+  return el.value;
+}
+
 function wireReports() {
   document.querySelectorAll(".report-pick").forEach((el) => {
     el.onclick = () => { view.reportPick = el.dataset.report; view.reportRun = null; render(); };
@@ -1839,7 +1865,7 @@ function wireReports() {
     const spec = view.reportPick || (data.reportCatalog && data.reportCatalog.reports.find((r) => r.enabled) || {}).name;
     el.onchange = () => {
       const f = view.reportForm[spec] || (view.reportForm[spec] = {});
-      f[el.dataset.param] = el.type === "checkbox" ? el.checked : el.value;
+      f[el.dataset.param] = readParamEl(el);
     };
   });
   const gen = $("report-generate");
