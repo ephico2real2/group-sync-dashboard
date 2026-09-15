@@ -1,0 +1,45 @@
+# forbidden.yaml — the tolerated-403 branches.
+#
+# users / identities / namespaces / nodes / oauth / oauthPods each answer 403 (the path is in
+# the message kube.py builds, satisfying `FORBIDDEN and path in exc.message`). Each of those
+# fetch_* methods returns None (tolerated + surfaced) rather than failing the poll. Groups and
+# GroupSyncs are still readable, so the core poll succeeds.
+
+meta:
+  clusterName: mock-openshift-restricted
+  token: "mock-token-forbidden"
+
+groupsyncs:
+  - name: ldap-sync
+    namespace: group-sync-operator
+    schedule: "*/30 * * * *"
+    conditions:
+      - {type: ReconcileSuccess, lastTransitionTime: "2026-09-14T08:00:00Z"}
+
+groups:
+  - name: admins
+    users: [alice]
+
+users:
+  forbidden: true
+
+identities:
+  forbidden: true
+
+namespaces:
+  forbidden: true
+
+nodes:
+  forbidden: true
+
+oauth:
+  forbidden: true
+
+oauthPods:
+  namespace: openshift-authentication
+  forbidden: true
+
+auditLog:
+  node: master-0
+  dir: oauth-server
+  files: []
