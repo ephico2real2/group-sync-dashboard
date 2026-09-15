@@ -43,6 +43,32 @@ def test_refresh_bindings_persists_the_feeds(mock_cluster, store):
     assert store.operator_configs("mock")["present"] is True
 
 
+def test_refresh_bindings_captures_two_dimension_metadata(mock_cluster, store, tmp_path):
+    # A poll configured with BOTH company.net/mnemonic and company.net/app-environment captures both
+    # dimensions end to end through the real poller/store (design §6). `store` writes to the same
+    # tmp_path/gsd.db, so a read-only connection sees exactly what the poll persisted.
+    cfg = mock_cluster.cluster_config(name="mock")
+    assert poll_once(store, cfg, timeout=5.0) == "ok"
+    assert refresh_bindings(store, cfg, timeout=5.0, namespaces_read=True,
+                            namespace_metadata_labels=["company.net/mnemonic",
+                                                       "company.net/app-environment"]) == "ok"
+    assert store.namespaces_source("mock")["state"] == "ok"
+    import sqlite3
+    conn = sqlite3.connect(f"file:{tmp_path / 'gsd.db'}?mode=ro", uri=True)
+    try:
+        captured = {(name, key, value) for name, key, value in conn.execute(
+            "SELECT name, key, value FROM cluster_namespace_label WHERE cluster_id='mock'")}
+    finally:
+        conn.close()
+    # Both dimensions land for a two-label namespace.
+    assert ("demo-prod", "company.net/mnemonic", "demo") in captured
+    assert ("demo-prod", "company.net/app-environment", "prod") in captured
+    assert ("demo-qa", "company.net/app-environment", "qa") in captured
+    # The missing-dimension namespace has only the mnemonic — no app-environment row at all.
+    assert ("gsd-shared", "company.net/mnemonic", "gsd") in captured
+    assert not any(n == "gsd-shared" and k == "company.net/app-environment" for n, k, _ in captured)
+
+
 def _resolver(cfg, verb: str) -> TierResolver:
     return TierResolver(
         cfg, verb=verb, resource="clusterrolebindings",

@@ -81,10 +81,28 @@ identities:
 
 namespaces:
   entries:
+    # Two selector dimensions — company.net/mnemonic AND company.net/app-environment — mirroring the
+    # real crc-local convention (docs/DESIGN_reporting_selectors_snapshots_and_windows.md §6), so the
+    # multi-dimension selector (AND across dimensions, OR within one) is exercisable against the mock.
+    # `team` is kept on the first two so the single-label tests still hold.
     - {name: acme-app, phase: Active, creationTimestamp: "2026-01-02T00:00:00Z",
-       labels: {"team": "acme", "kubernetes.io/metadata.name": "acme-app"}}
+       labels: {"team": "acme", "kubernetes.io/metadata.name": "acme-app",
+                "company.net/mnemonic": "acme", "company.net/app-environment": "prod"}}
     - {name: group-sync-operator, phase: Active, creationTimestamp: "2026-01-01T00:00:00Z",
-       labels: {"team": "platform"}}
+       labels: {"team": "platform",
+                "company.net/mnemonic": "gso", "company.net/app-environment": "prod"}}
+    - {name: demo-prod, phase: Active, creationTimestamp: "2026-01-04T00:00:00Z",
+       labels: {"company.net/mnemonic": "demo", "company.net/app-environment": "prod"}}
+    - {name: demo-qa, phase: Active, creationTimestamp: "2026-01-05T00:00:00Z",
+       labels: {"company.net/mnemonic": "demo", "company.net/app-environment": "qa"}}
+    - {name: beta-rnd, phase: Active, creationTimestamp: "2026-01-06T00:00:00Z",
+       labels: {"company.net/mnemonic": "beta", "company.net/app-environment": "rnd"}}
+    - {name: platform-prod, phase: Active, creationTimestamp: "2026-01-07T00:00:00Z",
+       labels: {"company.net/mnemonic": "klta", "company.net/app-environment": "prod"}}
+    # Missing-dimension NEGATIVE case: mnemonic only, no app-environment — it must drop out of any
+    # two-dimension AND selection on app-environment (adversarial-review note, 2026-09-15).
+    - {name: gsd-shared, phase: Active, creationTimestamp: "2026-01-08T00:00:00Z",
+       labels: {"company.net/mnemonic": "gsd"}}
   forbidden: false
 
 roles:
