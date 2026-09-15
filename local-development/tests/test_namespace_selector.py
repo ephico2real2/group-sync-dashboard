@@ -236,3 +236,8 @@ class TestSelectorMapValidation:
     def test_aggregate_value_cap_is_422(self):
         with pytest.raises(ValidationError, match="at most 50 selector values"):
             validate_params(self._spec(), {"selectors": {LABEL: [f"v{i}" for i in range(51)]}})
+
+    def test_dimension_requires_a_list_not_a_csv_string(self):
+        # The grammar is dict[str, list[str]]; a comma string must NOT be split (review #129 C1, Codex).
+        with pytest.raises(ValidationError, match="must be a list of strings"):
+            validate_params(self._spec(), {"selectors": {LABEL: "beta,demo"}})

@@ -4132,6 +4132,86 @@ class TestReportsTab:
         finally:
             ctx.close()
 
+    def test_an_older_preview_response_cannot_overwrite_the_newer_selection(self, browser, reporting_server):
+        # C4-A: clearTimeout cannot cancel a GET already sent; a late response for a superseded selection
+        # must be discarded by the version token, not painted over the newer count.
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.click('button.tab:text-is("Reports")')
+            page.wait_for_selector("#report-picker")
+            page.evaluate("""() => {
+                window.__resolvers = [];
+                reportGet = () => new Promise((resolve) => { window.__resolvers.push(resolve); });
+                view.cluster = "crc-local";
+                view.reportForm["namespace-access"] = { selectors: {"company.net/app-environment": ["prod"]} };
+                schedulePreview("namespace-access");
+            }""")
+            page.wait_for_function("() => window.__resolvers.length === 1")   # first GET in flight (past debounce)
+            page.evaluate("""() => {
+                view.reportForm["namespace-access"].selectors = {"company.net/app-environment": ["qa"]};
+                schedulePreview("namespace-access");
+            }""")
+            page.wait_for_function("() => window.__resolvers.length === 2")
+            page.evaluate("() => window.__resolvers[1]({namespaces: 2})")     # newer resolves first
+            page.wait_for_function("() => view.reportPreview.startsWith('2 namespace')")
+            page.evaluate("() => window.__resolvers[0]({namespaces: 1})")     # older resolves late
+            page.wait_for_timeout(50)
+            assert page.evaluate("() => view.reportPreview").startswith("2 namespace")   # not overwritten by 1
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_a_proto_selector_label_is_safe(self, browser, reporting_server):
+        # C4-B: a label read/assigned by own-key only, so `__proto__` never touches Object.prototype.
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.click('button.tab:text-is("Reports")')
+            page.wait_for_selector("#report-picker")
+            page.evaluate("""() => {
+                data.reportCatalog.namespaceSelectorDimensions = {
+                    "crc-local": [{label: "__proto__", values: ["prod"]}]
+                };
+                view.reportPick = "namespace-access";
+                render();
+            }""")
+            page.select_option("#report-selector-0", ["prod"])
+            page.locator("#report-selector-0").dispatch_event("change")
+            result = page.evaluate("""() => {
+                const m = view.reportForm["namespace-access"].selectors;
+                return {keys: Object.keys(m), value: m["__proto__"], nullProto: Object.getPrototypeOf(m) === null};
+            }""")
+            assert result == {"keys": ["__proto__"], "value": ["prod"], "nullProto": True}
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_new_frontend_falls_back_to_an_old_pods_mnemonic_control(self, browser, reporting_server):
+        # C7-A: an old report pod has no `selectors` ParamSpec; the form must keep rendering the single
+        # `mnemonics` control from namespaceSelectors, not hide every selector.
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.click('button.tab:text-is("Reports")')
+            page.wait_for_selector("#report-picker")
+            page.evaluate("""() => {
+                const spec = data.reportCatalog.reports.find((r) => r.name === "namespace-access");
+                spec.params = spec.params.filter((p) => p.name !== "selectors");   // old pod: no selectors spec
+                delete data.reportCatalog.namespaceSelectorDimensions;
+                data.reportCatalog.namespaceSelectors = {"crc-local": {label: "company.net/mnemonic", values: ["demo", "gsd"]}};
+                view.reportPick = "namespace-access";
+                render();
+            }""")
+            assert page.locator("#report-mnemonics").count() == 1
+            assert page.locator("#report-mnemonics option").evaluate_all("es => es.map(o => o.value)") == ["demo", "gsd"]
+            assert page.locator('[data-param="selectors"]').count() == 0
+            page.select_option("#report-mnemonics", ["demo"]); page.locator("#report-mnemonics").dispatch_event("change")
+            assert page.evaluate("() => view.reportForm['namespace-access'].mnemonics") == ["demo"]
+            assert not errors, errors
+        finally:
+            ctx.close()
+
     def test_a_narrowed_reader_sees_the_refusal_card_never_a_blank(self, browser, reporting_server):
         base, _, _ = reporting_server
         ctx, page, errors = _reports_page(browser, base, "alice")

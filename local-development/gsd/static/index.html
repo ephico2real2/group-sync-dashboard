@@ -194,7 +194,7 @@ function applyPosition(pos) {
         delete view.reportForm["namespace-access"].mnemonics;
         delete view.reportForm["namespace-access"].selectors;
       }
-      view.reportPreview = "";
+      clearReportPreview();   // and invalidate any in-flight #107 GET for the cluster we just left
       // Same reasoning for the Access granted search: it names this cluster's groups and
       // namespaces. The sort is a preference, not a cluster fact, and stays.
       view.bindingSearch = "";
@@ -1787,20 +1787,34 @@ function reportFormCard(spec, cat) {
   const dims = (cat.namespaceSelectorDimensions && cat.namespaceSelectorDimensions[view.cluster])
     || (() => { const s = cat.namespaceSelectors && cat.namespaceSelectors[view.cluster];
                 return s && s.values && s.values.length ? [{ label: s.label, values: s.values }] : []; })();
+  // An OLD report pod has no `selectors` ParamSpec, so the form must keep rendering the single
+  // `mnemonics` control (new frontend + old pod, review PR #129 C7-A). `selectedFor` reads the chosen
+  // array by OWN key only, so a label like `__proto__` cannot read Object.prototype (C4-B).
+  const supportsSelectorMap = spec.params.some((p) => p.name === "selectors");
+  const selectedFor = (map, key) =>
+    map && Object.prototype.hasOwnProperty.call(map, key) && Array.isArray(map[key]) ? map[key] : [];
   const field = (p) => {
-    // `mnemonics` is the deprecated single-dimension API shape; the form drives `selectors`.
-    if (p.name === "mnemonics" && spec.name === "namespace-access") return "";
+    if (p.name === "mnemonics" && spec.name === "namespace-access") {
+      if (supportsSelectorMap) return "";                    // new pod: the form drives `selectors`
+      const dimension = dims.find((d) => d.values && d.values.length);   // old pod: the single control
+      if (!dimension) return "";
+      const chosen = Array.isArray(form.mnemonics) ? form.mnemonics : [];
+      return `<div class="report-field"><label for="report-mnemonics">${esc(dimension.label)}</label>
+        <select id="report-mnemonics" data-param="mnemonics" multiple size="6">
+          ${dimension.values.map((v) => `<option value="${esc(v)}"${chosen.includes(v) ? " selected" : ""}>${esc(v)}</option>`).join("")}
+        </select>
+        <span class="muted">Select one or more; the report expands each to the namespaces carrying that label.</span></div>`;
+    }
     if (p.name === "selectors" && spec.name === "namespace-access") {
       // Hide the control where no dimension has captured values (explicit names only). Each dimension
       // is its own multi-select; the id is index-based because a label like company.net/mnemonic is not
       // a valid CSS id — the real key lives in data-selector-label (review, 2026-09-15).
       const withValues = dims.filter((d) => d.values && d.values.length);
       if (!withValues.length) return "";
-      const chosen = form.selectors || {};
       return withValues.map((d, i) => `<div class="report-field">
         <label for="report-selector-${i}">${esc(d.label)}</label>
         <select id="report-selector-${i}" data-param="selectors" data-selector-label="${esc(d.label)}" multiple size="6">
-          ${d.values.map((v) => `<option value="${esc(v)}"${(chosen[d.label] || []).includes(v) ? " selected" : ""}>${esc(v)}</option>`).join("")}
+          ${d.values.map((v) => `<option value="${esc(v)}"${selectedFor(form.selectors, d.label).includes(v) ? " selected" : ""}>${esc(v)}</option>`).join("")}
         </select>
         <span class="muted">Select one or more.${i === 0 ? " Dimensions combine with AND; values within a dimension with OR." : ""}</span></div>`).join("")
         + `<div class="report-field"><span class="muted" id="report-preview">${esc(view.reportPreview || "")}</span></div>`;
@@ -1876,36 +1890,60 @@ function readParamEl(el) {
 // beside Generate before a heavy run. A read-only GET; a null count (bad/empty selection, no snapshot)
 // shows nothing. The element is updated in place so a poll-driven render does not clear it mid-type.
 let _previewTimer = null;
+let _previewVersion = 0;
+function clearReportPreview() {
+  clearTimeout(_previewTimer); _previewTimer = null;
+  _previewVersion++;                                   // invalidate any GET already in flight
+  view.reportPreview = "";
+  const el = $("report-preview"); if (el) el.textContent = "";
+}
 function schedulePreview(spec) {
-  if (spec !== "namespace-access") return;
+  if (spec !== "namespace-access") { clearReportPreview(); return; }
   clearTimeout(_previewTimer);
+  const version = ++_previewVersion;
+  const cluster = view.cluster;
+  const sel = (view.reportForm["namespace-access"] || {}).selectors;
+  const encoded = sel && Object.keys(sel).length ? JSON.stringify(sel) : "";
+  if (!cluster || !encoded) {
+    view.reportPreview = ""; const el = $("report-preview"); if (el) el.textContent = ""; return;
+  }
   _previewTimer = setTimeout(async () => {
-    const sel = (view.reportForm["namespace-access"] || {}).selectors;
-    if (!sel || !Object.keys(sel).length || !view.cluster) { view.reportPreview = ""; }
-    else {
-      try {
-        const q = `cluster=${encodeURIComponent(view.cluster)}&selectors=${encodeURIComponent(JSON.stringify(sel))}`;
-        const r = await reportGet(`/api/namespace-count?${q}`);
-        const n = r && r.namespaces;
-        view.reportPreview = (n == null) ? "" : `${n} namespace${n === 1 ? "" : "s"} match this selection`;
-      } catch (e) { view.reportPreview = ""; }
-    }
-    const el = $("report-preview"); if (el) el.textContent = view.reportPreview;
+    let text = "";
+    try {
+      const q = `cluster=${encodeURIComponent(cluster)}&selectors=${encodeURIComponent(encoded)}`;
+      const r = await reportGet(`/api/namespace-count?${q}`);
+      const n = r && r.namespaces;
+      text = (n == null) ? "" : `${n} namespace${n === 1 ? "" : "s"} match this selection`;
+    } catch (e) { text = ""; }
+    // A late response for a superseded selection or a switched cluster is discarded: clearTimeout
+    // cannot cancel a GET already sent, so a stale count could otherwise paint (review PR #129 C4-A).
+    if (version !== _previewVersion || cluster !== view.cluster) return;
+    view.reportPreview = text;
+    const el = $("report-preview"); if (el) el.textContent = text;
   }, 400);
 }
 
 function wireReports() {
   document.querySelectorAll(".report-pick").forEach((el) => {
-    el.onclick = () => { view.reportPick = el.dataset.report; view.reportRun = null; render(); };
+    el.onclick = () => {
+      if (view.reportPick !== el.dataset.report) clearReportPreview();   // don't carry a count across reports
+      view.reportPick = el.dataset.report; view.reportRun = null; render();
+    };
   });
   document.querySelectorAll("[data-param]").forEach((el) => {
     const spec = view.reportPick || (data.reportCatalog && data.reportCatalog.reports.find((r) => r.enabled) || {}).name;
     el.onchange = () => {
       const f = view.reportForm[spec] || (view.reportForm[spec] = {});
       if (el.dataset.param === "selectors" && el.dataset.selectorLabel) {
-        // One multi-select per dimension; assemble the {label: [values]} map. An emptied dimension is
-        // removed (omitted = unconstrained); an empty map drops `selectors` entirely.
-        const map = f.selectors || (f.selectors = {});
+        // One multi-select per dimension; assemble the {label: [values]} map. A null-prototype object
+        // so a label like `__proto__` becomes an OWN key rather than invoking the legacy setter (C4-B).
+        // An emptied dimension is removed (omitted = unconstrained); an empty map drops `selectors`.
+        let map = f.selectors;
+        if (!map || Object.getPrototypeOf(map) !== null) {
+          const safe = Object.create(null);
+          for (const [k, v] of Object.entries(map || {})) safe[k] = v;
+          map = f.selectors = safe;
+        }
         const vals = Array.from(el.selectedOptions).map((o) => o.value);
         if (vals.length) map[el.dataset.selectorLabel] = vals; else delete map[el.dataset.selectorLabel];
         if (!Object.keys(map).length) delete f.selectors;

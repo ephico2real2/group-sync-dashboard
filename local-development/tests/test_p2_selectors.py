@@ -44,6 +44,12 @@ class TestSelectorLabelsEnv:
         with pytest.raises(ReportConfigError, match="array of strings"):
             _selector_labels_env()
 
+    def test_blank_entry_fails_instead_of_being_silently_dropped(self, monkeypatch):
+        # Only a literal [] defers to the singular; a blank entry is a config error (review #129, both).
+        monkeypatch.setenv("GSD_REPORT_NS_SELECTOR_LABELS", '["company.net/mnemonic", " "]')
+        with pytest.raises(ReportConfigError, match="non-empty strings"):
+            _selector_labels_env()
+
 
 class _FakeResp:
     def __init__(self, status=202, body=None):

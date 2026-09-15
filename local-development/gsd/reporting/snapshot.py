@@ -226,16 +226,23 @@ class Snapshot:
         """Namespace names matching EVERY selector dimension (AND across labels), where a dimension
         matches ANY of its values (OR within). Composes the single-key `namespaces_for_metadata`
         expansion and intersects in Python, so the SQL stays the form already tested and the AND is
-        explicit (docs/DESIGN_reporting_selectors_snapshots_and_windows.md §3). Empty selection -> []."""
+        explicit (docs/DESIGN_reporting_selectors_snapshots_and_windows.md §3). Empty selection -> [].
+
+        A sqlite3.Error from a table read after a clean open becomes SnapshotError HERE, the same wrap
+        as namespace_selectors, so GET /namespace-count degrades to a null count instead of a 500 and
+        sqlite3 is never named in server.py (the #117 D1 scar; storage seam)."""
         if not selectors or not self.has_table("cluster_namespace_label"):
             return []
-        result: set[str] | None = None
-        for key, values in selectors.items():
-            matched = set(self.namespaces_for_metadata(cluster_id, key, values))
-            result = matched if result is None else (result & matched)
-            if not result:
-                return []
-        return sorted(result or set())
+        try:
+            result: set[str] | None = None
+            for key, values in selectors.items():
+                matched = set(self.namespaces_for_metadata(cluster_id, key, values))
+                result = matched if result is None else (result & matched)
+                if not result:
+                    return []
+            return sorted(result or set())
+        except sqlite3.Error as exc:
+            raise SnapshotError(f"cannot read snapshot {Path(self.path).name}: not readable SQLite data") from exc
 
     def login_capture_status(self, cluster_id: str) -> dict | None:
         return self._row("SELECT started_at, last_read_at FROM login_capture_status WHERE cluster_id = ?", (cluster_id,))

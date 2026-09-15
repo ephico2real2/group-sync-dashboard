@@ -88,7 +88,8 @@ class TestItsOwnContract:
         client, _, _ = service
         for path in UNAUTHENTICATED:
             assert client.get(path).status_code in (200, 503), path
-        for path in (f"{REPORT_PREFIX}/api/reports", f"{REPORT_PREFIX}/api/runs", f"{REPORT_PREFIX}/api/snapshot", f"{REPORT_PREFIX}/api/usage"):
+        for path in (f"{REPORT_PREFIX}/api/reports", f"{REPORT_PREFIX}/api/runs", f"{REPORT_PREFIX}/api/snapshot",
+                     f"{REPORT_PREFIX}/api/usage", f"{REPORT_PREFIX}/api/namespace-count?cluster=x"):
             assert client.get(path).status_code == 401, path
 
 
@@ -375,6 +376,7 @@ class TestNamespaceSelectorsOnTheCatalogue:
             r = client.get(f"{REPORT_PREFIX}/api/reports", headers=_viewer())
             assert r.status_code == 200
             assert r.json()["namespaceSelectors"] == {}
+            assert r.json()["namespaceSelectorDimensions"] == {}   # degrade both maps (review #129 N5)
 
     def test_a_corrupt_snapshot_is_200_with_an_empty_map_not_500(self, tmp_path):
         # A file named like a copy (passes the stamp check) but not a SQLite database. Snapshot's
@@ -392,6 +394,7 @@ class TestNamespaceSelectorsOnTheCatalogue:
             assert r.status_code == 200, r.text
             body = r.json()
             assert body["namespaceSelectors"] == {}
+            assert body["namespaceSelectorDimensions"] == {}   # degrade both maps (review #129 N5)
             assert len(body["reports"]) == 11
 
     @pytest.mark.parametrize("needle", ["FROM cluster c", "FROM cluster_namespace_label"])
@@ -418,6 +421,7 @@ class TestNamespaceSelectorsOnTheCatalogue:
             r = client.get(f"{REPORT_PREFIX}/api/reports", headers=_viewer())
             assert r.status_code == 200, r.text
             assert r.json()["namespaceSelectors"] == {}
+            assert r.json()["namespaceSelectorDimensions"] == {}   # degrade both maps (review #129 N5)
 
 
 class TestNamespaceCountPreview:
@@ -439,7 +443,7 @@ class TestNamespaceCountPreview:
         ], "2026-09-14T00:00:00Z")
         assert store.snapshot(str(snapshots), keep=2); store.close()
         return build_report_app(
-            _settings(snapshots, artifacts,
+            _settings(snapshots, artifacts, enabled_reports=("namespace-access",),
                       namespace_selector_labels=("company.net/mnemonic", "company.net/app-environment")),
             secret=SECRET, clock=lambda: FROZEN)
 
@@ -462,3 +466,40 @@ class TestNamespaceCountPreview:
                 r = client.get(f"{REPORT_PREFIX}/api/namespace-count",
                                params={"cluster": "crc-local", "selectors": bad}, headers=_viewer())
                 assert r.status_code == 200 and r.json() == {"namespaces": None}, (bad, r.text)
+
+    def test_null_for_a_string_value_or_unconfigured_label(self, tmp_path):
+        import json as _json
+        with TestClient(self._app(tmp_path)) as client:
+            for bad in ({"company.net/mnemonic": "demo"}, {"company.net/not-configured": ["demo"]}):
+                r = client.get(f"{REPORT_PREFIX}/api/namespace-count",
+                               params={"cluster": "crc-local", "selectors": _json.dumps(bad)}, headers=_viewer())
+                assert r.status_code == 200 and r.json() == {"namespaces": None}, (bad, r.text)
+
+    def test_a_table_read_after_a_clean_open_is_null_not_500(self, tmp_path, monkeypatch):
+        # The count path calls namespaces_for_selectors, which now wraps sqlite3.Error -> SnapshotError
+        # so a post-open table read degrades to null, not a 500 (review #129 C6; the #117 D1 scar).
+        from gsd.reporting.snapshot import Snapshot
+        real_rows = Snapshot._rows
+
+        def failing_rows(self, sql, params=()):
+            if "FROM cluster_namespace_label" in sql:
+                raise sqlite3.OperationalError("simulated post-open snapshot damage")
+            return real_rows(self, sql, params)
+
+        monkeypatch.setattr(Snapshot, "_rows", failing_rows)
+        with TestClient(self._app(tmp_path), raise_server_exceptions=False) as client:
+            r = client.get(f"{REPORT_PREFIX}/api/namespace-count",
+                           params={"cluster": "crc-local", "selectors": '{"company.net/mnemonic": ["demo"]}'},
+                           headers=_viewer())
+            assert r.status_code == 200 and r.json() == {"namespaces": None}, r.text
+
+    def test_an_unknown_selector_label_is_422_not_a_failed_run(self, tmp_path):
+        # create_run refuses an unconfigured selector label up front (review #129 N1) — no stored failed run.
+        with TestClient(self._app(tmp_path)) as client:
+            r = client.post(f"{REPORT_PREFIX}/api/runs",
+                            json={"report": "namespace-access", "cluster": "crc-local",
+                                  "params": {"selectors": {"company.net/nope": ["x"]}}, "formats": ["html"]},
+                            headers=_viewer())
+            assert r.status_code == 422, r.text
+            assert "not configured" in r.json()["detail"]
+            assert client.get(f"{REPORT_PREFIX}/api/runs", headers=_viewer()).json()["total"] == 0

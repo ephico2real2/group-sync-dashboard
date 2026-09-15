@@ -131,8 +131,13 @@ def validate_selector_map(value: object, name: str) -> dict[str, list[str]]:
     for label, values in value.items():
         if not isinstance(label, str) or not label.strip():
             raise ValidationError(f"{name} label must be a non-empty string")
+        # A dimension's values must be a JSON list of strings — NOT a comma string. `_string_items`
+        # would accept "beta,demo" and split it, which the grammar (dict[str, list[str]]) forbids and
+        # which a Helm/JSON transport never produces (review PR #129 C1, Codex).
+        if not isinstance(values, list) or not all(isinstance(v, str) for v in values):
+            raise ValidationError(f"{name}[{label}] must be a list of strings")
         cleaned: list[str] = []
-        for v in _string_items(values, f"{name}[{label}]"):
+        for v in values:
             v = v.strip()
             if v and v not in cleaned:
                 cleaned.append(v)

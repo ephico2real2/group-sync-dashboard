@@ -208,7 +208,11 @@ def build_report_app(settings: ReportSettings, *, secret: bytes | None = None, c
             sel = validate_selector_map(parsed, "selectors") if parsed else {}
         except (ValueError, ValidationError):
             return {"namespaces": None}
-        if not sel:
+        # A label not among this deployment's configured dimensions expands to nothing; return a null
+        # count (not 0) so the form shows nothing, matching what create_run would refuse (review C6-B).
+        labels = tuple(settings.namespace_selector_labels) or (
+            (settings.namespace_selector_label,) if settings.namespace_selector_label else ())
+        if not sel or not labels or any(k not in labels for k in sel):
             return {"namespaces": None}
         try:
             with Snapshot(newest_snapshot(settings.snapshot_dir)) as snap:
@@ -236,6 +240,17 @@ def build_report_app(settings: ReportSettings, *, secret: bytes | None = None, c
             params = validate_params(spec, body.params)
         except ValidationError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        # A selector label that is not one of this deployment's configured dimensions is a fast 422
+        # (not a stored failed run): the subset check needs the settings, which validate_params does
+        # not have. build() keeps the same check as the worker's belt (review PR #129, N1).
+        if params.get("selectors"):
+            labels = tuple(settings.namespace_selector_labels) or (
+                (settings.namespace_selector_label,) if settings.namespace_selector_label else ())
+            unknown = sorted(k for k in params["selectors"] if k not in labels)
+            if unknown:
+                raise HTTPException(
+                    status_code=422,
+                    detail="selector label(s) not configured on this deployment: " + ", ".join(unknown))
         bad = sorted(set(body.formats) - {"html", "pdf"})
         if bad:
             raise HTTPException(status_code=422, detail=f"unknown format(s) {bad}; json is always written")

@@ -73,10 +73,12 @@ def _selector_labels_env() -> tuple[str, ...]:
         raise ReportConfigError(f"GSD_REPORT_NS_SELECTOR_LABELS={raw!r} is not a JSON array") from exc
     if not isinstance(parsed, list) or not all(isinstance(x, str) for x in parsed):
         raise ReportConfigError("GSD_REPORT_NS_SELECTOR_LABELS must be a JSON array of strings")
-    labels = tuple(x.strip() for x in parsed if x.strip())
-    if not labels:                                   # an empty [] still defers to the singular
+    if not parsed:                                   # only a literal [] defers to the singular
         single = os.environ.get("GSD_REPORT_NS_SELECTOR_LABEL", "").strip()
         return (single,) if single else ()
+    if any(not item.strip() for item in parsed):     # a blank entry is a config error, not silently dropped
+        raise ReportConfigError("GSD_REPORT_NS_SELECTOR_LABELS entries must be non-empty strings")
+    labels = tuple(item.strip() for item in parsed)
     if len(set(labels)) != len(labels):
         raise ReportConfigError(f"GSD_REPORT_NS_SELECTOR_LABELS has a duplicate label: {list(labels)}")
     return labels
