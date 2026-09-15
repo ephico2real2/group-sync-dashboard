@@ -51,7 +51,7 @@ declare — it only *overrides*, and the table says which way:
 |---|---|---|---|
 | `config.unmanagedAudit.mode` | `log` | `log` | redundant — already the default |
 | `logLevel` | `INFO` | `DEBUG` | lab override |
-| `authLogLevel.manage` / `.enabled` | `false` / `false` | `true` / `false` | lab override — the manager stays on to hold the operator CR at Normal now that the lab reads the audit log; `enabled=true` would be refused with `loginCapture.source=audit-log` |
+| `authLogLevel.manage` / `.enabled` | `false` / `false` | `false` / `false` | inherits the default: the lab reads the AUDIT LOG, which names the person at the default verbosity, so the auth-loglevel Job (a post-upgrade hook) is not needed; the one-time convergence to Normal is done, so management is off (set `manage=true` only for the pod-log source) |
 | `loginCapture.enabled` | `true` | `true` | redundant — the default since chart 0.14.0 |
 | `loginCapture.source` | `pod-log` | `audit-log` | lab override — a ClusterRole on `get nodes/proxy`, read-only; the audit log names the person at the default verbosity and keeps history |
 | `oauthProxy.apiTokenAccess.enabled` | `true` | `true` | redundant — the default since chart 0.14.0 |
