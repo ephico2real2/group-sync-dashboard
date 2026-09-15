@@ -141,6 +141,9 @@ REVIEW_ARTIFACTS = (
     # PR #111 namespace-metadata capture review: cites the implementation line numbers verbatim.
     "REVIEW_ns_metadata_capture_impl.md",
     "REVIEW_ns_selector_impl.md",
+    # PR #117 (#103, B3 GUI) review: cites the exact list_reports/applyPosition/readParamEl lines and
+    # test line numbers the findings refuse or replace — the record is the evidence, not rot.
+    "REVIEW_ns_selector_gui.md",
     "REVIEW_auditor_createlocal_guard.md",
     "REVIEW_retire_clusters.md",
     # The reporting-extension design round 1: its findings quote the design's old snippets

@@ -324,3 +324,97 @@ class TestRequestHygiene:
         for snap in opened:
             with pytest.raises(sqlite3.ProgrammingError):        # closed connection
                 snap._conn.execute("SELECT 1")
+
+
+class TestNamespaceSelectorsOnTheCatalogue:
+    """B3 (#117 C1): list_reports carries per-cluster {label, values} for the namespace-access
+    multi-select. B3 is the first caller to open a snapshot from the catalogue, so a missing,
+    unreadable or CORRUPT copy must degrade to an empty map and a 200 — never a 500 that takes the
+    whole Reports tab down. The suite had no test hitting namespaceSelectors before this."""
+
+    def test_per_cluster_label_and_values_when_the_selector_is_configured(self, tmp_path):
+        from gsd.store import Store
+        snapshots, artifacts = tmp_path / "snap", tmp_path / "art"
+        snapshots.mkdir(); artifacts.mkdir()
+        label = "company.net/mnemonic"
+        store = Store(str(tmp_path / "w.db"))
+        store.upsert_cluster("crc-local", "https://api.crc.testing:6443", True)
+        store.upsert_cluster("prod-east", "https://api.prod-east:6443", True)
+        store.replace_namespaces("crc-local", [
+            {"name": "beta-ns", "created_at": None, "phase": "Active", "metadata": {label: "beta"}},
+            {"name": "demo-ns", "created_at": None, "phase": "Active", "metadata": {label: "demo"}},
+        ], "2026-09-14T00:00:00Z")
+        store.replace_namespaces("prod-east", [
+            {"name": "gamma-ns", "created_at": None, "phase": "Active", "metadata": {label: "gamma"}},
+        ], "2026-09-14T00:00:00Z")
+        assert store.snapshot(str(snapshots), keep=2)
+        store.close()
+        app = build_report_app(_settings(snapshots, artifacts, namespace_selector_label=label),
+                               secret=SECRET, clock=lambda: FROZEN)
+        with TestClient(app) as client:
+            r = client.get(f"{REPORT_PREFIX}/api/reports", headers=_viewer())
+            assert r.status_code == 200
+            sel = r.json()["namespaceSelectors"]
+            assert sel["crc-local"] == {"label": label, "values": ["beta", "demo"]}
+            assert sel["prod-east"] == {"label": label, "values": ["gamma"]}
+
+    def test_empty_label_yields_empty_values_not_a_query(self, tmp_path):
+        # The default deployment configures no selector label: every cluster is present with an
+        # empty value list, so the GUI hides the control rather than guessing a key.
+        snapshots, artifacts = seeded_dirs(tmp_path)
+        app = build_report_app(_settings(snapshots, artifacts), secret=SECRET, clock=lambda: FROZEN)
+        with TestClient(app) as client:
+            sel = client.get(f"{REPORT_PREFIX}/api/reports", headers=_viewer()).json()["namespaceSelectors"]
+            assert sel[CLUSTER] == {"label": "", "values": []}
+
+    def test_missing_snapshot_directory_is_200_with_an_empty_map(self, tmp_path):
+        artifacts = tmp_path / "art"; artifacts.mkdir()
+        app = build_report_app(_settings(tmp_path / "no-such-snap", artifacts),
+                               secret=SECRET, clock=lambda: FROZEN)
+        with TestClient(app) as client:
+            r = client.get(f"{REPORT_PREFIX}/api/reports", headers=_viewer())
+            assert r.status_code == 200
+            assert r.json()["namespaceSelectors"] == {}
+
+    def test_a_corrupt_snapshot_is_200_with_an_empty_map_not_500(self, tmp_path):
+        # A file named like a copy (passes the stamp check) but not a SQLite database. Snapshot's
+        # PRAGMA read raises sqlite3.DatabaseError, which is neither SnapshotError nor OSError; before
+        # the C1 fix that escaped list_reports as a 500. Snapshot.__init__ now translates it to
+        # SnapshotError at the backend boundary (the storage seam keeps sqlite3 out of server.py), so
+        # the catalogue's existing except (SnapshotError, OSError) degrades to an empty map.
+        snapshots, artifacts = tmp_path / "snap", tmp_path / "art"
+        snapshots.mkdir(); artifacts.mkdir()
+        (snapshots / "gsd-20260914T000000.000000Z.db").write_bytes(b"this is not a sqlite database")
+        app = build_report_app(_settings(snapshots, artifacts, namespace_selector_label="company.net/mnemonic"),
+                               secret=SECRET, clock=lambda: FROZEN)
+        with TestClient(app, raise_server_exceptions=False) as client:
+            r = client.get(f"{REPORT_PREFIX}/api/reports", headers=_viewer())
+            assert r.status_code == 200, r.text
+            body = r.json()
+            assert body["namespaceSelectors"] == {}
+            assert len(body["reports"]) == 11
+
+    @pytest.mark.parametrize("needle", ["FROM cluster c", "FROM cluster_namespace_label"])
+    def test_a_table_read_after_a_clean_open_that_fails_is_200_not_500(self, tmp_path, monkeypatch, needle):
+        # #117 second pass (Codex D1): a copy can pass Snapshot.__init__ (connect/PRAGMA/sqlite_master
+        # all read cleanly) and then raise sqlite3.Error from a TABLE read — partial b-tree damage on a
+        # copy that rotted on disk after it was written. The __init__ wrap does not see that; the gather
+        # must. Snapshot.namespace_selectors wraps clusters()+namespace_metadata_values, so the catalogue
+        # still degrades to {} and 200. Forcing the specific read to raise proves it (500 before the
+        # gather was moved behind SnapshotError). The seam holds: no sqlite3 in server.py.
+        from gsd.reporting.snapshot import Snapshot
+        snapshots, artifacts = seeded_dirs(tmp_path)
+        real_rows = Snapshot._rows
+
+        def failing_rows(self, sql, params=()):
+            if needle in sql:
+                raise sqlite3.OperationalError("simulated post-open snapshot damage")
+            return real_rows(self, sql, params)
+
+        monkeypatch.setattr(Snapshot, "_rows", failing_rows)
+        app = build_report_app(_settings(snapshots, artifacts, namespace_selector_label="company.net/mnemonic"),
+                               secret=SECRET, clock=lambda: FROZEN)
+        with TestClient(app, raise_server_exceptions=False) as client:
+            r = client.get(f"{REPORT_PREFIX}/api/reports", headers=_viewer())
+            assert r.status_code == 200, r.text
+            assert r.json()["namespaceSelectors"] == {}

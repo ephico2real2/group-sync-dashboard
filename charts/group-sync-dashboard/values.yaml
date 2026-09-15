@@ -1849,10 +1849,14 @@ visibility:
 # ---------------------------------------------------------------------------
 # Put a chosen group over the report gate without making anyone a cluster admin. Members can review
 # users, groups and bindings in OpenShift directly AND run reports in the dashboard — read-only, no
-# workload access, no Usage tab. OFF by default (opt-in): an install that does not ask for auditors
-# renders no Group, Role or Binding.
+# workload access, no Usage tab. ON by default (the chart's on-by-default rule): the chart binds the
+# named auditor group below (createLocal:false — bind-only) to a read-only audit ClusterRole. The
+# binding is INERT on a cluster where that group does not exist, so the default is safe; the objects
+# are a ClusterRole and a name-based ClusterRoleBinding, never a Group. Set `enabled: false` in an
+# environment values file to render nothing (an environment disables explicitly, never the reverse —
+# a values file that forgets it must keep the auditor gate, not silently drop it).
 rbacAuditors:
-  enabled: false
+  enabled: true
   # The ClusterRole to bind. Default: the chart renders its own least-privilege read-only audit role
   # (§2.1). Set `existingClusterRole` to bind one you made elsewhere (e.g. via the namespace-config
   # operator) instead — the chart then renders no Role and only the Binding.
@@ -1862,7 +1866,7 @@ rbacAuditors:
   # The default names the estate's auditor group with createLocal:false — an LDAP sync (or the
   # namespace-config operator) owns the Group; this chart only binds it. Keep createLocal:false for any
   # group a directory syncs: a local Group of a synced name collides and can wedge the whole sync
-  # (docs/TROUBLESHOOTING_auditor_groups.md). The feature stays opt-in via `enabled` above.
+  # (docs/TROUBLESHOOTING_auditor_groups.md). Turn the whole feature off with `enabled: false` above.
   groups:
     - name: app-ocp-rbac-groupsync-ns-auditor
       # createLocal omitted => false: an LDAP sync (or the namespace-config operator) owns the Group and
