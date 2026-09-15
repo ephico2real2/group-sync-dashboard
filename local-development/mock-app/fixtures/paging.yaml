@@ -1,0 +1,35 @@
+# paging.yaml — exercise kube.py's continue-token loop with a tiny fixture.
+#
+# kube.py always sends limit=500, so real multi-page paging would need >500 objects. Instead
+# `meta.pageSize` caps the server's page below that limit — faithful behaviour, since a real
+# API server MAY return fewer than the requested limit and emit metadata.continue. With
+# pageSize=2 and 5 groups/nodes, kube.py's _list_all / _list_all_with follow three pages
+# (2 + 2 + 1) and the continue token is carried on every page (labelSelector too, for nodes).
+
+meta:
+  clusterName: mock-openshift-paged
+  token: "mock-token-paging"
+  pageSize: 2
+
+groups:
+  - {name: team-a, users: [u1, u2]}
+  - {name: team-b, users: [u3]}
+  - {name: team-c, users: [u4, u5, u6]}
+  - {name: team-d, users: [u7]}
+  - {name: team-e, users: null}
+
+nodes:
+  entries:
+    - {name: master-0, labels: {"node-role.kubernetes.io/master": ""}}
+    - {name: master-1, labels: {"node-role.kubernetes.io/master": ""}}
+    - {name: master-2, labels: {"node-role.kubernetes.io/master": ""}}
+    - {name: worker-0, labels: {"node-role.kubernetes.io/worker": ""}}
+    - {name: worker-1, labels: {"node-role.kubernetes.io/worker": ""}}
+  forbidden: false
+
+oauthPods:
+  namespace: openshift-authentication
+  entries:
+    - {name: oauth-openshift-a, phase: Running}
+    - {name: oauth-openshift-b, phase: Running}
+    - {name: oauth-openshift-c, phase: Running}
