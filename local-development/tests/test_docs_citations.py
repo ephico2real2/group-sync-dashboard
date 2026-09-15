@@ -149,6 +149,9 @@ REVIEW_ARTIFACTS = (
     # The reporting-extension design round 1: its findings quote the design's old snippets
     # (ReportError, NS_CAP, the wrong-pod env) verbatim, which is the point of a review record.
     "REVIEW_reporting_ext_design.md",
+    # The reporting output/delivery design round 1: quotes the old snippets (the CSV FORMATS gap,
+    # the report-diff ordering, the wrong chart key, the false snapshot facts) verbatim by file:line.
+    "REVIEW_reporting_output_delivery.md",
     # The log-level contract review. Same reason, plus a worked example of why the exemption is
     # right: it cites `README.md#Configuration`, a heading that does not exist — and the finding
     # attached to that citation was correct and was applied. Rewriting the citation would not make
