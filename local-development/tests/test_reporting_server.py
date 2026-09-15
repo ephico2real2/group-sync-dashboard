@@ -393,3 +393,28 @@ class TestNamespaceSelectorsOnTheCatalogue:
             body = r.json()
             assert body["namespaceSelectors"] == {}
             assert len(body["reports"]) == 11
+
+    @pytest.mark.parametrize("needle", ["FROM cluster c", "FROM cluster_namespace_label"])
+    def test_a_table_read_after_a_clean_open_that_fails_is_200_not_500(self, tmp_path, monkeypatch, needle):
+        # #117 second pass (Codex D1): a copy can pass Snapshot.__init__ (connect/PRAGMA/sqlite_master
+        # all read cleanly) and then raise sqlite3.Error from a TABLE read — partial b-tree damage on a
+        # copy that rotted on disk after it was written. The __init__ wrap does not see that; the gather
+        # must. Snapshot.namespace_selectors wraps clusters()+namespace_metadata_values, so the catalogue
+        # still degrades to {} and 200. Forcing the specific read to raise proves it (500 before the
+        # gather was moved behind SnapshotError). The seam holds: no sqlite3 in server.py.
+        from gsd.reporting.snapshot import Snapshot
+        snapshots, artifacts = seeded_dirs(tmp_path)
+        real_rows = Snapshot._rows
+
+        def failing_rows(self, sql, params=()):
+            if needle in sql:
+                raise sqlite3.OperationalError("simulated post-open snapshot damage")
+            return real_rows(self, sql, params)
+
+        monkeypatch.setattr(Snapshot, "_rows", failing_rows)
+        app = build_report_app(_settings(snapshots, artifacts, namespace_selector_label="company.net/mnemonic"),
+                               secret=SECRET, clock=lambda: FROZEN)
+        with TestClient(app, raise_server_exceptions=False) as client:
+            r = client.get(f"{REPORT_PREFIX}/api/reports", headers=_viewer())
+            assert r.status_code == 200, r.text
+            assert r.json()["namespaceSelectors"] == {}

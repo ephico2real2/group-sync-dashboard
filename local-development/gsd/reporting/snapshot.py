@@ -184,6 +184,23 @@ class Snapshot:
             "SELECT DISTINCT value FROM cluster_namespace_label "
             "WHERE cluster_id=? AND key=? ORDER BY value", (cluster_id, key))]
 
+    def namespace_selectors(self, key: str) -> dict[str, dict]:
+        """Per cluster id, the selector label and its captured values, for the B3 multi-select.
+
+        The whole gather lives here, not in the caller, for one reason: a copy that OPENED cleanly can
+        still raise sqlite3.Error from a later table read (partial b-tree damage on a copy that has
+        rotted on disk after it was written). Translated to SnapshotError HERE, at the backend boundary,
+        that becomes the catalogue's designed empty-map degradation instead of a 500 — and sqlite3 never
+        has to be named in server.py (the storage seam, tests/test_storage_seam.py). A genuine query bug
+        would fail the catalogue's own value assertions in the suite, so this does not mask one.
+        """
+        try:
+            return {row["id"]: {"label": key,
+                                "values": self.namespace_metadata_values(row["id"], key) if key else []}
+                    for row in self.clusters()}
+        except sqlite3.Error as exc:
+            raise SnapshotError(f"cannot read snapshot {Path(self.path).name}: not readable SQLite data") from exc
+
     def namespaces_for_metadata(self, cluster_id: str, key: str, values: list[str]) -> list[str]:
         """Namespace names whose metadata `key` is one of `values`. The strict selector's expansion."""
         if not key or not values or not self.has_table("cluster_namespace_label"):

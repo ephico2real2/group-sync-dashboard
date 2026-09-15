@@ -157,18 +157,16 @@ def build_report_app(settings: ReportSettings, *, secret: bytes | None = None, c
         and its values key, so "why is this greyed out" has an answer on the wire.
 
         `namespaceSelectors` carries, per cluster id, the mnemonic label and its captured values so the
-        namespace-access form can render the multi-select (B3). Opening the snapshot is best-effort: a
-        missing first snapshot returns an empty map and the form hides the control, never a 500.
+        namespace-access form can render the multi-select (B3). Reading the snapshot is best-effort: a
+        missing, unreadable or corrupt snapshot returns an empty map and the form hides the control,
+        never a 500 — the whole read (open AND the table gather) is behind SnapshotError in the backend.
         """
         selectors: dict[str, dict] = {}
         try:
             with Snapshot(newest_snapshot(settings.snapshot_dir)) as snap:
-                label = settings.namespace_selector_label
-                for row in snap.clusters():
-                    selectors[row["id"]] = {"label": label,
-                                            "values": snap.namespace_metadata_values(row["id"], label) if label else []}
+                selectors = snap.namespace_selectors(settings.namespace_selector_label)
         except (SnapshotError, OSError):
-            selectors = {}      # a missing first snapshot must not 500 the catalogue; the UI hides the control
+            selectors = {}      # a missing, unreadable or corrupt snapshot must not 500 the catalogue; the UI hides the control
         return {"reports": [spec.as_json(spec.name in settings.enabled_reports) for spec, _ in REGISTRY.values()],
                 "pdf": {"enabled": settings.pdf_enabled, "variant": settings.pdf_variant},
                 "viewer": p.name if p.kind == "viewer" else None,
