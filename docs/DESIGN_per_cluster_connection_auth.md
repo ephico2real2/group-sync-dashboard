@@ -1,9 +1,9 @@
 # Design — per-cluster connection credentials (chart-managed mounts, LDAP bind, insecure-TLS)
 
-Status: draft for round-1 review. Author-driven from the operator's 2026-09-14 request, after the
-#117/#118 mock-cluster integration exposed the gap live. This is a **chart feature** (with a small
-Phase-2 application addition), decomposed into its own PR(s) after review, per the programme's
-design-first rule.
+Status: decisions settled (2026-09-15, see the Decisions section), ready for P1 implementation.
+Author-driven from the operator's 2026-09-14 request, after the #117/#118 mock-cluster integration
+exposed the gap live. This is a **chart feature** (with a small Phase-2 application addition),
+decomposed into its own PR(s), per the programme's design-first rule.
 
 ## 1. The problem, measured
 
@@ -173,8 +173,9 @@ OAuth password-grant client in `gsd/kube.py`, token caching/refresh, and the `cr
 
 ## 9. Decomposition (each its own PR, each its own review)
 
-- **P1 — chart-only:** the `credentials.token` + `ca` mounts, `inCluster` flag, `insecureTLS`, the
-  computed clusters.yaml, `clusterOverrides`, the shared-CA default, guards, a `helm template` matrix
+- **P1 — chart-only:** the `credentials.token` + `ca` mounts, the `inCluster` flag (and migrating the
+  default `crc-local` entry to `inCluster: true`), `insecureTLS`, the computed clusters.yaml,
+  `clusterOverrides.<UPPER_NAME>` (values-only), the shared-CA default, guards, a `helm template` matrix
   test and a values-defaults update. No app change. Validated by re-running the #117 mock-cluster
   integration through pure Helm values (no `oc set volumes`).
 - **P2 — LDAP bind:** `credentials.ldap`, the app's OAuth password-grant + token refresh in `gsd/kube.py`,
@@ -189,10 +190,23 @@ OAuth password-grant client in `gsd/kube.py`, token caching/refresh, and the `cr
 - `test_storage_seam`, `test_values_defaults` (every new false-default enumerated), `test_chart_versions`
   (chart bump), and the citation tests stay green.
 
-## Open questions (to settle in review by "easy to manage, best practice")
+## Decisions (settled with the operator, 2026-09-15)
 
-1. Override surface: `clusterOverrides.<UPPER_NAME>` values-only, or also `GSD_CLUSTER_<NAME>_*` env?
-2. `inCluster` default: auto for the first entry when no mode is named, or always explicit?
-3. Base mount path: `/etc/gsd/clusters/<name>/…` (proposed) vs the operator's bare `/<name>/…`.
-4. Whether P1 should also migrate the existing `crc-local` default entry to `inCluster: true` (nicer,
-   but a values-default change consumers see).
+The round-1 open questions are resolved; P1 is built to these.
+
+0. **Cluster names are operator-chosen.** `name:` is arbitrary — the operator names each entry what they
+   like — and EVERYTHING derives from it: the mount paths (`/etc/gsd/clusters/<name>/secret/token`,
+   `…/config/ca.crt`), the Secret/ConfigMap default names (`<name>-secret`), and the override key
+   (`<UPPER_NAME>` — the name upper-snake-cased). A rename is one edit; the helpers recompute the rest.
+   No name is special-cased in the templates.
+1. **Override surface: values-only.** `clusterOverrides.<UPPER_NAME>` in P1 (`caPath` / `tokenPath`); the
+   `GSD_CLUSTER_<NAME>_*` env form is deferred — the values form is simpler and sufficient for the stated
+   use, and a second runtime surface can be added later without breaking the values one.
+2. **`inCluster` default: auto for the first entry** when no mode is named, so a single-cluster install
+   stays a one-liner (`- {name: <chosen>, enabled: true}` ⇒ the hosting SA).
+3. **Base mount path: `/etc/gsd/clusters/<name>/…`** — kept, consistent with the chart's existing
+   `/etc/gsd/*` mounts, rather than a bare `/<name>/…`.
+4. **P1 migrates the default `crc-local` entry to `inCluster: true`.** The values default becomes
+   `- {name: crc-local, inCluster: true, enabled: true}` (the name stays operator-choosable); the explicit
+   `tokenFile`/`caBundleFile` form still works and is what `inCluster: true` expands to. This is a
+   values-default change consumers see, noted in the P1 CHANGELOG as such.
