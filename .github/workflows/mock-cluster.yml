@@ -1,0 +1,57 @@
+# CI job (DESIGN §12): run form A — no cluster, no container runtime, no OpenShift.
+#
+# Action SHAs are pinned by the RELEASE TAG's commit, per memory pin-actions-by-release-tag-commit
+# (replace <…-sha> with the commit the tag points at; Dependabot keeps them current).
+name: mock-openshift
+
+on:
+  pull_request:
+    paths:
+      - 'local-development/gsd/kube.py'
+      - 'local-development/gsd/config.py'
+      - 'local-development/gsd/poller.py'
+      - 'local-development/gsd/store.py'
+      - 'local-development/mock-app/**'
+      - '.github/workflows/mock-cluster.yml'
+  push:
+    branches: [main]
+  workflow_dispatch:        # the container-smoke job (form B) is manual
+
+jobs:
+  mock-cluster:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - name: Install the dashboard (gsd) + the mock
+        working-directory: local-development
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .                 # provides gsd.ClusterClient / ClusterConfig
+          python -m pip install -e 'mock-app[test]'
+      - name: Run the mock-cluster suite
+        working-directory: local-development
+        run: pytest mock-app/tests -q
+
+  # Optional container smoke (form B): manual only — needs a runtime and is redundant with form
+  # A for parse coverage. Builds the image and curls /_mock/state + one list endpoint.
+  container-smoke:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build and smoke-test the image
+        working-directory: local-development/mock-app
+        run: |
+          docker build -f containerfile/Containerfile -t mock-openshift .
+          mkdir -p out
+          docker run -d --name mock -p 6443:6443 -v "$PWD/out:/out" mock-openshift
+          for i in $(seq 1 30); do
+            [ -s out/ca.crt ] && break; sleep 1
+          done
+          curl -sf https://localhost:6443/_mock/state --cacert out/ca.crt | head -c 200
+          curl -sf https://localhost:6443/apis/user.openshift.io/v1/groups \
+            --cacert out/ca.crt -H 'Authorization: Bearer mock-token-reference' | head -c 200
+          docker rm -f mock

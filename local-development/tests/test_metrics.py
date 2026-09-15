@@ -463,6 +463,7 @@ class TestRuntimeCounters:
         signals.note_poll_duration("crc", 1.42)
         store = Store(":memory:")
         try:
+            store.upsert_cluster("crc", "https://x", True)   # process metrics now require an active row (#96)
             text = generate_latest(build_registry(store, GRACE, signals=signals)).decode()
         finally:
             store.close()

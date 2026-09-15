@@ -135,6 +135,20 @@ REVIEW_ARTIFACTS = (
     # PR #95's record (the change-log folder, the skills and settings into git): quotes the
     # skill's old Step 4 command and the log's old heading verbatim, which is the point.
     "REVIEW_session_tooling.md",
+    # PR #110 rbacAuditors implementation review: quotes the template line numbers and the old
+    # single-verb assertion verbatim.
+    "REVIEW_rbacAuditors_impl.md",
+    # PR #111 namespace-metadata capture review: cites the implementation line numbers verbatim.
+    "REVIEW_ns_metadata_capture_impl.md",
+    "REVIEW_ns_selector_impl.md",
+    # PR #117 (#103, B3 GUI) review: cites the exact list_reports/applyPosition/readParamEl lines and
+    # test line numbers the findings refuse or replace — the record is the evidence, not rot.
+    "REVIEW_ns_selector_gui.md",
+    "REVIEW_auditor_createlocal_guard.md",
+    "REVIEW_retire_clusters.md",
+    # The reporting-extension design round 1: its findings quote the design's old snippets
+    # (ReportError, NS_CAP, the wrong-pod env) verbatim, which is the point of a review record.
+    "REVIEW_reporting_ext_design.md",
     # The reporting output/delivery design round 1: quotes the old snippets (the CSV FORMATS gap,
     # the report-diff ordering, the wrong chart key, the false snapshot facts) verbatim by file:line.
     "REVIEW_reporting_output_delivery.md",
@@ -143,6 +157,9 @@ REVIEW_ARTIFACTS = (
     # attached to that citation was correct and was applied. Rewriting the citation would not make
     # the record truer, and refusing the record over it would have cost a real finding.
     "REVIEW_log_level_contract.md",
+    # PR #118 (mock-app) review: cites the workflow lines and mock_app symbols the findings refuse
+    # or replace (placeholder SHAs, the SA-subject SAR gap, the apiVersion envelope).
+    "REVIEW_mock_cluster.md",
 )
 
 

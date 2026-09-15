@@ -55,11 +55,15 @@ logLevel: DEBUG
 # docs/LOGIN_CAPTURE_QUICKCHECK.md (§6 for the audit-log source), which is also how to verify the whole
 # path end to end.
 #
-# The manager stays on with enabled=false so its Job returns the operator CR to Normal — the chart
-# refuses `source: audit-log` together with `enabled: true`. Going straight to manage=false would
-# remove the revert Job with it and strand the cluster in Debug.
+# Management OFF: this cluster captures logins from the AUDIT LOG (loginCapture.source: audit-log,
+# below), which names the person at the DEFAULT verbosity — the oauth operator's log level never needs
+# raising, so the auth-loglevel Job is not needed here. That Job is a post-install/post-upgrade HOOK, so
+# with manage:true it ran on EVERY upgrade and, on the CPU-saturated CRC node, could not schedule and
+# hung the whole upgrade. The one-time convergence back to Normal is complete (the operator CR is at
+# Normal), so manage:false no longer risks stranding the cluster in Debug. Set manage:true only for the
+# pod-log login source, which is the one that needs the elevated verbosity.
 authLogLevel:
-  manage: true
+  manage: false
   enabled: false
 
 loginCapture:

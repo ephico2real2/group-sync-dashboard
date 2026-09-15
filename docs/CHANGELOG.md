@@ -8,6 +8,68 @@ lives next to the code and in the design and review records linked here. Changes
 last release sit under `## Unreleased` until the release that carries them replaces that heading —
 which `local-development/prepare-release.py` does when the release is cut.
 
+## Application 0.20.0 — chart 0.28.0 — 2026-09-15
+
+- **Docs: correct the chart README rbacAuditors default.** The README still listed `rbacAuditors.enabled` default as `false` / opt-in after 0.27.0 flipped it on; it now states the on-by-default behaviour, that the binding is inert until the named group has members, and that a populated group then reaches the wide report tier. Values behaviour is unchanged from 0.27.0 (review #121 follow-up, Cursor F1).
+
+## Application 0.20.0 — chart 0.27.0 — 2026-09-15
+
+- **Reporting auditors ON by default (chart).** `rbacAuditors.enabled` now defaults to `true`, per the chart's on-by-default rule: a default install binds the named auditor group (`app-ocp-rbac-groupsync-ns-auditor`, `createLocal: false` — bind-only) to a read-only audit ClusterRole, so an environment values file that does not mention it keeps the auditor gate rather than silently dropping it. The binding is inert where that group does not exist. Set `rbacAuditors.enabled: false` in an environment file to render nothing. Fixes the recurrence where a `helm upgrade -f <env>.yaml` dropped the auditor RBAC because the default was opt-in.
+  - **UPGRADE NOTE (0.26.0 → 0.27.0):** on a cluster where the named group `app-ocp-rbac-groupsync-ns-auditor` already exists (an LDAP sync, say), this upgrade GRANTS its members cluster-wide read on users/groups/RBAC objects AND the dashboard's wide report tier — read-only and installer-conferred, but a new grant relative to 0.26.0. On any cluster where you do not want that, set `rbacAuditors.enabled: false` before upgrading. Where the group has no members (or does not exist) the binding is inert.
+
+## Application 0.20.0 — chart 0.26.0 — 2026-09-14
+
+- **Retire clusters removed from the configuration (#96).** A cluster dropped from `clusters:` (or one
+  with `enabled: false`) no longer lingers in the UI as `ok` with frozen data and stale "overdue" alerts.
+  The poller marks its stored row `enabled = 0` at the start of every cycle (a config change rolls the
+  pod, so add/remove takes effect on the next start), and `/api/clusters`, `/api/whoami`, `/api/alerts`,
+  `/metrics` and a direct `/api/clusters/{id}/…` (which 404s like an unknown id) all skip it (with no
+  served cluster at all, `/api/alerts` fails closed to `scope: self` like `/api/whoami`). Its history and snapshot rows
+  stay, so an already-generated report still reads them (docs/ACCESS_CONTROL.md §11). Supersedes the D2
+  behaviour where a removed cluster resolved to `inherit` and stayed in the list.
+- **Reporting: a mnemonic multi-select on the namespace-access form (#103, B3).** The report catalogue
+  (`/report/api/reports`) now returns per-cluster `namespaceSelectors` — the configured selector label and
+  its captured values, opened best-effort from the snapshot (a missing, unreadable or corrupt snapshot
+  returns an empty map, never a 500 — the catalogue degrades, the Reports tab does not fault). The Reports
+  form renders a checkable multi-select of those values ahead of the advanced
+  explicit-names field, and a `readParamEl` helper serialises a `<select multiple>` as the full array (its
+  `value` is only the first option). Completes Extension B: capture (0.22.0) → API (0.24.0) → GUI here.
+
+## Application 0.19.0 — chart 0.25.0 — 2026-09-14
+
+- **Reporting auditors: default the auditor group and guard the `createLocal` collision.** `values.yaml`
+  now ships `rbacAuditors.groups` defaulting to `app-ocp-rbac-groupsync-ns-auditor` with
+  `createLocal: false` (opt-in via `rbacAuditors.enabled`, still off). A render-time guard refuses
+  `createLocal: true` for a group name that already exists under another owner (e.g. an LDAP sync),
+  failing the install with the one-line remedy instead of Helm's ownership error and preventing the
+  group-family sync from wedging (docs/TROUBLESHOOTING_auditor_groups.md,
+  docs/FINDINGS_auditor_group_ldap_sync_interaction.md).
+
+## Application 0.19.0 — chart 0.24.0 — 2026-09-14
+
+- **Reporting: select a report's namespaces by the estate's grouping label.** The namespace-access
+  report gains a `mnemonics` parameter that expands the configured `reporting.namespaceSelector.label`
+  values (captured in 0.22.0) to their namespaces; the explicit-names path stays as the advanced
+  fallback, and choosing both is refused. The report pod reads the selector key from
+  `GSD_REPORT_NS_SELECTOR_LABEL`. No default-install change (docs/DESIGN_reporting_auditors_and_ns_selector.md §3).
+
+## Application 0.19.0 — chart 0.23.0 — 2026-09-14
+
+- **Reporting: opt-in auditor groups (chart).** A new `rbacAuditors` stanza binds a chosen group
+  to a least-privilege, read-only ClusterRole (get/list on users, groups and the RBAC objects) so a
+  non-developer can run reports and review identities and RBAC in OpenShift directly — no workload
+  access, no Usage tab. Render guards ensure the role covers the report gate and refuse an unsafe
+  configuration; the ClusterRoleBinding name hashes the group and the role (LDAP DNs are not DNS-1123,
+  and roleRef is immutable). Off by default (docs/DESIGN_reporting_auditors_and_ns_selector.md §2).
+
+## Application 0.19.0 — chart 0.22.0 — 2026-09-14
+
+- **Reporting: namespace-metadata capture (chart + poller).** The poller now captures a bounded,
+  configured set of Namespace labels (`reporting.namespaceMetadata.labels`, default off, needs
+  `rbac.namespaces`) into a child table — the foundation for selecting a report's namespaces by the
+  estate's grouping label. Default off; a default install renders and behaves exactly as before
+  (docs/DESIGN_reporting_auditors_and_ns_selector.md §3).
+
 ## Application 0.19.0 — chart 0.21.0 — 2026-09-13
 
 - **Per-cluster authorization for the multi-cluster case.** A reader is authenticated by the

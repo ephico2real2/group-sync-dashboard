@@ -363,6 +363,7 @@ def refresh_bindings(
     audit_mode: str = "off",
     audit_max_per_cycle: int = 20,
     namespaces_read: bool = False,
+    namespace_metadata_labels: list[str] | None = None,
 ) -> str:
     """Re-read RoleBindings/ClusterRoleBindings for one cluster.
 
@@ -431,7 +432,7 @@ def refresh_bindings(
         fetch_namespaces = getattr(client, "fetch_namespaces", None)
         if fetch_namespaces is not None:
             try:
-                namespaces = fetch_namespaces()
+                namespaces = fetch_namespaces(namespace_metadata_labels)
             except ClusterError as exc:
                 log.warning("namespace refresh for %s failed: %s — the namespace report keeps "
                             "last cycle's coverage", cluster.name, exc.message)
@@ -892,6 +893,7 @@ class Poller:
                         audit_mode=self.settings.unmanaged_audit_mode,
                         audit_max_per_cycle=self.settings.unmanaged_audit_max_per_cycle,
                         namespaces_read=self.settings.namespaces_read_enabled,
+                        namespace_metadata_labels=self.settings.namespace_metadata_labels,
                     )
                 except Exception:  # noqa: BLE001
                     log.exception("unhandled error refreshing bindings for %s", cluster.name)
@@ -905,6 +907,13 @@ class Poller:
             self._stop.wait(max(1.0, self.settings.poll_interval_seconds - elapsed))
 
     def start(self) -> None:
+        # Reconcile the stored clusters against the configuration BEFORE polling: a cluster the
+        # config no longer names is retired (enabled=0, history kept), so it leaves the served set
+        # instead of lingering as `ok` with frozen data and stale alerts (#96). Config changes roll
+        # the pod, so this runs on every change — retire/add on the fly.
+        retired = self.store.retire_absent_clusters([c.name for c in self.settings.clusters])
+        if retired:
+            log.info("retired %d cluster(s) no longer in the configuration", retired)
         for cluster in self.settings.clusters:
             self.store.upsert_cluster(cluster.name, cluster.api_url, cluster.enabled)
             if not cluster.enabled:

@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gsd-mock"
+version = "0.1.0"
+description = "Fixture-driven mock of the OpenShift API surface that group-sync-dashboard reads"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+authors = [{ name = "group-sync-dashboard" }]
+
+# Core deps: the fixture loader (pyyaml), TLS cert generation (cryptography), and the
+# FastAPI app + uvicorn server. cryptography is already a transitive dependency of the
+# dashboard's stack; it is declared explicitly here because tls.py imports it directly.
+dependencies = [
+  "fastapi>=0.110",
+  "uvicorn>=0.29",
+  "pyyaml>=6.0",
+  "cryptography>=42.0",
+]
+
+[project.optional-dependencies]
+# The suite drives a REAL gsd.ClusterClient over the mock's TLS, so the dashboard package and
+# httpx must be importable. `pip install -e .` of the dashboard (local-development) provides
+# gsd + httpx; these are the extras a standalone checkout of just mock-app needs for tests.
+test = [
+  "pytest>=8.0",
+  "httpx>=0.27",
+]
+
+[project.scripts]
+mock-openshift = "mock_app.__main__:main"
+
+[tool.setuptools]
+packages = ["mock_app"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning"]

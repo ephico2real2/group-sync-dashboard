@@ -90,16 +90,30 @@ class Snapshot:
         except OSError as exc:
             raise SnapshotError(f"cannot inspect snapshot {path.name}: {exc}") from exc
         uri = f"file:{path}?immutable=1&mode=ro"
-        self._conn = sqlite3.connect(uri, uri=True, check_same_thread=False)
-        _harden(self._conn)
-        self._conn.row_factory = sqlite3.Row
-        self.schema_version = int(self._conn.execute("PRAGMA user_version").fetchone()[0])
-        if self.schema_version > KNOWN_SCHEMA_VERSION:
-            self._conn.close()
-            raise SnapshotError(
-                f"snapshot schema {self.schema_version} is newer than this report service understands "
-                f"({KNOWN_SCHEMA_VERSION}); the reporting image must be the dashboard's appVersion")
-        self._tables = {r[0] for r in self._conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        self._conn = None
+        try:
+            self._conn = sqlite3.connect(uri, uri=True, check_same_thread=False)
+            _harden(self._conn)
+            self._conn.row_factory = sqlite3.Row
+            self.schema_version = int(self._conn.execute("PRAGMA user_version").fetchone()[0])
+            if self.schema_version > KNOWN_SCHEMA_VERSION:
+                raise SnapshotError(
+                    f"snapshot schema {self.schema_version} is newer than this report service understands "
+                    f"({KNOWN_SCHEMA_VERSION}); the reporting image must be the dashboard's appVersion")
+            self._tables = {r[0] for r in self._conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        except sqlite3.Error as exc:
+            # A file named like a copy but not a readable SQLite database — truncated, torn, or not a
+            # database at all; the connect / PRAGMA / catalog reads are where that surfaces. Translated
+            # to SnapshotError HERE, at the backend boundary, so a caller (the catalogue, the age probe)
+            # sees one exception type and the engine never leaks past this module — the storage seam
+            # (tests/test_storage_seam.py) forbids `import sqlite3` outside the backend.
+            if self._conn is not None:
+                self._conn.close()
+            raise SnapshotError(f"cannot open snapshot {path.name}: not a readable SQLite database") from exc
+        except SnapshotError:
+            if self._conn is not None:
+                self._conn.close()
+            raise
 
     def close(self) -> None:
         self._conn.close()
@@ -160,6 +174,41 @@ class Snapshot:
         if not self.has_table("cluster_namespace"):
             return []
         return self._rows("SELECT name, created_at, phase FROM cluster_namespace WHERE cluster_id = ? ORDER BY name", (cluster_id,))
+
+    def namespace_metadata_values(self, cluster_id: str, key: str) -> list[str]:
+        """Distinct values captured for one metadata key, for the GUI's multi-select. Empty when the
+        table is absent (pre-migration snapshot), the key is not captured, or no namespace carries it."""
+        if not key or not self.has_table("cluster_namespace_label"):
+            return []
+        return [r["value"] for r in self._rows(
+            "SELECT DISTINCT value FROM cluster_namespace_label "
+            "WHERE cluster_id=? AND key=? ORDER BY value", (cluster_id, key))]
+
+    def namespace_selectors(self, key: str) -> dict[str, dict]:
+        """Per cluster id, the selector label and its captured values, for the B3 multi-select.
+
+        The whole gather lives here, not in the caller, for one reason: a copy that OPENED cleanly can
+        still raise sqlite3.Error from a later table read (partial b-tree damage on a copy that has
+        rotted on disk after it was written). Translated to SnapshotError HERE, at the backend boundary,
+        that becomes the catalogue's designed empty-map degradation instead of a 500 — and sqlite3 never
+        has to be named in server.py (the storage seam, tests/test_storage_seam.py). A genuine query bug
+        would fail the catalogue's own value assertions in the suite, so this does not mask one.
+        """
+        try:
+            return {row["id"]: {"label": key,
+                                "values": self.namespace_metadata_values(row["id"], key) if key else []}
+                    for row in self.clusters()}
+        except sqlite3.Error as exc:
+            raise SnapshotError(f"cannot read snapshot {Path(self.path).name}: not readable SQLite data") from exc
+
+    def namespaces_for_metadata(self, cluster_id: str, key: str, values: list[str]) -> list[str]:
+        """Namespace names whose metadata `key` is one of `values`. The strict selector's expansion."""
+        if not key or not values or not self.has_table("cluster_namespace_label"):
+            return []
+        marks = ",".join("?" for _ in values)
+        return [r["name"] for r in self._rows(
+            f"SELECT name FROM cluster_namespace_label WHERE cluster_id=? AND key=? AND value IN ({marks}) "
+            "ORDER BY name", (cluster_id, key, *values))]
 
     def login_capture_status(self, cluster_id: str) -> dict | None:
         return self._row("SELECT started_at, last_read_at FROM login_capture_status WHERE cluster_id = ?", (cluster_id,))

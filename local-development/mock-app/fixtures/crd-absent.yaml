@@ -1,0 +1,44 @@
+# crd-absent.yaml — the operator/CRD-absent branches.
+#
+# GroupSync CRD missing (endpoint a → plain 404 → kube.py sets groupsyncs=None, still reads
+# Groups); both operator-config CRDs missing (endpoints h+i → 404 → fetch_operator_configs
+# returns None); the OAuth CR absent (endpoint k → 404 → fetch_access_group_dn returns None).
+# Groups are still served, every one unattributed.
+
+meta:
+  clusterName: mock-openshift-no-operators
+  token: "mock-token-crd-absent"
+
+groupsyncs:
+  - crdAbsent: true          # endpoint (a) answers a plain 404
+
+groups:
+  - name: hand-made-admins
+    users: [alice, bob]
+  - name: hand-made-viewers
+    users: [carol]
+
+users:
+  entries:
+    - {name: alice, creationTimestamp: "2026-02-01T00:00:00Z", identities: []}
+  forbidden: false
+
+operatorConfigs:
+  namespaceConfigsCrdAbsent: true
+  groupConfigsCrdAbsent: true
+
+nodes:
+  entries:
+    - {name: master-0, labels: {"node-role.kubernetes.io/master": ""}}
+
+oauth:
+  crdAbsent: true            # endpoint (k) answers a plain 404
+
+oauthPods:
+  namespace: openshift-authentication
+  entries: []
+
+auditLog:
+  node: master-0
+  dir: oauth-server
+  files: []

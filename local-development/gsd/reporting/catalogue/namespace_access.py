@@ -5,22 +5,56 @@ from __future__ import annotations
 
 from ..model import KeyValues, Note, Section, Table
 from ..snapshot import CLUSTER_SCOPE, Snapshot
-from .common import Built, ParamSpec, ReportSpec, RunContext, cut, finding_label, roster_table
+from .common import (MAX_NAMESPACES, Built, ParamSpec, ReportSpec, RunContext, ValidationError,
+                     cut, finding_label, roster_table)
+
+
+def _validate_selection(params: dict) -> None:
+    """Cross-parameter check run at the endpoint (a 422): choose namespaces by mnemonic OR by name,
+    exactly one. The mnemonic-to-namespace expansion needs the snapshot, so it stays in build()."""
+    mnemonics = params.get("mnemonics") or []
+    names = params.get("namespaces") or []
+    if mnemonics and names:
+        raise ValidationError("choose namespaces by mnemonic OR by explicit name, not both")
+    if not mnemonics and not names:
+        raise ValidationError("select at least one namespace, by mnemonic or by explicit name")
+    if len(mnemonics) > MAX_NAMESPACES:
+        raise ValidationError(f"at most {MAX_NAMESPACES} mnemonic values per report")
+
 
 SPEC = ReportSpec(
     name="namespace-access", title="Namespace access report",
     summary="Per namespace: every group binding classified with who it reaches, every direct user grant, findings first.",
     values_key="namespaceAccess",
     params=(
-        ParamSpec("namespaces", "namespaces", None, "Comma-separated namespace names, at most 50; `(cluster-scoped)` for cluster-wide bindings.", required=True),
+        ParamSpec("mnemonics", "csv", None,
+                  "Select namespaces by the estate's grouping label (the Reports form offers the values). "
+                  "Strict and current; leave the explicit names empty when using this."),
+        ParamSpec("namespaces", "namespaces", None,
+                  "Advanced: explicit namespace names, at most 50; `(cluster-scoped)` for cluster-wide bindings."),
         ParamSpec("include_members", "bool", False, "Expand group rosters. Off by default — a file that gets emailed has no reader log — and recorded in the provenance when on."),
     ),
+    validator=_validate_selection,
 )
 
 
 def build(snap: Snapshot, ctx: RunContext, params: dict) -> Built:
     cid = ctx.cluster["id"]
-    names: list[str] = params["namespaces"]
+    mnemonics: list[str] = params.get("mnemonics") or []
+    names: list[str] = params.get("namespaces") or []
+    if mnemonics:
+        # The snapshot-dependent expansion: a mnemonic matching nothing is a failed run (it needs the
+        # snapshot), not a 422 — the cross-parameter check already ran at the endpoint.
+        if not ctx.namespace_selector_label:
+            raise ValidationError(
+                "mnemonic namespace selection is not configured on this deployment; set "
+                "reporting.namespaceSelector.label or use explicit namespace names")
+        names = snap.namespaces_for_metadata(cid, ctx.namespace_selector_label, mnemonics)
+        if not names:
+            raise ValidationError(
+                f"no namespace carries the selector label with value(s) {', '.join(mnemonics)}")
+    selector_capped = len(names) > MAX_NAMESPACES
+    names = names[:MAX_NAMESPACES]                # cap AFTER expansion; recorded in the coverage note
     keys = ["" if n == CLUSTER_SCOPE else n for n in names]
     include_members = params["include_members"]
     ns_state = (snap.namespaces_source(cid) or {}).get("state")
@@ -63,5 +97,13 @@ def build(snap: Snapshot, ctx: RunContext, params: dict) -> Built:
         if exists is None and n != CLUSTER_SCOPE and n not in observed:
             blocks.append(Note("Neither a Namespace object nor a binding in it was observed; this report cannot say whether the namespace exists.", "warning"))
         sections.append(Section(f"Namespace: {n}" if n != CLUSTER_SCOPE else "Cluster-scoped bindings", blocks, page_break=True))
+    if selector_capped:
+        sections.insert(0, Section("Coverage", [Note(
+            f"The selector matched more than {MAX_NAMESPACES} namespaces; this report covers the first "
+            f"{MAX_NAMESPACES} in name order. Narrow the mnemonic selection for a complete listing.",
+            "warning")]))
     totals = {"namespaces": len(names), "group_bindings": len(groups), "user_bindings": len(users)}
+    # `truncated` is a ROW_LIMIT cut only — assemble()'s Truncation note says exactly that, and a
+    # selector cap is neither a row cut nor a wrong `totals`. The Coverage section above is the cap
+    # record (design §3.6), so the selector cap does not set `truncated` (review #112, F1).
     return Built(sections, totals, truncated, include_members)

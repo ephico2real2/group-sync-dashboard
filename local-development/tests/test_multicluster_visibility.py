@@ -262,9 +262,14 @@ class TestInheritIsTheHostsDecidedTier:
             assert who["scope"] == "self"
             assert who["clusters"]["east"] == {"policy": "inherit", "identity": "none", "scope": "self"}
 
-    def test_no_enabled_cluster_fails_closed_on_the_headline(self, db):
+    def test_no_enabled_cluster_fails_closed_on_the_headline(self, tmp_path):
         """Cursor, second pass: with every entry disabled there is no host, and the nameless
-        question fell through to the host resolver — `all` above rows that all said `self`."""
+        question fell through to the host resolver — `all` above rows that all said `self`.
+
+        Its own db, not the module-scoped one: build_app's lifespan upserts these disabled clusters
+        (run_poller=False still records them), and once list_clusters skips enabled=0 (the #96 retire
+        rule) that would leak host/east=disabled into the shared-db tests that follow."""
+        db = str(tmp_path / "no-enabled.db")
         settings = Settings(clusters=[
             ClusterConfig("host", "https://api.host.example:6443", token_env="X", enabled=False),
             ClusterConfig("east", "https://api.east.example:6443", token_env="X", enabled=False),
@@ -273,8 +278,14 @@ class TestInheritIsTheHostsDecidedTier:
         app.state.tier_resolver = _Map({"root": "all"})
         with TestClient(app) as c:
             who = c.get("/api/whoami", headers=ROOT).json()["visibility"]
-            assert who["scope"] == "self"
-            assert {v["scope"] for v in who["clusters"].values()} == {"self"}
+            assert who["scope"] == "self"          # the nameless headline fails closed with no host
+            # #96: a disabled cluster is not served, so every-entry-disabled serves NOTHING — the rows
+            # are empty rather than a wall of `self` clusters the selector would never offer.
+            assert who["clusters"] == {}
+            # And the alert feed must agree: zero served clusters is not a wide `all` view above an
+            # empty list ("you are wide and the estate is green") — it fails closed to self (review).
+            assert c.get("/api/alerts", headers=ROOT).json() == {
+                "scope": "self", "viewer": "root", "count": 0, "alerts": []}
 
     def test_an_inherit_host_still_decides_by_its_resolver(self, client):
         assert client.get("/api/whoami", headers=ROOT).json()["visibility"]["scope"] == "all"

@@ -80,6 +80,7 @@ class ReportSettings:
     login_capture_enabled: bool = False
     namespaces_read_enabled: bool = False
     binding_interval_seconds: int = 300
+    namespace_selector_label: str = ""   # the captured key the namespace-access report selects on (B2)
     #: One worker renders at a time; the queue is bounded so a burst answers 429 rather than
     #: piling up renders the pod's memory limit then ends.
     max_queued_runs: int = 8
@@ -120,6 +121,7 @@ def load_report_settings() -> ReportSettings:
         login_capture_enabled=_bool_env("GSD_REPORT_LOGIN_CAPTURE_ENABLED", False),
         namespaces_read_enabled=_bool_env("GSD_REPORT_NAMESPACES_READ_ENABLED", False),
         binding_interval_seconds=_int_env("GSD_REPORT_BINDING_INTERVAL_SECONDS", 300, lo=1, hi=86400),
+        namespace_selector_label=os.environ.get("GSD_REPORT_NS_SELECTOR_LABEL", "").strip(),
         max_queued_runs=_int_env("GSD_REPORT_MAX_QUEUED_RUNS", 8, lo=1, hi=100),
         log_level=os.environ.get("GSD_LOG_LEVEL", "INFO"),
     )

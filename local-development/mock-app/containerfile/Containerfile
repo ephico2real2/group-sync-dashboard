@@ -1,0 +1,41 @@
+# Form B (DESIGN §8.2): a tiny image serving the mock on :6443 over TLS, driven by uvicorn.
+#
+#   podman build -f containerfile/Containerfile -t mock-openshift .
+#   podman run --rm -p 6443:6443 \
+#       -v ./fixtures:/fixtures:ro -v ./out:/out \
+#       mock-openshift
+#
+# The CA generated at boot is written to /out/ca.crt; mount /out into the dashboard pod and
+# point clusters[0].caBundleFile at it. Or bake a persistent CA (ca.crt/tls.crt/tls.key) into
+# a mounted /certs and pass --ca-in /certs via MOCK_CA_IN.
+
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+# Install the package (its deps: fastapi, uvicorn, pyyaml, cryptography).
+COPY pyproject.toml README.md ./
+COPY mock_app ./mock_app
+RUN pip install --no-cache-dir .
+
+# A baked default fixture so the image runs with no mounts; override by mounting /fixtures.
+COPY fixtures/reference.yaml /fixtures/reference.yaml
+COPY containerfile/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+# Run as a non-root user (6443 is > 1024, so no privileged bind needed).
+RUN useradd --uid 1001 --create-home --shell /usr/sbin/nologin mock \
+    && mkdir -p /out && chown 1001:1001 /out
+USER 1001
+
+ENV MOCK_FIXTURE=/fixtures/reference.yaml \
+    MOCK_HOST=0.0.0.0 \
+    MOCK_PORT=6443 \
+    MOCK_CA_OUT=/out/ca.crt \
+    MOCK_SANS=DNS:mock-openshift,DNS:localhost,IP:127.0.0.1
+
+EXPOSE 6443
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

@@ -467,6 +467,17 @@ CREATE TABLE IF NOT EXISTS cluster_namespace_status (
     state               TEXT NOT NULL,      -- ok | forbidden
     observed_at         TEXT NOT NULL
 );
+-- Bounded Namespace metadata the namespace-access report selects on (migration 12). Only the
+-- configured label keys, replaced whole with cluster_namespace on the binding cadence.
+CREATE TABLE IF NOT EXISTS cluster_namespace_label (
+    cluster_id          TEXT NOT NULL,
+    name                TEXT NOT NULL,
+    key                 TEXT NOT NULL,
+    value               TEXT NOT NULL,
+    PRIMARY KEY(cluster_id, name, key),
+    FOREIGN KEY(cluster_id, name) REFERENCES cluster_namespace(cluster_id, name) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_cnl_key_value ON cluster_namespace_label(cluster_id, key, value);
 -- What the report service published about itself, PULLED by the poller from GET /report/api/usage
 -- (the dashboard's API stays GET-only). One row per finished run; the id is the service's and is
 -- the pull watermark. Personnel data — who generated which report — served at the USAGE tier like
@@ -757,6 +768,26 @@ _MIGRATIONS: list[tuple[int, str, list[str]]] = [
                )""",
             "CREATE INDEX IF NOT EXISTS report_run_by_time ON report_run(requested_at DESC)",
             "CREATE INDEX IF NOT EXISTS report_run_by_user ON report_run(generated_by, requested_at DESC)",
+        ],
+    ),
+    (
+        12,
+        "reporting: bounded Namespace metadata (labels) the namespace-access report selects on",
+        [
+            # Only the configured label keys, replaced whole each cycle alongside cluster_namespace
+            # (docs/DESIGN_reporting_auditors_and_ns_selector.md §3.4). A child table, so adding a key
+            # is a values change with no further migration. ON DELETE CASCADE keeps it consistent if a
+            # namespace row is removed; replace_namespaces also clears it explicitly in the same write.
+            """CREATE TABLE IF NOT EXISTS cluster_namespace_label (
+                   cluster_id          TEXT NOT NULL,
+                   name                TEXT NOT NULL,
+                   key                 TEXT NOT NULL,
+                   value               TEXT NOT NULL,
+                   PRIMARY KEY(cluster_id, name, key),
+                   FOREIGN KEY(cluster_id, name)
+                       REFERENCES cluster_namespace(cluster_id, name) ON DELETE CASCADE
+               )""",
+            "CREATE INDEX IF NOT EXISTS idx_cnl_key_value ON cluster_namespace_label(cluster_id, key, value)",
         ],
     ),
 ]
@@ -1238,7 +1269,15 @@ class Store:
             conn.executemany(
                 """INSERT OR REPLACE INTO cluster_namespace(cluster_id, name, created_at, phase, observed_at)
                    VALUES(:cluster_id,:name,:created_at,:phase,:observed_at)""",
-                [{**r, "cluster_id": cluster_id, "observed_at": observed_at} for r in rows])
+                [{"cluster_id": cluster_id, "name": r["name"], "created_at": r.get("created_at"),
+                  "phase": r.get("phase"), "observed_at": observed_at} for r in rows])
+            # The bounded per-namespace metadata, replaced in the SAME transaction so a report never
+            # reads a namespace whose labels were deleted but not yet re-inserted (design §3.4).
+            conn.execute("DELETE FROM cluster_namespace_label WHERE cluster_id=?", (cluster_id,))
+            conn.executemany(
+                "INSERT INTO cluster_namespace_label(cluster_id, name, key, value) VALUES(?,?,?,?)",
+                [(cluster_id, r["name"], k, v)
+                 for r in rows for k, v in (r.get("metadata") or {}).items() if v is not None and v != ""])
             conn.execute(
                 """INSERT INTO cluster_namespace_status(cluster_id, state, observed_at) VALUES(?, 'ok', ?)
                    ON CONFLICT(cluster_id) DO UPDATE SET state='ok', observed_at=excluded.observed_at""",
@@ -1378,6 +1417,21 @@ class Store:
                  FROM cluster c LEFT JOIN poll_outcome p ON p.cluster_id = c.id
                 ORDER BY c.id"""
         )
+
+    def retire_absent_clusters(self, configured_ids: list[str]) -> int:
+        """Retire — never delete — every stored cluster the configuration no longer names: set
+        enabled=0 so its history and snapshot rows stay, but it leaves the served/active set (#96).
+        A cluster disabled in config is already enabled=0 through upsert_cluster; this catches the
+        ones the config dropped entirely. Returns how many rows it retired."""
+        ids = list(configured_ids)
+        with self._tx() as conn:
+            if ids:
+                marks = ",".join("?" for _ in ids)
+                cur = conn.execute(
+                    f"UPDATE cluster SET enabled=0 WHERE enabled=1 AND id NOT IN ({marks})", ids)
+            else:
+                cur = conn.execute("UPDATE cluster SET enabled=0 WHERE enabled=1")
+            return cur.rowcount
 
     # -- poll results ------------------------------------------------------------------
 

@@ -496,6 +496,11 @@ class Settings:
     # Whether the poller reads Namespace objects (rbac.namespaces) — lets the namespace report
     # attest ABSENCE. Kept from the first C3 body.
     namespaces_read_enabled: bool = False
+    # The Namespace label keys the poll captures per namespace, so the namespace-access report
+    # can select on them (docs/DESIGN_reporting_auditors_and_ns_selector.md §3). Bounded — only
+    # these keys, never the whole label map; default () is off. Read from the ConfigMap key
+    # `namespaceMetadataLabels` (rendered with toJson), the same convention as the audit lists.
+    namespace_metadata_labels: tuple[str, ...] = ()
 
     def cluster(self, name: str) -> ClusterConfig | None:
         for c in self.clusters:
@@ -511,9 +516,11 @@ class Settings:
     def cluster_policy(self, name: str) -> tuple[str, str]:
         """(visibility, identity) for one cluster id, defaults resolved.
 
-        A cluster the store still holds but the config no longer names — removed from values
-        after it was polled — resolves to inherit/same-as-host: today's behaviour for its
-        stale rows, and not wider than it. Deleting the rows is a data decision, not a tier one.
+        A cluster the config no longer names is RETIRED (enabled=0 at poll start, #96) and the
+        surfacing endpoints skip it before consulting this — so the inherit/same-as-host resolved
+        for an unconfigured id here is a defensive default, not the served behaviour it once was
+        (a retired cluster no longer appears at all). Retiring keeps the history; not a tier
+        decision.
         """
         host = self.host_cluster()
         cluster = self.cluster(name)
@@ -1148,6 +1155,7 @@ def load_settings(path: str | Path) -> Settings:
         reporting_snapshot_keep=_num_setting(raw, "GSD_REPORTING_SNAPSHOT_KEEP", "reportingSnapshotKeep", 2, int),
         reporting_ticket_ttl_seconds=_num_setting(raw, "GSD_REPORTING_TICKET_TTL_SECONDS", "reportingTicketTtlSeconds", 300, int),
         namespaces_read_enabled=_bool_setting(raw, "GSD_NAMESPACES_READ_ENABLED", "namespacesReadEnabled", False),
+        namespace_metadata_labels=_string_list_setting(raw, "namespaceMetadataLabels", ()),
         user_activity_visibility=_visibility_setting(raw),
         user_activity_flush_seconds=_num_setting(
             raw, "GSD_USER_ACTIVITY_FLUSH_SECONDS", "userActivityFlushSeconds", 60, int
