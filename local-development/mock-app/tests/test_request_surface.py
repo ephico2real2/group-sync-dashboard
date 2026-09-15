@@ -64,6 +64,28 @@ def test_fetch_namespaces(client):
     assert by["acme-app"]["metadata"] == {"team": "acme"}
 
 
+def test_fetch_namespaces_two_dimension_metadata(client):
+    # The multi-dimension selector reads BOTH company.net/mnemonic and company.net/app-environment
+    # (docs/DESIGN_reporting_selectors_snapshots_and_windows.md §6). The client down-selects to
+    # exactly the requested keys that are PRESENT — both on a two-dimension namespace, only the
+    # mnemonic on the missing-dimension negative case, never the whole label map.
+    keys = ["company.net/mnemonic", "company.net/app-environment"]
+    by = {n["name"]: n for n in client.fetch_namespaces(keys)}
+    assert by["demo-prod"]["metadata"] == {"company.net/mnemonic": "demo",
+                                           "company.net/app-environment": "prod"}
+    assert by["demo-qa"]["metadata"] == {"company.net/mnemonic": "demo",
+                                         "company.net/app-environment": "qa"}
+    assert by["platform-prod"]["metadata"] == {"company.net/mnemonic": "klta",
+                                               "company.net/app-environment": "prod"}
+    # acme-app also carries team + kubernetes.io/metadata.name; neither is requested, so only the
+    # two company.net keys come back.
+    assert by["acme-app"]["metadata"] == {"company.net/mnemonic": "acme",
+                                          "company.net/app-environment": "prod"}
+    # Negative case: only the mnemonic is present, so only it is copied — this namespace drops out
+    # of any AND-across-dimensions selection that also constrains app-environment.
+    assert by["gsd-shared"]["metadata"] == {"company.net/mnemonic": "gsd"}
+
+
 # ── (f)+(g) Group + User bindings ────────────────────────────────────────────────────────
 def test_fetch_bindings(client):
     rows = client.fetch_bindings()
