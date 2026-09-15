@@ -8,7 +8,7 @@ lives next to the code and in the design and review records linked here. Changes
 last release sit under `## Unreleased` until the release that carries them replaces that heading —
 which `local-development/prepare-release.py` does when the release is cut.
 
-## Unreleased
+## Application 0.20.0 — chart 0.26.0 — 2026-09-14
 
 - **Retire clusters removed from the configuration (#96).** A cluster dropped from `clusters:` (or one
   with `enabled: false`) no longer lingers in the UI as `ok` with frozen data and stale "overdue" alerts.

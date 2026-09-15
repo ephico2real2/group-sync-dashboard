@@ -169,7 +169,7 @@ type: application
 # proxy — or refuses, naming the value, where the release cannot host one.
 # CHART 0.21.0 (2026-09-13), MINOR: appVersion moves to application 0.19.0 (below); Per-cluster
 # authorization for the multi-cluster case: clusters[].visibility and clusters[].identity (D2).
-version: 0.25.0
+version: 0.26.0
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,
@@ -245,7 +245,7 @@ version: 0.25.0
 # poller writes a VACUUM INTO copy for the report pod and pulls its usage. Additive on the wire. MINOR.
 # 0.19.0 (2026-09-13). Per-cluster authorization for the multi-cluster case: clusters[].visibility
 # and clusters[].identity (D2). MINOR.
-appVersion: "0.19.0"
+appVersion: "0.20.0"
 
 keywords: [openshift, ldap, rbac, groupsync, observability]
 home: https://github.com/ephico2real2/group-sync-dashboard
