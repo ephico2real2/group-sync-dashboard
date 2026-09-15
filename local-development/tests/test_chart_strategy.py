@@ -556,10 +556,15 @@ class TestTheUsersGrantIsReadOnlyAndOptional:
     """
 
     def _users_rules(self, out):
+        # The MAIN rbac ClusterRole's users grant only. The read-only audit role (rbacAuditors, on by
+        # default) independently grants get/list on users — by design — so it is excluded here; this
+        # class is about `rbac.users`, the Users-tab source, not the auditor gate.
         import yaml
         found = []
         for doc in yaml.safe_load_all(out):
             if doc and doc.get("kind") in ("ClusterRole", "Role"):
+                if "report-auditor" in ((doc.get("metadata") or {}).get("name") or ""):
+                    continue
                 for rule in doc.get("rules") or []:
                     if "users" in (rule.get("resources") or []):
                         found.append(rule)
@@ -1690,8 +1695,18 @@ class TestReportingAuditors:
     auditor ClusterRole and a name-based ClusterRoleBinding per group, with render guards. Each
     render state is asserted so a future edit that breaks one is caught."""
 
-    def test_off_by_default_renders_no_auditor_objects(self):
-        ok, out = render()                                   # full chart: the auditor file is empty when off
+    def test_on_by_default_renders_the_auditor_objects(self):
+        # ON by default (the chart's on-by-default rule): a default install binds the named auditor
+        # group to the read-only audit ClusterRole, so an environment that forgets the value keeps the
+        # gate rather than silently dropping it. The default group is synced (createLocal:false), so a
+        # ClusterRole and a ClusterRoleBinding render, never a Group.
+        ok, docs, out = _auditor_docs()                      # no --set: the chart defaults
+        assert ok, out[-800:]
+        assert sorted(d["kind"] for d in docs) == ["ClusterRole", "ClusterRoleBinding"], docs
+        assert not any(d["kind"] == "Group" for d in docs), "the default group is synced, not created locally"
+
+    def test_explicit_disable_renders_no_auditor_objects(self):
+        ok, out = render(rbacAuditors__enabled="false")      # an env file disables explicitly
         assert ok, out[-800:]
         assert "report-auditor" not in out and "-ra-" not in out, out[-800:]
 

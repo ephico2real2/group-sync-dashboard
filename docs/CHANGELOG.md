@@ -8,6 +8,10 @@ lives next to the code and in the design and review records linked here. Changes
 last release sit under `## Unreleased` until the release that carries them replaces that heading —
 which `local-development/prepare-release.py` does when the release is cut.
 
+## Application 0.20.0 — chart 0.27.0 — 2026-09-15
+
+- **Reporting auditors ON by default (chart).** `rbacAuditors.enabled` now defaults to `true`, per the chart's on-by-default rule: a default install binds the named auditor group (`app-ocp-rbac-groupsync-ns-auditor`, `createLocal: false` — bind-only) to a read-only audit ClusterRole, so an environment values file that does not mention it keeps the auditor gate rather than silently dropping it. The binding is inert where that group does not exist. Set `rbacAuditors.enabled: false` in an environment file to render nothing. Fixes the recurrence where a `helm upgrade -f <env>.yaml` dropped the auditor RBAC because the default was opt-in.
+
 ## Application 0.20.0 — chart 0.26.0 — 2026-09-14
 
 - **Retire clusters removed from the configuration (#96).** A cluster dropped from `clusters:` (or one
