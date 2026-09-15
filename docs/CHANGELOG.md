@@ -8,9 +8,14 @@ lives next to the code and in the design and review records linked here. Changes
 last release sit under `## Unreleased` until the release that carries them replaces that heading —
 which `local-development/prepare-release.py` does when the release is cut.
 
+## Application 0.20.0 — chart 0.28.0 — 2026-09-15
+
+- **Docs: correct the chart README rbacAuditors default.** The README still listed `rbacAuditors.enabled` default as `false` / opt-in after 0.27.0 flipped it on; it now states the on-by-default behaviour, that the binding is inert until the named group has members, and that a populated group then reaches the wide report tier. Values behaviour is unchanged from 0.27.0 (review #121 follow-up, Cursor F1).
+
 ## Application 0.20.0 — chart 0.27.0 — 2026-09-15
 
 - **Reporting auditors ON by default (chart).** `rbacAuditors.enabled` now defaults to `true`, per the chart's on-by-default rule: a default install binds the named auditor group (`app-ocp-rbac-groupsync-ns-auditor`, `createLocal: false` — bind-only) to a read-only audit ClusterRole, so an environment values file that does not mention it keeps the auditor gate rather than silently dropping it. The binding is inert where that group does not exist. Set `rbacAuditors.enabled: false` in an environment file to render nothing. Fixes the recurrence where a `helm upgrade -f <env>.yaml` dropped the auditor RBAC because the default was opt-in.
+  - **UPGRADE NOTE (0.26.0 → 0.27.0):** on a cluster where the named group `app-ocp-rbac-groupsync-ns-auditor` already exists (an LDAP sync, say), this upgrade GRANTS its members cluster-wide read on users/groups/RBAC objects AND the dashboard's wide report tier — read-only and installer-conferred, but a new grant relative to 0.26.0. On any cluster where you do not want that, set `rbacAuditors.enabled: false` before upgrading. Where the group has no members (or does not exist) the binding is inert.
 
 ## Application 0.20.0 — chart 0.26.0 — 2026-09-14
 
