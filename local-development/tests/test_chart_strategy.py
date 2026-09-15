@@ -593,9 +593,12 @@ class TestTheUsersGrantIsReadOnlyAndOptional:
             "groups" in (rule.get("resources") or [])
             for doc in yaml.safe_load_all(out)
             if doc and doc.get("kind") == "ClusterRole"
+            # the MAIN reader role, not the always-on audit role which independently grants groups
+            # (review #121 pass 2, Codex C2): otherwise deleting the main role's groups rule still passes.
+            and "report-auditor" not in ((doc.get("metadata") or {}).get("name") or "")
             for rule in doc.get("rules") or []
         )
-        assert groups_granted, "declining the users grant must not disturb the groups grant"
+        assert groups_granted, "declining the users grant must not disturb the main role's groups grant"
 
     def test_users_is_never_granted_when_rbac_is_off_entirely(self):
         ok, out = render(rbac__create="false")
