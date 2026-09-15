@@ -206,7 +206,10 @@ class TestDerivations:
 
     def test_off_renders_none_of_it(self):
         docs = _render("reporting.enabled=false", "monitoring.prometheusRule.enabled=true", "monitoring.serviceMonitor.enabled=true")
-        assert not [d for d in docs if d["metadata"]["name"].startswith("t-group-sync-dashboard-report")]
+        # `report-auditor` is the rbacAuditors ClusterRole (on by default), gated by rbacAuditors.enabled
+        # not reporting.enabled — it shares the "report" prefix but is not a reporting object.
+        assert not [d for d in docs if d["metadata"]["name"].startswith("t-group-sync-dashboard-report")
+                    and "report-auditor" not in d["metadata"]["name"]]
         proxy = _container(_exact(docs, "Deployment", "t-group-sync-dashboard"), "oauth-proxy")
         assert not any("report" in a for a in proxy["args"])
         rules = [r["alert"] for d in docs if d.get("kind") == "PrometheusRule" for g in d["spec"]["groups"] for r in g["rules"] if "alert" in r]
