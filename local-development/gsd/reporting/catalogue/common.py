@@ -29,7 +29,7 @@ class ValidationError(ValueError):
 @dataclass(frozen=True)
 class ParamSpec:
     name: str
-    type: str                      # "namespaces" | "bool" | "int" | "str" | "date" | "enum" | "csv"
+    type: str                      # "namespaces" | "bool" | "int" | "str" | "date" | "enum" | "csv" | "selector-map"
     default: Any
     help: str
     choices: tuple[str, ...] = ()
@@ -75,6 +75,9 @@ class RunContext:
     schema_version: int
     #: The captured namespace-metadata key the namespace-access report selects on (B2). "" = no selector.
     namespace_selector_label: str = ""
+    #: The ordered selector DIMENSIONS the report offers (P2): company.net/mnemonic AND
+    #: company.net/app-environment. Empty = single-dimension (falls back to namespace_selector_label).
+    namespace_selector_labels: tuple[str, ...] = ()
 
 
 @dataclass
@@ -111,6 +114,36 @@ def _string_items(value: object, name: str) -> list[str]:
     if isinstance(value, list) and all(isinstance(item, str) for item in value):
         return list(value)
     raise ValidationError(f"{name} must be a comma-separated string or a list of strings")
+
+
+def validate_selector_map(value: object, name: str) -> dict[str, list[str]]:
+    """A `{label: [values]}` selection for the multi-dimension namespace selector (P2). STRUCTURE
+    only — the check that each label is one of the deployment's configured selector labels needs the
+    settings and stays in the report's build(). Values within a dimension are OR'd, dimensions are
+    AND'd (docs/DESIGN_reporting_selectors_snapshots_and_windows.md §3). An OMITTED dimension is
+    unconstrained; a PRESENT dimension with no values is a 422, so a blank multi-select cannot
+    silently select nothing and fail every run. Values are stripped, blanks skipped, de-duplicated;
+    the aggregate is bounded like the explicit-names path."""
+    if not isinstance(value, dict) or not value:
+        raise ValidationError(f"{name} must be a non-empty object of label -> [values]")
+    out: dict[str, list[str]] = {}
+    total = 0
+    for label, values in value.items():
+        if not isinstance(label, str) or not label.strip():
+            raise ValidationError(f"{name} label must be a non-empty string")
+        cleaned: list[str] = []
+        for v in _string_items(values, f"{name}[{label}]"):
+            v = v.strip()
+            if v and v not in cleaned:
+                cleaned.append(v)
+        if not cleaned:
+            raise ValidationError(
+                f"{name}[{label}] must have at least one value (omit the dimension to leave it unconstrained)")
+        out[label] = cleaned
+        total += len(cleaned)
+    if total > MAX_NAMESPACES:
+        raise ValidationError(f"at most {MAX_NAMESPACES} selector values in total")
+    return out
 
 
 def validate_params(spec: ReportSpec, raw: dict | None) -> dict:
@@ -167,6 +200,8 @@ def validate_params(spec: ReportSpec, raw: dict | None) -> dict:
             out[p.name] = value
         elif p.type == "csv":
             out[p.name] = [t.strip() for t in _string_items(value, p.name) if t.strip()]
+        elif p.type == "selector-map":
+            out[p.name] = validate_selector_map(value, p.name)
         else:  # "str"
             # A string is a string: a number was stringified here while the record said "strings
             # must be strings" (review of C3, second pass, Cursor).

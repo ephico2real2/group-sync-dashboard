@@ -225,7 +225,9 @@ class TestDerivations:
         pod = cron["spec"]["jobTemplate"]["spec"]["template"]
         assert pod["metadata"]["labels"]["app.kubernetes.io/component"] == "report-schedule"
         command = " ".join(pod["spec"]["containers"][0]["command"] + pod["spec"]["containers"][0].get("args", []))
-        for piece in ("--report access-matrix", "--cluster crc-local", "--schedule weekly", "--wait", "subject_kind=groups", "--format html"):
+        # P2: params ride as one --params-json JSON object, not repeated --param k=v (Helm %v is not JSON).
+        for piece in ("--report access-matrix", "--cluster crc-local", "--schedule weekly", "--wait",
+                      "--params-json", '"subject_kind":"groups"', "--format html"):
             assert piece in command, (piece, command)
 
     def test_the_namespaces_grant_follows_its_switch(self):

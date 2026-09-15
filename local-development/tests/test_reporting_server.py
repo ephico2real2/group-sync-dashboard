@@ -418,3 +418,47 @@ class TestNamespaceSelectorsOnTheCatalogue:
             r = client.get(f"{REPORT_PREFIX}/api/reports", headers=_viewer())
             assert r.status_code == 200, r.text
             assert r.json()["namespaceSelectors"] == {}
+
+
+class TestNamespaceCountPreview:
+    """P2 #107: the read-only GET count of namespaces the selectors expand to, shown beside Generate."""
+
+    def _app(self, tmp_path):
+        from gsd.store import Store
+        snapshots, artifacts = tmp_path / "snap", tmp_path / "art"
+        snapshots.mkdir(); artifacts.mkdir()
+        store = Store(str(tmp_path / "w.db"))
+        store.upsert_cluster("crc-local", "https://k8s", True)
+        store.replace_namespaces("crc-local", [
+            {"name": "demo-prod", "created_at": None, "phase": "Active",
+             "metadata": {"company.net/mnemonic": "demo", "company.net/app-environment": "prod"}},
+            {"name": "demo-qa", "created_at": None, "phase": "Active",
+             "metadata": {"company.net/mnemonic": "demo", "company.net/app-environment": "qa"}},
+            {"name": "beta-prod", "created_at": None, "phase": "Active",
+             "metadata": {"company.net/mnemonic": "beta", "company.net/app-environment": "prod"}},
+        ], "2026-09-14T00:00:00Z")
+        assert store.snapshot(str(snapshots), keep=2); store.close()
+        return build_report_app(
+            _settings(snapshots, artifacts,
+                      namespace_selector_labels=("company.net/mnemonic", "company.net/app-environment")),
+            secret=SECRET, clock=lambda: FROZEN)
+
+    def test_count_for_a_two_dimension_selection(self, tmp_path):
+        import json as _json
+        with TestClient(self._app(tmp_path)) as client:
+            sel = _json.dumps({"company.net/mnemonic": ["demo"], "company.net/app-environment": ["prod"]})
+            r = client.get(f"{REPORT_PREFIX}/api/namespace-count",
+                           params={"cluster": "crc-local", "selectors": sel}, headers=_viewer())
+            assert r.status_code == 200, r.text
+            assert r.json() == {"namespaces": 1}                       # only demo-prod
+            sel2 = _json.dumps({"company.net/app-environment": ["prod"]})
+            r2 = client.get(f"{REPORT_PREFIX}/api/namespace-count",
+                            params={"cluster": "crc-local", "selectors": sel2}, headers=_viewer())
+            assert r2.json() == {"namespaces": 2}                      # demo-prod, beta-prod
+
+    def test_null_for_empty_or_malformed_selection(self, tmp_path):
+        with TestClient(self._app(tmp_path)) as client:
+            for bad in ("", "notjson", "{}", '{"company.net/mnemonic": []}'):
+                r = client.get(f"{REPORT_PREFIX}/api/namespace-count",
+                               params={"cluster": "crc-local", "selectors": bad}, headers=_viewer())
+                assert r.status_code == 200 and r.json() == {"namespaces": None}, (bad, r.text)

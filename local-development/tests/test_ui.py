@@ -4080,11 +4080,12 @@ class TestReportsTab:
         finally:
             ctx.close()
 
-    def test_the_mnemonic_multiselect_posts_an_array_and_resets_on_cluster_switch(self, browser, reporting_server):
-        # B3, §3.7 + review #117 (C2/C4/C5): the form renders ONE multi-select of the cluster's captured
-        # values ahead of the advanced explicit-names field; the POST carries the selected values as an
-        # ARRAY (`el.value` gives only the first); a cluster switch drops the stale selection so cluster
-        # A's mnemonics are never posted against cluster B.
+    def test_the_multidimension_selector_posts_a_map_and_resets_on_cluster_switch(self, browser, reporting_server):
+        # P2 + review #117 (C2/C4/C5): the form renders ONE multi-select PER configured dimension
+        # (company.net/mnemonic AND company.net/app-environment); the id is index-based because a dotted
+        # label is not a valid CSS id, and the real key is in data-selector-label. The POST carries
+        # `selectors` as a {label: [values]} map (each select's `.value` gives only the first option); a
+        # cluster switch drops the stale selection so cluster A's values are never posted against B.
         import json as _json
         base, _, _ = reporting_server
         ctx, page, errors = _reports_page(browser, base, "root")
@@ -4092,33 +4093,41 @@ class TestReportsTab:
             page.click('button.tab:text-is("Reports")')
             page.wait_for_selector("#report-picker")
             page.evaluate("""() => {
-                data.reportCatalog.namespaceSelectors = {
-                    "crc-local": {label: "company.net/mnemonic", values: ["beta", "demo"]},
-                    "prod-east": {label: "company.net/mnemonic", values: ["gamma"]},
+                data.reportCatalog.namespaceSelectorDimensions = {
+                    "crc-local": [
+                        {label: "company.net/mnemonic", values: ["beta", "demo"]},
+                        {label: "company.net/app-environment", values: ["prod", "qa"]},
+                    ],
+                    "prod-east": [
+                        {label: "company.net/mnemonic", values: ["gamma"]},
+                        {label: "company.net/app-environment", values: ["prod"]},
+                    ],
                 };
                 view.reportPick = "namespace-access";
                 render();
             }""")
-            assert page.locator('[data-param="mnemonics"]').count() == 1                      # ONE control, no duplicate
-            assert page.locator("#report-mnemonics option").evaluate_all("es => es.map(o => o.value)") == ["beta", "demo"]
-            assert page.locator("#report-param-namespace-access-namespaces").count() == 1     # the advanced field is kept
-            page.select_option("#report-mnemonics", ["beta", "demo"])
-            page.locator("#report-mnemonics").dispatch_event("change")
-            assert page.evaluate("() => view.reportForm['namespace-access'].mnemonics") == ["beta", "demo"]
-            # The actual POST carries the array against THIS cluster. expect_request resolves when the
-            # request is SENT, so the body is captured whatever the run's own outcome — the request
-            # shape (an array, not "beta") is what B3 is about.
+            assert page.locator('[data-param="selectors"]').count() == 2                       # one select per dimension
+            assert page.locator("#report-selector-0").get_attribute("data-selector-label") == "company.net/mnemonic"
+            assert page.locator("#report-selector-1").get_attribute("data-selector-label") == "company.net/app-environment"
+            assert page.locator("#report-selector-0 option").evaluate_all("es => es.map(o => o.value)") == ["beta", "demo"]
+            assert page.locator("#report-param-namespace-access-namespaces").count() == 1      # advanced field kept
+            page.select_option("#report-selector-0", ["beta", "demo"]); page.locator("#report-selector-0").dispatch_event("change")
+            page.select_option("#report-selector-1", ["prod"]); page.locator("#report-selector-1").dispatch_event("change")
+            assert page.evaluate("() => view.reportForm['namespace-access'].selectors") == {
+                "company.net/mnemonic": ["beta", "demo"], "company.net/app-environment": ["prod"]}
+            # The actual POST carries the MAP against THIS cluster. expect_request resolves when the
+            # request is SENT, so the body is captured whatever the run's own outcome.
             with page.expect_request(lambda r: r.url.endswith("/api/runs") and r.method == "POST") as info:
                 page.locator("#report-generate").click()
             body = _json.loads(info.value.post_data)
             assert body["cluster"] == "crc-local"
-            assert body["params"]["mnemonics"] == ["beta", "demo"]
-            # A cluster switch through the real navigate() -> applyPosition path — the one the #f-cluster
-            # selector, popstate and hashchange all fire — drops the stale mnemonic and re-lists the new
-            # cluster's options, so a cluster-A value can never be posted against cluster B (#117 C4).
+            assert body["params"]["selectors"] == {
+                "company.net/mnemonic": ["beta", "demo"], "company.net/app-environment": ["prod"]}
+            # A cluster switch through the real navigate() -> applyPosition path drops the stale selection
+            # and re-lists the new cluster's dimensions, so a cluster-A value can never reach cluster B.
             page.evaluate("() => { navigate({ cluster: 'prod-east', groupsync: null, group: null, user: null }); render(); }")
-            assert page.evaluate("() => (view.reportForm['namespace-access'] || {}).mnemonics") is None
-            assert page.locator("#report-mnemonics option").evaluate_all("es => es.map(o => o.value)") == ["gamma"]
+            assert page.evaluate("() => (view.reportForm['namespace-access'] || {}).selectors") is None
+            assert page.locator("#report-selector-0 option").evaluate_all("es => es.map(o => o.value)") == ["gamma"]
             assert not errors, errors
         finally:
             ctx.close()

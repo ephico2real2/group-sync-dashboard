@@ -10,6 +10,7 @@ cannot be added without saying who may call it.
 from __future__ import annotations
 
 import hmac
+import json
 import logging
 import os
 import secrets
@@ -25,6 +26,7 @@ from ..activity import USER_HEADER
 from . import REPORT_PREFIX, TICKET_HEADER
 from .artifacts import FORMATS, ArtifactStore, Run, new_run_id
 from .catalogue import REGISTRY, ValidationError, validate_params
+from .catalogue.common import validate_selector_map
 from .config import ReportSettings, load_report_settings
 from .metrics import ReportSignals, build_report_registry
 from .runs import QueueFull, RunManager
@@ -161,16 +163,25 @@ def build_report_app(settings: ReportSettings, *, secret: bytes | None = None, c
         missing, unreadable or corrupt snapshot returns an empty map and the form hides the control,
         never a 500 — the whole read (open AND the table gather) is behind SnapshotError in the backend.
         """
+        # P2: `namespaceSelectorDimensions` carries one {label, values} per configured selector label
+        # (multi-dimension); `namespaceSelectors` keeps the single first-dimension shape for one release
+        # so a dashboard and report pod rolling independently never crash the Reports form.
+        labels = list(settings.namespace_selector_labels) or (
+            [settings.namespace_selector_label] if settings.namespace_selector_label else [])
         selectors: dict[str, dict] = {}
+        dimensions: dict[str, list] = {}
         try:
             with Snapshot(newest_snapshot(settings.snapshot_dir)) as snap:
-                selectors = snap.namespace_selectors(settings.namespace_selector_label)
+                dimensions = snap.namespace_selector_dimensions(labels)
+                selectors = snap.namespace_selectors(labels[0] if labels else "")
         except (SnapshotError, OSError):
             selectors = {}      # a missing, unreadable or corrupt snapshot must not 500 the catalogue; the UI hides the control
+            dimensions = {}
         return {"reports": [spec.as_json(spec.name in settings.enabled_reports) for spec, _ in REGISTRY.values()],
                 "pdf": {"enabled": settings.pdf_enabled, "variant": settings.pdf_variant},
                 "viewer": p.name if p.kind == "viewer" else None,
-                "namespaceSelectors": selectors}
+                "namespaceSelectors": selectors,
+                "namespaceSelectorDimensions": dimensions}
 
     @app.get(f"{REPORT_PREFIX}/api/snapshot")
     def snapshot_info(p: Principal = Depends(principal)) -> dict:
@@ -182,6 +193,28 @@ def build_report_app(settings: ReportSettings, *, secret: bytes | None = None, c
             return {"available": False, "reason": str(exc)}
         return {"available": True, "stamp": info.stamp, "age_seconds": round(info.age_seconds(now())),
                 "schema_version": info.schema_version, "bytes": info.bytes}
+
+    @app.get(f"{REPORT_PREFIX}/api/namespace-count")
+    def namespace_count(cluster: str = Query(..., description="the cluster id to count within"),
+                        selectors: str = Query("", description="the namespace-access selectors as a JSON object"),
+                        p: Principal = Depends(principal)) -> dict:
+        """Read-only preview (#107): the count of namespaces the namespace-access `selectors` expand to.
+
+        The number shown beside Generate before a heavy run. No artifact, no store write, and a GET, so
+        it never touches the one-write invariant. Bad input, an empty selection or a missing snapshot
+        returns a null count and the form shows nothing rather than an error."""
+        try:
+            parsed = json.loads(selectors) if selectors else {}
+            sel = validate_selector_map(parsed, "selectors") if parsed else {}
+        except (ValueError, ValidationError):
+            return {"namespaces": None}
+        if not sel:
+            return {"namespaces": None}
+        try:
+            with Snapshot(newest_snapshot(settings.snapshot_dir)) as snap:
+                return {"namespaces": len(snap.namespaces_for_selectors(cluster, sel))}
+        except (SnapshotError, OSError):
+            return {"namespaces": None}
 
     # -- runs -----------------------------------------------------------------------------------
 

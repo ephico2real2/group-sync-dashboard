@@ -8,6 +8,11 @@ lives next to the code and in the design and review records linked here. Changes
 last release sit under `## Unreleased` until the release that carries them replaces that heading —
 which `local-development/prepare-release.py` does when the release is cut.
 
+## Application 0.21.0 — chart 0.29.0 — 2026-09-15
+
+- **Multi-dimension namespace selector (P2).** The namespace-access report now selects on more than one captured metadata dimension at once — `company.net/mnemonic` **and** `company.net/app-environment` — combined AND across dimensions, OR within a dimension. `reporting.namespaceSelector.label` (a single key) becomes `reporting.namespaceSelector.labels` (an ordered list, each of which must be one of `reporting.namespaceMetadata.labels`); the singular is still honoured for one release when the list is empty. The Reports form renders one multi-select per dimension, and a debounced **preview count (#107)** shows how many namespaces the current selection expands to before a heavy run. Scheduled-report params now ride as one `--params-json` JSON object (Helm's `%v` cannot express a nested map), and the report service gains a read-only `GET /report/api/namespace-count` for the preview.
+  - **UPGRADE NOTE:** no behaviour change for an existing single-label deployment — `reporting.namespaceSelector.label` keeps working. To select on two dimensions, set `reporting.namespaceSelector.labels: [company.net/mnemonic, company.net/app-environment]` (both must be in `reporting.namespaceMetadata.labels`). The deprecated `mnemonics` report parameter still works one release; prefer `selectors`.
+
 ## Application 0.20.0 — chart 0.28.0 — 2026-09-15
 
 - **Docs: correct the chart README rbacAuditors default.** The README still listed `rbacAuditors.enabled` default as `false` / opt-in after 0.27.0 flipped it on; it now states the on-by-default behaviour, that the binding is inert until the named group has members, and that a populated group then reaches the wide report tier. Values behaviour is unchanged from 0.27.0 (review #121 follow-up, Cursor F1).

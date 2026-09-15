@@ -52,9 +52,9 @@ spec:
                 - --schedule
                 - {{ $s.name | quote }}
                 - --wait
-                {{- range $k, $v := ($s.params | default dict) }}
-                - --param
-                - {{ printf "%s=%v" $k $v | quote }}
+                {{- with ($s.params | default dict) }}
+                - --params-json
+                - {{ toJson . | quote }}
                 {{- end }}
                 {{- range $f := ($s.formats | default (list "html" "pdf")) }}
                 - --format

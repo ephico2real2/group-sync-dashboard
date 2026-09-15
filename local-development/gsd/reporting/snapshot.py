@@ -210,6 +210,33 @@ class Snapshot:
             f"SELECT name FROM cluster_namespace_label WHERE cluster_id=? AND key=? AND value IN ({marks}) "
             "ORDER BY name", (cluster_id, key, *values))]
 
+    def namespace_selector_dimensions(self, keys: list[str]) -> dict[str, list[dict]]:
+        """Per cluster id, one {label, values} entry per configured selector key, for the P2
+        multi-dimension multi-select. Behind the same sqlite3.Error -> SnapshotError boundary as
+        namespace_selectors, so a rotted copy degrades the catalogue to an empty map, never a 500
+        (the storage seam, tests/test_storage_seam.py)."""
+        try:
+            return {row["id"]: [{"label": k, "values": self.namespace_metadata_values(row["id"], k)}
+                                for k in keys if k]
+                    for row in self.clusters()}
+        except sqlite3.Error as exc:
+            raise SnapshotError(f"cannot read snapshot {Path(self.path).name}: not readable SQLite data") from exc
+
+    def namespaces_for_selectors(self, cluster_id: str, selectors: dict[str, list[str]]) -> list[str]:
+        """Namespace names matching EVERY selector dimension (AND across labels), where a dimension
+        matches ANY of its values (OR within). Composes the single-key `namespaces_for_metadata`
+        expansion and intersects in Python, so the SQL stays the form already tested and the AND is
+        explicit (docs/DESIGN_reporting_selectors_snapshots_and_windows.md §3). Empty selection -> []."""
+        if not selectors or not self.has_table("cluster_namespace_label"):
+            return []
+        result: set[str] | None = None
+        for key, values in selectors.items():
+            matched = set(self.namespaces_for_metadata(cluster_id, key, values))
+            result = matched if result is None else (result & matched)
+            if not result:
+                return []
+        return sorted(result or set())
+
     def login_capture_status(self, cluster_id: str) -> dict | None:
         return self._row("SELECT started_at, last_read_at FROM login_capture_status WHERE cluster_id = ?", (cluster_id,))
 
