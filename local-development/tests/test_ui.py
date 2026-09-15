@@ -4080,6 +4080,34 @@ class TestReportsTab:
         finally:
             ctx.close()
 
+    def test_the_mnemonic_multiselect_posts_an_array_and_follows_the_cluster(self, browser, reporting_server):
+        # B3, §3.7: the namespace-access form renders a multi-select of the cluster's captured selector
+        # values ahead of the advanced explicit-names field; selecting several posts an ARRAY (`el.value`
+        # would give only the first); switching the cluster changes the options.
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.click('button.tab:text-is("Reports")')
+            page.wait_for_selector("#report-picker")
+            page.evaluate("""() => {
+                data.reportCatalog.namespaceSelectors = {
+                    "crc-local": {label: "company.net/mnemonic", values: ["beta", "demo"]},
+                    "prod-east": {label: "company.net/mnemonic", values: ["gamma"]},
+                };
+                view.reportPick = "namespace-access";
+                render();
+            }""")
+            assert page.locator("#report-mnemonics option").evaluate_all("es => es.map(o => o.value)") == ["beta", "demo"]
+            assert page.locator("#report-param-namespace-access-namespaces").count() == 1   # the advanced field is kept
+            page.select_option("#report-mnemonics", ["beta", "demo"])
+            page.locator("#report-mnemonics").dispatch_event("change")
+            assert page.evaluate("() => view.reportForm['namespace-access'].mnemonics") == ["beta", "demo"]
+            page.evaluate("() => { view.cluster = 'prod-east'; render(); }")
+            assert page.locator("#report-mnemonics option").evaluate_all("es => es.map(o => o.value)") == ["gamma"]
+            assert not errors, errors
+        finally:
+            ctx.close()
+
     def test_a_narrowed_reader_sees_the_refusal_card_never_a_blank(self, browser, reporting_server):
         base, _, _ = reporting_server
         ctx, page, errors = _reports_page(browser, base, "alice")

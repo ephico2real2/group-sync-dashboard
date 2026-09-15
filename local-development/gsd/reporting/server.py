@@ -155,10 +155,24 @@ def build_report_app(settings: ReportSettings, *, secret: bytes | None = None, c
 
         The page renders its forms from `params`; a disabled report is listed with `enabled: false`
         and its values key, so "why is this greyed out" has an answer on the wire.
+
+        `namespaceSelectors` carries, per cluster id, the mnemonic label and its captured values so the
+        namespace-access form can render the multi-select (B3). Opening the snapshot is best-effort: a
+        missing first snapshot returns an empty map and the form hides the control, never a 500.
         """
+        selectors: dict[str, dict] = {}
+        try:
+            with Snapshot(newest_snapshot(settings.snapshot_dir)) as snap:
+                label = settings.namespace_selector_label
+                for row in snap.clusters():
+                    selectors[row["id"]] = {"label": label,
+                                            "values": snap.namespace_metadata_values(row["id"], label) if label else []}
+        except (SnapshotError, OSError):
+            selectors = {}      # a missing first snapshot must not 500 the catalogue; the UI hides the control
         return {"reports": [spec.as_json(spec.name in settings.enabled_reports) for spec, _ in REGISTRY.values()],
                 "pdf": {"enabled": settings.pdf_enabled, "variant": settings.pdf_variant},
-                "viewer": p.name if p.kind == "viewer" else None}
+                "viewer": p.name if p.kind == "viewer" else None,
+                "namespaceSelectors": selectors}
 
     @app.get(f"{REPORT_PREFIX}/api/snapshot")
     def snapshot_info(p: Principal = Depends(principal)) -> dict:

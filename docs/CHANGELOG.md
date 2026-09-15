@@ -18,6 +18,12 @@ which `local-development/prepare-release.py` does when the release is cut.
   served cluster at all, `/api/alerts` fails closed to `scope: self` like `/api/whoami`). Its history and snapshot rows
   stay, so an already-generated report still reads them (docs/ACCESS_CONTROL.md §11). Supersedes the D2
   behaviour where a removed cluster resolved to `inherit` and stayed in the list.
+- **Reporting: a mnemonic multi-select on the namespace-access form (#103, B3).** The report catalogue
+  (`/report/api/reports`) now returns per-cluster `namespaceSelectors` — the configured selector label and
+  its captured values, opened best-effort from the snapshot (a missing first snapshot returns an empty map,
+  never a 500). The Reports form renders a checkable multi-select of those values ahead of the advanced
+  explicit-names field, and a `readParamEl` helper serialises a `<select multiple>` as the full array (its
+  `value` is only the first option). Completes Extension B: capture (0.22.0) → API (0.24.0) → GUI here.
 
 ## Application 0.19.0 — chart 0.25.0 — 2026-09-14
 
