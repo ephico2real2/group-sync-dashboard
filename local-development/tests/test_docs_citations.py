@@ -160,6 +160,11 @@ REVIEW_ARTIFACTS = (
     # PR #118 (mock-app) review: cites the workflow lines and mock_app symbols the findings refuse
     # or replace (placeholder SHAs, the SA-subject SAR gap, the apiVersion envelope).
     "REVIEW_mock_cluster.md",
+    # PR #127 (selectors/snapshot-modes/windows) DESIGN review: quotes the as-is lines and symbols
+    # the findings correct (validate_params' closed type set, the poll-thread-only VACUUM, the R6
+    # GET-only contract, principal.kind, the interval-floor bypass) verbatim by file:line — a design
+    # review of code that does not exist yet, so its citations are point-in-time by construction.
+    "REVIEW_reporting_selectors_snapshots_windows.md",
 )
 
 
