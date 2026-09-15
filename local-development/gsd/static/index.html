@@ -187,6 +187,10 @@ function applyPosition(pos) {
       // empty state would blame the chip, but the reader never chose it here. Reset, like
       // memberSearch on a group change; the free-text search is a person, and persists.
       view.userFilter = "all"; view.showNeverNames = false;
+      // The mnemonic selection is THIS cluster's captured label values (B3, review #117 C4): carried
+      // across, a cluster-A mnemonic would be posted against cluster B — a failed run, or a hidden XOR
+      // 422 if the reader then typed explicit names. Drop it; the explicit names are the reader's text.
+      if (view.reportForm["namespace-access"]) delete view.reportForm["namespace-access"].mnemonics;
       // Same reasoning for the Access granted search: it names this cluster's groups and
       // namespaces. The sort is a preference, not a cluster fact, and stays.
       view.bindingSearch = "";

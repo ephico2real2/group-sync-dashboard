@@ -4080,10 +4080,12 @@ class TestReportsTab:
         finally:
             ctx.close()
 
-    def test_the_mnemonic_multiselect_posts_an_array_and_follows_the_cluster(self, browser, reporting_server):
-        # B3, §3.7: the namespace-access form renders a multi-select of the cluster's captured selector
-        # values ahead of the advanced explicit-names field; selecting several posts an ARRAY (`el.value`
-        # would give only the first); switching the cluster changes the options.
+    def test_the_mnemonic_multiselect_posts_an_array_and_resets_on_cluster_switch(self, browser, reporting_server):
+        # B3, §3.7 + review #117 (C2/C4/C5): the form renders ONE multi-select of the cluster's captured
+        # values ahead of the advanced explicit-names field; the POST carries the selected values as an
+        # ARRAY (`el.value` gives only the first); a cluster switch drops the stale selection so cluster
+        # A's mnemonics are never posted against cluster B.
+        import json as _json
         base, _, _ = reporting_server
         ctx, page, errors = _reports_page(browser, base, "root")
         try:
@@ -4097,12 +4099,25 @@ class TestReportsTab:
                 view.reportPick = "namespace-access";
                 render();
             }""")
+            assert page.locator('[data-param="mnemonics"]').count() == 1                      # ONE control, no duplicate
             assert page.locator("#report-mnemonics option").evaluate_all("es => es.map(o => o.value)") == ["beta", "demo"]
-            assert page.locator("#report-param-namespace-access-namespaces").count() == 1   # the advanced field is kept
+            assert page.locator("#report-param-namespace-access-namespaces").count() == 1     # the advanced field is kept
             page.select_option("#report-mnemonics", ["beta", "demo"])
             page.locator("#report-mnemonics").dispatch_event("change")
             assert page.evaluate("() => view.reportForm['namespace-access'].mnemonics") == ["beta", "demo"]
-            page.evaluate("() => { view.cluster = 'prod-east'; render(); }")
+            # The actual POST carries the array against THIS cluster. expect_request resolves when the
+            # request is SENT, so the body is captured whatever the run's own outcome — the request
+            # shape (an array, not "beta") is what B3 is about.
+            with page.expect_request(lambda r: r.url.endswith("/api/runs") and r.method == "POST") as info:
+                page.locator("#report-generate").click()
+            body = _json.loads(info.value.post_data)
+            assert body["cluster"] == "crc-local"
+            assert body["params"]["mnemonics"] == ["beta", "demo"]
+            # A cluster switch through the real navigate() -> applyPosition path — the one the #f-cluster
+            # selector, popstate and hashchange all fire — drops the stale mnemonic and re-lists the new
+            # cluster's options, so a cluster-A value can never be posted against cluster B (#117 C4).
+            page.evaluate("() => { navigate({ cluster: 'prod-east', groupsync: null, group: null, user: null }); render(); }")
+            assert page.evaluate("() => (view.reportForm['namespace-access'] || {}).mnemonics") is None
             assert page.locator("#report-mnemonics option").evaluate_all("es => es.map(o => o.value)") == ["gamma"]
             assert not errors, errors
         finally:

@@ -20,8 +20,9 @@ which `local-development/prepare-release.py` does when the release is cut.
   behaviour where a removed cluster resolved to `inherit` and stayed in the list.
 - **Reporting: a mnemonic multi-select on the namespace-access form (#103, B3).** The report catalogue
   (`/report/api/reports`) now returns per-cluster `namespaceSelectors` — the configured selector label and
-  its captured values, opened best-effort from the snapshot (a missing first snapshot returns an empty map,
-  never a 500). The Reports form renders a checkable multi-select of those values ahead of the advanced
+  its captured values, opened best-effort from the snapshot (a missing, unreadable or corrupt snapshot
+  returns an empty map, never a 500 — the catalogue degrades, the Reports tab does not fault). The Reports
+  form renders a checkable multi-select of those values ahead of the advanced
   explicit-names field, and a `readParamEl` helper serialises a `<select multiple>` as the full array (its
   `value` is only the first option). Completes Extension B: capture (0.22.0) → API (0.24.0) → GUI here.
 

@@ -90,16 +90,30 @@ class Snapshot:
         except OSError as exc:
             raise SnapshotError(f"cannot inspect snapshot {path.name}: {exc}") from exc
         uri = f"file:{path}?immutable=1&mode=ro"
-        self._conn = sqlite3.connect(uri, uri=True, check_same_thread=False)
-        _harden(self._conn)
-        self._conn.row_factory = sqlite3.Row
-        self.schema_version = int(self._conn.execute("PRAGMA user_version").fetchone()[0])
-        if self.schema_version > KNOWN_SCHEMA_VERSION:
-            self._conn.close()
-            raise SnapshotError(
-                f"snapshot schema {self.schema_version} is newer than this report service understands "
-                f"({KNOWN_SCHEMA_VERSION}); the reporting image must be the dashboard's appVersion")
-        self._tables = {r[0] for r in self._conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        self._conn = None
+        try:
+            self._conn = sqlite3.connect(uri, uri=True, check_same_thread=False)
+            _harden(self._conn)
+            self._conn.row_factory = sqlite3.Row
+            self.schema_version = int(self._conn.execute("PRAGMA user_version").fetchone()[0])
+            if self.schema_version > KNOWN_SCHEMA_VERSION:
+                raise SnapshotError(
+                    f"snapshot schema {self.schema_version} is newer than this report service understands "
+                    f"({KNOWN_SCHEMA_VERSION}); the reporting image must be the dashboard's appVersion")
+            self._tables = {r[0] for r in self._conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        except sqlite3.Error as exc:
+            # A file named like a copy but not a readable SQLite database — truncated, torn, or not a
+            # database at all; the connect / PRAGMA / catalog reads are where that surfaces. Translated
+            # to SnapshotError HERE, at the backend boundary, so a caller (the catalogue, the age probe)
+            # sees one exception type and the engine never leaks past this module — the storage seam
+            # (tests/test_storage_seam.py) forbids `import sqlite3` outside the backend.
+            if self._conn is not None:
+                self._conn.close()
+            raise SnapshotError(f"cannot open snapshot {path.name}: not a readable SQLite database") from exc
+        except SnapshotError:
+            if self._conn is not None:
+                self._conn.close()
+            raise
 
     def close(self) -> None:
         self._conn.close()
