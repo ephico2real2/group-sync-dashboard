@@ -60,13 +60,24 @@ def test_refresh_bindings_captures_two_dimension_metadata(mock_cluster, store, t
             "SELECT name, key, value FROM cluster_namespace_label WHERE cluster_id='mock'")}
     finally:
         conn.close()
-    # Both dimensions land for a two-label namespace.
-    assert ("demo-prod", "company.net/mnemonic", "demo") in captured
-    assert ("demo-prod", "company.net/app-environment", "prod") in captured
-    assert ("demo-qa", "company.net/app-environment", "qa") in captured
-    # The missing-dimension namespace has only the mnemonic — no app-environment row at all.
-    assert ("gsd-shared", "company.net/mnemonic", "gsd") in captured
-    assert not any(n == "gsd-shared" and k == "company.net/app-environment" for n, k, _ in captured)
+    # An EXACT set, not membership: a regression that copied the whole label map (team,
+    # kubernetes.io/metadata.name) would add rows and must fail here, not slip past `in` (review C3).
+    # gsd-shared appears with ONLY its mnemonic — the missing-dimension case has no app-environment row.
+    assert captured == {
+        ("acme-app", "company.net/mnemonic", "acme"),
+        ("acme-app", "company.net/app-environment", "prod"),
+        ("group-sync-operator", "company.net/mnemonic", "gso"),
+        ("group-sync-operator", "company.net/app-environment", "prod"),
+        ("demo-prod", "company.net/mnemonic", "demo"),
+        ("demo-prod", "company.net/app-environment", "prod"),
+        ("demo-qa", "company.net/mnemonic", "demo"),
+        ("demo-qa", "company.net/app-environment", "qa"),
+        ("beta-rnd", "company.net/mnemonic", "beta"),
+        ("beta-rnd", "company.net/app-environment", "rnd"),
+        ("platform-prod", "company.net/mnemonic", "klta"),
+        ("platform-prod", "company.net/app-environment", "prod"),
+        ("gsd-shared", "company.net/mnemonic", "gsd"),
+    }
 
 
 def _resolver(cfg, verb: str) -> TierResolver:

@@ -165,6 +165,9 @@ REVIEW_ARTIFACTS = (
     # GET-only contract, principal.kind, the interval-floor bypass) verbatim by file:line — a design
     # review of code that does not exist yet, so its citations are point-in-time by construction.
     "REVIEW_reporting_selectors_snapshots_windows.md",
+    # PR #128 (P1 mock fixtures) review: quotes the exact test lines and the down-select site by
+    # file:line at review time.
+    "REVIEW_p1_mock_fixtures.md",
 )
 
 
