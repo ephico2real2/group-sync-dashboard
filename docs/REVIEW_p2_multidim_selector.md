@@ -68,10 +68,34 @@ On a rolling upgrade the **dashboard image should not roll ahead of the report i
 pod is old, a run posting `selectors` is 422'd. The new frontend now keeps the single `mnemonics` control
 working against an old pod, so Generate still functions; the two images should still land together.
 
+## Second pass (fixed head)
+
+Both reviewers re-ran on the fixed head. V1 (each backend fix closes its hole without swallowing a real
+logic error) and V3 (the count / create_run / build() label checks are consistent; a configured-but-
+unmatched selector is a 0 count and a 202-then-failed run by design) CONFIRMED by both — Codex proved the
+`namespaces_for_selectors` catch lets a `RuntimeError` propagate and only converts `sqlite3.Error`, and
+that all three of `mnemonics`/`namespaces`/`selectors` still 202. Two converged findings, both applied:
+
+- **V2-F1 (both):** leaving the namespace-access report cleared the #107 preview but returning did not
+  recompute it, so a retained selection showed blank until the next change. Fixed: the report-pick handler
+  reschedules the preview on a switch back to namespace-access. Cursor also caught the XOR case — the
+  count kept painting when the reader set an explicit `namespaces` alongside `selectors` (which
+  `create_run` 422s); fixed with an XOR guard in `schedulePreview` and a reschedule on any param change.
+- **V4-F1 (both):** the catalogue gather was N+1 — `2 + clusters × (dimensions + 1)` reads on every 60s
+  catalogue load (402 at 100 clusters × 3 dims), which does not scale to the many-cluster estate this whole
+  design targets. Fixed: `namespace_selector_dimensions` now reads the whole estate in ONE
+  `WHERE key IN (…)` query, `namespace_selectors` derives from it, and `list_reports` derives the compat
+  first-dim map from the same fetch — **one** `cluster_namespace_label` read regardless of cluster or
+  dimension count (locked by `test_the_catalogue_gathers_the_selector_values_in_one_query`).
+
+Not applied (named, not blocking): the preview count is uncapped where `build()` caps expansion at
+`MAX_NAMESPACES=50` (wording-accurate — "match this selection", not "in this report").
+
 ## Outcome
 
 The backend AND/OR expansion, catalogue compatibility, storage seam, chart guard/env, JSON transport and
-read-only count architecture were sound. Two real code holes (the count-endpoint 500 and the preview
-race) and a real rolling-upgrade break (new frontend + old pod) were found and fixed, plus the grammar
-laxness and the fast-422/blank-label/doc/test gaps. Full non-UI suite and the UI selector tests green
-after the fixes.
+read-only count architecture were sound. First pass fixed two real code holes (the count-endpoint 500 and
+the preview race), a real rolling-upgrade break (new frontend + old pod), and the grammar laxness plus the
+fast-422/blank-label/doc/test gaps. Second pass fixed a preview-recompute regression and the catalogue
+N+1 (the load-bearing many-cluster efficiency fix). Full non-UI suite and the UI selector tests green
+after both passes; every verdict re-verified against the code before applying.

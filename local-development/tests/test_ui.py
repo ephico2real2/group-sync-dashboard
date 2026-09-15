@@ -4212,6 +4212,62 @@ class TestReportsTab:
         finally:
             ctx.close()
 
+    def test_switching_back_to_the_report_recomputes_the_retained_preview(self, browser, reporting_server):
+        # V2-F1 (2nd pass): leaving the report clears the count; returning with the selection retained
+        # must recompute it, not leave it blank until the next change.
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.click('button.tab:text-is("Reports")')
+            page.wait_for_selector("#report-picker")
+            page.evaluate("""() => {
+                reportGet = async () => ({namespaces: 2});
+                data.reportCatalog.namespaceSelectorDimensions = {
+                    "crc-local": [{label: "company.net/mnemonic", values: ["demo"]}]
+                };
+                view.reportPick = "namespace-access";
+                view.reportForm["namespace-access"] = { selectors: {"company.net/mnemonic": ["demo"]} };
+                render();
+                schedulePreview("namespace-access");
+            }""")
+            page.wait_for_function("() => view.reportPreview.startsWith('2 namespace')")
+            page.click("#report-pick-groups")
+            assert page.evaluate("() => view.reportPreview") == ""
+            page.click("#report-pick-namespace-access")
+            page.wait_for_function("() => view.reportPreview.startsWith('2 namespace')")
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_the_preview_is_blank_when_an_explicit_name_conflicts_with_selectors(self, browser, reporting_server):
+        # 2nd pass (Cursor): create_run 422s selectors + explicit names together; the #107 count must not
+        # keep painting for a click that will refuse.
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.click('button.tab:text-is("Reports")')
+            page.wait_for_selector("#report-picker")
+            page.evaluate("""() => {
+                window.__resolvers = [];
+                reportGet = () => new Promise((resolve) => { window.__resolvers.push(resolve); });
+                view.cluster = "crc-local";
+                view.reportForm["namespace-access"] = { selectors: {"company.net/mnemonic": ["demo"]} };
+                schedulePreview("namespace-access");
+            }""")
+            page.wait_for_function("() => window.__resolvers.length === 1")
+            page.evaluate("() => window.__resolvers[0]({namespaces: 4})")
+            page.wait_for_function("() => view.reportPreview.startsWith('4 namespace')")
+            page.evaluate("""() => {
+                view.reportForm["namespace-access"].namespaces = "prod-ns";
+                schedulePreview("namespace-access");
+            }""")
+            page.wait_for_timeout(60)
+            assert page.evaluate("() => view.reportPreview") == ""
+            assert page.evaluate("() => window.__resolvers.length") == 1   # no new GET fired
+            assert not errors, errors
+        finally:
+            ctx.close()
+
     def test_a_narrowed_reader_sees_the_refusal_card_never_a_blank(self, browser, reporting_server):
         base, _, _ = reporting_server
         ctx, page, errors = _reports_page(browser, base, "alice")

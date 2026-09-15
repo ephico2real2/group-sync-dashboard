@@ -333,6 +333,34 @@ class TestNamespaceSelectorsOnTheCatalogue:
     unreadable or CORRUPT copy must degrade to an empty map and a 200 — never a 500 that takes the
     whole Reports tab down. The suite had no test hitting namespaceSelectors before this."""
 
+    def test_the_catalogue_gathers_the_selector_values_in_one_query(self, tmp_path, monkeypatch):
+        # V4-F1 (2nd pass): the per-cluster-per-key gather was N+1; the batched dimensions read the whole
+        # estate in ONE cluster_namespace_label query, however many clusters and dimensions.
+        from gsd.store import Store
+        from gsd.reporting.snapshot import Snapshot
+        snapshots, artifacts = tmp_path / "snap", tmp_path / "art"
+        snapshots.mkdir(); artifacts.mkdir()
+        store = Store(str(tmp_path / "w.db"))
+        for i in range(12):
+            cid = f"c{i}"
+            store.upsert_cluster(cid, f"https://api.{cid}:6443", True)
+            store.replace_namespaces(cid, [
+                {"name": f"{cid}-a", "created_at": None, "phase": "Active",
+                 "metadata": {"company.net/mnemonic": "demo", "company.net/app-environment": "prod"}}],
+                "2026-09-14T00:00:00Z")
+        assert store.snapshot(str(snapshots), keep=2); store.close()
+        app = build_report_app(
+            _settings(snapshots, artifacts,
+                      namespace_selector_labels=("company.net/mnemonic", "company.net/app-environment")),
+            secret=SECRET, clock=lambda: FROZEN)
+        calls = []
+        real_rows = Snapshot._rows
+        monkeypatch.setattr(Snapshot, "_rows", lambda self, sql, params=(): (calls.append(sql), real_rows(self, sql, params))[1])
+        with TestClient(app) as client:
+            body = client.get(f"{REPORT_PREFIX}/api/reports", headers=_viewer()).json()
+        assert len(body["namespaceSelectorDimensions"]) == 12 and len(body["namespaceSelectors"]) == 12
+        assert sum("FROM cluster_namespace_label" in sql for sql in calls) == 1, calls
+
     def test_per_cluster_label_and_values_when_the_selector_is_configured(self, tmp_path):
         from gsd.store import Store
         snapshots, artifacts = tmp_path / "snap", tmp_path / "art"
@@ -503,3 +531,21 @@ class TestNamespaceCountPreview:
             assert r.status_code == 422, r.text
             assert "not configured" in r.json()["detail"]
             assert client.get(f"{REPORT_PREFIX}/api/runs", headers=_viewer()).json()["total"] == 0
+
+    def test_create_run_still_202s_mnemonics_namespaces_and_valid_selectors(self, tmp_path):
+        # The subset check must NOT refuse the three legitimate selection shapes (review #129 2nd pass, V1).
+        with TestClient(self._app(tmp_path)) as client:
+            h = _viewer()
+            for params in ({"namespaces": "demo-prod"}, {"mnemonics": ["demo"]},
+                           {"selectors": {"company.net/mnemonic": ["demo"], "company.net/app-environment": ["prod"]}}):
+                r = client.post(f"{REPORT_PREFIX}/api/runs", json={
+                    "report": "namespace-access", "cluster": "crc-local", "params": params, "formats": ["html"]}, headers=h)
+                assert r.status_code == 202, (params, r.text)
+
+    def test_a_configured_label_matching_nothing_counts_zero_not_null(self, tmp_path):
+        import json as _json
+        with TestClient(self._app(tmp_path)) as client:
+            r = client.get(f"{REPORT_PREFIX}/api/namespace-count",
+                           params={"cluster": "crc-local", "selectors": _json.dumps({"company.net/mnemonic": ["no-such"]})},
+                           headers=_viewer())
+            assert r.status_code == 200 and r.json() == {"namespaces": 0}, r.text

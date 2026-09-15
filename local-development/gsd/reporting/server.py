@@ -172,8 +172,10 @@ def build_report_app(settings: ReportSettings, *, secret: bytes | None = None, c
         dimensions: dict[str, list] = {}
         try:
             with Snapshot(newest_snapshot(settings.snapshot_dir)) as snap:
-                dimensions = snap.namespace_selector_dimensions(labels)
-                selectors = snap.namespace_selectors(labels[0] if labels else "")
+                dimensions = snap.namespace_selector_dimensions(labels)   # one query for the whole estate
+            first = labels[0] if labels else ""
+            selectors = {cid: {"label": first, "values": list(entries[0]["values"]) if entries else []}
+                         for cid, entries in dimensions.items()}          # compat first-dim map, no re-read
         except (SnapshotError, OSError):
             selectors = {}      # a missing, unreadable or corrupt snapshot must not 500 the catalogue; the UI hides the control
             dimensions = {}

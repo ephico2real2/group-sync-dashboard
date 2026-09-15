@@ -1902,9 +1902,14 @@ function schedulePreview(spec) {
   clearTimeout(_previewTimer);
   const version = ++_previewVersion;
   const cluster = view.cluster;
-  const sel = (view.reportForm["namespace-access"] || {}).selectors;
+  const form = view.reportForm["namespace-access"] || {};
+  const sel = form.selectors;
   const encoded = sel && Object.keys(sel).length ? JSON.stringify(sel) : "";
-  if (!cluster || !encoded) {
+  // create_run 422s if more than one of selectors/mnemonics/namespaces is set; don't show a count for a
+  // click that will refuse (review PR #129, 2nd pass, Cursor — same rule as _validate_selection).
+  const others = (Array.isArray(form.mnemonics) && form.mnemonics.length ? 1 : 0)
+    + (form.namespaces && String(form.namespaces).trim() ? 1 : 0);
+  if (!cluster || !encoded || others > 0) {
     view.reportPreview = ""; const el = $("report-preview"); if (el) el.textContent = ""; return;
   }
   _previewTimer = setTimeout(async () => {
@@ -1926,8 +1931,11 @@ function schedulePreview(spec) {
 function wireReports() {
   document.querySelectorAll(".report-pick").forEach((el) => {
     el.onclick = () => {
-      if (view.reportPick !== el.dataset.report) clearReportPreview();   // don't carry a count across reports
-      view.reportPick = el.dataset.report; view.reportRun = null; render();
+      const next = el.dataset.report;
+      const changed = view.reportPick !== next;
+      if (changed) clearReportPreview();                 // don't carry a count across reports
+      view.reportPick = next; view.reportRun = null; render();
+      if (changed && next === "namespace-access") schedulePreview(next);   // recompute a retained selection (V2-F1)
     };
   });
   document.querySelectorAll("[data-param]").forEach((el) => {
@@ -1950,6 +1958,7 @@ function wireReports() {
         schedulePreview(spec);
       } else {
         f[el.dataset.param] = readParamEl(el);
+        if (spec === "namespace-access") schedulePreview(spec);   // re-evaluate: an explicit name XORs the count away
       }
     };
   });
