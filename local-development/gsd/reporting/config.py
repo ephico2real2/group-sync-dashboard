@@ -9,6 +9,7 @@ worker with nothing to degrade to.
 
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass, field
 
@@ -56,6 +57,33 @@ def _bool_env(name: str, default: bool) -> bool:
     raise ReportConfigError(f"{name}={raw!r} is not a boolean (true/false)")
 
 
+def _selector_labels_env() -> tuple[str, ...]:
+    """The ordered selector dimensions from GSD_REPORT_NS_SELECTOR_LABELS (a JSON array, the same
+    transport the chart uses for namespaceMetadataLabels). Empty/unset falls back to the singular
+    GSD_REPORT_NS_SELECTOR_LABEL as a one-element list for one release. Duplicate or blank entries
+    fail at startup — a duplicated dimension would break the AND-across selection's expectation of
+    distinct keys (docs/DESIGN_reporting_selectors_snapshots_and_windows.md §3)."""
+    raw = os.environ.get("GSD_REPORT_NS_SELECTOR_LABELS", "").strip()
+    if not raw:
+        single = os.environ.get("GSD_REPORT_NS_SELECTOR_LABEL", "").strip()
+        return (single,) if single else ()
+    try:
+        parsed = json.loads(raw)
+    except ValueError as exc:
+        raise ReportConfigError(f"GSD_REPORT_NS_SELECTOR_LABELS={raw!r} is not a JSON array") from exc
+    if not isinstance(parsed, list) or not all(isinstance(x, str) for x in parsed):
+        raise ReportConfigError("GSD_REPORT_NS_SELECTOR_LABELS must be a JSON array of strings")
+    if not parsed:                                   # only a literal [] defers to the singular
+        single = os.environ.get("GSD_REPORT_NS_SELECTOR_LABEL", "").strip()
+        return (single,) if single else ()
+    if any(not item.strip() for item in parsed):     # a blank entry is a config error, not silently dropped
+        raise ReportConfigError("GSD_REPORT_NS_SELECTOR_LABELS entries must be non-empty strings")
+    labels = tuple(item.strip() for item in parsed)
+    if len(set(labels)) != len(labels):
+        raise ReportConfigError(f"GSD_REPORT_NS_SELECTOR_LABELS has a duplicate label: {list(labels)}")
+    return labels
+
+
 @dataclass(frozen=True)
 class ReportSettings:
     snapshot_dir: str = "/data/report"
@@ -81,6 +109,10 @@ class ReportSettings:
     namespaces_read_enabled: bool = False
     binding_interval_seconds: int = 300
     namespace_selector_label: str = ""   # the captured key the namespace-access report selects on (B2)
+    #: The ordered selector DIMENSIONS the namespace-access report offers (P2, multi-dimension:
+    #: company.net/mnemonic AND company.net/app-environment). Empty falls back to the singular
+    #: `namespace_selector_label` as a one-element list for one release (chart migration).
+    namespace_selector_labels: tuple[str, ...] = ()
     #: One worker renders at a time; the queue is bounded so a burst answers 429 rather than
     #: piling up renders the pod's memory limit then ends.
     max_queued_runs: int = 8
@@ -122,6 +154,7 @@ def load_report_settings() -> ReportSettings:
         namespaces_read_enabled=_bool_env("GSD_REPORT_NAMESPACES_READ_ENABLED", False),
         binding_interval_seconds=_int_env("GSD_REPORT_BINDING_INTERVAL_SECONDS", 300, lo=1, hi=86400),
         namespace_selector_label=os.environ.get("GSD_REPORT_NS_SELECTOR_LABEL", "").strip(),
+        namespace_selector_labels=_selector_labels_env(),
         max_queued_runs=_int_env("GSD_REPORT_MAX_QUEUED_RUNS", 8, lo=1, hi=100),
         log_level=os.environ.get("GSD_LOG_LEVEL", "INFO"),
     )

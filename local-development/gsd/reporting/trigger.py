@@ -23,7 +23,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--url", required=True, help="the report Service, e.g. https://gsd-report.ns.svc:8443")
     ap.add_argument("--report", required=True)
     ap.add_argument("--cluster", required=True)
-    ap.add_argument("--param", action="append", default=[], help="k=v, repeatable")
+    ap.add_argument("--param", action="append", default=[], help="k=v, repeatable — scalar params only")
+    ap.add_argument("--params-json", default="",
+                    help="the params as a JSON object; required for structured params like `selectors` "
+                         "that a k=v string cannot express (the chart renders schedules[].params this way)")
     ap.add_argument("--format", action="append", default=[], choices=["html", "pdf"])
     ap.add_argument("--schedule", required=True, help="the schedule's name, recorded as generated_by=schedule:<name>")
     ap.add_argument("--token-file", default=os.environ.get("GSD_REPORT_TOKEN_FILE", "/etc/gsd/report/token"))
@@ -31,8 +34,18 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--wait", action="store_true", help="poll until the run finishes; exit 1 if it failed")
     ap.add_argument("--timeout", type=int, default=600)
     a = ap.parse_args(argv)
-    params = {}
-    for kv in a.param:
+    params: dict = {}
+    if a.params_json:
+        try:
+            parsed = json.loads(a.params_json)
+        except ValueError as exc:
+            print(f"--params-json is not valid JSON: {exc}", file=sys.stderr)
+            return 1
+        if not isinstance(parsed, dict):
+            print("--params-json must be a JSON object", file=sys.stderr)
+            return 1
+        params.update(parsed)
+    for kv in a.param:                    # scalar overrides, back-compat
         k, _, v = kv.partition("=")
         params[k] = v
     with open(a.token_file, "rb") as fh:

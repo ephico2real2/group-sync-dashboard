@@ -52,7 +52,7 @@ class TestTheValidator:
         return REGISTRY["namespace-access"][0]
 
     def test_both_mnemonics_and_namespaces_is_422(self):
-        with pytest.raises(ValidationError, match="OR by explicit name, not both"):
+        with pytest.raises(ValidationError, match="not more than one"):
             validate_params(self._spec(), {"mnemonics": "beta", "namespaces": "prod-ns"})
 
     def test_neither_is_422(self):
@@ -93,7 +93,7 @@ class TestBuildExpandsMnemonics:
         with _snap(tmp_path) as snap:
             spec, build = REGISTRY["namespace-access"]
             p = validate_params(spec, {"mnemonics": "nope"})
-            with pytest.raises(ValidationError, match="no namespace carries the selector label"):
+            with pytest.raises(ValidationError, match="no namespace carries"):
                 build(snap, self._ctx(snap), p)
 
 
@@ -139,3 +139,105 @@ class TestSelectorCapAndGuards:
             p = validate_params(spec, {"mnemonics": "beta"})
             with pytest.raises(ValidationError, match="not configured"):
                 build(snap, self._ctx(snap, label=""), p)
+
+
+# ── P2: multi-dimension selector (company.net/mnemonic AND company.net/app-environment) ──────────
+LABEL2 = "company.net/app-environment"
+
+
+def _snap_two_dim(tmp_path: Path) -> Snapshot:
+    store = Store(str(tmp_path / "w2.db"))
+    store.upsert_cluster(CLUSTER, "https://k8s", True)
+    store.replace_namespaces(CLUSTER, [
+        {"name": "beta-prod",  "created_at": None, "phase": "Active", "metadata": {LABEL: "beta", LABEL2: "prod"}},
+        {"name": "beta-rnd",   "created_at": None, "phase": "Active", "metadata": {LABEL: "beta", LABEL2: "rnd"}},
+        {"name": "demo-prod",  "created_at": None, "phase": "Active", "metadata": {LABEL: "demo", LABEL2: "prod"}},
+        {"name": "demo-qa",    "created_at": None, "phase": "Active", "metadata": {LABEL: "demo", LABEL2: "qa"}},
+        {"name": "gsd-shared", "created_at": None, "phase": "Active", "metadata": {LABEL: "gsd"}},  # missing env
+    ], "2026-09-14T00:00:00Z")
+    path = store.snapshot(str(tmp_path), keep=2); store.close()
+    return Snapshot(Path(path))
+
+
+def _ctx_two_dim(snap):
+    import datetime
+    info = snap.info()
+    return RunContext(settings=ReportSettings(), cluster=snap.cluster(CLUSTER),
+                      now=datetime.datetime(2026, 9, 14), run_id="r", generated_by="root",
+                      generated_by_note="n", snapshot_stamp=info.stamp, snapshot_age_seconds=0.0,
+                      schema_version=info.schema_version, namespace_selector_label=LABEL,
+                      namespace_selector_labels=(LABEL, LABEL2))
+
+
+class TestMultiDimensionSelector:
+    def test_and_across_or_within(self, tmp_path):
+        with _snap_two_dim(tmp_path) as s:
+            assert s.namespaces_for_selectors(CLUSTER, {LABEL: ["beta", "demo"], LABEL2: ["prod"]}) == ["beta-prod", "demo-prod"]
+            assert s.namespaces_for_selectors(CLUSTER, {LABEL: ["demo"], LABEL2: ["prod", "qa"]}) == ["demo-prod", "demo-qa"]
+            assert s.namespaces_for_selectors(CLUSTER, {LABEL2: ["prod"]}) == ["beta-prod", "demo-prod"]
+            assert s.namespaces_for_selectors(CLUSTER, {LABEL: ["beta"], LABEL2: ["qa"]}) == []
+            assert s.namespaces_for_selectors(CLUSTER, {}) == []
+
+    def test_missing_dimension_namespace_drops_from_the_AND(self, tmp_path):
+        with _snap_two_dim(tmp_path) as s:
+            assert "gsd-shared" not in s.namespaces_for_selectors(CLUSTER, {LABEL: ["gsd"], LABEL2: ["prod"]})
+            assert s.namespaces_for_selectors(CLUSTER, {LABEL: ["gsd"]}) == ["gsd-shared"]
+
+    def test_dimensions_gather_for_the_catalogue(self, tmp_path):
+        with _snap_two_dim(tmp_path) as s:
+            assert s.namespace_selector_dimensions([LABEL, LABEL2])[CLUSTER] == [
+                {"label": LABEL, "values": ["beta", "demo", "gsd"]},
+                {"label": LABEL2, "values": ["prod", "qa", "rnd"]},
+            ]
+
+    def test_build_expands_selectors_and(self, tmp_path):
+        with _snap_two_dim(tmp_path) as snap:
+            spec, build = REGISTRY["namespace-access"]
+            p = validate_params(spec, {"selectors": {LABEL: ["demo"], LABEL2: ["prod", "qa"]}})
+            titles = [s.title for s in build(snap, _ctx_two_dim(snap), p).sections]
+            assert "Namespace: demo-prod" in titles and "Namespace: demo-qa" in titles
+            assert "Namespace: beta-prod" not in titles
+
+    def test_unknown_selector_label_is_a_failed_run(self, tmp_path):
+        with _snap_two_dim(tmp_path) as snap:
+            spec, build = REGISTRY["namespace-access"]
+            p = validate_params(spec, {"selectors": {"company.net/nope": ["x"]}})
+            with pytest.raises(ValidationError, match="not configured on this deployment"):
+                build(snap, _ctx_two_dim(snap), p)
+
+    def test_selectors_matching_nothing_is_a_failed_run(self, tmp_path):
+        with _snap_two_dim(tmp_path) as snap:
+            spec, build = REGISTRY["namespace-access"]
+            p = validate_params(spec, {"selectors": {LABEL: ["beta"], LABEL2: ["qa"]}})
+            with pytest.raises(ValidationError, match="no namespace matches"):
+                build(snap, _ctx_two_dim(snap), p)
+
+
+class TestSelectorMapValidation:
+    def _spec(self):
+        return REGISTRY["namespace-access"][0]
+
+    def test_valid_selector_map_dedups(self):
+        p = validate_params(self._spec(), {"selectors": {LABEL: ["beta", "beta", "demo"]}})
+        assert p["selectors"] == {LABEL: ["beta", "demo"]}
+
+    def test_empty_dimension_is_422(self):
+        with pytest.raises(ValidationError, match="at least one value"):
+            validate_params(self._spec(), {"selectors": {LABEL: []}})
+
+    def test_non_object_is_422(self):
+        with pytest.raises(ValidationError, match="non-empty object"):
+            validate_params(self._spec(), {"selectors": "beta"})
+
+    def test_selectors_and_namespaces_is_422(self):
+        with pytest.raises(ValidationError, match="not more than one"):
+            validate_params(self._spec(), {"selectors": {LABEL: ["beta"]}, "namespaces": "x"})
+
+    def test_aggregate_value_cap_is_422(self):
+        with pytest.raises(ValidationError, match="at most 50 selector values"):
+            validate_params(self._spec(), {"selectors": {LABEL: [f"v{i}" for i in range(51)]}})
+
+    def test_dimension_requires_a_list_not_a_csv_string(self):
+        # The grammar is dict[str, list[str]]; a comma string must NOT be split (review #129 C1, Codex).
+        with pytest.raises(ValidationError, match="must be a list of strings"):
+            validate_params(self._spec(), {"selectors": {LABEL: "beta,demo"}})

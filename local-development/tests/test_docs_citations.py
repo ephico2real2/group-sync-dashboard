@@ -168,6 +168,9 @@ REVIEW_ARTIFACTS = (
     # PR #128 (P1 mock fixtures) review: quotes the exact test lines and the down-select site by
     # file:line at review time.
     "REVIEW_p1_mock_fixtures.md",
+    # PR #129 (P2 multi-dimension selector) review: quotes the selector-map grammar, the count endpoint,
+    # the preview race and the rolling-upgrade break by file:line at review time.
+    "REVIEW_p2_multidim_selector.md",
 )
 
 

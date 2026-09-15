@@ -10,15 +10,16 @@ from .common import (MAX_NAMESPACES, Built, ParamSpec, ReportSpec, RunContext, V
 
 
 def _validate_selection(params: dict) -> None:
-    """Cross-parameter check run at the endpoint (a 422): choose namespaces by mnemonic OR by name,
-    exactly one. The mnemonic-to-namespace expansion needs the snapshot, so it stays in build()."""
-    mnemonics = params.get("mnemonics") or []
-    names = params.get("namespaces") or []
-    if mnemonics and names:
-        raise ValidationError("choose namespaces by mnemonic OR by explicit name, not both")
-    if not mnemonics and not names:
-        raise ValidationError("select at least one namespace, by mnemonic or by explicit name")
-    if len(mnemonics) > MAX_NAMESPACES:
+    """Cross-parameter check run at the endpoint (a 422): choose namespaces by `selectors`
+    (multi-dimension, P2) OR the deprecated single-dimension `mnemonics` OR explicit `namespaces` —
+    exactly one. The label-value expansion needs the snapshot, so it stays in build()."""
+    chosen = [k for k in ("selectors", "mnemonics", "namespaces") if params.get(k)]
+    if len(chosen) > 1:
+        raise ValidationError(
+            "choose namespaces by selectors OR mnemonic OR explicit name, not more than one")
+    if not chosen:
+        raise ValidationError("select at least one namespace, by selector, mnemonic or explicit name")
+    if len(params.get("mnemonics") or []) > MAX_NAMESPACES:
         raise ValidationError(f"at most {MAX_NAMESPACES} mnemonic values per report")
 
 
@@ -27,9 +28,13 @@ SPEC = ReportSpec(
     summary="Per namespace: every group binding classified with who it reaches, every direct user grant, findings first.",
     values_key="namespaceAccess",
     params=(
+        ParamSpec("selectors", "selector-map", None,
+                  "Select namespaces by the estate's grouping labels (the Reports form offers one "
+                  "multi-select per configured dimension). Values within a dimension match ANY; the "
+                  "dimensions are AND'd. Leave the explicit names empty when using this."),
         ParamSpec("mnemonics", "csv", None,
-                  "Select namespaces by the estate's grouping label (the Reports form offers the values). "
-                  "Strict and current; leave the explicit names empty when using this."),
+                  "Deprecated single-dimension form — maps to the first configured selector label. "
+                  "Prefer `selectors`; leave the explicit names empty when using this."),
         ParamSpec("namespaces", "namespaces", None,
                   "Advanced: explicit namespace names, at most 50; `(cluster-scoped)` for cluster-wide bindings."),
         ParamSpec("include_members", "bool", False, "Expand group rosters. Off by default — a file that gets emailed has no reader log — and recorded in the provenance when on."),
@@ -40,19 +45,36 @@ SPEC = ReportSpec(
 
 def build(snap: Snapshot, ctx: RunContext, params: dict) -> Built:
     cid = ctx.cluster["id"]
+    selectors: dict[str, list[str]] = params.get("selectors") or {}
     mnemonics: list[str] = params.get("mnemonics") or []
     names: list[str] = params.get("namespaces") or []
-    if mnemonics:
-        # The snapshot-dependent expansion: a mnemonic matching nothing is a failed run (it needs the
-        # snapshot), not a 422 — the cross-parameter check already ran at the endpoint.
-        if not ctx.namespace_selector_label:
+    # Prefer the multi-dimension labels; fall back to the singular for a deployment on the old config.
+    labels = tuple(ctx.namespace_selector_labels) or (
+        (ctx.namespace_selector_label,) if ctx.namespace_selector_label else ())
+    # The snapshot-dependent expansion: a selection matching nothing is a failed run (it needs the
+    # snapshot), not a 422 — the cross-parameter check already ran at the endpoint.
+    if selectors:
+        if not labels:
+            raise ValidationError(
+                "selector namespace selection is not configured on this deployment; set "
+                "reporting.namespaceSelector.labels or use explicit namespace names")
+        unknown = sorted(k for k in selectors if k not in labels)
+        if unknown:
+            raise ValidationError(
+                f"selector label(s) not configured on this deployment: {', '.join(unknown)}")
+        names = snap.namespaces_for_selectors(cid, selectors)
+        if not names:
+            raise ValidationError("no namespace matches " + " AND ".join(
+                f"{k} in ({', '.join(v)})" for k, v in selectors.items()))
+    elif mnemonics:
+        if not labels:
             raise ValidationError(
                 "mnemonic namespace selection is not configured on this deployment; set "
-                "reporting.namespaceSelector.label or use explicit namespace names")
-        names = snap.namespaces_for_metadata(cid, ctx.namespace_selector_label, mnemonics)
+                "reporting.namespaceSelector.labels or use explicit namespace names")
+        names = snap.namespaces_for_metadata(cid, labels[0], mnemonics)
         if not names:
             raise ValidationError(
-                f"no namespace carries the selector label with value(s) {', '.join(mnemonics)}")
+                f"no namespace carries {labels[0]} with value(s) {', '.join(mnemonics)}")
     selector_capped = len(names) > MAX_NAMESPACES
     names = names[:MAX_NAMESPACES]                # cap AFTER expansion; recorded in the coverage note
     keys = ["" if n == CLUSTER_SCOPE else n for n in names]

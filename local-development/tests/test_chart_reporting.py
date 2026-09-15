@@ -173,6 +173,8 @@ class TestRefusals:
         (("reporting.reports.groups.enabled=maybe",), "must be true or false"),
         (("reporting.schedules[0].name=w", "reporting.schedules[0].schedule=0 6 * * 1", "reporting.schedules[0].report=nope"), "is not an enabled catalogue name"),
         (("reporting.image.digest=abc",), "is not a digest"),
+        (("rbac.namespaces=true", "reporting.namespaceMetadata.labels[0]=company.net/mnemonic",
+          "reporting.namespaceSelector.labels[0]=company.net/nope"), "is not in reporting.namespaceMetadata.labels"),
     ])
     def test_each_guard_names_its_key(self, sets, needle):
         done = subprocess.run(["helm", "template", "t", str(CHART), "-n", "x", "--set", "ingress.host=h",
@@ -225,7 +227,9 @@ class TestDerivations:
         pod = cron["spec"]["jobTemplate"]["spec"]["template"]
         assert pod["metadata"]["labels"]["app.kubernetes.io/component"] == "report-schedule"
         command = " ".join(pod["spec"]["containers"][0]["command"] + pod["spec"]["containers"][0].get("args", []))
-        for piece in ("--report access-matrix", "--cluster crc-local", "--schedule weekly", "--wait", "subject_kind=groups", "--format html"):
+        # P2: params ride as one --params-json JSON object, not repeated --param k=v (Helm %v is not JSON).
+        for piece in ("--report access-matrix", "--cluster crc-local", "--schedule weekly", "--wait",
+                      "--params-json", '"subject_kind":"groups"', "--format html"):
             assert piece in command, (piece, command)
 
     def test_the_namespaces_grant_follows_its_switch(self):
