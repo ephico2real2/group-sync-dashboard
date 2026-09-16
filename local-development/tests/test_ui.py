@@ -4268,6 +4268,145 @@ class TestReportsTab:
         finally:
             ctx.close()
 
+    def test_the_view_button_lists_the_matched_names_without_resizing_the_form(self, browser, reporting_server):
+        # #143: the "view namespaces" affordance appears only once names exist; showModal() renders
+        # the list in the browser's top layer, so the report form's height cannot change — the whole
+        # "no resize" requirement, asserted as an unchanged bounding box.
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.click('button.tab:text-is("Reports")')
+            page.wait_for_selector("#report-picker")
+            page.evaluate("""() => {
+                reportGet = async () => ({namespaces: 3, names: ["beta-prod", "demo-prod", "demo-production"]});
+                data.reportCatalog.namespaceSelectorDimensions = {
+                    "crc-local": [{label: "company.net/mnemonic", values: ["beta", "demo"]}]
+                };
+                view.reportPick = "namespace-access";
+                render();
+            }""")
+            btn = page.locator("#report-preview-view")
+            assert btn.count() == 1 and btn.is_hidden()          # no selection yet -> no affordance
+            page.select_option("#report-selector-0", ["beta", "demo"])
+            page.locator("#report-selector-0").dispatch_event("change")
+            page.wait_for_function("() => view.reportPreview.startsWith('3 namespace')")
+            assert btn.is_visible()
+            before = page.locator("#report-form").bounding_box()["height"]
+            btn.click()
+            page.wait_for_selector("#ns-preview[open]")
+            assert page.locator("#ns-preview li").all_inner_texts() == ["beta-prod", "demo-prod", "demo-production"]
+            after = page.locator("#report-form").bounding_box()["height"]
+            assert after == before                               # top layer: the form did not reflow
+            page.keyboard.press("Escape")                        # the native dialog's own close
+            page.wait_for_function("() => !document.getElementById('ns-preview').open")
+            assert page.evaluate("() => document.activeElement && document.activeElement.id") == "report-preview-view"
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_a_selection_change_hides_the_view_affordance_until_the_fresh_reply_lands(self, browser, reporting_server):
+        # #144 adversarial review C3-A: between a selection change and its reply, the names on hand
+        # describe the PREVIOUS selection. A dialog opened in that window painted the superseded
+        # names and the landed reply never corrected it - so the affordance must offer nothing
+        # until the fresh reply lands.
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.click('button.tab:text-is("Reports")')
+            page.wait_for_selector("#report-picker")
+            page.evaluate("""() => {
+                window._gate = null;
+                let call = 0;
+                reportGet = async () => {
+                    call += 1;
+                    if (call === 1) return {namespaces: 3, names: ["beta-prod", "demo-prod", "demo-production"]};
+                    return new Promise((res) => { window._gate = () => res({namespaces: 1, names: ["beta-prod"]}); });
+                };
+                data.reportCatalog.namespaceSelectorDimensions = {
+                    "crc-local": [{label: "company.net/mnemonic", values: ["beta", "demo"]}]
+                };
+                view.reportPick = "namespace-access";
+                render();
+            }""")
+            page.select_option("#report-selector-0", ["beta", "demo"])
+            page.locator("#report-selector-0").dispatch_event("change")
+            page.wait_for_function("() => view.reportPreview.startsWith('3 namespace')")
+            btn = page.locator("#report-preview-view")
+            assert btn.is_visible()
+            page.select_option("#report-selector-0", ["beta"])
+            page.locator("#report-selector-0").dispatch_event("change")
+            # Inside the pending window: the only names on hand are the superseded selection's.
+            assert btn.is_hidden()                       # FAILS before the fix: still offers A's names
+            page.wait_for_function("() => !!window._gate")
+            page.evaluate("() => window._gate()")        # let the fresh reply land
+            page.wait_for_function("() => view.reportPreview.startsWith('1 namespace')")
+            assert btn.is_visible()                      # the affordance returns with fresh names
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_back_to_another_tab_does_not_strand_the_open_names_dialog(self, browser, reporting_server):
+        # #144 adversarial review C6-D: browser Back is not inert while a modal is up, and only the
+        # cluster branch of applyPosition clears the preview. A same-cluster Back from Reports must
+        # close the list, not float it over a page that carries no selection.
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.click('button.tab:text-is("Reports")')   # pushes reports over the boot tab
+            page.wait_for_selector("#report-picker")
+            page.evaluate("""() => {
+                reportGet = async () => ({namespaces: 2, names: ["beta-prod", "demo-prod"]});
+                data.reportCatalog.namespaceSelectorDimensions = {
+                    "crc-local": [{label: "company.net/mnemonic", values: ["beta", "demo"]}]
+                };
+                view.reportPick = "namespace-access";
+                render();
+            }""")
+            page.select_option("#report-selector-0", ["beta"])
+            page.locator("#report-selector-0").dispatch_event("change")
+            page.wait_for_function("() => view.reportPreview.startsWith('2 namespace')")
+            page.click("#report-preview-view")
+            page.wait_for_selector("#ns-preview[open]")
+            page.go_back()                                # same cluster, different tab
+            page.wait_for_function("() => view.page !== 'reports'")
+            assert page.evaluate("() => document.getElementById('ns-preview').open") is False   # FAILS before the fix
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_escape_after_a_poll_repaint_returns_focus_to_the_view_button(self, browser, reporting_server):
+        # #144 adversarial review C4-A: showModal() memorises the opener NODE; the 60 s render()
+        # replaces #main wholesale, so a close after a repaint would drop focus to <body>. The
+        # onclose re-aim by ID must land it on the button the current paint carries.
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.click('button.tab:text-is("Reports")')
+            page.wait_for_selector("#report-picker")
+            page.evaluate("""() => {
+                reportGet = async () => ({namespaces: 2, names: ["beta-prod", "demo-prod"]});
+                data.reportCatalog.namespaceSelectorDimensions = {
+                    "crc-local": [{label: "company.net/mnemonic", values: ["beta", "demo"]}]
+                };
+                view.reportPick = "namespace-access";
+                render();
+            }""")
+            page.select_option("#report-selector-0", ["beta"])
+            page.locator("#report-selector-0").dispatch_event("change")
+            page.wait_for_function("() => view.reportPreview.startsWith('2 namespace')")
+            page.click("#report-preview-view")
+            page.wait_for_selector("#ns-preview[open]")
+            page.evaluate("() => render()")               # the 60 s poll repaint, forced
+            page.keyboard.press("Escape")
+            page.wait_for_function("() => !document.getElementById('ns-preview').open")
+            # onclose re-aims focus AFTER the native restore, so wait for it to settle rather than
+            # asserting instantly (an immediate read catches the mid-close state). Before the fix
+            # this never becomes true and the wait times out — the fail-before.
+            page.wait_for_function("() => document.activeElement && document.activeElement.id === 'report-preview-view'")
+            assert not errors, errors
+        finally:
+            ctx.close()
+
     def test_a_narrowed_reader_sees_the_refusal_card_never_a_blank(self, browser, reporting_server):
         base, _, _ = reporting_server
         ctx, page, errors = _reports_page(browser, base, "alice")
