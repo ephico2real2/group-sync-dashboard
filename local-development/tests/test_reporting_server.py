@@ -509,11 +509,11 @@ class TestNamespaceCountPreview:
             r = client.get(f"{REPORT_PREFIX}/api/namespace-count",
                            params={"cluster": "crc-local", "selectors": sel}, headers=_viewer())
             assert r.status_code == 200, r.text
-            assert r.json() == {"namespaces": 1}                       # only demo-prod
+            assert r.json() == {"namespaces": 1, "names": ["demo-prod"]}          # only demo-prod
             sel2 = _json.dumps({"company.net/app-environment": ["prod"]})
             r2 = client.get(f"{REPORT_PREFIX}/api/namespace-count",
                             params={"cluster": "crc-local", "selectors": sel2}, headers=_viewer())
-            assert r2.json() == {"namespaces": 2}                      # demo-prod, beta-prod
+            assert r2.json() == {"namespaces": 2, "names": ["beta-prod", "demo-prod"]}   # sorted
 
     def test_null_for_empty_or_malformed_selection(self, tmp_path):
         with TestClient(self._app(tmp_path)) as client:
@@ -575,7 +575,50 @@ class TestNamespaceCountPreview:
             r = client.get(f"{REPORT_PREFIX}/api/namespace-count",
                            params={"cluster": "crc-local", "selectors": _json.dumps({"company.net/mnemonic": ["no-such"]})},
                            headers=_viewer())
-            assert r.status_code == 200 and r.json() == {"namespaces": 0}, r.text
+            assert r.status_code == 200 and r.json() == {"namespaces": 0, "names": []}, r.text
+
+    def test_a_match_names_the_namespaces_and_null_paths_carry_no_names_key(self, tmp_path):
+        # #143: the count names what it counts, sorted (namespaces_for_selectors' order); every null
+        # path stays byte-identical to #107 — {"namespaces": None} with NO names key.
+        import json as _json
+        with TestClient(self._app(tmp_path)) as client:
+            sel = _json.dumps({"company.net/mnemonic": ["demo", "beta"], "company.net/app-environment": ["prod"]})
+            r = client.get(f"{REPORT_PREFIX}/api/namespace-count",
+                           params={"cluster": "crc-local", "selectors": sel}, headers=_viewer())
+            assert r.status_code == 200, r.text
+            assert r.json() == {"namespaces": 2, "names": ["beta-prod", "demo-prod"]}
+            for bad in ("notjson", "{}", '{"company.net/not-configured": ["demo"]}'):
+                r2 = client.get(f"{REPORT_PREFIX}/api/namespace-count",
+                                params={"cluster": "crc-local", "selectors": bad}, headers=_viewer())
+                assert r2.json() == {"namespaces": None} and "names" not in r2.json(), (bad, r2.text)
+
+    def test_the_names_are_capped_while_the_count_stays_full(self, tmp_path):
+        # #143: past NAMESPACE_PREVIEW_NAMES_CAP the body carries the first CAP sorted names while
+        # `namespaces` keeps the FULL length, so the form can say "… and N more not shown".
+        import json as _json
+        from gsd.reporting.server import NAMESPACE_PREVIEW_NAMES_CAP as CAP
+        from gsd.store import Store
+        snapshots, artifacts = tmp_path / "snap", tmp_path / "art"
+        snapshots.mkdir(); artifacts.mkdir()
+        store = Store(str(tmp_path / "w.db"))
+        store.upsert_cluster("crc-local", "https://k8s", True)
+        store.replace_namespaces("crc-local", [
+            {"name": f"demo-{i:04d}", "created_at": None, "phase": "Active",
+             "metadata": {"company.net/mnemonic": "demo"}} for i in range(CAP + 3)
+        ], "2026-09-14T00:00:00Z")
+        assert store.snapshot(str(snapshots), keep=2); store.close()
+        app = build_report_app(
+            _settings(snapshots, artifacts, enabled_reports=("namespace-access",),
+                      namespace_selector_labels=("company.net/mnemonic",)),
+            secret=SECRET, clock=lambda: FROZEN)
+        with TestClient(app) as client:
+            r = client.get(f"{REPORT_PREFIX}/api/namespace-count",
+                           params={"cluster": "crc-local", "selectors": _json.dumps({"company.net/mnemonic": ["demo"]})},
+                           headers=_viewer())
+            body = r.json()
+            assert body["namespaces"] == CAP + 3                                # the FULL count
+            assert len(body["names"]) == CAP
+            assert body["names"] == [f"demo-{i:04d}" for i in range(CAP)]       # sorted, the first CAP
 
     def test_json_recursion_error_is_null_not_500(self, tmp_path, monkeypatch):
         # json.loads answers deeply-nested input with RecursionError (not a ValueError), which escaped the

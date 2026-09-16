@@ -42,6 +42,10 @@ REFUSAL = ("For administrators only. This view reports the cluster's own RBAC bi
            "operator configuration rather than anything belonging to the reader.")
 UNAUTHENTICATED = frozenset({f"{REPORT_PREFIX}/healthz", f"{REPORT_PREFIX}/readyz", f"{REPORT_PREFIX}/metrics"})
 
+#: GET /namespace-count now names what it counts (#143); the cap bounds the response body when a
+#: selection expands to thousands of namespaces — the form says "… and N more" past it.
+NAMESPACE_PREVIEW_NAMES_CAP = 200
+
 
 class Principal(BaseModel):
     kind: str            # "viewer" | "service"
@@ -213,7 +217,7 @@ def build_report_app(settings: ReportSettings, *, secret: bytes | None = None, c
     def namespace_count(cluster: str = Query(..., description="the cluster id to count within"),
                         selectors: str = Query("", description="the namespace-access selectors as a JSON object"),
                         p: Principal = Depends(principal)) -> dict:
-        """Read-only preview (#107): the count of namespaces the namespace-access `selectors` expand to.
+        """Read-only preview (#107, #143): the count of namespaces the selectors expand to, and their sorted names (capped at NAMESPACE_PREVIEW_NAMES_CAP).
 
         The number shown beside Generate before a heavy run. No artifact, no store write, and a GET, so
         it never touches the one-write invariant. Bad input, an empty selection or a missing snapshot
@@ -239,7 +243,11 @@ def build_report_app(settings: ReportSettings, *, secret: bytes | None = None, c
                 # null/unknown, never an attested 0 (review 2026-09-16, Fable N3, Codex-verified).
                 if not snap.selector_capture_present():
                     return {"namespaces": None}
-                return {"namespaces": len(snap.namespaces_for_selectors(cluster, sel))}
+                # Already sorted by namespaces_for_selectors. `namespaces` stays the FULL length so
+                # the form can say "… and N more" past the cap; a #107 frontend reads the count and
+                # never looks for `names`, so no compatibility shim is needed (#143).
+                names = snap.namespaces_for_selectors(cluster, sel)
+                return {"namespaces": len(names), "names": names[:NAMESPACE_PREVIEW_NAMES_CAP]}
         except (SnapshotError, OSError):
             return {"namespaces": None}
 

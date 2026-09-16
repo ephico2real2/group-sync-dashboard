@@ -164,6 +164,10 @@ securityContext:
 nodeSelector: {}
 tolerations: []
 affinity: {}
+# The dashboard pod's scheduling priority. Empty = the cluster default (priority 0). A PDB does NOT
+# stop preemption; set a PriorityClass name here when this pod must outrank contending workloads on a
+# saturated node (#97). Rendered only when set.
+priorityClassName: ""
 podAnnotations: {}
 podLabels: {}
 
@@ -1102,6 +1106,10 @@ reporting:
   nodeSelector: {}
   tolerations: []
   affinity: {}
+  # The report pod's scheduling priority. Empty = the cluster default (priority 0). #97 saw THIS pod
+  # preempted 29x in ~3h at 99% node CPU (OLM collect-profiles / marketplace pods); a PDB does not stop
+  # preemption, so set a PriorityClass name here to protect a report run in flight. Rendered only when set.
+  priorityClassName: ""
 
 # ---------------------------------------------------------------------------
 # RBAC
