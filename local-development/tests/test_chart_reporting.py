@@ -176,6 +176,11 @@ class TestRefusals:
         (("rbac.namespaces=true", "reporting.namespaceMetadata.labels[0]=company.net/mnemonic",
           "reporting.namespaceSelector.labels[0]=company.net/nope"), "is not in reporting.namespaceMetadata.labels"),
         (("reporting.namespaceSelector.label=company.net/mnemonic",), "was removed"),
+        (("reporting.window.enabled=true", "reporting.window.timezone=UTC", "reporting.window.start=9am"), "is not HH:MM"),
+        (("reporting.window.enabled=true", "reporting.window.timezone=UTC", "reporting.window.start=12:00", "reporting.window.end=12:00"), "start and end are equal"),
+        (("reporting.window.enabled=true", "reporting.window.timezone=UTC", "reporting.window.days={Funday}"), "is not one of Mon..Sun"),
+        (("reporting.window.enabled=true", "reporting.window.timezone=UTC", "reporting.window.days={Mon,Mon}"), "duplicate"),
+        (("reporting.window.enabled=true", "reporting.window.timezone=", "timezone="), "needs a timezone"),
     ])
     def test_each_guard_names_its_key(self, sets, needle):
         done = subprocess.run(["helm", "template", "t", str(CHART), "-n", "x", "--set", "ingress.host=h",
@@ -237,6 +242,26 @@ class TestDerivations:
         ok, out = _render_text(reporting__enabled="false")
         assert "reportingUrl" not in out
 
+    def test_the_window_renders_env_and_the_cronjob_timezone(self):
+        docs = _render("reporting.window.enabled=true", "reporting.window.timezone=America/New_York",
+                       "reporting.schedules[0].name=nightly", "reporting.schedules[0].schedule=0 22 * * *",
+                       "reporting.schedules[0].report=groups", "reporting.schedules[0].cluster=crc-local")
+        report = _container(_exact(docs, "Deployment", "t-group-sync-dashboard-report"), "report")
+        assert _env(report, "GSD_REPORT_WINDOW_ENABLED") == "true"
+        assert _env(report, "GSD_REPORT_WINDOW_TIMEZONE") == "America/New_York"     # window.timezone wins
+        cron = _exact(docs, "CronJob", "t-group-sync-dashboard-report-nightly")
+        assert cron["spec"]["timeZone"] == "America/New_York"                       # cron and window agree
+        docs_off = _render("reporting.schedules[0].name=nightly", "reporting.schedules[0].schedule=0 22 * * *",
+                           "reporting.schedules[0].report=groups", "reporting.schedules[0].cluster=crc-local")
+        report_off = _container(_exact(docs_off, "Deployment", "t-group-sync-dashboard-report"), "report")
+        assert _env(report_off, "GSD_REPORT_WINDOW_ENABLED") == "false"
+        assert "timeZone" not in _exact(docs_off, "CronJob", "t-group-sync-dashboard-report-nightly")["spec"]
+
+    def test_the_window_timezone_falls_back_to_values_timezone(self):
+        docs = _render("reporting.window.enabled=true", "timezone=Europe/Paris", "reporting.window.days={Mon}")
+        report = _container(_exact(docs, "Deployment", "t-group-sync-dashboard-report"), "report")
+        assert _env(report, "GSD_REPORT_WINDOW_TIMEZONE") == "Europe/Paris"          # empty window.timezone -> .Values.timezone
+
     def test_a_schedule_renders_one_cronjob_with_the_trigger_command(self):
         docs = _render("reporting.schedules[0].name=weekly", "reporting.schedules[0].schedule=0 6 * * 1",
                        "reporting.schedules[0].report=access-matrix", "reporting.schedules[0].cluster=crc-local",
@@ -257,3 +282,29 @@ class TestDerivations:
         assert not any(r.get("resources") == ["namespaces"] for r in rules)
         ok, out = _render_text(rbac__namespaces="true")
         assert _config_data(out)["namespacesReadEnabled"] is True
+
+
+def test_a_quoted_false_window_neither_gates_nor_sets_the_cron_timezone():
+    """A quoted "false" (or --set-string) is a non-empty, truthy string, which Go-template truthiness
+    read as ON: spec.timeZone appeared on the CronJob and the guard validated a window the app treats
+    as DISABLED (review of P4, C6/F3). gsd.reportWindowEnabled accepts exactly the report service's
+    _bool_env spellings and refuses the rest, so the three call sites cannot disagree."""
+    done = subprocess.run(["helm", "template", "t", str(CHART), "-n", "x", "--set", "ingress.host=h",
+                           "--set", "reporting.enabled=true", "--set", "reporting.schedules[0].name=nightly",
+                           "--set", "reporting.schedules[0].schedule=30 22 * * *",
+                           "--set", "reporting.schedules[0].report=access-matrix",
+                           "--set-string", "reporting.window.enabled=false"],
+                          capture_output=True, text=True, timeout=120)
+    assert done.returncode == 0, done.stderr
+    docs = [d for d in yaml.safe_load_all(done.stdout) if d]
+    assert "timeZone" not in _exact(docs, "CronJob", "t-group-sync-dashboard-report-nightly")["spec"]
+    report = _container(_exact(docs, "Deployment", "t-group-sync-dashboard-report"), "report")
+    assert _env(report, "GSD_REPORT_WINDOW_ENABLED") == "false"
+
+
+def test_a_misspelt_window_enabled_refuses_the_render():
+    done = subprocess.run(["helm", "template", "t", str(CHART), "-n", "x", "--set", "ingress.host=h",
+                           "--set", "reporting.enabled=true", "--set-string", "reporting.window.enabled=flase"],
+                          capture_output=True, text=True, timeout=120)
+    assert done.returncode != 0
+    assert "is not a boolean" in done.stderr

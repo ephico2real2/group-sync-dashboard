@@ -8,6 +8,15 @@ lives next to the code and in the design and review records linked here. Changes
 last release sit under `## Unreleased` until the release that carries them replaces that heading —
 which `local-development/prepare-release.py` does when the release is cut.
 
+## Application 0.24.0 — chart 0.32.0 — 2026-09-16
+
+- **Global reporting window (P4, `docs/DESIGN_reporting_selectors_snapshots_and_windows.md` §5; issue #131).** A new `reporting.window` block gates **automated** report runs — schedules, and any service-token caller — to a time-of-day range on chosen weekdays, in a chosen timezone. A human's manual run from the Reports tab is **never** gated (an operational rail, not access control). Off by default.
+  - **Enforcement** is authoritative in the report service's `create_run`: an automated run outside the window is refused with **409 + `Retry-After`** before any Run is stored; `trigger.py` maps that 409 to **exit 0** (a *skip*, so the CronJob is not marked failed and does not retry into the window). The one worker rechecks against the run's `requested_at` before rendering — a run admitted just before the close still completes (end-of-window schedules are not flaky), but a run that never was in-window is failed.
+  - **Origin is persisted** on each run — `viewer` (ticket), `schedule` (service token + a named schedule) or `service` (service token, no schedule) — and the gate keys on the origin, so a bare service `curl` with no `--schedule` is still treated as automated. The run manifest loader now defaults a missing `origin` to `viewer` and **tolerates unknown keys**, so a rollback that reads a newer manifest never drops the run from the index.
+  - **The predicate** is half-open `[start, end)`, wrap-aware (a night window like `22:00–06:00` splits at midnight; the post-midnight part belongs to the previous day), timezone-localized, and validated **fail-closed** at both render (chart guard) and report-service startup — an enabled-but-malformed window never silently disables gating. The schedule CronJob's `spec.timeZone` is set to the window's zone so the cron and the window agree (GA on Kubernetes 1.27 / OpenShift ~4.14; pruned on older).
+  - **Metrics:** `gsd_report_runs_outside_window_total{origin}` counts refusals (no names), and `gsd_report_schedule_last_success_timestamp{schedule}` (schedule names are operator config, not people) is the signal a monitor turns into "no success within its period" — so a wrong timezone cannot silently stop nightly evidence.
+  - **Not in this PR (named follow-ups):** splitting the ticket-signing secret from the service bearer (the window is non-adversarial to a token holder, per §8); the snapshot manual/automatic mode + PVC sentinel (P3).
+
 ## Application 0.23.0 — chart 0.31.0 — 2026-09-16
 
 - **Reporting-review fixes (Fable-high 24h review, Codex-verified — `docs/REVIEW_reporting_review_24h.md`).** Three defects the P1/P2 passes missed, each with a fail-before/pass-after test:

@@ -178,6 +178,9 @@ REVIEW_ARTIFACTS = (
     # PR #138 (advisory CVE scanning) review: cites the ci.yml image-job lines and the helm.yaml
     # caller-grant the finding fixes, by file:line at review time.
     "REVIEW_advisory_cve_scan.md",
+    # PR (P4 reporting window) review: quotes the create_run gate, the window predicate, the worker
+    # recheck and the chart guard the findings correct, by file:line at review time.
+    "REVIEW_p4_reporting_window.md",
 )
 
 

@@ -1021,6 +1021,28 @@ reporting:
     intervalSeconds: 300
     keep: 2
 
+  # The global reporting window (design §5): gate AUTOMATED report runs (schedules, and any service-token
+  # caller) to a time-of-day range on chosen weekdays, in a chosen timezone. A human's manual run from the
+  # Reports tab is NEVER gated — this is an operational rail, not access control. Off by default.
+  #   - A refused run answers 409; the schedule Job treats that as a SKIP (exit 0), not a failure, so the
+  #     CronJob is not marked failed and does not retry into the window.
+  #   - timezone defaults to .Values.timezone (the report pod's TZ) when left empty. When window.enabled,
+  #     the schedule CronJob's spec.timeZone is set to this same zone so the cron and the window agree —
+  #     otherwise Kubernetes runs the cron in the CONTROLLER's timezone and every run is 409-skipped.
+  #     spec.timeZone is GA on Kubernetes 1.27 / OpenShift ~4.14; on older it is silently pruned and the
+  #     cron falls back to the controller's timezone (document the estate's version before relying on it).
+  #   - start/end are HH:MM (24h) and must differ. A wrap window (start > end, e.g. 22:00-06:00) is a night
+  #     window: the post-midnight part belongs to the previous day. A window entirely inside the DST
+  #     spring-forward hour never opens — avoid 02:00-03:00 in a zone that springs forward there.
+  #   - days is a non-empty, duplicate-free subset of Mon..Sun. Malformed = a render failure (and a report
+  #     service startup failure): an enabled-but-broken window never silently disables gating.
+  window:
+    enabled: false
+    timezone: ""
+    start: "22:00"
+    end: "06:00"
+    days: [Mon, Tue, Wed, Thu, Fri, Sat, Sun]
+
   # Artefact retention: whichever bound is hit first; 0 disables a bound.
   retention:
     days: 90

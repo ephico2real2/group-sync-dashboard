@@ -112,3 +112,31 @@ class TestTriggerParamsJson:
     def test_non_object_params_json_exits_1(self, monkeypatch, tmp_path):
         rc = self._run(monkeypatch, tmp_path, ["--params-json", "[1,2]"])
         assert rc == 1
+
+
+class _FakeResp409:
+    status_code = 409
+    text = "outside the reporting window"
+    headers = {"Retry-After": "3600"}
+
+    def json(self):
+        return {}
+
+
+class _FakeClient409(_FakeClient):
+    def post(self, path, json=None):
+        _FakeClient.captured = {"path": path, "json": json}
+        return _FakeResp409()
+
+
+class TestTriggerWindow:
+    """The schedule Job maps the create_run 409 (window closed, design §5) to exit 0 — a SKIP, not a
+    CronJob failure, so Kubernetes does not mark the Job failed or retry it into the window."""
+
+    def test_409_outside_the_window_is_a_skip_exit_0(self, monkeypatch, tmp_path):
+        tok = tmp_path / "token"
+        tok.write_text("secret")
+        monkeypatch.setattr(trigger.httpx, "Client", _FakeClient409)
+        rc = trigger.main(["--url", "https://x", "--report", "namespace-access", "--cluster", "crc-local",
+                           "--schedule", "weekly", "--token-file", str(tok)])
+        assert rc == 0

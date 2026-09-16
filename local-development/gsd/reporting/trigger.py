@@ -56,6 +56,13 @@ def main(argv: list[str] | None = None) -> int:
             "formats": a.format or ["html", "pdf"], "schedule": a.schedule}
     with httpx.Client(base_url=a.url, headers=headers, verify=verify, timeout=30.0) as c:
         r = c.post("/report/api/runs", json=body)
+        if r.status_code == 409:
+            # The reporting window is closed (design §5): a schedule firing outside its window is a SKIP,
+            # not a failure. Exit 0 so the CronJob is not marked failed and does not retry into the
+            # window; the run simply did not happen. Any other non-202 (a real refusal) stays exit 1.
+            print(json.dumps({"skipped": "outside the reporting window",
+                              "retry_after_seconds": r.headers.get("Retry-After")}))
+            return 0
         if r.status_code != 202:
             print(f"refused: {r.status_code} {r.text}", file=sys.stderr)
             return 1

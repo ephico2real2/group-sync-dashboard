@@ -22,6 +22,11 @@ class ReportSignals:
         self._finished = {(n, s): 0 for n in REPORT_NAMES for s in ("done", "failed")}
         self._seconds = {n: 0.0 for n in REPORT_NAMES}
         self._bytes = {n: 0 for n in REPORT_NAMES}
+        #: Automated runs refused by the reporting window, by origin (config, not a person). §5.
+        self._outside_window = {"schedule": 0, "service": 0}
+        #: Unix time of the last successful run per schedule NAME (operator config, not a person) — the
+        #: signal a monitor turns into "no success within its period", the evidence-gap alert (§5).
+        self._schedule_last_success: dict[str, float] = {}
 
     def note_submitted(self, report: str) -> None:
         with self._lock:
@@ -34,10 +39,20 @@ class ReportSignals:
             self._seconds[report] = self._seconds.get(report, 0.0) + (seconds or 0.0)
             self._bytes[report] = self._bytes.get(report, 0) + (size or 0)
 
+    def note_outside_window(self, origin: str) -> None:
+        with self._lock:
+            self._outside_window[origin] = self._outside_window.get(origin, 0) + 1
+
+    def note_schedule_success(self, schedule: str, when: float) -> None:
+        with self._lock:
+            self._schedule_last_success[schedule] = when
+
     def snapshot(self) -> dict:
         with self._lock:
             return {"submitted": dict(self._submitted), "finished": dict(self._finished),
-                    "seconds": dict(self._seconds), "bytes": dict(self._bytes)}
+                    "seconds": dict(self._seconds), "bytes": dict(self._bytes),
+                    "outside_window": dict(self._outside_window),
+                    "schedule_last_success": dict(self._schedule_last_success)}
 
 
 class ReportCollector:
@@ -60,6 +75,19 @@ class ReportCollector:
         yield finished
         yield seconds
         yield size
+        outside = CounterMetricFamily("gsd_report_runs_outside_window_total",
+                                      "Automated runs refused because the reporting window is closed, by origin.",
+                                      labels=["origin"])
+        for origin in ("schedule", "service"):
+            outside.add_metric([origin], snap["outside_window"].get(origin, 0))
+        yield outside
+        last_success = GaugeMetricFamily("gsd_report_schedule_last_success_timestamp",
+                                         "Unix time of the last successful run per schedule name (operator config, "
+                                         "not a person); monitor 'no success within its period' as an evidence gap.",
+                                         labels=["schedule"])
+        for sched, ts in snap["schedule_last_success"].items():
+            last_success.add_metric([sched], ts)
+        yield last_success
         queued = GaugeMetricFamily("gsd_report_queue_length", "Runs waiting for the worker.")
         queued.add_metric([], self.runs.queued())
         yield queued

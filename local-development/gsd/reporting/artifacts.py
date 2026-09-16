@@ -15,7 +15,7 @@ import os
 import secrets
 import shutil
 import threading
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -45,9 +45,19 @@ class Run:
     bytes: dict = field(default_factory=dict)     # format -> size
     pdf_variant: str | None = None
     render_seconds: float | None = None
+    # How the run was requested: 'viewer' (a human's ticket), 'schedule' (service token + a named
+    # schedule) or 'service' (service token, no schedule). Persisted so the worker's window recheck
+    # (design §5) sees the same origin the endpoint gated on. Defaults to 'viewer' so a manifest written
+    # before P4 (no origin key) still loads and is never mistaken for automated.
+    origin: str = "viewer"
 
     def public(self) -> dict:
         return asdict(self)
+
+
+# The manifest is a forward/backward-tolerant envelope: unknown keys are dropped on load and missing
+# known keys fall back to defaults, so a rollback that reads a newer manifest does not drop the run.
+_RUN_FIELDS = frozenset(f.name for f in fields(Run))
 
 
 def new_run_id(now: datetime) -> str:
@@ -68,7 +78,10 @@ class ArtifactStore:
             if not d.is_dir() or not manifest.is_file():
                 continue
             try:
-                self._runs[d.name] = Run(**json.loads(manifest.read_text(encoding="utf-8")))
+                data = json.loads(manifest.read_text(encoding="utf-8"))
+                # Drop keys this build does not know (a newer manifest on rollback) rather than let
+                # Run(**data) TypeError and silently lose the run from the index (design §5).
+                self._runs[d.name] = Run(**{k: v for k, v in data.items() if k in _RUN_FIELDS})
             except (OSError, ValueError, TypeError) as exc:
                 log.warning("skipping unreadable run manifest %s: %s", manifest, exc)
         # A run that was 'running' when the pod died is failed, and the manifest says so.

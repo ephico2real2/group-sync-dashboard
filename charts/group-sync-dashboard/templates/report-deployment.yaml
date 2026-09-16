@@ -96,6 +96,20 @@ spec:
             # poller captures under reporting.namespaceMetadata.labels.
             - name: GSD_REPORT_NS_SELECTOR_LABELS
               value: {{ (((.Values.reporting | default dict).namespaceSelector) | default dict).labels | default list | toJson | quote }}
+            # The global reporting window (design §5). Disabled by default; the timezone defaults to
+            # .Values.timezone (the pod's TZ) when reporting.window.timezone is empty. The service
+            # validates these at startup and fails closed on a malformed enabled window.
+            {{- $window := (.Values.reporting | default dict).window | default dict }}
+            - name: GSD_REPORT_WINDOW_ENABLED
+              value: {{ include "gsd.reportWindowEnabled" . | quote }}
+            - name: GSD_REPORT_WINDOW_TIMEZONE
+              value: {{ ($window.timezone | default .Values.timezone) | quote }}
+            - name: GSD_REPORT_WINDOW_START
+              value: {{ $window.start | default "22:00" | quote }}
+            - name: GSD_REPORT_WINDOW_END
+              value: {{ $window.end | default "06:00" | quote }}
+            - name: GSD_REPORT_WINDOW_DAYS
+              value: {{ $window.days | default list | toJson | quote }}
             {{- with .Values.timezone }}
             - name: TZ
               value: {{ . | quote }}

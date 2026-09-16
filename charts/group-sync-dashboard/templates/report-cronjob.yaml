@@ -11,6 +11,14 @@ metadata:
   labels: {{- include "gsd.reportScheduleLabels" $ | nindent 4 }}
 spec:
   schedule: {{ $s.schedule | quote }}
+  {{- $window := ($.Values.reporting | default dict).window | default dict }}
+  {{- if eq (include "gsd.reportWindowEnabled" $) "true" }}
+  # Fire the cron in the reporting window's zone so its schedule times land INSIDE the window; without
+  # this Kubernetes interprets the cron in the controller's timezone and every run is 409-skipped
+  # (design §5). GA on Kubernetes 1.27 / OpenShift ~4.14; silently pruned on older, where the cron
+  # falls back to the controller's timezone.
+  timeZone: {{ $window.timezone | default $.Values.timezone | quote }}
+  {{- end }}
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3

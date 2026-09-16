@@ -13,6 +13,7 @@ import hmac
 import json
 import logging
 import os
+import re
 import secrets
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -62,6 +63,19 @@ def build_report_app(settings: ReportSettings, *, secret: bytes | None = None, c
     store = ArtifactStore(settings.artifact_dir)
     signals = ReportSignals()
     runs = RunManager(settings, store, signals, clock=now)
+    # Re-arm the evidence-gap signal from the index (review of P4, F4): the last-success gauge is
+    # process-local, so a restart emptied it and "no success within its period" (design §5) had NO
+    # series until the next success — the monitor went blind exactly when the service restarted. The
+    # run manifests already carry the truth; the newest DONE run per schedule is the last success.
+    _seeded: set[str] = set()
+    for _r in store.list(limit=100000)[0]:                          # newest first
+        if _r.status == "done" and _r.schedule and _r.finished_at and _r.schedule not in _seeded:
+            try:
+                _when = datetime.strptime(_r.finished_at, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC).timestamp()
+            except ValueError:
+                continue                                            # a hand-edited timestamp is skipped, not a crashloop
+            _seeded.add(_r.schedule)
+            signals.note_schedule_success(_r.schedule, _when)
 
     def snapshot_age() -> float | None:
         try:
@@ -264,13 +278,38 @@ def build_report_app(settings: ReportSettings, *, secret: bytes | None = None, c
             raise HTTPException(status_code=422, detail=f"unknown format(s) {bad}; json is always written")
         if "pdf" in body.formats and not settings.pdf_enabled:
             raise HTTPException(status_code=422, detail="PDF output is disabled on this deployment (reporting.pdf.enabled)")
-        if body.schedule and p.kind != "service":
-            raise HTTPException(status_code=422, detail="only the service token may name a schedule")
+        if body.schedule:
+            if p.kind != "service":
+                raise HTTPException(status_code=422, detail="only the service token may name a schedule")
+            # The schedule NAME becomes a public /metrics label (gsd_report_schedule_last_success_timestamp)
+            # — bound it to the chart's own DNS-label schedule-name shape so a service caller cannot put a
+            # person's name (or any arbitrary string) into a public, unauthenticated metric (review of P4,
+            # C7; the chart enforces the same pattern on reporting.schedules[].name).
+            if not re.fullmatch(r"[a-z0-9]([-a-z0-9]{0,40}[a-z0-9])?", body.schedule):
+                raise HTTPException(status_code=422,
+                                    detail="schedule must be a short DNS label (lowercase letters, digits, hyphens)")
+        # Origin (design §5): gate on HOW the run was requested, not on body.schedule alone — a bare
+        # service curl with no schedule is still automated and must be gated.
+        origin = "viewer" if p.kind == "viewer" else ("schedule" if body.schedule else "service")
+        # ONE authoritative instant supplies the window gate, the run id and the persisted requested_at, so
+        # a clock crossing the window's close between separate now() calls cannot admit a run and then
+        # stamp it out-of-window (review of P4, C3).
+        requested = now()
+        # The reporting window gates automated origins to the configured hours; a human's viewer run is
+        # never gated. Refuse OUTSIDE with 409 + Retry-After BEFORE constructing the Run, so an ordinary
+        # miss stores no failed run (the worker's recheck is the belt for a run admitted near the close).
+        if origin != "viewer" and not settings.window.is_open(requested):
+            signals.note_outside_window(origin)
+            retry = settings.window.seconds_until_open(requested)
+            log.warning("run refused: outside the reporting window (origin=%s report=%s retry_after=%ss)",
+                        origin, body.report, retry)
+            raise HTTPException(status_code=409, detail="outside the reporting window",
+                                headers={"Retry-After": str(retry)})
         by = f"schedule:{body.schedule}" if body.schedule else p.name
-        run = Run(id=new_run_id(now()), report=body.report, cluster=body.cluster, params=params,
+        run = Run(id=new_run_id(requested), report=body.report, cluster=body.cluster, params=params,
                   formats=sorted(set(body.formats)), generated_by=by,
                   generated_by_note="unattended (service token)" if p.kind == "service" else p.note,
-                  schedule=body.schedule, requested_at=now().strftime("%Y-%m-%dT%H:%M:%SZ"))
+                  schedule=body.schedule, requested_at=requested.strftime("%Y-%m-%dT%H:%M:%SZ"), origin=origin)
         try:
             runs.submit(run)
         except QueueFull as exc:
