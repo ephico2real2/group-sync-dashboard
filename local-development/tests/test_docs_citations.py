@@ -184,6 +184,9 @@ REVIEW_ARTIFACTS = (
     # PR #144 (#143 namespace-access names popup) two-reviewer record: cites the schedulePreview /
     # applyPosition / wireReports sites and the claim ids at review time, point-in-time by construction.
     "REVIEW_ns_preview_popup.md",
+    # PR #145 (#97 priorityClassName) review record: Codex generated/verified, Fable-high reviewed;
+    # cites the checksum line and template guards at review time, point-in-time by construction.
+    "REVIEW_priority_class.md",
 )
 
 
