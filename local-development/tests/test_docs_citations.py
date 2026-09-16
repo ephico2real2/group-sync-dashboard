@@ -181,6 +181,12 @@ REVIEW_ARTIFACTS = (
     # PR (P4 reporting window) review: quotes the create_run gate, the window predicate, the worker
     # recheck and the chart guard the findings correct, by file:line at review time.
     "REVIEW_p4_reporting_window.md",
+    # Handoff/planning docs under docs/handoff/. Point-in-time by construction: the cert-manager
+    # rework plan cites files in the OTHER repo (group-sync-operator-helm-chart), and the migration
+    # runbook cites machine state (tool versions, credential paths) at the moment it was captured —
+    # neither is a citation into this repo's code, so the resolver rule does not apply.
+    "crc-ca-cert-manager-plan.md",
+    "macbook-migration-plan.md",
     # PR #144 (#143 namespace-access names popup) two-reviewer record: cites the schedulePreview /
     # applyPosition / wireReports sites and the claim ids at review time, point-in-time by construction.
     "REVIEW_ns_preview_popup.md",
