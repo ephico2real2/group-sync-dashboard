@@ -289,9 +289,14 @@ python -m playwright install chromium     # for the e2e-walk / capture scripts
 # fresh pull secret first (nothing to copy):
 #   https://console.redhat.com/openshift/create/local  → download pull-secret
 
-crc config set cpus 5
-crc config set disk-size 60
-crc config set memory 16384
+# Sizing RAISED from the old 5 / 16384 / 60. That cluster sat at 99% CPU requests (4792m/4800m —
+# the #97 report-pod preemption cause) and 85% disk (51/60G) BEFORE monitoring or GitOps. The new
+# Mac is an Apple M5 Pro / 64 GB, so there is ample headroom to run monitoring + GitOps + the LDAP
+# lab together without re-saturating:
+crc config set cpus 8
+crc config set memory 32768                     # 32 GiB VM; leaves ~28-30 GiB for macOS + podman build VM
+crc config set disk-size 100
+crc config set enable-cluster-monitoring true   # NEW requirement; default CRC has monitoring OFF (0 pods)
 crc config set consent-telemetry yes
 crc config set no-proxy local,169.254/16
 
