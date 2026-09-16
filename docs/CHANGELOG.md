@@ -10,7 +10,7 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Application 0.24.0 — chart 0.33.0 — 2026-09-16
 
-- **`priorityClassName` on both Deployments (#97).** The chart renders a pod `priorityClassName` when `priorityClassName` (dashboard) or `reporting.priorityClassName` (report) is set; both default empty, so nothing changes by default. Measured on CRC (2026-09-14): the report pod was **Preempted 29x** in ~3h at **99% node CPU requests**, evicted by OLM `collect-profiles` (`openshift-user-critical`) and a marketplace catalog pod (`system-cluster-critical`); a PDB does not stop preemption, a priority does. Rendered only when set, mirroring the chart's existing `nodeSelector`/`tolerations`/`affinity` guards.
+- **`priorityClassName` on both Deployments (#97).** The chart renders a pod `priorityClassName` when `priorityClassName` (dashboard) or `reporting.priorityClassName` (report) is set; both default empty, so nothing renders by default — and `priorityClassName` is omitted from the report pod's config checksum, so introducing the key does not roll that pod on upgrade. Measured on CRC (2026-09-14): the report pod was **Preempted 29x** in ~3h at **99% node CPU requests**, evicted by OLM `collect-profiles` (`openshift-user-critical`) and a marketplace catalog pod (`system-cluster-critical`); a PDB does not stop preemption, a priority does. Rendered only when set, mirroring the chart's existing `nodeSelector`/`tolerations`/`affinity` guards.
 
 ## Application 0.24.0 — chart 0.32.0 — 2026-09-16
 

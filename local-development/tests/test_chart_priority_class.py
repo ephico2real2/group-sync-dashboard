@@ -53,3 +53,34 @@ class TestPriorityClassName:
         docs = _render("reporting.priorityClassName=high-report")
         assert _prio(_deploy(docs, "t-group-sync-dashboard-report")) == "high-report"
         assert _prio(_deploy(docs, "t-group-sync-dashboard")) is None
+
+
+def _render_str(*sets: str) -> list[dict]:
+    """--set-string, because helm's own --set typing would coerce '0600' to int 600 before the
+    template ever sees it (#97 review F1)."""
+    args = ["helm", "template", "t", str(CHART), "-n", "x", "--set", "ingress.host=h"]
+    for s in sets:
+        args += ["--set-string", s]
+    done = subprocess.run(args, capture_output=True, text=True, timeout=120)
+    assert done.returncode == 0, done.stderr
+    return [d for d in yaml.safe_load_all(done.stdout) if d]
+
+
+@needs_helm
+class TestPriorityClassNameReviewFixes:
+    def test_a_yaml_hostile_but_legal_name_survives_the_render(self):
+        # #97 review F1: '0600' and '0x1a' are legal PriorityClass names (DNS-1123 subdomains) AND
+        # YAML 1.1 integers. Unquoted they render as numbers and the apiserver's YAML->JSON decode
+        # rejects them ("cannot unmarshal number into ... type string"). `| quote` keeps them strings.
+        docs = _render_str("priorityClassName=0600", "reporting.priorityClassName=0x1a")
+        assert _prio(_deploy(docs, "t-group-sync-dashboard")) == "0600"
+        assert _prio(_deploy(docs, "t-group-sync-dashboard-report")) == "0x1a"
+
+    def test_the_checksum_does_not_roll_the_report_pod_for_a_priority_change(self):
+        # #97 review F2: checksum/reporting restarts the report pod when config the PROCESS reads
+        # changes. priorityClassName rolls the pod via the spec itself, so it must not also feed the
+        # hash — otherwise introducing the key (default "") rolls the pod on a defaults-only upgrade.
+        ann = lambda d: d["spec"]["template"]["metadata"]["annotations"]["checksum/reporting"]
+        assert ann(_deploy(_render(), "t-group-sync-dashboard-report")) == ann(
+            _deploy(_render("reporting.priorityClassName=high-report"),
+                    "t-group-sync-dashboard-report"))
