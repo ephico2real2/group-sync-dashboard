@@ -52,6 +52,22 @@
   </div>
 </div>
 
+<!-- #143: the namespace-access preview's "which namespaces" list. Static markup next to the idle
+     modal for the same reason the idle modal is static: render() repaints #main on every poll, and
+     removing an open modal <dialog> from the document closes it mid-read. A NATIVE <dialog> shown
+     with showModal(): the top layer means the report form below cannot reflow (the "no resize"
+     requirement), and focus trap, Escape and focus-return-to-opener come from the platform —
+     no inert shim here, unlike the idle modal. Filled at open time from view.reportPreviewNames. -->
+<dialog id="ns-preview" class="ns-preview" aria-labelledby="ns-preview-title">
+  <h2 id="ns-preview-title">Matched namespaces</h2>
+  <p class="muted" id="ns-preview-count"></p>
+  <ul id="ns-preview-list"></ul>
+  <p class="muted" id="ns-preview-more" hidden></p>
+  <form method="dialog" class="idle-actions">
+    <button id="ns-preview-close">Close</button>
+  </form>
+</dialog>
+
 <script>
 "use strict";
 
@@ -64,6 +80,7 @@ const STATES = {
 
 const view = { page: "overview", cluster: null, groupsync: null, groupFilter: "all", bindingFilter: "review",
                 reportPick: null, reportForm: {}, reportRun: null, reportSubmitting: false, reportPreview: "",
+                reportPreviewNames: [], reportPreviewCount: null,   // #143: the names behind the count
                 /* Free-text group search. A FILTER, so it lives here rather than in POSITION_KEYS —
                    same reasoning as groupFilter: it narrows what a page shows, it is not a place, and
                    a history entry per keystroke would bury every position Back exists to reach. */
@@ -1817,7 +1834,8 @@ function reportFormCard(spec, cat) {
           ${d.values.map((v) => `<option value="${esc(v)}"${selectedFor(form.selectors, d.label).includes(v) ? " selected" : ""}>${esc(v)}</option>`).join("")}
         </select>
         <span class="muted">Select one or more.${i === 0 ? " Dimensions combine with AND; values within a dimension with OR." : ""}</span></div>`).join("")
-        + `<div class="report-field"><span class="muted" id="report-preview">${esc(view.reportPreview || "")}</span></div>`;
+        + `<div class="report-field"><span class="muted" id="report-preview">${esc(view.reportPreview || "")}</span>
+           <button type="button" class="linkish" id="report-preview-view"${(view.reportPreviewNames || []).length ? "" : " hidden"}>view namespaces</button></div>`;
     }
     const id = `report-param-${spec.name}-${p.name}`;
     const val = form[p.name] !== undefined ? form[p.name] : (Array.isArray(p.default) ? p.default.join(",") : (p.default === null ? "" : p.default));
@@ -1895,7 +1913,12 @@ function clearReportPreview() {
   clearTimeout(_previewTimer); _previewTimer = null;
   _previewVersion++;                                   // invalidate any GET already in flight
   view.reportPreview = "";
+  view.reportPreviewNames = []; view.reportPreviewCount = null;
   const el = $("report-preview"); if (el) el.textContent = "";
+  const btn = $("report-preview-view"); if (btn) btn.hidden = true;
+  // A selection can die while its list is open (history Back fires popstate through a modal): names
+  // that no longer describe any selection must not stay on screen (#143).
+  closeNsPreview();
 }
 function schedulePreview(spec) {
   if (spec !== "namespace-access") { clearReportPreview(); return; }
@@ -1910,22 +1933,52 @@ function schedulePreview(spec) {
   const others = (Array.isArray(form.mnemonics) && form.mnemonics.length ? 1 : 0)
     + (form.namespaces && String(form.namespaces).trim() ? 1 : 0);
   if (!cluster || !encoded || others > 0) {
-    view.reportPreview = ""; const el = $("report-preview"); if (el) el.textContent = ""; return;
+    view.reportPreview = ""; view.reportPreviewNames = []; view.reportPreviewCount = null;
+    const el = $("report-preview"); if (el) el.textContent = "";
+    const btn = $("report-preview-view"); if (btn) btn.hidden = true;
+    return;
   }
   _previewTimer = setTimeout(async () => {
-    let text = "";
+    let text = "", names = [], count = null;
     try {
       const q = `cluster=${encodeURIComponent(cluster)}&selectors=${encodeURIComponent(encoded)}`;
       const r = await reportGet(`/api/namespace-count?${q}`);
       const n = r && r.namespaces;
       text = (n == null) ? "" : `${n} namespace${n === 1 ? "" : "s"} match this selection`;
+      // #143: the endpoint now names what it counts (capped server-side). An OLD pod's reply has no
+      // `names`; the affordance simply stays hidden — the same degradation shape as C7-A.
+      if (typeof n === "number" && n > 0 && Array.isArray(r.names)) { names = r.names; count = n; }
     } catch (e) { text = ""; }
     // A late response for a superseded selection or a switched cluster is discarded: clearTimeout
     // cannot cancel a GET already sent, so a stale count could otherwise paint (review PR #129 C4-A).
     if (version !== _previewVersion || cluster !== view.cluster) return;
     view.reportPreview = text;
+    view.reportPreviewNames = names; view.reportPreviewCount = count;
     const el = $("report-preview"); if (el) el.textContent = text;
+    const btn = $("report-preview-view"); if (btn) btn.hidden = !names.length;
   }, 400);
+}
+
+// #143: the popup that names what the count counts. showModal() puts it in the top layer, so the
+// report form CANNOT reflow while it is open; Escape, the focus trap and focus-return-to-opener are
+// the platform's. The idle modal is mirrored for the LOOK (app.css) and the labelled title only —
+// no $("wrap").inert here, because showModal already makes the background inert.
+function openNsPreview() {
+  const dlg = $("ns-preview");
+  const names = view.reportPreviewNames || [];
+  if (!dlg || !names.length || dlg.open) return;
+  const count = view.reportPreviewCount != null ? view.reportPreviewCount : names.length;
+  $("ns-preview-count").textContent = `${count} namespace${count === 1 ? "" : "s"} match this selection.`;
+  $("ns-preview-list").innerHTML = names.map((n) => `<li>${esc(n)}</li>`).join("");
+  const more = $("ns-preview-more");
+  more.hidden = count <= names.length;
+  more.textContent = more.hidden ? "" : `… and ${count - names.length} more not shown.`;
+  dlg.showModal();
+  $("ns-preview-close").focus();   // a control holds initial focus, the idle modal's intent
+}
+function closeNsPreview() {
+  const dlg = $("ns-preview");
+  if (dlg && dlg.open) dlg.close();   // close() hands focus back to the opener; nothing manual
 }
 
 function wireReports() {
@@ -1968,6 +2021,13 @@ function wireReports() {
   // by-id restore has nothing to restore), and the reader who pressed Enter on it should find
   // focus back on it when it re-enables.
   if (gen) gen.onclick = () => generateReport(document.activeElement === gen);
+  // #143: the names popup. The button is re-created by every render, so it is (re)wired here like
+  // every other report control. The <dialog> is static (next to #idle-modal) so a repaint never
+  // removes it while open; re-assigning its backdrop handler each render is harmless.
+  const nsBtn = $("report-preview-view");
+  if (nsBtn) nsBtn.onclick = openNsPreview;
+  const nsDlg = $("ns-preview");
+  if (nsDlg) nsDlg.onclick = (e) => { if (e.target === nsDlg) closeNsPreview(); };   // backdrop click
   document.querySelectorAll("[data-artifact]").forEach((el) => {
     el.onclick = () => downloadArtifact(el.dataset.artifact, el.dataset.format);
   });

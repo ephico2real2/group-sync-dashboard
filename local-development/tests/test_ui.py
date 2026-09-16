@@ -4268,6 +4268,42 @@ class TestReportsTab:
         finally:
             ctx.close()
 
+    def test_the_view_button_lists_the_matched_names_without_resizing_the_form(self, browser, reporting_server):
+        # #143: the "view namespaces" affordance appears only once names exist; showModal() renders
+        # the list in the browser's top layer, so the report form's height cannot change — the whole
+        # "no resize" requirement, asserted as an unchanged bounding box.
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.click('button.tab:text-is("Reports")')
+            page.wait_for_selector("#report-picker")
+            page.evaluate("""() => {
+                reportGet = async () => ({namespaces: 3, names: ["beta-prod", "demo-prod", "demo-production"]});
+                data.reportCatalog.namespaceSelectorDimensions = {
+                    "crc-local": [{label: "company.net/mnemonic", values: ["beta", "demo"]}]
+                };
+                view.reportPick = "namespace-access";
+                render();
+            }""")
+            btn = page.locator("#report-preview-view")
+            assert btn.count() == 1 and btn.is_hidden()          # no selection yet -> no affordance
+            page.select_option("#report-selector-0", ["beta", "demo"])
+            page.locator("#report-selector-0").dispatch_event("change")
+            page.wait_for_function("() => view.reportPreview.startsWith('3 namespace')")
+            assert btn.is_visible()
+            before = page.locator("#report-form").bounding_box()["height"]
+            btn.click()
+            page.wait_for_selector("#ns-preview[open]")
+            assert page.locator("#ns-preview li").all_inner_texts() == ["beta-prod", "demo-prod", "demo-production"]
+            after = page.locator("#report-form").bounding_box()["height"]
+            assert after == before                               # top layer: the form did not reflow
+            page.keyboard.press("Escape")                        # the native dialog's own close
+            page.wait_for_function("() => !document.getElementById('ns-preview').open")
+            assert page.evaluate("() => document.activeElement && document.activeElement.id") == "report-preview-view"
+            assert not errors, errors
+        finally:
+            ctx.close()
+
     def test_a_narrowed_reader_sees_the_refusal_card_never_a_blank(self, browser, reporting_server):
         base, _, _ = reporting_server
         ctx, page, errors = _reports_page(browser, base, "alice")
