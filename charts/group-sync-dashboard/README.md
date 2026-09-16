@@ -372,6 +372,7 @@ ArgoCD section explains for the cookie.
 | `probes.readiness.periodSeconds` / `.failureThreshold` | `15` / `3` | **15s**, because being wrong here only removes the pod from the Service and it comes straight back |
 | `podSecurityContext`, `securityContext` | non-root, read-only rootfs, all caps dropped | |
 | `nodeSelector`, `tolerations`, `affinity`, `podAnnotations`, `podLabels` | empty | |
+| `priorityClassName`, `reporting.priorityClassName` | `""` | a PriorityClass name for the dashboard / report pod, rendered only when set. A PDB does not stop preemption; set these when a workload must outrank profile-collection crons on a saturated node (#97) |
 
 ### Networking
 

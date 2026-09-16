@@ -37,6 +37,9 @@ spec:
       affinity:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- with .Values.reporting.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
       containers:
         - name: report
           image: {{ include "gsd.reportImage" . }}

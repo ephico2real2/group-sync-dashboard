@@ -8,6 +8,10 @@ lives next to the code and in the design and review records linked here. Changes
 last release sit under `## Unreleased` until the release that carries them replaces that heading —
 which `local-development/prepare-release.py` does when the release is cut.
 
+## Application 0.24.0 — chart 0.33.0 — 2026-09-16
+
+- **`priorityClassName` on both Deployments (#97).** The chart renders a pod `priorityClassName` when `priorityClassName` (dashboard) or `reporting.priorityClassName` (report) is set; both default empty, so nothing changes by default. Measured on CRC (2026-09-14): the report pod was **Preempted 29x** in ~3h at **99% node CPU requests**, evicted by OLM `collect-profiles` (`openshift-user-critical`) and a marketplace catalog pod (`system-cluster-critical`); a PDB does not stop preemption, a priority does. Rendered only when set, mirroring the chart's existing `nodeSelector`/`tolerations`/`affinity` guards.
+
 ## Application 0.24.0 — chart 0.32.0 — 2026-09-16
 
 - **Global reporting window (P4, `docs/DESIGN_reporting_selectors_snapshots_and_windows.md` §5; issue #131).** A new `reporting.window` block gates **automated** report runs — schedules, and any service-token caller — to a time-of-day range on chosen weekdays, in a chosen timezone. A human's manual run from the Reports tab is **never** gated (an operational rail, not access control). Off by default.
