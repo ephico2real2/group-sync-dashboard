@@ -175,12 +175,30 @@ class TestRefusals:
         (("reporting.image.digest=abc",), "is not a digest"),
         (("rbac.namespaces=true", "reporting.namespaceMetadata.labels[0]=company.net/mnemonic",
           "reporting.namespaceSelector.labels[0]=company.net/nope"), "is not in reporting.namespaceMetadata.labels"),
+        (("reporting.namespaceSelector.label=company.net/mnemonic",), "was removed"),
     ])
     def test_each_guard_names_its_key(self, sets, needle):
         done = subprocess.run(["helm", "template", "t", str(CHART), "-n", "x", "--set", "ingress.host=h",
                                *sum((["--set", s] for s in sets), [])], capture_output=True, text=True, timeout=120)
         assert done.returncode != 0, sets
         assert needle in done.stderr, done.stderr[-400:]
+
+    def test_the_removed_singular_label_refuses_only_a_material_value(self):
+        # Helm ignores an unknown key, so a stale non-empty reporting.namespaceSelector.label left in a
+        # 0.21 values file would render cleanly while the selector silently vanished. The chart refuses a
+        # materially-set .label (review 2026-09-16, Fable F2) — but 0.21 shipped `label: ""` as its
+        # default, so an empty value stays an allowed no-op, and the removed key is refused even when the
+        # new .labels is also present (Codex: refuse only a material value, and refuse first).
+        def _run(*sets):
+            return subprocess.run(["helm", "template", "t", str(CHART), "-n", "x", "--set", "ingress.host=h",
+                                   *sum((["--set", s] for s in sets), [])], capture_output=True, text=True, timeout=120)
+        assert _run("reporting.namespaceSelector.label=").returncode == 0            # the 0.21 no-op default
+        material = _run("reporting.namespaceSelector.label=company.net/mnemonic")
+        assert material.returncode != 0 and "was removed" in material.stderr, material.stderr[-400:]
+        both = _run("rbac.namespaces=true", "reporting.namespaceMetadata.labels[0]=company.net/mnemonic",
+                    "reporting.namespaceSelector.labels[0]=company.net/mnemonic",
+                    "reporting.namespaceSelector.label=company.net/mnemonic")
+        assert both.returncode != 0 and "was removed" in both.stderr, both.stderr[-400:]
 
 
 class TestDerivations:

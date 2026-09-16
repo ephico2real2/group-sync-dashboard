@@ -171,6 +171,10 @@ REVIEW_ARTIFACTS = (
     # PR #129 (P2 multi-dimension selector) review: quotes the selector-map grammar, the count endpoint,
     # the preview race and the rolling-upgrade break by file:line at review time.
     "REVIEW_p2_multidim_selector.md",
+    # The Fable-high 24h reporting review (Codex-verified): cites the count endpoint's except clause,
+    # the pre-capture snapshot path (both selectors and mnemonics) and the removed singular-label
+    # render guard by file:line at review time.
+    "REVIEW_reporting_review_24h.md",
 )
 
 

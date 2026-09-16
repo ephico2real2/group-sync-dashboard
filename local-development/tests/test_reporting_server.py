@@ -549,3 +549,36 @@ class TestNamespaceCountPreview:
                            params={"cluster": "crc-local", "selectors": _json.dumps({"company.net/mnemonic": ["no-such"]})},
                            headers=_viewer())
             assert r.status_code == 200 and r.json() == {"namespaces": 0}, r.text
+
+    def test_json_recursion_error_is_null_not_500(self, tmp_path, monkeypatch):
+        # json.loads answers deeply-nested input with RecursionError (not a ValueError), which escaped the
+        # endpoint's catch as a 500 against its "bad input returns null" contract (review, Fable F1). httpx
+        # rejects a 100k-char query URL before the app sees it, so the wire payload is simulated at the
+        # decoder (Codex: the TestClient path can't carry it; monkeypatch json.loads instead).
+        from gsd.reporting import server as report_server
+        real_loads = report_server.json.loads
+
+        def loads(value, *args, **kwargs):
+            if value == "trip-recursion":
+                raise RecursionError("simulated decoder depth guard")
+            return real_loads(value, *args, **kwargs)
+
+        monkeypatch.setattr(report_server.json, "loads", loads)
+        with TestClient(self._app(tmp_path), raise_server_exceptions=False) as client:
+            r = client.get(f"{REPORT_PREFIX}/api/namespace-count",
+                           params={"cluster": "crc-local", "selectors": "trip-recursion"}, headers=_viewer())
+            assert r.status_code == 200 and r.json() == {"namespaces": None}, r.text
+
+    def test_a_pre_capture_snapshot_returns_unknown_not_zero(self, tmp_path):
+        # A copy with no cluster_namespace_label table (an older dashboard's copy) must answer null, not
+        # an attested 0 (review, Fable N3 / Codex).
+        app = self._app(tmp_path)
+        copy = next((tmp_path / "snap").glob("gsd-*.db"))
+        with sqlite3.connect(copy) as db:
+            db.execute("DROP TABLE cluster_namespace_label")
+            db.execute("PRAGMA user_version = 11")
+        with TestClient(app) as client:
+            r = client.get(f"{REPORT_PREFIX}/api/namespace-count",
+                           params={"cluster": "crc-local", "selectors": '{"company.net/mnemonic": ["demo"]}'},
+                           headers=_viewer())
+            assert r.status_code == 200 and r.json() == {"namespaces": None}, r.text
