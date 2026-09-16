@@ -655,6 +655,26 @@ refuse, and loginActivity=true with capture off refuses — a report over a tabl
 The render guards for reporting, included by report-deployment.yaml AND deployment.yaml (the proxy
 args depend on them), so both objects refuse together. Emits nothing.
 */}}
+{{/*
+reporting.window.enabled as the literal word true or false — the SAME spellings the report service's
+_bool_env accepts (true/1/yes on, false/0/no off, case-insensitive); anything else fails the render.
+NOT bare Go-template truthiness: a quoted "false" (or --set-string) is a non-empty, truthy string,
+which would put spec.timeZone on the CronJob and run the window guard for a window the app treats as
+DISABLED (review of P4, C6/F3). One helper so the guard, the CronJob and the Deployment env agree.
+*/}}
+{{- define "gsd.reportWindowEnabled" -}}
+{{- $w := (.Values.reporting | default dict).window | default dict -}}
+{{- $raw := "false" -}}
+{{- if and (hasKey $w "enabled") (not (kindIs "invalid" $w.enabled)) -}}{{- $raw = lower (trim (toString $w.enabled)) -}}{{- end -}}
+{{- if has $raw (list "true" "1" "yes") -}}
+true
+{{- else if has $raw (list "false" "0" "no") -}}
+false
+{{- else -}}
+{{- fail (printf "reporting.window.enabled %q is not a boolean (true/false)." $raw) -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "gsd.reportingGuards" -}}
 {{- if eq (include "gsd.reportingEnabled" .) "true" -}}
 {{- if not .Values.oauthProxy.enabled -}}
@@ -699,6 +719,37 @@ args depend on them), so both objects refuse together. Emits nothing.
 {{- range $l := ($nsSelector.labels | default list) -}}
 {{- if not (has $l $nsLabels) -}}
 {{- fail (printf "reporting.namespaceSelector.labels entry %q is not in reporting.namespaceMetadata.labels %v. The poll would never capture it, so that dimension would always be empty." $l $nsLabels) -}}
+{{- end -}}
+{{- end -}}
+{{- /* Reporting window (design §5): validate at render what the report service validates at startup, so
+   an enabled-but-malformed window fails the render, not just the pod. */ -}}
+{{- $window := (.Values.reporting | default dict).window | default dict -}}
+{{- if eq (include "gsd.reportWindowEnabled" .) "true" -}}
+{{- if not (trim ($window.timezone | default .Values.timezone)) -}}
+{{- fail "reporting.window.enabled=true needs a timezone: set reporting.window.timezone or .Values.timezone to an IANA zone (e.g. America/New_York)." -}}
+{{- end -}}
+{{- range $k := (list "start" "end") -}}
+{{- if not (regexMatch "^([01][0-9]|2[0-3]):[0-5][0-9]$" (toString (get $window $k))) -}}
+{{- fail (printf "reporting.window.%s %q is not HH:MM (24h)." $k (toString (get $window $k))) -}}
+{{- end -}}
+{{- end -}}
+{{- if eq (toString $window.start) (toString $window.end) -}}
+{{- fail (printf "reporting.window.start and end are equal (%q); pick a real range, neither empty nor a full day." (toString $window.start)) -}}
+{{- end -}}
+{{- $days := $window.days | default list -}}
+{{- if eq (len $days) 0 -}}
+{{- fail "reporting.window.days is empty; give a non-empty subset of Mon..Sun." -}}
+{{- end -}}
+{{- $valid := dict "Mon" true "Tue" true "Wed" true "Thu" true "Fri" true "Sat" true "Sun" true -}}
+{{- $seen := dict -}}
+{{- range $d := $days -}}
+{{- if not (hasKey $valid (toString $d)) -}}
+{{- fail (printf "reporting.window.days entry %q is not one of Mon..Sun." (toString $d)) -}}
+{{- end -}}
+{{- if hasKey $seen (toString $d) -}}
+{{- fail (printf "reporting.window.days has a duplicate: %q." (toString $d)) -}}
+{{- end -}}
+{{- $_ := set $seen (toString $d) true -}}
 {{- end -}}
 {{- end -}}
 {{- /* Value-returning helpers validate as a side effect; assign their output so nothing prints. */ -}}

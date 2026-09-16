@@ -294,6 +294,33 @@ class TestTheArtifactStore:
         assert db.report_runs_watermark() == newer.id
         db.close()
 
+    def test_the_manifest_loader_defaults_origin_and_tolerates_unknown_keys(self, tmp_path):
+        """P4 (design §5): origin defaults to 'viewer' for a manifest written before the field existed,
+        and an UNKNOWN key from a newer binary's manifest is dropped on load — NOT TypeError'd into the
+        run being lost from the index (the rollback downgrade trap #131 named)."""
+        import json as _json
+        root = tmp_path / "a"
+        old = Run(id="20260906T120000.000000Z-0001", report="groups", cluster="c1", params={}, formats=["html"],
+                  generated_by="root", generated_by_note="n", schedule=None, requested_at="2026-09-06T12:00:00Z",
+                  status="done")
+        ArtifactStore(str(root)).create(old)
+        man = _json.loads((root / old.id / "run.json").read_text())
+        assert "origin" in man, "a run written now carries origin"
+        del man["origin"]                                   # a pre-P4 manifest
+        man["a_future_field"] = {"nested": 1}               # a newer binary's extra key
+        (root / old.id / "run.json").write_text(_json.dumps(man))
+        r = ArtifactStore(str(root)).get(old.id)
+        assert r is not None, "the run is not dropped from the index"
+        assert r.origin == "viewer", "no origin defaults to viewer (never mistaken for automated)"
+
+    def test_a_persisted_schedule_origin_round_trips(self, tmp_path):
+        root = tmp_path / "a"
+        run = Run(id="20260906T120000.000000Z-0002", report="groups", cluster="c1", params={}, formats=["html"],
+                  generated_by="svc", generated_by_note="n", schedule="nightly", requested_at="2026-09-06T12:00:00Z",
+                  status="done", origin="schedule")
+        ArtifactStore(str(root)).create(run)
+        assert ArtifactStore(str(root)).get(run.id).origin == "schedule"
+
 
 class TestRequestHygiene:
     def test_a_cluster_id_that_could_inject_a_header_is_refused(self, service):
@@ -582,3 +609,143 @@ class TestNamespaceCountPreview:
                            params={"cluster": "crc-local", "selectors": '{"company.net/mnemonic": ["demo"]}'},
                            headers=_viewer())
             assert r.status_code == 200 and r.json() == {"namespaces": None}, r.text
+
+
+class TestReportingWindowGate:
+    """The create_run reporting-window gate (design §5): automated origins (schedule/service) are
+    refused OUTSIDE the window with 409 + Retry-After; a human's viewer run is never gated; the refusal
+    is counted (no names). Fixed clocks + tickets minted at the same instant keep it deterministic."""
+
+    SAT_0300 = datetime(2026, 9, 19, 3, 0, tzinfo=UTC)     # Saturday 03:00 — outside a Mon-Fri 09-17 window
+    MON_1000 = datetime(2026, 9, 14, 10, 0, tzinfo=UTC)    # Monday 10:00 — inside
+
+    def _app(self, tmp_path, clock_dt):
+        from gsd.reporting.window import ReportingWindow
+        snapshots, artifacts = seeded_dirs(tmp_path)
+        w = ReportingWindow.from_strings(enabled=True, timezone="UTC", start="09:00", end="17:00",
+                                         days=["Mon", "Tue", "Wed", "Thu", "Fri"])
+        return build_report_app(_settings(snapshots, artifacts, window=w), secret=SECRET, clock=lambda: clock_dt)
+
+    def test_service_outside_window_is_409_with_retry_after_and_is_counted(self, tmp_path):
+        with TestClient(self._app(tmp_path, self.SAT_0300)) as client:
+            r = client.post(f"{REPORT_PREFIX}/api/runs",
+                            json={"report": "groups", "cluster": CLUSTER, "schedule": "nightly"}, headers=SERVICE)
+            assert r.status_code == 409, r.text
+            assert int(r.headers["Retry-After"]) > 0
+            m = client.get(f"{REPORT_PREFIX}/metrics").text
+            line = next(l for l in m.splitlines()
+                        if l.startswith('gsd_report_runs_outside_window_total{origin="schedule"}'))
+            assert float(line.split()[-1]) >= 1
+
+    def test_a_bare_service_run_with_no_schedule_is_also_gated(self, tmp_path):
+        with TestClient(self._app(tmp_path, self.SAT_0300)) as client:
+            r = client.post(f"{REPORT_PREFIX}/api/runs",
+                            json={"report": "groups", "cluster": CLUSTER}, headers=SERVICE)   # no schedule
+            assert r.status_code == 409, "a service curl with no schedule is still automated (gate on origin, not body.schedule)"
+
+    def test_a_viewer_is_never_gated(self, tmp_path):
+        ticket = {TICKET_HEADER: mint(SECRET, "root", "all", 300, now=int(self.SAT_0300.timestamp())),
+                  USER_HEADER: "root"}
+        with TestClient(self._app(tmp_path, self.SAT_0300)) as client:
+            r = client.post(f"{REPORT_PREFIX}/api/runs",
+                            json={"report": "groups", "cluster": CLUSTER}, headers=ticket)
+            assert r.status_code == 202, r.text          # admitted despite being outside the window
+
+    def test_service_inside_window_is_admitted(self, tmp_path):
+        with TestClient(self._app(tmp_path, self.MON_1000)) as client:
+            r = client.post(f"{REPORT_PREFIX}/api/runs",
+                            json={"report": "groups", "cluster": CLUSTER, "schedule": "nightly"}, headers=SERVICE)
+            assert r.status_code == 202, r.text
+            assert r.json()["origin"] == "schedule"      # origin is persisted on the run
+
+    def test_a_service_schedule_label_is_bounded_to_a_dns_label(self, tmp_path):
+        # A service token must not put a person's name into the public /metrics label
+        # gsd_report_schedule_last_success_timestamp{schedule=...} (review of P4, C7).
+        with TestClient(self._app(tmp_path, self.MON_1000)) as client:
+            bad = client.post(f"{REPORT_PREFIX}/api/runs",
+                              json={"report": "groups", "cluster": CLUSTER, "schedule": "Alice Smith"}, headers=SERVICE)
+            assert bad.status_code == 422 and "DNS label" in bad.json()["detail"]
+            ok = client.post(f"{REPORT_PREFIX}/api/runs",
+                             json={"report": "groups", "cluster": CLUSTER, "schedule": "nightly"}, headers=SERVICE)
+            assert ok.status_code == 202
+
+    def test_the_gate_id_and_requested_at_come_from_one_instant(self, tmp_path):
+        # C3: one now() call feeds the gate, the id and requested_at, so a clock advancing between
+        # separate calls cannot admit a run in-window and then stamp it from a later instant.
+        import itertools
+        from datetime import timedelta
+        from gsd.reporting.window import ReportingWindow
+        snapshots, artifacts = seeded_dirs(tmp_path)
+        w = ReportingWindow.from_strings(enabled=True, timezone="UTC", start="09:00", end="17:00",
+                                         days=["Mon", "Tue", "Wed", "Thu", "Fri"])
+        base = datetime(2026, 9, 14, 10, 0, 0, tzinfo=UTC)
+        ticks = itertools.count()
+        app = build_report_app(_settings(snapshots, artifacts, window=w), secret=SECRET,
+                               clock=lambda: base + timedelta(seconds=next(ticks)))
+        with TestClient(app) as client:
+            run = client.post(f"{REPORT_PREFIX}/api/runs",
+                              json={"report": "groups", "cluster": CLUSTER, "schedule": "nightly"},
+                              headers=SERVICE).json()
+        id_hhmmss = run["id"].split("-")[0][9:15]                 # HHMMSS of %Y%m%dT%H%M%S.%fZ
+        req_hhmmss = run["requested_at"][11:19].replace(":", "")  # HHMMSS of HH:MM:SS
+        assert id_hhmmss == req_hhmmss, (run["id"], run["requested_at"])
+
+
+class TestWorkerWindowRecheck:
+    """The worker's belt (design §5): a queued automated run whose requested_at was never inside the
+    window is failed at render with a reason and counted outside-window. It entered through submit()
+    (counted SUBMITTED), so the recheck failure must count it FINISHED too, or
+    gsd_report_runs_submitted_total minus finished_total reads as one run in flight for ever (P4, C5)."""
+
+    def test_a_recheck_failed_run_is_counted_finished(self, tmp_path):
+        from gsd.reporting.window import ReportingWindow
+        snapshots, artifacts = seeded_dirs(tmp_path)
+        w = ReportingWindow.from_strings(enabled=True, timezone="UTC", start="09:00", end="17:00",
+                                         days=["Mon", "Tue", "Wed", "Thu", "Fri"])
+        calls = []
+
+        class Recorder:
+            def note_submitted(self, report): calls.append(("submitted", report))
+            def note_finished(self, report, status, seconds, size): calls.append(("finished", report, status))
+            def note_outside_window(self, origin): calls.append(("outside", origin))
+            def note_schedule_success(self, schedule, when): calls.append(("schedule_success", schedule))
+
+        store = ArtifactStore(str(artifacts))
+        rm = RunManager(_settings(snapshots, artifacts, window=w), store, Recorder(),
+                        clock=lambda: datetime(2026, 9, 19, 3, 5, tzinfo=UTC))
+        run = Run(id="20260919T030000.000000Z-0001", report="groups", cluster=CLUSTER, params={},
+                  formats=["html"], generated_by="schedule:nightly",
+                  generated_by_note="unattended (service token)", schedule="nightly",
+                  requested_at="2026-09-19T03:00:00Z", origin="schedule")   # Saturday: never inside Mon-Fri 09-17
+        rm.submit(run)
+        rm._render(store.get(run.id))
+        failed = store.get(run.id)
+        assert failed.status == "failed" and "outside the reporting window" in failed.error
+        assert failed.finished_at is not None
+        assert ("submitted", "groups") in calls and ("outside", "schedule") in calls
+        assert not any(c[0] == "schedule_success" for c in calls)
+        assert ("finished", "groups", "failed") in calls, "a recheck-failed run must balance submitted/finished"
+
+
+class TestScheduleLastSuccessSurvivesRestart:
+    """F4: the last-success gauge is process-local; a fresh app must re-arm it from the durable run
+    manifests (the newest DONE run per schedule), or the §5 evidence-gap monitor goes blind after a
+    restart until the next success."""
+
+    def test_the_gauge_is_seeded_from_the_index(self, tmp_path):
+        snapshots, artifacts = seeded_dirs(tmp_path)
+        store = ArtifactStore(str(artifacts))
+        def mk(rid, status, sched, fin):
+            return Run(id=rid, report="groups", cluster=CLUSTER, params={}, formats=["html"],
+                       generated_by=f"schedule:{sched}", generated_by_note="n", schedule=sched,
+                       requested_at="2026-09-14T00:00:00Z", status=status, finished_at=fin, origin="schedule")
+        store.create(mk("20260914T090000.000000Z-0001", "done", "nightly", "2026-09-14T09:00:03Z"))
+        store.create(mk("20260915T090000.000000Z-0002", "done", "nightly", "2026-09-15T09:00:05Z"))   # newest done
+        store.create(mk("20260916T090000.000000Z-0003", "failed", "nightly", "2026-09-16T09:00:00Z"))  # newer, failed
+        app = build_report_app(_settings(snapshots, artifacts), secret=SECRET, clock=lambda: FROZEN)
+        with TestClient(app) as client:
+            m = client.get(f"{REPORT_PREFIX}/metrics").text
+        line = next(l for l in m.splitlines()
+                    if l.startswith('gsd_report_schedule_last_success_timestamp{schedule="nightly"}'))
+        expect = datetime(2026, 9, 15, 9, 0, 5, tzinfo=UTC).timestamp()   # the newest DONE run's finished_at
+        assert abs(float(line.split()[-1]) - expect) < 1.0, line

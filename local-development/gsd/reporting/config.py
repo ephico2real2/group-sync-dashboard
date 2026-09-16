@@ -13,6 +13,8 @@ import json
 import os
 from dataclasses import dataclass, field
 
+from .window import ReportingWindow, WindowConfigError
+
 #: The PDF/A variants fpdf2 enforces (measured against fpdf2 2.8.8: DocumentCompliance has exactly
 #: these plus PDFA_4E/PDFA_4F, which need an engineering/attachment intent this catalogue has no use
 #: for). "" is a plain PDF. The chart validates the same list at render (gsd.reportPdfVariant).
@@ -81,6 +83,37 @@ def _selector_labels_env() -> tuple[str, ...]:
     return labels
 
 
+#: A disabled window that never gates — the default when a deployment sets no reporting.window block.
+_DISABLED_WINDOW = ReportingWindow.from_strings(enabled=False, timezone="", start="00:00", end="00:00", days=[])
+
+
+def _window_env() -> ReportingWindow:
+    """The global reporting window from GSD_REPORT_WINDOW_* (design §5). Disabled by default. An
+    enabled-but-malformed window FAILS STARTUP (fail closed) — a wrong timezone, a bad time or an empty
+    days list must never silently disable gating and let automated runs fire at any hour."""
+    enabled = _bool_env("GSD_REPORT_WINDOW_ENABLED", False)
+    days: list[str] = []
+    raw = os.environ.get("GSD_REPORT_WINDOW_DAYS", "").strip()
+    if raw:
+        try:
+            parsed = json.loads(raw)
+        except ValueError as exc:
+            raise ReportConfigError(f"GSD_REPORT_WINDOW_DAYS={raw!r} is not a JSON array") from exc
+        if not isinstance(parsed, list) or not all(isinstance(x, str) for x in parsed):
+            raise ReportConfigError("GSD_REPORT_WINDOW_DAYS must be a JSON array of weekday names")
+        days = parsed
+    try:
+        return ReportingWindow.from_strings(
+            enabled=enabled,
+            timezone=os.environ.get("GSD_REPORT_WINDOW_TIMEZONE", ""),
+            start=os.environ.get("GSD_REPORT_WINDOW_START", "22:00"),
+            end=os.environ.get("GSD_REPORT_WINDOW_END", "06:00"),
+            days=days,
+        )
+    except WindowConfigError as exc:
+        raise ReportConfigError(str(exc)) from exc
+
+
 @dataclass(frozen=True)
 class ReportSettings:
     snapshot_dir: str = "/data/report"
@@ -109,6 +142,9 @@ class ReportSettings:
     #: company.net/mnemonic AND company.net/app-environment). Empty = no selector. Each must be one of
     #: the captured namespaceMetadata.labels.
     namespace_selector_labels: tuple[str, ...] = ()
+    #: The global reporting window (design §5): gates automated (schedule/service) runs to a time range
+    #: on chosen weekdays; a human's viewer run is never gated. Disabled by default.
+    window: ReportingWindow = _DISABLED_WINDOW
     #: One worker renders at a time; the queue is bounded so a burst answers 429 rather than
     #: piling up renders the pod's memory limit then ends.
     max_queued_runs: int = 8
@@ -152,4 +188,5 @@ def load_report_settings() -> ReportSettings:
         namespace_selector_labels=_selector_labels_env(),
         max_queued_runs=_int_env("GSD_REPORT_MAX_QUEUED_RUNS", 8, lo=1, hi=100),
         log_level=os.environ.get("GSD_LOG_LEVEL", "INFO"),
+        window=_window_env(),
     )
