@@ -218,6 +218,12 @@ function applyPosition(pos) {
     }
     view.cluster = pos.cluster;
   }
+  // #144 adversarial review C6-D: history Back is not inert while a modal is up, and only the
+  // cluster branch above clears the preview. A same-cluster Back from Reports to another tab
+  // repainted #main under a still-open names dialog — "N namespaces match this selection"
+  // floating over a page that carries no selection. Every position change arrives here (the
+  // chokepoint above), so close it here; a closed dialog makes this a no-op.
+  if (view.page !== "reports") closeNsPreview();
 }
 
 /* Every position change goes through here, so the URL, the history entry and `view` can never
@@ -1938,6 +1944,14 @@ function schedulePreview(spec) {
     const btn = $("report-preview-view"); if (btn) btn.hidden = true;
     return;
   }
+  // #144 adversarial review C3-A: the names on hand describe the PREVIOUS selection, and between
+  // here and the reply the new selection's expansion is unknown. The count TEXT stays (the #107
+  // choice — it corrects itself in place when the reply lands), but this affordance opens a
+  // PERSISTENT list the landed reply never repaints: change a dimension, click "view namespaces"
+  // inside the debounce window, and the dialog painted the superseded selection's names as the
+  // answer for the new one. So inside the window it offers nothing.
+  view.reportPreviewNames = []; view.reportPreviewCount = null;
+  const pendingBtn = $("report-preview-view"); if (pendingBtn) pendingBtn.hidden = true;
   _previewTimer = setTimeout(async () => {
     let text = "", names = [], count = null;
     try {
@@ -2027,7 +2041,18 @@ function wireReports() {
   const nsBtn = $("report-preview-view");
   if (nsBtn) nsBtn.onclick = openNsPreview;
   const nsDlg = $("ns-preview");
-  if (nsDlg) nsDlg.onclick = (e) => { if (e.target === nsDlg) closeNsPreview(); };   // backdrop click
+  if (nsDlg) {
+    nsDlg.onclick = (e) => { if (e.target === nsDlg) closeNsPreview(); };   // backdrop click
+    // #144 adversarial review C4-A: the platform returns focus to the node that was focused when
+    // showModal() ran — but the 60 s poll's render() replaces #main wholesale, so after a long
+    // read that node is detached and close() drops focus to <body>. Re-aim by ID at whatever
+    // button the CURRENT paint carries — the same by-id rule render() uses for its own restore.
+    // When the native restore already worked, this focuses the same node again: harmless.
+    nsDlg.onclose = () => {
+      const b = $("report-preview-view");
+      if (b && !b.hidden) b.focus();
+    };
+  }
   document.querySelectorAll("[data-artifact]").forEach((el) => {
     el.onclick = () => downloadArtifact(el.dataset.artifact, el.dataset.format);
   });
