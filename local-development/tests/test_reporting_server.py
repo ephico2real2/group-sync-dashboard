@@ -430,9 +430,9 @@ class TestNamespaceSelectorsOnTheCatalogue:
         # #117 second pass (Codex D1): a copy can pass Snapshot.__init__ (connect/PRAGMA/sqlite_master
         # all read cleanly) and then raise sqlite3.Error from a TABLE read — partial b-tree damage on a
         # copy that rotted on disk after it was written. The __init__ wrap does not see that; the gather
-        # must. Snapshot.namespace_selectors wraps clusters()+namespace_metadata_values, so the catalogue
-        # still degrades to {} and 200. Forcing the specific read to raise proves it (500 before the
-        # gather was moved behind SnapshotError). The seam holds: no sqlite3 in server.py.
+        # must. Snapshot.namespace_selector_dimensions wraps the clusters() and cluster_namespace_label
+        # reads, so the catalogue still degrades to {} and 200. Forcing the specific read to raise proves
+        # it (500 before the gather was moved behind SnapshotError). The seam holds: no sqlite3 in server.py.
         from gsd.reporting.snapshot import Snapshot
         snapshots, artifacts = seeded_dirs(tmp_path)
         real_rows = Snapshot._rows
