@@ -144,6 +144,15 @@ follows a value end to end; give it the venv interpreter path.
   give a reviewer the scratchpad root: a Codex exit trap once deleted the whole session directory. Each
   reviewer gets its own subdirectory and irreplaceable outputs are copied out first.
 
+**Wait with a background wakeup, not a polling loop.** Reviewers, the suite and CI each take minutes;
+every manual "is it done yet?" Read/Bash is a full-context model round-trip that re-bills the whole
+conversation for one "not yet". Arm ONE waiter that wakes you when the condition holds and stay silent
+until it fires: `Monitor` (or Bash `run_in_background`) with `until <done-check>; do sleep 3; done`,
+its filter matching BOTH the success and the failure markers so a crash wakes you too (silence is not
+success). A single status check is fine — is the pid alive, did the file appear — the *loop* of checks
+is the waste. Gotcha: a `… 2>&1 | tail -N` output file stays EMPTY until the command exits, so reading
+it early tells you nothing; that empty read is exactly what the wakeup spares you.
+
 ## Step 3 — decide, in writing, before applying
 
 Re-check every verdict yourself, CONFIRMED included; CONFIRMED is the weakest verdict because it
