@@ -311,6 +311,30 @@ jobs:
           fi
           exit $fail
 
+      - name: Preview each diagram as ASCII (mermaid-ascii, display only)
+        if: always()
+        run: |
+          set -uo pipefail
+          shopt -s nullglob
+          diagrams=(mmd/*.mmd)
+          if [ ${#diagrams[@]} -eq 0 ]; then echo "no extracted diagrams to preview"; exit 0; fi
+          # mermaid-ascii prints a mermaid diagram as ASCII straight into the log — a readable preview
+          # of what shipped, beside the SVG render above (which stays the correctness gate). DISPLAY
+          # ONLY: this step never fails the job, so an unsupported diagram type (sequence, gantt, ...)
+          # is a note, not a red run. Picks the Linux build for this runner; see
+          # local-development/docs/mermaid-ascii-terminal.md.
+          url=$(curl -s https://api.github.com/repos/AlexanderGrooff/mermaid-ascii/releases/latest \
+                  | grep "browser_download_url.*mermaid-ascii" | grep "$(uname)_$(uname -m)" \
+                  | cut -d: -f2,3 | tr -d '"' | tr -d ' ')
+          if ! { curl -sL "$url" -o mermaid-ascii.tar.gz && tar xzf mermaid-ascii.tar.gz; }; then
+            echo "mermaid-ascii install failed; skipping the ASCII preview"; exit 0
+          fi
+          for f in "${diagrams[@]}"; do
+            echo "::group::$f"
+            ./mermaid-ascii --ascii -f "$f" || echo "(mermaid-ascii does not render this diagram type)"
+            echo "::endgroup::"
+          done
+
   image:
     runs-on: ubuntu-latest
     # Advisory CVE reporting uploads SARIF to GitHub code scanning, which needs
