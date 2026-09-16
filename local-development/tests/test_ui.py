@@ -4407,6 +4407,78 @@ class TestReportsTab:
         finally:
             ctx.close()
 
+    def test_clearing_the_namespace_selector_deselects_everything(self, browser, reporting_server):
+        # #147: a <select multiple> has no easy deselect. Clear drops every #report-selector-N,
+        # deletes view.reportForm["namespace-access"].selectors, blanks the count, hides the
+        # names affordance, and closes #ns-preview — through schedulePreview so a late GET
+        # cannot paint a stale count.
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.click('button.tab:text-is("Reports")')
+            page.wait_for_selector("#report-picker")
+            page.evaluate("""() => {
+                reportGet = async () => ({namespaces: 2, names: ["beta-prod", "demo-prod"]});
+                data.reportCatalog.namespaceSelectorDimensions = {
+                    "crc-local": [
+                        {label: "company.net/mnemonic", values: ["beta", "demo"]},
+                        {label: "company.net/app-environment", values: ["prod", "qa"]},
+                    ]
+                };
+                view.reportPick = "namespace-access";
+                render();
+            }""")
+            clear = page.locator("#report-preview-clear")
+            view_btn = page.locator("#report-preview-view")
+            assert clear.count() == 1 and clear.is_hidden()          # no selection yet
+            assert view_btn.is_hidden()
+            page.select_option("#report-selector-0", ["beta", "demo"])
+            page.locator("#report-selector-0").dispatch_event("change")
+            page.select_option("#report-selector-1", ["prod"])
+            page.locator("#report-selector-1").dispatch_event("change")
+            page.wait_for_function("() => !document.getElementById('report-preview-clear').hidden")
+            assert page.evaluate("() => view.reportForm['namespace-access'].selectors") == {
+                "company.net/mnemonic": ["beta", "demo"], "company.net/app-environment": ["prod"]}
+            page.wait_for_function("() => view.reportPreview.startsWith('2 namespace')")
+            assert view_btn.is_visible()
+
+            # 1) the wired button, dialog closed: a real click deselects and hides both affordances.
+            #    #ns-preview opens as a modal (showModal), so Clear sits behind its backdrop while it
+            #    is open — a user clicks Clear with the dialog closed.
+            clear.click()
+            page.wait_for_function("() => document.getElementById('report-preview-clear').hidden")
+            assert page.evaluate("""() => {
+                const selects = [0, 1].map((i) => document.getElementById('report-selector-' + i));
+                return {
+                    empty: selects.every((s) => s && s.selectedOptions.length === 0),
+                    selectors: (view.reportForm['namespace-access'] || {}).selectors,
+                    preview: view.reportPreview,
+                    countText: document.getElementById('report-preview').textContent,
+                    clearHidden: document.getElementById('report-preview-clear').hidden,
+                    viewHidden: document.getElementById('report-preview-view').hidden,
+                };
+            }""") == {
+                "empty": True, "selectors": None, "preview": "", "countText": "",
+                "clearHidden": True, "viewHidden": True,
+            }
+
+            # 2) the dialog teardown: re-select, open the modal names list, then invoke the handler
+            #    (Clear cannot be clicked through the backdrop) — the selection clears and #ns-preview closes.
+            page.select_option("#report-selector-0", ["beta", "demo"])
+            page.locator("#report-selector-0").dispatch_event("change")
+            page.select_option("#report-selector-1", ["prod"])
+            page.locator("#report-selector-1").dispatch_event("change")
+            page.wait_for_function("() => (view.reportPreviewNames || []).length === 2")
+            view_btn.click()
+            page.wait_for_selector("#ns-preview[open]")
+            page.evaluate("() => clearNamespaceAccessSelectors()")
+            page.wait_for_function("() => !document.getElementById('ns-preview').open")
+            assert page.evaluate("() => (view.reportForm['namespace-access'] || {}).selectors") is None
+            assert clear.is_hidden() and view_btn.is_hidden()
+            assert not errors, errors
+        finally:
+            ctx.close()
+
     def test_a_narrowed_reader_sees_the_refusal_card_never_a_blank(self, browser, reporting_server):
         base, _, _ = reporting_server
         ctx, page, errors = _reports_page(browser, base, "alice")

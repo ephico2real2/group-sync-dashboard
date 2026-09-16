@@ -198,8 +198,51 @@ class TestEveryReportBuildsAndRenders:
         tables = [b for s in report.sections for b in s.blocks if getattr(b, "kind", "") == "table" and "indings of" in b.title]
         assert tables and all(t.columns[-3:] == ["Approve", "Revoke", "Comment"] for t in tables)
         assert report.sections[-1].title == "Sign-off"
-        # five groups carry a binding in the seed (team-a, team-b, gone-group, teem-a, system:authenticated); two people are bound directly
-        assert report.totals == {"groups": 5, "users": 2}
+        # four groups carry a binding in the seed after #147 omits system:authenticated
+        # (team-a, team-b, gone-group, teem-a); two people are bound directly
+        assert report.totals == {"groups": 4, "users": 2}
+
+    def test_system_subjects_are_absent_from_binding_reports_and_are_not_unmanaged(self, snapshot):
+        """#147: system:authenticated (GROUP, built_in) and the seed SA (is_platform=1)
+        must not appear in any report that lists bindings, and must not produce an
+        unmanaged/handmade finding. A real group/person stays classified as before.
+        The seed already carries both platform rows (reporting_seed.replace_bindings /
+        replace_user_bindings)."""
+        absent = ("system:authenticated", "authenticated-basic",
+                  "system:serviceaccount:openshift-x:y", "sa-admin")
+        emitters = ("namespace-access", "access-matrix", "privileged-access",
+                    "binding-findings", "access-certification", "compliance-snapshot")
+        for name in emitters:
+            text = json.dumps(_build(snapshot, name).canonical(), default=str, ensure_ascii=False)
+            for needle in absent:
+                assert needle not in text, (name, needle)
+
+        am = _build(snapshot, "access-matrix")
+        matrix = next(b for s in am.sections for b in s.blocks if getattr(b, "title", "") == "Matrix")
+        by_binding = {r[4]: r for r in matrix.rows}
+        assert "authenticated-basic" not in by_binding and "sa-admin" not in by_binding
+        assert by_binding["team-a-edit"][1] == "team-a" and by_binding["team-a-edit"][6] == "ok"
+        assert by_binding["handmade-edit"][1] == "team-b"
+        assert by_binding["handmade-edit"][5] == "hand-made"
+        assert by_binding["handmade-edit"][6] == "unmanaged"
+        assert by_binding["frank-admin"][0] == "user" and by_binding["frank-admin"][1] == "frank"
+        assert by_binding["erin-view"][0] == "user" and by_binding["erin-view"][1] == "erin"
+        assert all(not str(r[1]).startswith("system:") for r in matrix.rows)
+        assert all(r[6] != "unmanaged" or r[1] == "team-b" for r in matrix.rows)
+
+        bf = _build(snapshot, "binding-findings")
+        assert bf.totals.get("built_in", 0) == 0
+        assert bf.totals["unmanaged"] == 1
+        assert bf.totals["direct_user"] == 2
+        unmanaged_tbl = next(b for s in bf.sections for b in s.blocks
+                             if getattr(b, "title", "") == "unmanaged")
+        assert [r[0] for r in unmanaged_tbl.rows] == ["team-b"]
+        assert all(not str(c).startswith("system:") for r in unmanaged_tbl.rows for c in r)
+
+        # SA is stored, just not listed (is_platform). Store path is the include_platform read.
+        sa = snapshot.user_bindings(CLUSTER, include_platform=True)
+        assert any(u["user_name"].startswith("system:serviceaccount:") and u["is_platform"] for u in sa)
+        assert all(not u["user_name"].startswith("system:") for u in snapshot.user_bindings(CLUSTER))
 
     def test_groupsync_health_withholds_the_error_text(self, snapshot):
         report = _build(snapshot, "groupsync-health")

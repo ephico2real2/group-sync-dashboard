@@ -42,6 +42,12 @@ KNOWN_SCHEMA_VERSION = max(t for t, _, _ in _MIGRATIONS)
 CLUSTER_SCOPE = Store.CLUSTER_SCOPE
 PRIVILEGE_RANK = "CASE role_name WHEN 'cluster-admin' THEN 4 WHEN 'admin' THEN 3 WHEN 'edit' THEN 2 ELSE 1 END"
 
+#: Report-only: drop system:* GROUP subjects (the Store's built_in arm,
+#: `g.name IS NULL AND b.group_name LIKE 'system:%'`). They stay in the copy so
+#: the RBAC-policy tab and unmanaged-audit still see them; reports must not list
+#: them as a person's grant or as unmanaged/handmade (#147). Same LIKE as the CASE.
+_OMIT_SYSTEM_GROUP_SUBJECTS = " AND b.group_name NOT LIKE 'system:%'"
+
 
 class SnapshotError(Exception):
     """No usable copy: absent directory, no file, or a schema newer than this build."""
@@ -275,8 +281,11 @@ class Snapshot:
             (CLUSTER_SCOPE, cluster_id, CLUSTER_SCOPE, cluster_id))
 
     def group_bindings(self, cluster_id: str, namespaces: list[str] | None = None) -> list[dict]:
-        """Every group-subject binding, classified by the dashboard's own CASE, with reach. Ordered
-        namespace, finding severity, group, binding — deterministic so two reports diff cleanly."""
+        """Group-subject bindings a report may list, classified by the dashboard's own CASE, with reach.
+
+        `system:*` virtual groups are omitted here (see `_OMIT_SYSTEM_GROUP_SUBJECTS`). The CASE is
+        still Store._FINDING_CASE — a remaining row cannot disagree with the RBAC-policy tab.
+        Ordered namespace, finding severity, group, binding — deterministic so two reports diff cleanly."""
         reach = """
                       CASE WHEN g.name IS NULL THEN NULL ELSE COALESCE(li.member_count, 0) END AS member_count,
                       CASE WHEN g.name IS NULL OR ust.cluster_id IS NULL THEN NULL
@@ -284,7 +293,8 @@ class Snapshot:
         sql = ("""SELECT b.binding_kind, b.binding_namespace, b.binding_name, b.role_kind, b.role_name,
                          b.group_name, b.managed_source, b.exception,""" + reach
                + Store._FINDING_CASE + " AS finding"
-               + Store._FINDING_JOINS + Store._REACH_JOIN + Store._FINDING_WHERE)
+               + Store._FINDING_JOINS + Store._REACH_JOIN + Store._FINDING_WHERE
+               + _OMIT_SYSTEM_GROUP_SUBJECTS)
         params: list = [cluster_id]
         if namespaces is not None:
             sql += " AND b.binding_namespace IN (" + ",".join("?" * len(namespaces)) + ")"
@@ -297,7 +307,8 @@ class Snapshot:
 
     def findings_counts(self, cluster_id: str) -> dict[str, int]:
         rows = self._rows("SELECT" + Store._FINDING_CASE + " AS finding, COUNT(*) AS n"
-                          + Store._FINDING_JOINS + Store._FINDING_WHERE + " GROUP BY finding", (cluster_id,))
+                          + Store._FINDING_JOINS + Store._FINDING_WHERE
+                          + _OMIT_SYSTEM_GROUP_SUBJECTS + " GROUP BY finding", (cluster_id,))
         return {r["finding"]: int(r["n"]) for r in rows}
 
     def user_bindings(self, cluster_id: str, namespaces: list[str] | None = None,
@@ -513,7 +524,8 @@ class Snapshot:
             "members": one("SELECT COUNT(DISTINCT user_name) AS n FROM group_member WHERE cluster_id=?"),
             "users": one("SELECT COUNT(*) AS n FROM ocp_user WHERE cluster_id=?"),
             "users_logged_in": one("SELECT COUNT(*) AS n FROM ocp_user WHERE cluster_id=? AND has_identity=1"),
-            "group_bindings": one("SELECT COUNT(*) AS n FROM rbac_group_binding WHERE cluster_id=?"),
+            "group_bindings": one("SELECT COUNT(*) AS n FROM rbac_group_binding b WHERE b.cluster_id=?"
+                                  + _OMIT_SYSTEM_GROUP_SUBJECTS),
             "user_bindings": one("SELECT COUNT(*) AS n FROM user_binding WHERE cluster_id=? AND is_platform=0"),
             "platform_user_bindings": one("SELECT COUNT(*) AS n FROM user_binding WHERE cluster_id=? AND is_platform=1"),
             "namespaces_with_bindings": one("SELECT COUNT(DISTINCT binding_namespace) AS n FROM (SELECT binding_namespace FROM rbac_group_binding WHERE cluster_id=? AND binding_namespace<>'' UNION SELECT binding_namespace FROM user_binding WHERE cluster_id=? AND binding_namespace<>'')", cluster_id),
