@@ -378,7 +378,7 @@ class TestNamespaceSelectorsOnTheCatalogue:
         ], "2026-09-14T00:00:00Z")
         assert store.snapshot(str(snapshots), keep=2)
         store.close()
-        app = build_report_app(_settings(snapshots, artifacts, namespace_selector_label=label),
+        app = build_report_app(_settings(snapshots, artifacts, namespace_selector_labels=(label,)),
                                secret=SECRET, clock=lambda: FROZEN)
         with TestClient(app) as client:
             r = client.get(f"{REPORT_PREFIX}/api/reports", headers=_viewer())
@@ -415,7 +415,7 @@ class TestNamespaceSelectorsOnTheCatalogue:
         snapshots, artifacts = tmp_path / "snap", tmp_path / "art"
         snapshots.mkdir(); artifacts.mkdir()
         (snapshots / "gsd-20260914T000000.000000Z.db").write_bytes(b"this is not a sqlite database")
-        app = build_report_app(_settings(snapshots, artifacts, namespace_selector_label="company.net/mnemonic"),
+        app = build_report_app(_settings(snapshots, artifacts, namespace_selector_labels=("company.net/mnemonic",)),
                                secret=SECRET, clock=lambda: FROZEN)
         with TestClient(app, raise_server_exceptions=False) as client:
             r = client.get(f"{REPORT_PREFIX}/api/reports", headers=_viewer())
@@ -443,7 +443,7 @@ class TestNamespaceSelectorsOnTheCatalogue:
             return real_rows(self, sql, params)
 
         monkeypatch.setattr(Snapshot, "_rows", failing_rows)
-        app = build_report_app(_settings(snapshots, artifacts, namespace_selector_label="company.net/mnemonic"),
+        app = build_report_app(_settings(snapshots, artifacts, namespace_selector_labels=("company.net/mnemonic",)),
                                secret=SECRET, clock=lambda: FROZEN)
         with TestClient(app, raise_server_exceptions=False) as client:
             r = client.get(f"{REPORT_PREFIX}/api/reports", headers=_viewer())

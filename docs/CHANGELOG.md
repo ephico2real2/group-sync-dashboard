@@ -8,6 +8,11 @@ lives next to the code and in the design and review records linked here. Changes
 last release sit under `## Unreleased` until the release that carries them replaces that heading —
 which `local-development/prepare-release.py` does when the release is cut.
 
+## Application 0.22.0 — chart 0.30.0 — 2026-09-15
+
+- **Remove the deprecated single-dimension `reporting.namespaceSelector.label`.** P2 (0.21.0) replaced the single selector key with the list `reporting.namespaceSelector.labels`, keeping the singular for one release. It is now gone: the `.label` values key, the `GSD_REPORT_NS_SELECTOR_LABEL` env, the report-service config field and its fallback, and the singular render guard are all removed — only `.labels` remains. The `values.yaml` comments now spell out that the selector keys are enterprise-specific (set them to your cluster's real namespace-metadata label keys, not the `company.net/*` examples) and that the dropdown VALUES are auto-discovered from the namespaces.
+  - **UPGRADE NOTE (0.21.0 → 0.22.0):** a deployment that still set `reporting.namespaceSelector.label` must switch to `reporting.namespaceSelector.labels: [<key>]` — otherwise the namespace-access selector shows no dimensions (explicit names still work). `reporting.namespaceMetadata.labels` is unchanged.
+
 ## Application 0.21.0 — chart 0.29.0 — 2026-09-15
 
 - **Multi-dimension namespace selector (P2).** The namespace-access report now selects on more than one captured metadata dimension at once — `company.net/mnemonic` **and** `company.net/app-environment` — combined AND across dimensions, OR within a dimension. `reporting.namespaceSelector.label` (a single key) becomes `reporting.namespaceSelector.labels` (an ordered list, each of which must be one of `reporting.namespaceMetadata.labels`); the singular is still honoured for one release when the list is empty. The Reports form renders one multi-select per dimension, and a debounced **preview count (#107)** shows how many namespaces the current selection expands to before a heavy run. Scheduled-report params now ride as one `--params-json` JSON object (Helm's `%v` cannot express a nested map), and the report service gains a read-only `GET /report/api/namespace-count` for the preview.

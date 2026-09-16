@@ -14,15 +14,16 @@ class TestSelectorLabelsEnv:
                            '["company.net/mnemonic","company.net/app-environment"]')
         assert _selector_labels_env() == ("company.net/mnemonic", "company.net/app-environment")
 
-    def test_unset_falls_back_to_the_singular(self, monkeypatch):
+    def test_unset_is_empty_and_the_removed_singular_is_ignored(self, monkeypatch):
+        # The deprecated GSD_REPORT_NS_SELECTOR_LABEL is gone; only LABELS is read.
         monkeypatch.delenv("GSD_REPORT_NS_SELECTOR_LABELS", raising=False)
         monkeypatch.setenv("GSD_REPORT_NS_SELECTOR_LABEL", "company.net/mnemonic")
-        assert _selector_labels_env() == ("company.net/mnemonic",)
+        assert _selector_labels_env() == ()
 
-    def test_empty_json_array_falls_back_to_the_singular(self, monkeypatch):
+    def test_empty_json_array_is_empty(self, monkeypatch):
         monkeypatch.setenv("GSD_REPORT_NS_SELECTOR_LABELS", "[]")
         monkeypatch.setenv("GSD_REPORT_NS_SELECTOR_LABEL", "company.net/mnemonic")
-        assert _selector_labels_env() == ("company.net/mnemonic",)
+        assert _selector_labels_env() == ()
 
     def test_neither_is_empty(self, monkeypatch):
         monkeypatch.delenv("GSD_REPORT_NS_SELECTOR_LABELS", raising=False)

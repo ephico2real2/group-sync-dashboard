@@ -166,8 +166,7 @@ def build_report_app(settings: ReportSettings, *, secret: bytes | None = None, c
         # P2: `namespaceSelectorDimensions` carries one {label, values} per configured selector label
         # (multi-dimension); `namespaceSelectors` keeps the single first-dimension shape for one release
         # so a dashboard and report pod rolling independently never crash the Reports form.
-        labels = list(settings.namespace_selector_labels) or (
-            [settings.namespace_selector_label] if settings.namespace_selector_label else [])
+        labels = list(settings.namespace_selector_labels)
         selectors: dict[str, dict] = {}
         dimensions: dict[str, list] = {}
         try:
@@ -212,8 +211,7 @@ def build_report_app(settings: ReportSettings, *, secret: bytes | None = None, c
             return {"namespaces": None}
         # A label not among this deployment's configured dimensions expands to nothing; return a null
         # count (not 0) so the form shows nothing, matching what create_run would refuse (review C6-B).
-        labels = tuple(settings.namespace_selector_labels) or (
-            (settings.namespace_selector_label,) if settings.namespace_selector_label else ())
+        labels = tuple(settings.namespace_selector_labels)
         if not sel or not labels or any(k not in labels for k in sel):
             return {"namespaces": None}
         try:
@@ -246,8 +244,7 @@ def build_report_app(settings: ReportSettings, *, secret: bytes | None = None, c
         # (not a stored failed run): the subset check needs the settings, which validate_params does
         # not have. build() keeps the same check as the worker's belt (review PR #129, N1).
         if params.get("selectors"):
-            labels = tuple(settings.namespace_selector_labels) or (
-                (settings.namespace_selector_label,) if settings.namespace_selector_label else ())
+            labels = tuple(settings.namespace_selector_labels)
             unknown = sorted(k for k in params["selectors"] if k not in labels)
             if unknown:
                 raise HTTPException(

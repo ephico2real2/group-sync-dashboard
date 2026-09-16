@@ -73,10 +73,8 @@ class RunContext:
     snapshot_stamp: str
     snapshot_age_seconds: float
     schema_version: int
-    #: The captured namespace-metadata key the namespace-access report selects on (B2). "" = no selector.
-    namespace_selector_label: str = ""
-    #: The ordered selector DIMENSIONS the report offers (P2): company.net/mnemonic AND
-    #: company.net/app-environment. Empty = single-dimension (falls back to namespace_selector_label).
+    #: The ordered selector DIMENSIONS the namespace-access report offers (P2): company.net/mnemonic AND
+    #: company.net/app-environment. Empty = no selector.
     namespace_selector_labels: tuple[str, ...] = ()
 
 

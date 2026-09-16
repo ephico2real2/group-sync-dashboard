@@ -48,9 +48,7 @@ def build(snap: Snapshot, ctx: RunContext, params: dict) -> Built:
     selectors: dict[str, list[str]] = params.get("selectors") or {}
     mnemonics: list[str] = params.get("mnemonics") or []
     names: list[str] = params.get("namespaces") or []
-    # Prefer the multi-dimension labels; fall back to the singular for a deployment on the old config.
-    labels = tuple(ctx.namespace_selector_labels) or (
-        (ctx.namespace_selector_label,) if ctx.namespace_selector_label else ())
+    labels = tuple(ctx.namespace_selector_labels)
     # The snapshot-dependent expansion: a selection matching nothing is a failed run (it needs the
     # snapshot), not a 422 — the cross-parameter check already ran at the endpoint.
     if selectors:
