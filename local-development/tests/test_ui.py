@@ -4407,6 +4407,34 @@ class TestReportsTab:
         finally:
             ctx.close()
 
+    def test_the_reports_table_categorises_and_click_brings_the_form_into_view(self, browser, reporting_server):
+        # #147 reports directory: the picker is a category table (bold mono names + a coloured rail and
+        # chip per category), and clicking a report snaps its form into view (the "clean way",
+        # scrollIntoView) so a reader never scrolls down to the running panel.
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.click('button.tab:text-is("Reports")')
+            page.wait_for_selector("#report-picker table.report-table")
+            assert page.locator("#report-picker tr.report-pick").count() == 11
+            bf = page.locator("#report-pick-binding-findings")
+            assert "r-rbac" in (bf.get_attribute("class") or "")
+            assert bf.locator(".rp-chip").inner_text().strip() == "rbac"
+            assert page.locator("#report-pick-groupsync-health .rp-chip").inner_text().strip() == "health"
+            assert page.locator("#report-pick-namespace-access .rp-title").inner_text().strip() != ""
+            # the "clean way": clicking a report far down the list brings its form into the viewport,
+            # snapped near the top — without it the form sits below the 11-row table (top well past 160).
+            page.click("#report-pick-access-certification")
+            page.wait_for_function("""() => {
+                const f = document.getElementById('report-form');
+                if (!f || view.reportPick !== 'access-certification') return false;
+                const r = f.getBoundingClientRect();
+                return r.bottom > 0 && r.top >= -8 && r.top < 200;
+            }""")
+            assert not errors, errors
+        finally:
+            ctx.close()
+
     def test_clearing_the_namespace_selector_deselects_everything(self, browser, reporting_server):
         # #147: a <select multiple> has no easy deselect. Clear drops every #report-selector-N,
         # deletes view.reportForm["namespace-access"].selectors, blanks the count, hides the
