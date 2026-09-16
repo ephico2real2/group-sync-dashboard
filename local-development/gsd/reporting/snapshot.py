@@ -191,23 +191,6 @@ class Snapshot:
             "SELECT DISTINCT value FROM cluster_namespace_label "
             "WHERE cluster_id=? AND key=? ORDER BY value", (cluster_id, key))]
 
-    def namespace_selectors(self, key: str) -> dict[str, dict]:
-        """Per cluster id, the selector label and its captured values, for the B3 multi-select.
-
-        The whole gather lives here, not in the caller, for one reason: a copy that OPENED cleanly can
-        still raise sqlite3.Error from a later table read (partial b-tree damage on a copy that has
-        rotted on disk after it was written). Translated to SnapshotError HERE, at the backend boundary,
-        that becomes the catalogue's designed empty-map degradation instead of a 500 — and sqlite3 never
-        has to be named in server.py (the storage seam, tests/test_storage_seam.py). A genuine query bug
-        would fail the catalogue's own value assertions in the suite, so this does not mask one.
-
-        Derived from the batched namespace_selector_dimensions so the catalogue gathers the whole estate
-        in one query, not one-per-cluster (review PR #129, 2nd pass, V4-F1).
-        """
-        dimensions = self.namespace_selector_dimensions([key] if key else [])
-        return {cluster_id: {"label": key, "values": list(entries[0]["values"]) if entries else []}
-                for cluster_id, entries in dimensions.items()}
-
     def namespaces_for_metadata(self, cluster_id: str, key: str, values: list[str]) -> list[str]:
         """Namespace names whose metadata `key` is one of `values`. The strict selector's expansion."""
         if not key or not values or not self.has_table("cluster_namespace_label"):
@@ -221,9 +204,15 @@ class Snapshot:
         """Per cluster id, one {label, values} entry per configured selector key, for the P2
         multi-dimension multi-select. ONE query for the whole estate (review PR #129, 2nd pass, V4-F1):
         the per-cluster-per-key gather was 2 + clusters x (dimensions + 1) reads on every 60s catalogue
-        load, which does not scale to many clusters. Behind the same sqlite3.Error -> SnapshotError
-        boundary as namespace_selectors, so a rotted copy degrades the catalogue to an empty map, never a
-        500 (the storage seam, tests/test_storage_seam.py)."""
+        load, which does not scale to many clusters.
+
+        The whole gather lives here, not in the caller, for one reason (the #117 D1 scar): a copy that
+        OPENED cleanly can still raise sqlite3.Error from a later table read (partial b-tree damage on
+        a copy that rotted on disk after it was written). Translated to SnapshotError HERE, at the
+        backend boundary, that becomes the catalogue's designed empty-map degradation instead of a 500
+        — and sqlite3 never has to be named in server.py (the storage seam,
+        tests/test_storage_seam.py). A genuine query bug would fail the catalogue's own value
+        assertions in the suite, so this does not mask one."""
         try:
             keys = [k for k in keys if k]
             cluster_ids = [row["id"] for row in self.clusters()]
@@ -249,8 +238,8 @@ class Snapshot:
         explicit (docs/DESIGN_reporting_selectors_snapshots_and_windows.md §3). Empty selection -> [].
 
         A sqlite3.Error from a table read after a clean open becomes SnapshotError HERE, the same wrap
-        as namespace_selectors, so GET /namespace-count degrades to a null count instead of a 500 and
-        sqlite3 is never named in server.py (the #117 D1 scar; storage seam)."""
+        as namespace_selector_dimensions, so GET /namespace-count degrades to a null count instead of a
+        500 and sqlite3 is never named in server.py (the #117 D1 scar; storage seam)."""
         if not selectors or not self.has_table("cluster_namespace_label"):
             return []
         try:
