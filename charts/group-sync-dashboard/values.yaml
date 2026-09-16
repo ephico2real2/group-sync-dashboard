@@ -950,17 +950,27 @@ reporting:
   # Namespace objects with that grant). The render refuses a selector that names a key the poll does
   # not capture, and labels set while the grant is off.
   namespaceMetadata:
-    # Label keys the poll captures per namespace (bounded — only these, never the whole label map).
-    # Add keys (environment, owner, cost-centre) with no migration. e.g. [company.net/mnemonic]
+    # Label keys the poll captures per namespace (bounded — only these, never the whole label map). You
+    # name the KEYS here; the form's dropdown VALUES are auto-discovered from the namespaces themselves.
+    # Add keys (environment, owner, cost-centre) with no migration.
+    #
+    # These are ENTERPRISE-SPECIFIC. On a real/remote cluster set them to YOUR namespace-metadata label
+    # keys — the company.net/* below are examples, not defaults. e.g.
+    #   labels:
+    #     - company.net/mnemonic            # <- replace with your enterprise's actual metadata labels
+    #     - company.net/app-environment
     labels: []
   namespaceSelector:
     # The captured DIMENSIONS the namespace-access report offers (P2, multi-dimension). Each MUST be one
     # of namespaceMetadata.labels; the form renders one multi-select per entry, AND'd across, OR within.
-    # [] hides the selector. e.g. [company.net/mnemonic, company.net/app-environment]
+    # [] hides the selector.
+    #
+    # Same ENTERPRISE-SPECIFIC keys as namespaceMetadata.labels — set to your cluster's real metadata
+    # labels on a remote/production cluster, NOT the company.net/* examples. e.g.
+    #   labels:
+    #     - company.net/mnemonic            # <- replace with your enterprise's actual metadata labels
+    #     - company.net/app-environment
     labels: []
-    # Deprecated single-dimension form, honoured for one release only while `labels` is empty. Prefer
-    # `labels`. MUST be one of namespaceMetadata.labels. "" hides the selector.
-    label: ""
 
   image:
     repository: quay.io/ephico2real/group-sync-dashboard-report

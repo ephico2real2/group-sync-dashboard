@@ -102,7 +102,6 @@ class RunManager:
                                  generated_by=run.generated_by, generated_by_note=run.generated_by_note,
                                  snapshot_stamp=info.stamp, snapshot_age_seconds=info.age_seconds(now),
                                  schema_version=info.schema_version,
-                                 namespace_selector_label=self.settings.namespace_selector_label,
                                  namespace_selector_labels=self.settings.namespace_selector_labels)
                 from .catalogue.common import assemble
                 report = assemble(spec, snap, ctx, params, build(snap, ctx, params))

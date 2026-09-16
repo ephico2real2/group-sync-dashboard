@@ -695,10 +695,6 @@ args depend on them), so both objects refuse together. Emits nothing.
 {{- fail (printf "reporting.namespaceSelector.labels entry %q is not in reporting.namespaceMetadata.labels %v. The poll would never capture it, so that dimension would always be empty." $l $nsLabels) -}}
 {{- end -}}
 {{- end -}}
-{{- $nsSel := trim (toString ($nsSelector.label | default "")) -}}
-{{- if and (ne $nsSel "") (not (has $nsSel $nsLabels)) -}}
-{{- fail (printf "reporting.namespaceSelector.label %q is not in reporting.namespaceMetadata.labels %v. The poll would never capture it, so the selector would always be empty." $nsSel $nsLabels) -}}
-{{- end -}}
 {{- /* Value-returning helpers validate as a side effect; assign their output so nothing prints. */ -}}
 {{- $_ := include "gsd.reportPdfVariant" . -}}
 {{- $enabled := splitList "," (include "gsd.reportEnabledReports" .) -}}

@@ -91,12 +91,9 @@ spec:
               value: {{ .Values.rbac.namespaces | quote }}
             - name: GSD_REPORT_BINDING_INTERVAL_SECONDS
               value: {{ .Values.config.bindingIntervalSeconds | quote }}
-            # The captured Namespace-metadata key the namespace-access report selects on (B2). The
-            # report pod reads this; the dashboard poller captures under reporting.namespaceMetadata.labels.
-            - name: GSD_REPORT_NS_SELECTOR_LABEL
-              value: {{ (((.Values.reporting | default dict).namespaceSelector) | default dict).label | default "" | quote }}
-            # P2: the ordered selector dimensions as a JSON array (same transport as namespaceMetadataLabels).
-            # Empty [] defers to the singular above for one release.
+            # The captured Namespace-metadata DIMENSIONS the namespace-access report selects on, as a JSON
+            # array (same transport as namespaceMetadataLabels). The report pod reads these; the dashboard
+            # poller captures under reporting.namespaceMetadata.labels.
             - name: GSD_REPORT_NS_SELECTOR_LABELS
               value: {{ (((.Values.reporting | default dict).namespaceSelector) | default dict).labels | default list | toJson | quote }}
             {{- with .Values.timezone }}

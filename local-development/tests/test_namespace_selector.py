@@ -78,7 +78,7 @@ class TestBuildExpandsMnemonics:
         info = snap.info()
         return RunContext(settings=ReportSettings(), cluster=snap.cluster(CLUSTER), now=info.stamp and __import__("datetime").datetime(2026,9,14),
                           run_id="r", generated_by="root", generated_by_note="n", snapshot_stamp=info.stamp,
-                          snapshot_age_seconds=0.0, schema_version=info.schema_version, namespace_selector_label=label)
+                          snapshot_age_seconds=0.0, schema_version=info.schema_version, namespace_selector_labels=(label,) if label else ())
 
     def test_mnemonic_expands_to_its_namespaces(self, tmp_path):
         with _snap(tmp_path) as snap:
@@ -117,7 +117,7 @@ class TestSelectorCapAndGuards:
                           now=__import__("datetime").datetime(2026, 9, 14), run_id="r",
                           generated_by="root", generated_by_note="n", snapshot_stamp=info.stamp,
                           snapshot_age_seconds=0.0, schema_version=info.schema_version,
-                          namespace_selector_label=label)
+                          namespace_selector_labels=(label,) if label else ())
 
     def test_over_50_is_a_coverage_note_not_a_truncation_note(self, tmp_path):
         with self._big_snap(tmp_path, 60) as snap:
@@ -165,7 +165,7 @@ def _ctx_two_dim(snap):
     return RunContext(settings=ReportSettings(), cluster=snap.cluster(CLUSTER),
                       now=datetime.datetime(2026, 9, 14), run_id="r", generated_by="root",
                       generated_by_note="n", snapshot_stamp=info.stamp, snapshot_age_seconds=0.0,
-                      schema_version=info.schema_version, namespace_selector_label=LABEL,
+                      schema_version=info.schema_version,
                       namespace_selector_labels=(LABEL, LABEL2))
 
 
