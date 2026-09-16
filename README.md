@@ -110,6 +110,7 @@ the same deployment — the administrator's into `docs/screenshots/`, an ordinar
 |---|---|
 | [`docs/CHANGELOG.md`](docs/CHANGELOG.md) | what each application and chart release changed, newest first |
 | [`docs/reference-architecture.md`](docs/reference-architecture.md) | **start here to operate or extend it** — components, poll and request flow, data model, concurrency, security, and the reason behind each deliberate constraint |
+| [`docs/reports/`](docs/reports/README.md) | the eleven standard reports — what each shows, its parameters, and how to schedule them by cadence across clusters |
 | [`charts/group-sync-dashboard/`](charts/group-sync-dashboard/README.md) | the Helm chart — how you deploy it, and every value |
 | [`local-development/`](local-development/README.md) | the application, tests and build tooling |
 | [`local-development/API.md`](local-development/API.md) | every endpoint, what each field means, the ones routinely misread |
