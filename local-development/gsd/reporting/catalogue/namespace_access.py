@@ -60,6 +60,10 @@ def build(snap: Snapshot, ctx: RunContext, params: dict) -> Built:
         if unknown:
             raise ValidationError(
                 f"selector label(s) not configured on this deployment: {', '.join(unknown)}")
+        if not snap.selector_capture_present():          # a pre-capture copy attests nothing, not zero
+            raise ValidationError(
+                "this snapshot carries no namespace-label capture (it predates the capture); "
+                "use explicit namespace names or wait for the next snapshot")
         names = snap.namespaces_for_selectors(cid, selectors)
         if not names:
             raise ValidationError("no namespace matches " + " AND ".join(
@@ -69,6 +73,10 @@ def build(snap: Snapshot, ctx: RunContext, params: dict) -> Built:
             raise ValidationError(
                 "mnemonic namespace selection is not configured on this deployment; set "
                 "reporting.namespaceSelector.labels or use explicit namespace names")
+        if not snap.selector_capture_present():          # the mnemonic path expands the same table
+            raise ValidationError(
+                "this snapshot carries no namespace-label capture (it predates the capture); "
+                "use explicit namespace names or wait for the next snapshot")
         names = snap.namespaces_for_metadata(cid, labels[0], mnemonics)
         if not names:
             raise ValidationError(

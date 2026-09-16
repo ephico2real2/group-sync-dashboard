@@ -212,6 +212,24 @@ class TestMultiDimensionSelector:
             with pytest.raises(ValidationError, match="no namespace matches"):
                 build(snap, _ctx_two_dim(snap), p)
 
+    def test_a_pre_capture_snapshot_refuses_selectors_and_mnemonics(self, tmp_path):
+        # A copy written before schema 12 has no cluster_namespace_label table. BOTH the selectors path
+        # and the deprecated mnemonics path expand that table, so build() must refuse each with "carries
+        # no namespace-label capture" and never silently claim nothing matched (review 2026-09-16, Fable
+        # N3 / Codex: the mnemonics branch is the one Fable's own fix missed).
+        import sqlite3
+        with _snap_two_dim(tmp_path) as s:
+            copy = Path(s.path)
+        with sqlite3.connect(copy) as db:
+            db.execute("DROP TABLE cluster_namespace_label")
+            db.execute("PRAGMA user_version = 11")     # a genuine pre-capture schema (capture arrived at 12)
+        spec, build = REGISTRY["namespace-access"]
+        with Snapshot(copy) as snap:
+            for params in ({"selectors": {LABEL: ["demo"]}}, {"mnemonics": ["demo"]}):
+                p = validate_params(spec, params)
+                with pytest.raises(ValidationError, match="carries no namespace-label capture"):
+                    build(snap, _ctx_two_dim(snap), p)
+
 
 class TestSelectorMapValidation:
     def _spec(self):

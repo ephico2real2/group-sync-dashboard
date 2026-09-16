@@ -135,6 +135,13 @@ class Snapshot:
     def has_table(self, name: str) -> bool:
         return name in self._tables
 
+    def selector_capture_present(self) -> bool:
+        """Whether this copy carries the namespace-label capture at all. A copy without the table
+        cannot tell 'no namespace matches' from 'labels never captured' — an older dashboard's copy in
+        the rolling window — so a caller answering a count or expanding a selection must degrade to
+        'unknown', never an attested zero (review 2026-09-16, Fable N3 / Codex)."""
+        return self.has_table("cluster_namespace_label")
+
     def _rows(self, sql: str, params: tuple | list = ()) -> list[dict]:
         return [dict(r) for r in self._conn.execute(sql, params).fetchall()]
 

@@ -205,9 +205,13 @@ def build_report_app(settings: ReportSettings, *, secret: bytes | None = None, c
         it never touches the one-write invariant. Bad input, an empty selection or a missing snapshot
         returns a null count and the form shows nothing rather than an error."""
         try:
+            # RecursionError alongside ValueError: json.loads answers a pathologically nested payload
+            # ("["*~10000, which fits h11's 16 KiB request line) with RecursionError, NOT
+            # JSONDecodeError, and it is not a ValueError subclass, so it escaped this catch as a 500
+            # against the contract above (review 2026-09-16, Fable F1; measured, Codex-executed).
             parsed = json.loads(selectors) if selectors else {}
             sel = validate_selector_map(parsed, "selectors") if parsed else {}
-        except (ValueError, ValidationError):
+        except (ValueError, ValidationError, RecursionError):
             return {"namespaces": None}
         # A label not among this deployment's configured dimensions expands to nothing; return a null
         # count (not 0) so the form shows nothing, matching what create_run would refuse (review C6-B).
@@ -216,6 +220,11 @@ def build_report_app(settings: ReportSettings, *, secret: bytes | None = None, c
             return {"namespaces": None}
         try:
             with Snapshot(newest_snapshot(settings.snapshot_dir)) as snap:
+                # A copy that predates the label capture (an older dashboard's snapshot in the rolling
+                # window) cannot tell "no namespace matches" from "labels never captured" — answer
+                # null/unknown, never an attested 0 (review 2026-09-16, Fable N3, Codex-verified).
+                if not snap.selector_capture_present():
+                    return {"namespaces": None}
                 return {"namespaces": len(snap.namespaces_for_selectors(cluster, sel))}
         except (SnapshotError, OSError):
             return {"namespaces": None}
