@@ -42,11 +42,23 @@ PR that bumps the chart), never left as a dangling "follow-up".
 | Reviewer | Invocation | Verified by |
 |---|---|---|
 | Codex, GPT-5.6, highest reasoning | plugin agent `codex:codex-rescue` with **`--model gpt-5.6-sol --effort xhigh`** stated in the request; CLI form `codex exec --skip-git-repo-check -m gpt-5.6-sol -c model_reasoning_effort="xhigh" …` | probe from the repo root; the session jsonl under `~/.codex/sessions` records `"effort":"xhigh"`. The id `gpt-5.6` is REFUSED on this ChatGPT account. |
-| Cursor, Grok 4.6 high fast | `cursor agent -p --mode ask --output-format text --trust --model cursor-grok-4.6-high-fast "<brief>"` | probe from the repo root returns the expected words; `cursor agent models` lists the ids. |
+| Cursor, Grok 4.6 high fast (ZDR) | `cursor agent -p --mode ask --output-format text --trust --model cursor-grok-4.6-high-fast "<brief>"` | probe from the repo root returns the expected words; `cursor agent models` lists the ids. |
+| Cursor, Claude Fable 5 **high** thinking (**NO ZDR**) | `cursor agent -p --mode ask --output-format text --trust --model claude-fable-5-thinking-high "<brief>"` | probe returns "Claude Fable 5"; `cursor agent models` lists the id. The lighter tier — the confirmation (second) pass, or a smaller PR. |
+| Cursor, Claude Fable 5 **extra-high** thinking (**NO ZDR**) | `cursor agent -p --mode ask --output-format text --trust --model claude-fable-5-thinking-xhigh "<brief>"` | probe returns "Claude Fable 5"; `cursor agent models` lists the id. The deepest tier — the primary (first) pass / complex design; matches Codex xhigh. Cursor labels the 5.1 family "Claude Fable 5". |
+
+The two Cursor reviewers are **independent** — call either, or both (Fable as a *third* reviewer beside
+Grok + Codex when the design warrants three sets of eyes). **ZDR vs NO ZDR is the deciding trade:** Grok
+4.6 is zero-data-retention; the Fable ids are marked `(NO ZDR)`, so a review sends the repo's code + the
+brief to a provider that may **retain** it — weigh that against Fable's stronger reasoning before using it
+on sensitive code (a design/plan review over markdown is lower-sensitivity than shipping code). Which
+Cursor model is the session default is recorded in memory ([[cursor-fable-reviewer]]); absent that, Grok
+is the ZDR-safe default.
 
 Without the flags the plugin leaves model and effort UNSET and Cursor runs on `auto` — that is what the
-first passes on #69–#71 ran on, and the operator noticed. Probe both with a one-line prompt before a
-review if anything about the environment changed (login, plugin update, model list).
+first passes on #69–#71 ran on, and the operator noticed. Probe the chosen model with a one-line prompt
+before a review if anything about the environment changed (login, plugin update, model list). A finding
+from ANY reviewer is only a finding with the FULL code of the fix AND a failing/passing test — a
+design-level description is not the solution; demand the snippet (the operator's rule).
 
 ## Prerequisites — a clone does not provide them
 
