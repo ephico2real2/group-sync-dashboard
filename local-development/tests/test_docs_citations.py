@@ -181,6 +181,9 @@ REVIEW_ARTIFACTS = (
     # PR (P4 reporting window) review: quotes the create_run gate, the window predicate, the worker
     # recheck and the chart guard the findings correct, by file:line at review time.
     "REVIEW_p4_reporting_window.md",
+    # PR #145 (#97 priorityClassName) review record: Codex generated/verified, Fable-high reviewed;
+    # cites the checksum line and template guards at review time, point-in-time by construction.
+    "REVIEW_priority_class.md",
 )
 
 

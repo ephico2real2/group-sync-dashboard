@@ -19,7 +19,10 @@ spec:
     metadata:
       labels: {{- include "gsd.reportSelectorLabels" . | nindent 8 }}
       annotations:
-        checksum/reporting: {{ toYaml .Values.reporting | sha256sum }}
+        # priorityClassName is pod-spec (it rolls the pod via the template diff on its own), not config
+        # the report process reads, so it is omitted here — otherwise merely adding the key to values.yaml
+        # (0.33.0, default "") would Recreate-roll the #97 report pod on a defaults-only upgrade.
+        checksum/reporting: {{ omit .Values.reporting "priorityClassName" | toYaml | sha256sum }}
     spec:
       serviceAccountName: {{ include "gsd.reportName" . }}
       automountServiceAccountToken: false
@@ -36,6 +39,9 @@ spec:
       {{- with .Values.reporting.affinity }}
       affinity:
         {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.reporting.priorityClassName }}
+      priorityClassName: {{ . | quote }}
       {{- end }}
       containers:
         - name: report
