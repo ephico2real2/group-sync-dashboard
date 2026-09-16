@@ -175,6 +175,9 @@ REVIEW_ARTIFACTS = (
     # the pre-capture snapshot path (both selectors and mnemonics) and the removed singular-label
     # render guard by file:line at review time.
     "REVIEW_reporting_review_24h.md",
+    # PR #138 (advisory CVE scanning) review: cites the ci.yml image-job lines and the helm.yaml
+    # caller-grant the finding fixes, by file:line at review time.
+    "REVIEW_advisory_cve_scan.md",
 )
 
 
