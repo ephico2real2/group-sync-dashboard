@@ -244,6 +244,38 @@ class TestEveryReportBuildsAndRenders:
         assert any(u["user_name"].startswith("system:serviceaccount:") and u["is_platform"] for u in sa)
         assert all(not u["user_name"].startswith("system:") for u in snapshot.user_bindings(CLUSTER))
 
+    def test_a_system_only_namespace_is_not_observed_and_the_builtin_tier_is_gone(self, snapshot, tmp_path):
+        """#147 review F1a: the system: omit applied only to the listing left binding_namespaces and
+        counts()["namespaces_with_bindings"] still counting a namespace whose ONLY binding is a
+        system: group. Every real cluster has image-puller system:serviceaccounts:<ns> bindings, so
+        namespace-access would print "Observed: yes" over an empty table and the namespace count would
+        be inflated. Those surfaces now omit system: too, and binding-findings drops the built_in tier
+        (it would otherwise be a permanent, misleading 0)."""
+        base_observed = {r["namespace"] for r in snapshot.binding_namespaces(CLUSTER)}
+        base_nwb = snapshot.counts(CLUSTER)["namespaces_with_bindings"]
+
+        store = seed_store(str(tmp_path / "w.db"))
+        keep = ("binding_kind", "binding_namespace", "binding_name", "role_kind",
+                "role_name", "group_name", "managed_source", "exception")
+        existing = [{k: b.get(k) for k in keep} for b in store.all_bindings(CLUSTER)]
+        image_puller = {"binding_kind": "RoleBinding", "binding_namespace": "only-sys",
+                        "binding_name": "system:image-pullers", "role_kind": "ClusterRole",
+                        "role_name": "system:image-puller",
+                        "group_name": "system:serviceaccounts:only-sys"}
+        store.replace_bindings(CLUSTER, existing + [image_puller], "2026-09-06T12:00:00Z")
+        d = tmp_path / "s"; d.mkdir(); path = write_snapshot(store, d); store.close()
+        with Snapshot(path) as snap:
+            observed = {r["namespace"] for r in snap.binding_namespaces(CLUSTER)}
+            assert "only-sys" not in observed          # fail-before: image-puller made it observed
+            assert observed == base_observed           # adding a system:-only namespace changes nothing
+            assert snap.counts(CLUSTER)["namespaces_with_bindings"] == base_nwb
+
+            bf = _build(snap, "binding-findings")
+            assert "built_in" not in bf.totals         # fail-before: the permanent-0 built_in tier
+            text = json.dumps(bf.canonical(), default=str, ensure_ascii=False)
+            assert "system:serviceaccounts:only-sys" not in text
+            assert "RBAC policy tab" not in text       # summary no longer claims tab parity
+
     def test_groupsync_health_withholds_the_error_text(self, snapshot):
         report = _build(snapshot, "groupsync-health")
         text = json.dumps(report.canonical(), default=str, ensure_ascii=False)

@@ -268,12 +268,17 @@ class Snapshot:
     # -- bindings -----------------------------------------------------------------------------
 
     def binding_namespaces(self, cluster_id: str) -> list[dict]:
-        """DISTINCT namespaces observed on any binding, with counts; '' is the cluster-scope sentinel
-        (the current C3's store method, unchanged in meaning)."""
+        """DISTINCT namespaces observed on a person-facing binding, with counts; '' is the
+        cluster-scope sentinel.
+
+        `system:*` GROUP subjects are omitted here, matching `group_bindings` (#147), so a namespace
+        whose only grant is an image-puller `system:serviceaccounts:<ns>` binding is not reported as
+        observed over an empty table."""
         return self._rows(
             """SELECT ns AS namespace, SUM(g) AS group_bindings, SUM(u) AS user_bindings
-                 FROM (SELECT CASE WHEN binding_namespace='' THEN ? ELSE binding_namespace END AS ns, 1 AS g, 0 AS u
-                         FROM rbac_group_binding WHERE cluster_id=?
+                 FROM (SELECT CASE WHEN b.binding_namespace='' THEN ? ELSE b.binding_namespace END AS ns, 1 AS g, 0 AS u
+                         FROM rbac_group_binding b WHERE b.cluster_id=?"""
+            + _OMIT_SYSTEM_GROUP_SUBJECTS + """
                        UNION ALL
                        SELECT CASE WHEN binding_namespace='' THEN ? ELSE binding_namespace END, 0, 1
                          FROM user_binding WHERE cluster_id=? AND is_platform=0)
@@ -528,6 +533,12 @@ class Snapshot:
                                   + _OMIT_SYSTEM_GROUP_SUBJECTS),
             "user_bindings": one("SELECT COUNT(*) AS n FROM user_binding WHERE cluster_id=? AND is_platform=0"),
             "platform_user_bindings": one("SELECT COUNT(*) AS n FROM user_binding WHERE cluster_id=? AND is_platform=1"),
-            "namespaces_with_bindings": one("SELECT COUNT(DISTINCT binding_namespace) AS n FROM (SELECT binding_namespace FROM rbac_group_binding WHERE cluster_id=? AND binding_namespace<>'' UNION SELECT binding_namespace FROM user_binding WHERE cluster_id=? AND binding_namespace<>'')", cluster_id),
+            "namespaces_with_bindings": one(
+                "SELECT COUNT(DISTINCT binding_namespace) AS n FROM ("
+                "SELECT b.binding_namespace FROM rbac_group_binding b"
+                " WHERE b.cluster_id=? AND b.binding_namespace<>''"
+                + _OMIT_SYSTEM_GROUP_SUBJECTS
+                + " UNION SELECT binding_namespace FROM user_binding"
+                " WHERE cluster_id=? AND binding_namespace<>'' AND is_platform=0)", cluster_id),
             "groupsyncs": one("SELECT COUNT(*) AS n FROM groupsync_state WHERE cluster_id=?"),
         }
