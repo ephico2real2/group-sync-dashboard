@@ -1051,6 +1051,11 @@ reporting:
   # report (a bound of 0 is disabled). A scheduled run is kept while within the newest keepPerSchedule
   # per (schedule, cluster) OR younger than days, and is EXEMPT from the manual run-count cap. A manual
   # run is kept days (short) and at most maxRuns, whichever prunes first.
+  #
+  # NOTE — keepPerSchedule is a FLOOR (always keep the newest K), not a ceiling. Setting
+  # scheduled.days: 0 disables the age bound, and since keep only ever PROTECTS runs, that disables
+  # scheduled deletion entirely: it does NOT mean "keep only the newest K". Scheduled artefacts then
+  # grow without limit on the PVC. To bound them, set a non-zero scheduled.days.
   retention:
     scheduled:
       keepPerSchedule: 2

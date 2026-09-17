@@ -321,6 +321,36 @@ class TestTheArtifactStore:
         for cluster in ("east", "west"):
             assert sum(1 for r in kept if r.cluster == cluster) == 2
 
+    def test_a_young_scheduled_run_beyond_keep_is_not_deleted(self, tmp_path):
+        """keepPerSchedule is a FLOOR, not a ceiling: beyond the newest K but younger than
+        scheduled_days must still survive. Raised by the adversarial review (Cursor, C2) — the
+        all-February test above would pass even for a wrong 'drop everyone past K' predicate,
+        because there every beyond-K run is also past the age bound."""
+        store = ArtifactStore(str(tmp_path))
+        now = datetime(2026, 9, 6, 12, 0, tzinfo=UTC)
+
+        def mk(run_id, when, schedule="quarterly-compliance"):
+            store.create(Run(id=run_id, report="compliance-snapshot", cluster=CLUSTER, params={},
+                             formats=["html"], generated_by=f"schedule:{schedule}", generated_by_note="n",
+                             schedule=schedule, requested_at=when, status="done"))
+
+        # Three OLD (February, past days=90) and three YOUNG (10 days) under one (schedule, cluster).
+        for j in range(3):
+            t = datetime(2026, 2, 1, 0, 0, tzinfo=UTC) + timedelta(seconds=j)
+            mk(t.strftime("%Y%m%dT%H%M%S.%fZ") + f"-o{j}", t.strftime("%Y-%m-%dT%H:%M:%SZ"))
+        young = []
+        for j in range(3):
+            t = datetime(2026, 8, 27, 0, 0, tzinfo=UTC) + timedelta(seconds=j)
+            rid = t.strftime("%Y%m%dT%H%M%S.%fZ") + f"-y{j}"
+            young.append(rid)
+            mk(rid, t.strftime("%Y-%m-%dT%H:%M:%SZ"))
+
+        pruned = store.prune(scheduled_keep=2, scheduled_days=90, manual_days=3, manual_max_runs=500, now=now)
+        kept = {r.id for r in store.list(limit=10000)[0]}
+        assert pruned == 3, "only the three February runs are both beyond K and past days"
+        assert young[0] in kept, "the oldest young run is beyond keep=2 but inside 90 days — it must survive"
+        assert all(y in kept for y in young)
+
     def test_per_schedule_retention_override_wins(self, tmp_path):
         """overrides[name] = (keep, days) beats the globals for that schedule; another schedule inherits."""
         store = ArtifactStore(str(tmp_path))
