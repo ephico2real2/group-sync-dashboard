@@ -143,3 +143,9 @@ clusters:
     tokenFile: /etc/gsd/mock/token
     caBundleFile: /etc/gsd/mock/ca.crt
     enabled: true
+    # The mock is a demo cluster whose fixture makes kubeadmin cluster-admin and developer an editor.
+    # A second cluster defaults to self-only/identity:none — the chart never ASSUMES a host identity
+    # means the same thing elsewhere. Here we STATE it: a host-authenticated reader is the same identity
+    # on the mock, so their tier is computed by SAR (not forced to self), and the admin tabs render.
+    visibility: inherit
+    identity: same-as-host
