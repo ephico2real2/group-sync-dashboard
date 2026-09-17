@@ -1,0 +1,514 @@
+<title>Report Form Redesign</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap">
+<style>
+  :root{
+    --page:#f7f7f4; --surface:#fcfcfb; --surface-2:#f2f2ee; --field:#ffffff;
+    --ink:#12120f; --muted:#63635b; --faint:#8c8c83;
+    --border:rgba(18,18,15,.14); --border-soft:rgba(18,18,15,.07);
+    --accent:#4f5a67; --accent-ink:#ffffff; --accent-wash:rgba(79,90,103,.10);
+    --req:#8a5a3c; --ok:#3f8f5f;
+    --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+    --page:#101011; --surface:#17181a; --surface-2:#1e2023; --field:#202225;
+    --ink:#f2f2f0; --muted:#a3a39b; --faint:#78786f;
+    --border:rgba(255,255,255,.16); --border-soft:rgba(255,255,255,.08);
+    --accent:#8b98a8; --accent-ink:#12120f; --accent-wash:rgba(139,152,168,.16);
+    --req:#c8946a; --ok:#6cc088;
+  }}
+  :root[data-theme="dark"]{
+    --page:#101011; --surface:#17181a; --surface-2:#1e2023; --field:#202225;
+    --ink:#f2f2f0; --muted:#a3a39b; --faint:#78786f;
+    --border:rgba(255,255,255,.16); --border-soft:rgba(255,255,255,.08);
+    --accent:#8b98a8; --accent-ink:#12120f; --accent-wash:rgba(139,152,168,.16);
+    --req:#c8946a; --ok:#6cc088;
+  }
+  *{box-sizing:border-box}
+  body{background:var(--page);color:var(--ink);font-family:var(--sans);font-size:14px;line-height:1.5;
+    -webkit-font-smoothing:antialiased;padding:28px 20px 56px}
+  .wrap{max-width:1000px;margin:0 auto;display:flex;flex-direction:column;gap:20px}
+  .mock-note{font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--faint);
+    display:flex;align-items:center;gap:8px;margin:0 4px -4px}
+  .mock-note::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--accent)}
+
+  /* ── form shell ── */
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:12px;
+    box-shadow:0 1px 2px rgba(18,18,15,.04),0 1px 10px rgba(18,18,15,.03);overflow:hidden}
+  .head{padding:16px 22px 14px;border-bottom:1px solid var(--border-soft)}
+  .head h1{font-size:15px;font-weight:600;margin:0;font-family:var(--mono);letter-spacing:-.01em}
+  .head p{margin:5px 0 0;font-size:12.5px;color:var(--muted);max-width:74ch}
+  .grid{padding:20px 22px;display:grid;grid-template-columns:1fr 1fr;gap:18px 22px}
+  .field.wide{grid-column:1 / -1}
+  .field label{display:flex;align-items:center;gap:6px;font-size:11px;letter-spacing:.04em;
+    text-transform:uppercase;color:var(--faint);margin-bottom:6px;font-weight:600}
+  .req{color:var(--req);font-size:9px;letter-spacing:.06em;border:1px solid currentColor;border-radius:4px;padding:0 4px;line-height:1.5}
+  .hint{margin-top:5px;font-size:11.5px;color:var(--faint)}
+  .hint .m,.m{font-family:var(--mono);font-size:11px;color:var(--muted);background:var(--surface-2);padding:1px 5px;border-radius:4px}
+  .noparam{font-size:12.5px;color:var(--muted);border:1px dashed var(--border);border-radius:7px;padding:12px 14px;background:var(--surface-2)}
+  .q{display:inline-flex;width:14px;height:14px;border-radius:50%;border:1px solid var(--border);color:var(--faint);
+    align-items:center;justify-content:center;font-size:9px;cursor:help;margin-left:2px}
+  input[type=text],input[type=date],select,.control{width:100%;font-family:var(--sans);font-size:13px;
+    padding:9px 11px;border:1px solid var(--border);border-radius:7px;background:var(--field);color:var(--ink)}
+  input:focus,select:focus,.tags:focus-within{outline:2px solid var(--accent);outline-offset:1px}
+
+  /* switch (bool) */
+  .switch{display:inline-flex;align-items:center;gap:9px;cursor:pointer;user-select:none}
+  .switch .track{width:38px;height:22px;border-radius:20px;background:var(--surface-2);border:1px solid var(--border);
+    position:relative;transition:background .15s,border-color .15s}
+  .switch .knob{position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:var(--faint);transition:transform .15s,background .15s}
+  .switch.on .track{background:color-mix(in srgb,var(--ok) 22%,transparent);border-color:var(--ok)}
+  .switch.on .knob{transform:translateX(16px);background:var(--ok)}
+  .switch .lab{font-size:13px}
+
+  /* segmented (enum) */
+  .seg{display:inline-flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;background:var(--field)}
+  .seg button{font-family:var(--sans);font-size:12.5px;padding:7px 14px;border:0;background:transparent;color:var(--muted);
+    cursor:pointer;border-right:1px solid var(--border-soft)}
+  .seg button:last-child{border-right:0}
+  .seg button.sel{background:var(--accent);color:var(--accent-ink);font-weight:500}
+
+  /* number + unit (int) */
+  .num{display:inline-flex;align-items:stretch;border:1px solid var(--border);border-radius:7px;overflow:hidden;background:var(--field);max-width:180px}
+  .num input{border:0;outline:0;width:64px;text-align:center;font-family:var(--mono);background:transparent;color:var(--ink);padding:9px 4px}
+  .num .unit{display:flex;align-items:center;padding:0 12px;font-size:12.5px;color:var(--muted);background:var(--surface-2);border-left:1px solid var(--border)}
+  .num .step{width:30px;border:0;background:var(--surface-2);color:var(--muted);cursor:pointer;font-size:15px}
+
+  /* tag input (csv) */
+  .tags{display:flex;flex-wrap:wrap;gap:6px;align-items:center;border:1px solid var(--border);border-radius:7px;background:var(--field);padding:6px 8px;min-height:40px}
+  .tag{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:11.5px;background:var(--accent-wash);
+    color:var(--accent);border:1px solid color-mix(in srgb,var(--accent) 35%,transparent);border-radius:6px;padding:2px 4px 2px 8px}
+  .tag b{cursor:pointer;font-weight:400;opacity:.7}
+  .tags input{border:0;outline:0;flex:1;min-width:80px;background:transparent;color:var(--ink);font-size:13px;padding:4px}
+
+  /* lookup (values discovered from the cluster) */
+  .lookup{position:relative}
+  .menu{margin-top:6px;border:1px solid var(--border);border-radius:8px;background:var(--field);box-shadow:0 6px 20px rgba(18,18,15,.10);max-height:220px;overflow-y:auto}
+  .menu-head{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--faint);padding:7px 12px;background:var(--surface-2);border-bottom:1px solid var(--border-soft);position:sticky;top:0}
+  /* the selected chips wrap and grow the field freely (no cap) so the form resizes as selections grow */
+  .tags{max-height:none}
+  .opt{font-family:var(--mono);font-size:12.5px;padding:6px 12px;cursor:pointer;display:flex;align-items:center;gap:8px}
+  .opt::before{content:"";width:13px;height:13px;border-radius:4px;border:1px solid var(--border)}
+  .opt.sel::before{background:var(--accent);border-color:var(--accent);box-shadow:inset 0 0 0 2px var(--field)}
+  .opt:hover{background:var(--accent-wash)}
+  .opt.hide{display:none}
+  .menu .nomatch{font-family:var(--sans);font-size:11.5px;color:var(--faint);padding:7px 12px}
+
+  /* selector-map (namespace-access "Scope") */
+  .scope{grid-column:1 / -1;border:1px solid var(--border);border-radius:9px;background:var(--surface-2);padding:14px 16px}
+  .scope-top{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:10px}
+  .scope-top .t{font-size:12px;font-weight:600;letter-spacing:.03em;text-transform:uppercase;color:var(--muted)}
+  .scope-top .and{font-family:var(--mono);font-size:11px;color:var(--faint)}
+  .dims{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .dims label{margin-bottom:5px}
+  select[multiple]{height:120px;font-family:var(--mono);font-size:12.5px;padding:4px}
+  .scope-foot{display:flex;align-items:center;gap:12px;margin-top:11px;font-size:12.5px}
+  .count{font-family:var(--mono);color:var(--accent);font-weight:500}
+  .linkish{border:0;background:none;color:var(--accent);font-size:12.5px;cursor:pointer;padding:0;text-decoration:underline;text-underline-offset:2px}
+
+  /* advanced disclosure */
+  details.adv{grid-column:1 / -1;border-top:1px dashed var(--border);padding-top:6px}
+  details.adv>summary{list-style:none;cursor:pointer;font-size:12px;color:var(--muted);padding:8px 0;display:flex;align-items:center;gap:7px}
+  details.adv>summary::-webkit-details-marker{display:none}
+  details.adv>summary::before{content:"▸";color:var(--faint);transition:transform .15s}
+  details.adv[open]>summary::before{transform:rotate(90deg)}
+  .adv-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px 22px;padding:6px 0 4px}
+
+  /* action bar */
+  .actions{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 22px;
+    background:var(--surface-2);border-top:1px solid var(--border)}
+  .btn{font-family:var(--sans);font-size:13.5px;font-weight:600;padding:10px 20px;border-radius:8px;border:1px solid var(--accent);
+    background:var(--accent);color:var(--accent-ink);cursor:pointer;display:inline-flex;align-items:center;gap:9px}
+  .btn .fmt{font-family:var(--mono);font-size:10.5px;font-weight:400;opacity:.85}
+  .actions .note{font-size:11.5px;color:var(--faint)}
+  /* auto-filled badge */
+  .auto{font-size:9px;letter-spacing:.05em;text-transform:none;color:var(--ok);border:1px solid color-mix(in srgb,var(--ok) 45%,transparent);
+    background:color-mix(in srgb,var(--ok) 12%,transparent);border-radius:4px;padding:1px 6px;font-weight:500}
+  /* namespace preview popover */
+  .ns-pop{margin-top:10px;border:1px solid var(--border);border-radius:9px;background:var(--field);
+    box-shadow:0 6px 24px rgba(18,18,15,.12);max-width:340px;overflow:hidden}
+  .ns-pop-head{padding:9px 14px;font-size:12px;font-weight:600;border-bottom:1px solid var(--border-soft);background:var(--surface-2)}
+  .ns-pop ul{list-style:none;margin:0;padding:6px 0;max-height:180px;overflow:auto}
+  .ns-pop li{font-family:var(--mono);font-size:12.5px;padding:4px 14px}
+  .ns-pop li:hover{background:var(--accent-wash)}
+  @media(max-width:680px){.grid,.dims,.adv-grid{grid-template-columns:1fr}}
+</style>
+
+<div class="wrap">
+  <div class="mock-note">Mockup · Report form redesign · all 11 reports · one ParamSpec-driven shell · real discovered data from CRC (crc-local) · for review</div>
+
+  <!-- ── namespace-access (selector-map + sort + advanced) ── -->
+  <section class="card">
+    <div class="head"><h1>namespace-access</h1><p>Per namespace: every group binding classified with who it reaches, every direct user grant, findings first.</p></div>
+    <div class="grid">
+      <div class="scope">
+        <div class="scope-top"><span class="t">Scope — which namespaces <span class="auto">lookup · discovered</span></span><span class="and">dimensions combine with AND · values within one with OR</span></div>
+        <div class="dims">
+          <div><label>company.net/mnemonic</label>
+            <select multiple><option>alpha</option><option>beta</option><option selected>demo</option><option>gsd</option><option>gso</option><option>jeff</option><option>klt</option></select></div>
+          <div><label>company.net/app-environment</label>
+            <select multiple><option>prod</option><option>production</option><option>qa</option><option>rnd</option><option>uat</option></select></div>
+        </div>
+        <div class="scope-foot"><span class="count">5 namespaces match</span><button class="linkish" id="view-ns">view namespaces</button><button class="linkish">Clear</button></div>
+        <div class="ns-pop" id="ns-pop">
+          <div class="ns-pop-head">5 namespaces match — mnemonic = demo</div>
+          <ul><li>demo-prod</li><li>demo-production</li><li>demo-qa</li><li>demo-rnd</li><li>demo-uat</li></ul>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>Group rosters</label>
+        <div class="switch"><span class="track"><span class="knob"></span></span><span class="lab">Off — expand each group's members</span></div>
+        <div class="hint">A file that gets emailed has no reader log; recorded in the provenance when on.</div>
+      </div>
+
+      <div class="field"><label>Sort / group by <span class="auto">lookup · discovered</span></label>
+        <div class="seg"><button class="sel">mnemonic</button><button>app-environment</button><button>oud-group</button><button>namespace</button></div>
+        <div class="hint">A way to sort, not a filter — keys read from namespace metadata. <span class="m">company.net/mnemonic</span> and <span class="m">company.net/app-environment</span> are on every namespace; <span class="m">company.net/oud-group</span> is a special extra label carried only by some namespaces (the ones that pin an exact group), so grouping by it buckets just those and leaves the rest under <span class="m">(no oud-group)</span>.</div></div>
+
+      <details class="adv">
+        <summary>Advanced — explicit namespaces</summary>
+        <div class="adv-grid">
+          <div class="field"><label>namespaces</label><input type="text" placeholder="demo-prod, legacy-payments, (cluster-scoped)">
+            <div class="hint">Overrides Scope. Explicit names, at most 50; <span style="font-family:var(--mono)">(cluster-scoped)</span> for cluster-wide bindings.</div></div>
+        </div>
+      </details>
+    </div>
+    <div class="actions"><button class="btn">Generate <span class="fmt">HTML · PDF · JSON</span></button>
+      <span class="note">A manual run stores all three; the format is chosen for you.</span></div>
+  </section>
+
+  <!-- ── access-matrix (enum + text) ── -->
+  <section class="card">
+    <div class="head"><h1>access-matrix</h1><p>Every subject — group or user — with the namespaces it's bound in and the role: the "who has access where" sheet.</p></div>
+    <div class="grid">
+      <div class="scope subj">
+        <div class="scope-top"><span class="t">Subjects <span class="auto">lookup · discovered</span></span><span class="and">empty = all · pick users and/or groups, one or more</span></div>
+        <div class="dims">
+          <div class="field"><label>Users</label>
+            <div class="lookup">
+              <div class="tags"><input placeholder="pick users…"></div>
+              <div class="menu"><div class="menu-head">User objects · discovered</div>
+                <div class="opt">alice.cooper</div><div class="opt">bob.wilson</div><div class="opt">charlie.brown</div><div class="opt">dana.lee</div><div class="opt">jane.smith</div><div class="opt">jeff</div><div class="opt">john.doe</div><div class="opt">lateef.o</div><div class="opt">sarah.jones</div></div>
+            </div></div>
+          <div class="field"><label>Groups</label>
+            <div class="lookup">
+              <div class="tags"><input placeholder="pick groups…"></div>
+              <div class="menu"><div class="menu-head">synced groups · 67 discovered</div>
+                <div class="opt">app-ocp-rbac-alpha-cluster-admin</div><div class="opt">app-ocp-rbac-alpha-ns-admin</div><div class="opt">app-ocp-rbac-beta-ns-admin</div><div class="opt">app-ocp-rbac-demo-ns-developer</div><div class="opt">app-ocp-rbac-platform-cluster-admin</div><div class="opt">app-ocp-rbac-groupsync-ns-auditor</div><div class="opt">app-ocp-rbac-jeff-ns-admin</div><div class="opt">app-ocp-rbac-lateef-ns-developer</div></div>
+            </div></div>
+        </div>
+        <div class="scope-foot"><span class="count" data-all="all subjects">all subjects</span><button class="linkish clear-subj">Clear</button></div>
+      </div>
+      <div class="field"><label>Namespace prefix</label>
+        <input type="text" placeholder="demo-">
+        <div class="hint">namespace_prefix — restrict to namespaces whose name starts with this. Empty = all.</div></div>
+    </div>
+    <div class="actions"><button class="btn">Generate <span class="fmt">HTML · PDF · JSON</span></button>
+      <span class="note">A manual run stores all three; the format is chosen for you.</span></div>
+  </section>
+
+  <!-- ── privileged-access (switch + roles lookup) ── -->
+  <section class="card">
+    <div class="head"><h1>privileged-access</h1><p>Every subject holding cluster-admin at any scope, or admin/edit cluster-wide, with the people behind each group.</p></div>
+    <div class="grid">
+      <div class="field"><label>Group rosters</label>
+        <div class="switch on"><span class="track"><span class="knob"></span></span><span class="lab">On — name the people behind each privileged group</span></div>
+        <div class="hint">include_members — expands each group to its members (PII; recorded in the provenance).</div></div>
+      <div class="field"><label>Roles <span class="auto">lookup · discovered</span></label>
+        <div class="lookup">
+          <div class="tags"><input placeholder="pick roles…"></div>
+          <div class="menu"><div class="menu-head">ClusterRoles bound on the cluster · discovered</div>
+            <div class="opt">cluster-admin</div><div class="opt">admin</div><div class="opt">edit</div><div class="opt">view</div><div class="opt">database-admin</div><div class="opt">self-provisioner</div></div>
+        </div>
+        <div class="hint">roles — which roles count as privileged. Empty = the built-in set (cluster-admin anywhere; admin/edit cluster-wide).</div></div>
+    </div>
+    <div class="actions"><button class="btn">Generate <span class="fmt">HTML · PDF · JSON</span></button>
+      <span class="note">A manual run stores all three; the format is chosen for you.</span></div>
+  </section>
+
+  <!-- ── binding-findings (no parameters) ── -->
+  <section class="card">
+    <div class="head"><h1>binding-findings</h1><p>Dangling, unresolved and unmanaged group bindings and direct user grants; <span style="font-family:var(--mono)">system:*</span> groups omitted.</p></div>
+    <div class="grid">
+      <div class="field wide"><label>Parameters</label>
+        <div class="noparam">None — this report reads the whole cluster snapshot. Just generate.</div></div>
+    </div>
+    <div class="actions"><button class="btn">Generate <span class="fmt">HTML · PDF · JSON</span></button>
+      <span class="note">A manual run stores all three; the format is chosen for you.</span></div>
+  </section>
+
+  <!-- ── groups (int + switch) ── -->
+  <section class="card">
+    <div class="head"><h1>groups</h1><p>Every synced group: provider, member count, last sync, bindings, cliff silence; empty and unattributed groups; joins and leaves in the window.</p></div>
+    <div class="grid">
+      <div class="field"><label>Window</label>
+        <div class="num"><button class="step">−</button><input value="30"><span class="unit">days</span><button class="step">+</button></div>
+        <div class="hint">window_days — joins/leaves and sync activity over the last N days (1–3650).</div></div>
+      <div class="field"><label>Group rosters</label>
+        <div class="switch"><span class="track"><span class="knob"></span></span><span class="lab">Off — list each group's members</span></div>
+        <div class="hint">include_members — off by default (PII); recorded in the provenance when on.</div></div>
+      <div class="scope subj">
+        <div class="scope-top"><span class="t">Which groups <span class="auto">lookup · discovered</span></span><span class="and">empty = all groups · one or more</span></div>
+        <div class="field"><label>Groups</label>
+          <div class="lookup">
+            <div class="tags"><input placeholder="pick groups…"></div>
+            <div class="menu"><div class="menu-head">synced groups · 67 discovered</div>
+              <div class="opt">app-ocp-rbac-alpha-cluster-admin</div><div class="opt">app-ocp-rbac-alpha-ns-admin</div><div class="opt">app-ocp-rbac-beta-ns-admin</div><div class="opt">app-ocp-rbac-demo-ns-developer</div><div class="opt">app-ocp-rbac-platform-cluster-admin</div><div class="opt">app-ocp-rbac-groupsync-ns-auditor</div><div class="opt">app-ocp-rbac-jeff-ns-admin</div><div class="opt">app-ocp-rbac-lateef-ns-developer</div></div>
+          </div></div>
+        <div class="scope-foot"><span class="count" data-all="all groups">all groups</span><button class="linkish clear-subj">Clear</button></div>
+      </div>
+    </div>
+    <div class="actions"><button class="btn">Generate <span class="fmt">HTML · PDF · JSON</span></button>
+      <span class="note">A manual run stores all three; the format is chosen for you.</span></div>
+  </section>
+
+  <!-- ── users (providers lookup) ── -->
+  <section class="card">
+    <div class="head"><h1>users</h1><p>Every User object (a login): identity providers, group count, direct grants; manual accounts; members who have never logged in.</p></div>
+    <div class="grid">
+      <div class="field"><label>Identity providers <span class="auto">lookup · discovered</span></label>
+        <div class="lookup">
+          <div class="tags"><input placeholder="pick a provider…"></div>
+          <div class="menu"><div class="menu-head">discovered on the cluster · 4 providers</div>
+            <div class="opt">ceo_rnd_oim</div><div class="opt">ldap-local</div><div class="opt">developer</div><div class="opt">my-provider</div></div>
+        </div>
+        <div class="hint">providers — auto-populated from the identity providers the cluster actually has. Empty = all.</div></div>
+      <div class="scope subj">
+        <div class="scope-top"><span class="t">Which users <span class="auto">lookup · discovered</span></span><span class="and">empty = all users · one or more</span></div>
+        <div class="field"><label>Users</label>
+          <div class="lookup">
+            <div class="tags"><input placeholder="pick users…"></div>
+            <div class="menu"><div class="menu-head">User objects · discovered</div>
+              <div class="opt">alice.cooper</div><div class="opt">bob.wilson</div><div class="opt">charlie.brown</div><div class="opt">dana.lee</div><div class="opt">jane.smith</div><div class="opt">jeff</div><div class="opt">john.doe</div><div class="opt">lateef.o</div><div class="opt">sarah.jones</div></div>
+          </div></div>
+        <div class="scope-foot"><span class="count" data-all="all users">all users</span><button class="linkish clear-subj">Clear</button></div>
+      </div>
+    </div>
+    <div class="actions"><button class="btn">Generate <span class="fmt">HTML · PDF · JSON</span></button>
+      <span class="note">A manual run stores all three; the format is chosen for you.</span></div>
+  </section>
+
+  <!-- ── login-activity (int + user lookup) ── -->
+  <section class="card">
+    <div class="head"><h1>login-activity</h1><p>Login attempts by outcome and provider, per-user successes and failures, rejected attempts against the login gate.</p></div>
+    <div class="grid">
+      <div class="field"><label>Window</label>
+        <div class="num"><button class="step">−</button><input value="30"><span class="unit">days</span><button class="step">+</button></div>
+        <div class="hint">window_days — attempts observed in the last N days (1–3650).</div></div>
+      <div class="scope subj">
+        <div class="scope-top"><span class="t">Whose logins <span class="auto">lookup · discovered</span></span><span class="and">empty = all · pick users and/or groups, one or more</span></div>
+        <div class="dims">
+          <div class="field"><label>Users</label>
+            <div class="lookup">
+              <div class="tags"><input placeholder="pick users…"></div>
+              <div class="menu"><div class="menu-head">User objects · discovered</div>
+                <div class="opt">alice.cooper</div><div class="opt">bob.wilson</div><div class="opt">charlie.brown</div><div class="opt">dana.lee</div><div class="opt">jane.smith</div><div class="opt">jeff</div><div class="opt">john.doe</div><div class="opt">lateef.o</div><div class="opt">sarah.jones</div></div>
+            </div></div>
+          <div class="field"><label>Groups</label>
+            <div class="lookup">
+              <div class="tags"><input placeholder="pick groups…"></div>
+              <div class="menu"><div class="menu-head">synced groups · 67 discovered</div>
+                <div class="opt">app-ocp-rbac-alpha-cluster-admin</div><div class="opt">app-ocp-rbac-alpha-ns-admin</div><div class="opt">app-ocp-rbac-beta-ns-admin</div><div class="opt">app-ocp-rbac-demo-ns-developer</div><div class="opt">app-ocp-rbac-platform-cluster-admin</div><div class="opt">app-ocp-rbac-groupsync-ns-auditor</div><div class="opt">app-ocp-rbac-jeff-ns-admin</div><div class="opt">app-ocp-rbac-lateef-ns-developer</div></div>
+            </div></div>
+        </div>
+        <div class="scope-foot"><span class="count" data-all="all subjects">all subjects</span><button class="linkish clear-subj">Clear</button></div>
+      </div>
+    </div>
+    <div class="actions"><button class="btn">Generate <span class="fmt">HTML · PDF · JSON</span></button>
+      <span class="note">Needs login capture on; the report follows <code style="font-family:var(--mono)">loginCapture</code>.</span></div>
+  </section>
+
+  <!-- ── dormant-access (int) ── -->
+  <section class="card">
+    <div class="head"><h1>dormant-access</h1><p>Members with access who never logged in, members outside the gate, gate members with no access, and nobody-in-N-days.</p></div>
+    <div class="grid">
+      <div class="field"><label>Dormant after</label>
+        <div class="num"><button class="step">−</button><input value="90"><span class="unit">days</span><button class="step">+</button></div>
+        <div class="hint">dormant_days — a member is dormant after this many days with no login.</div></div>
+      <div class="scope subj">
+        <div class="scope-top"><span class="t">Whose access <span class="auto">lookup · discovered</span></span><span class="and">empty = all · pick users and/or groups, one or more</span></div>
+        <div class="dims">
+          <div class="field"><label>Users</label>
+            <div class="lookup">
+              <div class="tags"><input placeholder="pick users…"></div>
+              <div class="menu"><div class="menu-head">User objects · discovered</div>
+                <div class="opt">alice.cooper</div><div class="opt">bob.wilson</div><div class="opt">charlie.brown</div><div class="opt">dana.lee</div><div class="opt">jane.smith</div><div class="opt">jeff</div><div class="opt">john.doe</div><div class="opt">lateef.o</div><div class="opt">sarah.jones</div></div>
+            </div></div>
+          <div class="field"><label>Groups</label>
+            <div class="lookup">
+              <div class="tags"><input placeholder="pick groups…"></div>
+              <div class="menu"><div class="menu-head">synced groups · 67 discovered</div>
+                <div class="opt">app-ocp-rbac-alpha-cluster-admin</div><div class="opt">app-ocp-rbac-alpha-ns-admin</div><div class="opt">app-ocp-rbac-beta-ns-admin</div><div class="opt">app-ocp-rbac-demo-ns-developer</div><div class="opt">app-ocp-rbac-platform-cluster-admin</div><div class="opt">app-ocp-rbac-groupsync-ns-auditor</div><div class="opt">app-ocp-rbac-jeff-ns-admin</div><div class="opt">app-ocp-rbac-lateef-ns-developer</div></div>
+            </div></div>
+        </div>
+        <div class="scope-foot"><span class="count" data-all="all subjects">all subjects</span><button class="linkish clear-subj">Clear</button></div>
+      </div>
+    </div>
+    <div class="actions"><button class="btn">Generate <span class="fmt">HTML · PDF · JSON</span></button>
+      <span class="note">A manual run stores all three; the format is chosen for you.</span></div>
+  </section>
+
+  <!-- ── groupsync-health (int) ── -->
+  <section class="card">
+    <div class="head"><h1>groupsync-health</h1><p>Every GroupSync CR: computed state, schedule, last sync; reconcile errors; syncs in the window; NamespaceConfig and GroupConfig health.</p></div>
+    <div class="grid">
+      <div class="field"><label>Window</label>
+        <div class="num"><button class="step">−</button><input value="30"><span class="unit">days</span><button class="step">+</button></div>
+        <div class="hint">window_days — syncs and reconcile activity over the last N days (1–3650).</div></div>
+    </div>
+    <div class="actions"><button class="btn">Generate <span class="fmt">HTML · PDF · JSON</span></button>
+      <span class="note">A manual run stores all three; the format is chosen for you.</span></div>
+  </section>
+
+  <!-- ── compliance-snapshot (no parameters) ── -->
+  <section class="card">
+    <div class="head"><h1>compliance-snapshot</h1><p>One page of KPIs — groups, users, bindings, findings, privileged grants, dormant access, sync health — plus the coverage statement.</p></div>
+    <div class="grid">
+      <div class="field wide"><label>Parameters</label>
+        <div class="noparam">None — the standing compliance KPI sheet. Just generate.</div></div>
+    </div>
+    <div class="actions"><button class="btn">Generate <span class="fmt">HTML · PDF · JSON</span></button>
+      <span class="note">A manual run stores all three; the format is chosen for you.</span></div>
+  </section>
+
+  <!-- ── access-certification (required text + date + enum + switch + advanced) ── -->
+  <section class="card">
+    <div class="head"><h1>access-certification</h1><p>Per group (with roster) and per directly-bound user: every binding held, with Approve / Revoke / Comment columns and a sign-off block for the named reviewer.</p></div>
+    <div class="grid">
+      <div class="field"><label>Campaign <span class="req">required</span></label>
+        <input type="text" placeholder="Q3 2026 access review">
+        <div class="hint">Printed on every page.</div></div>
+      <div class="field"><label>Due <span class="req">required</span></label>
+        <input type="date">
+        <div class="hint">Sign-off deadline.</div></div>
+      <div class="field"><label>Reviewer <span class="req">required</span> <span class="auto">from your login</span></label>
+        <input type="text" value="lateef.o">
+        <div class="hint">Auto-filled with the signed-in user for a manual run (editable); a schedule sets it from its params.</div></div>
+      <div class="scope subj">
+        <div class="scope-top"><span class="t">Scope — whom to certify <span class="auto">lookup · discovered</span></span><span class="and">empty = all subjects · pick users and/or groups</span></div>
+        <div class="dims">
+          <div class="field"><label>Users</label>
+            <div class="lookup">
+              <div class="tags"><input placeholder="pick users…"></div>
+              <div class="menu"><div class="menu-head">User objects · discovered</div>
+                <div class="opt">alice.cooper</div><div class="opt">bob.wilson</div><div class="opt">charlie.brown</div><div class="opt">dana.lee</div><div class="opt">jane.smith</div><div class="opt">jeff</div><div class="opt">john.doe</div><div class="opt">lateef.o</div><div class="opt">sarah.jones</div></div>
+            </div></div>
+          <div class="field"><label>Groups</label>
+            <div class="lookup">
+              <div class="tags"><input placeholder="pick groups…"></div>
+              <div class="menu"><div class="menu-head">synced groups · 67 discovered</div>
+                <div class="opt">app-ocp-rbac-alpha-cluster-admin</div><div class="opt">app-ocp-rbac-alpha-ns-admin</div><div class="opt">app-ocp-rbac-beta-ns-admin</div><div class="opt">app-ocp-rbac-demo-ns-developer</div><div class="opt">app-ocp-rbac-platform-cluster-admin</div><div class="opt">app-ocp-rbac-groupsync-ns-auditor</div><div class="opt">app-ocp-rbac-jeff-ns-admin</div><div class="opt">app-ocp-rbac-lateef-ns-developer</div></div>
+            </div></div>
+        </div>
+        <div class="scope-foot"><span class="count" data-all="all subjects">all subjects</span><button class="linkish clear-subj">Clear</button></div>
+      </div>
+      <div class="field"><label>Group rosters</label>
+        <div class="switch on"><span class="track"><span class="knob"></span></span><span class="lab">On — a certification needs names to be signed</span></div></div>
+
+      <details class="adv" open>
+        <summary>Advanced — narrow the set</summary>
+        <div class="adv-grid">
+          <div class="field"><label>Group mnemonic <span class="auto">lookup · discovered</span></label>
+            <div class="lookup">
+              <div class="tags"><span class="tag" data-name="beta">beta <b>×</b></span><input placeholder="pick your mnemonic…"></div>
+              <div class="menu"><div class="menu-head">mnemonics on the cluster · from namespace metadata</div>
+                <div class="opt">alpha</div><div class="opt sel">beta</div><div class="opt">demo</div><div class="opt">gsd</div><div class="opt">gso</div><div class="opt">jeff</div></div>
+            </div>
+            <div class="hint">Your team's mnemonic (not a technical prefix). The report reads the <span class="m">company.net/oud-group</span> label on the namespaces carrying that mnemonic to find the exact group — no naming guesswork.<br>→ resolves to <span class="m">app-ocp-rbac-spar-ns-audit</span></div></div>
+          <div class="field"><label>oud-group <span class="auto">lookup · discovered</span></label>
+            <div class="lookup">
+              <div class="tags"><input placeholder="pick a group label…"></div>
+              <div class="menu"><div class="menu-head">company.net/oud-group values · from namespace metadata</div>
+                <div class="opt">app-ocp-rbac-spar-ns-audit</div><div class="opt">bda-rbac-trino-alpha-users</div><div class="opt">app-ocp-rbac-platform-ns-admin</div><div class="opt">bda-rbac-spark-theta-apps</div></div>
+            </div>
+            <div class="hint">An independent filter — select namespaces directly by their <span class="m">company.net/oud-group</span> label, separate from the mnemonic path. Pick one or more; the certification is scoped to the namespaces carrying them.</div></div>
+        </div>
+      </details>
+    </div>
+    <div class="actions"><button class="btn">Generate <span class="fmt">HTML · PDF · JSON</span></button>
+      <span class="note">Required fields are marked; the form validates before it submits.</span></div>
+  </section>
+</div>
+
+<script>
+  const pop = document.getElementById("ns-pop");
+  document.getElementById("view-ns").addEventListener("click", () => pop.hidden = !pop.hidden);
+
+  // lookup: click a discovered value to add, click again (or its ×) to remove; type + Enter to add a custom one
+  document.querySelectorAll(".lookup").forEach(lk => {
+    const tags = lk.querySelector(".tags"), input = tags.querySelector("input");
+    const optFor = n => [...lk.querySelectorAll(".menu .opt")].find(o => o.textContent.trim() === n);
+    const hasChip = n => !!tags.querySelector('.tag[data-name="' + n + '"]');
+    const addChip = n => {
+      if (!n || hasChip(n)) return;
+      const c = document.createElement("span");
+      c.className = "tag"; c.dataset.name = n; c.innerHTML = n + ' <b>×</b>';
+      tags.insertBefore(c, input);
+      const o = optFor(n); if (o) o.classList.add("sel");
+    };
+    const removeChip = n => {
+      const c = tags.querySelector('.tag[data-name="' + n + '"]'); if (c) c.remove();
+      const o = optFor(n); if (o) o.classList.remove("sel");
+    };
+    // type-ahead: show only options that match what's typed (case-insensitive)
+    const menu = lk.querySelector(".menu");
+    let nomatch = null;
+    const filterMenu = () => {
+      const q = input.value.trim().toLowerCase();
+      let shown = 0;
+      lk.querySelectorAll(".menu .opt").forEach(o => {
+        const hit = !q || o.textContent.trim().toLowerCase().includes(q);
+        o.classList.toggle("hide", !hit);
+        if (hit) shown++;
+      });
+      if (q && shown === 0) {
+        if (!nomatch) { nomatch = document.createElement("div"); nomatch.className = "nomatch"; menu.appendChild(nomatch); }
+        nomatch.textContent = 'No match — press Enter to add "' + input.value.trim() + '"';
+        nomatch.hidden = false;
+      } else if (nomatch) { nomatch.hidden = true; }
+    };
+    input.addEventListener("input", filterMenu);
+    lk.querySelectorAll(".menu .opt").forEach(o => o.addEventListener("click", () => {
+      const n = o.textContent.trim(); hasChip(n) ? removeChip(n) : addChip(n);
+      input.value = ""; filterMenu();
+    }));
+    tags.addEventListener("click", e => {
+      if (e.target.tagName === "B") removeChip(e.target.closest(".tag").dataset.name);
+    });
+    input.addEventListener("keydown", e => {
+      if (e.key === "Enter") { e.preventDefault(); addChip(input.value.trim()); input.value = ""; filterMenu(); }
+    });
+  });
+
+  // segmented control (enum): click to choose
+  document.querySelectorAll(".seg").forEach(seg =>
+    seg.querySelectorAll("button").forEach(b => b.addEventListener("click", () => {
+      seg.querySelectorAll("button").forEach(x => x.classList.remove("sel")); b.classList.add("sel");
+    })));
+
+  // switch (bool): click to toggle
+  document.querySelectorAll(".switch").forEach(s => s.addEventListener("click", () => s.classList.toggle("on")));
+
+  // number stepper (int): +/- adjust the value (min 1)
+  document.querySelectorAll(".num").forEach(n => {
+    const inp = n.querySelector("input");
+    n.querySelectorAll(".step").forEach(b => b.addEventListener("click", () => {
+      const d = b.textContent.trim() === "+" ? 1 : -1;
+      inp.value = Math.max(1, (parseInt(inp.value, 10) || 0) + d);
+    }));
+  });
+
+  // subject scopes (.scope.subj): live count + Clear (empty = the data-all label)
+  document.querySelectorAll(".scope.subj").forEach(sc => {
+    const count = sc.querySelector(".count");
+    const recount = () => { const n = sc.querySelectorAll(".tag").length; count.textContent = n ? n + " selected" : count.dataset.all; };
+    sc.querySelectorAll(".tags").forEach(t => new MutationObserver(recount).observe(t, { childList: true }));
+    const clr = sc.querySelector(".clear-subj");
+    if (clr) clr.addEventListener("click", () => {
+      sc.querySelectorAll(".tag").forEach(t => t.remove());
+      sc.querySelectorAll(".opt.sel").forEach(o => o.classList.remove("sel"));
+    });
+    recount();
+  });
+</script>
