@@ -278,11 +278,11 @@
       </div>
       <div class="trend">
         <div class="lab">Sync cadence</div>
-        <div class="val">3<span class="delta flat">CRs ok</span></div>
+        <div class="val">3<span style="font-size:15px;color:var(--faint)">/4</span><span class="delta down">1 overdue ▼</span></div>
         <svg class="spark" width="100%" height="30" viewBox="0 0 120 30" preserveAspectRatio="none" aria-label="sync cadence">
           <polyline fill="none" stroke="var(--good)" stroke-width="1.8" points="0,12 15,12 30,13 45,12 60,12 75,14 90,12 105,12 120,12"/>
         </svg>
-        <div class="retain">oldest sync 41m ago</div>
+        <div class="retain">crc-local 3 ok · mock/ldap-sync last synced 3d ago</div>
       </div>
       <div class="trend">
         <div class="lab">Report volume</div>
@@ -302,7 +302,7 @@
       <thead><tr><th>Cluster</th><th>State</th><th class="num">Groups</th><th class="num">Empty</th><th class="num">Unattrib.</th><th class="num">To review</th><th>GroupSync</th></tr></thead>
       <tbody>
         <tr class="row"><td class="cname">crc-local</td><td><span class="pill ok">up</span></td><td class="num">67</td><td class="num">1</td><td class="num">2</td><td class="num">11</td><td><span class="chip">3 CRs · all ok</span></td></tr>
-        <tr class="row"><td class="cname">mock</td><td><span class="pill ok">up</span></td><td class="num">7</td><td class="num">1</td><td class="num">0</td><td class="num">0</td><td><span class="chip">1 CR · ok</span></td></tr>
+        <tr class="row"><td class="cname">mock</td><td><span class="pill ok">up</span></td><td class="num">7</td><td class="num">1</td><td class="num">0</td><td class="num">0</td><td><span class="chip" style="color:var(--crit);border-color:color-mix(in srgb,var(--crit) 40%,transparent);background:var(--crit-wash)">1 CR · overdue 3d</span></td></tr>
       </tbody>
     </table></div>
   </section>
@@ -328,20 +328,12 @@
     if (ago === 0) tick();           // a fresh poll landed
   }, 1000);
 
-  // pulse ONLY when a value actually changes
+  // pulse ONLY when a value actually changes. In this mock nothing does between polls: every
+  // figure on the page was measured once (cgroup v2, ls -laR, an 11.1s usage_usec window) and a
+  // number that drifts on a timer is a number nobody measured. So a poll re-flashes the
+  // heartbeat and leaves the figures alone — the live page flashes a row when its value moves.
   function flash(el){ el.classList.remove("flash"); void el.offsetWidth; el.classList.add("flash"); }
-  function tick(){
-    const cpu = (0.08 + Math.random() * 0.14);
-    const val = document.getElementById("cpu-val");
-    val.textContent = cpu.toFixed(2);
-    document.getElementById("cpu-fill").style.width = (100 * cpu / 0.5) + "%";
-    flash(val.closest(".meter-row"));
-    if (Math.random() > 0.6) {                 // groups occasionally move
-      const g = document.getElementById("k-groups");
-      g.textContent = 74 + (Math.random() > 0.5 ? 1 : 0);
-      flash(g.closest(".kpi"));
-    }
-  }
+  function tick(){ flash(document.getElementById("beat").closest(".asof")); }
 
   // Colour theme: URL wins (shareable), then the last local choice.
   (function () {
