@@ -184,7 +184,19 @@
   .mono{font-family:var(--mono)}
   .badge{display:inline-flex;align-items:center;gap:5px;font-size:11px;padding:2px 9px;border-radius:999px;
     border:1px solid var(--border);color:var(--muted);background:var(--surface-2);white-space:nowrap}
-  .badge .glyph{width:7px;height:7px;border-radius:50%;display:inline-block;background:currentColor}
+  /* SHAPE, not only colour. app.css gives each state its own glyph so the state survives any
+     palette and any form of colour blindness: circle ok, triangle late/warning, square
+     overdue/critical, hollow circle unknown. A single round dot would throw that channel away. */
+  .badge .glyph{width:8px;height:8px;display:inline-block;background:currentColor;border-radius:50%}
+  .badge.late .glyph,.badge.warn .glyph{border-radius:0;clip-path:polygon(50% 0,100% 100%,0 100%)}
+  .badge.overdue .glyph,.badge.critical .glyph{border-radius:1px}
+  .badge.unknown .glyph{background:none;border:1.5px solid currentColor}
+  .badge.late{color:var(--warn);background:var(--warn-wash);
+    border-color:color-mix(in srgb,var(--warn) 40%,transparent)}
+  .badge.overdue{color:var(--crit);background:var(--crit-wash);
+    border-color:color-mix(in srgb,var(--crit) 40%,transparent)}
+  .sev.critical .glyph{border-radius:1px}
+  .sev.warning .glyph{border-radius:0;clip-path:polygon(50% 0,100% 100%,0 100%)}
   .badge.ok{color:var(--good);background:var(--good-wash);
     border-color:color-mix(in srgb,var(--good) 40%,transparent)}
   .badge.critical{color:var(--crit);background:var(--crit-wash);
@@ -289,8 +301,16 @@ const SYNCS = [
 /* WHAT EACH STATUS MEANS YOU DO. These three tables are not decoration — every state on them has a
    consequence, and the consequence is the part a reader acts on. A bare "ok" badge withholds the
    only thing that made it worth rendering, so each state carries its sentence. */
+/* The CR-state vocabulary, verbatim from the running page (STATES in index.html). FOUR states,
+   not two — `late` is the early warning and the one worth acting on before anything breaks.
+   It is a SEPARATE vocabulary from alert severity: an unreachable cluster is `critical`, it is
+   never "overdue". Borrowing one for the other is a real defect, not a shortcut. */
+const STATES = {ok:"ok", late:"late", overdue:"overdue", unknown:"unknown"};
+
 const MEANS = {
   sync_ok:       "syncing on schedule — the groups it owns are current as of the last sync",
+  sync_late:     "one interval has passed without a sync — not broken yet, but the next missed fire makes it overdue. This is the state to act on.",
+  sync_unknown:  "never observed a sync, or the cluster is unreachable — which is not the same as a sync that failed",
   sync_overdue:  "the schedule has stopped firing — every group it owns is frozen at its last sync, and nobody has been added or removed since",
   sync_error:    "the last run failed — the groups it owns are stale and the error below says why",
   cfg_ok:        "reconciling — new namespaces receive their RoleBindings",
@@ -513,7 +533,15 @@ function syncsCard(){
     <p class="note">These CRs own the groups, so their state is the estate's state.
     <code>state</code> and <code>next expected</code> are computed per request from the schedule and
     the last sync, never stored — a stored state is wrong the moment the clock moves past it.
-    <strong>ok</strong> means ${MEANS.sync_ok}; anything else says below what it costs you.</p>
+    Four states, and the glyph shape carries each one independently of colour.</p>
+    <div class="dsel" style="gap:14px">${
+      [["ok","sync_ok"],["late","sync_late"],["overdue","sync_overdue"],["unknown","sync_unknown"]]
+      .map(([st,k]) => `<span style="display:inline-flex;align-items:baseline;gap:7px;max-width:37ch">
+        <span class="badge ${st}"><span class="glyph" aria-hidden="true"></span>${st}</span>
+        <span style="font-size:11.5px;line-height:1.45">${esc(MEANS[k])}</span></span>`).join("")}</div>
+    <p class="note"><strong>late</strong> is the one to act on: nothing has broken yet, and the next
+    missed fire makes it overdue. The estate has none right now, which is why the row is not below —
+    a state nobody is in is documented, never invented.</p>
     <div class="scroll-x"><table>
       <thead><tr><th>Status</th><th>Name</th><th>Schedule</th><th class="num">Groups</th>
         <th>Last sync</th><th>Next expected</th></tr></thead>
@@ -521,9 +549,9 @@ function syncsCard(){
         const late = x.state !== "ok";
         return `<tr${late ? ' style="background:var(--crit-wash)"' : ""}>
         <td style="min-width:210px">
-          <span class="badge ${late ? "critical" : "ok"}"><span class="glyph" aria-hidden="true"></span>${
-            esc(x.state)}</span>
-          ${late ? `<div class="consq">${esc(MEANS.sync_overdue)}</div>` : ""}</td>
+          <span class="badge ${esc(x.state)}"><span class="glyph" aria-hidden="true"></span>${
+            esc(STATES[x.state] || "unknown")}</span>
+          ${late ? `<div class="consq">${esc(MEANS["sync_" + x.state] || MEANS.sync_overdue)}</div>` : ""}</td>
         <td class="mono">${esc(x.name)}<div class="t" style="font-size:11px">${esc(x.cluster)} · ${esc(x.ns)}</div></td>
         <td class="t">${esc(x.sched)}</td><td class="num">${x.groups}</td>
         <td class="t"${late ? ' style="color:var(--crit);font-weight:600"' : ""}>${esc(ago(x.last))}</td>
@@ -544,6 +572,10 @@ function configsCard(){
       <span class="badge warn">administrator only</span></h2>
     <p class="note">These CRs template the RoleBindings, so a failure here is silent by nature —
     nothing breaks, things simply stop being created. <strong>ok</strong> means ${MEANS.cfg_ok}.
+    <br><strong>"Failing" here is an ordering, not a flag.</strong> The operator never clears
+    <code>ReconcileError</code> on a later success — both conditions sit at <code>status: True</code>
+    indefinitely — so the condition itself says nothing about current health. Only
+    <code>error_at &gt; success_at</code> decides, and the same trap applies to the GroupSync CRs above.
     Administrator tier by decision: unlike the GroupSync CRs there is no <code>/metrics</code>
     analogue, so this is genuinely private (#169).</p>
     <div class="scroll-x"><table>
