@@ -184,7 +184,7 @@ This prevents dashboards from depending on dynamically generated Grafana datasou
 Recommended namespace:
 
 ```text
-my-grafana
+group-sync-dashboard
 ```
 
 Do not deploy the Grafana application directly into:
@@ -250,7 +250,7 @@ The Grafana Operator is installed from the OpenShift Operator catalog through OL
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: my-grafana
+  name: group-sync-dashboard
 ```
 
 Apply:
@@ -270,10 +270,10 @@ apiVersion: operators.coreos.com/v1
 kind: OperatorGroup
 metadata:
   name: grafana-operator-group
-  namespace: my-grafana
+  namespace: group-sync-dashboard
 spec:
   targetNamespaces:
-    - my-grafana
+    - group-sync-dashboard
 ```
 
 Apply:
@@ -298,7 +298,7 @@ apiVersion: operators.coreos.com/v1alpha1
 kind: Subscription
 metadata:
   name: grafana-operator
-  namespace: my-grafana
+  namespace: group-sync-dashboard
 spec:
   channel: v5
   installPlanApproval: Automatic
@@ -322,15 +322,15 @@ Allow OLM to resolve the version from the `v5` channel.
 ## 4.4 Verify the Operator installation
 
 ```bash
-oc get subscription -n my-grafana
+oc get subscription -n group-sync-dashboard
 ```
 
 ```bash
-oc get csv -n my-grafana
+oc get csv -n group-sync-dashboard
 ```
 
 ```bash
-oc get pods -n my-grafana
+oc get pods -n group-sync-dashboard
 ```
 
 Verify the Grafana CRDs:
@@ -422,14 +422,14 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: grafana-thanos
-  namespace: my-grafana
+  namespace: group-sync-dashboard
 automountServiceAccountToken: false
 ---
 apiVersion: v1
 kind: Secret
 metadata:
   name: grafana-thanos-token
-  namespace: my-grafana
+  namespace: group-sync-dashboard
   annotations:
     kubernetes.io/service-account.name: grafana-thanos
 type: kubernetes.io/service-account-token
@@ -452,11 +452,11 @@ token
 Verify:
 
 ```bash
-oc get secret grafana-thanos-token -n my-grafana
+oc get secret grafana-thanos-token -n group-sync-dashboard
 ```
 
 ```bash
-oc describe secret grafana-thanos-token -n my-grafana
+oc describe secret grafana-thanos-token -n group-sync-dashboard
 ```
 
 Expected output includes:
@@ -508,7 +508,7 @@ metadata:
 subjects:
   - kind: ServiceAccount
     name: grafana-thanos
-    namespace: my-grafana
+    namespace: group-sync-dashboard
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
@@ -540,7 +540,7 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: grafana-admin-credentials
-  namespace: my-grafana
+  namespace: group-sync-dashboard
 type: Opaque
 stringData:
   GF_SECURITY_ADMIN_USER: admin
@@ -583,7 +583,7 @@ apiVersion: grafana.integreatly.org/v1beta1
 kind: Grafana
 metadata:
   name: grafana
-  namespace: my-grafana
+  namespace: group-sync-dashboard
   labels:
     dashboards: "grafana"
 spec:
@@ -637,25 +637,25 @@ oc apply -f 07-grafana.yaml
 ## 9.1 Verify the Grafana instance
 
 ```bash
-oc get grafana -n my-grafana
+oc get grafana -n group-sync-dashboard
 ```
 
 ```bash
-oc get pods -n my-grafana
+oc get pods -n group-sync-dashboard
 ```
 
 ```bash
-oc get svc -n my-grafana
+oc get svc -n group-sync-dashboard
 ```
 
 ```bash
-oc get route -n my-grafana
+oc get route -n group-sync-dashboard
 ```
 
 Display the generated route:
 
 ```bash
-oc get route -n my-grafana -o wide
+oc get route -n group-sync-dashboard -o wide
 ```
 
 ---
@@ -684,7 +684,7 @@ apiVersion: grafana.integreatly.org/v1beta1
 kind: GrafanaDatasource
 metadata:
   name: openshift-thanos
-  namespace: my-grafana
+  namespace: group-sync-dashboard
 spec:
   uid: openshift-thanos
 
@@ -784,7 +784,7 @@ apiVersion: grafana.integreatly.org/v1beta1
 kind: GrafanaDashboard
 metadata:
   name: sample-dashboard
-  namespace: my-grafana
+  namespace: group-sync-dashboard
 spec:
   instanceSelector:
     matchLabels:
@@ -884,7 +884,7 @@ metadata:
 subjects:
   - kind: ServiceAccount
     name: grafana-thanos
-    namespace: my-grafana
+    namespace: group-sync-dashboard
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
@@ -942,7 +942,7 @@ Team A metrics only
 ## 13.1 Verify Operator resources
 
 ```bash
-oc get subscription,csv -n my-grafana
+oc get subscription,csv -n group-sync-dashboard
 ```
 
 ---
@@ -953,7 +953,7 @@ oc get subscription,csv -n my-grafana
 oc get grafana \
        grafanadatasource \
        grafanadashboard \
-       -n my-grafana
+       -n group-sync-dashboard
 ```
 
 ---
@@ -962,7 +962,7 @@ oc get grafana \
 
 ```bash
 oc describe grafanadatasource openshift-thanos \
-  -n my-grafana
+  -n group-sync-dashboard
 ```
 
 ---
@@ -971,7 +971,7 @@ oc describe grafanadatasource openshift-thanos \
 
 ```bash
 oc describe grafanadashboard sample-dashboard \
-  -n my-grafana
+  -n group-sync-dashboard
 ```
 
 ---
@@ -981,14 +981,14 @@ oc describe grafanadashboard sample-dashboard \
 First identify the Grafana deployment:
 
 ```bash
-oc get deployment -n my-grafana
+oc get deployment -n group-sync-dashboard
 ```
 
 Then inspect the Grafana container logs:
 
 ```bash
 oc logs \
-  -n my-grafana \
+  -n group-sync-dashboard \
   deployment/grafana-deployment \
   -c grafana
 ```
@@ -1003,7 +1003,7 @@ Extract the ServiceAccount token locally:
 
 ```bash
 TOKEN=$(oc get secret grafana-thanos-token \
-  -n my-grafana \
+  -n group-sync-dashboard \
   -o jsonpath='{.data.token}' | base64 -d)
 ```
 
