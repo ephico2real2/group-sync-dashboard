@@ -222,7 +222,7 @@
       <span class="chip">Full view — you are seeing everything</span>
       <span class="grow"></span>
       <label class="flabel">Appearance
-        <select id="theme"><option value="">Auto</option><option value="light">Light</option><option value="dark">Dark</option></select>
+        <select id="appearance"><option value="">Auto</option><option value="light">Light</option><option value="dark">Dark</option></select>
       </label>
       <label class="flabel">Colour
         <select id="palette">
@@ -721,7 +721,7 @@ function shellControl(id, attr, param){
     history.replaceState(history.state, "", u);   // never null: it would wipe the entry's position
   });
 }
-shellControl("theme", "data-theme", "mode");
+shellControl("appearance", "data-theme", "mode");
 shellControl("palette", "data-palette", "theme");
 applyPosition(positionFromHash());
 history.replaceState({ pos: currentPosition(), from: null }, "",

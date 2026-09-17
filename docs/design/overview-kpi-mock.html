@@ -185,48 +185,59 @@
     </h2>
     <div class="sys">
       <div class="comp">
-        <div class="comp-top"><span class="comp-name">dashboard</span><span class="pill ok">healthy</span></div>
+        <div class="comp-top"><span class="comp-name">dashboard</span><span class="pill warn">watch</span></div>
         <div class="meters">
           <div class="meter-row">
             <span class="meter-lab">Memory</span>
-            <span class="track" style="--th:80%"><span class="fill" style="width:19.6%"></span></span>
-            <span class="meter-val"><b>19.6%</b> of 512Mi</span>
+            <span class="track" style="--th:80%"><span class="fill" style="width:19.3%"></span></span>
+            <span class="meter-val"><b>19.3%</b> of 512Mi</span>
           </div>
           <div class="meter-row">
             <span class="meter-lab">CPU</span>
-            <span class="track" style="--th:80%"><span class="fill" id="cpu-fill" style="width:24%"></span></span>
-            <span class="meter-val"><b id="cpu-val">0.12</b> / 0.5 cores</span>
+            <span class="track" style="--th:80%"><span class="fill" id="cpu-fill" style="width:1%"></span></span>
+            <span class="meter-val"><b id="cpu-val">&lt;0.01</b> / 0.5 cores</span>
           </div>
           <div class="meter-row">
             <span class="meter-lab">Throttled</span>
-            <span class="track" style="--th:20%"><span class="fill" style="width:4%"></span></span>
-            <span class="meter-val"><b>0.11%</b> of periods</span>
+            <span class="track" style="--th:20%"><span class="fill warn" style="width:22%"></span></span>
+            <span class="meter-val"><b>1.10%</b> of periods</span>
+          </div>
+          <div class="meter-row">
+            <span class="meter-lab">Data volume</span>
+            <span class="track" style="--th:80%"><span class="fill warn" style="width:84%"></span></span>
+            <span class="meter-val"><b>18.6Mi</b> · node disk 84% full</span>
           </div>
         </div>
-        <div class="sub">196 throttled / 175,931 periods · 5.06s total</div>
-        <div class="rule">The mark on each track is the amber threshold — &gt;80% memory/CPU, &gt;1% throttled periods. Position against the mark reads without colour.</div>
+        <div class="sub">230 throttled / 20,853 periods · 8.71s total — over the 1% mark, which is why this reads <em>watch</em></div>
+        <div class="sub">gsd.db 2.3Mi + WAL 4.0Mi + 4 backups 8.1Mi, on a 59Gi hostpath volume that shares the node's disk (50G of 60G used)</div>
+        <div class="rule">The mark on each track is the amber threshold — &gt;80% memory/CPU, &gt;1% throttled periods. Position against the mark reads without colour. A hostpath volume's own size means nothing; the node disk it lives on is the number.</div>
       </div>
 
       <div class="comp">
-        <div class="comp-top"><span class="comp-name">report</span><span class="pill warn">watch</span></div>
+        <div class="comp-top"><span class="comp-name">report</span><span class="pill ok">healthy</span></div>
         <div class="meters">
           <div class="meter-row">
             <span class="meter-lab">Memory</span>
-            <span class="track" style="--th:80%"><span class="fill" style="width:31.4%"></span></span>
-            <span class="meter-val"><b>31.4%</b> of 512Mi</span>
+            <span class="track" style="--th:80%"><span class="fill" style="width:13.8%"></span></span>
+            <span class="meter-val"><b>13.8%</b> of 768Mi</span>
           </div>
           <div class="meter-row">
             <span class="meter-lab">CPU</span>
-            <span class="track" style="--th:80%"><span class="fill warn" style="width:68%"></span></span>
-            <span class="meter-val"><b>0.34</b> / 0.5 cores</span>
+            <span class="track" style="--th:80%"><span class="fill" style="width:1%"></span></span>
+            <span class="meter-val"><b>&lt;0.01</b> / 0.5 cores</span>
+          </div>
+          <div class="meter-row">
+            <span class="meter-lab">Throttled</span>
+            <span class="track" style="--th:20%"><span class="fill" style="width:1%"></span></span>
+            <span class="meter-val"><b>0.05%</b> of periods</span>
           </div>
           <div class="meter-row">
             <span class="meter-lab">Artefacts</span>
-            <span class="track" style="--th:80%"><span class="fill" style="width:6%"></span></span>
-            <span class="meter-val"><b>124Mi</b> / 2Gi PVC</span>
+            <span class="track" style="--th:80%"><span class="fill warn" style="width:84%"></span></span>
+            <span class="meter-val"><b>11.2Mi</b> · 418 files · node disk 84% full</span>
           </div>
         </div>
-        <div class="sub">preempted 29× in 3h on 2026-09-14 (#97) · priorityClassName now set</div>
+        <div class="sub">108 throttled / 235,324 periods · 5.17s total · preempted 29× in 3h on 2026-09-14 (#97), priorityClassName now set</div>
         <div class="rule">Throttling is the saturation signal, not CPU% — a service at 30% being throttled is mis-sized.</div>
       </div>
     </div>

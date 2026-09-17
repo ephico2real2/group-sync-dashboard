@@ -161,7 +161,7 @@ bindings:["Access granted",
 
   <section class="card"><h3><span class="b w">unresolved</span> Unresolved <span class="n">· 6</span></h3>
   <div class="note">These do not raise alerts: a group that has never been seen cannot be told apart from one that simply has not synced yet. They still grant nobody — typically a misspelled group name, or an onboarding that stopped halfway.</div>
-  ${tbl(`<th class="s asc">Group named by the binding</th><th class="s">Reaches</th><th class="s">Grants</th><th class="s">Scope</th><th class="s">Binding</th>`,
+  ${tbl(`<th class="s asc" aria-sort="ascending">Group named by the binding</th><th class="s" aria-sort="none">Reaches</th><th class="s" aria-sort="none">Grants</th><th class="s" aria-sort="none">Scope</th><th class="s" aria-sort="none">Binding</th>`,
   [["app-ocp-rbac-klt-ns-audit","view","klt-pass-mnemonic-3char","klt-audit-rb"],
    ["app-ocp-rbac-klt-ns-developer","edit","klt-pass-mnemonic-3char","klt-developer-rb"],
    ["app-ocp-rbac-klta-ns-audit","view","klt-pass-both","klta-audit-rb"],
@@ -177,7 +177,7 @@ bindings:["Access granted",
 
   <section class="card"><h3>Granted <span class="n">· 34</span></h3>
   <div class="note">The group named by each of these exists, so the access reaches its members. <b>Reaches</b> says how many people that is today, and how many of them have ever logged in.</div>
-  ${tbl(`<th class="s asc">Group named by the binding</th><th class="s">Reaches</th><th class="s">Grants</th><th class="s">Scope</th><th class="s">Binding</th>`,
+  ${tbl(`<th class="s asc" aria-sort="ascending">Group named by the binding</th><th class="s" aria-sort="none">Reaches</th><th class="s" aria-sort="none">Grants</th><th class="s" aria-sort="none">Scope</th><th class="s" aria-sort="none">Binding</th>`,
   [["app-ocp-rbac-alpha-cluster-admin",1,1,"admin","cluster-wide","…-admin-crb"],
    ["app-ocp-rbac-alpha-cluster-developer",2,2,"edit","cluster-wide","…-developer-crb"],
    ["app-ocp-rbac-alpha-database-admin",2,2,"database-admin","cluster-wide","…-database-admin-crb"],
