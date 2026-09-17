@@ -22,6 +22,7 @@ ORACLE = {
     "dana.lee": (True, False),      # cluster-reader: read yes, write no — excludes the auditor
     "lateef.o": (False, False),
     "jane.smith": (False, False),   # decoy group named "...-cluster-admin", no binding behind it
+    "developer": (True, False),     # reporting-auditor group: wide read (list crb) yes, usage (update) no
 }
 
 
@@ -39,6 +40,7 @@ def test_groups_resolution_is_byte_exact(mock_cluster):
     client = ClusterClient(mock_cluster.cluster_config(), timeout=5.0)
     assert client.fetch_groups_of_user("kubeadmin") == ["app-ocp-rbac-demo-cluster-admin"]
     assert client.fetch_groups_of_user("jane.smith") == ["platform-team-cluster-admin"]
+    assert client.fetch_groups_of_user("developer") == ["app-ocp-rbac-demo-report-auditors"]
     # Case-sensitive: KUBEADMIN is a different identity and resolves no groups.
     assert client.fetch_groups_of_user("KUBEADMIN") == []
 
