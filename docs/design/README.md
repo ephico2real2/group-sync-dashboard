@@ -9,5 +9,5 @@ artifacts (not shipped pages); the implemented pages live under `local-developme
 | [`report-form-mock.html`](report-form-mock.html) | The report input forms redesign — one ParamSpec-driven shell, discovered lookups with type-ahead, subject scopes — see issue #149 |
 | [`landing-access-mock.html`](landing-access-mock.html) | The self-scoped "Your access" landing page every user gets — what you can reach, where it came from, what changed — see issue #158 |
 | [`overview-kpi-mock.html`](overview-kpi-mock.html) | The administrator Overview makeover — system status, access posture, trends, Grafana/Observe links — see issue #157 |
-| [`tab-blueprint-mock.html`](tab-blueprint-mock.html) | The six remaining tabs — Groups, Users, Access granted, RBAC policy, Logins, Usage — in one shell, showing the global appearance/palette architecture — see issue #153 |
+| [`tab-redesign-mock.html`](tab-redesign-mock.html) | The six tabs redesigned **feature-complete** against the contract — real rows, real caveats, real filters — see issue #153 |
 | [`tab-feature-contract.md`](tab-feature-contract.md) | What a tab redesign may **not** remove — captured from the running dashboard and the render functions — see issue #153 |
