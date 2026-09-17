@@ -5,4 +5,4 @@ artifacts (not shipped pages); the implemented pages live under `local-developme
 
 | Mockup | For |
 |---|---|
-| [`reporting-status.html`](reporting-status.html) | The reporting status / schedules / history UI — see issue #149 |
+| [`reporting-status-mock.html`](reporting-status-mock.html) | The reporting status / schedules / history UI — see issue #149 |
