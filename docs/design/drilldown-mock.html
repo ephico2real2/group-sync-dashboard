@@ -81,29 +81,45 @@
   .tab:hover{color:var(--ink);background:var(--accent-wash)}
   .tab[aria-current=page]{color:var(--accent);border-bottom-color:var(--accent);font-weight:600}
 
-  /* ---------- lookup ---------- */
-  .lookup{position:relative;flex:1 1 320px;min-width:200px}
-  .lookup input{width:100%}
-  .hits{margin-top:14px;display:grid;gap:12px}
+
+  /* ---------- entry tiles: the lookup is an extra door, not the only one ---------- */
+  .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(215px,1fr));gap:12px;
+    padding:14px 20px 18px 23px}
+  .tile{display:block;text-align:left;font:inherit;color:var(--ink);cursor:pointer;
+    background:var(--surface-2);border:1px solid var(--border);border-radius:11px;padding:15px 16px;
+    transition:border-color .15s,transform .15s}
+  .tile:hover{border-color:var(--accent);transform:translateY(-1px)}
+  .tile .n{display:block;font-size:30px;font-weight:700;letter-spacing:-1px;line-height:1.05;
+    font-variant-numeric:tabular-nums}
+  .tile .k{display:block;font-size:13px;font-weight:600;margin-top:3px}
+  .tile .s{display:block;font-size:12px;color:var(--muted);margin-top:5px}
+  .tile .go{display:block;font-size:12px;color:var(--accent);margin-top:9px;font-weight:600}
+
+  /* ---------- lookup results ---------- */
+  .hits{display:grid;gap:12px;padding:0 20px 16px 23px}
   .hitgroup{border:1px solid var(--border);border-radius:10px;background:var(--surface);overflow:hidden}
   .hithead{display:flex;align-items:baseline;gap:10px;padding:9px 14px;background:var(--surface-2);
     border-bottom:1px solid var(--border-soft);font-size:12px;letter-spacing:.06em;text-transform:uppercase;
     color:var(--muted);font-weight:600}
   .hithead b{font-size:13px;color:var(--ink);letter-spacing:0;text-transform:none}
-  .hit{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 14px;border-top:1px solid var(--border-soft);
-    cursor:pointer;background:none;border-left:0;border-right:0;border-bottom:0;width:100%;text-align:left;
-    font:inherit;color:var(--ink)}
+  .hit{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 14px;
+    border-top:1px solid var(--border-soft);cursor:pointer;background:none;border-left:0;border-right:0;
+    border-bottom:0;width:100%;text-align:left;font:inherit;color:var(--ink)}
   .hit:first-of-type{border-top:0}
   .hit:hover{background:var(--accent-wash)}
   .hit .k{font-family:var(--mono);font-size:13px}
   .hit .sub{color:var(--muted);font-size:12px}
   mark{background:var(--warn-wash);color:inherit;border-radius:3px;padding:0 1px;font-weight:600}
+  /* the cross-kind bridge: browsing one list should not hide matches in the other two */
+  .alsobar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 20px 14px 23px;
+    color:var(--muted);font-size:12.5px;border-top:1px solid var(--border-soft)}
 
   /* ---------- cards ---------- */
   main{padding-top:18px}
   .card{position:relative;background:var(--surface);border:1px solid var(--border);border-radius:12px;
     margin-bottom:14px;overflow:hidden}
-  .card::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--sec,var(--accent));opacity:.8}
+  .card::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;
+    background:var(--sec,var(--accent));opacity:.8}
   .card>*{padding-left:23px}
   .card h2{font-size:15px;margin:0;padding-top:13px;padding-bottom:0;font-weight:600;display:flex;
     align-items:baseline;gap:8px;flex-wrap:wrap}
@@ -112,8 +128,8 @@
     margin:16px 0 4px;font-weight:600}
   .note{color:var(--muted);font-size:12.5px;padding-top:6px;padding-right:20px;padding-bottom:2px;max-width:88ch}
   .pad{padding:12px 20px 14px 23px}
-  .back{display:inline-flex;align-items:center;gap:6px;font:inherit;font-size:13px;background:none;border:0;
-    color:var(--accent);cursor:pointer;padding:12px 0 0 23px}
+  .back{display:inline-flex;align-items:center;gap:6px;font:inherit;font-size:13px;background:none;
+    border:0;color:var(--accent);cursor:pointer;padding:12px 0 0 23px}
   .back:hover{text-decoration:underline}
 
   .facts{display:flex;flex-wrap:wrap;gap:6px 30px;padding-top:10px;padding-bottom:12px}
@@ -122,15 +138,22 @@
   .fact .val{display:block;font-size:20px;font-weight:600;letter-spacing:-.3px;margin-top:1px}
   .fact .val.sm{font-size:13px;font-weight:500;font-family:var(--mono);letter-spacing:0}
 
-  /* Wide tables scroll inside their own container — the page body never scrolls sideways. */
   .scroll-x{overflow-x:auto;padding:0;margin:0 0 4px}
   table{border-collapse:collapse;width:100%;min-width:560px;font-size:13px}
   th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--faint);
-    font-weight:600;padding:8px 14px 6px 14px;border-bottom:1px solid var(--border);white-space:nowrap}
-  th:first-child{padding-left:23px}
+    font-weight:600;padding:0;border-bottom:1px solid var(--border);white-space:nowrap}
+  th button{font:inherit;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:inherit;
+    font-weight:600;background:none;border:0;padding:8px 14px 6px;cursor:pointer;width:100%;text-align:left}
+  th button:hover{color:var(--ink)}
+  th.plain{padding:8px 14px 6px}
+  th:first-child,th:first-child button{padding-left:23px}
+  th.num,th.num button{text-align:right}
   td{padding:7px 14px;border-bottom:1px solid var(--border-soft);vertical-align:top}
   td:first-child{padding-left:23px}
+  tbody tr{cursor:pointer}
   tbody tr:hover{background:var(--accent-wash)}
+  tbody tr.flat{cursor:default}
+  tbody tr.flat:hover{background:none}
   .num{text-align:right;font-variant-numeric:tabular-nums}
   .t{font-family:var(--mono);font-size:12px;color:var(--muted);white-space:nowrap}
   .ago{color:var(--faint)}
@@ -138,11 +161,12 @@
   .drill{font:inherit;font-family:var(--mono);font-size:13px;background:none;border:0;padding:0;
     color:var(--accent);cursor:pointer;text-decoration:underline;text-underline-offset:2px}
   .drill:hover{text-decoration-thickness:2px}
-  .drill::after{content:" ›";text-decoration:none;display:inline-block}
+  .drill::after{content:" \203A";text-decoration:none;display:inline-block}
   .full{color:var(--muted);font-size:12.5px}
 
   .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:7px;vertical-align:1px}
   .own-a{background:var(--accent)} .own-b{background:var(--warn)} .own-c{background:var(--good)}
+  .own-none{background:var(--crit)}
   .tag{display:inline-block;font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--border);
     color:var(--muted);background:var(--surface-2);white-space:nowrap}
   .tag.good{color:var(--good);background:var(--good-wash);border-color:color-mix(in srgb,var(--good) 40%,transparent)}
@@ -150,14 +174,14 @@
   .tag.crit{color:var(--crit);background:var(--crit-wash);border-color:color-mix(in srgb,var(--crit) 40%,transparent)}
   .joined{color:var(--good);font-weight:600} .left{color:var(--crit);font-weight:600}
   .empty{color:var(--muted);font-size:13px;padding:2px 20px 16px 23px;max-width:86ch}
-  .new{display:inline-block;font-size:10px;font-weight:700;letter-spacing:.08em;padding:2px 7px;border-radius:4px;
-    color:var(--accent-ink);background:var(--accent);text-transform:uppercase;vertical-align:2px}
+  .new{display:inline-block;font-size:10px;font-weight:700;letter-spacing:.08em;padding:2px 7px;
+    border-radius:4px;color:var(--accent-ink);background:var(--accent);text-transform:uppercase;vertical-align:2px}
   .mocknote{max-width:1240px;margin:22px auto 0;padding:11px 16px;border:1px dashed var(--border);
     border-radius:10px;color:var(--muted);font-size:12.5px;background:var(--surface-2)}
-  @media (max-width:520px){
-    .facts{gap:6px 18px}
-    .fact .val{font-size:17px}
-  }
+  .lookup{flex:1 1 320px;min-width:200px}
+  .lookup input{width:100%}
+  .grow{flex:1 1 40px}
+  @media (max-width:520px){ .facts{gap:6px 18px} .fact .val{font-size:17px} .tile .n{font-size:26px} }
 </style>
 
 <div class="shell">
@@ -182,164 +206,94 @@
     </div>
     <div class="filters">
       <label class="flabel">Cluster <select><option>crc-local</option><option>mock</option></select></label>
-      <div class="lookup">
-        <input id="q" type="search" placeholder="Find a user, group or namespace — try: demo · rbac alpha · alice"
-               aria-label="Find a user, group or namespace">
-      </div>
+      <label class="flabel" for="q" id="qlabel">Find</label>
+      <div class="lookup"><input id="q" type="search" autocomplete="off" spellcheck="false"></div>
       <label class="flabel">Group state <select><option>all</option><option>synced</option><option>unattributed</option></select></label>
     </div>
-    <nav class="tabs" aria-label="Dashboard sections">
-      <button class="tab">Overview</button>
-      <button class="tab" aria-current="page">Groups</button>
-      <button class="tab">Users</button>
-      <button class="tab">Access granted</button>
-      <button class="tab">RBAC policy</button>
-      <button class="tab">Namespace audit</button>
-      <button class="tab">Logins</button>
-      <button class="tab">Usage</button>
-      <button class="tab">Reports</button>
-    </nav>
+    <nav class="tabs" aria-label="Dashboard sections" id="tabs"></nav>
   </div>
 </div>
 
 <div class="wrap"><main id="main"></main></div>
 
 <div class="mocknote wrap">
-  <strong>Mock.</strong> Every name, count and timestamp below was read off the live CRC deployment
-  (application 0.24.0) with Playwright on 2026-09-17 — 67 groups, 63 users, 110 namespaces of which 23
-  carry <span class="mono">company.net/</span> labels. What is <em>proposed</em> rather than existing is
-  marked <span class="new">new</span>: the one lookup across all three entity types, and the namespace
-  as a drillable entity (<a href="https://github.com/ephico2real2/group-sync-dashboard/issues/167">#167</a>).
-  The tab bar wraps here, which is the fix for
-  <a href="https://github.com/ephico2real2/group-sync-dashboard/issues/166">#166</a>.
+  <strong>Mock.</strong> Every row is real: read off the live CRC deployment (application 0.24.0) on
+  2026-09-17 — <b>67 groups</b>, <b>63 users</b>, <b>110 namespaces</b> (23 labelled), their memberships,
+  and every RoleBinding and ClusterRoleBinding naming a group or a user. Nothing here is invented.
+  <br><strong>Three ways in, not one.</strong> Click a tile, click a tab, or type — the search is an extra
+  door beside the lists, never a replacement for them.
+  <br>Marked <span class="new">new</span>: the cross-kind search and the namespace as a drillable entity
+  (<a href="https://github.com/ephico2real2/group-sync-dashboard/issues/167">#167</a>). The tab bar wraps,
+  which is the fix for <a href="https://github.com/ephico2real2/group-sync-dashboard/issues/166">#166</a>.
   <br><strong>Navigation is the live app's own model</strong>, measured not guessed: the position lives in
   the hash, the in-page back button calls <span class="mono">history.back()</span> so it and the browser's
-  button walk one stack, Forward retraces, the search text is a filter and never a history entry, and a
-  pasted deep link — which has no <span class="mono">from</span> — rises to the parent instead of leaving
-  the page. Try it: drill in, then use your browser's back and forward buttons.
+  button walk one stack, Forward retraces, sorting and filtering are never history entries, and a pasted
+  deep link rises to its parent instead of leaving the page.
 </div>
-
 <script>
-/* ---------- data: measured, not invented ---------- */
-const OWN = {"app-ocp-rbac-group-groupsync":"own-a","autobahnusers-onboarding-groupsync":"own-b",
-             "bdp-oud-group-rbac-groupsync":"own-c"};
+/* Every row below was read off the live CRC cluster on 2026-09-17. Ages are computed against the
+   capture instant, not against the clock, so they stay true however long after this you open it. */
+const DATA = {"groups":[{"n":"app-ocp-rbac-abcd-ns-superuser","m":1,"own":"app-ocp-rbac-group-groupsync"},{"n":"app-ocp-rbac-alpha-cluster-admin","m":1,"own":"app-ocp-rbac-group-groupsync"},{"n":"app-ocp-rbac-alpha-cluster-audit","m":1,"own":"app-ocp-rbac-group-groupsync"},{"n":"app-ocp-rbac-alpha-cluster-developer","m":2,"own":"app-ocp-rbac-group-groupsync"},{"n":"app-ocp-rbac-alpha-database-admin","m":2,"own":"app-ocp-rbac-group-groupsync"},{"n":"app-ocp-rbac-alpha-ns-admin","m":1,"own":"app-ocp-rbac-group-groupsync"},{"n":"app-ocp-rbac-alpha-ns-audit","m":1,"own":"app-ocp-rbac-group-groupsync"},{"n":"app-ocp-rbac-alpha-ns-developer","m":2,"own":"app-ocp-rbac-group-groupsync"},{"n":"app-ocp-rbac-beta-ns-admin","m":2,"own":"app-ocp-rbac-group-groupsync"},{"n":"app-ocp-rbac-beta-ns-audit","m":1,"own":"app-ocp-rbac-group-groupsync"},{"n":"app-ocp-rbac-beta-ns-developer","m":1,"own":"app-ocp-rbac-group-groupsync"},{"n":"app-ocp-rbac-demo-cluster-admin","m":1,"own":"app-ocp-rbac-group-groupsync"},{"n":"app-ocp-rbac-demo-cluster-audit","m":1,"own":"app-ocp-rbac-group-groupsync"},{"n":"app-ocp-rbac-demo-cluster-developer","m":1,"own":"app-ocp-rbac-group-groupsync"},{"n":"app-ocp-rbac-demo-ns-admin","m":2,"own":"app-ocp-rbac-group-groupsync"},{"n":"app-ocp-rbac-demo-ns-audit","m":1,"own":"app-ocp-rbac-group-groupsync"},{"n":"app-ocp-rbac-demo-ns-developer","m":3,"own":"app-ocp-rbac-group-groupsync"},{"n":"app-ocp-rbac-devops-cluster-admin","m":1,"own":"app-ocp-rbac-group-groupsync"},{"n":"app-ocp-rbac-devops-ns-developer","m":1,"own":"app-ocp-rbac-group-groupsync"},{"n":"app-ocp-rbac-finance-cluster-developer","m":2,"own":"app-ocp-rbac-group-groupsync"},{"n":"app-ocp-rbac-groupsync-ns-auditor","m":3,"own":"app-ocp-rbac-group-groupsync"},{"n":"app-ocp-rbac-jeff-ns-admin","m":1,"own":"app-ocp-rbac-group-groupsync"},{"n":"app-ocp-rbac-jeff-ns-audit","m":1,"own":"app-ocp-rbac-group-groupsync"},{"n":"app-ocp-rbac-jeff-ns-developer","m":1,"own":"app-ocp-rbac-group-groupsync"},{"n":"app-ocp-rbac-lateef-ns-developer","m":1,"own":"app-ocp-rbac-group-groupsync"},{"n":"app-ocp-rbac-newteam-cluster-admin","m":2,"own":"app-ocp-rbac-group-groupsync"},{"n":"app-ocp-rbac-plat-ns-audit","m":1,"own":"app-ocp-rbac-group-groupsync"},{"n":"app-ocp-rbac-platform-cluster-admin","m":2,"own":"app-ocp-rbac-group-groupsync"},{"n":"app-ocp-rbac-platform-cluster-developer","m":2,"own":"app-ocp-rbac-group-groupsync"},{"n":"app-ocp-rbac-platform-ns-admin","m":2,"own":"app-ocp-rbac-group-groupsync"},{"n":"app-ocp-rbac-platform-ns-audit","m":1,"own":"app-ocp-rbac-group-groupsync"},{"n":"app-ocp-rbac-spar-ns-admin","m":1,"own":"app-ocp-rbac-group-groupsync"},{"n":"app-ocp-rbac-spar-ns-audit","m":1,"own":"app-ocp-rbac-group-groupsync"},{"n":"app-ocp-rbac-spar-ns-developer","m":2,"own":"app-ocp-rbac-group-groupsync"},{"n":"app-ocp-rbac-test-cluster-admin","m":1,"own":"app-ocp-rbac-group-groupsync"},{"n":"app-ocp-rbac-toolong-ns-audit","m":1,"own":"app-ocp-rbac-group-groupsync"},{"n":"app-ocp-rbac-trno-ns-admin","m":1,"own":"app-ocp-rbac-group-groupsync"},{"n":"app-ocp-rbac-trno-ns-audit","m":1,"own":"app-ocp-rbac-group-groupsync"},{"n":"app-ocp-rbac-trno-ns-developer","m":1,"own":"app-ocp-rbac-group-groupsync"},{"n":"app-ocp-rbac-tsta-ns-audit","m":1,"own":"app-ocp-rbac-group-groupsync"},{"n":"app-ocp-rbac-tstb-ns-audit","m":1,"own":"app-ocp-rbac-group-groupsync"},{"n":"app-ocp-rbac-tstc-ns-audit","m":1,"own":"app-ocp-rbac-group-groupsync"},{"n":"app-ocp-rbac-tstd-ns-audit","m":1,"own":"app-ocp-rbac-group-groupsync"},{"n":"app-ssb-autobahnusers","m":9,"own":"autobahnusers-onboarding-groupsync"},{"n":"bda-rbac-flink-alpha-apps","m":1,"own":"bdp-oud-group-rbac-groupsync"},{"n":"bda-rbac-flink-alpha-users","m":1,"own":"bdp-oud-group-rbac-groupsync"},{"n":"bda-rbac-presto-alpha-users","m":1,"own":"bdp-oud-group-rbac-groupsync"},{"n":"bda-rbac-spark-alpha-apps","m":1,"own":"bdp-oud-group-rbac-groupsync"},{"n":"bda-rbac-spark-alpha-users","m":2,"own":"bdp-oud-group-rbac-groupsync"},{"n":"bda-rbac-spark-delta-apps","m":1,"own":"bdp-oud-group-rbac-groupsync"},{"n":"bda-rbac-spark-delta-users","m":1,"own":"bdp-oud-group-rbac-groupsync"},{"n":"bda-rbac-spark-gamma-apps","m":1,"own":"bdp-oud-group-rbac-groupsync"},{"n":"bda-rbac-spark-omega-users","m":1,"own":"bdp-oud-group-rbac-groupsync"},{"n":"bda-rbac-spark-synca-users","m":1,"own":"bdp-oud-group-rbac-groupsync"},{"n":"bda-rbac-spark-syncb-users","m":1,"own":"bdp-oud-group-rbac-groupsync"},{"n":"bda-rbac-spark-syncc-users","m":1,"own":"bdp-oud-group-rbac-groupsync"},{"n":"bda-rbac-spark-syncd-users","m":1,"own":"bdp-oud-group-rbac-groupsync"},{"n":"bda-rbac-spark-theta-apps","m":1,"own":"bdp-oud-group-rbac-groupsync"},{"n":"bda-rbac-spark-theta-users","m":1,"own":"bdp-oud-group-rbac-groupsync"},{"n":"bda-rbac-trino-alpha-apps","m":1,"own":"bdp-oud-group-rbac-groupsync"},{"n":"bda-rbac-trino-alpha-users","m":2,"own":"bdp-oud-group-rbac-groupsync"},{"n":"bda-rbac-trino-delta-apps","m":1,"own":"bdp-oud-group-rbac-groupsync"},{"n":"bda-rbac-trino-delta-users","m":1,"own":"bdp-oud-group-rbac-groupsync"},{"n":"bda-rbac-trino-theta-apps","m":1,"own":"bdp-oud-group-rbac-groupsync"},{"n":"bda-rbac-trino-theta-users","m":1,"own":"bdp-oud-group-rbac-groupsync"},{"n":"test-group1","m":1,"own":null},{"n":"test-group2","m":0,"own":null}],"users":[{"n":"alice.cooper","f":"Alice Cooper","g":7,"p":"ldap-local","first":"2026-08-05"},{"n":"bob.wilson","f":"Bob Wilson","g":28,"p":"ldap-local","first":"2026-09-14"},{"n":"dana.lee","f":"Dana Lee","g":6,"p":"ldap-local","first":"2026-08-07"},{"n":"developer","f":"developer","g":0,"p":"developer","first":"2025-04-19"},{"n":"jane.smith","f":"Jane Smith","g":18,"p":"ldap-local","first":"2026-08-05"},{"n":"jeff","f":"jeff bush","g":4,"p":"ldap-local","first":"2026-08-07"},{"n":"john.doe","f":"John Doe","g":14,"p":"ldap-local","first":"2026-08-05"},{"n":"kubeadmin","f":"kubeadmin","g":0,"p":"developer","first":"2025-04-19"},{"n":"lateef.o","f":"lateef Oni","g":3,"p":"ldap-local","first":"2026-08-05"},{"n":"ocp-oauth-bind-serviceid","f":"ocp-oauth-bind-serviceid","g":1,"p":"ldap-local","first":"2026-08-05"},{"n":"sarah.jones","f":"Sarah Jones","g":3,"p":"ldap-local","first":"2026-08-07"},{"n":"test-python-user","f":"test-python-user","g":0,"p":null,"first":null},{"n":"test-user-002","f":"test-user-002","g":0,"p":"pnc_rnd_oim","first":"2025-05-18"},{"n":"test-user-003","f":"test-user-003","g":0,"p":"pnc_rnd_oim","first":"2025-05-18"},{"n":"test-user-004","f":"test-user-004","g":0,"p":"ceo_rnd_oim","first":"2025-05-18"},{"n":"test-user-005","f":"test-user-005","g":0,"p":"ceo_rnd_oim","first":"2025-05-18"},{"n":"test-user-006","f":"test-user-006","g":0,"p":"ceo_rnd_oim","first":"2025-05-18"},{"n":"test-user-007","f":"test-user-007","g":0,"p":"ceo_rnd_oim","first":"2025-05-18"},{"n":"test-user-008","f":"test-user-008","g":0,"p":"ceo_rnd_oim","first":"2025-05-18"},{"n":"test-user-009","f":"test-user-009","g":0,"p":"ceo_rnd_oim","first":"2025-05-18"},{"n":"test-user-010","f":"test-user-010","g":0,"p":"ceo_rnd_oim","first":"2025-05-18"},{"n":"test-user-011","f":"test-user-011","g":0,"p":"ceo_rnd_oim","first":"2025-05-18"},{"n":"test-user-012","f":"test-user-012","g":0,"p":"ceo_rnd_oim","first":"2025-05-18"},{"n":"test-user-013","f":"test-user-013","g":0,"p":"ceo_rnd_oim","first":"2025-05-18"},{"n":"test-user-014","f":"test-user-014","g":0,"p":"ceo_rnd_oim","first":"2025-05-18"},{"n":"test-user-015","f":"test-user-015","g":0,"p":"ceo_rnd_oim","first":"2025-05-18"},{"n":"test-user-016","f":"test-user-016","g":0,"p":"ceo_rnd_oim","first":"2025-05-18"},{"n":"test-user-017","f":"test-user-017","g":0,"p":"ceo_rnd_oim","first":"2025-05-18"},{"n":"test-user-018","f":"test-user-018","g":0,"p":"ceo_rnd_oim","first":"2025-05-18"},{"n":"test-user-019","f":"test-user-019","g":0,"p":"ceo_rnd_oim","first":"2025-05-18"},{"n":"test-user-020","f":"test-user-020","g":0,"p":"ceo_rnd_oim","first":"2025-05-18"},{"n":"test-user-021","f":"test-user-021","g":0,"p":"ceo_rnd_oim","first":"2025-05-18"},{"n":"test-user-022","f":"test-user-022","g":0,"p":"ceo_rnd_oim","first":"2025-05-18"},{"n":"test-user-023","f":"test-user-023","g":0,"p":"ceo_rnd_oim","first":"2025-05-18"},{"n":"test-user-024","f":"test-user-024","g":0,"p":"ceo_rnd_oim","first":"2025-05-18"},{"n":"test-user-025","f":"test-user-025","g":0,"p":"ceo_rnd_oim","first":"2025-05-18"},{"n":"test-user-026","f":"test-user-026","g":0,"p":"ceo_rnd_oim","first":"2025-05-18"},{"n":"test-user-027","f":"test-user-027","g":0,"p":"ceo_rnd_oim","first":"2025-05-18"},{"n":"test-user-028","f":"test-user-028","g":0,"p":"ceo_rnd_oim","first":"2025-05-18"},{"n":"test-user-029","f":"test-user-029","g":0,"p":"ceo_rnd_oim","first":"2025-05-18"},{"n":"test-user-030","f":"test-user-030","g":0,"p":"ceo_rnd_oim","first":"2025-05-18"},{"n":"test-user-031","f":"test-user-031","g":0,"p":"ceo_rnd_oim","first":"2025-05-18"},{"n":"test-user-032","f":"test-user-032","g":0,"p":"ceo_rnd_oim","first":"2025-05-18"},{"n":"test-user-033","f":"test-user-033","g":0,"p":"ceo_rnd_oim","first":"2025-05-18"},{"n":"test-user-034","f":"test-user-034","g":0,"p":"ceo_rnd_oim","first":"2025-05-18"},{"n":"test-user-035","f":"test-user-035","g":0,"p":"ceo_rnd_oim","first":"2025-05-18"},{"n":"test-user-036","f":"test-user-036","g":0,"p":"ceo_rnd_oim","first":"2025-05-18"},{"n":"test-user-037","f":"test-user-037","g":0,"p":"ceo_rnd_oim","first":"2025-05-18"},{"n":"test-user-038","f":"test-user-038","g":0,"p":"ceo_rnd_oim","first":"2025-05-18"},{"n":"test-user-039","f":"test-user-039","g":0,"p":"ceo_rnd_oim","first":"2025-05-18"},{"n":"test-user-040","f":"test-user-040","g":0,"p":"ceo_rnd_oim","first":"2025-05-18"},{"n":"test-user-041","f":"test-user-041","g":0,"p":"ceo_rnd_oim","first":"2025-05-18"},{"n":"test-user-042","f":"test-user-042","g":0,"p":"ceo_rnd_oim","first":"2025-05-18"},{"n":"test-user-043","f":"test-user-043","g":0,"p":"ceo_rnd_oim","first":"2025-05-18"},{"n":"test-user-044","f":"test-user-044","g":0,"p":"ceo_rnd_oim","first":"2025-05-18"},{"n":"test-user-045","f":"test-user-045","g":0,"p":"ceo_rnd_oim","first":"2025-05-18"},{"n":"test-user-046","f":"test-user-046","g":0,"p":"ceo_rnd_oim","first":"2025-05-18"},{"n":"test-user-047","f":"test-user-047","g":0,"p":"ceo_rnd_oim","first":"2025-05-18"},{"n":"test-user-048","f":"test-user-048","g":0,"p":"ceo_rnd_oim","first":"2025-05-18"},{"n":"test-user-049","f":"test-user-049","g":0,"p":"ceo_rnd_oim","first":"2025-05-18"},{"n":"test-user-050","f":"test-user-050","g":0,"p":"ceo_rnd_oim","first":"2025-05-18"},{"n":"user1","f":"user1","g":0,"p":"my-provider","first":"2025-12-08"},{"n":"user2","f":"user2","g":0,"p":"my-provider","first":"2025-12-08"}],"ns":[{"n":"beta-prod","m":"beta","e":"prod","oud":null},{"n":"beta-rnd","m":"beta","e":"rnd","oud":null},{"n":"beta-uat","m":"beta","e":"uat","oud":null},{"n":"ca-tutorial","m":null,"e":null,"oud":null},{"n":"ca-tutorial-app","m":null,"e":null,"oud":null},{"n":"cert-manager","m":null,"e":null,"oud":null},{"n":"cert-manager-operator","m":null,"e":null,"oud":null},{"n":"default","m":null,"e":null,"oud":null},{"n":"demo-prod","m":"demo","e":"prod","oud":null},{"n":"demo-production","m":"demo","e":"prod","oud":null},{"n":"demo-qa","m":"demo","e":"qa","oud":null},{"n":"demo-rnd","m":"demo","e":"rnd","oud":null},{"n":"demo-uat","m":"demo","e":"uat","oud":null},{"n":"grafana-test","m":null,"e":null,"oud":null},{"n":"group-sync-dashboard","m":"gsd","e":null,"oud":null},{"n":"group-sync-operator","m":"gso","e":null,"oud":null},{"n":"gsd-preexist","m":"gsd","e":null,"oud":null},{"n":"hostpath-provisioner","m":null,"e":null,"oud":null},{"n":"jeff-qa","m":"jeff","e":"qa","oud":null},{"n":"jeff-rnd","m":"jeff","e":"rnd","oud":null},{"n":"klt-fail-bad-env","m":"kltc","e":"production","oud":null},{"n":"klt-fail-mnemonic-toolong","m":"toolongx","e":"uat","oud":null},{"n":"klt-fail-no-labels","m":null,"e":null,"oud":null},{"n":"klt-fail-only-env","m":null,"e":"prod","oud":null},{"n":"klt-fail-only-mnemonic","m":"kltb","e":null,"oud":null},{"n":"klt-pass-both","m":"klta","e":"qa","oud":null},{"n":"klt-pass-mnemonic-3char","m":"klt","e":"rnd","oud":null},{"n":"kube-node-lease","m":null,"e":null,"oud":null},{"n":"kube-public","m":null,"e":null,"oud":null},{"n":"kube-system","m":null,"e":null,"oud":null},{"n":"kube-system-two","m":null,"e":null,"oud":null},{"n":"kube-test","m":null,"e":null,"oud":null},{"n":"kyverno","m":null,"e":null,"oud":null},{"n":"kyverno-cel-gen-demo","m":null,"e":null,"oud":null},{"n":"kyverno-cel-tutorial","m":null,"e":null,"oud":null},{"n":"kyverno-cel-tutorial-migration","m":null,"e":null,"oud":null},{"n":"ldap-testing","m":null,"e":null,"oud":null},{"n":"legacy-payments","m":null,"e":null,"oud":null},{"n":"legacy-reporting","m":null,"e":null,"oud":null},{"n":"namespace-configuration-operator","m":null,"e":null,"oud":null},{"n":"ocp-klt-excluded-no-labels","m":null,"e":null,"oud":null},{"n":"openshift","m":null,"e":null,"oud":null},{"n":"openshift-apiserver","m":null,"e":null,"oud":null},{"n":"openshift-apiserver-operator","m":null,"e":null,"oud":null},{"n":"openshift-authentication","m":null,"e":null,"oud":null},{"n":"openshift-authentication-operator","m":null,"e":null,"oud":null},{"n":"openshift-cloud-network-config-controller","m":null,"e":null,"oud":null},{"n":"openshift-cloud-platform-infra","m":null,"e":null,"oud":null},{"n":"openshift-cluster-machine-approver","m":null,"e":null,"oud":null},{"n":"openshift-cluster-notifier","m":null,"e":null,"oud":null},{"n":"openshift-cluster-samples-operator","m":null,"e":null,"oud":null},{"n":"openshift-cluster-storage-operator","m":null,"e":null,"oud":null},{"n":"openshift-cluster-version","m":null,"e":null,"oud":null},{"n":"openshift-config","m":null,"e":null,"oud":null},{"n":"openshift-config-managed","m":null,"e":null,"oud":null},{"n":"openshift-config-operator","m":null,"e":null,"oud":null},{"n":"openshift-console","m":null,"e":null,"oud":null},{"n":"openshift-console-operator","m":null,"e":null,"oud":null},{"n":"openshift-console-user-settings","m":null,"e":null,"oud":null},{"n":"openshift-controller-manager","m":null,"e":null,"oud":null},{"n":"openshift-controller-manager-operator","m":null,"e":null,"oud":null},{"n":"openshift-dns","m":null,"e":null,"oud":null},{"n":"openshift-dns-operator","m":null,"e":null,"oud":null},{"n":"openshift-etcd","m":null,"e":null,"oud":null},{"n":"openshift-etcd-operator","m":null,"e":null,"oud":null},{"n":"openshift-gitops-operator","m":null,"e":null,"oud":null},{"n":"openshift-host-network","m":null,"e":null,"oud":null},{"n":"openshift-image-registry","m":null,"e":null,"oud":null},{"n":"openshift-infra","m":null,"e":null,"oud":null},{"n":"openshift-ingress","m":null,"e":null,"oud":null},{"n":"openshift-ingress-canary","m":null,"e":null,"oud":null},{"n":"openshift-ingress-operator","m":null,"e":null,"oud":null},{"n":"openshift-kni-infra","m":null,"e":null,"oud":null},{"n":"openshift-kube-apiserver","m":null,"e":null,"oud":null},{"n":"openshift-kube-apiserver-operator","m":null,"e":null,"oud":null},{"n":"openshift-kube-controller-manager","m":null,"e":null,"oud":null},{"n":"openshift-kube-controller-manager-operator","m":null,"e":null,"oud":null},{"n":"openshift-kube-scheduler","m":null,"e":null,"oud":null},{"n":"openshift-kube-scheduler-operator","m":null,"e":null,"oud":null},{"n":"openshift-kube-storage-version-migrator","m":null,"e":null,"oud":null},{"n":"openshift-kube-storage-version-migrator-operator","m":null,"e":null,"oud":null},{"n":"openshift-machine-api","m":null,"e":null,"oud":null},{"n":"openshift-machine-config-operator","m":null,"e":null,"oud":null},{"n":"openshift-marketplace","m":null,"e":null,"oud":null},{"n":"openshift-monitoring","m":null,"e":null,"oud":null},{"n":"openshift-multus","m":null,"e":null,"oud":null},{"n":"openshift-network-console","m":null,"e":null,"oud":null},{"n":"openshift-network-diagnostics","m":null,"e":null,"oud":null},{"n":"openshift-network-node-identity","m":null,"e":null,"oud":null},{"n":"openshift-network-operator","m":null,"e":null,"oud":null},{"n":"openshift-node","m":null,"e":null,"oud":null},{"n":"openshift-nutanix-infra","m":null,"e":null,"oud":null},{"n":"openshift-oauth-apiserver","m":null,"e":null,"oud":null},{"n":"openshift-openstack-infra","m":null,"e":null,"oud":null},{"n":"openshift-operator-lifecycle-manager","m":null,"e":null,"oud":null},{"n":"openshift-operators","m":null,"e":null,"oud":null},{"n":"openshift-ovirt-infra","m":null,"e":null,"oud":null},{"n":"openshift-ovn-kubernetes","m":null,"e":null,"oud":null},{"n":"openshift-precedence-test","m":null,"e":null,"oud":null},{"n":"openshift-route-controller-manager","m":null,"e":null,"oud":null},{"n":"openshift-service-ca","m":null,"e":null,"oud":null},{"n":"openshift-service-ca-operator","m":null,"e":null,"oud":null},{"n":"openshift-test-demo","m":null,"e":null,"oud":null},{"n":"openshift-user-workload-monitoring","m":null,"e":null,"oud":null},{"n":"openshift-vsphere-infra","m":null,"e":null,"oud":null},{"n":"oud-poc-crossfamily","m":"beta","e":null,"oud":"app-ocp-rbac-spar-ns-audit"},{"n":"oud-poc-platform","m":null,"e":null,"oud":"app-ocp-rbac-platform-ns-admin"},{"n":"oud-poc-spark","m":null,"e":null,"oud":"bda-rbac-spark-theta-apps"},{"n":"oud-poc-trino","m":"alpha","e":null,"oud":"bda-rbac-trino-alpha-users"},{"n":"test-your-email","m":null,"e":null,"oud":null}],"memberOf":{"charlie.brown":["app-ocp-rbac-abcd-ns-superuser","app-ocp-rbac-finance-cluster-developer","app-ocp-rbac-newteam-cluster-admin","app-ocp-rbac-trno-ns-developer","bda-rbac-spark-theta-users","bda-rbac-trino-alpha-users"],"jane.smith":["app-ocp-rbac-alpha-cluster-admin","app-ocp-rbac-alpha-cluster-developer","app-ocp-rbac-alpha-ns-admin","app-ocp-rbac-alpha-ns-developer","app-ocp-rbac-beta-ns-admin","app-ocp-rbac-demo-cluster-developer","app-ocp-rbac-demo-ns-admin","app-ocp-rbac-demo-ns-developer","app-ocp-rbac-groupsync-ns-auditor","app-ocp-rbac-platform-cluster-developer","app-ocp-rbac-platform-ns-admin","app-ocp-rbac-spar-ns-admin","app-ocp-rbac-spar-ns-developer","app-ssb-autobahnusers","bda-rbac-presto-alpha-users","bda-rbac-spark-alpha-users","bda-rbac-trino-alpha-apps","bda-rbac-trino-delta-apps"],"bob.wilson":["app-ocp-rbac-alpha-cluster-audit","app-ocp-rbac-alpha-cluster-developer","app-ocp-rbac-alpha-ns-audit","app-ocp-rbac-alpha-ns-developer","app-ocp-rbac-beta-ns-audit","app-ocp-rbac-beta-ns-developer","app-ocp-rbac-demo-cluster-audit","app-ocp-rbac-demo-ns-audit","app-ocp-rbac-demo-ns-developer","app-ocp-rbac-finance-cluster-developer","app-ocp-rbac-groupsync-ns-auditor","app-ocp-rbac-plat-ns-audit","app-ocp-rbac-platform-ns-audit","app-ocp-rbac-spar-ns-audit","app-ocp-rbac-spar-ns-developer","app-ocp-rbac-toolong-ns-audit","app-ocp-rbac-tsta-ns-audit","app-ocp-rbac-tstb-ns-audit","app-ocp-rbac-tstc-ns-audit","app-ocp-rbac-tstd-ns-audit","app-ssb-autobahnusers","bda-rbac-spark-alpha-users","bda-rbac-spark-synca-users","bda-rbac-spark-syncb-users","bda-rbac-spark-syncc-users","bda-rbac-spark-syncd-users","bda-rbac-trino-alpha-users","bda-rbac-trino-theta-users"],"alice.cooper":["app-ocp-rbac-alpha-database-admin","app-ocp-rbac-beta-ns-admin","app-ocp-rbac-devops-ns-developer","app-ocp-rbac-platform-cluster-admin","app-ssb-autobahnusers","bda-rbac-spark-delta-users","bda-rbac-trino-delta-users"],"dana.lee":["app-ocp-rbac-alpha-database-admin","app-ssb-autobahnusers","bda-rbac-flink-alpha-apps","bda-rbac-flink-alpha-users","bda-rbac-spark-gamma-apps","bda-rbac-spark-omega-users"],"john.doe":["app-ocp-rbac-demo-cluster-admin","app-ocp-rbac-demo-ns-admin","app-ocp-rbac-devops-cluster-admin","app-ocp-rbac-newteam-cluster-admin","app-ocp-rbac-platform-cluster-admin","app-ocp-rbac-platform-cluster-developer","app-ocp-rbac-platform-ns-admin","app-ocp-rbac-test-cluster-admin","app-ocp-rbac-trno-ns-admin","app-ssb-autobahnusers","bda-rbac-spark-alpha-apps","bda-rbac-spark-delta-apps","bda-rbac-spark-theta-apps","bda-rbac-trino-theta-apps"],"sarah.jones":["app-ocp-rbac-demo-ns-developer","app-ocp-rbac-trno-ns-audit","app-ssb-autobahnusers"],"lateef.o":["app-ocp-rbac-groupsync-ns-auditor","app-ocp-rbac-lateef-ns-developer","app-ssb-autobahnusers"],"jeff":["app-ocp-rbac-jeff-ns-admin","app-ocp-rbac-jeff-ns-audit","app-ocp-rbac-jeff-ns-developer","app-ssb-autobahnusers"],"ocp-oauth-bind-serviceid":["app-ssb-autobahnusers"],"hello1":["test-group1"]},"counts":{"groups":67,"users":63,"ns":110,"nsLabelled":23,"identities":65,"usersWithIdentity":62,"boundGroups":29,"boundUsers":10},"members":{"app-ocp-rbac-abcd-ns-superuser":["charlie.brown"],"app-ocp-rbac-alpha-cluster-admin":["jane.smith"],"app-ocp-rbac-alpha-cluster-audit":["bob.wilson"],"app-ocp-rbac-alpha-cluster-developer":["bob.wilson","jane.smith"],"app-ocp-rbac-alpha-database-admin":["alice.cooper","dana.lee"],"app-ocp-rbac-alpha-ns-admin":["jane.smith"],"app-ocp-rbac-alpha-ns-audit":["bob.wilson"],"app-ocp-rbac-alpha-ns-developer":["bob.wilson","jane.smith"],"app-ocp-rbac-beta-ns-admin":["alice.cooper","jane.smith"],"app-ocp-rbac-beta-ns-audit":["bob.wilson"],"app-ocp-rbac-beta-ns-developer":["bob.wilson"],"app-ocp-rbac-demo-cluster-admin":["john.doe"],"app-ocp-rbac-demo-cluster-audit":["bob.wilson"],"app-ocp-rbac-demo-cluster-developer":["jane.smith"],"app-ocp-rbac-demo-ns-admin":["jane.smith","john.doe"],"app-ocp-rbac-demo-ns-audit":["bob.wilson"],"app-ocp-rbac-demo-ns-developer":["sarah.jones","bob.wilson","jane.smith"],"app-ocp-rbac-devops-cluster-admin":["john.doe"],"app-ocp-rbac-devops-ns-developer":["alice.cooper"],"app-ocp-rbac-finance-cluster-developer":["bob.wilson","charlie.brown"],"app-ocp-rbac-groupsync-ns-auditor":["bob.wilson","jane.smith","lateef.o"],"app-ocp-rbac-jeff-ns-admin":["jeff"],"app-ocp-rbac-jeff-ns-audit":["jeff"],"app-ocp-rbac-jeff-ns-developer":["jeff"],"app-ocp-rbac-lateef-ns-developer":["lateef.o"],"app-ocp-rbac-newteam-cluster-admin":["charlie.brown","john.doe"],"app-ocp-rbac-plat-ns-audit":["bob.wilson"],"app-ocp-rbac-platform-cluster-admin":["alice.cooper","john.doe"],"app-ocp-rbac-platform-cluster-developer":["jane.smith","john.doe"],"app-ocp-rbac-platform-ns-admin":["jane.smith","john.doe"],"app-ocp-rbac-platform-ns-audit":["bob.wilson"],"app-ocp-rbac-spar-ns-admin":["jane.smith"],"app-ocp-rbac-spar-ns-audit":["bob.wilson"],"app-ocp-rbac-spar-ns-developer":["bob.wilson","jane.smith"],"app-ocp-rbac-test-cluster-admin":["john.doe"],"app-ocp-rbac-toolong-ns-audit":["bob.wilson"],"app-ocp-rbac-trno-ns-admin":["john.doe"],"app-ocp-rbac-trno-ns-audit":["sarah.jones"],"app-ocp-rbac-trno-ns-developer":["charlie.brown"],"app-ocp-rbac-tsta-ns-audit":["bob.wilson"],"app-ocp-rbac-tstb-ns-audit":["bob.wilson"],"app-ocp-rbac-tstc-ns-audit":["bob.wilson"],"app-ocp-rbac-tstd-ns-audit":["bob.wilson"],"app-ssb-autobahnusers":["john.doe","jane.smith","alice.cooper","lateef.o","dana.lee","sarah.jones","jeff","ocp-oauth-bind-serviceid","bob.wilson"],"bda-rbac-flink-alpha-apps":["dana.lee"],"bda-rbac-flink-alpha-users":["dana.lee"],"bda-rbac-presto-alpha-users":["jane.smith"],"bda-rbac-spark-alpha-apps":["john.doe"],"bda-rbac-spark-alpha-users":["bob.wilson","jane.smith"],"bda-rbac-spark-delta-apps":["john.doe"],"bda-rbac-spark-delta-users":["alice.cooper"],"bda-rbac-spark-gamma-apps":["dana.lee"],"bda-rbac-spark-omega-users":["dana.lee"],"bda-rbac-spark-synca-users":["bob.wilson"],"bda-rbac-spark-syncb-users":["bob.wilson"],"bda-rbac-spark-syncc-users":["bob.wilson"],"bda-rbac-spark-syncd-users":["bob.wilson"],"bda-rbac-spark-theta-apps":["john.doe"],"bda-rbac-spark-theta-users":["charlie.brown"],"bda-rbac-trino-alpha-apps":["jane.smith"],"bda-rbac-trino-alpha-users":["bob.wilson","charlie.brown"],"bda-rbac-trino-delta-apps":["jane.smith"],"bda-rbac-trino-delta-users":["alice.cooper"],"bda-rbac-trino-theta-apps":["john.doe"],"bda-rbac-trino-theta-users":["bob.wilson"],"test-group1":["hello1"],"test-group2":[]},"bindGroup":{"app-ocp-rbac-alpha-cluster-admin":[{"role":"admin","rk":"ClusterRole","b":"app-ocp-rbac-alpha-cluster-admin-crb","ns":null}],"app-ocp-rbac-alpha-cluster-audit":[{"role":"view","rk":"ClusterRole","b":"app-ocp-rbac-alpha-cluster-audit-crb","ns":null}],"app-ocp-rbac-alpha-cluster-developer":[{"role":"edit","rk":"ClusterRole","b":"app-ocp-rbac-alpha-cluster-developer-crb","ns":null}],"app-ocp-rbac-alpha-database-admin":[{"role":"database-admin","rk":"ClusterRole","b":"app-ocp-rbac-alpha-database-admin-crb","ns":null}],"app-ocp-rbac-demo-cluster-admin":[{"role":"admin","rk":"ClusterRole","b":"app-ocp-rbac-demo-cluster-admin-crb","ns":null},{"role":"cluster-admin","rk":"ClusterRole","b":"demo-cluster-admin-crb","ns":null}],"app-ocp-rbac-demo-cluster-audit":[{"role":"view","rk":"ClusterRole","b":"app-ocp-rbac-demo-cluster-audit-crb","ns":null},{"role":"view","rk":"ClusterRole","b":"demo-cluster-audit-crb","ns":null}],"app-ocp-rbac-demo-cluster-developer":[{"role":"edit","rk":"ClusterRole","b":"app-ocp-rbac-demo-cluster-developer-crb","ns":null},{"role":"edit","rk":"ClusterRole","b":"demo-cluster-developer-crb","ns":null}],"app-ocp-rbac-devops-cluster-admin":[{"role":"admin","rk":"ClusterRole","b":"app-ocp-rbac-devops-cluster-admin-crb","ns":null}],"app-ocp-rbac-finance-cluster-developer":[{"role":"edit","rk":"ClusterRole","b":"app-ocp-rbac-finance-cluster-developer-crb","ns":null}],"app-ocp-rbac-newteam-cluster-admin":[{"role":"admin","rk":"ClusterRole","b":"app-ocp-rbac-newteam-cluster-admin-crb","ns":null}],"app-ocp-rbac-platform-cluster-admin":[{"role":"admin","rk":"ClusterRole","b":"app-ocp-rbac-platform-cluster-admin-crb","ns":null}],"app-ocp-rbac-platform-cluster-developer":[{"role":"edit","rk":"ClusterRole","b":"app-ocp-rbac-platform-cluster-developer-crb","ns":null}],"app-ocp-rbac-test-cluster-admin":[{"role":"admin","rk":"ClusterRole","b":"app-ocp-rbac-test-cluster-admin-crb","ns":null}],"app-ocp-rbac-groupsync-ns-auditor":[{"role":"group-sync-dashboard-report-auditor","rk":"ClusterRole","b":"group-sync-dashboard-ra-b78c05817c9d","ns":null}],"app-ocp-rbac-beta-ns-audit":[{"role":"view","rk":"ClusterRole","b":"beta-audit-rb","ns":"beta-prod"},{"role":"view","rk":"ClusterRole","b":"beta-audit-rb","ns":"beta-rnd"},{"role":"view","rk":"ClusterRole","b":"beta-audit-rb","ns":"beta-uat"}],"app-ocp-rbac-beta-ns-developer":[{"role":"edit","rk":"ClusterRole","b":"beta-developer-rb","ns":"beta-rnd"},{"role":"edit","rk":"ClusterRole","b":"beta-developer-rb","ns":"beta-uat"}],"app-ocp-rbac-demo-ns-audit":[{"role":"view","rk":"ClusterRole","b":"demo-audit-rb","ns":"demo-prod"},{"role":"view","rk":"ClusterRole","b":"demo-prod-audit-rb","ns":"demo-prod"},{"role":"view","rk":"ClusterRole","b":"demo-audit-rb","ns":"demo-production"},{"role":"view","rk":"ClusterRole","b":"demo-audit-rb","ns":"demo-qa"},{"role":"view","rk":"ClusterRole","b":"demo-audit-rb","ns":"demo-rnd"},{"role":"view","rk":"ClusterRole","b":"demo-audit-rb","ns":"demo-uat"}],"app-ocp-rbac-demo-ns-developer":[{"role":"edit","rk":"ClusterRole","b":"demo-developer-rb","ns":"demo-qa"},{"role":"edit","rk":"ClusterRole","b":"demo-developer-rb","ns":"demo-rnd"},{"role":"edit","rk":"ClusterRole","b":"demo-developer-rb","ns":"demo-uat"},{"role":"monitoring-rules-edit","rk":"ClusterRole","b":"demo-monitoring-config-rb","ns":"openshift-user-workload-monitoring"}],"app-ocp-rbac-jeff-ns-audit":[{"role":"view","rk":"ClusterRole","b":"jeff-audit-rb","ns":"jeff-qa"},{"role":"view","rk":"ClusterRole","b":"jeff-audit-rb","ns":"jeff-rnd"}],"app-ocp-rbac-jeff-ns-developer":[{"role":"edit","rk":"ClusterRole","b":"jeff-developer-rb","ns":"jeff-qa"},{"role":"edit","rk":"ClusterRole","b":"jeff-developer-rb","ns":"jeff-rnd"}],"app-ocp-rbac-toolongx-ns-audit":[{"role":"view","rk":"ClusterRole","b":"toolongx-audit-rb","ns":"klt-fail-mnemonic-toolong"}],"app-ocp-rbac-toolongx-ns-developer":[{"role":"edit","rk":"ClusterRole","b":"toolongx-developer-rb","ns":"klt-fail-mnemonic-toolong"}],"app-ocp-rbac-klta-ns-audit":[{"role":"view","rk":"ClusterRole","b":"klta-audit-rb","ns":"klt-pass-both"}],"app-ocp-rbac-klta-ns-developer":[{"role":"edit","rk":"ClusterRole","b":"klta-developer-rb","ns":"klt-pass-both"}],"app-ocp-rbac-klt-ns-audit":[{"role":"view","rk":"ClusterRole","b":"klt-audit-rb","ns":"klt-pass-mnemonic-3char"}],"app-ocp-rbac-klt-ns-developer":[{"role":"edit","rk":"ClusterRole","b":"klt-developer-rb","ns":"klt-pass-mnemonic-3char"}],"app-ocp-rbac-demo-ns-admin":[{"role":"monitoring-rules-edit","rk":"ClusterRole","b":"demo-monitoring-config-rb","ns":"openshift-user-workload-monitoring"}],"bda-rbac-spark-theta-apps":[{"role":"spark-job-submitter-role","rk":"Role","b":"bda-rbac-spark-theta-apps-rb","ns":"oud-poc-spark"}],"bda-rbac-trino-alpha-users":[{"role":"trino-job-submitter-role","rk":"Role","b":"bda-rbac-trino-alpha-users-rb","ns":"oud-poc-trino"}]},"bindUser":{"dana.lee":[{"role":"cluster-reader","rk":"ClusterRole","b":"cluster-reader","ns":null}],"jdoe":[{"role":"edit","rk":"ClusterRole","b":"jdoe-cluster-edit","ns":null},{"role":"admin","rk":"ClusterRole","b":"jdoe-admin","ns":"legacy-payments"},{"role":"edit","rk":"ClusterRole","b":"jdoe-edit","ns":"legacy-reporting"}],"kube-apiserver":[{"role":"kube-apiserver","rk":"ClusterRole","b":"kube-apiserver","ns":null}],"kubeadmin":[{"role":"cluster-admin","rk":"ClusterRole","b":"kubeadmin","ns":null},{"role":"admin","rk":"ClusterRole","b":"admin","ns":"beta-prod"},{"role":"admin","rk":"ClusterRole","b":"admin","ns":"beta-rnd"},{"role":"admin","rk":"ClusterRole","b":"admin","ns":"beta-uat"},{"role":"admin","rk":"ClusterRole","b":"admin","ns":"ca-tutorial"},{"role":"admin","rk":"ClusterRole","b":"admin","ns":"demo-prod"},{"role":"admin","rk":"ClusterRole","b":"admin","ns":"demo-production"},{"role":"admin","rk":"ClusterRole","b":"admin","ns":"demo-qa"},{"role":"admin","rk":"ClusterRole","b":"admin","ns":"demo-rnd"},{"role":"admin","rk":"ClusterRole","b":"admin","ns":"demo-uat"},{"role":"admin","rk":"ClusterRole","b":"admin","ns":"jeff-qa"},{"role":"admin","rk":"ClusterRole","b":"admin","ns":"jeff-rnd"},{"role":"admin","rk":"ClusterRole","b":"admin","ns":"namespace-configuration-operator"},{"role":"user-settings-725bac5d-7572-44a4-8690-dbf8a55300ce-role","rk":"Role","b":"user-settings-725bac5d-7572-44a4-8690-dbf8a55300ce-rolebinding","ns":"openshift-console-user-settings"}],"asmith":[{"role":"edit","rk":"ClusterRole","b":"asmith-edit","ns":"legacy-payments"}],"bwilliams":[{"role":"view","rk":"ClusterRole","b":"bwilliams-view","ns":"legacy-payments"}],"tmp-contractor-9931":[{"role":"view","rk":"ClusterRole","b":"contractor-view","ns":"legacy-reporting"}],"developer":[{"role":"user-settings-3da37b52-8aae-4469-bd31-bdd833ba5538-role","rk":"Role","b":"user-settings-3da37b52-8aae-4469-bd31-bdd833ba5538-rolebinding","ns":"openshift-console-user-settings"}],"john.doe":[{"role":"user-settings-42ec2b2b-5c66-401e-bb8b-f6401243c5bd-role","rk":"Role","b":"user-settings-42ec2b2b-5c66-401e-bb8b-f6401243c5bd-rolebinding","ns":"openshift-console-user-settings"}],"jane.smith":[{"role":"user-settings-56e5d658-1cee-4dad-832e-b56477b707b4-role","rk":"Role","b":"user-settings-56e5d658-1cee-4dad-832e-b56477b707b4-rolebinding","ns":"openshift-console-user-settings"}]},"gmeta":{"app-ocp-rbac-abcd-ns-superuser":{"dn":"cn=app-ocp-rbac-abcd-ns-superuser,ou=Groups,dc=ephico2real,dc=com","sync":"2026-09-17T22:00:09Z","created":"2026-08-04T20:45:31Z"},"app-ocp-rbac-alpha-cluster-admin":{"dn":"cn=app-ocp-rbac-alpha-cluster-admin,ou=Groups,dc=ephico2real,dc=com","sync":"2026-09-17T22:00:01Z","created":"2026-08-04T20:45:24Z"},"app-ocp-rbac-alpha-cluster-audit":{"dn":"cn=app-ocp-rbac-alpha-cluster-audit,ou=Groups,dc=ephico2real,dc=com","sync":"2026-09-17T22:00:02Z","created":"2026-08-04T20:45:24Z"},"app-ocp-rbac-alpha-cluster-developer":{"dn":"cn=app-ocp-rbac-alpha-cluster-developer,ou=Groups,dc=ephico2real,dc=com","sync":"2026-09-17T22:00:01Z","created":"2026-08-04T20:45:24Z"},"app-ocp-rbac-alpha-database-admin":{"dn":"cn=app-ocp-rbac-alpha-database-admin,ou=Groups,dc=ephico2real,dc=com","sync":"2026-09-17T22:00:10Z","created":"2026-08-14T15:55:04Z"},"app-ocp-rbac-alpha-ns-admin":{"dn":"cn=app-ocp-rbac-alpha-ns-admin,ou=Groups,dc=ephico2real,dc=com","sync":"2026-09-17T22:00:03Z","created":"2026-08-04T20:45:24Z"},"app-ocp-rbac-alpha-ns-audit":{"dn":"cn=app-ocp-rbac-alpha-ns-audit,ou=Groups,dc=ephico2real,dc=com","sync":"2026-09-17T22:00:04Z","created":"2026-08-04T20:45:25Z"},"app-ocp-rbac-alpha-ns-developer":{"dn":"cn=app-ocp-rbac-alpha-ns-developer,ou=Groups,dc=ephico2real,dc=com","sync":"2026-09-17T22:00:04Z","created":"2026-08-04T20:45:25Z"},"app-ocp-rbac-beta-ns-admin":{"dn":"cn=app-ocp-rbac-beta-ns-admin,ou=Groups,dc=ephico2real,dc=com","sync":"2026-09-17T22:00:05Z","created":"2026-08-04T20:45:26Z"},"app-ocp-rbac-beta-ns-audit":{"dn":"cn=app-ocp-rbac-beta-ns-audit,ou=Groups,dc=ephico2real,dc=com","sync":"2026-09-17T22:00:07Z","created":"2026-08-04T20:45:28Z"},"app-ocp-rbac-beta-ns-developer":{"dn":"cn=app-ocp-rbac-beta-ns-developer,ou=Groups,dc=ephico2real,dc=com","sync":"2026-09-17T22:00:06Z","created":"2026-08-04T20:45:27Z"},"app-ocp-rbac-demo-cluster-admin":{"dn":"cn=app-ocp-rbac-demo-cluster-admin,ou=Groups,dc=ephico2real,dc=com","sync":"2026-09-17T22:00:04Z","created":"2026-08-04T20:45:25Z"},"app-ocp-rbac-demo-cluster-audit":{"dn":"cn=app-ocp-rbac-demo-cluster-audit,ou=Groups,dc=ephico2real,dc=com","sync":"2026-09-17T22:00:05Z","created":"2026-08-04T20:45:26Z"},"app-ocp-rbac-demo-cluster-developer":{"dn":"cn=app-ocp-rbac-demo-cluster-developer,ou=Groups,dc=ephico2real,dc=com","sync":"2026-09-17T22:00:04Z","created":"2026-08-04T20:45:25Z"},"app-ocp-rbac-demo-ns-admin":{"dn":"cn=app-ocp-rbac-demo-ns-admin,ou=Groups,dc=ephico2real,dc=com","sync":"2026-09-17T22:00:05Z","created":"2026-08-04T20:45:26Z"},"app-ocp-rbac-demo-ns-audit":{"dn":"cn=app-ocp-rbac-demo-ns-audit,ou=Groups,dc=ephico2real,dc=com","sync":"2026-09-17T22:00:05Z","created":"2026-08-04T20:45:26Z"},"app-ocp-rbac-demo-ns-developer":{"dn":"cn=app-ocp-rbac-demo-ns-developer,ou=Groups,dc=ephico2real,dc=com","sync":"2026-09-17T22:00:05Z","created":"2026-08-04T20:45:26Z"},"app-ocp-rbac-devops-cluster-admin":{"dn":"cn=app-ocp-rbac-devops-cluster-admin,ou=Groups,dc=ephico2real,dc=com","sync":"2026-09-17T22:00:06Z","created":"2026-08-04T20:45:27Z"},"app-ocp-rbac-devops-ns-developer":{"dn":"cn=app-ocp-rbac-devops-ns-developer,ou=Groups,dc=ephico2real,dc=com","sync":"2026-09-17T22:00:06Z","created":"2026-08-04T20:45:27Z"},"app-ocp-rbac-finance-cluster-developer":{"dn":"cn=app-ocp-rbac-finance-cluster-developer,ou=Groups,dc=ephico2real,dc=com","sync":"2026-09-17T22:00:05Z","created":"2026-08-04T20:45:26Z"},"app-ocp-rbac-groupsync-ns-auditor":{"dn":"cn=app-ocp-rbac-groupsync-ns-auditor,ou=Groups,dc=ephico2real,dc=com","sync":"2026-09-17T22:00:10Z","created":"2026-09-14T20:21:01Z"},"app-ocp-rbac-jeff-ns-admin":{"dn":"cn=app-ocp-rbac-jeff-ns-admin,ou=Groups,dc=ephico2real,dc=com","sync":"2026-09-17T22:00:06Z","created":"2026-08-04T20:45:28Z"},"app-ocp-rbac-jeff-ns-audit":{"dn":"cn=app-ocp-rbac-jeff-ns-audit,ou=Groups,dc=ephico2real,dc=com","sync":"2026-09-17T22:00:07Z","created":"2026-08-04T20:45:29Z"},"app-ocp-rbac-jeff-ns-developer":{"dn":"cn=app-ocp-rbac-jeff-ns-developer,ou=Groups,dc=ephico2real,dc=com","sync":"2026-09-17T22:00:07Z","created":"2026-08-04T20:45:29Z"},"app-ocp-rbac-lateef-ns-developer":{"dn":"cn=app-ocp-rbac-lateef-ns-developer,ou=Groups,dc=ephico2real,dc=com","sync":"2026-09-17T22:00:07Z","created":"2026-08-04T20:45:28Z"},"app-ocp-rbac-newteam-cluster-admin":{"dn":"cn=app-ocp-rbac-newteam-cluster-admin,ou=Groups,dc=ephico2real,dc=com","sync":"2026-09-17T22:00:06Z","created":"2026-08-04T20:45:27Z"},"app-ocp-rbac-plat-ns-audit":{"dn":"cn=app-ocp-rbac-plat-ns-audit,ou=Groups,dc=ephico2real,dc=com","sync":"2026-09-17T22:00:09Z","created":"2026-08-04T20:45:31Z"},"app-ocp-rbac-platform-cluster-admin":{"dn":"cn=app-ocp-rbac-platform-cluster-admin,ou=Groups,dc=ephico2real,dc=com","sync":"2026-09-17T22:00:00Z","created":"2026-08-04T20:45:23Z"},"app-ocp-rbac-platform-cluster-developer":{"dn":"cn=app-ocp-rbac-platform-cluster-developer,ou=Groups,dc=ephico2real,dc=com","sync":"2026-09-17T22:00:00Z","created":"2026-08-04T20:45:23Z"},"app-ocp-rbac-platform-ns-admin":{"dn":"cn=app-ocp-rbac-platform-ns-admin,ou=Groups,dc=ephico2real,dc=com","sync":"2026-09-17T22:00:00Z","created":"2026-08-04T20:45:23Z"},"app-ocp-rbac-platform-ns-audit":{"dn":"cn=app-ocp-rbac-platform-ns-audit,ou=Groups,dc=ephico2real,dc=com","sync":"2026-09-17T22:00:01Z","created":"2026-08-04T20:45:24Z"},"app-ocp-rbac-spar-ns-admin":{"dn":"cn=app-ocp-rbac-spar-ns-admin,ou=Groups,dc=ephico2real,dc=com","sync":"2026-09-17T22:00:07Z","created":"2026-08-04T20:45:29Z"},"app-ocp-rbac-spar-ns-audit":{"dn":"cn=app-ocp-rbac-spar-ns-audit,ou=Groups,dc=ephico2real,dc=com","sync":"2026-09-17T22:00:08Z","created":"2026-08-04T20:45:29Z"},"app-ocp-rbac-spar-ns-developer":{"dn":"cn=app-ocp-rbac-spar-ns-developer,ou=Groups,dc=ephico2real,dc=com","sync":"2026-09-17T22:00:07Z","created":"2026-08-04T20:45:29Z"},"app-ocp-rbac-test-cluster-admin":{"dn":"cn=app-ocp-rbac-test-cluster-admin,ou=Groups,dc=ephico2real,dc=com","sync":"2026-09-17T22:00:06Z","created":"2026-08-04T20:45:28Z"},"app-ocp-rbac-toolong-ns-audit":{"dn":"cn=app-ocp-rbac-toolong-ns-audit,ou=Groups,dc=ephico2real,dc=com","sync":"2026-09-17T22:00:09Z","created":"2026-08-04T20:45:31Z"},"app-ocp-rbac-trno-ns-admin":{"dn":"cn=app-ocp-rbac-trno-ns-admin,ou=Groups,dc=ephico2real,dc=com","sync":"2026-09-17T22:00:08Z","created":"2026-08-04T20:45:30Z"},"app-ocp-rbac-trno-ns-audit":{"dn":"cn=app-ocp-rbac-trno-ns-audit,ou=Groups,dc=ephico2real,dc=com","sync":"2026-09-17T22:00:08Z","created":"2026-08-04T20:45:30Z"},"app-ocp-rbac-trno-ns-developer":{"dn":"cn=app-ocp-rbac-trno-ns-developer,ou=Groups,dc=ephico2real,dc=com","sync":"2026-09-17T22:00:08Z","created":"2026-08-04T20:45:30Z"},"app-ocp-rbac-tsta-ns-audit":{"dn":"cn=app-ocp-rbac-tsta-ns-audit,ou=Groups,dc=ephico2real,dc=com","sync":"2026-09-17T22:00:09Z","created":"2026-08-04T20:45:31Z"},"app-ocp-rbac-tstb-ns-audit":{"dn":"cn=app-ocp-rbac-tstb-ns-audit,ou=Groups,dc=ephico2real,dc=com","sync":"2026-09-17T22:00:10Z","created":"2026-08-04T20:45:32Z"},"app-ocp-rbac-tstc-ns-audit":{"dn":"cn=app-ocp-rbac-tstc-ns-audit,ou=Groups,dc=ephico2real,dc=com","sync":"2026-09-17T22:00:10Z","created":"2026-08-04T20:45:32Z"},"app-ocp-rbac-tstd-ns-audit":{"dn":"cn=app-ocp-rbac-tstd-ns-audit,ou=Groups,dc=ephico2real,dc=com","sync":"2026-09-17T22:00:10Z","created":"2026-08-04T20:45:32Z"},"app-ssb-autobahnusers":{"dn":"cn=app-ssb-autobahnusers,ou=Groups,dc=ephico2real,dc=com","sync":"2026-09-17T22:00:11Z","created":"2026-08-08T02:50:52Z"},"bda-rbac-flink-alpha-apps":{"dn":"cn=bda-rbac-flink-alpha-apps,ou=Groups,dc=ephico2real,dc=com","sync":"2026-09-17T22:00:13Z","created":"2026-08-04T20:45:38Z"},"bda-rbac-flink-alpha-users":{"dn":"cn=bda-rbac-flink-alpha-users,ou=Groups,dc=ephico2real,dc=com","sync":"2026-09-17T22:00:13Z","created":"2026-08-04T20:45:38Z"},"bda-rbac-presto-alpha-users":{"dn":"cn=bda-rbac-presto-alpha-users,ou=Groups,dc=ephico2real,dc=com","sync":"2026-09-17T22:00:13Z","created":"2026-08-04T20:45:39Z"},"bda-rbac-spark-alpha-apps":{"dn":"cn=bda-rbac-spark-alpha-apps,ou=Groups,dc=ephico2real,dc=com","sync":"2026-09-17T22:00:11Z","created":"2026-08-04T20:45:35Z"},"bda-rbac-spark-alpha-users":{"dn":"cn=bda-rbac-spark-alpha-users,ou=Groups,dc=ephico2real,dc=com","sync":"2026-09-17T22:00:11Z","created":"2026-08-04T20:45:35Z"},"bda-rbac-spark-delta-apps":{"dn":"cn=bda-rbac-spark-delta-apps,ou=Groups,dc=ephico2real,dc=com","sync":"2026-09-17T22:00:12Z","created":"2026-08-04T20:45:36Z"},"bda-rbac-spark-delta-users":{"dn":"cn=bda-rbac-spark-delta-users,ou=Groups,dc=ephico2real,dc=com","sync":"2026-09-17T22:00:12Z","created":"2026-08-04T20:45:36Z"},"bda-rbac-spark-gamma-apps":{"dn":"cn=bda-rbac-spark-gamma-apps,ou=Groups,dc=ephico2real,dc=com","sync":"2026-09-17T22:00:13Z","created":"2026-08-04T20:45:39Z"},"bda-rbac-spark-omega-users":{"dn":"cn=bda-rbac-spark-omega-users,ou=Groups,dc=ephico2real,dc=com","sync":"2026-09-17T22:00:14Z","created":"2026-08-04T20:45:39Z"},"bda-rbac-spark-synca-users":{"dn":"cn=bda-rbac-spark-synca-users,ou=Groups,dc=ephico2real,dc=com","sync":"2026-09-17T22:00:14Z","created":"2026-08-04T20:45:39Z"},"bda-rbac-spark-syncb-users":{"dn":"cn=bda-rbac-spark-syncb-users,ou=Groups,dc=ephico2real,dc=com","sync":"2026-09-17T22:00:14Z","created":"2026-08-04T20:45:40Z"},"bda-rbac-spark-syncc-users":{"dn":"cn=bda-rbac-spark-syncc-users,ou=Groups,dc=ephico2real,dc=com","sync":"2026-09-17T22:00:14Z","created":"2026-08-04T20:45:40Z"},"bda-rbac-spark-syncd-users":{"dn":"cn=bda-rbac-spark-syncd-users,ou=Groups,dc=ephico2real,dc=com","sync":"2026-09-17T22:00:14Z","created":"2026-08-04T20:45:40Z"},"bda-rbac-spark-theta-apps":{"dn":"cn=bda-rbac-spark-theta-apps,ou=Groups,dc=ephico2real,dc=com","sync":"2026-09-17T22:00:12Z","created":"2026-08-04T20:45:36Z"},"bda-rbac-spark-theta-users":{"dn":"cn=bda-rbac-spark-theta-users,ou=Groups,dc=ephico2real,dc=com","sync":"2026-09-17T22:00:12Z","created":"2026-08-04T20:45:36Z"},"bda-rbac-trino-alpha-apps":{"dn":"cn=bda-rbac-trino-alpha-apps,ou=Groups,dc=ephico2real,dc=com","sync":"2026-09-17T22:00:12Z","created":"2026-08-04T20:45:37Z"},"bda-rbac-trino-alpha-users":{"dn":"cn=bda-rbac-trino-alpha-users,ou=Groups,dc=ephico2real,dc=com","sync":"2026-09-17T22:00:12Z","created":"2026-08-04T20:45:37Z"},"bda-rbac-trino-delta-apps":{"dn":"cn=bda-rbac-trino-delta-apps,ou=Groups,dc=ephico2real,dc=com","sync":"2026-09-17T22:00:12Z","created":"2026-08-04T20:45:37Z"},"bda-rbac-trino-delta-users":{"dn":"cn=bda-rbac-trino-delta-users,ou=Groups,dc=ephico2real,dc=com","sync":"2026-09-17T22:00:12Z","created":"2026-08-04T20:45:37Z"},"bda-rbac-trino-theta-apps":{"dn":"cn=bda-rbac-trino-theta-apps,ou=Groups,dc=ephico2real,dc=com","sync":"2026-09-17T22:00:13Z","created":"2026-08-04T20:45:38Z"},"bda-rbac-trino-theta-users":{"dn":"cn=bda-rbac-trino-theta-users,ou=Groups,dc=ephico2real,dc=com","sync":"2026-09-17T22:00:13Z","created":"2026-08-04T20:45:38Z"},"test-group1":{"dn":null,"sync":null,"created":"2026-08-03T20:55:30Z"},"test-group2":{"dn":null,"sync":null,"created":"2026-08-03T20:55:36Z"}},"nsGrants":{"cluster-wide":[{"u":"dana.lee","role":"cluster-reader","b":"cluster-reader"},{"u":"jdoe","role":"edit","b":"jdoe-cluster-edit"},{"u":"kube-apiserver","role":"kube-apiserver","b":"kube-apiserver"},{"u":"kubeadmin","role":"cluster-admin","b":"kubeadmin"}],"legacy-payments":[{"u":"jdoe","role":"admin","b":"jdoe-admin"},{"u":"asmith","role":"edit","b":"asmith-edit"},{"u":"bwilliams","role":"view","b":"bwilliams-view"}],"legacy-reporting":[{"u":"jdoe","role":"edit","b":"jdoe-edit"},{"u":"tmp-contractor-9931","role":"view","b":"contractor-view"}],"beta-prod":[{"u":"kubeadmin","role":"admin","b":"admin"}],"beta-rnd":[{"u":"kubeadmin","role":"admin","b":"admin"}],"beta-uat":[{"u":"kubeadmin","role":"admin","b":"admin"}],"ca-tutorial":[{"u":"kubeadmin","role":"admin","b":"admin"}],"demo-prod":[{"u":"kubeadmin","role":"admin","b":"admin"}],"demo-production":[{"u":"kubeadmin","role":"admin","b":"admin"}],"demo-qa":[{"u":"kubeadmin","role":"admin","b":"admin"}],"demo-rnd":[{"u":"kubeadmin","role":"admin","b":"admin"}],"demo-uat":[{"u":"kubeadmin","role":"admin","b":"admin"}],"jeff-qa":[{"u":"kubeadmin","role":"admin","b":"admin"}],"jeff-rnd":[{"u":"kubeadmin","role":"admin","b":"admin"}],"namespace-configuration-operator":[{"u":"kubeadmin","role":"admin","b":"admin"}],"openshift-console-user-settings":[{"u":"kubeadmin","role":"user-settings-725bac5d-7572-44a4-8690-dbf8a55300ce-role","b":"user-settings-725bac5d-7572-44a4-8690-dbf8a55300ce-rolebinding"},{"u":"developer","role":"user-settings-3da37b52-8aae-4469-bd31-bdd833ba5538-role","b":"user-settings-3da37b52-8aae-4469-bd31-bdd833ba5538-rolebinding"},{"u":"john.doe","role":"user-settings-42ec2b2b-5c66-401e-bb8b-f6401243c5bd-role","b":"user-settings-42ec2b2b-5c66-401e-bb8b-f6401243c5bd-rolebinding"},{"u":"jane.smith","role":"user-settings-56e5d658-1cee-4dad-832e-b56477b707b4-role","b":"user-settings-56e5d658-1cee-4dad-832e-b56477b707b4-rolebinding"}]},"nsGroups":{"cluster-wide":[{"g":"app-ocp-rbac-alpha-cluster-admin","role":"admin"},{"g":"app-ocp-rbac-alpha-cluster-audit","role":"view"},{"g":"app-ocp-rbac-alpha-cluster-developer","role":"edit"},{"g":"app-ocp-rbac-alpha-database-admin","role":"database-admin"},{"g":"app-ocp-rbac-demo-cluster-admin","role":"admin"},{"g":"app-ocp-rbac-demo-cluster-admin","role":"cluster-admin"},{"g":"app-ocp-rbac-demo-cluster-audit","role":"view"},{"g":"app-ocp-rbac-demo-cluster-audit","role":"view"},{"g":"app-ocp-rbac-demo-cluster-developer","role":"edit"},{"g":"app-ocp-rbac-demo-cluster-developer","role":"edit"},{"g":"app-ocp-rbac-devops-cluster-admin","role":"admin"},{"g":"app-ocp-rbac-finance-cluster-developer","role":"edit"},{"g":"app-ocp-rbac-newteam-cluster-admin","role":"admin"},{"g":"app-ocp-rbac-platform-cluster-admin","role":"admin"},{"g":"app-ocp-rbac-platform-cluster-developer","role":"edit"},{"g":"app-ocp-rbac-test-cluster-admin","role":"admin"},{"g":"app-ocp-rbac-groupsync-ns-auditor","role":"group-sync-dashboard-report-auditor"}],"beta-prod":[{"g":"app-ocp-rbac-beta-ns-audit","role":"view"}],"beta-rnd":[{"g":"app-ocp-rbac-beta-ns-audit","role":"view"},{"g":"app-ocp-rbac-beta-ns-developer","role":"edit"}],"beta-uat":[{"g":"app-ocp-rbac-beta-ns-audit","role":"view"},{"g":"app-ocp-rbac-beta-ns-developer","role":"edit"}],"demo-prod":[{"g":"app-ocp-rbac-demo-ns-audit","role":"view"},{"g":"app-ocp-rbac-demo-ns-audit","role":"view"}],"demo-production":[{"g":"app-ocp-rbac-demo-ns-audit","role":"view"}],"demo-qa":[{"g":"app-ocp-rbac-demo-ns-audit","role":"view"},{"g":"app-ocp-rbac-demo-ns-developer","role":"edit"}],"demo-rnd":[{"g":"app-ocp-rbac-demo-ns-audit","role":"view"},{"g":"app-ocp-rbac-demo-ns-developer","role":"edit"}],"demo-uat":[{"g":"app-ocp-rbac-demo-ns-audit","role":"view"},{"g":"app-ocp-rbac-demo-ns-developer","role":"edit"}],"openshift-user-workload-monitoring":[{"g":"app-ocp-rbac-demo-ns-developer","role":"monitoring-rules-edit"},{"g":"app-ocp-rbac-demo-ns-admin","role":"monitoring-rules-edit"}],"jeff-qa":[{"g":"app-ocp-rbac-jeff-ns-audit","role":"view"},{"g":"app-ocp-rbac-jeff-ns-developer","role":"edit"}],"jeff-rnd":[{"g":"app-ocp-rbac-jeff-ns-audit","role":"view"},{"g":"app-ocp-rbac-jeff-ns-developer","role":"edit"}],"klt-fail-mnemonic-toolong":[{"g":"app-ocp-rbac-toolongx-ns-audit","role":"view"},{"g":"app-ocp-rbac-toolongx-ns-developer","role":"edit"}],"klt-pass-both":[{"g":"app-ocp-rbac-klta-ns-audit","role":"view"},{"g":"app-ocp-rbac-klta-ns-developer","role":"edit"}],"klt-pass-mnemonic-3char":[{"g":"app-ocp-rbac-klt-ns-audit","role":"view"},{"g":"app-ocp-rbac-klt-ns-developer","role":"edit"}],"oud-poc-spark":[{"g":"bda-rbac-spark-theta-apps","role":"spark-job-submitter-role"}],"oud-poc-trino":[{"g":"bda-rbac-trino-alpha-users","role":"trino-job-submitter-role"}]}};
+const CAPTURED = Date.parse("2026-09-17T22:05:00Z");
 
-const GROUPS = [
-  {n:"app-ssb-autobahnusers", m:9, own:"autobahnusers-onboarding-groupsync",
-   dn:"cn=app-ssb-autobahnusers,ou=Groups,dc=ephico2real,dc=com", sched:"0 */2 * * *", seen:"1h ago"},
-  {n:"app-ocp-rbac-alpha-database-admin", m:4, own:"app-ocp-rbac-group-groupsync"},
-  {n:"app-ocp-rbac-alpha-cluster-admin", m:3, own:"app-ocp-rbac-group-groupsync"},
-  {n:"app-ocp-rbac-alpha-cluster-audit", m:2, own:"app-ocp-rbac-group-groupsync"},
-  {n:"app-ocp-rbac-alpha-cluster-developer", m:5, own:"app-ocp-rbac-group-groupsync"},
-  {n:"app-ocp-rbac-beta-ns-admin", m:6, own:"app-ocp-rbac-group-groupsync"},
-  {n:"app-ocp-rbac-devops-ns-developer", m:8, own:"app-ocp-rbac-group-groupsync"},
-  {n:"app-ocp-rbac-platform-cluster-admin", m:2, own:"app-ocp-rbac-group-groupsync"},
-  {n:"app-ocp-rbac-abcd-ns-superuser", m:1, own:"app-ocp-rbac-group-groupsync"},
-  {n:"app-ocp-rbac-spar-ns-audit", m:3, own:"app-ocp-rbac-group-groupsync"},
-  {n:"bda-rbac-spark-delta-users", m:7, own:"bdp-oud-group-rbac-groupsync"},
-  {n:"bda-rbac-trino-delta-users", m:7, own:"bdp-oud-group-rbac-groupsync"},
-];
-const USERS = [
-  {n:"alice.cooper", f:"Alice Cooper", g:7, p:"ldap-local", last:"2026-08-05 12:15:49 EDT", first:"2026-08-02 00:00:33 EDT", in:true},
-  {n:"bob.wilson", f:"Bob Wilson", g:28, p:"ldap-local", last:"2026-09-14 16:53:46 EDT", first:"2026-08-02 00:00:33 EDT", in:true},
-  {n:"dana.lee", f:"Dana Lee", g:6, p:"ldap-local", last:"2026-08-10 09:03:19 EDT", first:"2026-08-04 16:46:29 EDT", in:true},
-  {n:"jane.smith", f:"Jane Smith", g:5, p:"ldap-local", last:"2026-08-09 14:22:07 EDT", first:"2026-08-02 00:00:33 EDT", in:true},
-  {n:"john.doe", f:"John Doe", g:4, p:"ldap-local", last:"2026-08-11 08:40:12 EDT", first:"2026-08-02 00:00:33 EDT", in:true},
-  {n:"jeff", f:"jeff bush", g:3, p:"ldap-local", last:"—", first:"2026-08-07 22:51:14 EDT", in:false},
-  {n:"lateef.o", f:"lateef Oni", g:4, p:"ldap-local", last:"2026-09-02 10:11:03 EDT", first:"2026-08-07 22:51:14 EDT", in:true},
-  {n:"sarah.jones", f:"Sarah Jones", g:2, p:"ldap-local", last:"—", first:"2026-08-07 22:51:14 EDT", in:false},
-  {n:"ocp-oauth-bind-serviceid", f:"ocp-oauth-bind-serviceid", g:1, p:"ldap-local", last:"—", first:"2026-08-07 22:51:14 EDT", in:false},
-];
-/* the 23 labelled namespaces, verbatim from `oc get ns` */
-const NS = [
-  {n:"demo-prod", m:"demo", e:"prod"}, {n:"demo-production", m:"demo", e:"prod"},
-  {n:"demo-qa", m:"demo", e:"qa"}, {n:"demo-rnd", m:"demo", e:"rnd"}, {n:"demo-uat", m:"demo", e:"uat"},
-  {n:"beta-prod", m:"beta", e:"prod"}, {n:"beta-rnd", m:"beta", e:"rnd"}, {n:"beta-uat", m:"beta", e:"uat"},
-  {n:"jeff-qa", m:"jeff", e:"qa"}, {n:"jeff-rnd", m:"jeff", e:"rnd"},
-  {n:"oud-poc-crossfamily", m:"beta", e:null, oud:"app-ocp-rbac-spar-ns-audit"},
-  {n:"group-sync-dashboard", m:"gsd", e:null}, {n:"group-sync-operator", m:"gso", e:null},
-  {n:"gsd-preexist", m:"gsd", e:null},
-  {n:"klt-pass-both", m:"klta", e:"qa"}, {n:"klt-pass-mnemonic-3char", m:"klt", e:"rnd"},
-  {n:"legacy-payments", m:null, e:null, risk:"High", priv:"admin", people:3, grants:3},
-  {n:"legacy-reporting", m:null, e:null, risk:"Medium", priv:"edit", people:2, grants:2},
-];
-
-/* app-ssb-autobahnusers, exactly as the live page renders it */
-const MEMBERS = [
-  ["alice.cooper","Alice Cooper","2026-08-07 22:51:14 EDT","40d ago"],
-  ["bob.wilson","Bob Wilson","2026-09-14 16:00:35 EDT","3d ago"],
-  ["dana.lee","Dana Lee","2026-08-07 22:51:14 EDT","40d ago"],
-  ["jane.smith","Jane Smith","2026-08-07 22:51:14 EDT","40d ago"],
-  ["jeff","jeff bush","2026-08-07 22:51:14 EDT","40d ago"],
-  ["john.doe","John Doe","2026-08-07 22:51:14 EDT","40d ago"],
-  ["lateef.o","lateef Oni","2026-08-07 22:51:14 EDT","40d ago"],
-  ["ocp-oauth-bind-serviceid","ocp-oauth-bind-serviceid","2026-08-07 22:51:14 EDT","40d ago"],
-  ["sarah.jones","Sarah Jones","2026-08-07 22:51:14 EDT","40d ago"],
-];
-/* alice.cooper, exactly as the live page renders it */
-const ALICE_GROUPS = [
-  ["app-ocp-rbac-alpha-database-admin","app-ocp-rbac-group-groupsync","2026-08-14 11:55:48 EDT"],
-  ["app-ocp-rbac-beta-ns-admin","app-ocp-rbac-group-groupsync","2026-08-02 00:00:33 EDT"],
-  ["app-ocp-rbac-devops-ns-developer","app-ocp-rbac-group-groupsync","2026-08-02 00:00:33 EDT"],
-  ["app-ocp-rbac-platform-cluster-admin","app-ocp-rbac-group-groupsync","2026-08-02 00:00:33 EDT"],
-  ["app-ssb-autobahnusers","autobahnusers-onboarding-groupsync","2026-08-07 22:51:14 EDT"],
-  ["bda-rbac-spark-delta-users","bdp-oud-group-rbac-groupsync","2026-08-04 16:46:29 EDT"],
-  ["bda-rbac-trino-delta-users","bdp-oud-group-rbac-groupsync","2026-08-04 16:46:29 EDT"],
-];
-const ALICE_HISTORY = [
-  ["+ joined","app-ocp-rbac-alpha-database-admin","2026-08-14 11:55:48 EDT"],
-  ["+ joined","app-ssb-autobahnusers","2026-08-07 22:51:14 EDT"],
-  ["+ joined","bda-rbac-trino-delta-users","2026-08-04 16:46:29 EDT"],
-  ["+ joined","bda-rbac-spark-delta-users","2026-08-04 16:46:29 EDT"],
-  ["− left","bda-rbac-trino-delta-users","2026-08-04 16:45:29 EDT"],
-  ["− left","bda-rbac-spark-delta-users","2026-08-04 16:45:29 EDT"],
-  ["+ joined","app-ocp-rbac-platform-cluster-admin","2026-08-02 00:00:33 EDT"],
-  ["+ joined","app-ocp-rbac-devops-ns-developer","2026-08-02 00:00:33 EDT"],
-  ["+ joined","app-ocp-rbac-beta-ns-admin","2026-08-02 00:00:33 EDT"],
-];
-
-const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
-/* Multi-word AND, the contract the live Groups/Users/member boxes already honour:
-   "alice zzz" must return nothing, which is what proves it is AND and not OR. */
+const esc = s => String(s == null ? "" : s).replace(/[&<>"]/g, c =>
+  ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+/* Multi-word AND — the contract the live Groups/Users/member boxes already honour, proven there by
+   "alice zzz" returning "0 of 9". Every term must appear, or it would be OR and mean nothing. */
 const terms = q => q.toLowerCase().split(/\s+/).filter(Boolean);
 const hits = (hay, ts) => ts.every(t => hay.toLowerCase().includes(t));
 const hl = (s, ts) => { let o = esc(s);
   ts.forEach(t => { if (!t) return;
-    o = o.replace(new RegExp("(" + t.replace(/[.*+?^${}()|[\]\\]/g,"\\$&") + ")", "ig"), "<mark>$1</mark>"); });
+    o = o.replace(new RegExp("(" + t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ")", "ig"), "<mark>$1</mark>"); });
   return o; };
+const ago = iso => {
+  if (!iso) return "";
+  const d = Math.round((CAPTURED - Date.parse(iso)) / 86400000);
+  if (d <= 0) return "today";
+  return d === 1 ? "1d ago" : d + "d ago";
+};
+const OWNCLASS = {"app-ocp-rbac-group-groupsync":"own-a",
+                  "autobahnusers-onboarding-groupsync":"own-b",
+                  "bdp-oud-group-rbac-groupsync":"own-c"};
+const dot = own => `<span class="dot ${own ? (OWNCLASS[own] || "own-a") : "own-none"}" title="${esc(own || "no GroupSync owns this group")}"></span>`;
 
-/* ── Navigation: the browser's history IS the trail ───────────────────────────────────
-   Modelled on the live dashboard, whose behaviour was measured rather than assumed:
-   the in-page back button and the browser's back button walk ONE stack, because the
-   in-page button calls history.back(). Two stacks diverge the moment a reader mixes them
-   (browser-back twice, then in-page-back) and the label then describes a position the
-   click does not go to.
+const GROUP = Object.fromEntries(DATA.groups.map(g => [g.n, g]));
+const USER  = Object.fromEntries(DATA.users.map(u => [u.n, u]));
+const NS    = Object.fromEntries(DATA.ns.map(n => [n.n, n]));
+const grantsOf = g => (DATA.bindGroup[g] || []);
+const nsLabels = n => [n.m, n.e, n.oud].filter(Boolean).join(" ");
 
-   POSITION ONLY in the URL. page/group/user/ns are a location — worth a URL, worth
-   sharing, worth a history entry. The search text is NOT: measured on the live app,
-   typing in the filter and changing the state select left history.length at 9 and the
-   hash untouched. An entry per keystroke would bury the positions Back exists to reach.
-
-   A HASH, not a path: only `/` serves the page, so `/groups/x` would 404 on a refresh. */
+/* ── Navigation ───────────────────────────────────────────────────────────────────────────
+   `page` is the TAB and group/user/ns are drill-downs layered on it — exactly the live model,
+   measured: drilling to a user from Groups gives #page=groups&user=…, and from Users gives
+   #page=users&user=…, so Back returns to the list the reader actually came from.
+   POSITION ONLY in the URL. The search text, the sort and the group-state filter are NOT
+   positions: on the live app, typing in the filter and changing the state select left
+   history.length at 9 and the hash untouched. An entry per keystroke would bury the positions
+   Back exists to reach. A HASH, not a path — only `/` serves the page. */
 const POSITION_KEYS = ["page", "group", "user", "ns"];
-const view = {page:"lookup", group:null, user:null, ns:null};
-const state = {q:""};   // a filter, not a position
+const PAGE_LABEL = {lookup:"search", overview:"overview", groups:"all groups", users:"all users",
+  bindings:"access granted", policy:"RBAC policy", namespaces:"all namespaces", logins:"logins",
+  usage:"usage", reports:"reports"};
+const TABS = [["overview","Overview"],["groups","Groups"],["users","Users"],["bindings","Access granted"],
+  ["policy","RBAC policy"],["namespaces","Namespace audit"],["logins","Logins"],["usage","Usage"],
+  ["reports","Reports"]];
+const LIVE_TABS = new Set(["groups","users","namespaces"]);
 
-function currentPosition(){
-  const pos = {}; for (const k of POSITION_KEYS) if (view[k]) pos[k] = view[k]; return pos;
-}
-function hashFor(pos){
-  const p = new URLSearchParams();
+const view = {page:"lookup", group:null, user:null, ns:null};
+const state = {q:"", sort:{groups:"n", users:"g", namespaces:"n"}, dir:{groups:1, users:-1, namespaces:1},
+               gstate:"all"};
+
+const currentPosition = () => { const p = {};
+  for (const k of POSITION_KEYS) if (view[k]) p[k] = view[k]; return p; };
+const hashFor = pos => { const p = new URLSearchParams();
   for (const k of POSITION_KEYS) if (pos[k]) p.set(k, pos[k]);
-  const q = p.toString(); return q ? "#" + q : "";
-}
-function positionFromHash(){
-  const p = new URLSearchParams(location.hash.replace(/^#/, "")), pos = {};
-  for (const k of POSITION_KEYS){ const v = p.get(k); if (v) pos[k] = v; }
-  return pos;
-}
-/* Assigned, never merged: an absent key means "not at that position". Merging would strand
-   a drill-down open after Back returned to the list behind it. */
+  const s = p.toString(); return s ? "#" + s : ""; };
+const positionFromHash = () => { const p = new URLSearchParams(location.hash.replace(/^#/, "")), pos = {};
+  for (const k of POSITION_KEYS) { const v = p.get(k); if (v) pos[k] = v; } return pos; };
+
+/* Assigned, never merged: an absent key means "not at that position". Merging would strand a
+   drill-down open after Back returned to the list behind it. */
 function applyPosition(pos){
   view.page = pos.page || "lookup";
   // The member filter belongs to the group it was typed against, so a change of group clears it.
@@ -349,329 +303,482 @@ function applyPosition(pos){
   view.ns    = pos.ns    || null;
 }
 /* Every position change goes through here, so the URL, the history entry and `view` can never
-   disagree. `from` is stored WITH the entry because push time is the only moment we know where
-   the reader came from — the History API exposes no entry but the current one — and storing it
-   is also what keeps the label right after a Forward. */
+   disagree. `from` is stored WITH the entry because push time is the only moment we know where the
+   reader came from — the History API exposes no entry but the current one — and storing it is also
+   what keeps the label right after a Forward. */
 function navigate(changes, { replace = false } = {}){
   const from = currentPosition();
   applyPosition({ ...from, ...changes });
   const pos = currentPosition();
-  // An unchanged position REPLACES rather than pushes, or re-selecting where you already are
-  // stacks identical entries and Back oscillates instead of leaving.
-  const unchanged = hashFor(pos) === hashFor(from);
-  const keepFrom = replace || unchanged;
+  // An unchanged position REPLACES rather than pushes, or re-selecting where you already are stacks
+  // identical entries and Back oscillates instead of leaving.
+  const keepFrom = replace || hashFor(pos) === hashFor(from);
   const st = { pos, from: keepFrom ? (history.state && history.state.from) || null : from };
   const url = hashFor(pos) || location.pathname + location.search;
   if (keepFrom) history.replaceState(st, "", url); else history.pushState(st, "", url);
 }
-function backTarget(){ return (history.state && history.state.from) || null; }
-/* A pasted link straight to a drill-down has no `from`: there is nowhere in THIS page to go
-   back to, and history.back() would leave it. Rise to the parent instead. */
+const backTarget = () => (history.state && history.state.from) || null;
 function goBack(){
+  // A pasted link straight to a drill-down has no `from`: there is nowhere in this page to go back
+  // to, and history.back() would leave it. Rise to the parent instead.
   if (backTarget()){ history.back(); return; }
-  navigate({ page:"lookup", group:null, user:null, ns:null });
+  navigate({ group:null, user:null, ns:null });
   render();
 }
-/* esc() on every one of these: a position now arrives from the URL, and this string is written
-   into innerHTML. The live app had exactly this hole — `#groupsync=<img src=x onerror=...>`
-   plus one ordinary click — and the fix is verified there: the label renders as
-   `← &lt;img src=x onerror=alert(1)&gt;`, no element, no dialog. */
+/* esc() on every one of these: a position now arrives from the URL and this string is written into
+   innerHTML. The live app had exactly this hole — a crafted #groupsync plus one ordinary click — and
+   the fix is verified there: the label renders as text, no element, no dialog. */
 function backLabel(){
-  const prev = backTarget();
-  if (!prev) return "\u2190 search";        // goBack() rises to the parent, so name the parent
-  if (prev.user)  return "\u2190 " + esc(prev.user);
-  if (prev.group) return "\u2190 " + esc(prev.group);
-  if (prev.ns)    return "\u2190 " + esc(prev.ns);
-  return "\u2190 search";
+  const p = backTarget();
+  if (!p) return "← " + (PAGE_LABEL[view.page] || "back");
+  if (p.user)  return "← " + esc(p.user);
+  if (p.group) return "← " + esc(p.group);
+  if (p.ns)    return "← " + esc(p.ns);
+  return "← " + (PAGE_LABEL[p.page] || "back");
 }
 
-function dot(own){ return `<span class="dot ${OWN[own]||"own-a"}" title="${esc(own)}"></span>`; }
-function userCell(n, full){
-  return `<button class="drill" data-user="${esc(n)}">${esc(n)}</button>` +
-         (full && full !== n ? ` <span class="full">· ${esc(full)}</span>` : "");
+/* ── the three lists: a tile or a tab opens one, the box filters it ────────────────────── */
+const matchGroups = ts => DATA.groups.filter(g =>
+  (state.gstate === "all" || (state.gstate === "synced" ? !!g.own : !g.own)) &&
+  (!ts.length || hits(g.n + " " + (g.own || ""), ts)));
+const matchUsers = ts => DATA.users.filter(u => !ts.length || hits(u.n + " " + u.f, ts));
+const matchNs    = ts => DATA.ns.filter(n => !ts.length || hits(n.n + " " + nsLabels(n), ts));
+
+function sorted(rows, kind){
+  const k = state.sort[kind], d = state.dir[kind];
+  return rows.slice().sort((a, b) => {
+    const x = a[k], y = b[k];
+    if (typeof x === "number" || typeof y === "number") return ((x || 0) - (y || 0)) * d;
+    return String(x || "").localeCompare(String(y || "")) * d;
+  });
+}
+const sortHead = (kind, key, label, cls) =>
+  `<th class="${cls || ""}"><button data-sort="${kind}:${key}">${label}${
+    state.sort[kind] === key ? (state.dir[kind] > 0 ? " ▲" : " ▼") : ""}</button></th>`;
+
+/* Browsing one list should not hide matches in the other two — but it must not hijack the list
+   either, so the other kinds are a one-line offer, not an interruption. */
+function alsoBar(ts, exclude){
+  if (!ts.length) return "";
+  const n = {groups: matchGroups(ts).length, users: matchUsers(ts).length, namespaces: matchNs(ts).length};
+  delete n[exclude];
+  const bits = Object.entries(n).filter(([, v]) => v > 0)
+    .map(([k, v]) => `${v} ${v === 1 ? k.replace(/s$/, "") : k}`);
+  if (!bits.length) return "";
+  return `<div class="alsobar">also matching <strong>${esc(state.q)}</strong>: ${bits.join(" · ")}
+    <button class="drill" data-widen="1" style="text-decoration:none">see all matches</button></div>`;
 }
 
-/* ---------- lookup ---------- */
+function listCard(kind, title, ts, rows, total, head, body, note){
+  return `<div class="card">
+    <h2>${title} <span class="cnt">· ${rows.length === total ? total
+      : rows.length + " of " + total + " shown"}</span></h2>
+    ${note ? `<p class="note">${note}</p>` : ""}
+    <div class="scroll-x"><table><thead><tr>${head}</tr></thead><tbody>${
+      rows.length ? body : `<tr class="flat"><td colspan="9" class="empty" style="padding:16px 23px">
+        Nothing matches ${state.q ? `<span class="mono">${esc(state.q)}</span>` : "this filter"}${
+        kind === "groups" && state.gstate !== "all" ? ` in <strong>${esc(state.gstate)}</strong> groups` : ""}.
+        All ${total} are still there — the filter is hiding them${state.q ? ". Press Escape to clear" : ""}.
+        </td></tr>`}</tbody></table></div>
+    ${alsoBar(ts, kind)}
+  </div>`;
+}
+
+function renderGroupsList(){
+  const ts = terms(state.q), rows = sorted(matchGroups(ts), "groups");
+  const head = sortHead("groups","n","Group") + sortHead("groups","own","Owner")
+             + sortHead("groups","m","Members","num")
+             + `<th class="plain num">Grants</th>`;
+  const body = rows.map(g => { const gr = grantsOf(g.n);
+    return `<tr data-group="${esc(g.n)}">
+      <td><span class="drill">${hl(g.n, ts)}</span></td>
+      <td>${dot(g.own)}<span class="mono" style="font-size:12px">${g.own ? hl(g.own, ts)
+        : `<span class="tag crit">unattributed</span>`}</span></td>
+      <td class="num">${g.m}</td>
+      <td class="num">${gr.length ? gr.length : `<span class="ago">none</span>`}</td></tr>`;
+  }).join("");
+  return listCard("groups", "Groups", ts, rows, DATA.counts.groups, head, body,
+    `Click any row. <strong>${DATA.counts.groups - Object.keys(DATA.bindGroup).length} of
+     ${DATA.counts.groups} groups grant nothing</strong> — they are synced but no binding names them,
+     which is usually a binding that was never created. Sort by Grants to find them.`);
+}
+
+function renderUsersList(){
+  const ts = terms(state.q), rows = sorted(matchUsers(ts), "users");
+  const head = sortHead("users","n","User") + `<th class="plain">Status</th>`
+             + sortHead("users","p","Provider") + sortHead("users","g","Groups","num")
+             + sortHead("users","first","First login (identity)");
+  const body = rows.map(u => `<tr data-user="${esc(u.n)}">
+      <td><span class="drill">${hl(u.n, ts)}</span>${u.f !== u.n
+        ? ` <span class="full">· ${hl(u.f, ts)}</span>` : ""}</td>
+      <td>${u.p ? `<span class="tag good">logged in</span>` : `<span class="tag warn">never logged in</span>`}</td>
+      <td class="t">${esc(u.p || "—")}</td>
+      <td class="num">${u.g}</td>
+      <td class="t">${esc(u.first || "—")}</td></tr>`).join("");
+  return listCard("users", "Users", ts, rows, DATA.counts.users, head, body,
+    `Click any row. "First login" is the Identity object's creation time — the true first login,
+     which the dashboard cannot reconstruct by polling. ${DATA.counts.usersWithIdentity} of
+     ${DATA.counts.users} users are identity-backed.`);
+}
+
+function renderNsList(){
+  const ts = terms(state.q), rows = sorted(matchNs(ts), "namespaces");
+  const head = sortHead("namespaces","n","Namespace") + sortHead("namespaces","m","Mnemonic")
+             + sortHead("namespaces","e","Environment")
+             + `<th class="plain">oud-group</th><th class="plain num">Via group</th><th class="plain num">Direct grants</th>`;
+  const body = rows.map(n => { const dg = (DATA.nsGrants[n.n] || []).length,
+                               vg = (DATA.nsGroups[n.n] || []).length;
+    return `<tr data-ns="${esc(n.n)}">
+      <td><span class="drill">${hl(n.n, ts)}</span></td>
+      <td class="t">${n.m ? hl(n.m, ts) : "—"}</td>
+      <td class="t">${n.e ? hl(n.e, ts) : "—"}</td>
+      <td>${n.oud ? `<span class="tag warn mono">${hl(n.oud, ts)}</span>` : `<span class="ago">—</span>`}</td>
+      <td class="num">${vg || `<span class="ago">0</span>`}</td>
+      <td class="num">${dg ? `<span class="tag crit">${dg}</span>` : `<span class="tag good">0</span>`}</td></tr>`;
+  }).join("");
+  return listCard("namespaces", "Namespaces <span class=\"new\">new</span>", ts, rows, DATA.counts.ns, head, body,
+    `Click any row — a namespace is an entity here, not just a filter
+     (<a href="https://github.com/ephico2real2/group-sync-dashboard/issues/167">#167</a>).
+     ${DATA.counts.nsLabelled} of ${DATA.counts.ns} carry <span class="mono">company.net/</span> labels.
+     A direct grant is the finding; zero is the state a review wants to confirm.`);
+}
+
+/* ── the lookup: three doors, then the cross-kind search ───────────────────────────────── */
 function renderLookup(){
   const ts = terms(state.q);
+  const tiles = `<div class="tiles">
+    <button class="tile" data-page="groups"><span class="n">${DATA.counts.groups}</span>
+      <span class="k">Groups</span>
+      <span class="s">${Object.keys(DATA.bindGroup).length} grant something · ${
+        DATA.groups.filter(g => !g.own).length} unattributed</span>
+      <span class="go">Browse all groups ›</span></button>
+    <button class="tile" data-page="users"><span class="n">${DATA.counts.users}</span>
+      <span class="k">Users</span>
+      <span class="s">${DATA.counts.usersWithIdentity} have logged in · ${
+        DATA.counts.users - DATA.counts.usersWithIdentity} never have</span>
+      <span class="go">Browse all users ›</span></button>
+    <button class="tile" data-page="namespaces"><span class="n">${DATA.counts.ns}</span>
+      <span class="k">Namespaces <span class="new">new</span></span>
+      <span class="s">${DATA.counts.nsLabelled} labelled · ${
+        Object.keys(DATA.nsGrants).length} carry a direct grant</span>
+      <span class="go">Browse all namespaces ›</span></button>
+  </div>`;
   if (!ts.length){
-    return `<div class="card"><h2>Find anything <span class="new">new</span></h2>
-      <p class="note">One box over all three entity types. The live dashboard already pattern-matches
-      groups, users and a group's own members — measured, multi-word AND, Escape clears. Namespaces have
-      only a five-option <span class="mono">&lt;select&gt;</span> today, which is the gap
-      <a href="https://github.com/ephico2real2/group-sync-dashboard/issues/167">#167</a> closes.</p>
-      <div class="pad">
-        <span class="tag">67 groups</span> <span class="tag">63 users</span>
-        <span class="tag">110 namespaces · 23 labelled</span>
-      </div>
+    return `<div class="card"><h2>Start anywhere</h2>
+      <p class="note">Open a list and browse it, pick a tab, or type in the box above to search all
+      three kinds at once. The search is an extra door beside the lists, never a replacement for them.</p>
+      ${tiles}
       <p class="note" style="padding-bottom:16px">Try <span class="mono">demo</span>,
-      <span class="mono">rbac alpha</span>, <span class="mono">alice</span>, or
-      <span class="mono">oud</span>.</p></div>`;
+      <span class="mono">rbac alpha</span>, <span class="mono">alice</span> or
+      <span class="mono">oud</span> — every term must appear, so
+      <span class="mono">alice zzz</span> finds nothing.</p></div>`;
   }
-  const g = GROUPS.filter(x => hits(x.n, ts));
-  const u = USERS.filter(x => hits(x.n + " " + x.f, ts));
-  const n = NS.filter(x => hits([x.n, x.m, x.e, x.oud].filter(Boolean).join(" "), ts));
+  const g = matchGroups(ts), u = matchUsers(ts), n = matchNs(ts);
   const total = g.length + u.length + n.length;
-  let h = `<div class="card"><h2>Matches <span class="cnt">· ${total} across 3 kinds</span></h2>
-    <p class="note">Every term must appear — <span class="mono">alice zzz</span> returns nothing, which is
-    how the live boxes behave.</p><div class="hits pad">`;
-  const sect = (label, note, rows) => rows.length ? `<div class="hitgroup">
-      <div class="hithead"><b>${label}</b> ${rows.length} of ${note}</div>${rows.join("")}</div>` : "";
-
-  h += sect("Groups", "67", g.map(x => `<button class="hit" data-group="${esc(x.n)}">
-      <span class="k">${hl(x.n, ts)}</span>
-      <span class="sub">${dot(x.own)}${esc(x.own)}</span>
-      <span class="grow"></span><span class="tag">${x.m} members</span></button>`));
-  h += sect("Users", "63", u.map(x => `<button class="hit" data-user="${esc(x.n)}">
-      <span class="k">${hl(x.n, ts)}</span> <span class="sub">${hl(x.f, ts)}</span>
-      <span class="grow"></span><span class="tag">${x.g} groups</span>
-      <span class="tag ${x.in ? "good" : ""}">${x.in ? "logged in" : "never logged in"}</span></button>`));
-  h += sect("Namespaces", "110", n.map(x => `<button class="hit" data-ns="${esc(x.n)}">
-      <span class="k">${hl(x.n, ts)}</span>
-      <span class="grow"></span>
-      ${x.m ? `<span class="tag mono">${hl(x.m, ts)}</span>` : ""}
-      ${x.e ? `<span class="tag mono">${hl(x.e, ts)}</span>` : ""}
-      ${x.oud ? `<span class="tag warn mono">oud · ${hl(x.oud, ts)}</span>` : ""}
-      ${x.risk ? `<span class="tag ${x.risk === "High" ? "crit" : "warn"}">${x.risk} risk</span>` : ""}</button>`));
-  if (!total) h += `<p class="empty">No group, user or namespace matches all of
-     <span class="mono">${esc(state.q)}</span>. The data is not empty — the search is hiding it.
-     Press Escape to clear.</p>`;
-  return h + `</div></div>`;
+  const sect = (label, rows, of) => rows.length ? `<div class="hitgroup">
+      <div class="hithead"><b>${label}</b> ${rows.length} of ${of}</div>${rows.slice(0, 12).join("")}
+      ${rows.length > 12 ? `<div class="alsobar">${rows.length - 12} more — open the full list to see them</div>` : ""}
+    </div>` : "";
+  return `<div class="card"><h2>Matches <span class="cnt">· ${total} across 3 kinds</span></h2>
+    <p class="note">Every term must appear, so <span class="mono">alice zzz</span> returns nothing —
+    which is how the live boxes already behave.</p>
+    <div class="hits">
+    ${sect("Groups", g.map(x => `<button class="hit" data-group="${esc(x.n)}">
+        <span class="k">${hl(x.n, ts)}</span>
+        <span class="sub">${dot(x.own)}${x.own ? esc(x.own) : "unattributed"}</span>
+        <span class="grow"></span><span class="tag">${x.m} members</span>
+        <span class="tag">${grantsOf(x.n).length} grants</span></button>`), DATA.counts.groups)}
+    ${sect("Users", u.map(x => `<button class="hit" data-user="${esc(x.n)}">
+        <span class="k">${hl(x.n, ts)}</span> <span class="sub">${hl(x.f, ts)}</span>
+        <span class="grow"></span><span class="tag">${x.g} groups</span>
+        <span class="tag ${x.p ? "good" : "warn"}">${x.p ? "logged in" : "never logged in"}</span></button>`),
+      DATA.counts.users)}
+    ${sect("Namespaces", n.map(x => `<button class="hit" data-ns="${esc(x.n)}">
+        <span class="k">${hl(x.n, ts)}</span><span class="grow"></span>
+        ${x.m ? `<span class="tag mono">${hl(x.m, ts)}</span>` : ""}
+        ${x.e ? `<span class="tag mono">${hl(x.e, ts)}</span>` : ""}
+        ${x.oud ? `<span class="tag warn mono">oud · ${hl(x.oud, ts)}</span>` : ""}
+        ${(DATA.nsGrants[x.n] || []).length ? `<span class="tag crit">${
+          DATA.nsGrants[x.n].length} direct</span>` : ""}</button>`), DATA.counts.ns)}
+    ${total ? "" : `<p class="empty">No group, user or namespace matches all of
+       <span class="mono">${esc(state.q)}</span>. The data is not empty — the search is hiding it.
+       Press Escape to clear.</p>`}
+    </div>${tiles}</div>`;
 }
 
-/* ---------- group detail ---------- */
+/* ── the three details ─────────────────────────────────────────────────────────────────── */
 function renderGroup(name){
-  const g = GROUPS.find(x => x.n === name) || GROUPS[0];
-  const ts = terms(state.q);
-  const mem = MEMBERS.filter(m => !ts.length || hits(m[0] + " " + m[1], ts));
+  const g = GROUP[name];
+  if (!g) return `<div class="card"><button class="back" data-back>${backLabel()}</button>
+    <h2>${esc(name)}</h2><p class="empty">No group by that name on this cluster. It may have been
+    deleted since the link was made — a dead link is a detour, not a dead end.</p></div>`;
+  const meta = DATA.gmeta[name] || {}, ts = terms(state.q);
+  const all = DATA.members[name] || [];
+  const mem = all.filter(m => !ts.length || hits(m + " " + ((USER[m] || {}).f || ""), ts));
+  const gr = grantsOf(name);
   return `<div class="card">
     <button class="back" data-back>${backLabel()}</button>
-    <h2>${esc(g.n)}</h2>
+    <h2>${esc(g.n)}${g.own ? "" : ` <span class="tag crit">unattributed</span>`}</h2>
     <div class="facts">
       <span class="fact"><span class="lab">Members</span><span class="val">${g.m}</span></span>
-      <span class="fact"><span class="lab">Owner</span><span class="val sm">${dot(g.own)}${esc(g.own)}</span></span>
-      <span class="fact"><span class="lab">Schedule</span><span class="val sm">${esc(g.sched||"0 */2 * * *")}</span></span>
-      <span class="fact"><span class="lab">Last refreshed</span><span class="val">${esc(g.seen||"1h ago")}</span></span>
+      <span class="fact"><span class="lab">Owner</span><span class="val sm">${dot(g.own)}${
+        esc(g.own || "none — hand-made")}</span></span>
+      <span class="fact"><span class="lab">Grants</span><span class="val" style="color:var(--${
+        gr.length ? "good" : "warn"})">${gr.length}</span></span>
+      <span class="fact"><span class="lab">Last synced</span><span class="val sm">${
+        meta.sync ? esc(meta.sync.replace("T"," ").replace("Z"," UTC")) : "never"}</span></span>
     </div>
-    <h3>Source DN</h3><p class="note mono" style="padding-bottom:14px">${esc(g.dn||"cn="+g.n+",ou=Groups,dc=ephico2real,dc=com")}</p>
+    ${meta.dn ? `<h3>Source DN</h3><p class="note mono" style="padding-bottom:14px">${esc(meta.dn)}</p>`
+      : `<p class="note" style="padding-bottom:14px">No source DN: nothing in LDAP maps to this group.
+         It was made by hand, so no sync will ever correct it.</p>`}
   </div>
 
   <div class="card">
-    <h2>Members <span class="cnt">· ${ts.length ? mem.length + " of " + MEMBERS.length + " shown" : MEMBERS.length}</span>${
+    <h2>Members <span class="cnt">· ${ts.length ? mem.length + " of " + all.length + " shown" : all.length}</span>${
       ts.length ? ` <span class="tag warn">scoped to this group</span>
       <button class="drill" data-widen="1" style="text-decoration:none">search everything instead</button>` : ""}</h2>
-    <p class="note"><strong>Select a user to see every group they belong to.</strong> "Member since" is when
-    this dashboard first observed the user in the group — not when LDAP added them. It cannot predate this dashboard.</p>
-    <div class="scroll-x"><table>
-      <thead><tr><th>User</th><th>In this group since</th><th>First ever granted</th><th>Last confirmed</th></tr></thead>
-      <tbody>${mem.map(m => `<tr>
-        <td>${userCell(m[0], m[1])}</td>
-        <td class="t">${m[2]} <span class="ago">(${m[3]})</span></td>
-        <td class="t">${m[2]}</td><td class="t">56s ago</td></tr>`).join("")
-        || `<tr><td colspan="4" class="empty" style="padding:14px 23px">No member matches
-             <span class="mono">${esc(state.q)}</span>. The group still has ${MEMBERS.length} members —
-             the filter is hiding them.</td></tr>`}</tbody>
-    </table></div>
+    <p class="note"><strong>Select a user to see every group they belong to.</strong> Membership comes
+    from the synced Group object, so this is as true on a cluster that has never enabled Debug logging.</p>
+    ${all.length ? `<div class="scroll-x"><table>
+      <thead><tr><th class="plain">User</th><th class="plain">Full name</th><th class="plain num">Their groups</th>
+        <th class="plain">First login</th></tr></thead>
+      <tbody>${mem.map(m => { const u = USER[m] || {};
+        return `<tr data-user="${esc(m)}"><td><span class="drill">${hl(m, ts)}</span></td>
+          <td class="full">${hl(u.f || m, ts)}</td><td class="num">${u.g == null ? "—" : u.g}</td>
+          <td class="t">${esc(u.first || "never")}</td></tr>`; }).join("")
+        || `<tr class="flat"><td colspan="4" class="empty" style="padding:14px 23px">No member matches
+             <span class="mono">${esc(state.q)}</span>. The group still has ${all.length} members —
+             the filter is hiding them.</td></tr>`}</tbody></table></div>`
+      : `<p class="empty">Zero members, so this group grants nobody anything. On an operator-synced
+         group that usually means an LDAP-side problem — a member DN that does not resolve.</p>`}
   </div>
 
-  <div class="card" style="--sec:var(--warn)">
+  <div class="card" style="--sec:var(--${gr.length ? "warn" : "crit"})">
     <h2>Access granted <span class="cnt">· direct role bindings</span></h2>
     <p class="note">This group is named by these bindings. Role rules are <strong>not</strong> evaluated,
     so this is what has been granted, not a computed list of permitted actions.</p>
-    <p class="empty">No RoleBindings or ClusterRoleBindings name this group. It grants no access on this
-    cluster — which, for a synced group, usually means the binding was never created.</p>
-  </div>
-
-  <div class="card">
-    <h2>Membership changes</h2>
-    <div class="scroll-x"><table>
-      <thead><tr><th>Change</th><th>User</th><th>Observed</th><th>Sync that carried it</th></tr></thead>
-      <tbody>${MEMBERS.map(m => `<tr><td><span class="joined">+ joined</span></td>
-        <td>${userCell(m[0])}</td><td class="t">${m[2]}</td><td class="t">2026-08-07 22:50:52 EDT</td></tr>`).join("")}</tbody>
-    </table></div>
+    ${gr.length ? `<div class="scroll-x"><table>
+      <thead><tr><th class="plain">Role</th><th class="plain">Scope</th><th class="plain">Binding</th></tr></thead>
+      <tbody>${gr.map(r => `<tr class="flat"><td><span class="mono">${esc(r.role)}</span>
+        <span class="full">${esc(r.rk)}</span></td>
+        <td>${r.ns ? `<button class="drill" data-ns="${esc(r.ns)}">${esc(r.ns)}</button>`
+          : `<span class="tag">cluster-wide</span>`}</td>
+        <td class="t">${esc(r.b)}</td></tr>`).join("")}</tbody></table></div>`
+      : `<p class="empty">No RoleBinding or ClusterRoleBinding names this group. It grants no access on
+         this cluster — which, for a synced group, usually means the binding was never created.
+         ${DATA.counts.groups - Object.keys(DATA.bindGroup).length} of ${DATA.counts.groups} groups here
+         are in this state.</p>`}
   </div>`;
 }
 
-/* ---------- user detail ---------- */
 function renderUser(name){
-  const u = USERS.find(x => x.n === name) || USERS[0];
-  const groups = u.n === "alice.cooper" ? ALICE_GROUPS
-    : GROUPS.slice(0, u.g).map(g => [g.n, g.own, "2026-08-02 00:00:33 EDT"]);
+  const u = USER[name];
+  if (!u) return `<div class="card"><button class="back" data-back>${backLabel()}</button>
+    <h2>${esc(name)}</h2><p class="empty">No user by that name on this cluster.</p></div>`;
+  const groups = DATA.memberOf[name] || [], direct = DATA.bindUser[name] || [];
+  const viaGroups = groups.flatMap(g => grantsOf(g).map(r => ({...r, via: g})));
+  const nsCount = new Set([...direct, ...viaGroups].filter(r => r.ns).map(r => r.ns)).size;
+  const cw = [...direct, ...viaGroups].filter(r => !r.ns);
   return `<div class="card">
     <button class="back" data-back>${backLabel()}</button>
-    <h2>${esc(u.n)} <span class="cnt">· ${esc(u.f)}</span></h2>
+    <h2>${esc(u.n)}${u.f !== u.n ? ` <span class="cnt">· ${esc(u.f)}</span>` : ""}</h2>
     <div class="facts">
       <span class="fact"><span class="lab">Groups</span><span class="val">${groups.length}</span></span>
-      <span class="fact"><span class="lab">Logged in</span><span class="val" style="color:var(--${u.in?"good":"warn"})">${u.in?"yes":"no"}</span></span>
-      <span class="fact"><span class="lab">First login</span><span class="val sm">${u.in?"2026-08-05 12:14:16 EDT":"—"}</span></span>
-      <span class="fact"><span class="lab">Last captured login</span><span class="val sm">${esc(u.last)}</span></span>
+      <span class="fact"><span class="lab">Logged in</span><span class="val" style="color:var(--${
+        u.p ? "good" : "warn"})">${u.p ? "yes" : "no"}</span></span>
+      <span class="fact"><span class="lab">First login</span><span class="val sm">${esc(u.first || "—")}</span></span>
+      <span class="fact"><span class="lab">Namespaces reached</span><span class="val">${nsCount}</span></span>
+      <span class="fact"><span class="lab">Cluster-wide roles</span><span class="val">${cw.length}</span></span>
     </div>
-    <p class="note" style="padding-bottom:14px">${u.in
-      ? `Has logged in to this cluster through <span class="mono">${esc(u.p)}</span>. Every group this user
-         belongs to on this cluster is listed below; the cluster itself can only answer this by scanning
-         every Group object.`
-      : `No login has been captured for this account. It is a synced group member that has never signed in —
-         which is a finding, not a gap in the data.`}</p>
+    <p class="note" style="padding-bottom:14px">${u.p
+      ? `Has logged in to this cluster through <span class="mono">${esc(u.p)}</span>. The first-login date
+         is the Identity object's own creation time — the true first login, which no amount of polling
+         could reconstruct. Every group this user belongs to is listed below; the cluster itself can
+         only answer this by scanning every Group object.`
+      : `No Identity exists for this account, so it has never signed in to this cluster. It is a synced
+         group member that has never arrived — a finding, not a gap in the data.`}</p>
   </div>
 
   <div class="card">
-    <h2>Group memberships</h2>
-    <div class="scroll-x"><table>
-      <thead><tr><th>Group</th><th>Owner</th><th>Member since</th></tr></thead>
-      <tbody>${groups.map(g => `<tr>
-        <td><button class="drill" data-group="${esc(g[0])}">${esc(g[0])}</button></td>
-        <td>${dot(g[1])}<span class="mono" style="font-size:12px">${esc(g[1])}</span></td>
-        <td class="t">${esc(g[2])}</td></tr>`).join("")}</tbody>
-    </table></div>
+    <h2>Group memberships <span class="cnt">· ${groups.length}</span></h2>
+    ${groups.length ? `<div class="scroll-x"><table>
+      <thead><tr><th class="plain">Group</th><th class="plain">Owner</th><th class="plain num">Grants</th></tr></thead>
+      <tbody>${groups.map(g => { const gg = GROUP[g] || {}, n = grantsOf(g).length;
+        return `<tr data-group="${esc(g)}"><td><span class="drill">${esc(g)}</span></td>
+          <td>${dot(gg.own)}<span class="mono" style="font-size:12px">${esc(gg.own || "unattributed")}</span></td>
+          <td class="num">${n || `<span class="ago">none</span>`}</td></tr>`; }).join("")}</tbody>
+    </table></div>` : `<p class="empty">Belongs to no group on this cluster.</p>`}
   </div>
 
   <div class="card" style="--sec:var(--warn)">
-    <h2>Access granted <span class="cnt">· direct role bindings</span></h2>
-    <p class="note">${esc(u.n)} is named by these bindings. Role rules are <strong>not</strong> evaluated,
-    so this is what has been granted, not a computed list of permitted actions.</p>
-    <div class="facts">
-      <span class="fact"><span class="lab">Namespaces</span><span class="val">0</span></span>
-      <span class="fact"><span class="lab">Cluster-wide roles</span><span class="val">2</span></span>
-    </div>
-    <h3>Cluster-wide</h3>
-    <div class="scroll-x"><table>
-      <thead><tr><th>Role</th><th>Binding</th><th>Via group</th></tr></thead>
-      <tbody>
-        <tr><td><span class="mono">database-admin</span> <span class="full">ClusterRole</span></td>
-            <td class="mono" style="font-size:12px">app-ocp-rbac-alpha-database-admin-crb</td>
-            <td><button class="drill" data-group="app-ocp-rbac-alpha-database-admin">app-ocp-rbac-alpha-database-admin</button></td></tr>
-        <tr><td><span class="mono">admin</span> <span class="full">ClusterRole</span></td>
-            <td class="mono" style="font-size:12px">app-ocp-rbac-platform-cluster-admin-crb</td>
-            <td><button class="drill" data-group="app-ocp-rbac-platform-cluster-admin">app-ocp-rbac-platform-cluster-admin</button></td></tr>
-      </tbody>
-    </table></div>
-  </div>
-
-  <div class="card">
-    <h2>History</h2>
-    <div class="scroll-x"><table>
-      <thead><tr><th>Change</th><th>Group</th><th>Observed</th></tr></thead>
-      <tbody>${ALICE_HISTORY.map(h => `<tr>
-        <td><span class="${h[0].startsWith("+") ? "joined" : "left"}">${esc(h[0])}</span></td>
-        <td><button class="drill" data-group="${esc(h[1])}">${esc(h[1])}</button></td>
-        <td class="t">${esc(h[2])}</td></tr>`).join("")}</tbody>
-    </table></div>
+    <h2>Access granted <span class="cnt">· what they can actually reach</span></h2>
+    <p class="note">${esc(u.n)} is named by these bindings, or reaches them through a group. Role rules
+    are <strong>not</strong> evaluated, so this is what has been granted, not a computed list of
+    permitted actions.</p>
+    ${(direct.length + viaGroups.length) ? `<div class="scroll-x"><table>
+      <thead><tr><th class="plain">Role</th><th class="plain">Scope</th><th class="plain">Via</th>
+        <th class="plain">Binding</th></tr></thead>
+      <tbody>${[...direct.map(r => ({...r, via:null})), ...viaGroups].map(r => `<tr class="flat">
+        <td><span class="mono">${esc(r.role)}</span> <span class="full">${esc(r.rk)}</span></td>
+        <td>${r.ns ? `<button class="drill" data-ns="${esc(r.ns)}">${esc(r.ns)}</button>`
+          : `<span class="tag">cluster-wide</span>`}</td>
+        <td>${r.via ? `<button class="drill" data-group="${esc(r.via)}">${esc(r.via)}</button>`
+          : `<span class="tag crit">named directly</span>`}</td>
+        <td class="t">${esc(r.b)}</td></tr>`).join("")}</tbody></table></div>
+      ${direct.length ? `<p class="note" style="padding-bottom:14px"><strong>${direct.length}</strong>
+        ${direct.length === 1 ? "grant names" : "grants name"} this person directly rather than through a
+        group. Those are the rows a directory change cannot offboard.</p>` : ""}`
+      : `<p class="empty">No binding names ${esc(u.n)}, and no group they belong to carries one. They can
+         sign in and see nothing — which is the correct state for an account awaiting its access.</p>`}
   </div>`;
 }
 
-/* ---------- namespace detail — the proposed third peer ---------- */
 function renderNs(name){
-  const n = NS.find(x => x.n === name) || NS[0];
-  const sibs = NS.filter(x => x.m && x.m === n.m && x.n !== n.n);
-  return `<div class="card" style="--sec:var(--good)">
+  const n = NS[name];
+  if (!n) return `<div class="card"><button class="back" data-back>${backLabel()}</button>
+    <h2>${esc(name)}</h2><p class="empty">No namespace by that name on this cluster.</p></div>`;
+  const direct = DATA.nsGrants[name] || [], viaG = DATA.nsGroups[name] || [];
+  const sibs = n.m ? DATA.ns.filter(x => x.m === n.m && x.n !== n.n) : [];
+  const people = new Set([...direct.map(d => d.u),
+    ...viaG.flatMap(v => DATA.members[v.g] || [])]).size;
+  return `<div class="card" style="--sec:var(--${direct.length ? "crit" : "good"})">
     <button class="back" data-back>${backLabel()}</button>
     <h2>${esc(n.n)} <span class="new">new</span></h2>
     <div class="facts">
-      <span class="fact"><span class="lab">Mnemonic</span><span class="val sm">${esc(n.m||"— none —")}</span></span>
-      <span class="fact"><span class="lab">Environment</span><span class="val sm">${esc(n.e||"— none —")}</span></span>
-      <span class="fact"><span class="lab">Reached by</span><span class="val">${n.people||0}</span></span>
-      <span class="fact"><span class="lab">Direct grants</span><span class="val" style="color:var(--${n.grants?"crit":"good"})">${n.grants||0}</span></span>
+      <span class="fact"><span class="lab">Mnemonic</span><span class="val sm">${esc(n.m || "— none —")}</span></span>
+      <span class="fact"><span class="lab">Environment</span><span class="val sm">${esc(n.e || "— none —")}</span></span>
+      <span class="fact"><span class="lab">People who reach it</span><span class="val">${people}</span></span>
+      <span class="fact"><span class="lab">Via groups</span><span class="val">${viaG.length}</span></span>
+      <span class="fact"><span class="lab">Direct grants</span><span class="val" style="color:var(--${
+        direct.length ? "crit" : "good"})">${direct.length}</span></span>
     </div>
-    <p class="note" style="padding-bottom:14px">
-      ${n.oud ? `Carries the third label <span class="mono">company.net/oud-group</span> =
-        <span class="mono">${esc(n.oud)}</span>, in addition to the usual two.` :
-        n.m ? `Labelled <span class="mono">company.net/mnemonic=${esc(n.m)}</span>${n.e
-          ? ` and <span class="mono">company.net/app-environment=${esc(n.e)}</span>` : ""}.` :
-        `Carries neither <span class="mono">company.net/mnemonic</span> nor
-         <span class="mono">company.net/app-environment</span> — it is outside the naming convention.`}
-      ${n.grants ? "" : " No direct RoleBinding names a person here, which is the state an access review wants to confirm."}
-    </p>
+    <p class="note" style="padding-bottom:14px">${
+      n.oud ? `Carries the third label <span class="mono">company.net/oud-group</span> =
+        <span class="mono">${esc(n.oud)}</span>, in addition to the usual two.`
+      : n.m ? `Labelled <span class="mono">company.net/mnemonic=${esc(n.m)}</span>${
+          n.e ? ` and <span class="mono">company.net/app-environment=${esc(n.e)}</span>` : ""}.`
+      : `Carries neither <span class="mono">company.net/mnemonic</span> nor
+         <span class="mono">company.net/app-environment</span> — outside the naming convention, so no
+         mnemonic-based report will ever pick it up.`}
+      ${direct.length ? "" : " No RoleBinding names a person here directly, which is the state an access review wants to confirm."}</p>
   </div>
-
-  ${n.grants ? `<div class="card" style="--sec:var(--crit)">
-    <h2>Direct grants <span class="cnt">· ${n.grants}</span></h2>
-    <p class="note">Ranked by the worst privilege granted, not by count — one forgotten cluster-admin
-    matters more than twenty view grants.</p>
-    <div class="scroll-x"><table>
-      <thead><tr><th>Person</th><th>Grant</th><th>Binding</th></tr></thead>
-      <tbody>
-        <tr><td>${userCell("jdoe")}</td><td><span class="tag crit">admin ClusterRole</span></td>
-            <td class="mono" style="font-size:12px">jdoe-admin</td></tr>
-        <tr><td>${userCell("asmith")}</td><td><span class="tag warn">edit ClusterRole</span></td>
-            <td class="mono" style="font-size:12px">asmith-edit</td></tr>
-        <tr><td>${userCell("bwilliams")}</td><td><span class="tag warn">edit ClusterRole</span></td>
-            <td class="mono" style="font-size:12px">bwilliams-edit</td></tr>
-      </tbody>
-    </table></div>
-  </div>` : ""}
 
   <div class="card">
-    <h2>Who reaches it, and through which group</h2>
-    <p class="note">The answer the triangle exists for: a namespace, back to the groups that grant it, back
-    to the people in those groups.</p>
-    ${n.oud ? `<div class="scroll-x"><table>
-      <thead><tr><th>Group</th><th>Role</th><th>People</th></tr></thead>
-      <tbody><tr>
-        <td><button class="drill" data-group="app-ocp-rbac-spar-ns-audit">app-ocp-rbac-spar-ns-audit</button></td>
-        <td><span class="tag">view ClusterRole</span></td><td class="num">3</td></tr></tbody></table></div>`
+    <h2>Who reaches it, and through which group <span class="cnt">· ${viaG.length}</span></h2>
+    <p class="note">The answer the triangle exists for: a namespace, back to the groups that grant it,
+    back to the people in those groups.</p>
+    ${viaG.length ? `<div class="scroll-x"><table>
+      <thead><tr><th class="plain">Group</th><th class="plain">Role</th><th class="plain num">Members</th></tr></thead>
+      <tbody>${viaG.map(v => `<tr data-group="${esc(v.g)}">
+        <td><span class="drill">${esc(v.g)}</span></td>
+        <td><span class="mono">${esc(v.role)}</span></td>
+        <td class="num">${(GROUP[v.g] || {}).m ?? 0}</td></tr>`).join("")}</tbody></table></div>`
       : `<p class="empty">No group-based binding names this namespace. Access here is
-         ${n.grants ? "entirely by the direct grants above — which is what makes it a finding." :
-         "not granted to anyone through the policy system."}</p>`}
+         ${direct.length ? "entirely by the direct grants below — which is what makes it a finding."
+           : "not granted to anyone through the policy system."}</p>`}
   </div>
+
+  ${direct.length ? `<div class="card" style="--sec:var(--crit)">
+    <h2>Direct grants <span class="cnt">· ${direct.length}</span></h2>
+    <p class="note">A person named by a binding rather than reached through a group. These are the rows
+    a directory change cannot offboard — the operational goal for this card is zero.</p>
+    <div class="scroll-x"><table>
+      <thead><tr><th class="plain">Person</th><th class="plain">Role</th><th class="plain">Binding</th></tr></thead>
+      <tbody>${direct.map(d => `<tr data-user="${esc(d.u)}">
+        <td><span class="drill">${esc(d.u)}</span></td>
+        <td><span class="tag ${/admin|edit/.test(d.role) ? "crit" : "warn"}">${esc(d.role)}</span></td>
+        <td class="t">${esc(d.b)}</td></tr>`).join("")}</tbody></table></div>
+  </div>` : ""}
 
   ${sibs.length ? `<div class="card">
     <h2>Same mnemonic <span class="cnt">· ${esc(n.m)}</span></h2>
     <p class="note">Sibling namespaces sharing <span class="mono">company.net/mnemonic=${esc(n.m)}</span>.
-    Typing the mnemonic in the lookup finds all ${sibs.length + 1} at once.</p>
+    Typing the mnemonic finds all ${sibs.length + 1} at once.</p>
     <div class="pad">${sibs.map(s => `<button class="drill" data-ns="${esc(s.n)}"
       style="margin-right:14px">${esc(s.n)}</button>`).join("")}</div>
   </div>` : ""}`;
 }
 
-/* ---------- shell ---------- */
+function renderPlaceholder(){
+  return `<div class="card"><h2>${esc(PAGE_LABEL[view.page] || view.page)}</h2>
+    <p class="note" style="padding-bottom:16px">This tab is modelled in
+    <span class="mono">tab-redesign-mock.html</span>. This mock covers the three entity surfaces and the
+    drill-downs between them — Groups, Users and Namespaces above are live; click a tile or a tab.</p></div>`;
+}
+
+/* ── shell ─────────────────────────────────────────────────────────────────────────────── */
+const SEARCH_SCOPE = () =>
+  view.group ? {label:"Find member", ph:"filter by id or name"}
+: view.user || view.ns ? {label:"Find", ph:"search groups, users and namespaces"}
+: view.page === "groups" ? {label:"Find group", ph:"filter by name or owner"}
+: view.page === "users" ? {label:"Find user", ph:"filter by id or name"}
+: view.page === "namespaces" ? {label:"Find namespace", ph:"filter by name, mnemonic or environment"}
+: {label:"Find", ph:"search groups, users and namespaces — try demo · rbac alpha · alice"};
+
+function renderTabs(){
+  document.getElementById("tabs").innerHTML = TABS.map(([id, label]) =>
+    `<button class="tab" data-page="${id}"${view.page === id ? ' aria-current="page"' : ""}${
+      LIVE_TABS.has(id) ? "" : ' title="modelled in tab-redesign-mock.html"'}>${label}</button>`).join("");
+}
+
 function render(){
-  const m = document.getElementById("main");
-  m.innerHTML = view.page === "group" ? renderGroup(view.group)
-              : view.page === "user"  ? renderUser(view.user)
-              : view.page === "ns"    ? renderNs(view.ns)
-              : renderLookup();
-  const q = document.getElementById("q");
-  q.placeholder = view.page === "group"
-    ? "Filter this group's members — id or name"
-    : "Find a user, group or namespace — try: demo · rbac alpha · alice";
+  document.getElementById("main").innerHTML =
+      view.group ? renderGroup(view.group)
+    : view.user  ? renderUser(view.user)
+    : view.ns    ? renderNs(view.ns)
+    : view.page === "groups"     ? renderGroupsList()
+    : view.page === "users"      ? renderUsersList()
+    : view.page === "namespaces" ? renderNsList()
+    : view.page === "lookup"     ? renderLookup()
+    : renderPlaceholder();
+  renderTabs();
+  const s = SEARCH_SCOPE(), q = document.getElementById("q");
+  document.getElementById("qlabel").textContent = s.label;
+  q.placeholder = s.ph;
+  if (q.value !== state.q) q.value = state.q;
 }
 
 document.addEventListener("click", e => {
-  const b = e.target.closest("[data-group],[data-user],[data-ns],[data-back],[data-widen]");
+  const b = e.target.closest("[data-sort],[data-page],[data-group],[data-user],[data-ns],[data-back],[data-widen]");
   if (!b) return;
+  if (b.dataset.sort){
+    // A sort is a preference, not a location: it changes no position and pushes no history entry,
+    // exactly as on the live app, where sorting left history.length unchanged.
+    const [kind, key] = b.dataset.sort.split(":");
+    if (state.sort[kind] === key) state.dir[kind] *= -1;
+    else { state.sort[kind] = key; state.dir[kind] = 1; }
+    render(); return;
+  }
   if (b.dataset.widen !== undefined){
-    /* Widen the scope, do not reset it: the reader has already typed what they are looking for.
-       applyPosition() clears the filter on a group change — correct, because the member filter
-       belongs to its group — so the text is carried across this one transition deliberately. */
+    // Widen the scope, do not reset it — the reader has already typed what they are looking for.
+    // applyPosition() clears the filter on a group change (the member filter belongs to its group),
+    // so the text is carried across this one transition deliberately.
     const carried = state.q;
     navigate({ page:"lookup", group:null, user:null, ns:null });
-    state.q = carried; document.getElementById("q").value = carried;
+    state.q = carried;
   } else if (b.dataset.back !== undefined){
-    goBack();
-    return;                       // goBack() renders, or history.back() will through popstate
+    goBack(); return;                 // history.back() renders through popstate
+  } else if (b.dataset.page){
+    navigate({ page:b.dataset.page, group:null, user:null, ns:null });
   } else if (b.dataset.group){
-    navigate({ page:"group", group:b.dataset.group, user:null, ns:null });
+    navigate({ group:b.dataset.group, user:null, ns:null });
   } else if (b.dataset.user){
-    /* `group: null` deliberately — a user is a user regardless of the route taken to them, and
-       this is what the live app does (the hash on alice.cooper carries no group). The breadcrumb
-       still reads "← app-ssb-autobahnusers" because that comes from the entry's `from`, not
-       from the position. */
-    navigate({ page:"user", user:b.dataset.user, group:null, ns:null });
+    // The tab stays put and only the drill-down changes, so Back returns to the list the reader came
+    // from — #page=users&user=… from Users, #page=groups&user=… from Groups. That is the live model.
+    navigate({ user:b.dataset.user, group:null, ns:null });
   } else if (b.dataset.ns){
-    navigate({ page:"ns", ns:b.dataset.ns, group:null, user:null });
+    navigate({ ns:b.dataset.ns, group:null, user:null });
   }
   window.scrollTo(0, 0);
   render();
 });
 
-/* The find box is global everywhere EXCEPT inside a group, where it scopes to that group's members
-   — which is what the live app does (the bar reads "Find member" there, and the box is not rendered
-   at all on a user page). Typing on a user or namespace page used to do nothing; it now returns to
-   the results, which is a position change and therefore one history entry — not one per keystroke. */
 const qbox = document.getElementById("q");
 qbox.addEventListener("input", e => {
   state.q = e.target.value;
-  if (state.q && (view.page === "user" || view.page === "ns")){
+  // Typing on a detail page that has no list to filter opens the cross-kind search instead of
+  // swallowing the keystroke. That is ONE position change, not one per character.
+  if (state.q && (view.user || view.ns)){
     const carried = state.q;
     navigate({ page:"lookup", group:null, user:null, ns:null });
     state.q = carried;
@@ -679,25 +786,23 @@ qbox.addEventListener("input", e => {
   render();
 });
 qbox.addEventListener("keydown", e => {
-  if (e.key === "Escape"){ e.target.value = ""; state.q = ""; render(); }
+  if (e.key === "Escape"){ state.q = ""; e.target.value = ""; render(); }
 });
 
 /* Restores the position the browser moved to. `event.state` is absent when the hash was edited by
-   hand, so the hash is the fallback — it holds the same position, just without the `from` that
-   labels the in-page button. */
+   hand, so the hash is the fallback — it holds the same position, without the `from` that labels
+   the in-page button. */
 addEventListener("popstate", event => {
   if (event.state && event.state.pos){ applyPosition(event.state.pos); render(); return; }
   const pos = positionFromHash();
   // An in-page anchor is not a position. Setting location.hash is a same-document navigation and
-  // fires popstate AS WELL AS hashchange, so "#main" arrived here first and reset the reader to
-  // the lookup. The guard has to be in BOTH handlers — the live app learned this the hard way.
+  // fires popstate AS WELL AS hashchange, so "#main" arrived here first and reset the reader. The
+  // guard has to be in BOTH handlers — the live app learned this from a regression test.
   if (location.hash && Object.keys(pos).length === 0) return;
   applyPosition(pos); render();
 });
-/* A hash pasted into the URL bar of a tab already showing this page is a same-document navigation:
-   an entry is created and this fires, but nothing reloads, so that entry carries no state. */
 addEventListener("hashchange", () => {
-  if (history.state && history.state.pos) return;   // popstate already handled it, with state
+  if (history.state && history.state.pos) return;     // popstate already handled it, with state
   const pos = positionFromHash();
   if (location.hash && Object.keys(pos).length === 0) return;
   applyPosition(pos);
@@ -707,9 +812,8 @@ addEventListener("hashchange", () => {
   render();
 });
 
-/* Appearance and palette are SHELL state: set on <html>, mirrored into the QUERY STRING (the hash
-   belongs to the position) so a link carries the reader's choice. They are never re-rendered by the
-   page's own repaint. */
+/* Appearance and palette are SHELL state: set on <html>, mirrored into the QUERY STRING — the hash
+   belongs to the position — so a link carries the reader's choice without disturbing where they are. */
 function shellControl(id, attr, param){
   const sel = document.getElementById(id);
   const start = new URLSearchParams(location.search).get(param);
@@ -719,18 +823,25 @@ function shellControl(id, attr, param){
     if (v) document.documentElement.setAttribute(attr, v);
     else document.documentElement.removeAttribute(attr);
     const u = new URL(location); v ? u.searchParams.set(param, v) : u.searchParams.delete(param);
-    // history.state is PRESERVED. Passing null here would wipe the entry's {pos, from}, and the
-    // next Back would land on a stateless entry — the back button silently losing its label and
-    // the reader losing the trail, from nothing more than a change of colour.
+    // history.state is PRESERVED. Passing null would wipe the entry's {pos, from}, and the next Back
+    // would land on a stateless entry — the back button silently losing its label and the reader
+    // losing the trail, from nothing more than a change of colour.
     history.replaceState(history.state, "", u);
   });
 }
 shellControl("theme", "data-theme", "mode");
 shellControl("palette", "data-palette", "theme");
 
-/* Boot: replaceState rather than push — the reader has not navigated yet, and pushing here would
-   put an entry under the first real one, so the first Back would appear to do nothing. It also
-   means history.state is never null, so the popstate handler always has a position. */
+document.querySelectorAll(".filters select").forEach(sel => {
+  if (sel.id) return;
+  sel.addEventListener("change", e => {
+    if (/^(all|synced|unattributed)$/.test(e.target.value)){ state.gstate = e.target.value; render(); }
+  });
+});
+
+/* Boot: replaceState rather than push — the reader has not navigated yet, and pushing here would put
+   an entry under the first real one, so the first Back would appear to do nothing. It also means
+   history.state is never null, so the popstate handler always has a position. */
 applyPosition(positionFromHash());
 history.replaceState({ pos: currentPosition(), from: null }, "",
                      hashFor(currentPosition()) || location.pathname + location.search);
