@@ -15,3 +15,4 @@ artifacts (not shipped pages); the implemented pages live under `local-developme
 | [`cluster-overview-mock.html`](cluster-overview-mock.html) | The Cluster Overview relaid onto the shared design system — cluster tiles that shrink as the fleet grows, paged alerts, and every status carrying its consequence — see issue #157 |
 | [`reports-page-mock.html`](reports-page-mock.html) | The Reports page as used — the catalogue (bolder names, a colour gradient per report) and the per-report form a click opens immediately, in view, as a shareable position — see issue #149 |
 | [`data-requirements.md`](data-requirements.md) | What every mock renders, where each number comes from today, and the ten gaps that stand between the mocks and real pages — see issues #156, #167, #149, #158 |
+| [`inventory-2026-09-17.md`](inventory-2026-09-17.md) | The dated inventory: every finished mock, its owning issue, its review rendering, the decisions it embodies, and what was retired |
