@@ -51,7 +51,7 @@ def test_fetch_identities(client):
     identities = client.fetch_identities()
     assert identities is not None
     assert identities["dana.lee"] == "2026-01-02T00:00:00Z"
-    assert set(identities) == {"dana.lee", "lateef.o", "jane.smith"}
+    assert set(identities) == {"dana.lee", "lateef.o", "jane.smith", "developer"}
 
 
 # ── (e) Namespaces ─────────────────────────────────────────────────────────────────────────

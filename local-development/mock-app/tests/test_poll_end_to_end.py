@@ -28,9 +28,9 @@ def test_poll_once_persists_the_reference_rows(mock_cluster, store):
     assert [g["name"] for g in store.groupsyncs("mock")] == ["ldap-sync"]
     assert {g["name"] for g in store.groups("mock")} == {
         "app-ocp-rbac-demo-cluster-admin", "cluster-readers", "platform-team-cluster-admin",
-        "acme-app-viewers", "empty-team", "legacy-ops"}
+        "acme-app-viewers", "empty-team", "legacy-ops", "app-ocp-rbac-demo-report-auditors"}
     assert [m["user_name"] for m in store.group_members("mock", "app-ocp-rbac-demo-cluster-admin")] == ["kubeadmin"]
-    assert {u["user_name"] for u in store.users("mock")} == {"kubeadmin", "dana.lee", "lateef.o", "jane.smith"}
+    assert {u["user_name"] for u in store.users("mock")} == {"kubeadmin", "dana.lee", "lateef.o", "jane.smith", "developer"}
 
 
 def test_refresh_bindings_persists_the_feeds(mock_cluster, store):
