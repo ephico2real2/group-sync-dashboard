@@ -11,3 +11,4 @@ artifacts (not shipped pages); the implemented pages live under `local-developme
 | [`overview-kpi-mock.html`](overview-kpi-mock.html) | The administrator Overview makeover — system status, access posture, trends, Grafana/Observe links — see issue #157 |
 | [`tab-redesign-mock.html`](tab-redesign-mock.html) | The six tabs redesigned **feature-complete** against the contract — real rows, real caveats, real filters — see issue #153 |
 | [`tab-feature-contract.md`](tab-feature-contract.md) | What a tab redesign may **not** remove — captured from the running dashboard and the render functions — see issue #153 |
+| [`drilldown-mock.html`](drilldown-mock.html) | The drill-down experience — one pattern-matched lookup over users, groups **and** namespaces, then group → member → user → via-group, with the namespace as the third drillable entity — see issues #166 and #167 |
