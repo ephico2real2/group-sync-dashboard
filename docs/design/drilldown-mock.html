@@ -212,6 +212,11 @@
   as a drillable entity (<a href="https://github.com/ephico2real2/group-sync-dashboard/issues/167">#167</a>).
   The tab bar wraps here, which is the fix for
   <a href="https://github.com/ephico2real2/group-sync-dashboard/issues/166">#166</a>.
+  <br><strong>Navigation is the live app's own model</strong>, measured not guessed: the position lives in
+  the hash, the in-page back button calls <span class="mono">history.back()</span> so it and the browser's
+  button walk one stack, Forward retraces, the search text is a filter and never a history entry, and a
+  pasted deep link — which has no <span class="mono">from</span> — rises to the parent instead of leaving
+  the page. Try it: drill in, then use your browser's back and forward buttons.
 </div>
 
 <script>
@@ -303,8 +308,82 @@ const hl = (s, ts) => { let o = esc(s);
     o = o.replace(new RegExp("(" + t.replace(/[.*+?^${}()|[\]\\]/g,"\\$&") + ")", "ig"), "<mark>$1</mark>"); });
   return o; };
 
-let view = {page:"lookup", group:null, user:null, ns:null, from:null};
-const state = {q:""};
+/* ── Navigation: the browser's history IS the trail ───────────────────────────────────
+   Modelled on the live dashboard, whose behaviour was measured rather than assumed:
+   the in-page back button and the browser's back button walk ONE stack, because the
+   in-page button calls history.back(). Two stacks diverge the moment a reader mixes them
+   (browser-back twice, then in-page-back) and the label then describes a position the
+   click does not go to.
+
+   POSITION ONLY in the URL. page/group/user/ns are a location — worth a URL, worth
+   sharing, worth a history entry. The search text is NOT: measured on the live app,
+   typing in the filter and changing the state select left history.length at 9 and the
+   hash untouched. An entry per keystroke would bury the positions Back exists to reach.
+
+   A HASH, not a path: only `/` serves the page, so `/groups/x` would 404 on a refresh. */
+const POSITION_KEYS = ["page", "group", "user", "ns"];
+const view = {page:"lookup", group:null, user:null, ns:null};
+const state = {q:""};   // a filter, not a position
+
+function currentPosition(){
+  const pos = {}; for (const k of POSITION_KEYS) if (view[k]) pos[k] = view[k]; return pos;
+}
+function hashFor(pos){
+  const p = new URLSearchParams();
+  for (const k of POSITION_KEYS) if (pos[k]) p.set(k, pos[k]);
+  const q = p.toString(); return q ? "#" + q : "";
+}
+function positionFromHash(){
+  const p = new URLSearchParams(location.hash.replace(/^#/, "")), pos = {};
+  for (const k of POSITION_KEYS){ const v = p.get(k); if (v) pos[k] = v; }
+  return pos;
+}
+/* Assigned, never merged: an absent key means "not at that position". Merging would strand
+   a drill-down open after Back returned to the list behind it. */
+function applyPosition(pos){
+  view.page = pos.page || "lookup";
+  // The member filter belongs to the group it was typed against, so a change of group clears it.
+  if ((pos.group || null) !== view.group) state.q = "";
+  view.group = pos.group || null;
+  view.user  = pos.user  || null;
+  view.ns    = pos.ns    || null;
+}
+/* Every position change goes through here, so the URL, the history entry and `view` can never
+   disagree. `from` is stored WITH the entry because push time is the only moment we know where
+   the reader came from — the History API exposes no entry but the current one — and storing it
+   is also what keeps the label right after a Forward. */
+function navigate(changes, { replace = false } = {}){
+  const from = currentPosition();
+  applyPosition({ ...from, ...changes });
+  const pos = currentPosition();
+  // An unchanged position REPLACES rather than pushes, or re-selecting where you already are
+  // stacks identical entries and Back oscillates instead of leaving.
+  const unchanged = hashFor(pos) === hashFor(from);
+  const keepFrom = replace || unchanged;
+  const st = { pos, from: keepFrom ? (history.state && history.state.from) || null : from };
+  const url = hashFor(pos) || location.pathname + location.search;
+  if (keepFrom) history.replaceState(st, "", url); else history.pushState(st, "", url);
+}
+function backTarget(){ return (history.state && history.state.from) || null; }
+/* A pasted link straight to a drill-down has no `from`: there is nowhere in THIS page to go
+   back to, and history.back() would leave it. Rise to the parent instead. */
+function goBack(){
+  if (backTarget()){ history.back(); return; }
+  navigate({ page:"lookup", group:null, user:null, ns:null });
+  render();
+}
+/* esc() on every one of these: a position now arrives from the URL, and this string is written
+   into innerHTML. The live app had exactly this hole — `#groupsync=<img src=x onerror=...>`
+   plus one ordinary click — and the fix is verified there: the label renders as
+   `← &lt;img src=x onerror=alert(1)&gt;`, no element, no dialog. */
+function backLabel(){
+  const prev = backTarget();
+  if (!prev) return "\u2190 search";        // goBack() rises to the parent, so name the parent
+  if (prev.user)  return "\u2190 " + esc(prev.user);
+  if (prev.group) return "\u2190 " + esc(prev.group);
+  if (prev.ns)    return "\u2190 " + esc(prev.ns);
+  return "\u2190 search";
+}
 
 function dot(own){ return `<span class="dot ${OWN[own]||"own-a"}" title="${esc(own)}"></span>`; }
 function userCell(n, full){
@@ -366,7 +445,7 @@ function renderGroup(name){
   const ts = terms(state.q);
   const mem = MEMBERS.filter(m => !ts.length || hits(m[0] + " " + m[1], ts));
   return `<div class="card">
-    <button class="back" data-back="lookup">← all groups</button>
+    <button class="back" data-back>${backLabel()}</button>
     <h2>${esc(g.n)}</h2>
     <div class="facts">
       <span class="fact"><span class="lab">Members</span><span class="val">${g.m}</span></span>
@@ -418,9 +497,8 @@ function renderUser(name){
   const u = USERS.find(x => x.n === name) || USERS[0];
   const groups = u.n === "alice.cooper" ? ALICE_GROUPS
     : GROUPS.slice(0, u.g).map(g => [g.n, g.own, "2026-08-02 00:00:33 EDT"]);
-  const backLabel = view.from ? "← " + view.from : "← all users";
   return `<div class="card">
-    <button class="back" data-back="${view.from ? "group:" + view.from : "lookup"}">${esc(backLabel)}</button>
+    <button class="back" data-back>${backLabel()}</button>
     <h2>${esc(u.n)} <span class="cnt">· ${esc(u.f)}</span></h2>
     <div class="facts">
       <span class="fact"><span class="lab">Groups</span><span class="val">${groups.length}</span></span>
@@ -486,7 +564,7 @@ function renderNs(name){
   const n = NS.find(x => x.n === name) || NS[0];
   const sibs = NS.filter(x => x.m && x.m === n.m && x.n !== n.n);
   return `<div class="card" style="--sec:var(--good)">
-    <button class="back" data-back="lookup">← all namespaces</button>
+    <button class="back" data-back>${backLabel()}</button>
     <h2>${esc(n.n)} <span class="new">new</span></h2>
     <div class="facts">
       <span class="fact"><span class="lab">Mnemonic</span><span class="val sm">${esc(n.m||"— none —")}</span></span>
@@ -561,42 +639,77 @@ function render(){
 document.addEventListener("click", e => {
   const b = e.target.closest("[data-group],[data-user],[data-ns],[data-back],[data-widen]");
   if (!b) return;
-  if (b.dataset.widen){
-    /* Widen, do not reset: the reader has already typed the thing they are looking for. */
-    view = {page:"lookup", from:null};
+  if (b.dataset.widen !== undefined){
+    /* Widen the scope, do not reset it: the reader has already typed what they are looking for.
+       applyPosition() clears the filter on a group change — correct, because the member filter
+       belongs to its group — so the text is carried across this one transition deliberately. */
+    const carried = state.q;
+    navigate({ page:"lookup", group:null, user:null, ns:null });
+    state.q = carried; document.getElementById("q").value = carried;
   } else if (b.dataset.back !== undefined){
-    const [kind, arg] = b.dataset.back.split(":");
-    if (kind === "group"){ view = {page:"group", group:arg, from:null}; }
-    else { view = {page:"lookup", from:null}; state.q = ""; document.getElementById("q").value = ""; }
+    goBack();
+    return;                       // goBack() renders, or history.back() will through popstate
   } else if (b.dataset.group){
-    view = {page:"group", group:b.dataset.group, from:null}; state.q = "";
-    document.getElementById("q").value = "";
+    navigate({ page:"group", group:b.dataset.group, user:null, ns:null });
   } else if (b.dataset.user){
-    /* the breadcrumb names where you came FROM, which is why it reads "← app-ssb-autobahnusers"
-       on the live app rather than a generic "Back". */
-    view = {page:"user", user:b.dataset.user, from: view.page === "group" ? view.group : null};
+    /* `group: null` deliberately — a user is a user regardless of the route taken to them, and
+       this is what the live app does (the hash on alice.cooper carries no group). The breadcrumb
+       still reads "← app-ssb-autobahnusers" because that comes from the entry's `from`, not
+       from the position. */
+    navigate({ page:"user", user:b.dataset.user, group:null, ns:null });
   } else if (b.dataset.ns){
-    view = {page:"ns", ns:b.dataset.ns, from:null};
+    navigate({ page:"ns", ns:b.dataset.ns, group:null, user:null });
   }
   window.scrollTo(0, 0);
   render();
 });
 
 /* The find box is global everywhere EXCEPT inside a group, where it scopes to that group's members
-   — which is what the live app does (the bar reads "Find member" there). On a user or namespace page
-   the live app hides the box entirely; typing there used to do nothing at all, so typing now returns
-   to the results instead of silently swallowing the keystroke. */
-document.getElementById("q").addEventListener("input", e => {
+   — which is what the live app does (the bar reads "Find member" there, and the box is not rendered
+   at all on a user page). Typing on a user or namespace page used to do nothing; it now returns to
+   the results, which is a position change and therefore one history entry — not one per keystroke. */
+const qbox = document.getElementById("q");
+qbox.addEventListener("input", e => {
   state.q = e.target.value;
-  if (state.q && (view.page === "user" || view.page === "ns")) view = {page:"lookup", from:null};
+  if (state.q && (view.page === "user" || view.page === "ns")){
+    const carried = state.q;
+    navigate({ page:"lookup", group:null, user:null, ns:null });
+    state.q = carried;
+  }
   render();
 });
-document.getElementById("q").addEventListener("keydown", e => {
+qbox.addEventListener("keydown", e => {
   if (e.key === "Escape"){ e.target.value = ""; state.q = ""; render(); }
 });
 
-/* Appearance and palette are SHELL state: set on <html>, mirrored into the URL so a link carries
-   the reader's choice, and read back on load. They are never re-rendered by the page's own repaint. */
+/* Restores the position the browser moved to. `event.state` is absent when the hash was edited by
+   hand, so the hash is the fallback — it holds the same position, just without the `from` that
+   labels the in-page button. */
+addEventListener("popstate", event => {
+  if (event.state && event.state.pos){ applyPosition(event.state.pos); render(); return; }
+  const pos = positionFromHash();
+  // An in-page anchor is not a position. Setting location.hash is a same-document navigation and
+  // fires popstate AS WELL AS hashchange, so "#main" arrived here first and reset the reader to
+  // the lookup. The guard has to be in BOTH handlers — the live app learned this the hard way.
+  if (location.hash && Object.keys(pos).length === 0) return;
+  applyPosition(pos); render();
+});
+/* A hash pasted into the URL bar of a tab already showing this page is a same-document navigation:
+   an entry is created and this fires, but nothing reloads, so that entry carries no state. */
+addEventListener("hashchange", () => {
+  if (history.state && history.state.pos) return;   // popstate already handled it, with state
+  const pos = positionFromHash();
+  if (location.hash && Object.keys(pos).length === 0) return;
+  applyPosition(pos);
+  // `from: null` is the truth here, and it is what makes goBack() rise to the parent instead of
+  // calling history.back() into whatever preceded this page.
+  history.replaceState({ pos: currentPosition(), from: null }, "", location.hash);
+  render();
+});
+
+/* Appearance and palette are SHELL state: set on <html>, mirrored into the QUERY STRING (the hash
+   belongs to the position) so a link carries the reader's choice. They are never re-rendered by the
+   page's own repaint. */
 function shellControl(id, attr, param){
   const sel = document.getElementById(id);
   const start = new URLSearchParams(location.search).get(param);
@@ -606,10 +719,20 @@ function shellControl(id, attr, param){
     if (v) document.documentElement.setAttribute(attr, v);
     else document.documentElement.removeAttribute(attr);
     const u = new URL(location); v ? u.searchParams.set(param, v) : u.searchParams.delete(param);
-    history.replaceState(null, "", u);
+    // history.state is PRESERVED. Passing null here would wipe the entry's {pos, from}, and the
+    // next Back would land on a stateless entry — the back button silently losing its label and
+    // the reader losing the trail, from nothing more than a change of colour.
+    history.replaceState(history.state, "", u);
   });
 }
 shellControl("theme", "data-theme", "mode");
 shellControl("palette", "data-palette", "theme");
+
+/* Boot: replaceState rather than push — the reader has not navigated yet, and pushing here would
+   put an entry under the first real one, so the first Back would appear to do nothing. It also
+   means history.state is never null, so the popstate handler always has a position. */
+applyPosition(positionFromHash());
+history.replaceState({ pos: currentPosition(), from: null }, "",
+                     hashFor(currentPosition()) || location.pathname + location.search);
 render();
 </script>
