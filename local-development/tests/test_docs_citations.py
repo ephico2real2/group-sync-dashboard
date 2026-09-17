@@ -193,6 +193,9 @@ REVIEW_ARTIFACTS = (
     # PR #145 (#97 priorityClassName) review record: Codex generated/verified, Fable-high reviewed;
     # cites the checksum line and template guards at review time, point-in-time by construction.
     "REVIEW_priority_class.md",
+    # PR #148 (#147 system: exclusion + Clear) review record: Grok generated, Codex + Grok reviewed;
+    # quotes the F1a fail-before observed set and the reviewers' probe output, point-in-time.
+    "REVIEW_147.md",
 )
 
 

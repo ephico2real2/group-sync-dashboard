@@ -98,6 +98,9 @@
   --tab-logins: #597b0a;
   --tab-usage: #c2410c;
   --tab-reports: #5b6470;      /* documents; 5.69:1 on --page (measured) */
+  /* Report categories (#147 reports table): a chip label + a per-row rail/wash (--rk). NOT --tab-*
+     (those are the active-tab label colours the contrast test audits); mid-tone on --surface-1. */
+  --k-access: #4f6b57; --k-rbac: #8a5a3c; --k-identity: #4a5c7a; --k-activity: #7a5170; --k-compliance: #6a6440;
   --accent: var(--tab-overview);
 
   /* TYPEFACES, self-hosted from gsd/static/vendor (see local-development/vendor-assets.sh).
@@ -179,6 +182,7 @@
     --tab-logins: #678e0b;
     --tab-usage: #d9490d;
     --tab-reports: #98a2b3;      /* 7.55:1 on the dark --page (measured) */
+    --k-access: #7fae8b; --k-rbac: #c8946a; --k-identity: #8ea3c8; --k-activity: #c090b4; --k-compliance: #b3aa72;
   }
 }
 :root[data-theme="dark"] {
@@ -217,6 +221,7 @@
   --tab-logins: #678e0b;
   --tab-usage: #d9490d;
   --tab-reports: #98a2b3;      /* 7.55:1 on the dark --page (measured) */
+  --k-access: #7fae8b; --k-rbac: #c8946a; --k-identity: #8ea3c8; --k-activity: #c090b4; --k-compliance: #b3aa72;
 }
 
 @font-face {
@@ -871,10 +876,53 @@ td.num.warn { color: var(--warn, #b45309); font-weight: 600; }
 
 /* Reports tab (docs/specs/SPEC_C3_reporting_microservice.md). Tokens only, as tests/test_accessibility.py
    demands; sizes through --text-* (tests/test_type_scale.py). */
-.switch-list { list-style: none; margin: 8px 0; padding: 0; max-height: 360px; overflow: auto; }
-.report-pick { display: block; width: 100%; text-align: left; padding: 6px 8px; border-radius: 6px; }
-.report-pick.current { background: var(--surface-1); outline: 1px solid var(--accent); }
-.report-pick[disabled] { opacity: .55; cursor: not-allowed; }
+/* Reports directory table (#147). Each row carries its category colour (--rk); the rows read as a
+   gradient down the list, the report name is bold mono, and clicking a row scrolls #report-form into
+   view (the "clean way"). Category colours are tokens (no literal hex, per test_accessibility.py). */
+.report-table-wrap { overflow-x: auto; margin: 8px 0 2px; }
+table.report-table { width: 100%; border-collapse: collapse; }
+.report-table thead th { font-size: var(--text-xs); font-weight: 600; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--text-muted); text-align: left; padding: 9px 14px;
+  background: var(--zebra); border-bottom: 1px solid var(--border); }
+.report-table th.rp-kcol { width: 108px; }
+tr.report-pick { --rk: var(--accent); border-bottom: 1px solid var(--border); cursor: pointer;
+  transition: background .14s ease;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--rk) 7%, transparent), transparent 44%); }
+tr.report-pick.r-access { --rk: var(--k-access); }
+tr.report-pick.r-rbac { --rk: var(--k-rbac); }
+tr.report-pick.r-identity { --rk: var(--k-identity); }
+tr.report-pick.r-activity { --rk: var(--k-activity); }
+tr.report-pick.r-compliance { --rk: var(--k-compliance); }
+tr.report-pick:hover { background: linear-gradient(90deg, color-mix(in srgb, var(--rk) 15%, transparent), transparent 60%); }
+tr.report-pick.current { background: linear-gradient(90deg, color-mix(in srgb, var(--rk) 20%, transparent), transparent 66%); }
+tr.report-pick:last-child { border-bottom: 0; }
+.report-table td { padding: 12px 14px; vertical-align: top; position: relative; }
+.report-table td.rp-kind { width: 108px; }
+tr.report-pick td:first-child::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+  background: linear-gradient(180deg, var(--rk), color-mix(in srgb, var(--rk) 32%, transparent)); transition: width .14s ease; }
+tr.report-pick:hover td:first-child::before, tr.report-pick.current td:first-child::before { width: 5px; }
+.rp-chip { display: inline-block; font-family: var(--font-mono); font-size: var(--text-micro); font-weight: 500;
+  letter-spacing: .02em; padding: 2px 8px; border-radius: 5px; border: 1px solid currentColor; white-space: nowrap; }
+.rp-chip.k-access { color: var(--k-access); }
+.rp-chip.k-rbac { color: var(--k-rbac); }
+.rp-chip.k-identity { color: var(--k-identity); }
+.rp-chip.k-activity { color: var(--k-activity); }
+.rp-chip.k-compliance { color: var(--k-compliance); }
+.report-table td.rp-name { width: 232px; }
+.rp-title { font-family: var(--font-mono); font-weight: 700; font-size: var(--text-md); letter-spacing: -.015em;
+  color: var(--text-primary); white-space: nowrap; }
+tr.report-pick.current .rp-title { color: var(--rk); }
+.rp-desc { color: var(--text-secondary); font-size: var(--text-md); max-width: 62ch; }
+.rp-off { color: var(--text-muted); font-style: italic; }
+tr.report-pick[aria-disabled="true"] { opacity: .5; cursor: not-allowed;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--rk) 7%, transparent), transparent 44%); }
+tr.report-pick[aria-disabled="true"] td:first-child::before { width: 3px; }
+tr.report-pick:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+@media (max-width: 680px) {
+  .report-table th.rp-kcol, .report-table td.rp-kind { display: none; }
+  .report-table td.rp-name { width: auto; } .rp-title { white-space: normal; }
+  .rp-desc { max-width: none; }
+}
 .report-fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px 16px; margin-top: 8px; }
 .report-field { display: flex; flex-direction: column; gap: 2px; }
 .report-field label { font-size: var(--text-sm); color: var(--text-muted); }
