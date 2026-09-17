@@ -1,0 +1,218 @@
+<title>Tab Blueprint</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
+<style>
+  :root{
+    --page:#f9f9f7; --surface:#fcfcfb; --surface-2:#f2f2ee;
+    --ink:#12120f; --muted:#5f5f58; --faint:#8a8a81;
+    --border:rgba(18,18,15,.13); --border-soft:rgba(18,18,15,.07);
+    --accent:#4f5a67; --accent-ink:#fff;
+    --good:#2f7d52; --warn:#9a6b1f; --crit:#a3382f;
+    --ui:"Space Grotesk",-apple-system,BlinkMacSystemFont,sans-serif;
+    --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+    --page:#0f1011; --surface:#17181a; --surface-2:#1d1f22;
+    --ink:#f2f2f0; --muted:#a5a59d; --faint:#7a7a72;
+    --border:rgba(255,255,255,.15); --border-soft:rgba(255,255,255,.07);
+    --accent:#8b98a8; --accent-ink:#12120f;
+    --good:#63c68d; --warn:#d9a441; --crit:#e2695c;
+  }}
+  :root[data-theme="dark"]{
+    --page:#0f1011; --surface:#17181a; --surface-2:#1d1f22;
+    --ink:#f2f2f0; --muted:#a5a59d; --faint:#7a7a72;
+    --border:rgba(255,255,255,.15); --border-soft:rgba(255,255,255,.07);
+    --accent:#8b98a8; --accent-ink:#12120f;
+    --good:#63c68d; --warn:#d9a441; --crit:#e2695c;
+  }
+  :root,:root[data-theme]{
+    --good-wash:color-mix(in srgb,var(--good) 14%,transparent);
+    --warn-wash:color-mix(in srgb,var(--warn) 16%,transparent);
+    --crit-wash:color-mix(in srgb,var(--crit) 13%,transparent);
+    --accent-wash:color-mix(in srgb,var(--accent) 12%,transparent);
+  }
+  :root[data-palette="deuter"],:root[data-palette="protan"]{--good:#0072B2;--warn:#E69F00;--crit:#D55E00;--accent:#005f8a}
+  :root[data-palette="trit"]{--good:#009E73;--warn:#CC79A7;--crit:#D55E00;--accent:#4a4a52}
+  :root[data-palette="contrast"]{--good:#00563f;--warn:#7a4a00;--crit:#8a0000;--accent:#1a1a1a;--faint:#4a4a44}
+  *{box-sizing:border-box}
+  body{background:var(--page);color:var(--ink);font-family:var(--ui);font-size:14px;line-height:1.5;
+    -webkit-font-smoothing:antialiased;padding:22px 20px 60px}
+  .wrap{max-width:1060px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
+  .note{font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--faint);
+    display:flex;align-items:center;gap:8px;margin:0 2px}
+  .note::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--accent)}
+
+  /* ── THE SHELL: theme lives here, every tab inherits it ── */
+  .shell{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;min-width:0}
+  .ctl{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:12px;color:var(--muted);min-width:0}
+  .ctl select{font-family:var(--mono);font-size:11.5px;padding:5px 9px;border-radius:8px;
+    border:1px solid var(--border);background:var(--surface);color:var(--ink);max-width:100%}
+  .tabs{display:flex;flex-wrap:wrap;gap:4px;background:var(--surface);border:1px solid var(--border);
+    border-radius:10px;padding:4px}
+  .tabs button{font-family:var(--ui);font-size:12.5px;font-weight:500;padding:7px 13px;border:0;border-radius:7px;
+    background:transparent;color:var(--muted);cursor:pointer;white-space:nowrap}
+  .tabs button.on{background:var(--accent);color:var(--accent-ink);font-weight:600}
+
+  /* ── the answer, then the detail — same as the locked pages ── */
+  .answer{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px 22px}
+  .answer h1{margin:0;font-size:23px;font-weight:700;letter-spacing:-.018em;line-height:1.2}
+  .answer .sub{margin-top:7px;font-size:13px;color:var(--muted)} .answer .sub b{color:var(--ink);font-weight:600}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:1px;background:var(--border-soft);
+    border:1px solid var(--border);border-radius:12px;overflow:hidden}
+  .kpi{background:var(--surface);padding:14px 16px}
+  .kpi .l{font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--faint);font-weight:600}
+  .kpi .v{font-family:var(--mono);font-size:26px;font-weight:600;margin-top:5px;font-variant-numeric:tabular-nums}
+  .kpi .n{font-size:11px;color:var(--muted);margin-top:2px}
+  .kpi.w .v{color:var(--warn)} .kpi.g .v{color:var(--good)}
+
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden}
+  .card>h2{margin:0;padding:12px 18px;font-size:11.5px;letter-spacing:.05em;text-transform:uppercase;
+    color:var(--muted);font-weight:600;border-bottom:1px solid var(--border-soft);
+    display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+  .card>h2 .c{font-family:var(--mono);color:var(--faint);letter-spacing:0;text-transform:none;font-weight:400}
+  .scroll-x{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  table{width:100%;border-collapse:collapse;min-width:560px}
+  th{font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--faint);font-weight:600;
+    text-align:left;padding:9px 18px;border-bottom:1px solid var(--border-soft);white-space:nowrap}
+  td{padding:11px 18px;border-bottom:1px solid var(--border-soft);font-size:13px}
+  tr:last-child td{border-bottom:0}
+  tbody tr:hover{background:var(--accent-wash);cursor:pointer}
+  td.n{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:right}
+  .m{font-family:var(--mono);font-size:12.5px}
+  .chip{display:inline-block;font-family:var(--mono);font-size:10.5px;padding:2px 8px;border-radius:999px;
+    border:1px solid var(--border);background:var(--surface-2);color:var(--muted);white-space:nowrap}
+  .chip.g{color:var(--good);background:var(--good-wash);border-color:color-mix(in srgb,var(--good) 38%,transparent)}
+  .chip.w{color:var(--warn);background:var(--warn-wash);border-color:color-mix(in srgb,var(--warn) 38%,transparent)}
+  .chip.c{color:var(--crit);background:var(--crit-wash);border-color:color-mix(in srgb,var(--crit) 38%,transparent)}
+  .foot{font-size:11.5px;color:var(--faint);padding:12px 18px;background:var(--surface-2);border-top:1px solid var(--border-soft)}
+  .bar{height:6px;border-radius:999px;background:var(--surface-2);overflow:hidden;display:block;margin-top:6px}
+  .bar i{display:block;height:100%;background:var(--good);border-radius:999px}
+  @media(max-width:640px){.answer h1{font-size:19px}}
+</style>
+
+<div class="wrap">
+  <div class="note">Blueprint · the six tabs without a design · real CRC data · theme lives in the shell</div>
+
+  <div class="shell">
+    <span class="tabs" id="tabs"></span>
+    <span class="ctl">
+      Cluster <select><option>crc-local</option><option>mock</option><option>prod-east</option></select>
+      Appearance <select id="appearance"><option value="">Auto</option><option value="light">Light</option><option value="dark">Dark</option></select>
+      Colours <select id="palette">
+        <option value="">Default</option><option value="deuter">Deuteranopia-safe</option>
+        <option value="protan">Protanopia-safe</option><option value="trit">Tritanopia-safe</option>
+        <option value="contrast">High contrast</option></select>
+    </span>
+  </div>
+
+  <div id="view" style="display:flex;flex-direction:column;gap:14px"></div>
+</div>
+
+<script>
+const esc = s => String(s).replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+const kpi = (l, v, n, cls="") => `<div class="kpi ${cls}"><div class="l">${l}</div><div class="v">${v}</div><div class="n">${n}</div></div>`;
+const answer = (h, s) => `<section class="answer"><h1>${h}</h1><div class="sub">${s}</div></section>`;
+const table = (title, count, head, rows, foot) =>
+  `<section class="card"><h2>${title}<span class="c">${count}</span></h2><div class="scroll-x"><table>
+   <thead><tr>${head.map(h=>`<th${h.n?' style="text-align:right"':''}>${h.t}</th>`).join("")}</tr></thead>
+   <tbody>${rows}</tbody></table></div>${foot?`<div class="foot">${foot}</div>`:""}</section>`;
+
+const TABS = {
+  groups: ["Groups", () =>
+    answer("67 groups synced on crc-local",
+      "<b>1</b> is empty and <b>2</b> have no sync provider — everything else is attributed and current.") +
+    `<div class="kpis">${kpi("Synced","67","from 3 GroupSync CRs")}${kpi("Empty","1","no members","w")}${kpi("Unattributed","2","no provider","w")}${kpi("Largest","9","app-ssb-autobahnusers")}</div>` +
+    table("Groups", "67 · showing 6", [{t:"Group"},{t:"Members",n:1},{t:"Provider"},{t:"State"}],
+      [["app-ssb-autobahnusers",9,"autobahnusers-onboarding-groupsync",""],
+       ["app-ocp-rbac-demo-ns-developer",3,"app-ocp-rbac-group-groupsync",""],
+       ["app-ocp-rbac-groupsync-ns-auditor",3,"app-ocp-rbac-group-groupsync",""],
+       ["app-ocp-rbac-alpha-cluster-developer",2,"app-ocp-rbac-group-groupsync",""],
+       ["app-ocp-rbac-alpha-database-admin",2,"app-ocp-rbac-group-groupsync",""],
+       ["app-ocp-rbac-abcd-ns-superuser",0,"—","empty"]].map(([n,m,p,s])=>
+        `<tr><td class="m">${esc(n)}</td><td class="n">${m}</td><td><span class="chip">${esc(p)}</span></td>
+         <td>${s==="empty"?'<span class="chip w">empty</span>':'<span class="chip g">ok</span>'}</td></tr>`).join(""),
+      "A group with no members still holds its bindings — it grants nothing until it syncs.")],
+
+  users: ["Users", () =>
+    answer("9 people have an account on crc-local",
+      "All from <b>ldap-local</b>. <b>bob.wilson</b> is in <b>28</b> groups — four times the median.") +
+    `<div class="kpis">${kpi("Accounts","9","User objects")}${kpi("In a group","9","all attributed","g")}${kpi("Providers","1","ldap-local")}${kpi("Most groups","28","bob.wilson","w")}</div>` +
+    table("Users", "9 · showing 6", [{t:"User"},{t:"Groups",n:1},{t:"Provider"},{t:"Spread"}],
+      [["bob.wilson",28],["jane.smith",18],["john.doe",14],["alice.cooper",7],["dana.lee",6],["jeff",4]]
+        .map(([u,g])=>`<tr><td class="m">${esc(u)}</td><td class="n">${g}</td>
+         <td><span class="chip">ldap-local</span></td>
+         <td><span class="bar"><i style="width:${Math.round(g/28*100)}%"></i></span></td></tr>`).join(""),
+      "Group count is reach, not privilege — a user in 28 groups may still hold no binding.")],
+
+  bindings: ["Access granted", () =>
+    answer("11 bindings need a look on crc-local",
+      "<b>6</b> unresolved and <b>5</b> unmanaged out of <b>202</b>. No dangling bindings.") +
+    `<div class="kpis">${kpi("To review","11","unresolved + unmanaged","w")}${kpi("Healthy","34","managed + resolved","g")}${kpi("Dangling","0","none","g")}${kpi("Built-in","157","platform, not granted")}</div>` +
+    table("Findings first", "11", [{t:"Binding"},{t:"Namespace"},{t:"Role"},{t:"Finding"}],
+      [["bdp-oud-group-rbac-…","oud-poc-trino","trino-job-submitter","unresolved"],
+       ["app-ocp-rbac-abcd-…","(cluster)","view","unresolved"],
+       ["hand-made-binding-1","demo-prod","edit","unmanaged"],
+       ["hand-made-binding-2","demo-qa","admin","unmanaged"]].map(([b,n,r,f])=>
+        `<tr><td class="m">${esc(b)}</td><td class="m">${esc(n)}</td><td><span class="chip">${esc(r)}</span></td>
+         <td><span class="chip ${f==="unmanaged"?"w":"c"}">${f}</span></td></tr>`).join(""),
+      "Unresolved = the group does not exist. Unmanaged = it exists but no GroupSync owns it.")],
+
+  policy: ["RBAC policy", () =>
+    answer("The policy operator is healthy",
+      "All <b>6</b> policy configs reconciled. <b>5</b> hand-made bindings bypass it — those are the exception list.") +
+    `<div class="kpis">${kpi("Configs","6","4 namespace · 2 group","g")}${kpi("Failing","0","all reconciled","g")}${kpi("Bypassing","5","unmanaged grants","w")}${kpi("Coverage","97%","of group bindings")}</div>` +
+    table("Policy configuration", "6", [{t:"Kind"},{t:"Name"},{t:"State"}],
+      [["NamespaceConfig","baseline-nonprod-rbac"],["NamespaceConfig","baseline-prod-rbac"],
+       ["NamespaceConfig","bdp-oud-group-rbac"],["NamespaceConfig","trino-oud-group-rbac"],
+       ["GroupConfig","baseline-cluster-rbac"],["GroupConfig","custom-cluster-rbac"]].map(([k,n])=>
+        `<tr><td><span class="chip">${k}</span></td><td class="m">${esc(n)}</td><td><span class="chip g">ok</span></td></tr>`).join(""),
+      "This tab shares its binding sections with Access granted — one component, two views.")],
+
+  logins: ["Logins", () =>
+    answer("541 sign-in attempts · 91% succeeded",
+      "<b>31</b> failed, <b>11</b> bad password, <b>6</b> rejected by the login gate.") +
+    `<div class="kpis">${kpi("Attempts","541","captured")}${kpi("Succeeded","493","91.1%","g")}${kpi("Failed","31","auth errors","w")}${kpi("Rejected","6","outside the gate","w")}</div>` +
+    table("By provider", "3", [{t:"Provider"},{t:"Attempts",n:1},{t:"Share"}],
+      [["developer",342],["ldap-local",188],["(none recorded)",11]].map(([p,n])=>
+        `<tr><td class="m">${esc(p)}</td><td class="n">${n}</td>
+         <td><span class="bar"><i style="width:${Math.round(n/342*100)}%"></i></span></td></tr>`).join(""),
+      "Capture is on. A rejected attempt is a real person who could authenticate but is not in the gate.")],
+
+  usage: ["Usage", () =>
+    answer("7 people used this dashboard",
+      "<b>1,817</b> interactions across <b>41</b> user-days, from <b>2026-08-02</b>.") +
+    `<div class="kpis">${kpi("People","7","distinct users")}${kpi("Interactions","1,817","whole set, not a page")}${kpi("User-days","41","rows")}${kpi("Since","08-02","retention cut")}</div>` +
+    `<section class="card"><h2>Why this is here<span class="c">one paragraph, not five</span></h2>
+      <div class="foot" style="background:transparent;border:0;padding:16px 18px;font-size:13px;color:var(--muted)">
+        This page records who opened the dashboard and how often — it is <b>not</b> cluster access.
+        Counts are whole-set scalars, never derived from the visible page: the same view once reported
+        167 days and 5,000 interactions when the truth was 364 and 10,920.
+      </div></section>`],
+};
+
+const ORDER = ["groups","users","bindings","policy","logins","usage"];
+const tabsEl = document.getElementById("tabs"), viewEl = document.getElementById("view");
+tabsEl.innerHTML = ORDER.map((k,i)=>`<button data-k="${k}"${i===0?' class="on"':''}>${TABS[k][0]}</button>`).join("");
+function show(k){
+  tabsEl.querySelectorAll("button").forEach(b=>b.classList.toggle("on", b.dataset.k===k));
+  viewEl.innerHTML = TABS[k][1]();
+}
+tabsEl.addEventListener("click", e => { const b=e.target.closest("button"); if(b) show(b.dataset.k); });
+show("groups");
+
+// Global appearance + palette — set on <html>, so every tab inherits with no per-tab code.
+[["appearance","data-theme","gsd-mode","mode"],["palette","data-palette","gsd-palette","theme"]]
+ .forEach(([id,attr,key,param])=>{
+  const sel=document.getElementById(id); if(!sel) return;
+  const fromUrl=new URLSearchParams(location.search).get(param)||"";
+  let saved=""; try{saved=localStorage.getItem(key)||"";}catch(e){}
+  const start=fromUrl||saved;
+  if(start){document.documentElement.setAttribute(attr,start); sel.value=start;}
+  sel.addEventListener("change",()=>{
+    const v=sel.value;
+    v?document.documentElement.setAttribute(attr,v):document.documentElement.removeAttribute(attr);
+    try{v?localStorage.setItem(key,v):localStorage.removeItem(key);}catch(e){}
+    const u=new URL(location.href); v?u.searchParams.set(param,v):u.searchParams.delete(param);
+    history.replaceState(null,"",u);
+  });
+});
+</script>
