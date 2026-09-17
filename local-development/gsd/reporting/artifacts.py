@@ -123,8 +123,18 @@ class ArtifactStore:
         return len(data)
 
     def read(self, run_id: str, fmt: str) -> bytes | None:
-        p = self._dir(run_id) / f"report.{fmt}"
-        return p.read_bytes() if p.is_file() else None
+        """The artefact bytes, or None when it is not there — including when prune removed the run's
+        directory between a check and the read. The reader deliberately does NOT take the store lock
+        (a download must not block rendering), so any look-before-you-leap check is already stale by
+        the time the bytes are read; asking forgiveness keeps a racing download a 404 instead of an
+        unhandled FileNotFoundError that FastAPI turns into a 500 (#155). Two-tier retention made this
+        likely: manual runs now live 3 days, not 90, so prune deletes far more often. The catch stays
+        NARROW on purpose — a permissions or disk failure must still surface to the operator, never be
+        laundered into 'this run has no artefact'."""
+        try:
+            return (self._dir(run_id) / f"report.{fmt}").read_bytes()
+        except (FileNotFoundError, NotADirectoryError):
+            return None
 
     def get(self, run_id: str) -> Run | None:
         with self._lock:

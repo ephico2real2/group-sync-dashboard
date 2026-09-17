@@ -347,6 +347,41 @@ class TestTheArtifactStore:
         assert sum(1 for r in kept if r.schedule == "biweekly-namespace-access") == 2, "inherits keep=2"
         assert pruned == 1
 
+    def _done_run(self, store, run_id="20260906T120000.000000Z-0001"):
+        run = Run(id=run_id, report="groups", cluster=CLUSTER, params={}, formats=["html"],
+                  generated_by="root", generated_by_note="n", schedule=None,
+                  requested_at="2026-09-06T12:00:00Z", status="done")
+        store.create(run)
+        store.write(run.id, "html", b"<p>evidence</p>")
+        return run
+
+    def test_a_download_racing_prune_reads_none_instead_of_raising(self, tmp_path, monkeypatch):
+        """#155: prune removes a run's files between the reader's check and its read — the reader holds
+        no lock, so the check's answer is already stale. `read` must return None (the endpoint's 404)
+        rather than raising FileNotFoundError out of get_artifact, which FastAPI turns into a 500."""
+        store = ArtifactStore(str(tmp_path))
+        run = self._done_run(store)
+        assert store.read(run.id, "html") == b"<p>evidence</p>"
+
+        # The race: the artefact is gone, but a check would still have answered "present".
+        (store._dir(run.id) / "report.html").unlink()
+        monkeypatch.setattr(Path, "is_file", lambda self: True)   # the stale look-before-you-leap answer
+        assert store.read(run.id, "html") is None, "a download racing prune answers 404, not a 500"
+
+    def test_a_genuine_io_error_is_not_laundered_into_a_missing_artefact(self, tmp_path, monkeypatch):
+        """The catch in `read` is deliberately narrow. A permissions or disk failure must still surface
+        (a 500 the operator can see), NOT be reported as 'this run has no artefact' (404) — so the
+        narrow catch cannot be widened to `except OSError` later without failing this."""
+        store = ArtifactStore(str(tmp_path))
+        run = self._done_run(store)
+
+        def boom(self):
+            raise PermissionError("EACCES: the volume rejected the read")
+
+        monkeypatch.setattr(Path, "read_bytes", boom)
+        with pytest.raises(PermissionError):
+            store.read(run.id, "html")
+
     def test_usage_does_not_advance_past_an_in_flight_older_run(self, tmp_path):
         """Cursor, review C3: a QueueFull failure has the newest id and finishes at once; publishing it
         while older runs are in flight moved the dashboard's MAX(id) watermark past them for ever."""
