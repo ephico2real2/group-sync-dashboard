@@ -7,22 +7,41 @@ from, and who generated it. A report is produced two ways: **on demand** from th
 
 ## The standard report names
 
-These are the canonical names. A schedule's `report:` and the Reports-tab picker use them verbatim; a
-finished run records the one it ran, and a scheduled run is tagged `generated_by = schedule:<name>`.
+Each report carries **two names**: the **report name** (kebab-case) — used by a schedule's `report:`,
+the Reports-tab picker, and the `generated_by = schedule:<name>` tag — and the **config key**
+(camelCase) — used only in `reporting.reports.<key>.enabled` to turn the report on or off.
 
-| Name | Report | What it shows |
-|---|---|---|
-| `namespace-access` | Namespace access report | Per namespace: every group binding classified with who it reaches, every direct user grant, findings first. |
-| `access-matrix` | Access matrix | Every subject (group or direct user), the namespaces it is bound in and the role granted — the "who has access where" sheet, by role name. |
-| `privileged-access` | Privileged access review | Every subject holding cluster-admin at any scope, or admin/edit cluster-wide, with the people behind each group. |
-| `binding-findings` | RBAC binding findings | Dangling, unresolved and unmanaged group bindings and direct user grants; `system:*` virtual groups are omitted (a platform built-in, not a person's grant). |
-| `groups` | Groups and membership changes | Every synced group: provider, member count, last sync, bindings, cliff silence; the empty and unattributed lists; joins and leaves in the window. |
-| `users` | Users | Every User object (a login), its identity providers, group count and direct grants; manual accounts; synced members who have never logged in. |
-| `login-activity` | Login activity | Attempts by outcome and provider, per-user successes and failures, and rejected attempts resolved against the login gate. |
-| `dormant-access` | Dormant and unusable access | Members with access who have never logged in, members outside the login gate, gate members with no access, and — with login capture — nobody-in-N-days. |
-| `groupsync-health` | GroupSync and policy-operator health | Every GroupSync CR with its computed state, schedule and last sync; reconcile errors (current vs stale); syncs in the window; NamespaceConfig/GroupConfig health. |
-| `compliance-snapshot` | Compliance snapshot | One page of KPIs — groups, users, bindings, findings, privileged grants, dormant access, sync health — and the coverage statement that says what this evidence can attest. |
-| `access-certification` | Access certification pack | Per group (with roster) and per directly-bound user: every binding held, with Approve / Revoke / Comment columns and a sign-off block for the named reviewer. |
+| Report name (`report:`) | Config key (`reporting.reports.<key>`) | Report | What it shows |
+|---|---|---|---|
+| `namespace-access` | `namespaceAccess` | Namespace access report | Per namespace: every group binding classified with who it reaches, every direct user grant, findings first. |
+| `access-matrix` | `accessMatrix` | Access matrix | Every subject (group or direct user), the namespaces it is bound in and the role granted — the "who has access where" sheet, by role name. |
+| `privileged-access` | `privilegedAccess` | Privileged access review | Every subject holding cluster-admin at any scope, or admin/edit cluster-wide, with the people behind each group. |
+| `binding-findings` | `bindingFindings` | RBAC binding findings | Dangling, unresolved and unmanaged group bindings and direct user grants; `system:*` virtual groups are omitted (a platform built-in, not a person's grant). |
+| `groups` | `groups` | Groups and membership changes | Every synced group: provider, member count, last sync, bindings, cliff silence; the empty and unattributed lists; joins and leaves in the window. |
+| `users` | `users` | Users | Every User object (a login), its identity providers, group count and direct grants; manual accounts; synced members who have never logged in. |
+| `login-activity` | `loginActivity` | Login activity | Attempts by outcome and provider, per-user successes and failures, and rejected attempts resolved against the login gate. |
+| `dormant-access` | `dormantAccess` | Dormant and unusable access | Members with access who have never logged in, members outside the login gate, gate members with no access, and — with login capture — nobody-in-N-days. |
+| `groupsync-health` | `groupsyncHealth` | GroupSync and policy-operator health | Every GroupSync CR with its computed state, schedule and last sync; reconcile errors (current vs stale); syncs in the window; NamespaceConfig/GroupConfig health. |
+| `compliance-snapshot` | `complianceSnapshot` | Compliance snapshot | One page of KPIs — groups, users, bindings, findings, privileged grants, dormant access, sync health — and the coverage statement that says what this evidence can attest. |
+| `access-certification` | `accessCertification` | Access certification pack | Per group (with roster) and per directly-bound user: every binding held, with Approve / Revoke / Comment columns and a sign-off block for the named reviewer. |
+
+### Enabling a report
+
+Ten reports are `enabled: true` by default. **`loginActivity` is special** — its default is `enabled: ""`,
+a sentinel meaning *follow `loginCapture`*: it is on only when login capture is on, so a login report can
+never exist with no login data. A report referenced by a schedule must be enabled.
+
+```yaml
+reporting:
+  reports:
+    loginActivity:      { enabled: true }   # explicit on — but the report is empty unless
+                                            # loginCapture.enabled (the poller feature) is also on
+    complianceSnapshot: { enabled: true }
+```
+
+Report enablement (the report service) and data *capture* (the poller — `loginCapture`, `rbac.identities`,
+`rbac.namespaces`) are separate knobs: enabling a report does not turn on the data it needs, and a report
+whose underlying capture is off renders empty.
 
 ## Report parameters
 
