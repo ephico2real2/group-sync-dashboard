@@ -140,7 +140,14 @@
       <span class="fresh"><i class="beat"></i>updated 40s ago</span>
       Cluster
       <select><option>crc-local</option><option>mock</option><option>prod-east</option></select>
-      <span class="theme">Colours
+      <span class="theme">Appearance
+          <select id="appearance" aria-label="Light or dark">
+            <option value="">Auto</option>
+            <option value="light">Light</option>
+            <option value="dark">Dark</option>
+          </select>
+        </span>
+        <span class="theme">Colours
         <select id="palette" aria-label="Colour theme">
           <option value="">Default</option>
           <option value="deuter">Deuteranopia-safe</option>
@@ -301,6 +308,25 @@
       try { v ? localStorage.setItem("gsd-palette", v) : localStorage.removeItem("gsd-palette"); } catch (e) {}
       const u = new URL(location.href);
       v ? u.searchParams.set("theme", v) : u.searchParams.delete("theme");
+      history.replaceState(null, "", u);
+    });
+  })();
+
+  // Appearance: Auto follows the OS; Light/Dark override it. Same URL+local rule as the palette.
+  (function () {
+    const sel = document.getElementById("appearance");
+    if (!sel) return;
+    const fromUrl = new URLSearchParams(location.search).get("mode") || "";
+    let saved = ""; try { saved = localStorage.getItem("gsd-mode") || ""; } catch (e) {}
+    const start = fromUrl || saved;
+    if (start) { document.documentElement.setAttribute("data-theme", start); sel.value = start; }
+    sel.addEventListener("change", function () {
+      const v = sel.value;
+      if (v) document.documentElement.setAttribute("data-theme", v);
+      else document.documentElement.removeAttribute("data-theme");
+      try { v ? localStorage.setItem("gsd-mode", v) : localStorage.removeItem("gsd-mode"); } catch (e) {}
+      const u = new URL(location.href);
+      v ? u.searchParams.set("mode", v) : u.searchParams.delete("mode");
       history.replaceState(null, "", u);
     });
   })();
