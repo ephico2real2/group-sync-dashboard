@@ -127,8 +127,13 @@ class ReportSettings:
     #: The embedded font for the PDF (regular, bold), vendored under gsd/static/vendor.
     font_regular: str = ""
     font_bold: str = ""
-    retention_days: int = 90
-    retention_max_runs: int = 500
+    #: Two-tier artefact retention (design R2), so a burst of manual runs can never evict a scheduled
+    #: report. Scheduled: keep the newest keepPerSchedule per (schedule, cluster) OR younger than days,
+    #: cap-exempt. Manual: kept days (short) and at most maxRuns. A bound of 0 is disabled.
+    scheduled_keep_per_schedule: int = 2
+    scheduled_retention_days: int = 90
+    manual_retention_days: int = 3
+    manual_retention_max_runs: int = 500
     marking: str = "Handling: internal — access review evidence"
     #: Which catalogue entries this deployment switched on (the chart derives loginActivity).
     enabled_reports: tuple[str, ...] = REPORT_NAMES
@@ -178,8 +183,10 @@ def load_report_settings() -> ReportSettings:
         tls_cert_file=cert, tls_key_file=key,
         pdf_enabled=pdf_enabled, pdf_variant=variant,
         font_regular=font_regular, font_bold=font_bold,
-        retention_days=_int_env("GSD_REPORT_RETENTION_DAYS", 90, lo=0, hi=3650),
-        retention_max_runs=_int_env("GSD_REPORT_RETENTION_MAX_RUNS", 500, lo=0, hi=100000),
+        scheduled_keep_per_schedule=_int_env("GSD_REPORT_SCHEDULED_KEEP_PER_SCHEDULE", 2, lo=0, hi=10000),
+        scheduled_retention_days=_int_env("GSD_REPORT_SCHEDULED_RETENTION_DAYS", 90, lo=0, hi=3650),
+        manual_retention_days=_int_env("GSD_REPORT_MANUAL_RETENTION_DAYS", 3, lo=0, hi=3650),
+        manual_retention_max_runs=_int_env("GSD_REPORT_MANUAL_RETENTION_MAX_RUNS", 500, lo=0, hi=100000),
         marking=os.environ.get("GSD_REPORT_MARKING", ReportSettings.marking),
         enabled_reports=enabled,
         login_capture_enabled=_bool_env("GSD_REPORT_LOGIN_CAPTURE_ENABLED", False),

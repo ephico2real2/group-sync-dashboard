@@ -1047,10 +1047,17 @@ reporting:
     end: "06:00"
     days: [Mon, Tue, Wed, Thu, Fri, Sat, Sun]
 
-  # Artefact retention: whichever bound is hit first; 0 disables a bound.
+  # Artefact retention — two tiers so a burst of manual (on-demand) runs can never evict a scheduled
+  # report (a bound of 0 is disabled). A scheduled run is kept while within the newest keepPerSchedule
+  # per (schedule, cluster) OR younger than days, and is EXEMPT from the manual run-count cap. A manual
+  # run is kept days (short) and at most maxRuns, whichever prunes first.
   retention:
-    days: 90
-    maxRuns: 500
+    scheduled:
+      keepPerSchedule: 2
+      days: 90
+    manual:
+      days: 3
+      maxRuns: 500
 
   # How long a minted ticket is valid; the page re-mints on expiry. 30..3600.
   ticket:

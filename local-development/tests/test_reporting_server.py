@@ -6,7 +6,7 @@ import inspect
 import sqlite3
 import threading
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -252,8 +252,8 @@ class TestTheArtifactStore:
         reloaded = ArtifactStore(str(tmp_path / "a"))
         first = reloaded.get("20260101T000000.000000Z-0000")
         assert first.status == "failed" and "restarted" in first.error
-        assert reloaded.prune(days=90, max_runs=0, now=now) == 1        # the January run
-        assert reloaded.prune(days=0, max_runs=2, now=now) == 1         # keep the newest two
+        assert reloaded.prune(scheduled_keep=0, scheduled_days=0, manual_days=90, manual_max_runs=0, now=now) == 1  # the January run
+        assert reloaded.prune(scheduled_keep=0, scheduled_days=0, manual_days=0, manual_max_runs=2, now=now) == 1   # keep the newest two
         assert {r.id[:8] for r, in [(x,) for x in reloaded.list()[0]]} == {"20260905", "20260906"}
 
     def test_prune_does_not_delete_a_queued_run_still_in_the_index(self, tmp_path):
@@ -266,9 +266,86 @@ class TestTheArtifactStore:
                        generated_by_note="n", schedule=None, requested_at="2026-09-06T12:00:00Z", status=status)
         queued, done = make("20260906T120000.000000Z-0001", "queued"), make("20260906T120001.000000Z-0002", "done")
         store.create(queued); store.create(done)
-        store.prune(days=0, max_runs=1, now=now)
+        store.prune(scheduled_keep=0, scheduled_days=0, manual_days=0, manual_max_runs=1, now=now)
         assert store.get(queued.id) is not None and store.get(done.id) is not None
         assert store.write(queued.id, "html", b"<p>") == 3, "write recreates a directory prune may have taken"
+
+    def test_a_manual_burst_never_evicts_a_scheduled_report(self, tmp_path):
+        """R2, the live bug: the single run-count cap sliced ALL finished runs by id, so a burst of
+        manual runs pushed a still-valid scheduled report past max_runs and deleted it. The two-tier
+        prune keeps scheduled runs cap-exempt (within keepPerSchedule per (schedule, cluster) OR younger
+        than scheduled_days), so the scheduled report survives the burst."""
+        store = ArtifactStore(str(tmp_path))
+        now = datetime(2026, 9, 6, 12, 0, tzinfo=UTC)
+
+        def mk(run_id, when, schedule=None):
+            store.create(Run(id=run_id, report="compliance-snapshot", cluster=CLUSTER, params={},
+                             formats=["html"], generated_by=(f"schedule:{schedule}" if schedule else "root"),
+                             generated_by_note="n", schedule=schedule, requested_at=when, status="done"))
+
+        # One scheduled run 40 days old (well inside scheduled days=90) ...
+        mk("20260728T000000.000000Z-aaaa", "2026-07-28T00:00:00Z", schedule="quarterly-compliance")
+        # ... then 600 recent manual runs (all inside manual days=3, so the run-count cap is the bound).
+        base = datetime(2026, 9, 6, 0, 0, tzinfo=UTC)
+        for i in range(600):
+            t = base + timedelta(seconds=i)
+            mk(t.strftime("%Y%m%dT%H%M%S.%fZ") + f"-{i:04x}", t.strftime("%Y-%m-%dT%H:%M:%SZ"))
+
+        pruned = store.prune(scheduled_keep=2, scheduled_days=90, manual_days=3, manual_max_runs=500, now=now)
+        survivors = {r.id for r in store.list(limit=10000)[0]}
+        assert "20260728T000000.000000Z-aaaa" in survivors, "the scheduled report must survive a manual burst"
+        assert pruned == 100, "only the 100 manual runs beyond the 500 cap are pruned; scheduled is cap-exempt"
+        assert sum(1 for r in store.list(limit=10000)[0] if not r.schedule) == 500
+
+    def test_scheduled_keep_is_per_schedule_and_cluster_and_survives_days(self, tmp_path):
+        """Newest keepPerSchedule per (schedule, cluster) survive past scheduled_days; beyond K only the
+        young survive. Two clusters under one schedule keep their own newest K independently."""
+        store = ArtifactStore(str(tmp_path))
+        now = datetime(2026, 9, 6, 12, 0, tzinfo=UTC)
+
+        def mk(run_id, when, cluster, schedule):
+            store.create(Run(id=run_id, report="compliance-snapshot", cluster=cluster, params={},
+                             formats=["html"], generated_by=f"schedule:{schedule}", generated_by_note="n",
+                             schedule=schedule, requested_at=when, status="done"))
+
+        # Three OLD runs (Feb, ~217 days ago, past scheduled_days=90) per cluster, one schedule.
+        for ci, cluster in enumerate(("east", "west")):
+            for j in range(3):
+                t = datetime(2026, 2, 1, 0, 0, tzinfo=UTC) + timedelta(seconds=ci * 10 + j)
+                mk(t.strftime("%Y%m%dT%H%M%S.%fZ") + f"-{ci}{j}", t.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                   cluster, "quarterly-compliance")
+
+        pruned = store.prune(scheduled_keep=2, scheduled_days=90, manual_days=3, manual_max_runs=500, now=now)
+        assert pruned == 2, "each cluster keeps its newest 2; the 3rd (oldest, past days) is pruned"
+        kept = store.list(limit=10000)[0]
+        for cluster in ("east", "west"):
+            assert sum(1 for r in kept if r.cluster == cluster) == 2
+
+    def test_per_schedule_retention_override_wins(self, tmp_path):
+        """overrides[name] = (keep, days) beats the globals for that schedule; another schedule inherits."""
+        store = ArtifactStore(str(tmp_path))
+        now = datetime(2026, 9, 6, 12, 0, tzinfo=UTC)
+
+        def mk(run_id, when, schedule):
+            store.create(Run(id=run_id, report="compliance-snapshot", cluster=CLUSTER, params={},
+                             formats=["html"], generated_by=f"schedule:{schedule}", generated_by_note="n",
+                             schedule=schedule, requested_at=when, status="done"))
+
+        # Five OLD runs under a quarterly schedule we override to keep 12; three under a schedule that
+        # inherits keep=2. All are past the global days=90 so the keep bound is what decides.
+        for j in range(5):
+            t = datetime(2026, 2, 1, 0, 0, tzinfo=UTC) + timedelta(seconds=j)
+            mk(t.strftime("%Y%m%dT%H%M%S.%fZ") + f"-a{j}", t.strftime("%Y-%m-%dT%H:%M:%SZ"), "quarterly-compliance")
+        for j in range(3):
+            t = datetime(2026, 2, 2, 0, 0, tzinfo=UTC) + timedelta(seconds=j)
+            mk(t.strftime("%Y%m%dT%H%M%S.%fZ") + f"-b{j}", t.strftime("%Y-%m-%dT%H:%M:%SZ"), "biweekly-namespace-access")
+
+        pruned = store.prune(scheduled_keep=2, scheduled_days=90, manual_days=3, manual_max_runs=500, now=now,
+                             overrides={"quarterly-compliance": (12, 2555)})
+        kept = store.list(limit=10000)[0]
+        assert sum(1 for r in kept if r.schedule == "quarterly-compliance") == 5, "override keep=12 keeps all 5"
+        assert sum(1 for r in kept if r.schedule == "biweekly-namespace-access") == 2, "inherits keep=2"
+        assert pruned == 1
 
     def test_usage_does_not_advance_past_an_in_flight_older_run(self, tmp_path):
         """Cursor, review C3: a QueueFull failure has the newest id and finishes at once; publishing it

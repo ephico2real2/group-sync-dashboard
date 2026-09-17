@@ -319,7 +319,8 @@ the same login; administrators (the wide tier) generate from the **Reports** tab
 | `reporting.pdf.enabled` / `.variant` | `true` / `pdf/a-2b` | PDF output and its archival profile (`""`, `pdf/a-1b`, `pdf/a-2b`, `pdf/a-2u`, `pdf/a-3b`, `pdf/a-3u`, `pdf/a-4`); `3b` embeds the canonical `.json` in the PDF | an unknown variant is refused; a variant with pdf off is ignored (NOTES say so) |
 | `reporting.persistence.enabled` / `.size` / `.storageClass` / `.accessMode` / `.existingClaim` | `true` / `2Gi` / `""` / `ReadWriteOnce` / `""` | where artefacts live; **no** keep annotation — every artefact is regenerable. Off = emptyDir | independent |
 | `reporting.snapshot.intervalSeconds` / `.keep` | `300` / `2` | how often the leader writes the read-only copy and how many it keeps | below `60` refused (a `VACUUM INTO` holds a read transaction) |
-| `reporting.retention.days` / `.maxRuns` | `90` / `500` | artefact retention, whichever bound is hit first; `0` disables a bound | — |
+| `reporting.retention.scheduled.keepPerSchedule` / `.days` | `2` / `90` | scheduled-report retention: keep the newest K per (schedule, cluster) OR younger than `days`; **exempt from the manual run-count cap** | a manual burst can never evict a scheduled report |
+| `reporting.retention.manual.days` / `.maxRuns` | `3` / `500` | on-demand (manual) run retention, whichever bound is hit first; `0` disables a bound | — |
 | `reporting.ticket.ttlSeconds` | `300` | how long a minted ticket is valid; the page re-mints on expiry | outside `30..3600` refused |
 | `reporting.marking` | `Handling: internal — access review evidence` | the first line of every report and the PDF's running header | — |
 | `reporting.reports.<name>.enabled` | `true` for nine; `loginActivity` `""` | one switch per report; `loginActivity` **follows `loginCapture.enabled`** by default | `loginActivity=true` with capture off is refused; anything but `true`/`false` (or `""` for loginActivity) is refused |
