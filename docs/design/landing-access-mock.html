@@ -5,9 +5,9 @@
     --page:#f9f9f7; --surface:#fcfcfb; --surface-2:#f2f2ee;
     --ink:#12120f; --muted:#5f5f58; --faint:#8a8a81;
     --border:rgba(18,18,15,.13); --border-soft:rgba(18,18,15,.07);
-    --accent:#4f5a67; --accent-ink:#fff; --accent-wash:rgba(79,90,103,.10);
-    --good:#2f7d52; --good-wash:rgba(47,125,82,.12);
-    --warn:#9a6b1f; --warn-wash:rgba(154,107,31,.14);
+    --accent:#4f5a67; --accent-ink:#fff;
+    --good:#2f7d52;
+    --warn:#9a6b1f;
     --ui:"Space Grotesk",-apple-system,BlinkMacSystemFont,sans-serif;
     --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
   }
@@ -15,18 +15,46 @@
     --page:#0f1011; --surface:#17181a; --surface-2:#1d1f22;
     --ink:#f2f2f0; --muted:#a5a59d; --faint:#7a7a72;
     --border:rgba(255,255,255,.15); --border-soft:rgba(255,255,255,.07);
-    --accent:#8b98a8; --accent-ink:#12120f; --accent-wash:rgba(139,152,168,.16);
-    --good:#63c68d; --good-wash:rgba(99,198,141,.14);
-    --warn:#d9a441; --warn-wash:rgba(217,164,65,.16);
+    --accent:#8b98a8; --accent-ink:#12120f;
+    --good:#63c68d;
+    --warn:#d9a441;
   }}
   :root[data-theme="dark"]{
     --page:#0f1011; --surface:#17181a; --surface-2:#1d1f22;
     --ink:#f2f2f0; --muted:#a5a59d; --faint:#7a7a72;
     --border:rgba(255,255,255,.15); --border-soft:rgba(255,255,255,.07);
-    --accent:#8b98a8; --accent-ink:#12120f; --accent-wash:rgba(139,152,168,.16);
-    --good:#63c68d; --good-wash:rgba(99,198,141,.14);
-    --warn:#d9a441; --warn-wash:rgba(217,164,65,.16);
+    --accent:#8b98a8; --accent-ink:#12120f;
+    --good:#63c68d;
+    --warn:#d9a441;
   }
+  /* Washes derive from the base colours, so a palette swap only overrides three hues. */
+  :root,:root[data-theme]{
+    --good-wash:color-mix(in srgb,var(--good) 14%,transparent);
+    --warn-wash:color-mix(in srgb,var(--warn) 16%,transparent);
+    --accent-wash:color-mix(in srgb,var(--accent) 12%,transparent);
+  }
+  /* Okabe-Ito — the standard colour-blind-safe set. Deuteranopia/protanopia (~8% of men)
+     cannot separate red from green, so "good" moves off green onto blue. */
+  :root[data-palette="deuter"],:root[data-palette="protan"]{
+    --good:#0072B2; --warn:#E69F00; --crit:#D55E00; --accent:#005f8a;
+  }
+  /* Tritanopia confuses blue and yellow, so the pair becomes teal and reddish-purple. */
+  :root[data-palette="trit"]{
+    --good:#009E73; --warn:#CC79A7; --crit:#D55E00; --accent:#4a4a52;
+  }
+  :root[data-palette="contrast"]{
+    --good:#00563f; --warn:#7a4a00; --crit:#8a0000; --accent:#1a1a1a; --faint:#4a4a44;
+  }
+  @media (prefers-color-scheme:dark){
+    :root[data-palette="contrast"]:not([data-theme="light"]){
+      --good:#7dffc4; --warn:#ffcf70; --crit:#ff9a8f; --accent:#e8e8e8; --accent-ink:#0f1011; --faint:#c9c9c2;
+    }
+  }
+  /* a little colour: each card carries its own accent rail */
+  .card{position:relative}
+  .card::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--sec,var(--accent));opacity:.8}
+  .card>h2{padding-left:23px}
+  .row,.foot{padding-left:23px}
   *{box-sizing:border-box}
   body{background:var(--page);color:var(--ink);font-family:var(--ui);font-size:14px;line-height:1.5;
     -webkit-font-smoothing:antialiased;padding:26px 20px 60px}
@@ -84,6 +112,7 @@
 
   .foot{font-size:12px;color:var(--faint);padding:13px 20px;background:var(--surface-2);
     border-top:1px solid var(--border-soft)}
+  .theme{display:inline-flex;align-items:center;gap:7px;margin-left:12px}
   .fresh{display:inline-flex;align-items:center;gap:7px;font-size:12px;color:var(--muted);
     margin-right:14px}
   .beat{width:7px;height:7px;border-radius:50%;background:var(--good);animation:beat 2.4s ease-in-out infinite}
@@ -111,6 +140,15 @@
       <span class="fresh"><i class="beat"></i>updated 40s ago</span>
       Cluster
       <select><option>crc-local</option><option>mock</option><option>prod-east</option></select>
+      <span class="theme">Colours
+        <select id="palette" aria-label="Colour theme">
+          <option value="">Default</option>
+          <option value="deuter">Deuteranopia-safe</option>
+          <option value="protan">Protanopia-safe</option>
+          <option value="trit">Tritanopia-safe</option>
+          <option value="contrast">High contrast</option>
+        </select>
+      </span>
     </span>
   </div>
 
@@ -132,7 +170,7 @@
     </div>
   </section>
 
-  <section class="card">
+  <section class="card" style="--sec:#0072B2">
     <h2>What changed <span class="count">last 30 days</span></h2>
     <div class="row">
       <span class="main">
@@ -159,7 +197,7 @@
     <div class="foot">History starts <span style="font-family:var(--mono)">2026-08-02</span> — older changes have been pruned by retention.</div>
   </section>
 
-  <section class="card">
+  <section class="card" style="--sec:#8a6d3b">
     <h2>Cluster-wide <span class="count">3 roles · 5 bindings</span></h2>
     <div class="row">
       <span class="main">
@@ -188,7 +226,7 @@
     <div class="foot">Three groups grant <span style="font-family:var(--mono)">edit</span> cluster-wide, but <span style="font-family:var(--mono)">admin</span> already includes it — removing them would not change what you can do.</div>
   </section>
 
-  <section class="card">
+  <section class="card" style="--sec:#2f7d52">
     <h2>Namespaces you can reach <span class="count">4 · all already covered</span></h2>
     <div class="row">
       <span class="main"><span class="name">demo-qa</span><span class="meta">via <b>app-ocp-rbac-demo-ns-developer</b></span></span>
@@ -211,7 +249,7 @@
     </div>
   </section>
 
-  <section class="card">
+  <section class="card" style="--sec:#b06a3b">
     <h2>Direct grant <span class="count">1</span></h2>
     <div class="row">
       <span class="main">
@@ -224,7 +262,7 @@
     <div class="foot">Created by the OpenShift console to store your own console preferences — expected, not a governance exception.</div>
   </section>
 
-  <section class="card">
+  <section class="card" style="--sec:#6b5b95">
     <h2>Your groups <span class="count">18 · 7 grant access</span></h2>
     <div class="row">
       <span class="main"><span class="name">app-ocp-rbac-alpha-cluster-admin</span><span class="meta">the one that gives you admin</span></span>
@@ -245,3 +283,25 @@
     <div class="foot">A group that grants nothing is normal — it may exist for another cluster, or be waiting on a binding.</div>
   </section>
 </div>
+
+<script>
+  // Colour theme: the URL wins (so a theme is shareable), then the last local choice.
+  (function () {
+    const sel = document.getElementById("palette");
+    if (!sel) return;
+    const fromUrl = new URLSearchParams(location.search).get("theme") || "";
+    let saved = "";
+    try { saved = localStorage.getItem("gsd-palette") || ""; } catch (e) {}
+    const start = fromUrl || saved;
+    if (start) { document.documentElement.setAttribute("data-palette", start); sel.value = start; }
+    sel.addEventListener("change", function () {
+      const v = sel.value;
+      if (v) document.documentElement.setAttribute("data-palette", v);
+      else document.documentElement.removeAttribute("data-palette");
+      try { v ? localStorage.setItem("gsd-palette", v) : localStorage.removeItem("gsd-palette"); } catch (e) {}
+      const u = new URL(location.href);
+      v ? u.searchParams.set("theme", v) : u.searchParams.delete("theme");
+      history.replaceState(null, "", u);
+    });
+  })();
+</script>
