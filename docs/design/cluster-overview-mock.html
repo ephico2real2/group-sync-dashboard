@@ -1,0 +1,604 @@
+<title>Cluster Overview</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
+<style>
+  /* Tokens are the locked global set (#152) — identical to landing-access-mock.html and
+     overview-kpi-mock.html. A new page consumes them; it never redefines a hue. */
+  :root{
+    --page:#f9f9f7; --surface:#fcfcfb; --surface-2:#f2f2ee;
+    --ink:#12120f; --muted:#5f5f58; --faint:#8a8a81;
+    --border:rgba(18,18,15,.13); --border-soft:rgba(18,18,15,.07);
+    --accent:#4f5a67; --accent-ink:#fff;
+    --good:#2f7d52;
+    --warn:#9a6b1f;
+    --crit:#a33a2a;
+    --ui:"Space Grotesk",-apple-system,BlinkMacSystemFont,sans-serif;
+    --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+    --page:#0f1011; --surface:#17181a; --surface-2:#1d1f22;
+    --ink:#f2f2f0; --muted:#a5a59d; --faint:#7a7a72;
+    --border:rgba(255,255,255,.15); --border-soft:rgba(255,255,255,.07);
+    --accent:#8b98a8; --accent-ink:#12120f;
+    --good:#63c68d; --warn:#d9a441; --crit:#e88a78;
+  }}
+  :root[data-theme="dark"]{
+    --page:#0f1011; --surface:#17181a; --surface-2:#1d1f22;
+    --ink:#f2f2f0; --muted:#a5a59d; --faint:#7a7a72;
+    --border:rgba(255,255,255,.15); --border-soft:rgba(255,255,255,.07);
+    --accent:#8b98a8; --accent-ink:#12120f;
+    --good:#63c68d; --warn:#d9a441; --crit:#e88a78;
+  }
+  :root,:root[data-theme]{
+    --good-wash:color-mix(in srgb,var(--good) 14%,transparent);
+    --warn-wash:color-mix(in srgb,var(--warn) 16%,transparent);
+    --crit-wash:color-mix(in srgb,var(--crit) 14%,transparent);
+    --accent-wash:color-mix(in srgb,var(--accent) 12%,transparent);
+  }
+  :root[data-palette="deuter"],:root[data-palette="protan"]{
+    --good:#0072B2; --warn:#E69F00; --crit:#D55E00; --accent:#005f8a;
+  }
+  :root[data-palette="trit"]{
+    --good:#009E73; --warn:#CC79A7; --crit:#D55E00; --accent:#4a4a52;
+  }
+  :root[data-palette="contrast"]{
+    --good:#00563f; --warn:#7a4a00; --crit:#8a0000; --accent:#1a1a1a; --faint:#4a4a44;
+  }
+  @media (prefers-color-scheme:dark){
+    :root[data-palette="contrast"]:not([data-theme="light"]){
+      --good:#7dffc4; --warn:#ffcf70; --crit:#ff9a8f; --accent:#e8e8e8; --accent-ink:#0f1011; --faint:#c9c9c2;
+    }
+  }
+  *{box-sizing:border-box}
+  body{background:var(--page);color:var(--ink);font-family:var(--ui);font-size:14px;line-height:1.5;
+    -webkit-font-smoothing:antialiased;padding:0 0 60px}
+  .mono{font-family:var(--mono)}
+  .wrap{max-width:1240px;margin:0 auto;padding:0 18px}
+
+  /* ---------- the persistent shell: appearance lives here, not in the repainting filter bar ---------- */
+  .shell{border-bottom:1px solid var(--border);background:var(--surface);position:sticky;top:0;z-index:20}
+  .topbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:12px 0}
+  .brand{font-weight:700;font-size:16px;letter-spacing:-.2px}
+  .chip{display:inline-flex;align-items:center;gap:6px;font-size:11px;padding:3px 10px;border-radius:999px;
+    border:1px solid var(--border);color:var(--muted);background:var(--surface-2);white-space:nowrap}
+  .grow{flex:1 1 40px}
+  .btn{font:inherit;font-size:13px;padding:5px 12px;border-radius:7px;border:1px solid var(--border);
+    background:var(--surface-2);color:var(--ink);cursor:pointer}
+  .btn:hover{background:var(--accent-wash)}
+  .btn:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  select,input[type=search]{font:inherit;font-size:13px;padding:5px 9px;border-radius:7px;
+    border:1px solid var(--border);background:var(--surface);color:var(--ink)}
+  /* The palette names are long enough to push "Sign out" onto a second row at 1280. Capping the
+     select keeps the top bar on one line without shortening a label into something ambiguous. */
+  #palette{max-width:172px}
+  .filters{display:flex;align-items:center;gap:8px 16px;flex-wrap:wrap;padding:0 0 10px}
+  .flabel{font-size:12px;color:var(--muted)}
+
+  /* #166: the live app sets flex-wrap:nowrap here, so at 375px this bar is 676px wide, does not
+     scroll, and the last four tabs are unreachable. Wrapping is the whole fix. */
+  nav.tabs{display:flex;flex-wrap:wrap;gap:2px 4px;padding-bottom:8px}
+  .tab{font:inherit;font-size:13px;padding:6px 11px;border:0;border-bottom:2px solid transparent;
+    background:none;color:var(--muted);cursor:pointer;border-radius:6px 6px 0 0}
+  .tab:hover{color:var(--ink);background:var(--accent-wash)}
+  .tab[aria-current=page]{color:var(--accent);border-bottom-color:var(--accent);font-weight:600}
+  /* ---------- density: the page changes shape as clusters multiply ----------
+     Measured intent, not decoration. With two clusters the tiles ARE the page. At forty they
+     are noise, and the alerts become the page while the tiles fall back to a status strip.
+     One attribute on <html> drives it, so every rule below reads as a tier rather than a
+     media query — this scales with the FLEET, not the viewport. */
+  .tiles{display:grid;gap:12px;padding:12px 20px 16px 23px}
+  [data-density="full"]    .tiles{grid-template-columns:repeat(auto-fill,minmax(340px,1fr))}
+  [data-density="medium"]  .tiles{grid-template-columns:repeat(auto-fill,minmax(230px,1fr))}
+  [data-density="compact"] .tiles{grid-template-columns:repeat(auto-fill,minmax(155px,1fr));gap:8px}
+  [data-density="dense"]   .tiles{display:block;padding:0}
+
+  .tile{position:relative;display:block;width:100%;text-align:left;font:inherit;color:var(--ink);
+    cursor:pointer;background:var(--surface-2);border:1px solid var(--border);border-radius:11px;
+    padding:13px 15px;transition:border-color .15s,transform .12s}
+  .tile:hover{border-color:var(--accent);transform:translateY(-1px)}
+  .tile:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .tile.bad{border-left:3px solid var(--crit)}
+  .tile.warnrail{border-left:3px solid var(--warn)}
+  .tile .cn{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-weight:600;font-size:14px}
+  .tile .api{display:block;font-family:var(--mono);font-size:11px;color:var(--faint);margin-top:4px;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .tile .poll{font-family:var(--mono);font-size:11px;color:var(--faint)}
+  .tk{display:grid;gap:7px 12px;margin-top:11px;grid-template-columns:repeat(auto-fit,minmax(78px,1fr))}
+  .tk .lab{display:block;font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--faint)}
+  .tk .v{display:block;font-size:17px;font-weight:600;line-height:1.15;font-variant-numeric:tabular-nums}
+  .tk .v.q{color:var(--faint);font-weight:500}
+  .tk .v.w{color:var(--warn)} .tk .v.c{color:var(--crit)}
+  .tk .v.sm{font-size:12px;font-family:var(--mono);font-weight:500}
+  /* what each tier drops, stated once */
+  [data-density="medium"] .tile .api,
+  [data-density="compact"] .tile .api, [data-density="compact"] .tile .poll,
+  [data-density="compact"] .k-extra{display:none}
+  [data-density="medium"] .k-extra{display:none}
+  [data-density="compact"] .tile{padding:10px 12px}
+  [data-density="compact"] .tk{margin-top:8px;gap:4px 8px}
+  [data-density="compact"] .tk .v{font-size:15px}
+
+  /* The consequence line. It sits under the badge rather than in a title= attribute on purpose:
+     a caveat a reader has to hover to find is a caveat that was deleted. */
+  .consq{font-size:11.5px;color:var(--muted);margin-top:4px;line-height:1.45;max-width:46ch}
+  .tile .consq{margin-top:7px}
+  [data-density="compact"] .k-consq,[data-density="dense"] .k-consq{display:none}
+
+  .dsel{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 20px 4px 23px;
+    font-size:12px;color:var(--muted)}
+  .dsel button{font:inherit;font-size:12px;padding:4px 10px;border-radius:999px;cursor:pointer;
+    border:1px solid var(--border);background:var(--surface-2);color:var(--muted)}
+  .dsel button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink);
+    border-color:var(--accent);font-weight:600}
+  .sim{font-size:11px;padding:2px 8px;border-radius:999px;border:1px dashed var(--warn);
+    color:var(--warn);background:var(--warn-wash)}
+
+  /* ---------- alerts: they lead once the fleet is big ---------- */
+  .alert{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;padding:9px 20px 9px 23px;
+    border-bottom:1px solid var(--border-soft);align-items:start}
+  .alert:last-child{border-bottom:0}
+  .alert.silenced{opacity:.62}
+  .alert .who{font-weight:600;font-size:13px}
+  .alert .where{font-weight:400;font-size:11px;color:var(--faint);font-family:var(--mono)}
+  .alert .what{grid-column:2;font-size:12.5px;color:var(--muted);max-width:92ch}
+  .sev{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;padding:2px 9px;
+    border-radius:999px;white-space:nowrap;align-self:start}
+  .sev .glyph{width:7px;height:7px;border-radius:50%;display:inline-block}
+  .sev.critical{color:var(--crit);background:var(--crit-wash);
+    border:1px solid color-mix(in srgb,var(--crit) 40%,transparent)}
+  .sev.critical .glyph{background:var(--crit)}
+  .sev.warning{color:var(--warn);background:var(--warn-wash);
+    border:1px solid color-mix(in srgb,var(--warn) 40%,transparent)}
+  .sev.warning .glyph{background:var(--warn)}
+  .silence-tag{font-size:11px;padding:1px 7px;border-radius:999px;border:1px dashed var(--border);
+    color:var(--faint);margin-right:6px}
+  .rollup{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 20px 8px 23px;
+    border-bottom:1px solid var(--border-soft);cursor:pointer;background:none;border-left:0;
+    border-right:0;border-top:0;width:100%;text-align:left;font:inherit;color:var(--ink)}
+  .rollup:hover{background:var(--accent-wash)}
+  .rollup .n{font-size:18px;font-weight:700;min-width:30px;font-variant-numeric:tabular-nums}
+
+  /* ---------- cards ---------- */
+  main{padding-top:18px}
+  .card{position:relative;background:var(--surface);border:1px solid var(--border);border-radius:12px;
+    margin-bottom:14px;overflow:hidden}
+  .card::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;
+    background:var(--sec,var(--accent));opacity:.8}
+  .card>h2,.card>.note,.card>.pad,.card>.empty,.card>h3{padding-left:23px}
+  .card h2{font-size:15px;margin:0;padding-top:13px;font-weight:600;display:flex;align-items:baseline;
+    gap:8px;flex-wrap:wrap}
+  .card h2 .cnt{color:var(--muted);font-weight:400;font-size:13px}
+  .note{color:var(--muted);font-size:12.5px;padding-top:6px;padding-right:20px;padding-bottom:2px;max-width:90ch}
+  .pad{padding:12px 20px 14px 23px}
+  .empty{color:var(--muted);font-size:13px;padding:2px 20px 16px 23px;max-width:86ch}
+
+  .scroll-x{overflow-x:auto}
+  table{border-collapse:collapse;width:100%;min-width:560px;font-size:13px}
+  th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--faint);
+    font-weight:600;padding:8px 14px 6px;border-bottom:1px solid var(--border);white-space:nowrap}
+  th:first-child{padding-left:23px}
+  th.num{text-align:right}
+  td{padding:7px 14px;border-bottom:1px solid var(--border-soft);vertical-align:top}
+  td:first-child{padding-left:23px}
+  .num{text-align:right;font-variant-numeric:tabular-nums}
+  .t{font-family:var(--mono);font-size:12px;color:var(--muted);white-space:nowrap}
+  .mono{font-family:var(--mono)}
+  .badge{display:inline-flex;align-items:center;gap:5px;font-size:11px;padding:2px 9px;border-radius:999px;
+    border:1px solid var(--border);color:var(--muted);background:var(--surface-2);white-space:nowrap}
+  .badge .glyph{width:7px;height:7px;border-radius:50%;display:inline-block;background:currentColor}
+  .badge.ok{color:var(--good);background:var(--good-wash);
+    border-color:color-mix(in srgb,var(--good) 40%,transparent)}
+  .badge.critical{color:var(--crit);background:var(--crit-wash);
+    border-color:color-mix(in srgb,var(--crit) 40%,transparent)}
+  .badge.unknown{color:var(--faint)}
+  .badge.warn{color:var(--warn);background:var(--warn-wash);
+    border-color:color-mix(in srgb,var(--warn) 40%,transparent)}
+  .grow{flex:1 1 20px}
+  .mocknote{max-width:1240px;margin:22px auto 0;padding:11px 16px;border:1px dashed var(--border);
+    border-radius:10px;color:var(--muted);font-size:12.5px;background:var(--surface-2)}
+  @media (max-width:520px){ [data-density="full"] .tiles{grid-template-columns:1fr} }
+</style>
+
+<div class="shell">
+  <div class="wrap">
+    <div class="topbar">
+      <span class="brand">OCP Access Tracking Dashboard</span>
+      <span class="chip">Full view — you are seeing everything</span>
+      <span class="grow"></span>
+      <label class="flabel">Appearance
+        <select id="theme"><option value="">Auto</option><option value="light">Light</option><option value="dark">Dark</option></select>
+      </label>
+      <label class="flabel">Colour
+        <select id="palette">
+          <option value="">Default</option>
+          <option value="deuter">Deuteranopia / protanopia</option>
+          <option value="trit">Tritanopia</option>
+          <option value="contrast">High contrast</option>
+        </select>
+      </label>
+      <button class="btn">Refresh</button>
+      <button class="btn">Sign out</button>
+    </div>
+    <div class="filters">
+      <label class="flabel">Cluster <select><option>all clusters</option><option>crc-local</option><option>mock</option></select></label>
+      <span class="grow"></span>
+      <span class="flabel" id="fleetline"></span>
+    </div>
+    <nav class="tabs" aria-label="Dashboard sections">
+      <button class="tab" aria-current="page">Cluster Overview</button>
+      <button class="tab">Groups</button><button class="tab">Users</button>
+      <button class="tab">Access granted</button><button class="tab">RBAC policy</button>
+      <button class="tab">Namespace audit</button><button class="tab">Logins</button>
+      <button class="tab">Usage</button><button class="tab">Reports</button>
+      <button class="tab">KPI</button>
+    </nav>
+  </div>
+</div>
+
+<div class="wrap"><main id="main"></main></div>
+
+<div class="mocknote wrap">
+  <strong>Mock.</strong> The two real clusters, their four real alerts, four GroupSync CRs and six
+  policy configs were read off the live CRC deployment on 2026-09-17. Everything the
+  <span class="sim">simulated</span> control adds beyond those two is marked as such on every tile —
+  it exists to show the layout scaling, never to imply a fleet that is not there.
+  <br><strong>Nothing is removed.</strong> Every card and every caveat from the current Overview
+  survives; this is a relayout onto the shared design system, not a redesign of the content
+  (<span class="mono">docs/design/tab-feature-contract.md</span>).
+  <br><strong>Access stays restricted.</strong> Visibility is unchanged and fail-closed; the Policy
+  operator card remains administrator-tier (#169, closed as won't-do).
+</div>
+<script>
+/* Read off the live cluster on 2026-09-17. Ages are computed against the capture instant so they
+   stay true however long after this the page is opened. */
+const NOW = Date.parse("2026-09-17T22:32:08Z");
+const CLUSTERS = [
+ {id:"crc-local", api:"https://kubernetes.default.svc", status:"ok", last_poll:"2026-09-17T22:32:08Z",
+  error:null, groupsync_count:3, operator_present:true, groups:67, empty:1, unattributed:2,
+  oldest_sync:"2026-09-17T22:00:11Z", configs:{total:6, failing:0}, dangling:0, unresolved:6,
+  visibility:"inherit · all"},
+ {id:"mock", api:"https://mock-openshift:6443", status:"ok", last_poll:"2026-09-17T22:32:08Z",
+  error:null, groupsync_count:1, operator_present:true, groups:7, empty:1, unattributed:0,
+  oldest_sync:"2026-09-14T08:00:00Z", configs:null, dangling:0, unresolved:0,
+  visibility:"self-only · self"},
+];
+const ALERTS = [
+ {cluster:"mock", kind:"overdue", subject:"ldap-sync", severity:"critical", silenced:false, silenced_by:null,
+  detail:"last sync 3d14h ago, schedule '*/30 * * * *' (> 2 intervals) — the schedule has stopped firing"},
+ {cluster:"crc-local", kind:"direct_user_binding", subject:"10 direct user grants", severity:"warning",
+  silenced:false, silenced_by:null,
+  detail:"across 4 namespaces, 1 granting admin or cluster-admin — access bound to a person rather than an enterprise-managed group. These survive offboarding: removing someone from an LDAP group revokes their access everywhere, a direct binding keeps granting to a name nobody reviews."},
+ {cluster:"crc-local", kind:"unattributed", subject:"test-group1", severity:"warning", silenced:false,
+  silenced_by:null, detail:"no sync-provider label — not managed by any GroupSync CR"},
+ {cluster:"crc-local", kind:"unattributed", subject:"test-group2", severity:"warning", silenced:false,
+  silenced_by:null, detail:"no sync-provider label — not managed by any GroupSync CR"},
+];
+const SYNCS = [
+ /* mock's ldap-sync is the one genuinely broken CR on this estate, and it is the same object the
+    critical alert names. A status table that omitted it would be a wall of green claiming health
+    the estate does not have. */
+ {cluster:"mock", name:"ldap-sync", ns:"group-sync-operator", state:"overdue", sched:"*/30 * * * *",
+  groups:7, last:"2026-09-14T08:00:00Z", next:"2026-09-14T08:30:00Z"},
+ {cluster:"crc-local", name:"app-ocp-rbac-group-groupsync", ns:"group-sync-operator", state:"ok",
+  sched:"*/30 * * * *", groups:43, last:"2026-09-17T22:00:11Z", next:"2026-09-17T23:00:00Z"},
+ {cluster:"crc-local", name:"autobahnusers-onboarding-groupsync", ns:"group-sync-operator", state:"ok",
+  sched:"0 */2 * * *", groups:1, last:"2026-09-17T21:30:00Z", next:"2026-09-18T00:00:00Z"},
+ {cluster:"crc-local", name:"bdp-oud-group-rbac-groupsync", ns:"group-sync-operator", state:"ok",
+  sched:"0 * * * *", groups:21, last:"2026-09-17T22:00:11Z", next:"2026-09-17T23:00:00Z"},
+];
+
+/* WHAT EACH STATUS MEANS YOU DO. These three tables are not decoration — every state on them has a
+   consequence, and the consequence is the part a reader acts on. A bare "ok" badge withholds the
+   only thing that made it worth rendering, so each state carries its sentence. */
+const MEANS = {
+  sync_ok:       "syncing on schedule — the groups it owns are current as of the last sync",
+  sync_overdue:  "the schedule has stopped firing — every group it owns is frozen at its last sync, and nobody has been added or removed since",
+  sync_error:    "the last run failed — the groups it owns are stale and the error below says why",
+  cfg_ok:        "reconciling — new namespaces receive their RoleBindings",
+  cfg_failing:   "RBAC has quietly stopped reconciling — new namespaces receive nothing and drift goes uncorrected",
+  cfg_absent:    "the CRDs are not installed here, which is a different truth from installed-with-zero-CRs: nothing templates this cluster's RoleBindings",
+  cl_ok:         "polled successfully — every count on this tile is current",
+  cl_bad:        "the poller cannot reach it — every count on this tile is the LAST ONE OBSERVED, not the current one",
+  cl_never:      "never polled — there are no counts yet, which is not the same as zero",
+};
+const CONFIGS = [
+ {kind:"GroupConfig", name:"baseline-cluster-rbac", success:"2026-09-17T22:00:15Z", error:null},
+ {kind:"GroupConfig", name:"custom-cluster-rbac", success:"2026-09-17T22:00:15Z", error:null},
+ {kind:"NamespaceConfig", name:"baseline-nonprod-rbac", success:"2026-09-17T20:45:39Z", error:null},
+ {kind:"NamespaceConfig", name:"baseline-prod-rbac", success:"2026-09-17T20:45:39Z", error:null},
+ {kind:"NamespaceConfig", name:"bdp-oud-group-rbac", success:"2026-09-17T20:45:38Z", error:null},
+ {kind:"NamespaceConfig", name:"trino-oud-group-rbac", success:"2026-09-17T20:45:38Z", error:null},
+];
+
+const esc = s => String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+function ago(iso){
+  if(!iso) return "never";
+  let s=Math.max(0,Math.round((NOW-Date.parse(iso))/1000));
+  if(s<90) return s+"s ago";
+  if(s<5400) return Math.round(s/60)+"m ago";
+  if(s<172800) return Math.round(s/3600)+"h ago";
+  const d=Math.floor(s/86400), h=Math.round((s%86400)/3600);
+  return d+"d"+(h?h+"h":"")+" ago";
+}
+const stamp = iso => iso ? iso.replace("T"," ").replace("Z"," UTC") : "—";
+
+/* The fleet size drives the shape. These thresholds are the design: at 3 the tiles are the page,
+   past 24 they are a status strip and the alerts are the page. */
+const TIERS = [[3,"full"],[8,"medium"],[24,"compact"],[Infinity,"dense"]];
+const densityFor = n => TIERS.find(([max]) => n <= max)[1];
+
+const state = {fleet:2, openKinds:new Set()};
+
+/* Simulated clusters are derived from the two real ones and carry `sim:true`, which every renderer
+   surfaces as a badge. A mock that quietly invents a fleet teaches the wrong number. */
+function fleet(){
+  const out = CLUSTERS.slice(0, Math.min(state.fleet, CLUSTERS.length));
+  const REG = ["eu-west","us-east","apac","us-west","eu-central","sa-east"];
+  for (let i = CLUSTERS.length; i < state.fleet; i++){
+    const base = CLUSTERS[i % 2], k = i - CLUSTERS.length;
+    const bad = k % 7 === 0, warn = k % 3 === 0;
+    out.push({...base, sim:true,
+      id: `${REG[k % REG.length]}-prod-${String(Math.floor(k/REG.length)+1).padStart(2,"0")}`,
+      api: `https://api.${REG[k % REG.length]}-${k}.example.internal:6443`,
+      status: bad ? "connection refused" : "ok",
+      groups: 40 + ((k*13) % 90), unattributed: warn ? 1 + (k % 3) : 0,
+      unresolved: warn ? (k % 5) : 0, empty: k % 4,
+      oldest_sync: bad ? "2026-09-14T08:00:00Z" : "2026-09-17T22:00:11Z",
+      configs: k % 5 === 0 ? null : {total:6, failing: bad ? 2 : 0}});
+  }
+  return out;
+}
+function alertsFor(cs){
+  const real = ALERTS.filter(a => cs.some(c => c.id === a.cluster));
+  const sim = [];
+  cs.filter(c => c.sim).forEach((c,i) => {
+    if (c.status !== "ok") sim.push({cluster:c.id, kind:"unreachable", subject:c.id, severity:"critical",
+      silenced:false, silenced_by:null, sim:true,
+      detail:"the poller cannot reach this cluster — every count below it is the last one observed, not the current one"});
+    if (c.unattributed) sim.push({cluster:c.id, kind:"unattributed", subject:`${c.unattributed} groups`,
+      severity:"warning", silenced: i % 9 === 3, silenced_by: i % 9 === 3 ? "chart values" : null, sim:true,
+      detail:"no sync-provider label — not managed by any GroupSync CR"});
+    if (c.configs && c.configs.failing) sim.push({cluster:c.id, kind:"config_reconcile_error",
+      subject:`${c.configs.failing} policy configs`, severity:"critical", silenced:false, silenced_by:null,
+      sim:true, detail:"RBAC has quietly stopped reconciling — new namespaces receive nothing"});
+  });
+  return real.concat(sim);
+}
+
+/* ── alerts ───────────────────────────────────────────────────────────────────────────────
+   Paged, with page numbers, because this list grows with the FLEET and not with the cluster:
+   four alerts across two clusters becomes eighty across forty, and an eighty-row card buries
+   the one critical row it exists to surface. Sorted critical-first for the same reason — page 1
+   must be the page worth reading.
+   The page number is view state, not a position: the live app keeps only page/cluster/group/user
+   in the URL, and an entry per page click would bury the positions Back exists to reach. */
+const PAGE_SIZE = 8;
+state.page = 1;
+
+function sevBadge(s){
+  return `<span class="sev ${s === "critical" ? "critical" : "warning"}">
+    <span class="glyph" aria-hidden="true"></span>${esc(s)}</span>`;
+}
+
+function pager(total, page, pages){
+  if (pages <= 1) return "";
+  const win = [];
+  for (let i = 1; i <= pages; i++){
+    if (i === 1 || i === pages || Math.abs(i - page) <= 2) win.push(i);
+    else if (win[win.length-1] !== "…") win.push("…");
+  }
+  return `<div class="dsel" style="padding-top:10px;padding-bottom:12px">
+    <button data-page="${Math.max(1, page-1)}"${page === 1 ? " disabled" : ""}>‹ Prev</button>
+    ${win.map(i => i === "…" ? `<span style="color:var(--faint)">…</span>`
+      : `<button data-page="${i}" aria-pressed="${i === page}">${i}</button>`).join("")}
+    <button data-page="${Math.min(pages, page+1)}"${page === pages ? " disabled" : ""}>Next ›</button>
+    <span class="grow"></span>
+    <span>showing ${(page-1)*PAGE_SIZE + 1}–${Math.min(page*PAGE_SIZE, total)} of ${total}</span>
+  </div>`;
+}
+
+function alertsCard(all){
+  const active = all.filter(a => !a.silenced), quiet = all.length - active.length;
+  const crit = active.filter(a => a.severity === "critical").length;
+  const rank = a => (a.silenced ? 2 : 0) + (a.severity === "critical" ? 0 : 1);
+  const rows = all.slice().sort((x, y) => rank(x) - rank(y));
+  const pages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  const page = Math.min(state.page, pages);
+  const slice = rows.slice((page-1)*PAGE_SIZE, page*PAGE_SIZE);
+  /* Kinds are a summary, never a replacement for the rows: a reader who only ever sees a rollup
+     learns to trust a number they cannot check. */
+  const kinds = {};
+  active.forEach(a => kinds[a.kind] = (kinds[a.kind] || 0) + 1);
+  return `<div class="card" style="--sec:var(--${crit ? "crit" : active.length ? "warn" : "good"})">
+    <h2>Needs attention <span class="cnt">· ${active.length} active${
+      crit ? ` · ${crit} critical` : ""}${quiet ? ` · ${quiet} silenced` : ""}</span></h2>
+    ${all.length ? `<p class="note">Sorted worst-first. A <strong>silenced</strong> alert is shown, not
+      hidden — the row stays, dimmed, naming what silenced it, and the count above excludes it. Hiding
+      it would train readers that "0 alerts" means healthy when it means somebody chose not to look.</p>
+    <div class="dsel">${Object.entries(kinds).sort((a,b) => b[1]-a[1])
+      .map(([k, n]) => `<span class="badge">${esc(k.replace(/_/g," "))} · ${n}</span>`).join("")}</div>
+    <div>${slice.map(a => `<div class="alert${a.silenced ? " silenced" : ""}">
+      ${sevBadge(a.severity)}
+      <div class="who">${esc(a.subject)}${a.sim ? ` <span class="sim">simulated</span>` : ""}
+        <div class="where">${esc(a.cluster)} · ${esc(a.kind)}</div></div>
+      <div class="what">${a.silenced
+        ? `<span class="silence-tag">silenced by ${esc(a.silenced_by)}</span>` : ""}${esc(a.detail)}</div>
+    </div>`).join("")}</div>
+    ${pager(rows.length, page, pages)}`
+    : `<p class="empty">No alerts. Nothing overdue, empty, unattributed, stale, collapsed, or failing.</p>`}
+  </div>`;
+}
+
+/* ── cluster tiles ────────────────────────────────────────────────────────────────────── */
+function tile(c, density){
+  const degraded = c.status && c.status !== "ok", never = c.status === null;
+  const st = never ? "unknown" : (degraded ? "critical" : "ok");
+  const stText = never ? "no data yet" : (degraded ? c.status : "reachable");
+  const review = (c.dangling || 0) + (c.unresolved || 0);
+  const k = (lab, val, cls, extra) =>
+    `<span class="${extra ? "k-extra" : ""}"><span class="lab">${lab}</span>
+      <span class="v ${cls || ""}">${val}</span></span>`;
+  return `<button class="tile ${degraded ? "bad" : (c.unattributed || review ? "warnrail" : "")}"
+      data-cluster="${esc(c.id)}">
+    <span class="cn">${esc(c.id)}
+      ${c.sim ? `<span class="sim">simulated</span>` : ""}
+      <span class="badge ${st}"><span class="glyph" aria-hidden="true"></span>${esc(stText)}</span>
+      <span class="grow"></span><span class="poll">${esc(ago(c.last_poll))}</span></span>
+    <span class="api">${esc(c.api)}</span>
+    ${degraded || never ? `<span class="consq k-consq">${
+      esc(never ? MEANS.cl_never : MEANS.cl_bad)}</span>` : ""}
+    <span class="tk">
+      ${k("Groups", c.groups)}
+      ${k("Review", review || "0", review ? "c" : "q")}
+      ${k("Unattributed", c.unattributed || "0", c.unattributed ? "w" : "q")}
+      ${density === "full" || density === "medium"
+        ? k("Oldest sync", ago(c.oldest_sync), "sm" + (Date.parse(c.oldest_sync) < NOW - 172800000 ? " c" : ""))
+        : ""}
+      ${k("GroupSync CRs", c.operator_present === false
+        ? `<span class="v sm c">operator not installed</span>` : c.groupsync_count, "", true)}
+      ${k("Empty", c.empty || "0", c.empty ? "w" : "q", true)}
+      ${k("Policy configs", c.configs
+        ? (c.configs.failing ? `${c.configs.total} <span class="v sm c">(${c.configs.failing} failing)</span>`
+           : c.configs.total)
+        : `<span class="v sm q">not installed</span>`, "", true)}
+    </span>
+  </button>`;
+}
+
+function denseRow(c){
+  const degraded = c.status && c.status !== "ok";
+  const review = (c.dangling || 0) + (c.unresolved || 0);
+  return `<tr data-cluster="${esc(c.id)}" style="cursor:pointer">
+    <td><span class="badge ${degraded ? "critical" : "ok"}"><span class="glyph" aria-hidden="true"></span>${
+      degraded ? esc(c.status) : "ok"}</span></td>
+    <td class="mono">${esc(c.id)}${c.sim ? ` <span class="sim">simulated</span>` : ""}</td>
+    <td class="num">${c.groups}</td>
+    <td class="num" style="color:var(--${review ? "crit" : "faint"})">${review}</td>
+    <td class="num" style="color:var(--${c.unattributed ? "warn" : "faint"})">${c.unattributed || 0}</td>
+    <td class="t">${esc(ago(c.oldest_sync))}</td>
+    <td class="t">${esc(ago(c.last_poll))}</td></tr>`;
+}
+
+function clustersCard(cs, density){
+  /* Worst-first once the eye cannot take them all in at once. Below that, stable order — a tile
+     that moves between refreshes is harder to find than one that is simply further down. */
+  const rank = c => (c.status !== "ok" ? 0 : 1) * 10 - ((c.dangling||0)+(c.unresolved||0) ? 1 : 0);
+  const rows = (density === "full") ? cs : cs.slice().sort((a,b) => rank(a) - rank(b));
+  const bad = cs.filter(c => c.status !== "ok").length;
+  return `<div class="card">
+    <h2>Clusters <span class="cnt">· ${cs.length}${bad ? ` · ${bad} unreachable` : " · all reachable"}</span></h2>
+    <p class="note">Every tile opens that cluster. The layout follows the fleet: full detail to 3,
+    four figures to 8, name and exceptions to 24, one row each beyond that — and past 3 they sort
+    worst-first, because a fleet you cannot take in at a glance has to put the bad one at the top.</p>
+    <div class="dsel">Preview the fleet size:
+      ${[2,6,14,40].map(n => `<button data-fleet="${n}" aria-pressed="${state.fleet === n}">${n}</button>`).join("")}
+      <span class="grow"></span><span>density <strong>${density}</strong></span></div>
+    ${density === "dense" ? `<div class="scroll-x"><table>
+      <thead><tr><th>Status</th><th>Cluster</th><th class="num">Groups</th><th class="num">Review</th>
+        <th class="num">Unattributed</th><th>Oldest sync</th><th>Polled</th></tr></thead>
+      <tbody>${rows.map(denseRow).join("")}</tbody></table></div>`
+      : `<div class="tiles">${rows.map(c => tile(c, density)).join("")}</div>`}
+  </div>`;
+}
+
+/* ── the two tables the contract says must survive ─────────────────────────────────────── */
+function syncsCard(){
+  /* Worst-first, and the consequence sits under the badge rather than in a tooltip: a caveat a
+     reader has to hover to find is a caveat that was deleted. */
+  const rank = x => x.state === "error" ? 0 : x.state === "overdue" ? 1 : 2;
+  const rows = SYNCS.slice().sort((a,b) => rank(a) - rank(b));
+  const bad = rows.filter(x => x.state !== "ok").length;
+  return `<div class="card" style="--sec:var(--${bad ? "crit" : "good"})">
+    <h2>GroupSync CRs <span class="cnt">· ${rows.length} across ${
+      new Set(rows.map(r => r.cluster)).size} clusters${bad ? ` · ${bad} not syncing` : " · all syncing"}</span></h2>
+    <p class="note">These CRs own the groups, so their state is the estate's state.
+    <code>state</code> and <code>next expected</code> are computed per request from the schedule and
+    the last sync, never stored — a stored state is wrong the moment the clock moves past it.
+    <strong>ok</strong> means ${MEANS.sync_ok}; anything else says below what it costs you.</p>
+    <div class="scroll-x"><table>
+      <thead><tr><th>Status</th><th>Name</th><th>Schedule</th><th class="num">Groups</th>
+        <th>Last sync</th><th>Next expected</th></tr></thead>
+      <tbody>${rows.map(x => {
+        const late = x.state !== "ok";
+        return `<tr${late ? ' style="background:var(--crit-wash)"' : ""}>
+        <td style="min-width:210px">
+          <span class="badge ${late ? "critical" : "ok"}"><span class="glyph" aria-hidden="true"></span>${
+            esc(x.state)}</span>
+          ${late ? `<div class="consq">${esc(MEANS.sync_overdue)}</div>` : ""}</td>
+        <td class="mono">${esc(x.name)}<div class="t" style="font-size:11px">${esc(x.cluster)} · ${esc(x.ns)}</div></td>
+        <td class="t">${esc(x.sched)}</td><td class="num">${x.groups}</td>
+        <td class="t"${late ? ' style="color:var(--crit);font-weight:600"' : ""}>${esc(ago(x.last))}</td>
+        <td class="t">${late
+          ? `<span style="color:var(--crit)">missed ${esc(ago(x.next))}</span>`
+          : esc(stamp(x.next))}</td></tr>`;
+      }).join("")}</tbody>
+    </table></div>
+  </div>`;
+}
+
+function configsCard(){
+  const failing = CONFIGS.filter(c => c.error).length;
+  const rows = CONFIGS.slice().sort((a,b) => (b.error?1:0) - (a.error?1:0));
+  return `<div class="card" style="--sec:var(--${failing ? "crit" : "accent"})">
+    <h2>Policy operator <span class="cnt">· NamespaceConfig / GroupConfig · ${CONFIGS.length} on crc-local${
+      failing ? ` · ${failing} failing` : " · all reconciling"}</span>
+      <span class="badge warn">administrator only</span></h2>
+    <p class="note">These CRs template the RoleBindings, so a failure here is silent by nature —
+    nothing breaks, things simply stop being created. <strong>ok</strong> means ${MEANS.cfg_ok}.
+    Administrator tier by decision: unlike the GroupSync CRs there is no <code>/metrics</code>
+    analogue, so this is genuinely private (#169).</p>
+    <div class="scroll-x"><table>
+      <thead><tr><th>Status</th><th>Kind</th><th>Name</th><th>Last success</th></tr></thead>
+      <tbody>${rows.map(c => `<tr${c.error ? ' style="background:var(--crit-wash)"' : ""}>
+        <td style="min-width:210px">
+          <span class="badge ${c.error ? "critical" : "ok"}"><span class="glyph" aria-hidden="true"></span>${
+            c.error ? "failing" : "ok"}</span>
+          ${c.error ? `<div class="consq">${esc(MEANS.cfg_failing)}</div>` : ""}</td>
+        <td class="t">${esc(c.kind)}</td><td class="mono">${esc(c.name)}</td>
+        <td class="t">${esc(ago(c.success))}</td></tr>`).join("")}</tbody>
+    </table></div>
+    <p class="note" style="padding-bottom:14px"><strong>mock</strong> reports these CRDs absent —
+    ${esc(MEANS.cfg_absent)}. Auto-detected, and the tile says "not installed" rather than 0.</p>
+  </div>`;
+}
+
+/* ── shell ────────────────────────────────────────────────────────────────────────────── */
+function render(){
+  const cs = fleet(), density = densityFor(cs.length), al = alertsFor(cs);
+  document.documentElement.setAttribute("data-density", density);
+  const active = al.filter(a => !a.silenced).length;
+  const crit = al.filter(a => !a.silenced && a.severity === "critical").length;
+  document.getElementById("fleetline").innerHTML =
+    `${cs.length} cluster${cs.length === 1 ? "" : "s"} · ${active} alert${active === 1 ? "" : "s"}` +
+    (crit ? ` · <strong style="color:var(--crit)">${crit} critical</strong>` : "");
+  /* Alerts lead once the fleet is big enough that the tiles stop being readable: past 8 clusters the
+     question is "what is broken", not "how is each one doing". */
+  const alertsFirst = cs.length > 8;
+  document.getElementById("main").innerHTML = alertsFirst
+    ? alertsCard(al) + clustersCard(cs, density) + syncsCard() + configsCard()
+    : clustersCard(cs, density) + alertsCard(al) + syncsCard() + configsCard();
+}
+
+document.addEventListener("click", e => {
+  const b = e.target.closest("[data-fleet],[data-page],[data-cluster]");
+  if (!b) return;
+  if (b.dataset.fleet){ state.fleet = +b.dataset.fleet; state.page = 1; render(); }
+  else if (b.dataset.page){ state.page = +b.dataset.page; render(); }
+  else if (b.dataset.cluster){ location.hash = "page=overview&cluster=" + encodeURIComponent(b.dataset.cluster); }
+});
+
+function shellControl(id, attr, param){
+  const sel = document.getElementById(id);
+  const start = new URLSearchParams(location.search).get(param);
+  if (start){ document.documentElement.setAttribute(attr, start); sel.value = start; }
+  sel.addEventListener("change", () => {
+    const v = sel.value;
+    if (v) document.documentElement.setAttribute(attr, v);
+    else document.documentElement.removeAttribute(attr);
+    const u = new URL(location); v ? u.searchParams.set(param, v) : u.searchParams.delete(param);
+    history.replaceState(history.state, "", u);   // never null: it would wipe the entry's position
+  });
+}
+shellControl("theme", "data-theme", "mode");
+shellControl("palette", "data-palette", "theme");
+render();
+</script>

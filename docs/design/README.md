@@ -12,3 +12,4 @@ artifacts (not shipped pages); the implemented pages live under `local-developme
 | [`tab-redesign-mock.html`](tab-redesign-mock.html) | The six tabs redesigned **feature-complete** against the contract — real rows, real caveats, real filters — see issue #153 |
 | [`tab-feature-contract.md`](tab-feature-contract.md) | What a tab redesign may **not** remove — captured from the running dashboard and the render functions — see issue #153 |
 | [`drilldown-mock.html`](drilldown-mock.html) | The drill-down experience — one pattern-matched lookup over users, groups **and** namespaces, then group → member → user → via-group, with the namespace as the third drillable entity — see issues #166 and #167 |
+| [`cluster-overview-mock.html`](cluster-overview-mock.html) | The Cluster Overview relaid onto the shared design system — cluster tiles that shrink as the fleet grows, paged alerts, and every status carrying its consequence — see issue #157 |
