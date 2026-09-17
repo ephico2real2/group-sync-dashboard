@@ -72,6 +72,39 @@ KPIs `Distinct users · Days recorded · Interactions · Retention`, all from wh
 never counted from the visible page. The standing footnote explains that `Day` is a **UTC bucket** while
 times are server-zone, and that *"an interaction is one deliberate action … not one HTTP request"*.
 
+### Cluster Overview  (operator ruling, 2026-09-17: keep as-is, do not redesign)
+
+*"I love it … we cannot afford to lose them. We can just create a new KPI panel and keep what we
+design there. No need to litigate that again."* This page is settled. A KPI redesign adds a **new**
+page; it does not reshape this one.
+
+Three cards, all of which must survive:
+
+1. **One card per connected cluster** (`crc-local`, `mock` today). These are already the tiles the
+   page grows into as clusters are added — the position `#page=overview&cluster=<id>` exists today,
+   so making a tile clickable needs no new navigation model.
+2. **GroupSync CRs** — `NAME · STATE · SCHEDULE · GROUPS · LAST SYNC · NEXT EXPECTED`. `state`,
+   `next_expected` and `error_is_current` are computed per request, never stored: a stored state is
+   wrong the moment the clock moves past it.
+3. **Policy operator (NamespaceConfig / GroupConfig)** — `KIND · NAME · STATE · LAST SUCCESS`, with
+   the note that *"a currently-failing one means RBAC has quietly stopped reconciling — new
+   namespaces receive nothing"*. That sentence is the reason the card exists.
+
+**Visibility, measured against `api.py` rather than assumed** — relevant because opening this page
+has been raised. It is not uniform:
+
+| card | tier | why |
+|---|---|---|
+| cluster cards + counts | every tier | already on the unauthenticated `/metrics` (`gsd_groups_total`, `gsd_bindings_total{finding=…}`); withholding would be theatre |
+| GroupSync CRs | every tier | `/metrics` is in the chart's `skipAuthRegex` and already serves `gsd_groupsync_state`, `gsd_groupsync_last_sync_timestamp_seconds`, `gsd_groupsync_groups_total` per CR |
+| Policy operator | **administrator only** | `require_admin_tier`. No `/metrics` analogue exists, so this is a genuinely private aggregate — an explicit reversal (03ad446) of the earlier "governance data about objects" ruling |
+
+Two fields are delivered but never rendered, and are omitted at the self tier: `ldap_filter` and
+`error_message`, because both can embed directory DNs and the gate group. `refresh()` fetches
+`/groupsyncs` inside `if (view.cluster)` — true on **every** page — so a narrowed reader's browser
+downloads this payload whichever tab they are on. "The Overview tab is admin-only" never protected
+them.
+
 ## The rule
 
 Redesign the layout. Keep the words. Where a note is moved behind a disclosure, it must still be
