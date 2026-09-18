@@ -250,4 +250,9 @@ naming `e2e_extra.py:55` — and passing after. Focused on the fixed tree (the r
 Policy tab, the walk tests, the CSS guards, the title and skip-auth parity files): 409 passed.
 Full UI suite 351 passed (236.83 s); non-UI suite 3305 passed, 12 skipped, with one environmental failure —
 `test_every_panel_promql_expression_parses_with_promtool` refuses to skip under `CI=1` on a machine without
-promtool (without the flag it skips; CI installs promtool). CI on the pushed head is recorded below when it lands.
+promtool (without the flag it skips; CI installs promtool). CI on `21e9538`: one browser failure —
+`test_the_contract_survives_in_both_views` at 14 clusters read the scoped view after `#back`, which arrives
+with the first paint (the tile, its alerts, "Loading…" — F15), and CI's runner had not landed the tables yet;
+350 passed beside it and every local run was green. The same wait-on-the-position that C6 named in the walk:
+an `_open_cluster` helper waits for the tables' paint and the two tests that read table content use it (the
+tests that deliberately read the first paint do not). CI on that head is recorded below when it lands.

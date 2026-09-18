@@ -1299,8 +1299,7 @@ class TestOverviewFleet:
         n, base = fleet
         self._open(page, base)
         opener = "tr.rowlink[data-cluster='crc-local']" if n > 24 else ".tile[data-cluster='crc-local']"
-        page.locator(opener).click()
-        page.wait_for_selector("#back")
+        _open_cluster(page, opener)
         assert page.evaluate("() => location.hash") == "#page=overview&cluster=crc-local"
         assert page.locator("#back").inner_text().strip() == "← all clusters"
         assert page.locator("#f-cluster").input_value() == "crc-local", "the selector is the same position as the tile"
@@ -1336,8 +1335,7 @@ class TestOverviewFleet:
                 assert page.locator("th", has_text=col).count() >= 1, col
             assert "Policy operator (NamespaceConfig / GroupConfig)" in text
             assert "quietly stopped reconciling" in text
-        page.locator("tr.rowlink[data-cluster='crc-local']" if n > 24 else ".tile[data-cluster='crc-local']").click()
-        page.wait_for_selector("#back")
+        _open_cluster(page, "tr.rowlink[data-cluster='crc-local']" if n > 24 else ".tile[data-cluster='crc-local']")
         # text_content: the labels are not upper-cased (OB1 measured text-transform none), but text_content
         # also reads the figures the density tier hides, which is the point — the scoped view carries them all
         text = page.locator("#main").text_content()
@@ -1434,6 +1432,18 @@ def review_restricted(tmp_path_factory):
 def _open_fleet(page, base, hash_=""):
     page.goto(f"{base}/{hash_}")
     page.wait_for_selector(".hero .value")
+
+
+def _open_cluster(page, opener):
+    """Click a tile (or a dense row) and wait for the scoped view to paint its TABLES. `#back` arrives with
+    the first paint — the tile, its alerts and "Loading…" (F15: a tile paints before it fetches); the
+    GroupSync CRs and policy tables land with the batch's one render. A test that reads them after `#back`
+    alone reads the Loading frame when the runner is slow enough: CI did, at 14 clusters (run 35342604962,
+    350 passed beside it, every local run green) — the wait on the position, not the paint, that OB1 found
+    in the e2e walk (pass 3, C6)."""
+    page.locator(opener).click()
+    page.wait_for_selector("#back")
+    page.wait_for_function("() => !document.getElementById('main').innerText.includes('Loading…')")
 
 
 class TestOverviewReview:
