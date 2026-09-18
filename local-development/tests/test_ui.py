@@ -2181,6 +2181,447 @@ class TestTheFleetOrphansNoPayload:
         assert not errors
 
 
+class TestLookup:
+    """#174: one lookup over the three kinds — three doors at rest, matches by kind with text, the AND
+    contract of the list boxes (`alice zzz` finds nothing), the also-line on a list page and
+    "search everything instead" inside a group carrying the text across ONE position change."""
+
+    def test_start_anywhere_doors_carry_the_lists_own_counts(self, page, server):
+        page.goto(f"{server}/#page=lookup&cluster=crc-local")
+        page.wait_for_selector(".door")
+        page.wait_for_function("() => [...document.querySelectorAll('.door .value')].every(v => v.textContent.trim() !== '…')")
+        doors = {d["kind"]: int(d["n"]) for d in page.evaluate(
+            "() => [...document.querySelectorAll('.door')].map(d => ({kind: d.querySelector('.label').textContent.trim(), n: d.querySelector('.value').textContent.trim()}))")}
+        api = f"{server}/api/clusters/crc-local"
+        assert doors["Groups"] == httpx.get(f"{api}/groups?state=all", timeout=5).json()["count"]
+        assert doors["Users"] == httpx.get(f"{api}/users?limit=10000", timeout=5).json()["total"]
+        assert doors["Namespaces"] == httpx.get(f"{api}/namespaces", timeout=5).json()["count"] == 9
+        page.locator(".door[data-page='groups'] button.drill").click()
+        page.wait_for_selector("tr[data-group]")
+        assert page.evaluate("() => location.hash") == "#page=groups&cluster=crc-local"
+
+    def test_typing_where_nothing_filters_opens_the_lookup_once(self, dash):
+        before = dash.evaluate("() => history.length")
+        dash.fill("#f-lookup-search", "alice")
+        dash.wait_for_selector("tr[data-user='alice']")
+        assert dash.evaluate("() => [view.page, location.hash]") == ["lookup", "#page=lookup&cluster=crc-local"]
+        assert dash.evaluate("() => history.length") == before + 1, "one position change, not one per keystroke"
+        assert dash.locator("#f-lookup-search").input_value() == "alice", "the text is carried"
+        dash.fill("#f-lookup-search", "alice cooper")
+        dash.wait_for_selector("tr[data-user='alice'] mark")
+        assert dash.evaluate("() => history.length") == before + 1, "typing on the lookup is a repaint"
+
+    def test_the_lookup_ands_its_words_across_three_kinds(self, page, server):
+        page.goto(f"{server}/#page=lookup&cluster=crc-local")
+        page.wait_for_selector(".door")
+        page.fill("#f-lookup-search", "alice zzz")
+        page.wait_for_selector("#main .empty-note")
+        assert "The data is not empty" in page.locator("#main .empty-note").inner_text()
+        assert page.locator("tr[data-user], tr[data-group], tr[data-ns]").count() == 0
+        page.fill("#f-lookup-search", "demo")
+        page.wait_for_selector("tr[data-ns='prod-ns']")
+        assert sorted(page.locator("tr[data-ns]").evaluate_all("els => els.map(e => e.dataset.ns)")) == ["prod-ns", "quiet-corner"], "by label value"
+        assert page.locator("tr[data-ns='prod-ns'] mark").count() >= 1, "the matched substring is marked"
+        page.fill("#f-lookup-search", "rbac alpha")
+        page.wait_for_selector("tr[data-group]")
+        groups = page.locator("tr[data-group]").evaluate_all("els => els.map(e => e.dataset.group)")
+        assert groups and all("rbac" in g and "alpha" in g for g in groups), groups
+        assert "of" in page.locator("h3", has_text="Groups").inner_text()
+        page.press("#f-lookup-search", "Escape")
+        page.wait_for_selector(".door")
+
+    def test_the_also_line_on_a_list_offers_the_other_kinds_and_carries_the_text(self, dash):
+        """Typing is a filter and issues no request, and the users list is fetched only on its own tab — so on a
+        fresh Groups tab the line is the plain door, and the counts appear only for a kind this session already
+        holds (the audit tab visited first). Either way the text is carried to the lookup."""
+        dash.click("#tab-groups")
+        dash.wait_for_selector("#f-group-search")
+        dash.evaluate("() => { window.__urls = []; const f = window.fetch;"
+                      " window.fetch = (...a) => { window.__urls.push(String(a[0])); return f(...a); }; }")
+        dash.fill("#f-group-search", "demo")
+        dash.wait_for_selector("[data-widen]")
+        line = dash.locator("[data-widen]").locator("xpath=..").inner_text()
+        assert "search everything for demo" in line and "namespaces" not in line, line
+        assert dash.evaluate("() => window.__urls") == [], "typing must not fetch"
+        dash.locator("[data-widen]").click()
+        dash.wait_for_selector("tr[data-ns='prod-ns']")
+        assert dash.evaluate("() => [view.page, document.getElementById('f-lookup-search').value]") == ["lookup", "demo"]
+        # the audit tab loads the namespaces; back on Groups the line now counts them
+        dash.click('button.tab:text-is("Namespace audit")')
+        dash.wait_for_selector("tr[data-ns]")
+        dash.click("#tab-groups")
+        dash.wait_for_selector("#f-group-search")
+        dash.fill("#f-group-search", "demo")
+        dash.wait_for_function("() => { const w = document.querySelector('[data-widen]'); return !!w && w.parentElement.textContent.includes('2 namespaces'); }")
+
+    def test_search_everything_instead_carries_the_text_out_of_a_group(self, dash):
+        dash.click("#tab-groups")
+        dash.wait_for_selector("tr[data-group='app-ocp-rbac-alpha-ns-admin']")
+        dash.locator("tr[data-group='app-ocp-rbac-alpha-ns-admin']").click()
+        dash.wait_for_selector("#f-member-search")
+        dash.fill("#f-member-search", "alice")
+        dash.wait_for_selector("[data-widen]")
+        dash.locator("[data-widen]").click()
+        # the group's own members table already lists alice — wait for the LOOKUP to paint, not for a row
+        dash.wait_for_function("() => view.page === 'lookup' && document.getElementById('f-lookup-search') && document.querySelector('#main h3')")
+        assert dash.locator("#main tr[data-user='alice']").count() == 1
+        assert dash.evaluate("() => [view.page, view.group, document.getElementById('f-lookup-search').value]") == ["lookup", None, "alice"]
+
+    # -- the review of #174 (Grok, Codex, OB1 — docs/REVIEW_lookup.md): OB1's thirteen, verbatim, each failing on
+    #    76ebaff and on the merged base d489bcc; the fixes are OB1's recipe plus Grok's and Codex's converging findings
+
+    # ── F1: IME and whitespace ──
+    def test_a_committed_ime_composition_opens_the_lookup_once(self, dash):
+        """Chromium fires no `input` after `compositionend` (measured: input×3 with isComposing=true, then
+        compositionend, nothing after), so the rule that opens the lookup from a page with no list has to
+        run on the commit too — or a CJK reader's query sits in the box on the Overview and opens nothing."""
+        before = dash.evaluate("() => history.length")
+        dash.focus("#f-lookup-search")
+        cdp = dash.context.new_cdp_session(dash)
+        cdp.send("Input.imeSetComposition", {"text": "か", "selectionStart": 1, "selectionEnd": 1})
+        dash.wait_for_timeout(150)
+        assert dash.evaluate("() => [view.page, history.length]") == ["overview", before], "mid-composition is not a position change"
+        cdp.send("Input.insertText", {"text": "かんり"})
+        dash.wait_for_function("() => view.page === 'lookup'", timeout=3_000)
+        assert dash.evaluate("() => [view.lookupSearch, location.hash, history.length]") == ["かんり", "#page=lookup&cluster=crc-local", before + 1]
+
+    def test_a_query_of_only_spaces_is_not_a_position_change(self, dash):
+        before = dash.evaluate("() => history.length")
+        dash.type("#f-lookup-search", "   ")
+        dash.wait_for_timeout(300)
+        assert dash.evaluate("() => [view.page, history.length]") == ["overview", before]
+
+    # ── F2: marking ──
+    def test_marking_keeps_the_text_it_marks(self, dash):
+        """hl() marked on the ESCAPED string: a one-character term landed inside an entity (`a` in `&amp;`),
+        and a second term inside the <mark> the first had just inserted ("alice a" painted "ark>aliceark>").
+        The rendered text must be the raw text; every mark must be one of the terms."""
+        cases = dash.evaluate("""() => [["Smith & Wesson", "a"], ["Dara O'Brien", "3"], ["Walter Holt <walt@corp.example>", "t"],
+              ["alice", "alice a"], ["app-ocp-rbac-alpha-ns-admin", "rbac a"], ["a.b", "."], ["a<b", "<"], ["x&y", "&"],
+              ["Alice Cooper", "alice cooper"]]
+            .map(([t, q]) => { const d = document.createElement("div"); d.innerHTML = hl(t, q);
+              return [t, q, d.textContent, [...d.querySelectorAll("mark")].map((m) => m.textContent)]; })""")
+        for text, q, rendered, marks in cases:
+            assert rendered == text, (text, q, rendered)
+            terms = q.lower().split()
+            # a term the raw text carries is marked; one it does not ("a" in "Smith & Wesson" — the head's only
+            # `a` was the entity's) is not
+            assert bool(marks) == any(t in text.lower() for t in terms), (text, q, marks)
+            for m in marks:
+                assert m.lower() in terms, (text, q, marks)
+
+    def test_overlapping_terms_mark_the_union_without_nesting(self, dash):
+        """Pass 2 (Codex): "ab bc" on "abc" marked "ab" only; every occurrence, overlapping ones included, is
+        marked as one merged range, never nested — and two terms that do not overlap ("ice coo" on
+        "alice cooper", a space between them) stay two marks with the gap unmarked."""
+        got = dash.evaluate("""() => [["abc", "ab bc"], ["aaa", "aa"], ["alice cooper", "ice coo"]].map(([text, query]) => {
+            const node = document.createElement("div"); node.innerHTML = hl(text, query);
+            return {text: node.textContent, html: node.innerHTML, nested: !!node.querySelector("mark mark")}; })""")
+        assert got == [{"text": "abc", "html": "<mark>abc</mark>", "nested": False},
+                       {"text": "aaa", "html": "<mark>aaa</mark>", "nested": False},
+                       {"text": "alice cooper", "html": "al<mark>ice</mark> <mark>coo</mark>per", "nested": False}], got
+
+    def test_a_name_with_an_ampersand_survives_the_first_keystroke(self, page, server):
+        """A seeded name on the page itself: the users payload gains one person whose display name carries
+        an ampersand; the first keystroke (`a`) must paint the name, not its entity."""
+        def with_sam(route):
+            resp = route.fetch()
+            body = resp.json()
+            body["users"].append({"user_name": "sam", "full_name": "Smith & Wesson", "logged_in": True, "group_count": 0,
+                                  "providers": ["ldap-local"], "first_login_at": None, "first_login_source": None,
+                                  "last_login_at": None, "created_at": None})
+            body["total"] += 1
+            body["count"] += 1
+            body["logged_in_total"] += 1
+            route.fulfill(response=resp, json=body)
+        page.route("**/users?limit=*", with_sam)
+        page.goto(f"{server}/#page=lookup&cluster=crc-local")
+        page.wait_for_selector(".door")
+        page.fill("#f-lookup-search", "a")
+        page.wait_for_selector("tr[data-user='sam']")
+        assert page.locator("tr[data-user='sam'] td:nth-child(2)").inner_text() == "Smith & Wesson"
+        page.fill("#f-lookup-search", "alice a")
+        page.wait_for_selector("tr[data-user='alice']")
+        assert page.locator("tr[data-user='alice'] td:first-child").inner_text() == "alice"
+
+    # ── F3: the doors' lines ──
+    def test_the_users_door_counts_logins_the_way_the_users_tab_does(self, page, server):
+        """A manual account (`oc create user`) is a row and not a login; the Users tab's headline is
+        logged_in_total, and the door's line must be the same number. The one refusal these lists have is
+        the missing identity, and both doors say so in the same words."""
+        page.goto(f"{server}/#page=lookup&cluster=crc-local")
+        page.wait_for_selector(".door")
+        lines = page.evaluate("""() => { data.users = {total: 2, logged_in_total: 1, truncated: false, never_logged_in_members: {count: 3, names: []},
+              users: [{user_name: "logged", logged_in: true}, {user_name: "made-by-hand", logged_in: false}]};
+            data.namespaces = {forbidden: true}; render();
+            return [...document.querySelectorAll(".door")].map((d) => [d.dataset.page, d.querySelector(".value").textContent.trim(), d.querySelector(".filterbar-note").textContent.trim()]); }""")
+        by = {p: (v, line) for p, v, line in lines}
+        assert by["users"] == ("2", "1 have logged in · 3 synced members never have"), by["users"]
+        assert by["nsaudit"][1] == "needs an authenticated identity", by["nsaudit"]
+
+    # ── F4: the self tier ──
+    def test_the_lookup_says_when_its_counts_are_the_readers_own(self, page, scoped_server):
+        p = _open_as(page, scoped_server, "alice")
+        p.evaluate("() => { location.hash = '#page=lookup&cluster=crc-local'; }")
+        p.wait_for_selector(".door")
+        p.wait_for_function("() => data.groupsMeta && data.groupsMeta.scope === 'self'")
+        assert p.locator("#main .scope-banner").count() == 1
+        assert "alice" in p.locator("#main .scope-banner").inner_text()
+        p.fill("#f-lookup-search", "a")
+        p.wait_for_selector("#main h3")
+        assert p.locator("#main .scope-banner").count() == 1
+        # page-level, as _open_as set it: a page header outranks a context header
+        p.set_extra_http_headers({"X-Forwarded-User": "root"})
+        p.evaluate("() => refresh()")
+        p.wait_for_function("() => data.groupsMeta && data.groupsMeta.scope === 'all'")
+        assert p.locator("#main .scope-banner").count() == 0
+
+    # ── F5: the empty state on a cluster with nothing recorded ──
+    def test_the_empty_state_does_not_claim_data_a_cluster_does_not_have(self, page, server):
+        page.goto(f"{server}/#page=lookup&cluster=prod-east")
+        page.wait_for_selector(".door")
+        page.wait_for_function("() => [...document.querySelectorAll('.door .value')].every(v => v.textContent.trim() !== '…')")
+        page.fill("#f-lookup-search", "alice")
+        page.wait_for_selector("#main .empty-note")
+        note = page.locator("#main .empty-note").inner_text()
+        assert "The data is not empty" not in note, note
+        assert "nothing to search yet" in note, note
+
+    # ── F6 / L8: one groups slot, its state recorded ──
+    def test_the_groups_tab_never_paints_the_lookups_slice_under_a_filter(self, dash):
+        dash.click("#tab-groups")
+        dash.wait_for_selector("tr[data-group]")
+        dash.select_option("#f-state", "empty")
+        dash.wait_for_function("() => document.querySelectorAll('tr[data-group]').length === 2")
+        dash.evaluate("() => { location.hash = '#page=lookup&cluster=crc-local'; }")
+        dash.wait_for_selector(".door")
+        dash.wait_for_function("() => data.groups && data.groups.length === 4")
+        # render() is synchronous and refresh() is not: what this returns is the frame the tab handler paints
+        first = dash.evaluate("""() => { document.getElementById('tab-groups').click();
+            return {rows: document.querySelectorAll('tr[data-group]').length, select: document.getElementById('f-state').value,
+                    loading: !!document.querySelector('#main .empty-note') && /Loading/.test(document.querySelector('#main .empty-note').textContent)}; }""")
+        assert first == {"rows": 0, "select": "empty", "loading": True}, first
+        dash.wait_for_function("() => document.querySelectorAll('tr[data-group]').length === 2")
+
+    def test_the_also_line_never_counts_a_filtered_groups_slice(self, dash):
+        dash.click("#tab-groups")
+        dash.wait_for_selector("tr[data-group]")
+        dash.select_option("#f-state", "empty")
+        dash.wait_for_function("() => document.querySelectorAll('tr[data-group]').length === 2")
+        dash.click("#tab-users")
+        dash.wait_for_selector("tr[data-user]")
+        dash.fill("#f-user-search", "rbac")
+        dash.wait_for_selector("[data-widen]")
+        line = dash.locator("[data-widen]").locator("xpath=..").inner_text()
+        assert "group" not in line and "search everything for rbac" in line, line
+
+    # ── F7: the keyboard ──
+    def test_a_door_and_every_hit_answer_the_keyboard(self, page, server):
+        page.goto(f"{server}/#page=lookup&cluster=crc-local")
+        page.wait_for_selector(".door")
+        page.focus(".door[data-page='groups'] button.drill")
+        page.keyboard.press("Enter")
+        page.wait_for_function("() => view.page === 'groups'", timeout=3_000)
+        page.go_back()
+        page.wait_for_selector(".door")
+        page.fill("#f-lookup-search", "rbac alpha")
+        page.wait_for_selector("tr[data-group='app-ocp-rbac-alpha-ns-admin'] button.drill")
+        page.focus("tr[data-group='app-ocp-rbac-alpha-ns-admin'] button.drill")
+        page.keyboard.press("Enter")
+        page.wait_for_function("() => view.group === 'app-ocp-rbac-alpha-ns-admin'", timeout=3_000)
+        page.go_back()
+        page.wait_for_function("() => view.page === 'lookup'")
+        page.fill("#f-lookup-search", "demo")
+        page.wait_for_selector("tr[data-ns='prod-ns'] button.drill")
+        page.focus("tr[data-ns='prod-ns'] button.drill")
+        page.keyboard.press("Space")
+        page.wait_for_function("() => view.ns === 'prod-ns'", timeout=3_000)
+        page.go_back()
+        page.wait_for_function("() => view.page === 'lookup'")
+        page.fill("#f-lookup-search", "alice")
+        page.wait_for_selector("tr[data-user='alice'] button.drill")
+        page.focus("tr[data-user='alice'] button.drill")
+        page.keyboard.press("Enter")
+        page.wait_for_function("() => view.user === 'alice'", timeout=3_000)
+
+    def test_a_group_drill_on_access_granted_answers_enter(self, dash):
+        """Pre-existing: the shim swallowed Enter on every .drill without a user target — the group drills
+        of Access granted included — and #174 added three more surfaces to the same handler."""
+        dash.click('button.tab:text-is("Access granted")')
+        dash.wait_for_selector("#main button.drill[data-group='was-managed']")
+        dash.focus("#main button.drill[data-group='was-managed']")
+        dash.keyboard.press("Enter")
+        dash.wait_for_function("() => view.group === 'was-managed'", timeout=3_000)
+
+    # ── Grok 6: the cut's door carries the query ──
+    def test_open_the_full_list_carries_the_query_to_that_lists_box(self, dash):
+        dash.evaluate("""() => { view.page = 'lookup'; view.lookupSearch = 'grp';
+            data.groups = Array.from({length: 14}, (_, i) => ({name: 'grp-' + i, member_count: 0, sync_provider: null, binding_count: 0}));
+            data.groupsMeta = {scope: 'all', viewer: null, state: 'all'};
+            data.users = {users: [], total: 0}; data.namespaces = {namespaces: [], label_keys: []}; render(); }""")
+        assert "2 more" in dash.locator("#main .filterbar-note", has_text="more").inner_text()
+        dash.locator("#main button[data-page='groups'].linkish").click()
+        # the position flips at once; the bar is repainted for the new page by the refresh that follows —
+        # wait for the Groups tab's own box, not for view.page (CI's runner read a bar not yet rebuilt)
+        dash.wait_for_selector("#f-group-search")
+        assert dash.evaluate("() => [view.page, view.groupSearch, document.getElementById('f-group-search').value]") == ["groups", "grp", "grp"]
+
+    # ── F8: the mark keeps the text's contrast ──
+    def test_the_mark_keeps_the_text_above_the_contrast_bar(self, page, server):
+        """The drill's link colour sits at 4.55:1 on the card; the accent wash behind a mark measured 3.40:1
+        (light) and 3.74:1 (dark). Measured, not asserted from the sheet: the mark's composed background under
+        its text, in both themes."""
+        contrast = """() => {
+          const parse = (s) => { let m = s.match(/rgba?\\(([\\d.]+),\\s*([\\d.]+),\\s*([\\d.]+)(?:,\\s*([\\d.]+))?\\)/);
+            if (m) return [+m[1]/255, +m[2]/255, +m[3]/255, m[4] === undefined ? 1 : +m[4]];
+            m = s.match(/color\\(srgb ([\\d.]+) ([\\d.]+) ([\\d.]+)(?: \\/ ([\\d.]+))?\\)/);
+            return [+m[1], +m[2], +m[3], m[4] === undefined ? 1 : +m[4]]; };
+          const lum = ([r, g, b]) => { const f = (c) => c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b); };
+          const over = (fg, bg) => [0, 1, 2].map((i) => fg[i] * fg[3] + bg[i] * (1 - fg[3])).concat([1]);
+          const ratio = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p); return (x + 0.05) / (y + 0.05); };
+          return [...document.querySelectorAll('#main mark')].map((mark) => { const cs = getComputedStyle(mark);
+            const card = over(parse(getComputedStyle(mark.closest('.card')).backgroundColor), parse(getComputedStyle(document.body).backgroundColor));
+            return +ratio(parse(cs.color), over(parse(cs.backgroundColor), card)).toFixed(2); });
+        }"""
+        page.goto(f"{server}/#page=lookup&cluster=crc-local")
+        page.wait_for_selector(".door")
+        page.fill("#f-lookup-search", "alice")
+        page.wait_for_selector("tr[data-user='alice'] mark")
+        for theme in ("light", "dark"):
+            page.evaluate("(t) => document.documentElement.setAttribute('data-theme', t)", theme)
+            ratios = page.evaluate(contrast)
+            assert ratios and min(ratios) >= 4.5, (theme, ratios)
+
+    def test_the_groups_hits_fit_a_phone_without_sideways_scroll(self, page, server):
+        """Seen on CRC at 375 px: the Owner cell does not wrap, so it took the width and every group name
+        broke at each hyphen into three lines while the table scrolled sideways inside `.scroll-x`. Under
+        520 px the Owner column is hidden — the name keeps two lines at most and the table fits; at 1280 px
+        the column is there (review of #174, pass 3, OB3)."""
+        def crc_owner(route):
+            resp = route.fetch()
+            body = resp.json()
+            for g in body["groups"]:
+                if g["sync_provider"]:
+                    g["sync_provider"] = "app-ocp-rbac-group-groupsync_ldap"
+            route.fulfill(response=resp, json=body)
+        page.route("**/groups?state=*", crc_owner)
+        page.goto(f"{server}/#page=lookup&cluster=crc-local")
+        page.wait_for_selector(".door")
+        page.fill("#f-lookup-search", "rbac")
+        page.wait_for_selector("tr[data-group='app-ocp-rbac-alpha-ns-admin']")
+        measure = """() => { const tr = document.querySelector("tr[data-group='app-ocp-rbac-alpha-ns-admin']");
+            const name = tr.querySelector('button.drill'); const wrap = tr.closest('.scroll-x');
+            return {lines: Math.round(name.getBoundingClientRect().height / parseFloat(getComputedStyle(name).lineHeight)),
+                    ownerShown: getComputedStyle(tr.querySelector('td:nth-child(2)')).display !== 'none',
+                    scrolls: wrap.scrollWidth > wrap.clientWidth}; }"""
+        wide = page.evaluate(measure)
+        assert wide == {"lines": 1, "ownerShown": True, "scrolls": False}, wide
+        page.set_viewport_size({"width": 375, "height": 740})
+        page.wait_for_timeout(300)
+        phone = page.evaluate(measure)
+        assert phone["ownerShown"] is False and phone["scrolls"] is False and phone["lines"] <= 2, phone
+
+    def test_the_lookup_holds_at_phone_width(self, page, server):
+        page.goto(f"{server}/#page=lookup&cluster=crc-local")
+        page.wait_for_selector(".door")
+        page.set_viewport_size({"width": 375, "height": 740})
+        page.wait_for_timeout(300)
+        assert page.evaluate("() => document.documentElement.scrollWidth <= innerWidth")
+        page.fill("#f-lookup-search", "a")
+        page.wait_for_selector("h3")
+        page.wait_for_timeout(300)
+        assert page.evaluate("() => document.documentElement.scrollWidth <= innerWidth")
+
+
+@pytest.fixture(scope="module")
+def slow_lookup_server(tmp_path_factory):
+    """The seeded app with the lookup's namespace list answering a second late — the proxy path's latency,
+    exaggerated, so a step that reads the page it is LEAVING is caught by the clock rather than by luck."""
+    import asyncio
+
+    class _Late:
+        def __init__(self, app):
+            self.app = app
+
+        async def __call__(self, scope, receive, send):
+            if scope["type"] == "http" and scope["path"].endswith("/namespaces"):
+                await asyncio.sleep(1.0)
+            await self.app(scope, receive, send)
+
+    db = str(tmp_path_factory.mktemp("gsd-slow") / "ui.db")
+    _seed(db)
+    settings = Settings(
+        clusters=[ClusterConfig("crc-local", "https://api.crc.testing:6443", token_env="X")],
+        db_path=db, login_capture_enabled=True,
+        namespace_metadata_labels=("company.net/mnemonic", "company.net/app-environment"),
+        view_restrictions_enabled=False,
+    )
+    port = _free_port()
+    srv = uvicorn.Server(uvicorn.Config(_Late(build_app(settings, run_poller=False)), host="127.0.0.1", port=port, log_level="warning"))
+    thread = threading.Thread(target=srv.run, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{port}"
+    for _ in range(100):
+        try:
+            if httpx.get(f"{base}/healthz", timeout=1).status_code == 200:
+                break
+        except httpx.HTTPError:
+            time.sleep(0.1)
+    else:
+        raise RuntimeError("slow dashboard server did not start")
+    yield base
+    srv.should_exit = True
+    thread.join(timeout=5)
+
+
+class TestTheWalksLookupStep:
+    """The e2e walk's lookup step (e2e-walk/e2e_capture.py, `walk_lookup`), driven against the seed with the
+    walk's own `Walk`: main() runs it after walk_tabs, so it starts on whatever tab the strip ends on, and it
+    must capture the LOOKUP — never the page it is leaving, and never skip on a page whose bar holds a list's
+    own box (review of #174, pass 3, OB3)."""
+
+    @staticmethod
+    def _walk(page, out):
+        import importlib.util
+        import pathlib
+        path = pathlib.Path(__file__).resolve().parents[1] / "e2e-walk" / "e2e_capture.py"
+        spec = importlib.util.spec_from_file_location("e2e_capture", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod, mod.Walk(page, out)
+
+    def test_the_step_captures_the_lookup_and_not_the_tab_it_left(self, page, slow_lookup_server, tmp_path):
+        """walk_tabs ends on Usage, whose off state is a `.empty-note` — the selector the step waited on — and
+        the doors' "…" test over zero doors is vacuously true: with the lookup's fetch a second out, the first
+        capture was of the Usage page and the step recorded "no matches" where the seed has two namespaces
+        matching "demo", then skipped the namespace drill for want of a row."""
+        errors: list[str] = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.goto(slow_lookup_server)
+        page.wait_for_selector(".hero .value", timeout=10_000)
+        page.click('button.tab:text-is("Usage")')
+        page.wait_for_selector('button.tab[aria-current="page"]:text-is("Usage")')
+        page.wait_for_selector("#main .empty-note")
+        mod, w = self._walk(page, tmp_path)
+        mod.walk_lookup(w)
+        by = {s["step"]: s for s in w.steps}
+        assert "lookup demo" in by, [s["step"] for s in w.steps]
+        assert by["lookup demo"]["ok"] and "Namespaces · 2 of 9" in by["lookup demo"]["detail"], by["lookup demo"]
+        assert "lookup -> namespace page" in by and by["lookup -> namespace page"]["detail"] == "prod-ns", by
+        assert by["lookup at 375 px"]["ok"], by["lookup at 375 px"]
+        assert not w.errors and not errors, (w.errors, errors)
+
+    def test_the_step_does_not_skip_from_a_list_page(self, dash, tmp_path):
+        """A list page's bar holds that list's own box and no Find box; that is not "a build without the
+        lookup", and a step that records itself skipped there is a pass that walked nothing."""
+        dash.click("#tab-groups")
+        dash.wait_for_selector("#f-group-search")
+        mod, w = self._walk(dash, tmp_path)
+        mod.walk_lookup(w)
+        steps = [s["step"] for s in w.steps]
+        assert "lookup demo" in steps, steps
+        assert not any("skipped" in s["detail"] for s in w.steps), steps
+
 def test_index_is_never_heuristically_cached(server):
     """Reported from the field: a deploy landed but the browser kept the old page, so a
     shipped fix looked like it was never shipped. Without Cache-Control, browsers apply
@@ -3258,7 +3699,8 @@ class TestGroupSearchEmptyStateHonesty:
         self._open(dash)
         # The shape the server returns for a state filter with no matches, plus an active search.
         dash.evaluate(
-            "() => { view.groupFilter = 'empty'; data.groups = []; view.groupSearch = 'admin'; render(); }")
+            "() => { view.groupFilter = 'empty'; data.groups = []; data.groupsMeta = {scope: 'all', viewer: null, state: 'empty'};"
+            " view.groupSearch = 'admin'; render(); }")
         note = dash.locator(".empty-note").inner_text()
         assert "search hiding" not in note, note
         assert "No groups match this filter" in note, note
@@ -3283,7 +3725,8 @@ class TestGroupSearchEmptyStateHonesty:
         """
         self._open(dash)
         dash.evaluate(
-            "() => { view.groupFilter = 'empty'; data.groups = []; view.groupSearch = 'admin'; render(); }")
+            "() => { view.groupFilter = 'empty'; data.groups = []; data.groupsMeta = {scope: 'all', viewer: null, state: 'empty'};"
+            " view.groupSearch = 'admin'; render(); }")
         card = " ".join(dash.locator("section.card").first.inner_text().split())
         assert "to see all 0" not in card, (
             f"the banner offers to show all 0 groups; clearing the box shows the same empty table: {card}"

@@ -313,7 +313,10 @@ obviously wrong. Use `count`, which is the row count under the current scope.
 Query: `state` = `all` (default) | `empty` | `unattributed`.
 
 Each row also carries `cliff_silence` — the raw value of the Group annotation
-`groupsync-dashboard.io/silence-group-count-cliff`, or `null` (application 0.12.0).
+`groupsync-dashboard.io/silence-group-count-cliff`, or `null` (application 0.12.0) — and
+`binding_count`, how many RoleBindings and ClusterRoleBindings name the group on this cluster: the
+same number the group's own detail lists under `bindings`, on every tier and under every `state`
+filter (#174, the Grants column of the list and the lookup).
 
 The two filters **overlap, deliberately**. `empty` means *zero members* for any group,
 whatever created it; `unattributed` means *no GroupSync CR claims it*. A hand-made group with no

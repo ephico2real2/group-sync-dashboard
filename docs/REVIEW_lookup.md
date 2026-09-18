@@ -1,0 +1,217 @@
+# Review record — one lookup over the three kinds (#174, PR #183)
+
+Branch `feat/drilldown`, base `feat/namespaces`. Head reviewed: `76ebaff`. Three reviewers on one brief
+(`review_174/brief.md` in the session scratchpad; its ten claims are restated in the table): Grok 4.6
+(Cursor, ask mode — source only); Codex (GPT-5.6, xhigh — source, an in-memory API probe, the shipped
+renderer executed in Node; no Chromium); OB1 (Claude Fable — a seeded-app Playwright harness with three
+servers, 24 measurements; `EXPLAIN QUERY PLAN`; a 10,000-user / 1,000-group scale probe; the mark's
+contrast over 30 theme × palette × OS combinations; every fix proved on a copy with thirteen tests, 13
+failed on `76ebaff` → 13 passed, and the full UI suite on the copy, 331 passed). OB1 also found that by the
+time it probed CRC the cluster had been redeployed to PR #180's head (my sequencing — the per-PR deploy
+loop had moved on), so its measurements are on the seeded app; the deployed walk of `76ebaff` earlier in
+the day (the lookup for "demo": 6 of 67 groups, 7 of 110 namespaces) stands as the live evidence.
+
+## Claims × reviewers × decision
+
+| # | Claim | Grok | Codex | OB1 | Decision |
+|---|---|---|---|---|---|
+| L1 | The position: a page, not a tab; `lookupSearch` a preference; "← search" | CONFIRMED — carried across a cluster switch | CONFIRMED | CONFIRMED (Back/Forward driven; carried) | Carried, as `userSearch` is; what the page then says on an empty cluster is F5 |
+| L2 | The Find box rule; typing where nothing filters; IME; Escape | CONFIRMED | REFUTED — `compositionend` only repaints | REFUTED — measured on the real IME path (CDP): no `input` follows `compositionend`, so a committed CJK query never opened the lookup; a query of spaces pushed a history entry | F1 |
+| L3 | Matching and marking; the entity case | CONFIRMED (the entity break is real) | REFUTED (Node probe: `a&<mark>amp</mark>;b`) | REFUTED — two breaks: inside an entity, and inside the `<mark>` the previous term inserted ("alice a" painted "ark>aliceark>") | F2 |
+| L4 | The doors' counts, lines and refusal copies | REFUTED — the Namespaces door's "outside your tier" for an identity 403 | REFUTED — "have logged in" counts rows, not `logged_in_total`; the same copy point | REFUTED — measured: a manual account counted as a login (CRC has one today: 63 rows, 62 logins); neither refusal copy is reachable; "outside your tier" is wrong in principle (no tier refuses these lists) | F3 |
+| L5 | `binding_count` on both branches, every predicate, the index | PLAUSIBLE (no plan run) | CONFIRMED (EXPLAIN: covering index) | CONFIRMED (EXPLAIN in every shape; 2.06 ms at 1,000 groups) | Held; the two-bindings-in-one-namespace row added to the seed (Grok 3) |
+| L6 | The also-line: counts only what is held; no fetch on a keystroke | CONFIRMED; would not decide differently | CONFIRMED; agrees with the deviation | CONFIRMED; agrees — and found it counting a **filtered** slice ("1 group" of 2 after the Groups tab's `empty` filter) | Kept; the filtered-slice count is F6 |
+| L7 | `wireLookup`'s one navigation per click; keyboard | REFUTED — Enter/Space on a door or a group/namespace hit swallowed | REFUTED, the same | REFUTED, the same, measured on every surface — and pre-existing on Access granted's group drills | F7 |
+| L8 | The lookup's fetches, the fingerprint, the self tier | REFUTED — `groups?state=all` written into `data.groups` poisons the Groups tab's first paint | REFUTED, the same | REFUTED, the same, measured (4 rows under "empty", then 2); a self-tier reader's users is a 200/self payload, not `{forbidden}` | F6 |
+| L9 | Render order and wiring; the self tier's namespaces | CONFIRMED | CONFIRMED | CONFIRMED (every handler wired once); risk: the self-tier lookup carries no scope statement | F4 |
+| L10 | 375 px; `.scroll-x`; the mark in both themes; reduced motion | PLAUSIBLE | PLAUSIBLE | CONFIRMED at 375 and for reduced motion; REFUTED on the mark: 3.40:1 (light) / 3.74:1 (dark) under the sheet's 4.5:1 bar, every wash fails | F8 |
+
+## Findings and decisions
+
+- **F1 — the committed IME composition opens the lookup; whitespace is not a position change** (Codex F2,
+  OB1). One `openLookupFor(key)` called from both the input handler and `compositionend`; `trim()` on the
+  query. OB1's test drives the real IME path (CDP `Input.imeSetComposition`); Codex's synthetic
+  `CompositionEvent`/`InputEvent` test was refuted — dispatched from JS they do not drive Blink's IME.
+- **F2 — `hl` marks on the raw text and escapes each fragment** (Grok 1, Codex F3, OB1). OB1's `matchAll`
+  over the terms longest-first, one pass, so marks never nest; Grok's range-merge did the same in more code.
+- **F3 — the Users door counts logins the way the Users tab does; the one refusal has one sentence** (Grok 2,
+  Codex F4, OB1). `logged_in_total`, with the tab's own fallback; both doors say "needs an authenticated
+  identity" — Codex's whoami-keyed "outside your tier" variant rejected (no tier refuses these lists; the
+  identity-less case paints the API error card before any door exists).
+- **F4 — the lookup says when its counts are the reader's own** (OB1). A scope line from `groupsMeta.scope`,
+  as every list page has.
+- **F5 — the empty state does not claim data a cluster does not have** (OB1). "The data is not empty" only
+  when something is held; otherwise "this cluster has nothing to search yet".
+- **F6 — the groups rows carry the state they were fetched under** (Grok 5, Codex F5, OB1). OB1's tag on
+  `groupsMeta.state` rather than Grok's second `lookupGroups` slot: one tag on the meta that already travels
+  with the rows and is already fingerprinted closes both the Groups tab's first paint (Loading, never the
+  other slice under this filter's copy) and the also-line's filtered-slice count, which a second slot would
+  have left open. Two stubs in `TestGroupSearchEmptyStateHonesty` now say which slice they stub.
+- **F7 — every drill activates from the keyboard** (Grok 4, Codex F1, OB1). OB1 removed the `.drill` keydown
+  handler outright (every `.drill` is a native button); this branch keeps the identical text #181 committed
+  for the same hole (`preventDefault(); el.click()`) so the two branches merge cleanly — the behaviour is the
+  same, and OB1's tests pass on it (a door, a group hit, a namespace hit, a user hit, and the pre-existing
+  Access granted drill).
+- **F8 — the mark keeps the text above the contrast bar** (OB1). No wash; weight is the channel that costs no
+  contrast. A visual deviation from the mock's wash, forced by the sheet's own 4.5:1 bar; recorded here for
+  the operator.
+- **G6 — "open the full list to see them" carries the query to that list's box** (Grok 6, OB1 agrees).
+- **Grok 3** — the seed's two-bindings-in-one-namespace row (the SQL was already right).
+- **Nits from the deployed walk**: the doors' double chevron (a literal beside `.drill::after`'s); the capture
+  script's `relative_to` crash for an output folder outside the repository.
+
+### Rejected / kept
+- Grok's `lookupGroups` slot (see F6); Codex's synthetic IME test and whoami-keyed refusal copy (see F1, F3).
+- OB1's deletion of the keydown handler (see F7 — behaviourally identical; the text follows #181).
+- The Find box on a user's page navigating away — the mock's rule (`drilldown-mock.html`, the
+  `view.user || view.ns` branch); kept.
+- "Owner matches unmarked" (Grok): a group found through its provider shows no mark; cosmetic, not fixed.
+
+## Not asked
+- **10,000 users / 1,000 groups** (OB1 measured): `/users?limit=10000` is 3.1 MB in 292 ms; a tab parked on
+  the lookup pays it every poll, as the Users tab already does. Accepted debt, stated. A keystroke at that
+  scale costs 10.5 ms to match and 11 ms to paint (twelve rows per kind and "988 more").
+- **The e2e walk and screenshot scripts** enumerate `button.tab`; the lookup is not a tab, so neither visits
+  it. The deployed walk of this head was done with a probe (`probe_crc_lookup.py`) that types the plan's
+  probes; a step for the walk scripts is a follow-up.
+- **The CHANGELOG entry's claims** not tested at `76ebaff` — "every hit a drill to its page", "the matched
+  substring marked" (correctness, not presence), "twelve per kind", the IME commit, the self-tier lookup,
+  the twice-in-one-namespace count — are all tested now.
+
+## Outcome
+Pass 1: nine findings across the three reviewers (the seven OB1 named with tests, Grok's G6 and seed row,
+plus two nits from the deployed walk), applied from OB1's validated recipe with #181's keyboard text;
+thirteen tests fail on `76ebaff` (OB1, 13 failed → 13 passed on its copy); on the merged base `d489bcc` eleven
+fail and the two keyboard tests already pass — that merge carries #181's fix for the same handler. Focused on
+the fixed tree (the lookup, the three search classes, the IME class, the namespaces class, the count test, the
+CSS guards): 434 passed; full non-UI suite 3383 passed, 17 skipped; full UI suite 347 passed. CI on the pushed
+head, the deploy and the second pass are recorded below when they land.
+
+## Pass 2 — over `f793b8e`
+
+Grok (source only — ask mode refuses a shell, so palettes and wash arithmetic were computed from
+`tests/test_accessibility.py`'s ratio against the tokens) and Codex (a read-only Node probe of the shipped
+renderer; its sandbox had no writable temp directory, so its pytest run could not start and P11 is read from
+the record's numbers) on the fixed head, eleven claims (`review_174/pass2/brief.md`). OB1's second pass runs
+behind its confirmation runs on #180 and #181, one at a time, and is recorded below when it lands. CI on
+`f793b8e`: green on every job. The head deployed on CRC and walked is `b6c9690` (the Outcome above).
+
+| # | Claim | Grok | Codex | Decision |
+|---|---|---|---|---|
+| P1 | The IME commit opens the lookup once; a query of spaces is not a position | CONFIRMED | CONFIRMED | — |
+| P2 | `hl`: raw-text marking, escaping, metacharacters, cost at 10,000 users | CONFIRMED — "leftmost-longest is acceptable" | REFUTED — overlapping terms: "ab bc" on "abc" marked "ab" only (`<mark>ab</mark>c`); the lookup over 10,000 users measured median 4.6 ms, p95 6.96 ms, max 8.86 ms; a pessimistic 10,000 × 2 `hl` run 35.67 ms median | A |
+| P3 | The doors' counts and the one refusal | CONFIRMED — "do not guard `groups?state=all` by itself" | CONFIRMED — the same: an identity 403 is one API failure before any door, better than three refusal doors | — |
+| P4 | The self-tier scope line, gone when the tier widens | CONFIRMED | CONFIRMED | — |
+| P5 | "hiding it" only when something is held; "nothing to search yet" | CONFIRMED | CONFIRMED | — |
+| P6 | `groupsMeta.state`; the Groups tab's Loading frame; the also-line's count | CONFIRMED | CONFIRMED — the state-only fingerprint change is necessary, not spurious (it releases the Loading frame when the slices coincide) | — |
+| P7 | Every drill a button; the keyboard is one click | CONFIRMED | CONFIRMED (UI Events, HTML activation) | — |
+| P8 | The mark's contrast without a wash | CONFIRMED — ≥ 4.5:1 in both themes and every palette; "a passing wash does not exist" | REFUTED — the test composites on `.card`; on a zebra `td` the drill text is 4.305:1 (light) / 4.375:1 (dark), lower on a hover row; a wash could pass only up to ≈ 0.819 %, invisible | B |
+| P9 | `data-filter` carries the query to the list's own box; Back keeps the lookup's | CONFIRMED | CONFIRMED | — |
+| P10 | The seed's third `devs` binding; one chevron; the capture script's path outside the repo | CONFIRMED | CONFIRMED | — |
+| P11 | Blast radius; the named classes green | PLAUSIBLE (no shell) | CONFIRMED from the record, not a rerun | The suites on this head: below |
+
+### A — overlapping terms marked the first only (Codex) — accepted
+`hl` marked each term's matches in turn, so "ab bc" on "abc" marked "ab" and never "bc". Every match of every
+term is collected as a `[start, end)` range through a lookahead pattern (`(?=(term))`, so overlapping matches
+of one term — "aa" on "aaa" — are all found), the ranges are sorted and merged, and the marks are emitted from
+the merged list: no nesting, every occurrence. Grok called leftmost-longest acceptable; the comment on the
+function promised "every occurrence", and a reader who typed "ab bc" would have seen half of "abc" marked.
+Test `test_overlapping_terms_mark_the_union_without_nesting`: "ab bc" on "abc" is one mark over "abc"; "aa"
+on "aaa" one mark over "aaa"; "ice coo" on "alice cooper" two marks with the space unmarked. The third case
+was first written expecting one mark over "ice coo"; the run refuted that — the terms do not overlap, a space
+sits between them — and the expectation was corrected to pin what the function rightly does.
+
+### B — the drill text on a zebra row (Codex) — accepted on the fact, routed to #184
+Pass 1 dropped the mark's wash because the accent wash put the link text at 3.4:1, and its test composites
+the mark on the card. Codex measured the real surface: on a zebra `td` the drill link itself is 4.305:1
+(light) and 4.375:1 (dark), lower on a hover row — under the sheet's 4.5:1 bar with or without a mark. That
+is the drill's colour against the foundation's zebra and hover tokens, on every table of the product, not
+the lookup's: #184, filed on the design foundation.
+
+### Volunteered and accepted — Grok: the e2e walk never visits the lookup
+`walk_tabs` iterates `button.tab`; the lookup is a page, not a tab, so pass 1's "Not asked" note stood. A
+`walk_lookup(w)` step in the capture script, called after the tabs: "demo" typed into the Find box, the
+page with its doors settled, a namespace hit's page and Back, the also-line on the Groups tab, then 375 px —
+four captures; on a build without the Find box the step records itself as skipped. Grok's version was
+rewritten to the walk's own conventions (`w.record`, `w.page_clean`, the doors' "…" settled before the
+shot).
+
+### Rejected / kept
+- Grok's leftmost-longest (see A).
+- Codex's P3 note (keep the unguarded groups request): kept; nothing was proposed against it.
+
+### Tests
+The lookup class with the CSS guards: 354 passed; the full UI suite on this tree: 348 passed (225.96 s).
+CI on `3958c55`: green on every job (the ci and mock-openshift workflows). Deployed to CRC (release revision 250,
+tag `0.24.0-3958c5522a`, both pods on it) and walked end to end with the walk scripts, the new lookup step
+included: 79 steps, every one passed — the lookup for "demo" (Groups 6 of 67, Namespaces 7 of 110), the
+namespace hit's page (`demo-prod`), the also-line on the Groups tab ("also matching demo: 7 namespaces — see
+all matches"), 375 px with no horizontal scroll; the second pass (the mock cluster, the light theme, every
+HTML report opened, page 1 of every PDF) and the integrity check clean. Read from the captures: the heading
+"Matches · 13 across 3 kinds" is the mock's copy verbatim (with no user matching "demo", only two kinds
+list rows); at 375 px the Groups table's names break at every hyphen because the owner cell does not wrap —
+the mock has no phone rule for this table, so it is a suggestion for the operator, put to OB1's confirmation
+brief as C12, not a deviation. OB1's confirmation is recorded below when it lands.
+
+## Pass 3 — OB3's confirmation over `b21ea86` (the merged head)
+
+The first pass run by **OB3** — the reviewer on Opus 5, created this day because the Fable weekly quota ran
+out mid-review: the OB2 background job on this same brief died after 32 turns with "You've reached your
+Fable limit", $4.93 spent and no report (`docs/session-changelogs/2026-09-17…`, Part 7). OB3 scales its own
+depth and says so: it treated C1 (the real IME path), C2 (the union's cost separated from the paint's), C5
+(a paint race, every frame after Back), C7 (composited pixels over 2 themes × 5 palettes × rest/zebra/hover),
+C9 (the walk step driven whole) and C13 (call counts at the chokepoints) as deep; C3, C4, C6, C8, C10 and C12
+as medium; C11 (the suites) as shallow — and ran the suites rather than reading the record's numbers.
+Thirteen claims, every fix proved on a clone. **Per the operator's rule of 2026-09-18, this pass is re-reviewed
+by OB1 or OB2 when the Fable quota resets.**
+
+| # | Claim | OB3 | Decision |
+|---|---|---|---|
+| C1 | The IME commit opens the lookup once | CONFIRMED — CDP `imeSetComposition`/`insertText`; no `input` follows `compositionend`; one history entry, one navigation; a commit ON the lookup navigates nowhere | — |
+| C2 | `hl`: the union, escaping, cost | CONFIRMED — 17 cases through the shipped function; the union's cost separated from the paint's | — |
+| C3 | The doors' counts and the one refusal | CONFIRMED | — |
+| C4 | The self-tier scope line | CONFIRMED | — |
+| C5 | `groupsMeta.state`; the Groups tab's Loading frame | CONFIRMED — measured every frame after Back, not the final state | — |
+| C6 | The keyboard on every surface | CONFIRMED — one navigation each from click, Enter and Space | — |
+| C7 | The mark's contrast | CONFIRMED on the card and the CSS; **Codex's zebra/hover numbers confirmed to the third decimal** | Stands with #184 |
+| C8 | `data-filter` carries the query | CONFIRMED at route-extended scale | — |
+| C9 | Pass 2's walk step | **REFUTED in two places** | A |
+| C10 | Two invocations and the poll | CONFIRMED — the caret and focus survive a repaint; zero page errors | — |
+| C11 | Nothing else moved | CONFIRMED by running the suites: full UI 352 on the unfixed copy | — |
+| C12 | The 375 px question the brief asked | PLAUSIBLE with six measured variants and a recommendation | B |
+| C13 | #167's pass-3 merge meets the lookup | CONFIRMED — one navigation per drill with the merged handler | — |
+
+### A — the walk step passed while capturing the wrong page (OB3, C9) — accepted
+Two defects in pass 2's `walk_lookup`, both of which made it record a PASS on evidence that is not the
+lookup:
+1. It waited on `tr[data-ns], tr[data-group], #main .empty-note` — and the Usage tab's own off-state note is
+   an `.empty-note` too. Driven the way `main()` drives it (the tab walk ends on Usage), the step recorded
+   `"lookup demo: no matches"` with two namespaces matching on the seed, and **the screenshot
+   `lookup-demo.png` was of the Usage tab**. The doors' `"…"` settle test passed vacuously over zero doors.
+   On CRC it passed only because that deployment's Usage tab had rows and no empty-note: right by luck of the
+   page it was leaving, wrong by its own logic.
+2. From a list page it recorded `"no Find box on this build — the lookup is not in it; step skipped"` as a
+   pass: a list page's bar holds that list's own box and no Find box. Latent today because `main()` leaves
+   the walk on Usage; a reorder of the tab strip or a walk started elsewhere is a false pass.
+The step now goes to the Overview first, where the Find box is unconditional, and waits for what **only the
+lookup paints** — three doors whose counts have landed. A build genuinely without the box still records itself
+skipped. Tests: `TestTheWalksLookupStep`, two cases, both failing on the merged head.
+
+### B — the lookup's Groups table at 375 px (OB3, C12) — accepted, option E
+The brief asked what the smallest rule is. OB3 measured six variants at 375 px with the CRC owner value: as
+shipped the name gets 95 px over three lines and the table scrolls sideways 149 px inside its wrapper (the
+document does not, which is why the existing phone test passes). Letting the owner wrap does not help — the
+name column is already at its min-content width. **Hiding the Owner column under 520 px** is the only variant
+that both keeps the name readable (two lines) and removes the scroll, and it follows the sheet's own
+precedent (`.report-table` hides its kind column under 680 px); the owner is one drill away on the group's
+page. Applied with its test.
+
+### Not asked
+- The record's own text: three guards now pin that the sheet's comment does not promise a wash, that `hl`'s
+  header comment describes the shipped mechanism rather than pass 1's, and that the CHANGELOG records every
+  pass (`tests/test_lookup_record_guards.py`).
+
+### Tests
+Five tests fail on the merged head (the two walk cases and the three record guards) and pass after; the
+focused set with the CSS guards and the docs citations: 1251 passed, 12 skipped.
+Full UI suite 355 passed (250.83 s). CI on the pushed head is recorded below when it lands.
