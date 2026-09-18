@@ -145,8 +145,9 @@ class TestTheDetail:
     def test_a_namespace_without_the_first_label_has_no_siblings(self, client):
         d = client.get("/api/clusters/crc/namespaces/legacy-payments", headers=ROOT).json()
         assert d["sibling_key"] is None and d["siblings"] == []
+        # people first, platform identities last — the row a review acts on leads
         assert [(x["user_name"], x["is_platform"]) for x in d["direct_grants"]] == [
-            ("system:serviceaccount:legacy-payments:default", 1), ("alice", 0)]
+            ("alice", 0), ("system:serviceaccount:legacy-payments:default", 1)]
 
     def test_a_namespace_the_store_no_longer_holds_is_a_detour_not_a_dead_end(self, client):
         d = client.get("/api/clusters/crc/namespaces/vanished-ns", headers=ROOT).json()

@@ -218,6 +218,16 @@ def _seed(db_path: str) -> None:
     #   * jdoe's name is an LDAP DN, which is what OpenShift produces when the identity
     #     provider maps `dn`. It contains commas, so any user list built by splitting a
     #     delimited string reports that one person as four.
+    # #167: every namespace the poller sees, with the captured labels — the grants above reach some
+    store.replace_namespaces("crc-local", [
+        {"name": "prod-ns", "created_at": _iso(now - timedelta(days=90)), "phase": "Active",
+         "metadata": {"company.net/mnemonic": "demo", "company.net/app-environment": "prod"}},
+        {"name": "klt-pass-both", "created_at": _iso(now - timedelta(days=30)), "phase": "Active",
+         "metadata": {"company.net/mnemonic": "klt", "company.net/app-environment": "qa"}},
+        {"name": "quiet-corner", "created_at": _iso(now - timedelta(days=10)), "phase": "Active",
+         "metadata": {"company.net/mnemonic": "demo", "company.net/app-environment": "qa"}},
+        *[{"name": f"ns{i}", "created_at": _iso(now - timedelta(days=5)), "phase": "Active", "metadata": {}} for i in range(6)],
+    ], _iso(now))
     store.replace_user_bindings(
         "crc-local",
         [
@@ -355,6 +365,7 @@ def server(tmp_path_factory):
         # different state from on-and-quiet. On, so the seeded attempts are what gets tested;
         # the off state has its own test that overrides it.
         login_capture_enabled=True,
+        namespace_metadata_labels=("company.net/mnemonic", "company.net/app-environment"),
         # This fixture predates per-user visibility and its tests assert the WIDE view
         # with the proxy off. Proxy-off already serves wide (there is no trusted identity
         # to scope to), so turning restrictions off here records the same deliberate,
@@ -1193,6 +1204,96 @@ class TestAppearanceAndColours:
 
     def test_the_controls_are_in_the_static_header_not_the_filter_bar(self, dash):
         assert dash.evaluate("() => document.querySelector('header.top #pref-mode') !== null && document.querySelector('#filters #pref-mode') === null")
+
+
+class TestNamespaces:
+    """#167: namespaces are entities, not a filter. The audit tab lists every namespace the poller sees
+    (nine in the seed, two of them labelled twice, one with no grant at all), a pattern box finds them
+    by name OR label value with the AND contract the other boxes honour, and a row opens a page that is
+    the third drill-down peer of a group and a user."""
+
+    def _open(self, dash):
+        dash.click('button.tab:text-is("Namespace audit")')
+        dash.wait_for_selector("h2:text-is('Namespaces')")
+
+    def test_every_namespace_is_listed_not_only_those_with_a_grant(self, dash):
+        self._open(dash)
+        assert dash.locator("tr[data-ns]").count() == 9
+        head = dash.locator("h2", has_text="Namespaces").first.inner_text()
+        assert "9" in head
+        # the label columns come from the configured keys, by their short names
+        # textContent, not inner_text: table headers are upper-cased by CSS
+        heads = dash.locator("h2:text-is('Namespaces') ~ div th").evaluate_all("els => els.map(e => e.textContent.trim())")
+        assert heads[:3] == ["Namespace", "mnemonic", "app-environment"]
+        quiet = dash.locator("tr[data-ns='quiet-corner']").inner_text()
+        assert "demo" in quiet and "qa" in quiet, "a namespace with no grant still shows its labels"
+
+    def test_the_box_finds_by_name_or_label_and_ands_its_words(self, dash):
+        self._open(dash)
+        box = dash.locator("#f-ns-search")
+        box.fill("demo")
+        dash.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 2")
+        names = sorted(dash.locator("tr[data-ns]").evaluate_all("els => els.map(e => e.dataset.ns)"))
+        assert names == ["prod-ns", "quiet-corner"], "demo is a label value, not a name"
+        box.fill("demo qa")
+        dash.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 1")
+        assert dash.locator("tr[data-ns]").first.get_attribute("data-ns") == "quiet-corner"
+        box.fill("demo zzz")
+        dash.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 0")
+        note = dash.locator("h2:text-is('Namespaces') ~ div.empty-note").inner_text()
+        assert "the filter is hiding them" in note and "9" in note
+        assert "0 of 9 shown" in dash.locator("h2", has_text="Namespaces").first.inner_text()
+        box.press("Escape")
+        dash.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 9")
+
+    def test_a_row_opens_the_namespace_and_back_returns_to_the_list(self, dash):
+        self._open(dash)
+        dash.locator("tr[data-ns='prod-ns'] button.drill").click()
+        dash.wait_for_selector("#back")
+        assert dash.evaluate("() => location.hash") == "#page=nsaudit&cluster=crc-local&ns=prod-ns"
+        assert dash.locator("#back").inner_text().strip() == "← all namespaces"
+        text = dash.locator("#main").text_content()
+        for h in ("Who reaches it, and through which group", "Direct grants", "History", "Same mnemonic"):
+            assert h in text, h
+        assert "quiet-corner" in text, "the sibling under the mnemonic label"
+        # the KPI row: the two labels, people, via groups, direct grants
+        assert dash.locator(".kpi .label", has_text="People who reach it").count() == 1
+        assert dash.locator("tr[data-group]").count() >= 1, "a group that grants it, drillable"
+        dash.locator("#back").click()
+        dash.wait_for_selector("h2:text-is('Namespaces')")
+        assert dash.evaluate("() => location.hash") == "#page=nsaudit&cluster=crc-local"
+
+    def test_the_group_drill_from_the_page_leaves_the_namespace_behind(self, dash):
+        self._open(dash)
+        dash.locator("tr[data-ns='prod-ns'] button.drill").click()
+        dash.wait_for_selector("tr[data-group] button.drill")
+        group = dash.locator("tr[data-group]").first.get_attribute("data-group")
+        dash.locator("tr[data-group] button.drill").first.click()
+        dash.wait_for_selector("#back-groups, #back")
+        hash_ = dash.evaluate("() => location.hash")
+        assert f"group={group}" in hash_ and "ns=" not in hash_, hash_
+        assert dash.evaluate("() => view.page") == "groups"
+        dash.go_back()
+        dash.wait_for_selector("h2:text-is('Who reaches it, and through which group')")
+        assert dash.evaluate("() => view.ns") == "prod-ns"
+
+    def test_a_sibling_opens_its_own_page(self, dash):
+        self._open(dash)
+        dash.locator("tr[data-ns='prod-ns'] button.drill").click()
+        dash.wait_for_selector("button.drill[data-ns='quiet-corner']")
+        dash.locator("button.drill[data-ns='quiet-corner']").click()
+        # wait for the NEW page: view.ns flips at once, the old page's #back stays until the refetch paints
+        dash.wait_for_selector("h2:text-is('quiet-corner')")
+        assert dash.locator("#back").inner_text().strip() == "← prod-ns"
+        assert "No RoleBinding names a person here directly" in dash.locator("#main").inner_text()
+
+    def test_the_page_holds_at_phone_width(self, dash):
+        self._open(dash)
+        dash.locator("tr[data-ns='prod-ns'] button.drill").click()
+        dash.wait_for_selector("#back")
+        dash.set_viewport_size({"width": 375, "height": 740})
+        dash.wait_for_timeout(300)
+        assert dash.evaluate("() => document.documentElement.scrollWidth <= innerWidth")
 
 
 def test_index_is_never_heuristically_cached(server):
