@@ -3486,12 +3486,7 @@ function wireNsPage() {
    state each; with text: the matches by kind, N of M, twelve per kind, every hit a drill. The
    search is an extra door beside the lists and the tabs, never a replacement for them. */
 const LOOKUP_PER_KIND = 12;
-/* The matched substrings, marked. Matching runs on the RAW text and each fragment is escaped as it is
-   emitted: marking on the escaped string let a term land inside an entity (the `a` of `&amp;` —
-   "Smith & Wesson" painted as "Smith &amp; Wesson") or inside the <mark> the previous term had just
-   inserted ("alice a", the transient of typing a second word, painted "ark>aliceark>"), and could never
-   mark a `<` or `&` the reader typed (review of #174, OB1). Longest term first so "alpha" wins over
-   "a"; one pass, so marks never nest; every occurrence of every term, case-insensitively. */
+/* The matched substrings, marked — the how and the why are inside the function, once. */
 function hl(text, query) {
   // The matched substrings, marked. Matching runs on the RAW text and each fragment is escaped as it is
   // emitted: marking on the escaped string let a term land inside an entity (the `a` of `&amp;` —
@@ -3598,7 +3593,10 @@ function lookupPage() {
   const more = (rows, of, page) => rows.length > LOOKUP_PER_KIND
     ? `<div class="filterbar-note mt-2">${rows.length - LOOKUP_PER_KIND} more — <button type="button" class="linkish" data-page="${page}" data-filter="${esc(q)}">open the full list to see them</button></div>` : "";
   const sect = (label, count, of, page, table) => count ? `<h3 class="mt-4">${label} <span class="muted fw-normal">· ${count} of ${of}</span></h3>${table}` : "";
-  const gT = `<div class="scroll-x"><table><thead><tr><th>Group</th><th>Owner</th><th class="num">Members</th><th class="num">Grants</th></tr></thead>
+  // `lookup-groups`: under 520 px the sheet hides the Owner column of this table — the owner cell does
+  // not wrap, and at 375 px it took the width while the name broke at every hyphen (the deployed walk,
+  // review of #174, pass 3); the owner is on the group's own page, one drill away.
+  const gT = `<div class="scroll-x"><table class="lookup-groups"><thead><tr><th>Group</th><th>Owner</th><th class="num">Members</th><th class="num">Grants</th></tr></thead>
     <tbody>${m.groups.slice(0, LOOKUP_PER_KIND).map((g) => `<tr class="rowlink" data-group="${esc(g.name)}">
       <td><button type="button" class="drill">${hl(g.name, q)}</button></td><td>${ownerCell(g.sync_provider)}</td>
       <td class="num">${g.member_count}</td><td class="num ${g.binding_count ? "" : "muted"}">${g.binding_count ?? "—"}</td></tr>`).join("")}</tbody></table></div>${more(m.groups, (data.groups || []).length, "groups")}`;

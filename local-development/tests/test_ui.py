@@ -1834,6 +1834,35 @@ class TestLookup:
             ratios = page.evaluate(contrast)
             assert ratios and min(ratios) >= 4.5, (theme, ratios)
 
+    def test_the_groups_hits_fit_a_phone_without_sideways_scroll(self, page, server):
+        """Seen on CRC at 375 px: the Owner cell does not wrap, so it took the width and every group name
+        broke at each hyphen into three lines while the table scrolled sideways inside `.scroll-x`. Under
+        520 px the Owner column is hidden — the name keeps two lines at most and the table fits; at 1280 px
+        the column is there (review of #174, pass 3, OB3)."""
+        def crc_owner(route):
+            resp = route.fetch()
+            body = resp.json()
+            for g in body["groups"]:
+                if g["sync_provider"]:
+                    g["sync_provider"] = "app-ocp-rbac-group-groupsync_ldap"
+            route.fulfill(response=resp, json=body)
+        page.route("**/groups?state=*", crc_owner)
+        page.goto(f"{server}/#page=lookup&cluster=crc-local")
+        page.wait_for_selector(".door")
+        page.fill("#f-lookup-search", "rbac")
+        page.wait_for_selector("tr[data-group='app-ocp-rbac-alpha-ns-admin']")
+        measure = """() => { const tr = document.querySelector("tr[data-group='app-ocp-rbac-alpha-ns-admin']");
+            const name = tr.querySelector('button.drill'); const wrap = tr.closest('.scroll-x');
+            return {lines: Math.round(name.getBoundingClientRect().height / parseFloat(getComputedStyle(name).lineHeight)),
+                    ownerShown: getComputedStyle(tr.querySelector('td:nth-child(2)')).display !== 'none',
+                    scrolls: wrap.scrollWidth > wrap.clientWidth}; }"""
+        wide = page.evaluate(measure)
+        assert wide == {"lines": 1, "ownerShown": True, "scrolls": False}, wide
+        page.set_viewport_size({"width": 375, "height": 740})
+        page.wait_for_timeout(300)
+        phone = page.evaluate(measure)
+        assert phone["ownerShown"] is False and phone["scrolls"] is False and phone["lines"] <= 2, phone
+
     def test_the_lookup_holds_at_phone_width(self, page, server):
         page.goto(f"{server}/#page=lookup&cluster=crc-local")
         page.wait_for_selector(".door")
@@ -1845,6 +1874,95 @@ class TestLookup:
         page.wait_for_timeout(300)
         assert page.evaluate("() => document.documentElement.scrollWidth <= innerWidth")
 
+
+@pytest.fixture(scope="module")
+def slow_lookup_server(tmp_path_factory):
+    """The seeded app with the lookup's namespace list answering a second late — the proxy path's latency,
+    exaggerated, so a step that reads the page it is LEAVING is caught by the clock rather than by luck."""
+    import asyncio
+
+    class _Late:
+        def __init__(self, app):
+            self.app = app
+
+        async def __call__(self, scope, receive, send):
+            if scope["type"] == "http" and scope["path"].endswith("/namespaces"):
+                await asyncio.sleep(1.0)
+            await self.app(scope, receive, send)
+
+    db = str(tmp_path_factory.mktemp("gsd-slow") / "ui.db")
+    _seed(db)
+    settings = Settings(
+        clusters=[ClusterConfig("crc-local", "https://api.crc.testing:6443", token_env="X")],
+        db_path=db, login_capture_enabled=True,
+        namespace_metadata_labels=("company.net/mnemonic", "company.net/app-environment"),
+        view_restrictions_enabled=False,
+    )
+    port = _free_port()
+    srv = uvicorn.Server(uvicorn.Config(_Late(build_app(settings, run_poller=False)), host="127.0.0.1", port=port, log_level="warning"))
+    thread = threading.Thread(target=srv.run, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{port}"
+    for _ in range(100):
+        try:
+            if httpx.get(f"{base}/healthz", timeout=1).status_code == 200:
+                break
+        except httpx.HTTPError:
+            time.sleep(0.1)
+    else:
+        raise RuntimeError("slow dashboard server did not start")
+    yield base
+    srv.should_exit = True
+    thread.join(timeout=5)
+
+
+class TestTheWalksLookupStep:
+    """The e2e walk's lookup step (e2e-walk/e2e_capture.py, `walk_lookup`), driven against the seed with the
+    walk's own `Walk`: main() runs it after walk_tabs, so it starts on whatever tab the strip ends on, and it
+    must capture the LOOKUP — never the page it is leaving, and never skip on a page whose bar holds a list's
+    own box (review of #174, pass 3, OB3)."""
+
+    @staticmethod
+    def _walk(page, out):
+        import importlib.util
+        import pathlib
+        path = pathlib.Path(__file__).resolve().parents[1] / "e2e-walk" / "e2e_capture.py"
+        spec = importlib.util.spec_from_file_location("e2e_capture", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod, mod.Walk(page, out)
+
+    def test_the_step_captures_the_lookup_and_not_the_tab_it_left(self, page, slow_lookup_server, tmp_path):
+        """walk_tabs ends on Usage, whose off state is a `.empty-note` — the selector the step waited on — and
+        the doors' "…" test over zero doors is vacuously true: with the lookup's fetch a second out, the first
+        capture was of the Usage page and the step recorded "no matches" where the seed has two namespaces
+        matching "demo", then skipped the namespace drill for want of a row."""
+        errors: list[str] = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.goto(slow_lookup_server)
+        page.wait_for_selector(".hero .value", timeout=10_000)
+        page.click('button.tab:text-is("Usage")')
+        page.wait_for_selector('button.tab[aria-current="page"]:text-is("Usage")')
+        page.wait_for_selector("#main .empty-note")
+        mod, w = self._walk(page, tmp_path)
+        mod.walk_lookup(w)
+        by = {s["step"]: s for s in w.steps}
+        assert "lookup demo" in by, [s["step"] for s in w.steps]
+        assert by["lookup demo"]["ok"] and "Namespaces · 2 of 9" in by["lookup demo"]["detail"], by["lookup demo"]
+        assert "lookup -> namespace page" in by and by["lookup -> namespace page"]["detail"] == "prod-ns", by
+        assert by["lookup at 375 px"]["ok"], by["lookup at 375 px"]
+        assert not w.errors and not errors, (w.errors, errors)
+
+    def test_the_step_does_not_skip_from_a_list_page(self, dash, tmp_path):
+        """A list page's bar holds that list's own box and no Find box; that is not "a build without the
+        lookup", and a step that records itself skipped there is a pass that walked nothing."""
+        dash.click("#tab-groups")
+        dash.wait_for_selector("#f-group-search")
+        mod, w = self._walk(dash, tmp_path)
+        mod.walk_lookup(w)
+        steps = [s["step"] for s in w.steps]
+        assert "lookup demo" in steps, steps
+        assert not any("skipped" in s["detail"] for s in w.steps), steps
 
 def test_index_is_never_heuristically_cached(server):
     """Reported from the field: a deploy landed but the browser kept the old page, so a

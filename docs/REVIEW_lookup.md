@@ -152,3 +152,66 @@ HTML report opened, page 1 of every PDF) and the integrity check clean. Read fro
 list rows); at 375 px the Groups table's names break at every hyphen because the owner cell does not wrap —
 the mock has no phone rule for this table, so it is a suggestion for the operator, put to OB1's confirmation
 brief as C12, not a deviation. OB1's confirmation is recorded below when it lands.
+
+## Pass 3 — OB3's confirmation over `b21ea86` (the merged head)
+
+The first pass run by **OB3** — the reviewer on Opus 5, created this day because the Fable weekly quota ran
+out mid-review: the OB2 background job on this same brief died after 32 turns with "You've reached your
+Fable limit", $4.93 spent and no report (`docs/session-changelogs/2026-09-17…`, Part 7). OB3 scales its own
+depth and says so: it treated C1 (the real IME path), C2 (the union's cost separated from the paint's), C5
+(a paint race, every frame after Back), C7 (composited pixels over 2 themes × 5 palettes × rest/zebra/hover),
+C9 (the walk step driven whole) and C13 (call counts at the chokepoints) as deep; C3, C4, C6, C8, C10 and C12
+as medium; C11 (the suites) as shallow — and ran the suites rather than reading the record's numbers.
+Thirteen claims, every fix proved on a clone. **Per the operator's rule of 2026-09-18, this pass is re-reviewed
+by OB1 or OB2 when the Fable quota resets.**
+
+| # | Claim | OB3 | Decision |
+|---|---|---|---|
+| C1 | The IME commit opens the lookup once | CONFIRMED — CDP `imeSetComposition`/`insertText`; no `input` follows `compositionend`; one history entry, one navigation; a commit ON the lookup navigates nowhere | — |
+| C2 | `hl`: the union, escaping, cost | CONFIRMED — 17 cases through the shipped function; the union's cost separated from the paint's | — |
+| C3 | The doors' counts and the one refusal | CONFIRMED | — |
+| C4 | The self-tier scope line | CONFIRMED | — |
+| C5 | `groupsMeta.state`; the Groups tab's Loading frame | CONFIRMED — measured every frame after Back, not the final state | — |
+| C6 | The keyboard on every surface | CONFIRMED — one navigation each from click, Enter and Space | — |
+| C7 | The mark's contrast | CONFIRMED on the card and the CSS; **Codex's zebra/hover numbers confirmed to the third decimal** | Stands with #184 |
+| C8 | `data-filter` carries the query | CONFIRMED at route-extended scale | — |
+| C9 | Pass 2's walk step | **REFUTED in two places** | A |
+| C10 | Two invocations and the poll | CONFIRMED — the caret and focus survive a repaint; zero page errors | — |
+| C11 | Nothing else moved | CONFIRMED by running the suites: full UI 352 on the unfixed copy | — |
+| C12 | The 375 px question the brief asked | PLAUSIBLE with six measured variants and a recommendation | B |
+| C13 | #167's pass-3 merge meets the lookup | CONFIRMED — one navigation per drill with the merged handler | — |
+
+### A — the walk step passed while capturing the wrong page (OB3, C9) — accepted
+Two defects in pass 2's `walk_lookup`, both of which made it record a PASS on evidence that is not the
+lookup:
+1. It waited on `tr[data-ns], tr[data-group], #main .empty-note` — and the Usage tab's own off-state note is
+   an `.empty-note` too. Driven the way `main()` drives it (the tab walk ends on Usage), the step recorded
+   `"lookup demo: no matches"` with two namespaces matching on the seed, and **the screenshot
+   `lookup-demo.png` was of the Usage tab**. The doors' `"…"` settle test passed vacuously over zero doors.
+   On CRC it passed only because that deployment's Usage tab had rows and no empty-note: right by luck of the
+   page it was leaving, wrong by its own logic.
+2. From a list page it recorded `"no Find box on this build — the lookup is not in it; step skipped"` as a
+   pass: a list page's bar holds that list's own box and no Find box. Latent today because `main()` leaves
+   the walk on Usage; a reorder of the tab strip or a walk started elsewhere is a false pass.
+The step now goes to the Overview first, where the Find box is unconditional, and waits for what **only the
+lookup paints** — three doors whose counts have landed. A build genuinely without the box still records itself
+skipped. Tests: `TestTheWalksLookupStep`, two cases, both failing on the merged head.
+
+### B — the lookup's Groups table at 375 px (OB3, C12) — accepted, option E
+The brief asked what the smallest rule is. OB3 measured six variants at 375 px with the CRC owner value: as
+shipped the name gets 95 px over three lines and the table scrolls sideways 149 px inside its wrapper (the
+document does not, which is why the existing phone test passes). Letting the owner wrap does not help — the
+name column is already at its min-content width. **Hiding the Owner column under 520 px** is the only variant
+that both keeps the name readable (two lines) and removes the scroll, and it follows the sheet's own
+precedent (`.report-table` hides its kind column under 680 px); the owner is one drill away on the group's
+page. Applied with its test.
+
+### Not asked
+- The record's own text: three guards now pin that the sheet's comment does not promise a wash, that `hl`'s
+  header comment describes the shipped mechanism rather than pass 1's, and that the CHANGELOG records every
+  pass (`tests/test_lookup_record_guards.py`).
+
+### Tests
+Five tests fail on the merged head (the two walk cases and the three record guards) and pass after; the
+focused set with the CSS guards and the docs citations: 1251 passed, 12 skipped.
+Full UI suite 355 passed (250.83 s). CI on the pushed head is recorded below when it lands.

@@ -153,17 +153,28 @@ def walk_tabs(w: Walk):
 
 def walk_lookup(w: Walk) -> None:
     """#174: the lookup is a page, not a tab, so walk_tabs never opens it. Skipped, and recorded as skipped,
-    on a build that has no Find box (review of #174, pass 2, Grok)."""
+    on a build that has no Find box (review of #174, pass 2, Grok).
+
+    From the Overview, whatever tab the walk left off on: a list page's bar holds that list's own box and no
+    Find box, so testing for the box there records a false skip. And the lookup is waited for by what only IT
+    paints — three doors with their counts landed — never by a selector the page being LEFT can satisfy: the
+    Usage tab's off state is a `.empty-note` too, and the doors' "…" test over zero doors is vacuously true, so
+    the first capture was of the Usage page, recorded as "no matches" (review of #174, pass 3, OB3 — measured
+    on the seeded app, where Usage is off)."""
     page = w.page
+    page.click('button.tab:text-is("Overview")')
+    page.wait_for_selector('button.tab[aria-current="page"]:text-is("Overview")', timeout=15_000)
+    page.wait_for_load_state("networkidle")
     if not page.locator("#f-lookup-search").count():
         w.record("lookup", True, "no Find box on this build — the lookup is not in it; step skipped")
         return
+    # The lookup page, painted with its data: the doors exist on no other page, and their counts land in the
+    # same paint as the rows (one Promise.all), so this is "the lookup has rendered its answer".
+    settled = ("() => view.page === 'lookup' && document.querySelectorAll('#main .door .value').length === 3"
+               " && [...document.querySelectorAll('#main .door .value')].every((v) => v.textContent.trim() !== '…')")
     w.errors.clear()
     page.fill("#f-lookup-search", "demo")
-    page.wait_for_function("() => view.page === 'lookup'")
-    page.wait_for_selector("tr[data-ns], tr[data-group], #main .empty-note")
-    page.wait_for_function(
-        "() => [...document.querySelectorAll('.door .value')].every(v => v.textContent.trim() !== '…')")
+    page.wait_for_function(settled, timeout=15_000)
     heads = " / ".join(h.strip() for h in page.locator("#main h3").all_inner_texts())
     problem = w.page_clean()
     shot = w.shot("lookup-demo")
@@ -186,7 +197,7 @@ def walk_lookup(w: Walk) -> None:
     w.record("also-line on Groups", "search everything" in line or "also matching" in line, line, shot)
     page.set_viewport_size({"width": 375, "height": 740})
     page.locator("[data-widen]").click()
-    page.wait_for_function("() => view.page === 'lookup'")
+    page.wait_for_function(settled, timeout=15_000)
     page.wait_for_timeout(300)
     fits = page.evaluate("() => document.documentElement.scrollWidth <= innerWidth")
     shot = w.shot("lookup-375", full=True)
