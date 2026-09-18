@@ -457,3 +457,33 @@ Outcome in one line: **…**
   Direct grants, where the mock shows it only under Direct.
 - Measured: twelve tests fail across the two passes and pass after; the full browser suite on the merged
   tree 372 passed; non-UI 3420 passed, 13 skipped. Record: `docs/REVIEW_home.md`.
+
+### Review pass 2 applied — commits `b65225e`, `4e61340`, PR #186
+
+- **Codex read the same brief a third time, against the committed tree — and found a defect by reading the
+  screenshots.** The evidence folder committed an hour earlier shows the sub-line as *"covers 12 of your 13
+  namespace grants"* over thirteen **namespaces**. Places are not grants. That is the strongest argument yet
+  for the operator's rule about committing evidence: the picture was reviewable, and the prose around it had
+  not been.
+- Four more: each cluster's history is read up to a cap, so on a busy cluster every count on the card was a
+  lower bound presented as complete (the payload names the capped clusters now); Home's own contrast —
+  measured in both themes, the amber pills at 4.40:1, muted row text at 4.21:1, muted under the 10 % hover
+  wash at 4.05:1 — fixed where it is Home's (secondary text on the rows, a 6 % wash, the amber pills on the
+  card's own surface), with the shared token's headroom left to #184 and a guard across all ten theme ×
+  palette variants whose docstring says it does NOT cover that; the CHANGELOG claimed the payload was
+  "byte-identical whichever tier resolves it" when the tier test pops `scope` and the window's clock-derived
+  start before comparing, and quoted a sentence the page no longer says; and `CLUSTER_ENDPOINTS`, the sweep
+  proving every cluster-scoped handler answers `hidden` exactly as `unknown`, covered neither `home` nor
+  `namespaces` from #167.
+- **One of my own, caught on re-reading:** an assertion written `== [] or True` — a tautology that can never
+  go red. Replaced with both directions asserted. Earlier in the same review I had also written a test that
+  passed BEFORE its fix (the seed carried no `remote-sar` cluster, so the code path it meant to exercise was
+  never reached) and rewrote it rather than trust the green.
+- Measured: five tests fail before these fixes and pass after; full browser suite **374 passed**; non-UI
+  **3438 passed, 13 skipped**; CI green on `b65225e` and `4e61340`. The live evidence was recaptured at
+  `b65225e` and the folder's README says which commit each picture is from and why two differ.
+- **The lab, not the code:** this deploy's rollout timed out because the CRC node hit
+  `node.kubernetes.io/disk-pressure` and tainted itself for five minutes; it cleared on its own and both pods
+  came up on the new image. The internal registry holds 128 tags (two per deploy) with the node's disk at
+  85 %, 9.5 G free — reported to the operator, not pruned: deleting images is their call.
+- Eleven findings on this page across three reviewers, each with a failing-then-passing test.
