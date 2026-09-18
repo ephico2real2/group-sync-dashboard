@@ -72,6 +72,28 @@ KPIs `Distinct users · Days recorded · Interactions · Retention`, all from wh
 never counted from the visible page. The standing footnote explains that `Day` is a **UTC bucket** while
 times are server-zone, and that *"an interaction is one deliberate action … not one HTTP request"*.
 
+### The persistent shell  (operator, 2026-09-17: "don't forget the refresh and logout button and our current settings")
+
+Every page renders **inside** the shell (`header.top` + `.filters` + `#main`), and the shell is not a tab —
+a redesign of any page inherits it and may not drop it. Measured on the live app (`index.html:24-50`,
+`:837`, `:876`, `:1746`) and on the mocks: two of eight carried these; six had silently lost Refresh and
+Sign out.
+
+| control | live element | what it is |
+|---|---|---|
+| **Refresh** | `button#refresh` | a manual poll of the current page's data, beside the automatic 60 s repaint |
+| **Sign out** | `a#logout` (shown behind the proxy) | ends the oauth-proxy session |
+| **Idle timeout** | the `Still there?` dialog — *Stay signed in* / *Sign out now* | `docs/DESIGN_session_and_signout.md`; a page may not hide or restyle it away |
+| **Tier chip** | "Full view — you are seeing everything" / the narrowed wording | what the viewer is seeing, stated |
+| **Version · updated** | `v0.24.0 · 52bba392b2 · updated 17:21:04` (`data.version`) | which build, and how fresh |
+| **Cluster selector** | `select#f-cluster` | a **position** — part of the URL, travels with Back |
+| **Group state** | `select#f-state` (Groups page) | `all / synced / unattributed` — a filter, not a position |
+| **Find** | `#f-group-search`, `#f-user-search`, `#f-member-search`, `#f-binding-search` | the pattern boxes, multi-word AND, Escape clears |
+| **Appearance · Colour** | the two selects, in the shell, never in `renderFilters()` | global; `?mode=` / `?theme=` (#152) |
+
+The rule: a page mock carries the shell **verbatim**, with every control present even where the page does
+not use it — the shell is the one thing a reader must be able to find on every screen.
+
 ### Cluster Overview  (operator ruling, 2026-09-17: keep as-is, do not redesign)
 
 *"I love it … we cannot afford to lose them. We can just create a new KPI panel and keep what we
