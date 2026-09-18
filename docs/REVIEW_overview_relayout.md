@@ -135,3 +135,38 @@ the overlaps noted), one routed (#182), two rejected. Fourteen tests in `TestOve
 Policy-tab test, each shown failing on `759cd7d`; the CSS guards (334) and the PR's own classes (74) pass
 on the fixed tree; the fleet at 2/6/14/40, the scoped view and the Policy tab were rendered and read.
 Full suites on the fixed tree: non-UI 3303 passed, 17 skipped; UI 344 passed. CI on the pushed head and the second pass are recorded below when they land.
+
+## Pass 2 — over `c806112`
+
+Grok (source only) and Codex (source and executed snippets; no Chromium) on the fixed head; OB1's second
+pass was lost to the session limit mid-measurement and is replaced by one confirmation run on the final
+head. Every verdict re-checked on the branch.
+
+| # | Claim | Grok | Codex | Decision |
+|---|---|---|---|---|
+| P1 | The retired-cluster detour: only the scoped Overview absorbs the 404; the bar renders | CONFIRMED, one leftover: the selector shows "all clusters" beside the detour | REFUTED on the same selector | V1 — the id gets its own selected option, "— not configured" |
+| P2 | `reachBadge()` at all three sites | CONFIRMED | CONFIRMED (executed: null → unknown/no data yet, ok, auth_failed/timeout → critical) | — |
+| P3 | `syncMeans()` | PLAUSIBLE — never-synced + invalid schedule takes the never-synced sentence | REFUTED, the same case | V2 — an unusable schedule is the cause with or without a last sync; the sentence no longer assumes one |
+| P4 | The absent note needs a poll | CONFIRMED | CONFIRMED | — |
+| P5 | The opened cluster's markup and styles | REFUTED — the rails (`.tile.bad`/`.warnrail`) were not paired | REFUTED, the same | V3 — paired |
+| P6 | The chokepoint clears on fleet → cluster and nothing on cluster → fleet | CONFIRMED | CONFIRMED | — |
+| P7 | Paint-first on a tile; `navSeq` | CONFIRMED | CONFIRMED | — |
+| P8 | The three answers; a widened reader is not stuck on Loading | CONFIRMED | CONFIRMED | — |
+| P9 | The fleet stage's guards; `undefined` vs `null` | CONFIRMED | CONFIRMED (`JSON.stringify([undefined]) === JSON.stringify([null])`) | — |
+| P10 | The Policy tab's plain card is the old card plus the line | REFUTED — the heading was wrapped in `.row-wrap` even when plain, so `.card > h3::before` (the accent rail) no longer matched | REFUTED, the same | V4 — the plain heading is a direct child again, and the rail selector also names `.row-wrap > h2/h3`, so the Overview's counted headings keep their rail too |
+| P11 | Compact keeps the two figures | CONFIRMED | CONFIRMED | Reversed on the operator's ruling (2026-09-18): the mock's visuals — compact hides the three extra figures, as the Overview mock's CSS does; the scoped view carries them all. OB1's F12 offered as a suggestion, declined |
+| P12 | The kinds chips' contrast | CONFIRMED (`--border` is the badge's own faint edge) | REFUTED — `--border` measures 1.24:1 / 1.34:1 on the surfaces | Rejected: `.badge` uses the same 1 px `--border` edge and the chip is the badge's shape; a heavier chip edge than the badges' would be the inconsistency. `--border`'s contrast is a design-system token question, already recorded on #152's review |
+| P13 | The fixtures and the two ordering-sensitive tests | CONFIRMED | CONFIRMED | — |
+
+**Volunteered and accepted — Codex: the e2e walk picked "all clusters" as the second cluster.**
+`e2e_extra.py` read option labels and compared them to the select's value; with the fleet option first
+(`value=""`, label "all clusters") the walk's second-cluster evidence stayed on the fleet. A
+`next_configured_cluster(options, current)` helper in `e2e_capture.py` skips empty-valued options; the
+walk selects by value and waits for `view.cluster`; a unit test loads the module by path.
+
+**Tests.** Six new (the rail, the selector, the accent rail on the Overview's counted headings, the Policy
+tab's direct-child heading, the never-synced invalid schedule, the walk's cluster pick), each failing on
+`c806112` (6 failed) and passing on the fixed tree; the density test's assertion is back to the mock's
+tiers and the compact-figures test is gone. Focused: the review classes, the Policy tab, the walk test and
+the CSS guards — 391 passed; full UI suite 348 passed; full non-UI suite 3304 passed, 17 skipped. CI on the
+pushed head and OB1's confirmation run are recorded below when they land.

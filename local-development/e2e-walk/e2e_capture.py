@@ -37,6 +37,19 @@ def required_params(login_user: str, namespaces: str) -> dict[str, dict[str, str
     }
 
 
+def next_configured_cluster(options: list[dict], current: str) -> dict | None:
+    """The second configured cluster from the fleet, or another configured cluster when one is
+    already selected. The Overview's fleet option (#172) has an empty value and is never a cluster:
+    picking options by label chose "all clusters" and the walk's second-cluster evidence stayed on
+    the fleet (Codex, review of #172, pass 2)."""
+    configured = [o for o in options if o.get("value")]
+    if not configured:
+        return None
+    if current:
+        return next((o for o in configured if o["value"] != current), None)
+    return configured[1] if len(configured) > 1 else configured[0]
+
+
 def now() -> str:
     return dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 

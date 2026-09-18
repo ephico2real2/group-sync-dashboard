@@ -926,10 +926,15 @@ function renderFilters() {
   // filter them while silently doing nothing.
   // #172: on the Overview "all clusters" is a position of its own (the fleet view), so the
   // selector offers it there and nowhere else — a drill-down needs a cluster.
+  // A pasted link to a retired or unknown id renders the detour; the selector then showed its first
+  // option — "all clusters" — for a page that is not the fleet. The id gets its own selected option,
+  // named for what it is (Grok, pass 2).
+  const known = !view.cluster || clusters.some((c) => c.id === view.cluster);
+  const goneOption = known ? "" : `<option value="${esc(view.cluster)}" selected>${esc(view.cluster)} — not configured</option>`;
   const fleetOption = view.page === "overview" && !view.groupsync
     ? `<option value=""${view.cluster ? "" : " selected"}>all clusters</option>` : "";
   let html = view.page === "usage" ? "" : `<label for="f-cluster">Cluster</label>
-    <select id="f-cluster">${fleetOption}${opts}</select>`;
+    <select id="f-cluster">${fleetOption}${goneOption}${opts}</select>`;
   if (view.page === "bindings" && !narrowedReader()) {
     html += searchBoxHtml("bindingSearch");
     html += `<label for="f-binding">Show</label>
@@ -1114,15 +1119,16 @@ const MEANS = {
   sync_late: "one interval has passed without a sync — not broken yet, but the next missed fire makes it overdue; the state to act on",
   sync_overdue: "the schedule has stopped firing — every group it owns is frozen at its last sync, and nobody has been added or removed since",
   sync_unknown: "never observed a sync — a freshly created CR looks like this until its first fire, which is not the same as a sync that failed",
-  sync_unknown_schedule: "the schedule is unusable, so no interval can be measured — the operator cannot fire it; the last sync is the last there will be until it is fixed",
+  sync_unknown_schedule: "the schedule is unusable, so no interval can be measured — the operator cannot fire it until it is fixed",
   cfg_failing: "RBAC has quietly stopped reconciling — new namespaces receive nothing and drift goes uncorrected",
   cl_bad: "the poller cannot reach it — every count on this tile is the last one observed, not the current one",
   cl_never: "never polled — there are no counts yet, which is not the same as zero",
 };
 /* The consequence for one CR row, from the fields the row carries: `schedule_valid` is enrich()'s
-   own verdict, so an `unknown` with a last sync and an invalid schedule is the schedule case. */
+   own verdict, so an `unknown` with an invalid schedule is the schedule case — with or without a
+   last sync: "until its first fire" is false of a cron that cannot fire (Grok, pass 2). */
 function syncMeans(r) {
-  if (r.state === "unknown" && r.last_sync_at && r.schedule_valid === false) return MEANS.sync_unknown_schedule;
+  if (r.state === "unknown" && r.schedule_valid === false) return MEANS.sync_unknown_schedule;
   return MEANS["sync_" + r.state] || MEANS.sync_unknown;
 }
 
@@ -1212,10 +1218,10 @@ function clusterTile(c, density, detail = false) {
 }
 function tileFigures(c, density) {
   const review = (c.dangling_bindings || 0) + (c.unresolved_bindings || 0);
-  // `extra`: hidden past full density; a string names the figure the compact tier drops as well
-  // (Empty) — the CR count and the failing-config count stay visible until the dense table.
+  // `extra`: the three figures the tiers past full hide (the mock's tiers, kept on the operator's
+  // ruling — the scoped view carries every figure).
   const k = (lab, val, cls, extra) =>
-    `<span class="${extra ? "k-extra" + (typeof extra === "string" ? " " + extra : "") : ""}"><span class="lab">${lab}</span><span class="v ${cls || ""}">${val}</span></span>`;
+    `<span class="${extra ? "k-extra" : ""}"><span class="lab">${lab}</span><span class="v ${cls || ""}">${val}</span></span>`;
   return `<div class="tk">
     ${k("Groups", c.group_count)}
     ${k("Bindings to review", review || "0", review ? "c" : "q")}
@@ -1223,7 +1229,7 @@ function tileFigures(c, density) {
     ${density === "full" || density === "medium" ? k("Oldest last sync", esc(ago(c.oldest_last_sync)), "sm") : ""}
     ${k("GroupSync CRs", c.groupsync_operator_present === false
       ? `<span class="err text-md">operator not installed</span>` : c.groupsync_count, "", true)}
-    ${k("Empty", c.empty_groups || "0", c.empty_groups ? "w" : "q", "k-empty")}
+    ${k("Empty", c.empty_groups || "0", c.empty_groups ? "w" : "q", true)}
     ${c.operator_configs ? k("Policy configs", `${c.operator_configs.total}${c.operator_configs.failing
       ? ` <span class="err text-md">(${c.operator_configs.failing} failing)</span>` : ""}`, "", true) : ""}
   </div>`;
@@ -1330,8 +1336,11 @@ function configsCard(entries, { plain = false } = {}) {
   if (!plain) rows.sort((a, b) => (isBad(b) ? 1 : 0) - (isBad(a) ? 1 : 0));
   const suffix = plain ? "" : `<span class="muted text-sm">${fleet ? "" : `· ${esc(present[0].cluster)} `}${
     rows.length ? `· ${rows.length}${failing.length ? ` · ${failing.length} failing` : " · all reconciling"}` : ""}</span>`;
+  // The plain card's heading is the old markup exactly — a direct child of the card (Grok, pass 2).
+  const head = suffix ? `<div class="row-wrap"><h3>Policy operator (NamespaceConfig / GroupConfig)</h3>${suffix}</div>`
+    : `<h3>Policy operator (NamespaceConfig / GroupConfig)</h3>`;
   return `<section class="card">
-    <div class="row-wrap"><h3>Policy operator (NamespaceConfig / GroupConfig)</h3>${suffix}</div>
+    ${head}
     <div class="filterbar-note mb-3">
       These CRs template the RoleBindings above. A currently-failing one means RBAC has
       quietly stopped reconciling — new namespaces receive nothing and drift stops being

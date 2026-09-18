@@ -495,7 +495,7 @@ h1, h2, h3 { font-weight: 600; margin: 0; }
    Groups tab is teal, so every heading under it is too, and a screenshot is placeable at
    a glance. Decorative only, hence aria-hidden by construction (a ::before pseudo-element
    is not in the accessibility tree). */
-.card > h2::before, .card > h3::before {
+.card > h2::before, .card > h3::before, .card > .row-wrap > h2::before, .card > .row-wrap > h3::before {
   content: ""; display: inline-block; vertical-align: middle;
   width: 3px; height: 0.95em; margin-right: var(--space-4); border-radius: var(--radius-xs);
   background: var(--accent);
@@ -1122,8 +1122,8 @@ dialog.ns-preview p { margin: 0 0 var(--space-4); font-size: var(--text-sm); }
 .tile:hover { border-color: var(--accent); transform: translateY(-1px); }
 .tile:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 /* The rail says which tile needs a reader first, in a channel the badge and the figures repeat. */
-.tile.bad { border-left: 3px solid var(--status-critical); }
-.tile.warnrail { border-left: 3px solid var(--status-warning); }
+.tile.bad, .tile-detail.bad { border-left: 3px solid var(--status-critical); }         /* the opened cluster keeps its rail (Grok, pass 2) */
+.tile.warnrail, .tile-detail.warnrail { border-left: 3px solid var(--status-warning); }
 /* The opened cluster (.tile-detail, the scoped view) is the same block without the face-click, so
    the heading, the API line and the poll age read the same there — scoped to .tile alone, the
    scoped view lost all three (measured: .api inline in the UI face, .poll 14px, .cn weight 400). */
@@ -1142,10 +1142,7 @@ dialog.ns-preview p { margin: 0 0 var(--space-4); font-size: var(--text-sm); }
    figures past medium. Nothing is dropped that the scoped view does not carry in full. */
 [data-density="medium"]  .tiles .tile .api,
 [data-density="compact"] .tiles .tile .api, [data-density="compact"] .tiles .tile .poll,
-[data-density="medium"] .tiles .k-extra { display: none; }
-/* Compact (9–24): the fleet tables are gone, so the CR count and the failing-config count — the
-   two figures the plan says the tiles carry past eight — stay on the tile; only Empty is dropped. */
-[data-density="compact"] .tiles .k-extra.k-empty { display: none; }
+[data-density="compact"] .tiles .k-extra, [data-density="medium"] .tiles .k-extra { display: none; }
 [data-density="compact"] .tiles .tile { padding: var(--space-5) var(--space-6); }
 [data-density="compact"] .tiles .tk { margin-top: var(--space-4); gap: var(--space-2) var(--space-4); }
 [data-density="compact"] .tiles .tk .v { font-size: var(--text-lg); }

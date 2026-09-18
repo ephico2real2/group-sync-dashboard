@@ -1245,9 +1245,7 @@ class TestOverviewFleet:
             assert page.locator(".tile").count() == n
             api_visible = page.locator(".tile .api").first.is_visible()
             assert api_visible == (n <= 3), "the API line belongs to the full tier only"
-            assert page.locator(".tile .k-extra.k-empty").first.is_visible() == (n <= 3), "Empty belongs to the full tier only"
-            # compact (9–24) has no fleet tables, so the CR count and the policy count stay on the tile (OB1 F12)
-            assert page.locator(".tile .k-extra:not(.k-empty)").first.is_visible() == (n <= 3 or 8 < n <= 24), "the CR and policy figures stay until the dense table"
+            assert page.locator(".tile .k-extra").first.is_visible() == (n <= 3), "the three extra figures belong to the full tier only (the mock's tiers)"
         page.set_viewport_size({"width": 375, "height": 740})
         assert page.evaluate("() => document.documentElement.dataset.density") == self.TIER[n], "density is the fleet's, not the viewport's"
         assert page.evaluate("() => document.documentElement.scrollWidth <= innerWidth")
@@ -1364,6 +1362,9 @@ def _review_server(tmp_path_factory, n: int, *, retired=(), badcron=False, restr
             rows.append({"name": "badcron-groupsync", "namespace": "group-sync-operator", "schedule": "not a cron",
                          "ldap_filter": "(cn=x)", "last_sync_at": _iso(now - timedelta(minutes=3)), "generation": 1,
                          "provider_keys": ["badcron-groupsync_ldap"]})
+            rows.append({"name": "nevercron-groupsync", "namespace": "group-sync-operator", "schedule": "not a cron",
+                         "ldap_filter": "(cn=y)", "last_sync_at": None, "generation": 1,
+                         "provider_keys": ["nevercron-groupsync_ldap"]})
             store.replace_groupsync_state("crc-local", rows, _iso(now))
     finally:
         store.close()
@@ -1584,15 +1585,51 @@ class TestOverviewReview:
         page.wait_for_timeout(1200)
         assert page.evaluate("() => data.fleet") == "SENTINEL", "the superseded refresh wrote data.fleet"
 
-    def test_compact_tiles_keep_the_cr_and_policy_figures(self, page, review_compact):
-        """Compact (9–24) has no fleet tables, so the CR count and the policy count stay on the tile; only
-        Empty is dropped (OB1 F12 — the plan's sentence over the mock's CSS)."""
-        base, _ = review_compact
+    def test_the_opened_cluster_keeps_the_tile_rail(self, page, review_two):
+        """Pass 2 (Grok V3): F4 paired .cn/.api/.poll onto .tile-detail and left .tile.bad behind, so an
+        opened auth_failed cluster looked healthier than its tile."""
+        base, _ = review_two
         _open_fleet(page, base)
-        vis = page.evaluate("""() => { const t = document.querySelector('.tile[data-cluster="crc-local"]');
-            return Object.fromEntries([...t.querySelectorAll('.tk > span')].map(k => [k.querySelector('.lab').textContent, getComputedStyle(k).display !== 'none'])); }""")
-        assert vis["GroupSync CRs"] and vis["Policy configs"], vis
-        assert not vis["Empty"], vis
+        rail = "() => { const t = document.querySelector(SEL); const s = getComputedStyle(t); return [t.className, s.borderLeftWidth, s.borderLeftColor]; }"
+        tile_rail = page.evaluate(rail.replace("SEL", "'.tile[data-cluster=\"prod-east\"]'"))
+        page.locator(".tile[data-cluster='prod-east']").click()
+        page.wait_for_selector(".tile-detail")
+        detail_rail = page.evaluate(rail.replace("SEL", "'.tile-detail'"))
+        assert "bad" in detail_rail[0]
+        assert detail_rail[1] == tile_rail[1] == "3px", (tile_rail, detail_rail)
+        assert detail_rail[2] == tile_rail[2]
+
+    def test_the_selector_names_a_retired_id_beside_its_detour(self, page, review_two):
+        """Pass 2 (Grok V1): the detour rendered with the selector on its first option, "all clusters",
+        for a page that is not the fleet."""
+        base, _ = review_two
+        page.goto(f"{base}/#page=overview&cluster=gone-cluster")
+        page.reload()
+        page.wait_for_function("() => document.querySelector('#main').innerText.includes('No cluster by that id')")
+        assert page.evaluate("() => [document.getElementById('f-cluster').value, view.cluster]") == ["gone-cluster", "gone-cluster"]
+        assert "not configured" in page.locator("#f-cluster option:checked").inner_text()
+        page.locator("#back").click()
+        page.wait_for_function("() => view.cluster === null && document.querySelector('.tile')")
+        assert page.locator("#f-cluster").input_value() == ""
+
+    def test_a_heading_beside_its_count_keeps_the_accent_rail(self, page, review_two):
+        """Pass 2 (Grok V4): `.card > h2::before` never matched a heading inside `.row-wrap`, so the
+        GroupSync card on the Overview and the Policy card lost their 3 px accent rail."""
+        base, _ = review_two
+        _open_fleet(page, base, "#page=overview&cluster=crc-local")
+        page.wait_for_selector("h3:has-text('Policy operator')")
+        widths = page.evaluate("""() => ['GroupSync CRs', 'Policy operator'].map(t => {
+            const h = [...document.querySelectorAll('#main h2, #main h3')].find(e => e.textContent.includes(t));
+            return getComputedStyle(h, '::before').width; })""")
+        assert widths == ["3px", "3px"], widths
+
+    def test_unknown_without_a_last_sync_still_names_an_unusable_schedule(self, page, review_two):
+        """Pass 2 (Grok V2): the schedule sentence was gated on a last sync, so a never-synced CR with an
+        unusable schedule read "until its first fire" — of a cron that cannot fire."""
+        base, _ = review_two
+        _open_fleet(page, base)
+        consq = page.locator("tr[data-cr='nevercron-groupsync'] .consq").inner_text()
+        assert "schedule" in consq and "never observed" not in consq, consq
 
     def test_kinds_are_chips_not_blank_badges(self, page, review_compact):
         """A .badge with no state class drew a 9 px transparent square where a glyph belongs (OB1 F13)."""
@@ -1982,6 +2019,15 @@ class TestUsagePage:
 
 
 class TestRbacPolicyPage:
+    def test_the_policy_heading_is_a_direct_card_child_with_its_accent_rail(self, dash):
+        """Pass 2 (Grok V4): the plain card's heading is the old markup exactly — a direct child of the card —
+        and the accent rail every card heading wears applies to it."""
+        self._open(dash)
+        dash.wait_for_selector("h3:has-text('Policy operator')")
+        got = dash.evaluate("""() => { const h = [...document.querySelectorAll('#main h3')].find(e => e.textContent.includes('Policy operator'));
+            return {parent: h.parentElement.className, width: getComputedStyle(h, '::before').width}; }""")
+        assert "row-wrap" not in got["parent"] and got["width"] == "3px", got
+
     def test_the_shared_policy_card_changes_only_the_failing_consequence(self, dash):
         """#172 shares the fleet's policy card with this tab and promised it only the consequence line; the
         shared card had also moved the failing row first, added the count to the heading, the attention wash
