@@ -188,5 +188,10 @@ def group_changes(events: list[dict], since: str) -> dict:
     # leftover batch of eleven groups is eleven more changes, not one (review of #158, Grok).
     more = sum(i["changes"] if i["kind"] == "flap" else i["count"] if i["kind"] == "batch" else 1
                for i in rest)
+    # `since` is NOT returned. It is derived from the request's clock, so it differs on every poll — and the
+    # page's unchanged-payload skip compares the whole payload, so echoing it meant Home, alone among the
+    # pages, repainted every 60 s and threw away scroll, selection and focus (OB3, integration review, C3;
+    # measured: three polls, three renders, the only differing slot `changes.since`, two seconds apart). The
+    # window is named by `window_days` and every item carries its own `observed_at`; nothing renders `since`.
     return {"items": shown, "more": more, "more_items": len(rest),
-            "changes": len(rows), "since": since, "window_days": HOME_CHANGES_DAYS}
+            "changes": len(rows), "window_days": HOME_CHANGES_DAYS}

@@ -487,3 +487,52 @@ Outcome in one line: **…**
   came up on the new image. The internal registry holds 128 tags (two per deploy) with the node's disk at
   85 %, 9.5 G free — reported to the operator, not pruned: deleting images is their call.
 - Eleven findings on this page across three reviewers, each with a failing-then-passing test.
+
+## Part 9 — the stack integrated, and what only integration could see (2026-09-18)
+
+### The practice, at the operator's direction
+
+- *"I like the idea [of] the integration branch and following cicd to rebuild and redeploy locally as
+  needed until our features and issues align for that feature release. Making sure we are commit and fix
+  merge conflict along the line."* So: a worktree on `integration/design-programme` from `origin/main`,
+  every open PR of the programme merged in order (#179, #180, #181, #183, #186), conflicts resolved and
+  committed there, both suites run on the merged tree, the image built and deployed to CRC from it, and the
+  walk run against that. **A fix belongs in the branch that owns the code** — the integration branch is a
+  proving ground, re-merged after each fix, never a destination.
+
+### What it found, none of it visible from any single branch
+
+- **37 browser failures, every one a timeout, all in the Overview.** #158 makes Home the landing page for
+  every tier; `TestOverviewFleet` and `TestOverviewReview` load with an empty hash because the Overview WAS
+  the landing page when they were written. Sibling branches: #158's branch fixed every Overview-subject
+  test it could reach, and could not reach these. Both helpers name `#page=overview` now (`b50ce5c`,
+  `86fce0f` on `feat/overview-relayout`), and two further bare loads with them. **37 → 2 → 0.**
+- **The walk's second pass — the same cause, in a script.** It logs in and goes straight to the cluster
+  selector, then waits for the opened cluster's tile block. Home carries the same selector and no tile, so
+  the switch worked and the wait timed out, taking the whole second pass with it while the main walk's 80
+  steps passed. It names the Overview first now.
+- **Three whole CHANGELOG entries silently dropped** by a keep-both conflict resolution, caught by a guard
+  test rather than by reading. Where every branch appends to one section, keep-both is not a merge. Rebuilt
+  as the union from each entry's owning branch: six entries, eleven review sub-bullets.
+- **Two conflicts needed COMBINING, not choosing** — a `navigate()` where one branch added `ns: null` and
+  another the fleet rise, and a boot path where one added a local and another narrowed a condition. Taking
+  either side drops the other's fix silently.
+- **My own process error:** a broken tuple reached a commit because the validation ran in a chain BESIDE
+  the commit rather than gating it. `check && commit`, never `check; commit`.
+
+### Measured on the integrated tree
+
+| | |
+|---|---|
+| browser suite | **419 passed** (37 failed / 382 passed before the fixes) |
+| non-browser suite | **3441 passed**, 13 skipped |
+| main walk | 80/80 steps |
+| second pass | 24/24 steps |
+| reports | 11 generated and integrity-checked |
+| image | `0.24.0-5ad0551cb5`, built locally, deployed to CRC, both pods ready |
+
+OB3 (Opus 5, raised to **max** effort for this one review at the operator's offer) reviewed the seams in
+parallel — its report and what came of it are recorded when it lands. Early from its log: contrast failures
+on the `dark/contrast` palette that no branch measured (the lookup's door at 2.8:1, the Overview's tile
+name at 3.08:1 against the 4.5 bar), and an independent reproduction of the same 37 failures from a clone
+taken before the fix.
