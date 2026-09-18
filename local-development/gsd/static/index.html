@@ -3348,7 +3348,16 @@ function nsDetail() {
   const people = direct.filter((x) => !x.is_platform);
   // Virtual `system:` groups authorise access but hold no person: badged in the table, folded on the
   // cluster-wide line (the deployed demo-prod page listed 54 bindings, 41 of them these — the CRC walk).
+  // Counted nowhere: `system:image-pullers` is in every OpenShift namespace, so a Via groups count that
+  // held them read 1 on every row and "zero in both" could never happen. A platform row's default
+  // binding is the platform's — the findings tier it built_in, never unmanaged — so it wears no
+  // hand-made badge (review of #167, pass 3, OB1).
+  const viaReal = via.filter((g) => !g.is_platform);
   const wideReal = wide.filter((g) => !g.is_platform), widePlatform = wide.filter((g) => g.is_platform);
+  // Folded most-bound first — system:authenticated, every logged-in user, carries most of a cluster's
+  // platform bindings — and with the count of groups behind the "…", which the deployed fold hid.
+  const platformNames = [...widePlatform.reduce((m, g) => m.set(g.group_name, (m.get(g.group_name) || 0) + 1), new Map())]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([name]) => name);
   // Cluster-wide grants naming a person, platform identities left out: kubeadmin reaches every
   // namespace by definition and would be one more line on every page (review of #167, Grok F4).
   const wideGrants = (d.cluster_wide_grants || []).filter((x) => !x.is_platform);
@@ -3367,14 +3376,14 @@ function nsDetail() {
     <div class="kpis">
       ${keys.map((k) => kpi(esc(labelShort(k)), esc(labels[k] || "— none —"), labels[k] ? "sm mono" : "sm muted")).join("")}
       ${self ? "" : kpi("People who reach it", d.people == null ? "—" : d.people)}
-      ${kpi("Via groups", via.length, via.length ? "" : "muted")}
+      ${kpi("Via groups", viaReal.length, viaReal.length ? "" : "muted")}
       ${kpi("Direct grants", people.length, people.length ? "err" : "muted")}
     </div>
     <div class="filterbar-note mt-4">${labelledNote}${people.length ? "" : " No RoleBinding names a person here directly, which is the state an access review wants to confirm."}${
       d.present ? "" : " The store no longer holds this namespace; what follows is what still names it."}</div>
   </section>
   <section class="card">
-    <h2>Who reaches it, and through which group <span class="muted fw-normal">· ${via.length}</span></h2>
+    <h2>Who reaches it, and through which group <span class="muted fw-normal">· ${viaReal.length}${via.length > viaReal.length ? ` · ${via.length - viaReal.length} platform` : ""}</span></h2>
     <div class="filterbar-note mb-4">${self ? "Your own memberships that reach this namespace."
       : "The answer the triangle exists for: a namespace, back to the groups that grant it, back to the people in those groups."}</div>
     ${via.length ? `<div class="scroll-x"><table>
@@ -3382,7 +3391,7 @@ function nsDetail() {
       <tbody>${via.map((g) => `<tr class="rowlink" data-group="${esc(g.group_name)}">
         <td><button type="button" class="drill">${esc(g.group_name)}</button>${g.is_platform ? ' <span class="badge unknown"><span class="glyph" aria-hidden="true"></span>platform</span>' : ""}</td>
         <td><code>${esc(g.role_name)}</code></td>
-        <td class="muted">${esc(g.binding_kind)} <code>${esc(g.binding_name)}</code>${g.managed_source ? "" : ' <span class="badge warning"><span class="glyph" aria-hidden="true"></span>hand-made</span>'}</td>
+        <td class="muted">${esc(g.binding_kind)} <code>${esc(g.binding_name)}</code>${g.managed_source || g.is_platform ? "" : ' <span class="badge warning"><span class="glyph" aria-hidden="true"></span>hand-made</span>'}</td>
         <td class="num">${g.member_count}</td></tr>`).join("")}</tbody></table></div>`
       : `<div class="empty-note">No group-based binding names this namespace. Access here is ${people.length
           ? "entirely by the direct grants below — which is what makes it a finding." : "not granted to anyone through the policy system."}</div>`}
@@ -3390,8 +3399,8 @@ function nsDetail() {
         grant${wideBindings === 1 ? "s" : ""} every namespace${wideReal.length + wideGrants.length ? `: ${[
           ...wideReal.map((g) => `<button type="button" class="drill" data-group="${esc(g.group_name)}">${esc(g.group_name)}</button> (<code>${esc(g.role_name)}</code>)`),
           ...wideGrants.map((x) => `<button type="button" class="drill" data-user="${esc(x.user_name)}">${esc(x.user_name)}</button> (<code>${esc(x.role_name)}</code>, named directly)`),
-        ].join(", ")}` : ""}${widePlatform.length ? `${wideReal.length + wideGrants.length ? "; and" : ":"} ${widePlatform.length} platform binding${widePlatform.length === 1 ? "" : "s"} to virtual groups (${
-          esc([...new Set(widePlatform.map((g) => g.group_name))].slice(0, 3).join(", "))}${new Set(widePlatform.map((g) => g.group_name)).size > 3 ? ", …" : ""}) that every namespace carries` : ""}.</div>` : ""}
+        ].join(", ")}` : ""}${widePlatform.length ? `${wideReal.length + wideGrants.length ? "; and" : ":"} ${widePlatform.length} platform binding${widePlatform.length === 1 ? "" : "s"} to ${platformNames.length} virtual group${platformNames.length === 1 ? "" : "s"} (${
+          esc(platformNames.slice(0, 3).join(", "))}${platformNames.length > 3 ? `, … ${platformNames.length - 3} more` : ""}) that every namespace carries` : ""}.</div>` : ""}
   </section>
   ${direct.length ? `<section class="card">
     <h2>Direct grants <span class="muted fw-normal">· ${people.length}${direct.length > people.length ? ` · ${direct.length - people.length} platform` : ""}</span></h2>
@@ -4198,7 +4207,10 @@ function wireDrilldown() {
   // nowhere. Naming the destination page here is what makes one drill handler correct from every
   // table that emits one, instead of each page needing its own.
   document.querySelectorAll("[data-group]").forEach((el) => {
-    el.onclick = () => {
+    el.onclick = (e) => {
+      // As the user drill below: a `data-group` button inside a `tr[data-group]` (the user page's
+      // memberships and history) fired both handlers — two navigations, two fetches (review of #167, pass 3).
+      e.stopPropagation();
       navigate({ page: "groups", group: el.dataset.group, user: null, ns: null });
       refresh();
     };

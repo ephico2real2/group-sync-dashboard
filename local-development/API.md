@@ -210,7 +210,8 @@ there by retention, which is a different fact from "the dashboard started there"
 ### `GET /api/clusters/{cluster_id}/namespaces`
 
 Every namespace the poller sees on the cluster, with its configured labels (`namespaceMetadataLabels`)
-and two counts — distinct groups bound in it, and non-platform grants naming a person there (#167).
+and two counts — distinct groups of people bound in it (a virtual `system:` group is on the page, badged, not in
+the count), and non-platform grants naming a person there (#167).
 Cluster-wide bindings reach every namespace and are counted once, on the envelope.
 
 ```json
@@ -257,7 +258,7 @@ how many distinct people the paths add up to, and its history of binding changes
   "labels": {"company.net/mnemonic": "demo", "company.net/app-environment": "prod"},
   "via_groups": [{"group_name": "app-ocp-rbac-demo-ns-developer", "binding_kind": "RoleBinding",
                   "binding_name": "demo-devs", "role_kind": "ClusterRole", "role_name": "edit",
-                  "managed_source": "baseline-nonprod-rbac", "member_count": 4}],
+                  "managed_source": "baseline-nonprod-rbac", "member_count": 4, "is_platform": 0}],
   "cluster_wide_groups": [{"group_name": "platform-team-cluster-admin", "role_name": "cluster-admin", "…": "…"}],
   "direct_grants": [{"user_name": "jane.smith", "binding_kind": "RoleBinding", "binding_name": "jane-edit",
                      "role_kind": "ClusterRole", "role_name": "edit", "is_platform": 0}],
@@ -271,8 +272,9 @@ how many distinct people the paths add up to, and its history of binding changes
 
 Every `via_groups` and `cluster_wide_groups` row carries `is_platform`: 1 for a virtual `system:` group
 (`system:authenticated`, `system:nodes`, `system:serviceaccounts:<ns>` — access with no person behind it),
-sorted after the real groups; the list's `cluster_wide_groups` count leaves them out, as the person counts
-leave platform identities out.
+sorted after the real groups; the list's `via_groups` column and `cluster_wide_groups` count leave them out, as
+the person counts leave platform identities out. A platform row's default binding wears no `hand-made` badge:
+the findings tier it `built_in`, never `unmanaged`.
 
 `cluster_wide_groups` and `cluster_wide_grants` are the ClusterRoleBindings — naming a group, naming a person —
 that reach this namespace along with every other; `direct_grants` are the bindings *in* the namespace only, and
