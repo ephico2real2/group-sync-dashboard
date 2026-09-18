@@ -141,7 +141,8 @@ CLUSTER_ENDPOINTS = ("groupsyncs", "groupsyncs/x/events", "groups", "groups/x", 
                      # #167's two. The sweep is what proves a handler answers `hidden` exactly as `unknown`,
                      # and a mutation shows it earns its place: delete `require_cluster` from
                      # `namespace_detail` and only the second of these fails (OB3, integration review, C8).
-                     "namespaces", "namespaces/prod-ns")
+                     "namespaces", "namespaces/prod-ns",
+                     "home")
 
 
 class TestHiddenIsNotAnOracle:

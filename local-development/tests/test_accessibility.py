@@ -219,3 +219,36 @@ def test_a_palette_overrides_only_the_status_hues():
             assert names, f"{theme}/{palette} defines nothing"
             allowed = {"status-good", "status-warning", "status-warning-edge", "status-critical", "text-muted"}
             assert names <= allowed, f"{theme}/{palette} overrides {sorted(names - allowed)}"
+
+
+HOME_HOVER_WASH = 0.06   # .home .hrow:hover — keep in step with the stylesheet
+
+
+def _mix(fg: str, bg: str, pct: float) -> str:
+    """`color-mix(in srgb, fg pct%, transparent)` painted over `bg` — what the eye actually gets."""
+    f, b = fg.lstrip("#"), bg.lstrip("#")
+    out = []
+    for i in (0, 2, 4):
+        out.append(round(int(f[i:i + 2], 16) * pct + int(b[i:i + 2], 16) * (1 - pct)))
+    return "#" + "".join(f"{c:02x}" for c in out)
+
+
+@pytest.mark.parametrize("variant", VARIANTS)
+def test_home_text_clears_aa_on_the_surfaces_it_actually_sits_on(themes, variant):
+    """#158's rows carry a hover wash, and a token measured on the card is not measured on the wash: with
+    `--text-muted` (4.68:1 on the card in light) under a 10 % accent wash the row's meta read 4.05:1, and
+    the amber pills on `--page-2` read 4.40:1 (review of #158, Codex; Grok measured the same shape). What
+    is checked here is Home's own choice — which token goes on a washed row, and which surface a pill sits
+    on. The tokens' own headroom on the shared surfaces is #184's, and this guard must not be read as
+    covering it."""
+    t = themes[variant]
+    card = t["surface-1"]
+    wash = _mix(t["tab-home"], card, HOME_HOVER_WASH)
+    failures = []
+    for label, fg, bg in (("row text on the card", t["text-secondary"], card),
+                          ("row text on the hover wash", t["text-secondary"], wash),
+                          ("the amber pill on its own surface", t["warn"], card)):
+        r = ratio(fg, bg)
+        if r < AA_TEXT:
+            failures.append(f"{label}: {fg} on {bg} is {r:.2f}:1")
+    assert not failures, f"{variant} — Home text under {AA_TEXT}:1:\n  " + "\n  ".join(failures)

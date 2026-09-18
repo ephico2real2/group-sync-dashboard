@@ -27,6 +27,7 @@ from fastapi.staticfiles import StaticFiles
 from . import TITLE, __version__
 from . import state as st
 from .activity import EMAIL_HEADER, INTERACTION_HEADER, USER_HEADER, ActivityRecorder
+from .home import HOME_CHANGES_DAYS, HOME_EVENTS_LIMIT, derive_answer, group_changes
 from .config import (
     IDENTITY_NONE, IDENTITY_SAME_AS_HOST, VISIBILITY_HIDDEN, VISIBILITY_INHERIT,
     VISIBILITY_REMOTE_SAR, VISIBILITY_SELF_ONLY, Settings, load_settings,
@@ -826,14 +827,45 @@ def build_app(
                 return fn(*args, **kwargs)
         return wrapper
 
+    def is_served(cluster_id: str) -> bool:
+        """Whether this instance serves the cluster at all — configured, enabled, and not `hidden`.
+
+        `require_cluster`'s rule as a predicate, for the handlers that WALK the stored clusters
+        instead of being handed one. Home's cross-cluster line was written against
+        `store.clusters()` (polled, still enabled=1) and so named a hidden cluster the very next
+        request 404s, counted its memberships and folded its history into "what changed" — the
+        rule has four copies in this file and the fifth site forgot a limb (review of #158, Grok).
+        """
+        cluster = settings.cluster(cluster_id)
+        return (cluster is not None and cluster.enabled
+                and settings.cluster_policy(cluster_id)[0] != VISIBILITY_HIDDEN)
+
+    def vouches_for_host_identity(cluster_id: str) -> bool:
+        """Whether this cluster treats the host's authenticated username as one of its own.
+
+        The name half of `viewer_scope`'s decision, answered from CONFIG alone. viewer_scope
+        answers it too, but on the way it may consult a tier resolver — a `remote-sar` cluster's
+        is an HTTP SubjectAccessReview — and a handler holding a read snapshot must not make one
+        of those per cluster in the fleet (review of #158, Grok). Kept in step with viewer_scope's
+        `keep`: restrictions off vouches for everyone; the host vouches for its own reader; an
+        `inherit` remote is keyed by the host's username; `self-only` needs `identity:
+        same-as-host`, which `remote-sar` is required by config validation to carry.
+        """
+        if not restrict:
+            return True
+        host = settings.host_cluster()
+        if host is not None and cluster_id == host.name:
+            return True
+        policy, identity = settings.cluster_policy(cluster_id)
+        return policy == VISIBILITY_INHERIT or identity == IDENTITY_SAME_AS_HOST
+
     def require_cluster(cluster_id: str):
         """The cluster, or a 404 — the SAME 404 for an id that does not exist, one whose policy is
         `hidden`, and one that is disabled/retired (removed from config), so the response is not an
         oracle over which clusters this instance watches. A retired cluster keeps its history but is
         not served (#96); hidden and disabled apply whatever the tier: they are serving rules."""
         cluster = settings.cluster(cluster_id)
-        if (cluster is None or not cluster.enabled
-                or settings.cluster_policy(cluster_id)[0] == VISIBILITY_HIDDEN):
+        if not is_served(cluster_id):
             raise HTTPException(status_code=404, detail=f"unknown cluster {cluster_id!r}")
         return cluster
 
@@ -1777,6 +1809,64 @@ def build_app(
             **detail,
             "changes": history,
             "retention": history_retention("binding_event", store.history_retained_since(cluster_id)),
+        }
+
+    @app.get("/api/clusters/{cluster_id}/home")
+    @consistent
+    def home(request: Request, cluster_id: str) -> dict:
+        """Home — the viewer's own access on one cluster, the page every reader lands on (#158).
+
+        SELF-SCOPED BY DEFINITION, on every tier: an administrator sees their own access here, never
+        everyone's, so the payload for a name is the same whichever tier resolves it. The identity is
+        the proxy's; without one there is nothing to scope to and the request is refused — never a
+        name the caller typed. Composed from the reads the drill-downs already serve (the viewer's
+        groups, the bindings those groups reach, the bindings naming them directly, their membership
+        history), and the arithmetic behind the page's sentences lives in gsd/home.py so a number and
+        its label change together. `elsewhere` names the other enabled clusters that treat this
+        identity as their own — a cluster whose identity policy withholds the host's username is not
+        listed, since nobody vouched for the name there.
+        """
+        require_cluster(cluster_id)
+        viewer, scope = viewer_scope(request, cluster_id)
+        me = require_viewer(viewer, cluster_id)
+        groups = store.user_groups(cluster_id, me)
+        via = store.user_bindings(cluster_id, me)
+        direct = store.direct_user_bindings(cluster_id, include_platform=True, user_name=me)
+        record = store.user_record(cluster_id, me)
+        since = (datetime.now(UTC) - timedelta(days=HOME_CHANGES_DAYS)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        # Each cluster's history is capped, so a card that showed the count as complete would be
+        # overclaiming on a busy one: the clusters that hit the cap ride along and the page says so
+        # (review of #158, Codex).
+        capped: list[str] = []
+        own = store.membership_events(cluster_id, user_name=me, limit=HOME_EVENTS_LIMIT)
+        if len(own) >= HOME_EVENTS_LIMIT:
+            capped.append(cluster_id)
+        events = [dict(e, cluster=cluster_id) for e in own]
+        counts = store.memberships_by_cluster(me)
+        elsewhere = []
+        for c in store.clusters():
+            if c["id"] == cluster_id or not is_served(c["id"]) or not vouches_for_host_identity(c["id"]):
+                continue
+            n = counts.get(c["id"], 0)
+            if not n:
+                continue   # "you're also on" means a membership there; a cluster with none is not theirs
+            elsewhere.append({"cluster": c["id"], "memberships": n, "status": c["status"], "last_poll": c["last_poll"]})
+            theirs = store.membership_events(c["id"], user_name=me, limit=HOME_EVENTS_LIMIT)
+            if len(theirs) >= HOME_EVENTS_LIMIT:
+                capped.append(c["id"])
+            events += [dict(e, cluster=c["id"]) for e in theirs]
+        return {
+            "cluster": cluster_id,
+            "viewer": me,
+            "scope": scope,
+            "full_name": store.user_full_name(cluster_id, me),
+            "providers": record["providers"] if record else [],
+            "answer": derive_answer(groups, via, direct),
+            "direct": direct,
+            "changes": dict(group_changes(events, since), capped_clusters=sorted(capped)),
+            "retention": history_retention("membership_event", store.history_retained_since(cluster_id)),
+            "elsewhere": elsewhere,
+            "memberships_total": counts.get(cluster_id, 0) + sum(e["memberships"] for e in elsewhere),
         }
 
     @app.get("/api/clusters/{cluster_id}/user-bindings")

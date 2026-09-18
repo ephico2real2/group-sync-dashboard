@@ -2353,6 +2353,14 @@ class Store:
             (cluster_id, user_name),
         )
 
+    def memberships_by_cluster(self, user_name: str) -> dict[str, int]:
+        """How many synced groups this person is in, per cluster — Home's "you're also on" line
+        (#158). One GROUP BY over group_member; the per-cluster detail is `user_groups`. Every cluster
+        the store holds, retired ones included: the caller keeps the enabled ones it may name."""
+        return {r["cluster_id"]: r["n"] for r in self._rows(
+            "SELECT cluster_id, COUNT(*) AS n FROM group_member WHERE user_name=? GROUP BY cluster_id",
+            (user_name,))}
+
     def binding_findings(self, cluster_id: str) -> list[dict]:
         """Classify every binding whose Group subject has no Group object.
 

@@ -398,3 +398,141 @@ Outcome in one line: **…**
   for that reader, keeps its drive script beside its report so the proof can be re-run, and flags what it
   treated as shallow, since that is what a second model is most likely to overturn. Agreeing with OB3
   because OB3 said it wastes the third-reviewer seat.
+
+## Part 8 — Home, the page every reader lands on, #158 (2026-09-18)
+
+### Implementation — commit `af3d47d` (2026-09-18 09:01), PR #186 (branch `feat/home` from `feat/drilldown`)
+
+- The operator's ruling that settled the issue's open question: *"our mockup user landing page should be
+  called by default main landing page simply called Home (overview stays as-is). It's easy that way."* So
+  `#page=home` is the default route on every tier and the first tab; the Overview keeps its
+  administrator-tier role one click away (#169 stands).
+- Self-scoped BY DEFINITION, which is what makes it tier-safe without a special case: an administrator sees
+  their own access, never everyone's, and the payload for a name is byte-identical whichever tier resolves
+  it (a test diffs the two bodies; only `scope` and the window's clock-derived start differ). A narrowed
+  reader's first impression of the product is no longer the Overview's refusal card.
+- One endpoint, `GET /api/clusters/{cluster_id}/home`, composed from the reads the drill-downs already
+  serve plus one new store method; the arithmetic is in `gsd/home.py` so a number and its label change
+  together. The page follows `docs/design/landing-access-mock.html` — the answer, then What changed (the
+  history folded: a group that changed five times in half an hour is one *flapping* line, a sync that added
+  eleven groups at once is one line), Cluster-wide, Namespaces you can reach, Direct grants, Your groups.
+  Every row is a whole-row `<button>`, so the keyboard reaches every drill.
+- **Two defects found by RENDERING the page, not by reading it:** `data.home` was fetched and never written
+  back, so the page sat on "Loading…" for good; and at 375 px a long role name in a `nowrap` pill squeezed
+  the group's name to one character per line. Both fixed, the second with a test that measures the cell.
+- Measured: the Home API tests 14 passed; the full browser suite 361; the CSS guards with `TestHome` 354;
+  non-UI 3414 passed, 13 skipped. CI on `af3d47d` green on every job. Deployed to CRC
+  (`0.24.0-af3d47dc71`).
+
+### Review pass 1 applied — commits `a1250fd`, `5efa89b`, `c5cd511` (2026-09-18 09:41), PR #186
+
+- **Grok 4.6** on ten claims, then **Codex (GPT-5.6, xhigh)** on the same brief against the tree with Grok's
+  fixes already in — so Codex's verdicts double as a check on those. The third seat was empty: the Fable
+  quota ran out the same day (Part 7), and OB3 was running #183's confirmation.
+- Grok: a **hidden** cluster was named on Home, counted and its history folded in, while its own endpoint
+  404s — the serving rule had four copies in `api.py` and this was the fifth site, which forgot a limb, so
+  it is one predicate now (`is_served`) with `require_cluster` its other caller; the same loop asked
+  `viewer_scope` per cluster, which on a `remote-sar` cluster is an HTTP SubjectAccessReview inside the
+  read snapshot, and the question Home actually asks is configuration (`vouches_for_host_identity`, traced
+  against `viewer_scope`'s own keep-rule before applying). Only a built-in **ClusterRole** is ranked: a
+  namespaced Role named `admin` is a different object, and ranking it by name let the page speak about
+  access nothing else grants. Two sentences that could be false: "0 groups grant edit cluster-wide" for a
+  role held only by a direct grant, and "N more changes" counting the leftover cards rather than the
+  changes.
+- Codex: the removal advice was a claim about **live rules** — the stock roles aggregate that way, but a
+  cluster can change what `edit` carries, so the card says *includes it by default, worth confirming*; the
+  cross-cluster pill was called `.stale`, which is the shell's refetch class (`opacity: 0.55` on whatever
+  carries it), so it rendered at **2.27:1 light / 2.60:1 dark** and one class meant two things — renamed
+  `.poll-age`; a retention window of "forever" claimed rows had been pruned; and "two paths to the same
+  grant" compared role names rather than the object.
+- **An integration failure CI found that neither branch's suite could:** PR CI builds the MERGE, and
+  `feat/drilldown` had meanwhile gained OB3's walk-step test, whose setup waits for the Overview's hero —
+  which this branch's route change moved. It names `#page=overview` now.
+- One of my own test-writing errors caught by the discipline: the resolver-count test PASSED before the fix
+  (the seed had no `remote-sar` cluster, so `viewer_scope` never reached a resolver). Rewritten with a real
+  `remote-sar` cluster so it discriminates, rather than trusted because it was green.
+- Routed to #184: Codex's and Grok's contrast measurements on Home's surfaces (`--warn` on `--page-2` 4.40:1,
+  muted text on the row hover wash 3.99:1) — the same shape as the zebra-row finding, and the same token fix.
+  Recorded as a deviation for the operator: a namespaced direct grant appears under both Namespaces and
+  Direct grants, where the mock shows it only under Direct.
+- Measured: twelve tests fail across the two passes and pass after; the full browser suite on the merged
+  tree 372 passed; non-UI 3420 passed, 13 skipped. Record: `docs/REVIEW_home.md`.
+
+### Review pass 2 applied — commits `b65225e`, `4e61340`, PR #186
+
+- **Codex read the same brief a third time, against the committed tree — and found a defect by reading the
+  screenshots.** The evidence folder committed an hour earlier shows the sub-line as *"covers 12 of your 13
+  namespace grants"* over thirteen **namespaces**. Places are not grants. That is the strongest argument yet
+  for the operator's rule about committing evidence: the picture was reviewable, and the prose around it had
+  not been.
+- Four more: each cluster's history is read up to a cap, so on a busy cluster every count on the card was a
+  lower bound presented as complete (the payload names the capped clusters now); Home's own contrast —
+  measured in both themes, the amber pills at 4.40:1, muted row text at 4.21:1, muted under the 10 % hover
+  wash at 4.05:1 — fixed where it is Home's (secondary text on the rows, a 6 % wash, the amber pills on the
+  card's own surface), with the shared token's headroom left to #184 and a guard across all ten theme ×
+  palette variants whose docstring says it does NOT cover that; the CHANGELOG claimed the payload was
+  "byte-identical whichever tier resolves it" when the tier test pops `scope` and the window's clock-derived
+  start before comparing, and quoted a sentence the page no longer says; and `CLUSTER_ENDPOINTS`, the sweep
+  proving every cluster-scoped handler answers `hidden` exactly as `unknown`, covered neither `home` nor
+  `namespaces` from #167.
+- **One of my own, caught on re-reading:** an assertion written `== [] or True` — a tautology that can never
+  go red. Replaced with both directions asserted. Earlier in the same review I had also written a test that
+  passed BEFORE its fix (the seed carried no `remote-sar` cluster, so the code path it meant to exercise was
+  never reached) and rewrote it rather than trust the green.
+- Measured: five tests fail before these fixes and pass after; full browser suite **374 passed**; non-UI
+  **3438 passed, 13 skipped**; CI green on `b65225e` and `4e61340`. The live evidence was recaptured at
+  `b65225e` and the folder's README says which commit each picture is from and why two differ.
+- **The lab, not the code:** this deploy's rollout timed out because the CRC node hit
+  `node.kubernetes.io/disk-pressure` and tainted itself for five minutes; it cleared on its own and both pods
+  came up on the new image. The internal registry holds 128 tags (two per deploy) with the node's disk at
+  85 %, 9.5 G free — reported to the operator, not pruned: deleting images is their call.
+- Eleven findings on this page across three reviewers, each with a failing-then-passing test.
+
+## Part 9 — the stack integrated, and what only integration could see (2026-09-18)
+
+### The practice, at the operator's direction
+
+- *"I like the idea [of] the integration branch and following cicd to rebuild and redeploy locally as
+  needed until our features and issues align for that feature release. Making sure we are commit and fix
+  merge conflict along the line."* So: a worktree on `integration/design-programme` from `origin/main`,
+  every open PR of the programme merged in order (#179, #180, #181, #183, #186), conflicts resolved and
+  committed there, both suites run on the merged tree, the image built and deployed to CRC from it, and the
+  walk run against that. **A fix belongs in the branch that owns the code** — the integration branch is a
+  proving ground, re-merged after each fix, never a destination.
+
+### What it found, none of it visible from any single branch
+
+- **37 browser failures, every one a timeout, all in the Overview.** #158 makes Home the landing page for
+  every tier; `TestOverviewFleet` and `TestOverviewReview` load with an empty hash because the Overview WAS
+  the landing page when they were written. Sibling branches: #158's branch fixed every Overview-subject
+  test it could reach, and could not reach these. Both helpers name `#page=overview` now (`b50ce5c`,
+  `86fce0f` on `feat/overview-relayout`), and two further bare loads with them. **37 → 2 → 0.**
+- **The walk's second pass — the same cause, in a script.** It logs in and goes straight to the cluster
+  selector, then waits for the opened cluster's tile block. Home carries the same selector and no tile, so
+  the switch worked and the wait timed out, taking the whole second pass with it while the main walk's 80
+  steps passed. It names the Overview first now.
+- **Three whole CHANGELOG entries silently dropped** by a keep-both conflict resolution, caught by a guard
+  test rather than by reading. Where every branch appends to one section, keep-both is not a merge. Rebuilt
+  as the union from each entry's owning branch: six entries, eleven review sub-bullets.
+- **Two conflicts needed COMBINING, not choosing** — a `navigate()` where one branch added `ns: null` and
+  another the fleet rise, and a boot path where one added a local and another narrowed a condition. Taking
+  either side drops the other's fix silently.
+- **My own process error:** a broken tuple reached a commit because the validation ran in a chain BESIDE
+  the commit rather than gating it. `check && commit`, never `check; commit`.
+
+### Measured on the integrated tree
+
+| | |
+|---|---|
+| browser suite | **419 passed** (37 failed / 382 passed before the fixes) |
+| non-browser suite | **3441 passed**, 13 skipped |
+| main walk | 80/80 steps |
+| second pass | 24/24 steps |
+| reports | 11 generated and integrity-checked |
+| image | `0.24.0-5ad0551cb5`, built locally, deployed to CRC, both pods ready |
+
+OB3 (Opus 5, raised to **max** effort for this one review at the operator's offer) reviewed the seams in
+parallel — its report and what came of it are recorded when it lands. Early from its log: contrast failures
+on the `dark/contrast` palette that no branch measured (the lookup's door at 2.8:1, the Overview's tile
+name at 3.08:1 against the 4.5 bar), and an independent reproduction of the same 37 failures from a clone
+taken before the fix.
