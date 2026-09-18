@@ -165,6 +165,37 @@ REVIEW_ARTIFACTS = (
     # GET-only contract, principal.kind, the interval-floor bypass) verbatim by file:line — a design
     # review of code that does not exist yet, so its citations are point-in-time by construction.
     "REVIEW_reporting_selectors_snapshots_windows.md",
+    # PR #128 (P1 mock fixtures) review: quotes the exact test lines and the down-select site by
+    # file:line at review time.
+    "REVIEW_p1_mock_fixtures.md",
+    # PR #129 (P2 multi-dimension selector) review: quotes the selector-map grammar, the count endpoint,
+    # the preview race and the rolling-upgrade break by file:line at review time.
+    "REVIEW_p2_multidim_selector.md",
+    # The Fable-high 24h reporting review (Codex-verified): cites the count endpoint's except clause,
+    # the pre-capture snapshot path (both selectors and mnemonics) and the removed singular-label
+    # render guard by file:line at review time.
+    "REVIEW_reporting_review_24h.md",
+    # PR #138 (advisory CVE scanning) review: cites the ci.yml image-job lines and the helm.yaml
+    # caller-grant the finding fixes, by file:line at review time.
+    "REVIEW_advisory_cve_scan.md",
+    # PR (P4 reporting window) review: quotes the create_run gate, the window predicate, the worker
+    # recheck and the chart guard the findings correct, by file:line at review time.
+    "REVIEW_p4_reporting_window.md",
+    # Handoff/planning docs under docs/handoff/. Point-in-time by construction: the cert-manager
+    # rework plan cites files in the OTHER repo (group-sync-operator-helm-chart), and the migration
+    # runbook cites machine state (tool versions, credential paths) at the moment it was captured —
+    # neither is a citation into this repo's code, so the resolver rule does not apply.
+    "crc-ca-cert-manager-plan.md",
+    "macbook-migration-plan.md",
+    # PR #144 (#143 namespace-access names popup) two-reviewer record: cites the schedulePreview /
+    # applyPosition / wireReports sites and the claim ids at review time, point-in-time by construction.
+    "REVIEW_ns_preview_popup.md",
+    # PR #145 (#97 priorityClassName) review record: Codex generated/verified, Fable-high reviewed;
+    # cites the checksum line and template guards at review time, point-in-time by construction.
+    "REVIEW_priority_class.md",
+    # PR #148 (#147 system: exclusion + Clear) review record: Grok generated, Codex + Grok reviewed;
+    # quotes the F1a fail-before observed set and the reviewers' probe output, point-in-time.
+    "REVIEW_147.md",
 )
 
 

@@ -9,8 +9,11 @@ worker with nothing to degrade to.
 
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass, field
+
+from .window import ReportingWindow, WindowConfigError
 
 #: The PDF/A variants fpdf2 enforces (measured against fpdf2 2.8.8: DocumentCompliance has exactly
 #: these plus PDFA_4E/PDFA_4F, which need an engineering/attachment intent this catalogue has no use
@@ -56,6 +59,61 @@ def _bool_env(name: str, default: bool) -> bool:
     raise ReportConfigError(f"{name}={raw!r} is not a boolean (true/false)")
 
 
+def _selector_labels_env() -> tuple[str, ...]:
+    """The ordered selector dimensions from GSD_REPORT_NS_SELECTOR_LABELS (a JSON array, the same
+    transport the chart uses for namespaceMetadataLabels). Empty/unset -> no selector. Duplicate or
+    blank entries fail at startup — a duplicated dimension would break the AND-across selection's
+    expectation of distinct keys (docs/DESIGN_reporting_selectors_snapshots_and_windows.md §3)."""
+    raw = os.environ.get("GSD_REPORT_NS_SELECTOR_LABELS", "").strip()
+    if not raw:
+        return ()
+    try:
+        parsed = json.loads(raw)
+    except ValueError as exc:
+        raise ReportConfigError(f"GSD_REPORT_NS_SELECTOR_LABELS={raw!r} is not a JSON array") from exc
+    if not isinstance(parsed, list) or not all(isinstance(x, str) for x in parsed):
+        raise ReportConfigError("GSD_REPORT_NS_SELECTOR_LABELS must be a JSON array of strings")
+    if not parsed:
+        return ()
+    if any(not item.strip() for item in parsed):     # a blank entry is a config error, not silently dropped
+        raise ReportConfigError("GSD_REPORT_NS_SELECTOR_LABELS entries must be non-empty strings")
+    labels = tuple(item.strip() for item in parsed)
+    if len(set(labels)) != len(labels):
+        raise ReportConfigError(f"GSD_REPORT_NS_SELECTOR_LABELS has a duplicate label: {list(labels)}")
+    return labels
+
+
+#: A disabled window that never gates — the default when a deployment sets no reporting.window block.
+_DISABLED_WINDOW = ReportingWindow.from_strings(enabled=False, timezone="", start="00:00", end="00:00", days=[])
+
+
+def _window_env() -> ReportingWindow:
+    """The global reporting window from GSD_REPORT_WINDOW_* (design §5). Disabled by default. An
+    enabled-but-malformed window FAILS STARTUP (fail closed) — a wrong timezone, a bad time or an empty
+    days list must never silently disable gating and let automated runs fire at any hour."""
+    enabled = _bool_env("GSD_REPORT_WINDOW_ENABLED", False)
+    days: list[str] = []
+    raw = os.environ.get("GSD_REPORT_WINDOW_DAYS", "").strip()
+    if raw:
+        try:
+            parsed = json.loads(raw)
+        except ValueError as exc:
+            raise ReportConfigError(f"GSD_REPORT_WINDOW_DAYS={raw!r} is not a JSON array") from exc
+        if not isinstance(parsed, list) or not all(isinstance(x, str) for x in parsed):
+            raise ReportConfigError("GSD_REPORT_WINDOW_DAYS must be a JSON array of weekday names")
+        days = parsed
+    try:
+        return ReportingWindow.from_strings(
+            enabled=enabled,
+            timezone=os.environ.get("GSD_REPORT_WINDOW_TIMEZONE", ""),
+            start=os.environ.get("GSD_REPORT_WINDOW_START", "22:00"),
+            end=os.environ.get("GSD_REPORT_WINDOW_END", "06:00"),
+            days=days,
+        )
+    except WindowConfigError as exc:
+        raise ReportConfigError(str(exc)) from exc
+
+
 @dataclass(frozen=True)
 class ReportSettings:
     snapshot_dir: str = "/data/report"
@@ -80,7 +138,13 @@ class ReportSettings:
     login_capture_enabled: bool = False
     namespaces_read_enabled: bool = False
     binding_interval_seconds: int = 300
-    namespace_selector_label: str = ""   # the captured key the namespace-access report selects on (B2)
+    #: The ordered selector DIMENSIONS the namespace-access report offers (P2, multi-dimension:
+    #: company.net/mnemonic AND company.net/app-environment). Empty = no selector. Each must be one of
+    #: the captured namespaceMetadata.labels.
+    namespace_selector_labels: tuple[str, ...] = ()
+    #: The global reporting window (design §5): gates automated (schedule/service) runs to a time range
+    #: on chosen weekdays; a human's viewer run is never gated. Disabled by default.
+    window: ReportingWindow = _DISABLED_WINDOW
     #: One worker renders at a time; the queue is bounded so a burst answers 429 rather than
     #: piling up renders the pod's memory limit then ends.
     max_queued_runs: int = 8
@@ -121,7 +185,8 @@ def load_report_settings() -> ReportSettings:
         login_capture_enabled=_bool_env("GSD_REPORT_LOGIN_CAPTURE_ENABLED", False),
         namespaces_read_enabled=_bool_env("GSD_REPORT_NAMESPACES_READ_ENABLED", False),
         binding_interval_seconds=_int_env("GSD_REPORT_BINDING_INTERVAL_SECONDS", 300, lo=1, hi=86400),
-        namespace_selector_label=os.environ.get("GSD_REPORT_NS_SELECTOR_LABEL", "").strip(),
+        namespace_selector_labels=_selector_labels_env(),
         max_queued_runs=_int_env("GSD_REPORT_MAX_QUEUED_RUNS", 8, lo=1, hi=100),
         log_level=os.environ.get("GSD_LOG_LEVEL", "INFO"),
+        window=_window_env(),
     )

@@ -8,14 +8,13 @@ from .common import Built, ReportSpec, RunContext, cut, ns_label
 
 SPEC = ReportSpec(
     name="binding-findings", title="RBAC binding findings",
-    summary="Dangling, unresolved and unmanaged group bindings, direct user grants, and the platform identities excluded — the classification the RBAC policy tab shows.",
+    summary="Dangling, unresolved and unmanaged group bindings and direct user grants; system:* virtual groups are omitted (a platform built-in, not a person's grant).",
     values_key="bindingFindings",
 )
 
 _DEFINITIONS = [
     ("dangling", "the group was observed operator-managed and is now absent — something broke; the binding grants nobody"),
     ("unresolved", "the group has never been seen managed and does not exist — the binding names something that never existed"),
-    ("built_in", "a system:* virtual group — authorises real access, no object expected"),
     ("unmanaged", "a synced group granted by a binding no policy operator manages, with no exception annotation — governance bypassed by hand"),
     ("ok", "resolves normally"),
 ]

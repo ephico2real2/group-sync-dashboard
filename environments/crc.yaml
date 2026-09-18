@@ -76,3 +76,76 @@ loginCapture:
 # here once, to validate B3 through grafana-operator v5 in namespace grafana-test (screenshot
 # docs/screenshots/06-grafana-dashboard-crc.png); that validation is recorded and the override
 # was removed with chart 0.14.0 (operator decision, 2026-09-05: nothing on this cluster reads it).
+
+# ---------------------------------------------------------------------------
+# Reporting — the namespace-access multi-dimension selector (P2, 0.21.0+)
+# ---------------------------------------------------------------------------
+# This cluster's namespaces carry enterprise metadata — company.net/mnemonic (the app mnemonic)
+# and company.net/app-environment (prod/qa/uat/...). Capture BOTH keys on the poll and offer BOTH
+# as selector DIMENSIONS in the Reports form, so the namespace-access report can be scoped by
+# "mnemonic in {demo, beta} AND app-environment in {prod}" — AND across dimensions, OR within.
+# The dropdown VALUES are auto-discovered from the namespaces; nothing is hard-coded here.
+#
+# rbac.namespaces is REQUIRED: without the grant to list Namespace objects the poller never reads
+# their labels, so the selector would always be empty (the chart guard refuses the combination).
+rbac:
+  namespaces: true
+
+reporting:
+  namespaceMetadata:
+    # The poller CAPTURES these label keys from every Namespace (bounded set).
+    labels:
+      - company.net/mnemonic
+      - company.net/app-environment
+  namespaceSelector:
+    # The Reports form OFFERS these as selector dimensions (must be a subset of the captured keys).
+    labels:
+      - company.net/mnemonic
+      - company.net/app-environment
+  # P4 — the global reporting window, ON per the mandate to turn on every reporting feature we added.
+  # It gates AUTOMATED runs (schedules and service-token callers) to a night window; a human's manual
+  # run from the Reports tab is NEVER gated. The CronJob below gets spec.timeZone = this zone so its
+  # schedule time lands inside the window (else the run would 409-skip).
+  window:
+    enabled: true
+    timezone: "America/New_York"
+    start: "22:00"
+    end: "06:00"
+    days: [Mon, Tue, Wed, Thu, Fri, Sat, Sun]
+  # One nightly schedule to exercise the window + the CronJob. namespace-access scoped by the mnemonic
+  # dimension (P2), so the schedule shows both features working together. Fires 22:00 New York, inside
+  # the window; a manual trigger outside the window would 409 -> the Job records a skip, not a failure.
+  schedules:
+    - name: nightly-namespace-access
+      schedule: "0 22 * * *"
+      report: namespace-access
+      cluster: crc-local
+      params:
+        selectors:
+          company.net/mnemonic: [demo, beta]
+
+# ---------------------------------------------------------------------------
+# Clusters the dashboard polls
+# ---------------------------------------------------------------------------
+# crc-local is this cluster (the in-pod ServiceAccount token). The mock OpenShift API server
+# (local-development/mock-app, Service mock-openshift:6443) is added as a SECOND cluster so the
+# namespace-access report and the P2 multi-dimension selector can be exercised against its fixture
+# namespaces too. Its token + CA live in the mock-cluster-creds Secret, mounted at /etc/gsd/mock by
+# the mock-creds volume (patched onto the Deployment; preserved across `helm upgrade` by 3-way merge).
+clusters:
+  - name: crc-local
+    apiUrl: https://kubernetes.default.svc
+    tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+    caBundleFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+    enabled: true
+  - name: mock
+    apiUrl: https://mock-openshift:6443
+    tokenFile: /etc/gsd/mock/token
+    caBundleFile: /etc/gsd/mock/ca.crt
+    enabled: true
+    # The mock is a demo cluster whose fixture makes kubeadmin cluster-admin and developer an editor.
+    # A second cluster defaults to self-only/identity:none — the chart never ASSUMES a host identity
+    # means the same thing elsewhere. Here we STATE it: a host-authenticated reader is the same identity
+    # on the mock, so their tier is computed by SAR (not forced to self), and the admin tabs render.
+    visibility: inherit
+    identity: same-as-host

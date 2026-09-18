@@ -1,0 +1,527 @@
+# MacBook Migration Runbook — group-sync-dashboard + CRC lab
+
+Execution-ordered. Old machine is an **Intel Mac** (`/usr/local`, `darwin/amd64`, CRC bundle
+`crc_vfkit_4.18.2_amd64`). A new **Apple Silicon** Mac uses `/opt/homebrew` and arm64 CRC/podman
+bundles — **versions transfer, binaries do not**. Do the steps in order; do not skip the "Before you
+move" section — several items exist in exactly one place and are gone the moment the disk is wiped.
+
+Convention used below:
+
+```sh
+DASH=/Users/olasumbo/gitRepos/group-sync-dashboard        # old machine
+SP=/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/4431debc-da47-459e-96d7-9fa404508f41/scratchpad
+KEEP=~/migration-carry                                     # off-machine transfer folder (USB / encrypted volume)
+```
+
+---
+
+## 1. Executive summary
+
+- **Transfers by `git clone`:** all committed/pushed history in the four repos — the C3 reporting
+  microservice is merged to `origin/main`; the app chart (0.32.0 / app 0.24.0), `release-crc.sh`,
+  `environments/crc.yaml`, the mock-app source, and the specs/tests/session-changelogs are all in git.
+- **At risk (exists in one place only):** `local-development/.env` (real registry push credentials,
+  gitignored, backed up **nowhere**); the **uncommitted** `environments/crc.yaml` edit (67 insertions)
+  and **`stash@{0}`** (a separate 36-line crc.yaml WIP); 6 project-memory notes newer than the
+  claude-config backup; and the session scratchpad (`mock-certmanager.yaml`, review briefs, bespoke
+  scripts) — which `/private/tmp` will wipe on a reboot, **not just on the move**.
+- **Single most important pre-move action:** get the three unrecoverable things off the machine —
+  **(1) `local-development/.env`**, **(2)** the uncommitted `crc.yaml` working-tree edit, and **(3)**
+  `stash@{0}` — before anything else. #1 is the top secret; #2 and #3 will **not** come back with a clone.
+- **A new CRC is rebuilt from scratch.** The 64 GB VM, the mock cluster, the cert-manager chains, the
+  LDAP lab, cluster-wide trust, and the dashboard's `mock-creds` volume patch are **live-only** and
+  mostly reproduced by **no committed manifest**. `release-crc.sh` deploys **only** the dashboard +
+  report images — it is not "the whole lab". Rebuild is a deliberate, ordered sequence (§4).
+- **Nothing SSH/keychain-based copies as a file:** the `gh` token, git push cred, cursor/codex logins,
+  and the CRC pull secret are all re-established by logging in / re-downloading on the new Mac.
+
+---
+
+## 2. Before you move (on THIS Mac) — ordered checklist
+
+### 2.0 — Make the carry folder
+
+```sh
+mkdir -p "$KEEP"        # put this on an encrypted USB / external volume, not iCloud
+```
+
+### 2.1 — TOP PRIORITY: preserve the one secret backed up nowhere
+
+`local-development/.env` holds `REGISTRY_USERNAME`, `REGISTRY_PASSWORD`, `IMAGE_PULL_SECRET`,
+`REGISTRY`, `K8S_NAMESPACE`. Gitignored, in no repo, in no backup. **Never print its contents.**
+
+```sh
+cp "$DASH/local-development/.env" "$KEEP/local-development.env"     # do NOT cat it
+```
+
+Fallback if not copied: re-enter each value from the operator's password store / registry account.
+The key layout is recoverable from the tracked `local-development/.env.example`; the actual secrets are not.
+
+### 2.2 — Commit/push every at-risk repo change (crc.yaml is the flagged file)
+
+**group-sync-dashboard `environments/crc.yaml` — the operator-flagged uncommitted edit (67 insertions:**
+P2 namespace selector on `company.net/mnemonic` + `company.net/app-environment`, the P4
+`America/New_York` 22:00–06:00 window, the nightly namespace-access schedule, the second "mock"
+cluster entry). A plain clone will **not** bring this back. Preserve it **both** ways:
+
+```sh
+# a) belt-and-suspenders patch into the carry folder
+git -C "$DASH" diff environments/crc.yaml > "$KEEP/crc.yaml.working.patch"
+# b) the durable path — commit to a branch and push
+git -C "$DASH" switch -c chore/crc-yaml-p2-p4-mock
+git -C "$DASH" add environments/crc.yaml
+git -C "$DASH" commit -m "environments(crc): P2 namespace selector, P4 night window, nightly schedule, mock cluster entry"
+git -C "$DASH" push -u origin chore/crc-yaml-p2-p4-mock
+```
+
+**`stash@{0}` — a SEPARATE 36-line crc.yaml WIP** on `feat/reporting-selector-gui` (base tip
+`08a7fa0`). Stashes **never** transfer via clone. This is **not** a duplicate of the 67-line edit —
+preserve **both**; applying one over the other may conflict.
+
+```sh
+git -C "$DASH" stash show -p 'stash@{0}' > "$KEEP/crc.yaml.stash.patch"
+```
+
+Confirm nothing else is unpushed across the group-sync repos (the operator/helm-chart/cilium repos
+were audited clean). For a feature branch, compare against its **own upstream**, not `origin/main`:
+
+```sh
+for r in group-sync-dashboard group-sync-operator group-sync-operator-helm-chart cilium-implementation-poc; do
+  echo "== $r =="; git -C "/Users/olasumbo/gitRepos/$r" status -sb | head -1
+  git -C "/Users/olasumbo/gitRepos/$r" log --branches --not --remotes --oneline | head   # anything printed = unpushed
+done
+```
+
+> `group-sync-operator`'s `990c097` shows "unpushed vs origin/main" but is already on
+> `origin/fix/reconcile-group-provenance-labels` — it IS on the remote. Not a loss.
+
+### 2.3 — Refresh the claude-config backup BEFORE relying on restore.sh
+
+Live memory is ahead of the `claude-config` repo by **6 dashboard notes** — 4 missing
+(`avoid-polling-use-background-wakeup.md`, `codex-exec-stdin-hang.md`, `cursor-fable-reviewer.md`,
+`no-attribution-trailers.md`) and 2 stale (`adversarial-review-before-shipping.md`, the `MEMORY.md`
+index). Running `restore.sh` on the new Mac today would silently install stale/incomplete memory.
+
+```sh
+# re-run the claude-config capture so the live memory dir is copied into the repo, then:
+git -C /Users/olasumbo/gitRepos/claude-config add -A
+git -C /Users/olasumbo/gitRepos/claude-config commit -m "capture: refresh dashboard memory notes before machine move"
+git -C /Users/olasumbo/gitRepos/claude-config push
+```
+
+### 2.4 — Copy the local-only files worth keeping out of the scratchpad
+
+`/private/tmp/...` is wiped by **reboot / OS temp cleanup**, not only by the move — treat as at-risk **now**.
+
+```sh
+mkdir -p "$KEEP/scratchpad"
+# the mock API TLS cert-manager manifest is now COMMITTED at
+#   local-development/mock-app/deploy/certmanager-tls.yaml  (travels via git clone — no carry needed)
+# in-flight adversarial-review briefs for the current C3 pass (fold outcomes into docs/REVIEW_C3.md too)
+cp "$SP/review_brief_p4.md" "$SP/fable_brief_138.md" "$SP/fable_brief_133.md" "$KEEP/scratchpad/" 2>/dev/null
+# the CRC cert-manager rework plan (§4.10) is now COMMITTED at
+#   docs/handoff/crc-ca-cert-manager-plan.md  (travels via git clone — no carry needed)
+# bespoke session scripts (modest value, hand-authored) — keep only if you want the tools
+cp "$SP/reporting_peek.py" "$SP/capture_b3.py" "$SP/capture_p2.py" "$SP/b3_mock_check.py" "$SP/advisory.sh" "$KEEP/scratchpad/" 2>/dev/null
+```
+
+Regenerable — **do not** carry: `.venv` (242 MB), `chart-*.tgz`, `crc-*.kubeconfig` (sensitive, re-derive
+from CRC), the `reporting-peek*/` and `b3-shots/` PNGs (re-run the capture scripts; the canonical e2e
+evidence is already committed under `reports/2026-09-14_e2e-walk*`).
+
+### 2.5 — Carry the credential/state files that ARE copyable (optional shortcuts to re-login)
+
+```sh
+mkdir -p "$KEEP/creds"
+cp -a ~/.ssh "$KEEP/creds/ssh"                                  # 600 perms preserved (-a); needed for the SSH remotes
+cp    ~/.codex/auth.json  "$KEEP/creds/codex-auth.json"         # mode 600; NOT the 314MB logs_*.sqlite
+cp    ~/.codex/config.toml "$KEEP/creds/codex-config.toml"
+cp    ~/.config/containers/auth.json "$KEEP/creds/containers-auth.json"   # base64 registry creds — secret
+```
+
+> Each of these can instead be re-established by logging in on the new Mac (§4.2). Copy = faster; login = cleaner.
+
+### 2.6 — Record (do NOT print) where the secrets and keys live
+
+Write a private note (in the password manager, not the repo) recording **locations only** — never dump values:
+
+- `~/.crc/machines/crc/kubeadmin-password` — **regenerable**; do NOT copy, do NOT print. Re-issued by `crc start`.
+- `local-development/.env` — top secret, carried in §2.1.
+- `~/.config/containers/auth.json` — base64 registry creds.
+- **CA PRIVATE KEY in git (security exposure, not a loss):**
+  `group-sync-operator-helm-chart/setup-local-ldap-testing/ca-key.pem` is committed and pushed to
+  `origin/main`. It survives the move (it clones), but if that repo is/ever becomes public the CA is
+  compromised. If committing it was unintentional: rotate the CA and scrub it from history.
+- CRC pull secret — **not stored on disk anywhere**; re-download on the new Mac (§4.9).
+
+### 2.7 — Record the tool versions to match
+
+Match these on the new Mac (arm64 builds of the same versions):
+
+| Tool | Version | Install channel |
+|---|---|---|
+| crc | 2.49.0+e843be (bundles OpenShift 4.18.2) | Red Hat installer `.pkg` |
+| oc | 4.13.6 (kustomize v4.5.7) | `brew install openshift-cli` |
+| helm | v3.14.0 | `brew install helm` |
+| podman | 5.5.2 | `brew install podman` |
+| gh | 2.100.0 | `brew install gh` |
+| node | v25.9.0 | `brew install node` |
+| python3 | 3.13.5 | `brew install python@3.13` |
+| actionlint | 1.7.12 | `brew install actionlint` |
+| codex-cli | 0.144.1 | `npm i -g @openai/codex` |
+| cursor CLI | (vendor) | `curl https://cursor.com/install -fsS \| bash` |
+| mermaid-ascii | (manual bin) | `go install github.com/AlexanderGrooff/mermaid-ascii@latest` |
+
+```sh
+# optional: snapshot the exact versions to the carry folder
+{ crc version; oc version --client; helm version; podman version; gh --version; node -v; python3 -V; \
+  actionlint --version; codex --version; cursor --version; } > "$KEEP/tool-versions.txt" 2>&1
+```
+
+---
+
+## 3. Transport — what travels how
+
+**By `git clone` (nothing to hand-carry):**
+
+| Repo | Remote | Transport |
+|---|---|---|
+| group-sync-dashboard | `https://github.com/ephico2real2/group-sync-dashboard.git` | HTTPS (keychain/gh) |
+| group-sync-operator | `git@github.com:ephico2real2/group-sync-operator.git` | **SSH** |
+| group-sync-operator-helm-chart | `git@github.com:ephico2real2/group-sync-operator-helm-chart.git` | **SSH** |
+| cilium-implementation-poc | `https://github.com/ephico2real2/cilium-implementation-poc.git` | HTTPS (keychain/gh) |
+| claude-config | (its origin) | for `restore.sh` — refresh+push first (§2.3) |
+
+> The two SSH remotes need `~/.ssh` present **before** you can clone/push them. Carry `~/.ssh` (§2.5) or
+> generate a fresh key on the new Mac and register the `.pub` with GitHub.
+
+**Hand-carried in `$KEEP` (credentials + unrecoverable working state):**
+`local-development.env`, `crc.yaml.working.patch`, `crc.yaml.stash.patch`, the `scratchpad/` copies
+(`mock-certmanager.yaml`, review briefs, `crc-ca-cert-manager-plan.md`, bespoke scripts), and the
+`creds/` shortcuts (`~/.ssh`, `codex-auth.json`, `codex-config.toml`, `containers-auth.json`).
+
+**Regenerated on the new Mac — do NOT carry:** `~/.kube/config` (re-issued by `crc start`/`oc login` —
+**do not copy the old one**, it points at the old CRC), the 64 GB `crc.img`, the CRC bundle cache (~6 GB),
+`kubeadmin-password`, `.venv`, built chart `.tgz`, podman machine SSH identity.
+
+**`~/.claude` project memory/settings:** carried by cloning `claude-config` and running its `restore.sh`
+(it re-keys the path slugs to the new home and symlinks the cilium lab memory to the dashboard's). The
+`.jsonl` session transcripts are **outside** restore scope — copy them deliberately only if you want the
+raw history; the distilled memory notes carry the durable takeaways.
+
+---
+
+## 4. On the NEW Mac — ordered setup
+
+### 4.1 — Install the tools
+
+```sh
+# Homebrew (Apple Silicon installs to /opt/homebrew)
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+brew install openshift-cli helm podman gh node python@3.13 actionlint
+
+# podman VM
+podman machine init && podman machine start          # consider --cpus/--memory > the old 2GiB default
+
+# codex CLI (npm global, not brew)
+npm install -g @openai/codex
+
+# cursor CLI (vendor script, not brew)
+curl https://cursor.com/install -fsS | bash
+
+# mermaid-ascii (manual binary, NOT a brew formula) — one-liner:
+go install github.com/AlexanderGrooff/mermaid-ascii@latest   # then symlink/copy into /usr/local/bin (or /opt/homebrew/bin)
+# (or download the release binary from github.com/AlexanderGrooff/mermaid-ascii into your PATH)
+
+# crc (Red Hat installer, NOT brew): download the .pkg from
+#   https://console.redhat.com/openshift/create/local  → install the .pkg
+```
+
+### 4.2 — Log in to each tool
+
+```sh
+gh auth login                       # HTTPS; request scopes: gist,read:org,repo,workflow
+gh auth setup-git                   # wires the osxkeychain credential helper for HTTPS pushes
+codex login                         # (or drop the carried ~/.codex/auth.json into place, mode 600)
+cursor agent login                  # REQUIRED for the adversarial-review pass; binary is `cursor`, subcommand `agent`
+podman login <registry>             # per registry (or drop the carried ~/.config/containers/auth.json, mode 600)
+# SSH: place carried ~/.ssh (chmod 600 the private key) OR ssh-keygen + add the new .pub to GitHub
+```
+
+### 4.3 — Clone the repos
+
+```sh
+mkdir -p ~/gitRepos && cd ~/gitRepos
+git clone https://github.com/ephico2real2/group-sync-dashboard.git
+git clone git@github.com:ephico2real2/group-sync-operator.git                 # SSH — needs the key
+git clone git@github.com:ephico2real2/group-sync-operator-helm-chart.git      # SSH — needs the key
+git clone https://github.com/ephico2real2/cilium-implementation-poc.git
+git clone <claude-config-remote> claude-config && (cd claude-config && ./restore.sh)
+```
+
+### 4.4 — Restore the unrecoverable working state into the clones
+
+```sh
+NDASH=~/gitRepos/group-sync-dashboard
+cp "$KEEP/local-development.env" "$NDASH/local-development/.env"    # the top secret
+
+# crc.yaml working-tree edit: if you pushed the branch in §2.2, just check it out; else apply the patch
+git -C "$NDASH" apply "$KEEP/crc.yaml.working.patch"               # (branch checkout is the cleaner path)
+
+# stash@{0}: apply the separate 36-line WIP where it belongs (feat/reporting-selector-gui @08a7fa0)
+git -C "$NDASH" checkout feat/reporting-selector-gui
+git -C "$NDASH" apply "$KEEP/crc.yaml.stash.patch"                 # keep it distinct from the 67-line edit
+```
+
+### 4.5 — Rebuild the python venv + Playwright chromium
+
+```sh
+cd "$NDASH/local-development"
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt          # (repo's requirements; .venv is gitignored, do not carry)
+python -m playwright install chromium     # for the e2e-walk / capture scripts
+```
+
+### 4.6 — Rebuild CRC (a brand-new cluster)
+
+```sh
+# fresh pull secret first (nothing to copy):
+#   https://console.redhat.com/openshift/create/local  → download pull-secret
+
+# Sizing RAISED from the old 5 / 16384 / 60. That cluster sat at 99% CPU requests (4792m/4800m —
+# the #97 report-pod preemption cause) and 85% disk (51/60G) BEFORE monitoring or GitOps. The new
+# Mac is an Apple M5 Pro / 64 GB, so there is ample headroom to run monitoring + GitOps + the LDAP
+# lab together without re-saturating:
+crc config set cpus 8
+crc config set memory 32768                     # 32 GiB VM; leaves ~28-30 GiB for macOS + podman build VM
+crc config set disk-size 100
+crc config set enable-cluster-monitoring true   # NEW requirement; default CRC has monitoring OFF (0 pods)
+crc config set consent-telemetry yes
+crc config set no-proxy local,169.254/16
+
+crc setup
+crc start --pull-secret-file ~/Downloads/pull-secret.txt
+eval "$(crc oc-env)"
+oc login -u kubeadmin -p "$(crc console --credentials | ...)"   # kubeadmin-password is REGENERATED by crc; never carried
+oc config current-context        # expect: default/api-crc-testing:6443/kubeadmin
+```
+
+### 4.6b — Operators + cluster monitoring (install after `crc start`)
+
+The lab depends on four OperatorHub operators (measured on the old CRC on 2026-09-16), and this move
+adds a fifth. Community-source operators need the `community-operators` CatalogSource healthy (see the
+memory on CRC catalog pull failures — disable the catalogs you do not use so the ones you do stop
+timing out on TLS).
+
+| Operator | Source / channel | CSV observed | Why the lab needs it |
+|---|---|---|---|
+| cert-manager Operator for Red Hat OpenShift | `redhat-operators` / `stable-v1` | `cert-manager-operator.v1.19.1` | every mock + LDAP cert — details in §4.7 |
+| group-sync-operator | `community-operators` / `alpha` | `group-sync-operator.v0.0.36` | the operator the dashboard observes |
+| namespace-configuration-operator | `community-operators` / `alpha` | `namespace-configuration-operator.v1.2.6` | namespace label/config automation the lab uses |
+| grafana-operator | `community-operators` / `v5` | `grafana-operator.v5.24.0` | validated the B3 Grafana dashboard (ns `grafana-test`) |
+| **OpenShift GitOps (ArgoCD)** | `redhat-operators` / `latest` | **NEW this move** | GitOps-manage the chart/app this time (creates an ArgoCD in `openshift-gitops`) |
+
+Install OpenShift GitOps (new this move):
+
+```sh
+oc apply -f - <<'EOF'
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: openshift-gitops-operator
+  namespace: openshift-operators
+spec:
+  channel: latest                 # confirm the channel on the new cluster: `oc get packagemanifest openshift-gitops-operator -o jsonpath='{.status.channels[*].name}'`
+  installPlanApproval: Automatic
+  name: openshift-gitops-operator
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+EOF
+oc rollout status deploy/openshift-gitops-server -n openshift-gitops --timeout=300s
+```
+
+**Enable OpenShift cluster monitoring (new this move).** Default CRC ships monitoring OFF — on the old
+cluster `openshift-monitoring` had **0 pods** and no `cluster-monitoring-config`, which is why the
+chart's `monitoring.serviceMonitor.enabled` / `monitoring.prometheusRule.enabled` were parked (see the
+"monitoring validation parked" memory). Turn it on so the ServiceMonitor + PrometheusRule can finally
+be validated on-cluster:
+
+```sh
+crc config set enable-cluster-monitoring true    # set BEFORE `crc start`; if already started, set then `crc stop && crc start`
+# verify after start:
+oc -n openshift-monitoring get pods               # prometheus-k8s / alertmanager / etc. should appear
+```
+
+> Enabling monitoring costs CPU/RAM on a single node — bump `crc config set memory` accordingly (the
+> §4.6 sizing of 16384 MB already leaves headroom; drop other operators first if the node saturates,
+> per the report-pod preemption seen at 99% CPU requests, issue #97).
+
+### 4.7 — cert-manager operator (prerequisite for ALL mock + LDAP certs)
+
+Install **cert-manager Operator for Red Hat OpenShift** (observed `cert-manager-operator.v1.19.1`).
+Wait for `cert-manager` / `cert-manager-cainjector` / `cert-manager-webhook` pods **Ready** in ns
+`cert-manager`. **Nothing that follows works until this is up.**
+
+### 4.8 — Deploy the app at 0.24.0 (the only fully-automated step)
+
+```sh
+cd "$NDASH"
+./local-development/release-crc.sh          # builds + pushes + deploys BOTH dashboard and report images
+                                            # tagged <version>-<sha>, using environments/crc.yaml as -f
+helm list -n group-sync-dashboard           # expect chart 0.32.0 / app 0.24.0, Deployed
+```
+
+> `release-crc.sh`'s scope is **exactly two images**. It does **not** create the mock backend,
+> cert-manager chains, the LDAP lab, cluster trust, or the `mock-creds` volume patch. Those are §4.9–§4.10.
+
+### 4.9 — Re-apply the mock cluster (all live-only, mostly no committed manifest)
+
+```sh
+# 1) build + push the mock image (release-crc.sh does NOT build this)
+cd "$NDASH/local-development/mock-app"
+podman build -f containerfile/Containerfile -t mock-openshift .
+# tag + push to the CRC internal registry as mock-openshift:test (same podman login flow release-crc.sh uses)
+
+# 2) the mock cert-manager chain — use the carried manifest (NO committed YAML reproduces it)
+oc apply -n group-sync-dashboard -f local-development/mock-app/deploy/certmanager-tls.yaml
+#   chain: Issuer mock-selfsigned (SelfSigned) -> Certificate mock-ca (isCA, secret mock-ca)
+#          -> Issuer mock-ca-issuer (CA) -> Certificate mock-tls
+#          (dnsNames: mock-openshift, .svc, .svc.cluster.local, localhost; ip 127.0.0.1; secret mock-tls)
+oc get certificate -n group-sync-dashboard mock-ca mock-tls    # wait for both Ready
+
+# 3) the mock backend Deployment + Service (NO committed manifest — capture from the old cluster if you
+#    still have it: `oc get deploy/svc mock-openshift -o yaml`; else re-author: image .../mock-openshift:test,
+#    volume certs -> secret mock-tls; Service ClusterIP 6443 -> 6443)
+
+# 4) the mock-cluster-creds secret — ca.crt MUST equal the mock-ca CA or the dashboard's TLS verify fails
+oc create secret generic mock-cluster-creds -n group-sync-dashboard \
+  --from-literal=token='mock-token-reference' \
+  --from-literal=ca.crt="$(oc get secret mock-ca -n group-sync-dashboard -o jsonpath='{.data.ca\.crt}' | base64 -d)"
+
+# 5) patch the mock-creds volume onto the dashboard Deployment — INVISIBLE to Helm; re-apply after EVERY fresh install
+oc set volume deploy/group-sync-dashboard --add --name mock-creds \
+  --secret-name mock-cluster-creds --mount-path /etc/gsd/mock -n group-sync-dashboard
+```
+
+> The committed `DESIGN_mock_cluster.md` / `mock-app/README.md` describe a **self-generated ephemeral
+> CA** — that **diverges** from the live wiring (cert-manager Issuers/Certificates, CA hand-copied into
+> `mock-cluster-creds`). Follow §4.9 above, not the doc verbatim.
+
+### 4.10 — LDAP lab + cluster-wide trust (only if the LDAP integration is needed)
+
+This is the `crc-*` cert-manager rework. **Do not duplicate it here** — follow the separate plan carried
+in §2.4:
+
+```
+$KEEP/scratchpad/crc-ca-cert-manager-plan.md
+```
+
+That plan covers: renaming the LDAP-specific PKI to a general CRC enterprise CA (`crc-selfsigned-bootstrap`
+→ root `crc-enterprise-root-ca` → issuer `crc-enterprise-ca` → bundle `crc-enterprise-ca-bundle`),
+the `proxy/cluster.spec.trustedCA` anchor, the openldap-server/phpldapadmin deployments in ns
+`ldap-testing`, and the two execution forks (fresh root = one node roll, vs reuse = zero-reboot). Execute
+it as its own PR + post-merge cluster steps. **The `proxy/cluster` trust change triggers a MachineConfig
+node roll (~105 s) — it reboots the CRC node** (see §6).
+
+---
+
+## 5. Verification
+
+```sh
+# CRC + context
+crc status                                   # VM Running
+oc config current-context                    # default/api-crc-testing:6443/kubeadmin
+
+# app version + rollout
+helm list -n group-sync-dashboard            # chart 0.32.0 / app 0.24.0, Deployed
+oc rollout status deploy/group-sync-dashboard -n group-sync-dashboard   # successfully rolled out
+oc get pods -n group-sync-dashboard          # dashboard + report Ready; mock-openshift Ready
+oc get deploy group-sync-dashboard -n group-sync-dashboard \
+  -o jsonpath='{.spec.template.spec.containers[0].image}'; echo   # 0.24.0-<sha>
+
+# in-pod commit stamp (release-crc.sh already verifies the running pod's commit)
+oc exec deploy/group-sync-dashboard -n group-sync-dashboard -- <the commit-stamp check release-crc.sh uses>
+
+# both clusters polling: crc-local (in-pod SA) AND mock (https://mock-openshift:6443, /etc/gsd/mock/{token,ca.crt})
+oc logs deploy/group-sync-dashboard -n group-sync-dashboard | grep -Ei 'poll|cluster|mock'
+#   mock must NOT show token/ca files absent — that means the §4.9 step 5 volume patch is missing (silent fail)
+
+# reporting UI reachable via the Route
+oc get route -n group-sync-dashboard -o jsonpath='{.items[0].spec.host}{"\n"}'   # curl / open it
+
+# review pipeline works
+cursor agent login && cursor --version       # non-interactive review fails until logged in
+codex --version                              # invoke with `< /dev/null` when scripting (stdin hang)
+# then run the adversarial-review skill on an open PR to confirm both reviewers drive end-to-end
+```
+
+Green when: CRC Running; 0.24.0 Deployed and the in-pod commit matches; both pods Ready; **both** clusters
+poll (mock included, files present at `/etc/gsd/mock`); the Route serves the reporting UI; cursor + codex
+both authenticate and the adversarial-review pass completes.
+
+---
+
+## 6. Gotchas (merged, all four audit dimensions)
+
+**Auth / credentials**
+- **`gh` token lives in the macOS keyring, not `~/.config/gh/hosts.yml`** (hosts.yml has only
+  username + git-protocol). Copying the gh config dir does **not** carry the login — run `gh auth login`.
+- **Git remote is HTTPS + `credential.helper=osxkeychain`.** Everyday push/pull uses the keychain/gh
+  token, not `~/.ssh`. Migrating without re-auth fails pushes even if you copied `~/.ssh`. Run
+  `gh auth setup-git`.
+- **`group-sync-operator` and `group-sync-operator-helm-chart` are SSH remotes** — the SSH key must be
+  present before you can clone/push them (dashboard + cilium are HTTPS).
+- **`cursor agent login` is required for the adversarial-review pass** and fails non-interactively until
+  done. Binary is `cursor`, subcommand `agent`; there is no separate `cursor-agent` binary.
+- **`codex-cli` 0.144.1 hangs reading stdin** unless invoked with `< /dev/null` — relevant when scripting it.
+- When copying `~/.codex`, copy **only** `auth.json` + `config.toml` — it also holds a **314 MB
+  `logs_2.sqlite`** and other large state.
+
+**Architecture / versions**
+- **Intel → Apple Silicon:** old binaries live under `/usr/local` (`darwin/amd64`, CRC bundle
+  `crc_vfkit_4.18.2_amd64`); the new Mac uses `/opt/homebrew` and **arm64** CRC/podman bundles.
+  **Versions transfer, binaries do not** — reinstall, don't copy.
+- **Version skew to note, not fix:** oc client is **4.13.6** while CRC ships **OpenShift 4.18.2**; the old
+  podman machine had only **2 GiB** RAM (size the new one larger).
+
+**Git state**
+- **Anything unpushed is gone** if not committed/pushed first — the 67-line `crc.yaml` edit and
+  `stash@{0}` are the two items in this project; **preserve both**, they are distinct (67-line working-tree
+  edit vs a separate 36-line stash on a different base) and applying one over the other may conflict.
+- The opening `gitStatus` (feat/c3-reporting-service, 13 modified files) is a **stale snapshot** — that
+  work was committed, reviewed, pushed and **merged to `origin/main`**; not lost.
+- For a **feature branch**, compare against its **own upstream** (`@{upstream}`), not `origin/main` —
+  `group-sync-operator`'s `990c097` is on `origin/fix/reconcile-group-provenance-labels`, i.e. pushed.
+- Unrelated repos under `~/gitRepos` (namespace-configuration-operator, helm-local-development, firewalla,
+  k8s-metrics*, kube-objects, fluentd-hec, kyverno, ceph-rbd-troubleshooting, openshift-rbac-automation)
+  hold local-only content — **out of scope** for this project; audit separately if doing a full-machine backup.
+
+**CRC / cluster (all rebuilt fresh)**
+- **`~/.kube/config` is per-CRC — do NOT copy the old one.** It points at the old cluster; `crc start` /
+  `oc login` issue a fresh context, kubeadmin password and SSH key.
+- **CRC pull secret is on disk nowhere** — re-download from the Red Hat console every time.
+- **`release-crc.sh` is two images only** — reading "the 0.24.0 deploy" as "the whole lab" is the trap.
+- **The `mock-creds` volume is invisible to Helm** (`helm get manifest | grep -c mock-creds = 0`). A fresh
+  install renders the dashboard **without** it and the mock poll **fails silently** (files absent at
+  `/etc/gsd/mock`) while the release still reports a clean rollout. **Re-patch after every fresh install.**
+- **The mock cert-manager chain + mock backend have NO committed manifest** (repo grep hits only docs).
+  The chain is in the carried `mock-certmanager.yaml`; the Deployment/Service must be captured from the
+  live cluster (`oc get -o yaml`) **before** discarding the old CRC, or re-authored from §4.9.
+- **`mock-cluster-creds.ca.crt` must equal the `mock-ca` CA.** If the cert-manager chain is recreated the
+  CA changes, so regenerate the secret from the **new** `mock-ca` or the dashboard's `CERT_REQUIRED` TLS
+  verify to the mock fails (UNREACHABLE). (`mock-tls`'s stale `last-applied` annotation is a red herring,
+  not a second unmanaged copy — it is genuinely cert-manager-managed now.)
+- **The cluster-wide trust change reboots the node.** `proxy/cluster.spec.trustedCA` (the enterprise CA
+  bundle) drives a **MachineConfig node roll (~105 s)** — expect a CRC node reboot when you apply §4.10.
+- **The single CRC node is CPU-saturated.** Rollouts and hook Jobs run slow/pending under load (transient
+  `FailedScheduling: Insufficient cpu`) — this is why `authLogLevel.manage` is `false` in `crc.yaml` (the
+  hook Job hung the upgrade). Expect the same on the new CRC; a transient Pending is not a fault.
+
+**Config backup / scratchpad**
+- **claude-config is behind live memory by 6 dashboard notes** — refresh, commit and push it **before**
+  running `restore.sh`, or the newest reviewer/attribution rules and the `MEMORY.md` index are silently lost.
+- **The scratchpad is under `/private/tmp`** — wiped by reboot / temp cleanup, **not just the move**. Copy
+  `mock-certmanager.yaml`, the review briefs, and `crc-ca-cert-manager-plan.md` out **now**.
+- **Security exposure:** `setup-local-ldap-testing/ca-key.pem` (a CA **private key**) is committed and
+  pushed to `origin/main`. Not a loss risk — an exposure. If unintentional, rotate the CA and scrub history.

@@ -1,0 +1,53 @@
+# cert-manager-managed TLS for the mock OpenShift API server. A STABLE self-signed CA (5y) signs an
+# auto-renewing leaf (90d, renewed 15d early) with the mock's SANs, so the mock cert never expires
+# out from under the dashboard again. The dashboard trusts the stable CA (copied once into
+# mock-cluster-creds.ca.crt); the CA does not rotate on leaf renewal, so that trust stays valid.
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: mock-selfsigned
+  namespace: group-sync-dashboard
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: mock-ca
+  namespace: group-sync-dashboard
+spec:
+  isCA: true
+  commonName: mock-openshift-ca
+  secretName: mock-ca
+  duration: 43800h        # 5 years
+  renewBefore: 8760h      # 1 year
+  privateKey: { algorithm: ECDSA, size: 256 }
+  issuerRef: { name: mock-selfsigned, kind: Issuer }
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: mock-ca-issuer
+  namespace: group-sync-dashboard
+spec:
+  ca:
+    secretName: mock-ca
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: mock-tls
+  namespace: group-sync-dashboard
+spec:
+  secretName: mock-tls          # the mock already mounts this Secret at /certs
+  duration: 2160h               # 90 days
+  renewBefore: 360h             # 15 days
+  dnsNames:
+    - mock-openshift
+    - mock-openshift.group-sync-dashboard.svc
+    - mock-openshift.group-sync-dashboard.svc.cluster.local
+    - localhost
+  ipAddresses:
+    - 127.0.0.1
+  privateKey: { algorithm: ECDSA, size: 256 }
+  issuerRef: { name: mock-ca-issuer, kind: Issuer }

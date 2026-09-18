@@ -4080,11 +4080,12 @@ class TestReportsTab:
         finally:
             ctx.close()
 
-    def test_the_mnemonic_multiselect_posts_an_array_and_resets_on_cluster_switch(self, browser, reporting_server):
-        # B3, §3.7 + review #117 (C2/C4/C5): the form renders ONE multi-select of the cluster's captured
-        # values ahead of the advanced explicit-names field; the POST carries the selected values as an
-        # ARRAY (`el.value` gives only the first); a cluster switch drops the stale selection so cluster
-        # A's mnemonics are never posted against cluster B.
+    def test_the_multidimension_selector_posts_a_map_and_resets_on_cluster_switch(self, browser, reporting_server):
+        # P2 + review #117 (C2/C4/C5): the form renders ONE multi-select PER configured dimension
+        # (company.net/mnemonic AND company.net/app-environment); the id is index-based because a dotted
+        # label is not a valid CSS id, and the real key is in data-selector-label. The POST carries
+        # `selectors` as a {label: [values]} map (each select's `.value` gives only the first option); a
+        # cluster switch drops the stale selection so cluster A's values are never posted against B.
         import json as _json
         base, _, _ = reporting_server
         ctx, page, errors = _reports_page(browser, base, "root")
@@ -4092,33 +4093,416 @@ class TestReportsTab:
             page.click('button.tab:text-is("Reports")')
             page.wait_for_selector("#report-picker")
             page.evaluate("""() => {
-                data.reportCatalog.namespaceSelectors = {
-                    "crc-local": {label: "company.net/mnemonic", values: ["beta", "demo"]},
-                    "prod-east": {label: "company.net/mnemonic", values: ["gamma"]},
+                data.reportCatalog.namespaceSelectorDimensions = {
+                    "crc-local": [
+                        {label: "company.net/mnemonic", values: ["beta", "demo"]},
+                        {label: "company.net/app-environment", values: ["prod", "qa"]},
+                    ],
+                    "prod-east": [
+                        {label: "company.net/mnemonic", values: ["gamma"]},
+                        {label: "company.net/app-environment", values: ["prod"]},
+                    ],
                 };
                 view.reportPick = "namespace-access";
                 render();
             }""")
-            assert page.locator('[data-param="mnemonics"]').count() == 1                      # ONE control, no duplicate
-            assert page.locator("#report-mnemonics option").evaluate_all("es => es.map(o => o.value)") == ["beta", "demo"]
-            assert page.locator("#report-param-namespace-access-namespaces").count() == 1     # the advanced field is kept
-            page.select_option("#report-mnemonics", ["beta", "demo"])
-            page.locator("#report-mnemonics").dispatch_event("change")
-            assert page.evaluate("() => view.reportForm['namespace-access'].mnemonics") == ["beta", "demo"]
-            # The actual POST carries the array against THIS cluster. expect_request resolves when the
-            # request is SENT, so the body is captured whatever the run's own outcome — the request
-            # shape (an array, not "beta") is what B3 is about.
+            assert page.locator('[data-param="selectors"]').count() == 2                       # one select per dimension
+            assert page.locator("#report-selector-0").get_attribute("data-selector-label") == "company.net/mnemonic"
+            assert page.locator("#report-selector-1").get_attribute("data-selector-label") == "company.net/app-environment"
+            assert page.locator("#report-selector-0 option").evaluate_all("es => es.map(o => o.value)") == ["beta", "demo"]
+            assert page.locator("#report-param-namespace-access-namespaces").count() == 1      # advanced field kept
+            page.select_option("#report-selector-0", ["beta", "demo"]); page.locator("#report-selector-0").dispatch_event("change")
+            page.select_option("#report-selector-1", ["prod"]); page.locator("#report-selector-1").dispatch_event("change")
+            assert page.evaluate("() => view.reportForm['namespace-access'].selectors") == {
+                "company.net/mnemonic": ["beta", "demo"], "company.net/app-environment": ["prod"]}
+            # The actual POST carries the MAP against THIS cluster. expect_request resolves when the
+            # request is SENT, so the body is captured whatever the run's own outcome.
             with page.expect_request(lambda r: r.url.endswith("/api/runs") and r.method == "POST") as info:
                 page.locator("#report-generate").click()
             body = _json.loads(info.value.post_data)
             assert body["cluster"] == "crc-local"
-            assert body["params"]["mnemonics"] == ["beta", "demo"]
-            # A cluster switch through the real navigate() -> applyPosition path — the one the #f-cluster
-            # selector, popstate and hashchange all fire — drops the stale mnemonic and re-lists the new
-            # cluster's options, so a cluster-A value can never be posted against cluster B (#117 C4).
+            assert body["params"]["selectors"] == {
+                "company.net/mnemonic": ["beta", "demo"], "company.net/app-environment": ["prod"]}
+            # A cluster switch through the real navigate() -> applyPosition path drops the stale selection
+            # and re-lists the new cluster's dimensions, so a cluster-A value can never reach cluster B.
             page.evaluate("() => { navigate({ cluster: 'prod-east', groupsync: null, group: null, user: null }); render(); }")
-            assert page.evaluate("() => (view.reportForm['namespace-access'] || {}).mnemonics") is None
-            assert page.locator("#report-mnemonics option").evaluate_all("es => es.map(o => o.value)") == ["gamma"]
+            assert page.evaluate("() => (view.reportForm['namespace-access'] || {}).selectors") is None
+            assert page.locator("#report-selector-0 option").evaluate_all("es => es.map(o => o.value)") == ["gamma"]
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_an_older_preview_response_cannot_overwrite_the_newer_selection(self, browser, reporting_server):
+        # C4-A: clearTimeout cannot cancel a GET already sent; a late response for a superseded selection
+        # must be discarded by the version token, not painted over the newer count.
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.click('button.tab:text-is("Reports")')
+            page.wait_for_selector("#report-picker")
+            page.evaluate("""() => {
+                window.__resolvers = [];
+                reportGet = () => new Promise((resolve) => { window.__resolvers.push(resolve); });
+                view.cluster = "crc-local";
+                view.reportForm["namespace-access"] = { selectors: {"company.net/app-environment": ["prod"]} };
+                schedulePreview("namespace-access");
+            }""")
+            page.wait_for_function("() => window.__resolvers.length === 1")   # first GET in flight (past debounce)
+            page.evaluate("""() => {
+                view.reportForm["namespace-access"].selectors = {"company.net/app-environment": ["qa"]};
+                schedulePreview("namespace-access");
+            }""")
+            page.wait_for_function("() => window.__resolvers.length === 2")
+            page.evaluate("() => window.__resolvers[1]({namespaces: 2})")     # newer resolves first
+            page.wait_for_function("() => view.reportPreview.startsWith('2 namespace')")
+            page.evaluate("() => window.__resolvers[0]({namespaces: 1})")     # older resolves late
+            page.wait_for_timeout(50)
+            assert page.evaluate("() => view.reportPreview").startswith("2 namespace")   # not overwritten by 1
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_a_proto_selector_label_is_safe(self, browser, reporting_server):
+        # C4-B: a label read/assigned by own-key only, so `__proto__` never touches Object.prototype.
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.click('button.tab:text-is("Reports")')
+            page.wait_for_selector("#report-picker")
+            page.evaluate("""() => {
+                data.reportCatalog.namespaceSelectorDimensions = {
+                    "crc-local": [{label: "__proto__", values: ["prod"]}]
+                };
+                view.reportPick = "namespace-access";
+                render();
+            }""")
+            page.select_option("#report-selector-0", ["prod"])
+            page.locator("#report-selector-0").dispatch_event("change")
+            result = page.evaluate("""() => {
+                const m = view.reportForm["namespace-access"].selectors;
+                return {keys: Object.keys(m), value: m["__proto__"], nullProto: Object.getPrototypeOf(m) === null};
+            }""")
+            assert result == {"keys": ["__proto__"], "value": ["prod"], "nullProto": True}
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_new_frontend_falls_back_to_an_old_pods_mnemonic_control(self, browser, reporting_server):
+        # C7-A: an old report pod has no `selectors` ParamSpec; the form must keep rendering the single
+        # `mnemonics` control from namespaceSelectors, not hide every selector.
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.click('button.tab:text-is("Reports")')
+            page.wait_for_selector("#report-picker")
+            page.evaluate("""() => {
+                const spec = data.reportCatalog.reports.find((r) => r.name === "namespace-access");
+                spec.params = spec.params.filter((p) => p.name !== "selectors");   // old pod: no selectors spec
+                delete data.reportCatalog.namespaceSelectorDimensions;
+                data.reportCatalog.namespaceSelectors = {"crc-local": {label: "company.net/mnemonic", values: ["demo", "gsd"]}};
+                view.reportPick = "namespace-access";
+                render();
+            }""")
+            assert page.locator("#report-mnemonics").count() == 1
+            assert page.locator("#report-mnemonics option").evaluate_all("es => es.map(o => o.value)") == ["demo", "gsd"]
+            assert page.locator('[data-param="selectors"]').count() == 0
+            page.select_option("#report-mnemonics", ["demo"]); page.locator("#report-mnemonics").dispatch_event("change")
+            assert page.evaluate("() => view.reportForm['namespace-access'].mnemonics") == ["demo"]
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_switching_back_to_the_report_recomputes_the_retained_preview(self, browser, reporting_server):
+        # V2-F1 (2nd pass): leaving the report clears the count; returning with the selection retained
+        # must recompute it, not leave it blank until the next change.
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.click('button.tab:text-is("Reports")')
+            page.wait_for_selector("#report-picker")
+            page.evaluate("""() => {
+                reportGet = async () => ({namespaces: 2});
+                data.reportCatalog.namespaceSelectorDimensions = {
+                    "crc-local": [{label: "company.net/mnemonic", values: ["demo"]}]
+                };
+                view.reportPick = "namespace-access";
+                view.reportForm["namespace-access"] = { selectors: {"company.net/mnemonic": ["demo"]} };
+                render();
+                schedulePreview("namespace-access");
+            }""")
+            page.wait_for_function("() => view.reportPreview.startsWith('2 namespace')")
+            page.click("#report-pick-groups")
+            assert page.evaluate("() => view.reportPreview") == ""
+            page.click("#report-pick-namespace-access")
+            page.wait_for_function("() => view.reportPreview.startsWith('2 namespace')")
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_the_preview_is_blank_when_an_explicit_name_conflicts_with_selectors(self, browser, reporting_server):
+        # 2nd pass (Cursor): create_run 422s selectors + explicit names together; the #107 count must not
+        # keep painting for a click that will refuse.
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.click('button.tab:text-is("Reports")')
+            page.wait_for_selector("#report-picker")
+            page.evaluate("""() => {
+                window.__resolvers = [];
+                reportGet = () => new Promise((resolve) => { window.__resolvers.push(resolve); });
+                view.cluster = "crc-local";
+                view.reportForm["namespace-access"] = { selectors: {"company.net/mnemonic": ["demo"]} };
+                schedulePreview("namespace-access");
+            }""")
+            page.wait_for_function("() => window.__resolvers.length === 1")
+            page.evaluate("() => window.__resolvers[0]({namespaces: 4})")
+            page.wait_for_function("() => view.reportPreview.startsWith('4 namespace')")
+            page.evaluate("""() => {
+                view.reportForm["namespace-access"].namespaces = "prod-ns";
+                schedulePreview("namespace-access");
+            }""")
+            page.wait_for_timeout(60)
+            assert page.evaluate("() => view.reportPreview") == ""
+            assert page.evaluate("() => window.__resolvers.length") == 1   # no new GET fired
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_the_view_button_lists_the_matched_names_without_resizing_the_form(self, browser, reporting_server):
+        # #143: the "view namespaces" affordance appears only once names exist; showModal() renders
+        # the list in the browser's top layer, so the report form's height cannot change — the whole
+        # "no resize" requirement, asserted as an unchanged bounding box.
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.click('button.tab:text-is("Reports")')
+            page.wait_for_selector("#report-picker")
+            page.evaluate("""() => {
+                reportGet = async () => ({namespaces: 3, names: ["beta-prod", "demo-prod", "demo-production"]});
+                data.reportCatalog.namespaceSelectorDimensions = {
+                    "crc-local": [{label: "company.net/mnemonic", values: ["beta", "demo"]}]
+                };
+                view.reportPick = "namespace-access";
+                render();
+            }""")
+            btn = page.locator("#report-preview-view")
+            assert btn.count() == 1 and btn.is_hidden()          # no selection yet -> no affordance
+            page.select_option("#report-selector-0", ["beta", "demo"])
+            page.locator("#report-selector-0").dispatch_event("change")
+            page.wait_for_function("() => view.reportPreview.startsWith('3 namespace')")
+            assert btn.is_visible()
+            before = page.locator("#report-form").bounding_box()["height"]
+            btn.click()
+            page.wait_for_selector("#ns-preview[open]")
+            assert page.locator("#ns-preview li").all_inner_texts() == ["beta-prod", "demo-prod", "demo-production"]
+            after = page.locator("#report-form").bounding_box()["height"]
+            assert after == before                               # top layer: the form did not reflow
+            page.keyboard.press("Escape")                        # the native dialog's own close
+            page.wait_for_function("() => !document.getElementById('ns-preview').open")
+            assert page.evaluate("() => document.activeElement && document.activeElement.id") == "report-preview-view"
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_a_selection_change_hides_the_view_affordance_until_the_fresh_reply_lands(self, browser, reporting_server):
+        # #144 adversarial review C3-A: between a selection change and its reply, the names on hand
+        # describe the PREVIOUS selection. A dialog opened in that window painted the superseded
+        # names and the landed reply never corrected it - so the affordance must offer nothing
+        # until the fresh reply lands.
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.click('button.tab:text-is("Reports")')
+            page.wait_for_selector("#report-picker")
+            page.evaluate("""() => {
+                window._gate = null;
+                let call = 0;
+                reportGet = async () => {
+                    call += 1;
+                    if (call === 1) return {namespaces: 3, names: ["beta-prod", "demo-prod", "demo-production"]};
+                    return new Promise((res) => { window._gate = () => res({namespaces: 1, names: ["beta-prod"]}); });
+                };
+                data.reportCatalog.namespaceSelectorDimensions = {
+                    "crc-local": [{label: "company.net/mnemonic", values: ["beta", "demo"]}]
+                };
+                view.reportPick = "namespace-access";
+                render();
+            }""")
+            page.select_option("#report-selector-0", ["beta", "demo"])
+            page.locator("#report-selector-0").dispatch_event("change")
+            page.wait_for_function("() => view.reportPreview.startsWith('3 namespace')")
+            btn = page.locator("#report-preview-view")
+            assert btn.is_visible()
+            page.select_option("#report-selector-0", ["beta"])
+            page.locator("#report-selector-0").dispatch_event("change")
+            # Inside the pending window: the only names on hand are the superseded selection's.
+            assert btn.is_hidden()                       # FAILS before the fix: still offers A's names
+            page.wait_for_function("() => !!window._gate")
+            page.evaluate("() => window._gate()")        # let the fresh reply land
+            page.wait_for_function("() => view.reportPreview.startsWith('1 namespace')")
+            assert btn.is_visible()                      # the affordance returns with fresh names
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_back_to_another_tab_does_not_strand_the_open_names_dialog(self, browser, reporting_server):
+        # #144 adversarial review C6-D: browser Back is not inert while a modal is up, and only the
+        # cluster branch of applyPosition clears the preview. A same-cluster Back from Reports must
+        # close the list, not float it over a page that carries no selection.
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.click('button.tab:text-is("Reports")')   # pushes reports over the boot tab
+            page.wait_for_selector("#report-picker")
+            page.evaluate("""() => {
+                reportGet = async () => ({namespaces: 2, names: ["beta-prod", "demo-prod"]});
+                data.reportCatalog.namespaceSelectorDimensions = {
+                    "crc-local": [{label: "company.net/mnemonic", values: ["beta", "demo"]}]
+                };
+                view.reportPick = "namespace-access";
+                render();
+            }""")
+            page.select_option("#report-selector-0", ["beta"])
+            page.locator("#report-selector-0").dispatch_event("change")
+            page.wait_for_function("() => view.reportPreview.startsWith('2 namespace')")
+            page.click("#report-preview-view")
+            page.wait_for_selector("#ns-preview[open]")
+            page.go_back()                                # same cluster, different tab
+            page.wait_for_function("() => view.page !== 'reports'")
+            assert page.evaluate("() => document.getElementById('ns-preview').open") is False   # FAILS before the fix
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_escape_after_a_poll_repaint_returns_focus_to_the_view_button(self, browser, reporting_server):
+        # #144 adversarial review C4-A: showModal() memorises the opener NODE; the 60 s render()
+        # replaces #main wholesale, so a close after a repaint would drop focus to <body>. The
+        # onclose re-aim by ID must land it on the button the current paint carries.
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.click('button.tab:text-is("Reports")')
+            page.wait_for_selector("#report-picker")
+            page.evaluate("""() => {
+                reportGet = async () => ({namespaces: 2, names: ["beta-prod", "demo-prod"]});
+                data.reportCatalog.namespaceSelectorDimensions = {
+                    "crc-local": [{label: "company.net/mnemonic", values: ["beta", "demo"]}]
+                };
+                view.reportPick = "namespace-access";
+                render();
+            }""")
+            page.select_option("#report-selector-0", ["beta"])
+            page.locator("#report-selector-0").dispatch_event("change")
+            page.wait_for_function("() => view.reportPreview.startsWith('2 namespace')")
+            page.click("#report-preview-view")
+            page.wait_for_selector("#ns-preview[open]")
+            page.evaluate("() => render()")               # the 60 s poll repaint, forced
+            page.keyboard.press("Escape")
+            page.wait_for_function("() => !document.getElementById('ns-preview').open")
+            # onclose re-aims focus AFTER the native restore, so wait for it to settle rather than
+            # asserting instantly (an immediate read catches the mid-close state). Before the fix
+            # this never becomes true and the wait times out — the fail-before.
+            page.wait_for_function("() => document.activeElement && document.activeElement.id === 'report-preview-view'")
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_the_reports_table_categorises_and_click_brings_the_form_into_view(self, browser, reporting_server):
+        # #147 reports directory: the picker is a category table (bold mono names + a coloured rail and
+        # chip per category), and clicking a report snaps its form into view (the "clean way",
+        # scrollIntoView) so a reader never scrolls down to the running panel.
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.click('button.tab:text-is("Reports")')
+            page.wait_for_selector("#report-picker table.report-table")
+            assert page.locator("#report-picker tr.report-pick").count() == 11
+            bf = page.locator("#report-pick-binding-findings")
+            assert "r-rbac" in (bf.get_attribute("class") or "")
+            assert bf.locator(".rp-chip").inner_text().strip() == "rbac"
+            assert page.locator("#report-pick-groupsync-health .rp-chip").inner_text().strip() == "health"
+            assert page.locator("#report-pick-namespace-access .rp-title").inner_text().strip() != ""
+            # the "clean way": clicking a report far down the list brings its form into the viewport,
+            # snapped near the top — without it the form sits below the 11-row table (top well past 160).
+            page.click("#report-pick-access-certification")
+            page.wait_for_function("""() => {
+                const f = document.getElementById('report-form');
+                if (!f || view.reportPick !== 'access-certification') return false;
+                const r = f.getBoundingClientRect();
+                return r.bottom > 0 && r.top >= -8 && r.top < 200;
+            }""")
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_clearing_the_namespace_selector_deselects_everything(self, browser, reporting_server):
+        # #147: a <select multiple> has no easy deselect. Clear drops every #report-selector-N,
+        # deletes view.reportForm["namespace-access"].selectors, blanks the count, hides the
+        # names affordance, and closes #ns-preview — through schedulePreview so a late GET
+        # cannot paint a stale count.
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.click('button.tab:text-is("Reports")')
+            page.wait_for_selector("#report-picker")
+            page.evaluate("""() => {
+                reportGet = async () => ({namespaces: 2, names: ["beta-prod", "demo-prod"]});
+                data.reportCatalog.namespaceSelectorDimensions = {
+                    "crc-local": [
+                        {label: "company.net/mnemonic", values: ["beta", "demo"]},
+                        {label: "company.net/app-environment", values: ["prod", "qa"]},
+                    ]
+                };
+                view.reportPick = "namespace-access";
+                render();
+            }""")
+            clear = page.locator("#report-preview-clear")
+            view_btn = page.locator("#report-preview-view")
+            assert clear.count() == 1 and clear.is_hidden()          # no selection yet
+            assert view_btn.is_hidden()
+            page.select_option("#report-selector-0", ["beta", "demo"])
+            page.locator("#report-selector-0").dispatch_event("change")
+            page.select_option("#report-selector-1", ["prod"])
+            page.locator("#report-selector-1").dispatch_event("change")
+            page.wait_for_function("() => !document.getElementById('report-preview-clear').hidden")
+            assert page.evaluate("() => view.reportForm['namespace-access'].selectors") == {
+                "company.net/mnemonic": ["beta", "demo"], "company.net/app-environment": ["prod"]}
+            page.wait_for_function("() => view.reportPreview.startsWith('2 namespace')")
+            assert view_btn.is_visible()
+
+            # 1) the wired button, dialog closed: a real click deselects and hides both affordances.
+            #    #ns-preview opens as a modal (showModal), so Clear sits behind its backdrop while it
+            #    is open — a user clicks Clear with the dialog closed.
+            clear.click()
+            page.wait_for_function("() => document.getElementById('report-preview-clear').hidden")
+            assert page.evaluate("""() => {
+                const selects = [0, 1].map((i) => document.getElementById('report-selector-' + i));
+                return {
+                    empty: selects.every((s) => s && s.selectedOptions.length === 0),
+                    selectors: (view.reportForm['namespace-access'] || {}).selectors,
+                    preview: view.reportPreview,
+                    countText: document.getElementById('report-preview').textContent,
+                    clearHidden: document.getElementById('report-preview-clear').hidden,
+                    viewHidden: document.getElementById('report-preview-view').hidden,
+                };
+            }""") == {
+                "empty": True, "selectors": None, "preview": "", "countText": "",
+                "clearHidden": True, "viewHidden": True,
+            }
+
+            # 2) the dialog teardown: re-select, open the modal names list, then invoke the handler
+            #    (Clear cannot be clicked through the backdrop) — the selection clears and #ns-preview closes.
+            page.select_option("#report-selector-0", ["beta", "demo"])
+            page.locator("#report-selector-0").dispatch_event("change")
+            page.select_option("#report-selector-1", ["prod"])
+            page.locator("#report-selector-1").dispatch_event("change")
+            page.wait_for_function("() => (view.reportPreviewNames || []).length === 2")
+            view_btn.click()
+            page.wait_for_selector("#ns-preview[open]")
+            page.evaluate("() => clearNamespaceAccessSelectors()")
+            page.wait_for_function("() => !document.getElementById('ns-preview').open")
+            assert page.evaluate("() => (view.reportForm['namespace-access'] || {}).selectors") is None
+            assert clear.is_hidden() and view_btn.is_hidden()
             assert not errors, errors
         finally:
             ctx.close()

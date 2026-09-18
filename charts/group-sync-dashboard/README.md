@@ -372,6 +372,7 @@ ArgoCD section explains for the cookie.
 | `probes.readiness.periodSeconds` / `.failureThreshold` | `15` / `3` | **15s**, because being wrong here only removes the pod from the Service and it comes straight back |
 | `podSecurityContext`, `securityContext` | non-root, read-only rootfs, all caps dropped | |
 | `nodeSelector`, `tolerations`, `affinity`, `podAnnotations`, `podLabels` | empty | |
+| `priorityClassName`, `reporting.priorityClassName` | `""` | a PriorityClass name for the dashboard / report pod, rendered only when set. A PDB does not stop preemption; set these when a workload must outrank profile-collection crons on a saturated node (#97) |
 
 ### Networking
 
@@ -419,7 +420,7 @@ ArgoCD section explains for the cookie.
 | `rbacAuditors.groups` | `[{name: app-ocp-rbac-groupsync-ns-auditor}]` | the groups to bind, each `{name, createLocal}`. The default names the estate's auditor group, bind-only (`createLocal` omitted), so enabling with no override binds it — supply your own list to change it. Bound by name, so a synced group and a local group work the same. `createLocal: true` also creates a local `Group` object; leave it off for a group the group-sync operator owns (the chart refuses `createLocal: true` when the Group already exists under another owner) |
 | `rbac.namespaces` | `false` | adds `get`/`list` on `namespaces` (core group). Lets the report service's namespace report attest **absence** — "this namespace exists and has no grants" — instead of "none observed". Off by default: extra RBAC |
 | `reporting.namespaceMetadata.labels` | `[]` | the Namespace label keys the poll captures per namespace, so the namespace-access report can select on them. Bounded — only these keys, never the whole label map; adding a key needs no migration. Needs `rbac.namespaces=true`; the render refuses labels set while it is off. e.g. `[company.net/mnemonic]` |
-| `reporting.namespaceSelector.label` | `""` | the captured key the namespace-access report selects on. Must be one of `reporting.namespaceMetadata.labels` or the render fails. `""` hides the selector. e.g. `company.net/mnemonic` |
+| `reporting.namespaceSelector.labels` | `[]` | the captured DIMENSIONS the namespace-access report offers. Each MUST be one of `reporting.namespaceMetadata.labels` or the render fails. The form renders one multi-select per entry, combined AND across dimensions and OR within one; the dropdown values are auto-discovered from the namespaces. `[]` hides the selector. Set to your cluster's real metadata label keys — e.g. `[company.net/mnemonic, company.net/app-environment]` |
 | `monitoring.serviceMonitor.enabled` | `false` | needs the Prometheus Operator CRDs (OpenShift ships them; the install fails on the unknown kind where they are absent). Off by default because the reference cluster runs no Prometheus; rendering with it on is verified |
 | `monitoring.serviceMonitor.interval` / `.scrapeTimeout` | `30s` / `10s` | every series is recomputed from SQLite on scrape and each scrape takes a read snapshot. Faster buys no resolution — the data only changes once per poll |
 | `monitoring.serviceMonitor.labels` | `{}` | extra metadata labels. Usually how a cluster's Prometheus selects which ServiceMonitors it owns |

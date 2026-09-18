@@ -59,6 +59,13 @@ groups:
   - name: legacy-ops
     syncProvider: acme-ldap
     users: [svc-legacy]
+  # The reporting-auditor group (rbacAuditors, #100): bound to the report-auditor ClusterRole below,
+  # which grants `list clusterrolebindings` — the wide-tier gate — so its members are AUDITORS (wide
+  # read-only, NOT usage). developer is a member, to test the auditor tier on the mock.
+  - name: app-ocp-rbac-demo-report-auditors
+    syncProvider: acme-ldap
+    syncTime: "2026-09-14T08:00:00Z"
+    users: [developer]
 
 users:
   entries:
@@ -70,6 +77,10 @@ users:
        identities: ["acme-ldap:lateef.o"]}
     - {name: jane.smith, fullName: "Jane Smith",    creationTimestamp: "2026-01-04T00:00:00Z",
        identities: ["acme-ldap:jane.smith"]}
+    # The developer persona: member of the reporting-auditor group below, so it exercises the AUDITOR
+    # (wide read-only) tier — a member of a feature-granting group, for testing "who belongs to it".
+    - {name: developer,  fullName: "Developer",     creationTimestamp: "2026-01-05T00:00:00Z",
+       identities: ["developer:developer"]}
   forbidden: false
 
 identities:
@@ -77,14 +88,33 @@ identities:
     - {userName: dana.lee,   creationTimestamp: "2026-01-02T00:00:00Z", providerPrefix: acme-ldap}
     - {userName: lateef.o,   creationTimestamp: "2026-01-03T00:00:00Z", providerPrefix: acme-ldap}
     - {userName: jane.smith, creationTimestamp: "2026-01-04T00:00:00Z", providerPrefix: acme-ldap}
+    - {userName: developer,  creationTimestamp: "2026-01-05T00:00:00Z", providerPrefix: developer}
   forbidden: false
 
 namespaces:
   entries:
+    # Two selector dimensions — company.net/mnemonic AND company.net/app-environment — mirroring the
+    # real crc-local convention (docs/DESIGN_reporting_selectors_snapshots_and_windows.md §6), so the
+    # multi-dimension selector (AND across dimensions, OR within one) is exercisable against the mock.
+    # `team` is kept on the first two so the single-label tests still hold.
     - {name: acme-app, phase: Active, creationTimestamp: "2026-01-02T00:00:00Z",
-       labels: {"team": "acme", "kubernetes.io/metadata.name": "acme-app"}}
+       labels: {"team": "acme", "kubernetes.io/metadata.name": "acme-app",
+                "company.net/mnemonic": "acme", "company.net/app-environment": "prod"}}
     - {name: group-sync-operator, phase: Active, creationTimestamp: "2026-01-01T00:00:00Z",
-       labels: {"team": "platform"}}
+       labels: {"team": "platform",
+                "company.net/mnemonic": "gso", "company.net/app-environment": "prod"}}
+    - {name: demo-prod, phase: Active, creationTimestamp: "2026-01-04T00:00:00Z",
+       labels: {"company.net/mnemonic": "demo", "company.net/app-environment": "prod"}}
+    - {name: demo-qa, phase: Active, creationTimestamp: "2026-01-05T00:00:00Z",
+       labels: {"company.net/mnemonic": "demo", "company.net/app-environment": "qa"}}
+    - {name: beta-rnd, phase: Active, creationTimestamp: "2026-01-06T00:00:00Z",
+       labels: {"company.net/mnemonic": "beta", "company.net/app-environment": "rnd"}}
+    - {name: platform-prod, phase: Active, creationTimestamp: "2026-01-07T00:00:00Z",
+       labels: {"company.net/mnemonic": "klta", "company.net/app-environment": "prod"}}
+    # Missing-dimension NEGATIVE case: mnemonic only, no app-environment — it must drop out of any
+    # two-dimension AND selection on app-environment (adversarial-review note, 2026-09-15).
+    - {name: gsd-shared, phase: Active, creationTimestamp: "2026-01-08T00:00:00Z",
+       labels: {"company.net/mnemonic": "gsd"}}
   forbidden: false
 
 roles:
@@ -97,6 +127,12 @@ roles:
         # Read verbs only — deliberately NO `update`, which is what excludes the auditor
         # (dana.lee) from the write-verb usage tier.
         - {verbs: [get, list, watch], apiGroups: ["*"], resources: ["*"]}
+    # The reporting-auditor ClusterRole (chart renders <fullname>-report-auditor). Read-only get/list on
+    # identities and RBAC — `list clusterrolebindings` is what lifts a member to the wide (auditor) tier.
+    - name: group-sync-dashboard-report-auditor
+      rules:
+        - {verbs: [get, list], apiGroups: ["user.openshift.io"], resources: ["users", "groups"]}
+        - {verbs: [get, list], apiGroups: ["rbac.authorization.k8s.io"], resources: ["roles", "rolebindings", "clusterroles", "clusterrolebindings"]}
   namespacedRoles:
     - namespace: acme-app
       name: viewer
@@ -119,6 +155,11 @@ bindings:
       roleRef: {kind: ClusterRole, name: cluster-reader}
       subjects: [{kind: Group, name: legacy-ops}]
       annotations: {"rbac.ocp.io/unmanaged-exception": "reviewed 2026-09-10, temporary"}
+    # Binds the auditor group to the report-auditor role → its members (developer) are wide-tier auditors.
+    - name: report-auditors-crb
+      roleRef: {kind: ClusterRole, name: group-sync-dashboard-report-auditor}
+      subjects: [{kind: Group, name: app-ocp-rbac-demo-report-auditors}]
+      labels: {"rbac.ocp.io/config-source": "gitops"}
   roleBindings:
     - namespace: acme-app
       name: viewer-rb

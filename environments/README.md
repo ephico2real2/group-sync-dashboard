@@ -55,6 +55,7 @@ declare — it only *overrides*, and the table says which way:
 | `loginCapture.enabled` | `true` | `true` | redundant — the default since chart 0.14.0 |
 | `loginCapture.source` | `pod-log` | `audit-log` | lab override — a ClusterRole on `get nodes/proxy`, read-only; the audit log names the person at the default verbosity and keeps history |
 | `oauthProxy.apiTokenAccess.enabled` | `true` | `true` | redundant — the default since chart 0.14.0 |
+| `rbac.namespaces` | `false` | `true` | lab override — a cluster-scoped read (get, list on namespaces, core group); required for the P2 namespace selector, off by default under the 0.14.0 rule |
 
 **Read the right-hand column as "why this is not the default".** The overrides that remain are
 fail-closed in the chart on purpose, and a plain `helm install` must not do them uninvited:
@@ -65,6 +66,11 @@ fail-closed in the chart on purpose, and a plain `helm install` must not do them
   on-by-default rule left off: the oauth-server audit log is replacing it as the source of login
   lines.
 - `DEBUG` is for debugging. `INFO` is the level that stays readable at steady state.
+- `rbac.namespaces` adds a **cluster-scoped** read (`get`, `list` on namespaces, core group) the
+  chart needs for nothing else, so it is off by default (the 0.14.0 rule). The lab turns it on
+  because the P2 namespace-access report and its multi-dimension selector read namespace labels;
+  without the grant the poller never lists namespaces and the selector is always empty — the chart
+  guard refuses the selector configuration without it.
 
 The redundant rows are deliberate, not an oversight: a release file should **state** what it wants
 rather than inherit it, so a default that moves later cannot silently change this cluster. Two of
@@ -73,6 +79,20 @@ that reason: the file records what this cluster runs with, whichever way the def
 costs one line each and buys a diff that shows intent. The Grafana dashboard override that validated
 B3 through grafana-operator v5 was removed with chart 0.14.0: its `""` default follows the
 ServiceMonitor, which this cluster keeps off, and nothing on the cluster reads the board.
+
+### The reporting feature block and the cluster list are configured in `crc.yaml`, not tracked here
+
+Two groups of keys `crc.yaml` sets are deliberately **not** rows in the table above: the
+`reporting.*` block — the P2/P4 feature configuration (which label keys the poller captures, which
+the Reports form offers as selector dimensions, the automated-run window, and the nightly schedule)
+— and `clusters`, the poll targets (this cluster plus the mock OpenShift API). These are feature
+configuration, not privileged overrides: every one still has a chart default, so the headline claim
+above still holds, and each is documented inline in `crc.yaml` with the reasoning next to the value.
+The table answers one question — "will a plain `helm install` do something privileged?" — and these
+keys are not part of that answer. `tests/test_environments_readme.py` enumerates the exemption (by
+`reporting.` prefix and `clusters`) so a genuinely new *privileged* override still cannot arrive
+undocumented, while the feature config that a lab file naturally carries does not have to be
+transcribed key-by-key into a table that would then need a list literal in a cell.
 
 `tests/test_environments_readme.py` holds this table against the real `values.yaml` and `crc.yaml`,
 because a table of defaults is exactly the kind of documentation that rots quietly — it stays

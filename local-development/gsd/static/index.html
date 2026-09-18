@@ -52,6 +52,22 @@
   </div>
 </div>
 
+<!-- #143: the namespace-access preview's "which namespaces" list. Static markup next to the idle
+     modal for the same reason the idle modal is static: render() repaints #main on every poll, and
+     removing an open modal <dialog> from the document closes it mid-read. A NATIVE <dialog> shown
+     with showModal(): the top layer means the report form below cannot reflow (the "no resize"
+     requirement), and focus trap, Escape and focus-return-to-opener come from the platform —
+     no inert shim here, unlike the idle modal. Filled at open time from view.reportPreviewNames. -->
+<dialog id="ns-preview" class="ns-preview" aria-labelledby="ns-preview-title">
+  <h2 id="ns-preview-title">Matched namespaces</h2>
+  <p class="muted" id="ns-preview-count"></p>
+  <ul id="ns-preview-list"></ul>
+  <p class="muted" id="ns-preview-more" hidden></p>
+  <form method="dialog" class="idle-actions">
+    <button id="ns-preview-close">Close</button>
+  </form>
+</dialog>
+
 <script>
 "use strict";
 
@@ -63,7 +79,8 @@ const STATES = {
 };
 
 const view = { page: "overview", cluster: null, groupsync: null, groupFilter: "all", bindingFilter: "review",
-                reportPick: null, reportForm: {}, reportRun: null, reportSubmitting: false,
+                reportPick: null, reportForm: {}, reportRun: null, reportSubmitting: false, reportPreview: "",
+                reportPreviewNames: [], reportPreviewCount: null,   // #143: the names behind the count
                 /* Free-text group search. A FILTER, so it lives here rather than in POSITION_KEYS —
                    same reasoning as groupFilter: it narrows what a page shows, it is not a place, and
                    a history entry per keystroke would bury every position Back exists to reach. */
@@ -187,16 +204,26 @@ function applyPosition(pos) {
       // empty state would blame the chip, but the reader never chose it here. Reset, like
       // memberSearch on a group change; the free-text search is a person, and persists.
       view.userFilter = "all"; view.showNeverNames = false;
-      // The mnemonic selection is THIS cluster's captured label values (B3, review #117 C4): carried
-      // across, a cluster-A mnemonic would be posted against cluster B — a failed run, or a hidden XOR
-      // 422 if the reader then typed explicit names. Drop it; the explicit names are the reader's text.
-      if (view.reportForm["namespace-access"]) delete view.reportForm["namespace-access"].mnemonics;
+      // The selector choices are THIS cluster's captured label values (B3, review #117 C4; P2 selectors):
+      // carried across, a cluster-A value would be posted against cluster B — a failed run, or a hidden
+      // XOR 422 if the reader then typed explicit names. Drop them; the explicit names are the reader's text.
+      if (view.reportForm["namespace-access"]) {
+        delete view.reportForm["namespace-access"].mnemonics;
+        delete view.reportForm["namespace-access"].selectors;
+      }
+      clearReportPreview();   // and invalidate any in-flight #107 GET for the cluster we just left
       // Same reasoning for the Access granted search: it names this cluster's groups and
       // namespaces. The sort is a preference, not a cluster fact, and stays.
       view.bindingSearch = "";
     }
     view.cluster = pos.cluster;
   }
+  // #144 adversarial review C6-D: history Back is not inert while a modal is up, and only the
+  // cluster branch above clears the preview. A same-cluster Back from Reports to another tab
+  // repainted #main under a still-open names dialog — "N namespaces match this selection"
+  // floating over a page that carries no selection. Every position change arrives here (the
+  // chokepoint above), so close it here; a closed dialog makes this a no-op.
+  if (view.page !== "reports") closeNsPreview();
 }
 
 /* Every position change goes through here, so the URL, the history entry and `view` can never
@@ -1756,20 +1783,46 @@ function reportsPage() {
   return `${reportPickerCard(reports, pick, cat)}${pick ? reportFormCard(pick, cat) : ""}${reportRunsCard()}`;
 }
 
+// #147 reports directory: report name -> [category (rail/chip colour), chip label]. groupsync-health
+// wears the compliance colour under a "health" label. An unknown name falls back to a neutral rail.
+const REPORT_KIND = {
+  "namespace-access": ["access", "access"],
+  "access-matrix": ["access", "access"],
+  "privileged-access": ["access", "access"],
+  "binding-findings": ["rbac", "rbac"],
+  "groups": ["identity", "identity"],
+  "users": ["identity", "identity"],
+  "login-activity": ["activity", "activity"],
+  "dormant-access": ["activity", "activity"],
+  "groupsync-health": ["compliance", "health"],
+  "compliance-snapshot": ["compliance", "compliance"],
+  "access-certification": ["compliance", "compliance"],
+};
+
 function reportPickerCard(reports, pick, cat) {
   return `<section class="card" id="report-picker">
     <h2>Reports</h2>
     <div class="filterbar-note">Generated by the report service from a read-only copy of this dashboard's data
       (${cat.pdf && cat.pdf.enabled ? `PDF ${esc(cat.pdf.variant || "plain")} and HTML` : "HTML only"}). Every document
       carries the sha256 of its data, the snapshot it was built from, and who generated it.</div>
-    <ul class="switch-list" role="listbox" aria-label="Reports">
-      ${reports.map((r) => `<li><button type="button" class="linkish report-pick${pick && r.name === pick.name ? " current" : ""}"
-          id="report-pick-${esc(r.name)}" data-report="${esc(r.name)}"${r.enabled ? "" : " disabled"} role="option"
-          aria-selected="${pick && r.name === pick.name}">
-          <span class="mono">${esc(r.title)}</span>
-          <span class="muted"> — ${esc(r.summary)}${r.enabled ? "" : ` <em>(off: ${esc(r.values_key)})</em>`}</span>
-        </button></li>`).join("")}
-    </ul>
+    <div class="report-table-wrap">
+      <table class="report-table" role="listbox" aria-label="Reports">
+        <thead><tr><th class="rp-kcol">Kind</th><th>Report</th><th>What it shows</th></tr></thead>
+        <tbody>
+          ${reports.map((r) => {
+            const [kcat, klabel] = REPORT_KIND[r.name] || ["access", "report"];
+            const on = pick && r.name === pick.name;
+            return `<tr class="report-pick r-${esc(kcat)}${on ? " current" : ""}" id="report-pick-${esc(r.name)}"
+                data-report="${esc(r.name)}" role="option" aria-selected="${on}"
+                tabindex="${r.enabled ? "0" : "-1"}"${r.enabled ? "" : ` aria-disabled="true"`}>
+              <td class="rp-kind"><span class="rp-chip k-${esc(kcat)}">${esc(klabel)}</span></td>
+              <td class="rp-name"><span class="rp-title">${esc(r.title)}</span></td>
+              <td class="rp-desc">${esc(r.summary)}${r.enabled ? "" : ` <span class="rp-off">(off: ${esc(r.values_key)})</span>`}</td>
+            </tr>`;
+          }).join("")}
+        </tbody>
+      </table>
+    </div>
   </section>`;
 }
 
@@ -1777,18 +1830,46 @@ function reportFormCard(spec, cat) {
   const form = view.reportForm[spec.name] || {};
   // The mnemonic selector (B3, §3.7): per-cluster label + captured values from the catalogue. Empty when
   // the deployment configures no selector or the snapshot has none — the control then hides.
-  const sel = (cat.namespaceSelectors && cat.namespaceSelectors[view.cluster]) || { label: "", values: [] };
+  // P2 multi-dimension selector: one multi-select per configured dimension (company.net/mnemonic AND
+  // company.net/app-environment). Prefer namespaceSelectorDimensions; fall back to the old single-field
+  // namespaceSelectors shape while a report pod still sends only that (rolling upgrade).
+  const dims = (cat.namespaceSelectorDimensions && cat.namespaceSelectorDimensions[view.cluster])
+    || (() => { const s = cat.namespaceSelectors && cat.namespaceSelectors[view.cluster];
+                return s && s.values && s.values.length ? [{ label: s.label, values: s.values }] : []; })();
+  // An OLD report pod has no `selectors` ParamSpec, so the form must keep rendering the single
+  // `mnemonics` control (new frontend + old pod, review PR #129 C7-A). `selectedFor` reads the chosen
+  // array by OWN key only, so a label like `__proto__` cannot read Object.prototype (C4-B).
+  const supportsSelectorMap = spec.params.some((p) => p.name === "selectors");
+  const selectedFor = (map, key) =>
+    map && Object.prototype.hasOwnProperty.call(map, key) && Array.isArray(map[key]) ? map[key] : [];
   const field = (p) => {
-    // namespace-access selects by mnemonic OR by explicit name. Render `mnemonics` as a multi-select of
-    // the cluster's captured values, ahead of the advanced explicit-names input; hide it (explicit names
-    // only) where no selector is configured or no value was captured. Selection preserved across renders.
     if (p.name === "mnemonics" && spec.name === "namespace-access") {
-      if (!sel.values.length) return "";
-      return `<div class="report-field"><label for="report-mnemonics">${esc(sel.label)}</label>
+      if (supportsSelectorMap) return "";                    // new pod: the form drives `selectors`
+      const dimension = dims.find((d) => d.values && d.values.length);   // old pod: the single control
+      if (!dimension) return "";
+      const chosen = Array.isArray(form.mnemonics) ? form.mnemonics : [];
+      return `<div class="report-field"><label for="report-mnemonics">${esc(dimension.label)}</label>
         <select id="report-mnemonics" data-param="mnemonics" multiple size="6">
-          ${sel.values.map((v) => `<option value="${esc(v)}"${(form.mnemonics || []).includes(v) ? " selected" : ""}>${esc(v)}</option>`).join("")}
+          ${dimension.values.map((v) => `<option value="${esc(v)}"${chosen.includes(v) ? " selected" : ""}>${esc(v)}</option>`).join("")}
         </select>
         <span class="muted">Select one or more; the report expands each to the namespaces carrying that label.</span></div>`;
+    }
+    if (p.name === "selectors" && spec.name === "namespace-access") {
+      // Hide the control where no dimension has captured values (explicit names only). Each dimension
+      // is its own multi-select; the id is index-based because a label like company.net/mnemonic is not
+      // a valid CSS id — the real key lives in data-selector-label (review, 2026-09-15).
+      const withValues = dims.filter((d) => d.values && d.values.length);
+      if (!withValues.length) return "";
+      const hasSelectors = Object.keys(form.selectors || {}).length > 0;
+      return withValues.map((d, i) => `<div class="report-field">
+        <label for="report-selector-${i}">${esc(d.label)}</label>
+        <select id="report-selector-${i}" data-param="selectors" data-selector-label="${esc(d.label)}" multiple size="6">
+          ${d.values.map((v) => `<option value="${esc(v)}"${selectedFor(form.selectors, d.label).includes(v) ? " selected" : ""}>${esc(v)}</option>`).join("")}
+        </select>
+        <span class="muted">Select one or more.${i === 0 ? " Dimensions combine with AND; values within a dimension with OR." : ""}</span></div>`).join("")
+        + `<div class="report-field"><span class="muted" id="report-preview">${esc(view.reportPreview || "")}</span>
+           <button type="button" class="linkish" id="report-preview-clear"${hasSelectors ? "" : " hidden"}>Clear</button>
+           <button type="button" class="linkish" id="report-preview-view"${(view.reportPreviewNames || []).length ? "" : " hidden"}>view namespaces</button></div>`;
     }
     const id = `report-param-${spec.name}-${p.name}`;
     const val = form[p.name] !== undefined ? form[p.name] : (Array.isArray(p.default) ? p.default.join(",") : (p.default === null ? "" : p.default));
@@ -1857,15 +1938,146 @@ function readParamEl(el) {
   return el.value;
 }
 
+// #107 preview: a debounced count of how many namespaces the current `selectors` expand to, shown
+// beside Generate before a heavy run. A read-only GET; a null count (bad/empty selection, no snapshot)
+// shows nothing. The element is updated in place so a poll-driven render does not clear it mid-type.
+let _previewTimer = null;
+let _previewVersion = 0;
+function clearReportPreview() {
+  clearTimeout(_previewTimer); _previewTimer = null;
+  _previewVersion++;                                   // invalidate any GET already in flight
+  view.reportPreview = "";
+  view.reportPreviewNames = []; view.reportPreviewCount = null;
+  const el = $("report-preview"); if (el) el.textContent = "";
+  const btn = $("report-preview-view"); if (btn) btn.hidden = true;
+  const clearBtn = $("report-preview-clear"); if (clearBtn) clearBtn.hidden = true;
+  // A selection can die while its list is open (history Back fires popstate through a modal): names
+  // that no longer describe any selection must not stay on screen (#143).
+  closeNsPreview();
+}
+function schedulePreview(spec) {
+  if (spec !== "namespace-access") { clearReportPreview(); return; }
+  clearTimeout(_previewTimer);
+  const version = ++_previewVersion;
+  const cluster = view.cluster;
+  const form = view.reportForm["namespace-access"] || {};
+  const sel = form.selectors;
+  const hasSel = !!(sel && Object.keys(sel).length);
+  const clearBtn = $("report-preview-clear"); if (clearBtn) clearBtn.hidden = !hasSel;
+  const encoded = sel && Object.keys(sel).length ? JSON.stringify(sel) : "";
+  // create_run 422s if more than one of selectors/mnemonics/namespaces is set; don't show a count for a
+  // click that will refuse (review PR #129, 2nd pass, Cursor — same rule as _validate_selection).
+  const others = (Array.isArray(form.mnemonics) && form.mnemonics.length ? 1 : 0)
+    + (form.namespaces && String(form.namespaces).trim() ? 1 : 0);
+  if (!cluster || !encoded || others > 0) {
+    view.reportPreview = ""; view.reportPreviewNames = []; view.reportPreviewCount = null;
+    const el = $("report-preview"); if (el) el.textContent = "";
+    const btn = $("report-preview-view"); if (btn) btn.hidden = true;
+    return;
+  }
+  // #144 adversarial review C3-A: the names on hand describe the PREVIOUS selection, and between
+  // here and the reply the new selection's expansion is unknown. The count TEXT stays (the #107
+  // choice — it corrects itself in place when the reply lands), but this affordance opens a
+  // PERSISTENT list the landed reply never repaints: change a dimension, click "view namespaces"
+  // inside the debounce window, and the dialog painted the superseded selection's names as the
+  // answer for the new one. So inside the window it offers nothing.
+  view.reportPreviewNames = []; view.reportPreviewCount = null;
+  const pendingBtn = $("report-preview-view"); if (pendingBtn) pendingBtn.hidden = true;
+  _previewTimer = setTimeout(async () => {
+    let text = "", names = [], count = null;
+    try {
+      const q = `cluster=${encodeURIComponent(cluster)}&selectors=${encodeURIComponent(encoded)}`;
+      const r = await reportGet(`/api/namespace-count?${q}`);
+      const n = r && r.namespaces;
+      text = (n == null) ? "" : `${n} namespace${n === 1 ? "" : "s"} match this selection`;
+      // #143: the endpoint now names what it counts (capped server-side). An OLD pod's reply has no
+      // `names`; the affordance simply stays hidden — the same degradation shape as C7-A.
+      if (typeof n === "number" && n > 0 && Array.isArray(r.names)) { names = r.names; count = n; }
+    } catch (e) { text = ""; }
+    // A late response for a superseded selection or a switched cluster is discarded: clearTimeout
+    // cannot cancel a GET already sent, so a stale count could otherwise paint (review PR #129 C4-A).
+    if (version !== _previewVersion || cluster !== view.cluster) return;
+    view.reportPreview = text;
+    view.reportPreviewNames = names; view.reportPreviewCount = count;
+    const el = $("report-preview"); if (el) el.textContent = text;
+    const btn = $("report-preview-view"); if (btn) btn.hidden = !names.length;
+  }, 400);
+}
+
+// #143: the popup that names what the count counts. showModal() puts it in the top layer, so the
+// report form CANNOT reflow while it is open; Escape, the focus trap and focus-return-to-opener are
+// the platform's. The idle modal is mirrored for the LOOK (app.css) and the labelled title only —
+// no $("wrap").inert here, because showModal already makes the background inert.
+function openNsPreview() {
+  const dlg = $("ns-preview");
+  const names = view.reportPreviewNames || [];
+  if (!dlg || !names.length || dlg.open) return;
+  const count = view.reportPreviewCount != null ? view.reportPreviewCount : names.length;
+  $("ns-preview-count").textContent = `${count} namespace${count === 1 ? "" : "s"} match this selection.`;
+  $("ns-preview-list").innerHTML = names.map((n) => `<li>${esc(n)}</li>`).join("");
+  const more = $("ns-preview-more");
+  more.hidden = count <= names.length;
+  more.textContent = more.hidden ? "" : `… and ${count - names.length} more not shown.`;
+  dlg.showModal();
+  $("ns-preview-close").focus();   // a control holds initial focus, the idle modal's intent
+}
+function closeNsPreview() {
+  const dlg = $("ns-preview");
+  if (dlg && dlg.open) dlg.close();   // close() hands focus back to the opener; nothing manual
+}
+
+function clearNamespaceAccessSelectors() {
+  // #147: a <select multiple> has no easy deselect. Mutate the live options and
+  // drop the map, then take the SAME schedulePreview path as a dimension change
+  // so a late #107 GET cannot paint a stale count (_previewVersion / cluster).
+  for (let i = 0; ; i++) {
+    const el = $("report-selector-" + i);
+    if (!el) break;
+    Array.from(el.options).forEach((o) => { o.selected = false; });
+  }
+  const f = view.reportForm["namespace-access"];
+  if (f) delete f.selectors;
+  schedulePreview("namespace-access");
+  closeNsPreview();   // empty-selection arm blanks the count; it does not close the names dialog
+}
+
 function wireReports() {
   document.querySelectorAll(".report-pick").forEach((el) => {
-    el.onclick = () => { view.reportPick = el.dataset.report; view.reportRun = null; render(); };
+    const choose = () => {
+      if (el.getAttribute("aria-disabled") === "true") return;   // a <tr> is not natively disableable
+      const next = el.dataset.report;
+      const changed = view.reportPick !== next;
+      if (changed) clearReportPreview();                 // don't carry a count across reports
+      view.reportPick = next; view.reportRun = null; render();
+      if (changed && next === "namespace-access") schedulePreview(next);   // recompute a retained selection (V2-F1)
+      // #147 reports table: clicking a report snaps its form/running panel into view — the "clean way".
+      const form = $("report-form"); if (form) form.scrollIntoView({ behavior: "smooth", block: "start" });
+    };
+    el.onclick = choose;
+    el.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); choose(); } };
   });
   document.querySelectorAll("[data-param]").forEach((el) => {
     const spec = view.reportPick || (data.reportCatalog && data.reportCatalog.reports.find((r) => r.enabled) || {}).name;
     el.onchange = () => {
       const f = view.reportForm[spec] || (view.reportForm[spec] = {});
-      f[el.dataset.param] = readParamEl(el);
+      if (el.dataset.param === "selectors" && el.dataset.selectorLabel) {
+        // One multi-select per dimension; assemble the {label: [values]} map. A null-prototype object
+        // so a label like `__proto__` becomes an OWN key rather than invoking the legacy setter (C4-B).
+        // An emptied dimension is removed (omitted = unconstrained); an empty map drops `selectors`.
+        let map = f.selectors;
+        if (!map || Object.getPrototypeOf(map) !== null) {
+          const safe = Object.create(null);
+          for (const [k, v] of Object.entries(map || {})) safe[k] = v;
+          map = f.selectors = safe;
+        }
+        const vals = Array.from(el.selectedOptions).map((o) => o.value);
+        if (vals.length) map[el.dataset.selectorLabel] = vals; else delete map[el.dataset.selectorLabel];
+        if (!Object.keys(map).length) delete f.selectors;
+        schedulePreview(spec);
+      } else {
+        f[el.dataset.param] = readParamEl(el);
+        if (spec === "namespace-access") schedulePreview(spec);   // re-evaluate: an explicit name XORs the count away
+      }
     };
   });
   const gen = $("report-generate");
@@ -1874,6 +2086,26 @@ function wireReports() {
   // by-id restore has nothing to restore), and the reader who pressed Enter on it should find
   // focus back on it when it re-enables.
   if (gen) gen.onclick = () => generateReport(document.activeElement === gen);
+  // #143: the names popup. The button is re-created by every render, so it is (re)wired here like
+  // every other report control. The <dialog> is static (next to #idle-modal) so a repaint never
+  // removes it while open; re-assigning its backdrop handler each render is harmless.
+  const nsBtn = $("report-preview-view");
+  if (nsBtn) nsBtn.onclick = openNsPreview;
+  const nsClear = $("report-preview-clear");
+  if (nsClear) nsClear.onclick = clearNamespaceAccessSelectors;
+  const nsDlg = $("ns-preview");
+  if (nsDlg) {
+    nsDlg.onclick = (e) => { if (e.target === nsDlg) closeNsPreview(); };   // backdrop click
+    // #144 adversarial review C4-A: the platform returns focus to the node that was focused when
+    // showModal() ran — but the 60 s poll's render() replaces #main wholesale, so after a long
+    // read that node is detached and close() drops focus to <body>. Re-aim by ID at whatever
+    // button the CURRENT paint carries — the same by-id rule render() uses for its own restore.
+    // When the native restore already worked, this focuses the same node again: harmless.
+    nsDlg.onclose = () => {
+      const b = $("report-preview-view");
+      if (b && !b.hidden) b.focus();
+    };
+  }
   document.querySelectorAll("[data-artifact]").forEach((el) => {
     el.onclick = () => downloadArtifact(el.dataset.artifact, el.dataset.format);
   });

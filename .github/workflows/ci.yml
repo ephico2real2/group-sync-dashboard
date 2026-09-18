@@ -311,8 +311,37 @@ jobs:
           fi
           exit $fail
 
+      - name: Preview each diagram as ASCII (mermaid-ascii, display only)
+        if: always()
+        run: |
+          set -uo pipefail
+          shopt -s nullglob
+          diagrams=(mmd/*.mmd)
+          if [ ${#diagrams[@]} -eq 0 ]; then echo "no extracted diagrams to preview"; exit 0; fi
+          # mermaid-ascii prints a mermaid diagram as ASCII straight into the log — a readable preview
+          # of what shipped, beside the SVG render above (which stays the correctness gate). DISPLAY
+          # ONLY: this step never fails the job, so an unsupported diagram type (sequence, gantt, ...)
+          # is a note, not a red run. Picks the Linux build for this runner; see
+          # local-development/docs/mermaid-ascii-terminal.md.
+          url=$(curl -s https://api.github.com/repos/AlexanderGrooff/mermaid-ascii/releases/latest \
+                  | grep "browser_download_url.*mermaid-ascii" | grep "$(uname)_$(uname -m)" \
+                  | cut -d: -f2,3 | tr -d '"' | tr -d ' ')
+          if ! { curl -sL "$url" -o mermaid-ascii.tar.gz && tar xzf mermaid-ascii.tar.gz; }; then
+            echo "mermaid-ascii install failed; skipping the ASCII preview"; exit 0
+          fi
+          for f in "${diagrams[@]}"; do
+            echo "::group::$f"
+            ./mermaid-ascii --ascii -f "$f" || echo "(mermaid-ascii does not render this diagram type)"
+            echo "::endgroup::"
+          done
+
   image:
     runs-on: ubuntu-latest
+    # Advisory CVE reporting uploads SARIF to GitHub code scanning, which needs
+    # security-events: write; contents: read keeps the checkout so alerts anchor to the commit.
+    permissions:
+      contents: read
+      security-events: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Build
@@ -346,33 +375,36 @@ jobs:
       # never let it fall back to the default. The blindness check below catches the day the
       # pinned version stops identifying the distribution.
       #
-      # only-fixed is load-bearing, not laziness. A base can carry HIGH CVEs with no available
-      # patch (four util-linux advisories on 2026-09-04, state Affected, no fixed build); without
-      # this flag the gate is red on every run for something nobody can act on, and a
-      # permanently-red gate gets ignored — which is worse than no gate. This fails only on
-      # findings somebody can actually fix.
-      - name: Scan the shipped image for FIXABLE vulnerabilities
+      # ADVISORY, NOT A GATE (operator decision 2026-09-16): CVE scanning REPORTS, it does not fail
+      # CI. only-fixed + severity-cutoff:high keep these two LOG lines focused on the actionable
+      # (fixable, high-severity) findings; the SARIF steps below publish the complete medium+
+      # inventory to GitHub code scanning (the Security tab), where each CVE is a non-blocking
+      # alert. Industry practice: report and mark unstable, do not gate. `fail-build: false` is what
+      # makes them advisory — do not set it true here without reinstating the required `image` check.
+      - name: Scan the shipped image for FIXABLE vulnerabilities (advisory)
         uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
         with:
           image: gsd:ci
           grype-version: v0.118.0
-          fail-build: true
+          fail-build: false
           only-fixed: true
           severity-cutoff: high
           output-format: table
 
-      - name: Scan the pack stage for FIXABLE vulnerabilities (bash, curl, jq, coreutils)
+      - name: Scan the pack stage for FIXABLE vulnerabilities (bash, curl, jq, coreutils; advisory)
         uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
         with:
           image: gsd:pack
           grype-version: v0.118.0
-          fail-build: true
+          fail-build: false
           only-fixed: true
           severity-cutoff: high
           output-format: table
 
-      # Separate, non-blocking, so the unfixable inventory is visible without gating.
-      - name: Full inventory, shipped image (informational)
+      # Advisory reporting: the shipped image's full medium+ inventory as SARIF, uploaded to GitHub
+      # code scanning so every CVE is a non-blocking alert in the Security tab. Never fails CI.
+      - name: Report shipped image to code scanning (SARIF)
+        id: sarif-shipped
         if: always()
         uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
         with:
@@ -380,7 +412,14 @@ jobs:
           grype-version: v0.118.0
           fail-build: false
           severity-cutoff: medium
-          output-format: table
+          output-format: sarif
+      - name: Upload shipped-image SARIF to code scanning
+        if: ${{ always() && steps.sarif-shipped.outputs.sarif != '' }}
+        continue-on-error: true   # reporting is best-effort; a code-scanning hiccup never fails CI
+        uses: github/codeql-action/upload-sarif@42c378ffbb438be29e3e1848d520fb0a8ee1c271 # v3.38.0
+        with:
+          sarif_file: ${{ steps.sarif-shipped.outputs.sarif }}
+          category: grype-gsd-shipped
 
       - name: Full inventory, pack stage (informational)
         id: pack-inventory
@@ -423,27 +462,29 @@ jobs:
         working-directory: local-development
         run: docker build -f Containerfile.report --target pack -t gsd-report:pack .
 
-      - name: Scan the report image for FIXABLE vulnerabilities
+      - name: Scan the report image for FIXABLE vulnerabilities (advisory)
         uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
         with:
           image: gsd-report:ci
           grype-version: v0.118.0
-          fail-build: true
+          fail-build: false
           only-fixed: true
           severity-cutoff: high
           output-format: table
 
-      - name: Scan the report pack stage for FIXABLE vulnerabilities
+      - name: Scan the report pack stage for FIXABLE vulnerabilities (advisory)
         uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
         with:
           image: gsd-report:pack
           grype-version: v0.118.0
-          fail-build: true
+          fail-build: false
           only-fixed: true
           severity-cutoff: high
           output-format: table
 
-      - name: Full inventory, report image
+      # Advisory reporting: the report image's full medium+ inventory as SARIF -> code scanning.
+      - name: Report the report image to code scanning (SARIF)
+        id: sarif-report
         if: always()
         uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
         with:
@@ -451,7 +492,14 @@ jobs:
           grype-version: v0.118.0
           fail-build: false
           severity-cutoff: medium
-          output-format: table
+          output-format: sarif
+      - name: Upload report-image SARIF to code scanning
+        if: ${{ always() && steps.sarif-report.outputs.sarif != '' }}
+        continue-on-error: true   # reporting is best-effort; a code-scanning hiccup never fails CI
+        uses: github/codeql-action/upload-sarif@42c378ffbb438be29e3e1848d520fb0a8ee1c271 # v3.38.0
+        with:
+          sarif_file: ${{ steps.sarif-report.outputs.sarif }}
+          category: grype-gsd-report
 
       - name: Full inventory, report pack stage
         if: always()

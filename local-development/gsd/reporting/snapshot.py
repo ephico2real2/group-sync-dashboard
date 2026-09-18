@@ -42,6 +42,12 @@ KNOWN_SCHEMA_VERSION = max(t for t, _, _ in _MIGRATIONS)
 CLUSTER_SCOPE = Store.CLUSTER_SCOPE
 PRIVILEGE_RANK = "CASE role_name WHEN 'cluster-admin' THEN 4 WHEN 'admin' THEN 3 WHEN 'edit' THEN 2 ELSE 1 END"
 
+#: Report-only: drop system:* GROUP subjects (the Store's built_in arm,
+#: `g.name IS NULL AND b.group_name LIKE 'system:%'`). They stay in the copy so
+#: the RBAC-policy tab and unmanaged-audit still see them; reports must not list
+#: them as a person's grant or as unmanaged/handmade (#147). Same LIKE as the CASE.
+_OMIT_SYSTEM_GROUP_SUBJECTS = " AND b.group_name NOT LIKE 'system:%'"
+
 
 class SnapshotError(Exception):
     """No usable copy: absent directory, no file, or a schema newer than this build."""
@@ -135,6 +141,13 @@ class Snapshot:
     def has_table(self, name: str) -> bool:
         return name in self._tables
 
+    def selector_capture_present(self) -> bool:
+        """Whether this copy carries the namespace-label capture at all. A copy without the table
+        cannot tell 'no namespace matches' from 'labels never captured' — an older dashboard's copy in
+        the rolling window — so a caller answering a count or expanding a selection must degrade to
+        'unknown', never an attested zero (review 2026-09-16, Fable N3 / Codex)."""
+        return self.has_table("cluster_namespace_label")
+
     def _rows(self, sql: str, params: tuple | list = ()) -> list[dict]:
         return [dict(r) for r in self._conn.execute(sql, params).fetchall()]
 
@@ -184,23 +197,6 @@ class Snapshot:
             "SELECT DISTINCT value FROM cluster_namespace_label "
             "WHERE cluster_id=? AND key=? ORDER BY value", (cluster_id, key))]
 
-    def namespace_selectors(self, key: str) -> dict[str, dict]:
-        """Per cluster id, the selector label and its captured values, for the B3 multi-select.
-
-        The whole gather lives here, not in the caller, for one reason: a copy that OPENED cleanly can
-        still raise sqlite3.Error from a later table read (partial b-tree damage on a copy that has
-        rotted on disk after it was written). Translated to SnapshotError HERE, at the backend boundary,
-        that becomes the catalogue's designed empty-map degradation instead of a 500 — and sqlite3 never
-        has to be named in server.py (the storage seam, tests/test_storage_seam.py). A genuine query bug
-        would fail the catalogue's own value assertions in the suite, so this does not mask one.
-        """
-        try:
-            return {row["id"]: {"label": key,
-                                "values": self.namespace_metadata_values(row["id"], key) if key else []}
-                    for row in self.clusters()}
-        except sqlite3.Error as exc:
-            raise SnapshotError(f"cannot read snapshot {Path(self.path).name}: not readable SQLite data") from exc
-
     def namespaces_for_metadata(self, cluster_id: str, key: str, values: list[str]) -> list[str]:
         """Namespace names whose metadata `key` is one of `values`. The strict selector's expansion."""
         if not key or not values or not self.has_table("cluster_namespace_label"):
@@ -209,6 +205,59 @@ class Snapshot:
         return [r["name"] for r in self._rows(
             f"SELECT name FROM cluster_namespace_label WHERE cluster_id=? AND key=? AND value IN ({marks}) "
             "ORDER BY name", (cluster_id, key, *values))]
+
+    def namespace_selector_dimensions(self, keys: list[str]) -> dict[str, list[dict]]:
+        """Per cluster id, one {label, values} entry per configured selector key, for the P2
+        multi-dimension multi-select. ONE query for the whole estate (review PR #129, 2nd pass, V4-F1):
+        the per-cluster-per-key gather was 2 + clusters x (dimensions + 1) reads on every 60s catalogue
+        load, which does not scale to many clusters.
+
+        The whole gather lives here, not in the caller, for one reason (the #117 D1 scar): a copy that
+        OPENED cleanly can still raise sqlite3.Error from a later table read (partial b-tree damage on
+        a copy that rotted on disk after it was written). Translated to SnapshotError HERE, at the
+        backend boundary, that becomes the catalogue's designed empty-map degradation instead of a 500
+        — and sqlite3 never has to be named in server.py (the storage seam,
+        tests/test_storage_seam.py). A genuine query bug would fail the catalogue's own value
+        assertions in the suite, so this does not mask one."""
+        try:
+            keys = [k for k in keys if k]
+            cluster_ids = [row["id"] for row in self.clusters()]
+            result = {cid: [{"label": k, "values": []} for k in keys] for cid in cluster_ids}
+            if not keys or not self.has_table("cluster_namespace_label"):
+                return result
+            marks = ",".join("?" for _ in keys)
+            positions = {k: i for i, k in enumerate(keys)}
+            for row in self._rows(
+                    "SELECT DISTINCT cluster_id, key, value FROM cluster_namespace_label "
+                    f"WHERE key IN ({marks}) ORDER BY cluster_id, key, value", tuple(keys)):
+                cid, key = row["cluster_id"], row["key"]
+                if cid in result and key in positions:
+                    result[cid][positions[key]]["values"].append(row["value"])
+            return result
+        except sqlite3.Error as exc:
+            raise SnapshotError(f"cannot read snapshot {Path(self.path).name}: not readable SQLite data") from exc
+
+    def namespaces_for_selectors(self, cluster_id: str, selectors: dict[str, list[str]]) -> list[str]:
+        """Namespace names matching EVERY selector dimension (AND across labels), where a dimension
+        matches ANY of its values (OR within). Composes the single-key `namespaces_for_metadata`
+        expansion and intersects in Python, so the SQL stays the form already tested and the AND is
+        explicit (docs/DESIGN_reporting_selectors_snapshots_and_windows.md §3). Empty selection -> [].
+
+        A sqlite3.Error from a table read after a clean open becomes SnapshotError HERE, the same wrap
+        as namespace_selector_dimensions, so GET /namespace-count degrades to a null count instead of a
+        500 and sqlite3 is never named in server.py (the #117 D1 scar; storage seam)."""
+        if not selectors or not self.has_table("cluster_namespace_label"):
+            return []
+        try:
+            result: set[str] | None = None
+            for key, values in selectors.items():
+                matched = set(self.namespaces_for_metadata(cluster_id, key, values))
+                result = matched if result is None else (result & matched)
+                if not result:
+                    return []
+            return sorted(result or set())
+        except sqlite3.Error as exc:
+            raise SnapshotError(f"cannot read snapshot {Path(self.path).name}: not readable SQLite data") from exc
 
     def login_capture_status(self, cluster_id: str) -> dict | None:
         return self._row("SELECT started_at, last_read_at FROM login_capture_status WHERE cluster_id = ?", (cluster_id,))
@@ -219,12 +268,17 @@ class Snapshot:
     # -- bindings -----------------------------------------------------------------------------
 
     def binding_namespaces(self, cluster_id: str) -> list[dict]:
-        """DISTINCT namespaces observed on any binding, with counts; '' is the cluster-scope sentinel
-        (the current C3's store method, unchanged in meaning)."""
+        """DISTINCT namespaces observed on a person-facing binding, with counts; '' is the
+        cluster-scope sentinel.
+
+        `system:*` GROUP subjects are omitted here, matching `group_bindings` (#147), so a namespace
+        whose only grant is an image-puller `system:serviceaccounts:<ns>` binding is not reported as
+        observed over an empty table."""
         return self._rows(
             """SELECT ns AS namespace, SUM(g) AS group_bindings, SUM(u) AS user_bindings
-                 FROM (SELECT CASE WHEN binding_namespace='' THEN ? ELSE binding_namespace END AS ns, 1 AS g, 0 AS u
-                         FROM rbac_group_binding WHERE cluster_id=?
+                 FROM (SELECT CASE WHEN b.binding_namespace='' THEN ? ELSE b.binding_namespace END AS ns, 1 AS g, 0 AS u
+                         FROM rbac_group_binding b WHERE b.cluster_id=?"""
+            + _OMIT_SYSTEM_GROUP_SUBJECTS + """
                        UNION ALL
                        SELECT CASE WHEN binding_namespace='' THEN ? ELSE binding_namespace END, 0, 1
                          FROM user_binding WHERE cluster_id=? AND is_platform=0)
@@ -232,8 +286,11 @@ class Snapshot:
             (CLUSTER_SCOPE, cluster_id, CLUSTER_SCOPE, cluster_id))
 
     def group_bindings(self, cluster_id: str, namespaces: list[str] | None = None) -> list[dict]:
-        """Every group-subject binding, classified by the dashboard's own CASE, with reach. Ordered
-        namespace, finding severity, group, binding — deterministic so two reports diff cleanly."""
+        """Group-subject bindings a report may list, classified by the dashboard's own CASE, with reach.
+
+        `system:*` virtual groups are omitted here (see `_OMIT_SYSTEM_GROUP_SUBJECTS`). The CASE is
+        still Store._FINDING_CASE — a remaining row cannot disagree with the RBAC-policy tab.
+        Ordered namespace, finding severity, group, binding — deterministic so two reports diff cleanly."""
         reach = """
                       CASE WHEN g.name IS NULL THEN NULL ELSE COALESCE(li.member_count, 0) END AS member_count,
                       CASE WHEN g.name IS NULL OR ust.cluster_id IS NULL THEN NULL
@@ -241,7 +298,8 @@ class Snapshot:
         sql = ("""SELECT b.binding_kind, b.binding_namespace, b.binding_name, b.role_kind, b.role_name,
                          b.group_name, b.managed_source, b.exception,""" + reach
                + Store._FINDING_CASE + " AS finding"
-               + Store._FINDING_JOINS + Store._REACH_JOIN + Store._FINDING_WHERE)
+               + Store._FINDING_JOINS + Store._REACH_JOIN + Store._FINDING_WHERE
+               + _OMIT_SYSTEM_GROUP_SUBJECTS)
         params: list = [cluster_id]
         if namespaces is not None:
             sql += " AND b.binding_namespace IN (" + ",".join("?" * len(namespaces)) + ")"
@@ -254,7 +312,8 @@ class Snapshot:
 
     def findings_counts(self, cluster_id: str) -> dict[str, int]:
         rows = self._rows("SELECT" + Store._FINDING_CASE + " AS finding, COUNT(*) AS n"
-                          + Store._FINDING_JOINS + Store._FINDING_WHERE + " GROUP BY finding", (cluster_id,))
+                          + Store._FINDING_JOINS + Store._FINDING_WHERE
+                          + _OMIT_SYSTEM_GROUP_SUBJECTS + " GROUP BY finding", (cluster_id,))
         return {r["finding"]: int(r["n"]) for r in rows}
 
     def user_bindings(self, cluster_id: str, namespaces: list[str] | None = None,
@@ -470,9 +529,16 @@ class Snapshot:
             "members": one("SELECT COUNT(DISTINCT user_name) AS n FROM group_member WHERE cluster_id=?"),
             "users": one("SELECT COUNT(*) AS n FROM ocp_user WHERE cluster_id=?"),
             "users_logged_in": one("SELECT COUNT(*) AS n FROM ocp_user WHERE cluster_id=? AND has_identity=1"),
-            "group_bindings": one("SELECT COUNT(*) AS n FROM rbac_group_binding WHERE cluster_id=?"),
+            "group_bindings": one("SELECT COUNT(*) AS n FROM rbac_group_binding b WHERE b.cluster_id=?"
+                                  + _OMIT_SYSTEM_GROUP_SUBJECTS),
             "user_bindings": one("SELECT COUNT(*) AS n FROM user_binding WHERE cluster_id=? AND is_platform=0"),
             "platform_user_bindings": one("SELECT COUNT(*) AS n FROM user_binding WHERE cluster_id=? AND is_platform=1"),
-            "namespaces_with_bindings": one("SELECT COUNT(DISTINCT binding_namespace) AS n FROM (SELECT binding_namespace FROM rbac_group_binding WHERE cluster_id=? AND binding_namespace<>'' UNION SELECT binding_namespace FROM user_binding WHERE cluster_id=? AND binding_namespace<>'')", cluster_id),
+            "namespaces_with_bindings": one(
+                "SELECT COUNT(DISTINCT binding_namespace) AS n FROM ("
+                "SELECT b.binding_namespace FROM rbac_group_binding b"
+                " WHERE b.cluster_id=? AND b.binding_namespace<>''"
+                + _OMIT_SYSTEM_GROUP_SUBJECTS
+                + " UNION SELECT binding_namespace FROM user_binding"
+                " WHERE cluster_id=? AND binding_namespace<>'' AND is_platform=0)", cluster_id),
             "groupsyncs": one("SELECT COUNT(*) AS n FROM groupsync_state WHERE cluster_id=?"),
         }

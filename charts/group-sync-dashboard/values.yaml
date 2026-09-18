@@ -164,6 +164,10 @@ securityContext:
 nodeSelector: {}
 tolerations: []
 affinity: {}
+# The dashboard pod's scheduling priority. Empty = the cluster default (priority 0). A PDB does NOT
+# stop preemption; set a PriorityClass name here when this pod must outrank contending workloads on a
+# saturated node (#97). Rendered only when set.
+priorityClassName: ""
 podAnnotations: {}
 podLabels: {}
 
@@ -950,13 +954,27 @@ reporting:
   # Namespace objects with that grant). The render refuses a selector that names a key the poll does
   # not capture, and labels set while the grant is off.
   namespaceMetadata:
-    # Label keys the poll captures per namespace (bounded — only these, never the whole label map).
-    # Add keys (environment, owner, cost-centre) with no migration. e.g. [company.net/mnemonic]
+    # Label keys the poll captures per namespace (bounded — only these, never the whole label map). You
+    # name the KEYS here; the form's dropdown VALUES are auto-discovered from the namespaces themselves.
+    # Add keys (environment, owner, cost-centre) with no migration.
+    #
+    # These are ENTERPRISE-SPECIFIC. On a real/remote cluster set them to YOUR namespace-metadata label
+    # keys — the company.net/* below are examples, not defaults. e.g.
+    #   labels:
+    #     - company.net/mnemonic            # <- replace with your enterprise's actual metadata labels
+    #     - company.net/app-environment
     labels: []
   namespaceSelector:
-    # The captured key the namespace-access report selects on; MUST be one of namespaceMetadata.labels.
-    # "" hides the selector. e.g. company.net/mnemonic
-    label: ""
+    # The captured DIMENSIONS the namespace-access report offers (P2, multi-dimension). Each MUST be one
+    # of namespaceMetadata.labels; the form renders one multi-select per entry, AND'd across, OR within.
+    # [] hides the selector.
+    #
+    # Same ENTERPRISE-SPECIFIC keys as namespaceMetadata.labels — set to your cluster's real metadata
+    # labels on a remote/production cluster, NOT the company.net/* examples. e.g.
+    #   labels:
+    #     - company.net/mnemonic            # <- replace with your enterprise's actual metadata labels
+    #     - company.net/app-environment
+    labels: []
 
   image:
     repository: quay.io/ephico2real/group-sync-dashboard-report
@@ -1006,6 +1024,28 @@ reporting:
   snapshot:
     intervalSeconds: 300
     keep: 2
+
+  # The global reporting window (design §5): gate AUTOMATED report runs (schedules, and any service-token
+  # caller) to a time-of-day range on chosen weekdays, in a chosen timezone. A human's manual run from the
+  # Reports tab is NEVER gated — this is an operational rail, not access control. Off by default.
+  #   - A refused run answers 409; the schedule Job treats that as a SKIP (exit 0), not a failure, so the
+  #     CronJob is not marked failed and does not retry into the window.
+  #   - timezone defaults to .Values.timezone (the report pod's TZ) when left empty. When window.enabled,
+  #     the schedule CronJob's spec.timeZone is set to this same zone so the cron and the window agree —
+  #     otherwise Kubernetes runs the cron in the CONTROLLER's timezone and every run is 409-skipped.
+  #     spec.timeZone is GA on Kubernetes 1.27 / OpenShift ~4.14; on older it is silently pruned and the
+  #     cron falls back to the controller's timezone (document the estate's version before relying on it).
+  #   - start/end are HH:MM (24h) and must differ. A wrap window (start > end, e.g. 22:00-06:00) is a night
+  #     window: the post-midnight part belongs to the previous day. A window entirely inside the DST
+  #     spring-forward hour never opens — avoid 02:00-03:00 in a zone that springs forward there.
+  #   - days is a non-empty, duplicate-free subset of Mon..Sun. Malformed = a render failure (and a report
+  #     service startup failure): an enabled-but-broken window never silently disables gating.
+  window:
+    enabled: false
+    timezone: ""
+    start: "22:00"
+    end: "06:00"
+    days: [Mon, Tue, Wed, Thu, Fri, Sat, Sun]
 
   # Artefact retention: whichever bound is hit first; 0 disables a bound.
   retention:
@@ -1066,6 +1106,10 @@ reporting:
   nodeSelector: {}
   tolerations: []
   affinity: {}
+  # The report pod's scheduling priority. Empty = the cluster default (priority 0). #97 saw THIS pod
+  # preempted 29x in ~3h at 99% node CPU (OLM collect-profiles / marketplace pods); a PDB does not stop
+  # preemption, so set a PriorityClass name here to protect a report run in flight. Rendered only when set.
+  priorityClassName: ""
 
 # ---------------------------------------------------------------------------
 # RBAC

@@ -95,12 +95,21 @@ class TestReadOnlyByConstruction:
 class TestTheClassificationIsTheStores:
     def test_group_bindings_agree_with_all_bindings_row_for_row(self, seeded):
         store, _, path = seeded
-        expected = sorted((b["finding"], b["group_name"], b["binding_namespace"], b["binding_name"]) for b in store.all_bindings(CLUSTER))
+        expected_all = sorted((b["finding"], b["group_name"], b["binding_namespace"], b["binding_name"])
+                              for b in store.all_bindings(CLUSTER))
+        expected = [row for row in expected_all if not row[1].startswith("system:")]
         with Snapshot(path) as snap:
-            got = sorted((b["finding"], b["group_name"], b["binding_namespace"], b["binding_name"]) for b in snap.group_bindings(CLUSTER))
-            assert got == expected and {"dangling", "unresolved", "unmanaged", "ok", "built_in"} <= {g[0] for g in got}
+            got = sorted((b["finding"], b["group_name"], b["binding_namespace"], b["binding_name"])
+                         for b in snap.group_bindings(CLUSTER))
+            assert got == expected
+            assert {"dangling", "unresolved", "unmanaged", "ok"} <= {g[0] for g in got}
+            assert "built_in" not in {g[0] for g in got}
+            assert any(row[1].startswith("system:") for row in expected_all), (
+                "the Store still has the virtual group; only the report listing drops it")
             counts = snap.findings_counts(CLUSTER)
         assert counts == {k: sum(1 for g in got if g[0] == k) for k in counts}
+        assert "built_in" not in counts
+        assert store.count_bindings_by_finding(CLUSTER).get("built_in", 0) >= 1
 
     def test_namespaces_are_pending_before_any_read_and_the_tables_exist(self, seeded):
         _, _, path = seeded

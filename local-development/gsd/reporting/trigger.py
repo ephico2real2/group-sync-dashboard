@@ -23,7 +23,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--url", required=True, help="the report Service, e.g. https://gsd-report.ns.svc:8443")
     ap.add_argument("--report", required=True)
     ap.add_argument("--cluster", required=True)
-    ap.add_argument("--param", action="append", default=[], help="k=v, repeatable")
+    ap.add_argument("--param", action="append", default=[], help="k=v, repeatable — scalar params only")
+    ap.add_argument("--params-json", default="",
+                    help="the params as a JSON object; required for structured params like `selectors` "
+                         "that a k=v string cannot express (the chart renders schedules[].params this way)")
     ap.add_argument("--format", action="append", default=[], choices=["html", "pdf"])
     ap.add_argument("--schedule", required=True, help="the schedule's name, recorded as generated_by=schedule:<name>")
     ap.add_argument("--token-file", default=os.environ.get("GSD_REPORT_TOKEN_FILE", "/etc/gsd/report/token"))
@@ -31,8 +34,18 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--wait", action="store_true", help="poll until the run finishes; exit 1 if it failed")
     ap.add_argument("--timeout", type=int, default=600)
     a = ap.parse_args(argv)
-    params = {}
-    for kv in a.param:
+    params: dict = {}
+    if a.params_json:
+        try:
+            parsed = json.loads(a.params_json)
+        except ValueError as exc:
+            print(f"--params-json is not valid JSON: {exc}", file=sys.stderr)
+            return 1
+        if not isinstance(parsed, dict):
+            print("--params-json must be a JSON object", file=sys.stderr)
+            return 1
+        params.update(parsed)
+    for kv in a.param:                    # scalar overrides, back-compat
         k, _, v = kv.partition("=")
         params[k] = v
     with open(a.token_file, "rb") as fh:
@@ -43,6 +56,13 @@ def main(argv: list[str] | None = None) -> int:
             "formats": a.format or ["html", "pdf"], "schedule": a.schedule}
     with httpx.Client(base_url=a.url, headers=headers, verify=verify, timeout=30.0) as c:
         r = c.post("/report/api/runs", json=body)
+        if r.status_code == 409:
+            # The reporting window is closed (design §5): a schedule firing outside its window is a SKIP,
+            # not a failure. Exit 0 so the CronJob is not marked failed and does not retry into the
+            # window; the run simply did not happen. Any other non-202 (a real refusal) stays exit 1.
+            print(json.dumps({"skipped": "outside the reporting window",
+                              "retry_after_seconds": r.headers.get("Retry-After")}))
+            return 0
         if r.status_code != 202:
             print(f"refused: {r.status_code} {r.text}", file=sys.stderr)
             return 1

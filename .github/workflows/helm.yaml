@@ -34,6 +34,13 @@ jobs:
   # cannot render must not become a published release.
   validate:
     uses: ./.github/workflows/ci.yml
+    # ci.yml's image job requests security-events: write (advisory SARIF upload to code scanning).
+    # A called workflow can only DOWNGRADE the caller's token, and the repo default is
+    # contents: read, so GitHub would refuse the nested job at plan time unless the caller grants
+    # security-events: write explicitly here.
+    permissions:
+      contents: read
+      security-events: write
 
   release:
     needs: validate

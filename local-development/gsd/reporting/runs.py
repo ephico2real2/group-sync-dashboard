@@ -84,7 +84,34 @@ class RunManager:
         except Exception:  # noqa: BLE001 — retention must never stop rendering
             log.exception("artifact prune failed")
 
+    def _admitted_in_window(self, run: Run) -> bool:
+        """Whether the run was requested INSIDE the reporting window — the worker's belt for the
+        queue-crossing case (design §5). Recheck against requested_at, not now: a run admitted just
+        before the close still renders (end-of-window schedules are not flaky), but a run that never
+        was in-window (a replayed manifest, config drift) is failed here rather than rendered. A
+        malformed timestamp is not the window's business — create_run already gated on it."""
+        if not self.settings.window.enabled:
+            return True
+        try:
+            requested = datetime.strptime(run.requested_at, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+        except (ValueError, TypeError):
+            return True
+        return self.settings.window.is_open(requested)
+
     def _render(self, run: Run) -> None:
+        if run.origin != "viewer" and not self._admitted_in_window(run):
+            run.status, run.error = "failed", "outside the reporting window at request time (rechecked at render)"
+            run.finished_at = self._clock().strftime("%Y-%m-%dT%H:%M:%SZ")
+            self.store.update(run)
+            self.metrics.note_outside_window(run.origin)
+            # submit() counted it SUBMITTED when it entered the queue, so the recheck failure counts it
+            # FINISHED here too — the early return skips the completion `finally` below, and without this
+            # gsd_report_runs_submitted_total minus finished_total reads as one run in flight for ever
+            # (review of P4, C5). Zero seconds, zero bytes: nothing rendered.
+            self.metrics.note_finished(run.report, "failed", 0.0, 0)
+            log.warning("run %s failed the window recheck (origin=%s requested_at=%s)",
+                        run.id, run.origin, run.requested_at)
+            return
         run.status, run.started_at = "running", self._clock().strftime("%Y-%m-%dT%H:%M:%SZ")
         self.store.update(run)
         started = time.perf_counter()
@@ -102,7 +129,7 @@ class RunManager:
                                  generated_by=run.generated_by, generated_by_note=run.generated_by_note,
                                  snapshot_stamp=info.stamp, snapshot_age_seconds=info.age_seconds(now),
                                  schema_version=info.schema_version,
-                                 namespace_selector_label=self.settings.namespace_selector_label)
+                                 namespace_selector_labels=self.settings.namespace_selector_labels)
                 from .catalogue.common import assemble
                 report = assemble(spec, snap, ctx, params, build(snap, ctx, params))
             run.snapshot_stamp, run.sha256 = info.stamp, report.sha256
@@ -126,3 +153,7 @@ class RunManager:
             run.finished_at = self._clock().strftime("%Y-%m-%dT%H:%M:%SZ")
             self.store.update(run)
             self.metrics.note_finished(run.report, run.status, run.render_seconds, sum(run.bytes.values()))
+            # The evidence-gap signal (design §5): stamp the schedule's last success so a monitor can
+            # alert on "no success within its period" — a wrong timezone must not silently stop evidence.
+            if run.status == "done" and run.schedule:
+                self.metrics.note_schedule_success(run.schedule, self._clock().timestamp())

@@ -42,7 +42,7 @@ PR that bumps the chart), never left as a dangling "follow-up".
 | Reviewer | Invocation | Verified by |
 |---|---|---|
 | Codex, GPT-5.6, highest reasoning | plugin agent `codex:codex-rescue` with **`--model gpt-5.6-sol --effort xhigh`** stated in the request; CLI form `codex exec --skip-git-repo-check -m gpt-5.6-sol -c model_reasoning_effort="xhigh" …` | probe from the repo root; the session jsonl under `~/.codex/sessions` records `"effort":"xhigh"`. The id `gpt-5.6` is REFUSED on this ChatGPT account. |
-| Cursor, Grok 4.6 high fast | `cursor agent -p --mode ask --output-format text --trust --model cursor-grok-4.6-high-fast "<brief>"` | probe from the repo root returns the expected words; `cursor agent models` lists the ids. |
+| Cursor, Grok 4.6 high fast (ZDR) | `cursor agent -p --mode ask --output-format text --trust --model cursor-grok-4.6-high-fast "<brief>"` | probe from the repo root returns the expected words; `cursor agent models` lists the ids. |
 | **OB1** (Obi-Wan) — Anthropic Fable 5.1, inside Claude Code | the `Agent` tool with **`model: "fable"`** (`claude-fable-5-1`), `subagent_type` general-purpose, the brief as its ENTIRE prompt plus the read-only rule below; NOT Cursor's `claude-fable-5-thinking-*` (the operator's naming and correction, 2026-09-18; Cursor's Fable is also capped by the Pro+ usage limit) | the agent's completion notification carries its answer; it runs with the session's tools, so its `bash -n` / read-only `kubectl` / `curl` outputs are in its report. |
 
 Without the flags the plugin leaves model and effort UNSET and Cursor runs on `auto` — that is what the
@@ -56,7 +56,9 @@ with quoted evidence (file:line, command + output) for every refutation; terse; 
 and the minimum changes. OB1 is **required** for anything that becomes an upstream post (an issue, a PR, a
 comment on someone else's repository) — the operator reads the draft under `docs/upstream/` after OB1 has,
 and posts only on their word. Codex and Grok run beside it, not instead of it. Probe both with a one-line prompt before a
-review if anything about the environment changed (login, plugin update, model list).
+review if anything about the environment changed (login, plugin update, model list). A finding from ANY
+reviewer is only a finding with the FULL code of the fix AND a failing/passing test — a design-level
+description is not the solution; demand the snippet (the operator's rule).
 
 ## Prerequisites — a clone does not provide them
 
@@ -151,6 +153,15 @@ number the cluster gives".
 - **Two reviewers writing into one file clobber each other** — never share an output file, and never
   give a reviewer the scratchpad root: a Codex exit trap once deleted the whole session directory. Each
   reviewer gets its own subdirectory and irreplaceable outputs are copied out first.
+
+**Wait with a background wakeup, not a polling loop.** Reviewers, the suite and CI each take minutes;
+every manual "is it done yet?" Read/Bash is a full-context model round-trip that re-bills the whole
+conversation for one "not yet". Arm ONE waiter that wakes you when the condition holds and stay silent
+until it fires: `Monitor` (or Bash `run_in_background`) with `until <done-check>; do sleep 3; done`,
+its filter matching BOTH the success and the failure markers so a crash wakes you too (silence is not
+success). A single status check is fine — is the pid alive, did the file appear — the *loop* of checks
+is the waste. Gotcha: a `… 2>&1 | tail -N` output file stays EMPTY until the command exits, so reading
+it early tells you nothing; that empty read is exactly what the wakeup spares you.
 
 ## Step 3 — decide, in writing, before applying
 
