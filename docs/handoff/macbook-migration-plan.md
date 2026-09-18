@@ -49,7 +49,7 @@ type or click it and there is no way around that, usually because it is interact
 | 2.0 | make the carry folder | Manual | one `mkdir` |
 | 2.1 | registry credentials | **nothing to do** | corrected: they are not carried. See `docs/handoff/registry-credentials.md` |
 | 2.2 | commit and push at-risk edits | Manual | `git add` / `commit` / `push` per repo. Already done for the dashboard, the RBAC automation and the NCO fork on 2026-09-18 |
-| 2.3 | refresh the claude-config backup | **Script** | the capture, then `git push` |
+| 2.3 | refresh the claude-config backup | **done** | closed 2026-09-18; re-run only if you work more before moving |
 | 2.4 | copy local-only scratchpad files | Manual | `cp`; most of it is already committed |
 | 2.5 | copy the optional login shortcuts | Manual | `cp` of `~/.ssh`, codex auth, containers auth |
 | 2.6 | record where secrets live | Hand-edit | a note in the password manager. **Locations only, never values** |
@@ -70,7 +70,7 @@ type or click it and there is no way around that, usually because it is interact
 | 4.8 | deploy the app | **Script** | `release-crc.sh` — builds, pushes, deploys and verifies the commit in-pod. The one fully automated step |
 | 4.9 | re-apply the mock cluster | Manual | five sub-steps, mostly live-only with no committed manifest. The slowest part of the move |
 | 4.10 | LDAP lab and cluster trust | Manual | only if you need LDAP. `setup-local-ldap-testing/` plus `MISSING-STEPS.md` for what the seeds do not create |
-| — | restore the Claude Code setup | **Script** | `claude-config/2026-09-18-design-programme/restore.sh`, after the repo root's own. Proven against an empty home on 2026-09-18 |
+| 4.3b | restore the Claude Code setup | **Script** | two scripts in order: the repo root's `restore.sh`, then `2026-09-18-design-programme/restore.sh`. Proven against an empty home |
 | 5 | verification | **Script** | the check block, then `capture-screenshots.py` for the pictures |
 
 ### The three scripts that do the heavy lifting
@@ -177,16 +177,25 @@ done
 
 ### 2.3 — Refresh the claude-config backup BEFORE relying on restore.sh
 
-Live memory is ahead of the `claude-config` repo by **6 dashboard notes** — 4 missing
-(`avoid-polling-use-background-wakeup.md`, `codex-exec-stdin-hang.md`, `cursor-fable-reviewer.md`,
-`no-attribution-trailers.md`) and 2 stale (`adversarial-review-before-shipping.md`, the `MEMORY.md`
-index). Running `restore.sh` on the new Mac today would silently install stale/incomplete memory.
+**Done on 2026-09-18** — the drift this step existed to catch is closed. The repo held 59 notes and
+live memory held 61; they are now identical and pushed, alongside the reviewer agents, the process
+sweeper, the merge helper and the changelog resolver, under
+`2026-09-18-design-programme/`.
+
+Re-run this only if you do more work before moving:
 
 ```sh
-# re-run the claude-config capture so the live memory dir is copied into the repo, then:
-git -C /Users/olasumbo/gitRepos/claude-config add -A
-git -C /Users/olasumbo/gitRepos/claude-config commit -m "capture: refresh dashboard memory notes before machine move"
-git -C /Users/olasumbo/gitRepos/claude-config push
+# copy the live memory dir into the repo, then:
+git -C ~/gitRepos/claude-config add -A
+git -C ~/gitRepos/claude-config commit -m "capture: refresh dashboard memory notes before machine move"
+git -C ~/gitRepos/claude-config push
+```
+
+Check before you leave — silence means the backup is current:
+
+```sh
+diff <(ls ~/.claude/projects/*group-sync-dashboard/memory) \
+     <(ls ~/gitRepos/claude-config/2026-09-18-design-programme/memory/*/)
 ```
 
 ### 2.4 — Copy the local-only files worth keeping out of the scratchpad
@@ -338,8 +347,35 @@ git clone https://github.com/ephico2real2/group-sync-dashboard.git
 git clone git@github.com:ephico2real2/group-sync-operator.git                 # SSH — needs the key
 git clone git@github.com:ephico2real2/group-sync-operator-helm-chart.git      # SSH — needs the key
 git clone https://github.com/ephico2real2/cilium-implementation-poc.git
-git clone <claude-config-remote> claude-config && (cd claude-config && ./restore.sh)
+git clone https://github.com/ephico2real2/claude-config.git
 ```
+
+### 4.3b — Restore the Claude Code setup (two scripts, in this order)
+
+The repo root's `restore.sh` lays down the global rules, settings, plans and every project's memory.
+The dated folder then layers on what this programme added. Run them in that order — the second
+overwrites settings deliberately, to add the sweeper's hook.
+
+```sh
+cd ~/gitRepos/claude-config
+./restore.sh                                   # 1. the base snapshot
+./2026-09-18-design-programme/restore.sh       # 2. agents, tools, the hook, the current memory
+```
+
+The second was run end to end against an empty `HOME` on 2026-09-18: both reviewer agents and the
+sweeper in place, `settings.json` parsed with all three hook events kept and the sweeper hook's
+absolute path re-keyed to the new home, 61 memory notes under a re-keyed project slug, and a second
+run exiting 0 leaving timestamped backups. It is safe to run twice.
+
+Check it landed:
+
+```sh
+ls ~/.claude/agents                            # ob2.md ob3.md
+~/.claude/tools/sweep-stale.py --report        # expect "nothing stale" on a fresh machine
+```
+
+Read `2026-09-18-design-programme/MIGRATION-READINESS.md` in that repo before you start §4.4 — it is
+the list of what a clone cannot bring back.
 
 ### 4.4 — Restore the unrecoverable working state into the clones
 
