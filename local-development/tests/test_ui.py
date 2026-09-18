@@ -1736,8 +1736,10 @@ class TestLookup:
             data.users = {users: [], total: 0}; data.namespaces = {namespaces: [], label_keys: []}; render(); }""")
         assert "2 more" in dash.locator("#main .filterbar-note", has_text="more").inner_text()
         dash.locator("#main button[data-page='groups'].linkish").click()
-        dash.wait_for_function("() => view.page === 'groups'")
-        assert dash.evaluate("() => [view.groupSearch, document.getElementById('f-group-search').value]") == ["grp", "grp"]
+        # the position flips at once; the bar is repainted for the new page by the refresh that follows —
+        # wait for the Groups tab's own box, not for view.page (CI's runner read a bar not yet rebuilt)
+        dash.wait_for_selector("#f-group-search")
+        assert dash.evaluate("() => [view.page, view.groupSearch, document.getElementById('f-group-search').value]") == ["groups", "grp", "grp"]
 
     # ── F8: the mark keeps the text's contrast ──
     def test_the_mark_keeps_the_text_above_the_contrast_bar(self, page, server):
