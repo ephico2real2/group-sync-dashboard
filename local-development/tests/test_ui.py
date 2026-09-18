@@ -1942,7 +1942,9 @@ class TestTheWalksLookupStep:
         matching "demo", then skipped the namespace drill for want of a row."""
         errors: list[str] = []
         page.on("pageerror", lambda e: errors.append(str(e)))
-        page.goto(slow_lookup_server)
+        # #158 made Home the landing page; this test's subject is the walk step, and it needs a painted
+        # page to start from, so it names the one it means rather than riding the default route.
+        page.goto(f"{slow_lookup_server}/#page=overview")
         page.wait_for_selector(".hero .value", timeout=10_000)
         page.click('button.tab:text-is("Usage")')
         page.wait_for_selector('button.tab[aria-current="page"]:text-is("Usage")')
@@ -3392,7 +3394,7 @@ class TestHome:
         }""")
         foot = p.locator(".home .c-wide .foot").inner_text()
         assert "0 groups grant" not in foot, foot
-        assert "A direct cluster-wide" in foot and "already includes it" in foot, foot
+        assert "A direct cluster-wide" in foot and "includes it by default" in foot, foot
 
     def test_the_more_line_reads_as_one_change_at_one(self, page, scoped_server):
         p = _home(page, scoped_server)
@@ -3410,6 +3412,50 @@ class TestHome:
         assert "last 30 days" in p.locator(".home .c-changes h2").inner_text()
         p.evaluate("() => { data.home.changes.window_days = 7; render(); }")
         assert "last 7 days" in p.locator(".home .c-changes h2").inner_text()
+
+    def test_the_poll_age_pill_is_not_the_shells_refetch_dim(self, page, scoped_server):
+        """The pill was called `.stale`, which is the shell's refetch state — a global `opacity: 0.55` on
+        whatever carries it — so it rendered at 55 % and measured 2.27:1 (Codex, review of #158). One class
+        cannot mean both "this page is being refetched" and "this cluster's data is old"."""
+        p = _home(page, scoped_server)
+        p.evaluate("""() => {
+          data.home.elsewhere = [{cluster: "prod-east", memberships: 3, status: "auth_failed", last_poll: "2026-01-01T00:00:00Z"}];
+          data.home.memberships_total = 5; render();
+        }""")
+        pill = p.locator(".home .poll-age")
+        assert pill.count() == 1, p.locator(".home .xcluster").inner_text()
+        assert p.locator(".home .stale").count() == 0, "the shell's refetch class is on the pill"
+        assert p.evaluate("() => getComputedStyle(document.querySelector('.home .poll-age')).opacity") == "1"
+
+    def test_a_retention_window_of_forever_does_not_claim_rows_were_pruned(self, page, scoped_server):
+        """`window_days: 0` is "kept forever", so the oldest row held is where the dashboard began watching,
+        not a cut — saying "pruned" of it invents a deletion (Codex, review of #158)."""
+        p = _home(page, scoped_server)
+        p.evaluate("""() => { data.home.retention = {window_days: 0, retained_since: "2026-08-02T00:00:00Z"};
+          render(); }""")
+        foot = p.locator(".home .c-changes .foot").inner_text()
+        assert "pruned" not in foot.replace("nothing is pruned", ""), foot
+        assert "where this dashboard began watching" in foot, foot
+        p.evaluate("""() => { data.home.retention = {window_days: 90, retained_since: "2026-08-02T00:00:00Z"};
+          render(); }""")
+        assert "have been pruned by retention" in p.locator(".home .c-changes .foot").inner_text()
+
+    def test_two_paths_of_different_kinds_are_not_called_the_same_grant(self, page, scoped_server):
+        """A Role and a ClusterRole of one name are two objects — the collision the ranking already fixed
+        (Codex, review of #158)."""
+        p = _home(page, scoped_server)
+        p.evaluate("""() => {
+          const grant = (kind, group) => ({role_name: "admin", role_kind: kind, via_group: group,
+                                           binding_name: "b-" + group, covered: false});
+          data.home.answer.namespaces = [
+            {name: "same", platform: false, covered: false, grants: [grant("ClusterRole", "g1"), grant("ClusterRole", "g2")]},
+            {name: "mixed", platform: false, covered: false, grants: [grant("ClusterRole", "g1"), grant("Role", "g2")]}];
+          render();
+        }""")
+        rows = p.evaluate("""() => Object.fromEntries([...document.querySelectorAll('.home .c-ns .hrow')].map(
+            r => [r.querySelector('.name').textContent.trim(), r.querySelector('.meta').textContent]))""")
+        assert "paths to the same grant" in rows["same"], rows
+        assert "paths to the same grant" not in rows["mixed"], rows
 
     def test_the_page_holds_at_375(self, page, scoped_server):
         page.set_viewport_size({"width": 375, "height": 740})

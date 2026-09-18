@@ -3038,7 +3038,7 @@ function homePage() {
     a.direct_count ? `<span class="tag warn">${plural(a.direct_count, "direct grant", "direct grants")}</span>` : "",
   ].join("");
   const stalePills = d.elsewhere.filter((c) => c.status !== "ok" || !c.last_poll || Date.now() - Date.parse(c.last_poll) > 86_400_000)
-    .map((c) => `<span class="stale">${esc(c.cluster)} ${c.status === "ok" ? "last polled" : `${esc(c.status)}, last polled`} ${esc(ago(c.last_poll))}</span>`).join("");
+    .map((c) => `<span class="poll-age">${esc(c.cluster)} ${c.status === "ok" ? "last polled" : `${esc(c.status)}, last polled`} ${esc(ago(c.last_poll))}</span>`).join("");
   const xcluster = d.elsewhere.length
     ? `<div class="xcluster">These numbers are for <b>${esc(cluster)}</b>. You're also on ${andList(d.elsewhere.map((c) => c.cluster))} —
         <b>${d.memberships_total}</b> group ${d.memberships_total === 1 ? "membership" : "memberships"} in total.${stalePills}</div>`
@@ -3064,10 +3064,14 @@ function homePage() {
     return homeRow(homeMain(esc(i.group_name), `${esc(i.change)}${elsewhere}`) + when,
       `data-group="${esc(i.group_name)}" data-cluster="${esc(i.cluster)}"`);
   });
+  // `window_days: 0` is "kept forever" (history_retention), so the oldest row held is where the dashboard
+  // STARTED watching, not a cut — saying "pruned" of it would invent a deletion (review of #158, Codex).
   const r = d.retention || {};
-  const changeFoot = r.retained_since
-    ? `History starts <span class="mono">${esc(String(r.retained_since).slice(0, 10))}</span> — older changes have been pruned by retention.`
-    : "Every change since this dashboard started watching your groups.";
+  const changeFoot = !r.retained_since
+    ? "Every change since this dashboard started watching your groups."
+    : r.window_days
+      ? `History starts <span class="mono">${esc(String(r.retained_since).slice(0, 10))}</span> — older changes have been pruned by retention.`
+      : `History starts <span class="mono">${esc(String(r.retained_since).slice(0, 10))}</span>, where this dashboard began watching; nothing is pruned.`;
   // The window is the server's (gsd/home.py) and arrives with the payload: a second copy here drifts
   // the moment one of them moves, and the card would name a window the rows were not selected by.
   const windowDays = ch.window_days;
@@ -3087,12 +3091,15 @@ function homePage() {
   // it, and the sentence read "0 groups grant edit cluster-wide … removing them would not change what
   // you can do" (review of #158, Grok).
   const wideFoot = a.cluster_wide.filter((w) => w.covered_by).map((w) => {
-    const includes = `<span class="mono">${esc(w.covered_by)}</span> already includes it`;
+    // "includes by default": the stock ClusterRoles aggregate this way, but a cluster may change what
+    // `edit` carries, so this is a lead for a review to confirm — never a proof about live rules
+    // (review of #158, Codex, citing the Kubernetes RBAC reference).
+    const includes = `<span class="mono">${esc(w.covered_by)}</span> includes it by default`;
     if (w.via_groups.length) {
-      return `${plural(w.via_groups.length, "group grants", "groups grant")} <span class="mono">${esc(w.role_name)}</span> cluster-wide, but ${includes} — removing ${w.via_groups.length === 1 ? "it" : "them"} would not change what you can do.`;
+      return `${plural(w.via_groups.length, "group grants", "groups grant")} <span class="mono">${esc(w.role_name)}</span> cluster-wide, and ${includes} — worth confirming before anyone relies on ${w.via_groups.length === 1 ? "it" : "them"}.`;
     }
     return w.direct
-      ? `A direct cluster-wide <span class="mono">${esc(w.role_name)}</span> grant is one ${includes} — removing it would not change what you can do.`
+      ? `A direct cluster-wide <span class="mono">${esc(w.role_name)}</span> grant sits under one ${includes} — worth confirming before anyone relies on it.`
       : "";
   }).filter(Boolean).join(" ");
   const wide = `<section class="card c-wide"><h2>Cluster-wide <span class="count">${plural(a.cluster_wide.length, "role", "roles")} · ${plural(a.cluster_wide_bindings, "binding", "bindings")}</span></h2>
@@ -3102,10 +3109,13 @@ function homePage() {
   // Namespaces: every one a binding reaches through your groups or names you in.
   const nsRows = a.namespaces.map((n) => {
     const viaGroups = [...new Set(n.grants.filter((g) => g.via_group).map((g) => g.via_group))];
+    // Keyed by kind AND name: a Role and a ClusterRole called `admin` are two objects, and calling them
+    // "the same grant" is the collision the ranking already fixed (review of #158, Codex).
+    const roleKeys = [...new Set(n.grants.map((g) => `${g.role_kind}/${g.role_name}`))];
     const roles = [...new Set(n.grants.map((g) => g.role_name))];
     const direct = n.grants.some((g) => !g.via_group);
     let meta = viaGroups.length ? `via ${andList(viaGroups)}` : "";
-    if (viaGroups.length > 1 && roles.length === 1) meta += ` — ${viaGroups.length === 2 ? "two" : viaGroups.length} paths to the same grant`;
+    if (viaGroups.length > 1 && roleKeys.length === 1) meta += ` — ${viaGroups.length === 2 ? "two" : viaGroups.length} paths to the same grant`;
     if (direct) meta = [meta, "granted to you directly"].filter(Boolean).join("; ");
     const right = n.covered && top ? `<span class="none">covered by ${esc(top)}</span>` : roles.map(rolePill).join("");
     const name = `${esc(n.name)}${n.platform ? '<span class="plat">platform namespace</span>' : ""}`;

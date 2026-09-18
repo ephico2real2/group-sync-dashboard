@@ -86,6 +86,49 @@ shows the console's own namespace only under Direct. Kept: a namespace a binding
 whichever path carries it, and the Direct card is what explains the path. Grok raised it; the operator's veto
 stands over this record.
 
+## Codex's pass — over the tree with Grok's fixes applied
+
+Codex (GPT-5.6, xhigh) read the same brief against the tree **after** Grok's four fixes were in, so its
+verdicts double as a check on those: it confirmed C1, C2, C3, C5, C7, C8 and C9 with its own probes — a
+matrix probe over proxy × restrictions × identity printed `403` and `404` in every unvouched combination, and
+it re-derived the hidden-cluster and resolver regressions. It refuted three more.
+
+### E — the removal advice was a claim about live rules (Codex C4/C6) — accepted
+The page said *"removing them would not change what you can do."* The stock ClusterRoles aggregate that way,
+but a cluster may change what `edit` carries and default-role reconciliation can be turned off, so a role's
+NAME is not proof of its live rules (the Kubernetes RBAC reference, which Codex cites). The card now says the
+stronger role *"includes it by default — worth confirming before anyone relies on them"*: a lead for a review,
+which is what this page is for, rather than a verdict it cannot support.
+
+### F — `.stale` was the shell's refetch class (Codex C10) — accepted
+The cross-cluster pill was called `.stale`, and `.stale { opacity: 0.55 }` is the shell's global refetch state,
+applied to whatever carries the class. The pill therefore rendered at 55 % — **2.27:1 light, 2.60:1 dark**,
+far under the bar — and one class meant both "this page is being refetched" and "this cluster's data is old".
+Renamed `.poll-age`, with a test that reads the computed opacity.
+
+### G — three sentences that could be false (Codex C6) — accepted
+- `window_days: 0` means kept forever, so the oldest row held is where the dashboard began watching. The foot
+  said *"older changes have been pruned by retention"* — inventing a deletion. It now says so only when a
+  window is set.
+- "two paths to the same grant" compared role NAMES, so a Role and a ClusterRole of one name were called the
+  same grant — the collision B had just fixed in the ranking. It compares kind and name.
+- The remaining copy points Codex raised (a fully-covered namespace still called a "grant", "1 / 1 groups
+  grant" in a terse tag, and the 500-event cap not announcing that counts are lower bounds) are recorded here
+  and not changed: the first two read correctly in context, and the cap is per cluster per poll on a page whose
+  window is 30 days — worth a follow-up only if a fleet ever exceeds it.
+
+### Measured by Codex, not asked
+Contrast on the actual Home surfaces, light/dark: `--warn` on `--page-2` 4.40 / 5.87; `--text-muted` on
+`--page-2` 4.21 / 5.03; muted on the 10 % row hover 3.99 / 4.22; the scope pill on its wash plus hover 6.11 /
+4.16; `.tag.rwx` 6.88 / 8.01 (passes) and `.flap` on the card (passes). The failures are the same shape as
+#184's and are posted there.
+
+### The integration CI found
+PR CI builds the merge of this branch into its base, and `feat/drilldown` had meanwhile gained OB3's
+`TestTheWalksLookupStep`, whose setup loads the app and waits for the Overview's hero. Home's route change
+moved that. The test names `#page=overview` now, like every other Overview-subject test this branch
+relocated — found by CI on the merge, not by either branch's own suite.
+
 ## Not asked
 - The e2e walk visits Home for free (it walks `button.tab`, and Home is first); Grok suggests a drill step —
   click a group row, wait for the group page, go back — since `walk_tabs` never leaves the tab. Worth adding.

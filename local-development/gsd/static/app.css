@@ -1170,10 +1170,13 @@ mark { background: none; color: inherit; font-weight: 700; }
 .home .xcluster { margin-top: var(--space-7); padding-top: var(--space-6); border-top: 1px solid var(--gridline);
   font-size: var(--text-md); color: var(--text-secondary); }
 .home .xcluster b { color: var(--text-primary); font-weight: 600; }
-.home .stale { display: inline-flex; align-items: center; gap: var(--space-3); margin-left: var(--space-5);
+/* `.poll-age`, NOT `.stale`: `.stale` is the shell's refetch state — `opacity: 0.55` on whatever carries
+   it — so this pill rendered at 55 % and measured 2.27:1 (light) / 2.60:1 (dark). One class cannot mean both
+   "this page is being refetched" and "this cluster's data is old" (review of #158, Codex). */
+.home .poll-age { display: inline-flex; align-items: center; gap: var(--space-3); margin-left: var(--space-5);
   font-family: var(--font-mono); font-size: var(--text-xs); padding: 2px 9px; /* optical: the badge's own metrics */
   border-radius: var(--radius-pill); color: var(--warn); border: 1px solid var(--status-warning-edge); }
-.home .stale::before { content: ""; width: 6px; height: 6px; border-radius: var(--radius-round); background: currentColor; }
+.home .poll-age::before { content: ""; width: 6px; height: 6px; border-radius: var(--radius-round); background: currentColor; }
 .home .card > h2 .count { font-family: var(--font-mono); color: var(--text-muted); font-weight: 400; }
 /* The list runs edge to edge inside the card: the rows carry the card's padding themselves. */
 .home .hlist { margin: 0 calc(-1 * var(--space-8)); border-top: 1px solid var(--gridline); }
@@ -1220,5 +1223,5 @@ mark { background: none; color: inherit; font-weight: 700; }
   .home .hrow { flex-wrap: wrap; row-gap: var(--space-4); }
   .home .hrow .main { flex: 1 1 100%; }
   .home .role, .home .scope { white-space: normal; overflow-wrap: anywhere; }
-  .home .stale { margin-left: 0; margin-top: var(--space-4); }
+  .home .poll-age { margin-left: 0; margin-top: var(--space-4); }
 }
