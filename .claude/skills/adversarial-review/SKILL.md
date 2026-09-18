@@ -43,9 +43,19 @@ PR that bumps the chart), never left as a dangling "follow-up".
 |---|---|---|
 | Codex, GPT-5.6, highest reasoning | plugin agent `codex:codex-rescue` with **`--model gpt-5.6-sol --effort xhigh`** stated in the request; CLI form `codex exec --skip-git-repo-check -m gpt-5.6-sol -c model_reasoning_effort="xhigh" …` | probe from the repo root; the session jsonl under `~/.codex/sessions` records `"effort":"xhigh"`. The id `gpt-5.6` is REFUSED on this ChatGPT account. |
 | Cursor, Grok 4.6 high fast | `cursor agent -p --mode ask --output-format text --trust --model cursor-grok-4.6-high-fast "<brief>"` | probe from the repo root returns the expected words; `cursor agent models` lists the ids. |
+| **OB1** (Obi-Wan) — Anthropic Fable 5.1, inside Claude Code | the `Agent` tool with **`model: "fable"`** (`claude-fable-5-1`), `subagent_type` general-purpose, the brief as its ENTIRE prompt plus the read-only rule below; NOT Cursor's `claude-fable-5-thinking-*` (the operator's naming and correction, 2026-09-18; Cursor's Fable is also capped by the Pro+ usage limit) | the agent's completion notification carries its answer; it runs with the session's tools, so its `bash -n` / read-only `kubectl` / `curl` outputs are in its report. |
 
 Without the flags the plugin leaves model and effort UNSET and Cursor runs on `auto` — that is what the
-first passes on #69–#71 ran on, and the operator noticed. Probe both with a one-line prompt before a
+first passes on #69–#71 ran on, and the operator noticed.
+
+**OB1 gets the same instructions as the other two — no shorter brief, no softer rules.** Its prompt is the
+brief file's content verbatim, preceded by one paragraph: it is the adversarial reviewer; do NOT modify any
+file, do NOT run git write commands, kubectl apply, helm or anything that changes a cluster; it MAY read
+files, run `bash -n`, read-only `kubectl`/`curl`/`jq`/`python3`; verdicts CONFIRMED / REFUTED / PLAUSIBLE
+with quoted evidence (file:line, command + output) for every refutation; terse; end with an overall verdict
+and the minimum changes. OB1 is **required** for anything that becomes an upstream post (an issue, a PR, a
+comment on someone else's repository) — the operator reads the draft under `docs/upstream/` after OB1 has,
+and posts only on their word. Codex and Grok run beside it, not instead of it. Probe both with a one-line prompt before a
 review if anything about the environment changed (login, plugin update, model list).
 
 ## Prerequisites — a clone does not provide them
@@ -82,7 +92,7 @@ the spec's NEW blocks, dependents (`needs:`), and what would go wrong on the NEX
 `brief-template.md` beside this file is the skeleton. Write the brief to a scratchpad file and pass the
 file's contents verbatim to both reviewers.
 
-## Step 2 — launch both, each to its own output file
+## Step 2 — launch all three, each to its own output
 
 ```sh
 S=<scratchpad>
@@ -106,9 +116,19 @@ cd "$W" && nohup codex exec --skip-git-repo-check -m gpt-5.6-sol -c model_reason
 sleep 20; head -c 400 "$S/review_codex_<id>.err"   # must show "OpenAI Codex … model: …", not only "Reading additional input from stdin..."
 ```
 
+and, in the same turn, **OB1** — the `Agent` tool, `model: "fable"`, `subagent_type: "general-purpose"`,
+`description: "OB1 adversarial review of <id>"`, the prompt = the read-only paragraph above + the brief's
+full text + the file paths it needs (it works in the repository itself, read-only — no export needed, but
+name the branch and say it must not switch). It runs in the background and reports on completion; never
+predict or paraphrase its result before the notification arrives. Save its answer to
+`$S/review_ob1_<id>.txt` yourself when it comes in, so the record has all three side by side.
+
 What each can and cannot do: Cursor in ask mode has NO shell and no network — it traces from source and
 must mark what it cannot measure PLAUSIBLE, not CONFIRMED. Codex has a shell and is the reviewer that
-follows a value end to end; give it the venv interpreter path.
+follows a value end to end; give it the venv interpreter path. OB1 has the session's tools and the live
+repository: it can read the real files and run read-only commands against the lab, so it is the reviewer
+that catches "the file the brief describes is not the file on disk" and "the number in the doc is not the
+number the cluster gives".
 
 ### Gotchas — all seen, all measured; read before every launch
 
@@ -162,7 +182,8 @@ with the decisions and the re-validation, and wait for CI green on that commit.
 
 ## Step 5 — the record and the memory
 
-`docs/REVIEW_<id>.md`: a table of claims × reviewers × decision; one section per accepted or rejected
+`docs/REVIEW_<id>.md`: a table of claims × reviewers × decision (the reviewers named as run: Codex, Grok,
+**OB1 — Fable 5.1, Claude Code Agent**); one section per accepted or rejected
 finding with Finding / Re-check / Decision; a "Not asked" section for what a reviewer volunteered; an
 Outcome paragraph. Add the file to `REVIEW_ARTIFACTS` in `local-development/tests/test_docs_citations.py`
 — the record deliberately quotes wrong anchors and old lines, and that is the point of a record. Add one
@@ -181,12 +202,15 @@ confirmation pass and it still finds things (Cursor found the all-dots reason af
 1. Local tests, spec verification and CI green BEFORE the review; PR open early with `Closes #N`.
 2. Brief written to a file: numbered claims, exact locations, artefact demanded, snippet + failing test
    demanded for refutations, constraints stated.
-3. Probe both models if anything changed; launch both with the exact invocations above, own output
-   files, own subdirectories, Codex with stdin closed (`< /dev/null`) and its stderr header read back.
-4. Wait for both; wait for the Codex process to actually exit; `git status`; remove reviewer artefacts.
+3. Probe Codex and Grok if anything changed; launch all three with the exact invocations above — own
+   output files, own subdirectories, Codex with stdin closed (`< /dev/null`) and its stderr header read
+   back, OB1 with the same brief and the read-only paragraph.
+4. Wait for all three; wait for the Codex process to actually exit and for OB1's completion notification;
+   `git status`; remove reviewer artefacts.
 5. Re-check every verdict yourself; decide each in writing with the reason; route out-of-scope findings.
 6. Apply; deviations into the spec's notes; rebuild if the image is touched; full suite; helm; CRC; live
    checks; the spec's verification repeated.
 7. `docs/REVIEW_<id>.md` + `REVIEW_ARTIFACTS`; commit naming the review; push; PR comment; CI green.
 8. Second pass on the fixed head; repeat 4–7 for anything it finds.
-9. Memory data point; only then call the PR ready. The operator merges.
+9. Memory data point; only then call the PR ready. **The operator merges — never merge yourself** (the
+   operator, 2026-09-18: "Don't merge automatically, remember you need to approve it").
