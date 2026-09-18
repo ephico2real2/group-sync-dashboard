@@ -42,7 +42,7 @@
   /* 4.55:1. Used as link text (.drill, .back) as well as the chart stroke, so it has to
      clear the 4.5 text bar, not just the 3:1 for graphical objects. */
   --series-1: #2874d0;
-  --series-1-wash: rgba(40, 116, 208, 0.10);
+  --series-1-wash: color-mix(in srgb, var(--series-1) 10%, transparent);
   /* status-good and status-critical are BOTH a badge glyph and running text
      (.change-added / .change-removed / .err), so both are held to 4.5:1. status-warning is
      only ever a glyph, so it is held to 3:1 (WCAG 1.4.11) — at 4.5:1 an amber turns brown
@@ -141,8 +141,30 @@
   --text-2xl: 22px;    /* KPI value */
   --text-3xl: 30px;    /* KPI value on a lead card */
   --text-hero: 48px;   /* the one number a page leads with */
+
+  /* SPACING and RADIUS scales (#152). The same discipline as the type scale, and the same
+     starting rule: these are the sheet's existing values named, at exactly their current px —
+     nothing moves. The spacing ladder is the 2px grid the sheet already sits on; a value off
+     the ladder (1, 3, 5, 7, 9 px — a control height, a glyph's asymmetry, 7-above/9-below the
+     3px tab bar) stays a literal with an `optical:` note on its own line, and
+     tests/test_type_scale.py fails on any literal without one. Add a step deliberately, or note
+     why the literal is right; never invent a number at the call site. */
+  --space-1: 2px;  --space-2: 4px;  --space-3: 6px;  --space-4: 8px;   --space-5: 10px;  --space-6: 12px;
+  --space-7: 14px; --space-8: 16px; --space-9: 18px; --space-10: 20px; --space-11: 22px;
+  --radius-xs: 2px;      /* the accent rail, the row highlight */
+  --radius-sm: 4px;      /* form fields */
+  --radius-md: 6px;      /* controls, popovers, the tab's crown */
+  --radius-lg: 10px;     /* cards and dialogs */
+  --radius-pill: 999px;  /* badges, chips, pills */
+  --radius-round: 50%;   /* glyph dots */
+
+  /* Two of the three tokens the Users tab's chips referenced before they existed (#152): they
+     fell back to hard-coded Tailwind-slate hex and rendered off the system in both themes. The
+     third, --accent-soft, is derived on body — see there. */
+  --line: #c3c2b7;                                                  /* a chip's resting border */
+  --warn: #b45309;  /* td.num.warn is TEXT at weight 600, so 4.5:1 — the warning-edge amber, not the 3:1 glyph amber */
 }
-@media (prefers-color-scheme: dark) {
+@media screen and (prefers-color-scheme: dark) {
   :root:where(:not([data-theme="light"])) {
     color-scheme: dark;
     --surface-1: #1a1a19;
@@ -156,7 +178,7 @@
     --baseline: #383835;
     --border: rgba(255, 255, 255, 0.10);
     --series-1: #3987e5;
-    --series-1-wash: rgba(57, 135, 229, 0.14);
+    --series-1-wash: color-mix(in srgb, var(--series-1) 14%, transparent);
     --series-2: #d95926;
     --series-3: #199e70;
     --series-4: #c98500;
@@ -173,6 +195,8 @@
        card but only 3.76:1 here, and .change-added renders it as text. */
     --status-good: #0ca30c;
     --status-unknown: #898781;
+    --line: #4a4a46;
+    --warn: #c48704;
     --tab-overview: #2d7ad7;
     --tab-groups: #12907f;
     --tab-bindings: #8468d0;
@@ -185,6 +209,12 @@
     --k-access: #7fae8b; --k-rbac: #c8946a; --k-identity: #8ea3c8; --k-activity: #c090b4; --k-compliance: #b3aa72;
   }
 }
+/* Dark is a SCREEN theme (OB1, review of #179): a print is paper, Chrome paints no page background by
+   default, and the dark text tokens landed near-white on white — measured under print emulation with
+   ?mode=dark. Every dark block below is screen-only; the palette blocks stay unconditional, so a
+   reader's palette prints in its light form. One wrapper per block, contents at column 0: the guard
+   tests anchor on `^:root` and `\n}`. */
+@media screen {
 :root[data-theme="dark"] {
   color-scheme: dark;
   --surface-1: #1a1a19;
@@ -198,7 +228,7 @@
   --baseline: #383835;
   --border: rgba(255, 255, 255, 0.10);
   --series-1: #3987e5;
-  --series-1-wash: rgba(57, 135, 229, 0.14);
+  --series-1-wash: color-mix(in srgb, var(--series-1) 14%, transparent);
   --series-2: #d95926;
   --series-3: #199e70;
   --series-4: #c98500;
@@ -212,6 +242,8 @@
      card but only 3.76:1 here, and .change-added renders it as text. */
   --status-good: #0ca30c;
   --status-unknown: #898781;
+  --line: #4a4a46;
+  --warn: #c48704;
   --tab-overview: #2d7ad7;
   --tab-groups: #12907f;
   --tab-bindings: #8468d0;
@@ -222,6 +254,108 @@
   --tab-usage: #d9490d;
   --tab-reports: #98a2b3;      /* 7.55:1 on the dark --page (measured) */
   --k-access: #7fae8b; --k-rbac: #c8946a; --k-identity: #8ea3c8; --k-activity: #c090b4; --k-compliance: #b3aa72;
+}
+}
+
+
+/* ---- Colour-vision palettes (#152) ----------------------------------------------------
+   Okabe–Ito, the standard colour-blind-safe set, applied at the token layer so every page
+   inherits it by existing. Deuteranopia and protanopia (~8 % of men) cannot separate red
+   from green, so "good" leaves green for blue and "warning" takes the orange; tritanopia is
+   the blue–yellow confusion, so that pair becomes teal and reddish-purple. High contrast keeps
+   the default hues and pushes the text and status tokens to 7:1 (AAA). Each palette overrides
+   ONLY the status trio and the export edge: --accent and the --tab-* identities stay — they
+   were already separated on lightness for a deuteranope, and a palette that repainted the
+   section colours would change which page you are on. Every value below was solved to the
+   same bars as the default tokens (4.5:1 text and 3:1 glyph on the card; the edge 3:1 on the
+   8 %-tinted page), moving lightness only, the minimum distance; the ratio each reached is
+   written beside it and tests/test_accessibility.py measures every theme × palette pair. The
+   OS-dark twin of each dark block must stay token-identical to the explicit one — a test holds
+   them together. */
+:root[data-palette="deuter"] {
+  --status-good: #0072b2;  /* 5.05:1 on the card */
+  --status-warning: #c18600;  /* 3.06:1 on the card */
+  --status-warning-edge: #b17a00;  /* 3.62:1 on the card */
+  --status-critical: #bf5400;  /* 4.56:1 on the card */
+}
+:root[data-palette="protan"] {
+  --status-good: #0072b2;  /* 5.05:1 on the card */
+  --status-warning: #c18600;  /* 3.06:1 on the card */
+  --status-warning-edge: #b17a00;  /* 3.62:1 on the card */
+  --status-critical: #bf5400;  /* 4.56:1 on the card */
+}
+:root[data-palette="trit"] {
+  --status-good: #008360;  /* 4.63:1 on the card */
+  --status-warning: #cb76a5;  /* 3.07:1 on the card */
+  --status-warning-edge: #c46499;  /* 3.63:1 on the card */
+  --status-critical: #bf5400;  /* 4.56:1 on the card */
+}
+:root[data-palette="contrast"] {
+  --status-good: #076607;  /* 7.02:1 on the card */
+  --status-warning: #9c6b03;  /* 4.53:1 on the card */
+  --status-warning-edge: #885e03;  /* 5.61:1 on the card */
+  --status-critical: #a42727;  /* 7.06:1 on the card */
+  --text-muted: #575551;  /* 7.25:1 on the card */
+}
+@media screen and (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"]))[data-palette="deuter"] {
+    --status-good: #0088d5;  /* 4.55:1 on the card */
+    --status-warning: #e69f00;  /* 7.73:1 on the card */
+    --status-warning-edge: #e69f00;  /* 7.73:1 on the card */
+    --status-critical: #d75f00;  /* 4.58:1 on the card */
+  }
+  :root:where(:not([data-theme="light"]))[data-palette="protan"] {
+    --status-good: #0088d5;  /* 4.55:1 on the card */
+    --status-warning: #e69f00;  /* 7.73:1 on the card */
+    --status-warning-edge: #e69f00;  /* 7.73:1 on the card */
+    --status-critical: #d75f00;  /* 4.58:1 on the card */
+  }
+  :root:where(:not([data-theme="light"]))[data-palette="trit"] {
+    --status-good: #009e73;  /* 5.09:1 on the card */
+    --status-warning: #cc79a7;  /* 5.69:1 on the card */
+    --status-warning-edge: #cc79a7;  /* 5.69:1 on the card */
+    --status-critical: #d75f00;  /* 4.58:1 on the card */
+  }
+  :root:where(:not([data-theme="light"]))[data-palette="contrast"] {
+    --status-good: #0ec00e;  /* 7.10:1 on the card */
+    --status-warning: #c48704;  /* 5.65:1 on the card */
+    --status-warning-edge: #c48704;  /* 5.65:1 on the card */
+    --status-critical: #e48d8d;  /* 7.04:1 on the card */
+    --text-muted: #a7a5a1;  /* 7.08:1 on the card */
+  }
+}
+@media screen {
+:root[data-theme="dark"][data-palette="deuter"] {
+  --status-good: #0088d5;  /* 4.55:1 on the card */
+  --status-warning: #e69f00;  /* 7.73:1 on the card */
+  --status-warning-edge: #e69f00;  /* 7.73:1 on the card */
+  --status-critical: #d75f00;  /* 4.58:1 on the card */
+}
+}
+@media screen {
+:root[data-theme="dark"][data-palette="protan"] {
+  --status-good: #0088d5;  /* 4.55:1 on the card */
+  --status-warning: #e69f00;  /* 7.73:1 on the card */
+  --status-warning-edge: #e69f00;  /* 7.73:1 on the card */
+  --status-critical: #d75f00;  /* 4.58:1 on the card */
+}
+}
+@media screen {
+:root[data-theme="dark"][data-palette="trit"] {
+  --status-good: #009e73;  /* 5.09:1 on the card */
+  --status-warning: #cc79a7;  /* 5.69:1 on the card */
+  --status-warning-edge: #cc79a7;  /* 5.69:1 on the card */
+  --status-critical: #d75f00;  /* 4.58:1 on the card */
+}
+}
+@media screen {
+:root[data-theme="dark"][data-palette="contrast"] {
+  --status-good: #0ec00e;  /* 7.10:1 on the card */
+  --status-warning: #c48704;  /* 5.65:1 on the card */
+  --status-warning-edge: #c48704;  /* 5.65:1 on the card */
+  --status-critical: #e48d8d;  /* 7.04:1 on the card */
+  --text-muted: #a7a5a1;  /* 7.08:1 on the card */
+}
 }
 
 @font-face {
@@ -269,6 +403,11 @@
 
 * { box-sizing: border-box; }
 body {
+  /* The pressed chip's wash (#152), derived HERE and not on :root: an unregistered custom property
+     inherits its COMPUTED value, so a :root color-mix(var(--accent)) freezes against --tab-overview
+     and the Users chips wear Overview's blue. body[data-page] overrides --accent on this same
+     element, so var(--accent) here follows the page (Grok, review of #179). */
+  --accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);
   margin: 0;
   color: var(--text-primary);
   /* Split rather than the `font:` shorthand so the size comes from the scale. The
@@ -295,12 +434,14 @@ body {
    light mode too whenever no theme is pinned, so unqualified it would put the dark shadow
    under every card on a white page. */
 :root { --elev-1: 0 1px 2px rgba(11,11,11,0.05), 0 1px 8px rgba(11,11,11,0.04); }
-@media (prefers-color-scheme: dark) {
+@media screen and (prefers-color-scheme: dark) {
   :root:where(:not([data-theme="light"])) {
     --elev-1: 0 1px 2px rgba(0,0,0,0.5), 0 1px 10px rgba(0,0,0,0.35);
   }
 }
+@media screen {
 :root[data-theme="dark"] { --elev-1: 0 1px 2px rgba(0,0,0,0.5), 0 1px 10px rgba(0,0,0,0.35); }
+}
 
 /* One focus treatment for everything focusable. There was none before: `select, button`
    inherited the UA outline, and `.drill` actively removed it. A 2px ring plus a 2px offset
@@ -309,7 +450,7 @@ body {
 :where(a, button, select, input, [tabindex]):focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
 }
 
 /* Skip link: the tables are long, and without this a keyboard user tabs the whole nav on
@@ -317,7 +458,7 @@ body {
 .skip {
   position: absolute; left: 8px; top: -44px; z-index: 100;
   background: var(--surface-1); color: var(--text-primary);
-  border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px;
+  border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-4) var(--space-6);
   transition: top 140ms ease;
 }
 .skip:focus { top: 8px; }
@@ -330,7 +471,7 @@ body {
 .sr-only {
   position: absolute;
   width: 1px; height: 1px;
-  margin: -1px; padding: 0;
+  margin: -1px; padding: 0; /* optical: the visually-hidden clip idiom */
   overflow: hidden;
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
@@ -356,32 +497,44 @@ h1, h2, h3 { font-weight: 600; margin: 0; }
    is not in the accessibility tree). */
 .card > h2::before, .card > h3::before {
   content: ""; display: inline-block; vertical-align: middle;
-  width: 3px; height: 0.95em; margin-right: 8px; border-radius: 2px;
+  width: 3px; height: 0.95em; margin-right: var(--space-4); border-radius: var(--radius-xs);
   background: var(--accent);
 }
 h1 { font-size: var(--text-xl); }
 h2 { font-size: var(--text-lg); }
 h3 { font-size: var(--text-md); color: var(--text-secondary); }
 
-.wrap { max-width: 1180px; margin: 0 auto; padding: 20px 20px 64px; }
+.wrap { max-width: 1180px; margin: 0 auto; padding: var(--space-10) var(--space-10) 64px; /* optical: the page's tail room */ }
 
 header.top {
-  display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
-  padding-bottom: 14px; border-bottom: 1px solid var(--border); margin-bottom: 18px;
+  display: flex; align-items: baseline; gap: var(--space-6); flex-wrap: wrap;
+  padding-bottom: var(--space-7); border-bottom: 1px solid var(--border); margin-bottom: var(--space-9);
 }
 header.top .sub { color: var(--text-muted); font-size: var(--text-sm); }
 header.top .spacer { flex: 1; }
+/* Appearance + Colours (#152): in the persistent header, never in renderFilters(), which is
+   rebuilt every 60 s and would drop a select from under the reader. */
+.shell-prefs { display: inline-flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+.shell-prefs .pref { display: inline-flex; align-items: center; gap: var(--space-3); } /* a label wraps WITH its select at 375px */
+.shell-prefs label { color: var(--text-secondary); font-size: var(--text-sm); }
+/* On a phone the two inline labels cost the header a row each (223 px at 375, was 113). Below 520 px a
+   label sits ABOVE its select, so the pair shares one row with Refresh and both labels stay on screen —
+   167 px measured, against 143 with the labels clipped away, which left two selects reading "Auto" and
+   "Default" with nothing naming them for a sighted reader (OB1, review 2 of #179). */
+@media (max-width: 520px) {
+  .shell-prefs .pref { flex-direction: column; align-items: flex-start; gap: 0; }
+}
 
 /* One filter row above everything it scopes — never a filter inside a card. */
 .filters {
-  display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
-  margin-bottom: 18px;
+  display: flex; gap: var(--space-5); align-items: center; flex-wrap: wrap;
+  margin-bottom: var(--space-9);
 }
 .filters label { color: var(--text-secondary); font-size: var(--text-sm); }
 select, button, a.btn, input[type="search"] {
   font: inherit; font-size: var(--text-md); color: var(--text-primary);
   background: var(--surface-1); border: 1px solid var(--border);
-  border-radius: 6px; padding: 5px 9px; cursor: pointer;
+  border-radius: var(--radius-md); padding: 5px 9px; /* optical: the control height every bar is built on */ cursor: pointer;
 }
 /* The search boxes take the same border, surface and type as the selects beside them — they
    were the one control in the bar left to the browser's default look. A text field is not a
@@ -401,24 +554,24 @@ button:hover, select:hover, a.btn:hover, input[type="search"]:hover { border-col
 
 .card {
   background: var(--surface-1); border: 1px solid var(--border);
-  border-radius: 10px; padding: 16px; margin-bottom: 14px;
+  border-radius: var(--radius-lg); padding: var(--space-8); margin-bottom: var(--space-7);
 }
-.grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+.grid { display: grid; gap: var(--space-7); grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
 
 /* Hero: the one number the dashboard leads with. Proportional figures, system sans. */
-.hero { display: flex; align-items: baseline; gap: 12px; margin-bottom: 4px; }
+.hero { display: flex; align-items: baseline; gap: var(--space-6); margin-bottom: var(--space-2); }
 .hero .value { font-size: var(--text-hero); font-weight: 600; line-height: 1; letter-spacing: -0.02em; }
 .hero .label { color: var(--text-secondary); }
 
 /* Stat tiles: the number IS the chart. No one-bar bar charts. */
-.kpis { display: flex; gap: 22px; flex-wrap: wrap; margin-top: 12px; }
+.kpis { display: flex; gap: var(--space-11); flex-wrap: wrap; margin-top: var(--space-6); }
 .kpi .label { font-size: var(--text-xs); color: var(--text-muted); text-transform: none; }
 /* A coloured edge on the counts that represent a problem, and only when the count is not
    zero. The number is still the signal — this just lets you find the one card with
    something wrong without reading six figures on each. Non-text, so the 3:1 bar of WCAG
    1.4.11 applies, which is what lets --status-warning appear here at all: it clears 3:1
    but not the 4.5:1 it would need as text. */
-.kpi.flag-warning, .kpi.flag-critical { padding-left: 9px; border-left: 3px solid transparent; }
+.kpi.flag-warning, .kpi.flag-critical { padding-left: 9px; /* optical: 9 + the 3px flag = one 12px step */ border-left: 3px solid transparent; }
 .kpi.flag-warning  { border-left-color: var(--status-warning); }
 .kpi.flag-critical { border-left-color: var(--status-critical); }
 .kpi .value { font-size: var(--text-2xl); font-weight: 600; line-height: 1.25; }
@@ -426,25 +579,25 @@ button:hover, select:hover, a.btn:hover, input[type="search"]:hover { border-col
 
 /* State badge: shape + colour + text. Colour is never the only channel. */
 .badge {
-  display: inline-flex; align-items: center; gap: 6px;
+  display: inline-flex; align-items: center; gap: var(--space-3);
   font-size: var(--text-sm); font-weight: 500; color: var(--text-primary);
-  border: 1px solid var(--border); border-radius: 999px; padding: 2px 9px 2px 7px;
+  border: 1px solid var(--border); border-radius: var(--radius-pill); padding: 2px 9px 2px 7px; /* optical: asymmetric around the glyph */
   white-space: nowrap;
 }
 .badge .glyph { width: 9px; height: 9px; flex: none; display: inline-block; }
-.badge.ok       .glyph { background: var(--status-good); border-radius: 50%; }
+.badge.ok       .glyph { background: var(--status-good); border-radius: var(--radius-round); }
 .badge.late     .glyph,
 .badge.warning  .glyph { background: var(--status-warning); clip-path: polygon(50% 0, 100% 100%, 0 100%); }
 .badge.overdue  .glyph,
-.badge.critical .glyph { background: var(--status-critical); border-radius: 1px; }
-.badge.unknown  .glyph { border: 1.5px solid var(--status-unknown); border-radius: 50%; background: none; }
+.badge.critical .glyph { background: var(--status-critical); border-radius: 1px; /* optical: the critical glyph is a square — its shape is the signal */ }
+.badge.unknown  .glyph { border: 1.5px solid var(--status-unknown); border-radius: var(--radius-round); background: none; }
 
 .muted { color: var(--text-muted); }
 .mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 
 table { border-collapse: collapse; width: 100%; font-size: var(--text-md); }
 th, td {
-  text-align: left; padding: 6px 10px 6px 0;
+  text-align: left; padding: var(--space-3) var(--space-5) var(--space-3) 0;
   border-bottom: 1px solid var(--gridline); vertical-align: top;
   /* Tabular figures everywhere, not just in .num columns. This dashboard repaints on a
      poll: with proportional digits a count going 9 -> 10, or a timestamp ticking, changes
@@ -453,7 +606,7 @@ th, td {
   font-variant-numeric: tabular-nums;
 }
 th { color: var(--text-muted); font-weight: 500; font-size: var(--text-xs); }
-td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; padding-right: 16px; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; padding-right: var(--space-8); }
 .scroll-x { overflow-x: auto; }
 
 /* Zebra striping is what actually makes a 60-row table scannable — the eye tracks a row
@@ -470,14 +623,14 @@ tbody tr:nth-child(even) td { background: var(--zebra); }
    and 5 used to sit at 2.74, 2.11 and 2.62 in the light theme, so a third of these dots
    were below the threshold for conveying anything at all. */
 .cr-dot {
-  width: 9px; height: 9px; border-radius: 50%; flex: none;
-  display: inline-block; margin-right: 6px; vertical-align: baseline;
+  width: 9px; height: 9px; border-radius: var(--radius-round); flex: none;
+  display: inline-block; margin-right: var(--space-3); vertical-align: baseline;
 }
 .owner { display: inline-flex; align-items: center; white-space: nowrap; }
 
 .chip {
-  display: inline-block; padding: 1px 7px; margin: 0 4px 4px 0;
-  border: 1px solid var(--border); border-radius: 999px;
+  display: inline-block; padding: 1px 7px; /* optical: a one-line chip */ margin: 0 var(--space-2) var(--space-2) 0;
+  border: 1px solid var(--border); border-radius: var(--radius-pill);
   font-size: var(--text-sm); background: var(--zebra);
 }
 
@@ -518,8 +671,8 @@ svg .hit { fill: transparent; cursor: pointer; }
 .tooltip {
   position: absolute; pointer-events: none; z-index: 5;
   background: var(--surface-1); color: var(--text-primary);
-  border: 1px solid var(--border); border-radius: 6px;
-  padding: 6px 9px; font-size: var(--text-sm); box-shadow: 0 2px 10px rgba(0,0,0,0.14);
+  border: 1px solid var(--border); border-radius: var(--radius-md);
+  padding: var(--space-3) 9px; /* optical: the popover's side room */ font-size: var(--text-sm); box-shadow: 0 2px 10px rgba(0,0,0,0.14);
   white-space: nowrap; opacity: 0; transition: opacity 90ms ease;
 }
 .tooltip.on { opacity: 1; }
@@ -530,9 +683,9 @@ svg .hit { fill: transparent; cursor: pointer; }
    every badge, while a reader who cannot separate red from amber loses nothing. Padding on
    the left so the bar has somewhere to sit without shifting the text. */
 .alert-row {
-  display: flex; gap: 10px; align-items: flex-start;
-  padding: 7px 0 7px 10px; border-bottom: 1px solid var(--gridline);
-  border-left: 3px solid transparent; border-radius: 2px;
+  display: flex; flex-wrap: wrap; /* #166: at 375px .who's 190px minimum plus the detail overflowed the page by 102px (measured); the detail drops to its own line instead */ gap: var(--space-5); align-items: flex-start;
+  padding: 7px 0 7px var(--space-5); /* optical: 7 + the 3px rail */ border-bottom: 1px solid var(--gridline);
+  border-left: 3px solid transparent; border-radius: var(--radius-xs);
   transition: background-color 160ms ease;
 }
 .alert-row.sev-critical { border-left-color: var(--status-critical); }
@@ -540,17 +693,17 @@ svg .hit { fill: transparent; cursor: pointer; }
 .alert-row:hover { background: var(--zebra); }
 .alert-row:last-child { border-bottom: 0; }
 .alert-row .who { min-width: 190px; font-weight: 500; word-break: break-all; }
-.alert-row .what { color: var(--text-secondary); }
+.alert-row .what { color: var(--text-secondary); flex: 1 1 240px; min-width: 0; } /* a basis, so the detail only drops to its own line when the row has no room for it (375px) and never wraps at desktop widths */
 /* Silenced: present and legible, visibly de-emphasised, never removed. The dashed edge is the
    second channel beside opacity, for the same colour-independence reason .badge has a glyph. */
 .alert-row.silenced { opacity: 0.65; border-left-style: dashed; }
 .silence-tag {
-  display: inline-block; font-size: var(--text-xs); line-height: 1.4; padding: 0 6px; margin-right: 6px;
-  border: 1px solid var(--status-unknown); border-radius: 3px; color: var(--text-muted);
+  display: inline-block; font-size: var(--text-xs); line-height: 1.4; padding: 0 var(--space-3); margin-right: var(--space-3);
+  border: 1px solid var(--status-unknown); border-radius: 3px; /* optical: the unknown-state chip */ color: var(--text-muted);
   white-space: nowrap;
 }
 
-.empty-note { color: var(--text-muted); font-size: var(--text-md); padding: 10px 0; }
+.empty-note { color: var(--text-muted); font-size: var(--text-md); padding: var(--space-5) 0; }
 .back { background: none; border: 0; padding: 0; color: var(--series-1); cursor: pointer; font-size: var(--text-md); }
 .filterbar-note { font-size: var(--text-sm); color: var(--text-muted); }
 code { font-family: var(--font-mono); font-size: var(--text-sm); }
@@ -563,7 +716,7 @@ code { font-family: var(--font-mono); font-size: var(--text-sm); }
    whatever the hue, while the full-strength colour lives in the border where the 3:1
    graphical bar applies. */
 .risk-pill {
-  display: inline-block; padding: 3px 10px; border-radius: 999px;
+  display: inline-block; padding: 3px var(--space-5); /* optical: the pill's own height */ border-radius: var(--radius-pill);
   font-size: var(--text-sm); font-weight: 700; letter-spacing: 0.02em;
   color: var(--text-primary); white-space: nowrap;
   border-left: 3px solid var(--risk-colour, var(--text-muted));
@@ -574,8 +727,8 @@ code { font-family: var(--font-mono); font-size: var(--text-sm); }
 .risk-medium   { --risk-colour: var(--series-4); }
 .risk-low      { --risk-colour: var(--text-muted); }
 
-.risk-headline { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
-.risk-headline .risk-pill { font-size: var(--text-lg); padding: 6px 14px; }
+.risk-headline { display: flex; align-items: center; gap: var(--space-5); margin-top: var(--space-5); }
+.risk-headline .risk-pill { font-size: var(--text-lg); padding: var(--space-3) var(--space-7); }
 
 /* The KPI row is the first thing read, so it gets real size. */
 .kpi.big .value { font-size: var(--text-3xl); letter-spacing: -0.02em; }
@@ -583,10 +736,10 @@ code { font-family: var(--font-mono); font-size: var(--text-sm); }
 
 /* Why-this-matters: three short arguments side by side rather than one dense paragraph
    nobody finishes. */
-.risk-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+.risk-grid { display: grid; gap: var(--space-7); grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
 .risk-item { font-size: var(--text-md); color: var(--text-secondary); line-height: 1.55; }
 .risk-item-h {
-  font-weight: 700; font-size: var(--text-md); color: var(--text-primary); margin-bottom: 3px;
+  font-weight: 700; font-size: var(--text-md); color: var(--text-primary); margin-bottom: 3px; /* optical: the reason's heading */
 }
 
 /* The table has to be scannable at a glance, so rows are taller and the identifying
@@ -594,9 +747,9 @@ code { font-family: var(--font-mono); font-size: var(--text-sm); }
    two competing backgrounds read as noise. */
 .audit-table th {
   font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.04em;
-  color: var(--text-muted); font-weight: 600; padding-bottom: 8px;
+  color: var(--text-muted); font-weight: 600; padding-bottom: var(--space-4);
 }
-.audit-table td { padding: 10px 14px 10px 0; font-size: var(--text-base); vertical-align: middle; }
+.audit-table td { padding: var(--space-5) var(--space-7) var(--space-5) 0; font-size: var(--text-base); vertical-align: middle; }
 .audit-table tbody tr:nth-child(even) td { background: none; }
 .audit-table .ns-cell strong { font-size: var(--text-lg); }
 .audit-table td.strong { font-weight: 700; }
@@ -610,17 +763,17 @@ code { font-family: var(--font-mono); font-size: var(--text-sm); }
   overflow-wrap: anywhere;
   white-space: normal;
 }
-.audit-table .who-name { display: inline-block; margin-right: 6px; }
-.who-more { margin-left: 2px; white-space: nowrap; }
+.audit-table .who-name { display: inline-block; margin-right: var(--space-3); }
+.who-more { margin-left: var(--space-1); white-space: nowrap; }
 .priv { font-weight: 600; }
 
 /* A tint the width of the row, so severity is visible without reading the pill. */
-.risk-row td:first-child { border-left: 4px solid var(--risk-colour); padding-left: 10px; }
+.risk-row td:first-child { border-left: 4px solid var(--risk-colour); padding-left: var(--space-5); }
 .risk-row.risk-critical td { background: color-mix(in srgb, var(--status-critical) 7%, transparent); }
 .risk-row.risk-high td { background: color-mix(in srgb, var(--status-warning) 7%, transparent); }
 
 /* ---- Namespace-audit controls -------------------------------------------------------- */
-.section-head { display: flex; align-items: center; gap: 12px; margin-bottom: 4px; }
+.section-head { display: flex; align-items: center; gap: var(--space-6); margin-bottom: var(--space-2); }
 .section-head .flush { flex: 1; }
 
 /* Sortable column header. A real <button> inside the <th>: a bare th is neither focusable
@@ -642,15 +795,15 @@ code { font-family: var(--font-mono); font-size: var(--text-sm); }
    mirrored into `view` anyway — at which point the element buys nothing and costs the
    styling control the arrow and count need. */
 .disclose {
-  display: inline-flex; align-items: center; gap: 6px;
+  display: inline-flex; align-items: center; gap: var(--space-3);
   font-size: var(--text-md); font-weight: 500;
-  border: 1px solid var(--border); border-radius: 6px;
-  padding: 4px 10px; background: var(--surface-1); cursor: pointer;
+  border: 1px solid var(--border); border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-5); background: var(--surface-1); cursor: pointer;
 }
 .disclose:hover { border-color: var(--baseline); }
 .disclose-arrow { color: var(--accent); font-size: var(--text-xs); }
 
-.ns-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+.ns-controls { display: flex; align-items: center; gap: var(--space-4); flex-wrap: wrap; margin-bottom: var(--space-5); }
 .ns-controls label { font-size: var(--text-sm); color: var(--text-secondary); }
 .ns-controls select { max-width: 340px; }
 
@@ -665,10 +818,10 @@ code { font-family: var(--font-mono); font-size: var(--text-sm); }
 /* Truncation is stated, never implied. A capped list that looks complete is the failure
    this whole change exists to avoid, so the note is a warning edge rather than a footnote. */
 .truncation-note {
-  margin-top: 10px; padding: 8px 12px;
+  margin-top: var(--space-5); padding: var(--space-4) var(--space-6);
   border-left: 3px solid var(--status-warning);
   background: color-mix(in srgb, var(--status-warning) 8%, transparent);
-  border-radius: 0 6px 6px 0;
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
 }
 
 /* ---- Visibility tier ------------------------------------------------------------------
@@ -682,7 +835,7 @@ code { font-family: var(--font-mono); font-size: var(--text-sm); }
   display: inline-flex; align-items: center;
   font-size: var(--text-sm); font-weight: 500; color: var(--text-primary);
   background: var(--zebra); border: 1px solid var(--border);
-  border-left-width: 3px; border-radius: 999px; padding: 2px 10px;
+  border-left-width: 3px; border-radius: var(--radius-pill); padding: var(--space-1) var(--space-5);
   white-space: nowrap;
 }
 /* The narrowed state carries the attention edge; the full state a neutral one. The WORDS
@@ -698,25 +851,25 @@ code { font-family: var(--font-mono); font-size: var(--text-sm); }
    complete is the silent-truncation defect wearing a security hat, so the banner is an
    edge-marked notice above the data it qualifies, never a footnote below it. */
 .scope-banner {
-  margin: 4px 0 10px; padding: 6px 10px;
+  margin: var(--space-2) 0 var(--space-5); padding: var(--space-3) var(--space-5);
   border-left: 3px solid var(--status-warning);
   background: color-mix(in srgb, var(--status-warning) 8%, transparent);
-  border-radius: 0 6px 6px 0;
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
 }
 
 /* A withheld view is a statement, not an absence — it must not wear .empty-note's quiet
    grey, which is this page's vocabulary for "nothing exists". */
 .scope-refusal {
-  margin-top: 6px; padding: 10px 12px;
+  margin-top: var(--space-3); padding: var(--space-5) var(--space-6);
   border-left: 3px solid var(--status-warning);
   background: color-mix(in srgb, var(--status-warning) 8%, transparent);
-  border-radius: 0 6px 6px 0;
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
   font-size: var(--text-md); color: var(--text-secondary);
 }
 .scope-refusal strong, .scope-banner strong { color: var(--text-primary); }
 
-.runbook { margin: 0; padding-left: 22px; font-size: var(--text-md); line-height: 1.7; color: var(--text-secondary); }
-.runbook li { margin-bottom: 5px; }
+.runbook { margin: 0; padding-left: var(--space-11); font-size: var(--text-md); line-height: 1.7; color: var(--text-secondary); }
+.runbook li { margin-bottom: 5px; /* optical: list rhythm at line-height 1.7 */ }
 .runbook strong { color: var(--text-primary); }
 
 /* ---- Section identity ---------------------------------------------------------------
@@ -733,11 +886,11 @@ body[data-page="logins"]   { --accent: var(--tab-logins); }
 body[data-page="usage"]    { --accent: var(--tab-usage); }
 body[data-page="reports"]  { --accent: var(--tab-reports); }
 
-.tabs { display: inline-flex; gap: 4px; }
+.tabs { display: inline-flex; gap: var(--space-2); flex-wrap: wrap; }
 .tab {
   position: relative;
-  background: none; border: 0; border-radius: 6px 6px 0 0;
-  padding: 7px 12px 9px; font-size: var(--text-md); font-weight: 500;
+  background: none; border: 0; border-radius: var(--radius-md) var(--radius-md) 0 0;
+  padding: 7px var(--space-6) 9px; /* optical: 7 above, 9 below the 3px bar */ font-size: var(--text-md); font-weight: 500;
   color: var(--text-secondary); cursor: pointer;
   transition: color 160ms ease, background-color 160ms ease;
 }
@@ -749,7 +902,7 @@ body[data-page="reports"]  { --accent: var(--tab-reports); }
 .tab[aria-current="page"] { color: var(--accent); font-weight: 700; }
 .tab[aria-current="page"]::after {
   content: ""; position: absolute; left: 8px; right: 8px; bottom: 0; height: 3px;
-  background: var(--accent); border-radius: 3px 3px 0 0;
+  background: var(--accent); border-radius: 3px 3px 0 0; /* optical: the 3px bar's own crown */
 }
 /* forced-colors strips author colours entirely; without this the active tab loses every
    visual channel except the weight. */
@@ -828,26 +981,26 @@ main > .grid:first-child > .card {
 header.top { border-bottom-color: color-mix(in srgb, var(--accent) 30%, var(--border)); }
 
 /* Users tab: chip filters and the never-logged-in toggle (DESIGN_users_tab_logins.md). */
-.chip-btn { border: 1px solid var(--line, #cbd5e1); background: transparent; border-radius: 999px;
-  padding: 2px 10px; font: inherit; font-size: .85em; cursor: pointer; margin: 0 6px 6px 0; }
-.chip-btn[aria-pressed="true"] { background: var(--accent-soft, #e2e8f0); font-weight: 600; }
+.chip-btn { border: 1px solid var(--line); background: transparent; border-radius: var(--radius-pill);
+  padding: var(--space-1) var(--space-5); font: inherit; font-size: .85em; cursor: pointer; margin: 0 var(--space-3) var(--space-3) 0; }
+.chip-btn[aria-pressed="true"] { background: var(--accent-soft); font-weight: 600; }
 .linkish { border: 0; background: none; padding: 0; font: inherit; color: inherit;
   text-decoration: underline; cursor: pointer; }
-td.num.warn { color: var(--warn, #b45309); font-weight: 600; }
+td.num.warn { color: var(--warn); font-weight: 600; }
 
 /* ---- Export (docs/DESIGN_export.md) ---------------------------------------------------
    Two real buttons in the filter bar and a note that states what the file will hold. The note
    wears the truncation edge whenever the page is a cut of a larger set, so "partial" is read
    before the download, not discovered in the spreadsheet. Tokens only: the contrast tables in
    tests/test_accessibility.py already cover every colour used here. */
-.export { display: inline-flex; align-items: center; gap: 6px; }
+.export { display: inline-flex; align-items: center; gap: var(--space-3); }
 .export-label { color: var(--text-secondary); font-size: var(--text-sm); }
 .export-note { font-size: var(--text-sm); color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .export-note.partial {
-  color: var(--text-primary); padding: 1px 8px;
+  color: var(--text-primary); padding: 1px var(--space-4); /* optical: a one-line control */
   border-left: 3px solid var(--status-warning-edge);
   background: color-mix(in srgb, var(--status-warning) 8%, transparent);
-  border-radius: 0 6px 6px 0;
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
 }
 
 /* ---- Idle timeout (docs/DESIGN_session_and_signout.md) --------------------------------
@@ -863,13 +1016,13 @@ td.num.warn { color: var(--warn, #b45309); font-weight: 600; }
 .idle-dialog {
   background: var(--surface-1); color: var(--text-primary);
   border: 1px solid var(--border); border-left: 4px solid var(--status-warning);
-  border-radius: 10px; padding: 18px 20px; max-width: 460px; margin: 16px;
+  border-radius: var(--radius-lg); padding: var(--space-9) var(--space-10); max-width: 460px; margin: var(--space-8);
   box-shadow: var(--elev-1);
 }
-.idle-dialog h2 { margin-bottom: 8px; }
-.idle-dialog p { margin: 0 0 12px; font-size: var(--text-base); color: var(--text-secondary); }
+.idle-dialog h2 { margin-bottom: var(--space-4); }
+.idle-dialog p { margin: 0 0 var(--space-6); font-size: var(--text-base); color: var(--text-secondary); }
 .idle-dialog strong { color: var(--text-primary); font-variant-numeric: tabular-nums; }
-.idle-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.idle-actions { display: flex; gap: var(--space-5); flex-wrap: wrap; }
 @media (forced-colors: active) {
   .idle-dialog { border: 2px solid CanvasText; }
 }
@@ -879,10 +1032,10 @@ td.num.warn { color: var(--warn, #b45309); font-weight: 600; }
 /* Reports directory table (#147). Each row carries its category colour (--rk); the rows read as a
    gradient down the list, the report name is bold mono, and clicking a row scrolls #report-form into
    view (the "clean way"). Category colours are tokens (no literal hex, per test_accessibility.py). */
-.report-table-wrap { overflow-x: auto; margin: 8px 0 2px; }
+.report-table-wrap { overflow-x: auto; margin: var(--space-4) 0 var(--space-1); }
 table.report-table { width: 100%; border-collapse: collapse; }
 .report-table thead th { font-size: var(--text-xs); font-weight: 600; letter-spacing: .08em;
-  text-transform: uppercase; color: var(--text-muted); text-align: left; padding: 9px 14px;
+  text-transform: uppercase; color: var(--text-muted); text-align: left; padding: 9px var(--space-7); /* optical: the catalogue header's height */
   background: var(--zebra); border-bottom: 1px solid var(--border); }
 .report-table th.rp-kcol { width: 108px; }
 tr.report-pick { --rk: var(--accent); border-bottom: 1px solid var(--border); cursor: pointer;
@@ -896,13 +1049,13 @@ tr.report-pick.r-compliance { --rk: var(--k-compliance); }
 tr.report-pick:hover { background: linear-gradient(90deg, color-mix(in srgb, var(--rk) 15%, transparent), transparent 60%); }
 tr.report-pick.current { background: linear-gradient(90deg, color-mix(in srgb, var(--rk) 20%, transparent), transparent 66%); }
 tr.report-pick:last-child { border-bottom: 0; }
-.report-table td { padding: 12px 14px; vertical-align: top; position: relative; }
+.report-table td { padding: var(--space-6) var(--space-7); vertical-align: top; position: relative; }
 .report-table td.rp-kind { width: 108px; }
 tr.report-pick td:first-child::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
   background: linear-gradient(180deg, var(--rk), color-mix(in srgb, var(--rk) 32%, transparent)); transition: width .14s ease; }
 tr.report-pick:hover td:first-child::before, tr.report-pick.current td:first-child::before { width: 5px; }
 .rp-chip { display: inline-block; font-family: var(--font-mono); font-size: var(--text-micro); font-weight: 500;
-  letter-spacing: .02em; padding: 2px 8px; border-radius: 5px; border: 1px solid currentColor; white-space: nowrap; }
+  letter-spacing: .02em; padding: var(--space-1) var(--space-4); border-radius: 5px; /* optical: between the chip and control radii */ border: 1px solid currentColor; white-space: nowrap; }
 .rp-chip.k-access { color: var(--k-access); }
 .rp-chip.k-rbac { color: var(--k-rbac); }
 .rp-chip.k-identity { color: var(--k-identity); }
@@ -923,12 +1076,12 @@ tr.report-pick:focus-visible { outline: 2px solid var(--accent); outline-offset:
   .report-table td.rp-name { width: auto; } .rp-title { white-space: normal; }
   .rp-desc { max-width: none; }
 }
-.report-fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px 16px; margin-top: 8px; }
-.report-field { display: flex; flex-direction: column; gap: 2px; }
+.report-fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: var(--space-5) var(--space-8); margin-top: var(--space-4); }
+.report-field { display: flex; flex-direction: column; gap: var(--space-1); }
 .report-field label { font-size: var(--text-sm); color: var(--text-muted); }
 .report-field input[type=text], .report-field input[type=number], .report-field input[type=date], .report-field select {
-  font: inherit; padding: 4px 6px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface-1); color: var(--text-primary); }
-.report-status { margin-top: 10px; padding: 8px 10px; border-left: 3px solid var(--accent); background: var(--surface-1); font-size: var(--text-sm); }
+  font: inherit; padding: var(--space-2) var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-1); color: var(--text-primary); }
+.report-status { margin-top: var(--space-5); padding: var(--space-4) var(--space-5); border-left: 3px solid var(--accent); background: var(--surface-1); font-size: var(--text-sm); }
 
 /* #143: the "view namespaces" popup — a native <dialog> in the top layer, so the report form
    cannot reflow while the list is open. The idle dialog's look, reused; the list scrolls INSIDE
@@ -938,14 +1091,38 @@ tr.report-pick:focus-visible { outline: 2px solid var(--accent); outline-offset:
 dialog.ns-preview {
   background: var(--surface-1); color: var(--text-primary);
   border: 1px solid var(--border); border-left: 4px solid var(--accent);
-  border-radius: 10px; padding: 18px 20px; max-width: 460px;
+  border-radius: var(--radius-lg); padding: var(--space-9) var(--space-10); max-width: 460px;
   box-shadow: var(--elev-1);
 }
 dialog.ns-preview::backdrop { background: color-mix(in srgb, var(--page) 72%, transparent); }
-dialog.ns-preview h2 { margin-bottom: 8px; }
-dialog.ns-preview ul { list-style: none; margin: 8px 0 12px; padding: 0; max-height: 320px; overflow: auto; }
-dialog.ns-preview li { padding: 2px 0; font-size: var(--text-base); }
-dialog.ns-preview p { margin: 0 0 8px; font-size: var(--text-sm); }
+dialog.ns-preview h2 { margin-bottom: var(--space-4); }
+dialog.ns-preview ul { list-style: none; margin: var(--space-4) 0 var(--space-6); padding: 0; max-height: 320px; overflow: auto; }
+dialog.ns-preview li { padding: var(--space-1) 0; font-size: var(--text-base); }
+dialog.ns-preview p { margin: 0 0 var(--space-4); font-size: var(--text-sm); }
 @media (forced-colors: active) {
   dialog.ns-preview { border: 2px solid CanvasText; }
 }
+
+/* ---- Utilities (#152) ---------------------------------------------------------------
+   The 92 inline style= attributes the page carried, as classes on the token system, so the
+   type-scale and spacing guards can see them (tests/test_type_scale.py scans index.html too).
+   Last in the sheet on purpose: a utility must win a tie with the component rule it adjusts
+   (.kpis.mt-0 over .kpis' own margin-top). Spacing utilities are named by the ladder step,
+   not the px, so a step change moves them with the scale. */
+.mt-0 { margin-top: 0; }
+.mt-2 { margin-top: var(--space-2); } .mt-3 { margin-top: var(--space-3); } .mt-4 { margin-top: var(--space-4); }
+.mt-5 { margin-top: var(--space-5); } .mt-6 { margin-top: var(--space-6); } .mt-7 { margin-top: var(--space-7); }
+.mb-3 { margin-bottom: var(--space-3); } .mb-4 { margin-bottom: var(--space-4); } .mb-5 { margin-bottom: var(--space-5); }
+.ml-2 { margin-left: var(--space-2); }
+.nowrap { white-space: nowrap; }
+.fw-normal { font-weight: 400; }
+.grow { flex: 1; }
+.row-wrap { display: flex; align-items: center; gap: var(--space-5); flex-wrap: wrap; }
+.chart-img { width: 100%; height: auto; display: block; }
+.text-xs { font-size: var(--text-xs); } .text-sm { font-size: var(--text-sm); }
+.text-md { font-size: var(--text-md); } .text-base { font-size: var(--text-base); }
+/* The cluster card's API line: 3px under the title row — off the ladder, kept as it was. */
+.cluster-api { font-size: var(--text-sm); margin-top: 3px; /* optical: sits under the title row */ }
+/* A KPI value one step down — schedules, timestamps and group names that would not fit at 22px.
+   The two "first / last login" values were 1rem (16px, off the scale) and now sit here at 15px. */
+.kpi .value.sm { font-size: var(--text-lg); }

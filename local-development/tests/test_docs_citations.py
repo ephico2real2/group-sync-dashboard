@@ -91,6 +91,9 @@ REVIEW_ARTIFACTS = (
     # is the operator's chart value", which is the whole question.
     "REVIEW_tier_constants_and_settling_name.md",
     "OAUTH_LOGLEVEL_REVIEW.md",
+    # PR #179's three-reviewer record: its findings quote the exact line of the page where a second
+    # class= attribute sat and the :root line the wash froze on — spans of code at a moment.
+    "REVIEW_design_foundation.md",
     # The PR #12 adversarial review. Its findings quote the exact lines they are about, which is
     # the point of a review record and precisely what the line-number rule forbids elsewhere.
     "REVIEW_login_capture_pr12.md",
