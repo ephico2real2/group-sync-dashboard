@@ -36,6 +36,57 @@ KEEP=~/migration-carry                                     # off-machine transfe
 
 ---
 
+## 1b. The whole move at a glance — every step, and how it runs
+
+Read this table first. **Script** means a command you run and it does the work. **Manual** means you
+type or click it and there is no way around that, usually because it is interactive or a browser login.
+**Hand-edit** means you write a file yourself.
+
+### On this Mac, before you move
+
+| # | Step | How | What it is |
+|---|---|---|---|
+| 2.0 | make the carry folder | Manual | one `mkdir` |
+| 2.1 | registry credentials | **nothing to do** | corrected: they are not carried. See `docs/handoff/registry-credentials.md` |
+| 2.2 | commit and push at-risk edits | Manual | `git add` / `commit` / `push` per repo. Already done for the dashboard, the RBAC automation and the NCO fork on 2026-09-18 |
+| 2.3 | refresh the claude-config backup | **Script** | the capture, then `git push` |
+| 2.4 | copy local-only scratchpad files | Manual | `cp`; most of it is already committed |
+| 2.5 | copy the optional login shortcuts | Manual | `cp` of `~/.ssh`, codex auth, containers auth |
+| 2.6 | record where secrets live | Hand-edit | a note in the password manager. **Locations only, never values** |
+| 2.7 | record tool versions | **Script** | one command writes the version snapshot |
+
+### On the new Mac
+
+| # | Step | How | What it is |
+|---|---|---|---|
+| 4.1 | install the tools | Manual | `brew install` lines, plus three that are NOT brew: codex (npm), cursor (vendor script), CRC (a `.pkg` you download) |
+| 4.2 | log in to each tool | Manual | `gh auth login`, `podman login quay.io`, `codex`/`cursor` logins, SSH key. All interactive by design |
+| 4.3 | clone the repos | Manual | `git clone` per repo |
+| 4.4 | restore working state | Manual | check out the pushed branches, or apply the two carried patches |
+| 4.5 | rebuild the venv and Playwright | **Script** | one block; no decisions |
+| 4.6 | rebuild CRC | Manual | `crc config set` lines then `crc start`. **Sized for the M5 Pro 18-core / 64 GB — see §4.6** |
+| 4.6b | operators and monitoring | Manual | OperatorHub installs; monitoring is ON now that the machine can carry it |
+| 4.7 | cert-manager operator | Manual | subscription plus the ClusterIssuer pair |
+| 4.8 | deploy the app | **Script** | `release-crc.sh` — builds, pushes, deploys and verifies the commit in-pod. The one fully automated step |
+| 4.9 | re-apply the mock cluster | Manual | five sub-steps, mostly live-only with no committed manifest. The slowest part of the move |
+| 4.10 | LDAP lab and cluster trust | Manual | only if you need LDAP. `setup-local-ldap-testing/` plus `MISSING-STEPS.md` for what the seeds do not create |
+| — | restore the Claude Code setup | **Script** | `claude-config/2026-09-18-design-programme/restore.sh`, after the repo root's own. Proven against an empty home on 2026-09-18 |
+| 5 | verification | **Script** | the check block, then `capture-screenshots.py` for the pictures |
+
+### The three scripts that do the heavy lifting
+
+| Script | Run it when | It does |
+|---|---|---|
+| `claude-config/.../restore.sh` | after cloning claude-config | agents, tools, settings with the hook path re-keyed, and the memory notes. Safe to run twice |
+| `local-development/registry-creds.sh` | in any shell that pushes an image | exports the registry credentials from your `podman login`. Source it; it prints nothing |
+| `local-development/release-crc.sh` | after CRC is up | builds both images, pushes to the internal registry, deploys, and verifies the running commit |
+
+### What genuinely cannot be scripted
+
+Browser logins (Red Hat pull secret, `gh auth login`, Quay), the CRC `.pkg` install, and §4.9's mock
+cluster, which has no committed manifest for the backend Deployment and Service. Everything else is
+either a script above or a short block you paste.
+
 ## 2. Before you move (on THIS Mac) — ordered checklist
 
 ### 2.0 — Make the carry folder
@@ -319,14 +370,20 @@ python -m playwright install chromium     # for the e2e-walk / capture scripts
 # fresh pull secret first (nothing to copy):
 #   https://console.redhat.com/openshift/create/local  → download pull-secret
 
-# Sizing RAISED from the old 5 / 16384 / 60. That cluster sat at 99% CPU requests (4792m/4800m —
-# the #97 report-pod preemption cause) and 85% disk (51/60G) BEFORE monitoring or GitOps. The new
-# Mac is an Apple M5 Pro / 64 GB, so there is ample headroom to run monitoring + GitOps + the LDAP
-# lab together without re-saturating:
-crc config set cpus 8
-crc config set memory 32768                     # 32 GiB VM; leaves ~28-30 GiB for macOS + podman build VM
-crc config set disk-size 100
+# SIZED FOR THE TARGET MACHINE: MacBook Pro, Apple M5 Pro, 18-core CPU, 64 GB unified memory
+# (operator, confirmed 2026-09-18). The 18-core M5 Pro is 6 super cores + 12 performance cores.
+#
+# The old cluster was 5 / 16384 / 60 and sat at 99% CPU requests (4792m/4800m — the #97 report-pod
+# preemption cause) and 85% disk (51/60G), BEFORE monitoring or GitOps. Every dimension rises:
+crc config set cpus 12                          # of 18; leaves 6 for macOS and the podman build VM
+crc config set memory 32768                     # 32 GiB VM, half the machine; 32 GiB left for macOS + podman
+crc config set disk-size 100                    # the 85%-full 60G was the real constraint; disk is cheap
 crc config set enable-cluster-monitoring true   # NEW requirement; default CRC has monitoring OFF (0 pods)
+#
+# NOTE ON CORE COUNT: Apple Silicon has no SMT/hyperthreading, so 18 physical cores are 18 logical
+# cores — `sysctl -n hw.logicalcpu` returns 18, not 36. Size against 18. Allocating as though there
+# were 36 would re-create exactly the over-subscription that preempted the report pod 29 times in
+# three hours on the old cluster (#97).
 crc config set consent-telemetry yes
 crc config set no-proxy local,169.254/16
 
@@ -336,6 +393,26 @@ eval "$(crc oc-env)"
 oc login -u kubeadmin -p "$(crc console --credentials | ...)"   # kubeadmin-password is REGENERATED by crc; never carried
 oc config current-context        # expect: default/api-crc-testing:6443/kubeadmin
 ```
+
+**On monitoring.** It is on above, which is the change this move makes possible. Monitoring costs
+roughly 3-4 GiB and a real slice of CPU; a 32 GiB / 12-core VM has room for it alongside GitOps and the
+LDAP lab, where the old 16 GiB / 5-core one did not. The memory note "Monitoring validation parked for
+a bigger CRC" is discharged by this machine — but measure once rather than assume:
+
+```sh
+oc adm top node
+oc get pods -A --field-selector=status.phase=Pending    # empty means it fits
+```
+
+If either looks tight, `crc config set enable-cluster-monitoring false && crc stop && crc start` puts it
+back. Over-subscription is what preempted the report pod 29 times in three hours on the old cluster.
+
+**Architecture, if the new Mac is Apple Silicon.** This laptop builds `amd64` (measured:
+`podman info` → `amd64/linux`) and the images on quay are **single-architecture**, not manifest lists.
+An arm64 CRC cannot run them. Nothing breaks for the lab, because `release-crc.sh` builds locally and
+will produce arm64 natively on the new machine. What does break is pulling `quay.io/ephico2real/...`
+onto an arm64 cluster — rebuild and push from the new Mac, or publish a manifest list, before relying
+on the external registry there.
 
 ### 4.6b — Operators + cluster monitoring (install after `crc start`)
 
