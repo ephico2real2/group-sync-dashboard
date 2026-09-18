@@ -20,14 +20,13 @@ KEEP=~/migration-carry                                     # off-machine transfe
 - **Transfers by `git clone`:** all committed/pushed history in the four repos — the C3 reporting
   microservice is merged to `origin/main`; the app chart (0.32.0 / app 0.24.0), `release-crc.sh`,
   `environments/crc.yaml`, the mock-app source, and the specs/tests/session-changelogs are all in git.
-- **At risk (exists in one place only):** `local-development/.env` (real registry push credentials,
-  gitignored, backed up **nowhere**); the **uncommitted** `environments/crc.yaml` edit (67 insertions)
+- **At risk (exists in one place only):** the **uncommitted** `environments/crc.yaml` edit (67 insertions)
   and **`stash@{0}`** (a separate 36-line crc.yaml WIP); 6 project-memory notes newer than the
   claude-config backup; and the session scratchpad (`mock-certmanager.yaml`, review briefs, bespoke
   scripts) — which `/private/tmp` will wipe on a reboot, **not just on the move**.
-- **Single most important pre-move action:** get the three unrecoverable things off the machine —
-  **(1) `local-development/.env`**, **(2)** the uncommitted `crc.yaml` working-tree edit, and **(3)**
-  `stash@{0}` — before anything else. #1 is the top secret; #2 and #3 will **not** come back with a clone.
+- **Single most important pre-move action:** get the two unrecoverable things off the machine — the
+  uncommitted `crc.yaml` working-tree edit and `stash@{0}`. Neither comes back with a clone.
+  `local-development/.env` is **not** one of them; see §2.1.
 - **A new CRC is rebuilt from scratch.** The 64 GB VM, the mock cluster, the cert-manager chains, the
   LDAP lab, cluster-wide trust, and the dashboard's `mock-creds` volume patch are **live-only** and
   mostly reproduced by **no committed manifest**. `release-crc.sh` deploys **only** the dashboard +
@@ -45,17 +44,47 @@ KEEP=~/migration-carry                                     # off-machine transfe
 mkdir -p "$KEEP"        # put this on an encrypted USB / external volume, not iCloud
 ```
 
-### 2.1 — TOP PRIORITY: preserve the one secret backed up nowhere
+### 2.1 — `local-development/.env` does NOT need carrying (corrected 2026-09-18)
 
-`local-development/.env` holds `REGISTRY_USERNAME`, `REGISTRY_PASSWORD`, `IMAGE_PULL_SECRET`,
-`REGISTRY`, `K8S_NAMESPACE`. Gitignored, in no repo, in no backup. **Never print its contents.**
+An earlier version of this runbook called this file the top secret and the single most important
+pre-move action. That was an overstatement. Of its seven keys, five have defaults in tracked files
+(`REGISTRY` and `REGISTRY_NAMESPACE` in `.github/workflows/helm.yaml`; `IMAGE_NAME` and
+`K8S_NAMESPACE` in `local-development/build-and-push-external.sh`; `IMAGE_PULL_SECRET` empty because
+the quay repository is public). The two that are real secrets already exist as **GitHub repository
+secrets**, so CI never depended on this laptop; their values cannot be read back, and do not need to
+be, because a Quay robot token is re-mintable on demand — which is the point of a robot account.
+
+So on the new Mac there is no file to restore. Log in once, then source the shim in any shell that
+needs to push:
 
 ```sh
-cp "$DASH/local-development/.env" "$KEEP/local-development.env"     # do NOT cat it
+podman login quay.io                          # once per machine; the only secret you ever type
+. ./local-development/registry-creds.sh       # exports the variables; prints nothing
+./local-development/build-and-push-external.sh
 ```
 
-Fallback if not copied: re-enter each value from the operator's password store / registry account.
-The key layout is recoverable from the tracked `local-development/.env.example`; the actual secrets are not.
+`registry-creds.sh` reads the credential that login stored and exports it under the **same names as
+the GitHub repository secrets** (`REGISTRY_USERNAME`, `REGISTRY_PASSWORD`), so a script reads
+identically in CI and on a laptop: in CI the workflow injects them, here the shim fills them. If they
+are already set it leaves them alone and never touches the store. `--check` reports what it found with
+the token masked to a length; `--login` logs podman in.
+
+Measured 2026-09-18: sourcing it prints **0 bytes**; the credential it exports exchanged a quay.io
+token for `pull,push` on `quay.io/ephico2real/group-sync-dashboard`, **HTTP 200**; and
+`build-and-push-external.sh` then reported `config : environment only (no .env found)` and proceeded
+past credential resolution.
+
+**No `.env` is written.** The credential lives in podman's store, where the login already put it, and
+in process memory for the life of one shell. A `.env` would be a second copy at rest that can drift,
+be committed by accident, or outlive a revoked token. Keeping one is still supported —
+`build-and-push-external.sh` reads it, and the environment wins where both set a value — but it is no
+longer the documented path and nothing needs to be carried between machines.
+
+The CRC internal registry needs nothing from here at all: `release-crc.sh` authenticates with
+`podman login -u kubeadmin -p "$(oc whoami -t)"`, a token minted at login.
+
+Storing the credentials by hand, storing them in GitHub with `gh`, keeping the `gh` session
+authenticated, and rotating the token are all in `docs/handoff/registry-credentials.md`.
 
 ### 2.2 — Commit/push every at-risk repo change (crc.yaml is the flagged file)
 
@@ -146,7 +175,8 @@ cp    ~/.config/containers/auth.json "$KEEP/creds/containers-auth.json"   # base
 Write a private note (in the password manager, not the repo) recording **locations only** — never dump values:
 
 - `~/.crc/machines/crc/kubeadmin-password` — **regenerable**; do NOT copy, do NOT print. Re-issued by `crc start`.
-- `local-development/.env` — top secret, carried in §2.1.
+- `local-development/.env` — no longer used; `registry-creds.sh` exports the same names from the
+  store after one `podman login`, see §2.1. Nothing to carry.
 - `~/.config/containers/auth.json` — base64 registry creds.
 - **CA PRIVATE KEY in git (security exposure, not a loss):**
   `group-sync-operator-helm-chart/setup-local-ldap-testing/ca-key.pem` is committed and pushed to
@@ -195,8 +225,8 @@ Match these on the new Mac (arm64 builds of the same versions):
 > The two SSH remotes need `~/.ssh` present **before** you can clone/push them. Carry `~/.ssh` (§2.5) or
 > generate a fresh key on the new Mac and register the `.pub` with GitHub.
 
-**Hand-carried in `$KEEP` (credentials + unrecoverable working state):**
-`local-development.env`, `crc.yaml.working.patch`, `crc.yaml.stash.patch`, the `scratchpad/` copies
+**Hand-carried in `$KEEP` (unrecoverable working state):**
+`crc.yaml.working.patch`, `crc.yaml.stash.patch`, the `scratchpad/` copies
 (`mock-certmanager.yaml`, review briefs, `crc-ca-cert-manager-plan.md`, bespoke scripts), and the
 `creds/` shortcuts (`~/.ssh`, `codex-auth.json`, `codex-config.toml`, `containers-auth.json`).
 
@@ -264,7 +294,7 @@ git clone <claude-config-remote> claude-config && (cd claude-config && ./restore
 
 ```sh
 NDASH=~/gitRepos/group-sync-dashboard
-cp "$KEEP/local-development.env" "$NDASH/local-development/.env"    # the top secret
+podman login quay.io   # then `. local-development/registry-creds.sh` in any pushing shell; see §2.1
 
 # crc.yaml working-tree edit: if you pushed the branch in §2.2, just check it out; else apply the patch
 git -C "$NDASH" apply "$KEEP/crc.yaml.working.patch"               # (branch checkout is the cleaner path)
