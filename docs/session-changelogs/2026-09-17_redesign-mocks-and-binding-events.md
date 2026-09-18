@@ -398,3 +398,62 @@ Outcome in one line: **…**
   for that reader, keeps its drive script beside its report so the proof can be re-run, and flags what it
   treated as shallow, since that is what a second model is most likely to overturn. Agreeing with OB3
   because OB3 said it wastes the third-reviewer seat.
+
+## Part 8 — Home, the page every reader lands on, #158 (2026-09-18)
+
+### Implementation — commit `af3d47d` (2026-09-18 09:01), PR #186 (branch `feat/home` from `feat/drilldown`)
+
+- The operator's ruling that settled the issue's open question: *"our mockup user landing page should be
+  called by default main landing page simply called Home (overview stays as-is). It's easy that way."* So
+  `#page=home` is the default route on every tier and the first tab; the Overview keeps its
+  administrator-tier role one click away (#169 stands).
+- Self-scoped BY DEFINITION, which is what makes it tier-safe without a special case: an administrator sees
+  their own access, never everyone's, and the payload for a name is byte-identical whichever tier resolves
+  it (a test diffs the two bodies; only `scope` and the window's clock-derived start differ). A narrowed
+  reader's first impression of the product is no longer the Overview's refusal card.
+- One endpoint, `GET /api/clusters/{cluster_id}/home`, composed from the reads the drill-downs already
+  serve plus one new store method; the arithmetic is in `gsd/home.py` so a number and its label change
+  together. The page follows `docs/design/landing-access-mock.html` — the answer, then What changed (the
+  history folded: a group that changed five times in half an hour is one *flapping* line, a sync that added
+  eleven groups at once is one line), Cluster-wide, Namespaces you can reach, Direct grants, Your groups.
+  Every row is a whole-row `<button>`, so the keyboard reaches every drill.
+- **Two defects found by RENDERING the page, not by reading it:** `data.home` was fetched and never written
+  back, so the page sat on "Loading…" for good; and at 375 px a long role name in a `nowrap` pill squeezed
+  the group's name to one character per line. Both fixed, the second with a test that measures the cell.
+- Measured: the Home API tests 14 passed; the full browser suite 361; the CSS guards with `TestHome` 354;
+  non-UI 3414 passed, 13 skipped. CI on `af3d47d` green on every job. Deployed to CRC
+  (`0.24.0-af3d47dc71`).
+
+### Review pass 1 applied — commits `a1250fd`, `5efa89b`, `c5cd511` (2026-09-18 09:41), PR #186
+
+- **Grok 4.6** on ten claims, then **Codex (GPT-5.6, xhigh)** on the same brief against the tree with Grok's
+  fixes already in — so Codex's verdicts double as a check on those. The third seat was empty: the Fable
+  quota ran out the same day (Part 7), and OB3 was running #183's confirmation.
+- Grok: a **hidden** cluster was named on Home, counted and its history folded in, while its own endpoint
+  404s — the serving rule had four copies in `api.py` and this was the fifth site, which forgot a limb, so
+  it is one predicate now (`is_served`) with `require_cluster` its other caller; the same loop asked
+  `viewer_scope` per cluster, which on a `remote-sar` cluster is an HTTP SubjectAccessReview inside the
+  read snapshot, and the question Home actually asks is configuration (`vouches_for_host_identity`, traced
+  against `viewer_scope`'s own keep-rule before applying). Only a built-in **ClusterRole** is ranked: a
+  namespaced Role named `admin` is a different object, and ranking it by name let the page speak about
+  access nothing else grants. Two sentences that could be false: "0 groups grant edit cluster-wide" for a
+  role held only by a direct grant, and "N more changes" counting the leftover cards rather than the
+  changes.
+- Codex: the removal advice was a claim about **live rules** — the stock roles aggregate that way, but a
+  cluster can change what `edit` carries, so the card says *includes it by default, worth confirming*; the
+  cross-cluster pill was called `.stale`, which is the shell's refetch class (`opacity: 0.55` on whatever
+  carries it), so it rendered at **2.27:1 light / 2.60:1 dark** and one class meant two things — renamed
+  `.poll-age`; a retention window of "forever" claimed rows had been pruned; and "two paths to the same
+  grant" compared role names rather than the object.
+- **An integration failure CI found that neither branch's suite could:** PR CI builds the MERGE, and
+  `feat/drilldown` had meanwhile gained OB3's walk-step test, whose setup waits for the Overview's hero —
+  which this branch's route change moved. It names `#page=overview` now.
+- One of my own test-writing errors caught by the discipline: the resolver-count test PASSED before the fix
+  (the seed had no `remote-sar` cluster, so `viewer_scope` never reached a resolver). Rewritten with a real
+  `remote-sar` cluster so it discriminates, rather than trusted because it was green.
+- Routed to #184: Codex's and Grok's contrast measurements on Home's surfaces (`--warn` on `--page-2` 4.40:1,
+  muted text on the row hover wash 3.99:1) — the same shape as the zebra-row finding, and the same token fix.
+  Recorded as a deviation for the operator: a namespaced direct grant appears under both Namespaces and
+  Direct grants, where the mock shows it only under Direct.
+- Measured: twelve tests fail across the two passes and pass after; the full browser suite on the merged
+  tree 372 passed; non-UI 3420 passed, 13 skipped. Record: `docs/REVIEW_home.md`.
