@@ -3376,10 +3376,16 @@ function nsDetail() {
     <div class="kpis">
       ${keys.map((k) => kpi(esc(labelShort(k)), esc(labels[k] || "— none —"), labels[k] ? "sm mono" : "sm muted")).join("")}
       ${self ? "" : kpi("People who reach it", d.people == null ? "—" : d.people)}
-      ${kpi("Via groups", viaReal.length, viaReal.length ? "" : "muted")}
-      ${kpi("Direct grants", people.length, people.length ? "err" : "muted")}
+      ${kpi(self ? "Via your groups" : "Via groups", viaReal.length, viaReal.length ? "" : "muted")}
+      ${kpi(self ? "Your direct grants" : "Direct grants", people.length, people.length ? "err" : "muted")}
     </div>
-    <div class="filterbar-note mt-4">${labelledNote}${people.length ? "" : " No RoleBinding names a person here directly, which is the state an access review wants to confirm."}${
+    <div class="filterbar-note mt-4">${labelledNote}${people.length ? "" : self
+      // At the self tier `direct_grants` are the viewer's OWN, so an empty list says nothing about anyone
+      // else: prod-ns carries jdoe's direct grant, and alice's page called that "the state an access review
+      // wants to confirm" — a false statement about the cluster, made to the reader least able to check it
+      // (OB3, integration review). The label follows the number it sits beside.
+      ? " No binding names you here directly; other people's direct grants are the administrator tier."
+      : " No RoleBinding names a person here directly, which is the state an access review wants to confirm."}${
       d.present ? "" : " The store no longer holds this namespace; what follows is what still names it."}</div>
   </section>
   <section class="card">
@@ -3393,8 +3399,12 @@ function nsDetail() {
         <td><code>${esc(g.role_name)}</code></td>
         <td class="muted">${esc(g.binding_kind)} <code>${esc(g.binding_name)}</code>${g.managed_source || g.is_platform ? "" : ' <span class="badge warning"><span class="glyph" aria-hidden="true"></span>hand-made</span>'}</td>
         <td class="num">${g.member_count}</td></tr>`).join("")}</tbody></table></div>`
-      : `<div class="empty-note">No group-based binding names this namespace. Access here is ${people.length
-          ? "entirely by the direct grants below — which is what makes it a finding." : "not granted to anyone through the policy system."}</div>`}
+      : `<div class="empty-note">${self
+          // The same rule for the groups: `via_groups` are the viewer's own paths here. klt-pass-both IS
+          // bound to app-ocp-rbac-klta-ns-audit, and alice's page said nobody is granted access at all.
+          ? "None of your own memberships reaches this namespace through a group binding. Whether anyone else's does is the administrator tier."
+          : `No group-based binding names this namespace. Access here is ${people.length
+              ? "entirely by the direct grants below — which is what makes it a finding." : "not granted to anyone through the policy system."}`}</div>`}
     ${wideBindings ? `<div class="filterbar-note mt-4">Also reached cluster-wide, by ${wideBindings === 1 ? "one binding" : `${wideBindings} bindings`} that
         grant${wideBindings === 1 ? "s" : ""} every namespace${wideReal.length + wideGrants.length ? `: ${[
           ...wideReal.map((g) => `<button type="button" class="drill" data-group="${esc(g.group_name)}">${esc(g.group_name)}</button> (<code>${esc(g.role_name)}</code>)`),
