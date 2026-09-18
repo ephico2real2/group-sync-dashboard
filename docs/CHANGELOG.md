@@ -8,6 +8,11 @@ lives next to the code and in the design and review records linked here. Changes
 last release sit under `## Unreleased` until the release that carries them replaces that heading —
 which `local-development/prepare-release.py` does when the release is cut.
 
+## Unreleased
+
+- **`binding_event`: the bindings' membership history (#167, #175 — `docs/DESIGN_binding_events.md`).** `rbac_group_binding` and `user_binding` are still replaced every refresh, but the refresh now first appends every (binding, subject) row that appeared or disappeared — a role change is one `removed` and one `added` — so a namespace has a history, the landing page's "what changed" can see the grant that changed what a person reaches, and #156 has an in-app bindings series. `GET /api/clusters/{cluster_id}/binding-changes` (self-scoped to the viewer and their groups), `gsd_binding_changes_total{cluster,change,subject_kind}` (counts only, pre-seeded), retention on `membershipEventsDays`, migration 13.
+  - **The first-observation rule, for both tables.** Measured on CRC: `membership_event` held 76 / 87 / 5 `added` rows in one instant per cluster — each cluster's first observation, one of which the landing-page notes had read as "a bulk onboarding". A first observation is now written with `baseline = 1` on both `membership_event` and `binding_event` (rows kept, so `first_seen_at`, `original_first_seen_at` and the cliff window are unchanged); a consumer renders it as "first observed", never "added". Existing rows on an upgraded store keep `baseline = 0`.
+
 ## Application 0.24.0 — chart 0.33.0 — 2026-09-16
 
 - **`priorityClassName` on both Deployments (#97).** The chart renders a pod `priorityClassName` when `priorityClassName` (dashboard) or `reporting.priorityClassName` (report) is set; both default empty, so nothing renders by default — and `priorityClassName` is omitted from the report pod's config checksum, so introducing the key does not roll that pod on upgrade. Measured on CRC (2026-09-14): the report pod was **Preempted 29x** in ~3h at **99% node CPU requests**, evicted by OLM `collect-profiles` (`openshift-user-critical`) and a marketplace catalog pod (`system-cluster-critical`); a PDB does not stop preemption, a priority does. Rendered only when set, mirroring the chart's existing `nodeSelector`/`tolerations`/`affinity` guards.

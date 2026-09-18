@@ -851,6 +851,8 @@ def build_app(
         days = {
             "membership_event": settings.membership_events_retention_days,
             "sync_event": settings.sync_events_retention_days,
+            # Shares membership_event's window by design (DESIGN_binding_events.md).
+            "binding_event": settings.membership_events_retention_days,
         }[table]
         return {"window_days": max(0, int(days)), "retained_since": since.get(table)}
 
@@ -1828,6 +1830,56 @@ def build_app(
             "truncated": truncated,
             "note": "accumulated from polling; covers only the period since this dashboard started",
             "retention": history_retention("membership_event", store.history_retained_since(cluster_id)),
+            "changes": events,
+        }
+
+    @app.get("/api/clusters/{cluster_id}/binding-changes")
+    @consistent
+    def binding_changes(
+        request: Request,
+        cluster_id: str,
+        namespace: str | None = Query(
+            default=None,
+            description="Only bindings in this namespace; the empty string selects "
+                        "ClusterRoleBindings. Omit for every scope."),
+        limit: int = Query(
+            default=100, ge=1, le=1000,
+            description="Maximum changes to return, newest first. `truncated` says whether "
+                        "older ones were dropped."),
+    ) -> dict:
+        """Which (binding, subject) rows appeared or disappeared, newest first — the bindings'
+        membership-changes (#167).
+
+        The only record of a binding change: the current-state tables are replaced every
+        refresh, so a RoleBinding created and deleted between two refreshes never existed as
+        far as the cluster view is concerned. Accumulated from polling; a `baseline` row is the
+        cluster's first observation, not a change anyone made.
+
+        SELF-SCOPED under view restrictions: only rows naming the viewer, or a group the viewer
+        belongs to — the same slice the drill-downs already serve them. The group list is read
+        here, at the call site, so R5 counts it.
+        """
+        require_cluster(cluster_id)
+        viewer, scope = viewer_scope(request, cluster_id)
+        if scope == "all":
+            rows = store.binding_events(cluster_id, namespace=namespace, limit=limit + 1)
+        else:
+            me = require_viewer(viewer, cluster_id)
+            mine = [g["group_name"] for g in store.user_groups(cluster_id, me)]
+            rows = store.binding_events(
+                cluster_id, namespace=namespace, limit=limit + 1, viewer=me, viewer_groups=mine)
+        truncated = len(rows) > limit
+        events = rows[:limit]
+        return {
+            "cluster": cluster_id,
+            "scope": scope,
+            "viewer": viewer,
+            "count": len(events),
+            "limit": limit,
+            "truncated": truncated,
+            "baseline_rows": sum(1 for e in events if e.get("baseline")),
+            "note": "accumulated from binding refreshes; a baseline row is the first observation, not a change",
+            "retention": history_retention("binding_event", store.history_retained_since(cluster_id)),
             "changes": events,
         }
 

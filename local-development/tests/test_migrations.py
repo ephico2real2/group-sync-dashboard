@@ -243,7 +243,7 @@ def test_migration_10_opens_a_v9_database_and_matches_a_fresh_one(tmp_path, vers
                 "INSERT INTO login_event(cluster_id,pod_name,user_name,outcome,at,detail,observed_at)"
                 " VALUES('crc','p',?,'failed','t','d','o')", (u,))
         assert upgraded._conn.execute("SELECT count(*) FROM login_event WHERE audit_id IS NULL").fetchone()[0] == 3
-        assert upgraded._conn.execute("PRAGMA user_version").fetchone()[0] == max(t for t, _, _ in _MIGRATIONS) == 12
+        assert upgraded._conn.execute("PRAGMA user_version").fetchone()[0] == max(t for t, _, _ in _MIGRATIONS) == 13
     finally:
         upgraded.close()
         fresh.close()

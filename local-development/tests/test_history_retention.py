@@ -111,7 +111,8 @@ class TestStorePrune:
         assert store.history_retained_since("crc")["membership_event"] == _iso(800 + 2 / 86400)
         store.prune_membership_events("crc", _iso(730))
         assert store.history_retained_since("crc")["membership_event"] == _iso(100)
-        assert store.history_retained_since("other") == {"membership_event": None, "sync_event": None}
+        assert store.history_retained_since("other") == {
+            "membership_event": None, "sync_event": None, "binding_event": None}
 
     def test_the_shared_index_comment_does_not_deny_retention(self):
         """B4 wrote 'the table has no retention by design' above the index B2 now prunes through."""

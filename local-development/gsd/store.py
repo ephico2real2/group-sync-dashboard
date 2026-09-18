@@ -189,7 +189,11 @@ CREATE TABLE IF NOT EXISTS membership_event (
     user_name           TEXT NOT NULL,
     change              TEXT NOT NULL,  -- added | removed
     observed_at         TEXT NOT NULL,
-    group_synced_at     TEXT            -- the group's own sync-time when we saw the change
+    group_synced_at     TEXT,           -- the group's own sync-time when we saw the change
+    -- 1 on a cluster's FIRST observation: the rows are "first seen by this dashboard", not a
+    -- change anyone made. Measured on CRC before this existed: 76, 87 and 5 "added" rows in one
+    -- instant per cluster, read by the landing page as a bulk onboarding (#175).
+    baseline            INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS membership_event_lookup
     ON membership_event(cluster_id, group_name, id DESC);
@@ -252,6 +256,35 @@ CREATE TABLE IF NOT EXISTS user_binding (
 );
 CREATE INDEX IF NOT EXISTS user_binding_by_namespace
     ON user_binding(cluster_id, binding_namespace);
+
+-- Binding changes, append-only — the bindings' membership_event (#167, ruled 2026-09-17).
+-- rbac_group_binding and user_binding are replaced every refresh, so a RoleBinding created or
+-- deleted between two refreshes left no trace: a namespace had no history, and the landing
+-- page's "what changed" was blind to the grant that actually changed what a person can do.
+-- One row per (binding, subject) that appeared or disappeared; a role change on the same
+-- binding is a `removed` and an `added`, so there is no third verb to explain.
+CREATE TABLE IF NOT EXISTS binding_event (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    cluster_id          TEXT NOT NULL,
+    binding_kind        TEXT NOT NULL,   -- RoleBinding | ClusterRoleBinding
+    binding_namespace   TEXT NOT NULL,   -- '' for ClusterRoleBinding
+    binding_name        TEXT NOT NULL,
+    subject_kind        TEXT NOT NULL,   -- Group | User
+    subject_name        TEXT NOT NULL,
+    role_kind           TEXT NOT NULL,
+    role_name           TEXT NOT NULL,
+    is_platform         INTEGER NOT NULL DEFAULT 0,
+    change              TEXT NOT NULL,   -- added | removed
+    baseline            INTEGER NOT NULL DEFAULT 0,  -- 1 on the cluster's first observation
+    observed_at         TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS binding_event_by_namespace
+    ON binding_event(cluster_id, binding_namespace, id DESC);
+CREATE INDEX IF NOT EXISTS binding_event_by_subject
+    ON binding_event(cluster_id, subject_kind, subject_name, id DESC);
+-- Retention's index (prune_binding_events, history_retained_since), as for membership_event.
+CREATE INDEX IF NOT EXISTS binding_event_by_time
+    ON binding_event(cluster_id, observed_at);
 
 -- Health of the namespace-configuration-operator's CRs, replaced on the binding cadence.
 -- Reconcile conditions ONLY: these CRs template the RoleBindings that give synced groups
@@ -788,6 +821,33 @@ _MIGRATIONS: list[tuple[int, str, list[str]]] = [
                        REFERENCES cluster_namespace(cluster_id, name) ON DELETE CASCADE
                )""",
             "CREATE INDEX IF NOT EXISTS idx_cnl_key_value ON cluster_namespace_label(cluster_id, key, value)",
+        ],
+    ),
+    (
+        13,
+        "binding_event: append-only binding changes; baseline flag on first observation (#167, #175)",
+        [
+            """CREATE TABLE IF NOT EXISTS binding_event (
+                   id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                   cluster_id          TEXT NOT NULL,
+                   binding_kind        TEXT NOT NULL,
+                   binding_namespace   TEXT NOT NULL,
+                   binding_name        TEXT NOT NULL,
+                   subject_kind        TEXT NOT NULL,
+                   subject_name        TEXT NOT NULL,
+                   role_kind           TEXT NOT NULL,
+                   role_name           TEXT NOT NULL,
+                   is_platform         INTEGER NOT NULL DEFAULT 0,
+                   change              TEXT NOT NULL,
+                   baseline            INTEGER NOT NULL DEFAULT 0,
+                   observed_at         TEXT NOT NULL
+               )""",
+            "CREATE INDEX IF NOT EXISTS binding_event_by_namespace ON binding_event(cluster_id, binding_namespace, id DESC)",
+            "CREATE INDEX IF NOT EXISTS binding_event_by_subject ON binding_event(cluster_id, subject_kind, subject_name, id DESC)",
+            "CREATE INDEX IF NOT EXISTS binding_event_by_time ON binding_event(cluster_id, observed_at)",
+            # Existing rows keep 0: the flood already recorded on an upgraded store stays as it
+            # was written; only observations from here on are classified.
+            "ALTER TABLE membership_event ADD COLUMN baseline INTEGER NOT NULL DEFAULT 0",
         ],
     ),
 ]
@@ -1569,6 +1629,20 @@ class Store:
             ):
                 existing.setdefault(row["group_name"], set()).add(row["user_name"])
 
+            # THE BASELINE. A cluster observed for the first time has no prior state to diff
+            # against, so every member would read as "added" in one instant — 76, 87 and 5 rows
+            # per cluster on CRC, one of which the landing page reported as a bulk onboarding
+            # (#175). The rows are still written (first_seen_at, original_first_seen_at and the
+            # cliff's window all depend on them) but flagged, so a consumer says "first observed"
+            # rather than "added". A NEW group in an already-observed cluster is a real change
+            # and is not flagged: only a cluster with neither members nor events is at baseline.
+            baseline = 0
+            if not existing:
+                seen = conn.execute(
+                    "SELECT 1 FROM membership_event WHERE cluster_id=? LIMIT 1", (cluster_id,)
+                ).fetchone()
+                baseline = 0 if seen else 1
+
             for group, members in memberships.items():
                 observed = set(members)
                 known = existing.get(group, set())
@@ -1585,9 +1659,9 @@ class Store:
                     )
                     conn.execute(
                         """INSERT INTO membership_event(cluster_id, group_name, user_name,
-                               change, observed_at, group_synced_at)
-                           VALUES(?,?,?,'added',?,?)""",
-                        (cluster_id, group, user, observed_at, synced_at),
+                               change, observed_at, group_synced_at, baseline)
+                           VALUES(?,?,?,'added',?,?,?)""",
+                        (cluster_id, group, user, observed_at, synced_at, baseline),
                     )
                     changes += 1
 
@@ -1684,7 +1758,7 @@ class Store:
         self, cluster_id: str, group_name: str | None = None,
         user_name: str | None = None, limit: int = 200,
     ) -> list[dict]:
-        sql = """SELECT group_name, user_name, change, observed_at, group_synced_at
+        sql = """SELECT group_name, user_name, change, observed_at, group_synced_at, baseline
                    FROM membership_event WHERE cluster_id=?"""
         params: list = [cluster_id]
         if group_name:
@@ -1869,9 +1943,27 @@ class Store:
 
     # -- RBAC bindings -----------------------------------------------------------------
 
-    def replace_bindings(self, cluster_id: str, rows: list[dict], observed_at: str) -> None:
-        """Replace this cluster's binding rows wholesale, in one transaction."""
+    def replace_bindings(self, cluster_id: str, rows: list[dict], observed_at: str) -> dict[str, int]:
+        """Replace this cluster's binding rows wholesale, in one transaction — recording, first,
+        every (binding, Group) that appeared or disappeared since the last refresh as a
+        binding_event. Returns {"added": n, "removed": m}.
+
+        The current-state table stays a replace (a binding is fully re-readable from the API);
+        the history is what the API cannot give back, so it is appended before the replace, in
+        the same transaction, from the same rows. A role change on the same binding+subject is
+        a `removed` and an `added`. The cluster's first observation is flagged `baseline`
+        rather than recorded as a mass grant — see sync_members for why the rows are still
+        written.
+        """
         with self._write() as conn:
+            changes = self._append_binding_events(
+                conn, cluster_id, "Group", "group_name",
+                current=conn.execute(
+                    """SELECT binding_kind, binding_namespace, binding_name, group_name AS subject,
+                              role_kind, role_name, 0 AS is_platform
+                         FROM rbac_group_binding WHERE cluster_id=?""", (cluster_id,)).fetchall(),
+                incoming=rows, observed_at=observed_at,
+            )
             conn.execute("DELETE FROM rbac_group_binding WHERE cluster_id=?", (cluster_id,))
             conn.executemany(
                 """INSERT OR REPLACE INTO rbac_group_binding(
@@ -1884,6 +1976,89 @@ class Store:
                 [{"managed_source": None, "exception": None, "audit_stamped": 0, **r,
                   "cluster_id": cluster_id, "observed_at": observed_at} for r in rows],
             )
+        return changes
+
+    def _append_binding_events(
+        self, conn: sqlite3.Connection, cluster_id: str, subject_kind: str, subject_field: str,
+        *, current: list, incoming: list[dict], observed_at: str,
+    ) -> dict[str, int]:
+        """Diff the stored (binding, subject) set against the incoming one; append an event per
+        difference. Identity is (binding_kind, binding_namespace, binding_name, subject); the
+        value compared is (role_kind, role_name), so a role change is one removed + one added.
+
+        Baseline: when this cluster has no current rows AND no events of this subject kind, this
+        is its first observation — every incoming row is flagged baseline=1. A refresh that
+        returns nothing for a cluster that had rows is a real mass removal and is recorded as
+        one; the poller never reaches here on a fetch failure (it returns before the replace).
+        """
+        def key(r):  # sqlite3.Row and dict both index by name
+            return (r["binding_kind"], r["binding_namespace"], r["binding_name"], r["subject"] if "subject" in r.keys() else r[subject_field])
+        before = {key(r): (r["role_kind"], r["role_name"], int(r["is_platform"] or 0)) for r in current}
+        after: dict = {}
+        for r in incoming:
+            k = (r["binding_kind"], r["binding_namespace"], r["binding_name"], r[subject_field])
+            after[k] = (r["role_kind"], r["role_name"], int(r.get("is_platform", 0) or 0))
+        baseline = 0
+        if not before:
+            seen = conn.execute(
+                "SELECT 1 FROM binding_event WHERE cluster_id=? AND subject_kind=? LIMIT 1",
+                (cluster_id, subject_kind),
+            ).fetchone()
+            baseline = 0 if seen else 1
+        counts = {"added": 0, "removed": 0}
+        rows = []
+        for k in sorted(set(before) | set(after)):
+            was, now = before.get(k), after.get(k)
+            # Compared on the role only: is_platform is metadata carried on the event, not part
+            # of what changed — a subject reclassified would otherwise read as removed + added.
+            if was is not None and now is not None and was[:2] == now[:2]:
+                continue
+            if was is not None:
+                rows.append((*k[:3], subject_kind, k[3], was[0], was[1], was[2], "removed", 0, observed_at))
+                counts["removed"] += 1
+            if now is not None:
+                rows.append((*k[:3], subject_kind, k[3], now[0], now[1], now[2], "added", baseline, observed_at))
+                counts["added"] += 1
+        if rows:
+            conn.executemany(
+                """INSERT INTO binding_event(cluster_id, binding_kind, binding_namespace, binding_name,
+                       subject_kind, subject_name, role_kind, role_name, is_platform, change,
+                       baseline, observed_at)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+                [(cluster_id, *r) for r in rows],
+            )
+        return counts
+
+    def binding_events(
+        self, cluster_id: str, *, namespace: str | None = None, limit: int = 200,
+        viewer: str | None = None, viewer_groups: list[str] | None = None,
+    ) -> list[dict]:
+        """Binding changes newest first. With `viewer`, only the rows that name the viewer or a
+        group the viewer belongs to — the self tier's slice, decided by the caller from
+        user_groups, so this method takes the scope rather than deciding it."""
+        sql = """SELECT binding_kind, binding_namespace, binding_name, subject_kind, subject_name,
+                        role_kind, role_name, is_platform, change, baseline, observed_at
+                   FROM binding_event WHERE cluster_id=?"""
+        params: list = [cluster_id]
+        if namespace is not None:
+            sql += " AND binding_namespace=?"
+            params.append(namespace)
+        if viewer is not None:
+            groups = list(viewer_groups or [])
+            clause = "(subject_kind='User' AND subject_name=?)"
+            params.append(viewer)
+            if groups:
+                clause += f" OR (subject_kind='Group' AND subject_name IN ({','.join('?' * len(groups))}))"
+                params.extend(groups)
+            sql += f" AND ({clause})"
+        sql += " ORDER BY id DESC LIMIT ?"
+        params.append(limit)
+        return self._rows(sql, params)
+
+    def prune_binding_events(self, cluster_id: str, before_at: str, max_rows: int = 5000) -> int:
+        """Delete binding events observed before `before_at`, at most `max_rows`. Same gates and
+        bound as prune_membership_events; served by binding_event_by_time."""
+        return self._prune_history("binding_event", cluster_id, before_at, max_rows)
 
     def record_managed_groups(
         self, cluster_id: str, groups: list[dict], observed_at: str
@@ -2081,9 +2256,18 @@ class Store:
 
     def replace_user_bindings(
         self, cluster_id: str, rows: list[dict], observed_at: str
-    ) -> None:
-        """Replace this cluster's direct-user binding rows wholesale."""
+    ) -> dict[str, int]:
+        """Replace this cluster's direct-user binding rows wholesale, recording the changes as
+        binding_events first (subject_kind User) — see replace_bindings. Returns the counts."""
         with self._write() as conn:
+            changes = self._append_binding_events(
+                conn, cluster_id, "User", "user_name",
+                current=conn.execute(
+                    """SELECT binding_kind, binding_namespace, binding_name, user_name AS subject,
+                              role_kind, role_name, is_platform
+                         FROM user_binding WHERE cluster_id=?""", (cluster_id,)).fetchall(),
+                incoming=rows, observed_at=observed_at,
+            )
             conn.execute("DELETE FROM user_binding WHERE cluster_id=?", (cluster_id,))
             conn.executemany(
                 """INSERT OR REPLACE INTO user_binding(
@@ -2093,6 +2277,7 @@ class Store:
                           :role_kind,:role_name,:user_name,:is_platform,:observed_at)""",
                 [{**r, "cluster_id": cluster_id, "observed_at": observed_at} for r in rows],
             )
+        return changes
 
     def replace_users(self, cluster_id: str, users: list[dict], observed_at: str,
                       identity_created: dict[str, str] | None = None) -> None:
@@ -2440,7 +2625,7 @@ class Store:
 
     # The two history tables retention may touch. A closed tuple, interpolated into SQL by
     # _prune_history — never a caller's string.
-    _HISTORY_TABLES = ("membership_event", "sync_event")
+    _HISTORY_TABLES = ("membership_event", "sync_event", "binding_event")
 
     def prune_membership_events(self, cluster_id: str, before_at: str, max_rows: int = 5000) -> int:
         """Delete membership events observed before `before_at`, at most `max_rows`. Returns rows deleted.
