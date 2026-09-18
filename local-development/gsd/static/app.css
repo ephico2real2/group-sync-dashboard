@@ -158,10 +158,10 @@
   --radius-pill: 999px;  /* badges, chips, pills */
   --radius-round: 50%;   /* glyph dots */
 
-  /* The three tokens the Users tab's chips referenced before they existed (#152): they fell
-     back to hard-coded Tailwind-slate hex and rendered off the system in both themes. */
+  /* Two of the three tokens the Users tab's chips referenced before they existed (#152): they
+     fell back to hard-coded Tailwind-slate hex and rendered off the system in both themes. The
+     third, --accent-soft, is derived on body — see there. */
   --line: #c3c2b7;                                                  /* a chip's resting border */
-  --accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);/* the pressed chip's wash */
   --warn: #b45309;  /* td.num.warn is TEXT at weight 600, so 4.5:1 — the warning-edge amber, not the 3:1 glyph amber */
 }
 @media (prefers-color-scheme: dark) {
@@ -388,6 +388,11 @@
 
 * { box-sizing: border-box; }
 body {
+  /* The pressed chip's wash (#152), derived HERE and not on :root: an unregistered custom property
+     inherits its COMPUTED value, so a :root color-mix(var(--accent)) freezes against --tab-overview
+     and the Users chips wear Overview's blue. body[data-page] overrides --accent on this same
+     element, so var(--accent) here follows the page (Grok, review of #179). */
+  --accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);
   margin: 0;
   color: var(--text-primary);
   /* Split rather than the `font:` shorthand so the size comes from the scale. The

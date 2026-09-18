@@ -12,7 +12,9 @@
   var html = document.documentElement, query = new URLSearchParams(location.search);
   function pick(param, key, allowed) {
     var v = query.get(param) || "";
-    if (!v) { try { v = localStorage.getItem(key) || ""; } catch (e) { v = ""; } }
+    if (allowed.indexOf(v) < 0) {   // absent OR junk: the reader's stored choice, if any (Grok, #179)
+      try { v = localStorage.getItem(key) || ""; } catch (e) { v = ""; }
+    }
     return allowed.indexOf(v) >= 0 ? v : "";
   }
   var mode = pick("mode", "gsd-mode", ["light", "dark"]);
@@ -3028,7 +3030,7 @@ function bindingsPage() {
           <strong>${Object.values(raw).filter(Array.isArray).reduce((n, rows) => n + rows.length, 0)}</strong> of
           <strong>${d.total || 0}</strong> group bindings, by group name; the cluster has more. The
           Find box and the sort work only over these, so a binding past the cut cannot be found here.</div>` : ""}
-    ${searching ? `<div class="filterbar-note" id="binding-search-note" class="mt-3">Filtered by
+    ${searching ? `<div class="filterbar-note mt-3" id="binding-search-note">Filtered by
       <strong>${esc(q.trim())}</strong> — every word must appear in the group, role, namespace or binding
       name. ${visible.reduce((n, t) => n + f[t].length, 0)} of
       ${visible.reduce((n, t) => n + (raw[t] || []).length, 0)} ${d.truncated ? "loaded " : ""}bindings in the

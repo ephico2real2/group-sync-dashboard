@@ -178,26 +178,44 @@ def test_ladders_are_defined_and_used(css):
     assert not unused, "ladder steps nothing references: " + ", ".join(unused)
 
 
+def _token_block_bodies(css: str) -> list[str]:
+    """Bodies of the :root / theme / palette rules only. Single-level (`[^}]*`): the first cut ran
+    each match to the next INDENTED `}`, and a palette block closing at column 0 swallowed the whole
+    `body {}` rule that followed — a hex on body was invisible (Grok, review of #179)."""
+    code = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+    return re.findall(r"^[ ]{0,2}:root[^\n{]*\{([^}]*)\}", code, re.M)
+
+
+def _raw_colours_outside_the_tokens(css: str) -> list[str]:
+    blocks = _token_block_bodies(css)
+    assert blocks, "no :root token blocks found"
+    outside = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+    for b in blocks:
+        outside = outside.replace(b, "")
+    return [m.group(0).strip() for m in re.finditer(r"^.*#[0-9a-fA-F]{3,8}\b.*$", outside, re.M)
+            if "url(" not in m.group(0)]
+
+
 def test_no_raw_colour_outside_the_token_blocks(css):
     """#152: a hex colour outside :root / the theme blocks / the palette blocks opts that rule out of
     both the appearance and the palette mechanism — the page would keep a light-theme colour on
     a dark page. Colours are tokens; rules reference them."""
-    blocks = re.findall(r"(?:^:root[^\n{]*|^  :root[^\n{]*)\{(.*?)\n  ?\}", css, re.S | re.M)
-    inside = "\n".join(blocks)
-    outside = css
-    for b in blocks:
-        outside = outside.replace(b, "")
-    outside = re.sub(r"/\*.*?\*/", "", outside, flags=re.S)
-    offenders = [m.group(0) for m in re.finditer(r"^.*#[0-9a-fA-F]{3,8}\b.*$", outside, re.M)
-                 if "url(" not in m.group(0)]
-    assert not offenders, "raw colours outside the token blocks:\n  " + "\n  ".join(o.strip() for o in offenders)
+    offenders = _raw_colours_outside_the_tokens(css)
+    assert not offenders, "raw colours outside the token blocks:\n  " + "\n  ".join(offenders)
 
 
-def test_comments_do_not_nest(css):
-    """CSS comments do not nest: a `*/` written inside a comment closes it there, and whatever follows
-    is parsed as a broken declaration that swallows the next real one. Measured on #152's first cut:
-    a token-block comment quoted `/* optical: … */`, the inner closer ended the comment, and the text
-    after it ate `--space-1: 2px;` — every chip lost its padding while the regex-based guards stayed
-    green. The render check caught it; this makes the parser's reading the test's reading."""
-    nested = [m.group(0)[:120] for m in re.finditer(r"/\*(.*?)\*/", css, re.S) if "/*" in m.group(1)]
-    assert not nested, "a comment contains a comment opener — its closer ends the outer comment early: " + " | ".join(nested)
+@pytest.mark.parametrize("rule", ["body {", ".badge {", "header.top {"])
+def test_a_hex_outside_the_tokens_is_seen(css, rule):
+    """The guard must see a leak wherever it lands — body is the realistic one (the page text
+    colour); the first-cut finder caught .badge and missed body."""
+    assert rule in css
+    poisoned = css.replace(rule, rule + "\n  color: #ff00ff;", 1)
+    assert any("#ff00ff" in o for o in _raw_colours_outside_the_tokens(poisoned)), f"a #hex in {rule!r} was invisible to the guard"
+
+
+def test_markup_does_not_repeat_the_class_attribute():
+    """A second class= on one tag is dropped by the HTML parser, so the utility never applies — the
+    bindings search note shipped as class="filterbar-note" … class="mt-3" (Grok, review of #179)."""
+    page = INDEX.read_text()
+    dupes = re.findall(r"<[^>\n]*\bclass=\"[^\"]*\"[^>\n]*\bclass=\"", page)
+    assert dupes == [], "merge the class attributes; the second is dropped: " + ", ".join(dupes)

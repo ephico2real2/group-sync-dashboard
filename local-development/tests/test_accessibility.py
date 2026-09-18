@@ -217,5 +217,5 @@ def test_a_palette_overrides_only_the_status_hues():
         for theme in ("light", "dark"):
             names = set(_palette_block(css, theme, palette))
             assert names, f"{theme}/{palette} defines nothing"
-            allowed = {"status-good", "status-warning", "status-warning-edge", "status-critical", "text-muted", "text-secondary"}
+            allowed = {"status-good", "status-warning", "status-warning-edge", "status-critical", "text-muted"}
             assert names <= allowed, f"{theme}/{palette} overrides {sorted(names - allowed)}"

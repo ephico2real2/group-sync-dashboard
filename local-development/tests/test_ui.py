@@ -1072,6 +1072,15 @@ class TestAppearanceAndColours:
         page.wait_for_selector("#pref-mode")
         assert page.evaluate("() => [document.documentElement.hasAttribute('data-theme'), document.documentElement.hasAttribute('data-palette')]") == [False, False]
 
+    def test_junk_in_the_url_does_not_discard_the_stored_choice(self, page, server):
+        """Grok, review of #179 (D5): a junk value in the URL is not a choice; the reader's stored one stands."""
+        page.goto(f"{server}/#page=groups&cluster=crc-local")
+        page.wait_for_selector("#pref-mode")
+        page.select_option("#pref-mode", "dark")
+        page.goto(f"{server}/?mode=purple#page=groups&cluster=crc-local")
+        page.wait_for_selector("#pref-mode")
+        assert page.evaluate("() => [document.documentElement.getAttribute('data-theme'), document.getElementById('pref-mode').value]") == ["dark", "dark"]
+
     def test_a_change_survives_the_filter_repaint_a_navigation_and_a_reload(self, dash):
         dash.select_option("#pref-mode", "dark")
         dash.select_option("#pref-palette", "trit")
@@ -1088,6 +1097,28 @@ class TestAppearanceAndColours:
         dash.select_option("#pref-mode", "")
         dash.select_option("#pref-palette", "")
         assert dash.evaluate("() => [document.documentElement.hasAttribute('data-theme'), localStorage.getItem('gsd-mode'), location.search]") == [False, None, ""]
+
+    def test_accent_soft_follows_the_page_accent(self, dash):
+        """Grok, review of #179 (F1): --accent-soft must be computed where --accent is overridden
+        (body), not on :root — an unregistered custom property inherits its COMPUTED value, so a
+        :root color-mix(var(--accent)) freezes against --tab-overview and the pressed chip on Users
+        wears the wrong section's wash. Fails on the :root definition; passes with it on body."""
+        def sample(tab):
+            dash.click(f"#tab-{tab}")
+            dash.wait_for_selector(f"#tab-{tab}[aria-current='page']")
+            return dash.evaluate("""() => {
+                const probe = document.createElement('div'); document.body.appendChild(probe);
+                probe.style.background = 'var(--accent-soft)';
+                const soft = getComputedStyle(probe).backgroundColor;
+                probe.style.background = 'color-mix(in srgb, var(--accent) 14%, transparent)';
+                const direct = getComputedStyle(probe).backgroundColor;
+                const accent = getComputedStyle(document.body).getPropertyValue('--accent').trim();
+                probe.remove(); return {soft, direct, accent}; }""")
+        overview, users = sample("overview"), sample("users")
+        assert users["accent"] != overview["accent"], "the two tabs share --accent — nothing to follow"
+        assert users["soft"] == users["direct"], f"Users --accent-soft {users['soft']} froze on :root (page mix {users['direct']})"
+        assert overview["soft"] == overview["direct"]
+        assert users["soft"] != overview["soft"], "both tabs resolved to the same wash"
 
     def test_the_controls_are_in_the_static_header_not_the_filter_bar(self, dash):
         assert dash.evaluate("() => document.querySelector('header.top #pref-mode') !== null && document.querySelector('#filters #pref-mode') === null")
