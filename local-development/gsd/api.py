@@ -1712,10 +1712,14 @@ def build_app(
         # reaches every namespace, which is what namespace_reach answers for the detail; the list
         # says the same (review of #167: Codex and OB1 on the count, OB1 F2 on the self tier).
         wide = store.namespace_detail(cluster_id, "", user_name=me, groups=groups)
-        cluster_wide_groups = len({g["group_name"] for g in wide["via_groups"]})
+        cluster_wide_groups = len({g["group_name"] for g in wide["via_groups"] if not g["is_platform"]})
         cluster_wide_grants = len([d for d in wide["cluster_wide_grants"] if not d["is_platform"]])
-        rows = store.namespaces(cluster_id, user_name=me, groups=groups,
-                                every=bool(cluster_wide_groups or cluster_wide_grants))
+        # The switch that lists every namespace is REACH — every cluster-wide binding naming the
+        # viewer, a platform identity's included — the same rule namespace_reach applies to the
+        # detail. The two counts stay the review's counts, platform identities left out; the page
+        # explains the one case where they differ (review of #167, pass 2, Codex).
+        cluster_wide_path = bool(wide["via_groups"] or wide["cluster_wide_grants"])
+        rows = store.namespaces(cluster_id, user_name=me, groups=groups, every=cluster_wide_path)
         source = store.namespaces_source(cluster_id)
         return {
             "cluster": cluster_id,
@@ -1726,6 +1730,7 @@ def build_app(
             "count": len(rows),
             "cluster_wide_groups": cluster_wide_groups,
             "cluster_wide_grants": cluster_wide_grants,
+            "cluster_wide_path": cluster_wide_path,
             "namespaces": rows,
         }
 

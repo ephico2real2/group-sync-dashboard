@@ -1064,18 +1064,25 @@ class TestTheShellAtPhoneWidth:
             "() => [...document.querySelectorAll('button.tab')].filter(t => t.getBoundingClientRect().right > innerWidth).map(t => t.id)")
         assert beyond == [], f"{tab}: tabs past the right edge: {beyond}"
 
-    def test_phone_header_stays_compact_and_prefs_stay_named(self, dash):
-        """The two labels cost the phone header a row each (223 px measured at 375, was 113). Below 520 px
-        they leave the screen but not the accessibility tree: each select keeps its label[for] name."""
+    def test_phone_header_stays_compact_and_prefs_stay_labelled_on_screen(self, dash):
+        """223 px at 375 (was 113): the two inline labels cost a row each. Below 520 px a label sits ABOVE its
+        select, the pair shares one row with Refresh, and the labels stay on screen — not only in the
+        accessibility tree: a select reading "Auto" or "Default" names nothing on its own (OB1, review 2 of
+        #179; 167 px measured with the labels visible, 143 with them clipped)."""
         dash.set_viewport_size({"width": 375, "height": 740})
-        box = dash.evaluate("""() => { const h = document.querySelector('header.top').getBoundingClientRect();
-            const mode = document.getElementById('pref-mode'), pal = document.getElementById('pref-palette');
-            return { height: h.height, modeName: mode.labels[0] && mode.labels[0].textContent.trim(),
-                     palName: pal.labels[0] && pal.labels[0].textContent.trim(),
-                     modeVisible: mode.getBoundingClientRect().height > 0, palVisible: pal.getBoundingClientRect().height > 0 }; }""")
-        assert box["height"] <= 160, box
-        assert box["modeName"] == "Appearance" and box["palName"] == "Colours", box
-        assert box["modeVisible"] and box["palVisible"], box
+        got = dash.evaluate("""() => { const r = (e) => e.getBoundingClientRect();
+            const head = document.querySelector('header.top'), mode = document.getElementById('pref-mode'), pal = document.getElementById('pref-palette');
+            const lab = (s) => { const l = s.labels[0], b = r(l); return {name: l.textContent.trim(), visible: b.width > 1 && b.height > 1, above: b.bottom <= r(s).top}; };
+            return {height: r(head).height, scrollWidth: document.documentElement.scrollWidth, mode: lab(mode), pal: lab(pal),
+                    oneRow: Math.abs(r(mode).top - r(pal).top) < 1}; }""")
+        assert got["height"] <= 180, got
+        assert got["scrollWidth"] <= 375, got
+        assert got["mode"] == {"name": "Appearance", "visible": True, "above": True}, got
+        assert got["pal"] == {"name": "Colours", "visible": True, "above": True}, got
+        assert got["oneRow"], got
+        dash.select_option("#pref-mode", "dark")
+        dash.select_option("#pref-palette", "trit")
+        assert dash.evaluate("() => [document.documentElement.dataset.theme, document.documentElement.dataset.palette]") == ["dark", "trit"]
 
 
 
@@ -1367,6 +1374,68 @@ class TestNamespaces:
         assert kpis == ["Via groups", "Direct grants"], kpis
         body = p.locator("#main").inner_text()
         assert "Your own memberships that reach this namespace" in body and "Also reached cluster-wide" in body
+
+    def test_a_platform_only_cluster_wide_path_explains_the_self_tier(self, page, scoped_server):
+        """kubeadmin's one binding is the platform-identity ClusterRoleBinding `ka`: at the self tier it reaches
+        every namespace (nine rows) and the line says why without claiming "0 grants reach every namespace"
+        (Codex, pass 2)."""
+        p = _open_as(page, scoped_server, "kubeadmin")
+        p.locator("button[data-nav='nsaudit']").click()
+        p.wait_for_selector("tr[data-ns]")
+        assert p.locator("tr[data-ns]").count() == 9
+        card = p.locator("h2:text-is('Namespaces')").locator("xpath=..").inner_text()
+        assert "platform identity of yours reaches every namespace below" in card, card
+        assert "0 cluster-wide direct grants of yours" not in card
+
+    def test_history_distinguishes_baseline_added_and_removed(self, dash):
+        """A baseline row is not an addition and must not wear the added colour (Grok P5, Codex B, pass 2);
+        the seed holds only baseline rows, so the three shapes are painted from one payload."""
+        self._open(dash)
+        dash.locator("tr[data-ns='prod-ns'] button.drill").click()
+        dash.wait_for_selector("h2:text-is('prod-ns')")
+        dash.evaluate("""() => { data.ns.changes = [
+            {change: "added", baseline: 1, subject_kind: "User", subject_name: "b", role_name: "view", binding_kind: "RoleBinding", binding_name: "b-rb", observed_at: "2026-09-18T00:00:00Z"},
+            {change: "added", baseline: 0, subject_kind: "User", subject_name: "a", role_name: "view", binding_kind: "RoleBinding", binding_name: "a-rb", observed_at: "2026-09-18T00:01:00Z"},
+            {change: "removed", baseline: 0, subject_kind: "User", subject_name: "r", role_name: "view", binding_kind: "RoleBinding", binding_name: "r-rb", observed_at: "2026-09-18T00:02:00Z"}];
+            render(); }""")
+        cells = dash.locator("td[class^='change-']").evaluate_all("els => els.map(e => [e.className, e.innerText.trim()])")
+        assert cells == [["change-baseline", "first observed"], ["change-added", "+ granted"], ["change-removed", "− revoked"]], cells
+
+    @pytest.mark.parametrize(("kind", "key"), [("user", "Enter"), ("user", "Space"), ("group", "Enter"), ("group", "Space")])
+    def test_namespace_drills_work_from_the_keyboard(self, dash, kind, key):
+        """Enter on a group's name went nowhere: the key handler cancelled the native click and navigated only
+        for a person's name (Grok V1, Codex C, pass 2). Every drill takes the click's path now."""
+        self._open(dash)
+        dash.locator("tr[data-ns='prod-ns'] button.drill").click()
+        dash.wait_for_selector("h2:text-is('prod-ns')")
+        button = dash.locator(f"tr[data-{kind}] button.drill").first
+        button.focus()
+        button.press(key)
+        dash.wait_for_function(f"() => !!view.{kind}")
+        assert dash.evaluate("() => view.ns") is None
+        assert "ns=" not in dash.evaluate("() => location.hash")
+        dash.go_back()
+        dash.wait_for_function("() => view.ns === 'prod-ns'")
+
+    def test_virtual_groups_are_badged_in_the_table_and_folded_on_the_cluster_wide_line(self, dash):
+        """Measured on CRC (the walk of #167's deployed head): demo-prod's cluster-wide line listed 54 bindings,
+        41 of them to `system:` groups — access with no person behind it. Badged in the table, folded on the
+        line, never dropped."""
+        self._open(dash)
+        dash.locator("tr[data-ns='prod-ns'] button.drill").click()
+        dash.wait_for_selector("h2:text-is('prod-ns')")
+        dash.evaluate("""() => {
+          data.ns.via_groups = [...data.ns.via_groups, {group_name: "system:serviceaccounts:prod-ns", binding_kind: "RoleBinding", binding_name: "system:image-pullers",
+                                 role_kind: "ClusterRole", role_name: "system:image-puller", managed_source: null, member_count: 0, is_platform: 1}];
+          data.ns.cluster_wide_groups = [...data.ns.cluster_wide_groups,
+            ...["system:authenticated", "system:nodes", "system:masters", "system:serviceaccounts"].map(g => ({group_name: g, binding_kind: "ClusterRoleBinding",
+                 binding_name: g + "-crb", role_kind: "ClusterRole", role_name: "basic-user", managed_source: null, member_count: 0, is_platform: 1}))];
+          render();
+        }""")
+        assert dash.locator("tr[data-group='system:serviceaccounts:prod-ns'] .badge", has_text="platform").count() == 1
+        line = dash.locator("#main .filterbar-note", has_text="Also reached cluster-wide").inner_text()
+        assert "4 platform bindings to virtual groups (system:authenticated, system:nodes, system:masters, …)" in line, line
+        assert "system:serviceaccounts-crb" not in line and line.count("system:") == 3, line
 
     def test_a_baseline_row_reads_first_observed_not_granted(self, dash):
         """#177's rule: a consumer renders a baseline row as "first observed", never as "added" — the cell
@@ -4454,12 +4523,17 @@ def reporting_server(tmp_path_factory):
     writer.close()
     from pathlib import Path
     vendor = Path(__file__).resolve().parents[1] / "gsd" / "static" / "vendor"
-    clock = {"now": _dt.now(_UTC)}
+    # Live unless a test pins it. The service verifies every ticket against THIS clock while the
+    # dashboard mints with wall time, so a clock frozen at creation refused every ticket minted more
+    # than MAX_CLOCK_SKEW_SECONDS (30) later as future-dated — a 403, which reportFetch does not remint
+    # on (401 only) — and the whole class painted the refusal card when the fixture was created ahead
+    # of it (OB1, review 2 of #179). A test that needs a fixed instant sets clock["now"] and clears it.
+    clock = {"now": None}
     report_settings = ReportSettings(snapshot_dir=str(snapshots), artifact_dir=str(artifacts), pdf_enabled=True, pdf_variant="pdf/a-2b",
                                      font_regular=str(vendor / "DejaVuSans.ttf"), font_bold=str(vendor / "DejaVuSans-Bold.ttf"),
                                      enabled_reports=tuple(n for n in REPORT_NAMES if n != "login-activity"),
                                      login_capture_enabled=False)
-    report_app = build_report_app(report_settings, secret=REPORT_SECRET, clock=lambda: clock["now"])
+    report_app = build_report_app(report_settings, secret=REPORT_SECRET, clock=lambda: clock["now"] or _dt.now(_UTC))
     settings = Settings(
         clusters=[ClusterConfig("crc-local", "https://api.crc.testing:6443", token_env="X")],
         db_path=db, login_capture_enabled=True, oauth_proxy_enabled=True,
@@ -4508,12 +4582,38 @@ def _reports_page(browser, base, user, fake_clock=False):
 
 
 class TestReportsTab:
+    def test_the_fixtures_report_service_keeps_wall_time(self, reporting_server):
+        """The service verifies every ticket against ITS clock while the dashboard mints with wall time; a
+        fixture clock frozen at creation refused any ticket minted more than MAX_CLOCK_SKEW_SECONDS (30)
+        later as "issued too far in the future" — a 403 the page cannot remint past (it remints on 401
+        only), so it painted the narrowed-reader refusal card where the picker belongs. Measured: 200 at
+        3 s after creation, 403 at 80 s; in CI the shell sweep created this fixture ten minutes before
+        the class (OB1, review 2 of #179). The snapshot's age is the service's clock read over the wire:
+        it has to move."""
+        import time as _time
+        from gsd.reporting.ticket import mint as _mint
+        base, _clock, _app = reporting_server
+        headers = {"X-Forwarded-User": "root", "X-GSD-Report-Ticket": _mint(REPORT_SECRET, "root", "all", 120)}
+
+        def age() -> int:
+            r = httpx.get(f"{base}/report/api/snapshot", headers=headers, timeout=5)
+            assert r.status_code == 200, f"{r.status_code} {r.text}: a ticket minted now is refused — the service clock is behind wall time"
+            return r.json()["age_seconds"]
+
+        first = age()
+        _time.sleep(1.2)
+        second = age()
+        assert second >= first + 1, f"the report service's clock is frozen: {first} -> {second}"
+
     def test_the_reports_tab_is_inside_the_viewport_too(self, browser, reporting_server):
         """The phone-width sweep runs on `server`, which has no reporting, so it sees eight tabs; the
         live bar was nine wide and Reports the first off the edge (OB1, review of #179). Measured here,
         beside the other users of the module-scoped `reporting_server`: created ten minutes ahead of
-        this class (the first cut placed it in the shell sweep) its report ticket outlived its 300 s
-        TTL and every test of this class timed out on `#report-picker` — in the full suite only."""
+        this class (the first cut placed it in the shell sweep), the fixture's then-frozen clock refused
+        every later-minted ticket as future-dated (the 30 s skew bound, a 403 the page does not remint
+        on) and every test of this class timed out on `#report-picker` — in the full suite only. The
+        earlier reading, "outlived its 300 s TTL", was wrong: the TTL is 120 s and the bound that bit
+        was the skew (OB1, review 2 of #179); the clock is live now, and a guard test holds it so."""
         base, _clock, _app = reporting_server
         ctx, page, errors = _reports_page(browser, base, "alice")
         try:
