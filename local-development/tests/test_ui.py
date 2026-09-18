@@ -1588,7 +1588,7 @@ class TestOverviewReview:
         page = ctx.new_page()
         hits = []
         page.on("request", lambda r: hits.append(r.url) if "/api/clusters/" in r.url else None)
-        page.goto(base + "/")
+        page.goto(base + "/#page=overview")   # the Overview's refusal is the subject; #158 moved the landing page
         page.wait_for_function("() => document.querySelector('#main').innerText.includes('Withheld')")
         page.evaluate("() => refresh({auto: true})")
         page.wait_for_timeout(1000)
@@ -1752,7 +1752,7 @@ def test_the_walks_cluster_switch_waits_for_the_paint_not_the_position(page, slo
     OB1, review of #172, pass 3). The helper returns when the opened cluster names the id and #main is no
     longer dimmed, however long the route takes."""
     wait_for_cluster_paint = _e2e_walk_module().wait_for_cluster_paint
-    page.goto(f"{slow_cluster_server}/")
+    page.goto(f"{slow_cluster_server}/#page=overview")   # the tile is the subject; #158 moved the landing page
     page.wait_for_selector(".tile[data-cluster='prod-east']")
     started = time.monotonic()
     page.locator("select#f-cluster").select_option(value="prod-east")
