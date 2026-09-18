@@ -10,6 +10,9 @@ A separate smoke test (test_live_smoke.py) covers the real thing.
 
 from __future__ import annotations
 
+import asyncio
+import importlib.util
+import pathlib
 import socket
 import threading
 import time
@@ -1371,9 +1374,33 @@ class TestNamespaces:
         p.locator("tr[data-ns='prod-ns'] button.drill").click()
         p.wait_for_selector("h2:text-is('prod-ns')")
         kpis = p.locator(".kpi .label").evaluate_all("els => els.map(e => e.textContent.trim())")
-        assert kpis == ["Via groups", "Direct grants"], kpis
+        # The self tier's labels say whose paths these are: an empty "Direct grants" on a page that holds
+        # only the viewer's own is a number under someone else's label (OB3, integration review, C10).
+        assert kpis == ["Via your groups", "Your direct grants"], kpis
         body = p.locator("#main").inner_text()
         assert "Your own memberships that reach this namespace" in body and "Also reached cluster-wide" in body
+
+    def test_the_self_tier_page_never_speaks_for_everyone(self, page, scoped_server):
+        """At the self tier `direct_grants` and `via_groups` are the viewer's OWN paths, so an empty list says
+        nothing about anyone else: prod-ns carries jdoe's direct grant and klt-pass-both is bound to
+        app-ocp-rbac-klta-ns-audit, and alice's pages read "No RoleBinding names a person here directly, which
+        is the state an access review wants to confirm" and "not granted to anyone through the policy system"
+        — false statements about the cluster, made to the reader least able to check them (OB3, integration
+        review, C10). The labels follow the numbers beside them (SPEC_per_user_visibility: never a recomputed
+        number under its old label)."""
+        p = _open_as(page, scoped_server, "alice")
+        p.goto(f"{scoped_server}/#page=nsaudit&cluster=crc-local&ns=prod-ns")
+        p.wait_for_selector("h2:text-is('prod-ns')")
+        body = p.locator("#main").inner_text()
+        assert "names a person here directly" not in body, body
+        assert "No binding names you here directly" in body, body
+        kpis = p.locator(".kpi .label").evaluate_all("els => els.map(e => e.textContent.trim())")
+        assert "Via your groups" in kpis and "Your direct grants" in kpis, kpis
+        p.goto(f"{scoped_server}/#page=nsaudit&cluster=crc-local&ns=klt-pass-both")
+        p.wait_for_selector("h2:text-is('klt-pass-both')")
+        body = p.locator("#main").inner_text()
+        assert "not granted to anyone" not in body and "No group-based binding names this namespace" not in body, body
+        assert "None of your own memberships reaches this namespace" in body, body
 
     def test_a_platform_only_cluster_wide_path_explains_the_self_tier(self, page, scoped_server):
         """kubeadmin's one binding is the platform-identity ClusterRoleBinding `ka`: at the self tier it reaches
@@ -1521,6 +1548,637 @@ class TestNamespaces:
         dash.route("**/api/clusters/*/namespaces", relabel)
         dash.evaluate("() => refresh({auto: true})")
         dash.wait_for_function("() => document.querySelector(\"tr[data-ns='prod-ns'] td.mono\").innerText.trim() === 'relabelled'")
+def _fleet_server(tmp_path_factory, n: int):
+    """The UI seed plus (n - 2) extra clusters, each polled once and refused — an unreachable cluster is
+    a legitimate tile ("auth_failed", counts frozen) and a critical alert, which is what the density
+    tiers, the worst-first order and the alert pager need in quantity (#172)."""
+    db = str(tmp_path_factory.mktemp("gsd") / "fleet.db")
+    _seed(db)
+    extra = [f"fleet-{i:02d}" for i in range(n - 2)]
+    store = Store(db)
+    try:
+        for cid in extra:
+            store.upsert_cluster(cid, f"https://api.{cid}.example.internal:6443", True)
+            store.record_poll(cid, "auth_failed", "401 Unauthorized — token invalid or expired")
+    finally:
+        store.close()
+    settings = Settings(
+        clusters=[ClusterConfig("crc-local", "https://api.crc.testing:6443", token_env="X"),
+                  ClusterConfig("prod-east", "https://api.prod-east.example.com:6443", token_env="Y")]
+                 + [ClusterConfig(cid, f"https://api.{cid}.example.internal:6443", token_env="Z") for cid in extra],
+        db_path=db, login_capture_enabled=True, view_restrictions_enabled=False,
+    )
+    port = _free_port()
+    app = build_app(settings, run_poller=False)
+    srv = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
+    thread = threading.Thread(target=srv.run, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{port}"
+    for _ in range(100):
+        try:
+            if httpx.get(f"{base}/healthz", timeout=1).status_code == 200:
+                break
+        except httpx.HTTPError:
+            time.sleep(0.1)
+    else:
+        raise RuntimeError("fleet server did not start")
+    return srv, thread, base
+
+
+@pytest.fixture(scope="module", params=[2, 6, 14, 40], ids=lambda n: f"{n}-clusters")
+def fleet(request, tmp_path_factory):
+    srv, thread, base = _fleet_server(tmp_path_factory, request.param)
+    yield request.param, base
+    srv.should_exit = True
+    thread.join(timeout=5)
+
+
+class TestOverviewFleet:
+    """#172: the Overview follows the fleet. Measured against the mock's thresholds (3 / 8 / 24) and
+    the live page's one-stack navigation, on a seeded fleet of 2, 6, 14 and 40 clusters."""
+    TIER = {2: "full", 6: "medium", 14: "compact", 40: "dense"}
+
+    def _open(self, page, base, hash_="#page=overview"):
+        """Named, not default — see `_open_fleet` above."""
+        page.goto(f"{base}/{hash_}")
+        page.wait_for_selector(".hero .value")
+        return page
+
+    def test_density_follows_the_fleet_not_the_viewport(self, page, fleet):
+        n, base = fleet
+        self._open(page, base)
+        assert page.evaluate("() => document.documentElement.dataset.density") == self.TIER[n]
+        if n > 24:
+            assert page.locator("tr.rowlink[data-cluster]").count() == n and page.locator(".tile").count() == 0
+        else:
+            assert page.locator(".tile").count() == n
+            api_visible = page.locator(".tile .api").first.is_visible()
+            assert api_visible == (n <= 3), "the API line belongs to the full tier only"
+            assert page.locator(".tile .k-extra").first.is_visible() == (n <= 3), "the three extra figures belong to the full tier only (the mock's tiers)"
+        page.set_viewport_size({"width": 375, "height": 740})
+        assert page.evaluate("() => document.documentElement.dataset.density") == self.TIER[n], "density is the fleet's, not the viewport's"
+        assert page.evaluate("() => document.documentElement.scrollWidth <= innerWidth")
+
+    def test_worst_first_past_three_and_alerts_lead_past_eight(self, page, fleet):
+        n, base = fleet
+        self._open(page, base)
+        order = page.evaluate("() => [...document.querySelectorAll('#main > section, #main > div')].map(e => e.className.split(' ')[0])")
+        if n <= 3:
+            first = page.locator(".tile h2").first.inner_text().strip()
+            assert first == "crc-local", "below four clusters the order is the served order, not worst-first"
+            assert order.index("tiles") < order.index("card"), "the tiles lead a small fleet"
+        else:
+            sel = "tr.rowlink[data-cluster] .badge" if n > 24 else ".tile .badge"
+            assert page.locator(sel).first.inner_text().strip() != "reachable", "past three clusters the worst tile comes first"
+        if n > 8:
+            first_card = page.locator("#main > section.card").first
+            assert first_card.locator(".hero .value").count() == 1, "past eight clusters the alerts lead the page"
+
+    def test_alerts_are_paged_and_the_page_is_view_state(self, page, fleet):
+        n, base = fleet
+        self._open(page, base)
+        pager = page.locator(".pager")
+        total = len(httpx.get(f"{base}/api/alerts", timeout=5).json()["alerts"])
+        if total <= 8:
+            assert pager.count() == 0, "eight or fewer alerts need no pager"
+            return
+        assert pager.count() == 1, f"{total} alerts need a pager"
+        assert page.locator(".alert-row").count() == 8
+        first_before = page.locator(".alert-row .who").first.inner_text()
+        page.get_by_role("button", name="2", exact=True).click()   # the numbered button, not "Next ›"
+        page.wait_for_function("() => document.querySelector(\"button[data-alert-page='2'][aria-pressed='true']\")")
+        assert page.locator(".alert-row .who").first.inner_text() != first_before
+        assert page.evaluate("() => location.hash") in ("", "#page=overview"), "a page click is not a position"
+        page.click("#tab-groups")
+        page.wait_for_selector("#tab-groups[aria-current='page']")
+        page.click("#tab-overview")
+        page.wait_for_selector("button[data-alert-page='1'][aria-pressed='true']")
+
+    def test_a_tile_opens_the_cluster_and_back_returns_to_the_fleet(self, page, fleet):
+        n, base = fleet
+        self._open(page, base)
+        opener = "tr.rowlink[data-cluster='crc-local']" if n > 24 else ".tile[data-cluster='crc-local']"
+        _open_cluster(page, opener)
+        assert page.evaluate("() => location.hash") == "#page=overview&cluster=crc-local"
+        assert page.locator("#back").inner_text().strip() == "← all clusters"
+        assert page.locator("#f-cluster").input_value() == "crc-local", "the selector is the same position as the tile"
+        assert page.locator("h2", has_text="GroupSync CRs").count() == 1
+        assert "on crc-local" in page.locator("#main").inner_text()
+        assert "across 1 cluster" in page.locator(".hero .label").inner_text(), "the scoped view counts one cluster's alerts"
+        page.locator("#back").click()
+        # The position changes at once; the repaint follows the refetch — wait for the selector to say so.
+        page.wait_for_function("() => document.getElementById('f-cluster').value === '' && !document.querySelector('#back')")
+        assert page.evaluate("() => location.hash") in ("#page=overview", "")
+        page.locator(opener).click()
+        page.wait_for_selector("#back")
+        page.go_back()
+        page.wait_for_function("() => document.getElementById('f-cluster').value === '' && !document.querySelector('#back')")
+        assert page.locator(".tile, tr.rowlink[data-cluster]").count() >= 2, "the browser's Back walks the same stack to the fleet"
+
+    def test_the_selector_opens_the_same_scoped_view(self, page, fleet):
+        n, base = fleet
+        self._open(page, base)
+        page.select_option("#f-cluster", "prod-east")
+        page.wait_for_selector("#back")
+        assert page.evaluate("() => location.hash") == "#page=overview&cluster=prod-east"
+        assert "401 Unauthorized" in page.locator("#main").inner_text()
+        assert "the poller cannot reach it" in page.locator("#main").inner_text(), "an unreachable cluster states its consequence"
+
+    def test_the_contract_survives_in_both_views(self, page, fleet):
+        n, base = fleet
+        self._open(page, base)
+        text = page.locator("#main").inner_text()
+        if n <= 8:
+            assert "GroupSync CRs" in page.locator("section.card h2").all_inner_texts()
+            for col in ("Name", "State", "Schedule", "Groups", "Last sync", "Next expected"):
+                assert page.locator("th", has_text=col).count() >= 1, col
+            assert "Policy operator (NamespaceConfig / GroupConfig)" in text
+            assert "quietly stopped reconciling" in text
+        _open_cluster(page, "tr.rowlink[data-cluster='crc-local']" if n > 24 else ".tile[data-cluster='crc-local']")
+        # text_content: the labels are not upper-cased (OB1 measured text-transform none), but text_content
+        # also reads the figures the density tier hides, which is the point — the scoped view carries them all
+        text = page.locator("#main").text_content()
+        for label in ("Groups", "Bindings to review", "Unattributed", "Oldest last sync", "GroupSync CRs", "Empty", "Policy configs"):
+            assert label in text, f"the scoped view dropped the figure {label!r}"
+        assert "Policy operator (NamespaceConfig / GroupConfig)" in text and "quietly stopped reconciling" in text
+        row = page.locator("tr[data-cr='bda-rbac-groupsync']")
+        assert "overdue" in row.inner_text() and "the schedule has stopped firing" in row.inner_text(), "overdue states its consequence"
+        ok_row = page.locator("tr[data-cr='ldap-groupsync']")
+        assert "ok" in ok_row.inner_text() and "frozen" not in ok_row.inner_text()
+        badges = [b.strip() for b in page.locator("tr[data-cr] .badge").all_inner_texts()]
+        assert not ({"critical", "warning"} & set(badges) - {"reconcile error"}) or all(b in ("ok", "late", "overdue", "unknown", "reconcile error") for b in badges), badges
+
+
+def _review_server(tmp_path_factory, n: int, *, retired=(), badcron=False, restricted=False):
+    """`_fleet_server` plus what the review of #172 needed: a CR with an unusable schedule, a retired
+    cluster (#96), restrictions on (the scoped_server shape — proxy on, the tier keyed off X-Forwarded-User)."""
+    from datetime import UTC as _UTC
+    db = str(tmp_path_factory.mktemp("gsd") / "review.db")
+    _seed(db)
+    extra = [f"fleet-{i:02d}" for i in range(n - 2)]
+    store = Store(db)
+    try:
+        for cid in extra:
+            store.upsert_cluster(cid, f"https://api.{cid}.example.internal:6443", True)
+            store.record_poll(cid, "auth_failed", "401 Unauthorized — token invalid or expired")
+        for cid in retired:                      # #96: removed from config, enabled=0, history kept
+            store.upsert_cluster(cid, f"https://api.{cid}.example.internal:6443", False)
+        if badcron:                              # synced 3 min ago on a reachable cluster; the schedule is the defect
+            rows = [dict(r) for r in store.groupsyncs("crc-local")]
+            now = datetime.now(_UTC)
+            rows.append({"name": "badcron-groupsync", "namespace": "group-sync-operator", "schedule": "not a cron",
+                         "ldap_filter": "(cn=x)", "last_sync_at": _iso(now - timedelta(minutes=3)), "generation": 1,
+                         "provider_keys": ["badcron-groupsync_ldap"]})
+            rows.append({"name": "nevercron-groupsync", "namespace": "group-sync-operator", "schedule": "not a cron",
+                         "ldap_filter": "(cn=y)", "last_sync_at": None, "generation": 1,
+                         "provider_keys": ["nevercron-groupsync_ldap"]})
+            store.replace_groupsync_state("crc-local", rows, _iso(now))
+    finally:
+        store.close()
+    kw = {"oauth_proxy_enabled": True} if restricted else {"view_restrictions_enabled": False}
+    settings = Settings(
+        clusters=[ClusterConfig("crc-local", "https://api.crc.testing:6443", token_env="X"),
+                  ClusterConfig("prod-east", "https://api.prod-east.example.com:6443", token_env="Y")]
+                 + [ClusterConfig(cid, f"https://api.{cid}.example.internal:6443", token_env="Z") for cid in extra],
+        db_path=db, login_capture_enabled=True, **kw,
+    )
+    port = _free_port()
+    app = build_app(settings, run_poller=False)
+    if restricted:
+        app.state.tier_resolver = _TierByName()
+    srv = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
+    thread = threading.Thread(target=srv.run, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{port}"
+    for _ in range(100):
+        try:
+            if httpx.get(f"{base}/healthz", timeout=1).status_code == 200:
+                break
+        except httpx.HTTPError:
+            time.sleep(0.1)
+    else:
+        raise RuntimeError("review server did not start")
+    return srv, thread, base, db
+
+
+def _serve_review(tmp_path_factory, n, **opts):
+    srv, thread, base, db = _review_server(tmp_path_factory, n, **opts)
+    yield base, db
+    srv.should_exit = True
+    thread.join(timeout=5)
+
+
+@pytest.fixture(scope="module")
+def review_two(tmp_path_factory):
+    yield from _serve_review(tmp_path_factory, 2, retired=("gone-cluster",), badcron=True)
+
+
+@pytest.fixture(scope="module")
+def review_compact(tmp_path_factory):
+    yield from _serve_review(tmp_path_factory, 14)
+
+
+@pytest.fixture(scope="module")
+def review_dense(tmp_path_factory):
+    yield from _serve_review(tmp_path_factory, 40)
+
+
+@pytest.fixture(scope="module")
+def review_restricted(tmp_path_factory):
+    yield from _serve_review(tmp_path_factory, 2, restricted=True)
+
+
+def _open_fleet(page, base, hash_="#page=overview"):
+    """The fleet, at a NAMED position. The default route is not this page's to assume: #158 makes Home the
+    landing page for every tier, and these tests — which live on a sibling branch and so never saw that
+    change — waited 30 s for a hero Home does not have, 37 times, the first time the two were merged. A
+    test names the page it is about."""
+    page.goto(f"{base}/{hash_}")
+    page.wait_for_selector(".hero .value")
+
+
+def _open_cluster(page, opener):
+    """Click a tile (or a dense row) and wait for the scoped view to paint its TABLES. `#back` arrives with
+    the first paint — the tile, its alerts and "Loading…" (F15: a tile paints before it fetches); the
+    GroupSync CRs and policy tables land with the batch's one render. A test that reads them after `#back`
+    alone reads the Loading frame when the runner is slow enough: CI did, at 14 clusters (run 35342604962,
+    350 passed beside it, every local run green) — the wait on the position, not the paint, that OB1 found
+    in the e2e walk (pass 3, C6)."""
+    page.locator(opener).click()
+    page.wait_for_selector("#back")
+    page.wait_for_function("() => !document.getElementById('main').innerText.includes('Loading…')")
+
+
+class TestOverviewReview:
+    """The review of #172 (docs/REVIEW_overview_relayout.md): one test per accepted finding, each shown
+    failing on 759cd7d. Grok read the source; OB1 drove the app at 2/6/14/40 clusters and supplied the
+    fixtures and most of these tests; Codex read the contract."""
+
+    def test_unknown_state_names_the_schedule_not_the_cluster(self, page, review_two):
+        """`unknown` on the wire is never "unreachable" — api.enrich() passes no `reachable` to
+        compute_state(); with a last sync and schedule_valid false it is the schedule (OB1 F1)."""
+        base, _ = review_two
+        _open_fleet(page, base)
+        row = page.locator("tr[data-cr='badcron-groupsync']")
+        assert "unknown" in row.locator(".badge").first.inner_text()
+        consq = row.locator(".consq").inner_text()
+        assert "schedule" in consq, consq
+        assert "unreachable" not in consq and "never observed" not in consq, consq
+
+    def test_dense_rows_carry_the_reachability_badge(self, page, review_dense):
+        """badge("critical") is a word outside STATES → "unknown" for every auth_failed row (Grok F2, OB1 F2)."""
+        base, _ = review_dense
+        _open_fleet(page, base)
+        b = page.locator("tr.rowlink[data-cluster='prod-east'] .badge")
+        assert b.inner_text().strip() == "auth_failed"
+        assert "critical" in b.get_attribute("class") and "unknown" not in b.get_attribute("class")
+
+    def test_absent_note_needs_a_successful_poll(self, page, review_two):
+        """The store's `present` is two-valued, so a never-polled or failed-poll cluster reads present:false too;
+        "prod-east reports these CRDs absent" was said of a cluster that reported nothing (OB1 F3)."""
+        base, _ = review_two
+        _open_fleet(page, base)
+        notes = [t for t in page.locator(".filterbar-note").all_inner_texts() if "absent" in t]
+        assert not any("prod-east" in t for t in notes), notes
+
+    def test_the_opened_cluster_has_no_dead_button_and_keeps_the_tile_typography(self, page, review_two):
+        """A string-replaced tile kept an inert heading button and lost every .tile-scoped style (Grok F3, OB1 F4)."""
+        base, _ = review_two
+        _open_fleet(page, base, "#page=overview&cluster=crc-local")
+        page.wait_for_selector(".tile-detail")
+        assert page.locator(".tile-detail button.tile-open").count() == 0, "a button that opens where the reader already is"
+        assert page.locator(".tile-detail h2").inner_text().strip() == "crc-local"
+        api = page.evaluate("() => { const s = getComputedStyle(document.querySelector('.tile-detail .api')); return [s.display, s.fontFamily]; }")
+        assert api[0] == "block", api
+        assert "mono" in api[1].lower(), api
+        assert page.evaluate("() => getComputedStyle(document.querySelector('.tile-detail .cn')).fontWeight") in ("600", "700", "bold")
+
+    def test_a_tile_opened_from_the_fleet_drops_the_previous_clusters_payloads(self, page, review_two):
+        """The orphan-clearing chokepoint was guarded on `view.cluster &&`; the fleet leaves it null, so a tile
+        opened after a scoped visit cleared nothing and the next tab painted crc-local's groups under
+        prod-east (OB1 F5; the same hole found tracing Grok's paint-first snippet)."""
+        base, _ = review_two
+        page.goto(f"{base}/#page=groups&cluster=crc-local")
+        page.wait_for_selector("tr[data-group]")
+        page.click("#tab-overview")
+        page.wait_for_function("() => view.cluster === null && document.querySelector('.tile')")
+        page.locator(".tile[data-cluster='prod-east']").click()
+        page.wait_for_selector("#back")
+        painted = page.evaluate("""() => { document.querySelector('#tab-groups').click();
+            return {cluster: view.cluster, rows: document.querySelectorAll('tr[data-group]').length}; }""")
+        assert painted["cluster"] == "prod-east"
+        assert painted["rows"] == 0, f"crc-local's groups painted under prod-east: {painted}"
+
+    def test_a_tile_paints_the_cluster_before_its_fetch_returns(self, page, review_two):
+        """The tab handler paints the destination before it fetches; a tile did navigate(); refresh() and left
+        the dimmed fleet on screen for the length of the round trip (Grok F5). The first paint is the tile,
+        its alerts and "Loading…" — no other cluster's CRs."""
+        base, _ = review_two
+        _open_fleet(page, base)
+        held = []
+        page.route("**/api/clusters/prod-east/groupsyncs", lambda route: held.append(route))
+        page.locator(".tile[data-cluster='prod-east']").click()
+        page.wait_for_selector("#back", timeout=3000)
+        assert "Loading" in page.locator("#main").inner_text()
+        assert page.locator("tr[data-cr]").count() == 0, "another cluster's CRs under prod-east"
+        for route in held:
+            route.continue_()
+        page.wait_for_function("() => !document.querySelector('#main').innerText.includes('Loading')")
+
+    def test_the_fleet_tables_say_loading_not_per_cluster_while_the_fetch_is_out(self, page, review_two):
+        """Below nine clusters a missing fleet payload is a fetch still out, not the per-cluster note (OB1 F6)."""
+        base, _ = review_two
+        page.goto(f"{base}/#page=groups&cluster=crc-local")
+        page.wait_for_selector("tr[data-group]")
+        first = page.evaluate("""() => { document.querySelector('#tab-overview').click();
+            return (document.querySelector('#main .empty-note') || {}).textContent || ''; }""")
+        assert "shown per cluster" not in first, first
+        assert "Loading" in first, first
+
+    def test_an_auto_refresh_repaints_the_fleet_tables_when_only_they_changed(self, page, review_two):
+        """data.fleet is rendered and was not fingerprinted (Grok F4, OB1 F7, Codex F4)."""
+        from datetime import UTC as _UTC
+        base, db = review_two
+        _open_fleet(page, base)
+        page.wait_for_selector("tr[data-cr='ldap-groupsync']")
+        cell = "() => document.querySelector(\"tr[data-cr='ldap-groupsync'] code\").textContent"
+        assert page.evaluate(cell) == "*/30 * * * *"
+        store = Store(db)
+        try:
+            rows = [dict(r) for r in store.groupsyncs("crc-local")]
+            for r in rows:
+                if r["name"] == "ldap-groupsync":
+                    r["schedule"] = "*/20 * * * *"      # still ok at a 4-minute age: no alert, no cluster count moves
+            store.replace_groupsync_state("crc-local", rows, _iso(datetime.now(_UTC)))
+        finally:
+            store.close()
+        page.evaluate("() => refresh({auto: true})")
+        page.wait_for_function("""() => document.querySelector("tr[data-cr='ldap-groupsync'] code").textContent === '*/20 * * * *'""", timeout=5000)
+
+    def test_a_failed_cluster_fetch_is_named_on_the_fleet_table(self, page, review_two):
+        """A cluster whose /groupsyncs request failed was folded into "all syncing" (OB1 F8)."""
+        base, _ = review_two
+        page.route("**/api/clusters/prod-east/groupsyncs", lambda route: route.fulfill(status=500, body="boom"))
+        _open_fleet(page, base)
+        page.wait_for_selector("tr[data-cr]")
+        text = page.locator("#main").inner_text()
+        assert "prod-east: CRs not fetched" in text, text[:400]
+
+    def test_a_narrowed_reader_does_not_fetch_the_fleet_tables(self, browser, review_restricted):
+        """A refused reader's browser ran the fleet stage every poll — N designed 403s a minute on /metrics
+        for a page they cannot see (OB1 F9)."""
+        base, _ = review_restricted
+        ctx = browser.new_context(extra_http_headers={"X-Forwarded-User": "alice"})
+        page = ctx.new_page()
+        hits = []
+        page.on("request", lambda r: hits.append(r.url) if "/api/clusters/" in r.url else None)
+        page.goto(base + "/#page=overview")   # the Overview's refusal is the subject; #158 moved the landing page
+        page.wait_for_function("() => document.querySelector('#main').innerText.includes('Withheld')")
+        page.evaluate("() => refresh({auto: true})")
+        page.wait_for_timeout(1000)
+        ctx.close()
+        assert hits == [], hits
+
+    def test_a_link_to_a_retired_cluster_is_a_detour_with_the_bar_intact(self, page, review_two):
+        """#96: the API 404s a retired id, the batch rejected, render() never ran — the generic error card with
+        no tab bar, and the page's own note unreachable (Grok F1, OB1 F10, Codex F2)."""
+        base, _ = review_two
+        page.goto(f"{base}/#page=overview&cluster=gone-cluster")
+        page.reload()
+        page.wait_for_function("() => document.querySelector('#main').innerText.includes('No cluster by that id')", timeout=8000)
+        assert page.locator("#f-cluster").count() == 1, "the filter bar never rendered"
+        assert "Dashboard API error" not in page.locator("#main").inner_text()
+        page.locator("#back").click()
+        page.wait_for_function("() => view.cluster === null && document.querySelector('.tile')")
+
+    def test_a_superseded_refresh_does_not_write_the_fleet_payload(self, page, review_two):
+        """data.fleet was written before the superseded check — the codebase's own "must not WRITE" rule
+        (OB1 F11). The supersede happens from inside the fleet stage's own request, so it is not a race."""
+        base, _ = review_two
+        _open_fleet(page, base)
+        page.wait_for_selector("tr[data-cr]")
+
+        def supersede_then_answer(route):
+            page.evaluate("() => { navigate({cluster: 'crc-local'}); refresh(); }")
+            route.continue_()
+
+        page.route("**/api/clusters/prod-east/groupsyncs", supersede_then_answer)
+        page.evaluate("() => { data.fleet = 'SENTINEL'; refresh({auto: true}); }")
+        page.wait_for_selector("#back")
+        page.wait_for_timeout(1200)
+        assert page.evaluate("() => data.fleet") == "SENTINEL", "the superseded refresh wrote data.fleet"
+
+    def test_the_opened_cluster_keeps_the_tile_rail(self, page, review_two):
+        """Pass 2 (Grok V3): F4 paired .cn/.api/.poll onto .tile-detail and left .tile.bad behind, so an
+        opened auth_failed cluster looked healthier than its tile."""
+        base, _ = review_two
+        _open_fleet(page, base)
+        rail = "() => { const t = document.querySelector(SEL); const s = getComputedStyle(t); return [t.className, s.borderLeftWidth, s.borderLeftColor]; }"
+        tile_rail = page.evaluate(rail.replace("SEL", "'.tile[data-cluster=\"prod-east\"]'"))
+        page.locator(".tile[data-cluster='prod-east']").click()
+        page.wait_for_selector(".tile-detail")
+        detail_rail = page.evaluate(rail.replace("SEL", "'.tile-detail'"))
+        assert "bad" in detail_rail[0]
+        assert detail_rail[1] == tile_rail[1] == "3px", (tile_rail, detail_rail)
+        assert detail_rail[2] == tile_rail[2]
+
+    def test_the_selector_names_a_retired_id_beside_its_detour(self, page, review_two):
+        """Pass 2 (Grok V1): the detour rendered with the selector on its first option, "all clusters",
+        for a page that is not the fleet."""
+        base, _ = review_two
+        page.goto(f"{base}/#page=overview&cluster=gone-cluster")
+        page.reload()
+        page.wait_for_function("() => document.querySelector('#main').innerText.includes('No cluster by that id')")
+        assert page.evaluate("() => [document.getElementById('f-cluster').value, view.cluster]") == ["gone-cluster", "gone-cluster"]
+        assert "not configured" in page.locator("#f-cluster option:checked").inner_text()
+        page.locator("#back").click()
+        page.wait_for_function("() => view.cluster === null && document.querySelector('.tile')")
+        assert page.locator("#f-cluster").input_value() == ""
+
+    def test_a_heading_beside_its_count_keeps_the_accent_rail(self, page, review_two):
+        """Pass 2 (Grok V4): `.card > h2::before` never matched a heading inside `.row-wrap`, so the
+        GroupSync card on the Overview and the Policy card lost their 3 px accent rail."""
+        base, _ = review_two
+        _open_fleet(page, base, "#page=overview&cluster=crc-local")
+        page.wait_for_selector("h3:has-text('Policy operator')")
+        widths = page.evaluate("""() => ['GroupSync CRs', 'Policy operator'].map(t => {
+            const h = [...document.querySelectorAll('#main h2, #main h3')].find(e => e.textContent.includes(t));
+            return getComputedStyle(h, '::before').width; })""")
+        assert widths == ["3px", "3px"], widths
+
+    def test_unknown_without_a_last_sync_still_names_an_unusable_schedule(self, page, review_two):
+        """Pass 2 (Grok V2): the schedule sentence was gated on a last sync, so a never-synced CR with an
+        unusable schedule read "until its first fire" — of a cron that cannot fire."""
+        base, _ = review_two
+        _open_fleet(page, base)
+        consq = page.locator("tr[data-cr='nevercron-groupsync'] .consq").inner_text()
+        assert "schedule" in consq and "never observed" not in consq, consq
+
+    def test_kinds_are_chips_not_blank_badges(self, page, review_compact):
+        """A .badge with no state class drew a 9 px transparent square where a glyph belongs (OB1 F13)."""
+        base, _ = review_compact
+        _open_fleet(page, base)
+        assert page.locator(".kinds .kind").count() > 0
+        assert page.locator(".kinds .badge").count() == 0
+
+    def test_a_tile_heading_carries_no_accent_rail_like_its_opened_form(self, page, review_two):
+        """Pass 2 widened the accent-rail selector to `.card > .row-wrap > h2::before` for the counted headings,
+        and it matched every tile's name heading too: a 3 px accent rail 16 px inboard of the tile's own 3 px
+        status rail, which the mock's tile (a button, not a card) never had, the pre-#172 cluster card never had,
+        and the opened cluster (.tile-detail, not a direct child of .card) does not have (OB1, pass 3). The tile
+        and its opened form agree — neither name wears the accent rail — and the counted headings keep theirs."""
+        base, _ = review_two
+        _open_fleet(page, base)
+        page.wait_for_selector("tr[data-cr]")
+        rail = "(sel) => getComputedStyle(document.querySelector(sel), '::before').width"
+        tile = page.evaluate(rail, ".tile[data-cluster='prod-east'] h2")
+        counted = page.evaluate("() => getComputedStyle([...document.querySelectorAll('#main h2')].find(h => h.textContent.includes('GroupSync CRs')), '::before').width")
+        page.locator(".tile[data-cluster='prod-east']").click()
+        page.wait_for_selector(".tile-detail h2")
+        detail = page.evaluate(rail, ".tile-detail h2")
+        assert tile == detail, (tile, detail)
+        assert tile != "3px" and counted == "3px", (tile, counted)
+
+
+def _e2e_walk_module():
+    """`local-development/e2e-walk/` is not a package; `e2e_capture.py` is loaded by path, as the walk's
+    own unit test loads it, so a helper the walk relies on can be driven against a seeded server here."""
+    path = pathlib.Path(__file__).resolve().parents[1] / "e2e-walk" / "e2e_capture.py"
+    spec = importlib.util.spec_from_file_location("gsd_e2e_capture_ui", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.fixture(scope="module")
+def slow_cluster_server(tmp_path_factory):
+    """The seeded two-cluster app behind an ASGI wrapper that holds prod-east's GroupSync payload for
+    1.2 s: the walk's cluster switch has to wait through a route's round trip, not loopback's."""
+    db = str(tmp_path_factory.mktemp("gsd") / "slow.db")
+    _seed(db)
+    settings = Settings(
+        clusters=[ClusterConfig("crc-local", "https://api.crc.testing:6443", token_env="X"),
+                  ClusterConfig("prod-east", "https://api.prod-east.example.com:6443", token_env="Y")],
+        db_path=db, login_capture_enabled=True, view_restrictions_enabled=False,
+    )
+    app = build_app(settings, run_poller=False)
+    held = {"/api/clusters/prod-east/groupsyncs": 1.2}
+
+    async def slow(scope, receive, send):
+        if scope["type"] == "http" and scope["path"] in held:
+            await asyncio.sleep(held[scope["path"]])
+        await app(scope, receive, send)
+
+    port = _free_port()
+    srv = uvicorn.Server(uvicorn.Config(slow, host="127.0.0.1", port=port, log_level="warning"))
+    thread = threading.Thread(target=srv.run, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{port}"
+    for _ in range(100):
+        try:
+            if httpx.get(f"{base}/healthz", timeout=1).status_code == 200:
+                break
+        except httpx.HTTPError:
+            time.sleep(0.1)
+    else:
+        raise RuntimeError("slow cluster server did not start")
+    yield base
+    srv.should_exit = True
+    thread.join(timeout=5)
+
+
+def test_the_walks_cluster_switch_waits_for_the_paint_not_the_position(page, slow_cluster_server):
+    """`view.cluster` changes the instant the selector fires, and `wait_for_load_state("networkidle")`
+    resolves at once when the document has already reached that state — so the walk's second-cluster wait
+    returned with the previous cluster still on screen, and its 900 ms sleep was the only cover (measured
+    with the fetch held 1.5 s: the heading stale after networkidle at 24 ms and after the sleep at 941 ms —
+    OB1, review of #172, pass 3). The helper returns when the opened cluster names the id and #main is no
+    longer dimmed, however long the route takes."""
+    wait_for_cluster_paint = _e2e_walk_module().wait_for_cluster_paint
+    page.goto(f"{slow_cluster_server}/#page=overview")   # the tile is the subject; #158 moved the landing page
+    page.wait_for_selector(".tile[data-cluster='prod-east']")
+    started = time.monotonic()
+    page.locator("select#f-cluster").select_option(value="prod-east")
+    wait_for_cluster_paint(page, "prod-east")
+    waited = time.monotonic() - started
+    assert page.locator("h2").first.inner_text().strip() == "prod-east"
+    assert not page.evaluate("() => document.getElementById('main').classList.contains('stale')")
+    assert waited >= 1.0, f"returned after {waited:.2f}s with the fetch held 1.2 s: the position, not the paint"
+
+
+
+@pytest.fixture(scope="module")
+def two_polled_server(tmp_path_factory):
+    """The UI seed with prod-east polled and holding two groups of its own, so a payload painted under the
+    wrong cluster shows as ROWS rather than as an empty list."""
+    db = str(tmp_path_factory.mktemp("gsd-two") / "ui.db")
+    _seed(db)
+    now = datetime.now(UTC)
+    store = Store(db)
+    try:
+        store.record_poll("prod-east", "ok", None)
+        store.replace_group_state("prod-east", [
+            {"name": "east-only-group-one", "member_count": 1, "sync_provider": "east-sync_ldap",
+             "group_synced_at": _iso(now - timedelta(minutes=2)), "ldap_uid": "cn=east-only-group-one,ou=Groups,dc=example,dc=com"},
+            {"name": "east-only-group-two", "member_count": 1, "sync_provider": "east-sync_ldap",
+             "group_synced_at": _iso(now - timedelta(minutes=2)), "ldap_uid": "cn=east-only-group-two,ou=Groups,dc=example,dc=com"},
+        ], _iso(now))
+        store.sync_members("prod-east", {"east-only-group-one": ["erin"], "east-only-group-two": ["erin"]}, {},
+                           _iso(now - timedelta(minutes=2)))
+    finally:
+        store.close()
+    settings = Settings(
+        clusters=[ClusterConfig("crc-local", "https://api.crc.testing:6443", token_env="X"),
+                  ClusterConfig("prod-east", "https://api.prod-east.example.com:6443", token_env="Y")],
+        db_path=db, login_capture_enabled=True, view_restrictions_enabled=False,
+    )
+    port = _free_port()
+    srv = uvicorn.Server(uvicorn.Config(build_app(settings, run_poller=False), host="127.0.0.1", port=port, log_level="warning"))
+    thread = threading.Thread(target=srv.run, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{port}"
+    for _ in range(100):
+        try:
+            if httpx.get(f"{base}/healthz", timeout=1).status_code == 200:
+                break
+        except httpx.HTTPError:
+            time.sleep(0.1)
+    else:
+        raise RuntimeError("two-polled server did not start")
+    yield base
+    srv.should_exit = True
+    thread.join(timeout=5)
+
+
+class TestTheFleetOrphansNoPayload:
+    """#172 made "no cluster" a position (the fleet), and the tab handler paints from `data` before it
+    fetches. The chokepoint dropped the cluster-scoped payloads on a change BETWEEN clusters and on the way
+    FROM no cluster, but not on the way TO none — so Groups on prod-east → Overview (the fleet) → Groups
+    painted prod-east's rows under `#page=groups&cluster=crc-local` for the length of the fetch (OB3,
+    integration review, C2: measured 300 ms after the click)."""
+
+    def test_a_tab_opened_from_the_fleet_never_paints_the_previous_clusters_rows(self, page, two_polled_server):
+        errors: list[str] = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.goto(f"{two_polled_server}/#page=groups&cluster=prod-east")
+        page.wait_for_selector("tr[data-group='east-only-group-one']")
+        page.click("#tab-overview")
+        page.wait_for_selector(".tile[data-cluster='crc-local']")
+        assert page.evaluate("() => view.cluster") is None, "the Overview tab opens the fleet"
+        held: list = []
+        page.route("**/api/clusters/*/groups?*", lambda route: held.append(route))   # hold the fetch; read the first paint
+        page.click("#tab-groups")
+        page.wait_for_function("() => location.hash === '#page=groups&cluster=crc-local'")   # boot stamped the default
+        first = page.evaluate("""() => ({rows: [...document.querySelectorAll('tr[data-group]')].map(t => t.dataset.group),
+                                        loading: document.getElementById('main').innerText.includes('Loading…')})""")
+        for route in held:
+            route.continue_()
+        page.unroute("**/api/clusters/*/groups?*")
+        assert first["rows"] == [] and first["loading"], f"another cluster's rows under crc-local's position: {first}"
+        page.wait_for_selector("tr[data-group='app-ocp-rbac-alpha-ns-admin']")
+        assert page.evaluate("() => document.getElementById('scope-note').textContent") == " - crc-local"
+        assert not errors
 
 
 class TestLookup:
@@ -2132,7 +2790,11 @@ class TestBrowserHistory:
     def test_the_boot_entry_carries_the_default_cluster(self, dash):
         """The default cluster is not known until the cluster list arrives — after boot stamped
         the entry — so the first entry used to carry no cluster at all, and Back from the reader's
-        FIRST cluster switch restored a drill-down against the wrong one."""
+        FIRST cluster switch restored a drill-down against the wrong one. Measured on a tab that
+        needs a cluster: on the Overview an absent cluster is the fleet view (#172), so the boot
+        entry there carries none, by design."""
+        assert dash.evaluate("() => history.state.pos.cluster") is None, "the Overview boots into the fleet"
+        dash.click("#tab-groups")
         dash.wait_for_function("() => view.cluster")
         assert dash.evaluate("() => history.state.pos.cluster") == "crc-local"
 
@@ -2248,8 +2910,10 @@ class TestBrowserHistory:
             "the label must describe where goBack() rises to, not a fixed string"
         )
         dash.locator("#back").click()
-        dash.wait_for_function("() => !document.querySelector('#back')")
-        assert dash.evaluate("() => view.page") == "overview"
+        # The CR detail's parent is the cluster it lives under — #page=overview&cluster=crc-local, the
+        # scoped view (#172), which carries its own back control to the fleet.
+        dash.wait_for_function("() => !view.groupsync && document.querySelector('#back') && document.querySelector('#back').textContent.includes('all clusters')")
+        assert dash.evaluate("() => [view.page, view.cluster, view.groupsync]") == ["overview", "crc-local", None]
 
     def test_back_after_a_cluster_switch_restores_that_cluster(self, dash):
         """Cluster is part of the position, not context around it — group names repeat."""
@@ -2358,6 +3022,31 @@ class TestUsagePage:
 
 
 class TestRbacPolicyPage:
+    def test_the_policy_heading_is_a_direct_card_child_with_its_accent_rail(self, dash):
+        """Pass 2 (Grok V4): the plain card's heading is the old markup exactly — a direct child of the card —
+        and the accent rail every card heading wears applies to it."""
+        self._open(dash)
+        dash.wait_for_selector("h3:has-text('Policy operator')")
+        got = dash.evaluate("""() => { const h = [...document.querySelectorAll('#main h3')].find(e => e.textContent.includes('Policy operator'));
+            return {parent: h.parentElement.className, width: getComputedStyle(h, '::before').width}; }""")
+        assert "row-wrap" not in got["parent"] and got["width"] == "3px", got
+
+    def test_the_shared_policy_card_changes_only_the_failing_consequence(self, dash):
+        """#172 shares the fleet's policy card with this tab and promised it only the consequence line; the
+        shared card had also moved the failing row first, added the count to the heading, the attention wash
+        and the state cell (Codex F5, OB1 O10). This tab's card is the pre-#172 card plus the line."""
+        self._open(dash)
+        dash.wait_for_selector("h3:has-text('Policy operator')")
+        card = dash.locator("section.card", has=dash.locator("h3", has_text="Policy operator (NamespaceConfig / GroupConfig)"))
+        assert card.locator("h3").inner_text().strip() == "Policy operator (NamespaceConfig / GroupConfig)"
+        assert card.locator("tbody code").all_inner_texts() == ["cluster-admin-groupconfig-rbac", "multitenant"], "the seed's order"
+        failing = card.locator("tbody tr", has_text="multitenant")
+        assert failing.get_attribute("class") in (None, "")
+        assert failing.locator("td.state-cell").count() == 0
+        assert "reconcile error" in failing.inner_text()
+        assert "RBAC has quietly stopped reconciling" in failing.inner_text()
+        assert "failed calling webhook validate.kyverno.svc-fail" in card.inner_text()
+
     """The RBAC-policy tab. It shipped broken — `section is not defined`, because the
     renderer was local to bindingsPage() — and the suite did not notice, because nothing
     opened the tab. Every page needs at least one test that renders it."""
@@ -2376,6 +3065,9 @@ class TestRbacPolicyPage:
 
     def test_it_reports_the_policy_operator_and_the_unmanaged_set(self, dash):
         self._open(dash)
+        # The tab paints first and fetches after; the operator card lands with the fetch. Before #172 the
+        # Overview had prefetched it for the selected cluster — the fleet view has no selected cluster.
+        dash.wait_for_selector("h3:has-text('Policy operator')")
         body = dash.locator("body").inner_text()
         assert "Policy operator" in body
         assert "outside the policy system" in body

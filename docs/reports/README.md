@@ -136,6 +136,11 @@ chooses HTML and/or PDF per run.
 
 > **Planned ([#149](https://github.com/ephico2real2/group-sync-dashboard/issues/149)):** scheduled runs
 > default to **HTML + JSON only** (no PDF — the HTML report has a print button, so a reviewer prints to
-> PDF on demand), and retention becomes two-tier — **scheduled** runs kept 90 days or the newest 2 per
-> schedule (whichever keeps more), **manual** runs expired quickly (3 days / newest 500) to keep the
-> volume lean. Until then, all runs share the retention in the chart values.
+> PDF on demand). Until then, a scheduled run stores whatever formats its schedule asks for.
+
+Retention is **two-tier** ([#149](https://github.com/ephico2real2/group-sync-dashboard/issues/149) R2),
+so a burst of on-demand runs can never evict a scheduled report. A **scheduled** run is kept while
+within the newest `keepPerSchedule` (default 2) per (schedule, cluster) **or** younger than `days`
+(default 90), and is exempt from the manual run-count cap. A **manual** run is kept `days` (default 3)
+and at most `maxRuns` (default 500), whichever prunes first. See `reporting.retention` in the chart
+values; `keepPerSchedule` is a floor, so `scheduled.days: 0` disables scheduled deletion altogether.

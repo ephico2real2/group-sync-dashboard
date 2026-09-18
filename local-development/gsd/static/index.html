@@ -260,13 +260,18 @@ function applyPosition(pos) {
   if ((pos.group || null) !== view.group) view.memberSearch = "";
   view.group = pos.group || null;
   view.user = pos.user || null;
-  view.ns = pos.ns || null;   // #167: the namespace page, the third drill-down peer
+      view.ns = pos.ns || null;   // #167: the namespace page, the third drill-down peer
+      view.alertPage = 1;   // #172: the alerts card's page is view state, never a position
   // `cluster` is part of the position, not context around it. Without it, Back after a cluster
   // switch restores a group name against whichever cluster is now selected — and group names
   // repeat across clusters, so it silently shows a DIFFERENT object under the name you
   // expected, or 404s. Only overwritten when the entry carries one, so an entry predating
   // cluster selection does not blank it.
-  if (pos.cluster) {
+  // The cluster this position implies: its own, or — on the fleet, where an absent cluster IS the position
+  // (#172) — none. Computed before the drop because the drop's question is "is this a different cluster
+  // from the one whose payloads I am holding?", and toward the fleet the answer used to go unasked.
+  const nextCluster = (view.page === "overview" && !view.groupsync && !pos.cluster) ? null : (pos.cluster || view.cluster);
+  if (nextCluster !== view.cluster || pos.cluster) {
     // A cluster switch orphans every cluster-scoped payload in `data`. The tab handler
     // paints BEFORE it fetches, so leaving them in place would put cluster A's rows on
     // screen under cluster B's title for the length of a fetch. Dropped, the same paint
@@ -274,7 +279,14 @@ function applyPosition(pos) {
     // selector, popstate and hashchange all arrive here, so no path can skip it.
     // Cross-cluster payloads (clusters, alerts, whoami, version, usage) survive — they
     // answer for every cluster or for none.
-    if (view.cluster && pos.cluster !== view.cluster) {
+    // From NO cluster as well (#172): the fleet view leaves view.cluster null, so a tile opened
+    // after a scoped visit is a cluster change too — guarded on `view.cluster &&`, crc-local's
+    // groups painted under " - prod-east" on the next tab click (measured, OB1 review).
+    // TO the fleet as well as between clusters: the drop sat under `if (pos.cluster)`, which the fleet
+    // never satisfies, so leaving a scoped page for the Overview tab and returning to that page painted
+    // the PREVIOUS cluster's rows under the boot cluster's position for the length of the fetch —
+    // prod-east's two groups under `#page=groups&cluster=crc-local` (OB3, integration review, C2).
+    if (nextCluster !== view.cluster) {
       data.groupsyncs = null; data.groups = null; data.groupsMeta = null;
       data.group = null; data.user = null; data.events = null; data.users = null;
       data.logins = null; data.access = null; data.findings = null;
@@ -298,8 +310,12 @@ function applyPosition(pos) {
       view.bindingSearch = "";
       view.nsSearch = "";
     }
-    view.cluster = pos.cluster;
+    if (pos.cluster) view.cluster = pos.cluster;
   }
+  // #172: on the Overview an absent cluster is the fleet view, so it is NOT left alone there —
+  // Back from a tile must land on the fleet, and the Overview tab opens it. Every other page
+  // keeps the rule above (a bare #page=groups keeps the cluster the reader had).
+  view.cluster = nextCluster;
   // #144 adversarial review C6-D: history Back is not inert while a modal is up, and only the
   // cluster branch above clears the preview. A same-cluster Back from Reports to another tab
   // repainted #main under a still-open names dialog — "N namespaces match this selection"
@@ -338,7 +354,12 @@ function goBack() {
   // back to, and history.back() would leave the dashboard. Rise to the natural parent instead,
   // which is a position the reader can then Back out of normally.
   if (backTarget()) { history.back(); return; }
-  navigate({ group: null, user: null, groupsync: null, ns: null });
+      // #172: from a cluster opened by link, the parent is the fleet view. The rise REPLACES the pasted
+      // entry: there was nothing behind it in this app, and a pushed entry would make the parent's own
+      // back control point at the drill-down the reader just rose from.
+      const toFleet = view.page === "overview" && view.cluster && !view.groupsync;
+      navigate({ group: null, user: null, groupsync: null, ns: null,
+                 ...(toFleet ? { cluster: null } : {}) }, { replace: true });
   refresh();
 }
 
@@ -356,6 +377,8 @@ const PAGE_LABEL = {
 
 function backLabel() {
   const prev = backTarget();
+  // #172: a cluster opened from its tile goes back to the fleet, whichever entry stands behind it.
+  if (view.page === "overview" && view.cluster && !view.groupsync && (!prev || !prev.cluster)) return "← all clusters";
   if (!prev) {
     // Nothing to return to — a pasted link. goBack() rises to the PARENT of where we are, so the
     // label has to describe that rather than a fixed string: on a GroupSync detail reached by
@@ -942,8 +965,17 @@ function renderFilters() {
   // Usage is a property of the DASHBOARD, not of a cluster. Leaving the cluster selector
   // up would say these numbers are scoped to crc-local, and changing it would appear to
   // filter them while silently doing nothing.
+  // #172: on the Overview "all clusters" is a position of its own (the fleet view), so the
+  // selector offers it there and nowhere else — a drill-down needs a cluster.
+  // A pasted link to a retired or unknown id renders the detour; the selector then showed its first
+  // option — "all clusters" — for a page that is not the fleet. The id gets its own selected option,
+  // named for what it is (Grok, pass 2).
+  const known = !view.cluster || clusters.some((c) => c.id === view.cluster);
+  const goneOption = known ? "" : `<option value="${esc(view.cluster)}" selected>${esc(view.cluster)} — not configured</option>`;
+  const fleetOption = view.page === "overview" && !view.groupsync
+    ? `<option value=""${view.cluster ? "" : " selected"}>all clusters</option>` : "";
   let html = view.page === "usage" ? "" : `<label for="f-cluster">Cluster</label>
-    <select id="f-cluster">${opts}</select>`;
+    <select id="f-cluster">${fleetOption}${goneOption}${opts}</select>`;
   if (view.page === "bindings" && !narrowedReader()) {
     html += searchBoxHtml("bindingSearch");
     html += `<label for="f-binding">Show</label>
@@ -1092,7 +1124,9 @@ function renderFilters() {
       // which is the single biggest reason browser-Back used to leave the dashboard: every
       // page but the one you were on was unreachable backwards. A drill-down is dropped
       // because it belongs to the page being left, not to the one being opened.
-      navigate({ page: b.dataset.nav, groupsync: null, group: null, user: null, ns: null });
+          // #172: the Overview tab opens the FLEET; a cluster is reached from a tile or the selector.
+          navigate({ page: b.dataset.nav, groupsync: null, group: null, user: null, ns: null,
+                     ...(b.dataset.nav === "overview" ? { cluster: null } : {}) });
       // PAINT THE DESTINATION FIRST, then fetch. refresh() used to await every endpoint
       // before rendering, and its first visible act dimmed the tab being LEFT — so the
       // destination appeared only after the whole round trip: re-measured 2026-08-10
@@ -1112,103 +1146,346 @@ function renderFilters() {
   });
 }
 
-function clusterCard(c) {
-  const degraded = c.status && c.status !== "ok";
-  const never = c.status === null;
-  // A cluster that cannot be reached renders as a degraded CARD, never as a page-level
-  // error — one bad token must not blank the dashboard for every other cluster.
-  const state = never ? "unknown" : (degraded ? "critical" : "ok");
-  const stateText = never ? "no data yet" : (degraded ? c.status : "reachable");
-  return `<section class="card">
-    <div class="row-wrap">
-      <h2>${esc(c.id)}</h2>
-      <span class="badge ${state}"><span class="glyph" aria-hidden="true"></span>${esc(stateText)}</span>
-      <span class="spacer grow"></span>
-      <span class="muted mono text-sm">${esc(ago(c.last_poll))}</span>
-    </div>
-    <div class="muted cluster-api"><code>${esc(c.api_url)}</code></div>
-    ${degraded ? `<div class="err mt-4 text-sm">${esc(c.error || "")}</div>` : ""}
-    <div class="kpis">
-      <!-- "not installed" instead of a count when the CRD is absent. A bare 0 here is
-           indistinguishable from an installed operator with no CRs defined, and it is the
-           first number a reader looks at to explain why every group is unattributed.
-           Explicitly === false: null means never polled, which must stay a plain count. -->
-      <div class="kpi ${c.groupsync_operator_present === false ? "flag-warning" : ""}">
-        <div class="label">GroupSync CRs</div>
-        <div class="value">${c.groupsync_operator_present === false
-          ? `<span class="err text-base">operator not installed</span>`
-          : c.groupsync_count}</div></div>
-      <div class="kpi"><div class="label">Groups</div><div class="value">${c.group_count}</div></div>
-      <div class="kpi ${c.empty_groups ? "flag-warning" : ""}"><div class="label">Empty</div>
-        <div class="value ${c.empty_groups ? "" : "muted"}">${c.empty_groups}</div></div>
-      <div class="kpi ${c.unattributed_groups ? "flag-warning" : ""}"><div class="label">Unattributed</div>
-        <div class="value ${c.unattributed_groups ? "" : "muted"}">${c.unattributed_groups}</div></div>
-      <div class="kpi ${(c.dangling_bindings + c.unresolved_bindings) ? "flag-critical" : ""}"><div class="label">Bindings to review</div>
-        <div class="value ${(c.dangling_bindings + c.unresolved_bindings) ? "" : "muted"}">${
-          (c.dangling_bindings || 0) + (c.unresolved_bindings || 0)}</div></div>
-      ${c.operator_configs ? `<div class="kpi ${c.operator_configs.failing ? "flag-critical" : ""}">
-        <div class="label">Policy configs</div>
-        <div class="value">${c.operator_configs.total}${c.operator_configs.failing
-          ? ` <span class="err text-md">(${c.operator_configs.failing} failing)</span>` : ""}</div>
-      </div>` : ""}
-      <div class="kpi"><div class="label">Oldest last sync</div>
-        <div class="value muted sm">${esc(ago(c.oldest_last_sync))}</div></div>
-    </div>
-  </section>`;
-}
-
 /* A silenced alert is shown, not hidden: the row stays, dimmed, with a tag naming what
    silenced it (the Group's annotation or the chart's values), and the hero counts only the
    active ones. Hiding it would train readers that "0 alerts" means healthy when it means
    "somebody chose not to look". The severity badge stays a severity word — the UI test
    holds badge labels to critical|warning — so "silenced" is a separate tag, not a badge. */
-function alertsCard() {
-  const a = data.alerts;
-  const active = a.filter((x) => !x.silenced);
-  const quiet = a.length - active.length;
-  const body = a.length === 0
+/* #172 — the Overview follows the fleet. Thresholds are the design: at three the tiles are the
+   page; past eight the alerts lead; past twenty-four a cluster is one table row. */
+const DENSITY_TIERS = [[3, "full"], [8, "medium"], [24, "compact"], [Infinity, "dense"]];
+const densityFor = (n) => DENSITY_TIERS.find(([max]) => n <= max)[1];
+const FLEET_TABLES_MAX = 8;
+const ALERT_PAGE = 8;
+/* Every non-ok state says what it costs, in words the reader acts on — under the badge, never in
+   a tooltip. The vocabulary is state.py's: `late` is one interval past the schedule (plus grace),
+   `overdue` is past two. `unknown` on the wire has exactly two causes — api.enrich() calls
+   compute_state() without `reachable`, so a CR is never `unknown` for its cluster being down: it
+   has never synced, or its schedule is unusable (no interval to measure). The row knows which. */
+const MEANS = {
+  sync_late: "one interval has passed without a sync — not broken yet, but the next missed fire makes it overdue; the state to act on",
+  sync_overdue: "the schedule has stopped firing — every group it owns is frozen at its last sync, and nobody has been added or removed since",
+  sync_unknown: "never observed a sync — a freshly created CR looks like this until its first fire, which is not the same as a sync that failed",
+  sync_unknown_schedule: "the schedule is unusable, so no interval can be measured — the operator cannot fire it until it is fixed",
+  cfg_failing: "RBAC has quietly stopped reconciling — new namespaces receive nothing and drift goes uncorrected",
+  cl_bad: "the poller cannot reach it — every count on this tile is the last one observed, not the current one",
+  cl_never: "never polled — there are no counts yet, which is not the same as zero",
+};
+/* The consequence for one CR row, from the fields the row carries: `schedule_valid` is enrich()'s
+   own verdict, so an `unknown` with an invalid schedule is the schedule case — with or without a
+   last sync: "until its first fire" is false of a cron that cannot fire (Grok, pass 2). */
+function syncMeans(r) {
+  if (r.state === "unknown" && r.schedule_valid === false) return MEANS.sync_unknown_schedule;
+  return MEANS["sync_" + r.state] || MEANS.sync_unknown;
+}
+
+function alertsCard(all, clusterCount) {
+  const active = all.filter((x) => !x.silenced);
+  const quiet = all.length - active.length;
+  const crit = active.filter((x) => x.severity === "critical").length;
+  // Worst first: critical, then warning, silenced last — page 1 must be the page worth reading.
+  const rank = (a) => (a.silenced ? 2 : 0) + (a.severity === "critical" ? 0 : 1);
+  const rows = all.slice().sort((x, y) => rank(x) - rank(y));
+  const pages = Math.max(1, Math.ceil(rows.length / ALERT_PAGE));
+  const page = Math.min(Math.max(1, view.alertPage || 1), pages);
+  const slice = rows.slice((page - 1) * ALERT_PAGE, page * ALERT_PAGE);
+  // Kinds are a summary, never a replacement for the rows.
+  const kinds = {};
+  active.forEach((a) => { kinds[a.kind] = (kinds[a.kind] || 0) + 1; });
+  const body = all.length === 0
     ? `<div class="empty-note">No alerts. Nothing overdue, empty, unattributed, stale, collapsed, or failing.</div>`
-    : a.map((x) => `<div class="alert-row sev-${x.severity === "critical" ? "critical" : "warning"}${x.silenced ? " silenced" : ""}">
+    : `${Object.keys(kinds).length ? `<div class="kinds">${Object.entries(kinds).sort((a, b) => b[1] - a[1])
+        .map(([k, n]) => `<span class="kind">${esc(k.replace(/_/g, " "))} · ${n}</span>`).join("")}</div>` : ""}`
+      + slice.map((x) => `<div class="alert-row sev-${x.severity === "critical" ? "critical" : "warning"}${x.silenced ? " silenced" : ""}">
         ${sevBadge(x.severity)}
         <div class="who">${esc(x.subject)}<div class="muted fw-normal text-xs">${esc(x.cluster)} · ${esc(x.kind)}</div></div>
         <div class="what">${x.silenced ? `<span class="silence-tag">silenced by ${esc(x.silenced_by)}</span> ` : ""}${esc(x.detail)}</div>
-      </div>`).join("");
+      </div>`).join("")
+      + alertPager(rows.length, page, pages);
   return `<section class="card">
     <div class="hero">
       <div class="value">${active.length}</div>
-      <div class="label">${active.length === 1 ? "alert" : "alerts"} across ${data.clusters.length} cluster${data.clusters.length === 1 ? "" : "s"}${quiet ? ` · ${quiet} silenced` : ""}</div>
+      <div class="label">${active.length === 1 ? "alert" : "alerts"} across ${clusterCount} cluster${clusterCount === 1 ? "" : "s"}${
+        crit ? ` · ${crit} critical` : ""}${quiet ? ` · ${quiet} silenced` : ""}</div>
     </div>
     ${body}
   </section>`;
 }
 
-function groupsyncTable() {
-  const rows = data.groupsyncs;
+/* Page numbers, with the neighbours of the current page and the two ends — a fleet's alert list
+   grows with the fleet, and an eighty-row card buries the one critical row it exists to surface. */
+function alertPager(total, page, pages) {
+  if (pages <= 1) return "";
+  const win = [];
+  for (let i = 1; i <= pages; i++) {
+    if (i === 1 || i === pages || Math.abs(i - page) <= 2) win.push(i);
+    else if (win[win.length - 1] !== "…") win.push("…");
+  }
+  return `<div class="pager" role="navigation" aria-label="Alert pages">
+    <button data-alert-page="${Math.max(1, page - 1)}"${page === 1 ? " disabled" : ""}>‹ Prev</button>
+    ${win.map((i) => i === "…" ? `<span class="ellipsis">…</span>`
+      : `<button data-alert-page="${i}" aria-pressed="${i === page}">${i}</button>`).join("")}
+    <button data-alert-page="${Math.min(pages, page + 1)}"${page === pages ? " disabled" : ""}>Next ›</button>
+    <span class="grow"></span>
+    <span>showing ${(page - 1) * ALERT_PAGE + 1}–${Math.min(page * ALERT_PAGE, total)} of ${total}</span>
+  </div>`;
+}
+
+/* A cluster's tile: a card whose whole face opens the cluster, with a real button in the heading
+   for the keyboard and the screen reader. The seven figures of the old card are all here at full
+   density; the tiers hide, never drop — the scoped view carries every one of them. */
+/* A cluster's reachability badge — the one span for a tile, a dense row and the opened cluster, so
+   the three cannot disagree. Hand-built, not badge(): `critical` is a severity, not a CR state, and
+   badge() maps any word outside STATES to "unknown" (a hollow ring for an auth_failed cluster). */
+function reachBadge(c) {
+  const degraded = c.status && c.status !== "ok";
+  const never = c.status === null;
+  const state = never ? "unknown" : (degraded ? "critical" : "ok");
+  const stateText = never ? "no data yet" : (degraded ? c.status : "reachable");
+  return `<span class="badge ${state}"><span class="glyph" aria-hidden="true"></span>${esc(stateText)}</span>`;
+}
+/* `detail` renders the same block for the OPENED cluster: a plain <div> with a plain heading — no
+   control that opens where the reader already is, and no string surgery on the tile's markup. */
+function clusterTile(c, density, detail = false) {
+  const degraded = c.status && c.status !== "ok";
+  const never = c.status === null;
+  const review = (c.dangling_bindings || 0) + (c.unresolved_bindings || 0);
+  const rail = degraded ? "bad" : (c.unattributed_groups || review ? "warnrail" : "");
+  const tag = detail ? "div" : "section";
+  const name = detail ? esc(c.id) : `<button class="linkish tile-open" data-cluster="${esc(c.id)}">${esc(c.id)}</button>`;
+  return `<${tag} class="${detail ? "tile-detail" : "card tile"} ${rail}"${detail ? "" : ` data-cluster="${esc(c.id)}"`}>
+    <div class="row-wrap cn"><h2>${name}</h2>
+      ${reachBadge(c)}
+      <span class="grow"></span><span class="poll">${esc(ago(c.last_poll))}</span></div>
+    <span class="api"><code>${esc(c.api_url)}</code></span>
+    ${degraded ? `<div class="err mt-4 text-sm">${esc(c.error || "")}</div>` : ""}
+    ${degraded || never ? `<div class="consq k-consq">${esc(never ? MEANS.cl_never : MEANS.cl_bad)}</div>` : ""}
+    ${tileFigures(c, density)}
+  </${tag}>`;
+}
+function tileFigures(c, density) {
+  const review = (c.dangling_bindings || 0) + (c.unresolved_bindings || 0);
+  // `extra`: the three figures the tiers past full hide (the mock's tiers, kept on the operator's
+  // ruling — the scoped view carries every figure).
+  const k = (lab, val, cls, extra) =>
+    `<span class="${extra ? "k-extra" : ""}"><span class="lab">${lab}</span><span class="v ${cls || ""}">${val}</span></span>`;
+  return `<div class="tk">
+    ${k("Groups", c.group_count)}
+    ${k("Bindings to review", review || "0", review ? "c" : "q")}
+    ${k("Unattributed", c.unattributed_groups || "0", c.unattributed_groups ? "w" : "q")}
+    ${density === "full" || density === "medium" ? k("Oldest last sync", esc(ago(c.oldest_last_sync)), "sm") : ""}
+    ${k("GroupSync CRs", c.groupsync_operator_present === false
+      ? `<span class="err text-md">operator not installed</span>` : c.groupsync_count, "", true)}
+    ${k("Empty", c.empty_groups || "0", c.empty_groups ? "w" : "q", true)}
+    ${c.operator_configs ? k("Policy configs", `${c.operator_configs.total}${c.operator_configs.failing
+      ? ` <span class="err text-md">(${c.operator_configs.failing} failing)</span>` : ""}`, "", true) : ""}
+  </div>`;
+}
+function denseRow(c) {
+  const review = (c.dangling_bindings || 0) + (c.unresolved_bindings || 0);
+  return `<tr class="rowlink" data-cluster="${esc(c.id)}">
+    <td>${reachBadge(c)}</td>
+    <td class="mono"><button class="linkish tile-open" data-cluster="${esc(c.id)}">${esc(c.id)}</button></td>
+    <td class="num">${c.group_count}</td>
+    <td class="num ${review ? "err" : "muted"}">${review}</td>
+    <td class="num ${c.unattributed_groups ? "warn" : "muted"}">${c.unattributed_groups || 0}</td>
+    <td class="mono">${esc(ago(c.oldest_last_sync))}</td>
+    <td class="mono">${esc(ago(c.last_poll))}</td></tr>`;
+}
+function clustersCard(cs, density) {
+  // Worst-first once the eye cannot take them all in at once; below that, stable order — a tile
+  // that moves between refreshes is harder to find than one that is simply further down.
+  const rank = (c) => (c.status !== "ok" ? 0 : 1) * 10 - (((c.dangling_bindings || 0) + (c.unresolved_bindings || 0)) ? 1 : 0);
+  const rows = density === "full" ? cs : cs.slice().sort((a, b) => rank(a) - rank(b));
+  const bad = cs.filter((c) => c.status !== "ok").length;
+  if (density === "dense") {
+    return `<section class="card">
+      <div class="row-wrap"><h2>Clusters</h2><span class="muted text-sm">· ${cs.length}${bad ? ` · ${bad} not reachable` : " · all reachable"}</span></div>
+      <div class="scroll-x"><table>
+        <thead><tr><th>Status</th><th>Cluster</th><th class="num">Groups</th><th class="num">Bindings to review</th>
+          <th class="num">Unattributed</th><th>Oldest last sync</th><th>Polled</th></tr></thead>
+        <tbody>${rows.map(denseRow).join("")}</tbody></table></div>
+    </section>`;
+  }
+  return `<div class="tiles">${rows.map((c) => clusterTile(c, density)).join("")}</div>`;
+}
+
+/* The GroupSync table the contract keeps — NAME · STATE · SCHEDULE · GROUPS · LAST SYNC · NEXT
+   EXPECTED — with a cluster column across the fleet and the consequence under any state but ok.
+   `state`, `next_expected` and `error_is_current` are computed per request, never stored. */
+function groupsyncTable(rows, scope, unfetched = []) {
   // null (not fetched for this cluster yet) and [] (fetched, none exist) are different
   // answers: claiming "None observed" while the fetch is still out is false.
   if (!rows) return `<section class="card"><h2>GroupSync CRs</h2>
     <div class="empty-note">Loading…</div></section>`;
-  if (!rows.length) return `<section class="card"><h2>GroupSync CRs</h2>
-    <div class="empty-note">None observed on this cluster yet.</div></section>`;
+  const fleet = !scope;
+  const bad = rows.filter((r) => r.state !== "ok").length;
+  // The heading keeps its exact words (the contract, and the tests read it); the count sits beside it.
+  const head = `<div class="row-wrap"><h2>GroupSync CRs</h2><span class="muted text-sm">· ${rows.length}${fleet ? "" : ` on ${esc(scope)}`}${
+    rows.length ? (bad ? ` · ${bad} not syncing` : " · all syncing") : ""}</span></div>`;
+  // Across the fleet a cluster whose /groupsyncs request FAILED is named, not folded into the
+  // count: "all syncing" over rows that silently lack a cluster is the false absence this
+  // card's Loading guard exists to prevent, one level up.
+  const missing = unfetched.length ? `<div class="filterbar-note mt-4">${esc(unfetched.join(", "))}: CRs not fetched — the
+    request failed, so ${unfetched.length === 1 ? "its" : "their"} CRs are not in this count.</div>` : "";
+  if (!rows.length) return `<section class="card">${head}
+    <div class="empty-note">None observed ${fleet ? "on any cluster" : "on this cluster"} yet.</div>${missing}</section>`;
+  const rank = (r) => (r.error_is_current ? 0 : r.state === "overdue" ? 1 : r.state === "late" ? 2 : r.state === "unknown" ? 3 : 4);
+  const sorted = rows.slice().sort((a, b) => rank(a) - rank(b));
   return `<section class="card">
-    <h2>GroupSync CRs</h2>
+    ${head}
+    <div class="filterbar-note mb-3">These CRs own the groups, so their state is the estate's state. <strong>ok</strong>
+      means syncing on schedule — the groups it owns are current as of the last sync. Four states, and the glyph shape
+      carries each one independently of colour.</div>
     <div class="scroll-x"><table>
       <thead><tr>
-        <th>Name</th><th>State</th><th>Schedule</th>
+        ${fleet ? "<th>Cluster</th>" : ""}<th>Name</th><th>State</th><th>Schedule</th>
         <th class="num">Groups</th><th>Last sync</th><th>Next expected</th>
       </tr></thead>
-      <tbody>${rows.map((r) => `
-        <tr class="rowlink" data-cr="${esc(r.name)}">
+      <tbody>${sorted.map((r) => {
+        const attn = r.state !== "ok" || r.error_is_current;
+        return `<tr class="rowlink${attn ? " attn" : ""}" data-cr="${esc(r.name)}" data-cluster="${esc(r.cluster || scope || "")}">
+          ${fleet ? `<td class="mono">${esc(r.cluster)}</td>` : ""}
           <td>${esc(r.name)}<div class="muted text-xs">${esc(r.namespace)}</div></td>
-          <td>${badge(r.state)}${r.error_is_current ? " " + sevBadge("critical", "reconcile error") : ""}</td>
+          <td class="state-cell">${badge(r.state)}${r.error_is_current ? " " + sevBadge("critical", "reconcile error") : ""}${
+            r.state !== "ok" ? `<div class="consq">${esc(syncMeans(r))}</div>` : ""}</td>
           <td><code>${esc(r.schedule || "—")}</code>${r.schedule_valid ? "" : ` <span class="err">invalid</span>`}</td>
           <td class="num">${r.group_count}</td>
-          <td class="mono">${esc(ago(r.last_sync_at))}</td>
+          <td class="mono${attn ? " err" : ""}">${esc(ago(r.last_sync_at))}</td>
           <td class="mono">${esc(r.next_expected ? fmtTime(r.next_expected) : "—")}</td>
-        </tr>`).join("")}
-      </tbody>
-    </table></div>
+        </tr>`;
+      }).join("")}</tbody>
+    </table></div>${missing}
   </section>`;
+}
+
+/* The policy-operator card the contract keeps — KIND · NAME · STATE · LAST SUCCESS and its
+   sentence — as one table across the fleet or one cluster. "Failing" is an ordering, not a flag:
+   the operator never clears ReconcileError, so only error_at > success_at decides. Administrator
+   tier: a narrowed reader's payload is null (guard403) and the card is simply absent. */
+function configsCard(entries, { plain = false } = {}) {
+  const present = entries.filter((e) => e.oc && e.oc.present);
+  if (!present.length) return "";
+  const fleet = entries.length > 1;
+  // "Absent" is a cluster's own report and needs a successful poll behind it: the store's `present`
+  // is two-valued (bool(...)), so a cluster that was never polled, or whose last poll failed, comes
+  // back present:false too — and "prod-east reports these CRDs absent" would be false of an
+  // auth_failed cluster that reported nothing. The caller passes what it knows of the poll.
+  const absent = entries.filter((e) => e.oc && e.oc.present === false && e.polled !== false).map((e) => e.cluster);
+  const rows = [];
+  present.forEach((e) => (e.oc.configs || []).forEach((c) => rows.push({ ...c, cluster: e.cluster })));
+  const isBad = (c) => c.error_at && (!c.success_at || c.error_at > c.success_at);
+  const failing = rows.filter(isBad);
+  // `plain` is the RBAC policy tab: the pre-#172 card plus the consequence line — its order, heading
+  // and rows otherwise unchanged (Codex, review of #172: the shared card had moved a failing row first
+  // and added the count, the attention wash and the state cell there too). The Overview's two forms
+  // keep them; their count sits beside the heading, as the GroupSync card's does, not inside it.
+  if (!plain) rows.sort((a, b) => (isBad(b) ? 1 : 0) - (isBad(a) ? 1 : 0));
+  const suffix = plain ? "" : `<span class="muted text-sm">${fleet ? "" : `· ${esc(present[0].cluster)} `}${
+    rows.length ? `· ${rows.length}${failing.length ? ` · ${failing.length} failing` : " · all reconciling"}` : ""}</span>`;
+  // The plain card's heading is the old markup exactly — a direct child of the card (Grok, pass 2).
+  const head = suffix ? `<div class="row-wrap"><h3>Policy operator (NamespaceConfig / GroupConfig)</h3>${suffix}</div>`
+    : `<h3>Policy operator (NamespaceConfig / GroupConfig)</h3>`;
+  return `<section class="card">
+    ${head}
+    <div class="filterbar-note mb-3">
+      These CRs template the RoleBindings above. A currently-failing one means RBAC has
+      quietly stopped reconciling — new namespaces receive nothing and drift stops being
+      corrected, with no error anywhere else.
+    </div>
+    ${rows.length === 0
+      ? `<div class="empty-note">Operator installed; no NamespaceConfig or GroupConfig CRs yet.</div>`
+      : `<div class="scroll-x"><table>
+          <thead><tr>${fleet ? "<th>Cluster</th>" : ""}<th>Kind</th><th>Name</th><th>State</th><th>Last success</th></tr></thead>
+          <tbody>${rows.map((c) => {
+            const bad = isBad(c);
+            return `<tr${bad && !plain ? ' class="attn"' : ""}>
+              ${fleet ? `<td class="mono">${esc(c.cluster)}</td>` : ""}
+              <td>${esc(c.kind)}</td>
+              <td><code>${esc(c.name)}</code></td>
+              <td${plain ? "" : ' class="state-cell"'}>${bad ? sevBadge("critical", "reconcile error") : badge("ok")}${
+                bad ? `<div class="consq">${esc(MEANS.cfg_failing)}</div>` : ""}</td>
+              <td class="mono">${esc(ago(c.success_at))}</td>
+            </tr>`;
+          }).join("")}</tbody>
+        </table></div>
+        ${failing.length ? `<div class="err mt-4 text-sm">${esc(failing[0].error_message || "")}</div>` : ""}`}
+    ${absent.length ? `<div class="filterbar-note mt-4">${esc(absent.join(", "))} report${absent.length === 1 ? "s" : ""} these CRDs absent —
+      nothing templates ${absent.length === 1 ? "that cluster's" : "their"} RoleBindings, which is a different truth from installed with zero CRs.</div>` : ""}
+  </section>`;
+}
+
+/* One cluster, opened from its tile or the selector: its figures in full, its alerts only, its
+   GroupSync CRs and its policy configs — every card of the fleet view, scoped. The tile renders
+   as a plain block here: the reader is already on the cluster. */
+function clusterDetail(c) {
+  const mine = data.alerts.filter((a) => a.cluster === c.id);
+  return `<section class="card">
+    <button class="back" id="back">${backLabel()}</button>
+    ${clusterTile(c, "full", true)}
+  </section>
+  ${alertsCard(mine, 1)}
+  ${groupsyncTable(data.groupsyncs, c.id)}
+  ${configsCard([{ cluster: c.id, oc: data.operatorConfigs }])}`;
+}
+
+function overviewPage() {
+  const cs = data.clusters;
+  const density = densityFor(cs.length);
+  document.documentElement.dataset.density = density;
+  if (view.cluster) {
+    const c = cs.find((x) => x.id === view.cluster);
+    if (!c) return `<section class="card"><button class="back" id="back">${backLabel()}</button>
+      <h2>${esc(view.cluster)}</h2><div class="empty-note">No cluster by that id is configured. A removed
+      cluster's link is a detour, not a dead end.</div></section>`;
+    return clusterDetail(c);
+  }
+  // Alerts lead once the fleet is big enough that the tiles stop being readable: past eight
+  // clusters the question is "what is broken", not "how is each one doing".
+  const alertsFirst = cs.length > FLEET_TABLES_MAX;
+  // Three answers, not two: past the medium tier the tables are per cluster by design; below it a
+  // missing payload is a fetch still out (the tab handler paints before it fetches), and the
+  // per-cluster note would then be a design decision claimed about a fleet of two.
+  const polledOk = (id) => { const c = cs.find((x) => x.id === id); return c ? c.status === "ok" : false; };
+  const tables = cs.length > FLEET_TABLES_MAX
+    ? `<section class="card"><h2>GroupSync CRs</h2>
+      <div class="empty-note">With ${cs.length} clusters the CR and policy tables are shown per cluster — open a tile.</div></section>`
+    : data.fleet
+      ? groupsyncTable(data.fleet.flatMap((f) => (f.groupsyncs || []).map((r) => ({ ...r, cluster: f.id }))), null,
+                       data.fleet.filter((f) => !f.groupsyncs).map((f) => f.id))
+        + configsCard(data.fleet.map((f) => ({ cluster: f.id, oc: f.operatorConfigs, polled: polledOk(f.id) })))
+      : `<section class="card"><h2>GroupSync CRs</h2><div class="empty-note">Loading…</div></section>`;
+  const tiles = clustersCard(cs, density);
+  const alerts = alertsCard(data.alerts, cs.length);
+  return (alertsFirst ? alerts + tiles : tiles + alerts) + tables;
+}
+
+function wireOverview() {
+  const main = $("main");
+  // A tile's whole face opens the cluster; the heading's button does the same for the keyboard.
+  main.querySelectorAll(".tile[data-cluster], tr.rowlink[data-cluster]:not([data-cr])").forEach((el) => {
+    el.onclick = (e) => {
+      if (e.target.closest("a")) return;
+      // PAINT FIRST, then fetch — the tab handler's rule (benchmark §6a: 2–4 ms against a 271–337 ms
+      // round trip), which a tile skipped, leaving the dimmed fleet on screen for the length of the
+      // fetch (Grok, review of #172). Safe because a cluster change FROM THE FLEET now drops the
+      // previous cluster's payloads at the chokepoint (applyPosition), so the first paint is the
+      // tile, its alerts and "Loading…" — never another cluster's rows under this one's name.
+      navigate({ cluster: el.dataset.cluster }); render(); refresh();
+    };
+  });
+  main.querySelectorAll("[data-cr]").forEach((tr) => {
+    tr.onclick = () => {
+      const changes = { groupsync: tr.dataset.cr };
+      if (tr.dataset.cluster && tr.dataset.cluster !== view.cluster) changes.cluster = tr.dataset.cluster;
+      navigate(changes); refresh();
+    };
+  });
+  main.querySelectorAll("[data-alert-page]").forEach((b) => {
+    b.onclick = () => { view.alertPage = Number(b.dataset.alertPage); render(); };   // view state: no fetch, no entry
+  });
+  const back = $("back");
+  if (back) back.onclick = goBack;
 }
 
 /* Sync timeline: ONE series (group count at each observed sync) so no legend box —
@@ -3412,10 +3689,16 @@ function nsDetail() {
     <div class="kpis">
       ${keys.map((k) => kpi(esc(labelShort(k)), esc(labels[k] || "— none —"), labels[k] ? "sm mono" : "sm muted")).join("")}
       ${self ? "" : kpi("People who reach it", d.people == null ? "—" : d.people)}
-      ${kpi("Via groups", viaReal.length, viaReal.length ? "" : "muted")}
-      ${kpi("Direct grants", people.length, people.length ? "err" : "muted")}
+      ${kpi(self ? "Via your groups" : "Via groups", viaReal.length, viaReal.length ? "" : "muted")}
+      ${kpi(self ? "Your direct grants" : "Direct grants", people.length, people.length ? "err" : "muted")}
     </div>
-    <div class="filterbar-note mt-4">${labelledNote}${people.length ? "" : " No RoleBinding names a person here directly, which is the state an access review wants to confirm."}${
+    <div class="filterbar-note mt-4">${labelledNote}${people.length ? "" : self
+      // At the self tier `direct_grants` are the viewer's OWN, so an empty list says nothing about anyone
+      // else: prod-ns carries jdoe's direct grant, and alice's page called that "the state an access review
+      // wants to confirm" — a false statement about the cluster, made to the reader least able to check it
+      // (OB3, integration review). The label follows the number it sits beside.
+      ? " No binding names you here directly; other people's direct grants are the administrator tier."
+      : " No RoleBinding names a person here directly, which is the state an access review wants to confirm."}${
       d.present ? "" : " The store no longer holds this namespace; what follows is what still names it."}</div>
   </section>
   <section class="card">
@@ -3429,8 +3712,12 @@ function nsDetail() {
         <td><code>${esc(g.role_name)}</code></td>
         <td class="muted">${esc(g.binding_kind)} <code>${esc(g.binding_name)}</code>${g.managed_source || g.is_platform ? "" : ' <span class="badge warning"><span class="glyph" aria-hidden="true"></span>hand-made</span>'}</td>
         <td class="num">${g.member_count}</td></tr>`).join("")}</tbody></table></div>`
-      : `<div class="empty-note">No group-based binding names this namespace. Access here is ${people.length
-          ? "entirely by the direct grants below — which is what makes it a finding." : "not granted to anyone through the policy system."}</div>`}
+      : `<div class="empty-note">${self
+          // The same rule for the groups: `via_groups` are the viewer's own paths here. klt-pass-both IS
+          // bound to app-ocp-rbac-klta-ns-audit, and alice's page said nobody is granted access at all.
+          ? "None of your own memberships reaches this namespace through a group binding. Whether anyone else's does is the administrator tier."
+          : `No group-based binding names this namespace. Access here is ${people.length
+              ? "entirely by the direct grants below — which is what makes it a finding." : "not granted to anyone through the policy system."}`}</div>`}
     ${wideBindings ? `<div class="filterbar-note mt-4">Also reached cluster-wide, by ${wideBindings === 1 ? "one binding" : `${wideBindings} bindings`} that
         grant${wideBindings === 1 ? "s" : ""} every namespace${wideReal.length + wideGrants.length ? `: ${[
           ...wideReal.map((g) => `<button type="button" class="drill" data-group="${esc(g.group_name)}">${esc(g.group_name)}</button> (<code>${esc(g.role_name)}</code>)`),
@@ -4227,35 +4514,10 @@ function directUserGrants(ub) {
 /* The policy operator's CR health. Rendered only when the CRDs exist on the cluster —
    absent is a different truth from "installed with zero CRs", and a section that says
    "all healthy" about a concept the cluster lacks would be a lie of layout. */
+/* The Policy tab's strip is the same card the Overview shows for one cluster (#172): one
+   renderer, so the contract's sentence and the consequence line cannot drift between the two. */
 function configHealth(oc) {
-  if (!oc || !oc.present) return "";
-  const rows = oc.configs || [];
-  const failing = rows.filter((c) =>
-    c.error_at && (!c.success_at || c.error_at > c.success_at));
-  return `<section class="card">
-    <h3>Policy operator (NamespaceConfig / GroupConfig)</h3>
-    <div class="filterbar-note mb-3">
-      These CRs template the RoleBindings above. A currently-failing one means RBAC has
-      quietly stopped reconciling — new namespaces receive nothing and drift stops being
-      corrected, with no error anywhere else.
-    </div>
-    ${rows.length === 0
-      ? `<div class="empty-note">Operator installed; no NamespaceConfig or GroupConfig CRs yet.</div>`
-      : `<div class="scroll-x"><table>
-          <thead><tr><th>Kind</th><th>Name</th><th>State</th><th>Last success</th></tr></thead>
-          <tbody>${rows.map((c) => {
-            const bad = c.error_at && (!c.success_at || c.error_at > c.success_at);
-            return `<tr>
-              <td>${esc(c.kind)}</td>
-              <td><code>${esc(c.name)}</code></td>
-              <td>${bad ? sevBadge("critical", "reconcile error") : badge("ok")}</td>
-              <td class="mono">${esc(ago(c.success_at))}</td>
-            </tr>`;
-          }).join("")}</tbody>
-        </table></div>
-        ${failing.length ? `<div class="err mt-4 text-sm">
-          ${esc(failing[0].error_message || "")}</div>` : ""}`}
-  </section>`;
+  return configsCard([{ cluster: view.cluster, oc }], { plain: true });
 }
 
 function render() {
@@ -4333,13 +4595,8 @@ function render() {
       `This page reports the cluster's own health — its GroupSync CRs, the policy operator
        that templates every synced group's access, and cluster-wide totals.`);
   } else {
-    main.innerHTML = alertsCard()
-      + `<div class="grid">${data.clusters.map(clusterCard).join("")}</div>`
-      + groupsyncTable()
-      + configHealth(data.operatorConfigs);
-    document.querySelectorAll("[data-cr]").forEach((tr) => {
-      tr.onclick = () => { navigate({ groupsync: tr.dataset.cr }); refresh(); };
-    });
+    main.innerHTML = overviewPage();
+    wireOverview();
   }
   // Same reason the cluster selector is hidden on Usage: the scope note would claim a
   // cluster scope this page does not have.
@@ -4558,7 +4815,9 @@ async function refresh(opts = {}) {
     // dispatches everything below in one burst.
     let bootClusters = null;
     let groupsState = null;   // the `state` the groups rows are requested under this cycle (groupsMeta.state)
-    if (!view.cluster) {
+    // #172: on the Overview an absent cluster IS a position — the fleet view — so no default is
+    // stamped there; every other tab still takes the first cluster exactly as before.
+    if (!view.cluster && !(view.page === "overview" && !view.groupsync)) {
       bootClusters = await get("/api/clusters");
       if (bootClusters.length) {
         view.cluster = bootClusters[0].id;
@@ -4594,7 +4853,14 @@ async function refresh(opts = {}) {
     };
     if (view.cluster) {
       const base = `/api/clusters/${encodeURIComponent(view.cluster)}`;
-      want.groupsyncs = get(`${base}/groupsyncs`);
+      // #172: on the Overview's scoped view a 404 for the CLUSTER is the removed-cluster case the
+      // page phrases itself ("No cluster by that id is configured … a detour, not a dead end");
+      // left to the catch below it became the generic error card — with no tab bar, since render()
+      // never ran (measured, OB1 review). Only there, and only the cluster-level payloads: a CR
+      // detail's 404 stays the "may have been deleted" card.
+      const clusterGone = (p) => (view.page === "overview" && !view.groupsync)
+        ? p.catch((e) => { if (e.status === 404) return null; throw e; }) : p;
+      want.groupsyncs = clusterGone(get(`${base}/groupsyncs`));
       // guard403 on the administrator-tier payloads: a narrowed reader's 403 is the
       // DESIGNED answer. Unguarded it fell to the catch below and replaced the whole tab
       // with "Dashboard API error: 403 Forbidden" — the defect the Usage tab first fixed.
@@ -4655,7 +4921,7 @@ async function refresh(opts = {}) {
       // for a payload with no `present`, so a refused one simply omits the panel and the
       // refusal card above carries the explanation.
       if ((view.page === "overview" && !view.groupsync) || view.page === "policy") {
-        want.operatorConfigs = guard403(get(`${base}/operator-configs`));
+        want.operatorConfigs = clusterGone(guard403(get(`${base}/operator-configs`)));
       }
       if (view.page === "nsaudit") {
         // The namespace filter is applied SERVER-side, not by filtering a full response in
@@ -4773,6 +5039,34 @@ async function refresh(opts = {}) {
       }
     }
     if ("operatorConfigs" in got) data.operatorConfigs = got.operatorConfigs;
+    // #172: the fleet view's GroupSync and policy tables are the per-cluster payloads, fetched in
+    // parallel AFTER the cluster list is known — one extra stage, and only up to the medium tier
+    // (eight clusters): forty clusters must not cost eighty requests a minute for two tables that
+    // the tiles already summarise and the scoped view carries in full.
+    if (view.page === "overview" && !view.cluster && !view.groupsync) {
+      const served = data.clusters || [];
+      // Not for a narrowed reader: render() paints them the refusal card, so two payloads per
+      // cluster would be N designed 403s a minute on /metrics for nothing shown (the Access
+      // granted rule above). Per cluster, the policy payload is asked for only where whoami
+      // says this reader is wide THERE — a host administrator narrowed on a remote gets that
+      // cluster's designed 403 otherwise, every poll.
+      const w = got.whoami;
+      if (served.length <= FLEET_TABLES_MAX && !narrowedFor(w)) {
+        const wideOn = (id) => !w || !w.authenticated || scopeFor(w, id) === "all";
+        const fleet = await Promise.all(served.map(async (c) => {
+          const base = `/api/clusters/${encodeURIComponent(c.id)}`;
+          const [groupsyncs, operatorConfigs] = await Promise.all([
+            get(`${base}/groupsyncs`).catch(() => null),
+            wideOn(c.id) ? guard403(get(`${base}/operator-configs`)).catch(() => null) : Promise.resolve(null),
+          ]);
+          return { id: c.id, groupsyncs, operatorConfigs };
+        }));
+        if (superseded()) return;   // a superseded refresh must not WRITE — the rule above, kept here
+        data.fleet = fleet;
+      } else {
+        data.fleet = null;
+      }
+    }
     if ("userBindings" in got) data.userBindings = got.userBindings;
     if ("namespaces" in got) data.namespaces = got.namespaces;
     if ("ns" in got) data.ns = got.ns;
@@ -4791,10 +5085,10 @@ async function refresh(opts = {}) {
       data.clusters, data.alerts, data.alertsScope, data.groupsyncs, data.groups,
       data.groupsMeta, data.group, data.user, data.users, data.events, data.logins, data.access,
       data.usage, data.findings, data.operatorConfigs, data.userBindings, data.whoami, data.myAccess,
-      data.reportCatalog, data.reportRuns,
-      // #167: the namespace list and page ride the same wire (review, Codex — left out, a poll whose
-      // only change was a label or a grant skipped the repaint the comment above forbids skipping).
-      data.namespaces, data.ns,
+          data.reportCatalog, data.reportRuns, data.fleet,   // #172: the fleet tables render from it
+          // #167: the namespace list and page ride the same wire (review, Codex — left out, a poll whose
+          // only change was a label or a grant skipped the repaint the comment above forbids skipping).
+          data.namespaces, data.ns,
     ]);
     if (opts.auto && fingerprint === lastFingerprint) {
       // Still say so. Leaving the clock frozen would read as "the dashboard has stopped",
