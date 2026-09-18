@@ -56,6 +56,7 @@ REPO = pathlib.Path(__file__).resolve().parents[1]
 # moved from 06 to 07 rather than leaving a number that no longer means its position. Users
 # arrived third in the strip, so everything after it moved up one for the same reason.
 TABS = [
+    ("Home",            "00-home.png"),
     ("Overview",        "01-overview.png"),
     ("Groups",          "02-groups.png"),
     ("Users",           "03-users.png"),

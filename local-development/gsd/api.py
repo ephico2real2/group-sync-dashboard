@@ -27,6 +27,7 @@ from fastapi.staticfiles import StaticFiles
 from . import TITLE, __version__
 from . import state as st
 from .activity import EMAIL_HEADER, INTERACTION_HEADER, USER_HEADER, ActivityRecorder
+from .home import HOME_CHANGES_DAYS, HOME_EVENTS_LIMIT, derive_answer, group_changes
 from .config import (
     IDENTITY_NONE, IDENTITY_SAME_AS_HOST, VISIBILITY_HIDDEN, VISIBILITY_INHERIT,
     VISIBILITY_REMOTE_SAR, VISIBILITY_SELF_ONLY, Settings, load_settings,
@@ -1777,6 +1778,59 @@ def build_app(
             **detail,
             "changes": history,
             "retention": history_retention("binding_event", store.history_retained_since(cluster_id)),
+        }
+
+    @app.get("/api/clusters/{cluster_id}/home")
+    @consistent
+    def home(request: Request, cluster_id: str) -> dict:
+        """Home — the viewer's own access on one cluster, the page every reader lands on (#158).
+
+        SELF-SCOPED BY DEFINITION, on every tier: an administrator sees their own access here, never
+        everyone's, so the payload for a name is the same whichever tier resolves it. The identity is
+        the proxy's; without one there is nothing to scope to and the request is refused — never a
+        name the caller typed. Composed from the reads the drill-downs already serve (the viewer's
+        groups, the bindings those groups reach, the bindings naming them directly, their membership
+        history), and the arithmetic behind the page's sentences lives in gsd/home.py so a number and
+        its label change together. `elsewhere` names the other enabled clusters that treat this
+        identity as their own — a cluster whose identity policy withholds the host's username is not
+        listed, since nobody vouched for the name there.
+        """
+        require_cluster(cluster_id)
+        viewer, scope = viewer_scope(request, cluster_id)
+        me = require_viewer(viewer, cluster_id)
+        groups = store.user_groups(cluster_id, me)
+        via = store.user_bindings(cluster_id, me)
+        direct = store.direct_user_bindings(cluster_id, include_platform=True, user_name=me)
+        record = store.user_record(cluster_id, me)
+        since = (datetime.now(UTC) - timedelta(days=HOME_CHANGES_DAYS)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        events = [dict(e, cluster=cluster_id)
+                  for e in store.membership_events(cluster_id, user_name=me, limit=HOME_EVENTS_LIMIT)]
+        counts = store.memberships_by_cluster(me)
+        elsewhere = []
+        for c in store.clusters():
+            if not c["enabled"] or c["id"] == cluster_id:
+                continue
+            other, _ = viewer_scope(request, c["id"])
+            if other != me:
+                continue
+            n = counts.get(c["id"], 0)
+            if not n:
+                continue   # "you're also on" means a membership there; a cluster with none is not theirs
+            elsewhere.append({"cluster": c["id"], "memberships": n, "status": c["status"], "last_poll": c["last_poll"]})
+            events += [dict(e, cluster=c["id"])
+                       for e in store.membership_events(c["id"], user_name=me, limit=HOME_EVENTS_LIMIT)]
+        return {
+            "cluster": cluster_id,
+            "viewer": me,
+            "scope": scope,
+            "full_name": store.user_full_name(cluster_id, me),
+            "providers": record["providers"] if record else [],
+            "answer": derive_answer(groups, via, direct),
+            "direct": direct,
+            "changes": group_changes(events, since),
+            "retention": history_retention("membership_event", store.history_retained_since(cluster_id)),
+            "elsewhere": elsewhere,
+            "memberships_total": counts.get(cluster_id, 0) + sum(e["memberships"] for e in elsewhere),
         }
 
     @app.get("/api/clusters/{cluster_id}/user-bindings")
