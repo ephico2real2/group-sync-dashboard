@@ -92,3 +92,43 @@ Outcome in one line: **…**
 - Measured: five touched files 156 passed; full suite **3081 passed, 17 skipped** (`--ignore=tests/test_ui.py`);
   CRC rolled to `0.24.0-127d5c735f`: no migration re-ran, nine markers unchanged (the open-time seed a measured
   no-op), 0 baseline rows, the route answers `count: 6, baseline_rows: 0`. Record: `docs/REVIEW_binding_events.md`.
+
+---
+
+## Part 3 — the design-system foundation, #152 + #166 (2026-09-17 → 18)
+
+### Implementation — commit `53a366a`, PR #179 (branch `feat/design-foundation` from main)
+
+- Measured before touching anything: 92 inline `style=` attributes (24 font sizes the type-scale guard could not
+  see), three `var(--x, #hex)` fallbacks, radius literals 999/6/50%/10/4/3/2/5/1 px, 25+ spacing literals on a
+  2 px grid; at 375 px on the live cluster the tab bar was **676 px** wide, the page **696**, five of nine tabs
+  past the edge. Plan posted on #152 first.
+- Spacing (`--space-1…11`) and radius ladders named at the sheet's own values — nothing moves; nineteen
+  off-ladder literals carry an `optical:` note the guard requires. `--line` / `--accent-soft` / `--warn` defined.
+  Okabe–Ito palettes solved to the default tokens' contrast bars by lightness alone (every theme × palette pair
+  measured: 328 contrast checks). Appearance + Colours in the static header, applied before first paint from the
+  URL, then storage. The 92 inline styles promoted to classes. `nav.tabs` wraps.
+- **Found by the render check (a pixel diff against main from the same seed)**: a token-block comment quoting
+  `/* optical: … */` closed early and the tail swallowed `--space-1: 2px;` — every chip lost its padding while
+  the regex guards stayed green. Fixed; a comments-do-not-nest guard added. The diff's verdict on the final
+  cut: groups / bindings / policy / nsaudit / usage **0 pixels changed** below the header.
+- Measured: `test_ui.py` 297 passed; guards 340; 375 px `scrollWidth` 375 on every tab; CI green.
+
+### Review pass 1 applied — commits `19d7b35`, `faf88b4`, `9a0e29c` (2026-09-17 23:48 → 2026-09-18)
+
+- Three reviewers on `53a366a`: Codex (gpt-5.6-sol xhigh, no Chromium in its sandbox — it executed the head and
+  wiring scripts in a mocked DOM), Grok 4.6, and OB1 with Playwright.
+- **Found by Codex and Grok, D3 refuted, accepted**: `--accent-soft` on `:root` froze against `--tab-overview`
+  (custom properties inherit their computed value) — the Users chip wore Overview's blue, measured
+  `color(srgb .157 .451 .804 / .14)`; now on `body`. **D8 refuted, accepted**: a second `class=` attribute on the
+  bindings search note (the parser drops it); merged, with a guard. **D10 refuted, accepted**: the raw-colour
+  guard's finder swallowed `body {}`; single-level bodies, with a parametrised leak test.
+- **Found by OB1, F1 (refuted at HEAD), accepted**: the Grok-pass rewrite had sliced `tests/test_type_scale.py`
+  from the colour guard to its end and deleted `test_comments_do_not_nest` — restored with a self-check. **F2,
+  volunteered, accepted**: `?mode=dark` printed dark text on white paper (measured under print emulation) —
+  every dark block is `@media screen` now, with a test. **F3, accepted**: Back shed `?mode`/`?theme` from the
+  URL — re-stamped on `popstate`. **F4, accepted**: the 375 px sweep never saw Reports — a test on the reporting
+  fixture. **F5**: a docstring count. OB1's element-by-element diff of 13 page states on 31 computed properties
+  against main is the evidence "nothing moved" now rests on.
+- Measured: guards 334; the shell UI classes 17; citations 891; CI green on `19d7b35`. Record:
+  `docs/REVIEW_design_foundation.md`. The second pass (Grok + OB1) on `9a0e29c` is running.
