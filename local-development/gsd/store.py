@@ -1290,6 +1290,122 @@ class Store:
                    ON CONFLICT(cluster_id) DO UPDATE SET state='forbidden', observed_at=excluded.observed_at""",
                 (cluster_id, observed_at))
 
+    def namespaces(self, cluster_id: str, *, user_name: str | None = None,
+                   groups: list[str] | None = None) -> list[dict]:
+        """Every namespace the poller sees, with the configured labels and two counts: distinct
+        groups bound IN the namespace and non-platform grants naming a person there (#167).
+
+        Cluster-wide bindings reach every namespace, so they are counted once by the caller
+        (`cluster_wide_*` on the envelope) rather than added to every row — a list where every
+        namespace shows twenty "via groups" says nothing about any of them.
+
+        Self tier (`user_name` given): only the namespaces one of the viewer's own `groups` or a
+        binding naming the viewer reaches, and the counts are over those paths — "grants
+        affecting them" (docs/ACCESS_CONTROL.md), never other people's.
+        """
+        own = user_name is not None
+        group_list = json.dumps(list(groups or []))
+        with self.read_snapshot():
+            rows = self._rows(
+                "SELECT name, created_at, phase, observed_at FROM cluster_namespace WHERE cluster_id=? ORDER BY name",
+                (cluster_id,))
+            labels: dict[str, dict[str, str]] = {}
+            for r in self._rows(
+                    "SELECT name, key, value FROM cluster_namespace_label WHERE cluster_id=? ORDER BY name, key",
+                    (cluster_id,)):
+                labels.setdefault(r["name"], {})[r["key"]] = r["value"]
+            via = {r["ns"]: r["n"] for r in self._rows(
+                f"""SELECT binding_namespace AS ns, COUNT(DISTINCT group_name) AS n
+                      FROM rbac_group_binding WHERE cluster_id=? AND binding_namespace != ''
+                      {"AND group_name IN (SELECT value FROM json_each(?))" if own else ""}
+                     GROUP BY binding_namespace""",
+                (cluster_id, group_list) if own else (cluster_id,))}
+            direct = {r["ns"]: r["n"] for r in self._rows(
+                f"""SELECT binding_namespace AS ns, COUNT(*) AS n
+                      FROM user_binding WHERE cluster_id=? AND binding_namespace != '' AND is_platform = 0
+                      {"AND user_name = ?" if own else ""}
+                     GROUP BY binding_namespace""",
+                (cluster_id, user_name) if own else (cluster_id,))}
+        out = []
+        for r in rows:
+            v, d = via.get(r["name"], 0), direct.get(r["name"], 0)
+            if own and not (v or d):
+                continue
+            out.append({"name": r["name"], "created_at": r["created_at"], "phase": r["phase"],
+                        "observed_at": r["observed_at"], "labels": labels.get(r["name"], {}),
+                        "via_groups": v, "direct_grants": d})
+        return out
+
+    def namespace_reach(self, cluster_id: str, name: str, user_name: str, groups: list[str]) -> bool:
+        """Whether one of the viewer's own paths — a group they belong to, or a binding naming
+        them — reaches the namespace, in the namespace or cluster-wide. Decided BEFORE any
+        existence lookup by the self-tier handler, so the refusal is the same for a real and a
+        nonexistent name."""
+        row = self._row(
+            """SELECT EXISTS(SELECT 1 FROM rbac_group_binding
+                              WHERE cluster_id=? AND binding_namespace IN (?, '')
+                                AND group_name IN (SELECT value FROM json_each(?)))
+                   OR EXISTS(SELECT 1 FROM user_binding
+                              WHERE cluster_id=? AND binding_namespace IN (?, '') AND user_name=?) AS reach""",
+            (cluster_id, name, json.dumps(list(groups)), cluster_id, name, user_name))
+        return bool(row and row["reach"])
+
+    def namespace_detail(self, cluster_id: str, name: str, *, user_name: str | None = None,
+                         groups: list[str] | None = None, sibling_key: str | None = None) -> dict:
+        """One namespace: its labels, who reaches it and through which group, the grants naming
+        a person there, the cluster-wide grants that reach it too, its siblings under the first
+        configured label, and how many distinct people the paths add up to (#167).
+
+        Returns a dict even when the store no longer holds the namespace (`present` False): a
+        namespace that bindings or history still name is answered, not 404'd — the caller decides.
+        Self tier: the viewer's own paths only, and `people` is None — it is a count over other
+        people's memberships.
+        """
+        own = user_name is not None
+        group_list = json.dumps(list(groups or []))
+        own_groups = " AND b.group_name IN (SELECT value FROM json_each(?))" if own else ""
+        with self.read_snapshot():
+            ns = self._row("SELECT name, created_at, phase, observed_at FROM cluster_namespace WHERE cluster_id=? AND name=?",
+                           (cluster_id, name))
+            labels = {r["key"]: r["value"] for r in self._rows(
+                "SELECT key, value FROM cluster_namespace_label WHERE cluster_id=? AND name=? ORDER BY key",
+                (cluster_id, name))}
+            def bound(namespace: str) -> list[dict]:
+                return self._rows(
+                    f"""SELECT b.group_name, b.binding_kind, b.binding_name, b.role_kind, b.role_name,
+                               b.managed_source, COALESCE(g.member_count, 0) AS member_count
+                          FROM rbac_group_binding b
+                          LEFT JOIN group_state g ON g.cluster_id = b.cluster_id AND g.name = b.group_name
+                         WHERE b.cluster_id=? AND b.binding_namespace=?{own_groups}
+                         ORDER BY b.role_name, b.group_name""",
+                    (cluster_id, namespace, group_list) if own else (cluster_id, namespace))
+            via_groups = bound(name)
+            cluster_wide = bound("")
+            direct = self._rows(
+                f"""SELECT user_name, binding_kind, binding_name, role_kind, role_name, is_platform
+                      FROM user_binding WHERE cluster_id=? AND binding_namespace=?{" AND user_name=?" if own else ""}
+                     ORDER BY is_platform, role_name, user_name""",
+                (cluster_id, name, user_name) if own else (cluster_id, name))
+            people = None
+            if not own:
+                names = sorted({r["group_name"] for r in via_groups} | {r["group_name"] for r in cluster_wide})
+                members = self._rows(
+                    "SELECT DISTINCT user_name FROM group_member WHERE cluster_id=? AND group_name IN (SELECT value FROM json_each(?))",
+                    (cluster_id, json.dumps(names)))
+                people = len({r["user_name"] for r in members} | {r["user_name"] for r in direct if not r["is_platform"]})
+            siblings: list[str] = []
+            if sibling_key and labels.get(sibling_key):
+                siblings = [r["name"] for r in self._rows(
+                    """SELECT name FROM cluster_namespace_label
+                        WHERE cluster_id=? AND key=? AND value=? AND name != ? ORDER BY name""",
+                    (cluster_id, sibling_key, labels[sibling_key], name))]
+        return {"name": name, "present": ns is not None,
+                "created_at": ns["created_at"] if ns else None, "phase": ns["phase"] if ns else None,
+                "observed_at": ns["observed_at"] if ns else None, "labels": labels,
+                "via_groups": via_groups, "cluster_wide_groups": cluster_wide,
+                "direct_grants": direct, "people": people, "siblings": siblings,
+                "sibling_key": sibling_key if labels.get(sibling_key or "") else None}
+
     def namespaces_source(self, cluster_id: str) -> dict | None:
         return self._row("SELECT state, observed_at FROM cluster_namespace_status WHERE cluster_id=?", (cluster_id,))
 
