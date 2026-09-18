@@ -132,3 +132,86 @@ Outcome in one line: **…**
   against main is the evidence "nothing moved" now rests on.
 - Measured: guards 334; the shell UI classes 17; citations 891; CI green on `19d7b35`. Record:
   `docs/REVIEW_design_foundation.md`. The second pass (Grok + OB1) on `9a0e29c` is running.
+
+### Review pass 2 applied — commits `2061807` (2026-09-18 00:26), `311f544` (2026-09-18 00:41), `a668d51` (2026-09-18 02:04)
+
+- Grok and OB1 on `9a0e29c`. **Grok, accepted**: a hashless link kept `?mode` only until the boot's
+  `replaceState` (`location.hash || location.pathname` dropped the query) — `pathname + search` now, with a test
+  (`2061807`); the two header labels were given to the accessibility tree by the clip idiom (`2061807`) — reversed
+  below. **`311f544`** relocated the Reports-at-375 test beside its module-scoped fixture with a diagnosis
+  ("its report ticket outlived its 300 s TTL") that OB1's pass 2 refuted and I retract: the fixture's
+  report-service clock was frozen at creation, the dashboard mints with wall time, and `ticket.py` refuses a
+  ticket issued more than 30 s after the service's "now" as future-dated — a 403 `reportFetch` never remints on
+  (401 only). Measured by OB1: 200 at 3 s after the fixture's creation, 403 at 80 s and 350 s; the TTL is 120 s.
+- **OB1 pass 2, accepted (`a668d51`)**: the fixture's clock is live unless a test pins it, and a guard reads the
+  snapshot's age twice over the wire and requires it to move (`0 -> 0` against the frozen fixture); each phone
+  label sits above its select below 520 px — 167 px measured, both labels visible and operable, against 142.5 px
+  with them clipped from sighted readers; the record's stale "223 px, no change" line and the CHANGELOG's silences
+  corrected. OB1's measurements behind the seven CONFIRMED claims: 90 theme × palette × tab samples for the
+  accent wash, a brace walk and print emulation for the `@media screen` wrappers, a registration-order trace for
+  the Back re-stamp, 137,496 computed-style comparisons across 22 page states for "nothing else moved".
+- Measured: both new tests fail on `311f544`; `TestReportsTab`, `TestTheShellAtPhoneWidth`,
+  `TestAppearanceAndColours` 37 passed; non-UI 3302 passed, 17 skipped; UI 306 passed; CI green on `a668d51`.
+  Record: `docs/REVIEW_design_foundation.md`, "Pass 2, OB1". A confirmation pass on `a668d51` follows.
+
+## Part 4 — the Cluster Overview relayout, #172 (2026-09-18)
+
+### Implementation — commit `759cd7d` (2026-09-18 00:57), PR #180 (branch `feat/overview-relayout` from `feat/design-foundation`)
+
+- The page follows the fleet, not the viewport: `data-density` from the served cluster count (3 / 8 / 24), a tile
+  per cluster with the seven figures at full density, worst-first past three, the alerts card first past eight,
+  eight alerts per page as view state, a consequence line under every non-ok state in `state.py`'s vocabulary,
+  and the scoped view (`#page=overview&cluster=<id>`) as a position on the one history stack — the fleet stamps
+  no default cluster.
+- Measured before the review: the fleet at 2, 6, 14 and 40 clusters rendered at 1440 and 375 px (`scrollWidth`
+  375 at every tier); `TestOverviewFleet` on the four fleets; CI green on `759cd7d`.
+
+### Review pass 1 applied — commit `c806112` (2026-09-18 02:02), PR #180
+
+- Three reviewers on one brief. **Grok** read the source: the dead heading button in the opened cluster, the
+  dense rows reading `unknown` for `auth_failed` (`badge("critical")` fell through `STATES`), the retired-cluster
+  link dying on a 404 before the page's own detour could render, `data.fleet` missing from the repaint
+  fingerprint, no paint before a tile's fetch — its O6 refutation was itself refuted (`311f544:3833` returned
+  `""` for `present:false` too) and its F4 test could not fail. **OB1** drove the app at 2/6/14/40 and measured
+  thirteen findings: `unknown` blaming the cluster (`api.enrich()` never passes `reachable`), the fleet's absent
+  note said of an unpolled cluster, the tile's styles lost in the opened block, a cluster change from the fleet
+  clearing nothing (crc-local's four groups painted under prod-east), the first paint claiming "shown per cluster"
+  of a fleet of two, a failed per-cluster fetch folded into "all syncing", a refused reader running the fleet
+  stage every poll, a superseded refresh writing `data.fleet`, compact tiles hiding the two figures the plan
+  named, blank-glyph kinds badges, and the Policy tab changed six ways. **Codex** read the contract: the Policy
+  tab's card restored (the pre-#172 card plus the consequence line), and the self-tier Overview conflict between
+  the tab-feature contract and `ACCESS_CONTROL.md` — routed to #182, not decided here.
+- Measured: `TestOverviewReview` (14) and the Policy-tab test fail on `759cd7d` (17 failed with the changed
+  density assertion); the fixed tree — the review class with the PR's own classes 74 passed, CSS guards 334,
+  non-UI 3303 passed, 17 skipped, UI 344 passed; the fleet at 14, the scoped view and the Policy tab rendered
+  and read; CI green on `c806112`. Record: `docs/REVIEW_overview_relayout.md`. The second pass is running.
+
+## Part 5 — namespaces as entities, #167 (2026-09-18)
+
+### Implementation — commits `6420e7f` (2026-09-18 00:35), `cf4f310` (2026-09-18 00:36, the merge of #177), `a801e00` (2026-09-18 00:45), `3365484` (2026-09-18 00:57, the merge of the foundation), PR #181 (branch `feat/namespaces` from `feat/design-foundation`)
+
+- `GET …/namespaces` (every namespace the poller sees, the configured labels, two counts, `source`) and
+  `GET …/namespaces/{name}` (who reaches it and through which group, the grants naming a person, the cluster-wide
+  grants, siblings under the first label, `people`, the history from `binding_event`); the Namespaces card on the
+  audit tab with a pattern box over name and label values; the namespace page as the third drill-down. Self tier:
+  own paths only, refused before any lookup so the two 403s are byte-identical.
+- Measured: 11 API tests and 6 UI tests on the branch; CI on `3365484` **red** — one test, the storage-seam
+  contract (three store methods not declared on `StorageBackend`), which the non-UI suite would have caught before
+  the push had it been run; and the merge `cf4f310` had left conflict markers in `docs/CHANGELOG.md`, unseen.
+
+### Review pass 1 applied — commit `6a8fa85` (2026-09-18 02:04), PR #181
+
+- Three reviewers; two batches. **Grok**: the conflict markers (with a tree-wide guard now), `ns` kept by the
+  cluster selector and the keyboard drill, the self tier's empty card claiming the poller saw nothing, cluster-wide
+  grants naming a person missing from the namespace page (ruled on the issue: they belong there), the audit
+  table's export offered on the namespace page. **OB1** (Playwright at both tiers, store probes): the envelope's
+  `cluster_wide_groups` counting rows where the column counts distinct groups (Codex measured the same: 2 for one
+  group bound twice) — a batch-1 decision reversed; the self-tier list hiding what a cluster-wide path reaches
+  while the detail opened every namespace through it (ruled: the list follows the reach rule); the card's intro
+  false at the self tier; a baseline history row reading "+ granted" against #177's rule; the list fetched on the
+  namespace page. **Codex**: `data.namespaces` and `data.ns` missing from the auto-refresh fingerprint (the same
+  class as #172's `data.fleet`); rejected — `Path(description=…)` on the path parameters (R2 is the query rule).
+- Measured: fourteen new tests fail on `3365484` (the two whose fix shares a file with its fixture proved against
+  the old fixture); the fixed tree — API/seam/hygiene/contract/docs 1021 passed, the four UI classes around the
+  change 48 passed, non-UI 3376 passed, 17 skipped, UI 320 passed; CI green on `6a8fa85`. Record:
+  `docs/REVIEW_namespaces.md`. The second pass is running.

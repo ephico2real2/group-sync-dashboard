@@ -1102,6 +1102,13 @@ dialog.ns-preview p { margin: 0 0 var(--space-4); font-size: var(--text-sm); }
   dialog.ns-preview { border: 2px solid CanvasText; }
 }
 
+/* ---- The lookup (#174) ----------------------------------------------------------------------
+   A door is a card whose whole face opens a list; the matched substring is marked in the accent's
+   wash so a hit says which word it matched. */
+.door { cursor: pointer; transition: border-color 160ms ease, transform 120ms ease; }
+.door:hover { border-color: var(--accent); transform: translateY(-1px); }
+mark { background: color-mix(in srgb, var(--accent) 22%, transparent); color: inherit; padding: 0 1px; /* optical: a hair of air around the mark */ border-radius: var(--radius-xs); }
+
 /* ---- Utilities (#152) ---------------------------------------------------------------
    The 92 inline style= attributes the page carried, as classes on the token system, so the
    type-scale and spacing guards can see them (tests/test_type_scale.py scans index.html too).

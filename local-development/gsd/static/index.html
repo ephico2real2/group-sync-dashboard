@@ -185,6 +185,7 @@ const view = { page: "overview", cluster: null, groupsync: null, groupFilter: "a
                 nsNamespace: "all", nsSort: "risk", nsDir: "desc",
                 nsGrantSort: "risk", nsGrantDir: "desc",
                 nsSearch: "",   // #167: the namespace list's pattern box; a preference, never a position
+                lookupSearch: "",   // #174: the one box over all three kinds; carried across "see all matches"
                 /* Namespaces whose full exposed-user list is expanded. In `view` like every
                    other control on this page, so a 60s poll repaint does not collapse a list
                    the reader just opened. */
@@ -350,7 +351,7 @@ function goBack() {
 const PAGE_LABEL = {
   overview: "overview", groups: "all groups", users: "all users", bindings: "access granted",
   policy: "RBAC policy", nsaudit: "namespace audit", logins: "logins", usage: "usage",
-  reports: "reports",
+  reports: "reports", lookup: "search",
 };
 
 function backLabel() {
@@ -843,6 +844,11 @@ const SEARCH_BOXES = {
     title: 'Filters every section by group, role, namespace or binding name as you type. Several words are ANDed — "alpha admin" finds admin granted to app-ocp-rbac-alpha-ns-admin. Escape clears.',
     help: "Filters the binding sections by group name, role, namespace or binding name as you type. Several words are combined with AND, so every word must appear. Press Escape to clear.",
   },
+  lookupSearch: {
+    id: "f-lookup-search", label: "Find", placeholder: "search groups, users and namespaces",
+    title: 'Searches groups, users and namespaces at once. Several words are ANDed — "alice zzz" finds nothing. Escape clears.',
+    help: "Searches groups by name, users by id or name, and namespaces by name or label, all at once. Several words are combined with AND, so every word must appear. Press Escape to clear.",
+  },
   nsSearch: {
     id: "f-ns-search", label: "Find namespace", placeholder: "filter by name or label",
     title: 'Filters namespaces by name or by a label value as you type. Several words are ANDed — "demo prod" finds demo-prod and demo-production. Escape clears.',
@@ -882,6 +888,12 @@ function wireSearchBox(key) {
   // renderFilters). The state still updates, so the compositionend render loses nothing.
   el.oninput = (e) => {
     view[key] = e.target.value;
+    if (key === "lookupSearch" && view.page !== "lookup" && view[key] && !e.isComposing) {
+      // ONE position change, not one per keystroke: the lookup is where these matches render.
+      navigate({ page: "lookup", group: null, user: null, ns: null, groupsync: null });
+      refresh();
+      return;
+    }
     if (!e.isComposing) render();
   };
   // addEventListener, not on-properties: composition events have no IDL handler attribute, so
@@ -960,6 +972,11 @@ function renderFilters() {
   // replaces #main with no focus or caret restore, so a box inside the card would lose focus after
   // every character. The bar is the one place a text field survives the repaint.
   if (view.page === "groups" && view.group && !view.user) html += searchBoxHtml("memberSearch");
+  // #174: wherever no list has its own box — the lookup, a user or namespace page, every other tab —
+  // the one box searches all three kinds; typing on a page with nothing to filter opens the lookup once.
+  const listBoxInScope = (view.page === "groups" && !view.user) || (view.page === "users" && !view.user)
+    || (view.page === "nsaudit" && !view.ns) || (view.page === "bindings" && !narrowedReader());
+  if (!listBoxInScope) html += searchBoxHtml("lookupSearch");
   if (view.page === "groups") {
     html += `<label for="f-state">Group state</label>
       <select id="f-state">
@@ -1373,6 +1390,7 @@ function groupsPage() {
       : `${rows.length} shown`}</span></h2>
     ${scopeBanner("groups", meta)}
     ${note ? `<div class="filterbar-note mt-2">${esc(note)}</div>` : ""}
+    ${alsoLine("groups", view.groupSearch)}
     ${searching ? `<div class="filterbar-note mt-2">Filtered by
       <strong>${esc(view.groupSearch.trim())}</strong> — every word must appear in the name.${all.length > 0
       // Same zero-denominator honesty as the empty state below: with nothing behind the search,
@@ -1399,11 +1417,12 @@ function groupsPage() {
                   groups.</div>`
               : `<div class="empty-note">No groups match this filter.</div>`))
       : `<div class="scroll-x"><table>
-          <thead><tr><th>Name</th><th class="num">Members</th><th>Owner</th>
+          <thead><tr><th>Name</th><th class="num">Members</th><th class="num">Grants</th><th>Owner</th>
             <th>Last refreshed</th><th>Source DN</th></tr></thead>
           <tbody>${rows.map((g) => `<tr class="rowlink" data-group="${esc(g.name)}">
             <td>${esc(g.name)}</td>
             <td class="num">${g.member_count}</td>
+            <td class="num ${g.binding_count ? "" : "muted"}">${g.binding_count ?? "—"}</td>
             <td>${ownerCell(g.sync_provider)}</td>
             <td class="mono">${esc(ago(g.group_synced_at))}</td>
             <td class="muted"><code>${esc(g.ldap_uid || "—")}</code></td>
@@ -1584,6 +1603,7 @@ function usersPage() {
       ? `<div class="truncation-note">Showing the first <strong>${all.length}</strong> of
           <strong>${total}</strong> users by id. The Find box and the chips search only these, so a
           person past the cut cannot be found here.</div>` : ""}
+    ${alsoLine("users", view.userSearch)}
     ${searching ? `<div class="filterbar-note mt-2">Filtered by
       <strong>${esc(q)}</strong> — every word must appear in the id or the name.${all.length > 0
       ? ` Clear the box, or press Escape in it, to see all ${all.length}.` : ""}</div>` : ""}
@@ -2802,6 +2822,7 @@ function groupDetail() {
       "Member since" is when this dashboard first observed the user in the group — not when
       LDAP added them. It cannot predate this dashboard.
     </div>
+    ${memberSearching ? `<div class="filterbar-note mt-0 mb-2">Searching the members of this group only — <button type="button" class="linkish" data-widen="${esc(memberQuery)}">search everything instead</button></div>` : ""}
     ${memberSearching ? `<div class="filterbar-note mt-0 mb-4">Filtered by
       <strong>${esc(memberQuery)}</strong> — every word must appear in the id or the name.${members.length > 0
       ? ` Clear the box, or press Escape in it, to see all ${members.length}.` : ""}</div>` : ""}
@@ -3323,6 +3344,7 @@ function namespacesCard() {
       ? "The namespaces your own memberships and grants reach — grants affecting you, nothing about other people."
       : "Every namespace the poller sees, not only those with a grant."} Click a row — a namespace is an entity here,
       the third drill-down beside groups and users. The box in the bar finds by name or by any captured label.</div>
+    ${alsoLine("namespaces", view.nsSearch)}
     ${note}${cw}${body}
   </section>`;
 }
@@ -3424,6 +3446,115 @@ function wireNsPage() {
   });
   const back = $("back");
   if (back) back.onclick = () => { goBack(); };
+}
+
+/* #174 — one lookup over the three kinds. At rest: three doors with their counts and one line of
+   state each; with text: the matches by kind, N of M, twelve per kind, every hit a drill. The
+   search is an extra door beside the lists and the tabs, never a replacement for them. */
+const LOOKUP_PER_KIND = 12;
+function hl(text, query) {
+  let out = esc(text == null ? "" : String(text));
+  (query || "").toLowerCase().split(/\s+/).filter(Boolean).forEach((t) => {
+    out = out.replace(new RegExp("(" + t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ")", "ig"), "<mark>$1</mark>");
+  });
+  return out;
+}
+function lookupMatches(q) {
+  const groups = (data.groups || []).filter((g) => matchesSearch([g.name, g.sync_provider], q));
+  const users = ((data.users && data.users.users) || []).filter((u) => matchesSearch([u.user_name, u.full_name], q));
+  const keys = (data.namespaces && data.namespaces.label_keys) || [];
+  const namespaces = ((data.namespaces && data.namespaces.namespaces) || [])
+    .filter((n) => matchesSearch([n.name, ...keys.map((k) => (n.labels || {})[k])], q));
+  return { groups, users, namespaces, keys };
+}
+/* On a list page: the door to the other two kinds for what was typed. Counts only for a kind this
+   session already holds (a tab visited on this cluster): typing is a filter and issues no request
+   (test_searching_does_not_refetch), and the users list is fetched only on its own tab
+   (test_other_tabs_never_request_the_user_list) — so a kind not yet loaded is not counted, and the
+   line is the plain door. The lookup page fetches all three on its own tab. */
+function alsoLine(kind, q) {
+  if (!(q || "").trim()) return "";
+  const m = lookupMatches(q);
+  const kinds = [["groups", m.groups.length, data.groups], ["users", m.users.length, data.users], ["namespaces", m.namespaces.length, data.namespaces]]
+    .filter(([k]) => k !== kind);
+  const bits = kinds.filter(([, n, loaded]) => loaded && n > 0).map(([k, n]) => `${n} ${n === 1 ? k.replace(/s$/, "") : k}`);
+  const door = `<button type="button" class="linkish" data-widen="${esc(q)}">${bits.length ? "see all matches" : `search everything for ${esc(q.trim())}`}</button>`;
+  return `<div class="filterbar-note mt-2">${bits.length ? `also matching <strong>${esc(q.trim())}</strong>: ${bits.join(" · ")} — ` : ""}${door}</div>`;
+}
+function lookupDoors() {
+  const g = data.groups, u = data.users, n = data.namespaces;
+  const door = (page, count, kind, line) => `<section class="card door" data-page="${page}">
+    <div class="kpi big"><div class="value">${count == null ? "…" : count}</div><div class="label">${kind}</div></div>
+    <div class="filterbar-note mt-2">${line}</div>
+    <div class="mt-3"><button type="button" class="drill" data-page="${page}">Browse all ${kind.toLowerCase()} ›</button></div>
+  </section>`;
+  const gLine = g ? `${g.filter((x) => x.binding_count).length} grant something · ${g.filter((x) => !x.sync_provider).length} unattributed` : "loading…";
+  const uLine = u && !u.forbidden ? `${(u.users || []).length} have logged in · ${((u.never_logged_in_members || {}).count) || 0} synced members never have${u.truncated ? " · list cut at the page limit" : ""}` : (u && u.forbidden ? "needs an authenticated identity" : "loading…");
+  const nList = n && !n.forbidden ? (n.namespaces || []) : null;
+  const nLine = nList ? `${nList.filter((x) => Object.keys(x.labels || {}).length).length} labelled · ${nList.filter((x) => x.direct_grants).length} carry a direct grant` : (n && n.forbidden ? "outside your tier" : "loading…");
+  return `<div class="grid">
+    ${door("groups", g ? g.length : null, "Groups", gLine)}
+    ${door("users", u && !u.forbidden ? (typeof u.total === "number" ? u.total : (u.users || []).length) : null, "Users", uLine)}
+    ${door("nsaudit", nList ? nList.length : null, "Namespaces", nLine)}
+  </div>`;
+}
+function lookupPage() {
+  const q = (view.lookupSearch || "").trim();
+  if (!q) {
+    return `<section class="card"><h2>Start anywhere</h2>
+      <div class="filterbar-note mb-4">Open a list and browse it, pick a tab, or type in the box above to search all three kinds at
+        once. The search is an extra door beside the lists, never a replacement for them. Every word must appear, so
+        <code>alice zzz</code> finds nothing.</div></section>${lookupDoors()}`;
+  }
+  const m = lookupMatches(q);
+  const total = m.groups.length + m.users.length + m.namespaces.length;
+  const more = (rows, of, page) => rows.length > LOOKUP_PER_KIND
+    ? `<div class="filterbar-note mt-2">${rows.length - LOOKUP_PER_KIND} more — <button type="button" class="linkish" data-page="${page}">open the full list to see them</button></div>` : "";
+  const sect = (label, count, of, page, table) => count ? `<h3 class="mt-4">${label} <span class="muted fw-normal">· ${count} of ${of}</span></h3>${table}` : "";
+  const gT = `<div class="scroll-x"><table><thead><tr><th>Group</th><th>Owner</th><th class="num">Members</th><th class="num">Grants</th></tr></thead>
+    <tbody>${m.groups.slice(0, LOOKUP_PER_KIND).map((g) => `<tr class="rowlink" data-group="${esc(g.name)}">
+      <td><button type="button" class="drill">${hl(g.name, q)}</button></td><td>${ownerCell(g.sync_provider)}</td>
+      <td class="num">${g.member_count}</td><td class="num ${g.binding_count ? "" : "muted"}">${g.binding_count ?? "—"}</td></tr>`).join("")}</tbody></table></div>${more(m.groups, (data.groups || []).length, "groups")}`;
+  const uT = `<div class="scroll-x"><table><thead><tr><th>User</th><th>Name</th><th class="num">Groups</th></tr></thead>
+    <tbody>${m.users.slice(0, LOOKUP_PER_KIND).map((u) => `<tr class="rowlink" data-user="${esc(u.user_name)}">
+      <td><button type="button" class="drill">${hl(u.user_name, q)}</button></td><td class="muted">${hl(u.full_name || "—", q)}</td>
+      <td class="num">${u.group_count || 0}</td></tr>`).join("")}</tbody></table></div>${more(m.users, ((data.users || {}).users || []).length, "users")}`;
+  const nT = `<div class="scroll-x"><table><thead><tr><th>Namespace</th>${m.keys.map((k) => `<th>${esc(labelShort(k))}</th>`).join("")}<th class="num">Direct grants</th></tr></thead>
+    <tbody>${m.namespaces.slice(0, LOOKUP_PER_KIND).map((n) => `<tr class="rowlink" data-ns="${esc(n.name)}">
+      <td><button type="button" class="drill">${hl(n.name, q)}</button></td>${m.keys.map((k) => `<td class="mono muted">${hl((n.labels || {})[k] || "—", q)}</td>`).join("")}
+      <td class="num ${n.direct_grants ? "err" : "muted"}">${n.direct_grants}</td></tr>`).join("")}</tbody></table></div>${more(m.namespaces, ((data.namespaces || {}).namespaces || []).length, "nsaudit")}`;
+  return `<section class="card">
+    <h2>Matches <span class="muted fw-normal">· ${total} across 3 kinds</span></h2>
+    <div class="filterbar-note mb-2">Every word must appear, so <code>alice zzz</code> returns nothing — the contract the list boxes already keep.</div>
+    ${sect("Groups", m.groups.length, (data.groups || []).length, "groups", gT)}
+    ${sect("Users", m.users.length, ((data.users || {}).users || []).length, "users", uT)}
+    ${sect("Namespaces", m.namespaces.length, ((data.namespaces || {}).namespaces || []).length, "nsaudit", nT)}
+    ${total ? "" : `<div class="empty-note">No group, user or namespace matches all of <strong>${esc(q)}</strong>. The data is not empty — the search
+      is hiding it. Press Escape in the box to clear.</div>`}
+  </section>${lookupDoors()}`;
+}
+function wireLookup() {
+  // Scoped to #main: <body> carries data-page too (renderFilters stamps the current page on it), and
+  // a document-wide selector once wired the body — every click then navigated back to the page it
+  // was on, after the door's own handler had left it. A door's inner button and the door itself
+  // name the same page; the innermost element handles the click and the rest is ignored.
+  document.querySelectorAll("#main [data-page]").forEach((el) => {
+    el.onclick = (e) => {
+      if (e.target.closest("[data-page]") !== el) return;
+      if (e.target.closest("[data-group],[data-user],[data-ns]")) return;
+      navigate({ page: el.dataset.page, group: null, user: null, ns: null, groupsync: null });
+      refresh();
+    };
+  });
+  document.querySelectorAll("[data-widen]").forEach((el) => {
+    el.onclick = () => {
+      // Widen the scope, do not reset it: the reader has already typed what they are looking for.
+      const carried = el.dataset.widen;
+      navigate({ page: "lookup", group: null, user: null, ns: null, groupsync: null });
+      view.lookupSearch = carried;
+      refresh();
+    };
+  });
 }
 
 function nsAuditPage() {
@@ -4034,7 +4165,12 @@ function render() {
   const focusedId = document.activeElement && document.activeElement.id;
   renderFilters();
   const main = $("main");
-  if (view.page === "nsaudit" && view.ns) {
+  if (view.page === "lookup") {
+    main.innerHTML = lookupPage();
+    wireDrilldown();
+    wireNsPage();
+    wireLookup();
+  } else if (view.page === "nsaudit" && view.ns) {
     main.innerHTML = nsDetail();
     wireDrilldown();
     wireNsPage();
@@ -4042,6 +4178,7 @@ function render() {
     main.innerHTML = nsAuditPage();
     wireNsAudit();
     wireNsPage();
+    wireLookup();
   } else if (view.page === "policy") {
     main.innerHTML = policyPage();
     wireDrilldown();
@@ -4067,12 +4204,15 @@ function render() {
   } else if (view.page === "users") {
     main.innerHTML = usersPage();
     wireDrilldown();
+    wireLookup();
   } else if (view.page === "groups" && view.group) {
     main.innerHTML = groupDetail();
     wireDrilldown();
+    wireLookup();
   } else if (view.page === "groups") {
     main.innerHTML = groupsPage();
     wireDrilldown();
+    wireLookup();
   } else if (view.groupsync) {
     main.innerHTML = groupsyncDetail();
     const back = $("back");
@@ -4363,6 +4503,11 @@ async function refresh(opts = {}) {
       }
       if (view.page === "bindings" && narrowedReader() && data.whoami && data.whoami.user) {
         want.myAccess = myAccessFetch(get, base, data.whoami.user, { allowStaleViewer: true });
+      }
+      if (view.page === "lookup") {
+        want.groups = get(`${base}/groups?state=all`);
+        want.users = guard403(get(`${base}/users?limit=${USERS_FETCH}`));
+        want.namespaces = guard403(get(`${base}/namespaces`));
       }
       if (view.page === "groups" || view.page === "users") {
         // The SAME order render() dispatches in, so what is fetched is what is painted. A pasted

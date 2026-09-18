@@ -3763,19 +3763,25 @@ class Store:
         Plan for the scoped shape, measured on the live database: group_state by its PK
         autoindex, group_member by its PK covering index — no new index needed.
         """
+        # #174: the one data addition the drill-down needs — how many bindings name the group, in a
+        # namespace or cluster-wide — so the list can say what a group grants without a click each.
+        # A correlated scalar over rbac_group_binding's (cluster_id, group_name) index, the same count
+        # group_detail's bindings list has rows, which a test holds them to.
+        grants = """(SELECT COUNT(*) FROM rbac_group_binding b
+                      WHERE b.cluster_id = g.cluster_id AND b.group_name = g.name) AS binding_count"""
         if user_name:
-            sql = ("""SELECT g.name, g.member_count, g.sync_provider, g.group_synced_at,
-                            g.ldap_uid, g.observed_at, g.cliff_silence
-                       FROM group_state g
-                       JOIN group_member m
-                         ON m.cluster_id = g.cluster_id AND m.group_name = g.name
-                      WHERE g.cluster_id=? AND m.user_name=?"""
+            sql = (f"""SELECT g.name, g.member_count, g.sync_provider, g.group_synced_at,
+                             g.ldap_uid, g.observed_at, g.cliff_silence, {grants}
+                        FROM group_state g
+                        JOIN group_member m
+                          ON m.cluster_id = g.cluster_id AND m.group_name = g.name
+                       WHERE g.cluster_id=? AND m.user_name=?"""
                    + self._group_state_predicate(state, alias="g") + " ORDER BY g.name")
             return self._rows(sql, [cluster_id, user_name])
-        sql = ("""SELECT name, member_count, sync_provider, group_synced_at, ldap_uid,
-                        observed_at, cliff_silence
-                   FROM group_state WHERE cluster_id=?"""
-               + self._group_state_predicate(state) + " ORDER BY name")
+        sql = (f"""SELECT g.name, g.member_count, g.sync_provider, g.group_synced_at, g.ldap_uid,
+                         g.observed_at, g.cliff_silence, {grants}
+                    FROM group_state g WHERE g.cluster_id=?"""
+               + self._group_state_predicate(state, alias="g") + " ORDER BY g.name")
         return self._rows(sql, [cluster_id])
 
     def is_group_member(self, cluster_id: str, group_name: str, user_name: str) -> bool:

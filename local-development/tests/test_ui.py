@@ -1398,6 +1398,104 @@ class TestNamespaces:
         dash.wait_for_function("() => document.querySelector(\"tr[data-ns='prod-ns'] td.mono\").innerText.trim() === 'relabelled'")
 
 
+class TestLookup:
+    """#174: one lookup over the three kinds — three doors at rest, matches by kind with text, the AND
+    contract of the list boxes (`alice zzz` finds nothing), the also-line on a list page and
+    "search everything instead" inside a group carrying the text across ONE position change."""
+
+    def test_start_anywhere_doors_carry_the_lists_own_counts(self, page, server):
+        page.goto(f"{server}/#page=lookup&cluster=crc-local")
+        page.wait_for_selector(".door")
+        page.wait_for_function("() => [...document.querySelectorAll('.door .value')].every(v => v.textContent.trim() !== '…')")
+        doors = {d["kind"]: int(d["n"]) for d in page.evaluate(
+            "() => [...document.querySelectorAll('.door')].map(d => ({kind: d.querySelector('.label').textContent.trim(), n: d.querySelector('.value').textContent.trim()}))")}
+        api = f"{server}/api/clusters/crc-local"
+        assert doors["Groups"] == httpx.get(f"{api}/groups?state=all", timeout=5).json()["count"]
+        assert doors["Users"] == httpx.get(f"{api}/users?limit=10000", timeout=5).json()["total"]
+        assert doors["Namespaces"] == httpx.get(f"{api}/namespaces", timeout=5).json()["count"] == 9
+        page.locator(".door[data-page='groups'] button.drill").click()
+        page.wait_for_selector("tr[data-group]")
+        assert page.evaluate("() => location.hash") == "#page=groups&cluster=crc-local"
+
+    def test_typing_where_nothing_filters_opens_the_lookup_once(self, dash):
+        before = dash.evaluate("() => history.length")
+        dash.fill("#f-lookup-search", "alice")
+        dash.wait_for_selector("tr[data-user='alice']")
+        assert dash.evaluate("() => [view.page, location.hash]") == ["lookup", "#page=lookup&cluster=crc-local"]
+        assert dash.evaluate("() => history.length") == before + 1, "one position change, not one per keystroke"
+        assert dash.locator("#f-lookup-search").input_value() == "alice", "the text is carried"
+        dash.fill("#f-lookup-search", "alice cooper")
+        dash.wait_for_selector("tr[data-user='alice'] mark")
+        assert dash.evaluate("() => history.length") == before + 1, "typing on the lookup is a repaint"
+
+    def test_the_lookup_ands_its_words_across_three_kinds(self, page, server):
+        page.goto(f"{server}/#page=lookup&cluster=crc-local")
+        page.wait_for_selector(".door")
+        page.fill("#f-lookup-search", "alice zzz")
+        page.wait_for_selector("#main .empty-note")
+        assert "The data is not empty" in page.locator("#main .empty-note").inner_text()
+        assert page.locator("tr[data-user], tr[data-group], tr[data-ns]").count() == 0
+        page.fill("#f-lookup-search", "demo")
+        page.wait_for_selector("tr[data-ns='prod-ns']")
+        assert sorted(page.locator("tr[data-ns]").evaluate_all("els => els.map(e => e.dataset.ns)")) == ["prod-ns", "quiet-corner"], "by label value"
+        assert page.locator("tr[data-ns='prod-ns'] mark").count() >= 1, "the matched substring is marked"
+        page.fill("#f-lookup-search", "rbac alpha")
+        page.wait_for_selector("tr[data-group]")
+        groups = page.locator("tr[data-group]").evaluate_all("els => els.map(e => e.dataset.group)")
+        assert groups and all("rbac" in g and "alpha" in g for g in groups), groups
+        assert "of" in page.locator("h3", has_text="Groups").inner_text()
+        page.press("#f-lookup-search", "Escape")
+        page.wait_for_selector(".door")
+
+    def test_the_also_line_on_a_list_offers_the_other_kinds_and_carries_the_text(self, dash):
+        """Typing is a filter and issues no request, and the users list is fetched only on its own tab — so on a
+        fresh Groups tab the line is the plain door, and the counts appear only for a kind this session already
+        holds (the audit tab visited first). Either way the text is carried to the lookup."""
+        dash.click("#tab-groups")
+        dash.wait_for_selector("#f-group-search")
+        dash.evaluate("() => { window.__urls = []; const f = window.fetch;"
+                      " window.fetch = (...a) => { window.__urls.push(String(a[0])); return f(...a); }; }")
+        dash.fill("#f-group-search", "demo")
+        dash.wait_for_selector("[data-widen]")
+        line = dash.locator("[data-widen]").locator("xpath=..").inner_text()
+        assert "search everything for demo" in line and "namespaces" not in line, line
+        assert dash.evaluate("() => window.__urls") == [], "typing must not fetch"
+        dash.locator("[data-widen]").click()
+        dash.wait_for_selector("tr[data-ns='prod-ns']")
+        assert dash.evaluate("() => [view.page, document.getElementById('f-lookup-search').value]") == ["lookup", "demo"]
+        # the audit tab loads the namespaces; back on Groups the line now counts them
+        dash.click('button.tab:text-is("Namespace audit")')
+        dash.wait_for_selector("tr[data-ns]")
+        dash.click("#tab-groups")
+        dash.wait_for_selector("#f-group-search")
+        dash.fill("#f-group-search", "demo")
+        dash.wait_for_function("() => { const w = document.querySelector('[data-widen]'); return !!w && w.parentElement.textContent.includes('2 namespaces'); }")
+
+    def test_search_everything_instead_carries_the_text_out_of_a_group(self, dash):
+        dash.click("#tab-groups")
+        dash.wait_for_selector("tr[data-group='app-ocp-rbac-alpha-ns-admin']")
+        dash.locator("tr[data-group='app-ocp-rbac-alpha-ns-admin']").click()
+        dash.wait_for_selector("#f-member-search")
+        dash.fill("#f-member-search", "alice")
+        dash.wait_for_selector("[data-widen]")
+        dash.locator("[data-widen]").click()
+        # the group's own members table already lists alice — wait for the LOOKUP to paint, not for a row
+        dash.wait_for_function("() => view.page === 'lookup' && document.getElementById('f-lookup-search') && document.querySelector('#main h3')")
+        assert dash.locator("#main tr[data-user='alice']").count() == 1
+        assert dash.evaluate("() => [view.page, view.group, document.getElementById('f-lookup-search').value]") == ["lookup", None, "alice"]
+
+    def test_the_lookup_holds_at_phone_width(self, page, server):
+        page.goto(f"{server}/#page=lookup&cluster=crc-local")
+        page.wait_for_selector(".door")
+        page.set_viewport_size({"width": 375, "height": 740})
+        page.wait_for_timeout(300)
+        assert page.evaluate("() => document.documentElement.scrollWidth <= innerWidth")
+        page.fill("#f-lookup-search", "a")
+        page.wait_for_selector("h3")
+        page.wait_for_timeout(300)
+        assert page.evaluate("() => document.documentElement.scrollWidth <= innerWidth")
+
+
 def test_index_is_never_heuristically_cached(server):
     """Reported from the field: a deploy landed but the browser kept the old page, so a
     shipped fix looked like it was never shipped. Without Cache-Control, browsers apply
