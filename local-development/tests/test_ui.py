@@ -1180,6 +1180,167 @@ class TestAppearanceAndColours:
         assert dash.evaluate("() => document.querySelector('header.top #pref-mode') !== null && document.querySelector('#filters #pref-mode') === null")
 
 
+def _fleet_server(tmp_path_factory, n: int):
+    """The UI seed plus (n - 2) extra clusters, each polled once and refused — an unreachable cluster is
+    a legitimate tile ("auth_failed", counts frozen) and a critical alert, which is what the density
+    tiers, the worst-first order and the alert pager need in quantity (#172)."""
+    db = str(tmp_path_factory.mktemp("gsd") / "fleet.db")
+    _seed(db)
+    extra = [f"fleet-{i:02d}" for i in range(n - 2)]
+    store = Store(db)
+    try:
+        for cid in extra:
+            store.upsert_cluster(cid, f"https://api.{cid}.example.internal:6443", True)
+            store.record_poll(cid, "auth_failed", "401 Unauthorized — token invalid or expired")
+    finally:
+        store.close()
+    settings = Settings(
+        clusters=[ClusterConfig("crc-local", "https://api.crc.testing:6443", token_env="X"),
+                  ClusterConfig("prod-east", "https://api.prod-east.example.com:6443", token_env="Y")]
+                 + [ClusterConfig(cid, f"https://api.{cid}.example.internal:6443", token_env="Z") for cid in extra],
+        db_path=db, login_capture_enabled=True, view_restrictions_enabled=False,
+    )
+    port = _free_port()
+    app = build_app(settings, run_poller=False)
+    srv = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
+    thread = threading.Thread(target=srv.run, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{port}"
+    for _ in range(100):
+        try:
+            if httpx.get(f"{base}/healthz", timeout=1).status_code == 200:
+                break
+        except httpx.HTTPError:
+            time.sleep(0.1)
+    else:
+        raise RuntimeError("fleet server did not start")
+    return srv, thread, base
+
+
+@pytest.fixture(scope="module", params=[2, 6, 14, 40], ids=lambda n: f"{n}-clusters")
+def fleet(request, tmp_path_factory):
+    srv, thread, base = _fleet_server(tmp_path_factory, request.param)
+    yield request.param, base
+    srv.should_exit = True
+    thread.join(timeout=5)
+
+
+class TestOverviewFleet:
+    """#172: the Overview follows the fleet. Measured against the mock's thresholds (3 / 8 / 24) and
+    the live page's one-stack navigation, on a seeded fleet of 2, 6, 14 and 40 clusters."""
+    TIER = {2: "full", 6: "medium", 14: "compact", 40: "dense"}
+
+    def _open(self, page, base, hash_=""):
+        page.goto(f"{base}/{hash_}")
+        page.wait_for_selector(".hero .value")
+        return page
+
+    def test_density_follows_the_fleet_not_the_viewport(self, page, fleet):
+        n, base = fleet
+        self._open(page, base)
+        assert page.evaluate("() => document.documentElement.dataset.density") == self.TIER[n]
+        if n > 24:
+            assert page.locator("tr.rowlink[data-cluster]").count() == n and page.locator(".tile").count() == 0
+        else:
+            assert page.locator(".tile").count() == n
+            api_visible = page.locator(".tile .api").first.is_visible()
+            assert api_visible == (n <= 3), "the API line belongs to the full tier only"
+            assert page.locator(".tile .k-extra").first.is_visible() == (n <= 3), "the three extra figures belong to the full tier only"
+        page.set_viewport_size({"width": 375, "height": 740})
+        assert page.evaluate("() => document.documentElement.dataset.density") == self.TIER[n], "density is the fleet's, not the viewport's"
+        assert page.evaluate("() => document.documentElement.scrollWidth <= innerWidth")
+
+    def test_worst_first_past_three_and_alerts_lead_past_eight(self, page, fleet):
+        n, base = fleet
+        self._open(page, base)
+        order = page.evaluate("() => [...document.querySelectorAll('#main > section, #main > div')].map(e => e.className.split(' ')[0])")
+        if n <= 3:
+            first = page.locator(".tile h2").first.inner_text().strip()
+            assert first == "crc-local", "below four clusters the order is the served order, not worst-first"
+            assert order.index("tiles") < order.index("card"), "the tiles lead a small fleet"
+        else:
+            sel = "tr.rowlink[data-cluster] .badge" if n > 24 else ".tile .badge"
+            assert page.locator(sel).first.inner_text().strip() != "reachable", "past three clusters the worst tile comes first"
+        if n > 8:
+            first_card = page.locator("#main > section.card").first
+            assert first_card.locator(".hero .value").count() == 1, "past eight clusters the alerts lead the page"
+
+    def test_alerts_are_paged_and_the_page_is_view_state(self, page, fleet):
+        n, base = fleet
+        self._open(page, base)
+        pager = page.locator(".pager")
+        total = len(httpx.get(f"{base}/api/alerts", timeout=5).json()["alerts"])
+        if total <= 8:
+            assert pager.count() == 0, "eight or fewer alerts need no pager"
+            return
+        assert pager.count() == 1, f"{total} alerts need a pager"
+        assert page.locator(".alert-row").count() == 8
+        first_before = page.locator(".alert-row .who").first.inner_text()
+        page.get_by_role("button", name="2", exact=True).click()   # the numbered button, not "Next ›"
+        page.wait_for_function("() => document.querySelector(\"button[data-alert-page='2'][aria-pressed='true']\")")
+        assert page.locator(".alert-row .who").first.inner_text() != first_before
+        assert page.evaluate("() => location.hash") in ("", "#page=overview"), "a page click is not a position"
+        page.click("#tab-groups")
+        page.wait_for_selector("#tab-groups[aria-current='page']")
+        page.click("#tab-overview")
+        page.wait_for_selector("button[data-alert-page='1'][aria-pressed='true']")
+
+    def test_a_tile_opens_the_cluster_and_back_returns_to_the_fleet(self, page, fleet):
+        n, base = fleet
+        self._open(page, base)
+        opener = "tr.rowlink[data-cluster='crc-local']" if n > 24 else ".tile[data-cluster='crc-local']"
+        page.locator(opener).click()
+        page.wait_for_selector("#back")
+        assert page.evaluate("() => location.hash") == "#page=overview&cluster=crc-local"
+        assert page.locator("#back").inner_text().strip() == "← all clusters"
+        assert page.locator("#f-cluster").input_value() == "crc-local", "the selector is the same position as the tile"
+        assert page.locator("h2", has_text="GroupSync CRs").count() == 1
+        assert "on crc-local" in page.locator("#main").inner_text()
+        assert "across 1 cluster" in page.locator(".hero .label").inner_text(), "the scoped view counts one cluster's alerts"
+        page.locator("#back").click()
+        # The position changes at once; the repaint follows the refetch — wait for the selector to say so.
+        page.wait_for_function("() => document.getElementById('f-cluster').value === '' && !document.querySelector('#back')")
+        assert page.evaluate("() => location.hash") in ("#page=overview", "")
+        page.locator(opener).click()
+        page.wait_for_selector("#back")
+        page.go_back()
+        page.wait_for_function("() => document.getElementById('f-cluster').value === '' && !document.querySelector('#back')")
+        assert page.locator(".tile, tr.rowlink[data-cluster]").count() >= 2, "the browser's Back walks the same stack to the fleet"
+
+    def test_the_selector_opens_the_same_scoped_view(self, page, fleet):
+        n, base = fleet
+        self._open(page, base)
+        page.select_option("#f-cluster", "prod-east")
+        page.wait_for_selector("#back")
+        assert page.evaluate("() => location.hash") == "#page=overview&cluster=prod-east"
+        assert "401 Unauthorized" in page.locator("#main").inner_text()
+        assert "the poller cannot reach it" in page.locator("#main").inner_text(), "an unreachable cluster states its consequence"
+
+    def test_the_contract_survives_in_both_views(self, page, fleet):
+        n, base = fleet
+        self._open(page, base)
+        text = page.locator("#main").inner_text()
+        if n <= 8:
+            assert "GroupSync CRs" in page.locator("section.card h2").all_inner_texts()
+            for col in ("Name", "State", "Schedule", "Groups", "Last sync", "Next expected"):
+                assert page.locator("th", has_text=col).count() >= 1, col
+            assert "Policy operator (NamespaceConfig / GroupConfig)" in text
+            assert "quietly stopped reconciling" in text
+        page.locator("tr.rowlink[data-cluster='crc-local']" if n > 24 else ".tile[data-cluster='crc-local']").click()
+        page.wait_for_selector("#back")
+        # text_content, not inner_text: the figure labels are upper-cased by CSS and inner_text applies it
+        text = page.locator("#main").text_content()
+        for label in ("Groups", "Bindings to review", "Unattributed", "Oldest last sync", "GroupSync CRs", "Empty", "Policy configs"):
+            assert label in text, f"the scoped view dropped the figure {label!r}"
+        assert "Policy operator (NamespaceConfig / GroupConfig)" in text and "quietly stopped reconciling" in text
+        row = page.locator("tr[data-cr='bda-rbac-groupsync']")
+        assert "overdue" in row.inner_text() and "the schedule has stopped firing" in row.inner_text(), "overdue states its consequence"
+        ok_row = page.locator("tr[data-cr='ldap-groupsync']")
+        assert "ok" in ok_row.inner_text() and "frozen" not in ok_row.inner_text()
+        badges = [b.strip() for b in page.locator("tr[data-cr] .badge").all_inner_texts()]
+        assert not ({"critical", "warning"} & set(badges) - {"reconcile error"}) or all(b in ("ok", "late", "overdue", "unknown", "reconcile error") for b in badges), badges
+
+
 def test_index_is_never_heuristically_cached(server):
     """Reported from the field: a deploy landed but the browser kept the old page, so a
     shipped fix looked like it was never shipped. Without Cache-Control, browsers apply
@@ -1348,7 +1509,11 @@ class TestBrowserHistory:
     def test_the_boot_entry_carries_the_default_cluster(self, dash):
         """The default cluster is not known until the cluster list arrives — after boot stamped
         the entry — so the first entry used to carry no cluster at all, and Back from the reader's
-        FIRST cluster switch restored a drill-down against the wrong one."""
+        FIRST cluster switch restored a drill-down against the wrong one. Measured on a tab that
+        needs a cluster: on the Overview an absent cluster is the fleet view (#172), so the boot
+        entry there carries none, by design."""
+        assert dash.evaluate("() => history.state.pos.cluster") is None, "the Overview boots into the fleet"
+        dash.click("#tab-groups")
         dash.wait_for_function("() => view.cluster")
         assert dash.evaluate("() => history.state.pos.cluster") == "crc-local"
 
@@ -1464,8 +1629,10 @@ class TestBrowserHistory:
             "the label must describe where goBack() rises to, not a fixed string"
         )
         dash.locator("#back").click()
-        dash.wait_for_function("() => !document.querySelector('#back')")
-        assert dash.evaluate("() => view.page") == "overview"
+        # The CR detail's parent is the cluster it lives under — #page=overview&cluster=crc-local, the
+        # scoped view (#172), which carries its own back control to the fleet.
+        dash.wait_for_function("() => !view.groupsync && document.querySelector('#back') && document.querySelector('#back').textContent.includes('all clusters')")
+        assert dash.evaluate("() => [view.page, view.cluster, view.groupsync]") == ["overview", "crc-local", None]
 
     def test_back_after_a_cluster_switch_restores_that_cluster(self, dash):
         """Cluster is part of the position, not context around it — group names repeat."""
@@ -1572,6 +1739,9 @@ class TestRbacPolicyPage:
 
     def test_it_reports_the_policy_operator_and_the_unmanaged_set(self, dash):
         self._open(dash)
+        # The tab paints first and fetches after; the operator card lands with the fetch. Before #172 the
+        # Overview had prefetched it for the selected cluster — the fleet view has no selected cluster.
+        dash.wait_for_selector("h3:has-text('Policy operator')")
         body = dash.locator("body").inner_text()
         assert "Policy operator" in body
         assert "outside the policy system" in body
