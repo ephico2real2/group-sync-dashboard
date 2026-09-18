@@ -272,3 +272,27 @@ tests that deliberately read the first paint do not). CI on `97adf24`: green on 
 rolled) and probed: density full, two tiles, the opened cluster's three headings, Back to the fleet, the Policy
 card's heading a direct card child with its 3 px rail, 375 px with no horizontal scroll; the drilldown head was
 redeployed afterwards to restore the report service.
+
+## Pass 4 — OB3's integration review (max effort), over `integration/design-programme`
+
+A review of all five features merged onto one branch, aimed at the seams. One finding is this branch's, and
+it is this branch's own idea meeting an older chokepoint.
+
+### The fleet is a position the payload drop never asked about (OB3, C2) — accepted
+#172 made "no cluster" a position — the fleet — and `applyPosition` is the chokepoint where a cluster change
+drops every cluster-scoped payload, because the tab handler paints from `data` before it fetches. The drop
+sat inside `if (pos.cluster)`, which the fleet never satisfies: a change BETWEEN clusters dropped, a change
+FROM no cluster dropped (this branch's own earlier fix), and a change TO no cluster did not.
+
+Measured: Groups on `prod-east` → the Overview tab (the fleet) → Groups again, 300 ms after the click —
+`#page=groups&cluster=crc-local` on screen with `east-only-group-one` and `east-only-group-two` in the
+table and "Groups · 2 shown" above it. Another cluster's rows under this cluster's position, for the length
+of a fetch, which is exactly what the chokepoint exists to prevent.
+
+The position's implied cluster is computed once (`nextCluster` — the fleet's is null) and the drop asks
+whether it differs from the one whose payloads are held, so every transition is asked, including toward the
+fleet. Test: `TestTheFleetOrphansNoPayload`, which holds the groups fetch and reads the first paint —
+`['east-only-group-one', 'east-only-group-two']` before, empty with Loading… after.
+
+### Tests
+Browser suite 352 passed, the navigation and Overview classes among them.

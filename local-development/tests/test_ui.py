@@ -6416,3 +6416,76 @@ class TestReportsTab:
 def test_no_reports_tab_when_the_feature_is_off(dash):
     assert dash.locator('button.tab:text-is("Reports")').count() == 0
     assert dash.evaluate("fetch('/api/report/ticket').then(r => r.status)") == 404
+
+
+@pytest.fixture(scope="module")
+def two_polled_server(tmp_path_factory):
+    """The UI seed with prod-east polled and holding two groups of its own, so a payload painted under the
+    wrong cluster shows as ROWS rather than as an empty list."""
+    db = str(tmp_path_factory.mktemp("gsd-two") / "ui.db")
+    _seed(db)
+    now = datetime.now(UTC)
+    store = Store(db)
+    try:
+        store.record_poll("prod-east", "ok", None)
+        store.replace_group_state("prod-east", [
+            {"name": "east-only-group-one", "member_count": 1, "sync_provider": "east-sync_ldap",
+             "group_synced_at": _iso(now - timedelta(minutes=2)), "ldap_uid": "cn=east-only-group-one,ou=Groups,dc=example,dc=com"},
+            {"name": "east-only-group-two", "member_count": 1, "sync_provider": "east-sync_ldap",
+             "group_synced_at": _iso(now - timedelta(minutes=2)), "ldap_uid": "cn=east-only-group-two,ou=Groups,dc=example,dc=com"},
+        ], _iso(now))
+        store.sync_members("prod-east", {"east-only-group-one": ["erin"], "east-only-group-two": ["erin"]}, {},
+                           _iso(now - timedelta(minutes=2)))
+    finally:
+        store.close()
+    settings = Settings(
+        clusters=[ClusterConfig("crc-local", "https://api.crc.testing:6443", token_env="X"),
+                  ClusterConfig("prod-east", "https://api.prod-east.example.com:6443", token_env="Y")],
+        db_path=db, login_capture_enabled=True, view_restrictions_enabled=False,
+    )
+    port = _free_port()
+    srv = uvicorn.Server(uvicorn.Config(build_app(settings, run_poller=False), host="127.0.0.1", port=port, log_level="warning"))
+    thread = threading.Thread(target=srv.run, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{port}"
+    for _ in range(100):
+        try:
+            if httpx.get(f"{base}/healthz", timeout=1).status_code == 200:
+                break
+        except httpx.HTTPError:
+            time.sleep(0.1)
+    else:
+        raise RuntimeError("two-polled server did not start")
+    yield base
+    srv.should_exit = True
+    thread.join(timeout=5)
+
+
+class TestTheFleetOrphansNoPayload:
+    """#172 made "no cluster" a position (the fleet), and the tab handler paints from `data` before it
+    fetches. The chokepoint dropped the cluster-scoped payloads on a change BETWEEN clusters and on the way
+    FROM no cluster, but not on the way TO none — so Groups on prod-east → Overview (the fleet) → Groups
+    painted prod-east's rows under `#page=groups&cluster=crc-local` for the length of the fetch (OB3,
+    integration review, C2: measured 300 ms after the click)."""
+
+    def test_a_tab_opened_from_the_fleet_never_paints_the_previous_clusters_rows(self, page, two_polled_server):
+        errors: list[str] = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.goto(f"{two_polled_server}/#page=groups&cluster=prod-east")
+        page.wait_for_selector("tr[data-group='east-only-group-one']")
+        page.click("#tab-overview")
+        page.wait_for_selector(".tile[data-cluster='crc-local']")
+        assert page.evaluate("() => view.cluster") is None, "the Overview tab opens the fleet"
+        held: list = []
+        page.route("**/api/clusters/*/groups?*", lambda route: held.append(route))   # hold the fetch; read the first paint
+        page.click("#tab-groups")
+        page.wait_for_function("() => location.hash === '#page=groups&cluster=crc-local'")   # boot stamped the default
+        first = page.evaluate("""() => ({rows: [...document.querySelectorAll('tr[data-group]')].map(t => t.dataset.group),
+                                        loading: document.getElementById('main').innerText.includes('Loading…')})""")
+        for route in held:
+            route.continue_()
+        page.unroute("**/api/clusters/*/groups?*")
+        assert first["rows"] == [] and first["loading"], f"another cluster's rows under crc-local's position: {first}"
+        page.wait_for_selector("tr[data-group='app-ocp-rbac-alpha-ns-admin']")
+        assert page.evaluate("() => document.getElementById('scope-note').textContent") == " - crc-local"
+        assert not errors
