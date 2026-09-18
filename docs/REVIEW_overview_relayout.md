@@ -255,4 +255,8 @@ promtool (without the flag it skips; CI installs promtool). CI on `21e9538`: one
 with the first paint (the tile, its alerts, "Loading…" — F15), and CI's runner had not landed the tables yet;
 350 passed beside it and every local run was green. The same wait-on-the-position that C6 named in the walk:
 an `_open_cluster` helper waits for the tables' paint and the two tests that read table content use it (the
-tests that deliberately read the first paint do not). CI on that head is recorded below when it lands.
+tests that deliberately read the first paint do not). CI on `97adf24`: green on every job. Deployed to CRC
+(tag `0.24.0-21e9538e0c`; the report pod's readyz refused the schema-14 store by design, the dashboard pod
+rolled) and probed: density full, two tiles, the opened cluster's three headings, Back to the fleet, the Policy
+card's heading a direct card child with its 3 px rail, 375 px with no horizontal scroll; the drilldown head was
+redeployed afterwards to restore the report service.
