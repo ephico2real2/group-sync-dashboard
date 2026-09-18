@@ -72,6 +72,61 @@ KPIs `Distinct users · Days recorded · Interactions · Retention`, all from wh
 never counted from the visible page. The standing footnote explains that `Day` is a **UTC bucket** while
 times are server-zone, and that *"an interaction is one deliberate action … not one HTTP request"*.
 
+### The persistent shell  (operator, 2026-09-17: "don't forget the refresh and logout button and our current settings")
+
+Every page renders **inside** the shell (`header.top` + `.filters` + `#main`), and the shell is not a tab —
+a redesign of any page inherits it and may not drop it. Measured on the live app, in `index.html` — the `header.top` markup, the `refresh()` and sign-out
+handlers, and the settings control they sit beside — and on the mocks: two of eight carried these; six had silently lost Refresh and
+Sign out.
+
+| control | live element | what it is |
+|---|---|---|
+| **Refresh** | `button#refresh` | a manual poll of the current page's data, beside the automatic 60 s repaint |
+| **Sign out** | `a#logout` (shown behind the proxy) | ends the oauth-proxy session |
+| **Idle timeout** | the `Still there?` dialog — *Stay signed in* / *Sign out now* | `docs/DESIGN_session_and_signout.md`; a page may not hide or restyle it away |
+| **Tier chip** | "Full view — you are seeing everything" / the narrowed wording | what the viewer is seeing, stated |
+| **Version · updated** | `v0.24.0 · 52bba392b2 · updated 17:21:04` (`data.version`) | which build, and how fresh |
+| **Cluster selector** | `select#f-cluster` | a **position** — part of the URL, travels with Back |
+| **Group state** | `select#f-state` (Groups page) | `all / synced / unattributed` — a filter, not a position |
+| **Find** | `#f-group-search`, `#f-user-search`, `#f-member-search`, `#f-binding-search` | the pattern boxes, multi-word AND, Escape clears |
+| **Appearance · Colour** | the two selects, in the shell, never in `renderFilters()` | global; `?mode=` / `?theme=` (#152) |
+
+The rule: a page mock carries the shell **verbatim**, with every control present even where the page does
+not use it — the shell is the one thing a reader must be able to find on every screen.
+
+### Cluster Overview  (operator ruling, 2026-09-17: keep as-is, do not redesign)
+
+*"I love it … we cannot afford to lose them. We can just create a new KPI panel and keep what we
+design there. No need to litigate that again."* This page is settled. A KPI redesign adds a **new**
+page; it does not reshape this one.
+
+Three cards, all of which must survive:
+
+1. **One card per connected cluster** (`crc-local`, `mock` today). These are already the tiles the
+   page grows into as clusters are added — the position `#page=overview&cluster=<id>` exists today,
+   so making a tile clickable needs no new navigation model.
+2. **GroupSync CRs** — `NAME · STATE · SCHEDULE · GROUPS · LAST SYNC · NEXT EXPECTED`. `state`,
+   `next_expected` and `error_is_current` are computed per request, never stored: a stored state is
+   wrong the moment the clock moves past it.
+3. **Policy operator (NamespaceConfig / GroupConfig)** — `KIND · NAME · STATE · LAST SUCCESS`, with
+   the note that *"a currently-failing one means RBAC has quietly stopped reconciling — new
+   namespaces receive nothing"*. That sentence is the reason the card exists.
+
+**Visibility, measured against `api.py` rather than assumed** — relevant because opening this page
+has been raised. It is not uniform:
+
+| card | tier | why |
+|---|---|---|
+| cluster cards + counts | every tier | already on the unauthenticated `/metrics` (`gsd_groups_total`, `gsd_bindings_total{finding=…}`); withholding would be theatre |
+| GroupSync CRs | every tier | `/metrics` is in the chart's `skipAuthRegex` and already serves `gsd_groupsync_state`, `gsd_groupsync_last_sync_timestamp_seconds`, `gsd_groupsync_groups_total` per CR |
+| Policy operator | **administrator only** | `require_admin_tier`. No `/metrics` analogue exists, so this is a genuinely private aggregate — an explicit reversal (03ad446) of the earlier "governance data about objects" ruling |
+
+Two fields are delivered but never rendered, and are omitted at the self tier: `ldap_filter` and
+`error_message`, because both can embed directory DNs and the gate group. `refresh()` fetches
+`/groupsyncs` inside `if (view.cluster)` — true on **every** page — so a narrowed reader's browser
+downloads this payload whichever tab they are on. "The Overview tab is admin-only" never protected
+them.
+
 ## The rule
 
 Redesign the layout. Keep the words. Where a note is moved behind a disclosure, it must still be
