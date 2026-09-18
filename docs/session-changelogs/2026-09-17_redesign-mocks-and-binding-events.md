@@ -75,3 +75,20 @@ Outcome in one line: **…**
   the full fix and its failing/passing test in its report; "Dont drop the cursor fable role" → the Cursor Fable rows
   stay; OB1 fills the role while Cursor's usage limit is hit (measured: `ActionRequiredError: You've hit your usage
   limit`), and Cursor Fable resumes when the quota resets.
+
+### Review pass 2 applied — commit `127d5c7` (2026-09-18 00:1x), PR #177
+
+- Three reviewers on `c59fddd`: Codex (gpt-5.6-sol xhigh), Grok 4.6, and **OB1** — Fable 5.1 through the Agent
+  tool, standing in while Cursor's Fable is at its monthly limit (measured: `ActionRequiredError`).
+- **Found by Codex and OB1, S3 refuted, accepted**: a cluster successfully polled empty on v13 IS provably observed
+  (`groupsync_presence`, `poll_outcome status='ok'`, both in `sync_members`' transaction); **Grok** added
+  `group_state`. **Found by OB1**: the deployed `1f55cb1` run against a v14 store would write rows with no
+  marker and an applied migration never re-runs — the seed now runs at **every open** (`_OBSERVATION_SEEDS`,
+  idempotent); the drafted migration 15 was dropped.
+- **Found by Codex (the plan) and OB1 (the timing), S6(d) refuted, accepted — reversing pass 1's rejection**:
+  306.82 ms per self-tier read at 300k rows against 1.80 ms with two index-served halves; `UNION ALL` applied with a
+  plan test.
+- **Found by OB1, V2**: the `_harden` docstring's "no SQL JSON functions" claim was false since `a7b155c` — restated.
+- Measured: five touched files 156 passed; full suite **3081 passed, 17 skipped** (`--ignore=tests/test_ui.py`);
+  CRC rolled to `0.24.0-127d5c735f`: no migration re-ran, nine markers unchanged (the open-time seed a measured
+  no-op), 0 baseline rows, the route answers `count: 6, baseline_rows: 0`. Record: `docs/REVIEW_binding_events.md`.

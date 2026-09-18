@@ -184,3 +184,25 @@ rejection ("nobody has measured it slow") no longer holds.
 **OB1, V2 — accepted.** The `_harden` docstring said the store uses no SQL JSON functions — false since
 `a7b155c`, and this change added a fourth `json_each`; it now states what is used and why the CVE's
 malformed-document path stays unreachable (the JSON is serialised here from Python lists of strings).
+
+## Re-validation after the second pass — `127d5c7` on CRC
+
+Built, pushed and rolled out as `0.24.0-127d5c735f` (`release-crc exit=0`). Measured on the new pod:
+
+- **No** `schema migration` line in the log — 14 did not re-run on a store already at 14, as `_migrate` promises;
+  `PRAGMA user_version` **14**.
+- `observation_state` unchanged at **nine** rows: the open-time seed found every (cluster, stream) already marked
+  and inserted nothing — the no-op the design claims for normal operation, measured.
+- **Zero** `baseline = 1` rows in either table; the six real events intact; **407 / 95 / 184** current rows.
+- `gsd_binding_changes_total` pre-seeded, eight series; through the route as kubeadmin the `UNION ALL` read answers
+  `scope: all, count: 6, baseline_rows: 0` — the same six rows the `OR` form returned before.
+
+## Outcome
+
+Two passes, three reviewers on the second. Pass 1: Cursor 10/10 CONFIRMED; Codex 9/10 with **C4 REFUTED** — the
+marker replaced the inference, migration 14 — plus the `json_each` bind. Pass 2 on the fixed head: S1/S2/S4/S5/S7/S8
+and S6(a–c) CONFIRMED by all three with artefacts; **S3's premise REFUTED** twice over (Codex, OB1) and extended by Grok,
+which moved the seed to every open; **S6(d) REFUTED and timed** by OB1 (306.82 ms → 1.80 ms at 300k rows), which
+reversed the pass-1 rejection of the `UNION ALL` rewrite. Eleven tests came out of the reviews. Full suite on the
+final head **3081 passed, 17 skipped**; `test_docs_citations` 891; both heads live on CRC with the upgrade path and
+the no-op re-open measured. The branch is ready for the operator's merge.
