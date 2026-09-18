@@ -1,0 +1,336 @@
+<title>Your Access</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
+<style>
+  :root{
+    --page:#f9f9f7; --surface:#fcfcfb; --surface-2:#f2f2ee;
+    --ink:#12120f; --muted:#5f5f58; --faint:#8a8a81;
+    --border:rgba(18,18,15,.13); --border-soft:rgba(18,18,15,.07);
+    --accent:#4f5a67; --accent-ink:#fff;
+    --good:#2f7d52;
+    --warn:#9a6b1f;
+    --ui:"Space Grotesk",-apple-system,BlinkMacSystemFont,sans-serif;
+    --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+    --page:#0f1011; --surface:#17181a; --surface-2:#1d1f22;
+    --ink:#f2f2f0; --muted:#a5a59d; --faint:#7a7a72;
+    --border:rgba(255,255,255,.15); --border-soft:rgba(255,255,255,.07);
+    --accent:#8b98a8; --accent-ink:#12120f;
+    --good:#63c68d;
+    --warn:#d9a441;
+  }}
+  :root[data-theme="dark"]{
+    --page:#0f1011; --surface:#17181a; --surface-2:#1d1f22;
+    --ink:#f2f2f0; --muted:#a5a59d; --faint:#7a7a72;
+    --border:rgba(255,255,255,.15); --border-soft:rgba(255,255,255,.07);
+    --accent:#8b98a8; --accent-ink:#12120f;
+    --good:#63c68d;
+    --warn:#d9a441;
+  }
+  /* Washes derive from the base colours, so a palette swap only overrides three hues. */
+  :root,:root[data-theme]{
+    --good-wash:color-mix(in srgb,var(--good) 14%,transparent);
+    --warn-wash:color-mix(in srgb,var(--warn) 16%,transparent);
+    --accent-wash:color-mix(in srgb,var(--accent) 12%,transparent);
+  }
+  /* Okabe-Ito — the standard colour-blind-safe set. Deuteranopia/protanopia (~8% of men)
+     cannot separate red from green, so "good" moves off green onto blue. */
+  :root[data-palette="deuter"],:root[data-palette="protan"]{
+    --good:#0072B2; --warn:#E69F00; --crit:#D55E00; --accent:#005f8a;
+  }
+  /* Tritanopia confuses blue and yellow, so the pair becomes teal and reddish-purple. */
+  :root[data-palette="trit"]{
+    --good:#009E73; --warn:#CC79A7; --crit:#D55E00; --accent:#4a4a52;
+  }
+  :root[data-palette="contrast"]{
+    --good:#00563f; --warn:#7a4a00; --crit:#8a0000; --accent:#1a1a1a; --faint:#4a4a44;
+  }
+  @media (prefers-color-scheme:dark){
+    :root[data-palette="contrast"]:not([data-theme="light"]){
+      --good:#7dffc4; --warn:#ffcf70; --crit:#ff9a8f; --accent:#e8e8e8; --accent-ink:#0f1011; --faint:#c9c9c2;
+    }
+  }
+  /* a little colour: each card carries its own accent rail */
+  .card{position:relative}
+  .card::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--sec,var(--accent));opacity:.8}
+  .card>h2{padding-left:23px}
+  .row,.foot{padding-left:23px}
+  *{box-sizing:border-box}
+  body{background:var(--page);color:var(--ink);font-family:var(--ui);font-size:14px;line-height:1.5;
+    -webkit-font-smoothing:antialiased;padding:26px 20px 60px}
+  .wrap{max-width:900px;margin:0 auto;display:flex;flex-direction:column;gap:16px}
+  .mock-note{font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--faint);
+    display:flex;align-items:center;gap:8px;margin:0 2px -4px}
+  .mock-note::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--accent)}
+
+  /* top bar: who + where */
+  .bar{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;min-width:0}
+  .who{font-size:12.5px;color:var(--muted)}
+  .who b{font-family:var(--mono);color:var(--ink);font-weight:600}
+  /* wrap, or the freshness + 3 selects run off a phone (measured: +321px at 375px) */
+  .switch{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:12.5px;color:var(--muted);min-width:0}
+  .switch select{max-width:100%}
+  .theme{flex-wrap:wrap}
+  .switch select{font-family:var(--mono);font-size:12.5px;padding:6px 10px;border-radius:8px;
+    border:1px solid var(--border);background:var(--surface);color:var(--ink)}
+
+  /* the answer, first */
+  .answer{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:24px 26px}
+  .answer h1{margin:0;font-size:27px;font-weight:700;letter-spacing:-.02em;line-height:1.15}
+  .answer .sub{margin-top:9px;font-size:14px;color:var(--muted)}
+  .answer .sub b{color:var(--ink);font-weight:600}
+  .tags{display:flex;gap:8px;flex-wrap:wrap;margin-top:15px}
+  .tag{font-family:var(--mono);font-size:11.5px;padding:3px 10px;border-radius:999px;
+    border:1px solid var(--border);background:var(--surface-2);color:var(--muted)}
+  .tag.ok{color:var(--good);background:var(--good-wash);border-color:color-mix(in srgb,var(--good) 40%,transparent)}
+  .tag.warn{color:var(--warn);background:var(--warn-wash);border-color:color-mix(in srgb,var(--warn) 40%,transparent)}
+  .tag.rwx{color:var(--accent-ink);background:var(--accent);border-color:var(--accent);font-weight:600}
+
+  /* cards */
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden}
+  .card>h2{margin:0;padding:13px 20px;font-size:12px;letter-spacing:.05em;text-transform:uppercase;
+    color:var(--muted);font-weight:600;border-bottom:1px solid var(--border-soft);
+    display:flex;justify-content:space-between;align-items:center;gap:10px}
+  .card>h2 .count{font-family:var(--mono);color:var(--faint);letter-spacing:0;text-transform:none;font-weight:400}
+
+  .row{display:flex;align-items:center;gap:14px;padding:15px 20px;cursor:pointer;
+    border-bottom:1px solid var(--border-soft)}
+  .row:last-child{border-bottom:0}
+  .row:hover{background:var(--accent-wash)}
+  .row .main{flex:1;min-width:0}
+  /* display:block is load-bearing — these are spans, so margin-top is ignored while inline
+     and the name/meta collapse onto one line. */
+  .row .name{display:block;font-family:var(--mono);font-size:13.5px;font-weight:600;word-break:break-all}
+  .row .meta{display:block;font-size:12px;color:var(--faint);margin-top:3px}
+  .row .meta b{color:var(--muted);font-weight:500}
+  .scope{font-family:var(--mono);font-size:11px;padding:3px 9px;border-radius:6px;
+    background:var(--accent-wash);color:var(--accent);border:1px solid color-mix(in srgb,var(--accent) 32%,transparent);white-space:nowrap}
+  .none{font-size:11.5px;color:var(--faint);font-style:italic;white-space:nowrap}
+  .role{font-family:var(--mono);font-size:11px;padding:3px 9px;border-radius:6px;white-space:nowrap;
+    background:var(--surface-2);border:1px solid var(--border);color:var(--muted)}
+  .role.rw{color:var(--warn);background:var(--warn-wash);border-color:color-mix(in srgb,var(--warn) 40%,transparent)}
+  .plat{font-size:10.5px;font-family:var(--mono);color:var(--faint);border:1px dashed var(--border);
+    border-radius:5px;padding:1px 6px;margin-left:8px}
+  .chev{color:var(--faint);font-size:15px}
+
+  .foot{font-size:12px;color:var(--faint);padding:13px 20px;background:var(--surface-2);
+    border-top:1px solid var(--border-soft)}
+  .theme{display:inline-flex;align-items:center;gap:7px;margin-left:0}
+  .fresh{display:inline-flex;align-items:center;gap:7px;font-size:12px;color:var(--muted);
+    margin-right:14px}
+  .beat{width:7px;height:7px;border-radius:50%;background:var(--good);animation:beat 2.4s ease-in-out infinite}
+  @keyframes beat{0%,100%{opacity:1}50%{opacity:.3}}
+  .xcluster{margin-top:14px;padding-top:13px;border-top:1px solid var(--border-soft);
+    font-size:12.5px;color:var(--muted)}
+  .xcluster b{color:var(--ink);font-weight:600}
+  .stale{display:inline-flex;align-items:center;gap:6px;margin-left:10px;font-family:var(--mono);
+    font-size:11px;padding:2px 9px;border-radius:999px;color:var(--warn);background:var(--warn-wash);
+    border:1px solid color-mix(in srgb,var(--warn) 40%,transparent)}
+  .stale::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}
+  .when{font-family:var(--mono);font-size:11px;color:var(--faint);white-space:nowrap}
+  .flap{font-family:var(--mono);font-size:10.5px;padding:2px 8px;border-radius:5px;white-space:nowrap;
+    color:var(--warn);background:var(--warn-wash);border:1px solid color-mix(in srgb,var(--warn) 40%,transparent)}
+  @media (prefers-reduced-motion: reduce){.beat{animation:none}}
+  @media(max-width:640px){.answer h1{font-size:22px}}
+</style>
+
+<div class="wrap">
+  <div class="mock-note">Mockup · “Your access” landing page · jane.smith · real CRC data</div>
+
+  <div class="bar">
+    <span class="who">Signed in as <b>jane.smith</b> · ldap-local</span>
+    <span class="switch">
+      <span class="fresh"><i class="beat"></i>updated 40s ago</span>
+      Cluster
+      <select><option>crc-local</option><option>mock</option><option>prod-east</option></select>
+      <span class="theme">Appearance
+          <select id="appearance" aria-label="Light or dark">
+            <option value="">Auto</option>
+            <option value="light">Light</option>
+            <option value="dark">Dark</option>
+          </select>
+        </span>
+        <span class="theme">Colours
+        <select id="palette" aria-label="Colour theme">
+          <option value="">Default</option>
+          <option value="deuter">Deuteranopia-safe</option>
+          <option value="protan">Protanopia-safe</option>
+          <option value="trit">Tritanopia-safe</option>
+          <option value="contrast">High contrast</option>
+        </select>
+      </span>
+    </span>
+  </div>
+
+  <section class="answer">
+    <h1>You have cluster-wide admin on crc-local</h1>
+    <div class="sub">
+      It already covers all <b>4</b> of your namespace grants. <b>7</b> of your <b>18</b> groups grant access; <b>1</b> direct grant.
+    </div>
+    <div class="tags">
+      <span class="tag rwx">cluster-wide admin</span>
+      <span class="tag">4 namespaces</span>
+      <span class="tag">7 / 18 groups grant</span>
+      <span class="tag warn">1 direct grant</span>
+    </div>
+    <div class="xcluster">
+      These numbers are for <b>crc-local</b>. You're also on <b>mock</b> and <b>prod-east</b> —
+      <b>36</b> group memberships in total.
+      <span class="stale">prod-east last polled 3 days ago</span>
+    </div>
+  </section>
+
+  <section class="card" style="--sec:#0072B2">
+    <h2>What changed <span class="count">last 30 days</span></h2>
+    <div class="row">
+      <span class="main">
+        <span class="name">platform-team-cluster-admin</span>
+        <span class="meta">added — on <b>prod-east</b>, not this cluster</span>
+      </span>
+      <span class="when">2 days ago</span><span class="chev">›</span>
+    </div>
+    <div class="row">
+      <span class="main">
+        <span class="name">app-ocp-rbac-groupsync-ns-auditor</span>
+        <span class="meta">added, removed and re-added — <b>5 changes in 33 minutes</b></span>
+      </span>
+      <span class="flap">flapping</span>
+      <span class="when">3 days ago</span><span class="chev">›</span>
+    </div>
+    <div class="row">
+      <span class="main">
+        <span class="name">17 groups added at once</span>
+        <span class="meta">alpha, beta, demo, platform, spar, presto, spark, trino — one sync</span>
+      </span>
+      <span class="when">3 days ago</span><span class="chev">›</span>
+    </div>
+    <div class="foot">History starts <span style="font-family:var(--mono)">2026-08-02</span> — older changes have been pruned by retention.</div>
+  </section>
+
+  <section class="card" style="--sec:#8a6d3b">
+    <h2>Cluster-wide <span class="count">3 roles · 5 bindings</span></h2>
+    <div class="row">
+      <span class="main">
+        <span class="name">admin</span>
+        <span class="meta">via <b>app-ocp-rbac-alpha-cluster-admin</b></span>
+      </span>
+      <span class="role rw">admin</span>
+      <span class="chev">›</span>
+    </div>
+    <div class="row">
+      <span class="main">
+        <span class="name">edit</span>
+        <span class="meta">via <b>alpha-cluster-developer</b>, <b>demo-cluster-developer</b>, <b>platform-cluster-developer</b></span>
+      </span>
+      <span class="none">covered by admin</span>
+      <span class="chev">›</span>
+    </div>
+    <div class="row">
+      <span class="main">
+        <span class="name">group-sync-dashboard-report-auditor</span>
+        <span class="meta">via <b>app-ocp-rbac-groupsync-ns-auditor</b></span>
+      </span>
+      <span class="role">reports</span>
+      <span class="chev">›</span>
+    </div>
+    <div class="foot">Three groups grant <span style="font-family:var(--mono)">edit</span> cluster-wide, but <span style="font-family:var(--mono)">admin</span> already includes it — removing them would not change what you can do.</div>
+  </section>
+
+  <section class="card" style="--sec:#2f7d52">
+    <h2>Namespaces you can reach <span class="count">4 · all already covered</span></h2>
+    <div class="row">
+      <span class="main"><span class="name">demo-qa</span><span class="meta">via <b>app-ocp-rbac-demo-ns-developer</b></span></span>
+      <span class="none">covered by admin</span><span class="chev">›</span>
+    </div>
+    <div class="row">
+      <span class="main"><span class="name">demo-rnd</span><span class="meta">via <b>app-ocp-rbac-demo-ns-developer</b></span></span>
+      <span class="none">covered by admin</span><span class="chev">›</span>
+    </div>
+    <div class="row">
+      <span class="main"><span class="name">demo-uat</span><span class="meta">via <b>app-ocp-rbac-demo-ns-developer</b></span></span>
+      <span class="none">covered by admin</span><span class="chev">›</span>
+    </div>
+    <div class="row">
+      <span class="main">
+        <span class="name">openshift-user-workload-monitoring<span class="plat">platform namespace</span></span>
+        <span class="meta">via <b>demo-ns-admin</b> and <b>demo-ns-developer</b> — two paths to the same grant</span>
+      </span>
+      <span class="role">monitoring-rules-edit</span><span class="chev">›</span>
+    </div>
+  </section>
+
+  <section class="card" style="--sec:#b06a3b">
+    <h2>Direct grant <span class="count">1</span></h2>
+    <div class="row">
+      <span class="main">
+        <span class="name">openshift-console-user-settings</span>
+        <span class="meta">granted to you directly, not through a group</span>
+      </span>
+      <span class="role">user-settings</span>
+      <span class="chev">›</span>
+    </div>
+    <div class="foot">Created by the OpenShift console to store your own console preferences — expected, not a governance exception.</div>
+  </section>
+
+  <section class="card" style="--sec:#6b5b95">
+    <h2>Your groups <span class="count">18 · 7 grant access</span></h2>
+    <div class="row">
+      <span class="main"><span class="name">app-ocp-rbac-alpha-cluster-admin</span><span class="meta">the one that gives you admin</span></span>
+      <span class="scope">cluster admin</span><span class="chev">›</span>
+    </div>
+    <div class="row">
+      <span class="main"><span class="name">app-ocp-rbac-demo-ns-developer</span><span class="meta">4 namespace grants</span></span>
+      <span class="scope">4 grants</span><span class="chev">›</span>
+    </div>
+    <div class="row">
+      <span class="main"><span class="name">5 more groups grant access</span><span class="meta">3 × cluster edit · demo-ns-admin · groupsync-ns-auditor</span></span>
+      <span class="none">show all</span><span class="chev">›</span>
+    </div>
+    <div class="row">
+      <span class="main"><span class="name">11 groups grant nothing here</span><span class="meta">spar, beta, platform, presto, spark, trino and others</span></span>
+      <span class="none">show all</span><span class="chev">›</span>
+    </div>
+    <div class="foot">A group that grants nothing is normal — it may exist for another cluster, or be waiting on a binding.</div>
+  </section>
+</div>
+
+<script>
+  // Colour theme: the URL wins (so a theme is shareable), then the last local choice.
+  (function () {
+    const sel = document.getElementById("palette");
+    if (!sel) return;
+    const fromUrl = new URLSearchParams(location.search).get("theme") || "";
+    let saved = "";
+    try { saved = localStorage.getItem("gsd-palette") || ""; } catch (e) {}
+    const start = fromUrl || saved;
+    if (start) { document.documentElement.setAttribute("data-palette", start); sel.value = start; }
+    sel.addEventListener("change", function () {
+      const v = sel.value;
+      if (v) document.documentElement.setAttribute("data-palette", v);
+      else document.documentElement.removeAttribute("data-palette");
+      try { v ? localStorage.setItem("gsd-palette", v) : localStorage.removeItem("gsd-palette"); } catch (e) {}
+      const u = new URL(location.href);
+      v ? u.searchParams.set("theme", v) : u.searchParams.delete("theme");
+      history.replaceState(null, "", u);
+    });
+  })();
+
+  // Appearance: Auto follows the OS; Light/Dark override it. Same URL+local rule as the palette.
+  (function () {
+    const sel = document.getElementById("appearance");
+    if (!sel) return;
+    const fromUrl = new URLSearchParams(location.search).get("mode") || "";
+    let saved = ""; try { saved = localStorage.getItem("gsd-mode") || ""; } catch (e) {}
+    const start = fromUrl || saved;
+    if (start) { document.documentElement.setAttribute("data-theme", start); sel.value = start; }
+    sel.addEventListener("change", function () {
+      const v = sel.value;
+      if (v) document.documentElement.setAttribute("data-theme", v);
+      else document.documentElement.removeAttribute("data-theme");
+      try { v ? localStorage.setItem("gsd-mode", v) : localStorage.removeItem("gsd-mode"); } catch (e) {}
+      const u = new URL(location.href);
+      v ? u.searchParams.set("mode", v) : u.searchParams.delete("mode");
+      history.replaceState(null, "", u);
+    });
+  })();
+</script>
