@@ -272,7 +272,10 @@ function applyPosition(pos) {
     // selector, popstate and hashchange all arrive here, so no path can skip it.
     // Cross-cluster payloads (clusters, alerts, whoami, version, usage) survive — they
     // answer for every cluster or for none.
-    if (view.cluster && pos.cluster !== view.cluster) {
+    // From NO cluster as well (#172): the fleet view leaves view.cluster null, so a tile opened
+    // after a scoped visit is a cluster change too — guarded on `view.cluster &&`, crc-local's
+    // groups painted under " - prod-east" on the next tab click (measured, OB1 review).
+    if (pos.cluster !== view.cluster) {
       data.groupsyncs = null; data.groups = null; data.groupsMeta = null;
       data.group = null; data.user = null; data.events = null; data.users = null;
       data.logins = null; data.access = null; data.findings = null;
@@ -1104,15 +1107,24 @@ const FLEET_TABLES_MAX = 8;
 const ALERT_PAGE = 8;
 /* Every non-ok state says what it costs, in words the reader acts on — under the badge, never in
    a tooltip. The vocabulary is state.py's: `late` is one interval past the schedule (plus grace),
-   `overdue` is past two, `unknown` is never-synced or unreachable. */
+   `overdue` is past two. `unknown` on the wire has exactly two causes — api.enrich() calls
+   compute_state() without `reachable`, so a CR is never `unknown` for its cluster being down: it
+   has never synced, or its schedule is unusable (no interval to measure). The row knows which. */
 const MEANS = {
   sync_late: "one interval has passed without a sync — not broken yet, but the next missed fire makes it overdue; the state to act on",
   sync_overdue: "the schedule has stopped firing — every group it owns is frozen at its last sync, and nobody has been added or removed since",
-  sync_unknown: "never observed a sync, or the cluster is unreachable — which is not the same as a sync that failed",
+  sync_unknown: "never observed a sync — a freshly created CR looks like this until its first fire, which is not the same as a sync that failed",
+  sync_unknown_schedule: "the schedule is unusable, so no interval can be measured — the operator cannot fire it; the last sync is the last there will be until it is fixed",
   cfg_failing: "RBAC has quietly stopped reconciling — new namespaces receive nothing and drift goes uncorrected",
   cl_bad: "the poller cannot reach it — every count on this tile is the last one observed, not the current one",
   cl_never: "never polled — there are no counts yet, which is not the same as zero",
 };
+/* The consequence for one CR row, from the fields the row carries: `schedule_valid` is enrich()'s
+   own verdict, so an `unknown` with a last sync and an invalid schedule is the schedule case. */
+function syncMeans(r) {
+  if (r.state === "unknown" && r.last_sync_at && r.schedule_valid === false) return MEANS.sync_unknown_schedule;
+  return MEANS["sync_" + r.state] || MEANS.sync_unknown;
+}
 
 function alertsCard(all, clusterCount) {
   const active = all.filter((x) => !x.silenced);
@@ -1130,7 +1142,7 @@ function alertsCard(all, clusterCount) {
   const body = all.length === 0
     ? `<div class="empty-note">No alerts. Nothing overdue, empty, unattributed, stale, collapsed, or failing.</div>`
     : `${Object.keys(kinds).length ? `<div class="kinds">${Object.entries(kinds).sort((a, b) => b[1] - a[1])
-        .map(([k, n]) => `<span class="badge"><span class="glyph" aria-hidden="true"></span>${esc(k.replace(/_/g, " "))} · ${n}</span>`).join("")}</div>` : ""}`
+        .map(([k, n]) => `<span class="kind">${esc(k.replace(/_/g, " "))} · ${n}</span>`).join("")}</div>` : ""}`
       + slice.map((x) => `<div class="alert-row sev-${x.severity === "critical" ? "critical" : "warning"}${x.silenced ? " silenced" : ""}">
         ${sevBadge(x.severity)}
         <div class="who">${esc(x.subject)}<div class="muted fw-normal text-xs">${esc(x.cluster)} · ${esc(x.kind)}</div></div>
@@ -1169,26 +1181,41 @@ function alertPager(total, page, pages) {
 /* A cluster's tile: a card whose whole face opens the cluster, with a real button in the heading
    for the keyboard and the screen reader. The seven figures of the old card are all here at full
    density; the tiers hide, never drop — the scoped view carries every one of them. */
-function clusterTile(c, density) {
+/* A cluster's reachability badge — the one span for a tile, a dense row and the opened cluster, so
+   the three cannot disagree. Hand-built, not badge(): `critical` is a severity, not a CR state, and
+   badge() maps any word outside STATES to "unknown" (a hollow ring for an auth_failed cluster). */
+function reachBadge(c) {
   const degraded = c.status && c.status !== "ok";
   const never = c.status === null;
   const state = never ? "unknown" : (degraded ? "critical" : "ok");
   const stateText = never ? "no data yet" : (degraded ? c.status : "reachable");
+  return `<span class="badge ${state}"><span class="glyph" aria-hidden="true"></span>${esc(stateText)}</span>`;
+}
+/* `detail` renders the same block for the OPENED cluster: a plain <div> with a plain heading — no
+   control that opens where the reader already is, and no string surgery on the tile's markup. */
+function clusterTile(c, density, detail = false) {
+  const degraded = c.status && c.status !== "ok";
+  const never = c.status === null;
   const review = (c.dangling_bindings || 0) + (c.unresolved_bindings || 0);
-  return `<section class="card tile ${degraded ? "bad" : (c.unattributed_groups || review ? "warnrail" : "")}" data-cluster="${esc(c.id)}">
-    <div class="row-wrap cn"><h2><button class="linkish tile-open" data-cluster="${esc(c.id)}">${esc(c.id)}</button></h2>
-      <span class="badge ${state}"><span class="glyph" aria-hidden="true"></span>${esc(stateText)}</span>
+  const rail = degraded ? "bad" : (c.unattributed_groups || review ? "warnrail" : "");
+  const tag = detail ? "div" : "section";
+  const name = detail ? esc(c.id) : `<button class="linkish tile-open" data-cluster="${esc(c.id)}">${esc(c.id)}</button>`;
+  return `<${tag} class="${detail ? "tile-detail" : "card tile"} ${rail}"${detail ? "" : ` data-cluster="${esc(c.id)}"`}>
+    <div class="row-wrap cn"><h2>${name}</h2>
+      ${reachBadge(c)}
       <span class="grow"></span><span class="poll">${esc(ago(c.last_poll))}</span></div>
     <span class="api"><code>${esc(c.api_url)}</code></span>
     ${degraded ? `<div class="err mt-4 text-sm">${esc(c.error || "")}</div>` : ""}
     ${degraded || never ? `<div class="consq k-consq">${esc(never ? MEANS.cl_never : MEANS.cl_bad)}</div>` : ""}
     ${tileFigures(c, density)}
-  </section>`;
+  </${tag}>`;
 }
 function tileFigures(c, density) {
   const review = (c.dangling_bindings || 0) + (c.unresolved_bindings || 0);
+  // `extra`: hidden past full density; a string names the figure the compact tier drops as well
+  // (Empty) — the CR count and the failing-config count stay visible until the dense table.
   const k = (lab, val, cls, extra) =>
-    `<span class="${extra ? "k-extra" : ""}"><span class="lab">${lab}</span><span class="v ${cls || ""}">${val}</span></span>`;
+    `<span class="${extra ? "k-extra" + (typeof extra === "string" ? " " + extra : "") : ""}"><span class="lab">${lab}</span><span class="v ${cls || ""}">${val}</span></span>`;
   return `<div class="tk">
     ${k("Groups", c.group_count)}
     ${k("Bindings to review", review || "0", review ? "c" : "q")}
@@ -1196,16 +1223,15 @@ function tileFigures(c, density) {
     ${density === "full" || density === "medium" ? k("Oldest last sync", esc(ago(c.oldest_last_sync)), "sm") : ""}
     ${k("GroupSync CRs", c.groupsync_operator_present === false
       ? `<span class="err text-md">operator not installed</span>` : c.groupsync_count, "", true)}
-    ${k("Empty", c.empty_groups || "0", c.empty_groups ? "w" : "q", true)}
+    ${k("Empty", c.empty_groups || "0", c.empty_groups ? "w" : "q", "k-empty")}
     ${c.operator_configs ? k("Policy configs", `${c.operator_configs.total}${c.operator_configs.failing
       ? ` <span class="err text-md">(${c.operator_configs.failing} failing)</span>` : ""}`, "", true) : ""}
   </div>`;
 }
 function denseRow(c) {
-  const degraded = c.status && c.status !== "ok", never = c.status === null;
   const review = (c.dangling_bindings || 0) + (c.unresolved_bindings || 0);
   return `<tr class="rowlink" data-cluster="${esc(c.id)}">
-    <td>${badge(never ? "unknown" : (degraded ? "critical" : "ok"))}</td>
+    <td>${reachBadge(c)}</td>
     <td class="mono"><button class="linkish tile-open" data-cluster="${esc(c.id)}">${esc(c.id)}</button></td>
     <td class="num">${c.group_count}</td>
     <td class="num ${review ? "err" : "muted"}">${review}</td>
@@ -1234,7 +1260,7 @@ function clustersCard(cs, density) {
 /* The GroupSync table the contract keeps — NAME · STATE · SCHEDULE · GROUPS · LAST SYNC · NEXT
    EXPECTED — with a cluster column across the fleet and the consequence under any state but ok.
    `state`, `next_expected` and `error_is_current` are computed per request, never stored. */
-function groupsyncTable(rows, scope) {
+function groupsyncTable(rows, scope, unfetched = []) {
   // null (not fetched for this cluster yet) and [] (fetched, none exist) are different
   // answers: claiming "None observed" while the fetch is still out is false.
   if (!rows) return `<section class="card"><h2>GroupSync CRs</h2>
@@ -1244,8 +1270,13 @@ function groupsyncTable(rows, scope) {
   // The heading keeps its exact words (the contract, and the tests read it); the count sits beside it.
   const head = `<div class="row-wrap"><h2>GroupSync CRs</h2><span class="muted text-sm">· ${rows.length}${fleet ? "" : ` on ${esc(scope)}`}${
     rows.length ? (bad ? ` · ${bad} not syncing` : " · all syncing") : ""}</span></div>`;
+  // Across the fleet a cluster whose /groupsyncs request FAILED is named, not folded into the
+  // count: "all syncing" over rows that silently lack a cluster is the false absence this
+  // card's Loading guard exists to prevent, one level up.
+  const missing = unfetched.length ? `<div class="filterbar-note mt-4">${esc(unfetched.join(", "))}: CRs not fetched — the
+    request failed, so ${unfetched.length === 1 ? "its" : "their"} CRs are not in this count.</div>` : "";
   if (!rows.length) return `<section class="card">${head}
-    <div class="empty-note">None observed ${fleet ? "on any cluster" : "on this cluster"} yet.</div></section>`;
+    <div class="empty-note">None observed ${fleet ? "on any cluster" : "on this cluster"} yet.</div>${missing}</section>`;
   const rank = (r) => (r.error_is_current ? 0 : r.state === "overdue" ? 1 : r.state === "late" ? 2 : r.state === "unknown" ? 3 : 4);
   const sorted = rows.slice().sort((a, b) => rank(a) - rank(b));
   return `<section class="card">
@@ -1264,14 +1295,14 @@ function groupsyncTable(rows, scope) {
           ${fleet ? `<td class="mono">${esc(r.cluster)}</td>` : ""}
           <td>${esc(r.name)}<div class="muted text-xs">${esc(r.namespace)}</div></td>
           <td class="state-cell">${badge(r.state)}${r.error_is_current ? " " + sevBadge("critical", "reconcile error") : ""}${
-            r.state !== "ok" ? `<div class="consq">${esc(MEANS["sync_" + r.state] || MEANS.sync_unknown)}</div>` : ""}</td>
+            r.state !== "ok" ? `<div class="consq">${esc(syncMeans(r))}</div>` : ""}</td>
           <td><code>${esc(r.schedule || "—")}</code>${r.schedule_valid ? "" : ` <span class="err">invalid</span>`}</td>
           <td class="num">${r.group_count}</td>
           <td class="mono${attn ? " err" : ""}">${esc(ago(r.last_sync_at))}</td>
           <td class="mono">${esc(r.next_expected ? fmtTime(r.next_expected) : "—")}</td>
         </tr>`;
       }).join("")}</tbody>
-    </table></div>
+    </table></div>${missing}
   </section>`;
 }
 
@@ -1279,19 +1310,28 @@ function groupsyncTable(rows, scope) {
    sentence — as one table across the fleet or one cluster. "Failing" is an ordering, not a flag:
    the operator never clears ReconcileError, so only error_at > success_at decides. Administrator
    tier: a narrowed reader's payload is null (guard403) and the card is simply absent. */
-function configsCard(entries) {
+function configsCard(entries, { plain = false } = {}) {
   const present = entries.filter((e) => e.oc && e.oc.present);
   if (!present.length) return "";
   const fleet = entries.length > 1;
-  const absent = entries.filter((e) => e.oc && e.oc.present === false).map((e) => e.cluster);
+  // "Absent" is a cluster's own report and needs a successful poll behind it: the store's `present`
+  // is two-valued (bool(...)), so a cluster that was never polled, or whose last poll failed, comes
+  // back present:false too — and "prod-east reports these CRDs absent" would be false of an
+  // auth_failed cluster that reported nothing. The caller passes what it knows of the poll.
+  const absent = entries.filter((e) => e.oc && e.oc.present === false && e.polled !== false).map((e) => e.cluster);
   const rows = [];
   present.forEach((e) => (e.oc.configs || []).forEach((c) => rows.push({ ...c, cluster: e.cluster })));
   const isBad = (c) => c.error_at && (!c.success_at || c.error_at > c.success_at);
   const failing = rows.filter(isBad);
-  rows.sort((a, b) => (isBad(b) ? 1 : 0) - (isBad(a) ? 1 : 0));
+  // `plain` is the RBAC policy tab: the pre-#172 card plus the consequence line — its order, heading
+  // and rows otherwise unchanged (Codex, review of #172: the shared card had moved a failing row first
+  // and added the count, the attention wash and the state cell there too). The Overview's two forms
+  // keep them; their count sits beside the heading, as the GroupSync card's does, not inside it.
+  if (!plain) rows.sort((a, b) => (isBad(b) ? 1 : 0) - (isBad(a) ? 1 : 0));
+  const suffix = plain ? "" : `<span class="muted text-sm">${fleet ? "" : `· ${esc(present[0].cluster)} `}${
+    rows.length ? `· ${rows.length}${failing.length ? ` · ${failing.length} failing` : " · all reconciling"}` : ""}</span>`;
   return `<section class="card">
-    <h3>Policy operator (NamespaceConfig / GroupConfig)${fleet ? "" : ` <span class="muted fw-normal">· ${esc(present[0].cluster)}</span>`}${
-      rows.length ? ` <span class="muted fw-normal">· ${rows.length}${failing.length ? ` · ${failing.length} failing` : " · all reconciling"}</span>` : ""}</h3>
+    <div class="row-wrap"><h3>Policy operator (NamespaceConfig / GroupConfig)</h3>${suffix}</div>
     <div class="filterbar-note mb-3">
       These CRs template the RoleBindings above. A currently-failing one means RBAC has
       quietly stopped reconciling — new namespaces receive nothing and drift stops being
@@ -1303,11 +1343,11 @@ function configsCard(entries) {
           <thead><tr>${fleet ? "<th>Cluster</th>" : ""}<th>Kind</th><th>Name</th><th>State</th><th>Last success</th></tr></thead>
           <tbody>${rows.map((c) => {
             const bad = isBad(c);
-            return `<tr${bad ? ' class="attn"' : ""}>
+            return `<tr${bad && !plain ? ' class="attn"' : ""}>
               ${fleet ? `<td class="mono">${esc(c.cluster)}</td>` : ""}
               <td>${esc(c.kind)}</td>
               <td><code>${esc(c.name)}</code></td>
-              <td class="state-cell">${bad ? sevBadge("critical", "reconcile error") : badge("ok")}${
+              <td${plain ? "" : ' class="state-cell"'}>${bad ? sevBadge("critical", "reconcile error") : badge("ok")}${
                 bad ? `<div class="consq">${esc(MEANS.cfg_failing)}</div>` : ""}</td>
               <td class="mono">${esc(ago(c.success_at))}</td>
             </tr>`;
@@ -1326,7 +1366,7 @@ function clusterDetail(c) {
   const mine = data.alerts.filter((a) => a.cluster === c.id);
   return `<section class="card">
     <button class="back" id="back">${backLabel()}</button>
-    ${clusterTile(c, "full").replace('<section class="card tile', '<div class="tile-detail').replace(/<\/section>$/, "</div>")}
+    ${clusterTile(c, "full", true)}
   </section>
   ${alertsCard(mine, 1)}
   ${groupsyncTable(data.groupsyncs, c.id)}
@@ -1347,11 +1387,18 @@ function overviewPage() {
   // Alerts lead once the fleet is big enough that the tiles stop being readable: past eight
   // clusters the question is "what is broken", not "how is each one doing".
   const alertsFirst = cs.length > FLEET_TABLES_MAX;
-  const tables = data.fleet
-    ? groupsyncTable(data.fleet.flatMap((f) => (f.groupsyncs || []).map((r) => ({ ...r, cluster: f.id }))), null)
-      + configsCard(data.fleet.map((f) => ({ cluster: f.id, oc: f.operatorConfigs })))
-    : `<section class="card"><h2>GroupSync CRs</h2>
-      <div class="empty-note">With ${cs.length} clusters the CR and policy tables are shown per cluster — open a tile.</div></section>`;
+  // Three answers, not two: past the medium tier the tables are per cluster by design; below it a
+  // missing payload is a fetch still out (the tab handler paints before it fetches), and the
+  // per-cluster note would then be a design decision claimed about a fleet of two.
+  const polledOk = (id) => { const c = cs.find((x) => x.id === id); return c ? c.status === "ok" : false; };
+  const tables = cs.length > FLEET_TABLES_MAX
+    ? `<section class="card"><h2>GroupSync CRs</h2>
+      <div class="empty-note">With ${cs.length} clusters the CR and policy tables are shown per cluster — open a tile.</div></section>`
+    : data.fleet
+      ? groupsyncTable(data.fleet.flatMap((f) => (f.groupsyncs || []).map((r) => ({ ...r, cluster: f.id }))), null,
+                       data.fleet.filter((f) => !f.groupsyncs).map((f) => f.id))
+        + configsCard(data.fleet.map((f) => ({ cluster: f.id, oc: f.operatorConfigs, polled: polledOk(f.id) })))
+      : `<section class="card"><h2>GroupSync CRs</h2><div class="empty-note">Loading…</div></section>`;
   const tiles = clustersCard(cs, density);
   const alerts = alertsCard(data.alerts, cs.length);
   return (alertsFirst ? alerts + tiles : tiles + alerts) + tables;
@@ -1363,7 +1410,12 @@ function wireOverview() {
   main.querySelectorAll(".tile[data-cluster], tr.rowlink[data-cluster]:not([data-cr])").forEach((el) => {
     el.onclick = (e) => {
       if (e.target.closest("a")) return;
-      navigate({ cluster: el.dataset.cluster }); refresh();
+      // PAINT FIRST, then fetch — the tab handler's rule (benchmark §6a: 2–4 ms against a 271–337 ms
+      // round trip), which a tile skipped, leaving the dimmed fleet on screen for the length of the
+      // fetch (Grok, review of #172). Safe because a cluster change FROM THE FLEET now drops the
+      // previous cluster's payloads at the chokepoint (applyPosition), so the first paint is the
+      // tile, its alerts and "Loading…" — never another cluster's rows under this one's name.
+      navigate({ cluster: el.dataset.cluster }); render(); refresh();
     };
   });
   main.querySelectorAll("[data-cr]").forEach((tr) => {
@@ -4039,7 +4091,7 @@ function directUserGrants(ub) {
 /* The Policy tab's strip is the same card the Overview shows for one cluster (#172): one
    renderer, so the contract's sentence and the consequence line cannot drift between the two. */
 function configHealth(oc) {
-  return configsCard([{ cluster: view.cluster, oc }]);
+  return configsCard([{ cluster: view.cluster, oc }], { plain: true });
 }
 
 function render() {
@@ -4358,7 +4410,14 @@ async function refresh(opts = {}) {
     };
     if (view.cluster) {
       const base = `/api/clusters/${encodeURIComponent(view.cluster)}`;
-      want.groupsyncs = get(`${base}/groupsyncs`);
+      // #172: on the Overview's scoped view a 404 for the CLUSTER is the removed-cluster case the
+      // page phrases itself ("No cluster by that id is configured … a detour, not a dead end");
+      // left to the catch below it became the generic error card — with no tab bar, since render()
+      // never ran (measured, OB1 review). Only there, and only the cluster-level payloads: a CR
+      // detail's 404 stays the "may have been deleted" card.
+      const clusterGone = (p) => (view.page === "overview" && !view.groupsync)
+        ? p.catch((e) => { if (e.status === 404) return null; throw e; }) : p;
+      want.groupsyncs = clusterGone(get(`${base}/groupsyncs`));
       // guard403 on the administrator-tier payloads: a narrowed reader's 403 is the
       // DESIGNED answer. Unguarded it fell to the catch below and replaced the whole tab
       // with "Dashboard API error: 403 Forbidden" — the defect the Usage tab first fixed.
@@ -4408,7 +4467,7 @@ async function refresh(opts = {}) {
       // for a payload with no `present`, so a refused one simply omits the panel and the
       // refusal card above carries the explanation.
       if ((view.page === "overview" && !view.groupsync) || view.page === "policy") {
-        want.operatorConfigs = guard403(get(`${base}/operator-configs`));
+        want.operatorConfigs = clusterGone(guard403(get(`${base}/operator-configs`)));
       }
       if (view.page === "nsaudit") {
         // The namespace filter is applied SERVER-side, not by filtering a full response in
@@ -4527,16 +4586,24 @@ async function refresh(opts = {}) {
     // the tiles already summarise and the scoped view carries in full.
     if (view.page === "overview" && !view.cluster && !view.groupsync) {
       const served = data.clusters || [];
-      if (served.length <= FLEET_TABLES_MAX) {
-        data.fleet = await Promise.all(served.map(async (c) => {
+      // Not for a narrowed reader: render() paints them the refusal card, so two payloads per
+      // cluster would be N designed 403s a minute on /metrics for nothing shown (the Access
+      // granted rule above). Per cluster, the policy payload is asked for only where whoami
+      // says this reader is wide THERE — a host administrator narrowed on a remote gets that
+      // cluster's designed 403 otherwise, every poll.
+      const w = got.whoami;
+      if (served.length <= FLEET_TABLES_MAX && !narrowedFor(w)) {
+        const wideOn = (id) => !w || !w.authenticated || scopeFor(w, id) === "all";
+        const fleet = await Promise.all(served.map(async (c) => {
           const base = `/api/clusters/${encodeURIComponent(c.id)}`;
           const [groupsyncs, operatorConfigs] = await Promise.all([
             get(`${base}/groupsyncs`).catch(() => null),
-            guard403(get(`${base}/operator-configs`)).catch(() => null),
+            wideOn(c.id) ? guard403(get(`${base}/operator-configs`)).catch(() => null) : Promise.resolve(null),
           ]);
           return { id: c.id, groupsyncs, operatorConfigs };
         }));
-        if (superseded()) return;
+        if (superseded()) return;   // a superseded refresh must not WRITE — the rule above, kept here
+        data.fleet = fleet;
       } else {
         data.fleet = null;
       }
@@ -4557,7 +4624,7 @@ async function refresh(opts = {}) {
       data.clusters, data.alerts, data.alertsScope, data.groupsyncs, data.groups,
       data.groupsMeta, data.group, data.user, data.users, data.events, data.logins, data.access,
       data.usage, data.findings, data.operatorConfigs, data.userBindings, data.whoami, data.myAccess,
-      data.reportCatalog, data.reportRuns,
+      data.reportCatalog, data.reportRuns, data.fleet,   // #172: the fleet tables render from it
     ]);
     if (opts.auto && fingerprint === lastFingerprint) {
       // Still say so. Leaving the clock frozen would read as "the dashboard has stopped",

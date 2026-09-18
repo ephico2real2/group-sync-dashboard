@@ -1124,10 +1124,13 @@ dialog.ns-preview p { margin: 0 0 var(--space-4); font-size: var(--text-sm); }
 /* The rail says which tile needs a reader first, in a channel the badge and the figures repeat. */
 .tile.bad { border-left: 3px solid var(--status-critical); }
 .tile.warnrail { border-left: 3px solid var(--status-warning); }
-.tile .cn { display: flex; align-items: center; gap: var(--space-4); flex-wrap: wrap; font-weight: 600; font-size: var(--text-base); }
-.tile .api { display: block; font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text-muted); margin-top: var(--space-2);
+/* The opened cluster (.tile-detail, the scoped view) is the same block without the face-click, so
+   the heading, the API line and the poll age read the same there — scoped to .tile alone, the
+   scoped view lost all three (measured: .api inline in the UI face, .poll 14px, .cn weight 400). */
+.tile .cn, .tile-detail .cn { display: flex; align-items: center; gap: var(--space-4); flex-wrap: wrap; font-weight: 600; font-size: var(--text-base); }
+.tile .api, .tile-detail .api { display: block; font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text-muted); margin-top: var(--space-2);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tile .poll { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text-muted); }
+.tile .poll, .tile-detail .poll { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text-muted); }
 .tk { display: grid; gap: var(--space-3) var(--space-6); margin-top: var(--space-5); grid-template-columns: repeat(auto-fit, minmax(78px, 1fr)); }
 .tk .lab { display: block; font-size: var(--text-xs); color: var(--text-muted); } /* the .kpi .label convention: never upper-cased */
 .tk .v { display: block; font-size: var(--text-xl); font-weight: 600; line-height: 1.15; font-variant-numeric: tabular-nums; }
@@ -1139,18 +1142,25 @@ dialog.ns-preview p { margin: 0 0 var(--space-4); font-size: var(--text-sm); }
    figures past medium. Nothing is dropped that the scoped view does not carry in full. */
 [data-density="medium"]  .tiles .tile .api,
 [data-density="compact"] .tiles .tile .api, [data-density="compact"] .tiles .tile .poll,
-[data-density="compact"] .tiles .k-extra, [data-density="medium"] .tiles .k-extra { display: none; }
+[data-density="medium"] .tiles .k-extra { display: none; }
+/* Compact (9–24): the fleet tables are gone, so the CR count and the failing-config count — the
+   two figures the plan says the tiles carry past eight — stay on the tile; only Empty is dropped. */
+[data-density="compact"] .tiles .k-extra.k-empty { display: none; }
 [data-density="compact"] .tiles .tile { padding: var(--space-5) var(--space-6); }
 [data-density="compact"] .tiles .tk { margin-top: var(--space-4); gap: var(--space-2) var(--space-4); }
 [data-density="compact"] .tiles .tk .v { font-size: var(--text-lg); }
 /* The consequence line: under the badge, never in a title= attribute — a caveat a reader has to
    hover to find is a caveat that was deleted. */
 .consq { font-size: var(--text-sm); color: var(--text-secondary); margin-top: var(--space-2); line-height: 1.45; max-width: 46ch; }
-.tile .consq { margin-top: var(--space-3); }
+.tile .consq, .tile-detail .consq { margin-top: var(--space-3); }
 /* Scoped to the fleet's tiles: the opened cluster (.tile-detail) shows everything at every tier. */
 [data-density="compact"] .tiles .k-consq, [data-density="dense"] .tiles .k-consq { display: none; }
-/* The alerts pager and the kinds summary. Page numbers are view state, not a position. */
+/* The alerts pager and the kinds summary. Page numbers are view state, not a position. A kind is
+   a count, not a state: a chip with the badge's shape and no glyph — a .badge without a state
+   class rendered a 9px transparent square where the shape should be (measured). */
 .kinds { display: flex; align-items: center; gap: var(--space-4); flex-wrap: wrap; margin: var(--space-4) 0; font-size: var(--text-sm); color: var(--text-muted); }
+.kinds .kind { display: inline-flex; align-items: center; font-size: var(--text-sm); font-weight: 500; color: var(--text-primary);
+  border: 1px solid var(--border); border-radius: var(--radius-pill); padding: 2px 9px; /* optical: the badge's own vertical/horizontal */ white-space: nowrap; }
 .pager { display: flex; align-items: center; gap: var(--space-4); flex-wrap: wrap; padding-top: var(--space-5); font-size: var(--text-sm); color: var(--text-muted); }
 .pager button { font: inherit; font-size: var(--text-sm); padding: var(--space-2) var(--space-5); border-radius: var(--radius-pill); }
 .pager button[aria-pressed="true"] { background: var(--accent); color: var(--surface-1); border-color: var(--accent); font-weight: 600; }
