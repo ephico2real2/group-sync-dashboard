@@ -1077,21 +1077,6 @@ class TestTheShellAtPhoneWidth:
         assert box["modeName"] == "Appearance" and box["palName"] == "Colours", box
         assert box["modeVisible"] and box["palVisible"], box
 
-    def test_the_reports_tab_is_inside_the_viewport_too(self, browser, reporting_server):
-        """`server` has no reporting, so the sweep above sees eight tabs; the live bar was nine wide and
-        Reports was the first tab off the edge (OB1, review of #179). Measured on the reporting fixture."""
-        base, _clock, _app = reporting_server
-        ctx, page, errors = _reports_page(browser, base, "alice")
-        try:
-            page.set_viewport_size({"width": 375, "height": 740})
-            page.click("#tab-reports")
-            page.wait_for_selector("#tab-reports[aria-current='page']")
-            page.wait_for_timeout(300)
-            assert page.evaluate("() => document.querySelectorAll('button.tab').length") == 9
-            assert page.evaluate("() => [document.documentElement.scrollWidth <= innerWidth, [...document.querySelectorAll('button.tab')].filter(t => t.getBoundingClientRect().right > innerWidth).map(t => t.id)]") == [True, []]
-            assert not errors
-        finally:
-            ctx.close()
 
 
 class TestAppearanceAndColours:
@@ -4308,6 +4293,25 @@ def _reports_page(browser, base, user, fake_clock=False):
 
 
 class TestReportsTab:
+    def test_the_reports_tab_is_inside_the_viewport_too(self, browser, reporting_server):
+        """The phone-width sweep runs on `server`, which has no reporting, so it sees eight tabs; the
+        live bar was nine wide and Reports the first off the edge (OB1, review of #179). Measured here,
+        beside the other users of the module-scoped `reporting_server`: created ten minutes ahead of
+        this class (the first cut placed it in the shell sweep) its report ticket outlived its 300 s
+        TTL and every test of this class timed out on `#report-picker` — in the full suite only."""
+        base, _clock, _app = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "alice")
+        try:
+            page.set_viewport_size({"width": 375, "height": 740})
+            page.click("#tab-reports")
+            page.wait_for_selector("#tab-reports[aria-current='page']")
+            page.wait_for_timeout(300)
+            assert page.evaluate("() => document.querySelectorAll('button.tab').length") == 9
+            assert page.evaluate("() => [document.documentElement.scrollWidth <= innerWidth, [...document.querySelectorAll('button.tab')].filter(t => t.getBoundingClientRect().right > innerWidth).map(t => t.id)]") == [True, []]
+            assert not errors
+        finally:
+            ctx.close()
+
     def test_the_administrator_generates_a_report_and_downloads_the_pdf(self, browser, reporting_server):
         base, _, _ = reporting_server
         ctx, page, errors = _reports_page(browser, base, "root")
