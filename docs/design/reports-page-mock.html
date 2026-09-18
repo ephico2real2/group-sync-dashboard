@@ -1,6 +1,7 @@
-<title>Report Form Redesign</title>
+<title>Reports</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap">
 <style>
+
   :root{
     --page:#f7f7f4; --surface:#fcfcfb; --surface-2:#f2f2ee; --field:#ffffff;
     --ink:#12120f; --muted:#63635b; --faint:#8c8c83;
@@ -162,21 +163,141 @@
   .shell label{font-family:var(--ui);font-size:12px;color:var(--muted)}
   .shell select{font:inherit;font-size:13px;padding:5px 9px;border-radius:7px;border:1px solid var(--border);
     background:var(--surface);color:var(--ink);max-width:172px}
+
+
+  /* ── the catalogue: the 09-16 directory design, on the global tokens ──
+     Category hues are identity, not status: a report is "access" or "rbac" the way a group has an
+     owner. They sit beside the global good/warn/crit, never in place of them. */
+  :root{ --k-access:#4f6b57; --k-rbac:#8a5a3c; --k-identity:#4a5c7a; --k-activity:#7a5170; --k-compliance:#6a6440; }
+  @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+    --k-access:#7fae8b; --k-rbac:#c8946a; --k-identity:#8ea3c8; --k-activity:#c090b4; --k-compliance:#b3aa72; }}
+  :root[data-theme="dark"]{ --k-access:#7fae8b; --k-rbac:#c8946a; --k-identity:#8ea3c8; --k-activity:#c090b4; --k-compliance:#b3aa72; }
+  .shell .topbar{max-width:1000px;margin:0 auto;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  .shell .chip{display:inline-flex;font-size:11px;padding:3px 10px;border-radius:999px;border:1px solid var(--border);
+    color:var(--muted);background:var(--surface-2);white-space:nowrap}
+  nav.tabs{max-width:1000px;margin:8px auto 0;display:flex;flex-wrap:wrap;gap:2px 4px}
+  .tab{font:inherit;font-family:var(--ui);font-size:13px;padding:6px 11px;border:0;border-bottom:2px solid transparent;
+    background:none;color:var(--muted);cursor:pointer;border-radius:6px 6px 0 0}
+  .tab[aria-current=page]{color:var(--accent);border-bottom-color:var(--accent);font-weight:600}
+  .wrap>*{min-width:0}
+  .cat table{width:100%;border-collapse:collapse;font-size:13.5px}
+  .cat thead th{font-size:10.5px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:var(--faint);
+    text-align:left;padding:11px 22px;background:var(--surface-2);border-bottom:1px solid var(--border)}
+  .cat thead th.kcol{width:104px}
+  tr.r-access{--rk:var(--k-access)} tr.r-rbac{--rk:var(--k-rbac)} tr.r-identity{--rk:var(--k-identity)}
+  tr.r-activity{--rk:var(--k-activity)} tr.r-health,tr.r-compliance{--rk:var(--k-compliance)}
+  .cat tbody tr{border-bottom:1px solid var(--border-soft);cursor:pointer;transition:background .14s ease;
+    background:linear-gradient(90deg, color-mix(in srgb,var(--rk) 7%, transparent), transparent 44%)}
+  .cat tbody tr:last-child{border-bottom:0}
+  .cat tbody tr:hover{background:linear-gradient(90deg, color-mix(in srgb,var(--rk) 15%, transparent), transparent 60%)}
+  .cat tbody tr:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+  .cat td{padding:13px 22px;vertical-align:top;position:relative}
+  .cat td.kind{width:104px}
+  .cat tbody tr td:first-child::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;
+    background:linear-gradient(180deg, var(--rk), color-mix(in srgb,var(--rk) 32%, transparent));transition:width .14s ease}
+  .cat tbody tr:hover td:first-child::before,.cat tbody tr.selected td:first-child::before{width:5px}
+  .kchip{display:inline-block;font-family:var(--mono);font-size:10.5px;font-weight:500;letter-spacing:.02em;
+    padding:2px 8px;border-radius:5px;border:1px solid currentColor;white-space:nowrap}
+  .k-access{color:var(--k-access)} .k-rbac{color:var(--k-rbac)} .k-identity{color:var(--k-identity)}
+  .k-activity{color:var(--k-activity)} .k-compliance{color:var(--k-compliance)}
+  /* BOLDER, as asked on 19:47 — the live catalogue still renders these at weight 400 */
+  .rname{font-family:var(--mono);font-size:13.5px;font-weight:700;color:var(--ink);letter-spacing:-.015em;white-space:nowrap}
+  .rkey{display:block;font-family:var(--mono);font-size:10.5px;color:var(--faint);margin-top:2px}
+  .cat td.report{width:250px}
+  .rdesc{color:var(--muted);max-width:62ch}
+  .cat tbody tr.selected{background:linear-gradient(90deg, color-mix(in srgb,var(--rk) 20%, transparent), transparent 66%)}
+  .cat tbody tr.selected .rname{color:var(--rk)}
+  /* the panel the click opens: the selected form card is moved in here, scrolled into view */
+  #panel{scroll-margin-top:96px;margin-top:20px}
+  #panel:empty{display:none}
+  #panel .card{border-left:4px solid var(--rk,var(--accent))}
+  .pool{display:none}
+  .panelbar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
+    padding:0 4px 8px;font-size:12px;color:var(--muted)}
+  .panelbar .back{font:inherit;font-size:13px;background:none;border:0;color:var(--accent);cursor:pointer;padding:0}
+  .legend{display:flex;flex-wrap:wrap;gap:14px;margin:14px 4px 0;font-size:11px;color:var(--faint)}
+  .legend span{display:inline-flex;align-items:center;gap:6px}
+  .legend i{width:9px;height:9px;border-radius:2px;border:1px solid currentColor}
+  @media (max-width:680px){ .cat thead th.kcol,.cat td.kind{display:none} .cat td.report{width:auto} .rname{white-space:normal} .rdesc{max-width:none} }
 </style>
 
-<div class="shell"><div class="bar">
-  <span class="brand">OCP Access Tracking Dashboard</span>
+<div class="shell"><div class="topbar">
+  <span class="brand">OCP Access Tracking Dashboard — crc-local</span>
+  <span class="chip">Full view — you are seeing everything</span>
   <span class="grow"></span>
   <label>Appearance <select id="appearance"><option value="">Auto</option><option value="light">Light</option><option value="dark">Dark</option></select></label>
   <label>Colour <select id="palette"><option value="">Default</option><option value="deuter">Deuteranopia / protanopia</option><option value="trit">Tritanopia</option><option value="contrast">High contrast</option></select></label>
       <button style="font:inherit;font-size:12px;padding:4px 10px;border-radius:7px;border:1px solid var(--border);background:var(--surface-2);color:var(--ink);cursor:pointer;margin-left:6px">Refresh</button>
       <button style="font:inherit;font-size:12px;padding:4px 10px;border-radius:7px;border:1px solid var(--border);background:var(--surface-2);color:var(--ink);cursor:pointer;margin-left:6px">Sign out</button>
-</div></div>
-<div class="wrap">
-  <div class="mock-note">Mockup · Report form redesign · all 11 reports · one ParamSpec-driven shell · real discovered data from CRC (crc-local) · for review</div>
+</div>
+<nav class="tabs" aria-label="Dashboard sections">
+  <button class="tab">Cluster Overview</button><button class="tab">Groups</button><button class="tab">Users</button>
+  <button class="tab">Access granted</button><button class="tab">RBAC policy</button><button class="tab">Namespace audit</button>
+  <button class="tab">Logins</button><button class="tab">Usage</button><button class="tab" aria-current="page">Reports</button><button class="tab">KPI</button>
+</nav></div>
 
-  <!-- ── namespace-access (selector-map + sort + advanced) ── -->
-  <section class="card">
+<div class="wrap">
+  <div class="mock-note">Mockup · Reports · the catalogue, and the form a click opens · real discovered data from CRC · for review</div>
+
+  <section class="card cat" aria-label="Reports">
+    <div class="head"><h1 style="font-family:var(--ui);font-size:16px">Reports <span class="kchip" style="font-weight:400;margin-left:8px">11 available</span></h1>
+      <p>Generated by the report service from a read-only copy of this dashboard's data (PDF pdf/a-2b and HTML).
+      Every document carries the sha256 of its data, the snapshot it was built from, and who generated it.
+      <strong>Click a report</strong> — its form opens right below, already in view.</p></div>
+    <div style="overflow-x:auto"><table>
+      <thead><tr><th class="kcol">Kind</th><th>Report</th><th>What it shows</th></tr></thead>
+      <tbody>
+        <tr class="r-access" data-report="namespace-access" tabindex="0">
+          <td class="kind"><span class="kchip k-access">access</span></td>
+          <td class="report"><span class="rname">Namespace access report</span><span class="rkey">namespace-access</span></td>
+          <td class="rdesc">Per namespace: every group binding classified with who it reaches, every direct user grant, findings first.</td></tr>
+        <tr class="r-access" data-report="access-matrix" tabindex="0">
+          <td class="kind"><span class="kchip k-access">access</span></td>
+          <td class="report"><span class="rname">Access matrix</span><span class="rkey">access-matrix</span></td>
+          <td class="rdesc">Every subject (group or direct user), the namespaces it is bound in and the role granted — the “who has access where” sheet, by role name.</td></tr>
+        <tr class="r-access" data-report="privileged-access" tabindex="0">
+          <td class="kind"><span class="kchip k-access">access</span></td>
+          <td class="report"><span class="rname">Privileged access review</span><span class="rkey">privileged-access</span></td>
+          <td class="rdesc">Every subject holding cluster-admin at any scope, or admin/edit cluster-wide, with the people behind each group.</td></tr>
+        <tr class="r-rbac" data-report="binding-findings" tabindex="0">
+          <td class="kind"><span class="kchip k-rbac">rbac</span></td>
+          <td class="report"><span class="rname">RBAC binding findings</span><span class="rkey">binding-findings</span></td>
+          <td class="rdesc">Dangling, unresolved and unmanaged group bindings, direct user grants, and the platform identities excluded — the classification the RBAC policy tab shows.</td></tr>
+        <tr class="r-identity" data-report="groups" tabindex="0">
+          <td class="kind"><span class="kchip k-identity">identity</span></td>
+          <td class="report"><span class="rname">Groups and membership changes</span><span class="rkey">groups</span></td>
+          <td class="rdesc">Every synced group: provider, member count, last sync, bindings, cliff silence; the empty and unattributed lists; joins and leaves in the window.</td></tr>
+        <tr class="r-identity" data-report="users" tabindex="0">
+          <td class="kind"><span class="kchip k-identity">identity</span></td>
+          <td class="report"><span class="rname">Users</span><span class="rkey">users</span></td>
+          <td class="rdesc">Every User object (a login), its identity providers, group count and direct grants; manual accounts; synced members who have never logged in.</td></tr>
+        <tr class="r-activity" data-report="login-activity" tabindex="0">
+          <td class="kind"><span class="kchip k-activity">activity</span></td>
+          <td class="report"><span class="rname">Login activity</span><span class="rkey">login-activity</span></td>
+          <td class="rdesc">Attempts by outcome and provider, per-user successes and failures, and rejected attempts resolved against the login gate.</td></tr>
+        <tr class="r-activity" data-report="dormant-access" tabindex="0">
+          <td class="kind"><span class="kchip k-activity">activity</span></td>
+          <td class="report"><span class="rname">Dormant and unusable access</span><span class="rkey">dormant-access</span></td>
+          <td class="rdesc">Members with access who have never logged in, members outside the login gate, gate members with no access, and — with login capture — nobody-in-N-days.</td></tr>
+        <tr class="r-health" data-report="groupsync-health" tabindex="0">
+          <td class="kind"><span class="kchip k-compliance">health</span></td>
+          <td class="report"><span class="rname">GroupSync and policy-operator health</span><span class="rkey">groupsync-health</span></td>
+          <td class="rdesc">Every GroupSync CR with its computed state, schedule and last sync; reconcile errors (current vs stale); syncs in the window; NamespaceConfig/GroupConfig health.</td></tr>
+        <tr class="r-compliance" data-report="compliance-snapshot" tabindex="0">
+          <td class="kind"><span class="kchip k-compliance">compliance</span></td>
+          <td class="report"><span class="rname">Compliance snapshot</span><span class="rkey">compliance-snapshot</span></td>
+          <td class="rdesc">One page of KPIs — groups, users, bindings, findings, privileged grants, dormant access, sync health — and the coverage statement that says what this evidence can attest.</td></tr>
+        <tr class="r-compliance" data-report="access-certification" tabindex="0">
+          <td class="kind"><span class="kchip k-compliance">compliance</span></td>
+          <td class="report"><span class="rname">Access certification pack</span><span class="rkey">access-certification</span></td>
+          <td class="rdesc">Per group (with roster) and per directly-bound user: every binding held, with Approve / Revoke / Comment columns and a sign-off block for the named reviewer.</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <div id="panel" aria-live="polite"></div>
+  <div class="pool" id="pool">
+  <section class="card" data-form="namespace-access">
     <div class="head"><h1>namespace-access</h1><p>Per namespace: every group binding classified with who it reaches, every direct user grant, findings first.</p></div>
     <div class="grid">
       <div class="scope">
@@ -215,9 +336,7 @@
     <div class="actions"><button class="btn">Generate <span class="fmt">HTML · PDF · JSON</span></button>
       <span class="note">A manual run stores all three; the format is chosen for you.</span></div>
   </section>
-
-  <!-- ── access-matrix (enum + text) ── -->
-  <section class="card">
+  <section class="card" data-form="access-matrix">
     <div class="head"><h1>access-matrix</h1><p>Every subject — group or user — with the namespaces it's bound in and the role: the "who has access where" sheet.</p></div>
     <div class="grid">
       <div class="scope subj">
@@ -245,9 +364,7 @@
     <div class="actions"><button class="btn">Generate <span class="fmt">HTML · PDF · JSON</span></button>
       <span class="note">A manual run stores all three; the format is chosen for you.</span></div>
   </section>
-
-  <!-- ── privileged-access (switch + roles lookup) ── -->
-  <section class="card">
+  <section class="card" data-form="privileged-access">
     <div class="head"><h1>privileged-access</h1><p>Every subject holding cluster-admin at any scope, or admin/edit cluster-wide, with the people behind each group.</p></div>
     <div class="grid">
       <div class="field"><label>Group rosters</label>
@@ -264,9 +381,7 @@
     <div class="actions"><button class="btn">Generate <span class="fmt">HTML · PDF · JSON</span></button>
       <span class="note">A manual run stores all three; the format is chosen for you.</span></div>
   </section>
-
-  <!-- ── binding-findings (no parameters) ── -->
-  <section class="card">
+  <section class="card" data-form="binding-findings">
     <div class="head"><h1>binding-findings</h1><p>Dangling, unresolved and unmanaged group bindings and direct user grants; <span style="font-family:var(--mono)">system:*</span> groups omitted.</p></div>
     <div class="grid">
       <div class="field wide"><label>Parameters</label>
@@ -275,9 +390,7 @@
     <div class="actions"><button class="btn">Generate <span class="fmt">HTML · PDF · JSON</span></button>
       <span class="note">A manual run stores all three; the format is chosen for you.</span></div>
   </section>
-
-  <!-- ── groups (int + switch) ── -->
-  <section class="card">
+  <section class="card" data-form="groups">
     <div class="head"><h1>groups</h1><p>Every synced group: provider, member count, last sync, bindings, cliff silence; empty and unattributed groups; joins and leaves in the window.</p></div>
     <div class="grid">
       <div class="field"><label>Window</label>
@@ -300,9 +413,7 @@
     <div class="actions"><button class="btn">Generate <span class="fmt">HTML · PDF · JSON</span></button>
       <span class="note">A manual run stores all three; the format is chosen for you.</span></div>
   </section>
-
-  <!-- ── users (providers lookup) ── -->
-  <section class="card">
+  <section class="card" data-form="users">
     <div class="head"><h1>users</h1><p>Every User object (a login): identity providers, group count, direct grants; manual accounts; members who have never logged in.</p></div>
     <div class="grid">
       <div class="field"><label>Identity providers <span class="auto">lookup · discovered</span></label>
@@ -326,9 +437,7 @@
     <div class="actions"><button class="btn">Generate <span class="fmt">HTML · PDF · JSON</span></button>
       <span class="note">A manual run stores all three; the format is chosen for you.</span></div>
   </section>
-
-  <!-- ── login-activity (int + user lookup) ── -->
-  <section class="card">
+  <section class="card" data-form="login-activity">
     <div class="head"><h1>login-activity</h1><p>Login attempts by outcome and provider, per-user successes and failures, rejected attempts against the login gate.</p></div>
     <div class="grid">
       <div class="field"><label>Window</label>
@@ -356,9 +465,7 @@
     <div class="actions"><button class="btn">Generate <span class="fmt">HTML · PDF · JSON</span></button>
       <span class="note">Needs login capture on; the report follows <code style="font-family:var(--mono)">loginCapture</code>.</span></div>
   </section>
-
-  <!-- ── dormant-access (int) ── -->
-  <section class="card">
+  <section class="card" data-form="dormant-access">
     <div class="head"><h1>dormant-access</h1><p>Members with access who never logged in, members outside the gate, gate members with no access, and nobody-in-N-days.</p></div>
     <div class="grid">
       <div class="field"><label>Dormant after</label>
@@ -386,9 +493,7 @@
     <div class="actions"><button class="btn">Generate <span class="fmt">HTML · PDF · JSON</span></button>
       <span class="note">A manual run stores all three; the format is chosen for you.</span></div>
   </section>
-
-  <!-- ── groupsync-health (int) ── -->
-  <section class="card">
+  <section class="card" data-form="groupsync-health">
     <div class="head"><h1>groupsync-health</h1><p>Every GroupSync CR: computed state, schedule, last sync; reconcile errors; syncs in the window; NamespaceConfig and GroupConfig health.</p></div>
     <div class="grid">
       <div class="field"><label>Window</label>
@@ -398,9 +503,7 @@
     <div class="actions"><button class="btn">Generate <span class="fmt">HTML · PDF · JSON</span></button>
       <span class="note">A manual run stores all three; the format is chosen for you.</span></div>
   </section>
-
-  <!-- ── compliance-snapshot (no parameters) ── -->
-  <section class="card">
+  <section class="card" data-form="compliance-snapshot">
     <div class="head"><h1>compliance-snapshot</h1><p>One page of KPIs — groups, users, bindings, findings, privileged grants, dormant access, sync health — plus the coverage statement.</p></div>
     <div class="grid">
       <div class="field wide"><label>Parameters</label>
@@ -409,9 +512,7 @@
     <div class="actions"><button class="btn">Generate <span class="fmt">HTML · PDF · JSON</span></button>
       <span class="note">A manual run stores all three; the format is chosen for you.</span></div>
   </section>
-
-  <!-- ── access-certification (required text + date + enum + switch + advanced) ── -->
-  <section class="card">
+  <section class="card" data-form="access-certification">
     <div class="head"><h1>access-certification</h1><p>Per group (with roster) and per directly-bound user: every binding held, with Approve / Revoke / Comment columns and a sign-off block for the named reviewer.</p></div>
     <div class="grid">
       <div class="field"><label>Campaign <span class="req">required</span></label>
@@ -467,6 +568,24 @@
     <div class="actions"><button class="btn">Generate <span class="fmt">HTML · PDF · JSON</span></button>
       <span class="note">Required fields are marked; the form validates before it submits.</span></div>
   </section>
+  </div>
+
+  <div class="legend">
+    <span class="k-access"><i></i>access</span><span class="k-rbac"><i></i>rbac</span>
+    <span class="k-identity"><i></i>identity</span><span class="k-activity"><i></i>activity</span>
+    <span class="k-compliance"><i></i>health / compliance</span>
+    <span class="grow"></span>
+    <span>Scheduled runs and history: <a href="reporting-status-mock.html" style="color:var(--accent)">Reporting status</a></span>
+  </div>
+</div>
+
+<div class="mock-note" style="max-width:1000px;margin:22px auto 0;text-transform:none;letter-spacing:0;font-size:12.5px;line-height:1.5;display:block">
+  <strong>What this page settles.</strong> The catalogue is the 09-16 directory design you approved
+  (bolder names, a colour gradient per report, click opens the panel immediately — the live catalogue
+  still renders names at weight 400). The form that opens is the approved per-report form, lifted
+  unchanged from the form mock: discovered lookups, type-ahead, all / clear, the oud-group filter.
+  A selected report is a position — <span class="mono">#page=reports&amp;report=…</span> — so a link
+  opens a form, and Back returns to the catalogue.
 </div>
 
 <script>
@@ -565,4 +684,71 @@ function shellControl(id, attr, param){
 }
 shellControl("appearance", "data-theme", "mode");
 shellControl("palette", "data-palette", "theme");
+
+/* ── the click: select, move the form in, bring it into view ─────────────────────────────
+   The form cards are real DOM from the start (the form mock's own wiring runs on them at load), so
+   opening one is a move, not a render — nothing re-initialises and nothing is lost between picks. */
+const POSITION_KEYS = ["page", "report"];
+const view = {page:"reports", report:null};
+const currentPosition = () => { const p = {}; for (const k of POSITION_KEYS) if (view[k]) p[k] = view[k]; return p; };
+const hashFor = pos => { const p = new URLSearchParams(); for (const k of POSITION_KEYS) if (pos[k]) p.set(k, pos[k]);
+  const q = p.toString(); return q ? "#" + q : ""; };
+const positionFromHash = () => { const p = new URLSearchParams(location.hash.replace(/^#/, "")), pos = {};
+  for (const k of POSITION_KEYS){ const v = p.get(k); if (v) pos[k] = v; } return pos; };
+function applyPosition(pos){ view.page = pos.page || "reports"; view.report = pos.report || null; }
+function navigate(changes, { replace = false } = {}){
+  const from = currentPosition(); applyPosition({ ...from, ...changes }); const pos = currentPosition();
+  const keepFrom = replace || hashFor(pos) === hashFor(from);
+  const st = { pos, from: keepFrom ? (history.state && history.state.from) || null : from };
+  const url = hashFor(pos) || location.pathname + location.search;
+  if (keepFrom) history.replaceState(st, "", url); else history.pushState(st, "", url);
+}
+const panel = document.getElementById("panel"), pool = document.getElementById("pool");
+function render(scroll){
+  document.querySelectorAll(".cat tbody tr").forEach(tr => tr.classList.toggle("selected", tr.dataset.report === view.report));
+  const open = panel.querySelector("[data-form]");
+  if (open && open.dataset.form !== view.report) pool.appendChild(open);
+  if (!view.report) return;
+  const card = pool.querySelector(`[data-form="${CSS.escape(view.report)}"]`);
+  if (!card) return;
+  const tr = document.querySelector(`.cat tr[data-report="${CSS.escape(view.report)}"]`);
+  panel.style.setProperty("--rk", tr ? getComputedStyle(tr).getPropertyValue("--rk").trim() : "var(--accent)");
+  const from = history.state && history.state.from;
+  const fromName = from && from.report && document.querySelector(`.cat tr[data-report="${CSS.escape(from.report)}"] .rname`);
+  const backText = fromName ? "← " + fromName.textContent : "← all reports";
+  let bar = panel.querySelector(".panelbar");
+  if (!bar){ bar = document.createElement("div"); bar.className = "panelbar"; panel.prepend(bar); }
+  bar.innerHTML = `<button class="back" data-back>${backText}</button>
+      <span>${tr ? tr.querySelector(".rname").textContent : ""} · <span class="mono">${view.report}</span></span>`;
+  if (!panel.querySelector("[data-form]")) panel.appendChild(card);
+  // The "clean way" (19:47): the click brings the form into view — no scrolling to find it.
+  // Landed by arithmetic rather than scrollIntoView: measured, scroll-margin-top did not hold under
+  // the sticky shell and the panel's title ended up hidden beneath it.
+  if (scroll){
+    const shell = document.querySelector(".shell").getBoundingClientRect().height;
+    window.scrollTo({ top: panel.getBoundingClientRect().top + window.scrollY - shell - 12, behavior: "smooth" });
+  }
+}
+document.addEventListener("click", e => {
+  const tr = e.target.closest(".cat tr[data-report]"), back = e.target.closest("[data-back]");
+  if (tr){ navigate({ report: tr.dataset.report }); render(true); }
+  else if (back){ if (history.state && history.state.from) history.back(); else { navigate({ report:null }); render(false); window.scrollTo({top:0, behavior:"smooth"}); } }
+});
+document.addEventListener("keydown", e => {
+  const tr = e.target.closest && e.target.closest(".cat tr[data-report]");
+  if (tr && (e.key === "Enter" || e.key === " ")){ e.preventDefault(); navigate({ report: tr.dataset.report }); render(true); }
+});
+addEventListener("popstate", ev => {
+  if (ev.state && ev.state.pos){ applyPosition(ev.state.pos); render(!!view.report); return; }
+  const pos = positionFromHash(); if (location.hash && Object.keys(pos).length === 0) return;
+  applyPosition(pos); render(!!view.report);
+});
+addEventListener("hashchange", () => {
+  if (history.state && history.state.pos) return;
+  const pos = positionFromHash(); if (location.hash && Object.keys(pos).length === 0) return;
+  applyPosition(pos); history.replaceState({ pos: currentPosition(), from: null }, "", location.hash); render(true);
+});
+applyPosition(positionFromHash());
+history.replaceState({ pos: currentPosition(), from: null }, "", hashFor(currentPosition()) || location.pathname + location.search);
+render(false);
 </script>

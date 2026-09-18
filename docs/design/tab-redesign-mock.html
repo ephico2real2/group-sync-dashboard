@@ -1,0 +1,275 @@
+<title>Tab Redesign</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
+<style>
+  :root{
+    --page:#f9f9f7;--surface:#fcfcfb;--surface-2:#f2f2ee;--ink:#12120f;--muted:#5f5f58;--faint:#8a8a81;
+    --border:rgba(18,18,15,.13);--border-soft:rgba(18,18,15,.07);--accent:#4f5a67;--accent-ink:#fff;
+    --good:#2f7d52;--warn:#9a6b1f;--crit:#a3382f;
+    --ui:"Space Grotesk",-apple-system,BlinkMacSystemFont,sans-serif;--mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+  }
+  @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+    --page:#0f1011;--surface:#17181a;--surface-2:#1d1f22;--ink:#f2f2f0;--muted:#a5a59d;--faint:#7a7a72;
+    --border:rgba(255,255,255,.15);--border-soft:rgba(255,255,255,.07);--accent:#8b98a8;--accent-ink:#12120f;
+    --good:#63c68d;--warn:#d9a441;--crit:#e2695c;}}
+  :root[data-theme="dark"]{
+    --page:#0f1011;--surface:#17181a;--surface-2:#1d1f22;--ink:#f2f2f0;--muted:#a5a59d;--faint:#7a7a72;
+    --border:rgba(255,255,255,.15);--border-soft:rgba(255,255,255,.07);--accent:#8b98a8;--accent-ink:#12120f;
+    --good:#63c68d;--warn:#d9a441;--crit:#e2695c;}
+  :root,:root[data-theme]{
+    --good-wash:color-mix(in srgb,var(--good) 14%,transparent);--warn-wash:color-mix(in srgb,var(--warn) 16%,transparent);
+    --crit-wash:color-mix(in srgb,var(--crit) 13%,transparent);--accent-wash:color-mix(in srgb,var(--accent) 12%,transparent);}
+  :root[data-palette="deuter"],:root[data-palette="protan"]{--good:#0072B2;--warn:#E69F00;--crit:#D55E00;--accent:#005f8a}
+  :root[data-palette="trit"]{--good:#009E73;--warn:#CC79A7;--crit:#D55E00;--accent:#4a4a52}
+  :root[data-palette="contrast"]{--good:#00563f;--warn:#7a4a00;--crit:#8a0000;--accent:#1a1a1a;--faint:#4a4a44}
+  *{box-sizing:border-box}
+  body{background:var(--page);color:var(--ink);font-family:var(--ui);font-size:14px;line-height:1.5;
+    -webkit-font-smoothing:antialiased;padding:20px 18px 70px}
+  .wrap{max-width:1120px;margin:0 auto;display:flex;flex-direction:column;gap:13px}
+  .note0{font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--faint);display:flex;align-items:center;gap:8px}
+  .note0::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--accent)}
+
+  /* shell */
+  .shell{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:9px;min-width:0}
+  .tabs{display:flex;flex-wrap:wrap;gap:3px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:3px}
+  .tabs button{font-family:var(--ui);font-size:12px;font-weight:500;padding:6px 11px;border:0;border-radius:7px;
+    background:transparent;color:var(--muted);cursor:pointer;white-space:nowrap}
+  .tabs button.on{background:var(--accent);color:var(--accent-ink);font-weight:600}
+  .ctl{display:flex;flex-wrap:wrap;align-items:center;gap:7px;font-size:11.5px;color:var(--muted);min-width:0}
+  .ctl select,.ctl input{font-family:var(--mono);font-size:11.5px;padding:5px 8px;border-radius:7px;
+    border:1px solid var(--border);background:var(--surface);color:var(--ink);max-width:100%}
+  .ctl input{min-width:200px;font-family:var(--ui)}
+  .exp{display:inline-flex;align-items:center;gap:5px}
+  .exp button{font-family:var(--mono);font-size:11px;padding:4px 9px;border-radius:6px;border:1px solid var(--border);
+    background:var(--surface);color:var(--muted);cursor:pointer}
+  .exp .cnt{font-family:var(--mono);font-size:10.5px;color:var(--faint)}
+  .pill{font-family:var(--mono);font-size:10.5px;padding:3px 9px;border-radius:999px;border:1px solid var(--border);
+    background:var(--surface-2);color:var(--muted)}
+
+  /* cards */
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden}
+  .card>h2{margin:0;padding:12px 17px;font-size:11.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);
+    font-weight:600;border-bottom:1px solid var(--border-soft);display:flex;justify-content:space-between;
+    align-items:center;gap:10px;flex-wrap:wrap}
+  .card h3{margin:0;padding:11px 17px;font-size:12.5px;font-weight:600;display:flex;align-items:center;gap:9px;
+    border-bottom:1px solid var(--border-soft);background:var(--surface-2)}
+  .card h3 .n{font-family:var(--mono);color:var(--faint);font-weight:400;font-size:11.5px}
+  .hero{display:flex;align-items:baseline;gap:13px;padding:17px}
+  .hero .v{font-family:var(--mono);font-size:36px;font-weight:700;line-height:1;font-variant-numeric:tabular-nums}
+  .hero .l{font-size:14px;color:var(--muted)}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(122px,1fr));gap:1px;background:var(--border-soft)}
+  .kpi{background:var(--surface);padding:12px 15px}
+  .kpi .l{font-size:10px;letter-spacing:.05em;text-transform:uppercase;color:var(--faint);font-weight:600}
+  .kpi .v{font-family:var(--mono);font-size:21px;font-weight:600;margin-top:4px;font-variant-numeric:tabular-nums}
+  .kpi.w{box-shadow:inset 3px 0 0 var(--warn)} .kpi.c{box-shadow:inset 3px 0 0 var(--crit)}
+  .note{font-size:12px;color:var(--muted);padding:12px 17px;border-bottom:1px solid var(--border-soft)}
+  .note b{color:var(--ink)} .note code{font-family:var(--mono);font-size:11.5px;background:var(--surface-2);padding:1px 5px;border-radius:4px}
+  .foot{font-size:11.5px;color:var(--faint);padding:12px 17px;background:var(--surface-2);border-top:1px solid var(--border-soft)}
+  .foot b{color:var(--muted)}
+  .trunc{font-size:11.5px;color:var(--warn);padding:10px 17px;background:var(--warn-wash);border-bottom:1px solid var(--border-soft)}
+  .scroll-x{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  table{width:100%;border-collapse:collapse;min-width:620px}
+  th{font-size:10px;letter-spacing:.05em;text-transform:uppercase;color:var(--faint);font-weight:600;text-align:left;
+    padding:8px 17px;border-bottom:1px solid var(--border-soft);white-space:nowrap}
+  th.s{cursor:pointer} th.s::after{content:"";margin-left:5px;color:var(--faint)}
+  th.s.asc::after{content:"▲"} th.s.desc::after{content:"▼"}
+  td{padding:10px 17px;border-bottom:1px solid var(--border-soft);font-size:12.5px;vertical-align:top}
+  tr:last-child td{border-bottom:0} tbody tr:hover{background:var(--accent-wash)}
+  td.n{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:right}
+  .m{font-family:var(--mono);font-size:12px}
+  .drill{font-family:var(--mono);font-size:12px;border:0;background:none;color:var(--accent);cursor:pointer;padding:0;
+    text-decoration:underline;text-underline-offset:2px}
+  .nodrill{font-family:var(--mono);font-size:12px;color:var(--muted);cursor:help;border-bottom:1px dotted var(--border)}
+  .b{display:inline-flex;align-items:center;gap:4px;font-family:var(--mono);font-size:10px;padding:2px 7px;
+    border-radius:5px;border:1px solid var(--border);background:var(--surface-2);color:var(--muted);white-space:nowrap}
+  .b::before{content:"●";font-size:7px}
+  .b.g{color:var(--good);background:var(--good-wash);border-color:color-mix(in srgb,var(--good) 38%,transparent)}
+  .b.w{color:var(--warn);background:var(--warn-wash);border-color:color-mix(in srgb,var(--warn) 38%,transparent)}
+  .b.c{color:var(--crit);background:var(--crit-wash);border-color:color-mix(in srgb,var(--crit) 38%,transparent)}
+  .b.u::before{content:"○"}
+  .err{color:var(--crit)} .mut{color:var(--faint)}
+  .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:baseline}
+  .empty{padding:17px;font-size:12.5px;color:var(--muted)}
+  @media(max-width:700px){.hero .v{font-size:28px}}
+</style>
+
+<div class="wrap">
+  <div class="note0">Redesign · feature-complete against docs/design/tab-feature-contract.md · every row from crc-local</div>
+
+  <div class="shell">
+    <span class="tabs" id="tabs"></span>
+    <span class="ctl">
+      Appearance <select id="appearance"><option value="">Auto</option><option value="light">Light</option><option value="dark">Dark</option></select>
+      Colours <select id="palette"><option value="">Default</option><option value="deuter">Deuteranopia-safe</option>
+        <option value="protan">Protanopia-safe</option><option value="trit">Tritanopia-safe</option><option value="contrast">High contrast</option></select>
+      <button style="font:inherit;font-size:12px;padding:4px 10px;border-radius:7px;border:1px solid var(--border);background:var(--surface-2);color:var(--ink);cursor:pointer;margin-left:6px">Refresh</button>
+      <button style="font:inherit;font-size:12px;padding:4px 10px;border-radius:7px;border:1px solid var(--border);background:var(--surface-2);color:var(--ink);cursor:pointer;margin-left:6px">Sign out</button>
+    </span>
+  </div>
+  <div class="shell" id="bar"></div>
+  <div id="view" style="display:flex;flex-direction:column;gap:13px"></div>
+</div>
+
+<script>
+const E = s => String(s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+const kpi=(l,v,c="")=>`<div class="kpi ${c}"><div class="l">${l}</div><div class="v">${v}</div></div>`;
+const hero=(v,l)=>`<div class="hero"><span class="v">${v}</span><span class="l">${l}</span></div>`;
+const tbl=(cols,rows,min=620)=>`<div class="scroll-x"><table style="min-width:${min}px"><thead><tr>${cols}</tr></thead><tbody>${rows}</tbody></table></div>`;
+const CLUSTER=`Cluster <select><option>crc-local</option><option>mock — your view</option></select>`;
+const EXPORT=n=>`<span class="exp">Export <button>CSV</button><button>JSON</button><span class="cnt">${n}</span></span>`;
+
+const PAGES={
+groups:["Groups",
+ `${CLUSTER} Find <input placeholder="filter by name"> Group state <select><option>all</option><option>empty</option><option>unattributed</option></select> ${EXPORT("67 rows")}`,
+ ()=>`<section class="card"><h2>Groups · 67 shown</h2>
+  ${tbl(`<th>Name</th><th style="text-align:right">Members</th><th>Owner</th><th>Last refreshed</th><th>Source DN</th>`,
+  [["app-ssb-autobahnusers",9,"autobahnusers-onboarding","#0072B2","20:00:05","ldap_uid"],
+   ["app-ocp-rbac-demo-ns-developer",3,"app-ocp-rbac-group","#2f7d52","20:30:03","ldap_uid"],
+   ["app-ocp-rbac-groupsync-ns-auditor",3,"app-ocp-rbac-group","#2f7d52","20:30:08","ldap_uid"],
+   ["app-ocp-rbac-alpha-database-admin",2,"app-ocp-rbac-group","#2f7d52","20:30:08","ldap_uid"],
+   ["app-ocp-rbac-abcd-ns-superuser",0,null,null,"20:30:01","ldap_uid"]]
+  .map(([n,m,o,c,t,dn])=>`<tr><td><button class="drill">${E(n)}</button></td><td class="n">${m}</td>
+   <td>${o?`<span class="dot" style="background:${c}"></span><span class="m">${E(o)}</span>`:'<span class="err">unattributed</span>'}</td>
+   <td class="mut">${t}</td><td class="m mut">${dn}</td></tr>`).join(""))}
+  <div class="foot">Select a group to see its members. The <b>Owner</b> dot colour is assigned by the CR's position in the full provider list — it stays the same colour when you filter.</div></section>`],
+
+users:["Users",
+ `${CLUSTER} Find <input placeholder="filter by id or name"> ${EXPORT("63 rows")}`,
+ ()=>`<section class="card"><h2>Users · 63 shown</h2>
+  <div class="kpis">${kpi("Have logged in","62")}${kpi("In a synced group","9")}${kpi("Logged in, no synced group","53","w")}${kpi("Synced, never logged in","2","w")}</div>
+  <div class="note"><b>First-login times are the Identity object's creation time</b> where an Identity names the User (read 20:54) and the User's creation time (approx.) otherwise. For a provider with <code>mappingMethod: lookup</code> the Identity is created by an administrator before the first login, and the time shown is that create.</div>
+  <div class="note" style="border-bottom:1px solid var(--border-soft)"><b>1</b> manual account (a User object with no identity — created by hand, never logged in as) is listed below and not counted above.</div>
+  ${tbl(`<th>User</th><th>Status</th><th>Provider</th><th style="text-align:right">Groups</th><th>Last login</th><th>First seen in a group</th>`,
+  [["kubeadmin","","logged in since 2025-04-19 (17mo ago)","identity","developer",0,"20:53","—"],
+   ["bob.wilson","Bob Wilson","logged in since 2026-09-14 (3d ago)","identity","ldap-local",28,"2026-09-14","2026-09-14"],
+   ["jane.smith","Jane Smith","logged in since 2026-08-05 (6wk ago)","identity","ldap-local",18,"2026-09-14","2026-08-05"],
+   ["alice.cooper","Alice Cooper","logged in since 2026-08-05 (6wk ago)","identity","ldap-local",7,"2026-08-05","2026-08-05"],
+   ["test-user-002","","logged in since 2025-05-18 (16mo ago)","identity","ceo_rnd_oim",0,"none captured","—"],
+   ["test-python-user","","manual account · never logged in","","—",0,"none captured","—"]]
+  .map(([u,f,st,src,p,g,ll,fs])=>`<tr><td><button class="drill">${E(u)}</button>${f?` <span class="mut">· ${E(f)}</span>`:""}</td>
+   <td>${E(st)}${src?` <span class="b g">${src}</span>`:""}</td><td><span class="b">${E(p)}</span></td>
+   <td class="n ${g===0?'err':''}">${g}</td><td class="mut">${E(ll)}</td><td class="mut">${E(fs)}</td></tr>`).join(""),700)}
+  <div class="foot"><b>test-user-002</b> first signed in <b>2025-05-18</b> — sixteen months before this dashboard recorded anything. That time comes from the Identity object, not from our polling, which is why enabling <code>rbac.identities</code> adds history we cannot otherwise reach. Select a user to see every group they belong to and every binding that reaches them.</div></section>`],
+
+bindings:["Access granted",
+ `${CLUSTER} Find <input placeholder="filter by group, role, namespace or binding"> Show <select><option>granted + needs review</option><option>all bindings</option><option>granted (group exists)</option><option>built-in</option><option>unmanaged</option></select> ${EXPORT("45 rows")}`,
+ ()=>`<section class="card"><h2>Access granted</h2>
+  <div class="kpis">${kpi("Group bindings on this cluster","202")}${kpi("Grant a real group","34")}${kpi("Need review","6","w")}${kpi("Built-in","157")}</div>
+  <div class="note">Direct RoleBindings and ClusterRoleBindings whose subject is a Group. <b>Role rules are not evaluated</b>, so this is what has been granted, not a computed list of permitted actions.</div>
+  ${hero("6","binding(s) that grant nobody")}
+  <div class="note">Each names a Group that does not exist, so the access it grants reaches no one. Nothing on the cluster reports this — <code>oc get rolebinding</code> shows a perfectly healthy object.</div></section>
+
+  <section class="card"><h3><span class="b c">dangling</span> Dangling <span class="n">· 0</span></h3>
+   <div class="empty">None.</div></section>
+
+  <section class="card"><h3><span class="b w">unresolved</span> Unresolved <span class="n">· 6</span></h3>
+  <div class="note">These do not raise alerts: a group that has never been seen cannot be told apart from one that simply has not synced yet. They still grant nobody — typically a misspelled group name, or an onboarding that stopped halfway.</div>
+  ${tbl(`<th class="s asc" aria-sort="ascending">Group named by the binding</th><th class="s" aria-sort="none">Reaches</th><th class="s" aria-sort="none">Grants</th><th class="s" aria-sort="none">Scope</th><th class="s" aria-sort="none">Binding</th>`,
+  [["app-ocp-rbac-klt-ns-audit","view","klt-pass-mnemonic-3char","klt-audit-rb"],
+   ["app-ocp-rbac-klt-ns-developer","edit","klt-pass-mnemonic-3char","klt-developer-rb"],
+   ["app-ocp-rbac-klta-ns-audit","view","klt-pass-both","klta-audit-rb"],
+   ["app-ocp-rbac-toolongx-ns-audit","view","klt-fail-mnemonic-toolong","toolongx-audit-rb"],
+   ["app-ocp-rbac-toolongx-ns-developer","edit","klt-fail-mnemonic-toolong","toolongx-developer-rb"]]
+  .map(([g,r,ns,b])=>`<tr><td><span class="nodrill" title="No Group object with this name exists on the cluster, so there is no page to open.">${E(g)}</span></td>
+   <td class="mut">—</td><td><span class="m">${r}</span> <span class="mut">ClusterRole</span></td><td class="m">${E(ns)}</td><td class="m mut">${E(b)}</td></tr>`).join(""))}
+  <div class="foot"><b>Reaches</b> is <b>—</b> here because the group does not exist — not zero members, which is a different finding.</div></section>
+
+  <section class="card"><h3><span class="b w">unmanaged</span> Unmanaged <span class="n">· 5</span></h3>
+  <div class="note">Hand-made grants on operator-synced groups, outside the policy system. Acknowledge a deliberate one with the <code>rbac.ocp.io/unmanaged-exception</code> annotation on the binding; the justification then lives next to the object and clears it here.</div>
+  <div class="empty mut">5 rows — same columns, group names drillable because the Group exists.</div></section>
+
+  <section class="card"><h3>Granted <span class="n">· 34</span></h3>
+  <div class="note">The group named by each of these exists, so the access reaches its members. <b>Reaches</b> says how many people that is today, and how many of them have ever logged in.</div>
+  ${tbl(`<th class="s asc" aria-sort="ascending">Group named by the binding</th><th class="s" aria-sort="none">Reaches</th><th class="s" aria-sort="none">Grants</th><th class="s" aria-sort="none">Scope</th><th class="s" aria-sort="none">Binding</th>`,
+  [["app-ocp-rbac-alpha-cluster-admin",1,1,"admin","cluster-wide","…-admin-crb"],
+   ["app-ocp-rbac-alpha-cluster-developer",2,2,"edit","cluster-wide","…-developer-crb"],
+   ["app-ocp-rbac-alpha-database-admin",2,2,"database-admin","cluster-wide","…-database-admin-crb"],
+   ["app-ocp-rbac-abcd-ns-superuser",0,0,"admin","abcd-prod","abcd-superuser-rb"]]
+  .map(([g,m,li,r,s,b])=>`<tr><td><button class="drill">${E(g)}</button></td>
+   <td>${m===0?'<span class="err" title="The group exists but has no members, so this binding grants nobody today.">0 members</span>':`${m} member${m>1?"s":""} <span class="mut">· ${li} logged in</span>`}</td>
+   <td><span class="m">${r}</span> <span class="mut">ClusterRole</span></td><td class="${s==="cluster-wide"?"mut":"m"}">${E(s)}</td><td class="m mut">${E(b)}</td></tr>`).join(""))}
+  </section>`],
+
+policy:["RBAC policy",
+ `${CLUSTER} <span class="pill">no search · no filter · no export on this tab</span>`,
+ ()=>`<section class="card"><h2>RBAC policy</h2>
+  ${hero("5","grant(s) outside the policy system")}
+  <div class="kpis">${kpi("Policy CRs","6")}${kpi("Unmanaged","5","w")}${kpi("Audit-stamped","0")}</div>
+  <div class="note">A grant is <b>unmanaged</b> when it names an operator-synced group but carries none of the policy operator's provenance — somebody granted access by hand. Acknowledge a deliberate one with the <code>rbac.ocp.io/unmanaged-exception</code> annotation on the binding.</div>
+  <div class="foot">The <code>oc get ... -l rbac.ocp.io/unmanaged=true</code> hint is deliberately absent — it appears only when at least one binding is audit-stamped, and here that count is <b>0</b>.</div></section>
+
+  <section class="card"><h3>Policy operator (NamespaceConfig / GroupConfig)</h3>
+  <div class="note">These CRs template the RoleBindings above. A currently-failing one means RBAC has quietly stopped reconciling — new namespaces receive nothing and drift stops being corrected, with no error anywhere else.</div>
+  ${tbl(`<th>Kind</th><th>Name</th><th>State</th><th>Last success</th>`,
+  [["NamespaceConfig","baseline-nonprod-rbac"],["NamespaceConfig","baseline-prod-rbac"],
+   ["NamespaceConfig","bdp-oud-group-rbac"],["NamespaceConfig","trino-oud-group-rbac"],
+   ["GroupConfig","baseline-cluster-rbac"],["GroupConfig","custom-cluster-rbac"]]
+  .map(([k,n])=>`<tr><td><span class="b">${k}</span></td><td class="m">${E(n)}</td><td><span class="b g">ok</span></td><td class="mut">20:30</td></tr>`).join(""),560)}
+  <div class="foot">This section <b>survives the refusal card</b> — CR health is governance data, so a narrowed reader still sees it even when the grants below are withheld.</div></section>
+
+  <section class="card"><h3><span class="b w">unmanaged</span> Grants outside the policy system <span class="n">· 5</span></h3>
+  <div class="note">Each names a group the operator syncs, and nothing templates the grant itself. Shares <code>bindingTable</code> — and its sort state — with Access granted.</div>
+  <div class="empty mut">5 rows · same five sortable columns.</div></section>`],
+
+logins:["Logins",
+ `${CLUSTER} Outcome <select><option>all outcomes</option><option>signed in</option><option>failed — no reason given</option><option>wrong password</option><option>no match</option></select> ${EXPORT("209 of 541")}`,
+ ()=>`<section class="card"><h2>Login attempts</h2>
+  ${hero("19","account(s) in no synced group")}
+  <div class="kpis">${kpi("Attempts","541")}${kpi("Distinct users","19")}${kpi("Signed in","493")}${kpi("Failed","48","w")}${kpi("Most recent","20h ago")}</div>
+  <div class="note">Watching since 2026-08-02; last read 20:54 (1m ago). <b>Nothing before capture began was ever recorded</b> — the oauth-server's log dies with its pod and cannot be read backwards — so an empty list here means nothing was <i>observed</i>, never that nobody signed in.</div></section>
+
+  <section class="card"><h3>Cluster access <span class="b">discovered</span></h3>
+  <div class="kpis">${kpi("Gate group","app-ssb-…")}${kpi("Allowed to log in","9")}${kpi("Hold access","10")}${kpi("Cannot log in","2","c")}${kpi("Gated, no access","1","w")}</div>
+  <div class="note">Membership of <code>cn=app-ssb-autobahnusers,ou=Groups,dc=ephico2real,dc=com</code> is required to authenticate, so anybody outside it cannot use access they hold. Both spellings of the membership attribute are read — <code>memberOf</code> on OpenLDAP and Active Directory, <code>isMemberOf</code> on 389-ds and Oracle DSEE — because neither is standardised.</div></section>
+
+  <section class="card"><h3>Every attempt <span class="n">· showing 209 of 541</span></h3>
+  ${tbl(`<th>When</th><th>User</th><th>Outcome</th><th>Provider</th><th>Detail</th><th>Node</th>`,
+  [["09-16 18:33","kubeadmin","failed","u","developer","audit: credential deny via /login/developer (the audit log records no cause)","crc","break-glass"],
+   ["09-14 19:22","kubeadmin","failed","u","developer","audit: cli deny via openshift-challenging-client — Authentication failed, attempted: basic","crc","break-glass"],
+   ["09-06 02:08","developer","failed","u","developer","audit: cli deny via openshift-challenging-client — Authentication failed, attempted: basic","crc","break-glass"],
+   ["09-03 16:13","developer","failed","u","developer","provider 'developer' reported no reason","oauth…nccmh","local provider"],
+   ["09-03 11:27","john.doe","failed","u","ldap-local","audit: cli deny via openshift-challenging-client — Authentication failed, attempted: basic","crc",""]]
+  .map(([w,u,o,sev,p,d,node,chip])=>`<tr><td class="mut">${w}</td>
+   <td><button class="drill">${E(u)}</button>${chip?` <span class="b w">${chip}</span>`:""}</td>
+   <td><span class="b ${sev}">failed — no reason given</span></td><td><span class="b">${E(p)}</span></td>
+   <td class="mut" style="max-width:340px">${E(d)}</td><td class="m mut">${E(node)}</td></tr>`).join(""),860)}
+  <div class="trunc">Showing the <b>209</b> most recent of <b>541</b> retained attempts. Every number above covers all of them.</div>
+  <div class="foot"><b>No match</b> covers two cases this log cannot separate: a real person who is not in the login-gate group, and a username that does not exist. The identity provider's search filter carries the gate group, so both produce the same <i>no entries matching</i> line. Where a <b>second badge</b> appears beside it, that ambiguity has been resolved — from synced group membership, not from any new read. <b>Detail</b> is the directory's own diagnostic, passed through rather than interpreted. The column reads <b>Node</b> rather than <b>Replica</b> because this cluster's source is the <b>audit log</b>.</div></section>`],
+
+usage:["Usage",
+ `<span class="pill">cluster selector deliberately omitted — usage is a property of the dashboard, not a cluster</span>`,
+ ()=>`<section class="card"><h2>Dashboard usage</h2>
+  ${hero("1","person used the dashboard today")}
+  <div class="kpis">${kpi("Distinct users","7")}${kpi("Days recorded","18")}${kpi("Interactions","1,817")}${kpi("Retention","400 days")}</div>
+  <div class="note">Showing <b>all users</b>, not only your own activity.</div></section>
+  <section class="card"><h3>By user and day</h3>
+  ${tbl(`<th>User</th><th>Day (UTC)</th><th>First seen</th><th>Last seen</th><th style="text-align:right">Interactions</th>`,
+  [["kubeadmin","2026-09-17","20:11","20:54",4],["kubeadmin","2026-09-16","14:02","23:56",102],
+   ["kubeadmin","2026-09-15","03:01","22:40",51],["bob.wilson","2026-09-14","20:37","21:02",29],
+   ["lateef.o","2026-09-14","19:49","20:22",28]]
+  .map(([u,d,f,l,i])=>`<tr><td class="m">${E(u)}</td><td class="m">${d}</td><td class="mut">${f}</td><td class="mut">${l}</td><td class="n">${i}</td></tr>`).join(""),560)}
+  <div class="foot">Times render in the server's timezone; the <b>Day</b> column is a <b>UTC</b> date — the day is a stored bucket computed when the activity was recorded, so re-labelling it local would misstate rows already written. An <b>interaction is one deliberate action</b> — opening the dashboard, switching tab, drilling in, changing a filter — <b>not one HTTP request</b>: the page refreshes itself every 60s and counting those measured how long a tab was left open rather than whether anyone used it. These are not logins either — logins to the <b>cluster</b> are on the Logins tab.</div></section>`],
+};
+
+const ORDER=["groups","users","bindings","policy","logins","usage"];
+const tabsEl=document.getElementById("tabs"),barEl=document.getElementById("bar"),viewEl=document.getElementById("view");
+tabsEl.innerHTML=ORDER.map((k,i)=>`<button data-k="${k}"${i===0?' class="on"':''}>${PAGES[k][0]}</button>`).join("");
+function show(k){
+  tabsEl.querySelectorAll("button").forEach(b=>b.classList.toggle("on",b.dataset.k===k));
+  barEl.innerHTML=`<span class="ctl">${PAGES[k][1]}</span>`;
+  viewEl.innerHTML=PAGES[k][2]();
+}
+tabsEl.addEventListener("click",e=>{const b=e.target.closest("button");if(b)show(b.dataset.k);});
+show("groups");
+
+[["appearance","data-theme","gsd-mode","mode"],["palette","data-palette","gsd-palette","theme"]].forEach(([id,attr,key,param])=>{
+  const sel=document.getElementById(id); if(!sel) return;
+  const fromUrl=new URLSearchParams(location.search).get(param)||"";
+  let saved=""; try{saved=localStorage.getItem(key)||"";}catch(e){}
+  const start=fromUrl||saved;
+  if(start){document.documentElement.setAttribute(attr,start);sel.value=start;}
+  sel.addEventListener("change",()=>{const v=sel.value;
+    v?document.documentElement.setAttribute(attr,v):document.documentElement.removeAttribute(attr);
+    try{v?localStorage.setItem(key,v):localStorage.removeItem(key);}catch(e){}
+    const u=new URL(location.href);v?u.searchParams.set(param,v):u.searchParams.delete(param);history.replaceState(null,"",u);});
+});
+</script>

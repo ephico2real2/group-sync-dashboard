@@ -81,10 +81,14 @@ spec:
               value: {{ .Values.reporting.pdf.enabled | quote }}
             - name: GSD_REPORT_PDF_VARIANT
               value: {{ include "gsd.reportPdfVariant" . | quote }}
-            - name: GSD_REPORT_RETENTION_DAYS
-              value: {{ .Values.reporting.retention.days | quote }}
-            - name: GSD_REPORT_RETENTION_MAX_RUNS
-              value: {{ .Values.reporting.retention.maxRuns | quote }}
+            - name: GSD_REPORT_SCHEDULED_KEEP_PER_SCHEDULE
+              value: {{ .Values.reporting.retention.scheduled.keepPerSchedule | quote }}
+            - name: GSD_REPORT_SCHEDULED_RETENTION_DAYS
+              value: {{ .Values.reporting.retention.scheduled.days | quote }}
+            - name: GSD_REPORT_MANUAL_RETENTION_DAYS
+              value: {{ .Values.reporting.retention.manual.days | quote }}
+            - name: GSD_REPORT_MANUAL_RETENTION_MAX_RUNS
+              value: {{ .Values.reporting.retention.manual.maxRuns | quote }}
             - name: GSD_REPORT_MARKING
               value: {{ .Values.reporting.marking | quote }}
             - name: GSD_REPORT_ENABLED_REPORTS

@@ -207,7 +207,10 @@ REVIEW_ARTIFACTS = (
     "REVIEW_namespaces.md",
     # PR #183 (#174 lookup) review record: quotes 76ebaff's line numbers and pre-fix copy; point-in-time.
     "REVIEW_lookup.md",
-    "REVIEW_home.md",
+        "REVIEW_home.md",
+        # PR #180 (#172 Overview relayout) review record: quotes 759cd7d's line numbers and pre-fix copy;
+        # point-in-time by construction.
+        "REVIEW_overview_relayout.md",
 )
 
 

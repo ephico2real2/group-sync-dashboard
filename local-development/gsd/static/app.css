@@ -498,8 +498,10 @@ h1, h2, h3 { font-weight: 600; margin: 0; }
 /* Card headings wear the section accent as a short leading rule. Cheap continuity: the
    Groups tab is teal, so every heading under it is too, and a screenshot is placeable at
    a glance. Decorative only, hence aria-hidden by construction (a ::before pseudo-element
-   is not in the accessibility tree). */
-.card > h2::before, .card > h3::before {
+   is not in the accessibility tree). A tile's name row is not a section heading: the tile carries its
+   status rail on its own edge, the mock's tile has no leading rule, and its opened form (.tile-detail)
+   has none — so the counted headings' rule (pass 2) stops at the tile (OB1, pass 3). */
+.card > h2::before, .card > h3::before, .card:not(.tile) > .row-wrap > h2::before, .card > .row-wrap > h3::before {
   content: ""; display: inline-block; vertical-align: middle;
   width: 3px; height: 0.95em; margin-right: var(--space-4); border-radius: var(--radius-xs);
   background: var(--accent);
@@ -1127,6 +1129,69 @@ dialog.ns-preview p { margin: 0 0 var(--space-4); font-size: var(--text-sm); }
    drops under the 4.5:1 bar the sheet holds (measured: 22% → 3.40:1, 8% → 4.10:1, in both themes and
    every palette). Weight is the channel that costs no contrast. */
 mark { background: none; color: inherit; font-weight: 700; }
+/* ---- Cluster Overview (#172) --------------------------------------------------------------
+   The page changes shape with the FLEET, not the viewport: one data-density attribute on <html>,
+   set by render() from the served cluster count (≤3 full, ≤8 medium, ≤24 compact, more dense),
+   so every rule below reads as a tier. With two clusters the tiles are the page; at forty they are
+   a status strip and the alerts are the page. A tile is a button that opens the cluster — the
+   position #page=overview&cluster=<id> that already existed — never a card with a link inside. */
+.tiles { display: grid; gap: var(--space-6); }
+[data-density="full"]    .tiles { grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); }
+[data-density="medium"]  .tiles { grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); }
+[data-density="compact"] .tiles { grid-template-columns: repeat(auto-fill, minmax(155px, 1fr)); gap: var(--space-4); }
+@media (max-width: 520px) { [data-density="full"] .tiles { grid-template-columns: 1fr; } }
+.tile {
+  position: relative; display: block; width: 100%; text-align: left; font: inherit; color: var(--text-primary);
+  cursor: pointer; background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius-lg);
+  padding: var(--space-7) var(--space-8); box-shadow: var(--elev-1);
+  transition: border-color 160ms ease, transform 120ms ease;
+}
+.tile:hover { border-color: var(--accent); transform: translateY(-1px); }
+.tile:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* The rail says which tile needs a reader first, in a channel the badge and the figures repeat. */
+.tile.bad, .tile-detail.bad { border-left: 3px solid var(--status-critical); }         /* the opened cluster keeps its rail (Grok, pass 2) */
+.tile.warnrail, .tile-detail.warnrail { border-left: 3px solid var(--status-warning); }
+/* The opened cluster (.tile-detail, the scoped view) is the same block without the face-click, so
+   the heading, the API line and the poll age read the same there — scoped to .tile alone, the
+   scoped view lost all three (measured: .api inline in the UI face, .poll 14px, .cn weight 400). */
+.tile .cn, .tile-detail .cn { display: flex; align-items: center; gap: var(--space-4); flex-wrap: wrap; font-weight: 600; font-size: var(--text-base); }
+.tile .api, .tile-detail .api { display: block; font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text-muted); margin-top: var(--space-2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tile .poll, .tile-detail .poll { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text-muted); }
+.tk { display: grid; gap: var(--space-3) var(--space-6); margin-top: var(--space-5); grid-template-columns: repeat(auto-fit, minmax(78px, 1fr)); }
+.tk .lab { display: block; font-size: var(--text-xs); color: var(--text-muted); } /* the .kpi .label convention: never upper-cased */
+.tk .v { display: block; font-size: var(--text-xl); font-weight: 600; line-height: 1.15; font-variant-numeric: tabular-nums; }
+.tk .v.q { color: var(--text-muted); font-weight: 500; }
+.tk .v.w { color: var(--warn); }
+.tk .v.c { color: var(--status-critical); }
+.tk .v.sm { font-size: var(--text-sm); font-family: var(--font-mono); font-weight: 500; }
+/* What each tier drops, stated once: the API line past full, the poll age and the three extra
+   figures past medium. Nothing is dropped that the scoped view does not carry in full. */
+[data-density="medium"]  .tiles .tile .api,
+[data-density="compact"] .tiles .tile .api, [data-density="compact"] .tiles .tile .poll,
+[data-density="compact"] .tiles .k-extra, [data-density="medium"] .tiles .k-extra { display: none; }
+[data-density="compact"] .tiles .tile { padding: var(--space-5) var(--space-6); }
+[data-density="compact"] .tiles .tk { margin-top: var(--space-4); gap: var(--space-2) var(--space-4); }
+[data-density="compact"] .tiles .tk .v { font-size: var(--text-lg); }
+/* The consequence line: under the badge, never in a title= attribute — a caveat a reader has to
+   hover to find is a caveat that was deleted. */
+.consq { font-size: var(--text-sm); color: var(--text-secondary); margin-top: var(--space-2); line-height: 1.45; max-width: 46ch; }
+.tile .consq, .tile-detail .consq { margin-top: var(--space-3); }
+/* Scoped to the fleet's tiles: the opened cluster (.tile-detail) shows everything at every tier. */
+[data-density="compact"] .tiles .k-consq, [data-density="dense"] .tiles .k-consq { display: none; }
+/* The alerts pager and the kinds summary. Page numbers are view state, not a position. A kind is
+   a count, not a state: a chip with the badge's shape and no glyph — a .badge without a state
+   class rendered a 9px transparent square where the shape should be (measured). */
+.kinds { display: flex; align-items: center; gap: var(--space-4); flex-wrap: wrap; margin: var(--space-4) 0; font-size: var(--text-sm); color: var(--text-muted); }
+.kinds .kind { display: inline-flex; align-items: center; font-size: var(--text-sm); font-weight: 500; color: var(--text-primary);
+  border: 1px solid var(--border); border-radius: var(--radius-pill); padding: 2px 9px; /* optical: the badge's own vertical/horizontal */ white-space: nowrap; }
+.pager { display: flex; align-items: center; gap: var(--space-4); flex-wrap: wrap; padding-top: var(--space-5); font-size: var(--text-sm); color: var(--text-muted); }
+.pager button { font: inherit; font-size: var(--text-sm); padding: var(--space-2) var(--space-5); border-radius: var(--radius-pill); }
+.pager button[aria-pressed="true"] { background: var(--accent); color: var(--surface-1); border-color: var(--accent); font-weight: 600; }
+.pager .ellipsis { color: var(--text-muted); }
+/* The CR and policy tables mark a row that needs a reader with a wash the glyph and the word repeat. */
+tr.attn td { background: color-mix(in srgb, var(--status-critical) 8%, transparent); }
+td.state-cell { min-width: 210px; }
 
 /* ---- Utilities (#152) ---------------------------------------------------------------
    The 92 inline style= attributes the page carried, as classes on the token system, so the
