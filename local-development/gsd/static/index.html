@@ -184,6 +184,7 @@ const view = { page: "overview", cluster: null, groupsync: null, groupFilter: "a
                    reads as the page fighting them. */
                 nsNamespace: "all", nsSort: "risk", nsDir: "desc",
                 nsGrantSort: "risk", nsGrantDir: "desc",
+                nsSearch: "",   // #167: the namespace list's pattern box; a preference, never a position
                 /* Namespaces whose full exposed-user list is expanded. In `view` like every
                    other control on this page, so a 60s poll repaint does not collapse a list
                    the reader just opened. */
@@ -220,7 +221,7 @@ let searchComposingIn = null;
    state are not: they live in `view` precisely because the page repaints on a timer (60s), one of them
    is a Set, and pushing an entry per sort click would bury the positions a reader wants Back to
    reach under a pile of them. */
-const POSITION_KEYS = ["page", "cluster", "groupsync", "group", "user"];
+const POSITION_KEYS = ["page", "cluster", "groupsync", "group", "user", "ns"];
 
 function currentPosition() {
   const pos = {};
@@ -258,7 +259,8 @@ function applyPosition(pos) {
   if ((pos.group || null) !== view.group) view.memberSearch = "";
   view.group = pos.group || null;
   view.user = pos.user || null;
-  view.alertPage = 1;   // #172: the alerts card's page is view state, never a position
+      view.ns = pos.ns || null;   // #167: the namespace page, the third drill-down peer
+      view.alertPage = 1;   // #172: the alerts card's page is view state, never a position
   // `cluster` is part of the position, not context around it. Without it, Back after a cluster
   // switch restores a group name against whichever cluster is now selected — and group names
   // repeat across clusters, so it silently shows a DIFFERENT object under the name you
@@ -288,6 +290,7 @@ function applyPosition(pos) {
       data.group = null; data.user = null; data.events = null; data.users = null;
       data.logins = null; data.access = null; data.findings = null;
       data.operatorConfigs = null; data.userBindings = null; data.myAccess = null;
+      data.namespaces = null; data.ns = null;
       // The Users-tab chips name providers and populations of THIS cluster; carried across, a
       // `provider:corp-ldap` chip on a cluster with no such provider would hide every row — the
       // empty state would blame the chip, but the reader never chose it here. Reset, like
@@ -304,6 +307,7 @@ function applyPosition(pos) {
       // Same reasoning for the Access granted search: it names this cluster's groups and
       // namespaces. The sort is a preference, not a cluster fact, and stays.
       view.bindingSearch = "";
+      view.nsSearch = "";
     }
     if (pos.cluster) view.cluster = pos.cluster;
   }
@@ -349,11 +353,12 @@ function goBack() {
   // back to, and history.back() would leave the dashboard. Rise to the natural parent instead,
   // which is a position the reader can then Back out of normally.
   if (backTarget()) { history.back(); return; }
-  // #172: from a cluster opened by link, the parent is the fleet view. The rise REPLACES the pasted
-  // entry: there was nothing behind it in this app, and a pushed entry would make the parent's own
-  // back control point at the drill-down the reader just rose from.
-  const toFleet = view.page === "overview" && view.cluster && !view.groupsync;
-  navigate({ group: null, user: null, groupsync: null, ...(toFleet ? { cluster: null } : {}) }, { replace: true });
+      // #172: from a cluster opened by link, the parent is the fleet view. The rise REPLACES the pasted
+      // entry: there was nothing behind it in this app, and a pushed entry would make the parent's own
+      // back control point at the drill-down the reader just rose from.
+      const toFleet = view.page === "overview" && view.cluster && !view.groupsync;
+      navigate({ group: null, user: null, groupsync: null, ns: null,
+                 ...(toFleet ? { cluster: null } : {}) }, { replace: true });
   refresh();
 }
 
@@ -384,6 +389,8 @@ function backLabel() {
   // click ran script in the reader's session. Reproduced with
   // `#groupsync=<img src=x onerror=...>`; the sink is old, the URL as a source is what this
   // branch added.
+  if (view.ns && prev.page === "nsaudit" && !prev.ns) return "← all namespaces";
+  if (prev.ns) return `← ${esc(prev.ns)}`;
   if (prev.user) return `← ${esc(prev.user)}`;
   if (prev.group) return `← ${esc(prev.group)}`;
   if (prev.groupsync) return `← ${esc(prev.groupsync)}`;
@@ -859,6 +866,11 @@ const SEARCH_BOXES = {
     title: 'Filters every section by group, role, namespace or binding name as you type. Several words are ANDed — "alpha admin" finds admin granted to app-ocp-rbac-alpha-ns-admin. Escape clears.',
     help: "Filters the binding sections by group name, role, namespace or binding name as you type. Several words are combined with AND, so every word must appear. Press Escape to clear.",
   },
+  nsSearch: {
+    id: "f-ns-search", label: "Find namespace", placeholder: "filter by name or label",
+    title: 'Filters namespaces by name or by a label value as you type. Several words are ANDed — "demo prod" finds demo-prod and demo-production. Escape clears.',
+    help: "Filters the namespace list by name or by the value of a captured label as you type. Several words are combined with AND, so every word must appear. Press Escape to clear.",
+  },
   memberSearch: {
     id: "f-member-search", label: "Find member", placeholder: "filter by id or name",
     title: "Filters this group's members by username or full name as you type. Several words are ANDed. Escape clears.",
@@ -954,6 +966,7 @@ function renderFilters() {
         <option value="unmanaged"${view.bindingFilter === "unmanaged" ? " selected" : ""}>unmanaged</option>
       </select>`;
   }
+  if (view.page === "nsaudit" && !view.ns) html += searchBoxHtml("nsSearch");
   if (view.page === "logins") {
     // Built from the outcomes actually PRESENT plus the current selection, not from a fixed
     // list of all ten. A cluster on OpenLDAP can never produce the four AD sub-code outcomes,
@@ -1038,7 +1051,7 @@ function renderFilters() {
 
   const cl = $("f-cluster");
   if (cl) cl.onchange = (e) => {
-    // A drill-down is scoped to its cluster. Carrying `group` or `user` across a cluster
+    // A drill-down is scoped to its cluster. Carrying `group`, `user` or `ns` across a cluster
     // switch would re-request that name against the new cluster — a different object with
     // the same name, or a 404 — so the drill-down is dropped from the new position.
     //
@@ -1047,7 +1060,7 @@ function renderFilters() {
     // pre-switch position that no longer made sense. With the browser's stack that erasure is
     // both impossible and wrong — the reader pressed Back expecting the cluster they were
     // reading, and every entry carries its own cluster, so returning to one is well defined.
-    navigate({ cluster: e.target.value, groupsync: null, group: null, user: null });
+    navigate({ cluster: e.target.value, groupsync: null, group: null, user: null, ns: null });
     refresh();
   };
   Object.keys(SEARCH_BOXES).forEach(wireSearchBox);
@@ -1085,9 +1098,9 @@ function renderFilters() {
       // which is the single biggest reason browser-Back used to leave the dashboard: every
       // page but the one you were on was unreachable backwards. A drill-down is dropped
       // because it belongs to the page being left, not to the one being opened.
-      // #172: the Overview tab opens the FLEET; a cluster is reached from a tile or the selector.
-      navigate({ page: b.dataset.nav, groupsync: null, group: null, user: null,
-                 ...(b.dataset.nav === "overview" ? { cluster: null } : {}) });
+          // #172: the Overview tab opens the FLEET; a cluster is reached from a tile or the selector.
+          navigate({ page: b.dataset.nav, groupsync: null, group: null, user: null, ns: null,
+                     ...(b.dataset.nav === "overview" ? { cluster: null } : {}) });
       // PAINT THE DESTINATION FIRST, then fetch. refresh() used to await every endpoint
       // before rendering, and its first visible act dimmed the tab being LEFT — so the
       // destination appeared only after the whole round trip: re-measured 2026-08-10
@@ -3539,6 +3552,187 @@ function policyPage() {
    binding that names the person. Presented per namespace because that is the unit the
    migration is done in, and because "which namespaces still do this?" is the question an
    owner actually asks. */
+/* #167 — namespaces are entities, not a filter: every one the poller sees, findable by name OR
+   by a label value with the same AND contract as the other boxes, and each one a page. */
+const labelShort = (key) => String(key).split("/").pop();
+
+function namespacesCard() {
+  const d = data.namespaces;
+  if (!d) return `<section class="card"><h2>Namespaces</h2><div class="empty-note">Loading…</div></section>`;
+  if (d.forbidden) return "";   // the audit's own refusal card above already explains the tier
+  const self = d.scope === "self";
+  const keys = d.label_keys || [];
+  const all = d.namespaces || [];
+  const q = (view.nsSearch || "").trim();
+  const shown = all.filter((n) => matchesSearch([n.name, ...keys.map((k) => (n.labels || {})[k])], view.nsSearch));
+  const source = d.source || {};
+  const note = source.state === "forbidden"
+    ? `<div class="filterbar-note truncation-note mb-4">The namespace read was refused (${esc(ago(source.observed_at))}), so this list cannot
+        attest absence — a namespace missing here may exist. Grant namespaces [get,list] (chart: <code>rbac.namespaces</code>).</div>`
+    : "";
+  // The envelope counts what the columns count — distinct groups, grants naming a person. At the
+  // self tier the counts are the viewer's own cluster-wide paths and the line explains why every
+  // namespace is listed; with none of their own there is nothing to explain (OB1 F2). `cluster_wide_path`
+  // is the reach itself, a platform identity's binding included: the one case where reach and the
+  // counts differ gets its own sentence rather than "0 and 0 reach every namespace" (Codex, pass 2).
+  const counted = !!(d.cluster_wide_groups || d.cluster_wide_grants);
+  const reached = d.cluster_wide_path == null ? counted : !!d.cluster_wide_path;
+  const cw = d.cluster_wide_groups == null || (self && !reached) ? ""
+    : self && reached && !counted
+      ? `<div class="filterbar-note mb-4">A cluster-wide grant to a platform identity of yours reaches every namespace below;
+          platform identities stay out of the direct-grant count. The columns count what is bound <em>in</em> each one.</div>`
+      : `<div class="filterbar-note mb-4">${d.cluster_wide_groups} group${d.cluster_wide_groups === 1 ? "" : "s"} bound cluster-wide and
+        ${d.cluster_wide_grants} cluster-wide direct grant${d.cluster_wide_grants === 1 ? "" : "s"}${self ? " of yours" : ""} reach every namespace below; the columns count
+        what is bound <em>in</em> each one. A namespace with zero in both is a result an access review wants to confirm.</div>`;
+  const body = shown.length
+    ? `<div class="scroll-x"><table>
+        <thead><tr><th>Namespace</th>${keys.map((k) => `<th>${esc(labelShort(k))}</th>`).join("")}
+          <th class="num">Via groups</th><th class="num">Direct grants</th></tr></thead>
+        <tbody>${shown.map((n) => `<tr class="rowlink" data-ns="${esc(n.name)}">
+          <td><button type="button" class="drill">${esc(n.name)}</button></td>
+          ${keys.map((k) => `<td class="mono muted">${esc((n.labels || {})[k] || "—")}</td>`).join("")}
+          <td class="num ${n.via_groups ? "" : "muted"}">${n.via_groups}</td>
+          <td class="num ${n.direct_grants ? "err" : "muted"}">${n.direct_grants}</td>
+        </tr>`).join("")}</tbody></table></div>`
+    : `<div class="empty-note">${q
+        ? `Nothing matches <strong>${esc(q)}</strong>. All ${all.length} are still there — the filter is hiding them. Press Escape in the box to clear.`
+        // At the self tier the rows are the viewer's own in-namespace paths, so an empty list is a
+        // fact about their view, not about the cluster (review of #167, Grok F3).
+        : (self
+            ? "None of your memberships or grants reaches a namespace on this cluster. That is your view, not the cluster: a namespace missing here may exist."
+            : "No namespaces recorded for this cluster yet.")}</div>`;
+  return `<section class="card">
+    <h2>Namespaces <span class="muted fw-normal">· ${shown.length === all.length ? all.length : `${shown.length} of ${all.length} shown`}</span></h2>
+    <div class="filterbar-note mb-4">${self
+      ? "The namespaces your own memberships and grants reach — grants affecting you, nothing about other people."
+      : "Every namespace the poller sees, not only those with a grant."} Click a row — a namespace is an entity here,
+      the third drill-down beside groups and users. The box in the bar finds by name or by any captured label.</div>
+    ${note}${cw}${body}
+  </section>`;
+}
+
+function nsDetail() {
+  const d = data.ns;
+  if (d && d.forbidden) {
+    return refusalCard(view.ns || "This namespace",
+      `Only namespaces your own memberships or grants reach are visible at your tier. This one is outside your view —
+       or does not exist; the two are deliberately indistinguishable.`, true);
+  }
+  if (!d) return `<section class="card"><div class="empty-note">Loading…</div></section>`;
+  const keys = d.label_keys || [];
+  const labels = d.labels || {};
+  const via = d.via_groups || [], wide = d.cluster_wide_groups || [], direct = d.direct_grants || [];
+  const people = direct.filter((x) => !x.is_platform);
+  // Virtual `system:` groups authorise access but hold no person: badged in the table, folded on the
+  // cluster-wide line (the deployed demo-prod page listed 54 bindings, 41 of them these — the CRC walk).
+  // Counted nowhere: `system:image-pullers` is in every OpenShift namespace, so a Via groups count that
+  // held them read 1 on every row and "zero in both" could never happen. A platform row's default
+  // binding is the platform's — the findings tier it built_in, never unmanaged — so it wears no
+  // hand-made badge (review of #167, pass 3, OB1).
+  const viaReal = via.filter((g) => !g.is_platform);
+  const wideReal = wide.filter((g) => !g.is_platform), widePlatform = wide.filter((g) => g.is_platform);
+  // Folded most-bound first — system:authenticated, every logged-in user, carries most of a cluster's
+  // platform bindings — and with the count of groups behind the "…", which the deployed fold hid.
+  const platformNames = [...widePlatform.reduce((m, g) => m.set(g.group_name, (m.get(g.group_name) || 0) + 1), new Map())]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([name]) => name);
+  // Cluster-wide grants naming a person, platform identities left out: kubeadmin reaches every
+  // namespace by definition and would be one more line on every page (review of #167, Grok F4).
+  const wideGrants = (d.cluster_wide_grants || []).filter((x) => !x.is_platform);
+  const wideBindings = wide.length + wideGrants.length;
+  const self = d.scope === "self";
+  const kpi = (label, value, cls) => `<div class="kpi"><div class="label">${label}</div><div class="value ${cls || ""}">${value}</div></div>`;
+  const labelledNote = keys.length
+    ? (keys.some((k) => labels[k])
+        ? `Labelled ${keys.filter((k) => labels[k]).map((k) => `<code>${esc(k)}=${esc(labels[k])}</code>`).join(" and ")}.`
+        : `Carries none of the captured labels (${keys.map((k) => `<code>${esc(k)}</code>`).join(", ")}) — outside the naming convention,
+           so no mnemonic-based report will ever pick it up.`)
+    : "";
+  return `<section class="card">
+    <button class="back" id="back">${backLabel()}</button>
+    <h2>${esc(d.name)}${d.present ? "" : ` <span class="badge unknown"><span class="glyph" aria-hidden="true"></span>no longer on the cluster</span>`}</h2>
+    <div class="kpis">
+      ${keys.map((k) => kpi(esc(labelShort(k)), esc(labels[k] || "— none —"), labels[k] ? "sm mono" : "sm muted")).join("")}
+      ${self ? "" : kpi("People who reach it", d.people == null ? "—" : d.people)}
+      ${kpi(self ? "Via your groups" : "Via groups", viaReal.length, viaReal.length ? "" : "muted")}
+      ${kpi(self ? "Your direct grants" : "Direct grants", people.length, people.length ? "err" : "muted")}
+    </div>
+    <div class="filterbar-note mt-4">${labelledNote}${people.length ? "" : self
+      // At the self tier `direct_grants` are the viewer's OWN, so an empty list says nothing about anyone
+      // else: prod-ns carries jdoe's direct grant, and alice's page called that "the state an access review
+      // wants to confirm" — a false statement about the cluster, made to the reader least able to check it
+      // (OB3, integration review). The label follows the number it sits beside.
+      ? " No binding names you here directly; other people's direct grants are the administrator tier."
+      : " No RoleBinding names a person here directly, which is the state an access review wants to confirm."}${
+      d.present ? "" : " The store no longer holds this namespace; what follows is what still names it."}</div>
+  </section>
+  <section class="card">
+    <h2>Who reaches it, and through which group <span class="muted fw-normal">· ${viaReal.length}${via.length > viaReal.length ? ` · ${via.length - viaReal.length} platform` : ""}</span></h2>
+    <div class="filterbar-note mb-4">${self ? "Your own memberships that reach this namespace."
+      : "The answer the triangle exists for: a namespace, back to the groups that grant it, back to the people in those groups."}</div>
+    ${via.length ? `<div class="scroll-x"><table>
+      <thead><tr><th>Group</th><th>Role</th><th>Binding</th><th class="num">Members</th></tr></thead>
+      <tbody>${via.map((g) => `<tr class="rowlink" data-group="${esc(g.group_name)}">
+        <td><button type="button" class="drill">${esc(g.group_name)}</button>${g.is_platform ? ' <span class="badge unknown"><span class="glyph" aria-hidden="true"></span>platform</span>' : ""}</td>
+        <td><code>${esc(g.role_name)}</code></td>
+        <td class="muted">${esc(g.binding_kind)} <code>${esc(g.binding_name)}</code>${g.managed_source || g.is_platform ? "" : ' <span class="badge warning"><span class="glyph" aria-hidden="true"></span>hand-made</span>'}</td>
+        <td class="num">${g.member_count}</td></tr>`).join("")}</tbody></table></div>`
+      : `<div class="empty-note">${self
+          // The same rule for the groups: `via_groups` are the viewer's own paths here. klt-pass-both IS
+          // bound to app-ocp-rbac-klta-ns-audit, and alice's page said nobody is granted access at all.
+          ? "None of your own memberships reaches this namespace through a group binding. Whether anyone else's does is the administrator tier."
+          : `No group-based binding names this namespace. Access here is ${people.length
+              ? "entirely by the direct grants below — which is what makes it a finding." : "not granted to anyone through the policy system."}`}</div>`}
+    ${wideBindings ? `<div class="filterbar-note mt-4">Also reached cluster-wide, by ${wideBindings === 1 ? "one binding" : `${wideBindings} bindings`} that
+        grant${wideBindings === 1 ? "s" : ""} every namespace${wideReal.length + wideGrants.length ? `: ${[
+          ...wideReal.map((g) => `<button type="button" class="drill" data-group="${esc(g.group_name)}">${esc(g.group_name)}</button> (<code>${esc(g.role_name)}</code>)`),
+          ...wideGrants.map((x) => `<button type="button" class="drill" data-user="${esc(x.user_name)}">${esc(x.user_name)}</button> (<code>${esc(x.role_name)}</code>, named directly)`),
+        ].join(", ")}` : ""}${widePlatform.length ? `${wideReal.length + wideGrants.length ? "; and" : ":"} ${widePlatform.length} platform binding${widePlatform.length === 1 ? "" : "s"} to ${platformNames.length} virtual group${platformNames.length === 1 ? "" : "s"} (${
+          esc(platformNames.slice(0, 3).join(", "))}${platformNames.length > 3 ? `, … ${platformNames.length - 3} more` : ""}) that every namespace carries` : ""}.</div>` : ""}
+  </section>
+  ${direct.length ? `<section class="card">
+    <h2>Direct grants <span class="muted fw-normal">· ${people.length}${direct.length > people.length ? ` · ${direct.length - people.length} platform` : ""}</span></h2>
+    <div class="filterbar-note mb-4">A person named by a binding rather than reached through a group — the rows a directory change cannot
+      offboard. The operational goal for this card is zero.</div>
+    <div class="scroll-x"><table>
+      <thead><tr><th>Person</th><th>Role</th><th>Binding</th></tr></thead>
+      <tbody>${direct.map((x) => `<tr class="rowlink" data-user="${esc(x.user_name)}">
+        <td><button type="button" class="drill">${esc(x.user_name)}</button>${x.is_platform ? ' <span class="badge unknown"><span class="glyph" aria-hidden="true"></span>platform</span>' : ""}</td>
+        <td><span class="badge ${/admin|edit/.test(x.role_name) ? "critical" : "warning"}"><span class="glyph" aria-hidden="true"></span>${esc(x.role_name)}</span></td>
+        <td class="muted">${esc(x.binding_kind)} <code>${esc(x.binding_name)}</code></td></tr>`).join("")}</tbody></table></div>
+  </section>` : ""}
+  ${(d.siblings || []).length ? `<section class="card">
+    <h2>Same ${esc(labelShort(d.sibling_key))} <span class="muted fw-normal">· ${esc(labels[d.sibling_key])}</span></h2>
+    <div class="filterbar-note mb-4">Sibling namespaces sharing <code>${esc(d.sibling_key)}=${esc(labels[d.sibling_key])}</code>. Typing the value in the
+      box finds all ${d.siblings.length + 1} at once.</div>
+    <div>${d.siblings.map((n) => `<button type="button" class="drill mt-2" data-ns="${esc(n)}">${esc(n)}</button>`).join(" ")}</div>
+  </section>` : ""}
+  <section class="card">
+    <h2>History <span class="muted fw-normal">· ${(d.changes || []).length}</span></h2>
+    ${retentionNote(d.retention)}
+    ${(d.changes || []).length ? `<div class="scroll-x"><table>
+      <thead><tr><th>Change</th><th>Subject</th><th>Role</th><th>Binding</th><th>Observed</th></tr></thead>
+      <tbody>${d.changes.map((c) => `<tr>
+        <td class="${c.baseline ? "change-baseline" : "change-" + esc(c.change)}">${c.baseline ? "first observed" : c.change === "added" ? "+ granted" : "− revoked"}</td>
+        <td>${esc(c.subject_kind)} <button type="button" class="drill" data-${c.subject_kind === "Group" ? "group" : "user"}="${esc(c.subject_name)}">${esc(c.subject_name)}</button></td>
+        <td><code>${esc(c.role_name)}</code></td>
+        <td class="muted">${esc(c.binding_kind)} <code>${esc(c.binding_name)}</code></td>
+        <td class="mono">${esc(fmtTime(c.observed_at))}</td></tr>`).join("")}</tbody></table></div>`
+      : `<div class="empty-note">No binding change recorded here since this dashboard started watching.</div>`}
+  </section>`;
+}
+
+function wireNsPage() {
+  document.querySelectorAll("[data-ns]").forEach((el) => {
+    el.onclick = (e) => {
+      if (e.target.closest("[data-group],[data-user]")) return;
+      navigate({ page: "nsaudit", ns: el.dataset.ns, group: null, user: null, groupsync: null });
+      refresh();
+    };
+  });
+  const back = $("back");
+  if (back) back.onclick = () => { goBack(); };
+}
+
 function nsAuditPage() {
   const ub = data.userBindings;
   if (!ub) return `<section class="card"><div class="empty-note">Loading…</div></section>`;
@@ -3547,8 +3741,8 @@ function nsAuditPage() {
   // decides which applies.
   if (ub.forbidden) return refusalCard("Namespace audit",
     `The per-namespace worklist of direct user grants names people and their access.`);
-  if (ub.scope === "self") return selfGrantsView(ub);
-  return directUserGrants(ub);
+  if (ub.scope === "self") return selfGrantsView(ub) + namespacesCard();
+  return directUserGrants(ub) + namespacesCard();
 }
 
 /* Risk tier for one namespace's worst grant. Ranked on PRIVILEGE and SCOPE, never on
@@ -3710,6 +3904,9 @@ function exportDescriptor() {
              // claim a global order the concatenated rows do not have (review, C1 pass 2).
              sort: { key: "finding," + view.bindingSort, dir: view.bindingDir } };
   }
+  // The namespace page holds no table this descriptor owns: offering the audit's direct-grants export
+  // there exported rows the reader was not looking at (review of #167, Grok F5).
+  if (view.page === "nsaudit" && view.ns) return null;
   if (view.page === "nsaudit") {
     const ub = data.userBindings;
     if (!ub || ub.forbidden) return null;
@@ -4119,9 +4316,14 @@ function render() {
   const focusedId = document.activeElement && document.activeElement.id;
   renderFilters();
   const main = $("main");
-  if (view.page === "nsaudit") {
+  if (view.page === "nsaudit" && view.ns) {
+    main.innerHTML = nsDetail();
+    wireDrilldown();
+    wireNsPage();
+  } else if (view.page === "nsaudit") {
     main.innerHTML = nsAuditPage();
     wireNsAudit();
+    wireNsPage();
   } else if (view.page === "policy") {
     main.innerHTML = policyPage();
     wireDrilldown();
@@ -4262,8 +4464,11 @@ function wireDrilldown() {
   // nowhere. Naming the destination page here is what makes one drill handler correct from every
   // table that emits one, instead of each page needing its own.
   document.querySelectorAll("[data-group]").forEach((el) => {
-    el.onclick = () => {
-      navigate({ page: "groups", group: el.dataset.group, user: null });
+    el.onclick = (e) => {
+      // As the user drill below: a `data-group` button inside a `tr[data-group]` (the user page's
+      // memberships and history) fired both handlers — two navigations, two fetches (review of #167, pass 3).
+      e.stopPropagation();
+      navigate({ page: "groups", group: el.dataset.group, user: null, ns: null });
       refresh();
     };
   });
@@ -4278,21 +4483,20 @@ function wireDrilldown() {
   document.querySelectorAll("[data-user]").forEach((el) => {
     const go = (e) => {
       e.stopPropagation();
-      navigate({ page: view.page === "users" ? "users" : "groups", user: el.dataset.user, group: null });
+      navigate({ page: view.page === "users" ? "users" : "groups", user: el.dataset.user, group: null, ns: null });
       refresh();
     };
     el.onclick = go;
   });
   // Keyboard parity: a drillable name is reachable by Tab and fires on Enter/Space, so the
-  // affordance is not mouse-only.
+  // affordance is not mouse-only. ONE path — the click's — for every drill: the handler used to
+  // cancel the key and then navigate only for a person's name, so Enter on a group's name (or a
+  // namespace's) went nowhere while the click worked (review of #167, pass 2: Grok, Codex).
   document.querySelectorAll(".drill").forEach((el) => {
     el.onkeydown = (e) => {
       if (e.key !== "Enter" && e.key !== " ") return;
       e.preventDefault();
-      const target = el.dataset.user || el.closest("[data-user]")?.dataset.user;
-      if (!target) return;
-      navigate({ page: view.page === "users" ? "users" : "groups", user: target, group: null });
-      refresh();
+      el.click();
     };
   });
   const back = $("back-groups");
@@ -4493,6 +4697,11 @@ async function refresh(opts = {}) {
         const q = new URLSearchParams({ limit: String(NS_GRANT_PAGE) });
         if (view.nsNamespace !== "all") q.set("namespace", view.nsNamespace);
         want.userBindings = guard403(get(`${base}/user-bindings?${q}`));
+        // #167: every namespace the poller sees, and the one being read.
+        // The list for the card, the detail for the page — never both: the page does not render the
+        // card, and fetching the list there was one request a minute for nothing (OB1, review of #167).
+        if (view.ns) want.ns = guard403(get(`${base}/namespaces/${encodeURIComponent(view.ns)}`));
+        else want.namespaces = guard403(get(`${base}/namespaces`));
       }
     }
     // Not cluster-scoped: this is who used the DASHBOARD, which has no cluster dimension.
@@ -4626,6 +4835,8 @@ async function refresh(opts = {}) {
       }
     }
     if ("userBindings" in got) data.userBindings = got.userBindings;
+    if ("namespaces" in got) data.namespaces = got.namespaces;
+    if ("ns" in got) data.ns = got.ns;
     // An AUTOMATIC refresh that changed nothing must not touch the DOM. render() replaces #main
     // wholesale, so an unconditional repaint every interval throws away the reader's scroll
     // position, any open tooltip, and their text selection — on a cluster that is idle, which is
@@ -4641,7 +4852,10 @@ async function refresh(opts = {}) {
       data.clusters, data.alerts, data.alertsScope, data.groupsyncs, data.groups,
       data.groupsMeta, data.group, data.user, data.users, data.events, data.logins, data.access,
       data.usage, data.findings, data.operatorConfigs, data.userBindings, data.whoami, data.myAccess,
-      data.reportCatalog, data.reportRuns, data.fleet,   // #172: the fleet tables render from it
+          data.reportCatalog, data.reportRuns, data.fleet,   // #172: the fleet tables render from it
+          // #167: the namespace list and page ride the same wire (review, Codex — left out, a poll whose
+          // only change was a label or a grant skipped the repaint the comment above forbids skipping).
+          data.namespaces, data.ns,
     ]);
     if (opts.auto && fingerprint === lastFingerprint) {
       // Still say so. Leaving the clock frozen would read as "the dashboard has stopped",

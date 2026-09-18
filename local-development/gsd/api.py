@@ -1685,6 +1685,100 @@ def build_app(
             **by_tier,
         }
 
+    @app.get("/api/clusters/{cluster_id}/namespaces")
+    @consistent
+    def list_namespaces(request: Request, cluster_id: str) -> dict:
+        """Every namespace the poller sees on one cluster, with its configured labels and two
+        counts — distinct groups bound in it, and non-platform grants naming a person there
+        (#167: the audit's picker offered only namespaces that already carried a grant; a
+        namespace with none is the result a review wants to confirm).
+
+        `source` says whether the namespace read was permitted: a refused read cannot attest
+        absence, and the page says so instead of showing an empty list as a clean one.
+        Cluster-wide bindings reach every namespace and are counted once on the envelope.
+
+        SELF-SCOPED under view restrictions: only the namespaces the viewer's own memberships or
+        own bindings reach, counted over those paths — "grants affecting them"
+        (docs/ACCESS_CONTROL.md); the cluster-wide counts are the viewer's own, and an own
+        cluster-wide path lists every namespace, as it reaches every one.
+        """
+        require_cluster(cluster_id)
+        viewer, scope = viewer_scope(request, cluster_id)
+        me = None if scope == "all" else require_viewer(viewer, cluster_id)
+        groups = None if me is None else [g["group_name"] for g in store.user_groups(cluster_id, me)]
+        # The cluster-wide rows — every one at the wide tier, the viewer's own at the self tier —
+        # counted the way every row counts: DISTINCT groups (a group with a cluster-admin and a view
+        # ClusterRoleBinding is one group), non-platform grants naming a person. A cluster-wide path
+        # reaches every namespace, which is what namespace_reach answers for the detail; the list
+        # says the same (review of #167: Codex and OB1 on the count, OB1 F2 on the self tier).
+        wide = store.namespace_detail(cluster_id, "", user_name=me, groups=groups)
+        cluster_wide_groups = len({g["group_name"] for g in wide["via_groups"] if not g["is_platform"]})
+        cluster_wide_grants = len([d for d in wide["cluster_wide_grants"] if not d["is_platform"]])
+        # The switch that lists every namespace is REACH — every cluster-wide binding naming the
+        # viewer, a platform identity's included — the same rule namespace_reach applies to the
+        # detail. The two counts stay the review's counts, platform identities left out; the page
+        # explains the one case where they differ (review of #167, pass 2, Codex).
+        cluster_wide_path = bool(wide["via_groups"] or wide["cluster_wide_grants"])
+        rows = store.namespaces(cluster_id, user_name=me, groups=groups, every=cluster_wide_path)
+        source = store.namespaces_source(cluster_id)
+        return {
+            "cluster": cluster_id,
+            "scope": scope,
+            "viewer": viewer,
+            "source": {"state": source["state"], "observed_at": source["observed_at"]} if source else None,
+            "label_keys": list(settings.namespace_metadata_labels),
+            "count": len(rows),
+            "cluster_wide_groups": cluster_wide_groups,
+            "cluster_wide_grants": cluster_wide_grants,
+            "cluster_wide_path": cluster_wide_path,
+            "namespaces": rows,
+        }
+
+    @app.get("/api/clusters/{cluster_id}/namespaces/{name}")
+    @consistent
+    def namespace_detail(request: Request, cluster_id: str, name: str) -> dict:
+        """One namespace: its labels, who reaches it and through which group, the grants naming
+        a person there, the cluster-wide grants that reach it too, its siblings under the first
+        configured label, and its history of binding changes (#167).
+
+        A namespace the store no longer holds but that bindings or history still name is
+        answered with `present: false`, not 404'd — a removed namespace's link is a detour, not a
+        dead end. 404 only when nothing at all names it.
+
+        SELF-SCOPED under view restrictions: refused BEFORE any lookup unless one of the
+        viewer's own paths reaches the namespace, so the 403 for a namespace outside their view
+        and for one that does not exist are byte-identical — no existence oracle over the very
+        list the self tier withholds. Then the viewer's own paths only; `people` is withheld as
+        None, being a count over other people's memberships.
+        """
+        require_cluster(cluster_id)
+        viewer, scope = viewer_scope(request, cluster_id)
+        me = None if scope == "all" else require_viewer(viewer, cluster_id)
+        groups = None
+        if me is not None:
+            groups = [g["group_name"] for g in store.user_groups(cluster_id, me)]
+            if not store.namespace_reach(cluster_id, name, me, groups):
+                raise HTTPException(
+                    status_code=403,
+                    detail="this namespace is outside your view; namespace detail beyond your own "
+                           "grants needs the wide tier",
+                )
+        keys = list(settings.namespace_metadata_labels)
+        detail = store.namespace_detail(cluster_id, name, user_name=me, groups=groups,
+                                        sibling_key=keys[0] if keys else None)
+        history = store.binding_events(cluster_id, namespace=name, limit=100, viewer=me, viewer_groups=groups)
+        if not detail["present"] and not detail["via_groups"] and not detail["direct_grants"] and not history:
+            raise HTTPException(status_code=404, detail=f"unknown namespace {name!r}")
+        return {
+            "cluster": cluster_id,
+            "scope": scope,
+            "viewer": viewer,
+            "label_keys": keys,
+            **detail,
+            "changes": history,
+            "retention": history_retention("binding_event", store.history_retained_since(cluster_id)),
+        }
+
     @app.get("/api/clusters/{cluster_id}/user-bindings")
     @consistent
     def direct_user_bindings(

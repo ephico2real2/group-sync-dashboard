@@ -657,6 +657,7 @@ tbody tr:nth-child(even) td { background: var(--zebra); }
   text-decoration-style: solid; text-decoration-color: var(--series-1);
 }
 .drill::after { content: " ›"; color: var(--text-muted); }
+.change-baseline { color: var(--text-muted); font-weight: 600; }   /* first observed: not an addition, not the added colour (review of #167, pass 2) */
 .change-added   { color: var(--status-good); font-weight: 600; }
 .change-removed { color: var(--status-critical); font-weight: 600; }
 

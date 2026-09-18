@@ -202,6 +202,9 @@ REVIEW_ARTIFACTS = (
     # PR #148 (#147 system: exclusion + Clear) review record: Grok generated, Codex + Grok reviewed;
     # quotes the F1a fail-before observed set and the reviewers' probe output, point-in-time.
     "REVIEW_147.md",
+    # PR #181 (#167 namespaces) review record: quotes the reviewed head's line numbers and the
+    # pre-fix copy; point-in-time by construction.
+    "REVIEW_namespaces.md",
     # PR #180 (#172 Overview relayout) review record: quotes 759cd7d's line numbers and pre-fix copy;
     # point-in-time by construction.
     "REVIEW_overview_relayout.md",
