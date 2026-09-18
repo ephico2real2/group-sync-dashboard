@@ -1035,6 +1035,64 @@ class TestBindingFindingsVisible:
         assert "Bindings to review" in body
 
 
+class TestTheShellAtPhoneWidth:
+    """#166, measured on the live cluster before the fix: at 375 px the nine-tab bar was 676 px wide,
+    `document.documentElement.scrollWidth` 696, and five tabs sat past the edge of a bar that could
+    not scroll — unreachable. The shell owns the bar (#152), so the check runs on every tab."""
+    TABS = ["overview", "groups", "users", "bindings", "policy", "nsaudit", "logins", "usage"]
+
+    @pytest.mark.parametrize("tab", TABS)
+    def test_no_horizontal_overflow_and_every_tab_inside_the_viewport(self, dash, tab):
+        dash.set_viewport_size({"width": 375, "height": 740})
+        dash.click(f"#tab-{tab}")
+        dash.wait_for_function("() => document.querySelector('#main .card, #main section, #main .empty-note')")
+        dash.wait_for_timeout(300)
+        width = dash.evaluate("() => [document.documentElement.scrollWidth, innerWidth]")
+        assert width[0] <= width[1], f"{tab}: the page scrolls sideways ({width[0]} > {width[1]})"
+        beyond = dash.evaluate(
+            "() => [...document.querySelectorAll('button.tab')].filter(t => t.getBoundingClientRect().right > innerWidth).map(t => t.id)")
+        assert beyond == [], f"{tab}: tabs past the right edge: {beyond}"
+
+
+class TestAppearanceAndColours:
+    """#152: appearance and palette are global shell state on <html>. The URL wins over the stored
+    choice so a shared link opens as the sender saw it; the head script applies both before the
+    stylesheet paints; the controls live in the static header, so the 60 s filter repaint cannot
+    destroy them; a change is never a navigation, so Back keeps working."""
+
+    def test_the_url_is_applied_before_the_first_paint_and_the_controls_mirror_it(self, page, server):
+        page.goto(f"{server}/?mode=dark&theme=deuter#page=groups&cluster=crc-local")
+        # Read at document-start, before the app's own script has run anything.
+        assert page.evaluate("() => [document.documentElement.getAttribute('data-theme'), document.documentElement.getAttribute('data-palette')]") == ["dark", "deuter"]
+        page.wait_for_selector("#pref-mode")
+        assert page.evaluate("() => [document.getElementById('pref-mode').value, document.getElementById('pref-palette').value]") == ["dark", "deuter"]
+
+    def test_junk_in_the_url_stamps_nothing(self, page, server):
+        page.goto(f"{server}/?mode=purple&theme=%3Cscript%3E#page=groups&cluster=crc-local")
+        page.wait_for_selector("#pref-mode")
+        assert page.evaluate("() => [document.documentElement.hasAttribute('data-theme'), document.documentElement.hasAttribute('data-palette')]") == [False, False]
+
+    def test_a_change_survives_the_filter_repaint_a_navigation_and_a_reload(self, dash):
+        dash.select_option("#pref-mode", "dark")
+        dash.select_option("#pref-palette", "trit")
+        before = dash.evaluate("() => history.state")
+        dash.evaluate("() => renderFilters()")          # the 60 s repaint
+        dash.click("#tab-users")
+        dash.wait_for_selector("#tab-users[aria-current='page']")
+        got = dash.evaluate("() => [document.documentElement.dataset.theme, document.documentElement.dataset.palette, location.search, document.getElementById('pref-mode').value]")
+        assert got == ["dark", "trit", "?mode=dark&theme=trit", "dark"]
+        assert before is not None and dash.evaluate("() => history.state && history.state.pos && history.state.pos.page") == "users", "the router's state was not preserved across the change"
+        dash.goto(dash.url.split("?")[0] + "#page=groups&cluster=crc-local")  # no query: the stored choice must win
+        dash.wait_for_selector("#pref-mode")
+        assert dash.evaluate("() => [document.documentElement.dataset.theme, document.documentElement.dataset.palette]") == ["dark", "trit"]
+        dash.select_option("#pref-mode", "")
+        dash.select_option("#pref-palette", "")
+        assert dash.evaluate("() => [document.documentElement.hasAttribute('data-theme'), localStorage.getItem('gsd-mode'), location.search]") == [False, None, ""]
+
+    def test_the_controls_are_in_the_static_header_not_the_filter_bar(self, dash):
+        assert dash.evaluate("() => document.querySelector('header.top #pref-mode') !== null && document.querySelector('#filters #pref-mode') === null")
+
+
 def test_index_is_never_heuristically_cached(server):
     """Reported from the field: a deploy landed but the browser kept the old page, so a
     shipped fix looked like it was never shipped. Without Cache-Control, browsers apply

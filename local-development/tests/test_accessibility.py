@@ -57,13 +57,36 @@ def _block(css: str, pattern: str) -> dict[str, str]:
     return dict(re.findall(r"--([a-z0-9-]+):\s*(#[0-9a-fA-F]{3,8})\s*;", match.group(1)))
 
 
+PALETTES = ("default", "deuter", "protan", "trit", "contrast")
+
+
+def _palette_block(css: str, theme: str, palette: str) -> dict[str, str]:
+    """The tokens a palette overrides for one theme (#152). Light palettes are `:root[data-palette]`;
+    dark ones are the explicit `:root[data-theme="dark"][data-palette]` block — the OS-dark twin
+    inside the media query is held identical to it by test_the_os_dark_palette_twins_match."""
+    if palette == "default":
+        return {}
+    if theme == "light":
+        return _block(css, rf':root\[data-palette="{palette}"\]\s*\{{(.*?)\n\}}')
+    return _block(css, rf':root\[data-theme="dark"\]\[data-palette="{palette}"\]\s*\{{(.*?)\n\}}')
+
+
 @pytest.fixture(scope="module")
 def themes():
+    """Every theme × palette combination, keyed "light", "dark", "light/deuter", "dark/contrast", …
+    The dark block only overrides what changes; the rest cascades from :root — and a palette
+    overrides only the hues it names, on top of its theme."""
     css = CSS.read_text()
     light = _block(css, r":root\s*\{(.*?)\n\}")
-    # The dark block only overrides what changes; the rest cascades from :root.
     dark = {**light, **_block(css, r':root\[data-theme="dark"\]\s*\{(.*?)\n\}')}
-    return {"light": light, "dark": dark}
+    out = {"light": light, "dark": dark}
+    for theme, base in (("light", light), ("dark", dark)):
+        for palette in PALETTES[1:]:
+            out[f"{theme}/{palette}"] = {**base, **_palette_block(css, theme, palette)}
+    return out
+
+
+VARIANTS = ["light", "dark"] + [f"{t}/{p}" for t in ("light", "dark") for p in PALETTES[1:]]
 
 
 # (token, background token, required ratio, why)
@@ -85,6 +108,9 @@ GRAPHICAL = [
     *[(f"series-{i}", "surface-1", AA_LARGE_OR_GRAPHIC, f"owner dot / chart mark {i}")
       for i in range(1, 9)],
 ]
+# td.num.warn is text at weight 600 (#152 defined the token the Users tab had been referencing
+# through a hard-coded fallback), so it is held to the text bar, unlike the badge amber.
+WARN_TEXT = [("warn", "surface-1", AA_TEXT, "td.num.warn"), ("warn", "page", AA_TEXT, "td.num.warn on a bare row")]
 # Active tab labels sit on the page; the accent also tints a card edge and the hero numeral.
 # Derived from the stylesheet, not hardcoded: a hardcoded list silently stops covering a
 # new tab, which is exactly what happened when `policy` and `nsaudit` were added — the
@@ -97,10 +123,10 @@ TAB_NAMES = _tab_tokens(CSS.read_text())
 TABS = [(token, "page", AA_TEXT, f"active {token} label") for token in TAB_NAMES]
 
 
-@pytest.mark.parametrize("theme", ["light", "dark"])
+@pytest.mark.parametrize("theme", VARIANTS)
 @pytest.mark.parametrize(
     "token,background,required,why",
-    TEXT_ON_PAGE + TEXT_ON_CARD + GRAPHICAL + TABS,
+    TEXT_ON_PAGE + TEXT_ON_CARD + GRAPHICAL + TABS + WARN_TEXT,
     ids=lambda v: v if isinstance(v, str) else str(v),
 )
 def test_contrast(themes, theme, token, background, required, why):
@@ -157,7 +183,7 @@ def _mix_srgb(foreground: str, background: str, weight: float) -> str:
     return "#" + "".join(f"{round(f * weight + b * (1 - weight)):02x}" for f, b in zip(ch(foreground), ch(background)))
 
 
-@pytest.mark.parametrize("theme", ["light", "dark"])
+@pytest.mark.parametrize("theme", VARIANTS)
 @pytest.mark.parametrize("background", ["page", "page-2"])
 def test_the_partial_export_edge_clears_graphical_contrast_on_the_page(themes, theme, background):
     """The export note's warning edge (`.export-note.partial`) sits on the page gradient, not on a
@@ -168,3 +194,28 @@ def test_the_partial_export_edge_clears_graphical_contrast_on_the_page(themes, t
     tinted = _mix_srgb(tokens["status-warning"], tokens[background], 0.08)
     got = ratio(edge, tinted)
     assert got >= AA_LARGE_OR_GRAPHIC, f"{theme}: {edge} on the tinted --{background} {tinted} is {got:.2f}:1"
+
+
+
+@pytest.mark.parametrize("palette", PALETTES[1:])
+def test_the_os_dark_palette_twins_match(palette):
+    """A dark palette is written twice — once guarded by prefers-color-scheme for a reader who set
+    nothing, once for an explicit data-theme="dark" — and the contrast checks read only the
+    explicit one. If the two ever drift, the un-stamped reader gets colours nobody measured."""
+    css = CSS.read_text()
+    explicit = _block(css, rf':root\[data-theme="dark"\]\[data-palette="{palette}"\]\s*\{{(.*?)\n\}}')
+    os_dark = _block(css, rf':root:where\(:not\(\[data-theme="light"\]\)\)\[data-palette="{palette}"\]\s*\{{(.*?)\n  \}}')
+    assert explicit, f"no explicit dark block for {palette}"
+    assert os_dark == explicit, f"{palette}: the OS-dark twin differs from the explicit dark block"
+
+
+def test_a_palette_overrides_only_the_status_hues():
+    """--accent and the --tab-* identities are the page's own colour, already separated on lightness
+    for a deuteranope; a palette that repainted them would change which page you are on."""
+    css = CSS.read_text()
+    for palette in PALETTES[1:]:
+        for theme in ("light", "dark"):
+            names = set(_palette_block(css, theme, palette))
+            assert names, f"{theme}/{palette} defines nothing"
+            allowed = {"status-good", "status-warning", "status-warning-edge", "status-critical", "text-muted", "text-secondary"}
+            assert names <= allowed, f"{theme}/{palette} overrides {sorted(names - allowed)}"

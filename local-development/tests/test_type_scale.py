@@ -128,3 +128,76 @@ def test_steps_are_distinct(scale):
             f"otherwise the choice between them is a coin flip that review cannot check."
         )
         seen[px] = name
+
+
+
+def test_inline_styles_carry_no_literal_at_all():
+    """#152: the page had 92 style= attributes, 21 of them font sizes the stylesheet's scale check
+    could not see. Every one is a class now. The one inline style allowed is a value the page can
+    only know at render time — a token reference (`background:var(--series-N)`) — never a number."""
+    page = INDEX.read_text()
+    styles = re.findall(r'style="([^"]*)"', page)
+    offenders = [v for v in styles if not re.fullmatch(r"[a-z-]+:var\(--[a-z0-9${}-]+\)(;[a-z-]+:var\(--[a-z0-9${}-]+\))*", v)]
+    assert not offenders, (
+        "inline style= attributes with a literal value — promote them to a class on the token system: "
+        + ", ".join(offenders)
+    )
+
+
+def _declarations(css: str, props: str):
+    """(line, property, value) for every declaration of the named properties, comments stripped."""
+    for line in css.splitlines():
+        code = re.sub(r"/\*.*?\*/", "", line)
+        for prop, value in re.findall(rf"(?<![-a-z])({props}):\s*([^;{{}}]+)", code):
+            yield line, prop, value.strip()
+
+
+@pytest.mark.parametrize("props,ladder", [
+    ("padding|padding-top|padding-right|padding-bottom|padding-left|gap|row-gap|column-gap|margin|margin-top|margin-right|margin-bottom|margin-left", "--space-"),
+    ("border-radius", "--radius-"),
+])
+def test_spacing_and_radius_come_from_the_ladders(css, props, ladder):
+    """#152: a px value in these properties is either a ladder step (var(--space-N) / var(--radius-*))
+    or a literal the sheet argues for on the same line with an `optical:` note. The type scale's
+    rule, applied to the two other scales the sheet now has."""
+    offenders = [line.strip() for line, _, value in _declarations(css, props)
+                 if re.search(r"\d+px", value) and "optical:" not in line]
+    assert not offenders, (
+        f"px literals off the {ladder} ladder without an optical note:\n  " + "\n  ".join(offenders)
+    )
+
+
+def test_ladders_are_defined_and_used(css):
+    space = re.findall(r"--space-(\d+):\s*(\d+)px", css)
+    radius = re.findall(r"--radius-([a-z]+):\s*([0-9.%px]+)", css)
+    assert [int(n) for n, _ in space] == list(range(1, len(space) + 1)), "the spacing ladder skips a step"
+    assert [int(px) for _, px in space] == sorted(int(px) for _, px in space), "the spacing ladder is not ascending"
+    assert radius, "no radius tokens"
+    unused = [f"--space-{n}" for n, _ in space if f"var(--space-{n})" not in css] + \
+             [f"--radius-{n}" for n, _ in radius if f"var(--radius-{n})" not in css]
+    assert not unused, "ladder steps nothing references: " + ", ".join(unused)
+
+
+def test_no_raw_colour_outside_the_token_blocks(css):
+    """#152: a hex colour outside :root / the theme blocks / the palette blocks opts that rule out of
+    both the appearance and the palette mechanism — the page would keep a light-theme colour on
+    a dark page. Colours are tokens; rules reference them."""
+    blocks = re.findall(r"(?:^:root[^\n{]*|^  :root[^\n{]*)\{(.*?)\n  ?\}", css, re.S | re.M)
+    inside = "\n".join(blocks)
+    outside = css
+    for b in blocks:
+        outside = outside.replace(b, "")
+    outside = re.sub(r"/\*.*?\*/", "", outside, flags=re.S)
+    offenders = [m.group(0) for m in re.finditer(r"^.*#[0-9a-fA-F]{3,8}\b.*$", outside, re.M)
+                 if "url(" not in m.group(0)]
+    assert not offenders, "raw colours outside the token blocks:\n  " + "\n  ".join(o.strip() for o in offenders)
+
+
+def test_comments_do_not_nest(css):
+    """CSS comments do not nest: a `*/` written inside a comment closes it there, and whatever follows
+    is parsed as a broken declaration that swallows the next real one. Measured on #152's first cut:
+    a token-block comment quoted `/* optical: … */`, the inner closer ended the comment, and the text
+    after it ate `--space-1: 2px;` — every chip lost its padding while the regex-based guards stayed
+    green. The render check caught it; this makes the parser's reading the test's reading."""
+    nested = [m.group(0)[:120] for m in re.finditer(r"/\*(.*?)\*/", css, re.S) if "/*" in m.group(1)]
+    assert not nested, "a comment contains a comment opener — its closer ends the outer comment early: " + " | ".join(nested)
