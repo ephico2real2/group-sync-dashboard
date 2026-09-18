@@ -386,3 +386,31 @@ Focused on the fixed tree (the namespaces API, `TestNamespaces`, `TestNamespaceA
 the CSS guards, the API contract, the docs citations): 1302 passed, 12 skipped.
 Full UI suite 332 passed (218.47 s); non-UI suite 3378 passed, 13 skipped (574.51 s). CI on `862df79`: green on
 every job. Merged into `feat/drilldown` as `b21ea86` (clean; 976 passed on the merged tree) for the deployed walk.
+
+## Pass 4 — OB3's integration review (max effort), over `integration/design-programme`
+
+Not a review of this branch: a review of all five features merged onto one branch, where the seams are. Two
+of its findings are this page's.
+
+### H — the self-tier page stated two facts about everyone (OB3, C10) — accepted
+At the self tier `direct_grants` and `via_groups` are the VIEWER's own paths — the endpoint's own docstring
+says so — and the page read them as the namespace's. Measured on the seeded app: alice on `prod-ns` was
+shown *"No RoleBinding names a person here directly, which is the state an access review wants to
+confirm"* while `jdoe-admin` names one; alice on `klt-pass-both` was shown *"not granted to anyone through
+the policy system"* while `app-ocp-rbac-klta-ns-audit` is bound there. Both are false statements about the
+cluster, made to the reader least able to check them, in a tool built for access review.
+
+Three sentences now speak only for the viewer at the self tier, and the KPI labels follow the numbers they
+sit beside — "Via your groups", "Your direct grants" — which is the rule `SPEC_per_user_visibility`
+already states: never a recomputed number under its old label. The wide tier is unchanged. Test:
+`test_the_self_tier_page_never_speaks_for_everyone`; the existing KPI-label assertion moved with the labels.
+
+### I — the policy sweep did not cover this branch's endpoints (OB3, C8) — accepted
+`CLUSTER_ENDPOINTS` is the sweep proving every cluster-scoped handler answers `hidden` exactly as `unknown`,
+so a hidden cluster is not an oracle. Neither `namespaces` nor `namespaces/{name}` was in it. Both added,
+and the second earns its place by mutation: with `require_cluster` deleted from `namespace_detail` the sweep
+fails on `namespaces/prod-ns` alone (1 failed, 57 passed) and passes on the real code (58 passed) — repeated
+here rather than taken on the reviewer's word.
+
+### Tests
+Browser suite 333 passed; non-browser 3380 passed, 13 skipped.

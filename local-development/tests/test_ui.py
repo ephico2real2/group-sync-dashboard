@@ -1934,9 +1934,33 @@ class TestNamespaces:
         p.locator("tr[data-ns='prod-ns'] button.drill").click()
         p.wait_for_selector("h2:text-is('prod-ns')")
         kpis = p.locator(".kpi .label").evaluate_all("els => els.map(e => e.textContent.trim())")
-        assert kpis == ["Via groups", "Direct grants"], kpis
+        # The self tier's labels say whose paths these are: an empty "Direct grants" on a page that holds
+        # only the viewer's own is a number under someone else's label (OB3, integration review, C10).
+        assert kpis == ["Via your groups", "Your direct grants"], kpis
         body = p.locator("#main").inner_text()
         assert "Your own memberships that reach this namespace" in body and "Also reached cluster-wide" in body
+
+    def test_the_self_tier_page_never_speaks_for_everyone(self, page, scoped_server):
+        """At the self tier `direct_grants` and `via_groups` are the viewer's OWN paths, so an empty list says
+        nothing about anyone else: prod-ns carries jdoe's direct grant and klt-pass-both is bound to
+        app-ocp-rbac-klta-ns-audit, and alice's pages read "No RoleBinding names a person here directly, which
+        is the state an access review wants to confirm" and "not granted to anyone through the policy system"
+        — false statements about the cluster, made to the reader least able to check them (OB3, integration
+        review, C10). The labels follow the numbers beside them (SPEC_per_user_visibility: never a recomputed
+        number under its old label)."""
+        p = _open_as(page, scoped_server, "alice")
+        p.goto(f"{scoped_server}/#page=nsaudit&cluster=crc-local&ns=prod-ns")
+        p.wait_for_selector("h2:text-is('prod-ns')")
+        body = p.locator("#main").inner_text()
+        assert "names a person here directly" not in body, body
+        assert "No binding names you here directly" in body, body
+        kpis = p.locator(".kpi .label").evaluate_all("els => els.map(e => e.textContent.trim())")
+        assert "Via your groups" in kpis and "Your direct grants" in kpis, kpis
+        p.goto(f"{scoped_server}/#page=nsaudit&cluster=crc-local&ns=klt-pass-both")
+        p.wait_for_selector("h2:text-is('klt-pass-both')")
+        body = p.locator("#main").inner_text()
+        assert "not granted to anyone" not in body and "No group-based binding names this namespace" not in body, body
+        assert "None of your own memberships reaches this namespace" in body, body
 
     def test_a_platform_only_cluster_wide_path_explains_the_self_tier(self, page, scoped_server):
         """kubeadmin's one binding is the platform-identity ClusterRoleBinding `ka`: at the self tier it reaches

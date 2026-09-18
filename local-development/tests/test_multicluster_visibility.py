@@ -137,7 +137,11 @@ class TestSelfOnlyNeverWidens:
 
 CLUSTER_ENDPOINTS = ("groupsyncs", "groupsyncs/x/events", "groups", "groups/x", "users", "users/x", "logins",
                      "cluster-access", "bindings/findings", "user-bindings", "operator-configs", "membership-changes",
-                     "binding-changes", "namespaces", "home")
+                     "binding-changes",
+                     # The sweep is what proves a handler answers `hidden` exactly as `unknown`, and a
+                     # mutation shows these earn their place: delete `require_cluster` from
+                     # `namespace_detail` and only `namespaces/prod-ns` fails (OB3, integration review, C8).
+                     "namespaces", "namespaces/prod-ns", "home")
 
 
 class TestHiddenIsNotAnOracle:
