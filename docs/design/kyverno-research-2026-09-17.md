@@ -2,7 +2,7 @@
 
 What was researched, against what, and what it means for the module #165 describes. Every claim
 below is cited to a file and line in the **Kyverno v1.19.1 source checkout** (chart 3.9.1,
-`charts/kyverno/Chart.yaml:4-5`) or to the **shipped CRDs**, re-verified on this date. Where the
+the chart's `version` and `appVersion` in `charts/kyverno/Chart.yaml`) or to the **shipped CRDs**, re-verified on this date. Where the
 earlier issue text overstated a source, this record corrects it and says so.
 
 ## Evidence on disk
@@ -22,7 +22,7 @@ earlier issue text overstated a source, this record corrects it and says so.
 **Correction to #165's wording.** The issue said the legacy family "is deleted in v1.20 (~Nov 2026),
 per the source". The source does not say that. What it says:
 
-- `crds/kyverno.io_clusterpolicies.yaml:57-58` — `deprecated: true`,
+- `crds/kyverno.io_clusterpolicies.yaml`, on the `v1` entry of `spec.versions` — `deprecated: true` with
   `deprecationWarning: kyverno.io/v1 ClusterPolicy is deprecated and will be removed`
 - `api/kyverno/v1/policy_types.go:28` — *"deprecated and will be removed in a future release;
   migrate to NamespacedValidatingPolicy and the other namespaced policy types (policies.kyverno.io)"*
@@ -33,8 +33,8 @@ the family is deprecated with a removal warning served by the API — but the da
 ## The findings, each cited
 
 ### 1. Build on `PolicyReport`, not on the policy CRDs
-`wgpolicyk8s.io_policyreports.yaml:44` serves **one** version, `v1alpha2`, with `storage: true`
-(`:359`) and `subresources: {}` (`:360`) — so a reader needs no `/status` subresource right. Every
+`wgpolicyk8s.io_policyreports.yaml` serves **one** entry in `spec.versions`, `v1alpha2`, and that entry
+carries `storage: true` and `subresources: {}` — so a reader needs no `/status` subresource right. Every
 policy type reports into this one result schema; the parser never needs to know policy kinds.
 
 ### 2. A blocked request produces no report
@@ -88,8 +88,8 @@ every LIST must paginate and filter client-side.
 Kyverno's own controller needed this; ours must do the same (re-LIST, then re-WATCH).
 
 ### 10. Two flags default **on** in chart 3.9.1 — a double-count risk to test on CRC
-`kyverno-values.yaml:840-841` `validatingAdmissionPolicyReports.enabled: true` and
-`:887-888` `generateValidatingAdmissionPolicy.enabled: true`. A `ValidatingPolicy` with
+In `kyverno-values.yaml`, `validatingAdmissionPolicyReports.enabled: true` and
+`generateValidatingAdmissionPolicy.enabled: true`. A `ValidatingPolicy` with
 `autogen.validatingAdmissionPolicy.enabled` may then report under **both** the Kyverno policy and
 the generated `ValidatingAdmissionPolicy`. Unverified — the open question in #165, answerable in
 minutes now that Kyverno is on CRC.

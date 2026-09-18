@@ -75,8 +75,8 @@ times are server-zone, and that *"an interaction is one deliberate action … no
 ### The persistent shell  (operator, 2026-09-17: "don't forget the refresh and logout button and our current settings")
 
 Every page renders **inside** the shell (`header.top` + `.filters` + `#main`), and the shell is not a tab —
-a redesign of any page inherits it and may not drop it. Measured on the live app (`index.html:24-50`,
-`:837`, `:876`, `:1746`) and on the mocks: two of eight carried these; six had silently lost Refresh and
+a redesign of any page inherits it and may not drop it. Measured on the live app, in `index.html` — the `header.top` markup, the `refresh()` and sign-out
+handlers, and the settings control they sit beside — and on the mocks: two of eight carried these; six had silently lost Refresh and
 Sign out.
 
 | control | live element | what it is |
