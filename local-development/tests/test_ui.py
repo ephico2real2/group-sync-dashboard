@@ -1035,6 +1035,158 @@ class TestBindingFindingsVisible:
         assert "Bindings to review" in body
 
 
+class TestTheShellAtPhoneWidth:
+    """#166, measured on the live cluster before the fix: at 375 px the nine-tab bar was 676 px wide,
+    `document.documentElement.scrollWidth` 696, and five tabs sat past the edge of a bar that could
+    not scroll — unreachable. The shell owns the bar (#152), so the check runs on every tab."""
+    TABS = ["overview", "groups", "users", "bindings", "policy", "nsaudit", "logins", "usage"]
+
+    @pytest.mark.parametrize("tab", TABS)
+    def test_no_horizontal_overflow_and_every_tab_inside_the_viewport(self, dash, tab):
+        dash.set_viewport_size({"width": 375, "height": 740})
+        dash.click(f"#tab-{tab}")
+        dash.wait_for_function("() => document.querySelector('#main .card, #main section, #main .empty-note')")
+        dash.wait_for_timeout(300)
+        width = dash.evaluate("() => [document.documentElement.scrollWidth, innerWidth]")
+        assert width[0] <= width[1], f"{tab}: the page scrolls sideways ({width[0]} > {width[1]})"
+        beyond = dash.evaluate(
+            "() => [...document.querySelectorAll('button.tab')].filter(t => t.getBoundingClientRect().right > innerWidth).map(t => t.id)")
+        assert beyond == [], f"{tab}: tabs past the right edge: {beyond}"
+
+    def test_phone_header_stays_compact_and_prefs_stay_labelled_on_screen(self, dash):
+        """223 px at 375 (was 113): the two inline labels cost a row each. Below 520 px a label sits ABOVE its
+        select, the pair shares one row with Refresh, and the labels stay on screen — not only in the
+        accessibility tree: a select reading "Auto" or "Default" names nothing on its own (OB1, review 2 of
+        #179; 167 px measured with the labels visible, 143 with them clipped)."""
+        dash.set_viewport_size({"width": 375, "height": 740})
+        got = dash.evaluate("""() => { const r = (e) => e.getBoundingClientRect();
+            const head = document.querySelector('header.top'), mode = document.getElementById('pref-mode'), pal = document.getElementById('pref-palette');
+            const lab = (s) => { const l = s.labels[0], b = r(l); return {name: l.textContent.trim(), visible: b.width > 1 && b.height > 1, above: b.bottom <= r(s).top}; };
+            return {height: r(head).height, scrollWidth: document.documentElement.scrollWidth, mode: lab(mode), pal: lab(pal),
+                    oneRow: Math.abs(r(mode).top - r(pal).top) < 1}; }""")
+        assert got["height"] <= 180, got
+        assert got["scrollWidth"] <= 375, got
+        assert got["mode"] == {"name": "Appearance", "visible": True, "above": True}, got
+        assert got["pal"] == {"name": "Colours", "visible": True, "above": True}, got
+        assert got["oneRow"], got
+        dash.select_option("#pref-mode", "dark")
+        dash.select_option("#pref-palette", "trit")
+        assert dash.evaluate("() => [document.documentElement.dataset.theme, document.documentElement.dataset.palette]") == ["dark", "trit"]
+
+
+
+class TestAppearanceAndColours:
+    """#152: appearance and palette are global shell state on <html>. The URL wins over the stored
+    choice so a shared link opens as the sender saw it; the head script applies both before the
+    stylesheet paints; the controls live in the static header, so the 60 s filter repaint cannot
+    destroy them; a change is never a navigation, so Back keeps working."""
+
+    def test_the_url_is_applied_before_the_first_paint_and_the_controls_mirror_it(self, page, server):
+        page.goto(f"{server}/?mode=dark&theme=deuter#page=groups&cluster=crc-local")
+        # Read at document-start, before the app's own script has run anything.
+        assert page.evaluate("() => [document.documentElement.getAttribute('data-theme'), document.documentElement.getAttribute('data-palette')]") == ["dark", "deuter"]
+        page.wait_for_selector("#pref-mode")
+        assert page.evaluate("() => [document.getElementById('pref-mode').value, document.getElementById('pref-palette').value]") == ["dark", "deuter"]
+
+    def test_junk_in_the_url_stamps_nothing(self, page, server):
+        page.goto(f"{server}/?mode=purple&theme=%3Cscript%3E#page=groups&cluster=crc-local")
+        page.wait_for_selector("#pref-mode")
+        assert page.evaluate("() => [document.documentElement.hasAttribute('data-theme'), document.documentElement.hasAttribute('data-palette')]") == [False, False]
+
+    def test_junk_in_the_url_does_not_discard_the_stored_choice(self, page, server):
+        """Grok, review of #179 (D5): a junk value in the URL is not a choice; the reader's stored one stands."""
+        page.goto(f"{server}/#page=groups&cluster=crc-local")
+        page.wait_for_selector("#pref-mode")
+        page.select_option("#pref-mode", "dark")
+        page.goto(f"{server}/?mode=purple#page=groups&cluster=crc-local")
+        page.wait_for_selector("#pref-mode")
+        assert page.evaluate("() => [document.documentElement.getAttribute('data-theme'), document.getElementById('pref-mode').value]") == ["dark", "dark"]
+
+    def test_a_change_survives_the_filter_repaint_a_navigation_and_a_reload(self, dash):
+        dash.select_option("#pref-mode", "dark")
+        dash.select_option("#pref-palette", "trit")
+        before = dash.evaluate("() => history.state")
+        dash.evaluate("() => renderFilters()")          # the 60 s repaint
+        dash.click("#tab-users")
+        dash.wait_for_selector("#tab-users[aria-current='page']")
+        got = dash.evaluate("() => [document.documentElement.dataset.theme, document.documentElement.dataset.palette, location.search, document.getElementById('pref-mode').value]")
+        assert got == ["dark", "trit", "?mode=dark&theme=trit", "dark"]
+        assert before is not None and dash.evaluate("() => history.state && history.state.pos && history.state.pos.page") == "users", "the router's state was not preserved across the change"
+        dash.goto(dash.url.split("?")[0] + "#page=groups&cluster=crc-local")  # no query: the stored choice must win
+        dash.wait_for_selector("#pref-mode")
+        assert dash.evaluate("() => [document.documentElement.dataset.theme, document.documentElement.dataset.palette]") == ["dark", "trit"]
+        dash.select_option("#pref-mode", "")
+        dash.select_option("#pref-palette", "")
+        assert dash.evaluate("() => [document.documentElement.hasAttribute('data-theme'), localStorage.getItem('gsd-mode'), location.search]") == [False, None, ""]
+
+    def test_accent_soft_follows_the_page_accent(self, dash):
+        """Grok, review of #179 (F1): --accent-soft must be computed where --accent is overridden
+        (body), not on :root — an unregistered custom property inherits its COMPUTED value, so a
+        :root color-mix(var(--accent)) freezes against --tab-overview and the pressed chip on Users
+        wears the wrong section's wash. Fails on the :root definition; passes with it on body."""
+        def sample(tab):
+            dash.click(f"#tab-{tab}")
+            dash.wait_for_selector(f"#tab-{tab}[aria-current='page']")
+            return dash.evaluate("""() => {
+                const probe = document.createElement('div'); document.body.appendChild(probe);
+                probe.style.background = 'var(--accent-soft)';
+                const soft = getComputedStyle(probe).backgroundColor;
+                probe.style.background = 'color-mix(in srgb, var(--accent) 14%, transparent)';
+                const direct = getComputedStyle(probe).backgroundColor;
+                const accent = getComputedStyle(document.body).getPropertyValue('--accent').trim();
+                probe.remove(); return {soft, direct, accent}; }""")
+        overview, users = sample("overview"), sample("users")
+        assert users["accent"] != overview["accent"], "the two tabs share --accent — nothing to follow"
+        assert users["soft"] == users["direct"], f"Users --accent-soft {users['soft']} froze on :root (page mix {users['direct']})"
+        assert overview["soft"] == overview["direct"]
+        assert users["soft"] != overview["soft"], "both tabs resolved to the same wash"
+
+    def test_print_is_light_whatever_the_screen_theme(self, page, server):
+        """OB1, review of #179: a print is paper — Chrome paints no page background by default, so the
+        dark tokens put near-white text on white. The dark blocks are screen-only; the palette stays,
+        in its light form. Fails on the ungated sheet (white text, dark scheme); passes gated."""
+        page.goto(f"{server}/?mode=dark&theme=contrast#page=overview&cluster=crc-local")
+        page.wait_for_selector(".hero .value")
+        page.emulate_media(media="print")
+        got = page.evaluate("() => { const cs = getComputedStyle(document.body); return [cs.color, cs.colorScheme, getComputedStyle(document.documentElement).getPropertyValue('--status-good').trim()]; }")
+        assert got == ["rgb(11, 11, 11)", "light", "#076607"], got
+        page.emulate_media(media="screen")
+        assert page.evaluate("() => getComputedStyle(document.body).colorScheme") == "dark"
+
+    def test_the_url_keeps_the_choice_across_back(self, dash):
+        """OB1, review of #179: replaceState rewrote only the current entry, so Back restored an
+        address without ?mode — and every entry pushed from there inherited the loss."""
+        dash.click("#tab-groups")
+        dash.wait_for_selector("tr[data-group]")
+        dash.click("tr[data-group='app-ocp-rbac-alpha-ns-admin']")
+        dash.wait_for_selector("#back-groups")
+        dash.select_option("#pref-mode", "dark")
+        dash.click("#back-groups")
+        dash.wait_for_function("() => !document.querySelector('#back-groups')")
+        assert dash.evaluate("() => [location.search, document.documentElement.dataset.theme, history.state.pos.page]") == ["?mode=dark", "dark", "groups"]
+
+    def test_a_hashless_mode_link_keeps_the_query_after_boot(self, page, server):
+        """Grok, review 2 of #179: boot used `location.hash || location.pathname`, which dropped ?mode
+        from a hashless link — the sender believed the address bar still said dark."""
+        page.goto(f"{server}/?mode=dark")
+        page.wait_for_selector("#pref-mode")
+        assert page.evaluate("() => [location.search, document.documentElement.getAttribute('data-theme'), document.getElementById('pref-mode').value]") == ["?mode=dark", "dark", "dark"]
+        page.click("#tab-users")
+        page.wait_for_selector("#tab-users[aria-current='page']")
+        assert page.evaluate("() => location.search") == "?mode=dark"
+
+    def test_a_valid_url_mode_wins_over_the_stored_choice(self, page, server):
+        page.goto(f"{server}/#page=groups&cluster=crc-local")
+        page.wait_for_selector("#pref-mode")
+        page.select_option("#pref-mode", "dark")
+        page.goto(f"{server}/?mode=light#page=groups&cluster=crc-local")
+        page.wait_for_selector("#pref-mode")
+        assert page.evaluate("() => [document.documentElement.getAttribute('data-theme'), document.getElementById('pref-mode').value]") == ["light", "light"]
+
+    def test_the_controls_are_in_the_static_header_not_the_filter_bar(self, dash):
+        assert dash.evaluate("() => document.querySelector('header.top #pref-mode') !== null && document.querySelector('#filters #pref-mode') === null")
+
+
 def test_index_is_never_heuristically_cached(server):
     """Reported from the field: a deploy landed but the browser kept the old page, so a
     shipped fix looked like it was never shipped. Without Cache-Control, browsers apply
@@ -3993,12 +4145,17 @@ def reporting_server(tmp_path_factory):
     writer.close()
     from pathlib import Path
     vendor = Path(__file__).resolve().parents[1] / "gsd" / "static" / "vendor"
-    clock = {"now": _dt.now(_UTC)}
+    # Live unless a test pins it. The service verifies every ticket against THIS clock while the
+    # dashboard mints with wall time, so a clock frozen at creation refused every ticket minted more
+    # than MAX_CLOCK_SKEW_SECONDS (30) later as future-dated — a 403, which reportFetch does not remint
+    # on (401 only) — and the whole class painted the refusal card when the fixture was created ahead
+    # of it (OB1, review 2 of #179). A test that needs a fixed instant sets clock["now"] and clears it.
+    clock = {"now": None}
     report_settings = ReportSettings(snapshot_dir=str(snapshots), artifact_dir=str(artifacts), pdf_enabled=True, pdf_variant="pdf/a-2b",
                                      font_regular=str(vendor / "DejaVuSans.ttf"), font_bold=str(vendor / "DejaVuSans-Bold.ttf"),
                                      enabled_reports=tuple(n for n in REPORT_NAMES if n != "login-activity"),
                                      login_capture_enabled=False)
-    report_app = build_report_app(report_settings, secret=REPORT_SECRET, clock=lambda: clock["now"])
+    report_app = build_report_app(report_settings, secret=REPORT_SECRET, clock=lambda: clock["now"] or _dt.now(_UTC))
     settings = Settings(
         clusters=[ClusterConfig("crc-local", "https://api.crc.testing:6443", token_env="X")],
         db_path=db, login_capture_enabled=True, oauth_proxy_enabled=True,
@@ -4047,6 +4204,51 @@ def _reports_page(browser, base, user, fake_clock=False):
 
 
 class TestReportsTab:
+    def test_the_fixtures_report_service_keeps_wall_time(self, reporting_server):
+        """The service verifies every ticket against ITS clock while the dashboard mints with wall time; a
+        fixture clock frozen at creation refused any ticket minted more than MAX_CLOCK_SKEW_SECONDS (30)
+        later as "issued too far in the future" — a 403 the page cannot remint past (it remints on 401
+        only), so it painted the narrowed-reader refusal card where the picker belongs. Measured: 200 at
+        3 s after creation, 403 at 80 s; in CI the shell sweep created this fixture ten minutes before
+        the class (OB1, review 2 of #179). The snapshot's age is the service's clock read over the wire:
+        it has to move."""
+        import time as _time
+        from gsd.reporting.ticket import mint as _mint
+        base, _clock, _app = reporting_server
+        headers = {"X-Forwarded-User": "root", "X-GSD-Report-Ticket": _mint(REPORT_SECRET, "root", "all", 120)}
+
+        def age() -> int:
+            r = httpx.get(f"{base}/report/api/snapshot", headers=headers, timeout=5)
+            assert r.status_code == 200, f"{r.status_code} {r.text}: a ticket minted now is refused — the service clock is behind wall time"
+            return r.json()["age_seconds"]
+
+        first = age()
+        _time.sleep(1.2)
+        second = age()
+        assert second >= first + 1, f"the report service's clock is frozen: {first} -> {second}"
+
+    def test_the_reports_tab_is_inside_the_viewport_too(self, browser, reporting_server):
+        """The phone-width sweep runs on `server`, which has no reporting, so it sees eight tabs; the
+        live bar was nine wide and Reports the first off the edge (OB1, review of #179). Measured here,
+        beside the other users of the module-scoped `reporting_server`: created ten minutes ahead of
+        this class (the first cut placed it in the shell sweep), the fixture's then-frozen clock refused
+        every later-minted ticket as future-dated (the 30 s skew bound, a 403 the page does not remint
+        on) and every test of this class timed out on `#report-picker` — in the full suite only. The
+        earlier reading, "outlived its 300 s TTL", was wrong: the TTL is 120 s and the bound that bit
+        was the skew (OB1, review 2 of #179); the clock is live now, and a guard test holds it so."""
+        base, _clock, _app = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "alice")
+        try:
+            page.set_viewport_size({"width": 375, "height": 740})
+            page.click("#tab-reports")
+            page.wait_for_selector("#tab-reports[aria-current='page']")
+            page.wait_for_timeout(300)
+            assert page.evaluate("() => document.querySelectorAll('button.tab').length") == 9
+            assert page.evaluate("() => [document.documentElement.scrollWidth <= innerWidth, [...document.querySelectorAll('button.tab')].filter(t => t.getBoundingClientRect().right > innerWidth).map(t => t.id)]") == [True, []]
+            assert not errors
+        finally:
+            ctx.close()
+
     def test_the_administrator_generates_a_report_and_downloads_the_pdf(self, browser, reporting_server):
         base, _, _ = reporting_server
         ctx, page, errors = _reports_page(browser, base, "root")
