@@ -264,7 +264,11 @@ function applyPosition(pos) {
   // repeat across clusters, so it silently shows a DIFFERENT object under the name you
   // expected, or 404s. Only overwritten when the entry carries one, so an entry predating
   // cluster selection does not blank it.
-  if (pos.cluster) {
+  // The cluster this position implies: its own, or — on the fleet, where an absent cluster IS the position
+  // (#172) — none. Computed before the drop because the drop's question is "is this a different cluster
+  // from the one whose payloads I am holding?", and toward the fleet the answer used to go unasked.
+  const nextCluster = (view.page === "overview" && !view.groupsync && !pos.cluster) ? null : (pos.cluster || view.cluster);
+  if (nextCluster !== view.cluster || pos.cluster) {
     // A cluster switch orphans every cluster-scoped payload in `data`. The tab handler
     // paints BEFORE it fetches, so leaving them in place would put cluster A's rows on
     // screen under cluster B's title for the length of a fetch. Dropped, the same paint
@@ -275,7 +279,11 @@ function applyPosition(pos) {
     // From NO cluster as well (#172): the fleet view leaves view.cluster null, so a tile opened
     // after a scoped visit is a cluster change too — guarded on `view.cluster &&`, crc-local's
     // groups painted under " - prod-east" on the next tab click (measured, OB1 review).
-    if (pos.cluster !== view.cluster) {
+    // TO the fleet as well as between clusters: the drop sat under `if (pos.cluster)`, which the fleet
+    // never satisfies, so leaving a scoped page for the Overview tab and returning to that page painted
+    // the PREVIOUS cluster's rows under the boot cluster's position for the length of the fetch —
+    // prod-east's two groups under `#page=groups&cluster=crc-local` (OB3, integration review, C2).
+    if (nextCluster !== view.cluster) {
       data.groupsyncs = null; data.groups = null; data.groupsMeta = null;
       data.group = null; data.user = null; data.events = null; data.users = null;
       data.logins = null; data.access = null; data.findings = null;
@@ -297,12 +305,12 @@ function applyPosition(pos) {
       // namespaces. The sort is a preference, not a cluster fact, and stays.
       view.bindingSearch = "";
     }
-    view.cluster = pos.cluster;
+    if (pos.cluster) view.cluster = pos.cluster;
   }
   // #172: on the Overview an absent cluster is the fleet view, so it is NOT left alone there —
   // Back from a tile must land on the fleet, and the Overview tab opens it. Every other page
   // keeps the rule above (a bare #page=groups keeps the cluster the reader had).
-  if (view.page === "overview" && !view.groupsync && !pos.cluster) view.cluster = null;
+  view.cluster = nextCluster;
   // #144 adversarial review C6-D: history Back is not inert while a modal is up, and only the
   // cluster branch above clears the preview. A same-cluster Back from Reports to another tab
   // repainted #main under a still-open names dialog — "N namespaces match this selection"
