@@ -517,6 +517,12 @@ header.top .spacer { flex: 1; }
 .shell-prefs { display: inline-flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
 .shell-prefs .pref { display: inline-flex; align-items: center; gap: var(--space-3); } /* a label wraps WITH its select at 375px */
 .shell-prefs label { color: var(--text-secondary); font-size: var(--text-sm); }
+/* On a phone the two labels cost a row each (the header measured 223 px at 375, was 113); below 520 px
+   they leave the screen but not the accessibility tree — the clip idiom, never display:none, so
+   label[for] still names each select (Grok, review 2 of #179). */
+@media (max-width: 520px) {
+  .shell-prefs label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+}
 
 /* One filter row above everything it scopes — never a filter inside a card. */
 .filters {

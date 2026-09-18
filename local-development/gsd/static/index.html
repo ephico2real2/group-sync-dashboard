@@ -4408,7 +4408,9 @@ applyPosition(positionFromHash());
 // page looks stale, so this is an ordinary path, not an exotic one.
 history.replaceState(
   { pos: currentPosition(), from: (history.state && history.state.from) || null },
-  "", location.hash || location.pathname);
+  // The query rides along on a hashless link: `location.pathname` alone dropped ?mode/?theme from
+  // /?mode=dark, and every entry pushed from there inherited the loss (Grok, review 2 of #179).
+  "", location.hash || (location.pathname + location.search));
 
 /* The session cap this page quotes when it ends. From /api/whoami rather than hardcoded, so
    it cannot contradict the proxy's own -cookie-expire. */

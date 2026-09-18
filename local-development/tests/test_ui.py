@@ -1053,6 +1053,19 @@ class TestTheShellAtPhoneWidth:
             "() => [...document.querySelectorAll('button.tab')].filter(t => t.getBoundingClientRect().right > innerWidth).map(t => t.id)")
         assert beyond == [], f"{tab}: tabs past the right edge: {beyond}"
 
+    def test_phone_header_stays_compact_and_prefs_stay_named(self, dash):
+        """The two labels cost the phone header a row each (223 px measured at 375, was 113). Below 520 px
+        they leave the screen but not the accessibility tree: each select keeps its label[for] name."""
+        dash.set_viewport_size({"width": 375, "height": 740})
+        box = dash.evaluate("""() => { const h = document.querySelector('header.top').getBoundingClientRect();
+            const mode = document.getElementById('pref-mode'), pal = document.getElementById('pref-palette');
+            return { height: h.height, modeName: mode.labels[0] && mode.labels[0].textContent.trim(),
+                     palName: pal.labels[0] && pal.labels[0].textContent.trim(),
+                     modeVisible: mode.getBoundingClientRect().height > 0, palVisible: pal.getBoundingClientRect().height > 0 }; }""")
+        assert box["height"] <= 160, box
+        assert box["modeName"] == "Appearance" and box["palName"] == "Colours", box
+        assert box["modeVisible"] and box["palVisible"], box
+
     def test_the_reports_tab_is_inside_the_viewport_too(self, browser, reporting_server):
         """`server` has no reporting, so the sweep above sees eight tabs; the live bar was nine wide and
         Reports was the first tab off the edge (OB1, review of #179). Measured on the reporting fixture."""
@@ -1159,6 +1172,24 @@ class TestAppearanceAndColours:
         dash.click("#back-groups")
         dash.wait_for_function("() => !document.querySelector('#back-groups')")
         assert dash.evaluate("() => [location.search, document.documentElement.dataset.theme, history.state.pos.page]") == ["?mode=dark", "dark", "groups"]
+
+    def test_a_hashless_mode_link_keeps_the_query_after_boot(self, page, server):
+        """Grok, review 2 of #179: boot used `location.hash || location.pathname`, which dropped ?mode
+        from a hashless link — the sender believed the address bar still said dark."""
+        page.goto(f"{server}/?mode=dark")
+        page.wait_for_selector("#pref-mode")
+        assert page.evaluate("() => [location.search, document.documentElement.getAttribute('data-theme'), document.getElementById('pref-mode').value]") == ["?mode=dark", "dark", "dark"]
+        page.click("#tab-users")
+        page.wait_for_selector("#tab-users[aria-current='page']")
+        assert page.evaluate("() => location.search") == "?mode=dark"
+
+    def test_a_valid_url_mode_wins_over_the_stored_choice(self, page, server):
+        page.goto(f"{server}/#page=groups&cluster=crc-local")
+        page.wait_for_selector("#pref-mode")
+        page.select_option("#pref-mode", "dark")
+        page.goto(f"{server}/?mode=light#page=groups&cluster=crc-local")
+        page.wait_for_selector("#pref-mode")
+        assert page.evaluate("() => [document.documentElement.getAttribute('data-theme'), document.getElementById('pref-mode').value]") == ["light", "light"]
 
     def test_the_controls_are_in_the_static_header_not_the_filter_bar(self, dash):
         assert dash.evaluate("() => document.querySelector('header.top #pref-mode') !== null && document.querySelector('#filters #pref-mode') === null")
