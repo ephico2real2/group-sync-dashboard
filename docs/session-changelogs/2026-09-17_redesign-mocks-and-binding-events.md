@@ -49,3 +49,29 @@ Outcome in one line: **…**
   under the client-certificate kubeconfig — recorded in memory). **Measured live**: two RoleBindings created at
   02:52:06Z → three `added` rows at 02:57:18Z (the platform's `system:image-pullers` included), namespace
   deleted → three matching `removed` rows at 03:03:18Z; counters symmetric.
+
+### Review pass 1 applied — commit `c59fddd` (2026-09-17 23:0x), PR #177
+
+- **Found by Codex (gpt-5.6-sol, xhigh), C4 REFUTED, accepted and fixed**: an empty first poll left no rows, so the
+  second poll's real additions were flagged `baseline = 1` (`first_empty=0 event_rows=0 second_nonempty=1
+  second_baseline=1`). The first observation is now a consumed marker — `observation_state(cluster_id, stream)`,
+  **migration 14** rather than Codex's rewrite of 13, because CRC already carried `user_version 13`.
+- **Found by Codex, volunteered, accepted**: one SQL placeholder per viewer group → "too many SQL variables" past
+  `SQLITE_LIMIT_VARIABLE_NUMBER`; one `json_each(?)` parameter now; the test forces the limit to 16.
+- **Found by Cursor (Grok 4.6)**: two stale "two tables" comments and four preservation tests — **applied**; its
+  accepted debt on the empty first observation is superseded by the marker.
+- Measured: touched files 193 passed; full suite **3073 passed, 17 skipped** (`--ignore=tests/test_ui.py`); citations
+  test 891 passed; CRC upgrade 13→14 wrote **0** baseline rows over 407 / 95 / 184 current rows; nine markers seeded;
+  the route answers `count: 6, baseline_rows: 0`. Record: `docs/REVIEW_binding_events.md`.
+- Process: Codex's own "leave the scratch directory empty" step deleted the launcher's `tee` target it shared —
+  recovered byte-identical (25,265 bytes) from the harness capture; the second pass gives each reviewer its own
+  directory and forbids deleting files it did not create.
+
+### The OB1 skill (PR #176, branch `skill-ob1-reviewer`) — commits `c31e6a9`, `dff6d4c`, `30dc24e`
+
+- The operator's branch conflicted with main (cut before `a3b4b07`); resolved keeping OB1, main's background-wakeup
+  paragraph, Grok's ZDR tag and the demand-the-snippet sentence — PR #176 reads MERGEABLE (blocked only on approval).
+- **The operator**: "It shouldn't be review only. It also produces the code fix for any suggestions" → OB1 hands back
+  the full fix and its failing/passing test in its report; "Dont drop the cursor fable role" → the Cursor Fable rows
+  stay; OB1 fills the role while Cursor's usage limit is hit (measured: `ActionRequiredError: You've hit your usage
+  limit`), and Cursor Fable resumes when the quota resets.

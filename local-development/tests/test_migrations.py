@@ -247,3 +247,90 @@ def test_migration_10_opens_a_v9_database_and_matches_a_fresh_one(tmp_path, vers
     finally:
         upgraded.close()
         fresh.close()
+
+
+def test_a_successfully_polled_empty_cluster_is_marked_at_the_next_open(tmp_path):
+    """Codex, review 2 of #177 (S3 refuted): a successful poll writes groupsync_presence in the same
+    transaction as sync_members, even when the cluster returned no Group at all — durable proof the
+    stream was observed before observation_state existed. The seed runs at every open (OB1), so a
+    store rewound to user_version 14 with the marker gone is marked again. Fails before (baseline == 1)."""
+    from gsd.store import Store
+    db = str(tmp_path / "polled-empty-v14.db")
+    store = Store(db)
+    store.upsert_cluster("crc", "https://api.crc.testing:6443", True)
+    with store.poll_snapshot():
+        store.replace_groupsync_state("crc", [], "2026-09-17T22:00:00Z")
+        store.replace_group_state("crc", [], "2026-09-17T22:00:00Z")
+        assert store.sync_members("crc", {}, {}, "2026-09-17T22:00:00Z") == 0
+        store.record_poll("crc", "ok", None)
+    for table in ("group_state", "group_member", "membership_event"):
+        assert store._conn.execute(f"SELECT count(*) FROM {table} WHERE cluster_id='crc'").fetchone()[0] == 0
+    assert store._conn.execute("SELECT count(*) FROM groupsync_presence WHERE cluster_id='crc'").fetchone()[0] == 1
+    # rewind only the new mechanism: the shape a marker-less build leaves behind (migration 14 will not re-run)
+    store._conn.execute("DELETE FROM observation_state")
+    store._conn.execute("PRAGMA user_version = 14")
+    store._conn.commit()
+    store.close()
+
+    upgraded = Store(db)
+    try:
+        streams = [r["stream"] for r in upgraded._conn.execute(
+            "SELECT stream FROM observation_state WHERE cluster_id='crc'")]
+        assert streams == ["membership"]
+        assert upgraded.sync_members("crc", {"g": ["alice"]}, {}, "2026-09-17T22:05:00Z") == 1
+        event = upgraded.membership_events("crc", user_name="alice")[0]
+        assert (event["change"], event["baseline"]) == ("added", 0)
+    finally:
+        upgraded.close()
+
+
+def test_a_committed_ok_poll_marks_membership_but_a_failed_one_does_not(tmp_path):
+    """OB1, review 2 of #177: poll_outcome.status='ok' is written LAST inside the same snapshot as
+    sync_members, so it proves the membership stream was observed even when it was empty; a
+    failed poll proves nothing. Fails without the poll_outcome seed (`[] == [('nil', 'membership')]`)."""
+    from gsd.store import Store
+    db = str(tmp_path / "v13.db")
+    fresh = Store(db)
+    fresh.upsert_cluster("nil", "https://nil:6443", True)
+    fresh.upsert_cluster("down", "https://down:6443", True)
+    fresh.record_poll("nil", "ok", None)           # polled, empty, committed
+    fresh.record_poll("down", "error", "refused")  # never observed
+    fresh._conn.executescript("DROP TABLE observation_state; PRAGMA user_version = 13;")
+    fresh.close()
+    upgraded = Store(db)
+    try:
+        assert upgraded._conn.execute("PRAGMA user_version").fetchone()[0] == 14
+        markers = [tuple(r) for r in upgraded._conn.execute(
+            "SELECT cluster_id, stream FROM observation_state ORDER BY 1")]
+        assert markers == [("nil", "membership")]
+        assert upgraded.sync_members("nil", {"g": ["zed"]}, {}, "2026-09-18T00:00:00Z") == 1
+        assert upgraded.membership_events("nil", user_name="zed")[0]["baseline"] == 0
+        assert upgraded.sync_members("down", {"g": ["ann"]}, {}, "2026-09-18T00:00:00Z") == 1
+        assert upgraded.membership_events("down", user_name="ann")[0]["baseline"] == 1
+    finally:
+        upgraded.close()
+
+
+def test_rows_written_without_a_marker_are_marked_at_the_next_open(tmp_path):
+    """OB1, review 2 of #177 (V1): a build without observation_state (1f55cb1, which the lab ran)
+    against a v14 store — a rollback — writes rows for a new cluster but no marker, and user_version
+    stays 14 so migration 14 never re-runs. The next open must still mark that cluster, or its next
+    real additions are flagged baseline. Simulated by writing the rows directly, as that build would."""
+    from gsd.store import Store
+    db = str(tmp_path / "v14.db")
+    s = Store(db)
+    s.upsert_cluster("x", "https://x:6443", True)
+    s._conn.execute("INSERT INTO group_member(cluster_id, group_name, user_name, first_seen_at, last_seen_at)"
+                    " VALUES('x','g','alice','t','t')")
+    s._conn.execute("INSERT INTO membership_event(cluster_id, group_name, user_name, change, observed_at)"
+                    " VALUES('x','g','alice','added','t')")
+    s._conn.commit()
+    s.close()
+    reopened = Store(db)
+    try:
+        assert [tuple(r) for r in reopened._conn.execute(
+            "SELECT cluster_id, stream FROM observation_state")] == [("x", "membership")]
+        assert reopened.sync_members("x", {"g": ["alice", "bob"]}, {}, "2026-09-18T00:00:00Z") == 1
+        assert reopened.membership_events("x", user_name="bob")[0]["baseline"] == 0
+    finally:
+        reopened.close()

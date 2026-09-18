@@ -48,6 +48,14 @@ def _seed(store: Store, table: str, n: int, days_ago: float, cluster: str = "crc
                        observed_at, group_synced_at) VALUES(?,?,?,'added',?,NULL)""",
                 [(cluster, "g", f"u{i}", _iso(days_ago + i / 86400)) for i in range(n)],
             )
+        elif table == "binding_event":
+            conn.executemany(
+                """INSERT INTO binding_event(cluster_id, binding_kind, binding_namespace, binding_name,
+                       subject_kind, subject_name, role_kind, role_name, is_platform, change, baseline,
+                       observed_at)
+                   VALUES(?,'RoleBinding','ns','rb','Group',?,'ClusterRole','view',0,'added',0,?)""",
+                [(cluster, f"g{i}", _iso(days_ago + i / 86400)) for i in range(n)],
+            )
         else:
             conn.executemany(
                 """INSERT INTO sync_event(cluster_id, groupsync_name, groupsync_namespace,
@@ -77,7 +85,8 @@ class _Elector:
 
 class TestStorePrune:
     @pytest.mark.parametrize("table,prune", [
-        ("membership_event", "prune_membership_events"), ("sync_event", "prune_sync_events")])
+        ("membership_event", "prune_membership_events"), ("sync_event", "prune_sync_events"),
+        ("binding_event", "prune_binding_events")])
     def test_prunes_by_age_and_leaves_the_rest(self, store, table, prune):
         _seed(store, table, 10, days_ago=800)
         _seed(store, table, 10, days_ago=10)
@@ -88,7 +97,8 @@ class TestStorePrune:
         assert _count(store, table, "other") == 5, "another cluster's rows were touched"
 
     @pytest.mark.parametrize("table,prune", [
-        ("membership_event", "prune_membership_events"), ("sync_event", "prune_sync_events")])
+        ("membership_event", "prune_membership_events"), ("sync_event", "prune_sync_events"),
+        ("binding_event", "prune_binding_events")])
     def test_each_call_is_bounded_and_the_backlog_drains_across_calls(self, store, table, prune):
         _seed(store, table, 12_000, days_ago=800)
         cutoff = _iso(730)
@@ -150,6 +160,10 @@ class _Recording(Store):
         self.calls.append("prune_sync_events")
         return super().prune_sync_events(cluster_id, before_at, max_rows)
 
+    def prune_binding_events(self, cluster_id, before_at, max_rows=5000):
+        self.calls.append("prune_binding_events")
+        return super().prune_binding_events(cluster_id, before_at, max_rows)
+
 
 @pytest.fixture()
 def recording(tmp_path):
@@ -171,7 +185,8 @@ class TestPollerPrune:
     def test_order_is_maintain_backup_then_prune(self, recording, tmp_path):
         poller = Poller(recording, _settings(tmp_path))
         poller._after_poll(CLUSTER)
-        assert recording.calls == ["maintain", "backup", "prune_membership_events", "prune_sync_events"]
+        assert recording.calls == ["maintain", "backup", "prune_membership_events", "prune_sync_events",
+                                   "prune_binding_events"]
 
     def test_nothing_is_deleted_until_a_backup_has_succeeded(self, recording, tmp_path):
         """A failing backup HOLDS the prune; the first good one releases it."""

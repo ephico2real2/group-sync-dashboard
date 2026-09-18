@@ -128,6 +128,28 @@ class TestDiff:
         events = store.binding_events("crc", viewer="alice", viewer_groups=groups)
         assert [(e["subject_kind"], e["subject_name"]) for e in events] == [("Group", "g-mine")]
 
+    def test_groups_polled_without_members_are_still_an_observation(self, tmp_path):
+        """Grok, review 2 of #177 (V1): a v13/v14 cluster whose groups were all polled with zero members
+        has group_state rows and nothing in group_member / membership_event — the 14 backfill missed it,
+        so its first join after the upgrade read as a first observation. The seed at open covers group_state."""
+        db = str(tmp_path / "polled-empty.db")
+        s = Store(db)
+        s.upsert_cluster("crc", "https://api.crc.testing:6443", True)
+        s.replace_group_state("crc", [{"name": "g", "member_count": 0, "sync_provider": None,
+                                       "group_synced_at": None, "ldap_uid": None, "cliff_silence": None}], T1)
+        # rewind to a store a marker-less build wrote to: 14 will not re-run, the open-time seed must
+        s._conn.execute("DELETE FROM observation_state")
+        s._conn.execute("PRAGMA user_version = 14")
+        s._conn.commit(); s.close()
+        s = Store(db)
+        try:
+            assert [r[0] for r in s._conn.execute("SELECT stream FROM observation_state WHERE cluster_id='crc'")] == ["membership"]
+            assert s.sync_members("crc", {"g": ["alice"]}, {}, T2) == 1
+            event = s.membership_events("crc", user_name="alice")[0]
+            assert (event["change"], event["baseline"]) == ("added", 0)
+        finally:
+            s.close()
+
     def test_is_platform_rides_the_event(self, store):
         store.replace_user_bindings("crc", [ub("p", "", "system:kube-controller-manager", platform=1)], T1)
         assert store.binding_events("crc")[0]["is_platform"] == 1
@@ -305,3 +327,31 @@ class TestUpgrade:
             assert store.membership_events("crc", user_name="bob")[0]["baseline"] == 0
         finally:
             store.close()
+
+
+def test_self_scope_with_groups_seeks_the_subject_index_for_both_halves(monkeypatch):
+    """OB1, review 2 of #177 (S6d): without statistics (this store never runs ANALYZE) the OR form
+    walked every row of the cluster and sorted — measured 306 ms at 300k rows against 1.8 ms for two
+    index seeks. Fails on the OR form with the by_time plan; passes on the UNION ALL form."""
+    store = Store(":memory:")
+    store.upsert_cluster("crc", "https://api.crc.testing:6443", True)
+    captured: dict = {}
+    orig = Store._rows
+
+    def spy(self, sql, params=()):
+        captured.update(sql=sql, params=list(params))
+        return orig(self, sql, params)
+    monkeypatch.setattr(Store, "_rows", spy)
+
+    def plan_of(**kw):
+        store.binding_events("crc", **kw)
+        return " | ".join(r[3] for r in store._conn.execute("EXPLAIN QUERY PLAN " + captured["sql"], captured["params"]))
+    try:
+        store.replace_bindings("crc", [rb("a", "ns", "g-mine")], T1)
+        plan = plan_of(viewer="alice", viewer_groups=["g-mine", "g-other"])
+        assert plan.count("USING INDEX binding_event_by_subject") == 2, plan
+        assert "binding_event_by_time" not in plan, plan
+        plan = plan_of(namespace="ns", viewer="alice", viewer_groups=["g-mine"])
+        assert "binding_event_by_time" not in plan, plan
+    finally:
+        store.close()

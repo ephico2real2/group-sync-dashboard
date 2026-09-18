@@ -563,6 +563,43 @@ CREATE INDEX IF NOT EXISTS report_run_by_user ON report_run(generated_by, reques
 # at startup, before anything reads. They must be written to be safe on a database that
 # already has the change (fresh databases get the new SCHEMA and then replay migrations
 # against it), which for ALTER TABLE ADD COLUMN means tolerating "duplicate column name".
+# A cluster that holds rows of a stream has been observed. Idempotent (INSERT OR IGNORE over the
+# primary key) and cheap (every DISTINCT cluster_id is led by an index), so it runs at EVERY open
+# and not only inside migration 14: a build without the marker (1f55cb1, which the lab ran) writing
+# rows for a new cluster in between would otherwise leave rows with no marker — and, since an
+# applied migration never re-runs, that cluster's next real additions would be flagged baseline
+# (OB1, review 2 of #177). Three sources prove a membership observation that left no member behind
+# — group_state (groups polled with zero members; Grok), groupsync_presence and poll_outcome
+# status='ok', both written in the same poll_snapshot transaction as sync_members (Codex, OB1) —
+# so a cluster successfully polled EMPTY is marked too. The binding streams have no such witness
+# (refresh_bindings deliberately records no poll outcome), so for them rows are the only proof.
+_OBSERVATION_SEEDS: tuple[str, ...] = (
+    """INSERT OR IGNORE INTO observation_state(cluster_id, stream)
+       SELECT DISTINCT cluster_id, 'membership' FROM membership_event""",
+    """INSERT OR IGNORE INTO observation_state(cluster_id, stream)
+       SELECT DISTINCT cluster_id, 'membership' FROM group_member""",
+    """INSERT OR IGNORE INTO observation_state(cluster_id, stream)
+       SELECT DISTINCT cluster_id, 'membership' FROM group_state""",
+    """INSERT OR IGNORE INTO observation_state(cluster_id, stream)
+       SELECT cluster_id, 'membership' FROM groupsync_presence""",
+    """INSERT OR IGNORE INTO observation_state(cluster_id, stream)
+       SELECT cluster_id, 'membership' FROM poll_outcome WHERE status = 'ok'""",
+    """INSERT OR IGNORE INTO observation_state(cluster_id, stream)
+       SELECT DISTINCT cluster_id, 'binding:Group' FROM rbac_group_binding""",
+    """INSERT OR IGNORE INTO observation_state(cluster_id, stream)
+       SELECT DISTINCT cluster_id, 'binding:User' FROM user_binding""",
+    """INSERT OR IGNORE INTO observation_state(cluster_id, stream)
+       SELECT DISTINCT cluster_id, 'binding:' || subject_kind FROM binding_event
+        WHERE subject_kind IN ('Group', 'User')""",
+)
+
+
+def _seed_observation_markers(conn: sqlite3.Connection) -> None:
+    """Mark every (cluster, stream) the store already holds evidence for. See _OBSERVATION_SEEDS."""
+    for sql in _OBSERVATION_SEEDS:
+        conn.execute(sql)
+
+
 _MIGRATIONS: list[tuple[int, str, list[str]]] = [
     (
         1,
@@ -871,19 +908,10 @@ _MIGRATIONS: list[tuple[int, str, list[str]]] = [
                    stream              TEXT NOT NULL,
                    PRIMARY KEY(cluster_id, stream)
                )""",
-            # Every cluster the store already knows has been observed: seed the markers so an
-            # upgrade never re-describes existing rows as a first observation.
-            """INSERT OR IGNORE INTO observation_state(cluster_id, stream)
-               SELECT DISTINCT cluster_id, 'membership' FROM membership_event""",
-            """INSERT OR IGNORE INTO observation_state(cluster_id, stream)
-               SELECT DISTINCT cluster_id, 'membership' FROM group_member""",
-            """INSERT OR IGNORE INTO observation_state(cluster_id, stream)
-               SELECT DISTINCT cluster_id, 'binding:Group' FROM rbac_group_binding""",
-            """INSERT OR IGNORE INTO observation_state(cluster_id, stream)
-               SELECT DISTINCT cluster_id, 'binding:User' FROM user_binding""",
-            """INSERT OR IGNORE INTO observation_state(cluster_id, stream)
-               SELECT DISTINCT cluster_id, 'binding:' || subject_kind FROM binding_event
-                WHERE subject_kind IN ('Group', 'User')""",
+            # Every cluster the store already knows has been observed: the same seeds run at every
+            # open (see _OBSERVATION_SEEDS), so an upgrade never re-describes existing rows as a
+            # first observation — and neither does a store a marker-less build wrote to.
+            *_OBSERVATION_SEEDS,
         ],
     ),
 ]
@@ -919,8 +947,10 @@ def _harden(conn: sqlite3.Connection) -> None:
     removes the mechanism it needs.
 
     RELATED, NOT MITIGATED BY THIS: CVE-2024-0232 — use-after-free in
-    jsonParseAddNodeArray. It needs SQL JSON functions, which this store does not use
-    (zero `json_` / `->>` occurrences); nothing here changes its reachability either way.
+    jsonParseAddNodeArray. It needs SQL JSON functions; this store uses json_each over JSON it
+    serialises itself from Python lists of strings (never over stored or user-supplied JSON
+    text), so the malformed-document path the CVE needs is not reachable from here; nothing in
+    this function changes that either way.
 
     NEITHER WAS FIXABLE BY UPGRADING when this was written: UBI9 shipped exactly one build,
     sqlite-libs-3.34.1-10.el9_8, so the surface it exposed was reduced instead. The hardened
@@ -1034,6 +1064,7 @@ class Store:
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._conn.executescript(SCHEMA)
         _migrate(self._conn)
+        _seed_observation_markers(self._conn)
         self._conn.commit()
 
     def close(self) -> None:
@@ -1685,7 +1716,7 @@ class Store:
             # (#175). The rows are still written (first_seen_at, original_first_seen_at and the
             # cliff's window all depend on them) but flagged, so a consumer says "first observed"
             # rather than "added". A NEW group in an already-observed cluster is a real change
-            # and is not flagged: only a cluster with neither members nor events is at baseline.
+            # and is not flagged: the stream's observation_state marker decides, not the rows.
             # Consumed even when this observation is empty — otherwise the first later addition
             # would be described as the cluster's first observation (review of #177, C4).
             baseline = self._first_observation(conn, cluster_id, "membership")
@@ -2077,25 +2108,37 @@ class Store:
         """Binding changes newest first. With `viewer`, only the rows that name the viewer or a
         group the viewer belongs to — the self tier's slice, decided by the caller from
         user_groups, so this method takes the scope rather than deciding it."""
-        sql = """SELECT binding_kind, binding_namespace, binding_name, subject_kind, subject_name,
-                        role_kind, role_name, is_platform, change, baseline, observed_at
-                   FROM binding_event WHERE cluster_id=?"""
-        params: list = [cluster_id]
+        columns = """binding_kind, binding_namespace, binding_name, subject_kind, subject_name,
+                     role_kind, role_name, is_platform, change, baseline, observed_at"""
+        where = "cluster_id=?"
+        scope: list = [cluster_id]
         if namespace is not None:
-            sql += " AND binding_namespace=?"
-            params.append(namespace)
-        if viewer is not None:
-            groups = list(viewer_groups or [])
-            clause = "(subject_kind='User' AND subject_name=?)"
-            params.append(viewer)
-            if groups:
-                # One bound JSON parameter, not one placeholder per group: a viewer in more groups
-                # than SQLITE_LIMIT_VARIABLE_NUMBER made this raise "too many SQL variables"
-                # (Codex, review of #177, reproduced with setlimit). json_each is already relied on.
-                clause += " OR (subject_kind='Group' AND subject_name IN (SELECT value FROM json_each(?)))"
-                params.append(json.dumps(groups))
-            sql += f" AND ({clause})"
-        sql += " ORDER BY id DESC LIMIT ?"
+            where += " AND binding_namespace=?"
+            scope.append(namespace)
+        if viewer is None:
+            return self._rows(
+                f"SELECT {columns} FROM binding_event WHERE {where} ORDER BY id DESC LIMIT ?",
+                [*scope, limit],
+            )
+        # Two index-served halves under UNION ALL, not one OR: this store never runs ANALYZE, and
+        # without statistics SQLite plans the OR as a walk of the cluster's rows plus a sort —
+        # measured 306 ms at 300k rows against 1.8 ms for the union, the same rows back (OB1,
+        # review 2 of #177). The groups ride as ONE bound JSON parameter: a viewer in more groups
+        # than SQLITE_LIMIT_VARIABLE_NUMBER made a placeholder list raise "too many SQL variables"
+        # (Codex, review of #177, reproduced with setlimit).
+        sql = f"""SELECT {columns} FROM (
+                      SELECT id, {columns} FROM binding_event
+                       WHERE {where} AND subject_kind='User' AND subject_name=?"""
+        params: list = [*scope, viewer]
+        groups = list(viewer_groups or [])
+        if groups:
+            sql += f"""
+                      UNION ALL
+                      SELECT id, {columns} FROM binding_event
+                       WHERE {where} AND subject_kind='Group'
+                         AND subject_name IN (SELECT value FROM json_each(?))"""
+            params += [*scope, json.dumps(groups)]
+        sql += ") ORDER BY id DESC LIMIT ?"
         params.append(limit)
         return self._rows(sql, params)
 

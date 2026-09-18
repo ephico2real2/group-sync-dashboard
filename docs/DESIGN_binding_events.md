@@ -45,8 +45,9 @@ CREATE TABLE IF NOT EXISTS observation_state (   -- migration 14
 );
 ```
 
-Migration 14 seeds a marker for every cluster the store already holds rows for (current rows or
-events of that stream), so an upgrade never re-describes existing rows as a first observation.
+Migration 14 — and every later open of the store — seeds a marker for every cluster that already holds
+evidence of the stream (current rows, events, or for membership a committed successful poll), so an
+upgrade never re-describes existing rows as a first observation.
 The marker is consumed inside the refresh's own write transaction: a rolled-back observation does
 not spend it. Nothing removes it — a cluster taken out of `clusters:` keeps its rows too (#96).
 
@@ -124,3 +125,14 @@ the numbers the store returned. **No label carries a subject's name.**
   (measured on the pod), and `_migrate` skips any target at or below the current version — a
   rewritten 13 would never have run there. The marker table and its backfill are migration 14;
   the C4 semantics are Codex's unchanged.
+- **The seed runs at every open, not in a numbered migration (second pass — Grok, Codex, OB1).** 14's
+  backfill missed two shapes a v13 store can hold: `group_state` rows with no member and no event (groups
+  polled with zero members — Grok), and a cluster successfully polled with no Group at all, which leaves
+  `groupsync_presence` and `poll_outcome status='ok'` behind in the same transaction as `sync_members`
+  (Codex, OB1). A numbered 15 was drafted for these; OB1 then measured the rollback gap that makes any
+  numbered seed insufficient: `1f55cb1` — the build the lab ran first — has no marker, so run against a
+  v14 store it writes rows with no marker, and an applied migration never re-runs. `_OBSERVATION_SEEDS`
+  is one idempotent list (`INSERT OR IGNORE`, every source led by a cluster_id index) that migration 14
+  runs and `Store.__init__` runs again at every open; in normal operation it is a no-op, because every
+  writer consumes the marker in the transaction that writes the rows. The binding streams have no
+  poll witness (`refresh_bindings` records no outcome on purpose), so for them rows stay the only proof.
