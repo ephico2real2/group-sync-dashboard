@@ -186,6 +186,27 @@ Outcome in one line: **…**
   non-UI 3303 passed, 17 skipped, UI 344 passed; the fleet at 14, the scoped view and the Policy tab rendered
   and read; CI green on `c806112`. Record: `docs/REVIEW_overview_relayout.md`. The second pass is running.
 
+### Review pass 2 applied — commit `602eaf7` (2026-09-18 04:55), merge `a78cb79` (2026-09-18 05:09), PR #180
+
+- Grok and Codex on `c806112` (OB1's second pass was lost to the session limit mid-measurement — three OB1 runs
+  had been launched at once; one confirmation run follows on the final head). Both converged on four residues
+  of pass 1: the opened cluster's rail (`.tile.bad` never paired with `.tile-detail`), the accent rail lost on a
+  heading inside `.row-wrap` (the Overview's counted headings and the Policy tab's), `syncMeans` gated on a last
+  sync (a never-synced CR with an unusable schedule promised "its first fire"), and the selector showing "all
+  clusters" beside the retired-cluster detour. **Codex, volunteered**: the e2e walk's second-cluster step chose
+  "all clusters" — the fleet option's label — so its evidence stayed on the fleet; `next_configured_cluster()`
+  skips empty-valued options, with a unit test.
+- **The operator's ruling (2026-09-18: the mocks' visuals)**: compact tiles hide the three extra figures again,
+  as the Overview mock's CSS does — OB1's F12 offered as a suggestion and declined. The kinds chips keep the
+  badge's own edge (Codex's heavier edge rejected: the chip is the badge's shape).
+- Measured: six new tests fail on `c806112` (forced checkout — the first proof had run on `759cd7d`), pass on
+  the fixed tree; focused 391; non-UI 3304 passed, 17 skipped; UI 344 → 348 after the merge of the foundation's
+  `a668d51` (a CHANGELOG conflict resolved; the merge was needed because a PR whose merge commit cannot be built
+  gets no `pull_request` run — ten minutes of "no checks reported" before that was understood); CI green on
+  `a78cb79`. Deployed to CRC (`0.24.0-602eaf7922`) and walked: the fleet, the scoped view, the Policy tab, 375 px
+  — captures sent. The report pod's `readyz` 503 on that deploy is the designed guard ("snapshot schema 14 is
+  newer than this report service understands (12)"): the drilldown stack had migrated the live store first.
+
 ## Part 5 — namespaces as entities, #167 (2026-09-18)
 
 ### Implementation — commits `6420e7f` (2026-09-18 00:35), `cf4f310` (2026-09-18 00:36, the merge of #177), `a801e00` (2026-09-18 00:45), `3365484` (2026-09-18 00:57, the merge of the foundation), PR #181 (branch `feat/namespaces` from `feat/design-foundation`)
@@ -215,3 +236,34 @@ Outcome in one line: **…**
   the old fixture); the fixed tree — API/seam/hygiene/contract/docs 1021 passed, the four UI classes around the
   change 48 passed, non-UI 3376 passed, 17 skipped, UI 320 passed; CI green on `6a8fa85`. Record:
   `docs/REVIEW_namespaces.md`. The second pass is running.
+
+### Review pass 2 applied — commit `f44e560` (2026-09-18 05:03), merge `ff6b0dd` (2026-09-18 05:09), PR #181
+
+- Grok and Codex on `6a8fa85`, plus the deployed walk. **Codex**: `every` came from the two counts, which leave
+  platform identities out, while `namespace_reach` counts every binding naming the viewer — kubeadmin at the
+  self tier opened any namespace and saw an empty list; the switch is the reach itself now (`cluster_wide_path`).
+  **Grok and Codex**: a baseline history row wore the added colour (`change-baseline`, muted); Enter on a group's
+  name went nowhere — the `.drill` keydown handler cancelled the key and navigated only for a person (every
+  drill takes the click's own path). **The deployed walk (CRC, `76ebaff21e`)**: `demo-prod`'s cluster-wide line
+  listed 54 bindings, 41 of them virtual `system:` groups — every `via_groups` / `cluster_wide_groups` row carries
+  `is_platform` now, the table badges the virtual ones, the line folds them ("and 41 platform bindings to
+  virtual groups (system:authenticated, system:nodes, …)"), the list's count leaves them out.
+- Measured: eight of the ten new cases fail on `6a8fa85` (the two user-key keyboard cases already passed there);
+  focused 1354 + 55; non-UI 3377 passed, 17 skipped; UI 327; CI green on `ff6b0dd` after the foundation merge.
+
+## Part 6 — one lookup over the three kinds, #174 (2026-09-18)
+
+### Implementation — commit `76ebaff` (2026-09-18 02:17), PR #183 (branch `feat/drilldown` from `feat/namespaces`)
+
+- `#page=lookup`: three doors at rest with the lists' own counts, the matches by kind with text (twelve per
+  kind), a Find box wherever no list has its own, the also-line on a list page, "search everything instead"
+  inside a group; `binding_count` on every `/groups` row (the Grants column). Two pinned rules shaped the one
+  deviation from the mock: typing never issues a request and the users list is fetched only on its own tab, so
+  the also-line counts only what the session already holds (a first cut prefetched on the poll and failed the
+  second rule; a second cut fetched once on the first keystroke and failed the first, moving the caret).
+- Measured: the six `TestLookup` tests, the count test (5), the nine UI classes around the change 122 passed;
+  non-UI 3381 passed, 17 skipped; UI 326; CI green; deployed to CRC (`0.24.0-76ebaff21e`, both pods verified
+  in-pod) and walked — the lookup for "demo" over the real cluster (6 of 67 groups, 7 of 110 namespaces), the
+  also-line, `demo-prod`'s page, 375 px; captures sent. The walk found the namespace page's 54-binding
+  cluster-wide wall (fixed on #181's second pass) and the doors' double chevron.
+- Merge `d489bcc` (2026-09-18 05:43): `feat/namespaces` at `ff6b0dd` (both review passes) into `feat/drilldown`, clean.

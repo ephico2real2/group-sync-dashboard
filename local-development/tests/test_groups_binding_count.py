@@ -28,6 +28,8 @@ def _seed(db: str) -> None:
     s.replace_bindings("crc", [
         {"binding_kind": "RoleBinding", "binding_namespace": "a", "binding_name": "devs-a", "role_kind": "ClusterRole", "role_name": "edit", "group_name": "devs"},
         {"binding_kind": "RoleBinding", "binding_namespace": "b", "binding_name": "devs-b", "role_kind": "ClusterRole", "role_name": "view", "group_name": "devs"},
+        # the same group bound TWICE in one namespace: two RoleBindings, one namespace — two rows, two grants
+        {"binding_kind": "RoleBinding", "binding_namespace": "a", "binding_name": "devs-a-view", "role_kind": "ClusterRole", "role_name": "view", "group_name": "devs"},
         {"binding_kind": "ClusterRoleBinding", "binding_namespace": "", "binding_name": "ops-admin", "role_kind": "ClusterRole", "role_name": "cluster-admin", "group_name": "ops"},
     ], now)
     s.close()
@@ -63,9 +65,9 @@ def test_every_row_counts_what_its_detail_lists(client, state):
 
 def test_the_counts_are_the_expected_ones(client):
     by = {r["name"]: r["binding_count"] for r in client.get("/api/clusters/crc/groups", headers=ROOT).json()["groups"]}
-    assert by == {"devs": 2, "ops": 1, "lonely": 0}, "namespaced and cluster-wide bindings both count; a group with none says 0"
+    assert by == {"devs": 3, "ops": 1, "lonely": 0}, "namespaced (twice in one namespace) and cluster-wide bindings both count; a group with none says 0"
 
 
 def test_the_self_tier_row_carries_the_same_count(client):
     rows = client.get("/api/clusters/crc/groups", headers=ALICE).json()["groups"]
-    assert [(r["name"], r["binding_count"]) for r in rows] == [("devs", 2)]
+    assert [(r["name"], r["binding_count"]) for r in rows] == [("devs", 3)]

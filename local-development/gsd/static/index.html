@@ -875,6 +875,20 @@ function searchBoxHtml(key) {
       <span id="${b.id}-help" class="sr-only">${esc(b.help)}</span>`;
 }
 
+/* #174: the one box, typed where no list has its own — ONE position change to the lookup, where the
+   matches render; not one per keystroke, and not for whitespace (a query of spaces matches nothing and
+   would push an entry for a page showing the doors). Returns true when it navigated, so the caller
+   repaints only when it did not. Called from BOTH the input handler and compositionend: Chromium
+   fires no `input` after `compositionend` (measured: input×3 with isComposing=true, then
+   compositionend, nothing after), so a CJK reader's committed query otherwise sat in the box on the
+   Overview and opened nothing until a further, uncomposed keystroke (review of #174, OB1). */
+function openLookupFor(key) {
+  if (key !== "lookupSearch" || view.page === "lookup" || !view[key].trim()) return false;
+  navigate({ page: "lookup", group: null, user: null, ns: null, groupsync: null });
+  refresh();
+  return true;
+}
+
 function wireSearchBox(key) {
   const b = SEARCH_BOXES[key];
   const el = $(b.id);
@@ -888,13 +902,8 @@ function wireSearchBox(key) {
   // renderFilters). The state still updates, so the compositionend render loses nothing.
   el.oninput = (e) => {
     view[key] = e.target.value;
-    if (key === "lookupSearch" && view.page !== "lookup" && view[key] && !e.isComposing) {
-      // ONE position change, not one per keystroke: the lookup is where these matches render.
-      navigate({ page: "lookup", group: null, user: null, ns: null, groupsync: null });
-      refresh();
-      return;
-    }
-    if (!e.isComposing) render();
+    if (e.isComposing) return;   // an unfinished conversion: the state is kept, compositionend paints
+    if (!openLookupFor(key)) render();
   };
   // addEventListener, not on-properties: composition events have no IDL handler attribute, so
   // `el.oncompositionstart = …` is a silent no-op expando — the slot would never be set. The node is
@@ -903,7 +912,7 @@ function wireSearchBox(key) {
   el.addEventListener("compositionend", (e) => {
     searchComposingIn = null;
     view[key] = e.target.value;
-    render();
+    if (!openLookupFor(key)) render();
   });
   // compositionend fires before blur in every engine, but a missed one would freeze this bar
   // forever (the guard would always return), so blur clears the slot as a backstop.
@@ -1368,6 +1377,11 @@ function groupsPage() {
   // null = not fetched for this cluster yet (first visit, or a cluster switch dropped it).
   // Same Loading state as every other tab; [] is a real answer and falls through.
   if (!data.groups) return `<section class="card"><div class="empty-note">Loading…</div></section>`;
+  // Held under another state (the lookup's `all` while the select says `empty`): the same Loading state
+  // as a first visit, until this state's rows land — never the other slice under this select's copy.
+  if (data.groupsMeta && data.groupsMeta.state && data.groupsMeta.state !== view.groupFilter) {
+    return `<section class="card"><div class="empty-note">Loading…</div></section>`;
+  }
   // The whole list before the search narrows it, so the header can report what was hidden. A filtered
   // view that cannot state its own denominator has the same defect as a truncated page that cannot:
   // the reader cannot tell "there is one" from "there is one THAT MATCHES".
@@ -3463,12 +3477,24 @@ function wireNsPage() {
    state each; with text: the matches by kind, N of M, twelve per kind, every hit a drill. The
    search is an extra door beside the lists and the tabs, never a replacement for them. */
 const LOOKUP_PER_KIND = 12;
+/* The matched substrings, marked. Matching runs on the RAW text and each fragment is escaped as it is
+   emitted: marking on the escaped string let a term land inside an entity (the `a` of `&amp;` —
+   "Smith & Wesson" painted as "Smith &amp; Wesson") or inside the <mark> the previous term had just
+   inserted ("alice a", the transient of typing a second word, painted "ark>aliceark>"), and could never
+   mark a `<` or `&` the reader typed (review of #174, OB1). Longest term first so "alpha" wins over
+   "a"; one pass, so marks never nest; every occurrence of every term, case-insensitively. */
 function hl(text, query) {
-  let out = esc(text == null ? "" : String(text));
-  (query || "").toLowerCase().split(/\s+/).filter(Boolean).forEach((t) => {
-    out = out.replace(new RegExp("(" + t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ")", "ig"), "<mark>$1</mark>");
-  });
-  return out;
+  const value = text == null ? "" : String(text);
+  const terms = [...new Set((query || "").toLowerCase().split(/\s+/).filter(Boolean))]
+    .sort((a, b) => b.length - a.length)
+    .map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  if (!terms.length) return esc(value);
+  let out = "", at = 0;
+  for (const m of value.matchAll(new RegExp(terms.join("|"), "ig"))) {
+    out += esc(value.slice(at, m.index)) + `<mark>${esc(m[0])}</mark>`;
+    at = m.index + m[0].length;
+  }
+  return out + esc(value.slice(at));
 }
 function lookupMatches(q) {
   const groups = (data.groups || []).filter((g) => matchesSearch([g.name, g.sync_provider], q));
@@ -3486,7 +3512,11 @@ function lookupMatches(q) {
 function alsoLine(kind, q) {
   if (!(q || "").trim()) return "";
   const m = lookupMatches(q);
-  const kinds = [["groups", m.groups.length, data.groups], ["users", m.users.length, data.users], ["namespaces", m.namespaces.length, data.namespaces]]
+  // `data.groups` is whatever slice was fetched last — the Groups tab's state filter, or the lookup's
+  // whole list. A count over the `empty` slice said "1 group" where the cluster had two (review of
+  // #174, OB1), so groups count only when the slice held is the whole list.
+  const groupsWhole = data.groups && data.groupsMeta && data.groupsMeta.state === "all";
+  const kinds = [["groups", m.groups.length, groupsWhole], ["users", m.users.length, data.users], ["namespaces", m.namespaces.length, data.namespaces]]
     .filter(([k]) => k !== kind);
   const bits = kinds.filter(([, n, loaded]) => loaded && n > 0).map(([k, n]) => `${n} ${n === 1 ? k.replace(/s$/, "") : k}`);
   const door = `<button type="button" class="linkish" data-widen="${esc(q)}">${bits.length ? "see all matches" : `search everything for ${esc(q.trim())}`}</button>`;
@@ -3497,30 +3527,50 @@ function lookupDoors() {
   const door = (page, count, kind, line) => `<section class="card door" data-page="${page}">
     <div class="kpi big"><div class="value">${count == null ? "…" : count}</div><div class="label">${kind}</div></div>
     <div class="filterbar-note mt-2">${line}</div>
-    <div class="mt-3"><button type="button" class="drill" data-page="${page}">Browse all ${kind.toLowerCase()} ›</button></div>
+    <div class="mt-3"><button type="button" class="drill" data-page="${page}">Browse all ${kind.toLowerCase()}</button></div>
   </section>`;
   const gLine = g ? `${g.filter((x) => x.binding_count).length} grant something · ${g.filter((x) => !x.sync_provider).length} unattributed` : "loading…";
-  const uLine = u && !u.forbidden ? `${(u.users || []).length} have logged in · ${((u.never_logged_in_members || {}).count) || 0} synced members never have${u.truncated ? " · list cut at the page limit" : ""}` : (u && u.forbidden ? "needs an authenticated identity" : "loading…");
+  // logged_in_total, the Users tab's own headline: a manual account (`oc create user`, nobody has
+  // used it) is a row, not a login — counting rows said "7 have logged in" over the tab's 6 (review
+  // of #174, OB1). The fallback is the tab's, for a server that sends only the rows.
+  const loggedIn = u && !u.forbidden
+    ? (typeof u.logged_in_total === "number" ? u.logged_in_total : (u.users || []).filter((x) => x.logged_in !== false).length) : null;
+  // One sentence for the one refusal these lists have: neither is refused by TIER (both self-scope);
+  // `require_viewer` refuses when there is no authenticated identity to scope to.
+  const uLine = u && !u.forbidden ? `${loggedIn} have logged in · ${((u.never_logged_in_members || {}).count) || 0} synced members never have${u.truncated ? " · list cut at the page limit" : ""}` : (u && u.forbidden ? "needs an authenticated identity" : "loading…");
   const nList = n && !n.forbidden ? (n.namespaces || []) : null;
-  const nLine = nList ? `${nList.filter((x) => Object.keys(x.labels || {}).length).length} labelled · ${nList.filter((x) => x.direct_grants).length} carry a direct grant` : (n && n.forbidden ? "outside your tier" : "loading…");
+  const nLine = nList ? `${nList.filter((x) => Object.keys(x.labels || {}).length).length} labelled · ${nList.filter((x) => x.direct_grants).length} carry a direct grant` : (n && n.forbidden ? "needs an authenticated identity" : "loading…");
   return `<div class="grid">
     ${door("groups", g ? g.length : null, "Groups", gLine)}
     ${door("users", u && !u.forbidden ? (typeof u.total === "number" ? u.total : (u.users || []).length) : null, "Users", uLine)}
     ${door("nsaudit", nList ? nList.length : null, "Namespaces", nLine)}
   </div>`;
 }
+/* The lookup's own scope statement: every list page says when its rows are the reader's own, and the
+   doors said "Browse all groups" to a narrowed reader with nothing on the page saying the counts were
+   theirs alone (review of #174, OB1). From the payload's declared scope, never derived here. */
+function lookupScopeLine() {
+  const meta = data.groupsMeta;
+  if (!meta || meta.scope !== "self") return "";
+  return `<div class="filterbar-note scope-banner">Showing only what reaches <strong>${esc(meta.viewer || "you")}</strong>:
+    the groups you belong to, your own user row and the namespaces your own grants reach. The cluster-wide
+    lists are the administrator tier.</div>`;
+}
 function lookupPage() {
   const q = (view.lookupSearch || "").trim();
   if (!q) {
     return `<section class="card"><h2>Start anywhere</h2>
+      ${lookupScopeLine()}
       <div class="filterbar-note mb-4">Open a list and browse it, pick a tab, or type in the box above to search all three kinds at
         once. The search is an extra door beside the lists, never a replacement for them. Every word must appear, so
         <code>alice zzz</code> finds nothing.</div></section>${lookupDoors()}`;
   }
   const m = lookupMatches(q);
   const total = m.groups.length + m.users.length + m.namespaces.length;
+  // data-filter: "see them" means the matches, so the list opens with this query in its own box
+  // (review of #174, Grok) — a door carries none and opens the list whole.
   const more = (rows, of, page) => rows.length > LOOKUP_PER_KIND
-    ? `<div class="filterbar-note mt-2">${rows.length - LOOKUP_PER_KIND} more — <button type="button" class="linkish" data-page="${page}">open the full list to see them</button></div>` : "";
+    ? `<div class="filterbar-note mt-2">${rows.length - LOOKUP_PER_KIND} more — <button type="button" class="linkish" data-page="${page}" data-filter="${esc(q)}">open the full list to see them</button></div>` : "";
   const sect = (label, count, of, page, table) => count ? `<h3 class="mt-4">${label} <span class="muted fw-normal">· ${count} of ${of}</span></h3>${table}` : "";
   const gT = `<div class="scroll-x"><table><thead><tr><th>Group</th><th>Owner</th><th class="num">Members</th><th class="num">Grants</th></tr></thead>
     <tbody>${m.groups.slice(0, LOOKUP_PER_KIND).map((g) => `<tr class="rowlink" data-group="${esc(g.name)}">
@@ -3534,14 +3584,22 @@ function lookupPage() {
     <tbody>${m.namespaces.slice(0, LOOKUP_PER_KIND).map((n) => `<tr class="rowlink" data-ns="${esc(n.name)}">
       <td><button type="button" class="drill">${hl(n.name, q)}</button></td>${m.keys.map((k) => `<td class="mono muted">${hl((n.labels || {})[k] || "—", q)}</td>`).join("")}
       <td class="num ${n.direct_grants ? "err" : "muted"}">${n.direct_grants}</td></tr>`).join("")}</tbody></table></div>${more(m.namespaces, ((data.namespaces || {}).namespaces || []).length, "nsaudit")}`;
+  // The zero-denominator honesty of the list pages: "the search is hiding it" is a claim about the
+  // data, and on a cluster with nothing recorded (a failed poll, a fresh one) it was false — the
+  // reader would clear the box expecting rows and get none (review of #174, OB1).
+  const held = (data.groups || []).length + ((data.users || {}).users || []).length + ((data.namespaces || {}).namespaces || []).length;
   return `<section class="card">
     <h2>Matches <span class="muted fw-normal">· ${total} across 3 kinds</span></h2>
+    ${lookupScopeLine()}
     <div class="filterbar-note mb-2">Every word must appear, so <code>alice zzz</code> returns nothing — the contract the list boxes already keep.</div>
     ${sect("Groups", m.groups.length, (data.groups || []).length, "groups", gT)}
     ${sect("Users", m.users.length, ((data.users || {}).users || []).length, "users", uT)}
     ${sect("Namespaces", m.namespaces.length, ((data.namespaces || {}).namespaces || []).length, "nsaudit", nT)}
-    ${total ? "" : `<div class="empty-note">No group, user or namespace matches all of <strong>${esc(q)}</strong>. The data is not empty — the search
-      is hiding it. Press Escape in the box to clear.</div>`}
+    ${total ? "" : (held
+      ? `<div class="empty-note">No group, user or namespace matches all of <strong>${esc(q)}</strong>. The data is not empty — the search
+          is hiding it. Press Escape in the box to clear.</div>`
+      : `<div class="empty-note">No group, user or namespace matches <strong>${esc(q)}</strong> — and this cluster has nothing to
+          search yet: no groups, users or namespaces are recorded for it. Clearing the box will not change that.</div>`)}
   </section>${lookupDoors()}`;
 }
 function wireLookup() {
@@ -3554,6 +3612,14 @@ function wireLookup() {
       if (e.target.closest("[data-page]") !== el) return;
       if (e.target.closest("[data-group],[data-user],[data-ns]")) return;
       navigate({ page: el.dataset.page, group: null, user: null, ns: null, groupsync: null });
+      // "open the full list to see them": the list's own box gets the query, so "them" is what it
+      // shows. After navigate(), which never touches these filters. A door carries no data-filter.
+      const carried = el.dataset.filter;
+      if (carried) {
+        if (el.dataset.page === "groups") view.groupSearch = carried;
+        else if (el.dataset.page === "users") view.userSearch = carried;
+        else if (el.dataset.page === "nsaudit") view.nsSearch = carried;
+      }
       refresh();
     };
   });
@@ -4464,6 +4530,7 @@ async function refresh(opts = {}) {
     // cycle pays one extra round trip to learn it. Every later cycle knows view.cluster and
     // dispatches everything below in one burst.
     let bootClusters = null;
+    let groupsState = null;   // the `state` the groups rows are requested under this cycle (groupsMeta.state)
     if (!view.cluster) {
       bootClusters = await get("/api/clusters");
       if (bootClusters.length) {
@@ -4514,7 +4581,12 @@ async function refresh(opts = {}) {
       if (view.page === "bindings" && narrowedReader() && data.whoami && data.whoami.user) {
         want.myAccess = myAccessFetch(get, base, data.whoami.user, { allowStaleViewer: true });
       }
+      // Which state the groups rows are fetched under, kept beside them (groupsMeta.state): the tab
+      // handler paints from `data` before it fetches, and the lookup's whole list painted under the
+      // Groups tab's `empty` select for the length of a fetch (review of #174, OB1 — measured: 4 rows
+      // under "empty", then 2).
       if (view.page === "lookup") {
+        groupsState = "all";
         want.groups = get(`${base}/groups?state=all`);
         want.users = guard403(get(`${base}/users?limit=${USERS_FETCH}`));
         want.namespaces = guard403(get(`${base}/namespaces`));
@@ -4532,6 +4604,7 @@ async function refresh(opts = {}) {
         } else if (view.group) {
           want.group = guard403(get(`${base}/groups/${encodeURIComponent(view.group)}`));
         } else {
+          groupsState = view.groupFilter;
           want.groups = get(`${base}/groups?state=${view.groupFilter}`);
         }
       }
@@ -4649,7 +4722,7 @@ async function refresh(opts = {}) {
       // Rows and their declared scope travel together; the banner renders from
       // `groupsMeta` and never from a client-side guess.
       data.groups = got.groups.groups;
-      data.groupsMeta = { scope: got.groups.scope, viewer: got.groups.viewer };
+      data.groupsMeta = { scope: got.groups.scope, viewer: got.groups.viewer, state: groupsState };
     }
     if ("logins" in got) { data.logins = got.logins; data.access = got.access; }
     if ("usage" in got) data.usage = got.usage;

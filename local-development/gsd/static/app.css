@@ -1109,7 +1109,10 @@ dialog.ns-preview p { margin: 0 0 var(--space-4); font-size: var(--text-sm); }
    wash so a hit says which word it matched. */
 .door { cursor: pointer; transition: border-color 160ms ease, transform 120ms ease; }
 .door:hover { border-color: var(--accent); transform: translateY(-1px); }
-mark { background: color-mix(in srgb, var(--accent) 22%, transparent); color: inherit; padding: 0 1px; /* optical: a hair of air around the mark */ border-radius: var(--radius-xs); }
+/* No fill: the drill's link colour sits at 4.55:1 on the card, so ANY wash of the accent behind it
+   drops under the 4.5:1 bar the sheet holds (measured: 22% → 3.40:1, 8% → 4.10:1, in both themes and
+   every palette). Weight is the channel that costs no contrast. */
+mark { background: none; color: inherit; font-weight: 700; }
 
 /* ---- Utilities (#152) ---------------------------------------------------------------
    The 92 inline style= attributes the page carried, as classes on the token system, so the
