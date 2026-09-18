@@ -384,5 +384,5 @@ Eight tests fail on `ff6b0dd` (the two changed API assertions, the in-namespace 
 assertion, the fold's count and order, the badge, the column's count, the double navigation) and pass after.
 Focused on the fixed tree (the namespaces API, `TestNamespaces`, `TestNamespaceAuditPage`, `TestBrowserHistory`,
 the CSS guards, the API contract, the docs citations): 1302 passed, 12 skipped.
-Full UI suite 332 passed (218.47 s); non-UI suite 3378 passed, 13 skipped (574.51 s). CI on the pushed head is
-recorded below when it lands.
+Full UI suite 332 passed (218.47 s); non-UI suite 3378 passed, 13 skipped (574.51 s). CI on `862df79`: green on
+every job. Merged into `feat/drilldown` as `b21ea86` (clean; 976 passed on the merged tree) for the deployed walk.
