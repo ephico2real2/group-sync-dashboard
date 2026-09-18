@@ -15,7 +15,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
-from e2e_capture import Walk, login, now  # noqa: E402
+from e2e_capture import Walk, login, next_configured_cluster, now, wait_for_cluster_paint  # noqa: E402
 
 from playwright.sync_api import sync_playwright  # noqa: E402
 
@@ -43,17 +43,19 @@ with sync_playwright() as p:
     page = ctx.new_page()
     w = Walk(page, OUT)
     assert login(w, BASE, USER, password, PROVIDER)
-    ids = [o.strip() for o in page.locator("select#f-cluster option").all_inner_texts()]
-    w.record("cluster selector options", True, ", ".join(ids) or "(selector not found)")
+    options = page.locator("select#f-cluster option").evaluate_all(
+        "nodes => nodes.map(o => ({value: o.value, label: o.textContent.trim()}))")
+    w.record("cluster selector options", True, ", ".join(o["label"] for o in options) or "(selector not found)")
     current = page.locator("select#f-cluster").input_value()
-    other = [i for i in ids if i != current]
+    other = next_configured_cluster(options, current)
     if other:
+        cluster_id = other["value"]
         sel = page.locator("select#f-cluster")
-        sel.select_option(label=other[0])
-        page.wait_for_load_state("networkidle")
+        sel.select_option(value=cluster_id)
+        wait_for_cluster_paint(page, cluster_id)
         page.wait_for_timeout(900)
-        shot = w.shot(f"overview-cluster-{other[0]}")
-        w.record(f"switch cluster to {other[0]}", w.page_clean() is None,
+        shot = w.shot(f"overview-cluster-{cluster_id}")
+        w.record(f"switch cluster to {cluster_id}", w.page_clean() is None,
                  f"heading: {page.locator('h2').first.inner_text().strip()}; url {page.url}", shot)
         page.click('button.tab:text-is("Reports")')
         page.wait_for_selector('button.tab[aria-current="page"]:text-is("Reports")', timeout=15_000)
@@ -62,8 +64,8 @@ with sync_playwright() as p:
         form = page.locator("#report-cluster")
         text = page.locator("main, body").first.inner_text()
         val = form.input_value() if form.count() else None
-        shot = w.shot(f"reports-cluster-{other[0]}")
-        w.record(f"Reports tab on {other[0]}", True,
+        shot = w.shot(f"reports-cluster-{cluster_id}")
+        w.record(f"Reports tab on {cluster_id}", True,
                  (f"the report form's read-only cluster field says {val}" if val else
                   "no report form; the card says: " + " ".join(text.split())[:300]), shot)
     pill = page.locator("#scope-pill")
