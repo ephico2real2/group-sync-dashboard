@@ -1064,18 +1064,25 @@ class TestTheShellAtPhoneWidth:
             "() => [...document.querySelectorAll('button.tab')].filter(t => t.getBoundingClientRect().right > innerWidth).map(t => t.id)")
         assert beyond == [], f"{tab}: tabs past the right edge: {beyond}"
 
-    def test_phone_header_stays_compact_and_prefs_stay_named(self, dash):
-        """The two labels cost the phone header a row each (223 px measured at 375, was 113). Below 520 px
-        they leave the screen but not the accessibility tree: each select keeps its label[for] name."""
+    def test_phone_header_stays_compact_and_prefs_stay_labelled_on_screen(self, dash):
+        """223 px at 375 (was 113): the two inline labels cost a row each. Below 520 px a label sits ABOVE its
+        select, the pair shares one row with Refresh, and the labels stay on screen — not only in the
+        accessibility tree: a select reading "Auto" or "Default" names nothing on its own (OB1, review 2 of
+        #179; 167 px measured with the labels visible, 143 with them clipped)."""
         dash.set_viewport_size({"width": 375, "height": 740})
-        box = dash.evaluate("""() => { const h = document.querySelector('header.top').getBoundingClientRect();
-            const mode = document.getElementById('pref-mode'), pal = document.getElementById('pref-palette');
-            return { height: h.height, modeName: mode.labels[0] && mode.labels[0].textContent.trim(),
-                     palName: pal.labels[0] && pal.labels[0].textContent.trim(),
-                     modeVisible: mode.getBoundingClientRect().height > 0, palVisible: pal.getBoundingClientRect().height > 0 }; }""")
-        assert box["height"] <= 160, box
-        assert box["modeName"] == "Appearance" and box["palName"] == "Colours", box
-        assert box["modeVisible"] and box["palVisible"], box
+        got = dash.evaluate("""() => { const r = (e) => e.getBoundingClientRect();
+            const head = document.querySelector('header.top'), mode = document.getElementById('pref-mode'), pal = document.getElementById('pref-palette');
+            const lab = (s) => { const l = s.labels[0], b = r(l); return {name: l.textContent.trim(), visible: b.width > 1 && b.height > 1, above: b.bottom <= r(s).top}; };
+            return {height: r(head).height, scrollWidth: document.documentElement.scrollWidth, mode: lab(mode), pal: lab(pal),
+                    oneRow: Math.abs(r(mode).top - r(pal).top) < 1}; }""")
+        assert got["height"] <= 180, got
+        assert got["scrollWidth"] <= 375, got
+        assert got["mode"] == {"name": "Appearance", "visible": True, "above": True}, got
+        assert got["pal"] == {"name": "Colours", "visible": True, "above": True}, got
+        assert got["oneRow"], got
+        dash.select_option("#pref-mode", "dark")
+        dash.select_option("#pref-palette", "trit")
+        assert dash.evaluate("() => [document.documentElement.dataset.theme, document.documentElement.dataset.palette]") == ["dark", "trit"]
 
 
 
@@ -4418,12 +4425,17 @@ def reporting_server(tmp_path_factory):
     writer.close()
     from pathlib import Path
     vendor = Path(__file__).resolve().parents[1] / "gsd" / "static" / "vendor"
-    clock = {"now": _dt.now(_UTC)}
+    # Live unless a test pins it. The service verifies every ticket against THIS clock while the
+    # dashboard mints with wall time, so a clock frozen at creation refused every ticket minted more
+    # than MAX_CLOCK_SKEW_SECONDS (30) later as future-dated — a 403, which reportFetch does not remint
+    # on (401 only) — and the whole class painted the refusal card when the fixture was created ahead
+    # of it (OB1, review 2 of #179). A test that needs a fixed instant sets clock["now"] and clears it.
+    clock = {"now": None}
     report_settings = ReportSettings(snapshot_dir=str(snapshots), artifact_dir=str(artifacts), pdf_enabled=True, pdf_variant="pdf/a-2b",
                                      font_regular=str(vendor / "DejaVuSans.ttf"), font_bold=str(vendor / "DejaVuSans-Bold.ttf"),
                                      enabled_reports=tuple(n for n in REPORT_NAMES if n != "login-activity"),
                                      login_capture_enabled=False)
-    report_app = build_report_app(report_settings, secret=REPORT_SECRET, clock=lambda: clock["now"])
+    report_app = build_report_app(report_settings, secret=REPORT_SECRET, clock=lambda: clock["now"] or _dt.now(_UTC))
     settings = Settings(
         clusters=[ClusterConfig("crc-local", "https://api.crc.testing:6443", token_env="X")],
         db_path=db, login_capture_enabled=True, oauth_proxy_enabled=True,
@@ -4472,12 +4484,38 @@ def _reports_page(browser, base, user, fake_clock=False):
 
 
 class TestReportsTab:
+    def test_the_fixtures_report_service_keeps_wall_time(self, reporting_server):
+        """The service verifies every ticket against ITS clock while the dashboard mints with wall time; a
+        fixture clock frozen at creation refused any ticket minted more than MAX_CLOCK_SKEW_SECONDS (30)
+        later as "issued too far in the future" — a 403 the page cannot remint past (it remints on 401
+        only), so it painted the narrowed-reader refusal card where the picker belongs. Measured: 200 at
+        3 s after creation, 403 at 80 s; in CI the shell sweep created this fixture ten minutes before
+        the class (OB1, review 2 of #179). The snapshot's age is the service's clock read over the wire:
+        it has to move."""
+        import time as _time
+        from gsd.reporting.ticket import mint as _mint
+        base, _clock, _app = reporting_server
+        headers = {"X-Forwarded-User": "root", "X-GSD-Report-Ticket": _mint(REPORT_SECRET, "root", "all", 120)}
+
+        def age() -> int:
+            r = httpx.get(f"{base}/report/api/snapshot", headers=headers, timeout=5)
+            assert r.status_code == 200, f"{r.status_code} {r.text}: a ticket minted now is refused — the service clock is behind wall time"
+            return r.json()["age_seconds"]
+
+        first = age()
+        _time.sleep(1.2)
+        second = age()
+        assert second >= first + 1, f"the report service's clock is frozen: {first} -> {second}"
+
     def test_the_reports_tab_is_inside_the_viewport_too(self, browser, reporting_server):
         """The phone-width sweep runs on `server`, which has no reporting, so it sees eight tabs; the
         live bar was nine wide and Reports the first off the edge (OB1, review of #179). Measured here,
         beside the other users of the module-scoped `reporting_server`: created ten minutes ahead of
-        this class (the first cut placed it in the shell sweep) its report ticket outlived its 300 s
-        TTL and every test of this class timed out on `#report-picker` — in the full suite only."""
+        this class (the first cut placed it in the shell sweep), the fixture's then-frozen clock refused
+        every later-minted ticket as future-dated (the 30 s skew bound, a 403 the page does not remint
+        on) and every test of this class timed out on `#report-picker` — in the full suite only. The
+        earlier reading, "outlived its 300 s TTL", was wrong: the TTL is 120 s and the bound that bit
+        was the skew (OB1, review 2 of #179); the clock is live now, and a guard test holds it so."""
         base, _clock, _app = reporting_server
         ctx, page, errors = _reports_page(browser, base, "alice")
         try:
