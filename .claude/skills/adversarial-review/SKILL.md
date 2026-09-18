@@ -53,7 +53,11 @@ brief file's content verbatim, preceded by one paragraph: it is the adversarial 
 file, do NOT run git write commands, kubectl apply, helm or anything that changes a cluster; it MAY read
 files, run `bash -n`, read-only `kubectl`/`curl`/`jq`/`python3`; verdicts CONFIRMED / REFUTED / PLAUSIBLE
 with quoted evidence (file:line, command + output) for every refutation; terse; end with an overall verdict
-and the minimum changes. OB1 is **required** for anything that becomes an upstream post (an issue, a PR, a
+and the minimum changes. **Not review only:** for every REFUTED or risk-naming PLAUSIBLE verdict and anything it
+volunteers, OB1 hands back the FULL code of the fix (the whole function, block or file section, with the path
+and where it goes) and a test that fails before and passes after — the fix goes into its report, never into
+the tree; the orchestrator traces it and applies it (the operator, 2026-09-17: "It shouldn't be review only. It
+also produces the code fix for any suggestions"). OB1 is **required** for anything that becomes an upstream post (an issue, a PR, a
 comment on someone else's repository) — the operator reads the draft under `docs/upstream/` after OB1 has,
 and posts only on their word. Codex and Grok run beside it, not instead of it. Probe both with a one-line prompt before a
 review if anything about the environment changed (login, plugin update, model list). A finding from ANY
