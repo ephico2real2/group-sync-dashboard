@@ -1,0 +1,377 @@
+<title>Overview KPI</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap">
+<style>
+  :root{
+    --page:#f9f9f7; --surface:#fcfcfb; --surface-2:#f2f2ee; --field:#ffffff;
+    --ink:#12120f; --muted:#5f5f58; --faint:#8a8a81;
+    --border:rgba(18,18,15,.13); --border-soft:rgba(18,18,15,.07);
+    --accent:#4f5a67; --accent-ink:#fff;
+    --good:#2f7d52;
+    --warn:#9a6b1f;
+    --crit:#a3382f;
+    --ui:"Space Grotesk",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+    --page:#0f1011; --surface:#17181a; --surface-2:#1d1f22; --field:#202225;
+    --ink:#f2f2f0; --muted:#a5a59d; --faint:#7a7a72;
+    --border:rgba(255,255,255,.15); --border-soft:rgba(255,255,255,.07);
+    --accent:#8b98a8; --accent-ink:#12120f;
+    --good:#63c68d;
+    --warn:#d9a441;
+    --crit:#e2695c;
+  }}
+  :root[data-theme="dark"]{
+    --page:#0f1011; --surface:#17181a; --surface-2:#1d1f22; --field:#202225;
+    --ink:#f2f2f0; --muted:#a5a59d; --faint:#7a7a72;
+    --border:rgba(255,255,255,.15); --border-soft:rgba(255,255,255,.07);
+    --accent:#8b98a8; --accent-ink:#12120f;
+    --good:#63c68d;
+    --warn:#d9a441;
+    --crit:#e2695c;
+  }
+  :root,:root[data-theme]{
+    --good-wash:color-mix(in srgb,var(--good) 13%,transparent);
+    --warn-wash:color-mix(in srgb,var(--warn) 15%,transparent);
+    --crit-wash:color-mix(in srgb,var(--crit) 13%,transparent);
+    --accent-wash:color-mix(in srgb,var(--accent) 11%,transparent);
+  }
+  /* Okabe-Ito. This page encodes state as green/amber/red — the worst pairing for the ~8% of
+     men with red-green colour blindness — so "good" moves off green onto blue. */
+  :root[data-palette="deuter"],:root[data-palette="protan"]{
+    --good:#0072B2; --warn:#E69F00; --crit:#D55E00; --accent:#005f8a;
+  }
+  /* Tritanopia confuses blue and yellow, so it needs the opposite fix, not the same one. */
+  :root[data-palette="trit"]{
+    --good:#009E73; --warn:#CC79A7; --crit:#D55E00; --accent:#4a4a52;
+  }
+  :root[data-palette="contrast"]{
+    --good:#00563f; --warn:#7a4a00; --crit:#8a0000; --accent:#1a1a1a; --faint:#4a4a44;
+  }
+  @media (prefers-color-scheme:dark){
+    :root[data-palette="contrast"]:not([data-theme="light"]){
+      --good:#7dffc4; --warn:#ffcf70; --crit:#ff9a8f; --accent:#e8e8e8; --accent-ink:#12120f; --faint:#c9c9c2;
+    }
+  }
+  /* THE THRESHOLD, DRAWN ON THE TRACK. A filled bar is just a filled bar to someone who cannot
+     separate the hues, so the limit is marked and the fill's position against it carries the state. */
+  .track{position:relative}
+  .track::after{content:"";position:absolute;top:-3px;bottom:-3px;width:2px;left:var(--th,101%);
+    background:var(--ink);opacity:.38}
+  .thlab{font-family:var(--mono);font-size:10px;color:var(--faint);margin-left:8px}
+  .theme{display:inline-flex;align-items:center;gap:7px;margin-left:14px;text-transform:none;letter-spacing:0;font-weight:400}
+  .theme select{font-family:var(--mono);font-size:11px;padding:4px 8px;border-radius:7px;
+    border:1px solid var(--border);background:var(--surface);color:var(--ink)}
+  *{box-sizing:border-box}
+  body{background:var(--page);color:var(--ink);font-family:var(--ui);font-size:14px;line-height:1.5;
+    -webkit-font-smoothing:antialiased;padding:26px 20px 60px}
+  .wrap{max-width:1180px;margin:0 auto;display:flex;flex-direction:column;gap:18px}
+  .mock-note{font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--faint);
+    display:flex;align-items:center;gap:8px;margin:0 2px -6px}
+  .mock-note::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--accent)}
+
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;
+    box-shadow:0 1px 2px rgba(18,18,15,.04),0 1px 12px rgba(18,18,15,.03)}
+  .card>h2{font-size:12px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);font-weight:600;
+    margin:0;padding:13px 18px;border-bottom:1px solid var(--border-soft);display:flex;align-items:center;
+    justify-content:space-between;gap:12px;flex-wrap:wrap}
+  .asof{font-family:var(--mono);font-size:10.5px;color:var(--faint);text-transform:none;letter-spacing:0;
+    display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-weight:400}
+
+  /* heartbeat — the only always-on motion, and it stops under reduced-motion */
+  .beat{width:7px;height:7px;border-radius:50%;background:var(--good);animation:beat 2s ease-in-out infinite}
+  @keyframes beat{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.35;transform:scale(.82)}}
+
+  /* system strip */
+  .sys{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--border-soft)}
+  .comp{background:var(--surface);padding:16px 18px}
+  .comp-top{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:14px}
+  .comp-name{font-family:var(--mono);font-size:13px;font-weight:600}
+  .pill{display:inline-flex;align-items:center;gap:6px;font-size:10.5px;font-weight:600;letter-spacing:.04em;
+    text-transform:uppercase;border-radius:999px;padding:3px 9px;border:1px solid currentColor}
+  .pill.ok{color:var(--good);background:var(--good-wash)}
+  .pill.warn{color:var(--warn);background:var(--warn-wash)}
+  .pill.crit{color:var(--crit);background:var(--crit-wash)}
+  .pill::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}
+
+  .meters{display:flex;flex-direction:column;gap:11px}
+  .meter-row{display:grid;grid-template-columns:76px 1fr auto;align-items:center;gap:11px}
+  .meter-lab{font-size:11px;color:var(--faint);text-transform:uppercase;letter-spacing:.04em}
+  .track{display:block;height:7px;border-radius:999px;background:var(--surface-2);border:1px solid var(--border-soft);overflow:hidden}
+  /* display:block is load-bearing — a grid item blockifies the track, but the fill span would stay
+     inline and silently ignore height:100%, rendering an empty bar. */
+  .fill{display:block;height:100%;min-width:3px;border-radius:999px;background:var(--good);transition:width .6s cubic-bezier(.2,.7,.3,1)}
+  .fill.warn{background:var(--warn)} .fill.crit{background:var(--crit)}
+  .meter-val{font-family:var(--mono);font-size:12px;font-variant-numeric:tabular-nums;min-width:104px;text-align:right}
+  .meter-val b{font-weight:600}
+  .sub{font-size:10.5px;color:var(--faint);font-family:var(--mono);margin-top:2px}
+  .rule{font-size:10.5px;color:var(--faint);margin-top:12px;padding-top:10px;border-top:1px dashed var(--border-soft)}
+
+  /* KPI band */
+  .kpis{display:grid;grid-template-columns:repeat(6,1fr);gap:1px;background:var(--border-soft)}
+  .kpi{background:var(--surface);padding:15px 16px}
+  .kpi .lab{font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--faint);font-weight:600}
+  .kpi .val{font-family:var(--mono);font-size:30px;font-weight:600;line-height:1.15;margin-top:6px;
+    font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+  .kpi .note{font-size:11px;color:var(--muted);margin-top:3px}
+  .kpi.flag-warn .val{color:var(--warn)} .kpi.flag-crit .val{color:var(--crit)}
+  /* pulse ONLY when a value actually changes */
+  .flash{animation:flash 1.1s ease-out}
+  @keyframes flash{0%{background:var(--accent-wash)}100%{background:transparent}}
+
+  /* trends */
+  .trends{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--border-soft)}
+  .trend{background:var(--surface);padding:15px 16px}
+  .trend .lab{font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--faint);font-weight:600}
+  .trend .val{font-family:var(--mono);font-size:19px;font-weight:600;margin-top:5px;font-variant-numeric:tabular-nums}
+  .trend .delta{font-size:11px;font-family:var(--mono);margin-left:7px;font-weight:500}
+  .up{color:var(--good)} .down{color:var(--crit)} .flat{color:var(--faint)}
+  .spark{margin-top:9px}
+  .retain{font-size:10px;color:var(--faint);margin-top:7px;font-family:var(--mono)}
+
+  /* clusters */
+  /* a wide table scrolls inside its own container; the card clips, so without this the
+     right-hand columns were unreachable on a phone (measured: +242px at 375px) */
+  .scroll-x{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  table{width:100%;border-collapse:collapse;min-width:620px}
+  th{font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--faint);font-weight:600;
+    text-align:left;padding:9px 18px;border-bottom:1px solid var(--border-soft)}
+  td{padding:11px 18px;border-bottom:1px solid var(--border-soft);font-size:13px}
+  tr:last-child td{border-bottom:0}
+  tr.row:hover{background:var(--accent-wash);cursor:pointer}
+  td.num{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:right}
+  .cname{font-family:var(--mono);font-weight:600}
+  .chip{display:inline-block;font-family:var(--mono);font-size:11px;padding:1px 7px;border-radius:5px;
+    background:var(--surface-2);border:1px solid var(--border-soft);color:var(--muted)}
+
+  /* grafana door */
+  .door{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:15px 18px;flex-wrap:wrap}
+  .door p{margin:0;font-size:12.5px;color:var(--muted);max-width:62ch}
+  .btns{display:flex;gap:9px;flex-wrap:wrap}
+  .btn{font-family:var(--ui);font-size:12.5px;font-weight:600;padding:8px 15px;border-radius:8px;cursor:pointer;
+    border:1px solid var(--accent);background:var(--accent);color:var(--accent-ink);display:inline-flex;align-items:center;gap:7px}
+  .btn.ghost{background:transparent;color:var(--accent)}
+  .btn .ext{font-family:var(--mono);font-size:10px;opacity:.8}
+
+  @media (prefers-reduced-motion: reduce){
+    .beat{animation:none} .flash{animation:none} .fill{transition:none}
+  }
+  @media(max-width:980px){.kpis{grid-template-columns:repeat(3,1fr)}.trends{grid-template-columns:repeat(2,1fr)}.sys{grid-template-columns:1fr}}
+</style>
+
+<div class="wrap">
+  <div class="mock-note">Mockup · Overview KPI makeover · administrator tier · live values from CRC (crc-local + mock) · for review</div>
+
+  <!-- ── system status ── -->
+  <section class="card">
+    <h2>System status
+      <span class="asof"><span class="beat" id="beat"></span>updated <span id="ago">4</span>s ago · poll 60s
+        <span class="theme">Appearance
+          <select id="appearance" aria-label="Light or dark">
+            <option value="">Auto</option>
+            <option value="light">Light</option>
+            <option value="dark">Dark</option>
+          </select>
+        </span>
+        <span class="theme">Colours
+          <select id="palette" aria-label="Colour theme">
+            <option value="">Default</option>
+            <option value="deuter">Deuteranopia-safe</option>
+            <option value="protan">Protanopia-safe</option>
+            <option value="trit">Tritanopia-safe</option>
+            <option value="contrast">High contrast</option>
+          </select>
+        </span>
+      <button style="font:inherit;font-size:12px;padding:4px 10px;border-radius:7px;border:1px solid var(--border);background:var(--surface-2);color:var(--ink);cursor:pointer;margin-left:6px">Refresh</button>
+      <button style="font:inherit;font-size:12px;padding:4px 10px;border-radius:7px;border:1px solid var(--border);background:var(--surface-2);color:var(--ink);cursor:pointer;margin-left:6px">Sign out</button></span>
+    </h2>
+    <div class="sys">
+      <div class="comp">
+        <div class="comp-top"><span class="comp-name">dashboard</span><span class="pill warn">watch</span></div>
+        <div class="meters">
+          <div class="meter-row">
+            <span class="meter-lab">Memory</span>
+            <span class="track" style="--th:80%"><span class="fill" style="width:19.3%"></span></span>
+            <span class="meter-val"><b>19.3%</b> of 512Mi</span>
+          </div>
+          <div class="meter-row">
+            <span class="meter-lab">CPU</span>
+            <span class="track" style="--th:80%"><span class="fill" id="cpu-fill" style="width:1%"></span></span>
+            <span class="meter-val"><b id="cpu-val">&lt;0.01</b> / 0.5 cores</span>
+          </div>
+          <div class="meter-row">
+            <span class="meter-lab">Throttled</span>
+            <span class="track" style="--th:20%"><span class="fill warn" style="width:22%"></span></span>
+            <span class="meter-val"><b>1.10%</b> of periods</span>
+          </div>
+          <div class="meter-row">
+            <span class="meter-lab">Data volume</span>
+            <span class="track" style="--th:80%"><span class="fill warn" style="width:84%"></span></span>
+            <span class="meter-val"><b>18.6Mi</b> · node disk 84% full</span>
+          </div>
+        </div>
+        <div class="sub">230 throttled / 20,853 periods · 8.71s total — over the 1% mark, which is why this reads <em>watch</em></div>
+        <div class="sub">gsd.db 2.3Mi + WAL 4.0Mi + 4 backups 8.1Mi, on a 59Gi hostpath volume that shares the node's disk (50G of 60G used)</div>
+        <div class="rule">The mark on each track is the amber threshold — &gt;80% memory/CPU, &gt;1% throttled periods. Position against the mark reads without colour. A hostpath volume's own size means nothing; the node disk it lives on is the number.</div>
+      </div>
+
+      <div class="comp">
+        <div class="comp-top"><span class="comp-name">report</span><span class="pill ok">healthy</span></div>
+        <div class="meters">
+          <div class="meter-row">
+            <span class="meter-lab">Memory</span>
+            <span class="track" style="--th:80%"><span class="fill" style="width:13.8%"></span></span>
+            <span class="meter-val"><b>13.8%</b> of 768Mi</span>
+          </div>
+          <div class="meter-row">
+            <span class="meter-lab">CPU</span>
+            <span class="track" style="--th:80%"><span class="fill" style="width:1%"></span></span>
+            <span class="meter-val"><b>&lt;0.01</b> / 0.5 cores</span>
+          </div>
+          <div class="meter-row">
+            <span class="meter-lab">Throttled</span>
+            <span class="track" style="--th:20%"><span class="fill" style="width:1%"></span></span>
+            <span class="meter-val"><b>0.05%</b> of periods</span>
+          </div>
+          <div class="meter-row">
+            <span class="meter-lab">Artefacts</span>
+            <span class="track" style="--th:80%"><span class="fill warn" style="width:84%"></span></span>
+            <span class="meter-val"><b>11.2Mi</b> · 418 files · node disk 84% full</span>
+          </div>
+        </div>
+        <div class="sub">108 throttled / 235,324 periods · 5.17s total · preempted 29× in 3h on 2026-09-14 (#97), priorityClassName now set</div>
+        <div class="rule">Throttling is the saturation signal, not CPU% — a service at 30% being throttled is mis-sized.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── KPI band ── -->
+  <section class="card">
+    <h2>Access posture <span class="asof">as of last poll · 2 clusters · crc-local + mock</span></h2>
+    <div class="kpis">
+      <div class="kpi"><div class="lab">Groups</div><div class="val" id="k-groups">74</div><div class="note">67 crc-local · 7 mock</div></div>
+      <div class="kpi"><div class="lab">Empty</div><div class="val flag" >2</div><div class="note">no members</div></div>
+      <div class="kpi"><div class="lab">Unattributed</div><div class="val">2</div><div class="note">no sync provider</div></div>
+      <div class="kpi flag-warn"><div class="lab">To review</div><div class="val">11</div><div class="note">6 unresolved · 5 unmanaged</div></div>
+      <div class="kpi"><div class="lab">Bindings</div><div class="val">38</div><div class="note">+157 built-in</div></div>
+      <div class="kpi"><div class="lab">Clusters up</div><div class="val">2<span style="font-size:17px;color:var(--faint)">/2</span></div><div class="note">leader held</div></div>
+    </div>
+  </section>
+
+  <!-- ── trends ── -->
+  <section class="card">
+    <h2>Trends <span class="asof">in-app from append-only history · deeper series in Grafana</span></h2>
+    <div class="trends">
+      <div class="trend">
+        <div class="lab">Membership churn</div>
+        <div class="val">18<span class="delta up">+4 ▲</span></div>
+        <svg class="spark" width="100%" height="30" viewBox="0 0 120 30" preserveAspectRatio="none" aria-label="churn trend">
+          <polyline fill="none" stroke="var(--good)" stroke-width="1.8" points="0,22 15,20 30,24 45,14 60,17 75,11 90,15 105,8 120,10"/>
+        </svg>
+        <div class="retain">14 joiners · 4 leavers · 30d</div>
+      </div>
+      <div class="trend">
+        <div class="lab">Login outcomes</div>
+        <div class="val">96.2%<span class="delta flat">= 0.0</span></div>
+        <svg class="spark" width="100%" height="30" viewBox="0 0 120 30" preserveAspectRatio="none" aria-label="login success trend">
+          <polyline fill="none" stroke="var(--accent)" stroke-width="1.8" points="0,9 15,8 30,11 45,7 60,9 75,8 90,12 105,8 120,9"/>
+        </svg>
+        <div class="retain">62 attempts · 4 providers</div>
+      </div>
+      <div class="trend">
+        <div class="lab">Sync cadence</div>
+        <div class="val">3<span style="font-size:15px;color:var(--faint)">/4</span><span class="delta down">1 overdue ▼</span></div>
+        <svg class="spark" width="100%" height="30" viewBox="0 0 120 30" preserveAspectRatio="none" aria-label="sync cadence">
+          <polyline fill="none" stroke="var(--good)" stroke-width="1.8" points="0,12 15,12 30,13 45,12 60,12 75,14 90,12 105,12 120,12"/>
+        </svg>
+        <div class="retain">crc-local 3 ok · mock/ldap-sync last synced 3d ago</div>
+      </div>
+      <div class="trend">
+        <div class="lab">Report volume</div>
+        <div class="val">3<span class="delta up">+3 ▲</span></div>
+        <svg class="spark" width="100%" height="30" viewBox="0 0 120 30" preserveAspectRatio="none" aria-label="report volume">
+          <polyline fill="none" stroke="var(--accent)" stroke-width="1.8" points="0,26 15,26 30,26 45,26 60,24 75,22 90,18 105,14 120,9"/>
+        </svg>
+        <div class="retain">timeline starts 2026-09-16</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── clusters ── -->
+  <section class="card">
+    <h2>Clusters</h2>
+    <div class="scroll-x"><table>
+      <thead><tr><th>Cluster</th><th>State</th><th class="num">Groups</th><th class="num">Empty</th><th class="num">Unattrib.</th><th class="num">To review</th><th>GroupSync</th></tr></thead>
+      <tbody>
+        <tr class="row"><td class="cname">crc-local</td><td><span class="pill ok">up</span></td><td class="num">67</td><td class="num">1</td><td class="num">2</td><td class="num">11</td><td><span class="chip">3 CRs · all ok</span></td></tr>
+        <tr class="row"><td class="cname">mock</td><td><span class="pill ok">up</span></td><td class="num">7</td><td class="num">1</td><td class="num">0</td><td class="num">0</td><td><span class="chip" style="color:var(--crit);border-color:color-mix(in srgb,var(--crit) 40%,transparent);background:var(--crit-wash)">1 CR · overdue 3d</span></td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <!-- ── grafana door ── -->
+  <section class="card">
+    <div class="door">
+      <p><strong>Deeper series live in your metrics stack.</strong> OpenShift removed its bundled Grafana in 4.11, so Grafana is optional and operator-owned — links appear only when <span style="font-family:var(--mono);font-size:11.5px">grafana.url</span> is configured. The console's Observe dashboards always ship.</p>
+      <div class="btns">
+        <button class="btn">Open in Grafana <span class="ext">↗ configured</span></button>
+        <button class="btn ghost">Observe → Dashboards <span class="ext">↗ console</span></button>
+      </div>
+    </div>
+  </section>
+</div>
+
+<script>
+  // "updated Ns ago" heartbeat — ties the blinking to a real poll, not decoration
+  let ago = 4;
+  setInterval(() => {
+    ago = ago >= 60 ? 0 : ago + 1;
+    document.getElementById("ago").textContent = ago;
+    if (ago === 0) tick();           // a fresh poll landed
+  }, 1000);
+
+  // pulse ONLY when a value actually changes. In this mock nothing does between polls: every
+  // figure on the page was measured once (cgroup v2, ls -laR, an 11.1s usage_usec window) and a
+  // number that drifts on a timer is a number nobody measured. So a poll re-flashes the
+  // heartbeat and leaves the figures alone — the live page flashes a row when its value moves.
+  function flash(el){ el.classList.remove("flash"); void el.offsetWidth; el.classList.add("flash"); }
+  function tick(){ flash(document.getElementById("beat").closest(".asof")); }
+
+  // Colour theme: URL wins (shareable), then the last local choice.
+  (function () {
+    const sel = document.getElementById("palette");
+    if (!sel) return;
+    const fromUrl = new URLSearchParams(location.search).get("theme") || "";
+    let saved = ""; try { saved = localStorage.getItem("gsd-palette") || ""; } catch (e) {}
+    const start = fromUrl || saved;
+    if (start) { document.documentElement.setAttribute("data-palette", start); sel.value = start; }
+    sel.addEventListener("change", function () {
+      const v = sel.value;
+      if (v) document.documentElement.setAttribute("data-palette", v);
+      else document.documentElement.removeAttribute("data-palette");
+      try { v ? localStorage.setItem("gsd-palette", v) : localStorage.removeItem("gsd-palette"); } catch (e) {}
+      const u = new URL(location.href);
+      v ? u.searchParams.set("theme", v) : u.searchParams.delete("theme");
+      history.replaceState(null, "", u);
+    });
+  })();
+
+  // Appearance: Auto follows the OS; Light/Dark override it. Same URL+local rule as the palette.
+  (function () {
+    const sel = document.getElementById("appearance");
+    if (!sel) return;
+    const fromUrl = new URLSearchParams(location.search).get("mode") || "";
+    let saved = ""; try { saved = localStorage.getItem("gsd-mode") || ""; } catch (e) {}
+    const start = fromUrl || saved;
+    if (start) { document.documentElement.setAttribute("data-theme", start); sel.value = start; }
+    sel.addEventListener("change", function () {
+      const v = sel.value;
+      if (v) document.documentElement.setAttribute("data-theme", v);
+      else document.documentElement.removeAttribute("data-theme");
+      try { v ? localStorage.setItem("gsd-mode", v) : localStorage.removeItem("gsd-mode"); } catch (e) {}
+      const u = new URL(location.href);
+      v ? u.searchParams.set("mode", v) : u.searchParams.delete("mode");
+      history.replaceState(null, "", u);
+    });
+  })();
+</script>

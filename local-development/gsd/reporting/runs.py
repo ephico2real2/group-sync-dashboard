@@ -80,7 +80,11 @@ class RunManager:
             return
         self._last_prune = now
         try:
-            self.store.prune(days=self.settings.retention_days, max_runs=self.settings.retention_max_runs, now=self._clock())
+            self.store.prune(scheduled_keep=self.settings.scheduled_keep_per_schedule,
+                             scheduled_days=self.settings.scheduled_retention_days,
+                             manual_days=self.settings.manual_retention_days,
+                             manual_max_runs=self.settings.manual_retention_max_runs,
+                             now=self._clock())
         except Exception:  # noqa: BLE001 — retention must never stop rendering
             log.exception("artifact prune failed")
 

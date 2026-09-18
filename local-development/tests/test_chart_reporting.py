@@ -43,6 +43,22 @@ def test_default_reporting_render_is_yaml_and_all_selectors_match_only_their_wor
     assert not _matches(ds, cl) and not _matches(rs, cl)
 
 
+def test_the_report_deployment_carries_the_two_tier_retention_env():
+    """R2 (#149): these four env vars are the ONLY wiring between values.reporting.retention and the
+    service's prune, and nothing else asserted them — a reverted template would have stayed green
+    (raised by the adversarial review, Cursor). The removed single-tier names must not come back."""
+    docs = _render("reporting.enabled=true")
+    report = _exact(docs, "Deployment", "t-group-sync-dashboard-report")
+    env = {e["name"]: e.get("value")
+           for c in report["spec"]["template"]["spec"]["containers"] for e in c.get("env", [])}
+    assert env["GSD_REPORT_SCHEDULED_KEEP_PER_SCHEDULE"] == "2"
+    assert env["GSD_REPORT_SCHEDULED_RETENTION_DAYS"] == "90"
+    assert env["GSD_REPORT_MANUAL_RETENTION_DAYS"] == "3"
+    assert env["GSD_REPORT_MANUAL_RETENTION_MAX_RUNS"] == "500"
+    assert "GSD_REPORT_RETENTION_DAYS" not in env, "the single-tier env was replaced, not kept"
+    assert "GSD_REPORT_RETENTION_MAX_RUNS" not in env
+
+
 class UniqueKeyLoader(yaml.SafeLoader):
     """Reject duplicate mapping keys instead of silently taking the last value."""
 

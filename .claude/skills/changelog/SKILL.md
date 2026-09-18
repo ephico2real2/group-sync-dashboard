@@ -82,6 +82,10 @@ Outcome in one line: **…**
 
 ## Rules that make it trustworthy
 
+- **Log after the notification, not after a poll.** A suite or a review that is still running is waited on
+  in the background (see the e2e-walk skill's "Background work — never poll it"); its numbers enter the log
+  from the completion notification's output file, never from an interim read.
+
 - **Measured, or marked.** A number, a status code, a digest or a test total appears only when the
   session ran the command. If a fact was lost (an output filter dropped a test name), say so in the
   line rather than reconstructing it.
