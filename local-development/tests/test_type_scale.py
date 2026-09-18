@@ -132,7 +132,7 @@ def test_steps_are_distinct(scale):
 
 
 def test_inline_styles_carry_no_literal_at_all():
-    """#152: the page had 92 style= attributes, 21 of them font sizes the stylesheet's scale check
+    """#152: the page had 92 style= attributes, 24 of them font sizes the stylesheet's scale check
     could not see. Every one is a class now. The one inline style allowed is a value the page can
     only know at render time — a token reference (`background:var(--series-N)`) — never a number."""
     page = INDEX.read_text()
@@ -219,3 +219,22 @@ def test_markup_does_not_repeat_the_class_attribute():
     page = INDEX.read_text()
     dupes = re.findall(r"<[^>\n]*\bclass=\"[^\"]*\"[^>\n]*\bclass=\"", page)
     assert dupes == [], "merge the class attributes; the second is dropped: " + ", ".join(dupes)
+
+
+def test_comments_do_not_nest(css):
+    """CSS comments do not nest: a `*/` written inside a comment closes it there, and whatever follows
+    is parsed as a broken declaration that swallows the next real one. Measured on #152's first cut:
+    a token-block comment quoted `/* optical: … */`, the inner closer ended the comment, and the text
+    after it ate `--space-1: 2px;` — every chip lost its padding while the regex-based guards stayed
+    green. The render check caught it; this makes the parser's reading the test's reading. (Deleted by
+    a careless slice in the Grok pass and restored by OB1's — the self-check below keeps it here.)"""
+    nested = [m.group(0)[:120] for m in re.finditer(r"/\*(.*?)\*/", css, re.S) if "/*" in m.group(1)]
+    assert not nested, "a comment contains a comment opener — its closer ends the outer comment early: " + " | ".join(nested)
+
+
+def test_a_nested_comment_opener_is_seen(css):
+    """The guard must fire on the first-cut shape: a token-block comment that quotes `/* optical: … */`."""
+    poisoned = css.replace("`optical:` note", "`/* optical: … */` note", 1)
+    assert poisoned != css
+    with pytest.raises(AssertionError):
+        test_comments_do_not_nest(poisoned)

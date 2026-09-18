@@ -87,6 +87,22 @@
     }
     wire("pref-mode", "data-theme", "mode", "gsd-mode");
     wire("pref-palette", "data-palette", "theme", "gsd-palette");
+    // Back/Forward restore an entry whose URL predates the change (replaceState rewrote only the
+    // current entry), so the address bar dropped ?mode/?theme after one Back and every entry pushed
+    // from there inherited the loss (OB1, review of #179). The attributes on <html> are the truth;
+    // re-stamp them on the entry the browser just restored. The state object is kept, so the
+    // router's own popstate handler reads the same position.
+    window.addEventListener("popstate", function () {
+      var u = new URL(location.href), changed = false;
+      [["mode", "data-theme"], ["theme", "data-palette"]].forEach(function (pair) {
+        var v = html.getAttribute(pair[1]) || "";
+        if ((u.searchParams.get(pair[0]) || "") !== v) {
+          if (v) u.searchParams.set(pair[0], v); else u.searchParams.delete(pair[0]);
+          changed = true;
+        }
+      });
+      if (changed) history.replaceState(history.state, "", u);
+    });
   })();
   </script>
 

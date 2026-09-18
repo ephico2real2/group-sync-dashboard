@@ -164,7 +164,7 @@
   --line: #c3c2b7;                                                  /* a chip's resting border */
   --warn: #b45309;  /* td.num.warn is TEXT at weight 600, so 4.5:1 — the warning-edge amber, not the 3:1 glyph amber */
 }
-@media (prefers-color-scheme: dark) {
+@media screen and (prefers-color-scheme: dark) {
   :root:where(:not([data-theme="light"])) {
     color-scheme: dark;
     --surface-1: #1a1a19;
@@ -209,6 +209,12 @@
     --k-access: #7fae8b; --k-rbac: #c8946a; --k-identity: #8ea3c8; --k-activity: #c090b4; --k-compliance: #b3aa72;
   }
 }
+/* Dark is a SCREEN theme (OB1, review of #179): a print is paper, Chrome paints no page background by
+   default, and the dark text tokens landed near-white on white — measured under print emulation with
+   ?mode=dark. Every dark block below is screen-only; the palette blocks stay unconditional, so a
+   reader's palette prints in its light form. One wrapper per block, contents at column 0: the guard
+   tests anchor on `^:root` and `\n}`. */
+@media screen {
 :root[data-theme="dark"] {
   color-scheme: dark;
   --surface-1: #1a1a19;
@@ -248,6 +254,7 @@
   --tab-usage: #d9490d;
   --tab-reports: #98a2b3;      /* 7.55:1 on the dark --page (measured) */
   --k-access: #7fae8b; --k-rbac: #c8946a; --k-identity: #8ea3c8; --k-activity: #c090b4; --k-compliance: #b3aa72;
+}
 }
 
 
@@ -290,7 +297,7 @@
   --status-critical: #a42727;  /* 7.06:1 on the card */
   --text-muted: #575551;  /* 7.25:1 on the card */
 }
-@media (prefers-color-scheme: dark) {
+@media screen and (prefers-color-scheme: dark) {
   :root:where(:not([data-theme="light"]))[data-palette="deuter"] {
     --status-good: #0088d5;  /* 4.55:1 on the card */
     --status-warning: #e69f00;  /* 7.73:1 on the card */
@@ -317,30 +324,38 @@
     --text-muted: #a7a5a1;  /* 7.08:1 on the card */
   }
 }
+@media screen {
 :root[data-theme="dark"][data-palette="deuter"] {
   --status-good: #0088d5;  /* 4.55:1 on the card */
   --status-warning: #e69f00;  /* 7.73:1 on the card */
   --status-warning-edge: #e69f00;  /* 7.73:1 on the card */
   --status-critical: #d75f00;  /* 4.58:1 on the card */
 }
+}
+@media screen {
 :root[data-theme="dark"][data-palette="protan"] {
   --status-good: #0088d5;  /* 4.55:1 on the card */
   --status-warning: #e69f00;  /* 7.73:1 on the card */
   --status-warning-edge: #e69f00;  /* 7.73:1 on the card */
   --status-critical: #d75f00;  /* 4.58:1 on the card */
 }
+}
+@media screen {
 :root[data-theme="dark"][data-palette="trit"] {
   --status-good: #009e73;  /* 5.09:1 on the card */
   --status-warning: #cc79a7;  /* 5.69:1 on the card */
   --status-warning-edge: #cc79a7;  /* 5.69:1 on the card */
   --status-critical: #d75f00;  /* 4.58:1 on the card */
 }
+}
+@media screen {
 :root[data-theme="dark"][data-palette="contrast"] {
   --status-good: #0ec00e;  /* 7.10:1 on the card */
   --status-warning: #c48704;  /* 5.65:1 on the card */
   --status-warning-edge: #c48704;  /* 5.65:1 on the card */
   --status-critical: #e48d8d;  /* 7.04:1 on the card */
   --text-muted: #a7a5a1;  /* 7.08:1 on the card */
+}
 }
 
 @font-face {
@@ -419,12 +434,14 @@ body {
    light mode too whenever no theme is pinned, so unqualified it would put the dark shadow
    under every card on a white page. */
 :root { --elev-1: 0 1px 2px rgba(11,11,11,0.05), 0 1px 8px rgba(11,11,11,0.04); }
-@media (prefers-color-scheme: dark) {
+@media screen and (prefers-color-scheme: dark) {
   :root:where(:not([data-theme="light"])) {
     --elev-1: 0 1px 2px rgba(0,0,0,0.5), 0 1px 10px rgba(0,0,0,0.35);
   }
 }
+@media screen {
 :root[data-theme="dark"] { --elev-1: 0 1px 2px rgba(0,0,0,0.5), 0 1px 10px rgba(0,0,0,0.35); }
+}
 
 /* One focus treatment for everything focusable. There was none before: `select, button`
    inherited the UA outline, and `.drill` actively removed it. A 2px ring plus a 2px offset

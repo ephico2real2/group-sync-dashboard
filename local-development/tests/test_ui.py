@@ -1053,6 +1053,22 @@ class TestTheShellAtPhoneWidth:
             "() => [...document.querySelectorAll('button.tab')].filter(t => t.getBoundingClientRect().right > innerWidth).map(t => t.id)")
         assert beyond == [], f"{tab}: tabs past the right edge: {beyond}"
 
+    def test_the_reports_tab_is_inside_the_viewport_too(self, browser, reporting_server):
+        """`server` has no reporting, so the sweep above sees eight tabs; the live bar was nine wide and
+        Reports was the first tab off the edge (OB1, review of #179). Measured on the reporting fixture."""
+        base, _clock, _app = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "alice")
+        try:
+            page.set_viewport_size({"width": 375, "height": 740})
+            page.click("#tab-reports")
+            page.wait_for_selector("#tab-reports[aria-current='page']")
+            page.wait_for_timeout(300)
+            assert page.evaluate("() => document.querySelectorAll('button.tab').length") == 9
+            assert page.evaluate("() => [document.documentElement.scrollWidth <= innerWidth, [...document.querySelectorAll('button.tab')].filter(t => t.getBoundingClientRect().right > innerWidth).map(t => t.id)]") == [True, []]
+            assert not errors
+        finally:
+            ctx.close()
+
 
 class TestAppearanceAndColours:
     """#152: appearance and palette are global shell state on <html>. The URL wins over the stored
@@ -1119,6 +1135,30 @@ class TestAppearanceAndColours:
         assert users["soft"] == users["direct"], f"Users --accent-soft {users['soft']} froze on :root (page mix {users['direct']})"
         assert overview["soft"] == overview["direct"]
         assert users["soft"] != overview["soft"], "both tabs resolved to the same wash"
+
+    def test_print_is_light_whatever_the_screen_theme(self, page, server):
+        """OB1, review of #179: a print is paper — Chrome paints no page background by default, so the
+        dark tokens put near-white text on white. The dark blocks are screen-only; the palette stays,
+        in its light form. Fails on the ungated sheet (white text, dark scheme); passes gated."""
+        page.goto(f"{server}/?mode=dark&theme=contrast#page=overview&cluster=crc-local")
+        page.wait_for_selector(".hero .value")
+        page.emulate_media(media="print")
+        got = page.evaluate("() => { const cs = getComputedStyle(document.body); return [cs.color, cs.colorScheme, getComputedStyle(document.documentElement).getPropertyValue('--status-good').trim()]; }")
+        assert got == ["rgb(11, 11, 11)", "light", "#076607"], got
+        page.emulate_media(media="screen")
+        assert page.evaluate("() => getComputedStyle(document.body).colorScheme") == "dark"
+
+    def test_the_url_keeps_the_choice_across_back(self, dash):
+        """OB1, review of #179: replaceState rewrote only the current entry, so Back restored an
+        address without ?mode — and every entry pushed from there inherited the loss."""
+        dash.click("#tab-groups")
+        dash.wait_for_selector("tr[data-group]")
+        dash.click("tr[data-group='app-ocp-rbac-alpha-ns-admin']")
+        dash.wait_for_selector("#back-groups")
+        dash.select_option("#pref-mode", "dark")
+        dash.click("#back-groups")
+        dash.wait_for_function("() => !document.querySelector('#back-groups')")
+        assert dash.evaluate("() => [location.search, document.documentElement.dataset.theme, history.state.pos.page]") == ["?mode=dark", "dark", "groups"]
 
     def test_the_controls_are_in_the_static_header_not_the_filter_bar(self, dash):
         assert dash.evaluate("() => document.querySelector('header.top #pref-mode') !== null && document.querySelector('#filters #pref-mode') === null")
