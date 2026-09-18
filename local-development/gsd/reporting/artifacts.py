@@ -123,8 +123,18 @@ class ArtifactStore:
         return len(data)
 
     def read(self, run_id: str, fmt: str) -> bytes | None:
-        p = self._dir(run_id) / f"report.{fmt}"
-        return p.read_bytes() if p.is_file() else None
+        """The artefact bytes, or None when it is not there — including when prune removed the run's
+        directory between a check and the read. The reader deliberately does NOT take the store lock
+        (a download must not block rendering), so any look-before-you-leap check is already stale by
+        the time the bytes are read; asking forgiveness keeps a racing download a 404 instead of an
+        unhandled FileNotFoundError that FastAPI turns into a 500 (#155). Two-tier retention made this
+        likely: manual runs now live 3 days, not 90, so prune deletes far more often. The catch stays
+        NARROW on purpose — a permissions or disk failure must still surface to the operator, never be
+        laundered into 'this run has no artefact'."""
+        try:
+            return (self._dir(run_id) / f"report.{fmt}").read_bytes()
+        except (FileNotFoundError, NotADirectoryError):
+            return None
 
     def get(self, run_id: str) -> Run | None:
         with self._lock:
@@ -158,22 +168,46 @@ class ArtifactStore:
                           key=lambda r: r.id)
         return runs[:limit]
 
-    def prune(self, *, days: int, max_runs: int, now: datetime) -> int:
-        """Remove FINISHED runs older than `days` and beyond the newest `max_runs`; 0 disables either
-        bound. Deletion is by run directory, so the index and the disk cannot disagree for long.
-        Queued and running runs are never doomed: they are still in the worker's queue, and deleting
-        their directory made GET /runs/{id} a 404 after a 202 while the worker skipped them silently
-        (review of C3, Cursor)."""
+    def prune(self, *, scheduled_keep: int, scheduled_days: int, manual_days: int,
+              manual_max_runs: int, now: datetime,
+              overrides: dict[str, tuple[int, int]] | None = None) -> int:
+        """Two-tier retention (design R2) so a burst of manual runs can never evict a scheduled report.
+
+        A SCHEDULED run (`schedule` set, `generated_by='schedule:<name>'`) is kept while within the newest
+        `scheduled_keep` per (schedule, cluster) OR younger than `scheduled_days`, and is EXEMPT from the
+        manual run-count cap — the live bug this fixes was the single cap slicing ALL finished runs by id,
+        so a burst of manual runs pushed a still-valid scheduled report past `max_runs` and deleted it.
+        `overrides[name] = (keep, days)` win over the globals for that schedule; a schedule with no override
+        inherits them. A MANUAL run (no `schedule`) is kept `manual_days` and at most `manual_max_runs`,
+        whichever prunes first. A bound of 0 is disabled. Queued/running runs are never doomed: they are
+        still the worker's, and deleting their directory made GET /runs/{id} a 404 after a 202 while the
+        worker skipped them silently (review of C3, Cursor). Deletion is by run directory, so the index and
+        the disk cannot disagree for long."""
+        overrides = overrides or {}
+
+        def older_than(run: Run, day_bound: int) -> bool:
+            return day_bound > 0 and run.id[:15] < (now - timedelta(days=day_bound)).strftime("%Y%m%dT%H%M%S")
+
         with self._lock:
-            runs = sorted((r for r in self._runs.values() if r.status in ("done", "failed")),
-                          key=lambda r: r.id, reverse=True)
+            finished = [r for r in self._runs.values() if r.status in ("done", "failed")]
             doomed: list[Run] = []
-            if max_runs > 0:
-                doomed += runs[max_runs:]
-                runs = runs[:max_runs]
-            if days > 0:
-                cutoff = (now - timedelta(days=days)).strftime("%Y%m%dT%H%M%S")
-                doomed += [r for r in runs if r.id[:15] < cutoff]
+
+            # Manual tier: keep the newest `manual_max_runs`, then drop anything older than `manual_days`.
+            manual = sorted((r for r in finished if not r.schedule), key=lambda r: r.id, reverse=True)
+            if manual_max_runs > 0:
+                doomed += manual[manual_max_runs:]
+                manual = manual[:manual_max_runs]
+            doomed += [r for r in manual if older_than(r, manual_days)]
+
+            # Scheduled tier: per (schedule, cluster) keep the newest K; beyond K keep only while young.
+            by_key: dict[tuple[str, str], list[Run]] = {}
+            for r in sorted((r for r in finished if r.schedule), key=lambda r: r.id, reverse=True):
+                by_key.setdefault((r.schedule, r.cluster), []).append(r)
+            for (name, _cluster), group in by_key.items():
+                keep, days = overrides.get(name, (scheduled_keep, scheduled_days))
+                doomed += [r for i, r in enumerate(group)
+                           if not (keep > 0 and i < keep) and older_than(r, days)]
+
             for r in doomed:
                 shutil.rmtree(self._dir(r.id), ignore_errors=True)
                 self._runs.pop(r.id, None)
