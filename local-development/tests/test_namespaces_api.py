@@ -54,6 +54,10 @@ def _seed(db: str) -> None:
          "user_name": "system:serviceaccount:legacy-payments:default", "is_platform": 1},
         {"binding_kind": "RoleBinding", "binding_namespace": "legacy-payments", "binding_name": "alice-view",
          "role_kind": "ClusterRole", "role_name": "view", "user_name": "alice", "is_platform": 0},
+        # erin is in no group: her one path is a ClusterRoleBinding, the row the namespace page dropped
+        # before the review of #167 (Grok F4) — every namespace's page must name her
+        {"binding_kind": "ClusterRoleBinding", "binding_namespace": "", "binding_name": "erin-view-all",
+         "role_kind": "ClusterRole", "role_name": "view", "user_name": "erin", "is_platform": 0},
     ], now)
     s.close()
 
@@ -94,7 +98,7 @@ class TestTheList:
         assert (by["legacy-payments"]["via_groups"], by["legacy-payments"]["direct_grants"]) == (0, 1), "the platform grant is not counted"
         assert (by["quiet-ns"]["via_groups"], by["quiet-ns"]["direct_grants"]) == (0, 0), "a namespace with nothing is a result, not an absence"
         # cluster-wide bindings reach every namespace and are counted once, on the envelope
-        assert body["cluster_wide_groups"] == 1 and body["cluster_wide_grants"] == 0
+        assert body["cluster_wide_groups"] == 1 and body["cluster_wide_grants"] == 1, "ops-admins, and erin by name"
 
     def test_a_refused_namespace_read_is_reported_not_hidden(self, db, client):
         s = Store(db)
@@ -120,7 +124,19 @@ class TestTheList:
         # demo-devs (alice's group) reaches demo-prod and demo-qa; her own binding reaches legacy-payments;
         # dave's grant on demo-prod and the platform grant are other people's and do not count
         assert by == {"demo-prod": (1, 0), "demo-qa": (1, 0), "legacy-payments": (0, 1)}
-        assert body["cluster_wide_groups"] is None and body["cluster_wide_grants"] is None
+        assert (body["cluster_wide_groups"], body["cluster_wide_grants"]) == (0, 0), "her own cluster-wide paths: none"
+
+    def test_a_cluster_wide_path_puts_every_namespace_in_the_self_tier_list(self, client):
+        # carol's only path is the cluster-wide ops-admins binding. `namespace_reach` opens every namespace
+        # for her (a real name 200s, a fake one 404s), so the LIST says the same — a reader whose one grant
+        # is cluster-admin cannot be shown an empty list (review of #167, OB1 F2; Grok F3 named the copy)
+        body = client.get("/api/clusters/crc/namespaces", headers={"X-Forwarded-User": "carol"}).json()
+        assert body["scope"] == "self" and body["count"] == 4, "every namespace, through the cluster-wide binding"
+        assert all((n["via_groups"], n["direct_grants"]) == (0, 0) for n in body["namespaces"]), \
+            "the columns still count what is bound IN each namespace by her own paths"
+        assert (body["cluster_wide_groups"], body["cluster_wide_grants"]) == (1, 0), \
+            "her own cluster-wide path is reported, so the card can say why every namespace is listed"
+        assert body["source"]["state"] == "ok"
 
     def test_the_list_counts_agree_with_each_detail(self, client):
         rows = client.get("/api/clusters/crc/namespaces", headers=ROOT).json()["namespaces"]
@@ -130,6 +146,36 @@ class TestTheList:
             assert len([x for x in d["direct_grants"] if not x["is_platform"]]) == row["direct_grants"], row["name"]
 
 
+class TestClusterWideCounts:
+    """Review of #167 (Codex, OB1): the envelope's `cluster_wide_groups` says GROUPS, and every row's
+    `via_groups` is COUNT(DISTINCT group_name) — the envelope must count the same thing."""
+
+    def test_the_envelope_counts_distinct_groups_bound_cluster_wide(self, tmp_path):
+        db = str(tmp_path / "cw.db")
+        s = Store(db)
+        now = now_iso()
+        s.upsert_cluster("crc", "https://api.crc.testing:6443", True)
+        s.record_poll("crc", "ok", None)
+        s.replace_namespaces("crc", [{"name": "only-ns", "created_at": now, "phase": "Active", "metadata": {}}], now)
+        # ONE group, TWO ClusterRoleBindings — the common cluster-admin + view pair
+        s.replace_bindings("crc", [
+            {"binding_kind": "ClusterRoleBinding", "binding_namespace": "", "binding_name": "ops-cluster-admin",
+             "role_kind": "ClusterRole", "role_name": "cluster-admin", "group_name": "ops-admins"},
+            {"binding_kind": "ClusterRoleBinding", "binding_namespace": "", "binding_name": "ops-view",
+             "role_kind": "ClusterRole", "role_name": "view", "group_name": "ops-admins"},
+        ], now)
+        s.close()
+        settings = Settings(clusters=[ClusterConfig("crc", "https://api.crc.testing:6443", token_env="X")],
+                            db_path=db, oauth_proxy_enabled=True, namespace_metadata_labels=KEYS)
+        app = build_app(settings, run_poller=False)
+        app.state.tier_resolver = _Map({"root": "all"})
+        with TestClient(app) as c:
+            body = c.get("/api/clusters/crc/namespaces", headers=ROOT).json()
+            d = c.get("/api/clusters/crc/namespaces/only-ns", headers=ROOT).json()
+        assert len(d["cluster_wide_groups"]) == 2, "the detail lists both bindings"
+        assert body["cluster_wide_groups"] == 1, "the envelope counts the group once, as every row's via_groups would"
+
+
 class TestTheDetail:
     def test_who_reaches_it_and_through_which_group(self, client):
         d = client.get("/api/clusters/crc/namespaces/demo-prod", headers=ROOT).json()
@@ -137,8 +183,9 @@ class TestTheDetail:
         assert [(g["group_name"], g["role_name"], g["member_count"]) for g in d["via_groups"]] == [("demo-devs", "edit", 2)]
         assert [(g["group_name"], g["role_name"]) for g in d["cluster_wide_groups"]] == [("ops-admins", "cluster-admin")]
         assert [(x["user_name"], x["role_name"], x["is_platform"]) for x in d["direct_grants"]] == [("dave", "admin", 0)]
-        # alice, bob (demo-devs), carol (ops-admins, cluster-wide) and dave (direct): four people
-        assert d["people"] == 4
+        assert [(x["user_name"], x["role_name"]) for x in d["cluster_wide_grants"]] == [("erin", "view")]
+        # alice, bob (demo-devs), carol (ops-admins, cluster-wide), dave (direct) and erin (cluster-wide by name)
+        assert d["people"] == 5
         assert d["sibling_key"] == "company.net/mnemonic" and d["siblings"] == ["demo-qa"]
         assert "retention" in d and isinstance(d["changes"], list)
 
@@ -160,7 +207,8 @@ class TestTheDetail:
         d = client.get("/api/clusters/crc/namespaces/demo-prod", headers=ALICE).json()
         assert d["scope"] == "self"
         assert [g["group_name"] for g in d["via_groups"]] == ["demo-devs"]
-        assert d["cluster_wide_groups"] == [] and d["direct_grants"] == [], "other people's grants are not hers"
+        assert d["cluster_wide_groups"] == [] and d["direct_grants"] == [] and d["cluster_wide_grants"] == [], \
+            "other people's grants are not hers"
         assert d["people"] is None
 
     def test_the_self_tier_refusal_is_the_same_for_a_real_and_a_nonexistent_namespace(self, client):
@@ -168,6 +216,14 @@ class TestTheDetail:
         fake = client.get("/api/clusters/crc/namespaces/never-heard-of", headers=ALICE)
         assert real.status_code == fake.status_code == 403
         assert real.json() == fake.json(), "a different answer would be an existence oracle"
+
+    def test_a_person_named_cluster_wide_reaches_every_namespace_on_the_page(self, client):
+        # quiet-ns has no binding in it at all: the page still names carol (ops-admins, cluster-wide) and
+        # erin (by name, cluster-wide), and counts both — the list's envelope counted erin once already
+        d = client.get("/api/clusters/crc/namespaces/quiet-ns", headers=ROOT).json()
+        assert d["via_groups"] == [] and d["direct_grants"] == [], "a cluster-wide grant is not a grant IN the namespace"
+        assert [(x["user_name"], x["role_name"], x["is_platform"]) for x in d["cluster_wide_grants"]] == [("erin", "view", 0)]
+        assert d["people"] == 2, "carol through ops-admins and erin by name"
 
     def test_a_cluster_wide_path_reaches_every_namespace_at_the_self_tier(self, client, db):
         # carol's only path is the cluster-wide ops-admins binding: every namespace is in her view,

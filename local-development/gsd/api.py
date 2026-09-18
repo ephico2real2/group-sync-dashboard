@@ -1699,15 +1699,24 @@ def build_app(
 
         SELF-SCOPED under view restrictions: only the namespaces the viewer's own memberships or
         own bindings reach, counted over those paths — "grants affecting them"
-        (docs/ACCESS_CONTROL.md) — with the cluster-wide counts withheld.
+        (docs/ACCESS_CONTROL.md); the cluster-wide counts are the viewer's own, and an own
+        cluster-wide path lists every namespace, as it reaches every one.
         """
         require_cluster(cluster_id)
         viewer, scope = viewer_scope(request, cluster_id)
         me = None if scope == "all" else require_viewer(viewer, cluster_id)
         groups = None if me is None else [g["group_name"] for g in store.user_groups(cluster_id, me)]
-        rows = store.namespaces(cluster_id, user_name=me, groups=groups)
+        # The cluster-wide rows — every one at the wide tier, the viewer's own at the self tier —
+        # counted the way every row counts: DISTINCT groups (a group with a cluster-admin and a view
+        # ClusterRoleBinding is one group), non-platform grants naming a person. A cluster-wide path
+        # reaches every namespace, which is what namespace_reach answers for the detail; the list
+        # says the same (review of #167: Codex and OB1 on the count, OB1 F2 on the self tier).
+        wide = store.namespace_detail(cluster_id, "", user_name=me, groups=groups)
+        cluster_wide_groups = len({g["group_name"] for g in wide["via_groups"]})
+        cluster_wide_grants = len([d for d in wide["cluster_wide_grants"] if not d["is_platform"]])
+        rows = store.namespaces(cluster_id, user_name=me, groups=groups,
+                                every=bool(cluster_wide_groups or cluster_wide_grants))
         source = store.namespaces_source(cluster_id)
-        wide = None if me is not None else store.namespace_detail(cluster_id, "", user_name=None)
         return {
             "cluster": cluster_id,
             "scope": scope,
@@ -1715,8 +1724,8 @@ def build_app(
             "source": {"state": source["state"], "observed_at": source["observed_at"]} if source else None,
             "label_keys": list(settings.namespace_metadata_labels),
             "count": len(rows),
-            "cluster_wide_groups": None if wide is None else len(wide["via_groups"]),
-            "cluster_wide_grants": None if wide is None else len([d for d in wide["direct_grants"] if not d["is_platform"]]),
+            "cluster_wide_groups": cluster_wide_groups,
+            "cluster_wide_grants": cluster_wide_grants,
             "namespaces": rows,
         }
 

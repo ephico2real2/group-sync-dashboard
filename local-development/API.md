@@ -232,8 +232,13 @@ Cluster-wide bindings reach every namespace and are counted once, on the envelop
 attest absence, and the page says so rather than showing an empty list as a clean one. A namespace with
 zero in both counts is a result an access review wants to confirm, not an absence.
 
+`cluster_wide_groups` counts distinct groups (a group with two ClusterRoleBindings is one group, as the
+`via_groups` column counts) and `cluster_wide_grants` the non-platform bindings naming a person, as the
+`direct_grants` column counts.
+
 Self tier: only the namespaces the viewer's own memberships or own bindings reach, counted over those
-paths; `cluster_wide_*` are `null`.
+paths; `cluster_wide_*` count the viewer's **own** cluster-wide paths, and when either is non-zero every
+namespace is listed — a cluster-wide grant reaches every one, which is also what the detail answers.
 
 ### `GET /api/clusters/{cluster_id}/namespaces/{name}`
 
@@ -253,11 +258,17 @@ how many distinct people the paths add up to, and its history of binding changes
   "cluster_wide_groups": [{"group_name": "platform-team-cluster-admin", "role_name": "cluster-admin", "…": "…"}],
   "direct_grants": [{"user_name": "jane.smith", "binding_kind": "RoleBinding", "binding_name": "jane-edit",
                      "role_kind": "ClusterRole", "role_name": "edit", "is_platform": 0}],
-  "people": 6, "sibling_key": "company.net/mnemonic", "siblings": ["demo-qa", "demo-uat"],
+  "cluster_wide_grants": [{"user_name": "ops.oncall", "binding_kind": "ClusterRoleBinding", "binding_name": "oncall-view",
+                           "role_kind": "ClusterRole", "role_name": "view", "is_platform": 0}],
+  "people": 7, "sibling_key": "company.net/mnemonic", "siblings": ["demo-qa", "demo-uat"],
   "changes": [{"…": "the binding_event rows for this namespace, newest first"}],
   "retention": {"window_days": 0, "retained_since": "2026-09-18T02:57:18Z"}
 }
 ```
+
+`cluster_wide_groups` and `cluster_wide_grants` are the ClusterRoleBindings — naming a group, naming a person —
+that reach this namespace along with every other; `direct_grants` are the bindings *in* the namespace only, and
+`people` counts the members of the via and cluster-wide groups plus every non-platform person named either way.
 
 `present` is `false` for a namespace the store no longer holds but that bindings or history still name —
 a removed namespace's link is a detour, not a dead end; 404 only when nothing at all names it.

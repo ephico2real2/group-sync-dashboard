@@ -1019,7 +1019,7 @@ function renderFilters() {
 
   const cl = $("f-cluster");
   if (cl) cl.onchange = (e) => {
-    // A drill-down is scoped to its cluster. Carrying `group` or `user` across a cluster
+    // A drill-down is scoped to its cluster. Carrying `group`, `user` or `ns` across a cluster
     // switch would re-request that name against the new cluster — a different object with
     // the same name, or a 404 — so the drill-down is dropped from the new position.
     //
@@ -1028,7 +1028,7 @@ function renderFilters() {
     // pre-switch position that no longer made sense. With the browser's stack that erasure is
     // both impossible and wrong — the reader pressed Back expecting the cluster they were
     // reading, and every entry carries its own cluster, so returning to one is well defined.
-    navigate({ cluster: e.target.value, groupsync: null, group: null, user: null });
+    navigate({ cluster: e.target.value, groupsync: null, group: null, user: null, ns: null });
     refresh();
   };
   Object.keys(SEARCH_BOXES).forEach(wireSearchBox);
@@ -3283,6 +3283,7 @@ function namespacesCard() {
   const d = data.namespaces;
   if (!d) return `<section class="card"><h2>Namespaces</h2><div class="empty-note">Loading…</div></section>`;
   if (d.forbidden) return "";   // the audit's own refusal card above already explains the tier
+  const self = d.scope === "self";
   const keys = d.label_keys || [];
   const all = d.namespaces || [];
   const q = (view.nsSearch || "").trim();
@@ -3292,9 +3293,12 @@ function namespacesCard() {
     ? `<div class="filterbar-note truncation-note mb-4">The namespace read was refused (${esc(ago(source.observed_at))}), so this list cannot
         attest absence — a namespace missing here may exist. Grant namespaces [get,list] (chart: <code>rbac.namespaces</code>).</div>`
     : "";
-  const cw = d.cluster_wide_groups != null
-    ? `<div class="filterbar-note mb-4">${d.cluster_wide_groups} cluster-wide group binding${d.cluster_wide_groups === 1 ? "" : "s"} and
-        ${d.cluster_wide_grants} cluster-wide direct grant${d.cluster_wide_grants === 1 ? "" : "s"} reach every namespace below; the columns count
+  // The envelope counts what the columns count — distinct groups, grants naming a person. At the
+  // self tier the counts are the viewer's own cluster-wide paths and the line explains why every
+  // namespace is listed; with none of their own there is nothing to explain (OB1 F2).
+  const cw = d.cluster_wide_groups != null && !(self && !d.cluster_wide_groups && !d.cluster_wide_grants)
+    ? `<div class="filterbar-note mb-4">${d.cluster_wide_groups} group${d.cluster_wide_groups === 1 ? "" : "s"} bound cluster-wide and
+        ${d.cluster_wide_grants} cluster-wide direct grant${d.cluster_wide_grants === 1 ? "" : "s"}${self ? " of yours" : ""} reach every namespace below; the columns count
         what is bound <em>in</em> each one. A namespace with zero in both is a result an access review wants to confirm.</div>` : "";
   const body = shown.length
     ? `<div class="scroll-x"><table>
@@ -3308,10 +3312,16 @@ function namespacesCard() {
         </tr>`).join("")}</tbody></table></div>`
     : `<div class="empty-note">${q
         ? `Nothing matches <strong>${esc(q)}</strong>. All ${all.length} are still there — the filter is hiding them. Press Escape in the box to clear.`
-        : "No namespaces recorded for this cluster yet."}</div>`;
+        // At the self tier the rows are the viewer's own in-namespace paths, so an empty list is a
+        // fact about their view, not about the cluster (review of #167, Grok F3).
+        : (self
+            ? "None of your memberships or grants reaches a namespace on this cluster. That is your view, not the cluster: a namespace missing here may exist."
+            : "No namespaces recorded for this cluster yet.")}</div>`;
   return `<section class="card">
     <h2>Namespaces <span class="muted fw-normal">· ${shown.length === all.length ? all.length : `${shown.length} of ${all.length} shown`}</span></h2>
-    <div class="filterbar-note mb-4">Every namespace the poller sees, not only those with a grant. Click a row — a namespace is an entity here,
+    <div class="filterbar-note mb-4">${self
+      ? "The namespaces your own memberships and grants reach — grants affecting you, nothing about other people."
+      : "Every namespace the poller sees, not only those with a grant."} Click a row — a namespace is an entity here,
       the third drill-down beside groups and users. The box in the bar finds by name or by any captured label.</div>
     ${note}${cw}${body}
   </section>`;
@@ -3329,6 +3339,10 @@ function nsDetail() {
   const labels = d.labels || {};
   const via = d.via_groups || [], wide = d.cluster_wide_groups || [], direct = d.direct_grants || [];
   const people = direct.filter((x) => !x.is_platform);
+  // Cluster-wide grants naming a person, platform identities left out: kubeadmin reaches every
+  // namespace by definition and would be one more line on every page (review of #167, Grok F4).
+  const wideGrants = (d.cluster_wide_grants || []).filter((x) => !x.is_platform);
+  const wideBindings = wide.length + wideGrants.length;
   const self = d.scope === "self";
   const kpi = (label, value, cls) => `<div class="kpi"><div class="label">${label}</div><div class="value ${cls || ""}">${value}</div></div>`;
   const labelledNote = keys.length
@@ -3362,8 +3376,11 @@ function nsDetail() {
         <td class="num">${g.member_count}</td></tr>`).join("")}</tbody></table></div>`
       : `<div class="empty-note">No group-based binding names this namespace. Access here is ${people.length
           ? "entirely by the direct grants below — which is what makes it a finding." : "not granted to anyone through the policy system."}</div>`}
-    ${wide.length ? `<div class="filterbar-note mt-4">Also reached cluster-wide, by ${wide.length === 1 ? "one binding" : `${wide.length} bindings`} that
-        grant${wide.length === 1 ? "s" : ""} every namespace: ${wide.map((g) => `<button type="button" class="drill" data-group="${esc(g.group_name)}">${esc(g.group_name)}</button> (<code>${esc(g.role_name)}</code>)`).join(", ")}.</div>` : ""}
+    ${wideBindings ? `<div class="filterbar-note mt-4">Also reached cluster-wide, by ${wideBindings === 1 ? "one binding" : `${wideBindings} bindings`} that
+        grant${wideBindings === 1 ? "s" : ""} every namespace: ${[
+          ...wide.map((g) => `<button type="button" class="drill" data-group="${esc(g.group_name)}">${esc(g.group_name)}</button> (<code>${esc(g.role_name)}</code>)`),
+          ...wideGrants.map((x) => `<button type="button" class="drill" data-user="${esc(x.user_name)}">${esc(x.user_name)}</button> (<code>${esc(x.role_name)}</code>, named directly)`),
+        ].join(", ")}.</div>` : ""}
   </section>
   ${direct.length ? `<section class="card">
     <h2>Direct grants <span class="muted fw-normal">· ${people.length}${direct.length > people.length ? ` · ${direct.length - people.length} platform` : ""}</span></h2>
@@ -3388,7 +3405,7 @@ function nsDetail() {
     ${(d.changes || []).length ? `<div class="scroll-x"><table>
       <thead><tr><th>Change</th><th>Subject</th><th>Role</th><th>Binding</th><th>Observed</th></tr></thead>
       <tbody>${d.changes.map((c) => `<tr>
-        <td class="change-${esc(c.change)}">${c.change === "added" ? "+ granted" : "− revoked"}${c.baseline ? ' <span class="muted">(first observed)</span>' : ""}</td>
+        <td class="change-${esc(c.change)}">${c.baseline ? "first observed" : c.change === "added" ? "+ granted" : "− revoked"}</td>
         <td>${esc(c.subject_kind)} <button type="button" class="drill" data-${c.subject_kind === "Group" ? "group" : "user"}="${esc(c.subject_name)}">${esc(c.subject_name)}</button></td>
         <td><code>${esc(c.role_name)}</code></td>
         <td class="muted">${esc(c.binding_kind)} <code>${esc(c.binding_name)}</code></td>
@@ -3580,6 +3597,9 @@ function exportDescriptor() {
              // claim a global order the concatenated rows do not have (review, C1 pass 2).
              sort: { key: "finding," + view.bindingSort, dir: view.bindingDir } };
   }
+  // The namespace page holds no table this descriptor owns: offering the audit's direct-grants export
+  // there exported rows the reader was not looking at (review of #167, Grok F5).
+  if (view.page === "nsaudit" && view.ns) return null;
   if (view.page === "nsaudit") {
     const ub = data.userBindings;
     if (!ub || ub.forbidden) return null;
@@ -4196,7 +4216,7 @@ function wireDrilldown() {
       e.preventDefault();
       const target = el.dataset.user || el.closest("[data-user]")?.dataset.user;
       if (!target) return;
-      navigate({ page: view.page === "users" ? "users" : "groups", user: target, group: null });
+      navigate({ page: view.page === "users" ? "users" : "groups", user: target, group: null, ns: null });
       refresh();
     };
   });
@@ -4390,8 +4410,10 @@ async function refresh(opts = {}) {
         if (view.nsNamespace !== "all") q.set("namespace", view.nsNamespace);
         want.userBindings = guard403(get(`${base}/user-bindings?${q}`));
         // #167: every namespace the poller sees, and the one being read.
-        want.namespaces = guard403(get(`${base}/namespaces`));
+        // The list for the card, the detail for the page — never both: the page does not render the
+        // card, and fetching the list there was one request a minute for nothing (OB1, review of #167).
         if (view.ns) want.ns = guard403(get(`${base}/namespaces/${encodeURIComponent(view.ns)}`));
+        else want.namespaces = guard403(get(`${base}/namespaces`));
       }
     }
     // Not cluster-scoped: this is who used the DASHBOARD, which has no cluster dimension.
@@ -4515,6 +4537,9 @@ async function refresh(opts = {}) {
       data.groupsMeta, data.group, data.user, data.users, data.events, data.logins, data.access,
       data.usage, data.findings, data.operatorConfigs, data.userBindings, data.whoami, data.myAccess,
       data.reportCatalog, data.reportRuns,
+      // #167: the namespace list and page ride the same wire (review, Codex — left out, a poll whose
+      // only change was a label or a grant skipped the repaint the comment above forbids skipping).
+      data.namespaces, data.ns,
     ]);
     if (opts.auto && fingerprint === lastFingerprint) {
       // Still say so. Leaving the clock frozen would read as "the dashboard has stopped",

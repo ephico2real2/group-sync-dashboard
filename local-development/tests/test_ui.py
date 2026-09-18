@@ -1280,6 +1280,123 @@ class TestNamespaces:
         dash.wait_for_timeout(300)
         assert dash.evaluate("() => document.documentElement.scrollWidth <= innerWidth")
 
+    # -- the review of #167 (Grok, pass 1 — docs/REVIEW_namespaces.md) ------------------------------
+
+    def test_switching_cluster_abandons_the_namespace(self, dash):
+        """The hole already closed for a group and a user: `ns` joined the position without joining the
+        selector's drop list, so a namespace page survived a cluster switch and refetched the name
+        against the new cluster — a different object, or a 404 (Grok F2)."""
+        self._open(dash)
+        dash.locator("tr[data-ns='prod-ns'] button.drill").click()
+        dash.wait_for_selector("#back")
+        dash.select_option("#f-cluster", "prod-east")
+        dash.wait_for_function("() => view.cluster === 'prod-east' && !document.querySelector('#back')")
+        assert "ns=" not in dash.evaluate("() => location.hash")
+        assert dash.evaluate("() => view.ns") is None
+        assert "Dashboard API error" not in dash.locator("#main").inner_text()
+
+    def test_the_keyboard_user_drill_from_the_page_leaves_the_namespace_behind(self, dash):
+        """Enter on a person's name is the keyboard twin of the click, which already dropped `ns` (Grok F2)."""
+        self._open(dash)
+        dash.locator("tr[data-ns='prod-ns'] button.drill").click()
+        dash.wait_for_selector("tr[data-user] button.drill")
+        dash.locator("tr[data-user] button.drill").first.focus()
+        dash.keyboard.press("Enter")
+        dash.wait_for_function("() => view.user")
+        hash_ = dash.evaluate("() => location.hash")
+        assert "user=" in hash_ and "ns=" not in hash_, hash_
+
+    def test_the_page_offers_no_export_of_a_table_it_does_not_show(self, dash):
+        """The audit tab exports its direct-grants table; the namespace page holds no table that descriptor
+        owns, and the buttons there exported rows the reader was not looking at (Grok F5)."""
+        self._open(dash)
+        assert dash.locator("#export-csv").count() == 1
+        dash.locator("tr[data-ns='prod-ns'] button.drill").click()
+        dash.wait_for_selector("#back")
+        assert dash.locator("#export-csv").count() == 0
+
+    def test_a_person_named_cluster_wide_is_on_the_page(self, dash):
+        """carol holds cluster-admin through a ClusterRoleBinding naming her (the seed's `carol-ca`): the
+        list's envelope counted her once, and the page for a namespace nobody else reaches said nothing
+        of her (Grok F4). Platform identities (kubeadmin's `ka`) stay off the line."""
+        self._open(dash)
+        dash.locator("tr[data-ns='quiet-corner'] button.drill").click()
+        dash.wait_for_selector("h2:text-is('quiet-corner')")
+        line = dash.locator("#main .filterbar-note", has_text="Also reached cluster-wide").inner_text()
+        assert "carol" in line and "cluster-admin" in line and "named directly" in line, line
+        assert "kubeadmin" not in line
+        assert dash.locator("#main button.drill[data-user='carol']").count() == 1
+
+    def test_the_namespaces_card_at_the_self_tier_speaks_of_the_viewers_grants(self, page, scoped_server):
+        """`nobody` holds no membership and no grant: the card lists nothing, and its copy must say that is
+        their view — not that the cluster has no namespaces, nor that it shows "every namespace the poller
+        sees" (Grok F3, OB1 F3)."""
+        p = _open_as(page, scoped_server, "nobody")
+        p.locator("button[data-nav='nsaudit']").click()
+        p.wait_for_selector("h2:text-is('Namespaces')")
+        card = p.locator("h2:text-is('Namespaces')").locator("xpath=..").inner_text()
+        assert "No namespaces recorded" not in card and "Every namespace the poller sees" not in card, card
+        assert "your own memberships and grants" in card and "your view, not the cluster" in card, card
+
+    def test_a_cluster_wide_path_of_the_viewers_own_lists_every_namespace(self, page, scoped_server):
+        """The detail's reach rule opens every namespace for a viewer with a cluster-wide path; the list says the
+        same (OB1 F2). carol's one grant is the ClusterRoleBinding naming her: nine rows, the line names the
+        path as hers, the columns count her in-namespace paths (none). The fixture names no label keys, so
+        there is no label column."""
+        p = _open_as(page, scoped_server, "carol")
+        p.locator("button[data-nav='nsaudit']").click()
+        p.wait_for_selector("tr[data-ns]")
+        heads = p.locator("h2:text-is('Namespaces') ~ div th").evaluate_all("els => els.map(e => e.textContent.trim())")
+        assert heads == ["Namespace", "Via groups", "Direct grants"]
+        assert p.locator("tr[data-ns]").count() == 9
+        card = p.locator("h2:text-is('Namespaces')").locator("xpath=..").inner_text()
+        assert "0 groups bound cluster-wide and 1 cluster-wide direct grant of yours reach every namespace below" in card, card
+        assert p.locator("tr[data-ns] td.num").evaluate_all("els => els.every(e => e.textContent.trim() === '0')")
+
+    def test_the_self_tier_page_carries_the_viewers_own_paths_only(self, page, scoped_server):
+        """alice's group holds the hand-made cluster-admin ClusterRoleBinding: nine rows through it (OB1 F2), and
+        prod-ns's page opens with her own memberships, no People KPI and no label KPI (no keys configured)."""
+        p = _open_as(page, scoped_server, "alice")
+        p.locator("button[data-nav='nsaudit']").click()
+        p.wait_for_selector("tr[data-ns]")
+        assert p.locator("tr[data-ns]").count() == 9
+        assert "1 group bound cluster-wide and 0 cluster-wide direct grants of yours" in p.locator("#main").inner_text()
+        p.locator("tr[data-ns='prod-ns'] button.drill").click()
+        p.wait_for_selector("h2:text-is('prod-ns')")
+        kpis = p.locator(".kpi .label").evaluate_all("els => els.map(e => e.textContent.trim())")
+        assert kpis == ["Via groups", "Direct grants"], kpis
+        body = p.locator("#main").inner_text()
+        assert "Your own memberships that reach this namespace" in body and "Also reached cluster-wide" in body
+
+    def test_a_baseline_row_reads_first_observed_not_granted(self, dash):
+        """#177's rule: a consumer renders a baseline row as "first observed", never as "added" — the cell
+        read "+ granted (first observed)" (OB1 F4). The seed wrote prod-ns's three bindings in its first
+        refresh, so all three are baseline rows."""
+        self._open(dash)
+        dash.locator("tr[data-ns='prod-ns'] button.drill").click()
+        dash.wait_for_selector("h2:text-is('prod-ns')")
+        cells = dash.locator("td[class^='change-']").evaluate_all("els => els.map(e => e.innerText.replace(/\\s+/g, ' ').trim())")
+        assert cells and all(c == "first observed" for c in cells), cells
+
+    def test_a_namespace_change_repaints_on_the_timer_path(self, dash):
+        """`data.namespaces` and `data.ns` were written by refresh() but left out of the unchanged-payload
+        fingerprint, so an automatic poll whose only change was namespace data skipped the repaint and the
+        card sat on a label the wire no longer carried (Codex, review of #167)."""
+        import json as _json
+        self._open(dash)
+        assert dash.locator("tr[data-ns='prod-ns'] td.mono").first.inner_text().strip() == "demo"
+
+        def relabel(route):
+            body = route.fetch().json()
+            for n in body["namespaces"]:
+                if n["name"] == "prod-ns":
+                    n["labels"]["company.net/mnemonic"] = "relabelled"
+            route.fulfill(status=200, content_type="application/json", body=_json.dumps(body))
+
+        dash.route("**/api/clusters/*/namespaces", relabel)
+        dash.evaluate("() => refresh({auto: true})")
+        dash.wait_for_function("() => document.querySelector(\"tr[data-ns='prod-ns'] td.mono\").innerText.trim() === 'relabelled'")
+
 
 def test_index_is_never_heuristically_cached(server):
     """Reported from the field: a deploy landed but the browser kept the old page, so a

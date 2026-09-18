@@ -1418,7 +1418,7 @@ class Store:
                 (cluster_id, observed_at))
 
     def namespaces(self, cluster_id: str, *, user_name: str | None = None,
-                   groups: list[str] | None = None) -> list[dict]:
+                   groups: list[str] | None = None, every: bool = False) -> list[dict]:
         """Every namespace the poller sees, with the configured labels and two counts: distinct
         groups bound IN the namespace and non-platform grants naming a person there (#167).
 
@@ -1428,7 +1428,11 @@ class Store:
 
         Self tier (`user_name` given): only the namespaces one of the viewer's own `groups` or a
         binding naming the viewer reaches, and the counts are over those paths — "grants
-        affecting them" (docs/ACCESS_CONTROL.md), never other people's.
+        affecting them" (docs/ACCESS_CONTROL.md), never other people's. `every` is the caller
+        saying one of those own paths is cluster-wide: it reaches every namespace, exactly as
+        `namespace_reach` answers for the detail, so every row stays (its columns still count what
+        is bound IN it) and the envelope names the cluster-wide path as the reason (review of
+        #167, OB1 F2).
         """
         own = user_name is not None
         group_list = json.dumps(list(groups or []))
@@ -1456,7 +1460,7 @@ class Store:
         out = []
         for r in rows:
             v, d = via.get(r["name"], 0), direct.get(r["name"], 0)
-            if own and not (v or d):
+            if own and not every and not (v or d):
                 continue
             out.append({"name": r["name"], "created_at": r["created_at"], "phase": r["phase"],
                         "observed_at": r["observed_at"], "labels": labels.get(r["name"], {}),
@@ -1480,8 +1484,9 @@ class Store:
     def namespace_detail(self, cluster_id: str, name: str, *, user_name: str | None = None,
                          groups: list[str] | None = None, sibling_key: str | None = None) -> dict:
         """One namespace: its labels, who reaches it and through which group, the grants naming
-        a person there, the cluster-wide grants that reach it too, its siblings under the first
-        configured label, and how many distinct people the paths add up to (#167).
+        a person there, the cluster-wide grants that reach it too (naming a group, and naming a
+        person), its siblings under the first configured label, and how many distinct people the
+        paths add up to (#167).
 
         Returns a dict even when the store no longer holds the namespace (`present` False): a
         namespace that bindings or history still name is answered, not 404'd — the caller decides.
@@ -1508,18 +1513,25 @@ class Store:
                     (cluster_id, namespace, group_list) if own else (cluster_id, namespace))
             via_groups = bound(name)
             cluster_wide = bound("")
-            direct = self._rows(
-                f"""SELECT user_name, binding_kind, binding_name, role_kind, role_name, is_platform
-                      FROM user_binding WHERE cluster_id=? AND binding_namespace=?{" AND user_name=?" if own else ""}
-                     ORDER BY is_platform, role_name, user_name""",
-                (cluster_id, name, user_name) if own else (cluster_id, name))
+            def named(namespace: str) -> list[dict]:
+                return self._rows(
+                    f"""SELECT user_name, binding_kind, binding_name, role_kind, role_name, is_platform
+                          FROM user_binding WHERE cluster_id=? AND binding_namespace=?{" AND user_name=?" if own else ""}
+                         ORDER BY is_platform, role_name, user_name""",
+                    (cluster_id, namespace, user_name) if own else (cluster_id, namespace))
+            direct = named(name)
+            # A ClusterRoleBinding naming a person reaches this namespace as surely as one naming a
+            # group. The list's envelope already counted these once; a page that left them out said
+            # "nobody else" about a cluster-admin (review of #167, Grok F4).
+            cluster_wide_grants = named("")
             people = None
             if not own:
                 names = sorted({r["group_name"] for r in via_groups} | {r["group_name"] for r in cluster_wide})
                 members = self._rows(
                     "SELECT DISTINCT user_name FROM group_member WHERE cluster_id=? AND group_name IN (SELECT value FROM json_each(?))",
                     (cluster_id, json.dumps(names)))
-                people = len({r["user_name"] for r in members} | {r["user_name"] for r in direct if not r["is_platform"]})
+                people = len({r["user_name"] for r in members}
+                             | {r["user_name"] for r in [*direct, *cluster_wide_grants] if not r["is_platform"]})
             siblings: list[str] = []
             if sibling_key and labels.get(sibling_key):
                 siblings = [r["name"] for r in self._rows(
@@ -1530,7 +1542,8 @@ class Store:
                 "created_at": ns["created_at"] if ns else None, "phase": ns["phase"] if ns else None,
                 "observed_at": ns["observed_at"] if ns else None, "labels": labels,
                 "via_groups": via_groups, "cluster_wide_groups": cluster_wide,
-                "direct_grants": direct, "people": people, "siblings": siblings,
+                "direct_grants": direct, "cluster_wide_grants": cluster_wide_grants,
+                "people": people, "siblings": siblings,
                 "sibling_key": sibling_key if labels.get(sibling_key or "") else None}
 
     def namespaces_source(self, cluster_id: str) -> dict | None:
