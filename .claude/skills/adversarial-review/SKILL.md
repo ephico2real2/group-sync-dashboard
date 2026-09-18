@@ -150,6 +150,16 @@ repository: it can read the real files and run read-only commands against the la
 that catches "the file the brief describes is not the file on disk" and "the number in the doc is not the
 number the cluster gives".
 
+**Every reviewer scales its own depth, and OB3's passes get a second reading.** OB1, OB2 and OB3 carry the
+same rubric in their bodies: the frontmatter tier is a FLOOR, a shallow claim (a string, a selector, a
+constant) is settled by a grep, a medium one (a render path, an API shape) by one drive, a deep one (a race,
+contrast over composited surfaces, cost at scale) gets the harness — and the report opens by naming which
+claims were treated as deep. The frontmatter has no `auto` value and no launch path sets effort, so this
+judgement is the model's, not the flag's. **A pass OB3 ran while the Fable quota was out is re-reviewed by
+OB1 or OB2 when it resets** (the operator, 2026-09-18): its verdicts are claims like any other, its
+CONFIRMED-without-an-artefact lines get re-measured, and its failing/passing proofs get re-run against the
+head as it stands then. Agreeing with OB3 because OB3 said it wastes the third-reviewer seat.
+
 ### Gotchas — all seen, all measured; read before every launch
 
 - **A backgrounded `codex exec` must have stdin closed, or it waits forever.** Launched from a
