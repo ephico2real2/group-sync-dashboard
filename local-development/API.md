@@ -205,6 +205,88 @@ for `sync_event`. `window_days` is the configured window (`0` = kept forever) an
 is the oldest observation still held on this cluster — a timeline that begins there was cut
 there by retention, which is a different fact from "the dashboard started there".
 
+## Namespaces
+
+### `GET /api/clusters/{cluster_id}/namespaces`
+
+Every namespace the poller sees on the cluster, with its configured labels (`namespaceMetadataLabels`)
+and two counts — distinct groups of people bound in it (a virtual `system:` group is on the page, badged, not in
+the count), and non-platform grants naming a person there (#167).
+Cluster-wide bindings reach every namespace and are counted once, on the envelope.
+
+```json
+{
+  "cluster": "crc-local", "scope": "all", "viewer": "kubeadmin",
+  "source": {"state": "ok", "observed_at": "2026-09-18T05:12:06Z"},
+  "label_keys": ["company.net/mnemonic", "company.net/app-environment", "company.net/oud-group"],
+  "count": 110, "cluster_wide_groups": 3, "cluster_wide_grants": 0, "cluster_wide_path": true,
+  "namespaces": [
+    {"name": "demo-prod", "created_at": "2026-08-02T04:00:11Z", "phase": "Active",
+     "observed_at": "2026-09-18T05:12:06Z",
+     "labels": {"company.net/mnemonic": "demo", "company.net/app-environment": "prod"},
+     "via_groups": 2, "direct_grants": 0}
+  ]
+}
+```
+
+`source.state` is `forbidden` when the chart did not grant the namespace read — a refused read cannot
+attest absence, and the page says so rather than showing an empty list as a clean one. A namespace with
+zero in both counts is a result an access review wants to confirm, not an absence.
+
+`cluster_wide_groups` counts distinct groups (a group with two ClusterRoleBindings is one group, as the
+`via_groups` column counts) and `cluster_wide_grants` the non-platform bindings naming a person, as the
+`direct_grants` column counts.
+
+`cluster_wide_path` is the reach itself: true when any cluster-wide binding names the viewer — unlike the
+two counts, a platform identity's binding included.
+
+Self tier: only the namespaces the viewer's own memberships or own bindings reach, counted over those
+paths; `cluster_wide_*` count the viewer's **own** cluster-wide paths, and when `cluster_wide_path` is true
+every namespace is listed — a cluster-wide grant reaches every one, which is also what the detail answers.
+
+### `GET /api/clusters/{cluster_id}/namespaces/{name}`
+
+One namespace: who reaches it and through which group, the grants naming a person there, the
+cluster-wide grants that reach it too, its siblings under the first configured label (the mnemonic),
+how many distinct people the paths add up to, and its history of binding changes.
+
+```json
+{
+  "cluster": "crc-local", "scope": "all", "viewer": "kubeadmin",
+  "name": "demo-prod", "present": true, "created_at": "…", "phase": "Active", "observed_at": "…",
+  "label_keys": ["company.net/mnemonic", "company.net/app-environment", "company.net/oud-group"],
+  "labels": {"company.net/mnemonic": "demo", "company.net/app-environment": "prod"},
+  "via_groups": [{"group_name": "app-ocp-rbac-demo-ns-developer", "binding_kind": "RoleBinding",
+                  "binding_name": "demo-devs", "role_kind": "ClusterRole", "role_name": "edit",
+                  "managed_source": "baseline-nonprod-rbac", "member_count": 4, "is_platform": 0}],
+  "cluster_wide_groups": [{"group_name": "platform-team-cluster-admin", "role_name": "cluster-admin", "…": "…"}],
+  "direct_grants": [{"user_name": "jane.smith", "binding_kind": "RoleBinding", "binding_name": "jane-edit",
+                     "role_kind": "ClusterRole", "role_name": "edit", "is_platform": 0}],
+  "cluster_wide_grants": [{"user_name": "ops.oncall", "binding_kind": "ClusterRoleBinding", "binding_name": "oncall-view",
+                           "role_kind": "ClusterRole", "role_name": "view", "is_platform": 0}],
+  "people": 7, "sibling_key": "company.net/mnemonic", "siblings": ["demo-qa", "demo-uat"],
+  "changes": [{"…": "the binding_event rows for this namespace, newest first"}],
+  "retention": {"window_days": 0, "retained_since": "2026-09-18T02:57:18Z"}
+}
+```
+
+Every `via_groups` and `cluster_wide_groups` row carries `is_platform`: 1 for a virtual `system:` group
+(`system:authenticated`, `system:nodes`, `system:serviceaccounts:<ns>` — access with no person behind it),
+sorted after the real groups; the list's `via_groups` column and `cluster_wide_groups` count leave them out, as
+the person counts leave platform identities out. A platform row's default binding wears no `hand-made` badge:
+the findings tier it `built_in`, never `unmanaged`.
+
+`cluster_wide_groups` and `cluster_wide_grants` are the ClusterRoleBindings — naming a group, naming a person —
+that reach this namespace along with every other; `direct_grants` are the bindings *in* the namespace only, and
+`people` counts the members of the via and cluster-wide groups plus every non-platform person named either way.
+
+`present` is `false` for a namespace the store no longer holds but that bindings or history still name —
+a removed namespace's link is a detour, not a dead end; 404 only when nothing at all names it.
+
+Self tier: refused **before** any lookup unless one of the viewer's own paths reaches the namespace, so the
+403 for a namespace outside their view and for one that does not exist are byte-identical; then the
+viewer's own paths only, and `people` is `null` (a count over other people's memberships).
+
 ## Groups
 
 ### `GET /api/clusters/{cluster_id}/groups`
@@ -423,6 +505,41 @@ stamped with a stale sync-time did not come from a sync.
 
 Since 0.13.0: `retention` for `membership_event`, the same shape as on `/events`. With the default
 `membershipEventsDays: 0` it reads `{"window_days": 0, "retained_since": <oldest row>}`.
+
+### `GET /api/clusters/{cluster_id}/binding-changes`
+
+Query: `namespace` (optional — the empty string selects ClusterRoleBindings; omit for every
+scope), `limit` (1–1000, default 100). Which (binding, subject) rows appeared or disappeared,
+newest first — the bindings' membership-changes (`docs/DESIGN_binding_events.md`).
+
+The only record of a binding change: the current-state tables are replaced every refresh, so a
+RoleBinding created and deleted between two refreshes never existed as far as
+`/bindings/findings` is concerned. A role change on the same binding+subject is one `removed`
+and one `added`.
+
+```json
+{
+  "cluster": "crc", "scope": "all", "viewer": "kubeadmin",
+  "count": 2, "limit": 100, "truncated": false, "baseline_rows": 0,
+  "note": "accumulated from binding refreshes; a baseline row is the first observation, not a change",
+  "retention": {"window_days": 0, "retained_since": "2026-09-17T22:00:11Z"},
+  "changes": [
+    {"binding_kind": "RoleBinding", "binding_namespace": "demo-qa", "binding_name": "demo-dev",
+     "subject_kind": "Group", "subject_name": "app-ocp-rbac-demo-ns-developer",
+     "role_kind": "ClusterRole", "role_name": "edit", "is_platform": 0,
+     "change": "added", "baseline": 0, "observed_at": "2026-09-17T22:05:00Z"}
+  ]
+}
+```
+
+`baseline` is 1 on a cluster's **first observation** of that subject kind — the refresh that
+consumes the cluster's `observation_state` marker, whether or not it returned rows — because
+every row it had is recorded as `added` in that instant, which is not a change anyone made;
+render it as "first observed", never as "added". A store upgraded with rows already present
+starts marked, so an upgrade writes no baseline rows. `retention` shares `membership_event`'s
+window (`membershipEventsDays`).
+
+Self tier: only rows naming the viewer, or a group the viewer belongs to.
 
 ## RBAC
 

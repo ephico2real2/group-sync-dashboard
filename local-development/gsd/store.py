@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Iterator
 
 from .storage import SqliteHealth, StorageHealth  # noqa: F401
+from .kube import SYSTEM_GROUP_PREFIX
 from .timeutil import now_iso
 
 log = logging.getLogger(__name__)
@@ -189,7 +190,11 @@ CREATE TABLE IF NOT EXISTS membership_event (
     user_name           TEXT NOT NULL,
     change              TEXT NOT NULL,  -- added | removed
     observed_at         TEXT NOT NULL,
-    group_synced_at     TEXT            -- the group's own sync-time when we saw the change
+    group_synced_at     TEXT,           -- the group's own sync-time when we saw the change
+    -- 1 on a cluster's FIRST observation: the rows are "first seen by this dashboard", not a
+    -- change anyone made. Measured on CRC before this existed: 76, 87 and 5 "added" rows in one
+    -- instant per cluster, read by the landing page as a bulk onboarding (#175).
+    baseline            INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS membership_event_lookup
     ON membership_event(cluster_id, group_name, id DESC);
@@ -252,6 +257,47 @@ CREATE TABLE IF NOT EXISTS user_binding (
 );
 CREATE INDEX IF NOT EXISTS user_binding_by_namespace
     ON user_binding(cluster_id, binding_namespace);
+
+-- Binding changes, append-only — the bindings' membership_event (#167, ruled 2026-09-17).
+-- rbac_group_binding and user_binding are replaced every refresh, so a RoleBinding created or
+-- deleted between two refreshes left no trace: a namespace had no history, and the landing
+-- page's "what changed" was blind to the grant that actually changed what a person can do.
+-- One row per (binding, subject) that appeared or disappeared; a role change on the same
+-- binding is a `removed` and an `added`, so there is no third verb to explain.
+CREATE TABLE IF NOT EXISTS binding_event (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    cluster_id          TEXT NOT NULL,
+    binding_kind        TEXT NOT NULL,   -- RoleBinding | ClusterRoleBinding
+    binding_namespace   TEXT NOT NULL,   -- '' for ClusterRoleBinding
+    binding_name        TEXT NOT NULL,
+    subject_kind        TEXT NOT NULL,   -- Group | User
+    subject_name        TEXT NOT NULL,
+    role_kind           TEXT NOT NULL,
+    role_name           TEXT NOT NULL,
+    is_platform         INTEGER NOT NULL DEFAULT 0,
+    change              TEXT NOT NULL,   -- added | removed
+    baseline            INTEGER NOT NULL DEFAULT 0,  -- 1 on the cluster's first observation
+    observed_at         TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS binding_event_by_namespace
+    ON binding_event(cluster_id, binding_namespace, id DESC);
+CREATE INDEX IF NOT EXISTS binding_event_by_subject
+    ON binding_event(cluster_id, subject_kind, subject_name, id DESC);
+-- Retention's index (prune_binding_events, history_retained_since), as for membership_event.
+CREATE INDEX IF NOT EXISTS binding_event_by_time
+    ON binding_event(cluster_id, observed_at);
+
+-- THE FIRST-OBSERVATION MARKER, one row per (cluster, stream), consumed once and kept for good.
+-- A baseline has to mean "existed before this dashboard started watching", and the only honest
+-- way to know that is to remember that we looked — not to infer it from what is in the tables:
+-- an empty first poll leaves no rows, so the NEXT poll would read as the first observation
+-- (Codex, review of #177: `first_empty=0 … second_baseline=1`), and retention that emptied a
+-- table would reopen the baseline. streams: membership | binding:Group | binding:User.
+CREATE TABLE IF NOT EXISTS observation_state (
+    cluster_id          TEXT NOT NULL,
+    stream              TEXT NOT NULL,
+    PRIMARY KEY(cluster_id, stream)
+);
 
 -- Health of the namespace-configuration-operator's CRs, replaced on the binding cadence.
 -- Reconcile conditions ONLY: these CRs template the RoleBindings that give synced groups
@@ -518,6 +564,43 @@ CREATE INDEX IF NOT EXISTS report_run_by_user ON report_run(generated_by, reques
 # at startup, before anything reads. They must be written to be safe on a database that
 # already has the change (fresh databases get the new SCHEMA and then replay migrations
 # against it), which for ALTER TABLE ADD COLUMN means tolerating "duplicate column name".
+# A cluster that holds rows of a stream has been observed. Idempotent (INSERT OR IGNORE over the
+# primary key) and cheap (every DISTINCT cluster_id is led by an index), so it runs at EVERY open
+# and not only inside migration 14: a build without the marker (1f55cb1, which the lab ran) writing
+# rows for a new cluster in between would otherwise leave rows with no marker — and, since an
+# applied migration never re-runs, that cluster's next real additions would be flagged baseline
+# (OB1, review 2 of #177). Three sources prove a membership observation that left no member behind
+# — group_state (groups polled with zero members; Grok), groupsync_presence and poll_outcome
+# status='ok', both written in the same poll_snapshot transaction as sync_members (Codex, OB1) —
+# so a cluster successfully polled EMPTY is marked too. The binding streams have no such witness
+# (refresh_bindings deliberately records no poll outcome), so for them rows are the only proof.
+_OBSERVATION_SEEDS: tuple[str, ...] = (
+    """INSERT OR IGNORE INTO observation_state(cluster_id, stream)
+       SELECT DISTINCT cluster_id, 'membership' FROM membership_event""",
+    """INSERT OR IGNORE INTO observation_state(cluster_id, stream)
+       SELECT DISTINCT cluster_id, 'membership' FROM group_member""",
+    """INSERT OR IGNORE INTO observation_state(cluster_id, stream)
+       SELECT DISTINCT cluster_id, 'membership' FROM group_state""",
+    """INSERT OR IGNORE INTO observation_state(cluster_id, stream)
+       SELECT cluster_id, 'membership' FROM groupsync_presence""",
+    """INSERT OR IGNORE INTO observation_state(cluster_id, stream)
+       SELECT cluster_id, 'membership' FROM poll_outcome WHERE status = 'ok'""",
+    """INSERT OR IGNORE INTO observation_state(cluster_id, stream)
+       SELECT DISTINCT cluster_id, 'binding:Group' FROM rbac_group_binding""",
+    """INSERT OR IGNORE INTO observation_state(cluster_id, stream)
+       SELECT DISTINCT cluster_id, 'binding:User' FROM user_binding""",
+    """INSERT OR IGNORE INTO observation_state(cluster_id, stream)
+       SELECT DISTINCT cluster_id, 'binding:' || subject_kind FROM binding_event
+        WHERE subject_kind IN ('Group', 'User')""",
+)
+
+
+def _seed_observation_markers(conn: sqlite3.Connection) -> None:
+    """Mark every (cluster, stream) the store already holds evidence for. See _OBSERVATION_SEEDS."""
+    for sql in _OBSERVATION_SEEDS:
+        conn.execute(sql)
+
+
 _MIGRATIONS: list[tuple[int, str, list[str]]] = [
     (
         1,
@@ -790,6 +873,48 @@ _MIGRATIONS: list[tuple[int, str, list[str]]] = [
             "CREATE INDEX IF NOT EXISTS idx_cnl_key_value ON cluster_namespace_label(cluster_id, key, value)",
         ],
     ),
+    (
+        13,
+        "binding_event: append-only binding changes; baseline flag on first observation (#167, #175)",
+        [
+            """CREATE TABLE IF NOT EXISTS binding_event (
+                   id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                   cluster_id          TEXT NOT NULL,
+                   binding_kind        TEXT NOT NULL,
+                   binding_namespace   TEXT NOT NULL,
+                   binding_name        TEXT NOT NULL,
+                   subject_kind        TEXT NOT NULL,
+                   subject_name        TEXT NOT NULL,
+                   role_kind           TEXT NOT NULL,
+                   role_name           TEXT NOT NULL,
+                   is_platform         INTEGER NOT NULL DEFAULT 0,
+                   change              TEXT NOT NULL,
+                   baseline            INTEGER NOT NULL DEFAULT 0,
+                   observed_at         TEXT NOT NULL
+               )""",
+            "CREATE INDEX IF NOT EXISTS binding_event_by_namespace ON binding_event(cluster_id, binding_namespace, id DESC)",
+            "CREATE INDEX IF NOT EXISTS binding_event_by_subject ON binding_event(cluster_id, subject_kind, subject_name, id DESC)",
+            "CREATE INDEX IF NOT EXISTS binding_event_by_time ON binding_event(cluster_id, observed_at)",
+            # Existing rows keep 0: the flood already recorded on an upgraded store stays as it
+            # was written; only observations from here on are classified.
+            "ALTER TABLE membership_event ADD COLUMN baseline INTEGER NOT NULL DEFAULT 0",
+        ],
+    ),
+    (
+        14,
+        "observation_state: the first-observation marker, consumed once per stream (review of #177, C4)",
+        [
+            """CREATE TABLE IF NOT EXISTS observation_state (
+                   cluster_id          TEXT NOT NULL,
+                   stream              TEXT NOT NULL,
+                   PRIMARY KEY(cluster_id, stream)
+               )""",
+            # Every cluster the store already knows has been observed: the same seeds run at every
+            # open (see _OBSERVATION_SEEDS), so an upgrade never re-describes existing rows as a
+            # first observation — and neither does a store a marker-less build wrote to.
+            *_OBSERVATION_SEEDS,
+        ],
+    ),
 ]
 
 
@@ -823,8 +948,10 @@ def _harden(conn: sqlite3.Connection) -> None:
     removes the mechanism it needs.
 
     RELATED, NOT MITIGATED BY THIS: CVE-2024-0232 — use-after-free in
-    jsonParseAddNodeArray. It needs SQL JSON functions, which this store does not use
-    (zero `json_` / `->>` occurrences); nothing here changes its reachability either way.
+    jsonParseAddNodeArray. It needs SQL JSON functions; this store uses json_each over JSON it
+    serialises itself from Python lists of strings (never over stored or user-supplied JSON
+    text), so the malformed-document path the CVE needs is not reachable from here; nothing in
+    this function changes that either way.
 
     NEITHER WAS FIXABLE BY UPGRADING when this was written: UBI9 shipped exactly one build,
     sqlite-libs-3.34.1-10.el9_8, so the surface it exposed was reduced instead. The hardened
@@ -938,6 +1065,7 @@ class Store:
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._conn.executescript(SCHEMA)
         _migrate(self._conn)
+        _seed_observation_markers(self._conn)
         self._conn.commit()
 
     def close(self) -> None:
@@ -1290,6 +1418,158 @@ class Store:
                    ON CONFLICT(cluster_id) DO UPDATE SET state='forbidden', observed_at=excluded.observed_at""",
                 (cluster_id, observed_at))
 
+    def namespaces(self, cluster_id: str, *, user_name: str | None = None,
+                   groups: list[str] | None = None, every: bool = False) -> list[dict]:
+        """Every namespace the poller sees, with the configured labels and two counts: distinct
+        groups of people bound IN the namespace (virtual `system:` groups left out) and non-platform
+        grants naming a person there (#167).
+
+        Cluster-wide bindings reach every namespace, so they are counted once by the caller
+        (`cluster_wide_*` on the envelope) rather than added to every row — a list where every
+        namespace shows twenty "via groups" says nothing about any of them.
+
+        Self tier (`user_name` given): only the namespaces one of the viewer's own `groups` or a
+        binding naming the viewer reaches, and the counts are over those paths — "grants
+        affecting them" (docs/ACCESS_CONTROL.md), never other people's. `every` is the caller
+        saying one of those own paths is cluster-wide: it reaches every namespace, exactly as
+        `namespace_reach` answers for the detail, so every row stays (its columns still count what
+        is bound IN it) and the envelope names the cluster-wide path as the reason (review of
+        #167, OB1 F2).
+        """
+        own = user_name is not None
+        group_list = json.dumps(list(groups or []))
+        with self.read_snapshot():
+            rows = self._rows(
+                "SELECT name, created_at, phase, observed_at FROM cluster_namespace WHERE cluster_id=? ORDER BY name",
+                (cluster_id,))
+            labels: dict[str, dict[str, str]] = {}
+            for r in self._rows(
+                    "SELECT name, key, value FROM cluster_namespace_label WHERE cluster_id=? ORDER BY name, key",
+                    (cluster_id,)):
+                labels.setdefault(r["name"], {})[r["key"]] = r["value"]
+            # Groups of people: a virtual `system:` group (system:serviceaccounts:<ns>, bound by the
+            # image-pullers RoleBinding in every OpenShift namespace) is on the page, badged, and out of
+            # this count as it is out of the envelope's — counted, it read 1 on every row and the card's
+            # "zero in both is a result" could never happen (review of #167, pass 3, OB1).
+            via = {r["ns"]: r["n"] for r in self._rows(
+                f"""SELECT binding_namespace AS ns,
+                           COUNT(DISTINCT CASE WHEN substr(group_name, 1, ?) = ? THEN NULL ELSE group_name END) AS n
+                      FROM rbac_group_binding WHERE cluster_id=? AND binding_namespace != ''
+                      {"AND group_name IN (SELECT value FROM json_each(?))" if own else ""}
+                     GROUP BY binding_namespace""",
+                (len(SYSTEM_GROUP_PREFIX), SYSTEM_GROUP_PREFIX, cluster_id, group_list) if own
+                else (len(SYSTEM_GROUP_PREFIX), SYSTEM_GROUP_PREFIX, cluster_id))}
+            direct = {r["ns"]: r["n"] for r in self._rows(
+                f"""SELECT binding_namespace AS ns, COUNT(*) AS n
+                      FROM user_binding WHERE cluster_id=? AND binding_namespace != '' AND is_platform = 0
+                      {"AND user_name = ?" if own else ""}
+                     GROUP BY binding_namespace""",
+                (cluster_id, user_name) if own else (cluster_id,))}
+            # The self tier's rows follow the REACH, as its cluster-wide switch does since pass 2: a
+            # binding naming the viewer in the namespace keeps the row, a platform identity's included,
+            # while the count beside it stays the review's count (review of #167, pass 3, OB1).
+            named = {r["ns"] for r in self._rows(
+                "SELECT DISTINCT binding_namespace AS ns FROM user_binding WHERE cluster_id=? AND binding_namespace != '' AND user_name=?",
+                (cluster_id, user_name))} if own else set()
+        out = []
+        for r in rows:
+            v, d = via.get(r["name"], 0), direct.get(r["name"], 0)
+            if own and not every and not (v or d or r["name"] in named):
+                continue
+            out.append({"name": r["name"], "created_at": r["created_at"], "phase": r["phase"],
+                        "observed_at": r["observed_at"], "labels": labels.get(r["name"], {}),
+                        "via_groups": v, "direct_grants": d})
+        return out
+
+    def namespace_reach(self, cluster_id: str, name: str, user_name: str, groups: list[str]) -> bool:
+        """Whether one of the viewer's own paths — a group they belong to, or a binding naming
+        them — reaches the namespace, in the namespace or cluster-wide. Decided BEFORE any
+        existence lookup by the self-tier handler, so the refusal is the same for a real and a
+        nonexistent name."""
+        row = self._row(
+            """SELECT EXISTS(SELECT 1 FROM rbac_group_binding
+                              WHERE cluster_id=? AND binding_namespace IN (?, '')
+                                AND group_name IN (SELECT value FROM json_each(?)))
+                   OR EXISTS(SELECT 1 FROM user_binding
+                              WHERE cluster_id=? AND binding_namespace IN (?, '') AND user_name=?) AS reach""",
+            (cluster_id, name, json.dumps(list(groups)), cluster_id, name, user_name))
+        return bool(row and row["reach"])
+
+    def namespace_detail(self, cluster_id: str, name: str, *, user_name: str | None = None,
+                         groups: list[str] | None = None, sibling_key: str | None = None) -> dict:
+        """One namespace: its labels, who reaches it and through which group, the grants naming
+        a person there, the cluster-wide grants that reach it too (naming a group, and naming a
+        person), its siblings under the first configured label, and how many distinct people the
+        paths add up to (#167).
+
+        Returns a dict even when the store no longer holds the namespace (`present` False): a
+        namespace that bindings or history still name is answered, not 404'd — the caller decides.
+        Self tier: the viewer's own paths only, and `people` is None — it is a count over other
+        people's memberships.
+        """
+        own = user_name is not None
+        group_list = json.dumps(list(groups or []))
+        own_groups = " AND b.group_name IN (SELECT value FROM json_each(?))" if own else ""
+        with self.read_snapshot():
+            ns = self._row("SELECT name, created_at, phase, observed_at FROM cluster_namespace WHERE cluster_id=? AND name=?",
+                           (cluster_id, name))
+            labels = {r["key"]: r["value"] for r in self._rows(
+                "SELECT key, value FROM cluster_namespace_label WHERE cluster_id=? AND name=? ORDER BY key",
+                (cluster_id, name))}
+            def bound(namespace: str) -> list[dict]:
+                return self._rows(
+                    f"""SELECT b.group_name, b.binding_kind, b.binding_name, b.role_kind, b.role_name,
+                               b.managed_source, COALESCE(g.member_count, 0) AS member_count
+                          FROM rbac_group_binding b
+                          LEFT JOIN group_state g ON g.cluster_id = b.cluster_id AND g.name = b.group_name
+                         WHERE b.cluster_id=? AND b.binding_namespace=?{own_groups}
+                         ORDER BY b.role_name, b.group_name""",
+                    (cluster_id, namespace, group_list) if own else (cluster_id, namespace))
+            # A `system:` subject (system:authenticated, system:nodes, system:serviceaccounts:<ns>) is a
+            # virtual group Kubernetes reserves: it authorises real access but no person is a member of
+            # it and no review acts on it. Classified and labelled here, never dropped — the deployed
+            # demo-prod page listed 54 cluster-wide bindings, 41 of them these (the CRC walk of #167).
+            def classify(rows: list[dict]) -> list[dict]:
+                out = [dict(r) for r in rows]
+                for r in out:
+                    r["is_platform"] = 1 if r["group_name"].startswith(SYSTEM_GROUP_PREFIX) else 0
+                out.sort(key=lambda r: (r["is_platform"], r["role_name"], r["group_name"]))
+                return out
+            via_groups = classify(bound(name))
+            cluster_wide = classify(bound(""))
+            def named(namespace: str) -> list[dict]:
+                return self._rows(
+                    f"""SELECT user_name, binding_kind, binding_name, role_kind, role_name, is_platform
+                          FROM user_binding WHERE cluster_id=? AND binding_namespace=?{" AND user_name=?" if own else ""}
+                         ORDER BY is_platform, role_name, user_name""",
+                    (cluster_id, namespace, user_name) if own else (cluster_id, namespace))
+            direct = named(name)
+            # A ClusterRoleBinding naming a person reaches this namespace as surely as one naming a
+            # group. The list's envelope already counted these once; a page that left them out said
+            # "nobody else" about a cluster-admin (review of #167, Grok F4).
+            cluster_wide_grants = named("")
+            people = None
+            if not own:
+                names = sorted({r["group_name"] for r in via_groups} | {r["group_name"] for r in cluster_wide})
+                members = self._rows(
+                    "SELECT DISTINCT user_name FROM group_member WHERE cluster_id=? AND group_name IN (SELECT value FROM json_each(?))",
+                    (cluster_id, json.dumps(names)))
+                people = len({r["user_name"] for r in members}
+                             | {r["user_name"] for r in [*direct, *cluster_wide_grants] if not r["is_platform"]})
+            siblings: list[str] = []
+            if sibling_key and labels.get(sibling_key):
+                siblings = [r["name"] for r in self._rows(
+                    """SELECT name FROM cluster_namespace_label
+                        WHERE cluster_id=? AND key=? AND value=? AND name != ? ORDER BY name""",
+                    (cluster_id, sibling_key, labels[sibling_key], name))]
+        return {"name": name, "present": ns is not None,
+                "created_at": ns["created_at"] if ns else None, "phase": ns["phase"] if ns else None,
+                "observed_at": ns["observed_at"] if ns else None, "labels": labels,
+                "via_groups": via_groups, "cluster_wide_groups": cluster_wide,
+                "direct_grants": direct, "cluster_wide_grants": cluster_wide_grants,
+                "people": people, "siblings": siblings,
+                "sibling_key": sibling_key if labels.get(sibling_key or "") else None}
+
     def namespaces_source(self, cluster_id: str) -> dict | None:
         return self._row("SELECT state, observed_at FROM cluster_namespace_status WHERE cluster_id=?", (cluster_id,))
 
@@ -1539,6 +1819,20 @@ class Store:
                  for r in rows],
             )
 
+    def _first_observation(self, conn: sqlite3.Connection, cluster_id: str, stream: str) -> int:
+        """Consume a stream's baseline once — independently of current rows and of retention.
+
+        Returns 1 on the observation that consumes it, 0 ever after. Inside the caller's write
+        transaction, so a rolled-back observation does not spend the marker.
+        """
+        seen = conn.execute(
+            "SELECT 1 FROM observation_state WHERE cluster_id=? AND stream=?", (cluster_id, stream),
+        ).fetchone()
+        if seen:
+            return 0
+        conn.execute("INSERT INTO observation_state(cluster_id, stream) VALUES(?,?)", (cluster_id, stream))
+        return 1
+
     def sync_members(
         self,
         cluster_id: str,
@@ -1569,6 +1863,17 @@ class Store:
             ):
                 existing.setdefault(row["group_name"], set()).add(row["user_name"])
 
+            # THE BASELINE. A cluster observed for the first time has no prior state to diff
+            # against, so every member would read as "added" in one instant — 76, 87 and 5 rows
+            # per cluster on CRC, one of which the landing page reported as a bulk onboarding
+            # (#175). The rows are still written (first_seen_at, original_first_seen_at and the
+            # cliff's window all depend on them) but flagged, so a consumer says "first observed"
+            # rather than "added". A NEW group in an already-observed cluster is a real change
+            # and is not flagged: the stream's observation_state marker decides, not the rows.
+            # Consumed even when this observation is empty — otherwise the first later addition
+            # would be described as the cluster's first observation (review of #177, C4).
+            baseline = self._first_observation(conn, cluster_id, "membership")
+
             for group, members in memberships.items():
                 observed = set(members)
                 known = existing.get(group, set())
@@ -1585,9 +1890,9 @@ class Store:
                     )
                     conn.execute(
                         """INSERT INTO membership_event(cluster_id, group_name, user_name,
-                               change, observed_at, group_synced_at)
-                           VALUES(?,?,?,'added',?,?)""",
-                        (cluster_id, group, user, observed_at, synced_at),
+                               change, observed_at, group_synced_at, baseline)
+                           VALUES(?,?,?,'added',?,?,?)""",
+                        (cluster_id, group, user, observed_at, synced_at, baseline),
                     )
                     changes += 1
 
@@ -1684,7 +1989,7 @@ class Store:
         self, cluster_id: str, group_name: str | None = None,
         user_name: str | None = None, limit: int = 200,
     ) -> list[dict]:
-        sql = """SELECT group_name, user_name, change, observed_at, group_synced_at
+        sql = """SELECT group_name, user_name, change, observed_at, group_synced_at, baseline
                    FROM membership_event WHERE cluster_id=?"""
         params: list = [cluster_id]
         if group_name:
@@ -1869,9 +2174,27 @@ class Store:
 
     # -- RBAC bindings -----------------------------------------------------------------
 
-    def replace_bindings(self, cluster_id: str, rows: list[dict], observed_at: str) -> None:
-        """Replace this cluster's binding rows wholesale, in one transaction."""
+    def replace_bindings(self, cluster_id: str, rows: list[dict], observed_at: str) -> dict[str, int]:
+        """Replace this cluster's binding rows wholesale, in one transaction — recording, first,
+        every (binding, Group) that appeared or disappeared since the last refresh as a
+        binding_event. Returns {"added": n, "removed": m}.
+
+        The current-state table stays a replace (a binding is fully re-readable from the API);
+        the history is what the API cannot give back, so it is appended before the replace, in
+        the same transaction, from the same rows. A role change on the same binding+subject is
+        a `removed` and an `added`. The cluster's first observation is flagged `baseline`
+        rather than recorded as a mass grant — see sync_members for why the rows are still
+        written.
+        """
         with self._write() as conn:
+            changes = self._append_binding_events(
+                conn, cluster_id, "Group", "group_name",
+                current=conn.execute(
+                    """SELECT binding_kind, binding_namespace, binding_name, group_name AS subject,
+                              role_kind, role_name, 0 AS is_platform
+                         FROM rbac_group_binding WHERE cluster_id=?""", (cluster_id,)).fetchall(),
+                incoming=rows, observed_at=observed_at,
+            )
             conn.execute("DELETE FROM rbac_group_binding WHERE cluster_id=?", (cluster_id,))
             conn.executemany(
                 """INSERT OR REPLACE INTO rbac_group_binding(
@@ -1884,6 +2207,98 @@ class Store:
                 [{"managed_source": None, "exception": None, "audit_stamped": 0, **r,
                   "cluster_id": cluster_id, "observed_at": observed_at} for r in rows],
             )
+        return changes
+
+    def _append_binding_events(
+        self, conn: sqlite3.Connection, cluster_id: str, subject_kind: str, subject_field: str,
+        *, current: list, incoming: list[dict], observed_at: str,
+    ) -> dict[str, int]:
+        """Diff the stored (binding, subject) set against the incoming one; append an event per
+        difference. Identity is (binding_kind, binding_namespace, binding_name, subject); the
+        value compared is (role_kind, role_name), so a role change is one removed + one added.
+
+        Baseline: the stream's observation_state marker is consumed on its first observation —
+        empty or not — and every incoming row of that observation is flagged baseline=1. A
+        refresh that returns nothing for a cluster that had rows is a real mass removal and is
+        recorded as one; the poller never reaches here on a fetch failure.
+        """
+        def key(r):  # sqlite3.Row and dict both index by name
+            return (r["binding_kind"], r["binding_namespace"], r["binding_name"], r["subject"] if "subject" in r.keys() else r[subject_field])
+        before = {key(r): (r["role_kind"], r["role_name"], int(r["is_platform"] or 0)) for r in current}
+        after: dict = {}
+        for r in incoming:
+            k = (r["binding_kind"], r["binding_namespace"], r["binding_name"], r[subject_field])
+            after[k] = (r["role_kind"], r["role_name"], int(r.get("is_platform", 0) or 0))
+        baseline = self._first_observation(conn, cluster_id, f"binding:{subject_kind}")
+        counts = {"added": 0, "removed": 0}
+        rows = []
+        for k in sorted(set(before) | set(after)):
+            was, now = before.get(k), after.get(k)
+            # Compared on the role only: is_platform is metadata carried on the event, not part
+            # of what changed — a subject reclassified would otherwise read as removed + added.
+            if was is not None and now is not None and was[:2] == now[:2]:
+                continue
+            if was is not None:
+                rows.append((*k[:3], subject_kind, k[3], was[0], was[1], was[2], "removed", 0, observed_at))
+                counts["removed"] += 1
+            if now is not None:
+                rows.append((*k[:3], subject_kind, k[3], now[0], now[1], now[2], "added", baseline, observed_at))
+                counts["added"] += 1
+        if rows:
+            conn.executemany(
+                """INSERT INTO binding_event(cluster_id, binding_kind, binding_namespace, binding_name,
+                       subject_kind, subject_name, role_kind, role_name, is_platform, change,
+                       baseline, observed_at)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+                [(cluster_id, *r) for r in rows],
+            )
+        return counts
+
+    def binding_events(
+        self, cluster_id: str, *, namespace: str | None = None, limit: int = 200,
+        viewer: str | None = None, viewer_groups: list[str] | None = None,
+    ) -> list[dict]:
+        """Binding changes newest first. With `viewer`, only the rows that name the viewer or a
+        group the viewer belongs to — the self tier's slice, decided by the caller from
+        user_groups, so this method takes the scope rather than deciding it."""
+        columns = """binding_kind, binding_namespace, binding_name, subject_kind, subject_name,
+                     role_kind, role_name, is_platform, change, baseline, observed_at"""
+        where = "cluster_id=?"
+        scope: list = [cluster_id]
+        if namespace is not None:
+            where += " AND binding_namespace=?"
+            scope.append(namespace)
+        if viewer is None:
+            return self._rows(
+                f"SELECT {columns} FROM binding_event WHERE {where} ORDER BY id DESC LIMIT ?",
+                [*scope, limit],
+            )
+        # Two index-served halves under UNION ALL, not one OR: this store never runs ANALYZE, and
+        # without statistics SQLite plans the OR as a walk of the cluster's rows plus a sort —
+        # measured 306 ms at 300k rows against 1.8 ms for the union, the same rows back (OB1,
+        # review 2 of #177). The groups ride as ONE bound JSON parameter: a viewer in more groups
+        # than SQLITE_LIMIT_VARIABLE_NUMBER made a placeholder list raise "too many SQL variables"
+        # (Codex, review of #177, reproduced with setlimit).
+        sql = f"""SELECT {columns} FROM (
+                      SELECT id, {columns} FROM binding_event
+                       WHERE {where} AND subject_kind='User' AND subject_name=?"""
+        params: list = [*scope, viewer]
+        groups = list(viewer_groups or [])
+        if groups:
+            sql += f"""
+                      UNION ALL
+                      SELECT id, {columns} FROM binding_event
+                       WHERE {where} AND subject_kind='Group'
+                         AND subject_name IN (SELECT value FROM json_each(?))"""
+            params += [*scope, json.dumps(groups)]
+        sql += ") ORDER BY id DESC LIMIT ?"
+        params.append(limit)
+        return self._rows(sql, params)
+
+    def prune_binding_events(self, cluster_id: str, before_at: str, max_rows: int = 5000) -> int:
+        """Delete binding events observed before `before_at`, at most `max_rows`. Same gates and
+        bound as prune_membership_events; served by binding_event_by_time."""
+        return self._prune_history("binding_event", cluster_id, before_at, max_rows)
 
     def record_managed_groups(
         self, cluster_id: str, groups: list[dict], observed_at: str
@@ -2081,9 +2496,18 @@ class Store:
 
     def replace_user_bindings(
         self, cluster_id: str, rows: list[dict], observed_at: str
-    ) -> None:
-        """Replace this cluster's direct-user binding rows wholesale."""
+    ) -> dict[str, int]:
+        """Replace this cluster's direct-user binding rows wholesale, recording the changes as
+        binding_events first (subject_kind User) — see replace_bindings. Returns the counts."""
         with self._write() as conn:
+            changes = self._append_binding_events(
+                conn, cluster_id, "User", "user_name",
+                current=conn.execute(
+                    """SELECT binding_kind, binding_namespace, binding_name, user_name AS subject,
+                              role_kind, role_name, is_platform
+                         FROM user_binding WHERE cluster_id=?""", (cluster_id,)).fetchall(),
+                incoming=rows, observed_at=observed_at,
+            )
             conn.execute("DELETE FROM user_binding WHERE cluster_id=?", (cluster_id,))
             conn.executemany(
                 """INSERT OR REPLACE INTO user_binding(
@@ -2093,6 +2517,7 @@ class Store:
                           :role_kind,:role_name,:user_name,:is_platform,:observed_at)""",
                 [{**r, "cluster_id": cluster_id, "observed_at": observed_at} for r in rows],
             )
+        return changes
 
     def replace_users(self, cluster_id: str, users: list[dict], observed_at: str,
                       identity_created: dict[str, str] | None = None) -> None:
@@ -2438,9 +2863,9 @@ class Store:
             )
             return conn.total_changes - before
 
-    # The two history tables retention may touch. A closed tuple, interpolated into SQL by
+    # The history tables retention may touch. A closed tuple, interpolated into SQL by
     # _prune_history — never a caller's string.
-    _HISTORY_TABLES = ("membership_event", "sync_event")
+    _HISTORY_TABLES = ("membership_event", "sync_event", "binding_event")
 
     def prune_membership_events(self, cluster_id: str, before_at: str, max_rows: int = 5000) -> int:
         """Delete membership events observed before `before_at`, at most `max_rows`. Returns rows deleted.

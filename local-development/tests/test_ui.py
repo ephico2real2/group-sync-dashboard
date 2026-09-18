@@ -221,6 +221,16 @@ def _seed(db_path: str) -> None:
     #   * jdoe's name is an LDAP DN, which is what OpenShift produces when the identity
     #     provider maps `dn`. It contains commas, so any user list built by splitting a
     #     delimited string reports that one person as four.
+    # #167: every namespace the poller sees, with the captured labels — the grants above reach some
+    store.replace_namespaces("crc-local", [
+        {"name": "prod-ns", "created_at": _iso(now - timedelta(days=90)), "phase": "Active",
+         "metadata": {"company.net/mnemonic": "demo", "company.net/app-environment": "prod"}},
+        {"name": "klt-pass-both", "created_at": _iso(now - timedelta(days=30)), "phase": "Active",
+         "metadata": {"company.net/mnemonic": "klt", "company.net/app-environment": "qa"}},
+        {"name": "quiet-corner", "created_at": _iso(now - timedelta(days=10)), "phase": "Active",
+         "metadata": {"company.net/mnemonic": "demo", "company.net/app-environment": "qa"}},
+        *[{"name": f"ns{i}", "created_at": _iso(now - timedelta(days=5)), "phase": "Active", "metadata": {}} for i in range(6)],
+    ], _iso(now))
     store.replace_user_bindings(
         "crc-local",
         [
@@ -358,6 +368,7 @@ def server(tmp_path_factory):
         # different state from on-and-quiet. On, so the seeded attempts are what gets tested;
         # the off state has its own test that overrides it.
         login_capture_enabled=True,
+        namespace_metadata_labels=("company.net/mnemonic", "company.net/app-environment"),
         # This fixture predates per-user visibility and its tests assert the WIDE view
         # with the proxy off. Proxy-off already serves wide (there is no trusted identity
         # to scope to), so turning restrictions off here records the same deliberate,
@@ -1742,7 +1753,329 @@ def test_the_walks_cluster_switch_waits_for_the_paint_not_the_position(page, slo
     assert page.locator("h2").first.inner_text().strip() == "prod-east"
     assert not page.evaluate("() => document.getElementById('main').classList.contains('stale')")
     assert waited >= 1.0, f"returned after {waited:.2f}s with the fetch held 1.2 s: the position, not the paint"
+class TestNamespaces:
+    """#167: namespaces are entities, not a filter. The audit tab lists every namespace the poller sees
+    (nine in the seed, two of them labelled twice, one with no grant at all), a pattern box finds them
+    by name OR label value with the AND contract the other boxes honour, and a row opens a page that is
+    the third drill-down peer of a group and a user."""
 
+    def _open(self, dash):
+        dash.click('button.tab:text-is("Namespace audit")')
+        dash.wait_for_selector("h2:text-is('Namespaces')")
+
+    def test_every_namespace_is_listed_not_only_those_with_a_grant(self, dash):
+        self._open(dash)
+        assert dash.locator("tr[data-ns]").count() == 9
+        head = dash.locator("h2", has_text="Namespaces").first.inner_text()
+        assert "9" in head
+        # the label columns come from the configured keys, by their short names
+        # textContent, not inner_text: table headers are upper-cased by CSS
+        heads = dash.locator("h2:text-is('Namespaces') ~ div th").evaluate_all("els => els.map(e => e.textContent.trim())")
+        assert heads[:3] == ["Namespace", "mnemonic", "app-environment"]
+        quiet = dash.locator("tr[data-ns='quiet-corner']").inner_text()
+        assert "demo" in quiet and "qa" in quiet, "a namespace with no grant still shows its labels"
+
+    def test_the_box_finds_by_name_or_label_and_ands_its_words(self, dash):
+        self._open(dash)
+        box = dash.locator("#f-ns-search")
+        box.fill("demo")
+        dash.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 2")
+        names = sorted(dash.locator("tr[data-ns]").evaluate_all("els => els.map(e => e.dataset.ns)"))
+        assert names == ["prod-ns", "quiet-corner"], "demo is a label value, not a name"
+        box.fill("demo qa")
+        dash.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 1")
+        assert dash.locator("tr[data-ns]").first.get_attribute("data-ns") == "quiet-corner"
+        box.fill("demo zzz")
+        dash.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 0")
+        note = dash.locator("h2:text-is('Namespaces') ~ div.empty-note").inner_text()
+        assert "the filter is hiding them" in note and "9" in note
+        assert "0 of 9 shown" in dash.locator("h2", has_text="Namespaces").first.inner_text()
+        box.press("Escape")
+        dash.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 9")
+
+    def test_a_row_opens_the_namespace_and_back_returns_to_the_list(self, dash):
+        self._open(dash)
+        dash.locator("tr[data-ns='prod-ns'] button.drill").click()
+        dash.wait_for_selector("#back")
+        assert dash.evaluate("() => location.hash") == "#page=nsaudit&cluster=crc-local&ns=prod-ns"
+        assert dash.locator("#back").inner_text().strip() == "← all namespaces"
+        text = dash.locator("#main").text_content()
+        for h in ("Who reaches it, and through which group", "Direct grants", "History", "Same mnemonic"):
+            assert h in text, h
+        assert "quiet-corner" in text, "the sibling under the mnemonic label"
+        # the KPI row: the two labels, people, via groups, direct grants
+        assert dash.locator(".kpi .label", has_text="People who reach it").count() == 1
+        assert dash.locator("tr[data-group]").count() >= 1, "a group that grants it, drillable"
+        dash.locator("#back").click()
+        dash.wait_for_selector("h2:text-is('Namespaces')")
+        assert dash.evaluate("() => location.hash") == "#page=nsaudit&cluster=crc-local"
+
+    def test_the_group_drill_from_the_page_leaves_the_namespace_behind(self, dash):
+        self._open(dash)
+        dash.locator("tr[data-ns='prod-ns'] button.drill").click()
+        dash.wait_for_selector("tr[data-group] button.drill")
+        group = dash.locator("tr[data-group]").first.get_attribute("data-group")
+        dash.locator("tr[data-group] button.drill").first.click()
+        dash.wait_for_selector("#back-groups, #back")
+        hash_ = dash.evaluate("() => location.hash")
+        assert f"group={group}" in hash_ and "ns=" not in hash_, hash_
+        assert dash.evaluate("() => view.page") == "groups"
+        dash.go_back()
+        dash.wait_for_selector("h2:text-is('Who reaches it, and through which group')")
+        assert dash.evaluate("() => view.ns") == "prod-ns"
+
+    def test_a_sibling_opens_its_own_page(self, dash):
+        self._open(dash)
+        dash.locator("tr[data-ns='prod-ns'] button.drill").click()
+        dash.wait_for_selector("button.drill[data-ns='quiet-corner']")
+        dash.locator("button.drill[data-ns='quiet-corner']").click()
+        # wait for the NEW page: view.ns flips at once, the old page's #back stays until the refetch paints
+        dash.wait_for_selector("h2:text-is('quiet-corner')")
+        assert dash.locator("#back").inner_text().strip() == "← prod-ns"
+        assert "No RoleBinding names a person here directly" in dash.locator("#main").inner_text()
+
+    def test_the_page_holds_at_phone_width(self, dash):
+        self._open(dash)
+        dash.locator("tr[data-ns='prod-ns'] button.drill").click()
+        dash.wait_for_selector("#back")
+        dash.set_viewport_size({"width": 375, "height": 740})
+        dash.wait_for_timeout(300)
+        assert dash.evaluate("() => document.documentElement.scrollWidth <= innerWidth")
+
+    # -- the review of #167 (Grok, pass 1 — docs/REVIEW_namespaces.md) ------------------------------
+
+    def test_switching_cluster_abandons_the_namespace(self, dash):
+        """The hole already closed for a group and a user: `ns` joined the position without joining the
+        selector's drop list, so a namespace page survived a cluster switch and refetched the name
+        against the new cluster — a different object, or a 404 (Grok F2)."""
+        self._open(dash)
+        dash.locator("tr[data-ns='prod-ns'] button.drill").click()
+        dash.wait_for_selector("#back")
+        dash.select_option("#f-cluster", "prod-east")
+        dash.wait_for_function("() => view.cluster === 'prod-east' && !document.querySelector('#back')")
+        assert "ns=" not in dash.evaluate("() => location.hash")
+        assert dash.evaluate("() => view.ns") is None
+        assert "Dashboard API error" not in dash.locator("#main").inner_text()
+
+    def test_the_keyboard_user_drill_from_the_page_leaves_the_namespace_behind(self, dash):
+        """Enter on a person's name is the keyboard twin of the click, which already dropped `ns` (Grok F2)."""
+        self._open(dash)
+        dash.locator("tr[data-ns='prod-ns'] button.drill").click()
+        dash.wait_for_selector("tr[data-user] button.drill")
+        dash.locator("tr[data-user] button.drill").first.focus()
+        dash.keyboard.press("Enter")
+        dash.wait_for_function("() => view.user")
+        hash_ = dash.evaluate("() => location.hash")
+        assert "user=" in hash_ and "ns=" not in hash_, hash_
+
+    def test_the_page_offers_no_export_of_a_table_it_does_not_show(self, dash):
+        """The audit tab exports its direct-grants table; the namespace page holds no table that descriptor
+        owns, and the buttons there exported rows the reader was not looking at (Grok F5)."""
+        self._open(dash)
+        assert dash.locator("#export-csv").count() == 1
+        dash.locator("tr[data-ns='prod-ns'] button.drill").click()
+        dash.wait_for_selector("#back")
+        assert dash.locator("#export-csv").count() == 0
+
+    def test_a_person_named_cluster_wide_is_on_the_page(self, dash):
+        """carol holds cluster-admin through a ClusterRoleBinding naming her (the seed's `carol-ca`): the
+        list's envelope counted her once, and the page for a namespace nobody else reaches said nothing
+        of her (Grok F4). Platform identities (kubeadmin's `ka`) stay off the line."""
+        self._open(dash)
+        dash.locator("tr[data-ns='quiet-corner'] button.drill").click()
+        dash.wait_for_selector("h2:text-is('quiet-corner')")
+        line = dash.locator("#main .filterbar-note", has_text="Also reached cluster-wide").inner_text()
+        assert "carol" in line and "cluster-admin" in line and "named directly" in line, line
+        assert "kubeadmin" not in line
+        assert dash.locator("#main button.drill[data-user='carol']").count() == 1
+
+    def test_the_namespaces_card_at_the_self_tier_speaks_of_the_viewers_grants(self, page, scoped_server):
+        """`nobody` holds no membership and no grant: the card lists nothing, and its copy must say that is
+        their view — not that the cluster has no namespaces, nor that it shows "every namespace the poller
+        sees" (Grok F3, OB1 F3)."""
+        p = _open_as(page, scoped_server, "nobody")
+        p.locator("button[data-nav='nsaudit']").click()
+        p.wait_for_selector("h2:text-is('Namespaces')")
+        card = p.locator("h2:text-is('Namespaces')").locator("xpath=..").inner_text()
+        assert "No namespaces recorded" not in card and "Every namespace the poller sees" not in card, card
+        assert "your own memberships and grants" in card and "your view, not the cluster" in card, card
+
+    def test_a_cluster_wide_path_of_the_viewers_own_lists_every_namespace(self, page, scoped_server):
+        """The detail's reach rule opens every namespace for a viewer with a cluster-wide path; the list says the
+        same (OB1 F2). carol's one grant is the ClusterRoleBinding naming her: nine rows, the line names the
+        path as hers, the columns count her in-namespace paths (none). The fixture names no label keys, so
+        there is no label column."""
+        p = _open_as(page, scoped_server, "carol")
+        p.locator("button[data-nav='nsaudit']").click()
+        p.wait_for_selector("tr[data-ns]")
+        heads = p.locator("h2:text-is('Namespaces') ~ div th").evaluate_all("els => els.map(e => e.textContent.trim())")
+        assert heads == ["Namespace", "Via groups", "Direct grants"]
+        assert p.locator("tr[data-ns]").count() == 9
+        card = p.locator("h2:text-is('Namespaces')").locator("xpath=..").inner_text()
+        assert "0 groups bound cluster-wide and 1 cluster-wide direct grant of yours reach every namespace below" in card, card
+        assert p.locator("tr[data-ns] td.num").evaluate_all("els => els.every(e => e.textContent.trim() === '0')")
+
+    def test_the_self_tier_page_carries_the_viewers_own_paths_only(self, page, scoped_server):
+        """alice's group holds the hand-made cluster-admin ClusterRoleBinding: nine rows through it (OB1 F2), and
+        prod-ns's page opens with her own memberships, no People KPI and no label KPI (no keys configured)."""
+        p = _open_as(page, scoped_server, "alice")
+        p.locator("button[data-nav='nsaudit']").click()
+        p.wait_for_selector("tr[data-ns]")
+        assert p.locator("tr[data-ns]").count() == 9
+        assert "1 group bound cluster-wide and 0 cluster-wide direct grants of yours" in p.locator("#main").inner_text()
+        p.locator("tr[data-ns='prod-ns'] button.drill").click()
+        p.wait_for_selector("h2:text-is('prod-ns')")
+        kpis = p.locator(".kpi .label").evaluate_all("els => els.map(e => e.textContent.trim())")
+        assert kpis == ["Via groups", "Direct grants"], kpis
+        body = p.locator("#main").inner_text()
+        assert "Your own memberships that reach this namespace" in body and "Also reached cluster-wide" in body
+
+    def test_a_platform_only_cluster_wide_path_explains_the_self_tier(self, page, scoped_server):
+        """kubeadmin's one binding is the platform-identity ClusterRoleBinding `ka`: at the self tier it reaches
+        every namespace (nine rows) and the line says why without claiming "0 grants reach every namespace"
+        (Codex, pass 2)."""
+        p = _open_as(page, scoped_server, "kubeadmin")
+        p.locator("button[data-nav='nsaudit']").click()
+        p.wait_for_selector("tr[data-ns]")
+        assert p.locator("tr[data-ns]").count() == 9
+        card = p.locator("h2:text-is('Namespaces')").locator("xpath=..").inner_text()
+        assert "platform identity of yours reaches every namespace below" in card, card
+        assert "0 cluster-wide direct grants of yours" not in card
+
+    def test_history_distinguishes_baseline_added_and_removed(self, dash):
+        """A baseline row is not an addition and must not wear the added colour (Grok P5, Codex B, pass 2);
+        the seed holds only baseline rows, so the three shapes are painted from one payload."""
+        self._open(dash)
+        dash.locator("tr[data-ns='prod-ns'] button.drill").click()
+        dash.wait_for_selector("h2:text-is('prod-ns')")
+        dash.evaluate("""() => { data.ns.changes = [
+            {change: "added", baseline: 1, subject_kind: "User", subject_name: "b", role_name: "view", binding_kind: "RoleBinding", binding_name: "b-rb", observed_at: "2026-09-18T00:00:00Z"},
+            {change: "added", baseline: 0, subject_kind: "User", subject_name: "a", role_name: "view", binding_kind: "RoleBinding", binding_name: "a-rb", observed_at: "2026-09-18T00:01:00Z"},
+            {change: "removed", baseline: 0, subject_kind: "User", subject_name: "r", role_name: "view", binding_kind: "RoleBinding", binding_name: "r-rb", observed_at: "2026-09-18T00:02:00Z"}];
+            render(); }""")
+        cells = dash.locator("td[class^='change-']").evaluate_all("els => els.map(e => [e.className, e.innerText.trim()])")
+        assert cells == [["change-baseline", "first observed"], ["change-added", "+ granted"], ["change-removed", "− revoked"]], cells
+
+    @pytest.mark.parametrize(("kind", "key"), [("user", "Enter"), ("user", "Space"), ("group", "Enter"), ("group", "Space")])
+    def test_namespace_drills_work_from_the_keyboard(self, dash, kind, key):
+        """Enter on a group's name went nowhere: the key handler cancelled the native click and navigated only
+        for a person's name (Grok V1, Codex C, pass 2). Every drill takes the click's path now."""
+        self._open(dash)
+        dash.locator("tr[data-ns='prod-ns'] button.drill").click()
+        dash.wait_for_selector("h2:text-is('prod-ns')")
+        button = dash.locator(f"tr[data-{kind}] button.drill").first
+        button.focus()
+        button.press(key)
+        dash.wait_for_function(f"() => !!view.{kind}")
+        assert dash.evaluate("() => view.ns") is None
+        assert "ns=" not in dash.evaluate("() => location.hash")
+        dash.go_back()
+        dash.wait_for_function("() => view.ns === 'prod-ns'")
+
+    def test_virtual_groups_are_badged_in_the_table_and_folded_on_the_cluster_wide_line(self, dash):
+        """Measured on CRC (the walk of #167's deployed head): demo-prod's cluster-wide line listed 54 bindings,
+        41 of them to `system:` groups — access with no person behind it. Badged in the table, folded on the
+        line, never dropped."""
+        self._open(dash)
+        dash.locator("tr[data-ns='prod-ns'] button.drill").click()
+        dash.wait_for_selector("h2:text-is('prod-ns')")
+        dash.evaluate("""() => {
+          data.ns.via_groups = [...data.ns.via_groups, {group_name: "system:serviceaccounts:prod-ns", binding_kind: "RoleBinding", binding_name: "system:image-pullers",
+                                 role_kind: "ClusterRole", role_name: "system:image-puller", managed_source: null, member_count: 0, is_platform: 1}];
+          data.ns.cluster_wide_groups = [...data.ns.cluster_wide_groups,
+            ...["system:authenticated", "system:nodes", "system:masters", "system:serviceaccounts"].map(g => ({group_name: g, binding_kind: "ClusterRoleBinding",
+                 binding_name: g + "-crb", role_kind: "ClusterRole", role_name: "basic-user", managed_source: null, member_count: 0, is_platform: 1}))];
+          render();
+        }""")
+        assert dash.locator("tr[data-group='system:serviceaccounts:prod-ns'] .badge", has_text="platform").count() == 1
+        line = dash.locator("#main .filterbar-note", has_text="Also reached cluster-wide").inner_text()
+        assert "4 platform bindings to 4 virtual groups (system:authenticated, system:masters, system:nodes, … 1 more)" in line, line
+        assert "system:serviceaccounts-crb" not in line and line.count("system:") == 3, line
+
+    def test_the_fold_says_how_many_virtual_groups_and_names_the_most_bound_first(self, dash):
+        """CRC's demo-prod fold read "35 platform bindings to virtual groups (system:authenticated,
+        system:cluster-admins, system:masters, …)": the three names were an accident of role order (basic-user,
+        then cluster-admin) and the "…" hid how many groups the rest were. Most-bound first — `system:authenticated`,
+        every logged-in user, carries most of a cluster's platform bindings — and the fold counts the groups
+        (OB1, pass 3 of #167)."""
+        self._open(dash)
+        dash.locator("tr[data-ns='prod-ns'] button.drill").click()
+        dash.wait_for_selector("h2:text-is('prod-ns')")
+        dash.evaluate("""() => {
+          data.ns.cluster_wide_groups = ["system:nodes", "system:serviceaccounts", "system:authenticated", "system:masters", "system:serviceaccounts"]
+            .map((g, i) => ({group_name: g, binding_kind: "ClusterRoleBinding", binding_name: g + "-crb-" + i, role_kind: "ClusterRole",
+                             role_name: "basic-user", managed_source: null, member_count: 0, is_platform: 1}));
+          data.ns.cluster_wide_grants = [];
+          render();
+        }""")
+        line = dash.locator("#main .filterbar-note", has_text="Also reached cluster-wide").inner_text()
+        assert "every namespace: 5 platform bindings to 4 virtual groups (system:serviceaccounts, system:authenticated, system:masters, … 1 more) that every namespace carries." in line, line
+        dash.evaluate("""() => { data.ns.cluster_wide_groups = data.ns.cluster_wide_groups.slice(2, 3); render(); }""")
+        line = dash.locator("#main .filterbar-note", has_text="Also reached cluster-wide").inner_text()
+        assert "by one binding that grants every namespace: 1 platform binding to 1 virtual group (system:authenticated) that every namespace carries." in line, line
+
+    def test_a_virtual_groups_default_binding_is_not_badged_hand_made(self, dash):
+        """`system:image-pullers` in every OpenShift namespace binds `system:serviceaccounts:<ns>`: the platform
+        makes it, nobody hand-makes it, and the findings tier it `built_in`, never `unmanaged` — yet the who-reaches
+        table put the `hand-made` badge beside the `platform` one (CRC's demo-prod page at b6c96905de; OB1, pass 3
+        of #167). The seed's `pullers-0` is that binding; `was-managed-rb`, a real group's hand-made binding, keeps
+        its badge."""
+        self._open(dash)
+        dash.locator("tr[data-ns='ns0'] button.drill").click()
+        dash.wait_for_selector("h2:text-is('ns0')")
+        row = dash.locator("tr[data-group='system:serviceaccounts:ns0']")
+        assert row.locator(".badge", has_text="platform").count() == 1
+        assert row.locator(".badge", has_text="hand-made").count() == 0, row.inner_text()
+        dash.go_back()
+        dash.wait_for_selector("tr[data-ns='prod-ns']")
+        dash.locator("tr[data-ns='prod-ns'] button.drill").click()
+        dash.wait_for_selector("h2:text-is('prod-ns')")
+        assert dash.locator("tr[data-group='was-managed'] .badge", has_text="hand-made").count() == 1
+
+    def test_the_via_groups_column_counts_groups_of_people_not_virtual_groups(self, dash):
+        """On OpenShift every namespace carries `system:image-pullers` → `system:serviceaccounts:<ns>`, so a Via
+        groups column that counts virtual groups reads 1 or more on every row and the card's "zero in both is a
+        result" can never happen; the envelope's cluster-wide count already leaves them out (pass 2, D). The row
+        and the page's KPI count groups of people; the table still lists the virtual row, badged, and the heading
+        says how many (OB1, pass 3 of #167)."""
+        self._open(dash)
+        assert dash.locator("tr[data-ns='ns0'] td.num").first.inner_text().strip() == "0"
+        dash.locator("tr[data-ns='ns0'] button.drill").click()
+        dash.wait_for_selector("h2:text-is('ns0')")
+        kpi = dash.locator(".kpi", has_text="Via groups").locator(".value").inner_text().strip()
+        assert kpi == "0", kpi
+        head = dash.locator("h2", has_text="Who reaches it").inner_text()
+        assert "· 0 · 1 platform" in head, head
+        assert dash.locator("tr[data-group='system:serviceaccounts:ns0']").count() == 1, "the virtual row is still listed"
+
+    def test_a_baseline_row_reads_first_observed_not_granted(self, dash):
+        """#177's rule: a consumer renders a baseline row as "first observed", never as "added" — the cell
+        read "+ granted (first observed)" (OB1 F4). The seed wrote prod-ns's three bindings in its first
+        refresh, so all three are baseline rows."""
+        self._open(dash)
+        dash.locator("tr[data-ns='prod-ns'] button.drill").click()
+        dash.wait_for_selector("h2:text-is('prod-ns')")
+        cells = dash.locator("td[class^='change-']").evaluate_all("els => els.map(e => e.innerText.replace(/\\s+/g, ' ').trim())")
+        assert cells and all(c == "first observed" for c in cells), cells
+
+    def test_a_namespace_change_repaints_on_the_timer_path(self, dash):
+        """`data.namespaces` and `data.ns` were written by refresh() but left out of the unchanged-payload
+        fingerprint, so an automatic poll whose only change was namespace data skipped the repaint and the
+        card sat on a label the wire no longer carried (Codex, review of #167)."""
+        import json as _json
+        self._open(dash)
+        assert dash.locator("tr[data-ns='prod-ns'] td.mono").first.inner_text().strip() == "demo"
+
+        def relabel(route):
+            body = route.fetch().json()
+            for n in body["namespaces"]:
+                if n["name"] == "prod-ns":
+                    n["labels"]["company.net/mnemonic"] = "relabelled"
+            route.fulfill(status=200, content_type="application/json", body=_json.dumps(body))
+
+        dash.route("**/api/clusters/*/namespaces", relabel)
+        dash.evaluate("() => refresh({auto: true})")
+        dash.wait_for_function("() => document.querySelector(\"tr[data-ns='prod-ns'] td.mono\").innerText.trim() === 'relabelled'")
 
 def test_index_is_never_heuristically_cached(server):
     """Reported from the field: a deploy landed but the browser kept the old page, so a
@@ -2045,6 +2378,26 @@ class TestBrowserHistory:
         dash.go_back()
         dash.wait_for_function("() => view.cluster === 'crc-local'")
         assert "cluster=crc-local" in dash.url
+
+
+    def test_a_group_drill_inside_a_group_row_navigates_once(self, dash):
+        """A user page's membership and history rows put a `data-group` button inside a `tr[data-group]`; the
+        group handler, unlike the user handler, did not stop propagation, so one click — or Enter — navigated
+        twice (a push, then a replace of the same position) and fetched twice (OB1's keyboard sweep, pass 3 of
+        #167). Counted at the two chokepoints every drill goes through."""
+        dash.locator("button[data-nav='users']").click()
+        dash.wait_for_selector("tr[data-user='alice']")
+        dash.locator("tr[data-user='alice'] button.drill").click()
+        dash.wait_for_selector("h2:text-is('alice')")
+        dash.evaluate("""() => { window.__n = {nav: 0, refresh: 0}; const n0 = navigate, r0 = refresh;
+            navigate = function (...a) { __n.nav++; return n0.apply(this, a); };
+            refresh = function (...a) { __n.refresh++; return r0.apply(this, a); }; }""")
+        button = dash.locator("tr[data-group='app-ocp-rbac-alpha-ns-admin'] button.drill").first
+        button.focus()
+        button.press("Enter")
+        dash.wait_for_selector("h2:text-is('app-ocp-rbac-alpha-ns-admin')")
+        dash.wait_for_timeout(300)
+        assert dash.evaluate("() => [__n.nav, __n.refresh]") == [1, 1]
 
 
 class TestNamespaceAuditPage:
