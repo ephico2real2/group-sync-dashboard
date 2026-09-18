@@ -1,14 +1,21 @@
 # Home — the page every reader lands on (#158)
 
-Evidence for issue #158, captured 2026-09-18 at commit `c5cd511` on branch `feat/home` (PR #186).
-Application `0.24.0-c5cd5112ec`, chart `0.33.0`, on CRC (`crc-local`) with the mock cluster beside it.
+Evidence for issue #158, captured 2026-09-18 on branch `feat/home` (PR #186), on CRC (`crc-local`) with the
+mock cluster beside it, chart `0.33.0`.
+
+The live captures (`01`, `02`) are from **`b65225e`** (`0.24.0-b65225e758`); the tier pair (`03`–`06`) and
+the dark theme (`07`) are from `c5cd511`, which differs from `b65225e` only in copy and contrast, not in
+what those four pictures are there to show. The live pair was **recaptured**: the first version, taken at
+`c5cd511`, read *"covers 12 of your 13 namespace grants"* over thirteen namespaces — a mislabel Codex found
+by reading this very folder, which is the argument for committing evidence. It now reads *"12 of the 13
+namespaces you reach"*.
 
 This folder is what the page DID on that day, at that commit, for those readers — not what it is meant to
 do. Every claim in the Definition of Done below names the picture that shows it.
 
 | File | What it shows | Captured against |
 |---|---|---|
-| `01-home-crc-1440.png` | Home as `kubeadmin` on the live cluster: cluster-wide `cluster-admin`, 13 namespaces with 12 already covered by it, 14 direct grants, no synced groups, and the cross-cluster line naming the mock cluster | CRC, the deployed image |
+| `01-home-crc-1440.png` | Home as `kubeadmin` on the live cluster (recaptured at `b65225e`): cluster-wide `cluster-admin`, 13 namespaces with 12 already covered by it, 14 direct grants, no synced groups, and the cross-cluster line naming the mock cluster | CRC, the deployed image |
 | `02-home-crc-375.png` | The same page at 375 px, top to bottom, with no sideways scroll (halved from the 8910 px original so it opens in a browser) | CRC, the deployed image |
 | `03-tier-self-home.png` | A **narrowed** reader (`alice`, pill "Your view — alice") landing on Home and seeing her own access — no refusal | the seeded app, restrictions on |
 | `04-tier-self-overview-refusal.png` | The same reader one click away on the Overview: the administrator-tier refusal, unchanged by this issue | the seeded app, restrictions on |
