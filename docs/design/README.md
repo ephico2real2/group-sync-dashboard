@@ -16,3 +16,4 @@ artifacts (not shipped pages); the implemented pages live under `local-developme
 | [`reports-page-mock.html`](reports-page-mock.html) | The Reports page as used — the catalogue (bolder names, a colour gradient per report) and the per-report form a click opens immediately, in view, as a shareable position — see issue #149 |
 | [`data-requirements.md`](data-requirements.md) | What every mock renders, where each number comes from today, and the ten gaps that stand between the mocks and real pages — see issues #156, #167, #149, #158 |
 | [`inventory-2026-09-17.md`](inventory-2026-09-17.md) | The dated inventory: every finished mock, its owning issue, its review rendering, the decisions it embodies, and what was retired |
+| [`kyverno-research-2026-09-17.md`](kyverno-research-2026-09-17.md) | The Kyverno research record — ten findings, each cited to the v1.19.1 source or shipped CRDs, and the correction to #165's removal-date claim |
