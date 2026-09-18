@@ -64,6 +64,18 @@ is recorded as a failed step, not screenshotted as if it worked (the rule from
 `local-development/capture-screenshots.py`, which this borrows its login sequence from: interstitial →
 provider chooser → form → optional consent). A report that reaches no terminal state in 120 s fails.
 
+## Background work — never poll it
+
+The operator's rule, verbatim (2026-09-17): *"Pls dont poll background jobs and waste tokens. Pls use watcher
+and ask them to notify you or wake up when the done."* A walk takes six minutes on CRC; a suite ten; a review
+pass twenty. Run each with the Bash tool's `run_in_background` (or arm a `Monitor` whose filter matches BOTH
+the success and the failure marker) and act only on its completion notification. Reading or tailing the
+output file before that notification is a full model round-trip that re-bills the whole conversation for
+one "not yet" — and a `… 2>&1 | tail -N` output file stays empty until the command exits, so the early read
+tells you nothing anyway. One status check when something looks wrong (is the pid alive, did the file
+appear) is fine; the *loop* of checks is the waste. Reviewers launched as agents notify on completion too:
+never predict or paraphrase their result before the notification arrives.
+
 ## Step 2 — look before you send
 
 Read two or three captures (the Overview, one report status, one `pdf-page1-*.png`) with the Read
