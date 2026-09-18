@@ -43,6 +43,13 @@ with sync_playwright() as p:
     page = ctx.new_page()
     w = Walk(page, OUT)
     assert login(w, BASE, USER, password, PROVIDER)
+    # This pass is about the OVERVIEW's second cluster — its tiles, its opened-cluster block — so it names
+    # that page instead of riding the default route. #158 makes Home the landing page for every tier, and
+    # Home has the same cluster selector but no tile: the switch below succeeded and then waited 15 s for
+    # a `.tile-detail` that only the Overview paints (measured on the integrated stack, 2026-09-18).
+    page.click('button.tab:text-is("Overview")')
+    page.wait_for_selector('button.tab[aria-current="page"]:text-is("Overview")', timeout=15_000)
+    page.wait_for_selector(".tile[data-cluster], tr.rowlink[data-cluster]", timeout=15_000)
     options = page.locator("select#f-cluster option").evaluate_all(
         "nodes => nodes.map(o => ({value: o.value, label: o.textContent.trim()}))")
     w.record("cluster selector options", True, ", ".join(o["label"] for o in options) or "(selector not found)")
