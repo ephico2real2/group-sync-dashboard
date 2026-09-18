@@ -236,6 +236,18 @@ unit test would have failed there; the binding guard, which needs no browser, st
 - The CR detail's heading rail (A).
 - The merge's resolution placed the #172 CHANGELOG entry above the foundation's; ordering in the doc only.
 
+### Found by integrating the stack, not by this branch — accepted
+Every branch of the programme is green on its own; merged onto one branch they are not. `TestOverviewFleet`
+and `TestOverviewReview` load the app with an empty hash and wait for the Overview's hero — correct here,
+because the Overview was the landing page when they were written. #158 (a SIBLING branch, which this one
+never sees) makes Home the landing page for every tier, and the first time the two were merged these tests
+waited 30 s for a hero Home does not have: **37 failures**, every one a selector timeout, in a suite that
+passes on both branches separately.
+
+The two helpers name `#page=overview` now. That is the same rule #158's branch applied to every
+Overview-subject test it could reach; these it could not reach, because they live here. A test names the
+page it is about rather than depending on what the default route happens to be.
+
 ### Not asked
 - P12, the chip edge: OB1 measured the alpha-composited edge at 1.24:1 (Codex's figure; its own drive first
   printed 19.17:1, which ignored the alpha, and it retracted that) and would not reopen the rejection — the

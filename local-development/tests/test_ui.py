@@ -1254,7 +1254,8 @@ class TestOverviewFleet:
     the live page's one-stack navigation, on a seeded fleet of 2, 6, 14 and 40 clusters."""
     TIER = {2: "full", 6: "medium", 14: "compact", 40: "dense"}
 
-    def _open(self, page, base, hash_=""):
+    def _open(self, page, base, hash_="#page=overview"):
+        """Named, not default — see `_open_fleet` above."""
         page.goto(f"{base}/{hash_}")
         page.wait_for_selector(".hero .value")
         return page
@@ -1443,7 +1444,11 @@ def review_restricted(tmp_path_factory):
     yield from _serve_review(tmp_path_factory, 2, restricted=True)
 
 
-def _open_fleet(page, base, hash_=""):
+def _open_fleet(page, base, hash_="#page=overview"):
+    """The fleet, at a NAMED position. The default route is not this page's to assume: #158 makes Home the
+    landing page for every tier, and these tests — which live on a sibling branch and so never saw that
+    change — waited 30 s for a hero Home does not have, 37 times, the first time the two were merged. A
+    test names the page it is about."""
     page.goto(f"{base}/{hash_}")
     page.wait_for_selector(".hero .value")
 
