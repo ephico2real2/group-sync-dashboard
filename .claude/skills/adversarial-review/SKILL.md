@@ -46,6 +46,7 @@ PR that bumps the chart), never left as a dangling "follow-up".
 | Cursor, Claude Fable 5 **high** thinking (**NO ZDR**) | `cursor agent -p --mode ask --output-format text --trust --model claude-fable-5-thinking-high "<brief>"` | probe returns "Claude Fable 5"; `cursor agent models` lists the id. The lighter tier — the confirmation (second) pass, or a smaller PR. |
 | Cursor, Claude Fable 5 **extra-high** thinking (**NO ZDR**) | `cursor agent -p --mode ask --output-format text --trust --model claude-fable-5-thinking-xhigh "<brief>"` | probe returns "Claude Fable 5"; `cursor agent models` lists the id. The deepest tier — the primary (first) pass / complex design; matches Codex xhigh. Cursor labels the 5.1 family "Claude Fable 5". |
 | **OB1** (Obi-Wan) — Anthropic Fable 5.1, inside Claude Code | the `Agent` tool with **`model: "fable"`** (`claude-fable-5-1`), `subagent_type` general-purpose, the brief as its ENTIRE prompt plus the read-only rule below; the same Fable as Cursor's `claude-fable-5-thinking-*` rows above by another route — the pivot to OB1 exists because Cursor's Fable is capped by the Pro+ usage limit (measured 2026-09-17: the first launch hit the monthly limit); the Cursor Fable rows stay (the operator, 2026-09-17: "Dont drop the cursor fable role. We only pivot to ob1 because our token issues with cursor fable") | the agent's completion notification carries its answer; it runs with the session's tools, so its `bash -n` / read-only `kubectl` / `curl` outputs are in its report. |
+| **OB2** — OB1 at **high** reasoning effort, the default from 2026-09-18 | the `Agent` tool with **`subagent_type: "ob2"`** — the project agent `.claude/agents/ob2.md` (`model: fable`, `effort: high`, the reviewer's standing rules in its body: verdicts with artefacts, every finding with its full fix and its failing/passing test, read-only, measure-don't-reason, the report shape); the brief is its whole prompt, no `model` parameter needed | the operator, 2026-09-18: *"Create a new skill from OB1 called OB2 (OB1 high) with fable 5.1 but with high effort and assume OB2"* — every launch uses OB2 now; OB1 (the general-purpose launch at the session's effort) only when the operator asks for it by name. Same tools, same rules, the same report; its completion notification carries the answer. |
 
 The Cursor reviewers are **independent** — call either, or both; Fable is the *third* reviewer beside
 Grok + Codex, through Cursor while its usage limit allows and through OB1 when it does not. **ZDR vs NO ZDR is the deciding trade:** Grok
@@ -132,7 +133,8 @@ cd "$W" && nohup codex exec --skip-git-repo-check -m gpt-5.6-sol -c model_reason
 sleep 20; head -c 400 "$S/review_codex_<id>.err"   # must show "OpenAI Codex … model: …", not only "Reading additional input from stdin..."
 ```
 
-and, in the same turn, **OB1** — the `Agent` tool, `model: "fable"`, `subagent_type: "general-purpose"`,
+and, in the same turn, **OB2** (from 2026-09-18 — `subagent_type: "ob2"`, the project agent that sets Fable 5.1 at high effort and carries the
+reviewer's standing rules; the brief is the whole prompt) — or, only when the operator asks for OB1 by name, **OB1** — the `Agent` tool, `model: "fable"`, `subagent_type: "general-purpose"`,
 `description: "OB1 adversarial review of <id>"`, the prompt = the read-only paragraph above + the brief's
 full text + the file paths it needs (it works in the repository itself, read-only — no export needed, but
 name the branch and say it must not switch). It runs in the background and reports on completion; never
