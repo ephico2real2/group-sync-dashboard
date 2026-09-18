@@ -308,3 +308,45 @@ class TestMalformedResponseGuard:
                 base_url="https://x",
             ) as http:
                 assert client._list_all(http, GROUP_API) == []
+
+
+class TestBaseline:
+    """#175: a cluster's first observation is not a change anyone made. Measured on CRC before
+    this existed: 76, 87 and 5 "added" rows in one instant per cluster, one of them read by the
+    landing page as a bulk onboarding. The rows are still written — first_seen_at and
+    original_first_seen_at depend on them — but flagged, so a consumer can say "first observed"."""
+
+    def test_first_observation_is_flagged_baseline(self, store):
+        assert sync(store, {"g": ["alice", "bob"], "h": ["carol"]}, T1) == 3
+        events = store.membership_events("crc")
+        assert {e["baseline"] for e in events} == {1}
+        assert store.group_members("crc", "g")[0]["first_seen_at"] == T1
+
+    def test_a_new_group_in_an_observed_cluster_is_a_real_change(self, store):
+        sync(store, {"g": ["alice"]}, T1)
+        assert sync(store, {"g": ["alice"], "h": ["bob", "carol"]}, T2) == 2
+        by_group = {e["group_name"]: e["baseline"] for e in store.membership_events("crc")}
+        assert by_group == {"g": 1, "h": 0}
+
+    def test_removals_are_never_baseline(self, store):
+        sync(store, {"g": ["alice", "bob"]}, T1)
+        sync(store, {"g": ["alice"]}, T2)
+        removed = [e for e in store.membership_events("crc") if e["change"] == "removed"]
+        assert removed and all(e["baseline"] == 0 for e in removed)
+
+    def test_each_cluster_has_its_own_baseline(self, store):
+        store.upsert_cluster("other", "https://other:6443", True)
+        sync(store, {"g": ["alice"]}, T1)
+        store.sync_members("other", {"g": ["bob"]}, {}, T2)
+        assert store.membership_events("other")[0]["baseline"] == 1
+        # a later poll of the first cluster that adds a member is not a baseline
+        sync(store, {"g": ["alice", "dave"]}, T3)
+        assert store.membership_events("crc", user_name="dave")[0]["baseline"] == 0
+
+    def test_an_empty_first_poll_consumes_the_baseline(self, store):
+        """Codex, review of #177: a cluster whose first poll is empty must not have its SECOND
+        poll described as the first observation — the marker is consumed regardless of rows."""
+        assert sync(store, {}, T1) == 0
+        assert sync(store, {"g": ["alice"]}, T2) == 1
+        event = store.membership_events("crc", user_name="alice")[0]
+        assert (event["change"], event["baseline"]) == ("added", 0)

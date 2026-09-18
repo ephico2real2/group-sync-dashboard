@@ -424,6 +424,41 @@ stamped with a stale sync-time did not come from a sync.
 Since 0.13.0: `retention` for `membership_event`, the same shape as on `/events`. With the default
 `membershipEventsDays: 0` it reads `{"window_days": 0, "retained_since": <oldest row>}`.
 
+### `GET /api/clusters/{cluster_id}/binding-changes`
+
+Query: `namespace` (optional — the empty string selects ClusterRoleBindings; omit for every
+scope), `limit` (1–1000, default 100). Which (binding, subject) rows appeared or disappeared,
+newest first — the bindings' membership-changes (`docs/DESIGN_binding_events.md`).
+
+The only record of a binding change: the current-state tables are replaced every refresh, so a
+RoleBinding created and deleted between two refreshes never existed as far as
+`/bindings/findings` is concerned. A role change on the same binding+subject is one `removed`
+and one `added`.
+
+```json
+{
+  "cluster": "crc", "scope": "all", "viewer": "kubeadmin",
+  "count": 2, "limit": 100, "truncated": false, "baseline_rows": 0,
+  "note": "accumulated from binding refreshes; a baseline row is the first observation, not a change",
+  "retention": {"window_days": 0, "retained_since": "2026-09-17T22:00:11Z"},
+  "changes": [
+    {"binding_kind": "RoleBinding", "binding_namespace": "demo-qa", "binding_name": "demo-dev",
+     "subject_kind": "Group", "subject_name": "app-ocp-rbac-demo-ns-developer",
+     "role_kind": "ClusterRole", "role_name": "edit", "is_platform": 0,
+     "change": "added", "baseline": 0, "observed_at": "2026-09-17T22:05:00Z"}
+  ]
+}
+```
+
+`baseline` is 1 on a cluster's **first observation** of that subject kind — the refresh that
+consumes the cluster's `observation_state` marker, whether or not it returned rows — because
+every row it had is recorded as `added` in that instant, which is not a change anyone made;
+render it as "first observed", never as "added". A store upgraded with rows already present
+starts marked, so an upgrade writes no baseline rows. `retention` shares `membership_event`'s
+window (`membershipEventsDays`).
+
+Self tier: only rows naming the viewer, or a group the viewer belongs to.
+
 ## RBAC
 
 ### `GET /api/clusters/{cluster_id}/bindings/findings`
