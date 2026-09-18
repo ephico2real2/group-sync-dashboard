@@ -142,4 +142,13 @@ shot).
 
 ### Tests
 The lookup class with the CSS guards: 354 passed; the full UI suite on this tree: 348 passed (225.96 s).
-CI on the pushed head and OB1's confirmation are recorded below when they land.
+CI on `3958c55`: green on every job (the ci and mock-openshift workflows). Deployed to CRC (release revision 250,
+tag `0.24.0-3958c5522a`, both pods on it) and walked end to end with the walk scripts, the new lookup step
+included: 79 steps, every one passed — the lookup for "demo" (Groups 6 of 67, Namespaces 7 of 110), the
+namespace hit's page (`demo-prod`), the also-line on the Groups tab ("also matching demo: 7 namespaces — see
+all matches"), 375 px with no horizontal scroll; the second pass (the mock cluster, the light theme, every
+HTML report opened, page 1 of every PDF) and the integrity check clean. Read from the captures: the heading
+"Matches · 13 across 3 kinds" is the mock's copy verbatim (with no user matching "demo", only two kinds
+list rows); at 375 px the Groups table's names break at every hyphen because the owner cell does not wrap —
+the mock has no phone rule for this table, so it is a suggestion for the operator, put to OB1's confirmation
+brief as C12, not a deviation. OB1's confirmation is recorded below when it lands.

@@ -207,6 +207,31 @@ Outcome in one line: **…**
   — captures sent. The report pod's `readyz` 503 on that deploy is the designed guard ("snapshot schema 14 is
   newer than this report service understands (12)"): the drilldown stack had migrated the live store first.
 
+### Review pass 3 applied — commits `21e9538` (2026-09-18 07:02), `97adf24` (2026-09-18 07:11), PR #180
+
+- OB1's confirmation run on the merged head `a78cb79` (its pass-2 run had been lost to the session limit): a
+  Playwright drive over four seeded fleets, both themes × five palettes, twenty snapshots across the poll,
+  the full UI suite once (349 passed). Three refutations, each proved fail-before/pass-after: pass 2's wider
+  accent-rail selector had reached every fleet tile's name (3 px, 16 px inboard of a bad tile's own status
+  rail; the opened form and the mock's tile have none) — the rule stops at the tile; the e2e walk's cluster
+  switch passed `cluster_id` positionally to Playwright's keyword-only `arg` (a TypeError at the second
+  cluster that `bash -n`, an AST parse and a by-path import could not see) — `arg=`, and a guard binds every
+  page call in both walk scripts against the installed signature; and the walk's wait returned before the
+  cluster painted (the previous heading still on screen at 24 ms and after the 900 ms sleep, the paint at
+  1523 ms with the fetch held 1.5 s) — a helper waits for the position, the dim gone and the opened
+  cluster's heading. The browser-driven test moved into the UI suite: CI's unit job has no Chromium. C4's
+  other-tab error card (a retired cluster on the Groups tab) recorded as F10's scope, not changed.
+- Measured: the three tests fail on `a78cb79` and pass after; focused 409; full UI suite 351 passed
+  (236.83 s); non-UI 3305 passed, 12 skipped, one environmental failure (the promtool test refuses to skip
+  under `CI=1` on a machine without promtool). CI on `21e9538`: one browser failure — the fleet contract test
+  read the scoped view after `#back`, which arrives with the first paint (F15), and CI's runner had not
+  landed the tables at 14 clusters (350 passed beside it, every local run green): the same
+  wait-on-the-position OB1 named in the walk, in a test; `97adf24` waits for the tables' paint at the two
+  reads that touch table content — CI green on every job. Deployed to CRC (`0.24.0-21e9538e0c`; the report
+  pod refused the schema-14 store by design, the drilldown head redeployed after) and probed: two tiles at
+  full density, the opened cluster, Back, the Policy heading's rail, 375 px; captures sent. Record:
+  `docs/REVIEW_overview_relayout.md`, Pass 3.
+
 ## Part 5 — namespaces as entities, #167 (2026-09-18)
 
 ### Implementation — commits `6420e7f` (2026-09-18 00:35), `cf4f310` (2026-09-18 00:36, the merge of #177), `a801e00` (2026-09-18 00:45), `3365484` (2026-09-18 00:57, the merge of the foundation), PR #181 (branch `feat/namespaces` from `feat/design-foundation`)
@@ -251,6 +276,26 @@ Outcome in one line: **…**
 - Measured: eight of the ten new cases fail on `6a8fa85` (the two user-key keyboard cases already passed there);
   focused 1354 + 55; non-UI 3377 passed, 17 skipped; UI 327; CI green on `ff6b0dd` after the foundation merge.
 
+### Review pass 3 applied — commit `862df79` (2026-09-18 07:48), PR #181; merged into `feat/drilldown` as `b21ea86` (2026-09-18 07:49)
+
+- OB1's confirmation run on the merged head `ff6b0dd` (its pass-2 run had been lost to the session limit): a
+  Playwright drive as every persona of the UI seed, an in-process TestClient over the same seed, a keyboard sweep
+  over every drill signature on every page, contrast by the composited colours, every fix proved on a clone.
+  Taken, each proved fail-before/pass-after: the self-tier list follows the reach inside a namespace too (a
+  platform identity's RoleBinding in a namespace listed nothing while the detail opened it); the Via groups
+  column and the page's count are groups of people — on OpenShift every namespace carries
+  `system:image-pullers`, so the column read 1 on every row and "zero in both" could never happen (a pass-2
+  assertion reversed, recorded for the operator); no hand-made badge on a platform row (the findings tier the
+  same binding built-in); the fold names the most-bound virtual groups first and counts them; a group drill
+  inside a group row on a user's page navigated twice (pre-existing) — the handler stops propagation; API.md.
+  Routed: OB1's recolour of the baseline cell — `--text-muted` composites to 4.45:1 (light) / 4.43:1 (dark) on
+  a zebra row, and the same rows put the added and removed colours under 4.5 too — one token change on the
+  foundation, #184, where the measurements are posted.
+- Measured: eight tests fail on `ff6b0dd` and pass after; focused 1302 passed, 12 skipped; full UI suite 332
+  passed (218.47 s); non-UI 3378 passed, 13 skipped; CI on `862df79` green on every job. Merged into
+  `feat/drilldown` cleanly (`b21ea86`; the namespaces, lookup, history and audit classes with the API tests:
+  976 passed) and deployed to CRC for the walk. Record: `docs/REVIEW_namespaces.md`, Pass 3.
+
 ## Part 6 — one lookup over the three kinds, #174 (2026-09-18)
 
 ### Implementation — commit `76ebaff` (2026-09-18 02:17), PR #183 (branch `feat/drilldown` from `feat/namespaces`)
@@ -293,3 +338,24 @@ Outcome in one line: **…**
   platform bindings to virtual groups"), 375 px — captures sent. Record: `docs/REVIEW_lookup.md`. The second
   pass by Grok and Codex is applied in the next entry; OB1's confirmation runs behind #180's and #181's,
   one at a time.
+
+### Review pass 2 applied — commit `3958c55` (2026-09-18 06:50), PR #183
+
+- Grok and Codex on `f793b8e`, eleven claims; OB1's second pass queued behind its confirmation runs on #180
+  and #181 (one at a time — three concurrent runs tripped the session limit and all were lost). Codex refuted
+  two: the highlighter marked each term's matches in turn ("ab bc" on "abc" marked "ab", never "bc") — every
+  match of every term is a range now, merged, so marks never nest; and the mark's contrast test composited on
+  the card while the drill text on a zebra row measures 4.305:1 (light) / 4.375:1 (dark) — the foundation's
+  drill colour against its zebra and hover tokens, on every table, filed as #184 rather than patched here.
+  Grok confirmed all ten it could trace (P11 PLAUSIBLE, no shell) and volunteered the walk step: the capture
+  script types "demo" into the Find box after the tabs, opens a namespace hit, reads the also-line, captures
+  375 px, and records itself skipped on a build without the box. Grok's "leftmost-longest is acceptable" on
+  the overlap was not taken (the function promises every occurrence). The union test's third case was first
+  written expecting one mark over "ice coo" on "alice cooper"; the run refuted it (a space sits between the
+  terms) and the expectation was corrected to two marks with the gap unmarked.
+- Measured: the lookup class with the CSS guards 354 passed; the full UI suite 348 passed (225.96 s); the
+  docs guards 893 passed, 12 skipped. Record: `docs/REVIEW_lookup.md`, Pass 2. CI on `3958c55` green on every
+  job. Deployed to CRC (revision 250, `0.24.0-3958c5522a`, from a clean detached worktree — the release script
+  refuses a dirty tree, and this entry was the dirt) and walked end to end: 79 steps, all passed, the new lookup
+  step among them ("demo": 6 of 67 groups, 7 of 110 namespaces; `demo-prod`; the also-line; 375 px). OB1's
+  confirmation is recorded when it lands.
