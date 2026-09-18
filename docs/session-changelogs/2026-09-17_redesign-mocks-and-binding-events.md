@@ -359,3 +359,42 @@ Outcome in one line: **…**
   refuses a dirty tree, and this entry was the dirt) and walked end to end: 79 steps, all passed, the new lookup
   step among them ("demo": 6 of 67 groups, 7 of 110 namespaces; `demo-prod`; the also-line; 375 px). OB1's
   confirmation is recorded when it lands.
+
+## Part 7 — the reviewer seat: OB2, then OB3 (2026-09-18)
+
+### The definitions — PR #185 (branch `skill-ob2-reviewer`), not yet merged
+
+- OB1 was a launch RECIPE, not a definition: the `Agent` tool with `model: "fable"`, `subagent_type:
+  "general-purpose"`, and the brief plus a read-only paragraph as its prompt — so it ran at whatever effort
+  the session was on. The operator asked for it as a first-class agent: *"Create a new skill from OB1 called
+  OB2 (OB1 high) with fable 5.1 but with high effort and assume OB2."* `.claude/agents/ob2.md` is that —
+  `model: fable`, `effort: high`, and the reviewer's standing rules in the body (verdicts with artefacts;
+  every REFUTED / risk-naming PLAUSIBLE / volunteered finding with the FULL code of its fix and a
+  failing/passing test; read-only, a copy for anything it changes; measure, don't reason from memory; the
+  report shape).
+- **Measured, the same hour:** the `Agent` tool could not see the new definition — the registry is read at
+  session start, so `subagent_type: "ob2"` answered "Agent type 'ob2' not found". The background path does
+  see it, and that is how the reviewer now runs: `claude -p "<brief>" --agent ob2 --allowedTools
+  "Bash,Read,Write,Edit,Glob,Grep" --output-format json --max-turns 300 < /dev/null`, with `CLAUDECODE`
+  dropped from the environment. Verified with a one-line probe on haiku before the real launch.
+- **The Fable weekly limit, measured:** that first OB2 background job — the confirmation pass on #183's
+  merged head — died after **32 turns** with `"You've reached your Fable limit."`, **$4.93** spent and no
+  report. The operator: *"We have hit our weekly fable usage limit. Create an ob3 from ob2 skill but use
+  opus 5 high with auto switch effort… Then substitute the jobs and role of ob2 with ob3 now for the
+  sessions."* `.claude/agents/ob3.md` is OB2's definition on `model: opus`, and OB3 holds the reviewer seat
+  until the Fable quota resets.
+- **On "auto effort" — what is actually available.** There is no `auto` value: the subagent frontmatter
+  takes one fixed tier (`low`…`max`), and neither the `Agent` tool nor `claude -p` exposes an effort flag,
+  so effort cannot be varied per launch from the outside. The tier is therefore pinned as a FLOOR and the
+  self-scaling lives in the agent's body as a rubric the model applies per claim — a shallow claim (a
+  string, a selector, a constant) is settled by a grep, a medium one (a render path, an API shape) by one
+  drive, a deep one (a race, contrast over composited surfaces, cost at scale) gets the harness; the brief
+  is budgeted as a whole so twelve claims are not twelve deep investigations; and the report opens by naming
+  which claims were treated as deep. At the operator's instruction the same mandate went into OB2's body, so
+  the judgement survives the quota reset rather than living only in the Opus definition.
+- **OB3's passes are not settled.** The operator's rule: *"ob1 or ob2 should further review your work done
+  with ob3."* Each definition carries its half — OB2 re-measures what OB3 marked CONFIRMED without an
+  inspectable artefact and re-runs its failing/passing proofs against the head as it stands then; OB3 writes
+  for that reader, keeps its drive script beside its report so the proof can be re-run, and flags what it
+  treated as shallow, since that is what a second model is most likely to overturn. Agreeing with OB3
+  because OB3 said it wastes the third-reviewer seat.

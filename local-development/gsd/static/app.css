@@ -1110,10 +1110,19 @@ dialog.ns-preview p { margin: 0 0 var(--space-4); font-size: var(--text-sm); }
 }
 
 /* ---- The lookup (#174) ----------------------------------------------------------------------
-   A door is a card whose whole face opens a list; the matched substring is marked in the accent's
-   wash so a hit says which word it matched. */
+   A door is a card whose whole face opens a list; the matched substring is marked in weight (the
+   <mark> rule below) so a hit says which word it matched. */
 .door { cursor: pointer; transition: border-color 160ms ease, transform 120ms ease; }
 .door:hover { border-color: var(--accent); transform: translateY(-1px); }
+/* The groups hits on a phone: the Owner cell (`.owner`, nowrap) took the width at 375 px and the name
+   broke at every hyphen — "app-ocp-" / "rbac-" / "alpha-ns-" / "admin" (the deployed walk). Measured at
+   375 with the CRC owner (`app-ocp-rbac-group-groupsync`): as shipped the name has 95 px and three lines
+   and the table scrolls sideways 149 px; with the Owner column hidden the name has 158 px and two lines
+   and the table fits. The column is hidden the way the report table hides its kind column under 680 px;
+   the owner is on the group's page, one drill away (review of #174, pass 3, OB3). */
+@media (max-width: 520px) {
+  .lookup-groups th:nth-child(2), .lookup-groups td:nth-child(2) { display: none; }
+}
 /* No fill: the drill's link colour sits at 4.55:1 on the card, so ANY wash of the accent behind it
    drops under the 4.5:1 bar the sheet holds (measured: 22% → 3.40:1, 8% → 4.10:1, in both themes and
    every palette). Weight is the channel that costs no contrast. */
