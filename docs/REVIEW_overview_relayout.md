@@ -170,3 +170,84 @@ tab's direct-child heading, the never-synced invalid schedule, the walk's cluste
 tiers and the compact-figures test is gone. Focused: the review classes, the Policy tab, the walk test and
 the CSS guards — 391 passed; full UI suite 348 passed; full non-UI suite 3304 passed, 17 skipped. CI on the
 pushed head and OB1's confirmation run are recorded below when they land.
+
+## Pass 3 — OB1's confirmation over `a78cb79`
+
+One reviewer, the final head (pass 2's `602eaf7` merged with the foundation's `a668d51`), eight claims
+(`review_172/pass3/brief.md`): a Playwright drive over four seeded fleets (3, 6, 14 and 40 clusters, a retired
+cluster, an unusable schedule, restrictions on), twenty state snapshots across the poll, both themes × five
+palettes, the full UI suite once (349 passed), every fix proved on a copy; OB1 first proved which `gsd` its
+interpreter imported (the venv's editable install points at the main repo; `python -m pytest` from the
+worktree wins). Pass 2's own OB1 run was lost to the session limit; this is its replacement.
+
+| # | Claim | OB1 | Decision |
+|---|---|---|---|
+| C1 | The opened cluster keeps the tile's rail — colour and width, every theme × palette | CONFIRMED — 20 combinations, tile = opened block to the token's rgb, 0 mismatches (the tile read after its 160 ms transition, which the first read caught mid-way) | — |
+| C2 | The counted headings keep the accent rail; no other `.row-wrap` heading gained one | CONFIRMED for the counted headings; REFUTED on the rest — every fleet tile's name wears it (3 px, 16 px inboard of a bad tile's own status rail) while its opened form does not; the CR detail's heading too | A |
+| C3 | An unusable schedule's sentence with and without a last sync; no row says "the last there will be" | CONFIRMED — six rows measured against the API's `state` and `schedule_valid` | — |
+| C4 | A retired id in the selector, pasted twice in a row; Back to the fleet | CONFIRMED — one "not configured" option each time, Back clean; on every other tab (`#page=groups&cluster=nope`) the generic error card with no bar, as before | Recorded — F10's scope |
+| C5 | The density tiers and the mock's `k-extra` rule | CONFIRMED at 3, 6, 14 and 40 (`k-empty` nowhere in the DOM or the sources) | — |
+| C6 | The walk's second-cluster pick and its wait | CONFIRMED on the pick; REFUTED on the wait — a TypeError at `e2e_extra.py:55` (positional `arg`), and the wait itself returns before the paint | B, C |
+| C7 | The merge of the foundation moved nothing of #172's rendering; 375 px; the fixture's clock | CONFIRMED — header 140 px, the labels above their selects; `git merge-tree` conflicts in the CHANGELOG only, `index.html` absent from the diff; 349 passed | — |
+| C8 | Two invocations and the poll: twenty snapshots | CONFIRMED — the rail, Back, the selector's value, the scoped rows all agree at every step; zero page errors | — |
+
+### A — every tile's name wore the accent rail (OB1) — accepted
+Pass 2 widened the accent-rail selector to `.card > .row-wrap > h2::before` for the counted headings
+("GroupSync CRs 6", the Policy heading beside its count), and a tile is a `.card` whose name sits in a
+`.row-wrap`: measured 3 px on every tile at full density, 19 px from the tile's edge, 16 px inboard of a bad
+tile's 3 px status rail — two rails — while the same heading in the opened cluster (`.tile-detail`, not a
+card) measures `auto`. The mock's tile (`cluster-overview-mock.html`) is a `<button class="tile">` with the
+status rail on its own edge and no leading rule, and the pre-#172 cluster card had none: the rail was a side
+effect of pass 2's selector, not a decision. `.card:not(.tile) > .row-wrap > h2::before` — the counted
+headings keep theirs; the tile and its opened form agree. Test
+`test_a_tile_heading_carries_no_accent_rail_like_its_opened_form`: `('3px', 'auto')` on `a78cb79`, passes
+after. The CR detail's heading (`row-wrap mt-5`) also gained the rail in pass 2 and keeps it — the group
+and user pages' headings wear it, so it is now consistent with its siblings.
+
+### B — the walk's cluster switch raised a TypeError (OB1) — accepted
+Pass 2 (`602eaf7`) wrote `page.wait_for_function("(id) => view.cluster === id", cluster_id)` in
+`e2e_extra.py`; the installed Playwright's signature is `(expression, *, arg=None, timeout=None,
+polling=None)`, so the walk would have raised "too many positional arguments" the moment it reached its
+second cluster — invisible to `bash -n`, an AST parse and the by-path import of `next_configured_cluster`,
+which is all pass 2 ran. `arg=cluster_id`. The guard
+`test_every_page_call_in_the_walk_binds_to_the_installed_playwright_api` binds every `page.<method>(...)`
+call in both walk scripts, by shape, against the installed `Page` signature — the walk only ever runs against
+a deployed cluster, so this is the one place a wrong call shape is caught before it does; on `a78cb79` it
+fails naming exactly `e2e_extra.py:55`.
+
+### C — the walk waited on the position, not the paint (OB1) — accepted
+`view.cluster` changes the instant the selector fires, and `wait_for_load_state("networkidle")` resolves at
+once when the document has already reached that state. Measured with the picked cluster's `/groupsyncs` held
+1.5 s: the position true at 22 ms, networkidle at 24 ms with the previous cluster's heading on screen and
+`#main` dimmed, still so after the script's 900 ms sleep (941 ms), the paint at 1523 ms. A route's round trip
+is 271–337 ms per request with five in flight, so the sleep usually covered it — a race whose evidence
+heading and screenshot would be the wrong cluster's the day it lost. `wait_for_cluster_paint(page,
+cluster_id)` in `e2e_capture.py` waits for the position, the dim gone and a `.tile-detail h2` naming the id;
+the walk calls it in place of the two waits (the settle stays). Test
+`test_the_walks_cluster_switch_waits_for_the_paint_not_the_position` on a seeded server whose ASGI wrapper
+holds prod-east's payload 1.2 s: returns ≥ 1.0 s later with the heading "prod-east" and the dim gone. It
+lives in `test_ui.py` — CI's unit job runs `tests/` without Chromium, so OB1's placement beside the walk's
+unit test would have failed there; the binding guard, which needs no browser, stays in that file.
+
+### Recorded, not changed
+- C4: on every tab but the Overview a link to a retired cluster is still the generic error card with no bar
+  (its "← all groups" re-renders the same card) — F10 limited the absorption to the scoped Overview; widening
+  it is a separate change, not a regression of this PR.
+- The CR detail's heading rail (A).
+- The merge's resolution placed the #172 CHANGELOG entry above the foundation's; ordering in the doc only.
+
+### Not asked
+- P12, the chip edge: OB1 measured the alpha-composited edge at 1.24:1 (Codex's figure; its own drive first
+  printed 19.17:1, which ignored the alpha, and it retracted that) and would not reopen the rejection — the
+  edge is the badge's own and the chip's text (19.2:1) carries the information. Stands.
+- F12: the tiles follow the mock as ruled; nothing to add.
+- The walk scripts' selectors resolve on every tab of the fixed head; the walk itself needs a cluster and was
+  not run.
+
+### Tests
+Three new, each failing on `a78cb79` — `('3px', 'auto')`; `AttributeError` (no helper); the binding error
+naming `e2e_extra.py:55` — and passing after. Focused on the fixed tree (the review classes, the fleet, the
+Policy tab, the walk tests, the CSS guards, the title and skip-auth parity files): 409 passed.
+Full UI suite 351 passed (236.83 s); non-UI suite 3305 passed, 12 skipped, with one environmental failure —
+`test_every_panel_promql_expression_parses_with_promtool` refuses to skip under `CI=1` on a machine without
+promtool (without the flag it skips; CI installs promtool). CI on the pushed head is recorded below when it lands.

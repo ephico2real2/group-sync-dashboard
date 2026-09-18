@@ -10,6 +10,9 @@ A separate smoke test (test_live_smoke.py) covers the real thing.
 
 from __future__ import annotations
 
+import asyncio
+import importlib.util
+import pathlib
 import socket
 import threading
 import time
@@ -1644,6 +1647,91 @@ class TestOverviewReview:
         _open_fleet(page, base)
         assert page.locator(".kinds .kind").count() > 0
         assert page.locator(".kinds .badge").count() == 0
+
+    def test_a_tile_heading_carries_no_accent_rail_like_its_opened_form(self, page, review_two):
+        """Pass 2 widened the accent-rail selector to `.card > .row-wrap > h2::before` for the counted headings,
+        and it matched every tile's name heading too: a 3 px accent rail 16 px inboard of the tile's own 3 px
+        status rail, which the mock's tile (a button, not a card) never had, the pre-#172 cluster card never had,
+        and the opened cluster (.tile-detail, not a direct child of .card) does not have (OB1, pass 3). The tile
+        and its opened form agree — neither name wears the accent rail — and the counted headings keep theirs."""
+        base, _ = review_two
+        _open_fleet(page, base)
+        page.wait_for_selector("tr[data-cr]")
+        rail = "(sel) => getComputedStyle(document.querySelector(sel), '::before').width"
+        tile = page.evaluate(rail, ".tile[data-cluster='prod-east'] h2")
+        counted = page.evaluate("() => getComputedStyle([...document.querySelectorAll('#main h2')].find(h => h.textContent.includes('GroupSync CRs')), '::before').width")
+        page.locator(".tile[data-cluster='prod-east']").click()
+        page.wait_for_selector(".tile-detail h2")
+        detail = page.evaluate(rail, ".tile-detail h2")
+        assert tile == detail, (tile, detail)
+        assert tile != "3px" and counted == "3px", (tile, counted)
+
+
+def _e2e_walk_module():
+    """`local-development/e2e-walk/` is not a package; `e2e_capture.py` is loaded by path, as the walk's
+    own unit test loads it, so a helper the walk relies on can be driven against a seeded server here."""
+    path = pathlib.Path(__file__).resolve().parents[1] / "e2e-walk" / "e2e_capture.py"
+    spec = importlib.util.spec_from_file_location("gsd_e2e_capture_ui", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.fixture(scope="module")
+def slow_cluster_server(tmp_path_factory):
+    """The seeded two-cluster app behind an ASGI wrapper that holds prod-east's GroupSync payload for
+    1.2 s: the walk's cluster switch has to wait through a route's round trip, not loopback's."""
+    db = str(tmp_path_factory.mktemp("gsd") / "slow.db")
+    _seed(db)
+    settings = Settings(
+        clusters=[ClusterConfig("crc-local", "https://api.crc.testing:6443", token_env="X"),
+                  ClusterConfig("prod-east", "https://api.prod-east.example.com:6443", token_env="Y")],
+        db_path=db, login_capture_enabled=True, view_restrictions_enabled=False,
+    )
+    app = build_app(settings, run_poller=False)
+    held = {"/api/clusters/prod-east/groupsyncs": 1.2}
+
+    async def slow(scope, receive, send):
+        if scope["type"] == "http" and scope["path"] in held:
+            await asyncio.sleep(held[scope["path"]])
+        await app(scope, receive, send)
+
+    port = _free_port()
+    srv = uvicorn.Server(uvicorn.Config(slow, host="127.0.0.1", port=port, log_level="warning"))
+    thread = threading.Thread(target=srv.run, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{port}"
+    for _ in range(100):
+        try:
+            if httpx.get(f"{base}/healthz", timeout=1).status_code == 200:
+                break
+        except httpx.HTTPError:
+            time.sleep(0.1)
+    else:
+        raise RuntimeError("slow cluster server did not start")
+    yield base
+    srv.should_exit = True
+    thread.join(timeout=5)
+
+
+def test_the_walks_cluster_switch_waits_for_the_paint_not_the_position(page, slow_cluster_server):
+    """`view.cluster` changes the instant the selector fires, and `wait_for_load_state("networkidle")`
+    resolves at once when the document has already reached that state — so the walk's second-cluster wait
+    returned with the previous cluster still on screen, and its 900 ms sleep was the only cover (measured
+    with the fetch held 1.5 s: the heading stale after networkidle at 24 ms and after the sleep at 941 ms —
+    OB1, review of #172, pass 3). The helper returns when the opened cluster names the id and #main is no
+    longer dimmed, however long the route takes."""
+    wait_for_cluster_paint = _e2e_walk_module().wait_for_cluster_paint
+    page.goto(f"{slow_cluster_server}/")
+    page.wait_for_selector(".tile[data-cluster='prod-east']")
+    started = time.monotonic()
+    page.locator("select#f-cluster").select_option(value="prod-east")
+    wait_for_cluster_paint(page, "prod-east")
+    waited = time.monotonic() - started
+    assert page.locator("h2").first.inner_text().strip() == "prod-east"
+    assert not page.evaluate("() => document.getElementById('main').classList.contains('stale')")
+    assert waited >= 1.0, f"returned after {waited:.2f}s with the fetch held 1.2 s: the position, not the paint"
 
 
 def test_index_is_never_heuristically_cached(server):

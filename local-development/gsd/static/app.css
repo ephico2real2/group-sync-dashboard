@@ -494,8 +494,10 @@ h1, h2, h3 { font-weight: 600; margin: 0; }
 /* Card headings wear the section accent as a short leading rule. Cheap continuity: the
    Groups tab is teal, so every heading under it is too, and a screenshot is placeable at
    a glance. Decorative only, hence aria-hidden by construction (a ::before pseudo-element
-   is not in the accessibility tree). */
-.card > h2::before, .card > h3::before, .card > .row-wrap > h2::before, .card > .row-wrap > h3::before {
+   is not in the accessibility tree). A tile's name row is not a section heading: the tile carries its
+   status rail on its own edge, the mock's tile has no leading rule, and its opened form (.tile-detail)
+   has none — so the counted headings' rule (pass 2) stops at the tile (OB1, pass 3). */
+.card > h2::before, .card > h3::before, .card:not(.tile) > .row-wrap > h2::before, .card > .row-wrap > h3::before {
   content: ""; display: inline-block; vertical-align: middle;
   width: 3px; height: 0.95em; margin-right: var(--space-4); border-radius: var(--radius-xs);
   background: var(--accent);

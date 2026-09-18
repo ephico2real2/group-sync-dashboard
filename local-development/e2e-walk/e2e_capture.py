@@ -50,6 +50,18 @@ def next_configured_cluster(options: list[dict], current: str) -> dict | None:
     return configured[1] if len(configured) > 1 else configured[0]
 
 
+def wait_for_cluster_paint(page, cluster_id: str, timeout: float = 15_000) -> None:
+    """The selector's handler navigates, dims #main (`stale`) and fetches; the cluster is on screen only
+    when render() lands. `view.cluster` changes at once and `wait_for_load_state("networkidle")` resolves
+    immediately once the document has reached that state, so neither says the cluster is painted — the
+    900 ms sleep that followed them covered a loopback round trip, not a route's (OB1, review of #172,
+    pass 3). The paint is the opened cluster's heading naming the id with the dim gone."""
+    page.wait_for_function(
+        "(id) => view.cluster === id && !document.getElementById('main').classList.contains('stale')"
+        " && [...document.querySelectorAll('.tile-detail h2')].some(h => h.textContent.trim() === id)",
+        arg=cluster_id, timeout=timeout)
+
+
 def now() -> str:
     return dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 

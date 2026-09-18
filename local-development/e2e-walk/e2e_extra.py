@@ -15,7 +15,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
-from e2e_capture import Walk, login, next_configured_cluster, now  # noqa: E402
+from e2e_capture import Walk, login, next_configured_cluster, now, wait_for_cluster_paint  # noqa: E402
 
 from playwright.sync_api import sync_playwright  # noqa: E402
 
@@ -52,8 +52,7 @@ with sync_playwright() as p:
         cluster_id = other["value"]
         sel = page.locator("select#f-cluster")
         sel.select_option(value=cluster_id)
-        page.wait_for_function("(id) => view.cluster === id", cluster_id)
-        page.wait_for_load_state("networkidle")
+        wait_for_cluster_paint(page, cluster_id)
         page.wait_for_timeout(900)
         shot = w.shot(f"overview-cluster-{cluster_id}")
         w.record(f"switch cluster to {cluster_id}", w.page_clean() is None,
