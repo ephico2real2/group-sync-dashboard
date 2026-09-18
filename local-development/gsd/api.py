@@ -827,14 +827,45 @@ def build_app(
                 return fn(*args, **kwargs)
         return wrapper
 
+    def is_served(cluster_id: str) -> bool:
+        """Whether this instance serves the cluster at all — configured, enabled, and not `hidden`.
+
+        `require_cluster`'s rule as a predicate, for the handlers that WALK the stored clusters
+        instead of being handed one. Home's cross-cluster line was written against
+        `store.clusters()` (polled, still enabled=1) and so named a hidden cluster the very next
+        request 404s, counted its memberships and folded its history into "what changed" — the
+        rule has four copies in this file and the fifth site forgot a limb (review of #158, Grok).
+        """
+        cluster = settings.cluster(cluster_id)
+        return (cluster is not None and cluster.enabled
+                and settings.cluster_policy(cluster_id)[0] != VISIBILITY_HIDDEN)
+
+    def vouches_for_host_identity(cluster_id: str) -> bool:
+        """Whether this cluster treats the host's authenticated username as one of its own.
+
+        The name half of `viewer_scope`'s decision, answered from CONFIG alone. viewer_scope
+        answers it too, but on the way it may consult a tier resolver — a `remote-sar` cluster's
+        is an HTTP SubjectAccessReview — and a handler holding a read snapshot must not make one
+        of those per cluster in the fleet (review of #158, Grok). Kept in step with viewer_scope's
+        `keep`: restrictions off vouches for everyone; the host vouches for its own reader; an
+        `inherit` remote is keyed by the host's username; `self-only` needs `identity:
+        same-as-host`, which `remote-sar` is required by config validation to carry.
+        """
+        if not restrict:
+            return True
+        host = settings.host_cluster()
+        if host is not None and cluster_id == host.name:
+            return True
+        policy, identity = settings.cluster_policy(cluster_id)
+        return policy == VISIBILITY_INHERIT or identity == IDENTITY_SAME_AS_HOST
+
     def require_cluster(cluster_id: str):
         """The cluster, or a 404 — the SAME 404 for an id that does not exist, one whose policy is
         `hidden`, and one that is disabled/retired (removed from config), so the response is not an
         oracle over which clusters this instance watches. A retired cluster keeps its history but is
         not served (#96); hidden and disabled apply whatever the tier: they are serving rules."""
         cluster = settings.cluster(cluster_id)
-        if (cluster is None or not cluster.enabled
-                or settings.cluster_policy(cluster_id)[0] == VISIBILITY_HIDDEN):
+        if not is_served(cluster_id):
             raise HTTPException(status_code=404, detail=f"unknown cluster {cluster_id!r}")
         return cluster
 
@@ -1808,10 +1839,7 @@ def build_app(
         counts = store.memberships_by_cluster(me)
         elsewhere = []
         for c in store.clusters():
-            if not c["enabled"] or c["id"] == cluster_id:
-                continue
-            other, _ = viewer_scope(request, c["id"])
-            if other != me:
+            if c["id"] == cluster_id or not is_served(c["id"]) or not vouches_for_host_identity(c["id"]):
                 continue
             n = counts.get(c["id"], 0)
             if not n:

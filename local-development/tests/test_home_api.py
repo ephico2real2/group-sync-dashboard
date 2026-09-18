@@ -178,7 +178,7 @@ def test_what_changed_folds_the_batch_and_the_flap_and_names_the_other_cluster(h
     assert single["group_name"] == "platform-team-cluster-admin" and single["change"] == "added"
     assert flap["group_name"] == AUDITOR and flap["changes"] == 5 and flap["span_minutes"] == 33 and flap["latest"] == "added"
     assert batch["change"] == "added" and batch["count"] == 11 and batch["groups"] == sorted(IDLE)
-    assert c["more"] == 0 and c["changes"] == 17
+    assert c["more"] == 0 and c["changes"] == 17 and c["window_days"] == HOME_CHANGES_DAYS
     assert home["retention"]["window_days"] >= 0 and "retained_since" in home["retention"]
 
 
@@ -244,6 +244,60 @@ class TestDerivation:
         assert a["top_role"] == "edit" and wide == {"edit": None, "view": "edit"}
         assert a["namespaces"][0]["grants"][0]["covered"] is False, "cluster-wide edit does not cover a namespaced admin"
 
+    def test_a_namespaced_role_named_admin_is_not_the_builtin_clusterrole(self):
+        """Kubernetes has one ClusterRole `admin`; a namespaced Role of that name is a different object.
+        Ranking it by name let the page say "covered by admin — removing this would not change what you
+        can do" about access nothing else grants (Grok, review of #158)."""
+        via = [{"binding_kind": "ClusterRoleBinding", "binding_namespace": "", "binding_name": "ca",
+                "role_kind": "ClusterRole", "role_name": "admin", "via_group": "g1"},
+               {"binding_kind": "RoleBinding", "binding_namespace": "ns", "binding_name": "r",
+                "role_kind": "Role", "role_name": "admin", "via_group": "g2"}]
+        a = derive_answer([{"group_name": g, "sync_provider": None, "first_seen_at": None, "last_seen_at": None}
+                           for g in ("g1", "g2")], via, [])
+        assert a["top_role"] == "admin"
+        grant = a["namespaces"][0]["grants"][0]
+        assert (grant["role_kind"], grant["role_name"]) == ("Role", "admin")
+        assert grant["covered"] is False, "a Role named admin is not ClusterRole admin"
+        assert a["namespaces"][0]["covered"] is False
+        assert a["namespaces_covered"] == 0
+
+    def test_a_cluster_wide_role_and_a_namespaced_role_of_one_name_stay_two_rows(self):
+        """Keyed by name alone, a Role and a ClusterRole called `admin` merged into one row and one
+        row's groups appeared under the other's name."""
+        via = [{"binding_kind": "ClusterRoleBinding", "binding_namespace": "", "binding_name": "ca",
+                "role_kind": "ClusterRole", "role_name": "admin", "via_group": "g1"},
+               {"binding_kind": "ClusterRoleBinding", "binding_namespace": "", "binding_name": "rb",
+                "role_kind": "Role", "role_name": "admin", "via_group": "g2"}]
+        a = derive_answer([], via, [])
+        rows = [(r["role_kind"], r["role_name"], r["via_groups"]) for r in a["cluster_wide"]]
+        assert rows == [("ClusterRole", "admin", ["g1"]), ("Role", "admin", ["g2"])], rows
+
+    def test_a_covered_role_held_only_directly_names_no_groups(self):
+        """A direct cluster-wide `edit` under a cluster-wide `admin` has no groups behind it, and the
+        card's foot read "0 groups grant edit cluster-wide … removing them would not change what you can
+        do" (Grok, review of #158). The payload is what the page composes from."""
+        direct = [{"binding_kind": "ClusterRoleBinding", "binding_namespace": "", "binding_name": "me-admin",
+                   "role_kind": "ClusterRole", "role_name": "admin", "user_name": "me", "is_platform": 0},
+                  {"binding_kind": "ClusterRoleBinding", "binding_namespace": "", "binding_name": "me-edit",
+                   "role_kind": "ClusterRole", "role_name": "edit", "user_name": "me", "is_platform": 0}]
+        a = derive_answer([], [], direct)
+        edit = next(r for r in a["cluster_wide"] if r["role_name"] == "edit")
+        assert edit["covered_by"] == "admin" and edit["via_groups"] == [] and edit["direct"] is True
+
+    def test_more_counts_the_changes_the_leftover_cards_stand_for(self):
+        """The page says "N more changes in the window", so N counts CHANGES: one leftover batch of
+        three groups is three, not one card (Grok, review of #158)."""
+        now = datetime.now(UTC)
+        since = (now - timedelta(days=HOME_CHANGES_DAYS)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        at = [_iso(now - timedelta(minutes=i)) for i in range(13)]
+        singles = [{"cluster": "c", "group_name": f"g{i}", "change": "added", "observed_at": at[i], "baseline": 0}
+                   for i in range(12)]
+        batch = [{"cluster": "c", "group_name": g, "change": "added", "observed_at": at[12], "baseline": 0}
+                 for g in ("x", "y", "z")]
+        c = group_changes(singles + batch, since)
+        assert c["changes"] == 15 and len(c["items"]) == 12 and c["more_items"] == 1
+        assert c["more"] == 3, "the leftover card is one batch of three groups, not '1 change'"
+
     def test_a_direct_cluster_wide_grant_counts_as_the_top_role(self):
         direct = [{"binding_kind": "ClusterRoleBinding", "binding_namespace": "", "binding_name": "me-ca", "role_kind": "ClusterRole",
                    "role_name": "cluster-admin", "user_name": "me", "is_platform": 0}]
@@ -277,3 +331,56 @@ def test_a_cluster_that_vouches_for_nobody_is_not_elsewhere(tmp_path):
     with TestClient(_app(db, {}, west_identity=IDENTITY_NONE)) as client:
         body = client.get("/api/clusters/crc/home", headers=ALICE).json()
     assert [e["cluster"] for e in body["elsewhere"]] == ["east"] and body["memberships_total"] == 20
+
+
+def test_a_hidden_cluster_is_not_elsewhere(tmp_path):
+    """`hidden` is a serving rule: the cluster is polled, never named. Home's cross-cluster line was
+    written against the STORE's clusters, so it named a cluster whose own endpoint 404s, counted its
+    memberships and folded its history into "what changed" (Grok, review of #158). The rule is one
+    predicate now — `is_served` — and `require_cluster` is its other caller."""
+    db = str(tmp_path / "hidden.db")
+    _seed(db)
+    app = build_app(Settings(
+        clusters=[ClusterConfig("crc", "https://api.crc.testing:6443", token_env="X"),
+                  ClusterConfig("east", "https://api.east.example.com:6443", token_env="Y",
+                                identity=IDENTITY_SAME_AS_HOST),
+                  ClusterConfig("west", "https://api.west.example.com:6443", token_env="Z",
+                                identity=IDENTITY_SAME_AS_HOST, visibility="hidden")],
+        db_path=db, oauth_proxy_enabled=True), run_poller=False)
+    app.state.tier_resolver = _Map({})
+    with TestClient(app) as client:
+        body = client.get("/api/clusters/crc/home", headers=ALICE).json()
+        assert client.get("/api/clusters/west/home", headers=ALICE).status_code == 404, "hidden 404s"
+    assert [e["cluster"] for e in body["elsewhere"]] == ["east"], body["elsewhere"]
+    assert body["memberships_total"] == 20, "the hidden cluster's membership is not counted"
+    assert all(i["cluster"] != "west" for i in body["changes"]["items"]), "nor its history folded in"
+
+
+def test_the_cross_cluster_loop_consults_no_tier_resolver(tmp_path):
+    """The loop runs inside `@consistent`, holding a read snapshot. `viewer_scope` decides a tier per
+    cluster, and a `remote-sar` cluster's resolver is an HTTP SubjectAccessReview against that cluster's
+    own API — one per remote in the fleet, inside the snapshot (Grok, review of #158). Home needs only the
+    NAME question, which is config alone: `west` is remote-sar here, and its resolver must not be called.
+    """
+    db = str(tmp_path / "noresolve.db")
+    _seed(db)
+    calls = []
+
+    class _Counting:
+        def resolve(self, viewer):
+            calls.append(viewer)
+            return "self"
+
+    app = build_app(Settings(
+        clusters=[ClusterConfig("crc", "https://api.crc.testing:6443", token_env="X"),
+                  ClusterConfig("east", "https://api.east.example.com:6443", token_env="Y",
+                                identity=IDENTITY_SAME_AS_HOST),
+                  ClusterConfig("west", "https://api.west.example.com:6443", token_env="Z",
+                                identity=IDENTITY_SAME_AS_HOST, visibility="remote-sar")],
+        db_path=db, oauth_proxy_enabled=True), run_poller=False)
+    app.state.tier_resolver = _Map({})
+    app.state.remote_tier_resolvers = {"west": _Counting()}
+    with TestClient(app) as client:
+        body = client.get("/api/clusters/crc/home", headers=ALICE).json()
+    assert [e["cluster"] for e in body["elsewhere"]] == ["east", "west"], "remote-sar still vouches for the name"
+    assert calls == [], f"the remote cluster's SubjectAccessReview ran inside the snapshot: {calls}"

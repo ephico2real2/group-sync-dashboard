@@ -27,7 +27,7 @@
   <title>__GSD_TITLE__</title>
 <link rel="stylesheet" href="/static/app.css">
 </head>
-<body data-page="overview">
+<body data-page="home">
 <a class="skip" href="#main">Skip to main content</a>
 <div class="wrap" id="wrap">
   <header class="top">
@@ -2986,7 +2986,6 @@ function userDetail() {
    the page that already exists. Every number comes from `answer`, derived once on the server
    (gsd/home.py); the page composes sentences from it and never recomputes a figure under a label. */
 const RW_ROLES = new Set(["cluster-admin", "admin", "edit"]);
-const HOME_CHANGES_DAYS = 30;   // the server's window (gsd/home.py); said on the card
 const HOME_FOLD_AFTER = 2;   // granting groups shown before "N more groups grant access"
 
 function homeRow(inner, attrs = "", cls = "") {
@@ -3069,9 +3068,12 @@ function homePage() {
   const changeFoot = r.retained_since
     ? `History starts <span class="mono">${esc(String(r.retained_since).slice(0, 10))}</span> — older changes have been pruned by retention.`
     : "Every change since this dashboard started watching your groups.";
-  const changed = `<section class="card c-changes"><h2>What changed <span class="count">last ${HOME_CHANGES_DAYS} days</span></h2>
-    ${changeRows.length ? `<div class="hlist">${changeRows.join("")}${ch.more ? `<div class="hrow static"><span class="main"><span class="meta">${ch.more} more changes in the window.</span></span></div>` : ""}</div>`
-      : `<div class="empty-note">No change to your group memberships in the last ${HOME_CHANGES_DAYS} days.</div>`}
+  // The window is the server's (gsd/home.py) and arrives with the payload: a second copy here drifts
+  // the moment one of them moves, and the card would name a window the rows were not selected by.
+  const windowDays = ch.window_days;
+  const changed = `<section class="card c-changes"><h2>What changed <span class="count">last ${windowDays} days</span></h2>
+    ${changeRows.length ? `<div class="hlist">${changeRows.join("")}${ch.more ? `<div class="hrow static"><span class="main"><span class="meta">${plural(ch.more, "more change", "more changes")} in the window.</span></span></div>` : ""}</div>`
+      : `<div class="empty-note">No change to your group memberships in the last ${windowDays} days.</div>`}
     <div class="foot">${changeFoot}</div></section>`;
 
   // Cluster-wide: the roles held everywhere, and which of them a stronger one already includes.
@@ -3081,10 +3083,18 @@ function homePage() {
     const right = w.covered_by ? `<span class="none">covered by ${esc(w.covered_by)}</span>` : rolePill(w.role_name);
     return homeRow(homeMain(esc(w.role_name), meta) + right, w.via_groups.length ? `data-group="${esc(w.via_groups[0])}"` : "");
   });
-  const covered = a.cluster_wide.filter((w) => w.covered_by);
-  const wideFoot = covered.length
-    ? covered.map((w) => `${plural(w.via_groups.length, "group grants", "groups grant")} <span class="mono">${esc(w.role_name)}</span> cluster-wide, but <span class="mono">${esc(w.covered_by)}</span> already includes it — removing ${w.via_groups.length === 1 ? "it" : "them"} would not change what you can do.`).join(" ")
-    : "";
+  // Only speak of groups that exist: a cluster-wide role held by a DIRECT grant has no groups behind
+  // it, and the sentence read "0 groups grant edit cluster-wide … removing them would not change what
+  // you can do" (review of #158, Grok).
+  const wideFoot = a.cluster_wide.filter((w) => w.covered_by).map((w) => {
+    const includes = `<span class="mono">${esc(w.covered_by)}</span> already includes it`;
+    if (w.via_groups.length) {
+      return `${plural(w.via_groups.length, "group grants", "groups grant")} <span class="mono">${esc(w.role_name)}</span> cluster-wide, but ${includes} — removing ${w.via_groups.length === 1 ? "it" : "them"} would not change what you can do.`;
+    }
+    return w.direct
+      ? `A direct cluster-wide <span class="mono">${esc(w.role_name)}</span> grant is one ${includes} — removing it would not change what you can do.`
+      : "";
+  }).filter(Boolean).join(" ");
   const wide = `<section class="card c-wide"><h2>Cluster-wide <span class="count">${plural(a.cluster_wide.length, "role", "roles")} · ${plural(a.cluster_wide_bindings, "binding", "bindings")}</span></h2>
     ${wideRows.length ? `<div class="hlist">${wideRows.join("")}</div>` : `<div class="empty-note">No cluster-wide role — everything you reach on ${esc(cluster)} is namespaced.</div>`}
     ${wideFoot ? `<div class="foot">${wideFoot}</div>` : ""}</section>`;

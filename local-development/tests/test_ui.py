@@ -1053,7 +1053,7 @@ class TestTheShellAtPhoneWidth:
     """#166, measured on the live cluster before the fix: at 375 px the nine-tab bar was 676 px wide,
     `document.documentElement.scrollWidth` 696, and five tabs sat past the edge of a bar that could
     not scroll — unreachable. The shell owns the bar (#152), so the check runs on every tab."""
-    TABS = ["overview", "groups", "users", "bindings", "policy", "nsaudit", "logins", "usage"]
+    TABS = ["home", "overview", "groups", "users", "bindings", "policy", "nsaudit", "logins", "usage"]
 
     @pytest.mark.parametrize("tab", TABS)
     def test_no_horizontal_overflow_and_every_tab_inside_the_viewport(self, dash, tab):
@@ -3098,8 +3098,8 @@ class TestSignOutControl:
         page = ctx.new_page()
         try:
             page.goto(proxied_server)
-            # Not `.hero .value`: alice is a narrowed reader, and the landing page is the
-            # administrator tier now, so she lands on a refusal card with no cluster hero.
+            # Not `.hero .value`: since #158 the landing page is Home, which carries no cluster
+            # hero for anyone. This wait only wants to know that the page painted.
             page.wait_for_selector("#main .card", timeout=10_000)
             link = page.locator("#logout")
             assert link.is_visible()
@@ -3117,8 +3117,8 @@ class TestSignOutControl:
         page = ctx.new_page()
         try:
             page.goto(proxied_server)
-            # Not `.hero .value`: alice is a narrowed reader, and the landing page is the
-            # administrator tier now, so she lands on a refusal card with no cluster hero.
+            # Not `.hero .value`: since #158 the landing page is Home, which carries no cluster
+            # hero for anyone. This wait only wants to know that the page painted.
             page.wait_for_selector("#main .card", timeout=10_000)
             page.wait_for_function("() => sessionCapNote !== ''", timeout=10_000)
             assert page.evaluate("() => sessionCapNote") == "4-hour"
@@ -3143,9 +3143,9 @@ def _open_as(page, base, user):
     page.set_extra_http_headers({"X-Forwarded-User": user})
     page.goto(base)
     try:
-        # `#main .card`, not `.hero .value`: the landing page is the administrator tier, so a
-        # narrowed reader lands on a refusal card that carries no cluster hero. Both render a
-        # section.card, which is what this wait actually wants to know — that the page painted.
+        # `#main .card`, not `.hero .value`: since #158 the landing page is Home, which carries no
+        # cluster hero for any tier. Home, a refusal and the Overview all render a section.card,
+        # which is what this wait actually wants to know — that the page painted.
         page.wait_for_selector("#main .card", timeout=10_000)
     except Exception:
         if errors:
@@ -3259,6 +3259,39 @@ class TestHome:
         text = page.locator(".home").inner_text()
         assert "Dashboard API error" not in text, text[:300]
         assert not errors
+
+    def test_the_cluster_wide_foot_never_says_zero_groups_grant(self, page, scoped_server):
+        """A cluster-wide role held only by a DIRECT grant has no groups behind it; the card's foot read
+        "0 groups grant edit cluster-wide … removing them would not change what you can do" (Grok, review
+        of #158). Painted from the payload that produced it."""
+        p = _home(page, scoped_server)
+        p.evaluate("""() => {
+          data.home.answer.cluster_wide = [
+            {role_name: "admin", role_kind: "ClusterRole", via_groups: [], direct: true, bindings: 1, covered_by: null},
+            {role_name: "edit", role_kind: "ClusterRole", via_groups: [], direct: true, bindings: 1, covered_by: "admin"}];
+          data.home.answer.top_role = "admin";
+          render();
+        }""")
+        foot = p.locator(".home .c-wide .foot").inner_text()
+        assert "0 groups grant" not in foot, foot
+        assert "A direct cluster-wide" in foot and "already includes it" in foot, foot
+
+    def test_the_more_line_reads_as_one_change_at_one(self, page, scoped_server):
+        p = _home(page, scoped_server)
+        p.evaluate("""() => { data.home.changes.more = 1; data.home.changes.more_items = 1;
+          if (!data.home.changes.items.length) data.home.changes.items = [{kind: "single", cluster: "crc-local",
+            change: "added", group_name: "g", observed_at: new Date().toISOString()}];
+          render(); }""")
+        assert "1 more change in the window" in p.locator(".home .c-changes").inner_text()
+
+    def test_the_window_named_on_the_card_is_the_one_the_rows_were_selected_by(self, page, scoped_server):
+        """The page carried its own copy of the 30-day window. Two constants for one number drift the
+        moment either moves, and the card would name a window the rows were not selected by (Grok,
+        review of #158). The window arrives with the payload."""
+        p = _home(page, scoped_server)
+        assert "last 30 days" in p.locator(".home .c-changes h2").inner_text()
+        p.evaluate("() => { data.home.changes.window_days = 7; render(); }")
+        assert "last 7 days" in p.locator(".home .c-changes h2").inner_text()
 
     def test_the_page_holds_at_375(self, page, scoped_server):
         page.set_viewport_size({"width": 375, "height": 740})

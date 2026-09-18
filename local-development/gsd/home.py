@@ -33,10 +33,25 @@ def is_platform_namespace(name: str) -> bool:
     return name in PLATFORM_NAMESPACES or name.startswith(PLATFORM_NAMESPACE_PREFIXES)
 
 
-def covers_grant(wide_role: str | None, role: str) -> bool:
-    """A cluster-wide ``wide_role`` makes a grant of ``role`` redundant when both are ranked and the
-    cluster-wide one is at least as strong (cluster-wide ``edit`` covers a namespaced ``edit``)."""
-    return wide_role in ROLE_RANK and role in ROLE_RANK and ROLE_RANK[wide_role] <= ROLE_RANK[role]
+def is_builtin_clusterrole(role_kind: str, role_name: str) -> bool:
+    """Only a ClusterRole named for one of the four the platform fixes is ranked. Kubernetes has ONE
+    ClusterRole ``admin``; a namespaced Role of that name is a different object with whatever rules its
+    author gave it, and ranking it would let the page say "removing this would not change what you can
+    do" about access nothing else grants (review of #158, Grok)."""
+    return role_kind == "ClusterRole" and role_name in ROLE_RANK
+
+
+def covers_grant(wide_role: str | None, role: str, *,
+                 wide_kind: str = "ClusterRole", role_kind: str = "ClusterRole") -> bool:
+    """A cluster-wide built-in ClusterRole makes a grant of another built-in ClusterRole redundant when
+    the cluster-wide one is at least as strong (cluster-wide ``edit`` covers a namespaced ``edit``).
+
+    Aggregation is the residual this does not model: a cluster can add rules to ``edit`` that ``admin``
+    does not carry, so "already includes it" is the platform's default relation, not a proof. The four
+    built-ins are what the mock ranks and what an access review reads; anything else is never covered."""
+    return (is_builtin_clusterrole(wide_kind, wide_role or "")
+            and is_builtin_clusterrole(role_kind, role)
+            and ROLE_RANK[wide_role] <= ROLE_RANK[role])
 
 
 def _rank(role: str) -> tuple[int, str]:
@@ -49,11 +64,14 @@ def derive_answer(groups: list[dict], via: list[dict], direct: list[dict]) -> di
     ``groups``: ``Store.user_groups`` rows; ``via``: ``Store.user_bindings`` rows (each carrying
     ``via_group``); ``direct``: ``Store.direct_user_bindings`` rows naming the viewer.
     """
-    wide: dict[str, dict] = {}
+    # Keyed by (kind, name): a Role and a ClusterRole of the same name are two objects, and merging
+    # them would put one's groups under the other's row (review of #158, Grok).
+    wide: dict[tuple[str, str], dict] = {}
 
     def wide_row(role_kind: str, role_name: str) -> dict:
-        return wide.setdefault(role_name, {"role_name": role_name, "role_kind": role_kind,
-                                           "via_groups": [], "direct": False, "bindings": 0})
+        return wide.setdefault((role_kind, role_name),
+                               {"role_name": role_name, "role_kind": role_kind,
+                                "via_groups": [], "direct": False, "bindings": 0})
 
     for b in via:
         if not b["binding_namespace"]:
@@ -66,11 +84,13 @@ def derive_answer(groups: list[dict], via: list[dict], direct: list[dict]) -> di
             row = wide_row(d["role_kind"], d["role_name"])
             row["bindings"] += 1
             row["direct"] = True
-    ranked = [name for name in wide if name in ROLE_RANK]
+    ranked = [r["role_name"] for r in wide.values()
+              if is_builtin_clusterrole(r["role_kind"], r["role_name"])]
     top = min(ranked, key=lambda n: ROLE_RANK[n]) if ranked else None
     for row in wide.values():
         stronger = [n for n in ranked
-                    if row["role_name"] in ROLE_RANK and ROLE_RANK[n] < ROLE_RANK[row["role_name"]]]
+                    if is_builtin_clusterrole(row["role_kind"], row["role_name"])
+                    and ROLE_RANK[n] < ROLE_RANK[row["role_name"]]]
         row["covered_by"] = min(stronger, key=lambda n: ROLE_RANK[n]) if stronger else None
     cluster_wide = sorted(wide.values(), key=lambda r: _rank(r["role_name"]))
 
@@ -83,12 +103,14 @@ def derive_answer(groups: list[dict], via: list[dict], direct: list[dict]) -> di
         if b["binding_namespace"]:
             ns_row(b["binding_namespace"])["grants"].append({
                 "role_name": b["role_name"], "role_kind": b["role_kind"], "via_group": b["via_group"],
-                "binding_name": b["binding_name"], "covered": covers_grant(top, b["role_name"])})
+                "binding_name": b["binding_name"],
+                "covered": covers_grant(top, b["role_name"], role_kind=b["role_kind"])})
     for d in direct:
         if d["binding_namespace"]:
             ns_row(d["binding_namespace"])["grants"].append({
                 "role_name": d["role_name"], "role_kind": d["role_kind"], "via_group": None,
-                "binding_name": d["binding_name"], "covered": covers_grant(top, d["role_name"])})
+                "binding_name": d["binding_name"],
+                "covered": covers_grant(top, d["role_name"], role_kind=d["role_kind"])})
     ns_rows = sorted(namespaces.values(), key=lambda n: n["name"])
     for n in ns_rows:
         n["grants"].sort(key=lambda g: (_rank(g["role_name"]), g["via_group"] or ""))
@@ -161,5 +183,10 @@ def group_changes(events: list[dict], since: str) -> dict:
             items.extend({"kind": "single", "cluster": cluster, "change": change,
                           "group_name": e["group_name"], "observed_at": observed_at} for e in evs)
     items.sort(key=lambda i: i["observed_at"], reverse=True)
-    return {"items": items[:HOME_CHANGES_ITEMS], "more": max(0, len(items) - HOME_CHANGES_ITEMS),
-            "changes": len(rows), "since": since}
+    shown, rest = items[:HOME_CHANGES_ITEMS], items[HOME_CHANGES_ITEMS:]
+    # The page says "N more changes", so N counts CHANGES, not the cards they were folded into: one
+    # leftover batch of eleven groups is eleven more changes, not one (review of #158, Grok).
+    more = sum(i["changes"] if i["kind"] == "flap" else i["count"] if i["kind"] == "batch" else 1
+               for i in rest)
+    return {"items": shown, "more": more, "more_items": len(rest),
+            "changes": len(rows), "since": since, "window_days": HOME_CHANGES_DAYS}
