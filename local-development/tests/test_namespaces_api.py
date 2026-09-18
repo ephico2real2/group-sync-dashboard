@@ -99,7 +99,8 @@ class TestTheList:
         assert body["source"]["state"] == "ok" and body["label_keys"] == list(KEYS)
         by = {n["name"]: n for n in body["namespaces"]}
         assert by["demo-prod"]["labels"] == {"company.net/mnemonic": "demo", "company.net/app-environment": "prod"}
-        assert (by["demo-prod"]["via_groups"], by["demo-prod"]["direct_grants"]) == (2, 1), "the virtual group counts as bound in the namespace"
+        assert (by["demo-prod"]["via_groups"], by["demo-prod"]["direct_grants"]) == (1, 1), \
+            "demo-devs; the virtual group is bound here but is no group of people — on the page, badged, out of the count"
         assert (by["legacy-payments"]["via_groups"], by["legacy-payments"]["direct_grants"]) == (0, 1), "the platform grant is not counted"
         assert (by["quiet-ns"]["via_groups"], by["quiet-ns"]["direct_grants"]) == (0, 0), "a namespace with nothing is a result, not an absence"
         # cluster-wide bindings reach every namespace and are counted once, on the envelope
@@ -147,7 +148,7 @@ class TestTheList:
         rows = client.get("/api/clusters/crc/namespaces", headers=ROOT).json()["namespaces"]
         for row in rows:
             d = client.get(f"/api/clusters/crc/namespaces/{row['name']}", headers=ROOT).json()
-            assert len({g["group_name"] for g in d["via_groups"]}) == row["via_groups"], row["name"]
+            assert len({g["group_name"] for g in d["via_groups"] if not g["is_platform"]}) == row["via_groups"], row["name"]
             assert len([x for x in d["direct_grants"] if not x["is_platform"]]) == row["direct_grants"], row["name"]
 
 
@@ -176,6 +177,35 @@ def test_a_platform_identity_cluster_wide_path_still_lists_every_namespace(tmp_p
     assert body["count"] == 2 and body["cluster_wide_path"] is True
     assert (body["cluster_wide_groups"], body["cluster_wide_grants"]) == (0, 0), "platform identities stay out of the counts"
     assert all((n["via_groups"], n["direct_grants"]) == (0, 0) for n in body["namespaces"])
+
+
+def test_a_platform_identity_in_namespace_path_is_listed_where_the_detail_opens(tmp_path):
+    """Pass 2's A made the cluster-wide half of the list follow the reach; the in-namespace half still kept a
+    row only for a non-platform grant, so a platform identity whose one path is a RoleBinding in a namespace got
+    an empty list while the detail opened that namespace (OB1, pass 3). The row is listed, with the review's
+    counts — (0, 0), platform identities out of the count — and nothing else opens."""
+    db = str(tmp_path / "platform-in-namespace.db")
+    now = now_iso()
+    s = Store(db)
+    s.upsert_cluster("crc", "https://api.crc.testing:6443", True)
+    s.record_poll("crc", "ok", None)
+    s.replace_namespaces("crc", [{"name": "one", "created_at": now, "phase": "Active", "metadata": {}},
+                                 {"name": "two", "created_at": now, "phase": "Active", "metadata": {}}], now)
+    s.replace_user_bindings("crc", [{"binding_kind": "RoleBinding", "binding_namespace": "one", "binding_name": "kubeadmin-admin",
+                                     "role_kind": "ClusterRole", "role_name": "admin", "user_name": "kubeadmin", "is_platform": 1}], now)
+    s.close()
+    app = build_app(Settings(clusters=[ClusterConfig("crc", "https://api.crc.testing:6443", token_env="X")],
+                             db_path=db, oauth_proxy_enabled=True), run_poller=False)
+    app.state.tier_resolver = _Map({})   # everyone is self
+    with TestClient(app) as client:
+        headers = {"X-Forwarded-User": "kubeadmin"}
+        body = client.get("/api/clusters/crc/namespaces", headers=headers).json()
+        one = client.get("/api/clusters/crc/namespaces/one", headers=headers)
+        two = client.get("/api/clusters/crc/namespaces/two", headers=headers)
+    assert (one.status_code, two.status_code) == (200, 403), "the detail's reach: the one namespace the binding names"
+    assert [n["name"] for n in body["namespaces"]] == ["one"] and body["count"] == 1, "the list says the same"
+    assert body["cluster_wide_path"] is False and (body["cluster_wide_groups"], body["cluster_wide_grants"]) == (0, 0)
+    assert (body["namespaces"][0]["via_groups"], body["namespaces"][0]["direct_grants"]) == (0, 0), "platform identities stay out of the count"
 
 
 class TestClusterWideCounts:

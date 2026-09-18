@@ -1421,7 +1421,8 @@ class Store:
     def namespaces(self, cluster_id: str, *, user_name: str | None = None,
                    groups: list[str] | None = None, every: bool = False) -> list[dict]:
         """Every namespace the poller sees, with the configured labels and two counts: distinct
-        groups bound IN the namespace and non-platform grants naming a person there (#167).
+        groups of people bound IN the namespace (virtual `system:` groups left out) and non-platform
+        grants naming a person there (#167).
 
         Cluster-wide bindings reach every namespace, so they are counted once by the caller
         (`cluster_wide_*` on the envelope) rather than added to every row — a list where every
@@ -1446,22 +1447,34 @@ class Store:
                     "SELECT name, key, value FROM cluster_namespace_label WHERE cluster_id=? ORDER BY name, key",
                     (cluster_id,)):
                 labels.setdefault(r["name"], {})[r["key"]] = r["value"]
+            # Groups of people: a virtual `system:` group (system:serviceaccounts:<ns>, bound by the
+            # image-pullers RoleBinding in every OpenShift namespace) is on the page, badged, and out of
+            # this count as it is out of the envelope's — counted, it read 1 on every row and the card's
+            # "zero in both is a result" could never happen (review of #167, pass 3, OB1).
             via = {r["ns"]: r["n"] for r in self._rows(
-                f"""SELECT binding_namespace AS ns, COUNT(DISTINCT group_name) AS n
+                f"""SELECT binding_namespace AS ns,
+                           COUNT(DISTINCT CASE WHEN substr(group_name, 1, ?) = ? THEN NULL ELSE group_name END) AS n
                       FROM rbac_group_binding WHERE cluster_id=? AND binding_namespace != ''
                       {"AND group_name IN (SELECT value FROM json_each(?))" if own else ""}
                      GROUP BY binding_namespace""",
-                (cluster_id, group_list) if own else (cluster_id,))}
+                (len(SYSTEM_GROUP_PREFIX), SYSTEM_GROUP_PREFIX, cluster_id, group_list) if own
+                else (len(SYSTEM_GROUP_PREFIX), SYSTEM_GROUP_PREFIX, cluster_id))}
             direct = {r["ns"]: r["n"] for r in self._rows(
                 f"""SELECT binding_namespace AS ns, COUNT(*) AS n
                       FROM user_binding WHERE cluster_id=? AND binding_namespace != '' AND is_platform = 0
                       {"AND user_name = ?" if own else ""}
                      GROUP BY binding_namespace""",
                 (cluster_id, user_name) if own else (cluster_id,))}
+            # The self tier's rows follow the REACH, as its cluster-wide switch does since pass 2: a
+            # binding naming the viewer in the namespace keeps the row, a platform identity's included,
+            # while the count beside it stays the review's count (review of #167, pass 3, OB1).
+            named = {r["ns"] for r in self._rows(
+                "SELECT DISTINCT binding_namespace AS ns FROM user_binding WHERE cluster_id=? AND binding_namespace != '' AND user_name=?",
+                (cluster_id, user_name))} if own else set()
         out = []
         for r in rows:
             v, d = via.get(r["name"], 0), direct.get(r["name"], 0)
-            if own and not every and not (v or d):
+            if own and not every and not (v or d or r["name"] in named):
                 continue
             out.append({"name": r["name"], "created_at": r["created_at"], "phase": r["phase"],
                         "observed_at": r["observed_at"], "labels": labels.get(r["name"], {}),

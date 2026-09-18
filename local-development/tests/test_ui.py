@@ -1434,8 +1434,64 @@ class TestNamespaces:
         }""")
         assert dash.locator("tr[data-group='system:serviceaccounts:prod-ns'] .badge", has_text="platform").count() == 1
         line = dash.locator("#main .filterbar-note", has_text="Also reached cluster-wide").inner_text()
-        assert "4 platform bindings to virtual groups (system:authenticated, system:nodes, system:masters, …)" in line, line
+        assert "4 platform bindings to 4 virtual groups (system:authenticated, system:masters, system:nodes, … 1 more)" in line, line
         assert "system:serviceaccounts-crb" not in line and line.count("system:") == 3, line
+
+    def test_the_fold_says_how_many_virtual_groups_and_names_the_most_bound_first(self, dash):
+        """CRC's demo-prod fold read "35 platform bindings to virtual groups (system:authenticated,
+        system:cluster-admins, system:masters, …)": the three names were an accident of role order (basic-user,
+        then cluster-admin) and the "…" hid how many groups the rest were. Most-bound first — `system:authenticated`,
+        every logged-in user, carries most of a cluster's platform bindings — and the fold counts the groups
+        (OB1, pass 3 of #167)."""
+        self._open(dash)
+        dash.locator("tr[data-ns='prod-ns'] button.drill").click()
+        dash.wait_for_selector("h2:text-is('prod-ns')")
+        dash.evaluate("""() => {
+          data.ns.cluster_wide_groups = ["system:nodes", "system:serviceaccounts", "system:authenticated", "system:masters", "system:serviceaccounts"]
+            .map((g, i) => ({group_name: g, binding_kind: "ClusterRoleBinding", binding_name: g + "-crb-" + i, role_kind: "ClusterRole",
+                             role_name: "basic-user", managed_source: null, member_count: 0, is_platform: 1}));
+          data.ns.cluster_wide_grants = [];
+          render();
+        }""")
+        line = dash.locator("#main .filterbar-note", has_text="Also reached cluster-wide").inner_text()
+        assert "every namespace: 5 platform bindings to 4 virtual groups (system:serviceaccounts, system:authenticated, system:masters, … 1 more) that every namespace carries." in line, line
+        dash.evaluate("""() => { data.ns.cluster_wide_groups = data.ns.cluster_wide_groups.slice(2, 3); render(); }""")
+        line = dash.locator("#main .filterbar-note", has_text="Also reached cluster-wide").inner_text()
+        assert "by one binding that grants every namespace: 1 platform binding to 1 virtual group (system:authenticated) that every namespace carries." in line, line
+
+    def test_a_virtual_groups_default_binding_is_not_badged_hand_made(self, dash):
+        """`system:image-pullers` in every OpenShift namespace binds `system:serviceaccounts:<ns>`: the platform
+        makes it, nobody hand-makes it, and the findings tier it `built_in`, never `unmanaged` — yet the who-reaches
+        table put the `hand-made` badge beside the `platform` one (CRC's demo-prod page at b6c96905de; OB1, pass 3
+        of #167). The seed's `pullers-0` is that binding; `was-managed-rb`, a real group's hand-made binding, keeps
+        its badge."""
+        self._open(dash)
+        dash.locator("tr[data-ns='ns0'] button.drill").click()
+        dash.wait_for_selector("h2:text-is('ns0')")
+        row = dash.locator("tr[data-group='system:serviceaccounts:ns0']")
+        assert row.locator(".badge", has_text="platform").count() == 1
+        assert row.locator(".badge", has_text="hand-made").count() == 0, row.inner_text()
+        dash.go_back()
+        dash.wait_for_selector("tr[data-ns='prod-ns']")
+        dash.locator("tr[data-ns='prod-ns'] button.drill").click()
+        dash.wait_for_selector("h2:text-is('prod-ns')")
+        assert dash.locator("tr[data-group='was-managed'] .badge", has_text="hand-made").count() == 1
+
+    def test_the_via_groups_column_counts_groups_of_people_not_virtual_groups(self, dash):
+        """On OpenShift every namespace carries `system:image-pullers` → `system:serviceaccounts:<ns>`, so a Via
+        groups column that counts virtual groups reads 1 or more on every row and the card's "zero in both is a
+        result" can never happen; the envelope's cluster-wide count already leaves them out (pass 2, D). The row
+        and the page's KPI count groups of people; the table still lists the virtual row, badged, and the heading
+        says how many (OB1, pass 3 of #167)."""
+        self._open(dash)
+        assert dash.locator("tr[data-ns='ns0'] td.num").first.inner_text().strip() == "0"
+        dash.locator("tr[data-ns='ns0'] button.drill").click()
+        dash.wait_for_selector("h2:text-is('ns0')")
+        kpi = dash.locator(".kpi", has_text="Via groups").locator(".value").inner_text().strip()
+        assert kpi == "0", kpi
+        head = dash.locator("h2", has_text="Who reaches it").inner_text()
+        assert "· 0 · 1 platform" in head, head
+        assert dash.locator("tr[data-group='system:serviceaccounts:ns0']").count() == 1, "the virtual row is still listed"
 
     def test_a_baseline_row_reads_first_observed_not_granted(self, dash):
         """#177's rule: a consumer renders a baseline row as "first observed", never as "added" — the cell
@@ -2085,6 +2141,26 @@ class TestBrowserHistory:
         dash.go_back()
         dash.wait_for_function("() => view.cluster === 'crc-local'")
         assert "cluster=crc-local" in dash.url
+
+
+    def test_a_group_drill_inside_a_group_row_navigates_once(self, dash):
+        """A user page's membership and history rows put a `data-group` button inside a `tr[data-group]`; the
+        group handler, unlike the user handler, did not stop propagation, so one click — or Enter — navigated
+        twice (a push, then a replace of the same position) and fetched twice (OB1's keyboard sweep, pass 3 of
+        #167). Counted at the two chokepoints every drill goes through."""
+        dash.locator("button[data-nav='users']").click()
+        dash.wait_for_selector("tr[data-user='alice']")
+        dash.locator("tr[data-user='alice'] button.drill").click()
+        dash.wait_for_selector("h2:text-is('alice')")
+        dash.evaluate("""() => { window.__n = {nav: 0, refresh: 0}; const n0 = navigate, r0 = refresh;
+            navigate = function (...a) { __n.nav++; return n0.apply(this, a); };
+            refresh = function (...a) { __n.refresh++; return r0.apply(this, a); }; }""")
+        button = dash.locator("tr[data-group='app-ocp-rbac-alpha-ns-admin'] button.drill").first
+        button.focus()
+        button.press("Enter")
+        dash.wait_for_selector("h2:text-is('app-ocp-rbac-alpha-ns-admin')")
+        dash.wait_for_timeout(300)
+        assert dash.evaluate("() => [__n.nav, __n.refresh]") == [1, 1]
 
 
 class TestNamespaceAuditPage:

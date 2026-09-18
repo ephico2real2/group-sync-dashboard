@@ -293,3 +293,96 @@ passed. Fail-before on `6a8fa85`: eight of the ten new cases fail (the two user-
 passed there — user drills worked; the group-key cases, the platform-identity list, the virtual-group fold,
 the baseline class and the changed count assertions fail). Full suites on the fixed tree: non-UI 3377 passed, 17
 skipped; UI 327 passed. CI on the pushed head and OB1's confirmation run are recorded below when they land.
+
+## Pass 3 — OB1's confirmation over `ff6b0dd`
+
+One reviewer on the final head (pass 2's `f44e560` merged with the foundation's `a668d51`), seven claims
+(`review_167/pass3/brief.md`): a Playwright drive on the UI seed's scoped servers as every persona (alice, carol,
+jdoe by its DN, kubeadmin, nobody, root), an in-process TestClient over the same seed, a keyboard sweep over every
+`.drill` signature on every page (click, Enter and Space, with `navigate`, `refresh`, `pushState` and
+`replaceState` counted), contrast by the composited colours, and every fix proved on a clone (10 failed on
+`ff6b0dd` → 44 passed; the clone's full suites: non-UI 3378 passed, UI 334 passed). OB1's own pass-2 run was
+lost to the session limit; this is its replacement. OB1 proved first which `gsd` its interpreter imported (the
+venv's editable install points at the main repo; `python -m pytest` from the worktree wins).
+
+| # | Claim | OB1 | Decision |
+|---|---|---|---|
+| C1 | `cluster_wide_path` is the reach; the list and the detail agree for every persona | CONFIRMED — for every persona the set the list returns equals the set the detail opens over the recorded namespaces; the one difference (`dev-ns`: 200 with `present: false` for jdoe and root, a namespace the store no longer holds but a binding still names) is the designed detour. The IN-namespace half is REFUTED, volunteered as NA-1: a platform identity whose only path is a RoleBinding in a namespace got an empty list while the detail opened it | A |
+| C2 | The baseline class, its contrast | PLAUSIBLE — on the card face 4.68:1 (light) / 4.85:1 (dark); on a zebra row (`--zebra` over the card, which the stylesheet guard never composites) `--text-muted` is 4.45:1 / 4.43:1 for 13 px text | B — routed to #184 |
+| C3 | The keyboard | CONFIRMED — every signature on every page: click = Enter = Space = one navigate, one pushState, no replaceState, the same destination; `ns` dropped where the click drops it; Back restores. One pre-existing exception (NA-2): a group drill inside a group row on a user's page navigated twice | C |
+| C4 | Virtual groups | CONFIRMED on the wire (real rows first, `people` unchanged, the envelope's count leaves them out) and on the page (the badge, the fold's every shape); the deployed fold's copy volunteered as NA-4, the column's count as NA-3, the API doc as NA-6 | D, E, F |
+| C5 | The merge of the foundation | CONFIRMED — 375 px: header 167 px, the labels above their selects, `scrollWidth` 375; `index.html` untouched by the merge, the CHANGELOG the only conflict; the reporting fixture's clock live | — |
+| C6 | Two invocations and the poll | CONFIRMED — page → Back → sibling → Back with a `pageerror` listener armed: none; an unchanged auto refresh leaves the DOM alone, a changed label repaints the page and the list (the fingerprint carries both) | — |
+| C7 | A hand-made badge on a virtual group's row | REFUTED — the seed's `pullers-0` (`system:image-pullers`-shaped) wears both badges while the findings API tiers the same binding `built_in`, never `unmanaged` | G |
+
+### A — the in-namespace half of the reach (OB1, NA-1) — accepted
+`namespace_reach` counts every binding naming the viewer; the list kept a row only for a non-platform grant
+(`is_platform = 0`) or a group path, so a platform identity whose only path is a RoleBinding in a namespace —
+kubeadmin bound `admin` in one namespace, everyone self — got an empty list while the detail opened that
+namespace: the same disagreement pass 2's A closed cluster-wide. The self-tier rows follow the reach: a namespace
+where any binding names the viewer keeps its row, with the review's counts beside it (0, 0 — platform identities
+stay out of the count). Test: `test_a_platform_identity_in_namespace_path_is_listed_where_the_detail_opens`
+(list `["one"]`, detail 200 on `one`, 403 on `two`), `[] == ['one']` on `ff6b0dd`.
+
+### B — `--text-muted` on a zebra row (OB1, C2) — accepted on the fact, routed to #184
+OB1 proposed `--text-secondary` for `.change-baseline` alone (7.34:1 on a zebra row) with a test that composites
+the painted cell. Not taken here: the zebra idiom undercuts every token the guard measures "on a card" — the same
+rows put `.change-added` at 4.28:1 (light), `.change-removed` at 4.44:1 / 4.11:1, every `td.muted` at 4.44 /
+4.43 (OB1's NA-5) — and #183's pass 2 measured the drill link at 4.305:1 / 4.375:1 there. Recolouring one class
+hides one instance of a design-system defect; the fix is one token change on the foundation (#184, where OB1's
+numbers are now posted), with a guard that composites the row, not the card.
+
+### C — a group drill inside a group row navigated twice (OB1, NA-2) — accepted
+A user's page nests a `button.drill[data-group]` inside a `tr[data-group]` (memberships, history); the
+`[data-group]` handler, unlike `[data-user]`'s, did not stop propagation — click, Enter and Space each gave two
+navigates (a push, then a replace of the same position) and two fetches, the first superseded. Pre-existing,
+not #167's keyboard change; `e.stopPropagation()` as the user handler does. Test:
+`test_a_group_drill_inside_a_group_row_navigates_once` — `[2, 2]` on `ff6b0dd`, `[1, 1]` after.
+
+### D — the Via groups column counted virtual groups (OB1, NA-3) — accepted; a decision the operator can veto
+Pass 2's D took platform groups out of the envelope's `cluster_wide_groups` and pinned the opposite for the rows
+(demo-prod `(2, 1)`, "the virtual group counts as bound in the namespace"). On OpenShift every namespace carries
+`system:image-pullers` → `system:serviceaccounts:<ns>`, so on CRC's 110 namespaces the column read ≥ 1 on every
+row and the card's own promise — "A namespace with zero in both is a result an access review wants to confirm"
+— could never come true (measured on the seed: ns0–ns5 read 1 each with nothing but the virtual group behind
+them). The row and the page's KPI count groups of people; the virtual row stays on the page, badged, and the
+who-reaches heading says how many are platform (the Direct grants card's own pattern, "· N · M platform"). The
+self tier is untouched (a viewer's synced groups are never `system:`). Tests: the API pin is `(1, 1)`, the
+list/detail agreement filters `is_platform`, and `test_the_via_groups_column_counts_groups_of_people_not_virtual_groups`
+reads the column (0), the KPI (0) and the heading ("· 0 · 1 platform") with the virtual row still listed.
+This reverses a pass-2 assertion; recorded here for the operator.
+
+### E — the fold names the most-bound groups first and counts them (OB1, NA-4) — accepted
+The deployed fold read "35 platform bindings to virtual groups (system:authenticated, system:cluster-admins,
+system:masters, …)": the three names were an accident of the store's sort (role, then group) and the "…" hid
+how many groups the rest were. The fold now names the groups most-bound first — `system:authenticated`, every
+logged-in user, carries most of a cluster's platform bindings — counts them, says "… N more" behind the three,
+and reads the singular for one ("1 platform binding to 1 virtual group (system:authenticated)"). Tests: the
+pass-2 fold assertion updated and `test_the_fold_says_how_many_virtual_groups_and_names_the_most_bound_first`.
+A number to check on the walk: the record said 41 of demo-prod's 54 cluster-wide bindings were virtual groups
+and the deployed fold said 35 — the fold counts `cluster_wide_groups` rows only; if the 41 counted platform
+grants naming a user too (`cluster_wide_grants`, never listed on the line), both are right.
+
+### F — API.md (OB1, NA-6) — accepted
+The detail example's `via_groups` row carries `is_platform`; the list's prose says which groups the column
+counts; the `is_platform` paragraph names the badge rule.
+
+### G — no hand-made badge on a platform row (OB1, C7) — accepted
+Nobody hand-makes `system:image-pullers`; the namespace controller does, and the findings tier that binding
+`built_in` before the `unmanaged` branch — two surfaces, one binding, two answers. The badge's own definition
+("None means nothing manages this binding — somebody created it by hand") is false on a virtual row. No
+hand-made badge where `is_platform`; a real group's hand-made binding keeps it. Test:
+`test_a_virtual_groups_default_binding_is_not_badged_hand_made` (`pullers-0` badged platform only;
+`was-managed` still hand-made).
+
+### Not asked
+- NA-5 — the zebra rows vs the status tokens (routed with B).
+- The record's "Rejected": nothing OB1 would decide differently.
+
+### Tests
+Eight tests fail on `ff6b0dd` (the two changed API assertions, the in-namespace reach, the updated fold
+assertion, the fold's count and order, the badge, the column's count, the double navigation) and pass after.
+Focused on the fixed tree (the namespaces API, `TestNamespaces`, `TestNamespaceAuditPage`, `TestBrowserHistory`,
+the CSS guards, the API contract, the docs citations): 1302 passed, 12 skipped.
+Full UI suite 332 passed (218.47 s); non-UI suite 3378 passed, 13 skipped (574.51 s). CI on the pushed head is
+recorded below when it lands.
