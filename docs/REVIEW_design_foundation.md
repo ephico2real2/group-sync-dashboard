@@ -58,8 +58,10 @@ pass applied); OB1 read the diff between the two and measured both. Every verdic
 - Forced-colours rules, `color-scheme` on the new selects, the print path (before F2: no `@media print` anywhere),
   the `localStorage` keys (only `gsd-mode` / `gsd-palette`), the e2e and screenshot selectors (`#refresh`,
   `button.tab`, `#f-cluster`) — checked by all three; nothing changed.
-- OB1's observations, recorded, no change: the header is 223 px tall at 375 px (was 113) and wraps to two rows
-  below ~1110 px at desktop — the cost of the two controls, a design decision; `--line` on the card is 1.75:1, a
+- OB1's observations, recorded: the header measured 223 px tall at 375 px (was 113) at `9a0e29c`; `2061807`
+  brought it to 142.5 by clipping the two labels, and pass 2's F2 (below) replaces that with a 167 px variant
+  that keeps them visible; it wraps to two rows below ~1110 px at desktop — the cost of the two controls, a
+  design decision; `--line` on the card is 1.75:1, a
   resting border, better than the fallback's ~1.4:1 but under the 3:1 boundary bar; `_declarations` exempts a whole
   line on one `optical:` note.
 - Codex: the exact pytest command failed in its sandbox because capture needs a writable temp dir; with `-s` the
@@ -78,3 +80,58 @@ blind guard), all three closed with tests before OB1 measured the head — where
 Chromium and found the one regression the fixes had introduced, plus a print defect no brief had asked about.
 OB1's element-by-element diff is the evidence the "nothing moved" claim rests on: only the #166 deltas, the chip
 tokens and the two stated 16→15 px values differ from main. Eleven tests came out of the pass.
+
+## Pass 2, OB1 — over `9a0e29c`, re-measured on `2061807` and `311f544`
+
+OB1 ran with a shell and Playwright against `git archive` extracts pinned to named commits (the tree moved
+twice under it), 90 theme × palette × tab samples for S1, a brace walk and print emulation for S2, a
+registration-order trace for S3, and 137,496 computed-style comparisons across 22 page states for S7.
+All seven claims CONFIRMED; three findings.
+
+### F1 — the Reports class failed in full runs because the fixture's clock was frozen, not because a ticket expired — accepted; my earlier diagnosis retracted
+
+**Finding.** `test_ui.py`'s `reporting_server` built the report service on `clock=lambda: clock["now"]`
+with `clock["now"]` fixed at creation. The service verifies every ticket against that clock while the
+dashboard mints with wall time; `ticket.py:95` refuses `issued > current + MAX_CLOCK_SKEW_SECONDS`
+(30 s) and `server.py` maps every refusal but expiry to **403**, which `reportFetch` does not remint on
+(401 only) — so any ticket minted more than 30 s after the fixture was created painted the narrowed-reader
+refusal card where the picker belongs. Measured: 200 at 3 s after creation, 403 at 80 s and 350 s.
+CI was red from `faf88b4` through `2061807` for exactly this (15 `TestReportsTab` failures, all
+`#report-picker` timeouts), because pass 1's Reports-at-375 test created the fixture ten minutes ahead
+of the class.
+
+**Re-check.** Every premise holds on the branch: the frozen `clock`, the 30 s bound, the 403 mapping,
+the 401-only remint, `/report/api/snapshot` computing `age_seconds` with the service clock. I retract the
+diagnosis in `311f544` ("its report ticket outlived its 300 s TTL"): the fixture's TTL is 120 s and the
+bound that bit was the skew; relocating the test hid the symptom (CI green) with a wrong cause and left
+the trap armed for any test that requests the fixture 30 s early, or a slow runner.
+
+**Decision.** The fixture's clock is live unless a test pins it (`clock["now"] or now()`); a guard test
+reads the snapshot's age twice over the wire 1.2 s apart and requires it to move — it fails against the
+frozen fixture ("the report service's clock is frozen: 0 -> 0") and passes with the live one; the
+docstring of the relocated test now states the mechanism. No test pinned the clock.
+
+### F2 — the phone header clipped its two labels from sighted readers — accepted
+
+**Finding.** `2061807` took the header from 222.5 px to 142.5 px at 375 px by clipping the labels
+(1 × 1 px, in the accessibility tree only): two selects reading "Auto" and "Default" with nothing naming
+them on screen. OB1 measured the alternative — each label above its select below 520 px, the pair on one
+row with Refresh — at 167 px, `scrollWidth` 375, both selects operable.
+
+**Decision.** The stacked variant. A select that names nothing on its own is the copy rule broken; 24.5 px
+buys both labels. The header test is replaced (bound 180 px, both labels visible and above their select,
+one row) and fails on `311f544` (`visible: False`).
+
+### F3 — two stale document lines — accepted
+The pass-1 line in this record saying the header is 223 px "no change" (rewritten above) and the CHANGELOG
+bullet's silence on print-is-light, the Back re-stamp, the junk fallthrough, the hashless boot and the
+phone labels (appended).
+
+### Not asked
+The e2e and screenshot scripts still select `button.tab` (confirmed static); forced colours and reduced
+motion hold under the `@media screen` wrappers; WebKit unmeasured (no browser installed).
+
+### Outcome of pass 2
+Three findings, three applied; two tests shown failing before. Focused: `TestReportsTab`,
+`TestTheShellAtPhoneWidth`, `TestAppearanceAndColours` — 37 passed on the fixed tree; the full suites —
+non-UI 3302 passed, 17 skipped; UI 306 passed. CI on the pushed head is recorded below when it lands.
