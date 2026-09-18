@@ -663,7 +663,7 @@ to and the request is refused with 403 — never a name the caller typed.
   "changes": {"items": [{"kind": "single", "cluster": "prod-east", "change": "added", "group_name": "platform-team-cluster-admin", "observed_at": "…"},
                         {"kind": "flap", "cluster": "crc-local", "group_name": "app-ocp-rbac-groupsync-ns-auditor", "changes": 5, "span_minutes": 33, "latest": "added", "observed_at": "…"},
                         {"kind": "batch", "cluster": "crc-local", "change": "added", "count": 17, "groups": ["…"], "observed_at": "…"}],
-              "more": 0, "changes": 23, "since": "…"},
+              "more": 0, "more_items": 0, "changes": 23, "window_days": 30},
   "retention": {"window_days": 90, "retained_since": "…"},
   "elsewhere": [{"cluster": "prod-east", "memberships": 17, "status": "ok", "last_poll": "…"}],
   "memberships_total": 36

@@ -8,6 +8,7 @@ memberships on two other clusters, and a month of membership history with a batc
 """
 from __future__ import annotations
 
+import time
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -179,6 +180,7 @@ def test_what_changed_folds_the_batch_and_the_flap_and_names_the_other_cluster(h
     assert flap["group_name"] == AUDITOR and flap["changes"] == 5 and flap["span_minutes"] == 33 and flap["latest"] == "added"
     assert batch["change"] == "added" and batch["count"] == 11 and batch["groups"] == sorted(IDLE)
     assert c["more"] == 0 and c["changes"] == 17 and c["window_days"] == HOME_CHANGES_DAYS
+    assert "since" not in c, "a clock-derived field on the wire defeats the page's unchanged-payload skip"
     assert home["retention"]["window_days"] >= 0 and "retained_since" in home["retention"]
 
 
@@ -203,8 +205,7 @@ def test_an_administrator_sees_their_own_access_here_not_everyones(tmp_path):
     assert (self_view["scope"], wide_view["scope"]) == ("self", "all")
     for body in (self_view, wide_view):
         body.pop("scope")
-        body["changes"].pop("since")   # the window's start is the request's clock, a second apart
-    assert self_view == wide_view
+    assert self_view == wide_view, "only `scope` may differ between the tiers"
 
 
 def test_no_identity_is_refused_never_a_typed_name(tmp_path):
@@ -401,3 +402,17 @@ def test_the_history_cap_is_named_on_the_wire(tmp_path, monkeypatch):
     with TestClient(_app(db, {})) as client:
         capped = client.get("/api/clusters/crc/home", headers=ALICE).json()["changes"]
     assert "crc" in capped["capped_clusters"], capped["capped_clusters"]
+
+
+def test_two_reads_of_an_unchanged_store_are_byte_identical(tmp_path):
+    """The page skips the repaint when the whole payload is unchanged, so ANY clock-derived field on the wire
+    defeats it. `/home` echoed the window's start, computed from `datetime.now()` per request — so Home,
+    alone among the pages, repainted every 60 s and threw away scroll, selection and focus (OB3, integration
+    review, C3). Two reads of a store nobody has touched must be the same bytes."""
+    db = str(tmp_path / "stable.db")
+    _seed(db)
+    with TestClient(_app(db, {})) as client:
+        first = client.get("/api/clusters/crc/home", headers=ALICE).content
+        time.sleep(1.1)                      # longer than the field's one-second resolution
+        second = client.get("/api/clusters/crc/home", headers=ALICE).content
+    assert first == second, "the payload moved while the store did not"

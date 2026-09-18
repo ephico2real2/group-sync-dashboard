@@ -172,3 +172,31 @@ rewritten to remove a duplicated rule rather than add a fifth copy; A's second t
 first version passed before the fix). Nine tests fail on `af3d47d` and pass after. Full browser suite 374 passed; non-UI 3438 passed, 13 skipped, after Codex's second reading. The third
 reviewer's confirmation (OB1 or OB2 when the Fable quota resets, per the operator's rule) is recorded below
 when it lands.
+
+## Pass 3 — OB3's integration review (max effort), over `integration/design-programme`
+
+A review of all five features merged onto one branch. Its C3 asked the converse of the fingerprint question
+this record's earlier passes only asked one way round: not "is every payload IN the fingerprint" (they are —
+24 of the 26 slots, and the two outside are a boot-only version string and an unrendered credential) but
+"does any payload in it change on EVERY poll", which would defeat the unchanged-payload skip entirely.
+
+### K — `/home` echoed the request's clock, so Home repainted every 60 seconds (OB3, C3) — accepted
+`group_changes` returned `since`, the window's start, computed per request from `datetime.now()` at second
+precision. The shell fingerprints the whole payload, so Home — alone among the pages — never matched its
+previous fingerprint and replaced `#main` on every automatic poll, throwing away scroll, selection and any
+focus on a row (the rows carry no id, so `render()`'s focus restore cannot find them). Measured: three
+polls, three repaints, the only differing slot `changes.since`, two seconds apart; every other page and
+tier fingerprinted equal across three polls, and every other endpoint is byte-stable across two reads.
+
+Nothing renders `since`. The window is named by `window_days` and every item carries its own `observed_at`,
+so the field is simply gone from the wire.
+
+**The part that is mine to own:** the tier-identity test popped `since` before comparing, with a comment
+saying it is "the request's clock, a second apart". I saw the field move and worked around it in the test
+rather than fixing the wire — which is how it survived two review passes. The workaround is gone; the two
+tier bodies are now identical but for `scope`. Tests: `test_two_reads_of_an_unchanged_store_are_byte_identical`
+(the bytes differed at `since`) and `TestHomeSkipsTheUnchangedPoll`, which marks a DOM node and requires it
+to survive two automatic polls.
+
+### Tests
+Browser suite 375 passed; non-browser suite 3439 passed, 13 skipped.

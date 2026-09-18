@@ -3508,6 +3508,24 @@ class TestHome:
         assert cell["h"] <= 80, f"the name stacked to {cell['h']}px tall"
 
 
+
+class TestHomeSkipsTheUnchangedPoll:
+    """The shell fingerprints every payload so an automatic poll that changed nothing does not replace
+    `#main` — the reader's scroll, selection and focus survive. `/home` echoed the request's clock
+    (`changes.since`, second precision), so on Home the fingerprint never matched and every 60 s poll
+    repainted the page (OB3, integration review, C3: three polls, three repaints, one moving field)."""
+
+    def test_two_automatic_polls_of_an_unchanged_store_leave_the_dom_alone(self, page, scoped_server):
+        p = _home(page, scoped_server)
+        p.wait_for_timeout(1500)   # the boot render has landed; nothing else is in flight
+        p.evaluate("() => { document.querySelector('.home .answer h1').dataset.sentinel = 'kept'; }")
+        for _ in range(2):
+            p.evaluate("() => refresh({auto: true})")
+            p.wait_for_timeout(1500)
+        assert p.evaluate("() => document.querySelector('.home .answer h1').dataset.sentinel") == "kept", \
+            "an automatic poll of an unchanged store repainted Home"
+
+
 class TestVisibilityLabels:
     def test_the_pill_names_the_narrowed_view(self, page, scoped_server):
         """Q6/DoD 5: the reader can tell 'this is your view' from 'this is everything',
