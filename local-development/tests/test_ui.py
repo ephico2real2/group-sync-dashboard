@@ -414,7 +414,10 @@ def dash(page, server):
     """
     errors: list[str] = []
     page.on("pageerror", lambda e: errors.append(str(e)))
-    page.goto(server)
+    # #158 made Home the landing page, and these are the OVERVIEW's tests plus the tab walks that
+    # start from it: the position is named rather than assumed, so a later change to the default
+    # route cannot silently move what they assert. Home has its own fixture below.
+    page.goto(f"{server}/#page=overview")
     try:
         page.wait_for_selector(".hero .value", timeout=10_000)
     except Exception:
@@ -717,7 +720,7 @@ class TestRendering:
         errors = []
         page.on("pageerror", lambda e: errors.append(str(e)))
         page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
-        page.goto(server)
+        page.goto(f"{server}/#page=overview")   # this test's subject is the Overview's chart (#158 moved the landing page)
         page.wait_for_selector(".hero .value")
         page.locator("tr[data-cr='ldap-groupsync']").click()
         page.wait_for_selector("svg .series-line")
@@ -1053,7 +1056,7 @@ class TestTheShellAtPhoneWidth:
     """#166, measured on the live cluster before the fix: at 375 px the nine-tab bar was 676 px wide,
     `document.documentElement.scrollWidth` 696, and five tabs sat past the edge of a bar that could
     not scroll — unreachable. The shell owns the bar (#152), so the check runs on every tab."""
-    TABS = ["overview", "groups", "users", "bindings", "policy", "nsaudit", "logins", "usage"]
+    TABS = ["home", "overview", "groups", "users", "bindings", "policy", "nsaudit", "logins", "usage"]
 
     @pytest.mark.parametrize("tab", TABS)
     def test_no_horizontal_overflow_and_every_tab_inside_the_viewport(self, dash, tab):
@@ -2494,7 +2497,9 @@ class TestTheWalksLookupStep:
         matching "demo", then skipped the namespace drill for want of a row."""
         errors: list[str] = []
         page.on("pageerror", lambda e: errors.append(str(e)))
-        page.goto(slow_lookup_server)
+        # #158 made Home the landing page; this test's subject is the walk step, and it needs a painted
+        # page to start from, so it names the one it means rather than riding the default route.
+        page.goto(f"{slow_lookup_server}/#page=overview")
         page.wait_for_selector(".hero .value", timeout=10_000)
         page.click('button.tab:text-is("Usage")')
         page.wait_for_selector('button.tab[aria-current="page"]:text-is("Usage")')
@@ -3801,8 +3806,8 @@ class TestSignOutControl:
         page = ctx.new_page()
         try:
             page.goto(proxied_server)
-            # Not `.hero .value`: alice is a narrowed reader, and the landing page is the
-            # administrator tier now, so she lands on a refusal card with no cluster hero.
+            # Not `.hero .value`: since #158 the landing page is Home, which carries no cluster
+            # hero for anyone. This wait only wants to know that the page painted.
             page.wait_for_selector("#main .card", timeout=10_000)
             link = page.locator("#logout")
             assert link.is_visible()
@@ -3820,8 +3825,8 @@ class TestSignOutControl:
         page = ctx.new_page()
         try:
             page.goto(proxied_server)
-            # Not `.hero .value`: alice is a narrowed reader, and the landing page is the
-            # administrator tier now, so she lands on a refusal card with no cluster hero.
+            # Not `.hero .value`: since #158 the landing page is Home, which carries no cluster
+            # hero for anyone. This wait only wants to know that the page painted.
             page.wait_for_selector("#main .card", timeout=10_000)
             page.wait_for_function("() => sessionCapNote !== ''", timeout=10_000)
             assert page.evaluate("() => sessionCapNote") == "4-hour"
@@ -3846,9 +3851,9 @@ def _open_as(page, base, user):
     page.set_extra_http_headers({"X-Forwarded-User": user})
     page.goto(base)
     try:
-        # `#main .card`, not `.hero .value`: the landing page is the administrator tier, so a
-        # narrowed reader lands on a refusal card that carries no cluster hero. Both render a
-        # section.card, which is what this wait actually wants to know — that the page painted.
+        # `#main .card`, not `.hero .value`: since #158 the landing page is Home, which carries no
+        # cluster hero for any tier. Home, a refusal and the Overview all render a section.card,
+        # which is what this wait actually wants to know — that the page painted.
         page.wait_for_selector("#main .card", timeout=10_000)
     except Exception:
         if errors:
@@ -3858,33 +3863,281 @@ def _open_as(page, base, user):
     return page
 
 
+
+def _home(page, base, user="alice"):
+    """Home as `user`, waited on its own paint — the pill and the tab strip arrive before the payload."""
+    errors: list[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.set_extra_http_headers({"X-Forwarded-User": user})
+    page.goto(base)
+    page.wait_for_selector(".home .answer, .home .scope-refusal", timeout=10_000)
+    assert not errors, "uncaught JS error on Home:\n  " + "\n  ".join(errors)
+    return page
+
+
+class TestHome:
+    """#158: Home is the page every reader lands on — their own access, on every tier, from
+    `docs/design/landing-access-mock.html`. Self-scoped by definition, so the shape is the same for a
+    narrowed reader and an administrator; the arithmetic is the server's (gsd/home.py) and the page only
+    composes sentences from it."""
+
+    def test_home_is_the_default_route_and_the_first_tab(self, page, scoped_server):
+        p = _home(page, scoped_server)
+        assert p.evaluate("() => view.page") == "home"
+        assert p.locator("button.tab").first.inner_text().strip() == "Home"
+        assert p.locator("#tab-home[aria-current='page']").count() == 1
+        assert p.evaluate("() => document.body.dataset.page") == "home", "the section accent follows the page"
+
+    def test_the_answer_leads_with_one_sentence_and_its_tags(self, page, scoped_server):
+        p = _home(page, scoped_server)
+        h1 = p.locator(".home .answer h1").inner_text()
+        assert h1.endswith("on crc-local"), h1
+        assert "Signed in as" in p.locator(".home .answer .who").inner_text()
+        tags = [t.strip() for t in p.locator(".home .tag").all_inner_texts()]
+        assert any("group" in t and "grant" in t for t in tags), tags
+
+    def test_every_row_is_a_button_the_keyboard_reaches(self, page, scoped_server):
+        """The mock's rows are whole-row controls; a div with a click handler is unreachable by keyboard
+        (the defect #167's and #174's reviews both found on other pages)."""
+        p = _home(page, scoped_server)
+        shapes = p.evaluate("""() => [...document.querySelectorAll('.home .hrow')].map(
+            r => [r.tagName, r.classList.contains('static'), r.getAttribute('type')])""")
+        assert shapes, "no rows rendered"
+        for tag, static, typ in shapes:
+            assert tag == ("DIV" if static else "BUTTON"), shapes
+            assert static or typ == "button", "a bare <button> inside a form would submit it"
+
+    def test_a_group_row_drills_to_that_group_and_back_returns_to_home(self, page, scoped_server):
+        p = _home(page, scoped_server)
+        row = p.locator(".home [data-group]").first
+        name = row.locator(".name").inner_text().strip()
+        row.click()
+        p.wait_for_selector(f"h2:text-is('{name}')")
+        assert p.evaluate("() => view.page") == "groups"
+        p.go_back()
+        p.wait_for_selector(".home .answer")
+        assert p.evaluate("() => view.page") == "home"
+
+    def test_the_folds_are_view_state_never_a_position(self, page, scoped_server):
+        """Expanding "show all" is not a place to come back to: it must not push a history entry."""
+        p = _home(page, scoped_server)
+        fold = p.locator(".home [data-home-show]")
+        if not fold.count():
+            pytest.skip("this seed has no folded group list")
+        before = p.evaluate("() => history.length")
+        fold.first.click()
+        p.wait_for_function("(n) => document.querySelectorAll('.home .hrow').length > n",
+                            arg=p.evaluate("() => document.querySelectorAll('.home .hrow').length") - 1)
+        assert p.evaluate("() => history.length") == before
+        assert p.evaluate("() => location.hash").startswith("#page=home")
+
+    def test_an_administrator_sees_their_own_access_here_not_the_clusters(self, page, scoped_server):
+        """The DoD's central claim: no admin aggregate may leak here. root is in no synced group in the
+        seed, so their Home says so rather than showing the cluster's groups."""
+        p = _home(page, scoped_server, "root")
+        assert p.locator("#scope-pill").inner_text().startswith("Full view")
+        text = p.locator(".home").inner_text()
+        assert "You are in no synced group here" in text.replace("\n", " "), text[:400]
+        assert "alice" not in text and "gatekeeper" not in text, "another person's name on a self-scoped page"
+
+    def test_the_cluster_selector_rescopes_and_a_cluster_that_vouches_for_nobody_says_so(self, page, scoped_server):
+        """The cluster is a position; switching re-scopes the answer without leaving Home. `prod-east` is
+        not the host cluster and its identity policy is the default `none` — it does not treat the host's
+        username as its own — so Home there is a refusal in its own words, never an API error and never a
+        page that quietly answers for a name nobody vouched for (docs/ACCESS_CONTROL.md §11)."""
+        p = _home(page, scoped_server)
+        assert "crc-local" in p.locator(".home .answer h1").inner_text()
+        p.select_option("#f-cluster", "prod-east")
+        p.wait_for_function("() => view.cluster === 'prod-east'")
+        p.wait_for_selector(".home .scope-refusal")
+        assert p.evaluate("() => view.page") == "home", "the cluster is a position, the page is not"
+        refusal = p.locator(".home .scope-refusal").inner_text()
+        assert "does not treat your identity as one of its own" in refusal, refusal
+        assert "Dashboard API error" not in p.locator("#main").inner_text()
+        p.select_option("#f-cluster", "crc-local")
+        p.wait_for_selector(".home .answer h1")
+        assert "crc-local" in p.locator(".home .answer h1").inner_text(), "and back"
+
+    def test_no_identity_says_so_in_its_own_words_not_as_an_api_error(self, page, scoped_server):
+        """The proxy passing no username is a refusal the page explains, never "Dashboard API error"."""
+        errors: list[str] = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.goto(f"{scoped_server}/#page=home&cluster=prod-east")
+        page.wait_for_selector(".home .card")
+        text = page.locator(".home").inner_text()
+        assert "Dashboard API error" not in text, text[:300]
+        assert not errors
+
+    def test_the_cluster_wide_foot_never_says_zero_groups_grant(self, page, scoped_server):
+        """A cluster-wide role held only by a DIRECT grant has no groups behind it; the card's foot read
+        "0 groups grant edit cluster-wide … removing them would not change what you can do" (Grok, review
+        of #158). Painted from the payload that produced it."""
+        p = _home(page, scoped_server)
+        p.evaluate("""() => {
+          data.home.answer.cluster_wide = [
+            {role_name: "admin", role_kind: "ClusterRole", via_groups: [], direct: true, bindings: 1, covered_by: null},
+            {role_name: "edit", role_kind: "ClusterRole", via_groups: [], direct: true, bindings: 1, covered_by: "admin"}];
+          data.home.answer.top_role = "admin";
+          render();
+        }""")
+        foot = p.locator(".home .c-wide .foot").inner_text()
+        assert "0 groups grant" not in foot, foot
+        assert "A direct cluster-wide" in foot and "includes it by default" in foot, foot
+
+    def test_the_more_line_reads_as_one_change_at_one(self, page, scoped_server):
+        p = _home(page, scoped_server)
+        p.evaluate("""() => { data.home.changes.more = 1; data.home.changes.more_items = 1;
+          if (!data.home.changes.items.length) data.home.changes.items = [{kind: "single", cluster: "crc-local",
+            change: "added", group_name: "g", observed_at: new Date().toISOString()}];
+          render(); }""")
+        assert "1 more change in the window" in p.locator(".home .c-changes").inner_text()
+
+    def test_the_window_named_on_the_card_is_the_one_the_rows_were_selected_by(self, page, scoped_server):
+        """The page carried its own copy of the 30-day window. Two constants for one number drift the
+        moment either moves, and the card would name a window the rows were not selected by (Grok,
+        review of #158). The window arrives with the payload."""
+        p = _home(page, scoped_server)
+        assert "last 30 days" in p.locator(".home .c-changes h2").inner_text()
+        p.evaluate("() => { data.home.changes.window_days = 7; render(); }")
+        assert "last 7 days" in p.locator(".home .c-changes h2").inner_text()
+
+    def test_the_poll_age_pill_is_not_the_shells_refetch_dim(self, page, scoped_server):
+        """The pill was called `.stale`, which is the shell's refetch state — a global `opacity: 0.55` on
+        whatever carries it — so it rendered at 55 % and measured 2.27:1 (Codex, review of #158). One class
+        cannot mean both "this page is being refetched" and "this cluster's data is old"."""
+        p = _home(page, scoped_server)
+        p.evaluate("""() => {
+          data.home.elsewhere = [{cluster: "prod-east", memberships: 3, status: "auth_failed", last_poll: "2026-01-01T00:00:00Z"}];
+          data.home.memberships_total = 5; render();
+        }""")
+        pill = p.locator(".home .poll-age")
+        assert pill.count() == 1, p.locator(".home .xcluster").inner_text()
+        assert p.locator(".home .stale").count() == 0, "the shell's refetch class is on the pill"
+        assert p.evaluate("() => getComputedStyle(document.querySelector('.home .poll-age')).opacity") == "1"
+
+    def test_a_retention_window_of_forever_does_not_claim_rows_were_pruned(self, page, scoped_server):
+        """`window_days: 0` is "kept forever", so the oldest row held is where the dashboard began watching,
+        not a cut — saying "pruned" of it invents a deletion (Codex, review of #158)."""
+        p = _home(page, scoped_server)
+        p.evaluate("""() => { data.home.retention = {window_days: 0, retained_since: "2026-08-02T00:00:00Z"};
+          render(); }""")
+        foot = p.locator(".home .c-changes .foot").inner_text()
+        assert "pruned" not in foot.replace("nothing is pruned", ""), foot
+        assert "where this dashboard began watching" in foot, foot
+        p.evaluate("""() => { data.home.retention = {window_days: 90, retained_since: "2026-08-02T00:00:00Z"};
+          render(); }""")
+        assert "have been pruned by retention" in p.locator(".home .c-changes .foot").inner_text()
+
+    def test_two_paths_of_different_kinds_are_not_called_the_same_grant(self, page, scoped_server):
+        """A Role and a ClusterRole of one name are two objects — the collision the ranking already fixed
+        (Codex, review of #158)."""
+        p = _home(page, scoped_server)
+        p.evaluate("""() => {
+          const grant = (kind, group) => ({role_name: "admin", role_kind: kind, via_group: group,
+                                           binding_name: "b-" + group, covered: false});
+          data.home.answer.namespaces = [
+            {name: "same", platform: false, covered: false, grants: [grant("ClusterRole", "g1"), grant("ClusterRole", "g2")]},
+            {name: "mixed", platform: false, covered: false, grants: [grant("ClusterRole", "g1"), grant("Role", "g2")]}];
+          render();
+        }""")
+        rows = p.evaluate("""() => Object.fromEntries([...document.querySelectorAll('.home .c-ns .hrow')].map(
+            r => [r.querySelector('.name').textContent.trim(), r.querySelector('.meta').textContent]))""")
+        assert "paths to the same grant" in rows["same"], rows
+        assert "paths to the same grant" not in rows["mixed"], rows
+
+    def test_the_labels_keep_the_units_of_the_numbers_beside_them(self, page, scoped_server):
+        """`answer.namespaces` are NAMESPACES; the sub-line called their count "namespace grants", so the
+        deployed page read "covers 12 of your 13 namespace grants" over 13 namespaces. And the tag read
+        "1 / 1 groups grant" at one (Codex, review of #158)."""
+        p = _home(page, scoped_server)
+        p.evaluate("""() => {
+          const a = data.home.answer;
+          a.top_role = "admin"; a.namespaces_covered = 2;
+          a.namespaces = ["one", "two", "three"].map(n => ({name: n, platform: false, covered: n !== "three",
+            grants: [{role_name: "edit", role_kind: "ClusterRole", via_group: "g", binding_name: "b", covered: n !== "three"}]}));
+          a.groups_total = 1; a.groups_granting = 1;
+          render();
+        }""")
+        sub = p.locator(".home .answer .sub").inner_text()
+        assert "namespaces you reach" in sub and "namespace grants" not in sub, sub
+        tags = " | ".join(p.locator(".home .tag").all_inner_texts())
+        assert "1 / 1 group grants" in tags, tags
+
+    def test_a_capped_history_says_its_counts_are_a_lower_bound(self, page, scoped_server):
+        """Each cluster's history is read up to a cap, so on a busy one the card's count is a lower bound;
+        showing it as complete would overclaim (Codex, review of #158)."""
+        p = _home(page, scoped_server)
+        p.evaluate("() => { data.home.changes.capped_clusters = ['crc-local', 'prod-east']; render(); }")
+        foot = p.locator(".home .c-changes .foot").inner_text()
+        assert "at least this many" in foot and "crc-local" in foot and "prod-east" in foot, foot
+        p.evaluate("() => { data.home.changes.capped_clusters = []; render(); }")
+        assert "at least this many" not in p.locator(".home .c-changes .foot").inner_text()
+
+    def test_the_page_holds_at_375(self, page, scoped_server):
+        page.set_viewport_size({"width": 375, "height": 740})
+        p = _home(page, scoped_server)
+        assert p.evaluate("() => document.documentElement.scrollWidth <= innerWidth"), "the page scrolls sideways"
+        assert p.evaluate("() => [...document.querySelectorAll('.home .hrow')].every(r => r.getBoundingClientRect().right <= innerWidth + 1)")
+
+    def test_a_long_role_name_does_not_squeeze_the_name_column_to_one_character(self, page, scoped_server):
+        """Measured on the rendered page at 375: `group-sync-dashboard-report-auditor` in a nowrap pill took
+        the row's whole width and stacked the group's name one character per line. The name keeps a floor it
+        cannot be squeezed below, and a pill that will not fit beside it wraps under instead."""
+        page.set_viewport_size({"width": 375, "height": 740})
+        p = _home(page, scoped_server)
+        p.evaluate("""() => {
+          data.home.answer.cluster_wide = [{role_name: "group-sync-dashboard-report-auditor-with-a-very-long-name",
+            role_kind: "ClusterRole", via_groups: ["app-ocp-rbac-groupsync-ns-auditor"], direct: false, bindings: 1, covered_by: null}];
+          render();
+        }""")
+        cell = p.evaluate("""() => { const n = document.querySelector('.home .c-wide .hrow .name');
+            const r = n.getBoundingClientRect(); return {w: Math.round(r.width), h: Math.round(r.height)}; }""")
+        assert cell["w"] >= 150, f"the name column collapsed to {cell['w']}px"
+        assert cell["h"] <= 80, f"the name stacked to {cell['h']}px tall"
+
+
 class TestVisibilityLabels:
     def test_the_pill_names_the_narrowed_view(self, page, scoped_server):
         """Q6/DoD 5: the reader can tell 'this is your view' from 'this is everything',
-        on every tab, starting with the landing page."""
+        on every tab, starting with the landing page — which since #158 is Home, not the Overview.
+
+        The landing page no longer refuses a narrowed reader: Home is self-scoped by definition, so
+        alice lands on her own access and the pill still names the tier she is on. The Overview's
+        refusal is unchanged and is asserted below, one click away (#169's ruling)."""
         p = _open_as(page, scoped_server, "alice")
         p.wait_for_selector("#scope-pill:not([hidden])")
         text = p.locator("#scope-pill").inner_text()
         assert text.startswith("Your view"), text
         assert "alice" in text, "the pill must name the viewer it is scoped to"
-        assert p.locator(".scope-refusal").count() == 1
-        assert p.locator(".hero").count() == 0
+        p.wait_for_selector(".home .answer")   # the pill rides whoami; Home waits on its own payload
+        assert p.locator(".home .answer").count() == 1, "a narrowed reader lands on Home, not a refusal"
+        assert p.locator(".scope-refusal").count() == 0
+        p.locator("button[data-nav='overview']").click()
+        p.wait_for_selector(".scope-refusal")
+        assert p.locator(".hero").count() == 0, "the Overview stays the administrator tier's"
 
     def test_the_administrator_is_told_they_see_everything(self, page, scoped_server):
         """The admin marker. 'Nothing looks different' and 'you are seeing everything'
-        are different statements, and only the second is checkable from the screen."""
+        are different statements, and only the second is checkable from the screen.
+
+        Since #158 the administrator lands on Home too — their OWN access, never everyone's — and
+        the Overview's cluster hero is one click away."""
         p = _open_as(page, scoped_server, "root")
         p.wait_for_selector("#scope-pill:not([hidden])")
         assert p.locator("#scope-pill").inner_text().startswith("Full view")
-        assert p.locator(".hero").count() == 1
+        p.wait_for_selector(".home .answer")
+        assert p.locator(".home .answer").count() == 1
         assert p.locator(".scope-refusal").count() == 0
+        p.locator("button[data-nav='overview']").click()
+        p.wait_for_selector(".hero .value")
+        assert p.locator(".hero").count() == 1
 
     def test_an_unknown_tier_does_not_paint_the_wide_overview(self, page, scoped_server):
         """A failed whoami is not evidence that the reader may see cluster-wide health."""
         page.route("**/api/whoami", lambda route: route.fulfill(
             status=503, content_type="application/json", body="{}"))
         page.set_extra_http_headers({"X-Forwarded-User": "alice"})
-        page.goto(scoped_server)
+        page.goto(f"{scoped_server}/#page=overview")
         page.wait_for_selector("#main .card", timeout=10_000)
         assert page.locator("#main .hero").count() == 0
 
@@ -3893,14 +4146,14 @@ class TestVisibilityLabels:
         page.route("**/api/whoami", lambda route: route.fulfill(
             status=503, content_type="application/json", body="{}"))
         page.set_extra_http_headers({"X-Forwarded-User": "alice"})
-        page.goto(scoped_server)
+        page.goto(f"{scoped_server}/#page=overview")
         page.wait_for_selector("#main .card", timeout=10_000)
         assert page.locator("#main .scope-refusal").count() == 0
         assert page.locator("#main").inner_text().strip() == "Loading…"
 
     def test_an_unauthenticated_whoami_body_paints_the_wide_overview(self, page, scoped_server):
         """Without a verified identity no tier applies, so silence must not invent narrowing."""
-        page.goto(scoped_server)
+        page.goto(f"{scoped_server}/#page=overview")
         page.wait_for_selector("#main .card", timeout=10_000)
         assert page.locator("#main .hero").count() == 1
         assert page.locator("#main .scope-refusal").count() == 0
@@ -4034,7 +4287,7 @@ class TestVisibilityLabels:
         with the proxy off — its responses carry scope 'all' or nothing — so the pill
         must exist (it is part of the header) and stay hidden, and no self banner may
         render anywhere."""
-        page.goto(server)
+        page.goto(f"{server}/#page=overview")
         page.wait_for_selector(".hero .value", timeout=10_000)
         assert page.locator("#scope-pill").count() == 1, "the pill mount is missing from the header"
         assert page.locator("#scope-pill").is_hidden()
@@ -4881,7 +5134,7 @@ class TestGroupCountCliffOnTheOverview:
     def test_silenced_is_shown_dimmed_and_counted_apart(self, page, cliff_server):
         errors: list[str] = []
         page.on("pageerror", lambda e: errors.append(str(e)))
-        page.goto(cliff_server)
+        page.goto(f"{cliff_server}/#page=overview")
         page.wait_for_selector(".alert-row", timeout=10_000)
         assert not errors, errors
         rows = page.locator(".alert-row")
@@ -5298,7 +5551,7 @@ def _open_idle(page, base):
     """A clocked page: Date.now and every timer are the test's to advance."""
     page.clock.install()
     page.set_extra_http_headers({"X-Forwarded-User": "alice"})
-    page.goto(base)
+    page.goto(f"{base}/#page=overview")   # the idle model is the subject; the Overview is just a painted page
     page.wait_for_selector(".hero .value", timeout=10_000)
     page.wait_for_function("() => idle.enabled === true", timeout=10_000)
     return page
@@ -5630,7 +5883,7 @@ class TestReportsTab:
             page.click("#tab-reports")
             page.wait_for_selector("#tab-reports[aria-current='page']")
             page.wait_for_timeout(300)
-            assert page.evaluate("() => document.querySelectorAll('button.tab').length") == 9
+            assert page.evaluate("() => document.querySelectorAll('button.tab').length") == 10   # Home joined the strip (#158)
             assert page.evaluate("() => [document.documentElement.scrollWidth <= innerWidth, [...document.querySelectorAll('button.tab')].filter(t => t.getBoundingClientRect().right > innerWidth).map(t => t.id)]") == [True, []]
             assert not errors
         finally:

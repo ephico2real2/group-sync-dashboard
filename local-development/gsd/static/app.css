@@ -75,6 +75,7 @@
      active tab wears its accent as label text and not only as a bar. Hues are spread around
      the wheel and also separated in lightness, so the four stay distinguishable to a
      deuteranope, for whom the green and the orange collapse toward each other. */
+  --tab-home: #3d5a80;         /* Home (#158): 6.7:1 on --page (measured) */
   --tab-overview: #2873cd;
   --tab-groups: #108172;
   --tab-bindings: #6d4bc7;
@@ -197,7 +198,9 @@
     --status-unknown: #898781;
     --line: #4a4a46;
     --warn: #c48704;
-    --tab-overview: #2d7ad7;
+    --tab-home: #8fb3dd;       /* 8.7:1 on --page (measured) */
+    --tab-home: #8fb3dd;
+  --tab-overview: #2d7ad7;
     --tab-groups: #12907f;
     --tab-bindings: #8468d0;
     --tab-policy: #a855f7;
@@ -244,6 +247,7 @@
   --status-unknown: #898781;
   --line: #4a4a46;
   --warn: #c48704;
+  --tab-home: #8fb3dd;
   --tab-overview: #2d7ad7;
   --tab-groups: #12907f;
   --tab-bindings: #8468d0;
@@ -879,6 +883,7 @@ code { font-family: var(--font-mono); font-size: var(--text-sm); }
    Each view owns an accent, which drives the tab, the page bloom, the card top edge and
    the focus ring. One variable, swapped on <body>, so a new view needs one line here and
    nothing else. */
+body[data-page="home"]     { --accent: var(--tab-home); }
 body[data-page="overview"] { --accent: var(--tab-overview); }
 body[data-page="groups"]   { --accent: var(--tab-groups); }
 body[data-page="users"]    { --accent: var(--tab-users); }
@@ -1210,3 +1215,84 @@ mark { background: none; color: inherit; font-weight: 700; }
 /* A KPI value one step down — schedules, timestamps and group names that would not fit at 22px.
    The two "first / last login" values were 1rem (16px, off the scale) and now sit here at 15px. */
 .kpi .value.sm { font-size: var(--text-lg); }
+
+/* ── Home (#158) — docs/design/landing-access-mock.html on the design tokens ──────────────────
+   The answer card leads with one sentence; the five cards below are lists of whole-row controls
+   (a native button when the row drills, so the keyboard reaches it), each with the mock's
+   right-hand pill: a role, "covered by admin", a scope. Each card carries its own section accent
+   through --accent, so the heading rail and the hover wash agree. */
+.home .answer .who { font-size: var(--text-sm); color: var(--text-muted); margin-bottom: var(--space-4); }
+.home .answer .who b { font-family: var(--font-mono); color: var(--text-primary); font-weight: 600; }
+.home .answer h1 { margin: 0; font-size: var(--text-3xl); font-weight: 700; letter-spacing: -0.02em; line-height: 1.15; text-wrap: balance; }
+.home .answer .sub { margin-top: var(--space-4); color: var(--text-secondary); }
+.home .answer .sub b { color: var(--text-primary); font-weight: 600; }
+.home .tags { display: flex; gap: var(--space-4); flex-wrap: wrap; margin-top: var(--space-7); }
+.home .tag { font-family: var(--font-mono); font-size: var(--text-sm); padding: 3px 10px; /* optical: the pill metrics the header chip already uses */
+  border-radius: var(--radius-pill); border: 1px solid var(--border); background: var(--page-2); color: var(--text-secondary); }
+.home .tag.warn { color: var(--warn); background: var(--surface-1); border-color: var(--status-warning-edge); }
+.home .tag.rwx { color: var(--surface-1); background: var(--accent); border-color: var(--accent); font-weight: 600; }
+.home .xcluster { margin-top: var(--space-7); padding-top: var(--space-6); border-top: 1px solid var(--gridline);
+  font-size: var(--text-md); color: var(--text-secondary); }
+.home .xcluster b { color: var(--text-primary); font-weight: 600; }
+/* `.poll-age`, NOT `.stale`: `.stale` is the shell's refetch state — `opacity: 0.55` on whatever carries
+   it — so this pill rendered at 55 % and measured 2.27:1 (light) / 2.60:1 (dark). One class cannot mean both
+   "this page is being refetched" and "this cluster's data is old" (review of #158, Codex). */
+.home .poll-age { display: inline-flex; align-items: center; gap: var(--space-3); margin-left: var(--space-5);
+  font-family: var(--font-mono); font-size: var(--text-xs); padding: 2px 9px; /* optical: the badge's own metrics */
+  border-radius: var(--radius-pill); color: var(--warn); background: var(--surface-1);
+  border: 1px solid var(--status-warning-edge); }
+.home .poll-age::before { content: ""; width: 6px; height: 6px; border-radius: var(--radius-round); background: currentColor; }
+.home .card > h2 .count { font-family: var(--font-mono); color: var(--text-muted); font-weight: 400; }
+/* The list runs edge to edge inside the card: the rows carry the card's padding themselves. */
+.home .hlist { margin: 0 calc(-1 * var(--space-8)); border-top: 1px solid var(--gridline); }
+.home .hrow { display: flex; align-items: center; gap: var(--space-7); width: 100%; padding: var(--space-6) var(--space-8);
+  border: 0; border-bottom: 1px solid var(--gridline); background: none; color: inherit; font: inherit; text-align: left;
+  cursor: pointer; border-radius: 0; }
+.home .hrow:last-child { border-bottom: 0; }
+/* 6 %, not 10 %: the wash sits under the row's own text, and every extra point of it costs contrast
+   (measured light: secondary 6.68 at 10 %, 7.09 at 6 %; the amber pills 4.23 → 4.49). Still a visible
+   affordance — the chevron and the pointer carry the rest. */
+.home .hrow:hover, .home .hrow:focus-visible { background: color-mix(in srgb, var(--accent) 6%, transparent); }
+.home .hrow.static { cursor: default; }
+.home .hrow.static:hover { background: none; }
+.home .hrow:not(.static)::after { content: "›"; color: var(--text-muted); font-size: var(--text-lg); flex: 0 0 auto; margin-left: auto; }
+.home .hrow .name { display: block; font-family: var(--font-mono); font-size: var(--text-md); font-weight: 600; overflow-wrap: anywhere; }
+.home .hrow .meta { display: block; font-size: var(--text-sm); color: var(--text-secondary); margin-top: var(--space-1); }
+.home .hrow .meta b { color: var(--text-secondary); font-weight: 500; }
+.home .role, .home .scope { font-family: var(--font-mono); font-size: var(--text-xs); padding: 3px 9px; /* optical: the badge's metrics, one step taller for a bare word */
+  border-radius: var(--radius-sm); white-space: nowrap; background: var(--page-2); border: 1px solid var(--border); color: var(--text-secondary); }
+/* On the card's own surface, not --page-2: --warn measures 4.40:1 there (light) and 4.89 here
+   (review of #158, Codex). */
+.home .role.rw { color: var(--warn); background: var(--surface-1); border-color: var(--status-warning-edge); }
+.home .scope { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.home .none { font-size: var(--text-sm); color: var(--text-secondary); font-style: italic; white-space: nowrap; }
+.home .plat { font-size: var(--text-xs); font-family: var(--font-mono); color: var(--text-secondary); border: 1px dashed var(--border);
+  border-radius: var(--radius-xs); padding: 1px 6px; /* optical: a tag inside a heading sits tighter than a standalone pill */
+  margin-left: var(--space-4); font-weight: 400; }
+.home .flap { font-family: var(--font-mono); font-size: var(--text-xs); padding: 2px 8px; /* optical: the badge's metrics */
+  border-radius: var(--radius-xs); white-space: nowrap; color: var(--warn); background: var(--surface-1);
+  border: 1px solid var(--status-warning-edge); }
+.home .when { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text-secondary); white-space: nowrap; }
+.home .foot { font-size: var(--text-sm); color: var(--text-muted); margin: var(--space-7) calc(-1 * var(--space-8)) calc(-1 * var(--space-8));
+  padding: var(--space-6) var(--space-8); background: var(--page-2); border-top: 1px solid var(--gridline);
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg); }
+.home .hlist + .foot { margin-top: 0; }
+.home .card.c-changes { --accent: var(--series-1); }
+.home .card.c-wide    { --accent: var(--series-4); }
+.home .card.c-ns      { --accent: var(--series-3); }
+.home .card.c-direct  { --accent: var(--series-2); }
+.home .card.c-groups  { --accent: var(--series-7); }
+/* A long role name (`group-sync-dashboard-report-auditor`) in a nowrap pill took the row's whole width
+   at 375 px and squeezed the name column to one character per line — measured on the rendered page. The
+   name keeps a floor it can never be squeezed below, and a pill that cannot fit beside it wraps rather
+   than winning the fight. */
+.home .hrow .main { flex: 1 1 12rem; min-width: 0; }
+.home .role, .home .scope, .home .none, .home .when, .home .flap { flex: 0 1 auto; min-width: 0; }
+@media (max-width: 640px) {
+  .home .answer h1 { font-size: var(--text-2xl); }
+  /* The pills drop onto their own line under the name, left-aligned with it. */
+  .home .hrow { flex-wrap: wrap; row-gap: var(--space-4); }
+  .home .hrow .main { flex: 1 1 100%; }
+  .home .role, .home .scope { white-space: normal; overflow-wrap: anywhere; }
+  .home .poll-age { margin-left: 0; margin-top: var(--space-4); }
+}

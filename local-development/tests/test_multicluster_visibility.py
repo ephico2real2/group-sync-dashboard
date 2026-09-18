@@ -137,7 +137,7 @@ class TestSelfOnlyNeverWidens:
 
 CLUSTER_ENDPOINTS = ("groupsyncs", "groupsyncs/x/events", "groups", "groups/x", "users", "users/x", "logins",
                      "cluster-access", "bindings/findings", "user-bindings", "operator-configs", "membership-changes",
-                     "binding-changes")
+                     "binding-changes", "namespaces", "home")
 
 
 class TestHiddenIsNotAnOracle:

@@ -27,7 +27,7 @@
   <title>__GSD_TITLE__</title>
 <link rel="stylesheet" href="/static/app.css">
 </head>
-<body data-page="overview">
+<body data-page="home">
 <a class="skip" href="#main">Skip to main content</a>
 <div class="wrap" id="wrap">
   <header class="top">
@@ -155,7 +155,7 @@ const STATES = {
   unknown: { label: "unknown" },
 };
 
-const view = { page: "overview", cluster: null, groupsync: null, groupFilter: "all", bindingFilter: "review",
+const view = { page: "home", homeShow: {}, cluster: null, groupsync: null, groupFilter: "all", bindingFilter: "review",
                 reportPick: null, reportForm: {}, reportRun: null, reportSubmitting: false, reportPreview: "",
                 reportPreviewNames: [], reportPreviewCount: null,   // #143: the names behind the count
                 /* Free-text group search. A FILTER, so it lives here rather than in POSITION_KEYS —
@@ -253,7 +253,7 @@ function positionFromHash() {
 function applyPosition(pos) {
   // Assigned rather than merged: an absent key means "not at that position", so leaving the
   // old value would strand a drill-down open after Back returned to the list behind it.
-  view.page = pos.page || "overview";
+  view.page = pos.page || "home";   // #158: Home is where every reader lands
   view.groupsync = pos.groupsync || null;
   // The member filter belongs to the group it was typed against. Compared before the assignment,
   // so leaving the page, drilling to another group, and Back into a different one all clear it.
@@ -284,6 +284,7 @@ function applyPosition(pos) {
       data.logins = null; data.access = null; data.findings = null;
       data.operatorConfigs = null; data.userBindings = null; data.myAccess = null;
       data.namespaces = null; data.ns = null;
+      data.home = null;   // #158: the answer is the selected cluster's
       // The Users-tab chips name providers and populations of THIS cluster; carried across, a
       // `provider:corp-ldap` chip on a cluster with no such provider would hide every row — the
       // empty state would blame the chip, but the reader never chose it here. Reset, like
@@ -363,7 +364,7 @@ function goBack() {
    — a reader matches the label to a tab, so a second vocabulary for the same six places would be
    its own small lie. */
 const PAGE_LABEL = {
-  overview: "overview", groups: "all groups", users: "all users", bindings: "access granted",
+  home: "home", overview: "overview", groups: "all groups", users: "all users", bindings: "access granted",
   policy: "RBAC policy", nsaudit: "namespace audit", logins: "logins", usage: "usage",
   reports: "reports", lookup: "search",
 };
@@ -455,7 +456,10 @@ let data = { clusters: [], alerts: [], groupsyncs: null, groups: null, events: n
              /* The narrowed reader's own access path on the Access granted tab (their /users/{me}
                 payload). Its own slot, not `user`: the user detail page owns `user` and a drill
                 from this tab to their own profile must not race two writers into one slot. */
-             myAccess: null };
+             myAccess: null,
+             /* Home (#158): the reader's own access on the selected cluster — the page's whole payload,
+                derived server-side (gsd/home.py) so a number and its label change together. */
+             home: null };
 
 const $ = (id) => document.getElementById(id);
 
@@ -1030,6 +1034,7 @@ function renderFilters() {
     `<button class="tab" id="tab-${id}" data-nav="${id}"${view.page === id ? ' aria-current="page"' : ""}>${label}</button>`;
   html += `<span class="spacer"></span>
     <nav class="tabs" aria-label="Dashboard sections">
+      ${tab("home", "Home")}
       ${tab("overview", "Overview")}
       ${tab("groups", "Groups")}
       ${tab("users", "Users")}
@@ -3243,6 +3248,234 @@ function userDetail() {
    membership) — rendered where the refusal card used to be. The payload is their own
    /users/{me}; a viewer the store has never seen (no group, no history, no User) is a 404
    there, and that is the empty state here, never an error card. */
+/* ── Home (#158) ────────────────────────────────────────────────────────────────────────────
+   The page every reader lands on: "what can I reach, and how?", for the person asking and nobody
+   else. Self-scoped by definition, so it renders the same shape for a narrowed reader and an
+   administrator — the tier problem the Overview's refusal card left open is dissolved rather than
+   special-cased. The visuals are docs/design/landing-access-mock.html: the answer first, then five
+   cards (what changed, cluster-wide, namespaces, direct grants, your groups), every row a drill into
+   the page that already exists. Every number comes from `answer`, derived once on the server
+   (gsd/home.py); the page composes sentences from it and never recomputes a figure under a label. */
+const RW_ROLES = new Set(["cluster-admin", "admin", "edit"]);
+const HOME_FOLD_AFTER = 2;   // granting groups shown before "N more groups grant access"
+
+function homeRow(inner, attrs = "", cls = "") {
+  // A whole row is the control (the mock's row-with-chevron): a native button when it drills, so
+  // Enter and Space activate it and the drill handlers (`[data-group]`, `[data-ns]`) find it by
+  // the same attributes every other page uses; a div when there is nowhere to go.
+  return attrs
+    ? `<button type="button" class="hrow ${cls}" ${attrs}>${inner}</button>`
+    : `<div class="hrow static ${cls}">${inner}</div>`;
+}
+const homeMain = (name, meta) => `<span class="main"><span class="name">${name}</span>${meta ? `<span class="meta">${meta}</span>` : ""}</span>`;
+const rolePill = (role) => `<span class="role${RW_ROLES.has(role) ? " rw" : ""}">${esc(role)}</span>`;
+const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+const andList = (names) => names.map((n) => `<b>${esc(n)}</b>`).join(", ").replace(/, ([^,]*)$/, " and $1");
+
+function homePage() {
+  const d = data.home;
+  if (!d) return `<div class="home"><section class="card"><div class="empty-note">Loading…</div></section></div>`;
+  if (d.forbidden) {
+    return `<div class="home"><section class="card"><h2>Home</h2>
+      <div class="scope-refusal"><strong>Nobody to show.</strong> Home is your own access — the groups you are
+      in, what they grant you, where — and there is no authenticated identity to scope it to: the proxy
+      passed no username, or this cluster does not treat your identity as one of its own. The cluster is
+      not empty and nothing is broken; sign in through the proxy and it fills in.</div></section></div>`;
+  }
+  const a = d.answer, cluster = d.cluster, top = a.top_role;
+  const nsCount = a.namespaces.length;
+  // The answer, first. One sentence that is true of this reader on this cluster.
+  let h1;
+  if (top) h1 = `You have cluster-wide ${esc(top)} on ${esc(cluster)}`;
+  else if (a.cluster_wide.length) h1 = `You hold ${plural(a.cluster_wide.length, "cluster-wide role", "cluster-wide roles")} on ${esc(cluster)}`;
+  else if (nsCount) h1 = `You reach ${plural(nsCount, "namespace", "namespaces")} on ${esc(cluster)}`;
+  else if (a.groups_total) h1 = `Your groups grant nothing on ${esc(cluster)}`;
+  else h1 = `Nothing on ${esc(cluster)} names you`;
+  const sub = [];
+  if (top && nsCount) {
+    // "all 1 of your namespace grant" is not a sentence: at one, the count IS the word.
+    sub.push(a.namespaces_covered === nsCount
+      ? (nsCount === 1 ? `It already covers the one namespace you reach.`
+                       : `It already covers all <b>${nsCount}</b> namespaces you reach.`)
+      : `It covers <b>${a.namespaces_covered}</b> of the <b>${nsCount}</b> namespaces you reach.`);
+  }
+  sub.push(a.groups_total
+    ? `<b>${a.groups_granting}</b> of your <b>${a.groups_total}</b> ${a.groups_total === 1 ? "group grants" : "groups grant"} access; <b>${a.direct_count}</b> direct ${a.direct_count === 1 ? "grant" : "grants"}.`
+    : `You are in no synced group here; <b>${a.direct_count}</b> direct ${a.direct_count === 1 ? "grant" : "grants"}.`);
+  const tags = [
+    top ? `<span class="tag rwx">cluster-wide ${esc(top)}</span>` : `<span class="tag">no cluster-wide role</span>`,
+    `<span class="tag">${plural(nsCount, "namespace", "namespaces")}</span>`,
+    `<span class="tag">${a.groups_granting} / ${a.groups_total} ${a.groups_total === 1 ? "group grants" : "groups grant"}</span>`,
+    a.direct_count ? `<span class="tag warn">${plural(a.direct_count, "direct grant", "direct grants")}</span>` : "",
+  ].join("");
+  const stalePills = d.elsewhere.filter((c) => c.status !== "ok" || !c.last_poll || Date.now() - Date.parse(c.last_poll) > 86_400_000)
+    .map((c) => `<span class="poll-age">${esc(c.cluster)} ${c.status === "ok" ? "last polled" : `${esc(c.status)}, last polled`} ${esc(ago(c.last_poll))}</span>`).join("");
+  const xcluster = d.elsewhere.length
+    ? `<div class="xcluster">These numbers are for <b>${esc(cluster)}</b>. You're also on ${andList(d.elsewhere.map((c) => c.cluster))} —
+        <b>${d.memberships_total}</b> group ${d.memberships_total === 1 ? "membership" : "memberships"} in total.${stalePills}</div>`
+    : "";
+  const who = `<div class="who">Signed in as <b>${esc(d.viewer)}</b>${d.providers.length ? ` · ${esc(d.providers.join(", "))}` : ""}${d.full_name ? ` · ${esc(d.full_name)}` : ""}</div>`;
+  const answer = `<section class="card answer">${who}<h1>${h1}</h1><div class="sub">${sub.join(" ")}</div><div class="tags">${tags}</div>${xcluster}</section>`;
+
+  // What changed: the reader's own membership history, folded server-side.
+  const ch = d.changes;
+  const changeRows = ch.items.map((i) => {
+    const elsewhere = i.cluster !== cluster ? ` — on <b>${esc(i.cluster)}</b>, not this cluster` : "";
+    const when = `<span class="when">${esc(ago(i.observed_at))}</span>`;
+    if (i.kind === "flap") {
+      const story = i.latest === "added" ? "added, removed and re-added" : "removed, added and removed again";
+      return homeRow(homeMain(esc(i.group_name), `${story} — <b>${i.changes} changes in ${i.span_minutes} minutes</b>${elsewhere}`)
+        + `<span class="flap">flapping</span>${when}`, `data-group="${esc(i.group_name)}" data-cluster="${esc(i.cluster)}"`);
+    }
+    if (i.kind === "batch") {
+      const shown = i.groups.slice(0, 6).map(esc).join(", ");
+      return homeRow(homeMain(`${i.count} groups ${esc(i.change)} at once`, `${shown}${i.groups.length > 6 ? ` and ${i.groups.length - 6} more` : ""} — one sync${elsewhere}`)
+        + when, `data-nav-groups="${esc(i.cluster)}"`);
+    }
+    return homeRow(homeMain(esc(i.group_name), `${esc(i.change)}${elsewhere}`) + when,
+      `data-group="${esc(i.group_name)}" data-cluster="${esc(i.cluster)}"`);
+  });
+  // `window_days: 0` is "kept forever" (history_retention), so the oldest row held is where the dashboard
+  // STARTED watching, not a cut — saying "pruned" of it would invent a deletion (review of #158, Codex).
+  const r = d.retention || {};
+  // A cluster whose history hit the per-cluster cap makes every count here a lower bound; saying the
+  // number plainly would overclaim (review of #158, Codex).
+  const capped = (ch.capped_clusters || []);
+  const capNote = capped.length
+    ? ` Only the most recent changes were read for ${andList(capped)}, so the counts here are at least this many.`
+    : "";
+  const changeFoot = !r.retained_since
+    ? "Every change since this dashboard started watching your groups."
+    : r.window_days
+      ? `History starts <span class="mono">${esc(String(r.retained_since).slice(0, 10))}</span> — older changes have been pruned by retention.`
+      : `History starts <span class="mono">${esc(String(r.retained_since).slice(0, 10))}</span>, where this dashboard began watching; nothing is pruned.`;
+  // The window is the server's (gsd/home.py) and arrives with the payload: a second copy here drifts
+  // the moment one of them moves, and the card would name a window the rows were not selected by.
+  const windowDays = ch.window_days;
+  const changed = `<section class="card c-changes"><h2>What changed <span class="count">last ${windowDays} days</span></h2>
+    ${changeRows.length ? `<div class="hlist">${changeRows.join("")}${ch.more ? `<div class="hrow static"><span class="main"><span class="meta">${plural(ch.more, "more change", "more changes")} in the window.</span></span></div>` : ""}</div>`
+      : `<div class="empty-note">No change to your group memberships in the last ${windowDays} days.</div>`}
+    <div class="foot">${changeFoot}${capNote}</div></section>`;
+
+  // Cluster-wide: the roles held everywhere, and which of them a stronger one already includes.
+  const wideRows = a.cluster_wide.map((w) => {
+    const via = w.via_groups.length ? `via ${andList(w.via_groups)}` : "";
+    const meta = [w.direct ? "granted to you directly" : "", via].filter(Boolean).join("; ");
+    const right = w.covered_by ? `<span class="none">covered by ${esc(w.covered_by)}</span>` : rolePill(w.role_name);
+    return homeRow(homeMain(esc(w.role_name), meta) + right, w.via_groups.length ? `data-group="${esc(w.via_groups[0])}"` : "");
+  });
+  // Only speak of groups that exist: a cluster-wide role held by a DIRECT grant has no groups behind
+  // it, and the sentence read "0 groups grant edit cluster-wide … removing them would not change what
+  // you can do" (review of #158, Grok).
+  const wideFoot = a.cluster_wide.filter((w) => w.covered_by).map((w) => {
+    // "includes by default": the stock ClusterRoles aggregate this way, but a cluster may change what
+    // `edit` carries, so this is a lead for a review to confirm — never a proof about live rules
+    // (review of #158, Codex, citing the Kubernetes RBAC reference).
+    const includes = `<span class="mono">${esc(w.covered_by)}</span> includes it by default`;
+    if (w.via_groups.length) {
+      return `${plural(w.via_groups.length, "group grants", "groups grant")} <span class="mono">${esc(w.role_name)}</span> cluster-wide, and ${includes} — worth confirming before anyone relies on ${w.via_groups.length === 1 ? "it" : "them"}.`;
+    }
+    return w.direct
+      ? `A direct cluster-wide <span class="mono">${esc(w.role_name)}</span> grant sits under one ${includes} — worth confirming before anyone relies on it.`
+      : "";
+  }).filter(Boolean).join(" ");
+  const wide = `<section class="card c-wide"><h2>Cluster-wide <span class="count">${plural(a.cluster_wide.length, "role", "roles")} · ${plural(a.cluster_wide_bindings, "binding", "bindings")}</span></h2>
+    ${wideRows.length ? `<div class="hlist">${wideRows.join("")}</div>` : `<div class="empty-note">No cluster-wide role — everything you reach on ${esc(cluster)} is namespaced.</div>`}
+    ${wideFoot ? `<div class="foot">${wideFoot}</div>` : ""}</section>`;
+
+  // Namespaces: every one a binding reaches through your groups or names you in.
+  const nsRows = a.namespaces.map((n) => {
+    const viaGroups = [...new Set(n.grants.filter((g) => g.via_group).map((g) => g.via_group))];
+    // Keyed by kind AND name: a Role and a ClusterRole called `admin` are two objects, and calling them
+    // "the same grant" is the collision the ranking already fixed (review of #158, Codex).
+    const roleKeys = [...new Set(n.grants.map((g) => `${g.role_kind}/${g.role_name}`))];
+    const roles = [...new Set(n.grants.map((g) => g.role_name))];
+    const direct = n.grants.some((g) => !g.via_group);
+    let meta = viaGroups.length ? `via ${andList(viaGroups)}` : "";
+    if (viaGroups.length > 1 && roleKeys.length === 1) meta += ` — ${viaGroups.length === 2 ? "two" : viaGroups.length} paths to the same grant`;
+    if (direct) meta = [meta, "granted to you directly"].filter(Boolean).join("; ");
+    const right = n.covered && top ? `<span class="none">covered by ${esc(top)}</span>` : roles.map(rolePill).join("");
+    const name = `${esc(n.name)}${n.platform ? '<span class="plat">platform namespace</span>' : ""}`;
+    return homeRow(homeMain(name, meta) + right, `data-ns="${esc(n.name)}"`);
+  });
+  const nsCovered = a.namespaces_covered;
+  const nsCount2 = nsCount && top ? (nsCovered === nsCount ? " · all already covered" : nsCovered ? ` · ${nsCovered} already covered` : "") : "";
+  const namespaces = `<section class="card c-ns"><h2>Namespaces you can reach <span class="count">${nsCount}${nsCount2}</span></h2>
+    ${nsRows.length ? `<div class="hlist">${nsRows.join("")}</div>` : `<div class="empty-note">No namespaced grant reaches you on ${esc(cluster)}.</div>`}</section>`;
+
+  // Direct grants: the governance exception, shown to the person who holds it. Omitted at zero —
+  // the answer already says "0 direct grants", and an empty card would only repeat it.
+  const consoleNs = "openshift-console-user-settings";
+  const directRows = d.direct.map((g) => homeRow(
+    homeMain(esc(g.binding_namespace || "cluster-wide"), "granted to you directly, not through a group") + rolePill(g.role_name),
+    g.binding_namespace ? `data-ns="${esc(g.binding_namespace)}"` : ""));
+  const directFoot = d.direct.length && d.direct.every((g) => g.binding_namespace === consoleNs)
+    ? "Created by the OpenShift console to store your own console preferences — expected, not a governance exception."
+    : "A grant naming you rather than a group survives your removal from every group — the exception an access review looks for.";
+  const direct = d.direct.length
+    ? `<section class="card c-direct"><h2>${d.direct.length === 1 ? "Direct grant" : "Direct grants"} <span class="count">${d.direct.length}</span></h2>
+        <div class="hlist">${directRows.join("")}</div><div class="foot">${directFoot}</div></section>`
+    : "";
+
+  // Your groups: the one that gives the top role first, then what each grants; the long tail folded.
+  const show = view.homeShow;
+  const granting = a.groups.filter((g) => g.grants), idle = a.groups.filter((g) => !g.grants);
+  const groupMeta = (g) => {
+    if (g.gives_top) {
+      const peers = granting.filter((x) => x.gives_top).length;
+      return peers === 1 ? `the one that gives you ${esc(top)}` : `one of the ${peers} that give you ${esc(top)}`;
+    }
+    const parts = [];
+    if (g.cluster_wide_roles.length) parts.push(`cluster-wide ${g.cluster_wide_roles.map(esc).join(", ")}`);
+    if (g.namespaces.length) parts.push(plural(g.namespaces.length, "namespace grant", "namespace grants"));
+    return parts.join(" · ");
+  };
+  const groupRight = (g) => g.gives_top ? `<span class="scope">cluster ${esc(top)}</span>` : `<span class="scope">${plural(g.grants, "grant", "grants")}</span>`;
+  const groupRow = (g) => homeRow(homeMain(esc(g.group_name), groupMeta(g)) + groupRight(g), `data-group="${esc(g.group_name)}"`);
+  const lead = granting.slice(0, HOME_FOLD_AFTER), rest = granting.slice(HOME_FOLD_AFTER);
+  const groupRows = lead.map(groupRow);
+  if (rest.length) {
+    if (show.granting) groupRows.push(...rest.map(groupRow));
+    else groupRows.push(homeRow(homeMain(`${rest.length} more ${rest.length === 1 ? "group grants" : "groups grant"} access`,
+      rest.slice(0, 4).map((g) => esc(g.group_name)).join(" · ") + (rest.length > 4 ? " · …" : ""))
+      + `<span class="none">show all</span>`, `data-home-show="granting"`));
+  }
+  if (idle.length) {
+    if (show.idle) groupRows.push(...idle.map((g) => homeRow(homeMain(esc(g.group_name), "grants nothing here") + `<span class="none">no grant</span>`, `data-group="${esc(g.group_name)}"`)));
+    else groupRows.push(homeRow(homeMain(`${plural(idle.length, "group grants", "groups grant")} nothing here`,
+      idle.slice(0, 6).map((g) => esc(g.group_name)).join(", ") + (idle.length > 6 ? " and others" : ""))
+      + `<span class="none">show all</span>`, `data-home-show="idle"`));
+  }
+  const groups = `<section class="card c-groups"><h2>Your groups <span class="count">${a.groups_total} · ${a.groups_granting} grant access</span></h2>
+    ${groupRows.length ? `<div class="hlist">${groupRows.join("")}</div>` : `<div class="empty-note">You are in no synced group on ${esc(cluster)}.</div>`}
+    <div class="foot">A group that grants nothing is normal — it may exist for another cluster, or be waiting on a binding.</div></section>`;
+
+  return `<div class="home">${answer}${changed}${wide}${namespaces}${direct}${groups}</div>`;
+}
+
+function wireHome() {
+  // The folds are view state, never a position: expanding "show all" is not a place to come back to.
+  document.querySelectorAll("[data-home-show]").forEach((el) => {
+    el.onclick = (e) => { e.stopPropagation(); view.homeShow[el.dataset.homeShow] = true; render(); };
+  });
+  // A change on another cluster drills into that cluster's group page: the cluster is part of the
+  // position, so Back returns here with this cluster restored (applyPosition owns the switch).
+  document.querySelectorAll(".home [data-group][data-cluster]").forEach((el) => {
+    el.onclick = (e) => {
+      e.stopPropagation();
+      navigate({ page: "groups", group: el.dataset.group, cluster: el.dataset.cluster, user: null, ns: null });
+      render(); refresh();
+    };
+  });
+  document.querySelectorAll("[data-nav-groups]").forEach((el) => {
+    el.onclick = (e) => {
+      e.stopPropagation();
+      navigate({ page: "groups", cluster: el.dataset.navGroups, group: null, user: null, ns: null });
+      render(); refresh();
+    };
+  });
+}
+
 function myAccessPage(d) {
   const rows = d.bindings || [];
   const banner = scopeBanner("access", d);
@@ -4512,7 +4745,12 @@ function render() {
   const focusedId = document.activeElement && document.activeElement.id;
   renderFilters();
   const main = $("main");
-  if (view.page === "lookup") {
+  if (view.page === "home") {
+    main.innerHTML = homePage();
+    wireDrilldown();
+    wireNsPage();
+    wireHome();
+  } else if (view.page === "lookup") {
     main.innerHTML = lookupPage();
     wireDrilldown();
     wireNsPage();
@@ -4862,6 +5100,11 @@ async function refresh(opts = {}) {
       // handler paints from `data` before it fetches, and the lookup's whole list painted under the
       // Groups tab's `empty` select for the length of a fetch (review of #174, OB1 — measured: 4 rows
       // under "empty", then 2).
+      // Home (#158): one payload, the reader's own — refused (403) when the proxy passed no
+      // identity, which the page says in its own words rather than as an API error.
+      if (view.page === "home") {
+        want.home = guard403(get(`${base}/home`));
+      }
       if (view.page === "lookup") {
         groupsState = "all";
         want.groups = get(`${base}/groups?state=all`);
@@ -5053,6 +5296,7 @@ async function refresh(opts = {}) {
     }
     if ("userBindings" in got) data.userBindings = got.userBindings;
     if ("namespaces" in got) data.namespaces = got.namespaces;
+    if ("home" in got) data.home = got.home;   // #158
     if ("ns" in got) data.ns = got.ns;
     // An AUTOMATIC refresh that changed nothing must not touch the DOM. render() replaces #main
     // wholesale, so an unconditional repaint every interval throws away the reader's scroll
@@ -5068,7 +5312,7 @@ async function refresh(opts = {}) {
     const fingerprint = JSON.stringify([
       data.clusters, data.alerts, data.alertsScope, data.groupsyncs, data.groups,
       data.groupsMeta, data.group, data.user, data.users, data.events, data.logins, data.access,
-      data.usage, data.findings, data.operatorConfigs, data.userBindings, data.whoami, data.myAccess,
+      data.usage, data.findings, data.operatorConfigs, data.userBindings, data.whoami, data.myAccess, data.home,
       data.reportCatalog, data.reportRuns,
       data.fleet,   // #172: the fleet tables render from it
       // #167: the namespace list and page ride the same wire (review, Codex — left out, a poll whose

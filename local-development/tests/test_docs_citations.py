@@ -207,10 +207,11 @@ REVIEW_ARTIFACTS = (
     "REVIEW_overview_relayout.md",
     # PR #181 (#167 namespaces) review record: quotes the reviewed head's line numbers and the
     # pre-fix copy; point-in-time by construction.
-    "REVIEW_namespaces.md",)
     "REVIEW_namespaces.md",
     # PR #183 (#174 lookup) review record: quotes 76ebaff's line numbers and pre-fix copy; point-in-time.
     "REVIEW_lookup.md",
+    # PR #186 (#158 Home) review record: quotes the reviewed heads' line numbers and pre-fix copy.
+    "REVIEW_home.md",
 )
 
 def _markdown() -> list[pathlib.Path]:

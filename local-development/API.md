@@ -630,6 +630,61 @@ prefix — a grants-nobody binding with no alert.
 Direct bindings only. Role rules are never fetched or expanded, so this is not an
 effective-permission calculation and must not be presented as one.
 
+### `GET /api/clusters/{cluster_id}/home`
+
+Home — the page every reader lands on (#158): the viewer's own access on one cluster, answering "what can I
+reach, and how?" for the person asking and nobody else. **Self-scoped by definition, on every tier**: an
+administrator sees their own access here, never everyone's, so the payload for a name is identical whichever
+tier resolves it (only `scope` says which). The identity is the proxy's; with none there is nothing to scope
+to and the request is refused with 403 — never a name the caller typed.
+
+```json
+{
+  "cluster": "crc-local", "viewer": "jane.smith", "scope": "self",
+  "full_name": "Jane Smith", "providers": ["ldap-local"],
+  "answer": {
+    "top_role": "admin",
+    "cluster_wide": [{"role_name": "admin", "role_kind": "ClusterRole", "via_groups": ["app-ocp-rbac-alpha-cluster-admin"],
+                      "direct": false, "bindings": 1, "covered_by": null},
+                     {"role_name": "edit", "role_kind": "ClusterRole", "via_groups": ["…", "…", "…"],
+                      "direct": false, "bindings": 3, "covered_by": "admin"}],
+    "cluster_wide_bindings": 5,
+    "namespaces": [{"name": "demo-qa", "platform": false, "covered": true,
+                    "grants": [{"role_name": "edit", "role_kind": "ClusterRole", "via_group": "app-ocp-rbac-demo-ns-developer",
+                                "binding_name": "demo-qa-devs", "covered": true}]}],
+    "namespaces_covered": 3,
+    "groups": [{"group_name": "app-ocp-rbac-alpha-cluster-admin", "sync_provider": "ldap-groupsync_ldap",
+                "first_seen_at": "…", "last_seen_at": "…", "grants": 1, "cluster_wide_roles": ["admin"],
+                "namespaces": [], "gives_top": true}],
+    "groups_total": 18, "groups_granting": 7, "direct_count": 1
+  },
+  "direct": [{"binding_kind": "RoleBinding", "binding_namespace": "openshift-console-user-settings", "binding_name": "user-settings-jane",
+              "role_kind": "Role", "role_name": "user-settings-jane-role", "user_name": "jane.smith", "is_platform": 0}],
+  "changes": {"items": [{"kind": "single", "cluster": "prod-east", "change": "added", "group_name": "platform-team-cluster-admin", "observed_at": "…"},
+                        {"kind": "flap", "cluster": "crc-local", "group_name": "app-ocp-rbac-groupsync-ns-auditor", "changes": 5, "span_minutes": 33, "latest": "added", "observed_at": "…"},
+                        {"kind": "batch", "cluster": "crc-local", "change": "added", "count": 17, "groups": ["…"], "observed_at": "…"}],
+              "more": 0, "changes": 23, "since": "…"},
+  "retention": {"window_days": 90, "retained_since": "…"},
+  "elsewhere": [{"cluster": "prod-east", "memberships": 17, "status": "ok", "last_poll": "…"}],
+  "memberships_total": 36
+}
+```
+
+`answer` is derived once, server-side (`gsd/home.py`), so the page's sentences and the numbers under them
+change together. `top_role` is the strongest of the four built-in ClusterRoles held cluster-wide
+(cluster-admin ⊃ admin ⊃ edit ⊃ view), through a group or directly; a grant is `covered` when that role is at
+least as strong, and a cluster-wide role is `covered_by` a strictly stronger one — a custom role is never
+covered and never covers, since its meaning is the cluster's. `namespaces` are every namespace a binding
+reaches through the viewer's groups or names them in directly (`via_group` null), `platform` for the
+platform's own (`openshift-*`, `kube-*`, `default`). `groups` are every synced group the viewer is in, the
+one that gives `top_role` first, then by what each grants. `direct` are the bindings naming the viewer
+(their own only). `changes` is their membership history over the last 30 days on this cluster and on every
+cluster in `elsewhere`, folded: a group with three or more changes is one `flap` line, three or more groups
+changing in one sync one `batch` line, the rest `single`; newest first, twelve lines and `more`.
+`elsewhere` names the other enabled clusters that treat this identity as their own, with the viewer's
+membership count and the cluster's last poll; a cluster whose identity policy withholds the host's username
+is not listed.
+
 ### `GET /api/clusters/{cluster_id}/user-bindings`
 
 Roles granted **directly to a person** rather than to a group. The governance finding in its
