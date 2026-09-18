@@ -83,6 +83,9 @@ longer the documented path and nothing needs to be carried between machines.
 The CRC internal registry needs nothing from here at all: `release-crc.sh` authenticates with
 `podman login -u kubeadmin -p "$(oc whoami -t)"`, a token minted at login.
 
+Storing the credentials by hand, storing them in GitHub with `gh`, keeping the `gh` session
+authenticated, and rotating the token are all in `docs/handoff/registry-credentials.md`.
+
 ### 2.2 — Commit/push every at-risk repo change (crc.yaml is the flagged file)
 
 **group-sync-dashboard `environments/crc.yaml` — the operator-flagged uncommitted edit (67 insertions:**
