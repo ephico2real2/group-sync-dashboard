@@ -43,7 +43,17 @@ PR that bumps the chart), never left as a dangling "follow-up".
 |---|---|---|
 | Codex, GPT-5.6, highest reasoning | plugin agent `codex:codex-rescue` with **`--model gpt-5.6-sol --effort xhigh`** stated in the request; CLI form `codex exec --skip-git-repo-check -m gpt-5.6-sol -c model_reasoning_effort="xhigh" …` | probe from the repo root; the session jsonl under `~/.codex/sessions` records `"effort":"xhigh"`. The id `gpt-5.6` is REFUSED on this ChatGPT account. |
 | Cursor, Grok 4.6 high fast (ZDR) | `cursor agent -p --mode ask --output-format text --trust --model cursor-grok-4.6-high-fast "<brief>"` | probe from the repo root returns the expected words; `cursor agent models` lists the ids. |
-| **OB1** (Obi-Wan) — Anthropic Fable 5.1, inside Claude Code | the `Agent` tool with **`model: "fable"`** (`claude-fable-5-1`), `subagent_type` general-purpose, the brief as its ENTIRE prompt plus the read-only rule below; NOT Cursor's `claude-fable-5-thinking-*` (the operator's naming and correction, 2026-09-18; Cursor's Fable is also capped by the Pro+ usage limit) | the agent's completion notification carries its answer; it runs with the session's tools, so its `bash -n` / read-only `kubectl` / `curl` outputs are in its report. |
+| Cursor, Claude Fable 5 **high** thinking (**NO ZDR**) | `cursor agent -p --mode ask --output-format text --trust --model claude-fable-5-thinking-high "<brief>"` | probe returns "Claude Fable 5"; `cursor agent models` lists the id. The lighter tier — the confirmation (second) pass, or a smaller PR. |
+| Cursor, Claude Fable 5 **extra-high** thinking (**NO ZDR**) | `cursor agent -p --mode ask --output-format text --trust --model claude-fable-5-thinking-xhigh "<brief>"` | probe returns "Claude Fable 5"; `cursor agent models` lists the id. The deepest tier — the primary (first) pass / complex design; matches Codex xhigh. Cursor labels the 5.1 family "Claude Fable 5". |
+| **OB1** (Obi-Wan) — Anthropic Fable 5.1, inside Claude Code | the `Agent` tool with **`model: "fable"`** (`claude-fable-5-1`), `subagent_type` general-purpose, the brief as its ENTIRE prompt plus the read-only rule below; the same Fable as Cursor's `claude-fable-5-thinking-*` rows above by another route — the pivot to OB1 exists because Cursor's Fable is capped by the Pro+ usage limit (measured 2026-09-17: the first launch hit the monthly limit); the Cursor Fable rows stay (the operator, 2026-09-17: "Dont drop the cursor fable role. We only pivot to ob1 because our token issues with cursor fable") | the agent's completion notification carries its answer; it runs with the session's tools, so its `bash -n` / read-only `kubectl` / `curl` outputs are in its report. |
+
+The Cursor reviewers are **independent** — call either, or both; Fable is the *third* reviewer beside
+Grok + Codex, through Cursor while its usage limit allows and through OB1 when it does not. **ZDR vs NO ZDR is the deciding trade:** Grok
+4.6 is zero-data-retention; the Fable ids are marked `(NO ZDR)`, so a review sends the repo's code + the
+brief to a provider that may **retain** it — weigh that against Fable's stronger reasoning before using it
+on sensitive code (a design/plan review over markdown is lower-sensitivity than shipping code). Which
+Cursor model is the session default is recorded in memory ([[cursor-fable-reviewer]]); absent that, Grok
+is the ZDR-safe default.
 
 Without the flags the plugin leaves model and effort UNSET and Cursor runs on `auto` — that is what the
 first passes on #69–#71 ran on, and the operator noticed.
