@@ -110,3 +110,55 @@ project design record and must live in the repo, not as an external link:
   Reference the committed file (its repo path) instead.
 - **Link the committed mockup from the issue** it belongs to, so the design and its tracking issue
   stay together.
+
+## Verify before you publish — code review does not catch these
+
+Never publish a page (artifact or committed mock) without **rendering it headlessly and looking at
+the screenshot**. Playwright + Chromium are in `local-development/.venv`; a render is ~5 seconds.
+Syntax checks are not enough — `node --check` passes on every failure listed below.
+
+1. **Render and Read the PNG.** A screenshot that times out is itself a finding.
+2. **Drive every interactive control** and assert the resulting state (`getComputedStyle`, the
+   attribute you set, `location.search`) — not merely that no JS error was thrown.
+3. **Re-render at 375 / 393 / 768 / 1280** and assert `documentElement.scrollWidth <= innerWidth`,
+   plus check nothing is clipped inside an `overflow:hidden` card.
+
+Measured failures from one session (2026-09-17), each invisible in review:
+
+- A `MutationObserver` observing a subtree that its own callback wrote to → infinite loop, **blank
+  page**. "No JS errors" was true throughout.
+- A `<select>` that did nothing: the handler was appended by replacing `</script>` on a page with
+  **no script block**.
+- `<span>` used for a meter fill and for stacked name/meta lines — `height:100%` and `margin-top`
+  are ignored while inline, so bars rendered empty and two lines collapsed into one. Twice.
+- At 375px: a top bar **321px** past the viewport, and a table **242px** past it inside a card with
+  `overflow:hidden` — columns unreachable, not merely clipped. Desktop was perfect.
+- A badge computed from a bucket's rows rather than the bucket, so "platform namespace" got pasted
+  onto group and role headings after a pivot.
+
+## Appearance and colour are shell state, never page state
+
+Theme is global. Put `data-theme` (Auto/Light/Dark) and `data-palette` (colour-vision) on `<html>`
+and define every colour as a token at `:root`; a view then inherits the theme **by existing**, with
+no per-page wiring for anyone to forget. Specifics that matter:
+
+- The control belongs in the **persistent shell**, never inside a render function that repaints on a
+  poll — it would be destroyed under the user mid-interaction.
+- Apply the stored/URL theme in a **head-blocking inline script**, or every load flashes the wrong
+  theme first.
+- Persist to the **URL** (`?mode=`, `?theme=`) *and* `localStorage`, URL winning on load, so a shared
+  link opens as the sender saw it.
+- Offer colour-vision palettes from **Okabe–Ito**. Deuteranopia/protanopia (~8% of men) cannot
+  separate red from green — so a green/amber "good/warn" pair is the worst possible default and
+  "good" must move onto blue. Tritanopia is blue–yellow and needs the *opposite* fix; one
+  "colour-blind mode" is wrong.
+- **Colour may never be the only carrier of state.** Keep the word ("covered by admin", "flapping"),
+  and where a bar encodes a threshold, draw the threshold on the track so position reads without any
+  colour perception.
+
+## Mock with real data, measured
+
+Populate mockups from the actual cluster — `oc`, the public `/metrics`, or a read-only query against
+the pod's SQLite — never invented values. Real data changes the design: it surfaced a flapping
+membership, a three-day-stale cluster, redundant grants already covered by cluster-admin, and groups
+that grant nothing. If a number cannot be measured, say so rather than inventing a plausible one.
