@@ -3457,6 +3457,34 @@ class TestHome:
         assert "paths to the same grant" in rows["same"], rows
         assert "paths to the same grant" not in rows["mixed"], rows
 
+    def test_the_labels_keep_the_units_of_the_numbers_beside_them(self, page, scoped_server):
+        """`answer.namespaces` are NAMESPACES; the sub-line called their count "namespace grants", so the
+        deployed page read "covers 12 of your 13 namespace grants" over 13 namespaces. And the tag read
+        "1 / 1 groups grant" at one (Codex, review of #158)."""
+        p = _home(page, scoped_server)
+        p.evaluate("""() => {
+          const a = data.home.answer;
+          a.top_role = "admin"; a.namespaces_covered = 2;
+          a.namespaces = ["one", "two", "three"].map(n => ({name: n, platform: false, covered: n !== "three",
+            grants: [{role_name: "edit", role_kind: "ClusterRole", via_group: "g", binding_name: "b", covered: n !== "three"}]}));
+          a.groups_total = 1; a.groups_granting = 1;
+          render();
+        }""")
+        sub = p.locator(".home .answer .sub").inner_text()
+        assert "namespaces you reach" in sub and "namespace grants" not in sub, sub
+        tags = " | ".join(p.locator(".home .tag").all_inner_texts())
+        assert "1 / 1 group grants" in tags, tags
+
+    def test_a_capped_history_says_its_counts_are_a_lower_bound(self, page, scoped_server):
+        """Each cluster's history is read up to a cap, so on a busy one the card's count is a lower bound;
+        showing it as complete would overclaim (Codex, review of #158)."""
+        p = _home(page, scoped_server)
+        p.evaluate("() => { data.home.changes.capped_clusters = ['crc-local', 'prod-east']; render(); }")
+        foot = p.locator(".home .c-changes .foot").inner_text()
+        assert "at least this many" in foot and "crc-local" in foot and "prod-east" in foot, foot
+        p.evaluate("() => { data.home.changes.capped_clusters = []; render(); }")
+        assert "at least this many" not in p.locator(".home .c-changes .foot").inner_text()
+
     def test_the_page_holds_at_375(self, page, scoped_server):
         page.set_viewport_size({"width": 375, "height": 740})
         p = _home(page, scoped_server)

@@ -123,6 +123,39 @@ Contrast on the actual Home surfaces, light/dark: `--warn` on `--page-2` 4.40 / 
 4.16; `.tag.rwx` 6.88 / 8.01 (passes) and `.flap` on the card (passes). The failures are the same shape as
 #184's and are posted there.
 
+### H — Codex's second reading, over the committed tree — accepted
+Codex re-ran the whole brief against `e3062f5` (the tree with both passes and the evidence folder in) and
+refused to call it done. Three more:
+- **"namespace grants" counted namespaces.** `answer.namespaces` are places; the sub-line called their
+  count "namespace grants", so the deployed capture in `reports/2026-09-18_home-158/` literally reads
+  *"covers 12 of your 13 namespace grants"* over thirteen namespaces. The evidence folder made the defect
+  concrete, which is an argument for committing evidence. Now "the namespaces you reach". The tag beside it
+  read "1 / 1 groups grant" at one.
+- **The per-cluster history cap was silent.** Each cluster's history is read up to `HOME_EVENTS_LIMIT`, so
+  on a busy cluster every count on the card is a lower bound presented as complete. The payload names the
+  capped clusters and the card says the counts are at least that many.
+- **Home's own contrast.** Measured, both themes: `--warn` on `--page-2` 4.40:1 (light), `--text-muted` on
+  `--page-2` 4.21:1, and muted under the 10 % hover wash 4.05:1 — Grok had flagged the shape, Codex the
+  numbers, and they agree. The root cause is that `--text-muted` only clears 4.68:1 on the card to begin
+  with, so any wash sinks it: that token's headroom is #184's. What is Home's own — which token goes on a
+  washed row, and which surface a pill sits on — is fixed here: the rows carry `--text-secondary`, the wash
+  drops to 6 %, and the amber pills carry the card's own surface instead of `--page-2`. Measured after:
+  every Home pair clears 4.5:1 in both themes with headroom (7.09 for row text on the wash, 4.89 for the
+  amber pills), pinned by `test_home_text_clears_aa_on_the_surfaces_it_actually_sits_on` across all ten
+  theme × palette variants — with a docstring saying it does NOT cover the shared tokens.
+
+### I — the CHANGELOG said two things that had stopped being true (Codex) — accepted
+It claimed the payload is "byte-identical whichever tier resolves it" — my own test pops `scope` and the
+window's clock-derived start before comparing, so it was never byte-identical — and it quoted the removal
+sentence the page no longer says. Both corrected. A changelog that quotes copy the product does not have is
+the drift these records exist to prevent.
+
+### J — the policy sweep did not cover the new endpoint (Codex) — accepted
+`CLUSTER_ENDPOINTS` in `tests/test_multicluster_visibility.py` is the sweep that proves every cluster-scoped
+handler answers `hidden` exactly as it answers `unknown`. `home` was not in it — nor, it turns out, was
+`namespaces` from #167. Both added; both pass, because `require_cluster` guards the handler — but the
+guard is what pins it, and the leak Grok found was in the one loop that did not go through it.
+
 ### The integration CI found
 PR CI builds the merge of this branch into its base, and `feat/drilldown` had meanwhile gained OB3's
 `TestTheWalksLookupStep`, whose setup loads the app and waits for the Overview's hero. Home's route change
@@ -136,6 +169,6 @@ relocated — found by CI on the merge, not by either branch's own suite.
 ## Outcome
 Four findings from one reviewer, all four accepted with their fixes traced before applying (A's fix was
 rewritten to remove a duplicated rule rather than add a fifth copy; A's second test was rewritten because the
-first version passed before the fix). Nine tests fail on `af3d47d` and pass after. Full browser suite 364
-passed; non-UI 3420 passed, 13 skipped. Codex's pass on the same brief and the third reviewer's confirmation
-are recorded below when they land.
+first version passed before the fix). Nine tests fail on `af3d47d` and pass after. Full browser suite 374 passed; non-UI 3438 passed, 13 skipped, after Codex's second reading. The third
+reviewer's confirmation (OB1 or OB2 when the Fable quota resets, per the operator's rule) is recorded below
+when it lands.

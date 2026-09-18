@@ -384,3 +384,20 @@ def test_the_cross_cluster_loop_consults_no_tier_resolver(tmp_path):
         body = client.get("/api/clusters/crc/home", headers=ALICE).json()
     assert [e["cluster"] for e in body["elsewhere"]] == ["east", "west"], "remote-sar still vouches for the name"
     assert calls == [], f"the remote cluster's SubjectAccessReview ran inside the snapshot: {calls}"
+
+
+def test_the_history_cap_is_named_on_the_wire(tmp_path, monkeypatch):
+    """A cluster whose history hits the per-cluster cap makes every count a lower bound, so the payload
+    says which clusters those were rather than letting the page present them as complete (Codex, review
+    of #158). Both directions, so the field means something: capped at 2, not capped at the real limit."""
+    import gsd.api as api
+    db = str(tmp_path / "capped.db")
+    _seed(db)
+    with TestClient(_app(db, {})) as client:
+        uncapped = client.get("/api/clusters/crc/home", headers=ALICE).json()["changes"]
+    assert uncapped["capped_clusters"] == [], uncapped["capped_clusters"]
+    assert uncapped["changes"] > 2, "the seed must exceed the cap this test lowers to, or it proves nothing"
+    monkeypatch.setattr(api, "HOME_EVENTS_LIMIT", 2)
+    with TestClient(_app(db, {})) as client:
+        capped = client.get("/api/clusters/crc/home", headers=ALICE).json()["changes"]
+    assert "crc" in capped["capped_clusters"], capped["capped_clusters"]

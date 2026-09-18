@@ -1834,8 +1834,14 @@ def build_app(
         direct = store.direct_user_bindings(cluster_id, include_platform=True, user_name=me)
         record = store.user_record(cluster_id, me)
         since = (datetime.now(UTC) - timedelta(days=HOME_CHANGES_DAYS)).strftime("%Y-%m-%dT%H:%M:%SZ")
-        events = [dict(e, cluster=cluster_id)
-                  for e in store.membership_events(cluster_id, user_name=me, limit=HOME_EVENTS_LIMIT)]
+        # Each cluster's history is capped, so a card that showed the count as complete would be
+        # overclaiming on a busy one: the clusters that hit the cap ride along and the page says so
+        # (review of #158, Codex).
+        capped: list[str] = []
+        own = store.membership_events(cluster_id, user_name=me, limit=HOME_EVENTS_LIMIT)
+        if len(own) >= HOME_EVENTS_LIMIT:
+            capped.append(cluster_id)
+        events = [dict(e, cluster=cluster_id) for e in own]
         counts = store.memberships_by_cluster(me)
         elsewhere = []
         for c in store.clusters():
@@ -1845,8 +1851,10 @@ def build_app(
             if not n:
                 continue   # "you're also on" means a membership there; a cluster with none is not theirs
             elsewhere.append({"cluster": c["id"], "memberships": n, "status": c["status"], "last_poll": c["last_poll"]})
-            events += [dict(e, cluster=c["id"])
-                       for e in store.membership_events(c["id"], user_name=me, limit=HOME_EVENTS_LIMIT)]
+            theirs = store.membership_events(c["id"], user_name=me, limit=HOME_EVENTS_LIMIT)
+            if len(theirs) >= HOME_EVENTS_LIMIT:
+                capped.append(c["id"])
+            events += [dict(e, cluster=c["id"]) for e in theirs]
         return {
             "cluster": cluster_id,
             "viewer": me,
@@ -1855,7 +1863,7 @@ def build_app(
             "providers": record["providers"] if record else [],
             "answer": derive_answer(groups, via, direct),
             "direct": direct,
-            "changes": group_changes(events, since),
+            "changes": dict(group_changes(events, since), capped_clusters=sorted(capped)),
             "retention": history_retention("membership_event", store.history_retained_since(cluster_id)),
             "elsewhere": elsewhere,
             "memberships_total": counts.get(cluster_id, 0) + sum(e["memberships"] for e in elsewhere),

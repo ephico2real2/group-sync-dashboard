@@ -3024,9 +3024,9 @@ function homePage() {
   if (top && nsCount) {
     // "all 1 of your namespace grant" is not a sentence: at one, the count IS the word.
     sub.push(a.namespaces_covered === nsCount
-      ? (nsCount === 1 ? `It already covers your one namespace grant.`
-                       : `It already covers all <b>${nsCount}</b> of your namespace grants.`)
-      : `It covers <b>${a.namespaces_covered}</b> of your <b>${nsCount}</b> namespace grants.`);
+      ? (nsCount === 1 ? `It already covers the one namespace you reach.`
+                       : `It already covers all <b>${nsCount}</b> namespaces you reach.`)
+      : `It covers <b>${a.namespaces_covered}</b> of the <b>${nsCount}</b> namespaces you reach.`);
   }
   sub.push(a.groups_total
     ? `<b>${a.groups_granting}</b> of your <b>${a.groups_total}</b> ${a.groups_total === 1 ? "group grants" : "groups grant"} access; <b>${a.direct_count}</b> direct ${a.direct_count === 1 ? "grant" : "grants"}.`
@@ -3034,7 +3034,7 @@ function homePage() {
   const tags = [
     top ? `<span class="tag rwx">cluster-wide ${esc(top)}</span>` : `<span class="tag">no cluster-wide role</span>`,
     `<span class="tag">${plural(nsCount, "namespace", "namespaces")}</span>`,
-    `<span class="tag">${a.groups_granting} / ${a.groups_total} groups grant</span>`,
+    `<span class="tag">${a.groups_granting} / ${a.groups_total} ${a.groups_total === 1 ? "group grants" : "groups grant"}</span>`,
     a.direct_count ? `<span class="tag warn">${plural(a.direct_count, "direct grant", "direct grants")}</span>` : "",
   ].join("");
   const stalePills = d.elsewhere.filter((c) => c.status !== "ok" || !c.last_poll || Date.now() - Date.parse(c.last_poll) > 86_400_000)
@@ -3067,6 +3067,12 @@ function homePage() {
   // `window_days: 0` is "kept forever" (history_retention), so the oldest row held is where the dashboard
   // STARTED watching, not a cut — saying "pruned" of it would invent a deletion (review of #158, Codex).
   const r = d.retention || {};
+  // A cluster whose history hit the per-cluster cap makes every count here a lower bound; saying the
+  // number plainly would overclaim (review of #158, Codex).
+  const capped = (ch.capped_clusters || []);
+  const capNote = capped.length
+    ? ` Only the most recent changes were read for ${andList(capped)}, so the counts here are at least this many.`
+    : "";
   const changeFoot = !r.retained_since
     ? "Every change since this dashboard started watching your groups."
     : r.window_days
@@ -3078,7 +3084,7 @@ function homePage() {
   const changed = `<section class="card c-changes"><h2>What changed <span class="count">last ${windowDays} days</span></h2>
     ${changeRows.length ? `<div class="hlist">${changeRows.join("")}${ch.more ? `<div class="hrow static"><span class="main"><span class="meta">${plural(ch.more, "more change", "more changes")} in the window.</span></span></div>` : ""}</div>`
       : `<div class="empty-note">No change to your group memberships in the last ${windowDays} days.</div>`}
-    <div class="foot">${changeFoot}</div></section>`;
+    <div class="foot">${changeFoot}${capNote}</div></section>`;
 
   // Cluster-wide: the roles held everywhere, and which of them a stronger one already includes.
   const wideRows = a.cluster_wide.map((w) => {
