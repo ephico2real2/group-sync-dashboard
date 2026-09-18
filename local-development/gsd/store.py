@@ -286,6 +286,18 @@ CREATE INDEX IF NOT EXISTS binding_event_by_subject
 CREATE INDEX IF NOT EXISTS binding_event_by_time
     ON binding_event(cluster_id, observed_at);
 
+-- THE FIRST-OBSERVATION MARKER, one row per (cluster, stream), consumed once and kept for good.
+-- A baseline has to mean "existed before this dashboard started watching", and the only honest
+-- way to know that is to remember that we looked — not to infer it from what is in the tables:
+-- an empty first poll leaves no rows, so the NEXT poll would read as the first observation
+-- (Codex, review of #177: `first_empty=0 … second_baseline=1`), and retention that emptied a
+-- table would reopen the baseline. streams: membership | binding:Group | binding:User.
+CREATE TABLE IF NOT EXISTS observation_state (
+    cluster_id          TEXT NOT NULL,
+    stream              TEXT NOT NULL,
+    PRIMARY KEY(cluster_id, stream)
+);
+
 -- Health of the namespace-configuration-operator's CRs, replaced on the binding cadence.
 -- Reconcile conditions ONLY: these CRs template the RoleBindings that give synced groups
 -- their access, so a failing one means RBAC silently stops reconciling — but they have no
@@ -848,6 +860,30 @@ _MIGRATIONS: list[tuple[int, str, list[str]]] = [
             # Existing rows keep 0: the flood already recorded on an upgraded store stays as it
             # was written; only observations from here on are classified.
             "ALTER TABLE membership_event ADD COLUMN baseline INTEGER NOT NULL DEFAULT 0",
+        ],
+    ),
+    (
+        14,
+        "observation_state: the first-observation marker, consumed once per stream (review of #177, C4)",
+        [
+            """CREATE TABLE IF NOT EXISTS observation_state (
+                   cluster_id          TEXT NOT NULL,
+                   stream              TEXT NOT NULL,
+                   PRIMARY KEY(cluster_id, stream)
+               )""",
+            # Every cluster the store already knows has been observed: seed the markers so an
+            # upgrade never re-describes existing rows as a first observation.
+            """INSERT OR IGNORE INTO observation_state(cluster_id, stream)
+               SELECT DISTINCT cluster_id, 'membership' FROM membership_event""",
+            """INSERT OR IGNORE INTO observation_state(cluster_id, stream)
+               SELECT DISTINCT cluster_id, 'membership' FROM group_member""",
+            """INSERT OR IGNORE INTO observation_state(cluster_id, stream)
+               SELECT DISTINCT cluster_id, 'binding:Group' FROM rbac_group_binding""",
+            """INSERT OR IGNORE INTO observation_state(cluster_id, stream)
+               SELECT DISTINCT cluster_id, 'binding:User' FROM user_binding""",
+            """INSERT OR IGNORE INTO observation_state(cluster_id, stream)
+               SELECT DISTINCT cluster_id, 'binding:' || subject_kind FROM binding_event
+                WHERE subject_kind IN ('Group', 'User')""",
         ],
     ),
 ]
@@ -1599,6 +1635,20 @@ class Store:
                  for r in rows],
             )
 
+    def _first_observation(self, conn: sqlite3.Connection, cluster_id: str, stream: str) -> int:
+        """Consume a stream's baseline once — independently of current rows and of retention.
+
+        Returns 1 on the observation that consumes it, 0 ever after. Inside the caller's write
+        transaction, so a rolled-back observation does not spend the marker.
+        """
+        seen = conn.execute(
+            "SELECT 1 FROM observation_state WHERE cluster_id=? AND stream=?", (cluster_id, stream),
+        ).fetchone()
+        if seen:
+            return 0
+        conn.execute("INSERT INTO observation_state(cluster_id, stream) VALUES(?,?)", (cluster_id, stream))
+        return 1
+
     def sync_members(
         self,
         cluster_id: str,
@@ -1636,12 +1686,9 @@ class Store:
             # cliff's window all depend on them) but flagged, so a consumer says "first observed"
             # rather than "added". A NEW group in an already-observed cluster is a real change
             # and is not flagged: only a cluster with neither members nor events is at baseline.
-            baseline = 0
-            if not existing:
-                seen = conn.execute(
-                    "SELECT 1 FROM membership_event WHERE cluster_id=? LIMIT 1", (cluster_id,)
-                ).fetchone()
-                baseline = 0 if seen else 1
+            # Consumed even when this observation is empty — otherwise the first later addition
+            # would be described as the cluster's first observation (review of #177, C4).
+            baseline = self._first_observation(conn, cluster_id, "membership")
 
             for group, members in memberships.items():
                 observed = set(members)
@@ -1986,10 +2033,10 @@ class Store:
         difference. Identity is (binding_kind, binding_namespace, binding_name, subject); the
         value compared is (role_kind, role_name), so a role change is one removed + one added.
 
-        Baseline: when this cluster has no current rows AND no events of this subject kind, this
-        is its first observation — every incoming row is flagged baseline=1. A refresh that
-        returns nothing for a cluster that had rows is a real mass removal and is recorded as
-        one; the poller never reaches here on a fetch failure (it returns before the replace).
+        Baseline: the stream's observation_state marker is consumed on its first observation —
+        empty or not — and every incoming row of that observation is flagged baseline=1. A
+        refresh that returns nothing for a cluster that had rows is a real mass removal and is
+        recorded as one; the poller never reaches here on a fetch failure.
         """
         def key(r):  # sqlite3.Row and dict both index by name
             return (r["binding_kind"], r["binding_namespace"], r["binding_name"], r["subject"] if "subject" in r.keys() else r[subject_field])
@@ -1998,13 +2045,7 @@ class Store:
         for r in incoming:
             k = (r["binding_kind"], r["binding_namespace"], r["binding_name"], r[subject_field])
             after[k] = (r["role_kind"], r["role_name"], int(r.get("is_platform", 0) or 0))
-        baseline = 0
-        if not before:
-            seen = conn.execute(
-                "SELECT 1 FROM binding_event WHERE cluster_id=? AND subject_kind=? LIMIT 1",
-                (cluster_id, subject_kind),
-            ).fetchone()
-            baseline = 0 if seen else 1
+        baseline = self._first_observation(conn, cluster_id, f"binding:{subject_kind}")
         counts = {"added": 0, "removed": 0}
         rows = []
         for k in sorted(set(before) | set(after)):
@@ -2048,8 +2089,11 @@ class Store:
             clause = "(subject_kind='User' AND subject_name=?)"
             params.append(viewer)
             if groups:
-                clause += f" OR (subject_kind='Group' AND subject_name IN ({','.join('?' * len(groups))}))"
-                params.extend(groups)
+                # One bound JSON parameter, not one placeholder per group: a viewer in more groups
+                # than SQLITE_LIMIT_VARIABLE_NUMBER made this raise "too many SQL variables"
+                # (Codex, review of #177, reproduced with setlimit). json_each is already relied on.
+                clause += " OR (subject_kind='Group' AND subject_name IN (SELECT value FROM json_each(?)))"
+                params.append(json.dumps(groups))
             sql += f" AND ({clause})"
         sql += " ORDER BY id DESC LIMIT ?"
         params.append(limit)
@@ -2623,7 +2667,7 @@ class Store:
             )
             return conn.total_changes - before
 
-    # The two history tables retention may touch. A closed tuple, interpolated into SQL by
+    # The history tables retention may touch. A closed tuple, interpolated into SQL by
     # _prune_history — never a caller's string.
     _HISTORY_TABLES = ("membership_event", "sync_event", "binding_event")
 

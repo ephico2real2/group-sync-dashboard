@@ -8,6 +8,7 @@ history tables, the metric counts without naming anyone, and the wire says what 
 
 from __future__ import annotations
 
+import sqlite3
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -89,6 +90,43 @@ class TestDiff:
         assert store.replace_user_bindings("crc", [], T3) == {"added": 0, "removed": 1}
         groups = [e for e in store.binding_events("crc") if e["subject_kind"] == "Group"]
         assert len(groups) == 1
+
+    def test_a_platform_flag_alone_is_not_a_change(self, store):
+        """is_platform is metadata on the event, not part of what changed (Cursor, review of #177)."""
+        store.replace_user_bindings("crc", [ub("p", "", "svc-x", platform=0)], T1)
+        assert store.replace_user_bindings("crc", [ub("p", "", "svc-x", platform=1)], T2) == {"added": 0, "removed": 0}
+        assert len(store.binding_events("crc")) == 1
+
+    def test_wipe_then_recreate_is_not_a_second_baseline(self, store):
+        """Events of the kind exist after the wipe, so the recreation is a real `added` (Cursor)."""
+        store.replace_bindings("crc", [rb("a", "ns1", "g1")], T1)
+        store.replace_bindings("crc", [], T2)
+        store.replace_bindings("crc", [rb("a", "ns1", "g1")], T3)
+        newest = store.binding_events("crc")[0]
+        assert (newest["change"], newest["baseline"], newest["observed_at"]) == ("added", 0, T3)
+
+    def test_an_empty_first_binding_refresh_consumes_the_baseline(self, store):
+        """Codex, review of #177 (C4): the marker, not the rows, decides the first observation."""
+        assert store.replace_bindings("crc", [], T1) == {"added": 0, "removed": 0}
+        store.replace_bindings("crc", [rb("a", "ns", "g")], T2)
+        assert store.binding_events("crc")[0]["baseline"] == 0
+
+    def test_retention_does_not_reopen_the_baseline(self, store):
+        """The marker survives a prune that empties the events (Codex; closes Cursor's accepted debt)."""
+        store.replace_bindings("crc", [rb("a", "ns", "g")], T1)
+        store.replace_bindings("crc", [], T2)
+        assert store.prune_binding_events("crc", T3, max_rows=10) == 2
+        assert store.binding_events("crc") == []
+        store.replace_bindings("crc", [rb("a", "ns", "g")], T3)
+        assert store.binding_events("crc")[0]["baseline"] == 0
+
+    def test_self_scope_does_not_exceed_sqlite_variable_limit(self, store):
+        """A viewer in more groups than SQLITE_LIMIT_VARIABLE_NUMBER (Codex, reproduced)."""
+        store.replace_bindings("crc", [rb("a", "ns", "g-mine")], T1)
+        store._conn.setlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, 16)
+        groups = ["g-mine"] + [f"unrelated-{i}" for i in range(20)]
+        events = store.binding_events("crc", viewer="alice", viewer_groups=groups)
+        assert [(e["subject_kind"], e["subject_name"]) for e in events] == [("Group", "g-mine")]
 
     def test_is_platform_rides_the_event(self, store):
         store.replace_user_bindings("crc", [ub("p", "", "system:kube-controller-manager", platform=1)], T1)
@@ -236,3 +274,34 @@ class TestSelfTier:
 
     def test_no_viewer_behind_the_proxy_is_refused_not_widened(self, client):
         assert client.get("/api/clusters/crc/binding-changes").status_code in (401, 403)
+
+
+class TestUpgrade:
+    def test_a_v12_membership_event_table_gains_baseline_and_keeps_working(self, tmp_path):
+        """The class of bug test_migrations.py exists for: on an EXISTING database the SCHEMA's
+        `baseline` column never appears by itself, so migration 13's ALTER must add it — and the
+        first sync_members afterwards must not crash naming a column that is not there (Cursor)."""
+        import sqlite3
+        db = str(tmp_path / "v12.db")
+        conn = sqlite3.connect(db)
+        conn.executescript("""
+            CREATE TABLE membership_event (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, cluster_id TEXT NOT NULL, group_name TEXT NOT NULL,
+                user_name TEXT NOT NULL, change TEXT NOT NULL, observed_at TEXT NOT NULL, group_synced_at TEXT);
+            INSERT INTO membership_event(cluster_id, group_name, user_name, change, observed_at)
+                VALUES('crc', 'g', 'alice', 'added', '2026-08-02T04:00:33Z');
+            PRAGMA user_version = 12;
+        """)
+        conn.commit(); conn.close()
+        store = Store(db)
+        try:
+            cols = {r[1] for r in store._conn.execute("PRAGMA table_info(membership_event)")}
+            assert "baseline" in cols
+            assert store._conn.execute("PRAGMA user_version").fetchone()[0] == 14
+            assert store._conn.execute("SELECT baseline FROM membership_event").fetchone()[0] == 0
+            store.upsert_cluster("crc", "https://api.crc.testing:6443", True)
+            # events already exist for crc, so this is NOT a first observation
+            assert store.sync_members("crc", {"g": ["alice", "bob"]}, {}, T1) == 2
+            assert store.membership_events("crc", user_name="bob")[0]["baseline"] == 0
+        finally:
+            store.close()

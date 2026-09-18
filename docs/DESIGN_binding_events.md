@@ -37,6 +37,19 @@ Indexes: `(cluster_id, binding_namespace, id DESC)`, `(cluster_id, subject_kind,
 `(cluster_id, observed_at)` for retention. Migration **13** creates it and adds
 `membership_event.baseline INTEGER NOT NULL DEFAULT 0`.
 
+```sql
+CREATE TABLE IF NOT EXISTS observation_state (   -- migration 14
+    cluster_id          TEXT NOT NULL,
+    stream              TEXT NOT NULL,            -- membership | binding:Group | binding:User
+    PRIMARY KEY(cluster_id, stream)
+);
+```
+
+Migration 14 seeds a marker for every cluster the store already holds rows for (current rows or
+events of that stream), so an upgrade never re-describes existing rows as a first observation.
+The marker is consumed inside the refresh's own write transaction: a rolled-back observation does
+not spend it. Nothing removes it — a cluster taken out of `clusters:` keeps its rows too (#96).
+
 **Identity** of a row for the diff is `(binding_kind, binding_namespace, binding_name, subject)`;
 the compared value is `(role_kind, role_name)`. A role change is therefore one `removed` and one
 `added` — no third verb.
@@ -47,9 +60,13 @@ Measured on CRC: `membership_event` held **76 / 87 / 5** `added` rows in one ins
 — each cluster's first observation — and the 87 (prod-east, `2026-09-14T00:18:18Z`) had been read
 as "a bulk onboarding". A first observation is not a change anyone made.
 
-Rule, for both tables: when a cluster has **no current rows and no events of that kind**, the
-refresh is its first observation and every `added` row is written with `baseline = 1`. The rows
-are still written — `first_seen_at`, `original_first_seen_at` (a `MIN` over `added` events) and
+Rule, for both tables: a cluster's first observation of a stream — `membership`, `binding:Group`,
+`binding:User` — is the refresh that consumes that stream's row in `observation_state`, **empty or
+not**; every `added` row of that refresh is written with `baseline = 1`. The marker, not the rows,
+decides: inferring "first" from "no current rows and no events" was an off-by-one (Codex, review
+of #177 — an empty first poll left nothing behind, so the next poll read as the first observation
+and its real additions were flagged), and it reopened the baseline whenever retention emptied a
+stream. The rows are still written — `first_seen_at`, `original_first_seen_at` (a `MIN` over `added` events) and
 the group-count cliff's window all depend on them — but a consumer renders a baseline row as
 "first observed by this dashboard", never as "added". A new group or binding appearing in an
 already-observed cluster is a real change and is not flagged. A refresh returning nothing for a
@@ -91,3 +108,19 @@ the numbers the store returned. **No label carries a subject's name.**
   the honest rendering possible. Existing rows on an upgraded store keep `baseline = 0`.
 - **Shared retention window** rather than `bindingEventsDays`: fewer knobs, same question; a
   separate window can be added without a migration if compliance ever needs it.
+- **The marker replaced the inference (Codex, review of #177, C4 refuted).** The first cut decided
+  "first observation" from "no current rows and no events of that kind"; Cursor had accepted the
+  empty-first-poll edge as debt. Codex's probe (`first_empty=0 event_rows=0 second_nonempty=1
+  second_baseline=1`) showed it is not an edge but an off-by-one: the second poll's rows are real
+  additions. `observation_state` is consumed once per stream regardless of rows, which also closes
+  the retention edge — a pruned stream no longer reopens its baseline. Three tests hold it.
+- **One bound parameter for the viewer's groups (Codex, volunteered).** The self-scoped
+  `binding_events` built one placeholder per group; a viewer in more groups than
+  `SQLITE_LIMIT_VARIABLE_NUMBER` raised "too many SQL variables". The Group clause now reads
+  `subject_name IN (SELECT value FROM json_each(?))` — one parameter, any group count; a test
+  forces the limit to 16 with `setlimit` and reads through 21 groups.
+- **Migration 14, not a rewrite of 13.** Codex's snippet rewrote migration 13 to create the marker
+  table. CRC already carried `PRAGMA user_version 13` from the first deployment of this branch
+  (measured on the pod), and `_migrate` skips any target at or below the current version — a
+  rewritten 13 would never have run there. The marker table and its backfill are migration 14;
+  the C4 semantics are Codex's unchanged.

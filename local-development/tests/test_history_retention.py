@@ -124,7 +124,7 @@ class TestStorePrune:
 
     def test_the_retention_indexes_exist(self, store):
         names = {r["name"] for r in store._rows("SELECT name FROM sqlite_master WHERE type='index'")}
-        assert {"membership_event_by_time", "sync_event_by_time"} <= names
+        assert {"membership_event_by_time", "sync_event_by_time", "binding_event_by_time"} <= names
 
 
 class _Recording(Store):

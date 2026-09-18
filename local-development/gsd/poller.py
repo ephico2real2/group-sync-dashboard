@@ -656,7 +656,7 @@ class Poller:
             log.exception("backup failed; the poll continues and the history is unprotected")
 
     def _prune_history(self, cluster: ClusterConfig) -> None:
-        """Retention on membership_event and sync_event, AFTER the backup and never ahead of one.
+        """Retention on membership_event, sync_event and binding_event, AFTER the backup and never ahead of one.
 
         Three gates, in order. The windows: 0 disables a table, both 0 is a no-op. The backup:
         nothing is deleted until a backup has SUCCEEDED in this process — a failing backup holds

@@ -342,3 +342,11 @@ class TestBaseline:
         # a later poll of the first cluster that adds a member is not a baseline
         sync(store, {"g": ["alice", "dave"]}, T3)
         assert store.membership_events("crc", user_name="dave")[0]["baseline"] == 0
+
+    def test_an_empty_first_poll_consumes_the_baseline(self, store):
+        """Codex, review of #177: a cluster whose first poll is empty must not have its SECOND
+        poll described as the first observation — the marker is consumed regardless of rows."""
+        assert sync(store, {}, T1) == 0
+        assert sync(store, {"g": ["alice"]}, T2) == 1
+        event = store.membership_events("crc", user_name="alice")[0]
+        assert (event["change"], event["baseline"]) == ("added", 0)

@@ -450,9 +450,12 @@ and one `added`.
 }
 ```
 
-`baseline` is 1 on a cluster's **first observation** — every row it had is recorded as `added`
-in that instant, which is not a change anyone made; render it as "first observed", never as
-"added". `retention` shares `membership_event`'s window (`membershipEventsDays`).
+`baseline` is 1 on a cluster's **first observation** of that subject kind — the refresh that
+consumes the cluster's `observation_state` marker, whether or not it returned rows — because
+every row it had is recorded as `added` in that instant, which is not a change anyone made;
+render it as "first observed", never as "added". A store upgraded with rows already present
+starts marked, so an upgrade writes no baseline rows. `retention` shares `membership_event`'s
+window (`membershipEventsDays`).
 
 Self tier: only rows naming the viewer, or a group the viewer belongs to.
 
