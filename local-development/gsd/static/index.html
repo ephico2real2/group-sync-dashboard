@@ -3295,11 +3295,18 @@ function namespacesCard() {
     : "";
   // The envelope counts what the columns count — distinct groups, grants naming a person. At the
   // self tier the counts are the viewer's own cluster-wide paths and the line explains why every
-  // namespace is listed; with none of their own there is nothing to explain (OB1 F2).
-  const cw = d.cluster_wide_groups != null && !(self && !d.cluster_wide_groups && !d.cluster_wide_grants)
-    ? `<div class="filterbar-note mb-4">${d.cluster_wide_groups} group${d.cluster_wide_groups === 1 ? "" : "s"} bound cluster-wide and
+  // namespace is listed; with none of their own there is nothing to explain (OB1 F2). `cluster_wide_path`
+  // is the reach itself, a platform identity's binding included: the one case where reach and the
+  // counts differ gets its own sentence rather than "0 and 0 reach every namespace" (Codex, pass 2).
+  const counted = !!(d.cluster_wide_groups || d.cluster_wide_grants);
+  const reached = d.cluster_wide_path == null ? counted : !!d.cluster_wide_path;
+  const cw = d.cluster_wide_groups == null || (self && !reached) ? ""
+    : self && reached && !counted
+      ? `<div class="filterbar-note mb-4">A cluster-wide grant to a platform identity of yours reaches every namespace below;
+          platform identities stay out of the direct-grant count. The columns count what is bound <em>in</em> each one.</div>`
+      : `<div class="filterbar-note mb-4">${d.cluster_wide_groups} group${d.cluster_wide_groups === 1 ? "" : "s"} bound cluster-wide and
         ${d.cluster_wide_grants} cluster-wide direct grant${d.cluster_wide_grants === 1 ? "" : "s"}${self ? " of yours" : ""} reach every namespace below; the columns count
-        what is bound <em>in</em> each one. A namespace with zero in both is a result an access review wants to confirm.</div>` : "";
+        what is bound <em>in</em> each one. A namespace with zero in both is a result an access review wants to confirm.</div>`;
   const body = shown.length
     ? `<div class="scroll-x"><table>
         <thead><tr><th>Namespace</th>${keys.map((k) => `<th>${esc(labelShort(k))}</th>`).join("")}
@@ -3339,6 +3346,9 @@ function nsDetail() {
   const labels = d.labels || {};
   const via = d.via_groups || [], wide = d.cluster_wide_groups || [], direct = d.direct_grants || [];
   const people = direct.filter((x) => !x.is_platform);
+  // Virtual `system:` groups authorise access but hold no person: badged in the table, folded on the
+  // cluster-wide line (the deployed demo-prod page listed 54 bindings, 41 of them these — the CRC walk).
+  const wideReal = wide.filter((g) => !g.is_platform), widePlatform = wide.filter((g) => g.is_platform);
   // Cluster-wide grants naming a person, platform identities left out: kubeadmin reaches every
   // namespace by definition and would be one more line on every page (review of #167, Grok F4).
   const wideGrants = (d.cluster_wide_grants || []).filter((x) => !x.is_platform);
@@ -3370,17 +3380,18 @@ function nsDetail() {
     ${via.length ? `<div class="scroll-x"><table>
       <thead><tr><th>Group</th><th>Role</th><th>Binding</th><th class="num">Members</th></tr></thead>
       <tbody>${via.map((g) => `<tr class="rowlink" data-group="${esc(g.group_name)}">
-        <td><button type="button" class="drill">${esc(g.group_name)}</button></td>
+        <td><button type="button" class="drill">${esc(g.group_name)}</button>${g.is_platform ? ' <span class="badge unknown"><span class="glyph" aria-hidden="true"></span>platform</span>' : ""}</td>
         <td><code>${esc(g.role_name)}</code></td>
         <td class="muted">${esc(g.binding_kind)} <code>${esc(g.binding_name)}</code>${g.managed_source ? "" : ' <span class="badge warning"><span class="glyph" aria-hidden="true"></span>hand-made</span>'}</td>
         <td class="num">${g.member_count}</td></tr>`).join("")}</tbody></table></div>`
       : `<div class="empty-note">No group-based binding names this namespace. Access here is ${people.length
           ? "entirely by the direct grants below — which is what makes it a finding." : "not granted to anyone through the policy system."}</div>`}
     ${wideBindings ? `<div class="filterbar-note mt-4">Also reached cluster-wide, by ${wideBindings === 1 ? "one binding" : `${wideBindings} bindings`} that
-        grant${wideBindings === 1 ? "s" : ""} every namespace: ${[
-          ...wide.map((g) => `<button type="button" class="drill" data-group="${esc(g.group_name)}">${esc(g.group_name)}</button> (<code>${esc(g.role_name)}</code>)`),
+        grant${wideBindings === 1 ? "s" : ""} every namespace${wideReal.length + wideGrants.length ? `: ${[
+          ...wideReal.map((g) => `<button type="button" class="drill" data-group="${esc(g.group_name)}">${esc(g.group_name)}</button> (<code>${esc(g.role_name)}</code>)`),
           ...wideGrants.map((x) => `<button type="button" class="drill" data-user="${esc(x.user_name)}">${esc(x.user_name)}</button> (<code>${esc(x.role_name)}</code>, named directly)`),
-        ].join(", ")}.</div>` : ""}
+        ].join(", ")}` : ""}${widePlatform.length ? `${wideReal.length + wideGrants.length ? "; and" : ":"} ${widePlatform.length} platform binding${widePlatform.length === 1 ? "" : "s"} to virtual groups (${
+          esc([...new Set(widePlatform.map((g) => g.group_name))].slice(0, 3).join(", "))}${new Set(widePlatform.map((g) => g.group_name)).size > 3 ? ", …" : ""}) that every namespace carries` : ""}.</div>` : ""}
   </section>
   ${direct.length ? `<section class="card">
     <h2>Direct grants <span class="muted fw-normal">· ${people.length}${direct.length > people.length ? ` · ${direct.length - people.length} platform` : ""}</span></h2>
@@ -3405,7 +3416,7 @@ function nsDetail() {
     ${(d.changes || []).length ? `<div class="scroll-x"><table>
       <thead><tr><th>Change</th><th>Subject</th><th>Role</th><th>Binding</th><th>Observed</th></tr></thead>
       <tbody>${d.changes.map((c) => `<tr>
-        <td class="change-${esc(c.change)}">${c.baseline ? "first observed" : c.change === "added" ? "+ granted" : "− revoked"}</td>
+        <td class="${c.baseline ? "change-baseline" : "change-" + esc(c.change)}">${c.baseline ? "first observed" : c.change === "added" ? "+ granted" : "− revoked"}</td>
         <td>${esc(c.subject_kind)} <button type="button" class="drill" data-${c.subject_kind === "Group" ? "group" : "user"}="${esc(c.subject_name)}">${esc(c.subject_name)}</button></td>
         <td><code>${esc(c.role_name)}</code></td>
         <td class="muted">${esc(c.binding_kind)} <code>${esc(c.binding_name)}</code></td>
@@ -4209,15 +4220,14 @@ function wireDrilldown() {
     el.onclick = go;
   });
   // Keyboard parity: a drillable name is reachable by Tab and fires on Enter/Space, so the
-  // affordance is not mouse-only.
+  // affordance is not mouse-only. ONE path — the click's — for every drill: the handler used to
+  // cancel the key and then navigate only for a person's name, so Enter on a group's name (or a
+  // namespace's) went nowhere while the click worked (review of #167, pass 2: Grok, Codex).
   document.querySelectorAll(".drill").forEach((el) => {
     el.onkeydown = (e) => {
       if (e.key !== "Enter" && e.key !== " ") return;
       e.preventDefault();
-      const target = el.dataset.user || el.closest("[data-user]")?.dataset.user;
-      if (!target) return;
-      navigate({ page: view.page === "users" ? "users" : "groups", user: target, group: null, ns: null });
-      refresh();
+      el.click();
     };
   });
   const back = $("back-groups");

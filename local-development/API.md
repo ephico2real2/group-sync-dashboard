@@ -218,7 +218,7 @@ Cluster-wide bindings reach every namespace and are counted once, on the envelop
   "cluster": "crc-local", "scope": "all", "viewer": "kubeadmin",
   "source": {"state": "ok", "observed_at": "2026-09-18T05:12:06Z"},
   "label_keys": ["company.net/mnemonic", "company.net/app-environment", "company.net/oud-group"],
-  "count": 110, "cluster_wide_groups": 3, "cluster_wide_grants": 0,
+  "count": 110, "cluster_wide_groups": 3, "cluster_wide_grants": 0, "cluster_wide_path": true,
   "namespaces": [
     {"name": "demo-prod", "created_at": "2026-08-02T04:00:11Z", "phase": "Active",
      "observed_at": "2026-09-18T05:12:06Z",
@@ -236,9 +236,12 @@ zero in both counts is a result an access review wants to confirm, not an absenc
 `via_groups` column counts) and `cluster_wide_grants` the non-platform bindings naming a person, as the
 `direct_grants` column counts.
 
+`cluster_wide_path` is the reach itself: true when any cluster-wide binding names the viewer — unlike the
+two counts, a platform identity's binding included.
+
 Self tier: only the namespaces the viewer's own memberships or own bindings reach, counted over those
-paths; `cluster_wide_*` count the viewer's **own** cluster-wide paths, and when either is non-zero every
-namespace is listed — a cluster-wide grant reaches every one, which is also what the detail answers.
+paths; `cluster_wide_*` count the viewer's **own** cluster-wide paths, and when `cluster_wide_path` is true
+every namespace is listed — a cluster-wide grant reaches every one, which is also what the detail answers.
 
 ### `GET /api/clusters/{cluster_id}/namespaces/{name}`
 
@@ -265,6 +268,11 @@ how many distinct people the paths add up to, and its history of binding changes
   "retention": {"window_days": 0, "retained_since": "2026-09-18T02:57:18Z"}
 }
 ```
+
+Every `via_groups` and `cluster_wide_groups` row carries `is_platform`: 1 for a virtual `system:` group
+(`system:authenticated`, `system:nodes`, `system:serviceaccounts:<ns>` — access with no person behind it),
+sorted after the real groups; the list's `cluster_wide_groups` count leaves them out, as the person counts
+leave platform identities out.
 
 `cluster_wide_groups` and `cluster_wide_grants` are the ClusterRoleBindings — naming a group, naming a person —
 that reach this namespace along with every other; `direct_grants` are the bindings *in* the namespace only, and

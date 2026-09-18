@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Iterator
 
 from .storage import SqliteHealth, StorageHealth  # noqa: F401
+from .kube import SYSTEM_GROUP_PREFIX
 from .timeutil import now_iso
 
 log = logging.getLogger(__name__)
@@ -1511,8 +1512,18 @@ class Store:
                          WHERE b.cluster_id=? AND b.binding_namespace=?{own_groups}
                          ORDER BY b.role_name, b.group_name""",
                     (cluster_id, namespace, group_list) if own else (cluster_id, namespace))
-            via_groups = bound(name)
-            cluster_wide = bound("")
+            # A `system:` subject (system:authenticated, system:nodes, system:serviceaccounts:<ns>) is a
+            # virtual group Kubernetes reserves: it authorises real access but no person is a member of
+            # it and no review acts on it. Classified and labelled here, never dropped — the deployed
+            # demo-prod page listed 54 cluster-wide bindings, 41 of them these (the CRC walk of #167).
+            def classify(rows: list[dict]) -> list[dict]:
+                out = [dict(r) for r in rows]
+                for r in out:
+                    r["is_platform"] = 1 if r["group_name"].startswith(SYSTEM_GROUP_PREFIX) else 0
+                out.sort(key=lambda r: (r["is_platform"], r["role_name"], r["group_name"]))
+                return out
+            via_groups = classify(bound(name))
+            cluster_wide = classify(bound(""))
             def named(namespace: str) -> list[dict]:
                 return self._rows(
                     f"""SELECT user_name, binding_kind, binding_name, role_kind, role_name, is_platform

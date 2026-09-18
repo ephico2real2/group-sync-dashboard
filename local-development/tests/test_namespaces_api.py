@@ -45,6 +45,11 @@ def _seed(db: str) -> None:
          "role_kind": "ClusterRole", "role_name": "cluster-admin", "group_name": "ops-admins"},
         {"binding_kind": "RoleBinding", "binding_namespace": "vanished-ns", "binding_name": "old-rb",
          "role_kind": "ClusterRole", "role_name": "view", "group_name": "demo-devs"},
+        # virtual groups: real access, no person — classified, folded, never dropped (the CRC walk of #167)
+        {"binding_kind": "ClusterRoleBinding", "binding_namespace": "", "binding_name": "basic-users",
+         "role_kind": "ClusterRole", "role_name": "basic-user", "group_name": "system:authenticated"},
+        {"binding_kind": "RoleBinding", "binding_namespace": "demo-prod", "binding_name": "system:image-pullers",
+         "role_kind": "ClusterRole", "role_name": "system:image-puller", "group_name": "system:serviceaccounts:demo-prod"},
     ], now)
     s.replace_user_bindings("crc", [
         {"binding_kind": "RoleBinding", "binding_namespace": "demo-prod", "binding_name": "dave-admin",
@@ -94,11 +99,11 @@ class TestTheList:
         assert body["source"]["state"] == "ok" and body["label_keys"] == list(KEYS)
         by = {n["name"]: n for n in body["namespaces"]}
         assert by["demo-prod"]["labels"] == {"company.net/mnemonic": "demo", "company.net/app-environment": "prod"}
-        assert (by["demo-prod"]["via_groups"], by["demo-prod"]["direct_grants"]) == (1, 1)
+        assert (by["demo-prod"]["via_groups"], by["demo-prod"]["direct_grants"]) == (2, 1), "the virtual group counts as bound in the namespace"
         assert (by["legacy-payments"]["via_groups"], by["legacy-payments"]["direct_grants"]) == (0, 1), "the platform grant is not counted"
         assert (by["quiet-ns"]["via_groups"], by["quiet-ns"]["direct_grants"]) == (0, 0), "a namespace with nothing is a result, not an absence"
         # cluster-wide bindings reach every namespace and are counted once, on the envelope
-        assert body["cluster_wide_groups"] == 1 and body["cluster_wide_grants"] == 1, "ops-admins, and erin by name"
+        assert body["cluster_wide_groups"] == 1 and body["cluster_wide_grants"] == 1, "ops-admins, and erin by name — system:authenticated is virtual and left out"
 
     def test_a_refused_namespace_read_is_reported_not_hidden(self, db, client):
         s = Store(db)
@@ -146,6 +151,33 @@ class TestTheList:
             assert len([x for x in d["direct_grants"] if not x["is_platform"]]) == row["direct_grants"], row["name"]
 
 
+def test_a_platform_identity_cluster_wide_path_still_lists_every_namespace(tmp_path):
+    """The detail's reach counts every binding naming the viewer, a platform identity's included; the
+    list's switch counted only non-platform grants, so kubeadmin at the self tier opened any namespace
+    and saw an empty list (review of #167, pass 2, Codex)."""
+    db = str(tmp_path / "platform-viewer.db")
+    now = now_iso()
+    s = Store(db)
+    s.upsert_cluster("crc", "https://api.crc.testing:6443", True)
+    s.record_poll("crc", "ok", None)
+    s.replace_namespaces("crc", [{"name": "one", "created_at": now, "phase": "Active", "metadata": {}},
+                                 {"name": "two", "created_at": now, "phase": "Active", "metadata": {}}], now)
+    s.replace_user_bindings("crc", [{"binding_kind": "ClusterRoleBinding", "binding_namespace": "", "binding_name": "kubeadmin-ca",
+                                     "role_kind": "ClusterRole", "role_name": "cluster-admin", "user_name": "kubeadmin", "is_platform": 1}], now)
+    s.close()
+    app = build_app(Settings(clusters=[ClusterConfig("crc", "https://api.crc.testing:6443", token_env="X")],
+                             db_path=db, oauth_proxy_enabled=True), run_poller=False)
+    app.state.tier_resolver = _Map({})   # everyone is self
+    with TestClient(app) as client:
+        headers = {"X-Forwarded-User": "kubeadmin"}
+        body = client.get("/api/clusters/crc/namespaces", headers=headers).json()
+        detail = client.get("/api/clusters/crc/namespaces/one", headers=headers)
+    assert detail.status_code == 200
+    assert body["count"] == 2 and body["cluster_wide_path"] is True
+    assert (body["cluster_wide_groups"], body["cluster_wide_grants"]) == (0, 0), "platform identities stay out of the counts"
+    assert all((n["via_groups"], n["direct_grants"]) == (0, 0) for n in body["namespaces"])
+
+
 class TestClusterWideCounts:
     """Review of #167 (Codex, OB1): the envelope's `cluster_wide_groups` says GROUPS, and every row's
     `via_groups` is COUNT(DISTINCT group_name) — the envelope must count the same thing."""
@@ -180,8 +212,10 @@ class TestTheDetail:
     def test_who_reaches_it_and_through_which_group(self, client):
         d = client.get("/api/clusters/crc/namespaces/demo-prod", headers=ROOT).json()
         assert d["present"] and d["scope"] == "all"
-        assert [(g["group_name"], g["role_name"], g["member_count"]) for g in d["via_groups"]] == [("demo-devs", "edit", 2)]
-        assert [(g["group_name"], g["role_name"]) for g in d["cluster_wide_groups"]] == [("ops-admins", "cluster-admin")]
+        assert [(g["group_name"], g["role_name"], g["member_count"], g["is_platform"]) for g in d["via_groups"]] == [
+            ("demo-devs", "edit", 2, 0), ("system:serviceaccounts:demo-prod", "system:image-puller", 0, 1)], "real groups first, the virtual one labelled"
+        assert [(g["group_name"], g["role_name"], g["is_platform"]) for g in d["cluster_wide_groups"]] == [
+            ("ops-admins", "cluster-admin", 0), ("system:authenticated", "basic-user", 1)]
         assert [(x["user_name"], x["role_name"], x["is_platform"]) for x in d["direct_grants"]] == [("dave", "admin", 0)]
         assert [(x["user_name"], x["role_name"]) for x in d["cluster_wide_grants"]] == [("erin", "view")]
         # alice, bob (demo-devs), carol (ops-admins, cluster-wide), dave (direct) and erin (cluster-wide by name)

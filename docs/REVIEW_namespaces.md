@@ -225,3 +225,71 @@ fixture instead) and the F3 API pin. Focused runs on the fixed tree: the API, se
 docs tests — 1021 passed, 12 skipped; the four UI classes around the change — 48 passed; the full suites on
 the fixed tree — non-UI 3376 passed, 17 skipped; UI 320 passed. CI on the pushed head and the second pass
 are recorded below when they land.
+
+## Pass 2 — over `6a8fa85`
+
+Grok (source only) and Codex (in-memory `TestClient` probes and the shipped renderer evaluated
+directly; no Chromium) on the fixed head; OB1's second pass was lost to the session limit while its
+Playwright driver ran, and is replaced by one confirmation run on the final head. A fourth source joined
+this pass: the head deployed on CRC (`76ebaff21e`, through PR #183's stack) and walked as kubeadmin.
+
+| # | Claim | Grok | Codex | Decision |
+|---|---|---|---|---|
+| P1 | `cluster_wide_grants`: platform rows in the detail, out of the envelope and `people`; DISTINCT across the four sources | CONFIRMED | CONFIRMED (probe: `people 4` with an overlapping member/direct person) | — |
+| P2 | The line's grammar at 0 / 1 / many, "of yours" at self | CONFIRMED | CONFIRMED (renderer executed) | — |
+| P3 | `every` = the viewer's own cluster-wide paths; R5 four calls; the 403 before lookup | CONFIRMED — a platform identity cannot be a person | REFUTED — `every` came from the counts, which drop platform rows, while `namespace_reach` does not: kubeadmin at the self tier opened any namespace and saw an empty list | A — the switch is the reach itself (`cluster_wide_path`, on the envelope); the counts stay the review's counts; the card names the platform-only case |
+| P4 | The four personas' copy | CONFIRMED (traced from the tests) | REFUTED as written — P2 changed the wide line, so "byte-identical" and P2 could not both hold | The brief contradicted itself; the intro and empty strings are identical, the line is P2's. No change |
+| P5 | The baseline cell | PLAUSIBLE — the words match, the class is still `change-added` (green) | REFUTED, the same | B — `change-baseline`, muted |
+| P6 | The fingerprint; `data.ns` on the list | CONFIRMED | CONFIRMED (JSON probe) | — |
+| P7 | The fetch gating; Back does not flash Loading | CONFIRMED | CONFIRMED | — |
+| P8 | `ns` dropped by the selector and the keyboard | CONFIRMED for the user drill; Enter on a GROUP's name goes nowhere (volunteered, V1) | REFUTED — the same (`group-enter { prevented: true, calls: 0 }`) | C — every drill activates through the click's own path |
+| P9 | The export | CONFIRMED | CONFIRMED | — |
+| P10 | `StorageBackend` | CONFIRMED | CONFIRMED (5 passed) | — |
+| P11 | The marker guard | CONFIRMED | CONFIRMED (`tracked-via-git 546`, 124 binaries skipped) | — |
+| P12 | API.md and the CHANGELOG against the wire | CONFIRMED (no request-spy test for the fetch gating) | REFUTED on the P3 edge only | A documents `cluster_wide_path` |
+
+### A — a platform identity's reach and its list disagreed (Codex) — accepted
+`namespace_reach` counts every binding naming the viewer, a platform identity's included; the list's
+`every` came from the two counts, which leave platform identities out — so `kubeadmin` at the self tier
+(the UI seed's `ka`, a platform ClusterRoleBinding) opened any namespace and saw an empty list. The
+switch is the reach itself now, returned as `cluster_wide_path`; the counts are unchanged; the card's
+line says "A cluster-wide grant to a platform identity of yours reaches every namespace below" for that
+case instead of "0 groups … and 0 grants of yours reach every namespace". Tests: an API test with a
+platform-only self viewer; kubeadmin on `scoped_server` (nine rows, the platform sentence).
+
+### B — a baseline row wore the added colour (Grok P5, Codex) — accepted
+`first observed` is not an addition; `change-baseline` (muted) beside `change-added` and
+`change-removed`. Test: three synthetic rows painted from one payload, class and text asserted.
+
+### C — Enter on a group's name went nowhere (Grok V1, Codex) — accepted
+The `.drill` keydown handler cancelled the key and navigated only for a person's name; every drill takes
+the click's own path now (`el.click()`), which also drops `ns`. Test: user and group, Enter and Space, with
+Back restoring the namespace. The same handler is on `feat/drilldown` (#174), where Grok and Codex found
+the same swallow on the lookup's doors; the fix text is identical on both branches.
+
+### D — the deployed page's cluster-wide line was a 54-binding wall (the CRC walk) — accepted
+Measured on the deployed head (`demo-prod`): "Also reached cluster-wide, by 54 bindings" listing
+`system:authenticated`, `system:nodes`, `system:masters`, `system:serviceaccounts`… with `basic-user`,
+`self-provisioner`, `system:discovery`… — 41 of the 54 are virtual `system:` groups (`SYSTEM_GROUP_PREFIX`
+in `gsd/kube.py`: "reserved-by-convention … classified and labelled, never silently dropped"), and the
+who-reaches table listed `system:serviceaccounts:demo-prod` as a hand-made path. Every `via_groups` and
+`cluster_wide_groups` row carries `is_platform` now (real groups first); the table badges the virtual
+ones; the line lists the real groups and the people, then folds the rest: "and 41 platform bindings to
+virtual groups (system:authenticated, system:nodes, system:masters, …) that every namespace carries"; the
+list's `cluster_wide_groups` count leaves them out, as the person counts leave platform identities out.
+Tests: the API seed gains `system:authenticated` (cluster-wide) and `system:serviceaccounts:demo-prod`
+(in the namespace); the UI test injects four virtual cluster-wide rows and one in-namespace row and reads
+the badge and the fold.
+
+### Rejected / kept
+- Codex's `cluster_wide_path` copy variant for the wide tier — not needed: the wide tier's line is
+  unchanged.
+- Grok's "of yours" nit (attached to the grants half) — the sentence reads correctly for both halves.
+- OB1's own guard file, Codex's `=======` check — as in pass 1.
+
+### Measured on the fixed tree
+API/seam/contract/docs/CSS-guard tests 1354 passed, 12 skipped; the four UI classes around the change 55
+passed. Fail-before on `6a8fa85`: eight of the ten new cases fail (the two user-key keyboard cases already
+passed there — user drills worked; the group-key cases, the platform-identity list, the virtual-group fold,
+the baseline class and the changed count assertions fail). Full suites on the fixed tree: non-UI 3377 passed, 17
+skipped; UI 327 passed. CI on the pushed head and OB1's confirmation run are recorded below when they land.
