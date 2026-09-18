@@ -168,7 +168,8 @@ number the cluster gives".
   give a reviewer the scratchpad root: a Codex exit trap once deleted the whole session directory. Each
   reviewer gets its own subdirectory and irreplaceable outputs are copied out first.
 
-**Wait with a background wakeup, not a polling loop.** Reviewers, the suite and CI each take minutes;
+**Wait with a background wakeup, not a polling loop** (the operator, 2026-09-17: *"Pls dont poll background jobs
+and waste tokens. Pls use watcher and ask them to notify you or wake up when the done"*). Reviewers, the suite and CI each take minutes;
 every manual "is it done yet?" Read/Bash is a full-context model round-trip that re-bills the whole
 conversation for one "not yet". Arm ONE waiter that wakes you when the condition holds and stay silent
 until it fires: `Monitor` (or Bash `run_in_background`) with `until <done-check>; do sleep 3; done`,
