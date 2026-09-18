@@ -356,6 +356,19 @@ def poll_once(
     return OK
 
 
+def _note_binding_changes(signals, cluster: str, subject_kind: str, counts: dict[str, int] | None) -> None:
+    """Feed gsd_binding_changes_total from the same numbers the store returned. Never raises:
+    a metrics bug must not become a binding-refresh failure."""
+    if signals is None or not counts:
+        return
+    for change, n in counts.items():
+        if n:
+            signals.note_binding_changes(cluster, change, subject_kind, n)
+    if any(counts.values()):
+        log.info("%s: %d %s binding(s) added, %d removed since the last refresh",
+                 cluster, counts.get("added", 0), subject_kind.lower(), counts.get("removed", 0))
+
+
 def refresh_bindings(
     store: StorageBackend,
     cluster: ClusterConfig,
@@ -364,6 +377,7 @@ def refresh_bindings(
     audit_max_per_cycle: int = 20,
     namespaces_read: bool = False,
     namespace_metadata_labels: list[str] | None = None,
+    signals=None,
 ) -> str:
     """Re-read RoleBindings/ClusterRoleBindings for one cluster.
 
@@ -382,7 +396,7 @@ def refresh_bindings(
         )
         return exc.outcome
 
-    store.replace_bindings(
+    group_changes = store.replace_bindings(
         cluster.name,
         [
             {
@@ -399,6 +413,7 @@ def refresh_bindings(
         ],
         now_iso(),
     )
+    _note_binding_changes(signals, cluster.name, "Group", group_changes)
 
     # Direct-user bindings ride the same cadence and the same two list calls' worth of
     # cluster data. Fetched separately rather than in one pass because the two questions
@@ -410,7 +425,7 @@ def refresh_bindings(
         log.warning("user-binding refresh for %s failed: %s — group data is unaffected",
                     cluster.name, exc.message)
     else:
-        store.replace_user_bindings(
+        user_changes = store.replace_user_bindings(
             cluster.name,
             [{"binding_kind": u.binding_kind, "binding_namespace": u.binding_namespace,
               "binding_name": u.binding_name, "role_kind": u.role_kind,
@@ -418,6 +433,7 @@ def refresh_bindings(
               "is_platform": 1 if u.is_platform else 0} for u in user_rows],
             now_iso(),
         )
+        _note_binding_changes(signals, cluster.name, "User", user_changes)
         people = sum(1 for u in user_rows if not u.is_platform)
         log.info("%s: %d direct-user binding(s), %d naming a person",
                  cluster.name, len(user_rows), people)
@@ -640,7 +656,7 @@ class Poller:
             log.exception("backup failed; the poll continues and the history is unprotected")
 
     def _prune_history(self, cluster: ClusterConfig) -> None:
-        """Retention on membership_event and sync_event, AFTER the backup and never ahead of one.
+        """Retention on membership_event, sync_event and binding_event, AFTER the backup and never ahead of one.
 
         Three gates, in order. The windows: 0 disables a table, both 0 is a no-op. The backup:
         nothing is deleted until a backup has SUCCEEDED in this process — a failing backup holds
@@ -666,6 +682,11 @@ class Poller:
              self.store.prune_membership_events),
             ("sync_event", self.settings.sync_events_retention_days,
              self.store.prune_sync_events),
+            # binding_event shares membership_event's window: both are "who could reach what,
+            # and since when", and a second knob for the same question would be one more
+            # thing to keep equal (docs/DESIGN_binding_events.md).
+            ("binding_event", self.settings.membership_events_retention_days,
+             self.store.prune_binding_events),
         )
         if all(days <= 0 for _, days, _ in windows):
             return
@@ -894,6 +915,7 @@ class Poller:
                         audit_max_per_cycle=self.settings.unmanaged_audit_max_per_cycle,
                         namespaces_read=self.settings.namespaces_read_enabled,
                         namespace_metadata_labels=self.settings.namespace_metadata_labels,
+                        signals=self.signals,
                     )
                 except Exception:  # noqa: BLE001
                     log.exception("unhandled error refreshing bindings for %s", cluster.name)

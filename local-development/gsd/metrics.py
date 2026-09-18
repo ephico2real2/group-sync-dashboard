@@ -65,7 +65,12 @@ TIER_CHECK_OUTCOMES = ("allowed", "denied", "unreachable", "auth_failed", "forbi
 # The poller's pulls of the report service's usage feed (docs/specs/SPEC_C3_reporting_microservice.md §3.2).
 REPORT_PULL_OUTCOMES = ("ok", "refused", "unreachable", "error")
 TIERS = ("all", "self")
-RETENTION_TABLES = ("login_event", "dashboard_user_activity", "membership_event", "sync_event")
+RETENTION_TABLES = ("login_event", "dashboard_user_activity", "membership_event", "sync_event",
+                    "binding_event")
+# binding_event's two vocabularies. subject_kind is the Kubernetes subject kind, bounded at two;
+# NO label ever carries the subject's name (the public-/metrics rule).
+BINDING_CHANGES = ("added", "removed")
+BINDING_SUBJECT_KINDS = ("Group", "User")
 
 
 class RuntimeSignals:
@@ -93,6 +98,7 @@ class RuntimeSignals:
         self._poll_seconds: dict[str, float] = {}
         self._audit_unmatched: dict[tuple[str, str], int] = {}
         self._report_pulls: dict[str, int] = {}
+        self._binding_changes: dict[tuple[str, str, str], int] = {}
 
     def note_tier_check(self, threshold: str, outcome: str) -> None:
         with self._lock:
@@ -117,6 +123,15 @@ class RuntimeSignals:
     def note_backup_failure(self) -> None:
         with self._lock:
             self._backup_failures += 1
+
+    def note_binding_changes(self, cluster: str, change: str, subject_kind: str, count: int) -> None:
+        """Binding rows that appeared or disappeared in a refresh, by cluster, change and subject
+        kind — the count the store returned from its diff, never a name (#167)."""
+        if count <= 0:
+            return
+        with self._lock:
+            key = (cluster, change, subject_kind)
+            self._binding_changes[key] = self._binding_changes.get(key, 0) + count
 
     def note_poll_duration(self, cluster: str, seconds: float) -> None:
         with self._lock:
@@ -148,6 +163,7 @@ class RuntimeSignals:
                 "poll_seconds": dict(self._poll_seconds),
                 "audit_unmatched": dict(self._audit_unmatched),
                 "report_pulls": dict(self._report_pulls),
+                "binding_changes": dict(self._binding_changes),
             }
 
 
@@ -591,6 +607,15 @@ class DashboardCollector:
             "breaking, the timestamp says how stale the last good copy already is.",
             labels=[],
         )
+        binding_changes = CounterMetricFamily(
+            "gsd_binding_changes_total",
+            "RoleBinding/ClusterRoleBinding subject rows that appeared (added) or disappeared "
+            "(removed) between two binding refreshes, by cluster and subject kind — the change "
+            "the current-state tables cannot show. A cluster's first observation is counted as "
+            "added but flagged baseline in the store, so a step on a new cluster is expected. "
+            "Pre-seeded to 0 per enabled cluster. Per replica (leader): sum().",
+            labels=["cluster", "change", "subject_kind"],
+        )
         audit_unmatched = CounterMetricFamily(
             "gsd_login_capture_unmatched_total",
             "Audit-log login attempts whose typed username resolved to no configured identity "
@@ -625,11 +650,18 @@ class DashboardCollector:
             for (cluster, outcome), count in sorted(snap["audit_unmatched"].items()):
                 if cluster in enabled_ids:
                     audit_unmatched.add_metric([cluster, outcome], count)
+            for cluster in sorted(enabled_ids):
+                for change in BINDING_CHANGES:
+                    for kind in BINDING_SUBJECT_KINDS:
+                        binding_changes.add_metric(
+                            [cluster, change, kind],
+                            snap["binding_changes"].get((cluster, change, kind), 0))
             for cluster, seconds in sorted(snap["poll_seconds"].items()):
                 if cluster in enabled_ids:
                     poll_duration.add_metric([cluster], seconds)
 
-        yield from (checks, decisions, refusals, retention, backup_failures, audit_unmatched, poll_duration)
+        yield from (checks, decisions, refusals, retention, backup_failures, audit_unmatched,
+                    binding_changes, poll_duration)
 
         report_pulls = CounterMetricFamily(
             "gsd_report_usage_pulls_total",
