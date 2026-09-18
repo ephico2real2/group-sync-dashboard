@@ -3484,15 +3484,32 @@ const LOOKUP_PER_KIND = 12;
    mark a `<` or `&` the reader typed (review of #174, OB1). Longest term first so "alpha" wins over
    "a"; one pass, so marks never nest; every occurrence of every term, case-insensitively. */
 function hl(text, query) {
+  // The matched substrings, marked. Matching runs on the RAW text and each fragment is escaped as it is
+  // emitted: marking on the escaped string let a term land inside an entity (the `a` of `&amp;` —
+  // "Smith & Wesson" painted as "Smith &amp; Wesson") or inside the <mark> the previous term had just
+  // inserted ("alice a", the transient of typing a second word, painted "ark>aliceark>"), and could never
+  // mark a `<` or `&` the reader typed (review of #174, OB1). Every occurrence of every term, overlapping
+  // ones included ("ab bc" on "abc" marks all of "abc"; "aa" on "aaa" too), collected as ranges and merged,
+  // so marks never nest (review of #174, pass 2, Codex).
   const value = text == null ? "" : String(text);
-  const terms = [...new Set((query || "").toLowerCase().split(/\s+/).filter(Boolean))]
-    .sort((a, b) => b.length - a.length)
-    .map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  const terms = [...new Set((query || "").toLowerCase().split(/\s+/).filter(Boolean))];
   if (!terms.length) return esc(value);
+  const ranges = [];
+  for (const term of terms) {
+    const pattern = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    for (const m of value.matchAll(new RegExp(`(?=(${pattern}))`, "ig"))) ranges.push([m.index, m.index + m[1].length]);
+  }
+  ranges.sort((a, b) => a[0] - b[0] || b[1] - a[1]);
+  const merged = [];
+  for (const [s, e] of ranges) {
+    const last = merged[merged.length - 1];
+    if (!last || s >= last[1]) merged.push([s, e]);
+    else last[1] = Math.max(last[1], e);
+  }
   let out = "", at = 0;
-  for (const m of value.matchAll(new RegExp(terms.join("|"), "ig"))) {
-    out += esc(value.slice(at, m.index)) + `<mark>${esc(m[0])}</mark>`;
-    at = m.index + m[0].length;
+  for (const [s, e] of merged) {
+    out += esc(value.slice(at, s)) + `<mark>${esc(value.slice(s, e))}</mark>`;
+    at = e;
   }
   return out + esc(value.slice(at));
 }

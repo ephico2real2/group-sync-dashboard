@@ -1596,6 +1596,17 @@ class TestLookup:
             for m in marks:
                 assert m.lower() in terms, (text, q, marks)
 
+    def test_overlapping_terms_mark_the_union_without_nesting(self, dash):
+        """Pass 2 (Codex): "ab bc" on "abc" marked "ab" only; every occurrence, overlapping ones included, is
+        marked as one merged range, never nested — and two terms that do not overlap ("ice coo" on
+        "alice cooper", a space between them) stay two marks with the gap unmarked."""
+        got = dash.evaluate("""() => [["abc", "ab bc"], ["aaa", "aa"], ["alice cooper", "ice coo"]].map(([text, query]) => {
+            const node = document.createElement("div"); node.innerHTML = hl(text, query);
+            return {text: node.textContent, html: node.innerHTML, nested: !!node.querySelector("mark mark")}; })""")
+        assert got == [{"text": "abc", "html": "<mark>abc</mark>", "nested": False},
+                       {"text": "aaa", "html": "<mark>aaa</mark>", "nested": False},
+                       {"text": "alice cooper", "html": "al<mark>ice</mark> <mark>coo</mark>per", "nested": False}], got
+
     def test_a_name_with_an_ampersand_survives_the_first_keystroke(self, page, server):
         """A seeded name on the page itself: the users payload gains one person whose display name carries
         an ampersand; the first keystroke (`a`) must paint the name, not its entity."""

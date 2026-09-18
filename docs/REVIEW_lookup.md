@@ -86,3 +86,60 @@ fail and the two keyboard tests already pass — that merge carries #181's fix f
 the fixed tree (the lookup, the three search classes, the IME class, the namespaces class, the count test, the
 CSS guards): 434 passed; full non-UI suite 3383 passed, 17 skipped; full UI suite 347 passed. CI on the pushed
 head, the deploy and the second pass are recorded below when they land.
+
+## Pass 2 — over `f793b8e`
+
+Grok (source only — ask mode refuses a shell, so palettes and wash arithmetic were computed from
+`tests/test_accessibility.py`'s ratio against the tokens) and Codex (a read-only Node probe of the shipped
+renderer; its sandbox had no writable temp directory, so its pytest run could not start and P11 is read from
+the record's numbers) on the fixed head, eleven claims (`review_174/pass2/brief.md`). OB1's second pass runs
+behind its confirmation runs on #180 and #181, one at a time, and is recorded below when it lands. CI on
+`f793b8e`: green on every job. The head deployed on CRC and walked is `b6c9690` (the Outcome above).
+
+| # | Claim | Grok | Codex | Decision |
+|---|---|---|---|---|
+| P1 | The IME commit opens the lookup once; a query of spaces is not a position | CONFIRMED | CONFIRMED | — |
+| P2 | `hl`: raw-text marking, escaping, metacharacters, cost at 10,000 users | CONFIRMED — "leftmost-longest is acceptable" | REFUTED — overlapping terms: "ab bc" on "abc" marked "ab" only (`<mark>ab</mark>c`); the lookup over 10,000 users measured median 4.6 ms, p95 6.96 ms, max 8.86 ms; a pessimistic 10,000 × 2 `hl` run 35.67 ms median | A |
+| P3 | The doors' counts and the one refusal | CONFIRMED — "do not guard `groups?state=all` by itself" | CONFIRMED — the same: an identity 403 is one API failure before any door, better than three refusal doors | — |
+| P4 | The self-tier scope line, gone when the tier widens | CONFIRMED | CONFIRMED | — |
+| P5 | "hiding it" only when something is held; "nothing to search yet" | CONFIRMED | CONFIRMED | — |
+| P6 | `groupsMeta.state`; the Groups tab's Loading frame; the also-line's count | CONFIRMED | CONFIRMED — the state-only fingerprint change is necessary, not spurious (it releases the Loading frame when the slices coincide) | — |
+| P7 | Every drill a button; the keyboard is one click | CONFIRMED | CONFIRMED (UI Events, HTML activation) | — |
+| P8 | The mark's contrast without a wash | CONFIRMED — ≥ 4.5:1 in both themes and every palette; "a passing wash does not exist" | REFUTED — the test composites on `.card`; on a zebra `td` the drill text is 4.305:1 (light) / 4.375:1 (dark), lower on a hover row; a wash could pass only up to ≈ 0.819 %, invisible | B |
+| P9 | `data-filter` carries the query to the list's own box; Back keeps the lookup's | CONFIRMED | CONFIRMED | — |
+| P10 | The seed's third `devs` binding; one chevron; the capture script's path outside the repo | CONFIRMED | CONFIRMED | — |
+| P11 | Blast radius; the named classes green | PLAUSIBLE (no shell) | CONFIRMED from the record, not a rerun | The suites on this head: below |
+
+### A — overlapping terms marked the first only (Codex) — accepted
+`hl` marked each term's matches in turn, so "ab bc" on "abc" marked "ab" and never "bc". Every match of every
+term is collected as a `[start, end)` range through a lookahead pattern (`(?=(term))`, so overlapping matches
+of one term — "aa" on "aaa" — are all found), the ranges are sorted and merged, and the marks are emitted from
+the merged list: no nesting, every occurrence. Grok called leftmost-longest acceptable; the comment on the
+function promised "every occurrence", and a reader who typed "ab bc" would have seen half of "abc" marked.
+Test `test_overlapping_terms_mark_the_union_without_nesting`: "ab bc" on "abc" is one mark over "abc"; "aa"
+on "aaa" one mark over "aaa"; "ice coo" on "alice cooper" two marks with the space unmarked. The third case
+was first written expecting one mark over "ice coo"; the run refuted that — the terms do not overlap, a space
+sits between them — and the expectation was corrected to pin what the function rightly does.
+
+### B — the drill text on a zebra row (Codex) — accepted on the fact, routed to #184
+Pass 1 dropped the mark's wash because the accent wash put the link text at 3.4:1, and its test composites
+the mark on the card. Codex measured the real surface: on a zebra `td` the drill link itself is 4.305:1
+(light) and 4.375:1 (dark), lower on a hover row — under the sheet's 4.5:1 bar with or without a mark. That
+is the drill's colour against the foundation's zebra and hover tokens, on every table of the product, not
+the lookup's: #184, filed on the design foundation.
+
+### Volunteered and accepted — Grok: the e2e walk never visits the lookup
+`walk_tabs` iterates `button.tab`; the lookup is a page, not a tab, so pass 1's "Not asked" note stood. A
+`walk_lookup(w)` step in the capture script, called after the tabs: "demo" typed into the Find box, the
+page with its doors settled, a namespace hit's page and Back, the also-line on the Groups tab, then 375 px —
+four captures; on a build without the Find box the step records itself as skipped. Grok's version was
+rewritten to the walk's own conventions (`w.record`, `w.page_clean`, the doors' "…" settled before the
+shot).
+
+### Rejected / kept
+- Grok's leftmost-longest (see A).
+- Codex's P3 note (keep the unguarded groups request): kept; nothing was proposed against it.
+
+### Tests
+The lookup class with the CSS guards: 354 passed; the full UI suite on this tree: 348 passed (225.96 s).
+CI on the pushed head and OB1's confirmation are recorded below when they land.

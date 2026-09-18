@@ -151,6 +151,50 @@ def walk_tabs(w: Walk):
         w.record(f"tab {label}", problem is None, problem or f"heading: {h2}", shot)
 
 
+def walk_lookup(w: Walk) -> None:
+    """#174: the lookup is a page, not a tab, so walk_tabs never opens it. Skipped, and recorded as skipped,
+    on a build that has no Find box (review of #174, pass 2, Grok)."""
+    page = w.page
+    if not page.locator("#f-lookup-search").count():
+        w.record("lookup", True, "no Find box on this build — the lookup is not in it; step skipped")
+        return
+    w.errors.clear()
+    page.fill("#f-lookup-search", "demo")
+    page.wait_for_function("() => view.page === 'lookup'")
+    page.wait_for_selector("tr[data-ns], tr[data-group], #main .empty-note")
+    page.wait_for_function(
+        "() => [...document.querySelectorAll('.door .value')].every(v => v.textContent.trim() !== '…')")
+    heads = " / ".join(h.strip() for h in page.locator("#main h3").all_inner_texts())
+    problem = w.page_clean()
+    shot = w.shot("lookup-demo")
+    w.record("lookup demo", problem is None, problem or (heads or "no matches"), shot)
+    rows = page.locator("tr[data-ns]")
+    if rows.count():
+        rows.first.locator("button.drill").click()
+        page.wait_for_selector("#back")
+        problem = w.page_clean()
+        shot = w.shot("lookup-namespace")
+        w.record("lookup -> namespace page", problem is None, problem or page.locator("#main h2").first.inner_text().strip(), shot)
+        page.go_back()
+        page.wait_for_function("() => view.page === 'lookup'")
+    page.click('button.tab:text-is("Groups")')
+    page.wait_for_selector("#f-group-search")
+    page.fill("#f-group-search", "demo")
+    page.wait_for_selector("[data-widen]")
+    line = page.locator("[data-widen]").locator("xpath=..").inner_text()
+    shot = w.shot("lookup-also-line")
+    w.record("also-line on Groups", "search everything" in line or "also matching" in line, line, shot)
+    page.set_viewport_size({"width": 375, "height": 740})
+    page.locator("[data-widen]").click()
+    page.wait_for_function("() => view.page === 'lookup'")
+    page.wait_for_timeout(300)
+    fits = page.evaluate("() => document.documentElement.scrollWidth <= innerWidth")
+    shot = w.shot("lookup-375", full=True)
+    w.record("lookup at 375 px", fits, f"scrollWidth fits={fits}", shot)
+    page.set_viewport_size({"width": 1440, "height": 900})
+    page.fill("#f-lookup-search", "")
+
+
 def walk_reports(w: Walk, required: dict[str, dict[str, str]]):
     page = w.page
     w.errors.clear()
@@ -289,6 +333,7 @@ def main() -> int:
                 body = res.get("json") if res.get("json") is not None else res.get("text")
                 w.record(f"GET {path}", res.get("status") == 200, f"HTTP {res.get('status')}", api=body)
             walk_tabs(w)
+            walk_lookup(w)
             walk_reports(w, required_params(args.login_user, args.namespaces))
         browser.close()
 

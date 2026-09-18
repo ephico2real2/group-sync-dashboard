@@ -267,3 +267,29 @@ Outcome in one line: **…**
   also-line, `demo-prod`'s page, 375 px; captures sent. The walk found the namespace page's 54-binding
   cluster-wide wall (fixed on #181's second pass) and the doors' double chevron.
 - Merge `d489bcc` (2026-09-18 05:43): `feat/namespaces` at `ff6b0dd` (both review passes) into `feat/drilldown`, clean.
+
+### Review pass 1 applied — commits `b6c9690` (2026-09-18 05:57), `f793b8e` (2026-09-18 06:04), PR #183
+
+- Three reviewers on `76ebaff`. **OB1** (a seeded-app Playwright harness, `EXPLAIN QUERY PLAN`, a 10,000-user
+  scale probe, the mark's contrast over 30 theme × palette × OS combinations, every fix proved on a copy)
+  measured what the other two read: the committed IME composition never opened the lookup (Chromium fires no
+  `input` after `compositionend` — Codex had named it, with a synthetic-event test that cannot drive Blink's
+  IME); the highlighter corrupting names inside an entity and inside the previous term's `<mark>`; the Users
+  door counting a manual account as a login (live on CRC: 63 rows, 62 logins); no scope statement on the
+  self-tier lookup; "the data is not empty" on an empty cluster; the lookup's `groups?state=all` painting under
+  the Groups tab's filter and counted by the also-line; every non-user drill dead to the keyboard (pre-existing
+  on Access granted); the mark's wash at 3.40:1 under the sheet's 4.5:1 bar. **Grok** and **Codex** converged on
+  the keyboard, the highlighter, the `state=all` slice and the door copy; Grok's "open the full list" carrying
+  nothing and the two-bindings-in-one-namespace seed were taken too. OB1's recipe applied (its `groupsMeta.state`
+  tag over Grok's second slot: it also closes the also-line's filtered-slice count); the keyboard block keeps
+  #181's text so the branches merge cleanly. The deployed walk's two nits (the doors' double chevron, the
+  capture script's out-of-repo path) folded in.
+- Measured: thirteen tests fail on `76ebaff` (OB1) and eleven on the merged base `d489bcc` (the two keyboard
+  tests already fixed there by #181's merge); focused 434; non-UI 3383 passed, 17 skipped; UI 347. CI on
+  `b6c9690`: one browser failure — OB1's "open the full list" test read the Groups tab's box before the bar was
+  repainted (a race on CI's runner, 3/3 green locally); `f793b8e` waits for the box; CI green on every job.
+  Deployed to CRC (`0.24.0-b6c96905de`, the full stack, the report pod ready again at schema 14) and walked: the
+  lookup for "demo", the also-line, `demo-prod` with the folded cluster-wide line ("19 real bindings; and 35
+  platform bindings to virtual groups"), 375 px — captures sent. Record: `docs/REVIEW_lookup.md`. The second
+  pass by Grok and Codex is applied in the next entry; OB1's confirmation runs behind #180's and #181's,
+  one at a time.
