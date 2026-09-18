@@ -126,6 +126,7 @@ class TestSelfOnlyNeverWidens:
         assert "identity" not in refused.json()["detail"].split("your identity")[1]
         for path in ("/api/clusters/far/users/alice", "/api/clusters/far/logins",
                      "/api/clusters/far/user-bindings", "/api/clusters/far/membership-changes",
+                     "/api/clusters/far/binding-changes",
                      "/api/clusters/far/cluster-access"):
             assert client.get(path, headers=ROOT).status_code == 403, path
         # CR health is full at both tiers by ruling and stays served, projected.
@@ -135,7 +136,8 @@ class TestSelfOnlyNeverWidens:
 
 
 CLUSTER_ENDPOINTS = ("groupsyncs", "groupsyncs/x/events", "groups", "groups/x", "users", "users/x", "logins",
-                     "cluster-access", "bindings/findings", "user-bindings", "operator-configs", "membership-changes")
+                     "cluster-access", "bindings/findings", "user-bindings", "operator-configs", "membership-changes",
+                     "binding-changes")
 
 
 class TestHiddenIsNotAnOracle:

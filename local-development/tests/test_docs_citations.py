@@ -77,6 +77,9 @@ LINE_NUMBER_CITATION = re.compile(
 # findings quote the exact lines they are about — rewriting those to symbol names as the code changes
 # would falsify the record of what was reviewed. These files are historical once written.
 REVIEW_ARTIFACTS = (
+    # PR #177 (binding_event): the record quotes the live measurements and the brief's claims about
+    # spans of code at a moment — the line-number exemption's purpose.
+    "REVIEW_binding_events.md",
     # The chart/app release-decoupling design. A review record: its findings quote the exact
     # workflow steps, values lines and helper expressions they would replace, and the claims are
     # about spans of code at a moment — which is what the line-number exemption is for.
