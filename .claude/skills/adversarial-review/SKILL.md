@@ -46,6 +46,8 @@ PR that bumps the chart), never left as a dangling "follow-up".
 | Cursor, Claude Fable 5 **high** thinking (**NO ZDR**) | `cursor agent -p --mode ask --output-format text --trust --model claude-fable-5-thinking-high "<brief>"` | probe returns "Claude Fable 5"; `cursor agent models` lists the id. The lighter tier — the confirmation (second) pass, or a smaller PR. |
 | Cursor, Claude Fable 5 **extra-high** thinking (**NO ZDR**) | `cursor agent -p --mode ask --output-format text --trust --model claude-fable-5-thinking-xhigh "<brief>"` | probe returns "Claude Fable 5"; `cursor agent models` lists the id. The deepest tier — the primary (first) pass / complex design; matches Codex xhigh. Cursor labels the 5.1 family "Claude Fable 5". |
 | **OB1** (Obi-Wan) — Anthropic Fable 5.1, inside Claude Code | the `Agent` tool with **`model: "fable"`** (`claude-fable-5-1`), `subagent_type` general-purpose, the brief as its ENTIRE prompt plus the read-only rule below; the same Fable as Cursor's `claude-fable-5-thinking-*` rows above by another route — the pivot to OB1 exists because Cursor's Fable is capped by the Pro+ usage limit (measured 2026-09-17: the first launch hit the monthly limit); the Cursor Fable rows stay (the operator, 2026-09-17: "Dont drop the cursor fable role. We only pivot to ob1 because our token issues with cursor fable") | the agent's completion notification carries its answer; it runs with the session's tools, so its `bash -n` / read-only `kubectl` / `curl` outputs are in its report. |
+| **OB2** — OB1 at **high** reasoning effort, the default from 2026-09-18 | the `Agent` tool with **`subagent_type: "ob2"`** — the project agent `.claude/agents/ob2.md` (`model: fable`, `effort: high`, the reviewer's standing rules in its body: verdicts with artefacts, every finding with its full fix and its failing/passing test, read-only, measure-don't-reason, the report shape); the brief is its whole prompt, no `model` parameter needed | the operator, 2026-09-18: *"Create a new skill from OB1 called OB2 (OB1 high) with fable 5.1 but with high effort and assume OB2"* — every launch uses OB2 now; OB1 (the general-purpose launch at the session's effort) only when the operator asks for it by name. Same tools, same rules, the same report; its completion notification carries the answer. |
+| **OB3** — the same reviewer on **Opus 5**, choosing its own depth; the default from 2026-09-18 | the `Agent` tool with **`subagent_type: "ob3"`** — the project agent `.claude/agents/ob3.md` (`model: opus`, `effort: high` as a FLOOR, and a rubric in its body: shallow claims are settled by a grep, medium by one drive, deep ones get the harness, and the report names which it treated as deep). Also runnable as a background job: `claude -p "<the brief's prompt>" --agent ob3 --allowedTools "Bash,Read,Write,Edit,Glob,Grep" --output-format json --max-turns 300 < /dev/null` (drop `CLAUDECODE` from the environment first) | the operator, 2026-09-18: *"We have hit our weekly fable usage limit… use opus 5 high with auto switch effort… substitute the jobs and role of ob2 with ob3."* MEASURED that day: an OB2 background run died after 32 turns with "You've reached your Fable limit", $4.93 spent and no report. There is no `auto` effort value — the frontmatter takes a fixed tier and neither the `Agent` tool nor `claude -p` exposes an effort flag — so the tier is pinned at `high` and the self-scaling lives in the agent's body. |
 
 The Cursor reviewers are **independent** — call either, or both; Fable is the *third* reviewer beside
 Grok + Codex, through Cursor while its usage limit allows and through OB1 when it does not. **ZDR vs NO ZDR is the deciding trade:** Grok
@@ -132,7 +134,9 @@ cd "$W" && nohup codex exec --skip-git-repo-check -m gpt-5.6-sol -c model_reason
 sleep 20; head -c 400 "$S/review_codex_<id>.err"   # must show "OpenAI Codex … model: …", not only "Reading additional input from stdin..."
 ```
 
-and, in the same turn, **OB1** — the `Agent` tool, `model: "fable"`, `subagent_type: "general-purpose"`,
+and, in the same turn, **OB3** (from 2026-09-18 — `subagent_type: "ob3"`, the project agent on Opus 5 that scales its own depth per
+claim and carries the reviewer's standing rules; the brief is the whole prompt. OB2 is the same definition on Fable 5.1 and returns when
+that quota resets) — or, only when the operator asks for OB1 by name, **OB1** — the `Agent` tool, `model: "fable"`, `subagent_type: "general-purpose"`,
 `description: "OB1 adversarial review of <id>"`, the prompt = the read-only paragraph above + the brief's
 full text + the file paths it needs (it works in the repository itself, read-only — no export needed, but
 name the branch and say it must not switch). It runs in the background and reports on completion; never
@@ -145,6 +149,16 @@ follows a value end to end; give it the venv interpreter path. OB1 has the sessi
 repository: it can read the real files and run read-only commands against the lab, so it is the reviewer
 that catches "the file the brief describes is not the file on disk" and "the number in the doc is not the
 number the cluster gives".
+
+**Every reviewer scales its own depth, and OB3's passes get a second reading.** OB1, OB2 and OB3 carry the
+same rubric in their bodies: the frontmatter tier is a FLOOR, a shallow claim (a string, a selector, a
+constant) is settled by a grep, a medium one (a render path, an API shape) by one drive, a deep one (a race,
+contrast over composited surfaces, cost at scale) gets the harness — and the report opens by naming which
+claims were treated as deep. The frontmatter has no `auto` value and no launch path sets effort, so this
+judgement is the model's, not the flag's. **A pass OB3 ran while the Fable quota was out is re-reviewed by
+OB1 or OB2 when it resets** (the operator, 2026-09-18): its verdicts are claims like any other, its
+CONFIRMED-without-an-artefact lines get re-measured, and its failing/passing proofs get re-run against the
+head as it stands then. Agreeing with OB3 because OB3 said it wastes the third-reviewer seat.
 
 ### Gotchas — all seen, all measured; read before every launch
 
