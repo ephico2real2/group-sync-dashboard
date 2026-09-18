@@ -235,7 +235,8 @@ def main() -> int:
             print(f"  {f}", file=sys.stderr)
         return 1
 
-    print(f"\n{len(TABS)} screenshots written to {out.relative_to(REPO)} ({args.theme} theme)")
+    where = out.relative_to(REPO) if out.is_relative_to(REPO) else out   # a scratch folder outside the repo is fine
+    print(f"\n{len(TABS)} screenshots written to {where} ({args.theme} theme)")
     return 0
 
 
