@@ -165,7 +165,7 @@ class TestCgroupSampler:
 
     def test_the_monitor_view_carries_a_rate_from_the_second_sample(self, tmp_path):
         s = _sampler(tmp_path)
-        mon = SystemMonitor(s, str(tmp_path))
+        mon = SystemMonitor(s, str(tmp_path), min_rate_interval=0.0)
         first = mon.view()
         assert first["cpu"]["cores_used"] is None and first["memory"]["limit_bytes"] == 536870912
         assert first["disk"]["total_bytes"] > 0
@@ -173,6 +173,45 @@ class TestCgroupSampler:
         second = mon.view()
         assert second["cpu"]["cores_used"] is not None and second["cpu"]["throttled_fraction"] == pytest.approx(0.2)
         assert SystemMonitor(CgroupSampler(str(tmp_path / "none")), None).view() is None
+
+    def test_a_rate_is_never_minted_over_a_sliver(self, tmp_path, monkeypatch):
+        """Measured on CRC: the two cluster threads pulled the report's usage feed milliseconds apart and
+        the second view said cores_used 0.0813 over rate_interval_seconds 0.0. Inside the minimum
+        interval a view repeats the last rate (None until one exists); the baseline does not move."""
+        clock = {"t": 1000.0}
+        monkeypatch.setattr("gsd.kpi.system.time.monotonic", lambda: clock["t"])
+        s = _sampler(tmp_path)
+        mon = SystemMonitor(s, None, min_rate_interval=5.0)
+        assert mon.view()["cpu"]["cores_used"] is None
+        clock["t"] += 0.01
+        _sampler(tmp_path, usage_usec=5158284)
+        assert mon.view()["cpu"]["rate_interval_seconds"] is None, "10 ms is not an interval"
+        clock["t"] += 10.0
+        _sampler(tmp_path, usage_usec=6058284, nr_periods=175941, nr_throttled=198)
+        view = mon.view()
+        assert view["cpu"]["rate_interval_seconds"] == pytest.approx(10.0, abs=0.1)
+        assert view["cpu"]["cores_used"] == pytest.approx(1.0 / 10.01, abs=0.01)
+        clock["t"] += 1.0
+        again = mon.view()
+        assert again["cpu"] == view["cpu"] | {"usage_seconds": again["cpu"]["usage_seconds"]}, "the last rate, repeated"
+
+    def test_the_poller_takes_a_baseline_once_a_cycle(self, tmp_path):
+        from gsd.config import ClusterConfig
+        from gsd.poller import Poller
+
+        class Monitor:
+            views = 0
+            def view(self):
+                self.views += 1
+
+        store = seed_store(str(tmp_path / "w.db"))
+        try:
+            mon = Monitor()
+            poller = Poller(store, _settings(str(tmp_path / "w.db")), signals=None, system_monitor=mon)
+            poller._after_poll(ClusterConfig(CLUSTER, "https://x", token_env="T"))
+        finally:
+            store.close()
+        assert mon.views == 1
 
     def test_disk_is_statvfs_of_the_path(self, tmp_path):
         d = disk(str(tmp_path))

@@ -144,17 +144,40 @@ def disk(path: str) -> Disk | None:
     return Disk(used_bytes=total - st.f_frsize * st.f_bfree, total_bytes=total)
 
 
+#: The shortest interval a CPU rate is derived over. Measured on CRC before this existed: the two
+#: cluster threads pulled the report service's usage feed milliseconds apart, and the second view
+#: reported `cores_used 0.0813` over `rate_interval_seconds 0.0` — a rate over a few milliseconds is
+#: noise. A view inside the interval repeats the last rate instead of minting one.
+MIN_RATE_INTERVAL_SECONDS = 5.0
+
+
 class SystemMonitor:
     """One process's self-report, for the in-app surface: the sampler, the volume, and the previous
     CPU sample the next rate is derived from. `view()` is what the dashboard serves for itself and
     what the report service adds to its usage feed. None when the cgroup is unreadable — the page
-    says "unavailable", never 0."""
+    says "unavailable", never 0. The poll thread calls `view()` once a cycle so a page request always
+    has a baseline at most one poll interval old; two callers inside MIN_RATE_INTERVAL_SECONDS share
+    one rate rather than deriving a second over a sliver."""
 
-    def __init__(self, sampler: CgroupSampler | None, volume: str | None):
+    def __init__(self, sampler: CgroupSampler | None, volume: str | None,
+                 min_rate_interval: float = MIN_RATE_INTERVAL_SECONDS):
         self.sampler = sampler
         self.volume = volume
+        self.min_rate_interval = min_rate_interval
         self._previous: Cpu | None = None
+        self._last_rate: CpuRate | None = None
         self._lock = threading.Lock()
+
+    def _rate(self, cpu: Cpu) -> CpuRate | None:
+        with self._lock:
+            if self._previous is None:
+                self._previous = cpu
+                return None
+            if cpu.monotonic - self._previous.monotonic < self.min_rate_interval:
+                return self._last_rate
+            self._last_rate = cpu_rate(self._previous, cpu)
+            self._previous = cpu
+            return self._last_rate
 
     def view(self) -> dict | None:
         if self.sampler is None:
@@ -166,9 +189,7 @@ class SystemMonitor:
         if memory is not None:
             view["memory"] = {"used_bytes": memory.current_bytes, "limit_bytes": memory.limit_bytes}
         if cpu is not None:
-            with self._lock:
-                rate = cpu_rate(self._previous, cpu)
-                self._previous = cpu
+            rate = self._rate(cpu)
             view["cpu"] = {
                 "limit_cores": cpu.limit_cores,
                 "usage_seconds": cpu.usage_seconds,

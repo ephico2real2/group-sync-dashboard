@@ -337,7 +337,11 @@ def build_app(
     # this instance, and the collector reads a snapshot of it at scrape time. Created here,
     # before anything that carries it.
     signals = RuntimeSignals()
-    poller = Poller(store, settings, elector, signals=signals)
+    # This process's self-report (#156): its own cgroup and the filesystem under the database. The
+    # sampler reads nothing until scraped or asked, and reads None on cgroup v1 — omitted, not zero.
+    from .kpi.system import CgroupSampler, SystemMonitor
+    system_monitor = SystemMonitor(CgroupSampler(), os.path.dirname(os.path.abspath(settings.db_path)))
+    poller = Poller(store, settings, elector, signals=signals, system_monitor=system_monitor)
     # The report service (docs/specs/SPEC_C3_reporting_microservice.md). The token is read ONCE at
     # startup: the same bytes the report pod verifies with, so a ticket minted here is accepted
     # there. Missing or short when reporting is on is a startup failure — a module that is on and
@@ -2190,10 +2194,6 @@ def build_app(
             "alerts": alerts,
         }
 
-    # This process's self-report (#156): its own cgroup and the filesystem under the database. The
-    # sampler reads nothing until scraped or asked, and reads None on cgroup v1 — omitted, not zero.
-    from .kpi.system import CgroupSampler, SystemMonitor
-    system_monitor = SystemMonitor(CgroupSampler(), os.path.dirname(os.path.abspath(settings.db_path)))
     metrics_registry = build_registry(store, grace, elector,
                                       signals=signals, settings=settings,
                                       reporting_enabled=bool(settings.reporting_url),

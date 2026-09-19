@@ -575,9 +575,10 @@ class Poller:
     """Runs one polling thread per enabled cluster."""
 
     def __init__(self, store: StorageBackend, settings: Settings,
-                 elector: LeaderElector | None = None, signals=None):
+                 elector: LeaderElector | None = None, signals=None, system_monitor=None):
         self.store = store
         self.settings = settings
+        self.system_monitor = system_monitor
         # The process-event metrics seam (gsd/metrics.py RuntimeSignals), duck-typed and
         # optional so this module never imports the metrics module and every existing
         # caller keeps working. Reports poll durations, backup failures and — passed
@@ -743,6 +744,10 @@ class Poller:
         self._maybe_backup()
         self._prune_history(cluster)
         self._rollup_kpi(cluster)
+        if self.system_monitor is not None:
+            # A CPU baseline once a cycle, so a page's rate spans at most one poll interval rather
+            # than the gap between two page requests (gsd/kpi/system.py#SystemMonitor).
+            self.system_monitor.view()
         # Reporting rides the same tail: the snapshot after the checkpoint (so the copy is the
         # smallest it can be), the usage pull after that. _run_cluster's leadership check is a
         # cycle old after the poll's network I/O, so re-check before each operation. Both checks are
