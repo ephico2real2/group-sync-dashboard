@@ -30,6 +30,13 @@ rules:
   - apiGroups: ["apps"]
     resources: ["deployments"]
     verbs: ["get"]
+  # The one write: an annotation on the chart's own service-ca ConfigMap, which re-enqueues the
+  # datasource in the operator (it watches the ConfigMaps a datasource reads) when a reconcile
+  # raced the instance and is sitting in backoff — see the script.
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["{{ include "openshift-grafana.fullname" . }}-service-ca"]
+    verbs: ["get", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

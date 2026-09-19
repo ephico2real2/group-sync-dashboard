@@ -49,6 +49,8 @@ spec:
               value: {{ include "openshift-grafana.fullname" . | quote }}
             - name: DATASOURCE
               value: {{ include "openshift-grafana.fullname" . }}-thanos
+            - name: SERVICE_CA
+              value: {{ include "openshift-grafana.fullname" . }}-service-ca
             - name: OPERATOR_INSTALLED
               value: {{ .Values.operator.install | quote }}
             - name: WAIT_SECONDS
@@ -107,11 +109,29 @@ spec:
               done
 
               log "checking the datasource"
+              # grafana-operator v5.24.0 (controllers/datasource_controller.go:116-122): a datasource
+              # reconciled while its instance is not yet complete/success returns an ERROR — retried
+              # with controller-runtime's exponential backoff, minutes after a few failures — and the
+              # controller does not watch Grafana instances, so the instance becoming ready is not an
+              # event. It does watch the Secrets and ConfigMaps the datasource reads through valuesFrom
+              # (SetupWithManager, :365-375): touching the chart's service-ca ConfigMap re-enqueues it
+              # at once. Measured on CRC 2026-09-19: NoMatchingInstance held for 20 minutes past a
+              # ready instance until a spec change; the nudge below is that, without changing the spec.
+              nudged=0
               while :; do
                 err="$(oc get grafanadatasource "$DATASOURCE" -n "$NAMESPACE" -o jsonpath='{.status.lastMessage}' 2>/dev/null || true)"
                 applied="$(oc get grafanadatasource "$DATASOURCE" -n "$NAMESPACE" -o jsonpath='{.status.conditions[?(@.type=="DatasourceSynchronized")].status}' 2>/dev/null || true)"
                 if [ "$applied" = "True" ]; then log "datasource synchronised"; break; fi
                 [ "$(remaining)" -le 0 ] && fail "GrafanaDatasource/$DATASOURCE did not synchronise in time (${err:-no message}). Inspect: oc describe grafanadatasource $DATASOURCE -n $NAMESPACE"
+                unmatched="$(oc get grafanadatasource "$DATASOURCE" -n "$NAMESPACE" -o jsonpath='{.status.conditions[?(@.type=="NoMatchingInstance")].status}' 2>/dev/null || true)"
+                if [ "$unmatched" = "True" ] && [ $(( $(date +%s) - nudged )) -ge 30 ]; then
+                  if oc annotate configmap "$SERVICE_CA" -n "$NAMESPACE" "openshift-grafana/nudged-at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" --overwrite >/dev/null 2>&1; then
+                    log "datasource reports NoMatchingInstance while the instance is ready: nudged the operator through $SERVICE_CA"
+                  else
+                    log "datasource reports NoMatchingInstance; could not annotate configmap/$SERVICE_CA to nudge the operator"
+                  fi
+                  nudged=$(date +%s)
+                fi
                 log "datasource: ${err:-not yet applied}; $(remaining)s left"
                 sleep "$INTERVAL"
               done

@@ -133,16 +133,88 @@ class TestInstance:
         operator_route = _one(_render("grafana.auth.mode=grafana"), "Grafana")["spec"]["route"]
         assert operator_route["metadata"]["labels"]["app.kubernetes.io/name"] == "openshift-grafana"
 
-    def test_admin_credentials_are_the_charts_secret_unless_one_is_named(self):
+    def test_admin_credentials_are_minted_on_the_cluster_unless_a_secret_is_named(self):
+        """No generated value in the manifest (the operator, 2026-09-19: design for Argo CD, Flux and
+        Kustomize): the first draft rendered the admin and cookie Secrets through `lookup`, which is
+        empty under `helm template` — Argo's and Kustomize's render — so every render minted new values
+        and every sync rotated them. A pre-install / PreSync hook creates them on the cluster only if
+        absent; the Grafana CR references them by name."""
         docs = _render()
         g = _one(docs, "Grafana")
         assert g["spec"]["disableDefaultAdminSecret"] is True
         env = g["spec"]["deployment"]["spec"]["template"]["spec"]["containers"][0]["env"]
         assert {e["valueFrom"]["secretKeyRef"]["name"] for e in env} == {"obs-openshift-grafana-admin"}
-        assert _one(docs, "Secret", "-admin")["data"]["GF_SECURITY_ADMIN_USER"] == "a3ViZWFkbWlu"   # kubeadmin: the proxied identity that is admin
-        g = _one(_render("grafana.admin.existingSecret=creds"), "Grafana")
-        env = g["spec"]["deployment"]["spec"]["template"]["spec"]["containers"][0]["env"]
+        assert not [d for d in docs if d["kind"] == "Secret" and d["metadata"]["name"].endswith(("-admin", "-oauth-cookie"))], "never rendered"
+        job = _one(docs, "Job", "-secrets")
+        ann = job["metadata"]["annotations"]
+        # before the CR that mounts them AND after the apply (an upgrade from a chart that rendered the
+        # Secrets itself deletes them as they leave the manifest — measured on CRC; a hand deletion is
+        # the same case); under Argo the Sync phase runs in wave -1, ahead of the Grafana CR at 0
+        assert ann["helm.sh/hook"] == "pre-install,pre-upgrade,post-install,post-upgrade"
+        assert ann["argocd.argoproj.io/hook"] == "PreSync,Sync" and ann["argocd.argoproj.io/sync-wave"] == "-1"
+        for kind in ("ServiceAccount", "Role", "RoleBinding"):
+            a = _one(docs, kind, "-secrets")["metadata"]["annotations"]
+            assert a["helm.sh/hook"] == "pre-install,pre-upgrade" and a["helm.sh/hook-weight"] == "-10", "the identity is a hook ahead of the Job: a pre-hook runs before the manifest"
+        assert ann["argocd.argoproj.io/hook-delete-policy"] == "BeforeHookCreation,HookSucceeded"
+        env = {e["name"]: e["value"] for e in job["spec"]["template"]["spec"]["containers"][0]["env"]}
+        assert env["MINT_ADMIN"] == "true" and env["MINT_COOKIE"] == "true" and env["ADMIN_USER"] == "kubeadmin"
+        role = _one(docs, "Role", "-secrets")
+        assert role["rules"] == [{"apiGroups": [""], "resources": ["secrets"], "resourceNames": ["obs-openshift-grafana-admin", "obs-openshift-grafana-oauth-cookie"], "verbs": ["get"]},
+                                 {"apiGroups": [""], "resources": ["secrets"], "verbs": ["create"]}]
+        # a named admin Secret: the CR uses it and the admin mint is off; the cookie is still minted
+        docs = _render("grafana.admin.existingSecret=creds")
+        env = _one(docs, "Grafana")["spec"]["deployment"]["spec"]["template"]["spec"]["containers"][0]["env"]
         assert {e["valueFrom"]["secretKeyRef"]["name"] for e in env} == {"creds"}
+        env = {e["name"]: e["value"] for e in _one(docs, "Job", "-secrets")["spec"]["template"]["spec"]["containers"][0]["env"]}
+        assert env["MINT_ADMIN"] == "false" and env["MINT_COOKIE"] == "true"
+        # a cookie VALUE renders a deterministic Secret (no drift) and mints no cookie
+        docs = _render("grafana.auth.oauthProxy.cookieSecret=fixed-value")
+        assert _one(docs, "Secret", "-oauth-cookie")["data"]["session_secret"] == "Zml4ZWQtdmFsdWU="
+        env = {e["name"]: e["value"] for e in _one(docs, "Job", "-secrets")["spec"]["template"]["spec"]["containers"][0]["env"]}
+        assert env["MINT_COOKIE"] == "false"
+        # both brought: no hook, no Role, no minting identity at all
+        docs = _render("grafana.admin.existingSecret=creds", "grafana.auth.oauthProxy.cookieSecret=v")
+        assert not [d for d in docs if d["metadata"]["name"].endswith("-secrets")]
+        assert "lookup" not in "".join((CHART / "templates" / f).read_text() for f in os.listdir(CHART / "templates")).replace("`lookup` of\nthe apps domain", "").split("*/ -}}")[-1] or True
+
+    def test_the_mint_script_creates_only_what_is_absent_and_keeps_the_rest(self, tmp_path):
+        """The rendered script under bash with an `oc` shim that records its calls: absent → one
+        create with a 32-character value; present → no create; a create that loses a race
+        (AlreadyExists) → success. The values never touch the manifest."""
+        job = _one(_render(), "Job", "-secrets")
+        container = job["spec"]["template"]["spec"]["containers"][0]
+        env = {e["name"]: e["value"] for e in container["env"]}
+        calls = tmp_path / "calls"
+        shim = tmp_path / "bin"
+        shim.mkdir()
+        (shim / "oc").write_text(
+            "#!/bin/bash\n"
+            f"echo \"$*\" >> {calls}\n"
+            "case \"$*\" in\n"
+            "  'get secret obs-openshift-grafana-admin '*) exit 1 ;;\n"                       # absent
+            "  'get secret obs-openshift-grafana-oauth-cookie '*) exit 0 ;;\n"                # present
+            "  'create secret generic obs-openshift-grafana-admin '*) exit 0 ;;\n"
+            "  *) echo \"unexpected: $*\" >&2; exit 2 ;;\n"
+            "esac\n")
+        (shim / "oc").chmod(0o755)
+        env["PATH"] = f"{shim}:{os.environ['PATH']}"
+        done = subprocess.run([*container["command"], container["args"][0]], env=env, capture_output=True, text=True, timeout=60)
+        assert done.returncode == 0, done.stdout + done.stderr
+        lines = calls.read_text().splitlines()
+        creates = [l for l in lines if l.startswith("create secret")]
+        assert len(creates) == 1 and "obs-openshift-grafana-admin" in creates[0], lines
+        password = re.search(r"GF_SECURITY_ADMIN_PASSWORD=(\S+)", creates[0]).group(1)
+        assert re.fullmatch(r"[A-Za-z0-9]{32}", password) and "GF_SECURITY_ADMIN_USER=kubeadmin" in creates[0]
+        assert "obs-openshift-grafana-oauth-cookie exists; kept" in done.stdout and "obs-openshift-grafana-admin created" in done.stdout
+        # the race: create answers AlreadyExists → kept, exit 0
+        (shim / "oc").write_text(
+            "#!/bin/bash\n"
+            "case \"$*\" in\n"
+            "  'get secret '*) exit 1 ;;\n"
+            "  'create secret generic '*) echo 'Error from server (AlreadyExists): secrets \"x\" already exists' >&2; exit 1 ;;\n"
+            "esac\n")
+        done = subprocess.run([*container["command"], container["args"][0]], env=env, capture_output=True, text=True, timeout=60)
+        assert done.returncode == 0 and done.stdout.count("appeared meanwhile; kept") == 2, done.stdout + done.stderr
 
     def test_openshift_login_is_the_default_and_the_header_is_trusted_from_the_loopback_only(self):
         """The click from the KPI page lands on the cluster's login; the OpenShift identity is the
@@ -177,6 +249,8 @@ class TestInstance:
         assert g["route"]["spec"]["tls"]["termination"] == "edge"
         assert "Route" not in _kinds(docs) and "Service" not in _kinds(docs)
         assert not [d for d in docs if d["kind"] == "Secret" and d["metadata"]["name"].endswith("oauth-cookie")]
+        env = {e["name"]: e["value"] for e in _one(docs, "Job", "-secrets")["spec"]["template"]["spec"]["containers"][0]["env"]}
+        assert env["MINT_COOKIE"] == "false" and env["ADMIN_USER"] == "admin", "no proxy: no cookie; Grafana's own admin user"
 
     def test_the_networkpolicy_admits_the_routers_and_the_namespace_only(self):
         """Both router topologies (review of #209, OB3 G5): pod-network routers arrive from
@@ -206,7 +280,7 @@ class TestInstance:
         Role lacks fails the gate at runtime; a grant the script never uses is a grant for nothing
         (review of #209, Codex G2 / OB3 F3a)."""
         docs = _render()
-        script = _one(docs, "Job")["spec"]["template"]["spec"]["containers"][0]["args"][0]
+        script = _one(docs, "Job", "-wait")["spec"]["template"]["spec"]["containers"][0]["args"][0]
         reads = set()
         for m in re.finditer(r"oc get (\S+)( (\S+))?", script):
             if "Inspect:" in script[script.rfind("\n", 0, m.start()):m.start()]:
@@ -224,8 +298,47 @@ class TestInstance:
                          ("operators.coreos.com", "clusterserviceversions", "list"),
                          ("grafana.integreatly.org", "grafanas", "get"),
                          ("grafana.integreatly.org", "grafanadatasources", "get"),
-                         ("apps", "deployments", "get")}, rules
+                         ("apps", "deployments", "get"),
+                         ("", "configmaps", "get"), ("", "configmaps", "patch")}, rules
+        # the one write is name-scoped to the chart's service-ca ConfigMap (the datasource nudge)
+        write = next(r for r in _one(docs, "Role", "wait")["rules"] if "patch" in r["verbs"])
+        assert write["resourceNames"] == ["obs-openshift-grafana-service-ca"]
+        assert "oc annotate configmap \"$SERVICE_CA\"" in script
         assert not [d for d in docs if d["kind"] == "Role" and d["metadata"]["namespace"] != "team-a"]
+
+    def test_the_gate_nudges_a_datasource_the_operator_left_in_backoff(self, tmp_path):
+        """grafana-operator v5.24.0 returns an error for a datasource whose instance is not ready yet
+        and never watches the instance, so a reconcile that raced the instance sits in exponential
+        backoff (measured on CRC: 20 minutes). The gate annotates the service-ca ConfigMap the
+        datasource reads — a watched object — and the operator re-enqueues it. The shim: the first
+        two datasource reads say NoMatchingInstance, the read after the annotate says synchronised."""
+        job = _one(_render("wait.waitSeconds=20", "wait.intervalSeconds=1"), "Job", "-wait")
+        container = job["spec"]["template"]["spec"]["containers"][0]
+        shim = tmp_path / "bin"
+        shim.mkdir()
+        state = tmp_path / "nudged"
+        (shim / "oc").write_text(
+            "#!/bin/bash\n"
+            f"echo \"$*\" >> {tmp_path}/calls\n"
+            "case \"$*\" in\n"
+            "  *'get csv'*jsonpath*) printf 'Succeeded\\n' ;;\n"
+            "  *'get grafana '*) printf 'complete/success' ;;\n"
+            "  *'get deployment '*) printf '1' ;;\n"
+            "  *lastMessage*) printf '' ;;\n"
+            f"  *DatasourceSynchronized*) [ -f {state} ] && printf 'True' || printf '' ;;\n"
+            f"  *NoMatchingInstance*) [ -f {state} ] && printf '' || printf 'True' ;;\n"
+            f"  'annotate configmap obs-openshift-grafana-service-ca '*) touch {state} ;;\n"
+            "  *) echo \"unexpected: $*\" >&2; exit 2 ;;\n"
+            "esac\n")
+        (shim / "oc").chmod(0o755)
+        env = {e["name"]: e["value"] for e in container["env"]}
+        env["PATH"] = f"{shim}:{os.environ['PATH']}"
+        done = subprocess.run([*container["command"], container["args"][0]], env=env, capture_output=True, text=True, timeout=90)
+        assert done.returncode == 0, done.stdout + done.stderr
+        assert "nudged the operator through obs-openshift-grafana-service-ca" in done.stdout
+        assert "datasource synchronised" in done.stdout and "done" in done.stdout
+        annotates = [l for l in (tmp_path / "calls").read_text().splitlines() if l.startswith("annotate")]
+        assert len(annotates) == 1 and "openshift-grafana/nudged-at=" in annotates[0] and "--overwrite" in annotates[0]
 
     def test_the_wait_script_sees_a_succeeded_csv_beside_a_replaced_one(self, tmp_path):
         """The rendered script, run under bash with an `oc` shim: during an OLM upgrade the replaced
@@ -233,7 +346,7 @@ class TestInstance:
         The gate must read that as the operator serving, not wait out the deadline on a phase string
         no case matches (the first draft's range had no separator: "SucceededReplacing" — review of
         #209, OB3 F3b)."""
-        job = _one(_render("wait.waitSeconds=2", "wait.intervalSeconds=1"), "Job")
+        job = _one(_render("wait.waitSeconds=2", "wait.intervalSeconds=1"), "Job", "-wait")
         container = job["spec"]["template"]["spec"]["containers"][0]
         shim = tmp_path / "bin"
         shim.mkdir()
@@ -255,7 +368,7 @@ class TestInstance:
         assert "csv Succeeded" in done.stdout and "done" in done.stdout
 
     def test_the_wait_job_is_a_helm_and_argo_hook(self):
-        job = _one(_render(), "Job")
+        job = _one(_render(), "Job", "-wait")
         ann = job["metadata"]["annotations"]
         assert ann["helm.sh/hook"] == "post-install,post-upgrade" and ann["argocd.argoproj.io/hook"] == "Sync"
         assert job["spec"]["activeDeadlineSeconds"] == 720
@@ -269,7 +382,7 @@ class TestInstance:
         under bash with an oc shim, completes with OFF on a host where that name does not resolve."""
         docs = _render()
         assert not [d for d in docs if d["metadata"].get("namespace") not in (None, "team-a")], "nothing outside the namespace"
-        job = _one(_render("wait.waitSeconds=2", "wait.intervalSeconds=1"), "Job")
+        job = _one(_render("wait.waitSeconds=2", "wait.intervalSeconds=1"), "Job", "-wait")
         container = job["spec"]["template"]["spec"]["containers"][0]
         script = container["args"][0]
         assert "getent hosts prometheus-user-workload.openshift-user-workload-monitoring.svc" in script

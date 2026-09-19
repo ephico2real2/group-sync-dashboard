@@ -66,12 +66,14 @@ grafana:
       sar: ""
       # The absolute session cap, a Go duration.
       cookieExpire: 4h
-      # Set to reuse a cookie secret across releases; empty generates one and keeps it across upgrades.
+      # Set to reuse a cookie secret across releases (rendered as a plain Secret); empty: a hook Job
+      # mints one ON THE CLUSTER, only if absent — never in the manifest, so no GitOps tool rotates it.
       cookieSecret: ""
-  # The admin credentials Grafana itself holds (the operator provisions through them). Empty: the
-  # chart generates `<name>-admin` once (user `auth.adminUser`, a random password) and keeps it
-  # across upgrades. Name your own Secret (keys GF_SECURITY_ADMIN_USER / GF_SECURITY_ADMIN_PASSWORD)
-  # to bring credentials from your secret manager.
+  # The admin credentials Grafana itself holds (the operator provisions through them). Empty: a hook
+  # Job mints `<name>-admin` on the cluster (user `auth.adminUser`, a random password), only if it
+  # does not exist — never in the manifest, so Helm, Flux, Argo CD and Kustomize all keep it. Name
+  # your own Secret (keys GF_SECURITY_ADMIN_USER / GF_SECURITY_ADMIN_PASSWORD) to bring credentials
+  # from your secret manager.
   admin:
     existingSecret: ""
   # Grafana's own config.ini, as the operator's `config` map of sections. The auth sections are
