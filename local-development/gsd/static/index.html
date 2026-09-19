@@ -1708,7 +1708,7 @@ function kpiPage() {
   <section class="card kpi-page">
     <div class="kdoor">
       <p><strong>Deeper series live in your metrics stack.</strong> OpenShift removed its bundled Grafana in 4.11, so Grafana is
-        optional and operator-owned — the link appears only when <span class="mono">grafana.url</span> is configured. The console's
+        operator-owned${grafana ? " — this link opens the board on the Grafana in this namespace" : " — no Grafana was discovered in this namespace yet (the openshift-grafana chart installs one; <span class=\"mono\">grafana.url</span> names one elsewhere)"}. The console's
         Observe dashboards always ship${observe ? " — the link opens this namespace's workloads board" : " — the console's URL could not be discovered; set <span class=\"mono\">console.url</span> to link them"}.</p>
       <div class="btns">
         ${grafana ? `<a class="btn" href="${esc(grafana)}" target="_blank" rel="noopener">Open in Grafana <span class="ext">↗</span></a>` : ""}

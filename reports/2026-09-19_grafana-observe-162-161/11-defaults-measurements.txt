@@ -1,0 +1,29 @@
+# 2026-09-19, the "just works" test: nothing set, both charts on their defaults.
+## openshift-grafana, release grafana, upgraded with --reset-values (no --set):
+USER-SUPPLIED VALUES:
+null
+22:45:46Z user-workload monitoring: ON (prometheus-user-workload.openshift-user-workload-monitoring.svc resolves)
+22:45:47Z csv Succeeded
+22:45:47Z done
+uwm-check objects left in openshift-monitoring: 0
+
+## group-sync-dashboard 46ee06d, environments/crc.yaml sets none of monitoring/grafana/console — rendered by the defaults:
+servicemonitor.monitoring.coreos.com/group-sync-dashboard
+prometheusrule.monitoring.coreos.com/group-sync-dashboard
+grafanadashboard.grafana.integreatly.org/group-sync-dashboard
+role.rbac.authorization.k8s.io/group-sync-dashboard-grafana-discovery
+rolebinding.rbac.authorization.k8s.io/group-sync-dashboard-grafana-discovery
+GrafanaDashboard DashboardSynchronized=True
+
+## the pod's own discovery (its log) and /api/kpi links on the loopback:
+GET https://kubernetes.default.svc/apis/route.openshift.io/v1/namespaces/group-sync-dashboard/routes?labelSelector=app.kubernetes.io%2Fname%3Dopenshift-grafana "HTTP/1.1 200 OK"
+{
+ "grafana": "https://grafana-openshift-grafana-group-sync-dashboard.apps-crc.testing",
+ "grafana_dashboard_uid": "gsd-group-sync-dashboard",
+ "console": "https://console-openshift-console.apps-crc.testing",
+ "observe": "https://console-openshift-console.apps-crc.testing/dev-monitoring/ns/group-sync-dashboard?dashboard=dashboard-k8s-resources-workloads-namespace"
+}
+
+## the Grafana door followed through the OpenShift login as kubeadmin (Playwright):
+GRAFANA_URL https://grafana-openshift-grafana-group-sync-dashboard.apps-crc.testing/d/gsd-group-sync-dashboard/ocp-access-tracking-dashboard-e28094-group-sync?from=now-30d&to=now&timezone=browser&orgId=1&var-DS_PROMETHEUS=openshift-thanos&var-cluster=$__all&refresh=1m
+TITLE OCP Access Tracking Dashboard — group sync - group-sync-dashboard - Dashboards - Grafana

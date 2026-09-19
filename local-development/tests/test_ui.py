@@ -1274,9 +1274,10 @@ class TestKpiPage:
 
     def test_the_doors_render_only_when_configured(self, dash):
         self._open(dash)
-        # the fixture configures neither Grafana nor the console: prose, no dead buttons
+        # the fixture configures neither Grafana nor the console and discovers nothing: prose, no dead buttons
         assert dash.locator(".kpi-page .kdoor .btn").count() == 0
-        assert "grafana.url" in dash.locator(".kpi-page .kdoor p").inner_text()
+        prose = dash.locator(".kpi-page .kdoor p").inner_text()
+        assert "no Grafana was discovered" in prose and "grafana.url" in prose and "console.url" in prose
 
     def test_a_cluster_row_opens_its_overview(self, dash):
         self._open(dash)

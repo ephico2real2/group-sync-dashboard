@@ -14,6 +14,9 @@ monitoring switched on that day.
 | `06-observe-old-form-as-view-only-user-bad-request.png` | The same reader on the first door (`?project-dropdown-value=…`): *Project: All Projects*, every graph on *Bad Request* — the operator's report, reproduced |
 | `07-observe-as-kubeadmin-last-project-all-368003f.png` | kubeadmin with `console.lastNamespace` set to All Projects first: the new door still selects the project |
 | `08-observe-measurements.txt` | The deployed `/api/kpi` links; the walk's selector text and the `namespace=` each panel request carried, old door and new, both users; prom-label-proxy's 400 on :9092 with an empty `namespace=` |
+| `09-kpi-page-doors-discovered-46ee06d.png` | The KPI page on `46ee06d` with **nothing configured** — `environments/crc.yaml` sets no monitoring, grafana or console value — both doors present: Grafana discovered from the Route, the console from `console-public` |
+| `10-grafana-door-through-openshift-login-46ee06d.png` | The discovered Grafana door followed through the OpenShift login to the board (24 panels) |
+| `11-defaults-measurements.txt` | The Grafana release on `--reset-values` (no user values), the gate's `user-workload monitoring: ON`, no object left in `openshift-monitoring`, the objects the dashboard chart's defaults rendered, the CR synced, the pod's Route lookup and the discovered links |
 | `observe_walk.py` | The Playwright walk (CONSOLE_USER / CONSOLE_PASSWORD / OBS_PATH) |
 | `03-measurements.txt` | The datasource's health (`OK`), an instant query through it returning both pods' `gsd_process_memory_bytes` from `openshift-user-workload-monitoring/user-workload`, the CR's `DashboardSynchronized=True`, `/api/kpi`'s `links`, and `console-public` read with the dashboard's own ServiceAccount |
 
