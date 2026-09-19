@@ -79,8 +79,14 @@ say "2/5  the fixture ConfigMap (the Deployment mounts it at /fixtures)"
 # MISSED on the first cut of this script and caught by the operator: without this the pod cannot
 # start, because MOCK_FIXTURE points inside a volume that would not exist. The live ConfigMap was
 # byte-for-byte identical to the committed fixture, so it is simply rebuilt from the file.
-oc create configmap mock-fixture -n "$NS" --from-file="../fixtures/${FIXTURE}" \
-  --dry-run=client -o yaml | oc apply -f -
+if [ "$FIXTURE" = "reference.yaml" ] && [ -f mock-fixture-configmap.yaml ]; then
+  # The captured manifest, exactly as it ran on CRC. Verified identical to ../fixtures/reference.yaml.
+  oc apply -n "$NS" -f mock-fixture-configmap.yaml
+else
+  # Any other scenario is built from its fixture file.
+  oc create configmap mock-fixture -n "$NS" --from-file="../fixtures/${FIXTURE}" \
+    --dry-run=client -o yaml | oc apply -f -
+fi
 
 say "3/5  the workload"
 oc apply -n "$NS" -f mock-openshift-deployment.yaml -f mock-openshift-service.yaml

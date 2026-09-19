@@ -29,8 +29,9 @@ rebuild. `deploy-mock.sh` beside this file is that missing sequence.
    `ContainerCreating`.
 3. **The fixture ConfigMap.** `mock-fixture`, mounted at `/fixtures`, holding the one fixture the pod
    serves. The Deployment's `MOCK_FIXTURE` env var points inside that volume, so without the ConfigMap
-   the pod cannot start. The live one was byte-for-byte identical to the committed fixture, so it is
-   rebuilt straight from the file rather than carried.
+   the pod cannot start. `mock-fixture-configmap.yaml` is the manifest captured off the running cluster,
+   and its payload was verified identical to `../fixtures/reference.yaml`. The script applies that
+   captured file for the default scenario, and builds the ConfigMap from the fixture for any other.
 4. **The workload.** `mock-openshift-deployment.yaml` and `mock-openshift-service.yaml`, both captured
    from the running cluster before it was deleted. The Service is ClusterIP on 6443. It mounts two
    volumes: `certs` from secret `mock-tls`, and `fixtures` from the ConfigMap above.
