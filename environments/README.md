@@ -50,7 +50,6 @@ declare — it only *overrides*, and the table says which way:
 | key | chart default | crc.yaml | verdict |
 |---|---|---|---|
 | `config.unmanagedAudit.mode` | `log` | `log` | redundant — already the default |
-| `console.url` | `""` | `https://console-openshift-console.apps-crc.testing` | lab override — the KPI page's Observe → Dashboards door (#157) opens CRC's console; Grafana stays unset, there is none on CRC |
 | `logLevel` | `INFO` | `DEBUG` | lab override |
 | `authLogLevel.manage` / `.enabled` | `false` / `false` | `false` / `false` | inherits the default: the lab reads the AUDIT LOG, which names the person at the default verbosity, so the auth-loglevel Job (a post-upgrade hook) is not needed; the one-time convergence to Normal is done, so management is off (set `manage=true` only for the pod-log source) |
 | `loginCapture.enabled` | `true` | `true` | redundant — the default since chart 0.14.0 |
@@ -78,8 +77,11 @@ rather than inherit it, so a default that moves later cannot silently change thi
 them became redundant on chart 0.14.0 (`loginCapture`, `apiTokenAccess`) and were kept for exactly
 that reason: the file records what this cluster runs with, whichever way the default moves. That
 costs one line each and buys a diff that shows intent. The Grafana dashboard override that validated
-B3 through grafana-operator v5 was removed with chart 0.14.0: its `""` default follows the
-ServiceMonitor, which this cluster keeps off, and nothing on the cluster reads the board.
+B3 through grafana-operator v5 was removed with chart 0.14.0 and its `""` default follows the
+ServiceMonitor — ON by default since chart 0.36.0 (2026-09-19), with the rules and the GrafanaDashboard
+CR, so the board ships and the `openshift-grafana` release in the same namespace reads it through the
+CR (#161); the KPI page's doors are discovered. `crc.yaml` sets none of it, on purpose: the lab
+runs the default and would notice if the default stopped working.
 
 ### The reporting feature block and the cluster list are configured in `crc.yaml`, not tracked here
 

@@ -210,8 +210,10 @@ class TestTheSwitches:
             assert "steps.plan.outputs.new == 'true'" in cond
         plan = _step(release, "Report what this run will publish")
         assert plan.get("id") == "plan"
-        assert 'echo "new=true" >> "$GITHUB_OUTPUT"' in plan["run"]
-        assert 'echo "new=false" >> "$GITHUB_OUTPUT"' in plan["run"]
+        # `new` is decided across EVERY chart chart-releaser packages (review of #209: the second
+        # chart was released with no provenance while the plan looked at the app chart alone).
+        assert 'for chart in charts/*/; do' in plan["run"] and 'echo "new=${new}" >> "$GITHUB_OUTPUT"' in plan["run"]
+        assert "new=true" in plan["run"] and "new=false" in plan["run"]
 
 
 # ── Permissions ──────────────────────────────────────────────────────────────────────────────
@@ -306,7 +308,10 @@ class TestWhatIsSignedAndHow:
         assert image[0]["with"]["push-to-registry"] is False
         chart = [s for s in _jobs(HELM)["release"]["steps"] if "attest-build-provenance" in (s.get("uses") or "")]
         assert len(chart) == 1
-        assert chart[0]["with"]["subject-path"].startswith(".cr-release-packages/group-sync-dashboard-")
+        # every NEW package the run created and nothing else — the plan step's list (review of
+        # #209: a `*.tgz` glob would also attest a changed-but-unbumped chart's package that
+        # chart-releaser never uploads)
+        assert chart[0]["with"]["subject-path"] == "${{ steps.plan.outputs.subjects }}"
 
     def test_the_install_guide_gives_the_verification_commands(self) -> None:
         text = INSTALL_GUIDE.read_text()

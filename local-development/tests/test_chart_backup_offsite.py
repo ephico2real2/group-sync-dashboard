@@ -57,8 +57,13 @@ class TestSwitch:
     def test_nothing_renders_by_default(self):
         ok, out = render()
         assert ok, out
-        assert "backup-offsite" not in out
-        assert not [d for d in _docs(out) if d.get("kind") == "CronJob"]
+        docs = _docs(out)
+        assert not [d for d in docs if d.get("kind") == "CronJob"]
+        assert not [d for d in docs if d.get("metadata", {}).get("name", "").endswith("-backup-offsite")]
+        # the rules render by default since 0.36.0: the two offsite alerts stay behind the switch (the
+        # shipped Grafana board's text panel names them as "backup.offsite.enabled only", which is fine)
+        alerts = [r["alert"] for d in docs if d.get("kind") == "PrometheusRule" for g in d["spec"]["groups"] for r in g["rules"] if "alert" in r]
+        assert not [a for a in alerts if "Offsite" in a], alerts
 
     def test_enabled_renders_the_four_objects(self):
         ok, out = render(**ON)

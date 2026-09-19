@@ -1,0 +1,49 @@
+{{ include "openshift-grafana.fullname" . }} — an isolated Grafana in {{ .Release.Namespace }}, reading
+OpenShift's user-workload metrics through Thanos ({{ .Values.thanos.scope }} scope).
+
+  Instance:    oc get grafana {{ include "openshift-grafana.fullname" . }} -n {{ .Release.Namespace }}
+  Datasource:  oc get grafanadatasource {{ include "openshift-grafana.fullname" . }}-thanos -n {{ .Release.Namespace }}
+{{- if .Values.grafana.route.enabled }}
+  Route:       oc get route -n {{ .Release.Namespace }} -l app.kubernetes.io/instance={{ .Release.Name }}
+{{- else }}
+  Not exposed: grafana.route.enabled is false — port-forward, or set it true for a Route.
+{{- end }}
+{{- if eq .Values.grafana.auth.mode "openshift" }}
+  Login:       the cluster's (oauth-proxy); {{ .Values.grafana.auth.adminUser }} is Grafana's admin, everyone the SubjectAccessReview admits is a Viewer.
+{{- else }}
+  Login:       Grafana's own form; the admin credentials are in secret/{{ .Values.grafana.admin.existingSecret | default (printf "%s-admin" (include "openshift-grafana.fullname" .)) }}.
+{{- end }}
+
+Attach a dashboard by selecting this instance:
+
+  apiVersion: grafana.integreatly.org/v1beta1
+  kind: GrafanaDashboard
+  spec:
+    instanceSelector:
+      matchLabels:
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    datasources:
+      - inputName: DS_PROMETHEUS
+        datasourceName: {{ .Values.thanos.datasource.uid | quote }}   # the uid: substituted verbatim into the panels
+    configMapRef: {name: <your-configmap>, key: <your-file>.json}
+
+PREREQUISITE — user-workload monitoring (cluster-admin, once per cluster; the OpenShift engineers).
+Without it the user-workload Prometheus does not exist and Thanos serves no user metrics: the
+datasource is green, the panels are empty. The post-install Job VERIFIES it with no grant (it resolves
+prometheus-user-workload.openshift-user-workload-monitoring.svc, a Service the platform creates only
+when it is on) and REPORTS it — it never fails the install on it:
+  oc logs -n {{ .Release.Namespace }} job/{{ include "openshift-grafana.fullname" . }}-wait | grep 'user-workload monitoring'
+If it says OFF, ask them to run (or add the key to the existing ConfigMap's config.yaml):
+  oc -n openshift-monitoring create configmap cluster-monitoring-config --from-literal=config.yaml='enableUserWorkload: true'
+  oc get pods -n openshift-user-workload-monitoring     # prometheus-user-workload-0 appears within a minute
+Nothing to re-install afterwards.
+{{- if .Values.wait.enabled }}
+
+The post-install gate waits up to {{ .Values.wait.waitSeconds }}s (+120s): run helm install/upgrade with
+--timeout above that ({{ div (add .Values.wait.waitSeconds 120) 60 | add 1 }}m); Helm's default of 5m gives up on the gate first.
+{{- end }}
+{{- if and .Values.operatorGroup.create (not .Values.operator.install) }}
+
+Note: operatorGroup.create is true but operator.install is false — no OperatorGroup was rendered;
+the operator you reuse brings its own.
+{{- end }}

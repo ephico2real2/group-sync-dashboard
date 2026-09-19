@@ -34,7 +34,7 @@ needs_helm = pytest.mark.skipif(shutil.which("helm") is None, reason="helm not i
 def _render(*sets: str) -> list[dict]:
     args = ["helm", "template", "t", str(CHART), "-n", "x", "--set", "ingress.host=h"]
     for s in sets:
-        args += ["--set", s]
+        args += [s] if s.startswith("--") else ["--set", s]
     done = subprocess.run(args, capture_output=True, text=True, timeout=120)
     assert done.returncode == 0, done.stderr
     return [d for d in yaml.safe_load_all(done.stdout) if d]
@@ -186,9 +186,10 @@ class TestTheFile:
 
 @needs_helm
 class TestTheConfigMap:
-    def test_off_by_default_because_the_servicemonitor_is(self):
-        # The ServiceMonitor stays off by operator decision (chart 0.14.0); "" follows it.
-        assert not _dashboard_configmaps(_render())
+    def test_on_by_default_because_the_servicemonitor_is(self):
+        # "" follows the ServiceMonitor, ON since chart 0.36.0 (operator decision 2026-09-19); off with it.
+        assert len(_dashboard_configmaps(_render())) == 1
+        assert not _dashboard_configmaps(_render("monitoring.serviceMonitor.enabled=false"))
 
     def test_follows_the_servicemonitor_on_when_left_empty(self):
         assert len(_dashboard_configmaps(_render("monitoring.serviceMonitor.enabled=true"))) == 1
@@ -252,3 +253,68 @@ class TestTheConfigMap:
         rendered = cm["data"]["group-sync-dashboard.json"]
         assert rendered == DASHBOARD.read_text()
         assert json.loads(rendered)["uid"] == "gsd-group-sync-dashboard"
+
+
+@needs_helm
+class TestTheOperatorCr:
+    def test_the_template_no_longer_claims_to_ship_no_cr(self):
+        """The header comment said "No CR is shipped here on purpose" while the same file rendered
+        one (#161, review of #209, OB3 N1): a comment that contradicts the block below it."""
+        text = (CHART / "templates" / "grafana-dashboard.yaml").read_text()
+        assert "kind: GrafanaDashboard" in text
+        assert "No CR is shipped" not in text
+        assert "NOT SHIPPED: a GrafanaDashboard CR" not in (CHART / "values.yaml").read_text()
+
+    def test_an_empty_datasource_binding_refuses_the_render(self):
+        """grafana-operator refuses a datasources[] entry whose datasourceName is empty (content/
+        resolver.go: "input or datasource empty") and the board never appears — refuse at render."""
+        args = ["helm", "template", "t", str(CHART), "-n", "x", "--set", "ingress.host=h", "--api-versions", "grafana.integreatly.org/v1beta1",
+                "--set", "monitoring.grafanaDashboard.enabled=true", "--set", "monitoring.grafanaDashboard.cr.enabled=true",
+                "--set", "monitoring.grafanaDashboard.cr.datasource="]
+        done = subprocess.run(args, capture_output=True, text=True, timeout=120)
+        assert done.returncode != 0, done.stdout
+        assert "cr.datasource" in done.stderr
+
+    def test_an_empty_instance_selector_refuses_the_render(self):
+        """An empty selector with allowCrossNamespaceImport matches EVERY Grafana the operator sees."""
+        args = ["helm", "template", "t", str(CHART), "-n", "x", "--set", "ingress.host=h", "--api-versions", "grafana.integreatly.org/v1beta1",
+                "--set", "monitoring.grafanaDashboard.enabled=true", "--set", "monitoring.grafanaDashboard.cr.enabled=true",
+                "--set", "monitoring.grafanaDashboard.cr.instanceSelector=null"]
+        done = subprocess.run(args, capture_output=True, text=True, timeout=120)
+        assert done.returncode != 0, done.stdout
+        assert "cr.instanceSelector" in done.stderr
+
+    def test_on_by_default_only_where_the_cluster_serves_the_api_and_never_without_the_configmap(self):
+        """#161 (review of #209, Grok N9): the CR lives INSIDE the ConfigMap's switch, so it can never
+        point at a ConfigMap that is not rendered; bound to the datasource by uid (measured: the
+        operator substitutes the value verbatim into the panels' uid fields). On by default since
+        0.36.0 and rendered only where .Capabilities.APIVersions has the CR's API — a default install on
+        a cluster with no grafana-operator renders no CR and cannot fail on an unknown kind."""
+        assert not [d for d in _render() if d.get("kind") == "GrafanaDashboard"], "no API version: no CR"
+        assert [d for d in _render("--api-versions=grafana.integreatly.org/v1beta1") if d.get("kind") == "GrafanaDashboard"]
+        assert not [d for d in _render("--api-versions=grafana.integreatly.org/v1beta1", "monitoring.grafanaDashboard.cr.enabled=false") if d.get("kind") == "GrafanaDashboard"]
+        docs = _render("--api-versions=grafana.integreatly.org/v1beta1", "monitoring.grafanaDashboard.enabled=true", "monitoring.grafanaDashboard.cr.enabled=true")
+        cr = next(d for d in docs if d["kind"] == "GrafanaDashboard")
+        cm = _dashboard_configmaps(docs)[0]
+        assert cr["spec"]["configMapRef"] == {"name": cm["metadata"]["name"], "key": "group-sync-dashboard.json"}
+        assert cr["spec"]["datasources"] == [{"inputName": "DS_PROMETHEUS", "datasourceName": "openshift-thanos"}]
+        assert cr["spec"]["allowCrossNamespaceImport"] is True and cr["spec"]["resyncPeriod"] == "2m"
+        docs = _render("--api-versions=grafana.integreatly.org/v1beta1", "monitoring.grafanaDashboard.enabled=false", "monitoring.grafanaDashboard.cr.enabled=true")
+        assert not [d for d in docs if d.get("kind") == "GrafanaDashboard"] and not _dashboard_configmaps(docs)
+
+    def test_the_grafana_discovery_role_renders_while_discovery_is_on(self):
+        """Chart 0.36.0: `grafana.url` empty + a selector = the poll thread lists this namespace's Routes,
+        through a namespaced get/list Role the chart renders; a named URL or an empty selector renders
+        neither the Role nor the binding."""
+        docs = _render()
+        role = next(d for d in docs if d["kind"] == "Role" and d["metadata"]["name"].endswith("-grafana-discovery"))
+        assert role["metadata"]["namespace"] == "x"
+        assert role["rules"] == [{"apiGroups": ["route.openshift.io"], "resources": ["routes"], "verbs": ["get", "list"]}]
+        binding = next(d for d in docs if d["kind"] == "RoleBinding" and d["metadata"]["name"].endswith("-grafana-discovery"))
+        assert binding["roleRef"]["name"] == role["metadata"]["name"]
+        cm = next(d for d in docs if d["kind"] == "ConfigMap" and "grafanaRouteSelector" in (d.get("data") or {}).get("clusters.yaml", ""))
+        cfg = yaml.safe_load(cm["data"]["clusters.yaml"])
+        assert cfg["grafanaRouteSelector"] == "app.kubernetes.io/name=openshift-grafana"
+        assert cfg["grafanaDashboardUid"] == "gsd-group-sync-dashboard"
+        for off in ("grafana.url=https://g.example", "grafana.discovery.selector="):
+            assert not [d for d in _render(off) if d["metadata"]["name"].endswith("-grafana-discovery")], off

@@ -1,0 +1,15 @@
+# datasource health
+{"message":"Successfully queried the Prometheus API.","status":"OK"}
+# instant query through the datasource (namespace scope, GET)
+[[{"__name__": "gsd_process_memory_bytes", "component": "dashboard", "container": "oauth-proxy", "endpoint": "http", "instance": "10.217.1.121:8443", "job": "group-sync-dashboard", "namespace": "group-sync-dashboard", "pod": "group-sync-dashboard-68d9c87fbf-bj5kq", "prometheus": "openshift-user-workload-monitoring/user-workload", "service": "group-sync-dashboard"}, [83501056]], [{"__name__": "gsd_process_memory_bytes", "component": "report", "container": "report", "endpoint": "https", "instance": "10.217.1.122:8443", "job": "group-sync-dashboard-report", "namespace": "group-sync-dashboard", "pod": "group-sync-dashboard-report-79bb95bd74-cm92x", "prometheus": "openshift-user-workload-monitoring/user-workload", "service": "group-sync-dashboard-report"}, [61202432]]]
+# the CR
+group-sync-dashboard DashboardSynchronized=True
+# /api/kpi links
+{
+ "grafana": "https://grafana-openshift-grafana-route-group-sync-dashboard.apps-crc.testing",
+ "grafana_dashboard_uid": "gsd-group-sync-dashboard",
+ "console": "https://console-openshift-console.apps-crc.testing",
+ "observe": "https://console-openshift-console.apps-crc.testing/monitoring/dashboards/dashboard-k8s-resources-workloads-namespace?project-dropdown-value=group-sync-dashboard&namespace=group-sync-dashboard&type=ALL_OPTION_KEY"
+}
+# console-public, read with the dashboard's own ServiceAccount (oc --token=<its token> get configmap console-public -n openshift-config-managed)
+https://console-openshift-console.apps-crc.testing

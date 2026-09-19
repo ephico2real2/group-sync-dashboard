@@ -15,7 +15,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import unquote
+from urllib.parse import quote, unquote, urlsplit
 
 import httpx
 
@@ -628,6 +628,56 @@ class ClusterClient:
             verify=verify,
             timeout=self._timeout,
         )
+
+    #: The ConfigMap the console-operator publishes for every authenticated identity — a Role in
+    #: openshift-config-managed grants `get` on it to system:authenticated (measured on 4.22) — so a
+    #: pod's own ServiceAccount can learn the console's URL without a grant of its own.
+    CONSOLE_PUBLIC = "/api/v1/namespaces/openshift-config-managed/configmaps/console-public"
+
+    def console_url(self) -> str | None:
+        """The web console's public URL from `openshift-config-managed/console-public`, or None when the
+        cluster does not publish one (not OpenShift; the ConfigMap withheld; the token unresolvable —
+        the poll itself reports that). The KPI page's Observe door is built on it (#157) when the chart
+        sets no `console.url`, so the value is held to the same rule as `console.url` (config._door_url):
+        an https base with a host and no query or fragment — the page appends a path and a query to it.
+        `https://` alone would otherwise become a door to `https:`."""
+        try:
+            with self._client() as client:
+                body = self._get(client, self.CONSOLE_PUBLIC, {})
+        except ClusterError:
+            return None
+        url = (body.get("data") or {}).get("consoleURL") if isinstance(body, dict) else None
+        if not isinstance(url, str):
+            return None
+        url = url.strip().rstrip("/")
+        parts = urlsplit(url)
+        # `?` and `#` themselves, not the parsed parts: a bare trailing `?` parses as no query and
+        # would still put two query strings in the door.
+        if parts.scheme != "https" or not parts.netloc or "?" in url or "#" in url:
+            return None
+        return url
+
+    def route_url(self, namespace: str, selector: str) -> str | None:
+        """The public URL of the one Route in `namespace` carrying `selector`, or None: the KPI page's
+        Grafana door when the chart sets no `grafana.url` (#157). The openshift-grafana chart labels
+        its Route `app.kubernetes.io/name=openshift-grafana` — the default selector. Held to the door
+        rule like the console: https only (a Route without TLS is not a door the page will open),
+        exactly one match (two Grafanas in a namespace is a choice the operator makes with
+        `grafana.url`). Needs `get`/`list` on routes in that namespace — the chart's Role."""
+        path = f"/apis/route.openshift.io/v1/namespaces/{quote(namespace, safe='')}/routes"
+        try:
+            with self._client() as client:
+                body = self._get(client, path, {"labelSelector": selector})
+        except ClusterError:
+            return None
+        items = body.get("items") if isinstance(body, dict) else None
+        if not isinstance(items, list) or len(items) != 1 or not isinstance(items[0], dict):
+            return None
+        spec = items[0].get("spec") or {}
+        host = spec.get("host") if isinstance(spec, dict) else None
+        if not isinstance(host, str) or not spec.get("tls") or not re.fullmatch(r"[A-Za-z0-9.-]+", host.strip()):
+            return None
+        return f"https://{host.strip()}"
 
     def fetch(self) -> tuple[list[GroupSyncView] | None, list[GroupView]]:
         """One poll's worth of reads. Raises ClusterError with a classified outcome.

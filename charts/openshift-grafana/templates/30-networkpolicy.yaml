@@ -1,0 +1,69 @@
+{{- /*
+Who may reach Grafana: the routers (the Route, when enabled) and pods in this namespace (a
+dashboard that proxies or embeds it). Everything else is refused. Add peers under
+networkPolicy.extraFrom for another namespace's callers.
+*/ -}}
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "openshift-grafana.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "openshift-grafana.labels" . | nindent 4 }}
+spec:
+  # The operator labels the instance's pods `app: <Grafana name>` — measured on v5.24.0; a selector
+  # that matches no pod is a policy that protects nothing, silently.
+  podSelector:
+    matchLabels:
+      app: {{ include "openshift-grafana.fullname" . }}
+  policyTypes: [Ingress]
+  ingress:
+    {{- if eq .Values.grafana.auth.mode "openshift" }}
+    # The router reaches the proxy only; Grafana's own port is for this namespace (the operator's
+    # provisioning) and any peer named below.
+    - from:
+        # The routers: on the pod network (LoadBalancerService, the cloud default) they come from
+        # openshift-ingress; with endpointPublishingStrategy HostNetwork (bare metal, CRC) they run
+        # on the host network and arrive from the node, which OVN-Kubernetes exposes as the
+        # openshift-host-network namespace — the same pair the ingress operator's own canary policy
+        # admits. On a single node the second peer is invisible (a policy never blocks the resident
+        # node); on a multi-node HostNetwork cluster it is the difference between a Route that works
+        # and one that answers only from the router's own node.
+        - namespaceSelector:
+            matchLabels:
+              policy-group.network.openshift.io/ingress: ""
+        - namespaceSelector:
+            matchLabels:
+              policy-group.network.openshift.io/host-network: ""
+      ports:
+        - port: {{ .Values.grafana.auth.oauthProxy.port }}
+          protocol: TCP
+    - from:
+        - podSelector: {}
+        {{- with .Values.networkPolicy.extraFrom }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      ports:
+        - port: 3000
+          protocol: TCP
+        - port: {{ .Values.grafana.auth.oauthProxy.port }}
+          protocol: TCP
+    {{- else }}
+    - from:
+        # the same two router peers as above
+        - namespaceSelector:
+            matchLabels:
+              policy-group.network.openshift.io/ingress: ""
+        - namespaceSelector:
+            matchLabels:
+              policy-group.network.openshift.io/host-network: ""
+        - podSelector: {}
+        {{- with .Values.networkPolicy.extraFrom }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      ports:
+        - port: 3000
+          protocol: TCP
+    {{- end }}
+{{- end }}

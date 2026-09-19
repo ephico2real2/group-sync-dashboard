@@ -1,0 +1,47 @@
+{{- /*
+The front door with auth.mode openshift: a second Service on the proxy's port — the operator's own
+Service stays on 3000, which is where it provisions dashboards and datasources — with the service CA
+issuing the proxy's certificate into `<name>-proxy-tls`; and the reencrypt Route to it, which the
+router trusts through the same CA. The operator's Route stays off in this mode (20-grafana.yaml).
+*/ -}}
+{{- if eq .Values.grafana.auth.mode "openshift" }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "openshift-grafana.fullname" . }}-proxy
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "openshift-grafana.labels" . | nindent 4 }}
+  annotations:
+    service.beta.openshift.io/serving-cert-secret-name: {{ include "openshift-grafana.fullname" . }}-proxy-tls
+spec:
+  selector:
+    app: {{ include "openshift-grafana.fullname" . }}
+  ports:
+    - name: https
+      port: {{ .Values.grafana.auth.oauthProxy.port }}
+      targetPort: https
+      protocol: TCP
+{{- if .Values.grafana.route.enabled }}
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: {{ include "openshift-grafana.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "openshift-grafana.labels" . | nindent 4 }}
+spec:
+  {{- with .Values.grafana.route.host }}
+  host: {{ . | quote }}
+  {{- end }}
+  to:
+    kind: Service
+    name: {{ include "openshift-grafana.fullname" . }}-proxy
+  port:
+    targetPort: https
+  tls:
+    termination: reencrypt
+    insecureEdgeTerminationPolicy: Redirect
+{{- end }}
+{{- end }}
