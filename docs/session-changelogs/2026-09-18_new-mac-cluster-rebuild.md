@@ -316,6 +316,20 @@ that carry code: #202 (#163) and #206 (#156).
   `user-workload monitoring: ON`, 0 objects left in `openshift-monitoring`; the dashboard with `crc.yaml` setting none of it rendered
   the ServiceMonitor, the rule, the CR (`DashboardSynchronized=True`) and the discovery Role; `/api/kpi` links discovered; the Grafana
   door followed through the OpenShift login to the board (24 panels). Captures `reports/2026-09-19_grafana-observe-162-161/`.
+- `a74577a`, `6fb95a9` **design for Argo CD, Flux and Kustomize** (the operator: "someone might use any of the 3 popular
+  tools outside of helm"; "remember the argocd failed initially like 2 weeks ago"): what each renderer does, read from
+  the sources (argo-cd `util/helm/cmd.go` `--api-versions … --include-crds`, `controller/state.go` live API list,
+  `reposerver/cache/cache.go` cache key; helm-controller a real install). The chart's generated Secrets were the trap —
+  `lookup` is empty under `helm template`, every render minted new values, every sync would have rotated them — so they
+  are now **minted on the cluster by a hook, never rendered**. Four upgrades to get there, each measured: the hook's SA
+  as an ordinary resource ("serviceaccount not found" — a pre-hook runs before the manifest → the identity is a hook
+  at −10); Helm deleting the Secrets as they left the manifest (→ a post phase too); the datasource stuck 20 min in the
+  operator's backoff (v5.24.0 returns an error and never watches the instance — the gate now annotates the watched
+  `service-ca` ConfigMap); a final upgrade from a deployed revision: resourceVersions 596822/596848 **KEPT**, gate done
+  in 2 min, the door through the proxy on the minted values (`/api/user` kubeadmin, `isGrafanaAdmin=True`). The
+  dashboard chart's own `lookup` pattern (cookie, report token) is documented for Argo (`ignoreDifferences` +
+  `RespectIgnoreDifferences=true`) and is the next PR's fix. Full suite 3686 passed, 13 skipped; CI green on `6fb95a9`.
+- **#209 merged** at `1c99dcf` on the operator's instruction ("let us merge all changes … push it to my repo").
 - Housekeeping: a background shell from the GSO night was still looping on `oc get application` (Argo removed) — stopped.
 
 ## Numbers
