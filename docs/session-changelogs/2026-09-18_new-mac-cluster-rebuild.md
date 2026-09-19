@@ -283,6 +283,55 @@ that carry code: #202 (#163) and #206 (#156).
 
 ---
 
+### #162 / #161 — the openshift-grafana chart, the GrafanaDashboard CR, the discovered Observe door (2026-09-19 15:4x → 17:5x) — commits `2d1083c` … `07fb9c9`, PR #209
+
+- `2d1083c` the second chart, `charts/openshift-grafana` (grafana-operator v5 from the catalog, the instance, a Thanos datasource on
+  the tenancy port through a `view` RoleBinding in the namespace, service CA and token via `valuesFrom`, a NetworkPolicy, a wait gate;
+  `crds/` for the one-shot install) and the console discovered from `openshift-config-managed/console-public`. Measured on the way: the
+  tenancy port authorises the HTTP method as the verb (POST → `create pods`, so GET); the operator labels the pod `app: <name>` (the
+  first policy selected nothing); the operator substitutes `datasourceName` verbatim into the panels' `uid` (a name → "Data source
+  not found", so the uid).
+- `0101f8e` the CR on request, six KPI panels; `576fc03` the OpenShift login (oauth-proxy sidecar; forged header on :3000 → 401),
+  the UWM check, three KPI alerts; `d739ffd` `docs/DESIGN_grafana_and_observe.md`.
+- **Review, pass 1** (Grok, Codex, OB3 — `docs/REVIEW_grafana_and_observe.md`): `1825626` the wait Role cut to the script's reads,
+  a rediscovery that never blanks the door, every chart attested, the doors guarded at render; `368003f` OB3's: the required bump
+  check was RED on the head (→ chart 0.36.0), lint loops every chart, the attestation takes exactly the uploaded packages, HostNetwork
+  routers admitted (**Found by OB3** — CRC's single node cannot show it), one CSV phase per line, `--timeout 15m` above the gate, the
+  CR refuses empties, the discovered URL held to the door rule, 25 silently-skipped citation checks restored (893/12 again).
+- **G9 overturned by the operator** ("well only kubeadmin worked"; jane.smith on *Bad Request*): all three reviewers had CONFIRMED
+  the Observe URL's parameters. Measured with the `developer` user given `view` and the last project primed to All: the admin form
+  sent `query_range … namespace=` absent (prom-label-proxy 400 on :9092, reproduced with a lab token); the plugin's graphs put the
+  console's *active namespace* on the tenancy request (`query-browser.tsx`), set only from a `/ns/<name>` path segment or
+  `console.lastNamespace` — kubeadmin's happened to be the namespace, and he never uses the tenancy proxy. `972b143` the door is
+  `/dev-monitoring/ns/<ns>?dashboard=<board>` → `namespace=<ns>` on the same user's request. Evidence `98a22a4`. Retracted on the way:
+  the `--as=jane.smith` RBAC reading (impersonation drops OpenShift group membership; her real token passed `get pods`).
+- `46ee06d` **the operator's defaults**: ServiceMonitor, rules, board and CR (behind `.Capabilities.APIVersions`) on; `grafana.url`
+  discovered from the Route by label through a namespaced Role; the Grafana chart's Route on; the gate verifies UWM **by DNS** —
+  `getent hosts prometheus-user-workload.openshift-user-workload-monitoring.svc`, measured from a namespace-only pod (resolves; a
+  missing Service → NXDOMAIN, `getent` exit 2, present in `ose-cli`) — and reports, never fails; the Role in `openshift-monitoring`
+  gone; a "Prerequisites — the Grafana and Observe integration" stanza in both READMEs. A latent defect surfaced by the flip: a quote
+  in `fullnameOverride` broke `monitoring.yaml` once the rules rendered by default (**Found by the existing route test**) — two scalars
+  quoted. Full suite 3684 passed, 13 skipped; TestKpiPage 16.
+- `07fb9c9` the defaults-only install on CRC: the Grafana release on `--reset-values` (`USER-SUPPLIED VALUES: null`), gate
+  `user-workload monitoring: ON`, 0 objects left in `openshift-monitoring`; the dashboard with `crc.yaml` setting none of it rendered
+  the ServiceMonitor, the rule, the CR (`DashboardSynchronized=True`) and the discovery Role; `/api/kpi` links discovered; the Grafana
+  door followed through the OpenShift login to the board (24 panels). Captures `reports/2026-09-19_grafana-observe-162-161/`.
+- `a74577a`, `6fb95a9` **design for Argo CD, Flux and Kustomize** (the operator: "someone might use any of the 3 popular
+  tools outside of helm"; "remember the argocd failed initially like 2 weeks ago"): what each renderer does, read from
+  the sources (argo-cd `util/helm/cmd.go` `--api-versions … --include-crds`, `controller/state.go` live API list,
+  `reposerver/cache/cache.go` cache key; helm-controller a real install). The chart's generated Secrets were the trap —
+  `lookup` is empty under `helm template`, every render minted new values, every sync would have rotated them — so they
+  are now **minted on the cluster by a hook, never rendered**. Four upgrades to get there, each measured: the hook's SA
+  as an ordinary resource ("serviceaccount not found" — a pre-hook runs before the manifest → the identity is a hook
+  at −10); Helm deleting the Secrets as they left the manifest (→ a post phase too); the datasource stuck 20 min in the
+  operator's backoff (v5.24.0 returns an error and never watches the instance — the gate now annotates the watched
+  `service-ca` ConfigMap); a final upgrade from a deployed revision: resourceVersions 596822/596848 **KEPT**, gate done
+  in 2 min, the door through the proxy on the minted values (`/api/user` kubeadmin, `isGrafanaAdmin=True`). The
+  dashboard chart's own `lookup` pattern (cookie, report token) is documented for Argo (`ignoreDifferences` +
+  `RespectIgnoreDifferences=true`) and is the next PR's fix. Full suite 3686 passed, 13 skipped; CI green on `6fb95a9`.
+- **#209 merged** at `1c99dcf` on the operator's instruction ("let us merge all changes … push it to my repo").
+- Housekeeping: a background shell from the GSO night was still looping on `oc get application` (Argo removed) — stopped.
+
 ## Numbers
 
 | | |
