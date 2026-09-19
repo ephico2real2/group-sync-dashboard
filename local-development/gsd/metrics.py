@@ -66,7 +66,7 @@ TIER_CHECK_OUTCOMES = ("allowed", "denied", "unreachable", "auth_failed", "forbi
 REPORT_PULL_OUTCOMES = ("ok", "refused", "unreachable", "error")
 TIERS = ("all", "self")
 RETENTION_TABLES = ("login_event", "dashboard_user_activity", "membership_event", "sync_event",
-                    "binding_event")
+                    "binding_event", "kpi_daily")
 # binding_event's two vocabularies. subject_kind is the Kubernetes subject kind, bounded at two;
 # NO label ever carries the subject's name (the public-/metrics rule).
 BINDING_CHANGES = ("added", "removed")
@@ -99,6 +99,48 @@ class RuntimeSignals:
         self._audit_unmatched: dict[tuple[str, str], int] = {}
         self._report_pulls: dict[str, int] = {}
         self._binding_changes: dict[tuple[str, str, str], int] = {}
+        # The KPI module's counters (#156), accumulated FROM THE STORE under an id watermark per
+        # cluster rather than incremented by the writers: the store stays the source of truth, and
+        # retention — which deletes old rows, always below the watermark — cannot move them backwards.
+        self._membership_watermark: dict[str, int] = {}
+        self._membership_totals: dict[tuple[str, str], int] = {}
+        self._login_watermark: dict[str, int] = {}
+        self._login_totals: dict[tuple[str, str, str], int] = {}
+        # The report service's last self-reported system usage, pulled with the usage feed.
+        self._report_system: dict | None = None
+        self._report_system_at: str | None = None
+
+    def membership_change_totals(self, store, cluster_ids) -> dict[tuple[str, str], int]:
+        """Advance each cluster's watermark over the rows committed since the last call and return
+        the running totals by (cluster, change). Called under the scrape's read snapshot."""
+        with self._lock:
+            for cluster in cluster_ids:
+                counts, newest = store.membership_changes_since(cluster, self._membership_watermark.get(cluster, 0))
+                for change, n in counts.items():
+                    self._membership_totals[(cluster, change)] = self._membership_totals.get((cluster, change), 0) + n
+                self._membership_watermark[cluster] = newest
+            return dict(self._membership_totals)
+
+    def login_attempt_totals(self, store, cluster_ids) -> dict[tuple[str, str, str], int]:
+        """The same watermark seam for login attempts, by (cluster, outcome, provider)."""
+        with self._lock:
+            for cluster in cluster_ids:
+                counts, newest = store.login_attempts_since(cluster, self._login_watermark.get(cluster, 0))
+                for (outcome, provider), n in counts.items():
+                    key = (cluster, outcome, provider)
+                    self._login_totals[key] = self._login_totals.get(key, 0) + n
+                self._login_watermark[cluster] = newest
+            return dict(self._login_totals)
+
+    def note_report_system(self, view: dict | None, at: str) -> None:
+        """The report service's self-report as the usage feed carried it; None when the feed had
+        none (an older build) — the page then says unavailable rather than showing a stale block."""
+        with self._lock:
+            self._report_system, self._report_system_at = (view, at) if view else (None, None)
+
+    def report_system(self) -> tuple[dict | None, str | None]:
+        with self._lock:
+            return self._report_system, self._report_system_at
 
     def note_tier_check(self, threshold: str, outcome: str) -> None:
         with self._lock:
@@ -186,6 +228,10 @@ class DashboardCollector:
         # but claims no measurements it never took.
         self.signals = signals
         self.settings = settings
+        # The KPI module's sources (#156): this process's cgroup sampler and the volume its data
+        # lives on. Set by build_registry; a bare collector declares the families and measures nothing.
+        self.system = None
+        self.volume = None
         # Whether the report service is configured: the usage-pull family is declared only then,
         # pre-seeded to zero (docs/specs/SPEC_C3_reporting_microservice.md §8.15.6).
         self.reporting_enabled = False
@@ -549,6 +595,19 @@ class DashboardCollector:
             capture_source, audit_settled,
         )
         yield from self._event_families(enabled_ids)
+        yield from self._kpi_families(enabled_ids)
+
+    def _kpi_families(self, enabled_ids: set[str]):
+        """The KPI module's public families (gsd/kpi/definitions.py#PUBLIC_KPIS) — this process's
+        own system usage under component="dashboard", and the churn counters. Declared always;
+        sampled only where a source is wired, the rule _event_families states."""
+        from .kpi import COMPONENT_DASHBOARD, Context
+        from .kpi.definitions import PUBLIC_KPIS
+        from .kpi.render_prom import render
+        ctx = Context(component=COMPONENT_DASHBOARD, system=self.system, volume=self.volume,
+                      store=self.store if self.signals is not None else None,
+                      cluster_ids=tuple(sorted(enabled_ids)), signals=self.signals)
+        yield from render(PUBLIC_KPIS, ctx)
 
     def _event_families(self, enabled_ids: set[str]):
         """Families whose source is the process or the filesystem, not the store.
@@ -717,11 +776,13 @@ class DashboardCollector:
 
 def build_registry(store: StorageBackend, grace: timedelta, elector=None,
                    signals: RuntimeSignals | None = None, settings=None,
-                   reporting_enabled: bool = False) -> CollectorRegistry:
+                   reporting_enabled: bool = False, system=None, volume: str | None = None) -> CollectorRegistry:
     """A dedicated registry — the default one carries process/GC collectors we do not want
     duplicated per app instance, and tests build several apps in one interpreter."""
     registry = CollectorRegistry()
     collector = DashboardCollector(store, grace, elector, signals=signals, settings=settings)
     collector.reporting_enabled = reporting_enabled
+    collector.system = system
+    collector.volume = volume
     registry.register(collector)
     return registry

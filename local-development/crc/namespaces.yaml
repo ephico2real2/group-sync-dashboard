@@ -1,0 +1,149 @@
+# The CRC lab's application namespaces — the population the dashboard's Namespaces tab, the
+# namespace-access report's mnemonic/app-environment selector, and the NCO baseline policies act on.
+#
+# Read off the old cluster's own Namespaces tab (reports/2026-09-18_design-programme-release/
+# screenshots/06-namespace-audit.png, 110 rows, MNEMONIC and APP-ENVIRONMENT columns) after the move to
+# the new MacBook found none of them committed anywhere: every one had been created by hand. The three
+# spar-*/trno-* and the three oud-poc-{trino,crossfamily,platform} namespaces are NOT here — they are in
+# openshift-rbac-automation/working-sessions/policies/{bda-namespace,oud-group-namespace}.yaml and are
+# applied from there; klt-* come from that repository's kyverno-label-test-namespaces.yaml.
+#
+#   oc apply -f local-development/crc/namespaces.yaml
+#
+# The labels are the operator's convention (memory: namespace-metadata-mnemonic-convention):
+# company.net/mnemonic + company.net/app-environment drive baseline-{nonprod,prod}-rbac, and
+# company.net/oud-group drives the bdp/trino oud-group policies, whose value must name a synced group.
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: beta-prod
+  labels:
+    company.net/mnemonic: beta
+    company.net/app-environment: prod
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: beta-rnd
+  labels:
+    company.net/mnemonic: beta
+    company.net/app-environment: rnd
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: beta-uat
+  labels:
+    company.net/mnemonic: beta
+    company.net/app-environment: uat
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: demo-prod
+  labels:
+    company.net/mnemonic: demo
+    company.net/app-environment: prod
+---
+# a second prod namespace for the same mnemonic — two rows in a selector, one mnemonic
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: demo-production
+  labels:
+    company.net/mnemonic: demo
+    company.net/app-environment: prod
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: demo-qa
+  labels:
+    company.net/mnemonic: demo
+    company.net/app-environment: qa
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: demo-rnd
+  labels:
+    company.net/mnemonic: demo
+    company.net/app-environment: rnd
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: demo-uat
+  labels:
+    company.net/mnemonic: demo
+    company.net/app-environment: uat
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: jeff-qa
+  labels:
+    company.net/mnemonic: jeff
+    company.net/app-environment: qa
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: jeff-rnd
+  labels:
+    company.net/mnemonic: jeff
+    company.net/app-environment: rnd
+---
+# mnemonic with no environment — the single-dimension negative case in a two-dimension AND
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gsd-preexist
+  labels:
+    company.net/mnemonic: gsd
+---
+# the bdp NamespaceConfig (groupPrefix bda-rbac-spark) binds this group; the other three oud-poc-* namespaces are in openshift-rbac-automation
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: oud-poc-spark
+  labels:
+    company.net/oud-group: bda-rbac-spark-alpha-users
+---
+# no labels: outside the policy system on purpose — the direct-grant demo lives here
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: legacy-payments
+---
+# no labels: the second direct-grant demo namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: legacy-reporting
+---
+# no labels; an openshift-* name the poller must still list
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: openshift-test-demo
+---
+# no labels
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: test-your-email
+---
+# no labels
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ca-tutorial
+---
+# no labels
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ca-tutorial-app

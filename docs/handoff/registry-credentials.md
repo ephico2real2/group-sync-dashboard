@@ -111,11 +111,29 @@ Measured 2026-09-18: sourcing printed **0 bytes**; the exported credential excha
 for `pull,push` on `quay.io/ephico2real/group-sync-dashboard`, **HTTP 200**; and
 `build-and-push-external.sh` then reported `config : environment only (no .env found)`.
 
+## 4b. A new machine, without typing the token again (2026-09-19)
+
+The robot credential is also kept **encrypted** in the private `claude-config` repository —
+`2026-09-18-design-programme/secrets/quay-robot.json.vault`, written by its `tools/vault.sh` with a
+passphrase that lives only in `~/.vault-key`. `registry-creds.sh` reads it as the fallback when this
+machine has no `podman login` yet, so the order is: the environment (CI) → the local store → the vault.
+
+```sh
+gh repo clone ephico2real2/claude-config          # your gh login is the access control
+printf '%s' 'the passphrase' > ~/.vault-key && chmod 600 ~/.vault-key
+./local-development/registry-creds.sh --login     # podman logged in from the vault; nothing typed
+```
+
+Measured 2026-09-19 with the local store moved aside: `--check` reported the vault as its source, the
+token exchange for `pull,push` answered **HTTP 200**, `--login` recreated `auth.json` at mode 600, and
+with the store back the store won. The plaintext is never written to disk (`vault.sh view` to stdout).
+
 ## 5. Rotating, and what a leak costs
 
 1. Quay → Robot Accounts → regenerate the token. The old one dies immediately.
 2. `podman login quay.io` again on each machine that pushes.
 3. `gh secret set REGISTRY_PASSWORD` to update CI.
 
-Nothing else holds a copy. That is the whole point of not carrying a `.env` between machines: a token
-you re-mint is a token the old laptop no longer has.
+The vault holds the only other copy, so a rotation is also `vault.sh encrypt --force` from the fresh
+store and a commit. That is the whole point of not carrying a `.env` between machines: a token you
+re-mint is a token the old laptop no longer has.

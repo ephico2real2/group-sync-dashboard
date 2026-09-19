@@ -5,6 +5,7 @@ from __future__ import annotations
 from ..model import KeyValues, Note, Section, Table
 from ..snapshot import Snapshot
 from .common import Built, ParamSpec, ReportSpec, RunContext, cut, roster_table, window_start
+from ...kpi.predicates import is_empty, is_unattributed
 
 SPEC = ReportSpec(
     name="groups", title="Groups and membership changes",
@@ -28,16 +29,16 @@ def build(snap: Snapshot, ctx: RunContext, params: dict) -> Built:
     shown_changes, t2 = cut([[c["observed_at"], c["change"], c["group_name"], c["user_name"], c["group_synced_at"] or ""] for c in changes])
     sections = [
         Section("Summary", [KeyValues("Groups", [
-            ("Total", len(groups)), ("Empty (no members)", sum(1 for g in groups if g["member_count"] == 0)),
-            ("Unattributed (no sync provider)", sum(1 for g in groups if not g["sync_provider"])),
+            ("Total", len(groups)), ("Empty (no members)", sum(1 for g in groups if is_empty(g))),
+            ("Unattributed (no sync provider)", sum(1 for g in groups if is_unattributed(g))),
             (f"Members added in {params['window_days']} d", change_counts["added"]), (f"Members removed in {params['window_days']} d", change_counts["removed"]),
             ("Membership history retained since", retained or "no rows"),
         ])]),
         Section("Inventory", [Table("Groups", ["group", "provider", "members", "synced at", "bindings", "cliff silence"], inventory)], page_break=True),
         Section("Groups needing attention", [
-            Table("Empty groups", ["group", "provider"], [[g["name"], g["sync_provider"] or "unattributed"] for g in groups if g["member_count"] == 0], empty_text="none",
+            Table("Empty groups", ["group", "provider"], [[g["name"], g["sync_provider"] or "unattributed"] for g in groups if is_empty(g)], empty_text="none",
                   note="A group that grants nobody: either the directory group emptied, or the LDAP filter no longer matches it."),
-            Table("Unattributed groups", ["group", "members"], [[g["name"], g["member_count"]] for g in groups if not g["sync_provider"]], empty_text="none",
+            Table("Unattributed groups", ["group", "members"], [[g["name"], g["member_count"]] for g in groups if is_unattributed(g)], empty_text="none",
                   note="No GroupSync CR claims this group; it is not governed by the directory."),
         ], page_break=True),
         Section(f"Membership changes, last {params['window_days']} days", [

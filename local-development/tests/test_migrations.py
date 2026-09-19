@@ -243,7 +243,7 @@ def test_migration_10_opens_a_v9_database_and_matches_a_fresh_one(tmp_path, vers
                 "INSERT INTO login_event(cluster_id,pod_name,user_name,outcome,at,detail,observed_at)"
                 " VALUES('crc','p',?,'failed','t','d','o')", (u,))
         assert upgraded._conn.execute("SELECT count(*) FROM login_event WHERE audit_id IS NULL").fetchone()[0] == 3
-        assert upgraded._conn.execute("PRAGMA user_version").fetchone()[0] == max(t for t, _, _ in _MIGRATIONS) == 14
+        assert upgraded._conn.execute("PRAGMA user_version").fetchone()[0] == max(t for t, _, _ in _MIGRATIONS) == 16
     finally:
         upgraded.close()
         fresh.close()
@@ -299,7 +299,7 @@ def test_a_committed_ok_poll_marks_membership_but_a_failed_one_does_not(tmp_path
     fresh.close()
     upgraded = Store(db)
     try:
-        assert upgraded._conn.execute("PRAGMA user_version").fetchone()[0] == 14
+        assert upgraded._conn.execute("PRAGMA user_version").fetchone()[0] == 16
         markers = [tuple(r) for r in upgraded._conn.execute(
             "SELECT cluster_id, stream FROM observation_state ORDER BY 1")]
         assert markers == [("nil", "membership")]

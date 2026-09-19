@@ -76,8 +76,8 @@ def build_report_app(settings: ReportSettings, *, secret: bytes | None = None, c
         if _r.status == "done" and _r.schedule and _r.finished_at and _r.schedule not in _seeded:
             try:
                 _when = datetime.strptime(_r.finished_at, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC).timestamp()
-            except ValueError:
-                continue                                            # a hand-edited timestamp is skipped, not a crashloop
+            except (ValueError, TypeError):
+                continue                                            # a hand-edited timestamp, of any shape or type, is skipped, not a crashloop
             _seeded.add(_r.schedule)
             signals.note_schedule_success(_r.schedule, _when)
 
@@ -88,7 +88,13 @@ def build_report_app(settings: ReportSettings, *, secret: bytes | None = None, c
         except (SnapshotError, OSError):
             return None
 
-    registry = build_report_registry(signals, store, runs, settings.snapshot_dir, snapshot_age)
+    # This process's self-report (#156): its own cgroup and the filesystem under the artefact volume,
+    # exported on /metrics under component="report" and carried to the dashboard on the usage feed.
+    from ..kpi.system import CgroupSampler, SystemMonitor, artifact_bytes
+    system_monitor = SystemMonitor(CgroupSampler(), settings.artifact_dir,
+                                   own=("artifacts", artifact_bytes(settings.artifact_dir)))
+    registry = build_report_registry(signals, store, runs, settings.snapshot_dir, snapshot_age,
+                                     system=system_monitor.sampler, volume=system_monitor.volume)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -376,7 +382,10 @@ def build_report_app(settings: ReportSettings, *, secret: bytes | None = None, c
         """
         rows = store.since(since_id, limit)
         return {"runs": [r.public() for r in rows], "next_since_id": rows[-1].id if rows else since_id,
-                "truncated": len(rows) == limit, "service_version": __version__}
+                "truncated": len(rows) == limit, "service_version": __version__,
+                # The service's own system usage (#156), for the dashboard's KPI page: the one
+                # channel the dashboard already pulls, so no second endpoint and no second token.
+                "system": system_monitor.view()}
 
     app.state.store, app.state.runs, app.state.settings = store, runs, settings
     return app
