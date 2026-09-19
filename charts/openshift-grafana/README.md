@@ -24,9 +24,16 @@ oc -n openshift-monitoring create configmap cluster-monitoring-config \
   --from-literal=config.yaml='enableUserWorkload: true'
 ```
 
-(or add `enableUserWorkload: true` to the existing ConfigMap's `config.yaml`). Everything else the
-chart needs is in the namespace it installs into — with the default `thanos.scope: namespace` a team
-installs it with ordinary project rights.
+(or add `enableUserWorkload: true` to the existing ConfigMap's `config.yaml`).
+
+The other cluster-scoped step is the **first install on a cluster with no grafana-operator**: Helm
+creates the four CRDs under `crds/` when they are absent, and a CustomResourceDefinition is
+cluster-scoped — that needs the right to create CRDs, which a project Role does not carry. Once the
+CRDs exist (this chart's first install, or any grafana-operator already on the cluster), everything
+else lives in the namespace the chart installs into, and with the default `thanos.scope: namespace`
+a team installs and upgrades it with ordinary project rights. The gate prints the prerequisite's
+command after every install and, when it may read `openshift-monitoring` (`wait.verifyUserWorkloadMonitoring`),
+fails the install with it when user-workload monitoring is off.
 
 ## How the install order works
 

@@ -19,15 +19,17 @@ metadata:
   labels:
     {{- include "openshift-grafana.labels" . | nindent 4 }}
 rules:
+  # Exactly what the script reads (review of #209, Codex and Grok): CSVs are LISTED (the operator's
+  # CSV is found by its displayName), the instance, the datasource and the Deployment are GOT by name.
   - apiGroups: ["operators.coreos.com"]
-    resources: ["clusterserviceversions", "subscriptions"]
+    resources: ["clusterserviceversions"]
     verbs: ["get", "list"]
   - apiGroups: ["grafana.integreatly.org"]
     resources: ["grafanas", "grafanadatasources"]
-    verbs: ["get", "list"]
+    verbs: ["get"]
   - apiGroups: ["apps"]
     resources: ["deployments"]
-    verbs: ["get", "list"]
+    verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

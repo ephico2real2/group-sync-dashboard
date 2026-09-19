@@ -80,8 +80,10 @@ rather than inherit it, so a default that moves later cannot silently change thi
 them became redundant on chart 0.14.0 (`loginCapture`, `apiTokenAccess`) and were kept for exactly
 that reason: the file records what this cluster runs with, whichever way the default moves. That
 costs one line each and buys a diff that shows intent. The Grafana dashboard override that validated
-B3 through grafana-operator v5 was removed with chart 0.14.0: its `""` default follows the
-ServiceMonitor, which this cluster keeps off, and nothing on the cluster reads the board.
+B3 through grafana-operator v5 was removed with chart 0.14.0 and its `""` default follows the
+ServiceMonitor — which the M5 Pro's CRC keeps ON since 2026-09-19 (user-workload monitoring is on),
+so the board ships, and the `openshift-grafana` release in the same namespace reads it through the
+GrafanaDashboard CR (#161).
 
 ### The reporting feature block and the cluster list are configured in `crc.yaml`, not tracked here
 

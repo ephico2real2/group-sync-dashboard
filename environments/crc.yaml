@@ -83,7 +83,7 @@ monitoring:
     enabled: true
   grafanaDashboard:
     # The openshift-grafana chart runs in this namespace as release `grafana` (#162); the CR hands
-    # it the board, bound to its "OpenShift Thanos" datasource by name (#161).
+    # it the board, bound to its datasource by uid, `openshift-thanos` (#161).
     cr:
       enabled: true
 

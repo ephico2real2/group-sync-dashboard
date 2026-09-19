@@ -59,6 +59,8 @@ data:
     kpiCpuWarnPercent: {{ .Values.kpi.thresholds.cpuPercent }}
     kpiThrottledWarnPercent: {{ .Values.kpi.thresholds.throttledPercent }}
     kpiDiskWarnPercent: {{ .Values.kpi.thresholds.diskPercent }}
+    {{- include "gsd.doorUrl" (list "grafana.url" .Values.grafana.url) }}
+    {{- include "gsd.doorUrl" (list "console.url" .Values.console.url) }}
     grafanaUrl: {{ .Values.grafana.url | quote }}
     grafanaDashboardUid: {{ .Values.grafana.dashboardUid | quote }}
     consoleUrl: {{ .Values.console.url | quote }}

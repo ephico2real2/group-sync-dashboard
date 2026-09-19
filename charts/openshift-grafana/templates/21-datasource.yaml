@@ -1,7 +1,8 @@
 {{- /*
 The Thanos datasource, applied to the instance by instanceSelector. NAME and uid are both fixed
-(values thanos.datasource): a dashboard exported with `${DS_PROMETHEUS}` binds by name through
-GrafanaDashboard.spec.datasources[].datasourceName; one that hard-codes a uid binds by uid.
+(values thanos.datasource): a dashboard that hard-codes a uid binds by uid, and one exported with
+`${DS_PROMETHEUS}` binds through GrafanaDashboard.spec.datasources[].datasourceName — which the
+operator substitutes verbatim into the panels' uid fields, so that value must be the uid too.
 
 Two values come in through valuesFrom and never through the manifest: the bearer token (the
 ServiceAccount's Secret) and the service CA (the injected ConfigMap) — so the rendered YAML carries

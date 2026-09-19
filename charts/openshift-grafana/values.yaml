@@ -109,9 +109,11 @@ thanos:
     service: thanos-querier.openshift-monitoring.svc.cluster.local
     tenancyPort: 9092
     clusterPort: 9091
-  # Deterministic NAME and uid. Dashboards exported with an input (`${DS_PROMETHEUS}`) bind by
-  # name (GrafanaDashboard.spec.datasources[].datasourceName); dashboards that hard-code a uid bind
-  # by uid. Pinning only one silently mis-binds the other kind.
+  # Deterministic name and uid. `name` labels it in Grafana; `uid` is what dashboards bind to — a
+  # board that hard-codes a uid directly, and a board exported with an input (`${DS_PROMETHEUS}`)
+  # through GrafanaDashboard.spec.datasources[].datasourceName, which despite its name the operator
+  # substitutes VERBATIM into the panels' uid fields (measured on CRC: the display name rendered in
+  # the browser, Grafana's query API answered "Data source not found"). Give consumers the uid.
   datasource:
     name: OpenShift Thanos
     uid: openshift-thanos

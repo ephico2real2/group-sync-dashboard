@@ -252,3 +252,21 @@ class TestTheConfigMap:
         rendered = cm["data"]["group-sync-dashboard.json"]
         assert rendered == DASHBOARD.read_text()
         assert json.loads(rendered)["uid"] == "gsd-group-sync-dashboard"
+
+
+@needs_helm
+class TestTheOperatorCr:
+    def test_off_by_default_and_never_without_the_configmap(self):
+        """#161 (review of #209, Grok N9): the CR lives INSIDE the ConfigMap's switch, so it can never
+        point at a ConfigMap that is not rendered; bound to the datasource by uid (measured: the
+        operator substitutes the value verbatim into the panels' uid fields)."""
+        docs = _render("monitoring.grafanaDashboard.enabled=true")
+        assert not [d for d in docs if d.get("kind") == "GrafanaDashboard"]
+        docs = _render("monitoring.grafanaDashboard.enabled=true", "monitoring.grafanaDashboard.cr.enabled=true")
+        cr = next(d for d in docs if d["kind"] == "GrafanaDashboard")
+        cm = _dashboard_configmaps(docs)[0]
+        assert cr["spec"]["configMapRef"] == {"name": cm["metadata"]["name"], "key": "group-sync-dashboard.json"}
+        assert cr["spec"]["datasources"] == [{"inputName": "DS_PROMETHEUS", "datasourceName": "openshift-thanos"}]
+        assert cr["spec"]["allowCrossNamespaceImport"] is True and cr["spec"]["resyncPeriod"] == "2m"
+        docs = _render("monitoring.grafanaDashboard.enabled=false", "monitoring.grafanaDashboard.cr.enabled=true")
+        assert not [d for d in docs if d.get("kind") == "GrafanaDashboard"] and not _dashboard_configmaps(docs)

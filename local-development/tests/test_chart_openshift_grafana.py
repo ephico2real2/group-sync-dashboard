@@ -219,3 +219,23 @@ class TestNothingApplicationSpecific:
             crd = yaml.safe_load(p.read_text())
             assert crd["kind"] == "CustomResourceDefinition" and "status" not in crd
             assert crd["metadata"]["name"] == p.name[:-5]
+
+
+@needs_helm
+class TestTheAppChartsDoors:
+    """The app chart refuses a door URL that is not an http(s) URL at RENDER time (review of #209,
+    Grok N4): the app's own guard runs at process start, after a successful `helm upgrade`."""
+
+    APP = REPO / "charts" / "group-sync-dashboard"
+
+    def _render(self, *sets: str) -> subprocess.CompletedProcess:
+        args = ["helm", "template", "t", str(self.APP)]
+        for s in sets:
+            args += ["--set", s]
+        return subprocess.run(args, capture_output=True, text=True, timeout=120)
+
+    def test_bad_door_urls_refuse_the_render_and_good_ones_pass(self):
+        for bad in ("grafana.url=javascript:alert(1)", "console.url=grafana.example.com", "grafana.url=https://g.example/?x=1"):
+            done = self._render(bad)
+            assert done.returncode != 0 and "must be an http(s) URL" in done.stderr, bad
+        assert self._render("grafana.url=https://g.example/grafana", "console.url=https://c.example").returncode == 0

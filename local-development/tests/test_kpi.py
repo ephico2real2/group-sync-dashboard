@@ -733,3 +733,29 @@ class TestObserveDoor:
             assert calls == ["c1"] and signals.console_url() == "https://c.example"
         finally:
             store.close()
+
+    def test_a_failed_rediscovery_does_not_drop_a_known_console(self, tmp_path, monkeypatch):
+        """Review of #209 (Grok, N6): a one-cycle 403 or timeout returned None and overwrote the URL the
+        previous cycle discovered — the door vanished for a poll interval."""
+        from gsd.config import ClusterConfig
+        from gsd.poller import Poller
+        answers = iter(["https://c.example", None])
+
+        class Client:
+            def __init__(self, cluster, timeout=None):
+                pass
+            def console_url(self):
+                return next(answers)
+
+        monkeypatch.setattr("gsd.poller.ClusterClient", Client)
+        store = seed_store(str(tmp_path / "w.db"))
+        try:
+            signals = RuntimeSignals()
+            poller = Poller(store, _settings(str(tmp_path / "w.db")), signals=signals)
+            host = ClusterConfig("c1", "https://x", token_env="T")
+            poller._discover_console(host)
+            assert signals.console_url() == "https://c.example"
+            poller._discover_console(host)
+            assert signals.console_url() == "https://c.example", "a None rediscovery must not blank the door"
+        finally:
+            store.close()

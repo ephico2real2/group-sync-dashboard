@@ -767,16 +767,21 @@ class Poller:
         """The host cluster's console URL, once a cycle, for the KPI page's Observe door (#157): read
         from openshift-config-managed/console-public with the pod's own identity. Only the host's
         thread asks — the console the reader is signed in to is the host's — and a failure to read
-        it is a None the page renders as "no console link", never an error in the poll."""
+        it never stops the poll and never blanks a console already known."""
         if self.signals is None:
             return
         host = self.settings.host_cluster()
         if host is None or cluster.name != host.name:
             return
         try:
-            self.signals.note_console_url(ClusterClient(cluster, timeout=self.settings.request_timeout_seconds).console_url())
+            url = ClusterClient(cluster, timeout=self.settings.request_timeout_seconds).console_url()
         except Exception:  # noqa: BLE001 - a discovery must never stop the poll
             log.exception("%s: console discovery failed; the poll continues", cluster.name)
+            return
+        # None never overwrites a URL already known: a one-cycle 403 or timeout would otherwise drop
+        # the door the previous cycle discovered (review of #209, Grok).
+        if url is not None:
+            self.signals.note_console_url(url)
 
     def _rollup_kpi(self, cluster: ClusterConfig) -> None:
         """The daily KPI rollup (#156): the leader writes today's row for this cluster once, after
