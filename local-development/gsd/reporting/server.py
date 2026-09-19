@@ -88,7 +88,12 @@ def build_report_app(settings: ReportSettings, *, secret: bytes | None = None, c
         except (SnapshotError, OSError):
             return None
 
-    registry = build_report_registry(signals, store, runs, settings.snapshot_dir, snapshot_age)
+    # This process's self-report (#156): its own cgroup and the filesystem under the artefact volume,
+    # exported on /metrics under component="report" and carried to the dashboard on the usage feed.
+    from ..kpi.system import CgroupSampler, SystemMonitor
+    system_monitor = SystemMonitor(CgroupSampler(), settings.artifact_dir)
+    registry = build_report_registry(signals, store, runs, settings.snapshot_dir, snapshot_age,
+                                     system=system_monitor.sampler, volume=system_monitor.volume)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -376,7 +381,10 @@ def build_report_app(settings: ReportSettings, *, secret: bytes | None = None, c
         """
         rows = store.since(since_id, limit)
         return {"runs": [r.public() for r in rows], "next_since_id": rows[-1].id if rows else since_id,
-                "truncated": len(rows) == limit, "service_version": __version__}
+                "truncated": len(rows) == limit, "service_version": __version__,
+                # The service's own system usage (#156), for the dashboard's KPI page: the one
+                # channel the dashboard already pulls, so no second endpoint and no second token.
+                "system": system_monitor.view()}
 
     app.state.store, app.state.runs, app.state.settings = store, runs, settings
     return app

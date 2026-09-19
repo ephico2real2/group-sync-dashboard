@@ -78,7 +78,7 @@ credential-less `curl`, so refusing the same per-CR identity behind login would 
 `ldap_filter` and `error_message`, both of which can embed directory DNs and the gate group.
 Administrators receive the full row, unchanged.
 
-**`bindings/findings` and `operator-configs` are the administrator tier** (`403` at self). The
+**`bindings/findings`, `operator-configs` and `kpi` are the administrator tier** (`403` at self). The
 Access granted tab at the narrowed tier reads the reader's own path instead — `/users/{name}`
 for their own name, whose `bindings` carry `via_group` — which the gate never withheld.
 They describe objects too, but that is not the test. A binding row names which *group* holds
@@ -765,6 +765,58 @@ the cluster does not have.
 A CR is currently failing when `error_at` is set and is *later* than `success_at`. A
 `NamespaceConfig` that stops reconciling raises nothing on the cluster — both its conditions
 stay `True` — so new namespaces silently receive no RBAC and drift stops being corrected.
+
+### `GET /api/kpi`
+
+The KPI module's in-app surface (#156): every KPI definition rendered as JSON, the 30-day trends,
+the daily rollup's series, and both processes' self-reported system usage. **Administrator tier**
+(`403` at self): the `internal` class counts people, and the trends aggregate the fleet's churn
+and logins — governance data about the clusters, not about the reader.
+
+```json
+{
+  "scope": "all", "viewer": "root", "as_of": "2026-09-19T14:02:11Z",
+  "kpis": {
+    "gsd_membership_changes_total": {"help": "…", "kind": "counter", "privacy": "public",
+                                     "labels": ["cluster", "change"],
+                                     "samples": [{"cluster": "crc-local", "change": "added", "value": 14}]},
+    "users_total": {"help": "…", "kind": "gauge", "privacy": "internal", "labels": ["cluster"],
+                    "samples": [{"cluster": "crc-local", "value": 41}]},
+    "gsd_process_memory_limit_bytes": {"…": "…", "samples": null}
+  },
+  "trends": {
+    "crc-local": {
+      "window_days": 30,
+      "history_retained_since": {"membership_event": "2026-08-20T00:00:00Z", "sync_event": null, "binding_event": null},
+      "daily": {"since": "2026-09-19", "window_days": 90,
+                "series": {"groups": [{"day": "2026-09-19", "value": 62.0}], "bindings": []}},
+      "as_of": "2026-09-19T14:01:40Z"
+    }
+  },
+  "system": {
+    "dashboard": {"as_of": "2026-09-19T14:02:11Z",
+                  "memory": {"used_bytes": 105410560, "limit_bytes": 536870912},
+                  "cpu": {"limit_cores": 0.5, "usage_seconds": 5.06, "periods": 175931,
+                          "throttled_periods": 196, "throttled_seconds": 5.06,
+                          "cores_used": 0.02, "throttled_fraction": 0.0, "rate_interval_seconds": 60.0},
+                  "disk": {"used_bytes": 27000000000, "total_bytes": 32000000000}},
+    "report": null
+  }
+}
+```
+
+Every KPI carries its **privacy class**: `public` ones are the same definitions `/metrics`
+exports (`gsd_process_*{component}`, `gsd_volume_disk_*`, `gsd_membership_changes_total`,
+`gsd_login_attempts_total`); `internal` ones — anything counting people — never reach `/metrics`,
+which the renderer refuses rather than a convention remembers. A KPI whose source cannot be
+measured has `samples: null` — *unavailable*, distinguishable from 0 (a cgroup v1 node, an
+unlimited `memory.max`). `system.report` is the report service's last self-report, pulled with
+its usage feed; `null` until the first pull, or when the service predates it. `cpu.cores_used`
+and `throttled_fraction` are rates over the interval since the previous sample, on a monotonic
+clock, and `null` on the first. Every trend carries `history_retained_since`, because retention
+prunes the event tables and a trend that ignores the cut lies about a quiet month; `daily.since`
+is where the rollup — written once a day by the leader, for the counts that have no history —
+actually starts.
 
 ### `GET /api/whoami`
 

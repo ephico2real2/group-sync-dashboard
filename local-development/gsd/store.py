@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Iterator
 
 from .storage import SqliteHealth, StorageHealth  # noqa: F401
+from .kpi.predicates import GROUP_EMPTY, GROUP_UNATTRIBUTED, qualified
 from .kube import SYSTEM_GROUP_PREFIX
 from .timeutil import now_iso
 
@@ -547,6 +548,19 @@ CREATE TABLE IF NOT EXISTS report_run (
 );
 CREATE INDEX IF NOT EXISTS report_run_by_time ON report_run(requested_at DESC);
 CREATE INDEX IF NOT EXISTS report_run_by_user ON report_run(generated_by, requested_at DESC);
+
+-- The daily KPI rollup (#156): one row per (cluster, UTC day, metric), written by the leader on the
+-- first successful poll of each day. The counts it holds (groups, bindings, people) have NO history
+-- of their own — group_state and rbac_group_binding are replaced every poll — and user-workload
+-- monitoring is off by default on OpenShift, so without this an install with no Prometheus has no
+-- trend at all. A handful of rows per cluster per day; pruned after KPI_DAILY_RETENTION_DAYS.
+CREATE TABLE IF NOT EXISTS kpi_daily (
+    cluster_id          TEXT NOT NULL,
+    day                 TEXT NOT NULL,      -- YYYY-MM-DD, UTC
+    metric              TEXT NOT NULL,
+    value               REAL NOT NULL,
+    PRIMARY KEY(cluster_id, day, metric)
+);
 """
 
 
@@ -913,6 +927,19 @@ _MIGRATIONS: list[tuple[int, str, list[str]]] = [
             # open (see _OBSERVATION_SEEDS), so an upgrade never re-describes existing rows as a
             # first observation — and neither does a store a marker-less build wrote to.
             *_OBSERVATION_SEEDS,
+        ],
+    ),
+    (
+        15,
+        "kpi_daily: the leader's daily rollup of the counts that have no history (#156)",
+        [
+            """CREATE TABLE IF NOT EXISTS kpi_daily (
+                   cluster_id          TEXT NOT NULL,
+                   day                 TEXT NOT NULL,
+                   metric              TEXT NOT NULL,
+                   value               REAL NOT NULL,
+                   PRIMARY KEY(cluster_id, day, metric)
+               )""",
         ],
     ),
 ]
@@ -3758,7 +3785,6 @@ class Store:
         Two copies of this predicate would drift the way the count-versus-list defects did,
         and the `empty` reading below has already been re-litigated once — it must not fork.
         """
-        prefix = f"{alias}." if alias else ""
         if state == "empty":
             # EVERY group with no members, whatever created it. This was scoped to
             # `sync_provider IS NOT NULL` on PLAN §7's reading of EMPTY as "synced, then lost
@@ -3770,9 +3796,9 @@ class Store:
             # two questions, not a partition. "Which groups grant nobody?" and "which groups is
             # no CR managing?" have different answers and a group can be both. Nothing sums
             # them — checked across store, api, metrics and the UI before the change.
-            return f" AND {prefix}member_count = 0"
+            return " AND " + qualified(GROUP_EMPTY, alias)
         if state == "unattributed":
-            return f" AND {prefix}sync_provider IS NULL"
+            return " AND " + qualified(GROUP_UNATTRIBUTED, alias)
         if state != "all":
             raise ValueError(f"unknown group state filter {state!r}")
         return ""
@@ -3831,14 +3857,14 @@ class Store:
         return bool(rows)
 
     def group_counts(self, cluster_id: str) -> dict:
+        # The same fragments as the `empty` / `unattributed` predicates in groups() above and the
+        # compliance snapshot's counts (gsd/kpi/predicates.py). A count that disagrees with its own
+        # list is the defect class this project keeps rediscovering, so a test pins them together.
         row = self._row(
-            """SELECT COUNT(*) AS total,
-                      -- Must stay identical to the `empty` predicate in groups() above. A
-                      -- count that disagrees with its own list is the defect class this
-                      -- project keeps rediscovering, so a test pins them together.
-                      SUM(CASE WHEN member_count = 0 THEN 1 ELSE 0 END) AS empty,
-                      SUM(CASE WHEN sync_provider IS NULL THEN 1 ELSE 0 END) AS unattributed
-                 FROM group_state WHERE cluster_id=?""",
+            f"""SELECT COUNT(*) AS total,
+                       SUM(CASE WHEN {GROUP_EMPTY} THEN 1 ELSE 0 END) AS empty,
+                       SUM(CASE WHEN {GROUP_UNATTRIBUTED} THEN 1 ELSE 0 END) AS unattributed
+                  FROM group_state WHERE cluster_id=?""",
             (cluster_id,),
         )
         return {
@@ -3846,6 +3872,106 @@ class Store:
             "empty": row["empty"] or 0,
             "unattributed": row["unattributed"] or 0,
         }
+
+    # -- the KPI module's scalars (#156) ----------------------------------------------------
+
+    def people_counts(self, cluster_id: str) -> dict:
+        """Users known to the cluster and distinct group members — PEOPLE counts, so `internal`:
+        they reach the tier-gated JSON surface and never /metrics (gsd/kpi/__init__.py)."""
+        users = self._row("SELECT COUNT(*) AS n FROM ocp_user WHERE cluster_id=?", (cluster_id,))
+        members = self._row("SELECT COUNT(DISTINCT user_name) AS n FROM group_member WHERE cluster_id=?",
+                            (cluster_id,))
+        return {"users": (users or {}).get("n") or 0, "members": (members or {}).get("n") or 0}
+
+    def membership_changes_since(self, cluster_id: str, since_id: int) -> tuple[dict[str, int], int]:
+        """Membership events with id > `since_id` that are CHANGES (baseline=0: a cluster's first
+        observation is "first seen", not churn — #175), counted by `change`, and the newest id seen.
+
+        The seam under gsd_membership_changes_total: a counter accumulated from the table by an id
+        watermark rather than kept beside it, so the store stays the source of truth and retention —
+        which deletes OLD rows, always below the watermark — cannot make the counter go backwards.
+        AUTOINCREMENT ids never reuse, so a row committed after this read has a higher id.
+        """
+        # ONE statement for the counts and the watermark: a row committed between two statements
+        # would be above the new watermark and never counted. Baseline rows are grouped apart so the
+        # watermark still passes them.
+        rows = self._rows(
+            """SELECT CASE WHEN baseline=1 THEN 'baseline' ELSE change END AS change,
+                      COUNT(*) AS n, MAX(id) AS newest
+                 FROM membership_event WHERE cluster_id=? AND id>? GROUP BY 1""",
+            (cluster_id, since_id),
+        )
+        newest = max([since_id, *(r["newest"] for r in rows)])
+        return {r["change"]: r["n"] for r in rows if r["change"] != "baseline"}, newest
+
+    def login_attempts_since(self, cluster_id: str, since_id: int) -> tuple[dict[tuple[str, str], int], int]:
+        """Login attempts with id > `since_id`, counted by (outcome, provider), and the newest id — the
+        same watermark seam as membership_changes_since, under gsd_login_attempts_total. A row with no
+        provider counts under 'unknown' (an attempt against a name that resolves to no identity)."""
+        rows = self._rows(
+            """SELECT outcome, COALESCE(provider, 'unknown') AS provider, COUNT(*) AS n, MAX(id) AS newest
+                 FROM login_event WHERE cluster_id=? AND id>? GROUP BY outcome, provider""",
+            (cluster_id, since_id),
+        )
+        newest = max([since_id, *(r["newest"] for r in rows)])
+        return {(r["outcome"], r["provider"]): r["n"] for r in rows}, newest
+
+    def membership_churn(self, cluster_id: str, since_at: str) -> dict[str, int]:
+        """Joiners and leavers observed since `since_at` (baseline rows excluded) — the in-app trend.
+        Two scalars over the (cluster_id, observed_at) index."""
+        rows = self._rows(
+            """SELECT change, COUNT(*) AS n FROM membership_event
+                WHERE cluster_id=? AND observed_at>=? AND baseline=0 GROUP BY change""",
+            (cluster_id, since_at),
+        )
+        counts = {r["change"]: r["n"] for r in rows}
+        return {"added": counts.get("added", 0), "removed": counts.get("removed", 0)}
+
+    def login_outcomes(self, cluster_id: str, since_at: str) -> dict:
+        """Attempts, successes and distinct providers seen since `since_at` — the in-app trend, as
+        scalars: never derived from a page of rows."""
+        row = self._row(
+            """SELECT COUNT(*) AS attempts,
+                      SUM(CASE WHEN outcome='success' THEN 1 ELSE 0 END) AS successes,
+                      COUNT(DISTINCT provider) AS providers
+                 FROM login_event WHERE cluster_id=? AND at>=?""",
+            (cluster_id, since_at),
+        )
+        row = row or {}
+        return {"attempts": row.get("attempts") or 0, "successes": row.get("successes") or 0,
+                "providers": row.get("providers") or 0}
+
+    def kpi_daily_written(self, cluster_id: str, day: str) -> bool:
+        return bool(self._row("SELECT 1 AS yes FROM kpi_daily WHERE cluster_id=? AND day=? LIMIT 1",
+                              (cluster_id, day)))
+
+    def write_kpi_daily(self, cluster_id: str, day: str, values: dict[str, float]) -> int:
+        """Record the day's rollup, once: INSERT OR IGNORE, so a second leader or a retried cycle
+        cannot overwrite the day's first reading. Returns rows written."""
+        with self._write() as conn:
+            before = conn.total_changes
+            conn.executemany(
+                "INSERT OR IGNORE INTO kpi_daily(cluster_id, day, metric, value) VALUES(?,?,?,?)",
+                [(cluster_id, day, metric, float(value)) for metric, value in values.items()],
+            )
+            return conn.total_changes - before
+
+    def kpi_daily_series(self, cluster_id: str, metric: str, since_day: str) -> list[dict]:
+        """The rollup's points for one metric from `since_day`, oldest first."""
+        return self._rows(
+            "SELECT day, value FROM kpi_daily WHERE cluster_id=? AND metric=? AND day>=? ORDER BY day",
+            (cluster_id, metric, since_day),
+        )
+
+    def kpi_daily_since(self, cluster_id: str) -> str | None:
+        """The oldest day the rollup holds for this cluster — where a trend really starts."""
+        row = self._row("SELECT MIN(day) AS since FROM kpi_daily WHERE cluster_id=?", (cluster_id,))
+        return (row or {}).get("since")
+
+    def prune_kpi_daily(self, cluster_id: str, before_day: str) -> int:
+        with self._write() as conn:
+            return conn.execute("DELETE FROM kpi_daily WHERE cluster_id=? AND day<?",
+                                (cluster_id, before_day)).rowcount
 
     def oldest_last_sync(self, cluster_id: str) -> str | None:
         row = self._row(
