@@ -54,6 +54,35 @@ verify() {
   else
     echo "  WARNING: the dashboard is MISSING the mock-creds volume — re-run without --verify"
   fi
+  # THE ROLLOUT, NOT JUST THE OBJECTS. Measured 2026-09-18: every line above was green while the pod
+  # sat in CrashLoopBackOff on exit 132 (the cryptography wheel's SIGILL on CRC on Apple Silicon), and
+  # the dashboard reported the mock unreachable. And "some pod is Ready" is not enough either: a bad
+  # change rolled onto a working mock leaves the OLD pod serving while the new one crash-loops, so the
+  # test is the Deployment's own verdict — every replica updated to the current template AND
+  # available. The newest pod's exit code is printed otherwise, because 132 and 137 are diagnoses.
+  want=$(oc get deploy mock-openshift -n "$NS" -o jsonpath='{.spec.replicas}' 2>/dev/null)
+  upd=$(oc get deploy mock-openshift -n "$NS" -o jsonpath='{.status.updatedReplicas}' 2>/dev/null)
+  avail=$(oc get deploy mock-openshift -n "$NS" -o jsonpath='{.status.availableReplicas}' 2>/dev/null)
+  unav=$(oc get deploy mock-openshift -n "$NS" -o jsonpath='{.status.unavailableReplicas}' 2>/dev/null)
+  if [ "${upd:-0}" = "${want:-1}" ] && [ "${avail:-0}" = "${want:-1}" ] && [ "${unav:-0}" = "0" ]; then
+    echo "  rollout complete: ${avail}/${want} updated and available"
+  else
+    newest=$(oc get pods -n "$NS" -l app=mock-openshift --sort-by=.metadata.creationTimestamp \
+      -o jsonpath='{range .items[*]}{.status.containerStatuses[0].state.waiting.reason}{" exit="}{.status.containerStatuses[0].lastState.terminated.exitCode}{"\n"}{end}' 2>/dev/null | tail -1)
+    echo "  WARNING: rollout not complete (updated=${upd:-0} available=${avail:-0} unavailable=${unav:-0} of ${want:-1}; newest pod: ${newest:-none})"
+    echo "           exit 132 on Apple Silicon CRC means OPENSSL_armcap=0 is missing from the Deployment"
+    return 1
+  fi
+  # AND THE DASHBOARD'S VIEW OF IT: the poller's verdict is what the Overview tile shows. Read from
+  # the pod's loopback, which is the unauthenticated /api the oauth-proxy never sees.
+  verdict=$(oc exec -n "$NS" deploy/group-sync-dashboard -c dashboard -- \
+    curl -s --max-time 5 http://127.0.0.1:8080/api/clusters 2>/dev/null \
+    | grep -o '"id": *"mock"[^}]*"status": *"[a-z]*"' | grep -o '"status": *"[a-z]*"' | grep -o '[a-z]*"$' | tr -d '"')
+  case "$verdict" in
+    ok) echo "  dashboard reports the mock cluster ok" ;;
+    "") echo "  WARNING: could not read the dashboard's cluster status (is the dashboard running?)" ;;
+    *)  echo "  WARNING: the dashboard reports the mock cluster ${verdict}"; return 1 ;;
+  esac
 }
 [ "$VERIFY_ONLY" = true ] && { verify; exit 0; }
 

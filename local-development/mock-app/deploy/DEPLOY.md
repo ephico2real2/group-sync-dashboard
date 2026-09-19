@@ -65,8 +65,13 @@ Prerequisites it checks rather than assumes: a logged-in cluster, and cert-manag
 ./deploy-mock.sh --verify
 ```
 
-It reports the workload, the two certificates, the secret, and — the step most often forgotten —
-whether the dashboard actually carries the `mock-creds` volume.
+It reports the workload, the two certificates, the secret, the step most often forgotten —
+whether the dashboard actually carries the `mock-creds` volume — and then the two things that decide
+whether any of it works: the Deployment's rollout is complete (every replica on the current template
+and available; a pod crash-looping behind an older one still serving does not pass), and the
+dashboard's own `/api/clusters` reports the mock `ok`. It exits non-zero on either. Measured
+2026-09-18: without those two checks every line was green while the pod sat in `CrashLoopBackOff` on
+exit 132 (`cryptography`'s SIGILL on CRC on Apple Silicon) and the Overview tile read unreachable.
 
 On the dashboard's Overview the mock cluster should appear as a second tile, reachable, alongside
 `crc-local`. If it shows the token or ca file as absent, step 5 is missing.
