@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import json
 import sqlite3
 import threading
 import time
@@ -16,7 +17,7 @@ from gsd.activity import USER_HEADER
 from gsd.reporting import REPORT_PREFIX, TICKET_HEADER
 from gsd.reporting.artifacts import ArtifactStore, Run
 from gsd.reporting.config import ReportSettings
-from gsd.reporting.runs import RunManager
+from gsd.reporting.runs import QueueFull, RunManager
 from gsd.reporting.server import REFUSAL, UNAUTHENTICATED, build_report_app
 from gsd.reporting.ticket import mint
 from reporting_seed import CLUSTER, seeded_dirs
@@ -421,33 +422,138 @@ class TestTheArtifactStore:
         assert survivors == {"20260906T110000.000000Z-early", "20260906T110200.000000Z-fast2"}, \
             "the cap keeps the most recently COMPLETED runs, not the most recently requested"
 
+    # ---- Fix A (C2 / C4): the exact end-of-second predicate ------------------------------------------
     def test_completion_rounding_can_never_delete_early(self, tmp_path):
         """#163. finished_at is persisted to whole seconds. A run that finished at exactly the cutoff second
         is aged from the END of that second, so it is NOT older than the bound — deleting it would be
-        deleting a run that may be up to 999 ms younger than its stamp says."""
+        deleting a run that may be up to 999 ms younger than its stamp says. One second later the end of
+        its second is on the cutoff and it goes; a run stamped one second BEFORE the cutoff finished, at
+        the latest, a millisecond before it, and goes at once. That second is where `<` and `<=` differ:
+        with `<` a whole-second `now` kept every run one second longer than main's id-keyed prune did."""
         store = ArtifactStore(str(tmp_path))
         now = datetime(2026, 9, 6, 12, 0, 0, tzinfo=UTC)
         at_cutoff = now - timedelta(days=3)
-        store.create(Run(id="20260901T000000.000000Z-edge", report="compliance-snapshot", cluster=CLUSTER, params={},
-                         formats=["html"], generated_by="root", generated_by_note="n", schedule=None,
-                         requested_at="2026-09-01T00:00:00Z", status="done",
-                         finished_at=at_cutoff.strftime("%Y-%m-%dT%H:%M:%SZ")))
-        assert store.prune(scheduled_keep=2, scheduled_days=90, manual_days=3, manual_max_runs=500, now=now) == 0
-        # One second past the end of that second, it is older, and goes.
-        assert store.prune(scheduled_keep=2, scheduled_days=90, manual_days=3, manual_max_runs=500,
-                           now=now + timedelta(seconds=2)) == 1
 
-    def test_a_manifest_without_finished_at_ages_from_its_id(self, tmp_path):
-        """#163's documented fallback: a manifest written before finished_at existed still prunes, by the
-        request time its id encodes — the only date such a manifest has."""
-        from gsd.reporting.artifacts import retention_stamp
+        def mk(run_id, finished):
+            store.create(Run(id=run_id, report="compliance-snapshot", cluster=CLUSTER, params={}, formats=["html"],
+                             generated_by="root", generated_by_note="n", schedule=None,
+                             requested_at="2026-09-01T00:00:00Z", status="done",
+                             finished_at=finished.strftime("%Y-%m-%dT%H:%M:%SZ")))
+
+        mk("20260901T000000.000000Z-edge", at_cutoff)
+        assert store.prune(scheduled_keep=2, scheduled_days=90, manual_days=3, manual_max_runs=500, now=now) == 0
+        # One second later the end of its second is on the cutoff: older, gone.
+        assert store.prune(scheduled_keep=2, scheduled_days=90, manual_days=3, manual_max_runs=500,
+                           now=now + timedelta(seconds=1)) == 1
+        # Stamped one second before the cutoff: it finished before the cutoff by every reading, gone now.
+        mk("20260901T000001.000000Z-before", at_cutoff - timedelta(seconds=1))
+        assert store.prune(scheduled_keep=2, scheduled_days=90, manual_days=3, manual_max_runs=500, now=now) == 1
+
+    # ---- Fix B (C1, volunteered): a wrong-typed finished_at must not stop retention ---------------------
+    def test_a_hand_edited_finished_at_of_the_wrong_type_does_not_stop_retention(self, tmp_path):
+        """The manifest is a hand-readable JSON file and the loader is deliberately tolerant of its shape.
+        A `finished_at` that is not a string (a JSON number, say) raised TypeError out of retention_stamp,
+        and _maybe_prune swallows every exception — so ONE edited manifest silently switched retention
+        off for the whole store. The wrong-typed stamp is skipped like a malformed one: the run ages from
+        its id, and every other run is still pruned."""
+        for run_id, finished in (("20260801T000000.000000Z-edit", 1757160000),
+                                 ("20260701T000000.000000Z-good", "2026-07-01T00:00:05Z")):
+            run = Run(id=run_id, report="compliance-snapshot", cluster=CLUSTER, params={}, formats=["html"],
+                      generated_by="root", generated_by_note="n", schedule=None,
+                      requested_at="2026-08-01T00:00:00Z", status="done")
+            manifest = run.public()
+            manifest["finished_at"] = finished
+            (tmp_path / run_id).mkdir()
+            (tmp_path / run_id / "run.json").write_text(json.dumps(manifest), encoding="utf-8")
         store = ArtifactStore(str(tmp_path))
         now = datetime(2026, 9, 6, 12, 0, tzinfo=UTC)
+        assert store.prune(scheduled_keep=2, scheduled_days=90, manual_days=3, manual_max_runs=500, now=now) == 2
+        assert store.list(limit=10)[0] == []
+
+    # ---- Fix C (C5): the fallback pinned on the runs that actually take it (replaces test 4) ----------
+    def test_a_run_that_never_completed_ages_from_its_id(self, tmp_path):
+        """#163's documented fallback, on the runs that take it. `finished_at` has been in every manifest
+        since the first release, so the fallback is not a legacy path: it is the run the pod died under
+        (`_load` marks it failed; no completion to stamp) and a run a full queue refused before this
+        release stamped it. The only date either has is the request time its id encodes. (Pins, not a
+        fail-before test: main aged these by the id too, which is why the PR's version of this test could
+        only fail on main with an ImportError.)"""
+        from gsd.reporting.artifacts import retention_stamp
+        interrupted = Run(id="20260801T000000.000000Z-died", report="compliance-snapshot", cluster=CLUSTER, params={},
+                          formats=["html"], generated_by="root", generated_by_note="n", schedule=None,
+                          requested_at="2026-08-01T00:00:00Z", status="running", started_at="2026-08-01T00:00:01Z")
+        refused = Run(id="20260802T000000.000000Z-full", report="compliance-snapshot", cluster=CLUSTER, params={},
+                      formats=["html"], generated_by="root", generated_by_note="n", schedule=None,
+                      requested_at="2026-08-02T00:00:00Z", status="failed",
+                      error="the render queue is full; try again shortly")
+        for run in (interrupted, refused):
+            (tmp_path / run.id).mkdir()
+            (tmp_path / run.id / "run.json").write_text(json.dumps(run.public()), encoding="utf-8")
+        store = ArtifactStore(str(tmp_path))                     # the restart: 'running' becomes 'failed'
+        died = store.get(interrupted.id)
+        assert died.status == "failed" and died.finished_at is None
+        assert retention_stamp(died) == datetime(2026, 8, 1, tzinfo=UTC)
+        assert retention_stamp(store.get(refused.id)) == datetime(2026, 8, 2, tzinfo=UTC)
+        now = datetime(2026, 9, 6, 12, 0, tzinfo=UTC)
+        assert store.prune(scheduled_keep=2, scheduled_days=90, manual_days=3, manual_max_runs=500, now=now) == 2
+
+    # ---- Fix D (optional, volunteered): a queue refusal is a terminal transition — stamp it ------------
+    def test_a_run_refused_by_a_full_queue_is_stamped_finished(self, tmp_path):
+        """Every terminal transition stamps finished_at — the render's `finally` and the window recheck
+        (test_a_recheck_failed_run_is_counted_finished asserts it) — except the queue refusal in submit(),
+        which failed the run and left the stamp None. The run finished the instant it was refused; say so, and
+        retention ages it like every other failure instead of through the id fallback."""
+        snapshots, artifacts = seeded_dirs(tmp_path)
+        store = ArtifactStore(str(artifacts))
+        clock = datetime(2026, 9, 6, 12, 0, 5, tzinfo=UTC)
+
+        class Recorder:
+            def note_submitted(self, report):
+                pass
+
+        rm = RunManager(_settings(snapshots, artifacts, max_queued_runs=1), store, Recorder(), clock=lambda: clock)
+
+        def mk(i):
+            return Run(id=f"20260906T12000{i}.000000Z-000{i}", report="groups", cluster=CLUSTER, params={},
+                       formats=["html"], generated_by="root", generated_by_note="n", schedule=None,
+                       requested_at=f"2026-09-06T12:00:0{i}Z")
+
+        rm.submit(mk(0))                                   # fills the one-slot queue; the worker is never started
+        with pytest.raises(QueueFull):
+            rm.submit(mk(1))
+        refused = store.get("20260906T120001.000000Z-0001")
+        assert refused.status == "failed" and "queue is full" in refused.error
+        assert refused.finished_at == "2026-09-06T12:00:05Z"
+
+    def test_scheduled_keep_uses_completion_order(self, tmp_path):
+        """#163, the scheduled tier (review of C5, Codex): keep-K holds the most recently COMPLETED
+        reports per (schedule, cluster). An early request that finished last owns the one slot; the
+        later request that finished first is beyond the keep and, past `days`, goes. Fails on the
+        id-keyed prune, which kept the later id."""
+        store = ArtifactStore(str(tmp_path))
+
+        def mk(run_id, finished):
+            store.create(Run(id=run_id, report="groups", cluster="east", params={}, formats=["html"],
+                             generated_by="schedule:nightly", generated_by_note="n", schedule="nightly",
+                             requested_at="2026-01-01T00:00:00Z", status="done", finished_at=finished))
+
+        early, late = "20260101T000000.000000Z-early", "20260102T000000.000000Z-late"
+        mk(early, "2026-02-02T00:00:00Z")
+        mk(late, "2026-02-01T00:00:00Z")
+        assert store.prune(scheduled_keep=1, scheduled_days=1, manual_days=0, manual_max_runs=0,
+                           now=datetime(2026, 9, 6, tzinfo=UTC)) == 1
+        assert {r.id for r in store.list(limit=10)[0]} == {early}
+
+    def test_a_naive_now_does_not_stop_retention(self, tmp_path):
+        """Review of #163 (Cursor, volunteered): the stamps are aware, so a naive `now` from an injected
+        clock raised TypeError out of the comparison — and `_maybe_prune` swallows every exception, so
+        retention would have switched off silently. A naive instant is read as UTC and the prune runs."""
+        store = ArtifactStore(str(tmp_path))
         store.create(Run(id="20260801T000000.000000Z-old", report="compliance-snapshot", cluster=CLUSTER, params={},
                          formats=["html"], generated_by="root", generated_by_note="n", schedule=None,
-                         requested_at="2026-08-01T00:00:00Z", status="done", finished_at=None))
-        assert retention_stamp(store.get("20260801T000000.000000Z-old")) == datetime(2026, 8, 1, tzinfo=UTC)
-        assert store.prune(scheduled_keep=2, scheduled_days=90, manual_days=3, manual_max_runs=500, now=now) == 1
+                         requested_at="2026-08-01T00:00:00Z", status="done", finished_at="2026-08-01T00:00:05Z"))
+        assert store.prune(scheduled_keep=2, scheduled_days=90, manual_days=3, manual_max_runs=500,
+                           now=datetime(2026, 9, 6, 12, 0)) == 1
 
     def test_a_download_racing_prune_reads_none_instead_of_raising(self, tmp_path, monkeypatch):
         """#155: prune removes a run's files between the reader's check and its read — the reader holds

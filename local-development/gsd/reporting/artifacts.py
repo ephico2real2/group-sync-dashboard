@@ -62,14 +62,19 @@ _RUN_FIELDS = frozenset(f.name for f in fields(Run))
 
 def retention_stamp(run: Run) -> datetime:
     """When the artefact came into existence, for retention: `finished_at` (persisted to whole seconds by
-    the worker), or, for a manifest written before that field existed, the request time the id encodes.
-    Both are UTC and second-precision; the id's fraction is dropped so the two sources compare alike.
-    The id is NOT the retention key (#163): it is minted at request time, and a run that waited is older
-    by id than by artefact."""
+    the worker), or, for a run that never completed, the request time the id encodes. `finished_at` has
+    been in every manifest since the first release, so the fallback is not a legacy path — it is LIVE:
+    the run the pod died under (`_load` marks it failed; there is no completion to stamp) and the run a
+    full queue refused (`RunManager.submit` fails it without a stamp). Both sources are UTC and
+    second-precision; the id's fraction is dropped so they compare alike. A hand-edited stamp — the
+    wrong shape, or not a string at all — is skipped like a missing one, never raised: `_maybe_prune`
+    swallows every exception, so one bad manifest would otherwise switch retention off for the whole
+    store. The id is NOT the retention key (#163): it is minted at request time, and a run that waited
+    is older by id than by artefact."""
     if run.finished_at:
         try:
             return datetime.strptime(run.finished_at, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
-        except ValueError:
+        except (ValueError, TypeError):
             pass
     return datetime.strptime(run.id[:15], "%Y%m%dT%H%M%S").replace(tzinfo=UTC)
 
@@ -198,18 +203,25 @@ class ArtifactStore:
         or rendered slowly arrived with an id already older than the cutoff, so the very next prune could
         delete an artefact seconds old, and "newest" ranked a fast late request above a slow early one.
         Retention protects an artefact, and the artefact exists from completion. Both tiers use the one
-        stamp (`retention_stamp`), so the semantic is the same everywhere; a manifest written before
-        `finished_at` existed falls back to the id. Queued/running runs are never doomed: they are
-        still the worker's, and deleting their directory made GET /runs/{id} a 404 after a 202 while the
-        worker skipped them silently (review of C3, Cursor). Deletion is by run directory, so the index and
-        the disk cannot disagree for long."""
+        stamp (`retention_stamp`), so the semantic is the same everywhere; a run that never completed
+        (refused by a full queue, or the pod died under it) falls back to the id. Queued/running runs are
+        never doomed: they are still the worker's, and deleting their directory made GET /runs/{id} a 404
+        after a 202 while the worker skipped them silently (review of C3, Cursor). Deletion is by run
+        directory, so the index and the disk cannot disagree for long."""
         overrides = overrides or {}
+        if now.tzinfo is None:
+            # The stamps are aware (UTC). Comparing one against a naive `now` raises TypeError, and
+            # `_maybe_prune` swallows it — an injected clock that forgot its zone would switch retention
+            # off silently. The clocks here are UTC by contract, so a naive instant is read as UTC.
+            now = now.replace(tzinfo=UTC)
 
         def older_than(run: Run, day_bound: int) -> bool:
             # End-of-second, deliberately: finished_at is persisted to whole seconds, so a run that
-            # finished at hh:mm:ss.9 is stamped hh:mm:ss. Ageing it from the END of that second can
-            # only keep a run a moment longer, never delete it a moment early.
-            return day_bound > 0 and retention_stamp(run) + timedelta(seconds=1) < now - timedelta(days=day_bound)
+            # finished at hh:mm:ss.9 is stamped hh:mm:ss. It is older than the bound once the END of
+            # that second is at or before the cutoff (`<=`, exactly): rounding can never delete a run a
+            # moment early, a run stamped on the cutoff second survives until the next, and for a run
+            # that finished the second it was requested the decision is the one main made from its id.
+            return day_bound > 0 and retention_stamp(run) + timedelta(seconds=1) <= now - timedelta(days=day_bound)
 
         # Both tiers order by the same key, so "newest" means the same thing everywhere: most recently
         # COMPLETED, the id (request order) breaking ties within one second.
