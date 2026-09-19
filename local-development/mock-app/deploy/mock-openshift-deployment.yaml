@@ -25,6 +25,14 @@ spec:
       - env:
         - name: MOCK_CA_IN
           value: /certs
+        # CRC ON APPLE SILICON: the cryptography wheel's statically linked OpenSSL trusts the guest
+        # kernel's HWCAP, which under Virtualization.framework advertises sve2/svei8mm that the hardware
+        # does not implement, and the accelerated path it picks dies with SIGILL (exit 132) on import.
+        # Measured on that node, 2026-09-18: cryptography >= 48.0.0 exit 132, <= 46.0.3 fine, and 50.0.1
+        # with this variable imports and generates a 2048-bit RSA key. 0 disables OpenSSL's ARM assembly
+        # and uses the generic C paths - harmless on amd64 and on real arm64 hosts.
+        - name: OPENSSL_armcap
+          value: "0"
         - name: MOCK_FIXTURE
           value: /fixtures/reference.yaml
         - name: MOCK_PORT
