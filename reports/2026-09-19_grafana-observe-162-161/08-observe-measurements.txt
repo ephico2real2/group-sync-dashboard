@@ -1,0 +1,33 @@
+# 2026-09-19, deployed image 368003f9de, chart openshift-grafana 0.1.0 (release grafana), CRC 4.22.7
+# The Observe door after 972b143 — /api/kpi links read on the pod's loopback:
+{
+ "grafana": "https://grafana-openshift-grafana-group-sync-dashboard.apps-crc.testing",
+ "grafana_dashboard_uid": "gsd-group-sync-dashboard",
+ "console": "https://console-openshift-console.apps-crc.testing",
+ "observe": "https://console-openshift-console.apps-crc.testing/dev-monitoring/ns/group-sync-dashboard?dashboard=dashboard-k8s-resources-workloads-namespace"
+}
+
+# Walk (observe_walk.py, Playwright): the console's last-used project primed to "All Projects" first
+# (a visit to /k8s/all-namespaces/pods), then the door path opened; PROJECT is the selector's text,
+# QUERY the first request of each kind the panels issued, with its namespace= parameter.
+
+## developer — a view-only reader (a temporary view RoleBinding on the namespace, deleted after)
+### the old door (admin form, ?project-dropdown-value=…)
+PROJECT Project: All Projects
+ALERTS ['Danger alert:\nAn error occurred']
+QUERY /api/prometheus-tenancy/api/v1/query_range namespace= <none>          <- the 400 in the operator's screenshot
+QUERY /api/prometheus-tenancy/api/v1/query    namespace= group-sync-dashboard  (SingleStat/table panels use the variable)
+### the new door (/dev-monitoring/ns/group-sync-dashboard?dashboard=…)
+FINAL   …/monitoring/dashboards/dashboard-k8s-resources-workloads-namespace?project-dropdown-value=group-sync-dashboard&namespace=group-sync-dashboard&type=ALL_OPTION_KEY
+PROJECT Project: group-sync-dashboard
+ALERTS []
+QUERY /api/prometheus-tenancy/api/v1/query_range namespace= group-sync-dashboard
+
+## kubeadmin (console.lastNamespace set to #ALL_NS# before the run) — the new door
+PROJECT Project: group-sync-dashboard
+ALERTS []
+QUERY /api/prometheus/api/v1/rules  (a cluster-admin never uses the tenancy proxy — why the old form never failed for kubeadmin)
+
+# prom-label-proxy on thanos-querier :9092, the CPU Usage panel's query, a lab user's real token:
+#   namespace=group-sync-dashboard -> 200, one series per workload
+#   namespace=                     -> 400 {"error":"The \"namespace\" query parameter must be provided.","errorType":"prom-label-proxy"}
