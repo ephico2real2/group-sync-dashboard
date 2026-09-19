@@ -385,6 +385,70 @@ class TestTheArtifactStore:
         store.write(run.id, "html", b"<p>evidence</p>")
         return run
 
+    def test_retention_ages_a_run_from_completion_not_from_its_request(self, tmp_path):
+        """#163. A manual run REQUESTED five days ago (its id says so) but FINISHED ten seconds ago must
+        survive manual_days=3: retention protects an artefact, and this artefact is ten seconds old.
+        On main, older_than() compared run.id[:15] against the cutoff and deleted it on the next prune."""
+        store = ArtifactStore(str(tmp_path))
+        now = datetime(2026, 9, 6, 12, 0, tzinfo=UTC)
+        requested = now - timedelta(days=5)
+        store.create(Run(id=requested.strftime("%Y%m%dT%H%M%S.%fZ") + "-slow", report="compliance-snapshot",
+                         cluster=CLUSTER, params={}, formats=["html"], generated_by="root", generated_by_note="n",
+                         schedule=None, requested_at=requested.strftime("%Y-%m-%dT%H:%M:%SZ"), status="done",
+                         finished_at=(now - timedelta(seconds=10)).strftime("%Y-%m-%dT%H:%M:%SZ")))
+        pruned = store.prune(scheduled_keep=2, scheduled_days=90, manual_days=3, manual_max_runs=500, now=now)
+        assert pruned == 0, "a run whose artefact is ten seconds old is not three days old"
+        assert len(store.list(limit=10)[0]) == 1
+
+    def test_the_manual_cap_keeps_the_most_recently_completed_runs(self, tmp_path):
+        """#163. Three manual runs, cap 2. `early` was requested FIRST but finished LAST (it waited in the
+        queue); by completion it is the newest and must be kept, and the run that finished first is the
+        one the cap drops. On main, "newest" sorted by id (request order) and dropped `early`."""
+        store = ArtifactStore(str(tmp_path))
+        now = datetime(2026, 9, 6, 12, 0, tzinfo=UTC)
+
+        def mk(run_id, requested, finished):
+            store.create(Run(id=run_id, report="compliance-snapshot", cluster=CLUSTER, params={}, formats=["html"],
+                             generated_by="root", generated_by_note="n", schedule=None,
+                             requested_at=requested, status="done", finished_at=finished))
+
+        mk("20260906T110000.000000Z-early", "2026-09-06T11:00:00Z", "2026-09-06T11:59:00Z")   # asked first, done last
+        mk("20260906T110100.000000Z-fast1", "2026-09-06T11:01:00Z", "2026-09-06T11:01:05Z")   # done first -> dropped
+        mk("20260906T110200.000000Z-fast2", "2026-09-06T11:02:00Z", "2026-09-06T11:02:05Z")
+        pruned = store.prune(scheduled_keep=2, scheduled_days=90, manual_days=3, manual_max_runs=2, now=now)
+        survivors = {r.id for r in store.list(limit=10)[0]}
+        assert pruned == 1
+        assert survivors == {"20260906T110000.000000Z-early", "20260906T110200.000000Z-fast2"}, \
+            "the cap keeps the most recently COMPLETED runs, not the most recently requested"
+
+    def test_completion_rounding_can_never_delete_early(self, tmp_path):
+        """#163. finished_at is persisted to whole seconds. A run that finished at exactly the cutoff second
+        is aged from the END of that second, so it is NOT older than the bound — deleting it would be
+        deleting a run that may be up to 999 ms younger than its stamp says."""
+        store = ArtifactStore(str(tmp_path))
+        now = datetime(2026, 9, 6, 12, 0, 0, tzinfo=UTC)
+        at_cutoff = now - timedelta(days=3)
+        store.create(Run(id="20260901T000000.000000Z-edge", report="compliance-snapshot", cluster=CLUSTER, params={},
+                         formats=["html"], generated_by="root", generated_by_note="n", schedule=None,
+                         requested_at="2026-09-01T00:00:00Z", status="done",
+                         finished_at=at_cutoff.strftime("%Y-%m-%dT%H:%M:%SZ")))
+        assert store.prune(scheduled_keep=2, scheduled_days=90, manual_days=3, manual_max_runs=500, now=now) == 0
+        # One second past the end of that second, it is older, and goes.
+        assert store.prune(scheduled_keep=2, scheduled_days=90, manual_days=3, manual_max_runs=500,
+                           now=now + timedelta(seconds=2)) == 1
+
+    def test_a_manifest_without_finished_at_ages_from_its_id(self, tmp_path):
+        """#163's documented fallback: a manifest written before finished_at existed still prunes, by the
+        request time its id encodes — the only date such a manifest has."""
+        from gsd.reporting.artifacts import retention_stamp
+        store = ArtifactStore(str(tmp_path))
+        now = datetime(2026, 9, 6, 12, 0, tzinfo=UTC)
+        store.create(Run(id="20260801T000000.000000Z-old", report="compliance-snapshot", cluster=CLUSTER, params={},
+                         formats=["html"], generated_by="root", generated_by_note="n", schedule=None,
+                         requested_at="2026-08-01T00:00:00Z", status="done", finished_at=None))
+        assert retention_stamp(store.get("20260801T000000.000000Z-old")) == datetime(2026, 8, 1, tzinfo=UTC)
+        assert store.prune(scheduled_keep=2, scheduled_days=90, manual_days=3, manual_max_runs=500, now=now) == 1
+
     def test_a_download_racing_prune_reads_none_instead_of_raising(self, tmp_path, monkeypatch):
         """#155: prune removes a run's files between the reader's check and its read — the reader holds
         no lock, so the check's answer is already stale. `read` must return None (the endpoint's 404)

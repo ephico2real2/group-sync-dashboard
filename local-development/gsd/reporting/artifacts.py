@@ -60,6 +60,20 @@ class Run:
 _RUN_FIELDS = frozenset(f.name for f in fields(Run))
 
 
+def retention_stamp(run: Run) -> datetime:
+    """When the artefact came into existence, for retention: `finished_at` (persisted to whole seconds by
+    the worker), or, for a manifest written before that field existed, the request time the id encodes.
+    Both are UTC and second-precision; the id's fraction is dropped so the two sources compare alike.
+    The id is NOT the retention key (#163): it is minted at request time, and a run that waited is older
+    by id than by artefact."""
+    if run.finished_at:
+        try:
+            return datetime.strptime(run.finished_at, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+        except ValueError:
+            pass
+    return datetime.strptime(run.id[:15], "%Y%m%dT%H%M%S").replace(tzinfo=UTC)
+
+
 def new_run_id(now: datetime) -> str:
     return now.strftime("%Y%m%dT%H%M%S.%fZ") + "-" + secrets.token_hex(2)
 
@@ -179,21 +193,35 @@ class ArtifactStore:
         so a burst of manual runs pushed a still-valid scheduled report past `max_runs` and deleted it.
         `overrides[name] = (keep, days)` win over the globals for that schedule; a schedule with no override
         inherits them. A MANUAL run (no `schedule`) is kept `manual_days` and at most `manual_max_runs`,
-        whichever prunes first. A bound of 0 is disabled. Queued/running runs are never doomed: they are
+        whichever prunes first. A bound of 0 is disabled. AGE IS MEASURED FROM COMPLETION (#163): a run's
+        `finished_at`, not its id — the id is minted at request time, and a run that waited in the queue
+        or rendered slowly arrived with an id already older than the cutoff, so the very next prune could
+        delete an artefact seconds old, and "newest" ranked a fast late request above a slow early one.
+        Retention protects an artefact, and the artefact exists from completion. Both tiers use the one
+        stamp (`retention_stamp`), so the semantic is the same everywhere; a manifest written before
+        `finished_at` existed falls back to the id. Queued/running runs are never doomed: they are
         still the worker's, and deleting their directory made GET /runs/{id} a 404 after a 202 while the
         worker skipped them silently (review of C3, Cursor). Deletion is by run directory, so the index and
         the disk cannot disagree for long."""
         overrides = overrides or {}
 
         def older_than(run: Run, day_bound: int) -> bool:
-            return day_bound > 0 and run.id[:15] < (now - timedelta(days=day_bound)).strftime("%Y%m%dT%H%M%S")
+            # End-of-second, deliberately: finished_at is persisted to whole seconds, so a run that
+            # finished at hh:mm:ss.9 is stamped hh:mm:ss. Ageing it from the END of that second can
+            # only keep a run a moment longer, never delete it a moment early.
+            return day_bound > 0 and retention_stamp(run) + timedelta(seconds=1) < now - timedelta(days=day_bound)
+
+        # Both tiers order by the same key, so "newest" means the same thing everywhere: most recently
+        # COMPLETED, the id (request order) breaking ties within one second.
+        def newest_first(run: Run) -> tuple[datetime, str]:
+            return (retention_stamp(run), run.id)
 
         with self._lock:
             finished = [r for r in self._runs.values() if r.status in ("done", "failed")]
             doomed: list[Run] = []
 
             # Manual tier: keep the newest `manual_max_runs`, then drop anything older than `manual_days`.
-            manual = sorted((r for r in finished if not r.schedule), key=lambda r: r.id, reverse=True)
+            manual = sorted((r for r in finished if not r.schedule), key=newest_first, reverse=True)
             if manual_max_runs > 0:
                 doomed += manual[manual_max_runs:]
                 manual = manual[:manual_max_runs]
@@ -201,7 +229,7 @@ class ArtifactStore:
 
             # Scheduled tier: per (schedule, cluster) keep the newest K; beyond K keep only while young.
             by_key: dict[tuple[str, str], list[Run]] = {}
-            for r in sorted((r for r in finished if r.schedule), key=lambda r: r.id, reverse=True):
+            for r in sorted((r for r in finished if r.schedule), key=newest_first, reverse=True):
                 by_key.setdefault((r.schedule, r.cluster), []).append(r)
             for (name, _cluster), group in by_key.items():
                 keep, days = overrides.get(name, (scheduled_keep, scheduled_days))
