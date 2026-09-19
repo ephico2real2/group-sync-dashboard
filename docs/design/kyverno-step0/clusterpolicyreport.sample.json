@@ -1,0 +1,84 @@
+{
+  "apiVersion": "wgpolicyk8s.io/v1alpha2",
+  "kind": "ClusterPolicyReport",
+  "metadata": {
+    "name": "1e5f4028-2250-4460-afae-7305362671c0",
+    "labels": {
+      "app.kubernetes.io/managed-by": "kyverno"
+    },
+    "ownerReferences": [
+      {
+        "apiVersion": "v1",
+        "kind": "Namespace",
+        "name": "test-your-email",
+        "uid": "1e5f4028-2250-4460-afae-7305362671c0"
+      }
+    ]
+  },
+  "scope": {
+    "apiVersion": "v1",
+    "kind": "Namespace",
+    "name": "test-your-email",
+    "uid": "1e5f4028-2250-4460-afae-7305362671c0"
+  },
+  "summary": {
+    "error": 0,
+    "fail": 1,
+    "pass": 0,
+    "skip": 6,
+    "warn": 0
+  },
+  "results": [
+    {
+      "category": "Multi-Tenancy",
+      "message": "preconditions not met",
+      "policy": "namespace-oud-group-allowlist",
+      "properties": {
+        "process": "background scan"
+      },
+      "result": "skip",
+      "rule": "validate-oud-group-known-family",
+      "scored": true,
+      "severity": "high",
+      "source": "kyverno",
+      "timestamp": {
+        "nanos": 0,
+        "seconds": 1789834362
+      }
+    },
+    {
+      "category": "Multi-Tenancy",
+      "message": "For RBAC automation, namespace should have both 'company.net/mnemonic' and 'company.net/app-environment' labels",
+      "policy": "rbac-standards-enforcement",
+      "properties": {
+        "process": "background scan"
+      },
+      "result": "fail",
+      "rule": "require-rbac-labels",
+      "scored": true,
+      "severity": "high",
+      "source": "kyverno",
+      "timestamp": {
+        "nanos": 0,
+        "seconds": 1789834362
+      }
+    },
+    {
+      "category": "Multi-Tenancy",
+      "message": "preconditions not met",
+      "policy": "rbac-standards-enforcement",
+      "properties": {
+        "process": "background scan"
+      },
+      "result": "skip",
+      "rule": "validate-custom-clusterroles-format",
+      "scored": true,
+      "severity": "high",
+      "source": "kyverno",
+      "timestamp": {
+        "nanos": 0,
+        "seconds": 1789834362
+      }
+    }
+  ]
+}
