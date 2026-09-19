@@ -37,9 +37,11 @@ def render(kpis: tuple[Kpi, ...], ctx: Context) -> dict:
 
 
 def posture(store, cluster_id: str, grace: timedelta, now: datetime) -> dict:
-    """The access-posture figures for one cluster, from the scalar queries the cluster rows and
-    /metrics already use — the KPI band and the Clusters table (#157) read this block, so the page
-    adds no arithmetic of its own. CR states are derived the way the CR list derives them."""
+    """The access-posture inputs for one cluster, from the scalar queries the cluster rows and
+    /metrics already use. The Clusters table (#157) reads them as they are; the band SUMS them across
+    the fleet and combines named categories (dangling + unresolved = "to review") — arithmetic over
+    whole-set scalars, never over a capped row list. CR states are derived the way the CR list
+    derives them."""
     from .. import state as st
     groups = store.group_counts(cluster_id)
     findings = store.count_bindings_by_finding(cluster_id)
@@ -49,7 +51,10 @@ def posture(store, cluster_id: str, grace: timedelta, now: datetime) -> dict:
         states[state] = states.get(state, 0) + 1
     return {
         "groups": groups,
-        "bindings": {k: findings.get(k, 0) for k in ("ok", "dangling", "unresolved", "built_in")},
+        # Every tier _FINDING_CASE names, `unmanaged` included: the page's Bindings figure is the
+        # cluster's group bindings less the built-in ones, and a tier left out here left a hand-made
+        # grant out of that count (measured: 3 of 4 on the UI seed).
+        "bindings": {k: findings.get(k, 0) for k in ("ok", "dangling", "unresolved", "unmanaged", "built_in")},
         "groupsyncs": {"total": sum(states.values()), "states": states,
                        "oldest_last_sync": store.oldest_last_sync(cluster_id)},
     }
@@ -68,7 +73,11 @@ def page_payload(ctx: Context, *, dashboard_system: dict | None, report_system: 
     trends, postures = {}, {}
     if ctx.store is not None:
         since_day = (now - timedelta(days=ROLLUP_DAYS)).strftime("%Y-%m-%d")
-        since_at = (now - timedelta(days=TREND_DAYS)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        # The sparklines' buckets: TREND_DAYS whole UTC days ending today, from the first day's
+        # midnight. A rolling `now - 30d` start put a partial day in front of the thirty the page
+        # draws (today and the 29 before it); its rows were in the scalars and off the line
+        # (measured: 7 joiners at now-30d+1min, on the payload, absent from the sparkline).
+        activity_since = (now - timedelta(days=TREND_DAYS - 1)).strftime("%Y-%m-%dT00:00:00Z")
         for cluster in ctx.cluster_ids:
             retained = ctx.store.history_retained_since(cluster)
             trends[cluster] = {
@@ -78,7 +87,7 @@ def page_payload(ctx: Context, *, dashboard_system: dict | None, report_system: 
                 # pull began with the reporting module, not with the cluster's history.
                 "report_timeline_since": ctx.store.report_volume(cluster, "9999")["since"],
                 # Per-day buckets over the window, for the sparklines.
-                "activity": ctx.store.daily_activity(cluster, since_at),
+                "activity": ctx.store.daily_activity(cluster, activity_since),
                 "daily": {
                     "since": ctx.store.kpi_daily_since(cluster),
                     "window_days": ROLLUP_DAYS,

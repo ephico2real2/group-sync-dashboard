@@ -5,6 +5,7 @@ rollup the leader writes once, and predicates the compliance snapshot shares."""
 from __future__ import annotations
 
 import json
+import sqlite3
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -581,6 +582,19 @@ class TestPageSettings:
         with pytest.raises(ConfigError):
             load_settings(cfg)
 
+    def test_a_door_url_that_is_not_http_is_refused_at_load(self, tmp_path):
+        """Review of #157 (Codex, P7): `grafanaUrl: javascript:alert(1)` reached /api/kpi verbatim and
+        the page's escaping cannot make an unsafe scheme safe in an href. Refused at load."""
+        from gsd.config import ConfigError, load_settings
+        import yaml
+        cfg = tmp_path / "gsd.yaml"
+        for bad in ("javascript:alert(document.domain)", "data:text/html,<script>1</script>", "grafana.example", "https://g.example/?x=1"):
+            cfg.write_text(yaml.safe_dump({"clusters": [{"name": "c1", "apiUrl": "https://x", "tokenEnv": "T"}], "grafanaUrl": bad}))
+            with pytest.raises(ConfigError):
+                load_settings(cfg)
+        cfg.write_text(yaml.safe_dump({"clusters": [{"name": "c1", "apiUrl": "https://x", "tokenEnv": "T"}], "consoleUrl": "https://c.example/"}))
+        assert load_settings(cfg).console_url == "https://c.example"
+
     def test_the_payload_carries_posture_thresholds_and_only_configured_links(self, tmp_path):
         db = str(tmp_path / "gsd.db")
         _seed(db)
@@ -592,6 +606,50 @@ class TestPageSettings:
         assert body["links"] == {"grafana": "https://g.example"}
         p = body["posture"]["c1"]
         assert set(p) == {"groups", "bindings", "groupsyncs"}
-        assert set(p["bindings"]) == {"ok", "dangling", "unresolved", "built_in"}
+        assert set(p["bindings"]) == {"ok", "dangling", "unresolved", "unmanaged", "built_in"}
         assert p["groups"]["total"] == 3, "the visibility seed's three groups"
         assert set(body["trends"]["c1"]["activity"]) == {"membership", "logins", "syncs", "reports"}
+
+    def test_the_activity_buckets_are_the_thirty_whole_utc_days_the_page_draws(self, tmp_path):
+        """A rolling `now - 30d` start put a partial day in front of the thirty the sparkline plots (as-of's
+        day and the 29 before it): rows on it were in the scalars and off the line. The buckets start at the
+        first drawn day's midnight, so every bucket the payload carries is a day the page draws."""
+        db = str(tmp_path / "gsd.db")
+        _seed(db)
+        now = datetime.now(UTC)
+        edge = (now - timedelta(days=30) + timedelta(minutes=1)).strftime("%Y-%m-%dT%H:%M:%SZ")   # inside the rolling window, before the first drawn day
+        first = (now - timedelta(days=28)).strftime("%Y-%m-%dT00:00:30Z")                        # a drawn day
+        app = build_app(_settings(db), run_poller=False)
+        app.state.tier_resolver = _MapResolver({"root": "all"})
+        with TestClient(app) as client:
+            seeded = client.get("/api/kpi", headers=H("root")).json()["kpis"]["membership_added_30d"]["samples"][0]["value"]
+            conn = sqlite3.connect(db)
+            for user, at in (("edge", edge), ("first", first)):
+                conn.execute("INSERT INTO membership_event(cluster_id, group_name, user_name, change, observed_at, baseline)"
+                             " VALUES('c1', 'g', ?, 'added', ?, 0)", (user, at))
+            conn.commit()
+            conn.close()
+            body = client.get("/api/kpi", headers=H("root")).json()
+        as_of = datetime.strptime(body["as_of"], "%Y-%m-%dT%H:%M:%SZ")
+        drawn = {(as_of - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(body["trends"]["c1"]["window_days"])}
+        days = {b["day"] for b in body["trends"]["c1"]["activity"]["membership"]}
+        assert days <= drawn, f"buckets the page never draws: {sorted(days - drawn)}"
+        assert first[:10] in days
+        # the rolling scalar still counts the edge row: the two windows differ by that partial day, by design
+        assert body["kpis"]["membership_added_30d"]["samples"][0] == {"cluster": "c1", "value": seeded + 2}
+
+    def test_the_activity_buckets_seek_their_indexes(self):
+        """Review of #157 (Grok, N4): report_run had no cluster-leading index, so the per-cluster
+        reads scanned every run. Migration 17; every bucket query must name a seek."""
+        store = Store(":memory:")
+        queries = {
+            "membership": "SELECT substr(observed_at,1,10) AS day, COUNT(*) FROM membership_event WHERE cluster_id=? AND observed_at>=? AND baseline=0 GROUP BY day",
+            "logins": "SELECT substr(at,1,10) AS day, COUNT(*) FROM login_event WHERE cluster_id=? AND at>=? GROUP BY day",
+            "syncs": "SELECT substr(observed_at,1,10) AS day, COUNT(*) FROM sync_event WHERE cluster_id=? AND observed_at>=? GROUP BY day",
+            "reports": "SELECT substr(requested_at,1,10) AS day, COUNT(*) FROM report_run WHERE cluster_id=? AND requested_at>=? GROUP BY day",
+            "report_volume": "SELECT COUNT(*), MIN(requested_at) FROM report_run WHERE cluster_id=?",
+        }
+        for name, sql in queries.items():
+            plan = [r[3] for r in store._conn.execute("EXPLAIN QUERY PLAN " + sql, ("c", "x")[: sql.count("?")])]
+            assert any(line.startswith("SEARCH") for line in plan), (name, plan)
+            assert not any(line.startswith("SCAN") for line in plan), (name, plan)

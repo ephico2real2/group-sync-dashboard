@@ -786,7 +786,7 @@ and logins — governance data about the clusters, not about the reader.
   },
   "posture": {
     "crc-local": {"groups": {"total": 62, "empty": 1, "unattributed": 2},
-                  "bindings": {"ok": 31, "dangling": 5, "unresolved": 6, "built_in": 157},
+                  "bindings": {"ok": 26, "dangling": 5, "unresolved": 6, "unmanaged": 5, "built_in": 157},
                   "groupsyncs": {"total": 3, "states": {"ok": 3}, "oldest_last_sync": "2026-09-19T13:30:00Z"}}
   },
   "thresholds": {"memory_percent": 80, "cpu_percent": 80, "throttled_percent": 1, "disk_percent": 80},
@@ -834,7 +834,9 @@ poll thread takes a baseline every cycle). Every trend carries `history_retained
 retention prunes the event tables and a trend that ignores the cut lies about a quiet month;
 `report_timeline_since` is the first report run the dashboard ever recorded for the cluster; and
 `daily.since` is where the rollup — written once a day by the leader, for the counts that have no
-history — actually starts. `activity` is the window's per-UTC-day buckets, for the page's sparklines.
+history — actually starts. `activity` is the page's sparkline buckets: the `window_days` whole UTC
+days ending on `as_of`'s day, from the first day's midnight — the scalars beside them are rolling
+30 × 24 h, so the two can differ by that first, partial day.
 `posture` is each served cluster's access-posture figures from the same scalar queries the cluster
 rows and `/metrics` use, and `groupsyncs.states` the CRs' derived states, so the KPI page (#157) adds no
 arithmetic of its own. `thresholds` are the configured amber marks (`kpi.thresholds.*` in the chart) the

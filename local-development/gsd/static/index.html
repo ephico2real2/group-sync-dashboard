@@ -1439,11 +1439,11 @@ function clusterDetail(c) {
 }
 
 /* ── The KPI page (#157), built to docs/design/overview-kpi-mock.html ─────────────────────────
-   Every number comes from /api/kpi (#156): the two pods' self-reported system usage, the
-   access-posture band, the four trends with their sparklines, the clusters table and the doors
-   out. Nothing here is derived from a capped page, and no tile invents a threshold — the amber
-   marks come from the payload (`thresholds`, chart values kpi.thresholds.*) and each meter's
-   rule line names the one it applied. */
+   Every number comes from /api/kpi (#156), /api/clusters (the rows' status) and /api/version
+   (the leader): the page adds no query of its own — it SUMS the per-cluster figures the payload
+   carries and formats them. Nothing here is derived from a capped page, and no tile invents a
+   threshold — the amber marks come from the payload (`thresholds`, chart values kpi.thresholds.*)
+   and each meter's rule line names the one it applied. */
 
 const KPI_MI = 1024 * 1024;
 
@@ -1465,25 +1465,34 @@ function kpiNum(n) {
   return n == null ? "—" : Number(n).toLocaleString("en-US");
 }
 
-/* One meter: label, the track with the amber mark at the threshold, the fill, the value. The
-   state is decided HERE and only here (over the threshold → warn), so the fill's colour, the
-   component's pill and the rule line cannot disagree. `pct` null renders an unmeasured track. */
-function kpiMeter(label, pct, thresholdPct, valueHtml) {
-  const over = pct != null && thresholdPct != null && pct > thresholdPct;
-  const width = pct == null ? 0 : Math.max(0, Math.min(100, pct));
+/* The Throttled track's full scale, as a multiple of its threshold: the mock draws the 1 % mark at
+   20 % of the track (docs/design/overview-kpi-mock.html, `--th:20%`, 1.10 % as a 22 % fill). On a
+   0–100 % track the 1 % mark sat 3 px from the left edge and the mock's 1.10 % (watch) and 0.05 %
+   (healthy) filled within half a pixel of each other (OB3 measured it at 1280 px, review of #157) —
+   position read nothing. */
+const KPI_THROTTLE_SCALE = 5;
+
+/* One meter: label, the track with the amber mark at the threshold, the fill, the value. `over` is the
+   component's decision — kpiComponent compares each meter ONCE and passes the result here — so the
+   fill's colour, the pill and the rule line come from a single comparison. `scale` is the track's full
+   width as a percentage: 100 for memory, CPU and disk; the threshold × KPI_THROTTLE_SCALE for
+   throttling. The mark and the fill are both drawn against it. `pct` null renders an unmeasured track. */
+function kpiMeter(label, pct, thresholdPct, over, valueHtml, scale = 100) {
+  const mark = thresholdPct == null ? 101 : +((thresholdPct / scale) * 100).toFixed(4);
+  const width = pct == null ? 0 : +Math.max(0, Math.min(100, (pct / scale) * 100)).toFixed(4);
   return `<div class="meter-row">
     <span class="meter-lab">${esc(label)}</span>
-    <span class="track" data-th="${thresholdPct == null ? 101 : thresholdPct}" role="img"
-          aria-label="${esc(label)}: ${pct == null ? "unavailable" : kpiPct(pct)} of the limit${thresholdPct == null ? "" : `, amber above ${thresholdPct}%`}">
+    <span class="track" data-th="${mark}" data-scale="${scale}" role="img"
+          aria-label="${esc(label)}: ${pct == null ? "unavailable" : kpiPct(pct)} of the limit${thresholdPct == null ? "" : `, amber above ${thresholdPct}%`}${scale === 100 ? "" : ` on a track to ${scale}%`}">
       <span class="fill${over ? " warn" : ""}${pct == null ? " none" : ""}" data-width="${width}"></span>
     </span>
     <span class="meter-val">${valueHtml}</span>
   </div>`;
 }
 
-/* A component's card in the system strip. `own` is the mock's second sub-line — the component's
-   own bytes beside the filesystem it lives on. Returns the html and the state the pill showed, so
-   the caller's tests can read both. */
+/* A component's card in the system strip. `ownLine` renders the mock's second sub-line — the
+   component's own bytes beside the filesystem it lives on. The state the badge shows is also
+   stamped as data-state on the card, so a test can read it without parsing the badge. */
 function kpiComponent(name, sys, th, ownLine) {
   if (!sys) {
     return `<div class="comp" data-comp="${esc(name)}" data-state="unknown"><div class="comp-top"><span class="comp-name">${esc(name)}</span>
@@ -1495,11 +1504,16 @@ function kpiComponent(name, sys, th, ownLine) {
   const cpuPct = cpu.limit_cores && cpu.cores_used != null ? (cpu.cores_used / cpu.limit_cores) * 100 : null;
   const thrPct = cpu.throttled_fraction == null ? null : cpu.throttled_fraction * 100;
   const diskPct = disk.total_bytes ? (disk.used_bytes / disk.total_bytes) * 100 : null;
+  // THE ONE DECISION PER METER: an unmeasured value or an absent threshold is never over. The
+  // fill, the pill and the rule line below all read these four booleans and nothing else.
+  const over = (pct, limit) => pct != null && limit != null && pct > limit;
+  const memOver = over(memPct, th.memory_percent), cpuOver = over(cpuPct, th.cpu_percent);
+  const thrOver = over(thrPct, th.throttled_percent), diskOver = over(diskPct, th.disk_percent);
   const overs = [];
-  if (memPct != null && memPct > th.memory_percent) overs.push(`memory ${kpiPct(memPct)} > ${th.memory_percent}%`);
-  if (cpuPct != null && cpuPct > th.cpu_percent) overs.push(`CPU ${kpiPct(cpuPct)} > ${th.cpu_percent}%`);
-  if (thrPct != null && thrPct > th.throttled_percent) overs.push(`throttled ${kpiPct(thrPct, 2)} > ${th.throttled_percent}%`);
-  if (diskPct != null && diskPct > th.disk_percent) overs.push(`disk ${kpiPct(diskPct, 0)} > ${th.disk_percent}%`);
+  if (memOver) overs.push(`memory ${kpiPct(memPct)} > ${th.memory_percent}%`);
+  if (cpuOver) overs.push(`CPU ${kpiPct(cpuPct)} > ${th.cpu_percent}%`);
+  if (thrOver) overs.push(`throttled ${kpiPct(thrPct, 2)} > ${th.throttled_percent}%`);
+  if (diskOver) overs.push(`disk ${kpiPct(diskPct, 0)} > ${th.disk_percent}%`);
   const state = overs.length ? "warning" : "ok";
   const cores = cpu.cores_used == null ? "—" : cpu.cores_used < 0.01 ? "&lt;0.01" : cpu.cores_used.toFixed(2);
   const limitCores = cpu.limit_cores == null ? "no limit" : `${cpu.limit_cores} cores`;
@@ -1507,7 +1521,7 @@ function kpiComponent(name, sys, th, ownLine) {
   const thrSub = noCgroup ? "no cgroup v2 sample on this host — memory, CPU and throttling are unmeasured, not zero"
     : cpu.periods == null ? "no CPU quota on this cgroup — nothing to throttle"
     : `${kpiNum(cpu.throttled_periods)} throttled / ${kpiNum(cpu.periods)} periods · ${(cpu.throttled_seconds || 0).toFixed(2)}s total`
-      + (thrPct != null && thrPct > th.throttled_percent ? ` — over the ${th.throttled_percent}% mark, which is why this reads <em>watch</em>` : "");
+      + (thrOver ? ` — over the ${th.throttled_percent}% mark, which is why this reads <em>watch</em>` : "");
   const diskLabel = name === "report" ? "Artefacts" : "Data volume";
   const own = name === "report" ? sys.artifacts : sys.data;
   const ownBytes = own ? (name === "report" ? own.bytes : own.db_bytes + own.wal_bytes + (own.backups ? own.backups.bytes : 0)) : null;
@@ -1517,12 +1531,13 @@ function kpiComponent(name, sys, th, ownLine) {
     <div class="comp-top"><span class="comp-name">${esc(name)}</span>
       <span class="badge ${state}"><span class="glyph" aria-hidden="true"></span>${state === "ok" ? "healthy" : "watch"}</span></div>
     <div class="meters">
-      ${kpiMeter("Memory", memPct, th.memory_percent, !sys.memory ? "unavailable"
+      ${kpiMeter("Memory", memPct, th.memory_percent, memOver, !sys.memory ? "unavailable"
         : `<b>${kpiPct(memPct)}</b> of ${mem.limit_bytes ? kpiBytes(mem.limit_bytes) : "no limit"}`)}
-      ${kpiMeter("CPU", cpuPct, th.cpu_percent, !sys.cpu ? "unavailable" : `<b>${cores}</b> / ${limitCores}`)}
-      ${kpiMeter("Throttled", thrPct, th.throttled_percent, !sys.cpu || cpu.periods == null ? "unavailable"
-        : `<b>${thrPct == null ? "—" : kpiPct(thrPct, 2)}</b> of periods`)}
-      ${kpiMeter(diskLabel, diskPct, th.disk_percent, diskVal)}
+      ${kpiMeter("CPU", cpuPct, th.cpu_percent, cpuOver, !sys.cpu ? "unavailable" : `<b>${cores}</b> / ${limitCores}`)}
+      ${kpiMeter("Throttled", thrPct, th.throttled_percent, thrOver, !sys.cpu || cpu.periods == null ? "unavailable"
+        : `<b>${thrPct == null ? "—" : kpiPct(thrPct, 2)}</b> of periods`,
+        th.throttled_percent == null ? 100 : th.throttled_percent * KPI_THROTTLE_SCALE)}
+      ${kpiMeter(diskLabel, diskPct, th.disk_percent, diskOver, diskVal)}
     </div>
     <div class="sub">${thrSub}</div>
     ${ownLine(own, disk)}
@@ -1535,13 +1550,17 @@ function kpiComponent(name, sys, th, ownLine) {
 }
 
 /* A 30-day sparkline from per-day buckets: one point per UTC day in the window, zero where the day
-   has no row, so a quiet week is a flat line rather than a missing one. */
-function kpiSpark(days, rows, key, label, stroke) {
+   has no row, so a quiet week is a flat line rather than a missing one. The window ENDS on the
+   payload's as-of day, not on the browser's clock: the buckets are the server's whole UTC days
+   (page_payload starts them at the first day's midnight), and a browser on the other side of
+   midnight UTC would otherwise plot an empty last day and drop the first (OB3, review of #157). */
+function kpiSpark(days, rows, key, label, stroke, asOf) {
   const byDay = new Map((rows || []).map((r) => [r.day, Number(r[key]) || 0]));
-  const today = new Date();
+  const end = new Date(asOf);
+  const last = isNaN(end.getTime()) ? new Date() : end;
   const points = [];
   for (let i = days - 1; i >= 0; i--) {
-    const d = new Date(today.getTime() - i * 86400000).toISOString().slice(0, 10);
+    const d = new Date(last.getTime() - i * 86400000).toISOString().slice(0, 10);
     points.push(byDay.get(d) || 0);
   }
   const max = Math.max(1, ...points);
@@ -1562,16 +1581,27 @@ function kpiTile(id, label, value, note, flag) {
     <div class="label">${esc(label)}</div><div class="value">${value}</div><div class="note">${note}</div></div>`;
 }
 
+const KPI_REFUSAL = `This page reports the dashboard's own pods, the fleet's access posture and its trends —
+         governance data about the clusters, not about the reader.`;
+
 function kpiPage() {
   const k = data.kpi;
   if (!k) return `<section class="card"><h2>KPIs</h2><div class="empty-note">Loading…</div></section>`;
+  // A designed 403 absorbed by guard403 (a first cycle whose whoami had not yet declared the tier, or
+  // a request the proxy let through with no identity): the same card, not a TypeError on a payload
+  // that carries no blocks — the Reports tab's `cat.forbidden` rule (OB3, review of #157).
+  if (k.forbidden) return refusalCard("KPIs", KPI_REFUSAL);
   const th = k.thresholds || {};
   const clusters = Object.keys(k.posture || {});
   const cs = (data.clusters || []).filter((c) => clusters.includes(c.id));
   const sum = (f) => clusters.reduce((n, c) => n + (f(k.posture[c]) || 0), 0);
   const groups = sum((p) => p.groups.total), empty = sum((p) => p.groups.empty), unattr = sum((p) => p.groups.unattributed);
   const dangling = sum((p) => p.bindings.dangling), unresolved = sum((p) => p.bindings.unresolved);
-  const bindings = sum((p) => p.bindings.ok + p.bindings.dangling + p.bindings.unresolved), builtin = sum((p) => p.bindings.built_in);
+  // Every tier but built-in — the Access granted tab's headline less its built-in tile. `unmanaged`
+  // (a hand-made grant on a synced group) is a binding on the cluster whichever section lists it
+  // (OB3, review of #157: the tile read 3 of the seed's 4).
+  const bindings = sum((p) => p.bindings.ok + p.bindings.dangling + p.bindings.unresolved + (p.bindings.unmanaged || 0));
+  const builtin = sum((p) => p.bindings.built_in);
   const up = cs.filter((c) => c.status === "ok").length;
   const leader = data.version ? data.version.leader : null;
   const review = dangling + unresolved;
@@ -1584,7 +1614,18 @@ function kpiPage() {
   const runs = clusters.reduce((n, c) => n + churn(c, "report_runs_30d"), 0);
   const crTotal = sum((p) => p.groupsyncs.total), crOk = sum((p) => p.groupsyncs.states.ok);
   const crOverdue = sum((p) => p.groupsyncs.states.overdue), crLate = sum((p) => p.groupsyncs.states.late);
-  const mergeDays = (key) => clusters.flatMap((c) => ((k.trends[c] || {}).activity || {})[key] || []);
+  // Per-day buckets summed ACROSS clusters — a day both clusters have rows for is one point, the
+  // sum, so the sparkline's last point agrees with the tile (review of #157, Grok: the first cut
+  // concatenated the rows and the Map kept the last cluster's).
+  const mergeDays = (key, fields) => {
+    const byDay = new Map();
+    clusters.forEach((c) => (((k.trends[c] || {}).activity || {})[key] || []).forEach((r) => {
+      const row = byDay.get(r.day) || { day: r.day };
+      fields.forEach((f) => { row[f] = (row[f] || 0) + (Number(r[f]) || 0); });
+      byDay.set(r.day, row);
+    }));
+    return [...byDay.values()];
+  };
   const retained = clusters.map((c) => ((k.trends[c] || {}).history_retained_since || {}).membership_event).filter(Boolean).sort()[0];
   const reportSince = clusters.map((c) => (k.trends[c] || {}).report_timeline_since).filter(Boolean).sort()[0];
   const ownLineDashboard = (own, disk) => own
@@ -1600,7 +1641,7 @@ function kpiPage() {
   const oldest = cs.map((c) => c.oldest_last_sync).filter(Boolean).sort()[0];
   return `
   <section class="card kpi-page">
-    <h2>System status <span class="asof"><span class="beat" aria-hidden="true"></span>updated <span data-kpi-ago="${esc(k.as_of)}">${esc(ago(k.as_of))}</span> · poll ${POLL_INTERVAL_MS / 1000}s</span></h2>
+    <h2>System status <span class="asof"><span class="beat" aria-hidden="true"></span>updated <span data-kpi-ago="${esc(k.as_of)}">${esc(ago(k.as_of))}</span> · refresh ${POLL_INTERVAL_MS / 1000}s</span></h2>
     <div class="sys">
       ${kpiComponent("dashboard", k.system.dashboard, th, ownLineDashboard)}
       ${kpiComponent("report", k.system.report, th, ownLineReport)}
@@ -1623,25 +1664,25 @@ function kpiPage() {
       <div class="trend">
         <div class="label">Membership churn</div>
         <div class="value">${kpiNum(added + removed)}<span class="delta ${added - removed > 0 ? "up" : added - removed < 0 ? "down" : "flat"}">${added - removed >= 0 ? "+" : ""}${kpiNum(added - removed)} ${added - removed > 0 ? "▲" : added - removed < 0 ? "▼" : "="}</span></div>
-        ${kpiSpark(window, mergeDays("membership").map((r) => ({ day: r.day, n: (r.added || 0) + (r.removed || 0) })), "n", "membership changes per day", "var(--status-good)")}
+        ${kpiSpark(window, mergeDays("membership", ["added", "removed"]).map((r) => ({ day: r.day, n: r.added + r.removed })), "n", "membership changes per day", "var(--status-good)", k.as_of)}
         <div class="retain">${kpiNum(added)} joiners · ${kpiNum(removed)} leavers · ${window}d${retained ? ` · history retained since ${esc(retained.slice(0, 10))}` : ""}</div>
       </div>
       <div class="trend">
         <div class="label">Login outcomes</div>
         <div class="value">${attempts ? kpiPct((successes / attempts) * 100) : "—"}<span class="delta flat">${kpiNum(successes)} ok</span></div>
-        ${kpiSpark(window, mergeDays("logins"), "attempts", "login attempts per day", "var(--series-1)")}
+        ${kpiSpark(window, mergeDays("logins", ["attempts", "successes"]), "attempts", "login attempts per day", "var(--series-1)", k.as_of)}
         <div class="retain">${kpiNum(attempts)} attempts · ${kpiNum(providers)} provider${providers === 1 ? "" : "s"}</div>
       </div>
       <div class="trend">
         <div class="label">Sync cadence</div>
         <div class="value">${kpiNum(crOk)}<span class="of">/${kpiNum(crTotal)}</span>${crOverdue ? `<span class="delta down">${kpiNum(crOverdue)} overdue ▼</span>` : crLate ? `<span class="delta flat">${kpiNum(crLate)} late</span>` : `<span class="delta up">all ok</span>`}</div>
-        ${kpiSpark(window, mergeDays("syncs"), "syncs", "syncs observed per day", "var(--status-good)")}
+        ${kpiSpark(window, mergeDays("syncs", ["syncs"]), "syncs", "syncs observed per day", "var(--status-good)", k.as_of)}
         <div class="retain">${clusters.map((c) => `${esc(c)} ${kpiNum(k.posture[c].groupsyncs.states.ok || 0)} ok`).join(" · ")}${oldest ? ` · oldest sync ${esc(ago(oldest))}` : ""}</div>
       </div>
       <div class="trend">
         <div class="label">Report volume</div>
         <div class="value">${kpiNum(runs)}<span class="delta ${runs ? "up" : "flat"}">${runs ? `+${kpiNum(runs)} ▲` : "none"}</span></div>
-        ${kpiSpark(window, mergeDays("reports"), "runs", "report runs per day", "var(--series-1)")}
+        ${kpiSpark(window, mergeDays("reports", ["runs"]), "runs", "report runs per day", "var(--series-1)", k.as_of)}
         <div class="retain">${reportSince ? `timeline starts ${esc(reportSince.slice(0, 10))}` : "no report run recorded yet"}</div>
       </div>
     </div>
@@ -5048,13 +5089,13 @@ function render() {
     wireDrilldown();
   } else if (view.page === "kpi") {
     // The same tier rule as the Overview, in the same words: the page is about the clusters and
-    // the dashboard's own pods, and answers nothing a reader can ask about themselves.
+    // the dashboard's own pods, and answers nothing a reader can ask about themselves. Keyed on the
+    // HOST's headline, as Reports is and as the fetch is: the page is fleet-wide, so a narrowed
+    // remote left selected must not refuse a host administrator (review of #157, Grok).
     if (!readerTierKnown()) {
       main.innerHTML = `<section class="card"><div class="empty-note">Loading…</div></section>`;
-    } else if (narrowedReader()) {
-      main.innerHTML = refusalCard("KPIs",
-        `This page reports the dashboard's own pods, the fleet's access posture and its trends —
-         governance data about the clusters, not about the reader.`);
+    } else if (narrowedOnHost()) {
+      main.innerHTML = refusalCard("KPIs", KPI_REFUSAL);
     } else {
       main.innerHTML = kpiPage();
       wireKpi();
@@ -5502,6 +5543,18 @@ async function refresh(opts = {}) {
     }
     if ("findings" in got) data.findings = got.findings;
     if ("kpi" in got) data.kpi = got.kpi;
+    // The KPI page decides again from the whoami that just arrived, as Reports does: the fetch was
+    // chosen from the previous cycle's identity, so a reader promoted mid-session would otherwise
+    // sit on "Loading…" for a poll interval, and a demoted one would keep the payload in memory.
+    if (view.page === "kpi" && got.whoami) {
+      if (narrowedOnHost()) {
+        data.kpi = null;
+      } else if (got.whoami.authenticated && !("kpi" in got)) {
+        const body = await guard403(get("/api/kpi"));
+        if (superseded()) return;
+        data.kpi = body;
+      }
+    }
     if ("myAccess" in got) data.myAccess = got.myAccess;
     // THE ACCESS GRANTED TAB DECIDES AGAIN FROM THE WHOAMI THAT JUST ARRIVED. The requests
     // above were chosen from the previous cycle's identity — unknown on the first cycle, and
@@ -5613,6 +5666,7 @@ async function refresh(opts = {}) {
       data.groupsMeta, data.group, data.user, data.users, data.events, data.logins, data.access,
       data.usage, data.findings, data.operatorConfigs, data.userBindings, data.whoami, data.myAccess, data.home,
       data.reportCatalog, data.reportRuns, data.fleet,   // #172: the fleet tables render from it
+      data.kpi,   // #157 (review, Codex): left out, a poll whose only change was a KPI never repainted the page
       // #167: the namespace list and page ride the same wire (review, Codex — left out, a poll whose
       // only change was a label or a grant skipped the repaint the comment above forbids skipping).
       data.namespaces, data.ns,

@@ -1334,7 +1334,10 @@ td.state-cell { min-width: 210px; }
 /* display:block is load-bearing — an inline span ignores height:100% and renders an empty bar */
 .kpi-page .fill { display: block; height: 100%; min-width: 3px; border-radius: var(--radius-pill);
   background: var(--status-good); transition: width .6s cubic-bezier(.2, .7, .3, 1); }
-.kpi-page .fill.warn { background: var(--status-warning); }
+/* --warn, not --status-warning: the fill's edge against the track's --page-2 wash IS the meter
+   (1.4.11, a graphical object), and the badge amber measures 2.70:1 there in light (2.76 on the
+   three light palettes); the text-grade amber td.num.warn already wears is 4.40:1 light, 5.87 dark. */
+.kpi-page .fill.warn { background: var(--warn); }
 .kpi-page .fill.none { min-width: 0; background: transparent; }
 .kpi-page .meter-val { font-family: var(--font-mono); font-size: var(--text-sm); font-variant-numeric: tabular-nums;
   min-width: 110px; text-align: right; }
