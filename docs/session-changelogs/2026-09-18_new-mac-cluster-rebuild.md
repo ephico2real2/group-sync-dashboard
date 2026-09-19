@@ -205,6 +205,82 @@ Outcome in one line: **the lab rebuilt on the M5 Pro from the charts' values fil
   `dashboard reports the mock cluster ok`) — the #197 fix on the merged tree.
 - The operator's rulings this session: the GitOps chart's review can wait; OB3 runs at `effort: max`.
 
+## Part 8 — the issue list, from the top (2026-09-19 08:3x → ) — PRs #200, #201, #202, #203, #205, #206, #207
+
+Post-merge, the operator's "now let us look our issues and what is pending and start to complete the
+issues". Small PRs first (#200 the vault fallback for `registry-creds.sh`; #201 the new CRC's namespaces
+and direct grants; #203 the drill-link contrast; #205 the Kyverno step-0 measurements), then the two
+that carry code: #202 (#163) and #206 (#156).
+
+### #163 — retention ages a run from its completion (2026-09-19 10:2x → 13:5x) — commits `f3c9f61`, `916200a`, `43fc933`, PR #202
+
+- `prune` keyed both tiers on the run id, minted at request time; a run that waited or rendered slowly
+  arrived `done` already older than `manual.days`. One stamp, `retention_stamp` (`finished_at`, aged from
+  the end of its second), both tiers. Chart 0.34.1 for the values/README wording.
+- **Review pass 1** (Grok, OB3, Codex — `docs/REVIEW_retention_from_completion.md`): six accepted, three
+  rejected. **Found by all three:** the boundary predicate `<` kept a run one second longer than `main`
+  did — measured by two independent 200-run differentials, zero difference after `<=`. **Found by OB3:** a
+  wrong-typed `finished_at` raised into `_maybe_prune`'s swallow and switched retention off for the whole
+  store; the "legacy manifest" story was false (`finished_at` has always been written); a queue refusal
+  never stamped. **Found by Grok:** a naive `now` hit the same swallow. **Found by Codex:** the scheduled tier
+  had no behavioural test. **Rejected:** Codex's C8 — a permanent id-ordered protection for unstamped
+  failed runs, which is the bug seen from the other side.
+- **Review pass 2** (the same three at `916200a`): the predicate is decision-identical to `main` — OB3's
+  9,036-run differential and Codex's 200-run one both 0. **Found by all three:** the loader never read the
+  id, and the fallback's `strptime(id[:15])` was outside the `try` — one hand-edited id halted every prune,
+  a regression against `main`'s string comparison; the loader now refuses a manifest whose id is not its
+  directory's name or does not parse (OB3 reloaded 300 minted manifests identically). **Found by OB3:** the
+  schedule last-success seed caught `ValueError` only — the wrong-typed stamp retention now tolerates
+  crashlooped the pod. **Rejected:** Cursor's and Codex's re-opening of C8 (files under a restart-failed run
+  are not servable: the download handler answers 404 for any run not `done`); Cursor's prose-agreement test.
+- Measured: reporting suite 61 → 63 passed; full hermetic suite 3468 → 3471 passed, 13 skipped. Both
+  passes' decisions are on the PR (comments of 2026-09-19).
+
+### #156 — the KPI module (2026-09-19 12:1x → 13:0x) — commits `8c946d2`, `a7d2f58`, `8b89b0c`, `c245897`, `64bb82f`, PR #206
+
+- `gsd/kpi/`: one definition per KPI with a privacy class the Prometheus renderer enforces (it REFUSES
+  an internal definition); cgroup v2 self-report for both pods under `component`; churn and login
+  counters accumulated from the event tables under an id watermark; `kpi_daily` (migration 15) written
+  by the leader once a day; the group predicates spelled once and read by the store, the snapshot and,
+  after review, the Groups report. Measured on CRC at `8c946d2`: dashboard 81 MB of 512Mi, 0.5 CPU, 5 of
+  120 periods throttled; report 62 MB of 768Mi; `/api/kpi` 200 at the wide tier, 403 for `jdoe`.
+- **Found by the live check** (before any report landed): a CPU rate minted over 0.0 s between the two
+  cluster threads' usage pulls — a 5 s floor and a per-cycle baseline (`a7d2f58`). The operator's
+  "everything as designed in our kpi mock up" → own bytes, report volume and the timeline start added
+  (`8b89b0c`).
+- **Review pass 1** (Grok, Codex, OB3 — `docs/REVIEW_kpi_module.md`): **found by all three** the `provider`
+  label had no bound of the dashboard's own — bounded to the Identity-derived providers plus `unknown`
+  (else `other`), and at the source by OB3's `configured_path_provider` after it drove `/login/evil%2Fx`
+  into the column; **found by Grok and Codex** zeros from a partial `cpu.stat`, a zero period that 500'd
+  `/api/kpi` and the usage feed, an unclamped throttled share, the rollup running after a FAILED poll,
+  the Groups report's fourth spelling of the predicates; **found by Grok, Codex and OB3** the watermark
+  queries scanning the cluster per scrape (OB3: measured at 300k rows) — migration 16. **Rejected:**
+  pruning by watermark, a two-value anonymised provider class, a separate retention family.
+- Measured: `tests/test_kpi.py` 28 → 37; full hermetic suite 3512 → 3522 passed, 13 skipped.
+
+### #157 — the KPI page, to the mock (2026-09-19 13:0x → 14:1x) — commits `6e6405b`, `3c6e3c8`, `12065bf`, `c6bf775`, PR #207 (stacked on #206)
+
+- The operator: "I want everything as designed in our kpi mock up for kpi page/panel." A new
+  administrator-tier tab built to `docs/design/overview-kpi-mock.html`, rendered from `/api/kpi` (which
+  gained `posture`, `thresholds`, `links`, `activity`): system status for both pods with the amber mark drawn
+  on each track, the six-tile band, four trends with sparklines, the clusters table, the doors out. Chart
+  0.35.0 (`kpi.thresholds.*`, `grafana.url`, `console.url`). Headless renders at 1280 and 375 px read before
+  the first commit; the first CRC render found "512.0Mi" (`3c6e3c8`).
+- **Review pass 1** (Grok, Codex, OB3 — `docs/REVIEW_kpi_page.md`): **found by OB3** the throttled mark at
+  3 px on a 0–100 % track (the page's headline device read nothing — the track is drawn to 5× its
+  threshold), the Bindings tile dropping the `unmanaged` tier, the fill's 2.70:1 amber, the window's
+  partial first day off the line and the line's days from the browser's clock; **found by Grok and OB3**
+  the paint refusing a host administrator over a selected narrowed remote; **found by Grok** a shared day
+  kept from one cluster only, `report_run` without a cluster-leading index (migration 17); **found by Codex
+  and OB3** a `javascript:` door URL reaching the href; **found by Codex** `data.kpi` missing from the repaint
+  fingerprint. **Rejected:** a payload-driven refresh cadence; warn-and-unset for a bad door URL.
+- Measured: `TestKpiPage` 9 → 16, `tests/test_kpi.py` 41; full hermetic suite 3539 passed, 13 skipped;
+  deployed to CRC at `12065bf` and walked through the real proxy at 1440 light and 375 dark
+  (`reports/2026-09-19_kpi-156-157/`); the dashboard pod on watch at 3.03 % throttled, 69 groups, 48 + 155
+  bindings, 81.4 % login success over 43 attempts.
+- Observed, not this session's: `tests/test_ui.py::TestLookup::test_the_also_line_…` fails on `main` on this
+  machine ("typing must not fetch") and passes in CI; three reviewers could not say why offline.
+
 ---
 
 ## Numbers
