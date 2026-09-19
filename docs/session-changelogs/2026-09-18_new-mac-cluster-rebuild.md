@@ -258,6 +258,29 @@ that carry code: #202 (#163) and #206 (#156).
   pruning by watermark, a two-value anonymised provider class, a separate retention family.
 - Measured: `tests/test_kpi.py` 28 → 37; full hermetic suite 3512 → 3522 passed, 13 skipped.
 
+### #157 — the KPI page, to the mock (2026-09-19 13:0x → 14:1x) — commits `6e6405b`, `3c6e3c8`, `12065bf`, `c6bf775`, PR #207 (stacked on #206)
+
+- The operator: "I want everything as designed in our kpi mock up for kpi page/panel." A new
+  administrator-tier tab built to `docs/design/overview-kpi-mock.html`, rendered from `/api/kpi` (which
+  gained `posture`, `thresholds`, `links`, `activity`): system status for both pods with the amber mark drawn
+  on each track, the six-tile band, four trends with sparklines, the clusters table, the doors out. Chart
+  0.35.0 (`kpi.thresholds.*`, `grafana.url`, `console.url`). Headless renders at 1280 and 375 px read before
+  the first commit; the first CRC render found "512.0Mi" (`3c6e3c8`).
+- **Review pass 1** (Grok, Codex, OB3 — `docs/REVIEW_kpi_page.md`): **found by OB3** the throttled mark at
+  3 px on a 0–100 % track (the page's headline device read nothing — the track is drawn to 5× its
+  threshold), the Bindings tile dropping the `unmanaged` tier, the fill's 2.70:1 amber, the window's
+  partial first day off the line and the line's days from the browser's clock; **found by Grok and OB3**
+  the paint refusing a host administrator over a selected narrowed remote; **found by Grok** a shared day
+  kept from one cluster only, `report_run` without a cluster-leading index (migration 17); **found by Codex
+  and OB3** a `javascript:` door URL reaching the href; **found by Codex** `data.kpi` missing from the repaint
+  fingerprint. **Rejected:** a payload-driven refresh cadence; warn-and-unset for a bad door URL.
+- Measured: `TestKpiPage` 9 → 16, `tests/test_kpi.py` 41; full hermetic suite 3539 passed, 13 skipped;
+  deployed to CRC at `12065bf` and walked through the real proxy at 1440 light and 375 dark
+  (`reports/2026-09-19_kpi-156-157/`); the dashboard pod on watch at 3.03 % throttled, 69 groups, 48 + 155
+  bindings, 81.4 % login success over 43 attempts.
+- Observed, not this session's: `tests/test_ui.py::TestLookup::test_the_also_line_…` fails on `main` on this
+  machine ("typing must not fetch") and passes in CI; three reviewers could not say why offline.
+
 ---
 
 ## Numbers
