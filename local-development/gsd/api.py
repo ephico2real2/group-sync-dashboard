@@ -337,7 +337,12 @@ def build_app(
     # this instance, and the collector reads a snapshot of it at scrape time. Created here,
     # before anything that carries it.
     signals = RuntimeSignals()
-    poller = Poller(store, settings, elector, signals=signals)
+    # This process's self-report (#156): its own cgroup and the filesystem under the database. The
+    # sampler reads nothing until scraped or asked, and reads None on cgroup v1 — omitted, not zero.
+    from .kpi.system import CgroupSampler, SystemMonitor, dashboard_data_bytes
+    system_monitor = SystemMonitor(CgroupSampler(), os.path.dirname(os.path.abspath(settings.db_path)),
+                                   own=("data", dashboard_data_bytes(settings.db_path, settings.backup_dir)))
+    poller = Poller(store, settings, elector, signals=signals, system_monitor=system_monitor)
     # The report service (docs/specs/SPEC_C3_reporting_microservice.md). The token is read ONCE at
     # startup: the same bytes the report pod verifies with, so a ticket minted here is accepted
     # there. Missing or short when reporting is on is a startup failure — a module that is on and
@@ -2192,7 +2197,8 @@ def build_app(
 
     metrics_registry = build_registry(store, grace, elector,
                                       signals=signals, settings=settings,
-                                      reporting_enabled=bool(settings.reporting_url))
+                                      reporting_enabled=bool(settings.reporting_url),
+                                      system=system_monitor.sampler, volume=system_monitor.volume)
 
     @app.get("/metrics")
     def metrics() -> Response:
@@ -2208,6 +2214,33 @@ def build_app(
     @app.get("/healthz")
     def healthz() -> dict:
         return {"status": "ok"}
+
+    @app.get("/api/kpi")
+    @consistent
+    def kpi(request: Request) -> dict:
+        """The KPI module's in-app surface (#156): every definition rendered as JSON — the public ones
+        /metrics also carries and the internal ones it never does — the 30-day trends with their
+        retention edge, the daily rollup's series, and both processes' self-reported system usage.
+
+        ADMINISTRATOR TIER ONLY: the internal class counts people, and the trends aggregate the
+        fleet's churn and logins, which is governance data about the clusters, not about the reader
+        (the same reasoning as /operator-configs). Each block states its as-of, so a figure that
+        differs from a signed report's — a snapshot taken earlier — is explained, not mysterious.
+        """
+        require_admin_tier(request)
+        from .kpi import COMPONENT_DASHBOARD, Context
+        from .kpi.render_json import page_payload
+        served = tuple(row["id"] for row in store.clusters() if is_served(row["id"]))
+        last_poll = {row["id"]: row["last_poll"] for row in store.clusters()}
+        ctx = Context(component=COMPONENT_DASHBOARD, system=system_monitor.sampler, volume=system_monitor.volume,
+                      store=store, cluster_ids=served, signals=signals)
+        report_system, report_system_at = signals.report_system()
+        return {
+            "scope": "all",
+            "viewer": trusted_viewer(request),
+            **page_payload(ctx, dashboard_system=system_monitor.view(), report_system=report_system,
+                           report_system_at=report_system_at, last_poll=last_poll),
+        }
 
     @app.get("/api/whoami")
     def whoami(request: Request) -> dict:
@@ -2661,6 +2694,7 @@ def build_app(
         app.mount("/static", PageSourceRefusingStaticFiles(directory=STATIC_DIR), name="static")
 
     app.state.store = store
+    app.state.signals = signals
     app.state.settings = settings
     # The visibility seam, published for the handlers and for tests to substitute: a fake
     # resolver here (any object with resolve(viewer) -> "all" | "self") is how a test
