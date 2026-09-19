@@ -205,6 +205,37 @@ Outcome in one line: **the lab rebuilt on the M5 Pro from the charts' values fil
   `dashboard reports the mock cluster ok`) — the #197 fix on the merged tree.
 - The operator's rulings this session: the GitOps chart's review can wait; OB3 runs at `effort: max`.
 
+## Part 8 — the issue list, from the top (2026-09-19 08:3x → ) — PRs #200, #201, #202, #203, #205, #206
+
+Post-merge, the operator's "now let us look our issues and what is pending and start to complete the
+issues". Small PRs first (#200 the vault fallback for `registry-creds.sh`; #201 the new CRC's namespaces
+and direct grants; #203 the drill-link contrast; #205 the Kyverno step-0 measurements), then the two
+that carry code: #202 (#163) and #206 (#156).
+
+### #163 — retention ages a run from its completion (2026-09-19 10:2x → 13:5x) — commits `f3c9f61`, `916200a`, `43fc933`, PR #202
+
+- `prune` keyed both tiers on the run id, minted at request time; a run that waited or rendered slowly
+  arrived `done` already older than `manual.days`. One stamp, `retention_stamp` (`finished_at`, aged from
+  the end of its second), both tiers. Chart 0.34.1 for the values/README wording.
+- **Review pass 1** (Grok, OB3, Codex — `docs/REVIEW_retention_from_completion.md`): six accepted, three
+  rejected. **Found by all three:** the boundary predicate `<` kept a run one second longer than `main`
+  did — measured by two independent 200-run differentials, zero difference after `<=`. **Found by OB3:** a
+  wrong-typed `finished_at` raised into `_maybe_prune`'s swallow and switched retention off for the whole
+  store; the "legacy manifest" story was false (`finished_at` has always been written); a queue refusal
+  never stamped. **Found by Grok:** a naive `now` hit the same swallow. **Found by Codex:** the scheduled tier
+  had no behavioural test. **Rejected:** Codex's C8 — a permanent id-ordered protection for unstamped
+  failed runs, which is the bug seen from the other side.
+- **Review pass 2** (the same three at `916200a`): the predicate is decision-identical to `main` — OB3's
+  9,036-run differential and Codex's 200-run one both 0. **Found by all three:** the loader never read the
+  id, and the fallback's `strptime(id[:15])` was outside the `try` — one hand-edited id halted every prune,
+  a regression against `main`'s string comparison; the loader now refuses a manifest whose id is not its
+  directory's name or does not parse (OB3 reloaded 300 minted manifests identically). **Found by OB3:** the
+  schedule last-success seed caught `ValueError` only — the wrong-typed stamp retention now tolerates
+  crashlooped the pod. **Rejected:** Cursor's and Codex's re-opening of C8 (files under a restart-failed run
+  are not servable: the download handler answers 404 for any run not `done`); Cursor's prose-agreement test.
+- Measured: reporting suite 61 → 63 passed; full hermetic suite 3468 → 3471 passed, 13 skipped. Both
+  passes' decisions are on the PR (comments of 2026-09-19).
+
 ---
 
 ## Numbers
