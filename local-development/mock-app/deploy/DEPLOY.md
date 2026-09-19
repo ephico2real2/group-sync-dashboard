@@ -128,16 +128,20 @@ so they can be refreshed rather than hand-edited when the live shape changes.
 
 ### Prerequisite: krew, then neat
 
-`kubectl-neat` strips what the API server and admission controllers inject into a live object. There is
-**no Homebrew formula** for it (checked 2026-09-18), so it installs through krew, kubectl's plugin
-manager:
+`kubectl-neat` strips what the API server and admission controllers inject into a live object. It has
+**no Homebrew formula of its own** (checked 2026-09-18), so it is installed through krew, kubectl's
+plugin manager — and krew is itself a plugin that does not ship with kubectl, so that comes first.
+On a Mac both steps are Homebrew's:
 
 ```sh
-# krew itself, if you do not have it — https://krew.sigs.k8s.io/docs/user-guide/setup/install/
+brew install krew
+export PATH="$HOME/.krew/bin:$PATH"     # put this in your shell profile
 kubectl krew install neat
-export PATH="$HOME/.krew/bin:$PATH"     # add this to your shell profile
 kubectl neat version                     # 2.0.4 here
 ```
+
+The `PATH` export is required, not a nicety: kubectl discovers plugins on `PATH`, and without it both
+`kubectl krew` and `kubectl neat` report "unknown command".
 
 krew prints a warning that plugins are not audited by its maintainers. That is worth reading once and
 is the reason this is a documented prerequisite rather than something a script installs for you.
