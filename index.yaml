@@ -3,6 +3,27 @@ entries:
   group-sync-dashboard:
   - apiVersion: v2
     appVersion: 0.24.0
+    created: "2026-09-19T23:52:38.222065049Z"
+    description: Read-only observability for the redhat-cop group-sync-operator
+    digest: 2654c3677e94ec4ab7e985589f0c6dbebffc0ee5ea87659d19ee2faa8a0388c5
+    home: https://github.com/ephico2real2/group-sync-dashboard
+    keywords:
+    - openshift
+    - ldap
+    - rbac
+    - groupsync
+    - observability
+    maintainers:
+    - name: ephico2real
+    name: group-sync-dashboard
+    sources:
+    - https://github.com/ephico2real2/group-sync-dashboard
+    type: application
+    urls:
+    - group-sync-dashboard-0.36.0.tgz
+    version: 0.36.0
+  - apiVersion: v2
+    appVersion: 0.24.0
     created: "2026-09-19T20:46:13.491807874Z"
     description: Read-only observability for the redhat-cop group-sync-operator
     digest: 717f39921f9062c406e4f5773b4d1456a75711e58bc892694c23699b1ac08188
@@ -799,4 +820,55 @@ entries:
     urls:
     - group-sync-dashboard-0.2.0.tgz
     version: 0.2.0
-generated: "2026-09-19T20:46:13.492060476Z"
+  openshift-grafana:
+  - annotations:
+      artifacthub.io/category: monitoring-logging
+      artifacthub.io/crds: |
+        - kind: Grafana
+          version: v1beta1
+          name: grafanas.grafana.integreatly.org
+          displayName: Grafana
+          description: A Grafana instance managed by grafana-operator v5 (a copy, installed only when absent)
+        - kind: GrafanaDatasource
+          version: v1beta1
+          name: grafanadatasources.grafana.integreatly.org
+          displayName: GrafanaDatasource
+          description: A datasource applied to matching Grafana instances
+        - kind: GrafanaDashboard
+          version: v1beta1
+          name: grafanadashboards.grafana.integreatly.org
+          displayName: GrafanaDashboard
+          description: A dashboard applied to matching Grafana instances
+        - kind: GrafanaFolder
+          version: v1beta1
+          name: grafanafolders.grafana.integreatly.org
+          displayName: GrafanaFolder
+          description: A folder applied to matching Grafana instances
+      artifacthub.io/operator: "false"
+      artifacthub.io/prerelease: "false"
+    apiVersion: v2
+    appVersion: 5.24.0
+    created: "2026-09-19T23:52:38.342612552Z"
+    description: An isolated Grafana instance in your own namespace, wired to OpenShift's
+      Thanos querier (user-workload monitoring) through grafana-operator v5 — installable
+      by any team, with no application-specific content. Deploy it before a chart
+      that ships a GrafanaDashboard CR.
+    digest: 38bdd3299e4e5ed70b609db5c43c435f3d061bc71fbea4d93a592e1a32187ffa
+    home: https://github.com/ephico2real2/group-sync-dashboard
+    keywords:
+    - grafana
+    - openshift
+    - monitoring
+    - thanos
+    - grafana-operator
+    kubeVersion: '>=1.28.0-0'
+    maintainers:
+    - name: ephico2real2
+    name: openshift-grafana
+    sources:
+    - https://github.com/ephico2real2/group-sync-dashboard/tree/main/charts/openshift-grafana
+    type: application
+    urls:
+    - openshift-grafana-0.1.0.tgz
+    version: 0.1.0
+generated: "2026-09-19T23:52:38.342856539Z"
