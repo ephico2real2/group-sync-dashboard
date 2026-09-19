@@ -50,6 +50,9 @@ def page_payload(ctx: Context, *, dashboard_system: dict | None, report_system: 
             trends[cluster] = {
                 "window_days": TREND_DAYS,
                 "history_retained_since": retained,
+                # Where the recorded report timeline starts — the mock's "timeline starts …": the
+                # pull began with the reporting module, not with the cluster's history.
+                "report_timeline_since": ctx.store.report_volume(cluster, "9999")["since"],
                 "daily": {
                     "since": ctx.store.kpi_daily_since(cluster),
                     "window_days": ROLLUP_DAYS,

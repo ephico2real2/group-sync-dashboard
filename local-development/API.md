@@ -788,6 +788,7 @@ and logins — governance data about the clusters, not about the reader.
     "crc-local": {
       "window_days": 30,
       "history_retained_since": {"membership_event": "2026-08-20T00:00:00Z", "sync_event": null, "binding_event": null},
+      "report_timeline_since": "2026-09-16T02:00:00Z",
       "daily": {"since": "2026-09-19", "window_days": 90,
                 "series": {"groups": [{"day": "2026-09-19", "value": 62.0}], "bindings": []}},
       "as_of": "2026-09-19T14:01:40Z"
@@ -799,7 +800,8 @@ and logins — governance data about the clusters, not about the reader.
                   "cpu": {"limit_cores": 0.5, "usage_seconds": 5.06, "periods": 175931,
                           "throttled_periods": 196, "throttled_seconds": 5.06,
                           "cores_used": 0.02, "throttled_fraction": 0.0, "rate_interval_seconds": 60.0},
-                  "disk": {"used_bytes": 27000000000, "total_bytes": 32000000000}},
+                  "disk": {"used_bytes": 27000000000, "total_bytes": 32000000000},
+                  "data": {"db_bytes": 2400000, "wal_bytes": 4200000, "backups": {"count": 4, "bytes": 8500000}}},
     "report": null
   }
 }
@@ -811,12 +813,17 @@ exports (`gsd_process_*{component}`, `gsd_volume_disk_*`, `gsd_membership_change
 which the renderer refuses rather than a convention remembers. A KPI whose source cannot be
 measured has `samples: null` — *unavailable*, distinguishable from 0 (a cgroup v1 node, an
 unlimited `memory.max`). `system.report` is the report service's last self-report, pulled with
-its usage feed; `null` until the first pull, or when the service predates it. `cpu.cores_used`
+its usage feed — the same blocks, with `artifacts: {bytes, files}` in place of `data`; `null` until
+the first pull, or when the service predates it. `disk` is the filesystem under the volume (on a
+hostPath volume, the node's disk), `data` / `artifacts` the component's own bytes on it — the mock
+shows both because a hostPath volume's own size means nothing. `cpu.cores_used`
 and `throttled_fraction` are rates over the interval since the previous sample, on a monotonic
-clock, and `null` on the first. Every trend carries `history_retained_since`, because retention
-prunes the event tables and a trend that ignores the cut lies about a quiet month; `daily.since`
-is where the rollup — written once a day by the leader, for the counts that have no history —
-actually starts.
+clock, and `null` on the first, and are derived only over an interval of at least five seconds (the
+poll thread takes a baseline every cycle). Every trend carries `history_retained_since`, because
+retention prunes the event tables and a trend that ignores the cut lies about a quiet month;
+`report_timeline_since` is the first report run the dashboard ever recorded for the cluster; and
+`daily.since` is where the rollup — written once a day by the leader, for the counts that have no
+history — actually starts.
 
 ### `GET /api/whoami`
 

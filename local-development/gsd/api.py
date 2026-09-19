@@ -339,8 +339,9 @@ def build_app(
     signals = RuntimeSignals()
     # This process's self-report (#156): its own cgroup and the filesystem under the database. The
     # sampler reads nothing until scraped or asked, and reads None on cgroup v1 — omitted, not zero.
-    from .kpi.system import CgroupSampler, SystemMonitor
-    system_monitor = SystemMonitor(CgroupSampler(), os.path.dirname(os.path.abspath(settings.db_path)))
+    from .kpi.system import CgroupSampler, SystemMonitor, dashboard_data_bytes
+    system_monitor = SystemMonitor(CgroupSampler(), os.path.dirname(os.path.abspath(settings.db_path)),
+                                   own=("data", dashboard_data_bytes(settings.db_path, settings.backup_dir)))
     poller = Poller(store, settings, elector, signals=signals, system_monitor=system_monitor)
     # The report service (docs/specs/SPEC_C3_reporting_microservice.md). The token is read ONCE at
     # startup: the same bytes the report pod verifies with, so a ticket minted here is accepted

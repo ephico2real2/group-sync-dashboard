@@ -90,8 +90,9 @@ def build_report_app(settings: ReportSettings, *, secret: bytes | None = None, c
 
     # This process's self-report (#156): its own cgroup and the filesystem under the artefact volume,
     # exported on /metrics under component="report" and carried to the dashboard on the usage feed.
-    from ..kpi.system import CgroupSampler, SystemMonitor
-    system_monitor = SystemMonitor(CgroupSampler(), settings.artifact_dir)
+    from ..kpi.system import CgroupSampler, SystemMonitor, artifact_bytes
+    system_monitor = SystemMonitor(CgroupSampler(), settings.artifact_dir,
+                                   own=("artifacts", artifact_bytes(settings.artifact_dir)))
     registry = build_report_registry(signals, store, runs, settings.snapshot_dir, snapshot_age,
                                      system=system_monitor.sampler, volume=system_monitor.volume)
 

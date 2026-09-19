@@ -112,6 +112,15 @@ def _logins(field):
     return collect
 
 
+def _reports(field):
+    def collect(ctx: Context):
+        if ctx.store is None:
+            return None
+        since = _window_start(TREND_DAYS)
+        return [Sample((cluster,), ctx.store.report_volume(cluster, since)[field]) for cluster in ctx.cluster_ids]
+    return collect
+
+
 def _people(field):
     def collect(ctx: Context):
         if ctx.store is None:
@@ -169,6 +178,8 @@ INTERNAL_KPIS: tuple[Kpi, ...] = (
     Kpi("login_attempts_30d", "Login attempts captured in the last 30 days.", GAUGE, ("cluster",), INTERNAL, _logins("attempts")),
     Kpi("login_successes_30d", "Successful logins in the last 30 days.", GAUGE, ("cluster",), INTERNAL, _logins("successes")),
     Kpi("login_providers_30d", "Identity providers seen in the last 30 days.", GAUGE, ("cluster",), INTERNAL, _logins("providers")),
+    Kpi("report_runs_30d", "Report runs requested in the last 30 days.", GAUGE, ("cluster",), INTERNAL, _reports("runs")),
+    Kpi("report_runs_done_30d", "Report runs that finished in the last 30 days.", GAUGE, ("cluster",), INTERNAL, _reports("done")),
     # People counts: personnel information, so internal — the gsd_dashboard_active_users ruling.
     Kpi("users_total", "User objects on the cluster.", GAUGE, ("cluster",), INTERNAL, _people("users")),
     Kpi("members_total", "Distinct people in at least one group.", GAUGE, ("cluster",), INTERNAL, _people("members")),

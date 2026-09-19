@@ -160,10 +160,15 @@ class SystemMonitor:
     one rate rather than deriving a second over a sliver."""
 
     def __init__(self, sampler: CgroupSampler | None, volume: str | None,
-                 min_rate_interval: float = MIN_RATE_INTERVAL_SECONDS):
+                 min_rate_interval: float = MIN_RATE_INTERVAL_SECONDS, own=None):
         self.sampler = sampler
         self.volume = volume
         self.min_rate_interval = min_rate_interval
+        # The component's OWN bytes, beside the filesystem's: `(key, callable)` — the dashboard's
+        # database, WAL and backups under "data"; the report's artefact bytes and file count under
+        # "artifacts". The mock shows both ("gsd.db 2.3Mi + WAL 4.0Mi + 4 backups 8.1Mi",
+        # "Artefacts 11.2Mi · 418 files"); a hostPath volume's own size means nothing.
+        self.own = own
         self._previous: Cpu | None = None
         self._last_rate: CpuRate | None = None
         self._lock = threading.Lock()
@@ -183,8 +188,8 @@ class SystemMonitor:
         if self.sampler is None:
             return None
         memory, cpu = self.sampler.memory(), self.sampler.cpu()
-        if memory is None and cpu is None:
-            return None
+        # Each block is measured on its own: a host with no cgroup v2 (a laptop) still has a disk
+        # and its own files, so the view carries what could be read and is None only when nothing could.
         view: dict = {}
         if memory is not None:
             view["memory"] = {"used_bytes": memory.current_bytes, "limit_bytes": memory.limit_bytes}
@@ -204,4 +209,56 @@ class SystemMonitor:
             d = disk(self.volume)
             if d is not None:
                 view["disk"] = {"used_bytes": d.used_bytes, "total_bytes": d.total_bytes}
-        return view
+        if self.own is not None:
+            key, measure = self.own
+            try:
+                own = measure()
+            except Exception:  # noqa: BLE001 — a stat failure must not cost the whole block
+                log.exception("own-bytes measurement failed; omitted")
+                own = None
+            if own is not None:
+                view[key] = own
+        return view or None
+
+
+def dashboard_data_bytes(db_path: str, backup_dir: str | None):
+    """The dashboard's own bytes: the database file, its WAL, and the backups — what
+    `gsd_sqlite_wal_bytes` and the backup gauge already say, gathered for the page."""
+    def measure() -> dict | None:
+        try:
+            db = os.stat(db_path).st_size
+        except OSError:
+            return None
+        try:
+            wal = os.stat(db_path + "-wal").st_size
+        except OSError:
+            wal = 0
+        backups = {"count": 0, "bytes": 0}
+        if backup_dir:
+            for f in Path(backup_dir).glob("gsd-*.db"):
+                try:
+                    backups["count"] += 1
+                    backups["bytes"] += f.stat().st_size
+                except OSError:
+                    pass
+        return {"db_bytes": db, "wal_bytes": wal, "backups": backups}
+    return measure
+
+
+def artifact_bytes(root: str):
+    """The report service's own bytes: every file under every run directory, and how many."""
+    def measure() -> dict | None:
+        total, files = 0, 0
+        try:
+            for d in Path(root).iterdir():
+                if d.is_dir():
+                    for f in d.iterdir():
+                        try:
+                            total += f.stat().st_size
+                            files += 1
+                        except OSError:
+                            pass
+        except OSError:
+            return None
+        return {"bytes": total, "files": files}
+    return measure

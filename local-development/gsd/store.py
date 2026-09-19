@@ -3941,6 +3941,19 @@ class Store:
         return {"attempts": row.get("attempts") or 0, "successes": row.get("successes") or 0,
                 "providers": row.get("providers") or 0}
 
+    def report_volume(self, cluster_id: str, since_at: str) -> dict:
+        """Report runs recorded for this cluster since `since_at`, and where the recorded timeline
+        starts — the mock's "Report volume · timeline starts …" (docs/design/overview-kpi-mock.html).
+        Two scalars over report_run; no names."""
+        row = self._row(
+            """SELECT SUM(CASE WHEN requested_at>=? THEN 1 ELSE 0 END) AS runs,
+                      SUM(CASE WHEN requested_at>=? AND status='done' THEN 1 ELSE 0 END) AS done,
+                      MIN(requested_at) AS since
+                 FROM report_run WHERE cluster_id=?""",
+            (since_at, since_at, cluster_id),
+        ) or {}
+        return {"runs": row.get("runs") or 0, "done": row.get("done") or 0, "since": row.get("since")}
+
     def kpi_daily_written(self, cluster_id: str, day: str) -> bool:
         return bool(self._row("SELECT 1 AS yes FROM kpi_daily WHERE cluster_id=? AND day=? LIMIT 1",
                               (cluster_id, day)))

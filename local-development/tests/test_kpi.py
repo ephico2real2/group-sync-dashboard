@@ -173,6 +173,8 @@ class TestCgroupSampler:
         second = mon.view()
         assert second["cpu"]["cores_used"] is not None and second["cpu"]["throttled_fraction"] == pytest.approx(0.2)
         assert SystemMonitor(CgroupSampler(str(tmp_path / "none")), None).view() is None
+        assert SystemMonitor(CgroupSampler(str(tmp_path / "none")), str(tmp_path)).view().keys() == {"disk"}, \
+            "no cgroup does not hide the disk"
 
     def test_a_rate_is_never_minted_over_a_sliver(self, tmp_path, monkeypatch):
         """Measured on CRC: the two cluster threads pulled the report's usage feed milliseconds apart and
@@ -212,6 +214,21 @@ class TestCgroupSampler:
         finally:
             store.close()
         assert mon.views == 1
+
+    def test_own_bytes_ride_the_view(self, tmp_path):
+        """The mock's own-bytes lines: gsd.db + WAL + backups for the dashboard, artefact bytes and
+        file count for the report — beside the filesystem figure, never instead of it."""
+        from gsd.kpi.system import artifact_bytes, dashboard_data_bytes
+        db = tmp_path / "gsd.db"; db.write_bytes(b"d" * 100); (tmp_path / "gsd.db-wal").write_bytes(b"w" * 40)
+        backups = tmp_path / "backup"; backups.mkdir()
+        (backups / "gsd-1.db").write_bytes(b"b" * 10); (backups / "gsd-2.db").write_bytes(b"b" * 15)
+        mon = SystemMonitor(_sampler(tmp_path), str(tmp_path), own=("data", dashboard_data_bytes(str(db), str(backups))))
+        assert mon.view()["data"] == {"db_bytes": 100, "wal_bytes": 40, "backups": {"count": 2, "bytes": 25}}
+        assert dashboard_data_bytes(str(tmp_path / "missing.db"), None)() is None
+        arts = tmp_path / "artifacts"; (arts / "r1").mkdir(parents=True); (arts / "r2").mkdir()
+        (arts / "r1" / "run.json").write_bytes(b"{}"); (arts / "r1" / "report.html").write_bytes(b"h" * 30)
+        (arts / "r2" / "run.json").write_bytes(b"{}")
+        assert artifact_bytes(str(arts))() == {"bytes": 34, "files": 3}
 
     def test_disk_is_statvfs_of_the_path(self, tmp_path):
         d = disk(str(tmp_path))
@@ -415,6 +432,9 @@ class TestApi:
         assert set(trend["history_retained_since"]) == {"membership_event", "sync_event", "binding_event"}
         assert set(trend["daily"]["series"]) == set(defs.ROLLUP_METRICS)
         assert body["kpis"]["users_total"]["privacy"] == INTERNAL
+        assert body["kpis"]["report_runs_30d"]["samples"] == [{"cluster": "c1", "value": 0}, {"cluster": "c2", "value": 0}]
+        assert trend["report_timeline_since"] is None
+        assert body["system"]["dashboard"]["data"]["db_bytes"] > 0
         # The report service has not reported: unavailable, not a block of zeros.
         assert body["system"]["report"] is None
 
@@ -441,6 +461,7 @@ class TestReportService:
             usage = client.get("/report/api/usage", headers=SERVICE).json()
             assert usage["system"]["memory"] == {"used_bytes": 105410560, "limit_bytes": 536870912}
             assert usage["system"]["disk"]["total_bytes"] > 0
+            assert usage["system"]["artifacts"] == {"bytes": 0, "files": 0}
             text = client.get("/report/metrics").text
         s = _series(text, "gsd_process_memory_bytes")
         assert s == {'gsd_process_memory_bytes{component="report"}': 105410560.0}
