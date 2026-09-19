@@ -1,0 +1,45 @@
+{{- /*
+What the Thanos identity may read.
+
+namespace scope: thanos-querier's tenancy port (:9092) authorises every query with a
+SubjectAccessReview for `get pods` in the `namespace=` the query names — the `view` ClusterRole
+grants it. Bound HERE, in the release's namespace, so the whole install lives where the consumer
+already has rights.
+
+cluster scope: :9091 serves every metric on the cluster and is authorised by the
+cluster-monitoring-view ClusterRole bound in openshift-monitoring — a RoleBinding in a namespace the
+consumer does not own, hence a privileged, opt-in variant.
+*/ -}}
+{{- if eq .Values.thanos.scope "namespace" }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "openshift-grafana.fullname" . }}-thanos-view
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "openshift-grafana.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: view
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "openshift-grafana.fullname" . }}-thanos
+    namespace: {{ .Release.Namespace }}
+{{- else }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "openshift-grafana.fullname" . }}-{{ .Release.Namespace }}-thanos-view
+  namespace: openshift-monitoring
+  labels:
+    {{- include "openshift-grafana.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-monitoring-view
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "openshift-grafana.fullname" . }}-thanos
+    namespace: {{ .Release.Namespace }}
+{{- end }}

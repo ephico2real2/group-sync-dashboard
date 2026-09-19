@@ -841,7 +841,10 @@ days ending on `as_of`'s day, from the first day's midnight — the scalars besi
 rows and `/metrics` use, and `groupsyncs.states` the CRs' derived states, so the KPI page (#157) adds no
 arithmetic of its own. `thresholds` are the configured amber marks (`kpi.thresholds.*` in the chart) the
 page draws on every meter and names in its rule line; `links` carries the doors out (`grafana`,
-`grafana_dashboard_uid`, `console`) and omits any that is not configured.
+`grafana_dashboard_uid`, `console`, `observe`) and omits any that is not configured. `console` is
+the chart's `console.url` or, when that is empty, the URL the poll thread discovered from
+`openshift-config-managed/console-public`; `observe` is the console's namespace-workloads dashboard
+scoped to the pod's own namespace (`…/monitoring/dashboards/dashboard-k8s-resources-workloads-namespace?project-dropdown-value=<ns>&namespace=<ns>&type=ALL_OPTION_KEY`).
 
 ### `GET /api/whoami`
 

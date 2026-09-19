@@ -1958,7 +1958,10 @@ kpi:
 # The doors out of the KPI page. OpenShift removed its bundled Grafana in 4.11, so Grafana is
 # optional and operator-owned: the "Open in Grafana" link renders only when `grafana.url` is set
 # (with `dashboardUid`, it opens the board directly). The console's Observe → Dashboards always
-# ships; `console.url` is the console's route, and the link is omitted when it is empty.
+# ships: the door opens the console's namespace-workloads board scoped to the pod's own namespace.
+# `console.url` empty (the default) means DISCOVERED — the poll thread reads the console's public
+# URL from openshift-config-managed/console-public, which every authenticated identity may read on
+# OpenShift; set it only for a console the cluster does not publish, or a different one.
 grafana:
   url: ""
   dashboardUid: ""

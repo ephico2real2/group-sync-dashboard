@@ -10,6 +10,7 @@ import functools
 import logging
 import hashlib
 import html
+from urllib.parse import quote
 import os
 from email.utils import formatdate, parsedate_to_datetime
 import re
@@ -308,6 +309,20 @@ def _refusal_reason(row: dict) -> str | None:
     if row.get("known_user") or row.get("has_history"):
         return REFUSAL_NOT_GATED
     return REFUSAL_NO_RECORD
+
+
+def own_namespace() -> str | None:
+    """The namespace this pod runs in, from the ServiceAccount mount (the leader elector's source),
+    or GSD_NAMESPACE outside a cluster; None when neither says."""
+    from .leader import SA_NAMESPACE
+    env = os.environ.get("GSD_NAMESPACE")
+    if env:
+        return env
+    try:
+        with open(SA_NAMESPACE, encoding="utf-8") as handle:
+            return handle.read().strip() or None
+    except OSError:
+        return None
 
 
 def build_app(
@@ -2215,6 +2230,24 @@ def build_app(
     def healthz() -> dict:
         return {"status": "ok"}
 
+    def kpi_links() -> dict:
+        """The doors out of the KPI page (#157). The console's URL is the chart's `console.url` when
+        set, else what the poll thread discovered from openshift-config-managed/console-public;
+        `observe` is the console's namespace-workloads dashboard scoped to THIS pod's namespace —
+        the monitoring plugin reads the project selector from `project-dropdown-value` and every
+        dashboard variable by name from the query string (`namespace`, `type`; `ALL_OPTION_KEY` is
+        its "All" — openshift/monitoring-plugin query-params.ts, useLegacyDashboards.ts)."""
+        console = settings.console_url or signals.console_url()
+        links = {k: v for k, v in (("grafana", settings.grafana_url),
+                                   ("grafana_dashboard_uid", settings.grafana_dashboard_uid),
+                                   ("console", console)) if v}
+        if console:
+            ns = own_namespace()
+            links["observe"] = (f"{console}/monitoring/dashboards/dashboard-k8s-resources-workloads-namespace"
+                                f"?project-dropdown-value={quote(ns)}&namespace={quote(ns)}&type=ALL_OPTION_KEY"
+                                if ns else f"{console}/monitoring/dashboards")
+        return links
+
     @app.get("/api/kpi")
     @consistent
     def kpi(request: Request) -> dict:
@@ -2244,9 +2277,7 @@ def build_app(
                                        "cpu_percent": settings.kpi_cpu_warn_percent,
                                        "throttled_percent": settings.kpi_throttled_warn_percent,
                                        "disk_percent": settings.kpi_disk_warn_percent},
-                           links={k: v for k, v in (("grafana", settings.grafana_url),
-                                                    ("grafana_dashboard_uid", settings.grafana_dashboard_uid),
-                                                    ("console", settings.console_url)) if v}),
+                           links=kpi_links()),
         }
 
     @app.get("/api/whoami")

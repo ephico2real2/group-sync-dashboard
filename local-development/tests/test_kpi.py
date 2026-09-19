@@ -653,3 +653,83 @@ class TestPageSettings:
             plan = [r[3] for r in store._conn.execute("EXPLAIN QUERY PLAN " + sql, ("c", "x")[: sql.count("?")])]
             assert any(line.startswith("SEARCH") for line in plan), (name, plan)
             assert not any(line.startswith("SCAN") for line in plan), (name, plan)
+
+
+class TestObserveDoor:
+    """#157: the Observe door opens the console's namespace-workloads dashboard for THIS pod's
+    namespace, on a console URL the chart names or the poll thread discovers."""
+
+    def test_the_link_is_the_namespace_workloads_board_with_the_plugins_parameters(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("GSD_NAMESPACE", "team a")
+        db = str(tmp_path / "gsd.db")
+        _seed(db)
+        app = build_app(_settings(db, console_url="https://console.example"), run_poller=False)
+        app.state.tier_resolver = _MapResolver({"root": "all"})
+        with TestClient(app) as client:
+            links = client.get("/api/kpi", headers=H("root")).json()["links"]
+        assert links["observe"] == ("https://console.example/monitoring/dashboards/dashboard-k8s-resources-workloads-namespace"
+                                    "?project-dropdown-value=team%20a&namespace=team%20a&type=ALL_OPTION_KEY")
+
+    def test_a_discovered_console_serves_when_the_chart_names_none_and_a_named_one_wins(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("GSD_NAMESPACE", "ns1")
+        db = str(tmp_path / "gsd.db")
+        _seed(db)
+        app = build_app(_settings(db), run_poller=False)
+        app.state.tier_resolver = _MapResolver({"root": "all"})
+        with TestClient(app) as client:
+            assert "observe" not in client.get("/api/kpi", headers=H("root")).json()["links"], "nothing discovered yet: no dead link"
+            app.state.signals.note_console_url("https://discovered.example")
+            links = client.get("/api/kpi", headers=H("root")).json()["links"]
+            assert links["console"] == "https://discovered.example" and links["observe"].startswith("https://discovered.example/monitoring/dashboards/dashboard-k8s")
+        app2 = build_app(_settings(db, console_url="https://named.example"), run_poller=False)
+        app2.state.tier_resolver = _MapResolver({"root": "all"})
+        app2.state.signals.note_console_url("https://discovered.example")
+        with TestClient(app2) as client:
+            assert client.get("/api/kpi", headers=H("root")).json()["links"]["console"] == "https://named.example"
+
+    def test_discovery_reads_console_public_and_tolerates_a_cluster_without_it(self):
+        """The ConfigMap a Role in openshift-config-managed grants `get` on to system:authenticated
+        (measured on 4.22): the pod's own ServiceAccount reads it, no chart RBAC. A 403/404 is None."""
+        import httpx
+        from gsd.config import ClusterConfig
+        from gsd.kube import ClusterClient
+
+        def handler(request):
+            if request.url.path.endswith("/configmaps/console-public"):
+                return httpx.Response(200, json={"data": {"consoleURL": "https://console-openshift-console.apps.example/"}})
+            return httpx.Response(404, json={})
+
+        c = ClusterClient(ClusterConfig("host", "https://api.example:6443", token_env="T"))
+        c._client = lambda: httpx.Client(transport=httpx.MockTransport(handler), base_url="https://api.example:6443")
+        assert c.console_url() == "https://console-openshift-console.apps.example"
+        c._client = lambda: httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(403, json={})), base_url="https://x")
+        assert c.console_url() is None
+        c._client = lambda: httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(200, json={"data": {"consoleURL": "javascript:x"}})), base_url="https://x")
+        assert c.console_url() is None, "only an https URL is a console"
+
+    def test_the_poll_thread_discovers_on_the_host_only_and_never_fails_the_poll(self, tmp_path, monkeypatch):
+        from gsd.config import ClusterConfig
+        from gsd.poller import Poller
+
+        calls = []
+
+        class Client:
+            def __init__(self, cluster, timeout=None):
+                calls.append(cluster.name)
+            def console_url(self):
+                if calls[-1] == "boom":
+                    raise RuntimeError("no")
+                return "https://c.example"
+
+        monkeypatch.setattr("gsd.poller.ClusterClient", Client)
+        store = seed_store(str(tmp_path / "w.db"))
+        try:
+            signals = RuntimeSignals()
+            settings = _settings(str(tmp_path / "w.db"))
+            poller = Poller(store, settings, signals=signals)
+            poller._discover_console(ClusterConfig("c2", "https://x", token_env="T"))
+            assert calls == [] and signals.console_url() is None, "only the host's thread asks"
+            poller._discover_console(ClusterConfig("c1", "https://x", token_env="T"))
+            assert calls == ["c1"] and signals.console_url() == "https://c.example"
+        finally:
+            store.close()

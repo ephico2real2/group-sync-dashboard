@@ -70,12 +70,17 @@ loginCapture:
   enabled: true
   source: audit-log
 
-# The reference cluster runs no Prometheus (built-in monitoring is disabled to save resources), so
-# the ServiceMonitor and the rules stay off — the chart default, kept off by operator decision
-# under the 0.14.0 rule — and the Grafana dashboard ConfigMap follows them off. It was forced on
-# here once, to validate B3 through grafana-operator v5 in namespace grafana-test (screenshot
-# docs/screenshots/06-grafana-dashboard-crc.png); that validation is recorded and the override
-# was removed with chart 0.14.0 (operator decision, 2026-09-05: nothing on this cluster reads it).
+# The M5 Pro's CRC (28 GB, 10 CPUs) runs full cluster monitoring, and user-workload monitoring was
+# switched on 2026-09-19 (openshift-monitoring/cluster-monitoring-config: enableUserWorkload: true),
+# so the ServiceMonitor and the rules are ON here: prometheus-user-workload scrapes /metrics, Thanos
+# serves the series to the openshift-grafana chart's datasource in this namespace, and the Grafana
+# dashboard ConfigMap follows the ServiceMonitor on. (The old reference cluster ran no Prometheus,
+# which is why the chart default stays off under the 0.14.0 rule.)
+monitoring:
+  serviceMonitor:
+    enabled: true
+  prometheusRule:
+    enabled: true
 
 # ---------------------------------------------------------------------------
 # Reporting — the namespace-access multi-dimension selector (P2, 0.21.0+)
@@ -150,7 +155,3 @@ clusters:
     visibility: inherit
     identity: same-as-host
 
-# The KPI page's Observe door (#157): CRC's console route. Grafana is not installed on CRC, so that
-# door stays off and the page says so in prose.
-console:
-  url: https://console-openshift-console.apps-crc.testing

@@ -1,0 +1,118 @@
+# openshift-grafana — an isolated Grafana in YOUR namespace, reading OpenShift's user-workload
+# metrics through Thanos. Nothing here names an application: a consumer brings its own dashboards
+# (a ConfigMap + a GrafanaDashboard CR, or a GrafanaDashboard carrying the JSON) selecting the
+# instance by the labels this chart puts on it (`instanceSelector`, see the README).
+#
+# ORDER OF INSTALL. Helm resolves every kind in a release before it applies anything, so a Grafana
+# CR in the manifest would be refused while grafana-operator's CRDs are absent. The chart ships
+# copies of the four CRDs it uses under crds/ — Helm installs those first, only when absent, and
+# never upgrades or deletes them — so a single `helm install` works on a cluster with no operator.
+# OLM then installs the operator and adopts the identical CRDs. `helm template` renders without
+# them; Argo CD applies crds/ like any manifest.
+#
+# THE ONE CLUSTER-ADMIN PREREQUISITE, once per cluster: user-workload monitoring must be on —
+#   oc -n openshift-monitoring create configmap cluster-monitoring-config \
+#     --from-literal=config.yaml='enableUserWorkload: true'
+# (or add the key to the existing ConfigMap). Without it Thanos serves no user metrics.
+
+nameOverride: ""
+fullnameOverride: ""
+
+operator:
+  # Install grafana-operator here, through OLM. false: reuse an operator a platform team already
+  # runs (AllNamespaces), and render only the instance — no Subscription, no OperatorGroup.
+  install: true
+  channel: v5
+  # community-operators, the catalog that carries grafana-operator on OpenShift.
+  source: community-operators
+  sourceNamespace: openshift-marketplace
+  # Automatic: OLM applies the plan; Manual keeps upgrades for a human but the FIRST install
+  # then needs an approval too, which this chart does not automate — prefer Automatic for a
+  # per-namespace instance whose operator only serves that namespace.
+  installPlanApproval: Automatic
+  # Pin a CSV for change control; empty lets the channel decide.
+  startingCSV: ""
+
+operatorGroup:
+  # ONE OperatorGroup per namespace. A namespace that already has one (the app chart, another
+  # operator) must reuse it: set false here, and make sure the existing group targets this
+  # namespace. Ignored when operator.install is false.
+  create: true
+
+# The Grafana instance. `labels` are what GrafanaDatasource / GrafanaDashboard CRs select it by:
+# the chart's own datasource selects `app.kubernetes.io/instance: <release>` plus these.
+grafana:
+  # Extra labels on the Grafana CR, for a consumer's instanceSelector (the reference architecture
+  # uses `dashboards: grafana`). The release's instance label is always present.
+  labels: {}
+  # grafana-operator generates `<name>-admin-credentials` (user admin, a random password) when this
+  # is empty. Name your own Secret (keys GF_SECURITY_ADMIN_USER / GF_SECURITY_ADMIN_PASSWORD) to
+  # bring credentials from your secret manager.
+  admin:
+    existingSecret: ""
+  # Grafana's own config.ini, as the operator's `config` map of sections.
+  config:
+    log:
+      mode: console
+      level: info
+    auth:
+      disable_login_form: "false"
+    auth.anonymous:
+      enabled: "false"
+  # Persist Grafana's own database (users, saved state). Off: an emptyDir, fine for provisioned
+  # dashboards that live in CRs.
+  persistence:
+    enabled: false
+    size: 2Gi
+    storageClassName: ""
+  # Expose Grafana. Off by default — a consumer opts in; the operator creates an edge-terminated
+  # Route the router names (host empty) or the host given.
+  route:
+    enabled: false
+    host: ""
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {memory: 512Mi}
+
+# The Thanos datasource. `scope` is the load-bearing choice:
+#   namespace  — thanos-querier :9092, the tenancy port: queries are scoped to THIS namespace
+#                (`namespace=<release namespace>`), authorised by a `view` RoleBinding the chart
+#                creates HERE. No object outside the namespace; a team installs it alone.
+#   cluster    — thanos-querier :9091, every metric on the cluster, authorised by a RoleBinding
+#                to cluster-monitoring-view in openshift-monitoring — a privileged step in a
+#                namespace the consumer does not own. For a central observability Grafana only.
+thanos:
+  scope: namespace
+  querier:
+    service: thanos-querier.openshift-monitoring.svc.cluster.local
+    tenancyPort: 9092
+    clusterPort: 9091
+  # Deterministic NAME and uid. Dashboards exported with an input (`${DS_PROMETHEUS}`) bind by
+  # name (GrafanaDashboard.spec.datasources[].datasourceName); dashboards that hard-code a uid bind
+  # by uid. Pinning only one silently mis-binds the other kind.
+  datasource:
+    name: OpenShift Thanos
+    uid: openshift-thanos
+    isDefault: true
+    timeInterval: 30s
+  # TLS to thanos-querier is verified against the service CA, injected by the service-ca operator
+  # into a ConfigMap this chart annotates (`service.beta.openshift.io/inject-cabundle`). Never
+  # `tlsSkipVerify`.
+
+# Who may reach Grafana's pod. The Route's router and this namespace's pods by default; add
+# peers (namespaceSelector / podSelector entries) for a dashboard that embeds Grafana.
+networkPolicy:
+  enabled: true
+  # Extra `from` peers, appended to the router and same-namespace rules.
+  extraFrom: []
+
+# The post-install gate: waits for the operator's CSV to succeed (when installed here) and the
+# Grafana instance to report ready, so `helm install` returns a working Grafana or a named failure.
+wait:
+  enabled: true
+  waitSeconds: 600
+  intervalSeconds: 10
+  image:
+    repository: registry.redhat.io/openshift4/ose-cli
+    tag: latest
+  ttlSecondsAfterFinished: 600

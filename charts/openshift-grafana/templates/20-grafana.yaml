@@ -1,0 +1,74 @@
+{{- /*
+The instance. Labelled with the release's instance label (and grafana.labels), which is what the
+chart's datasource and every consumer's GrafanaDashboard select it by. Admin credentials: the
+operator's generated Secret unless grafana.admin.existingSecret names one. The Route is opt-in.
+*/ -}}
+apiVersion: grafana.integreatly.org/v1beta1
+kind: Grafana
+metadata:
+  name: {{ include "openshift-grafana.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "openshift-grafana.labels" . | nindent 4 }}
+    {{- with .Values.grafana.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  {{- if .Values.grafana.admin.existingSecret }}
+  disableDefaultAdminSecret: true
+  {{- end }}
+  config:
+    {{- toYaml .Values.grafana.config | nindent 4 }}
+  {{- if .Values.grafana.persistence.enabled }}
+  persistentVolumeClaim:
+    spec:
+      accessModes: [ReadWriteOnce]
+      resources:
+        requests:
+          storage: {{ .Values.grafana.persistence.size }}
+      {{- with .Values.grafana.persistence.storageClassName }}
+      storageClassName: {{ . | quote }}
+      {{- end }}
+  {{- end }}
+  deployment:
+    spec:
+      template:
+        spec:
+          containers:
+            - name: grafana
+              resources:
+                {{- toYaml .Values.grafana.resources | nindent 16 }}
+              {{- if .Values.grafana.admin.existingSecret }}
+              env:
+                - name: GF_SECURITY_ADMIN_USER
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.grafana.admin.existingSecret }}
+                      key: GF_SECURITY_ADMIN_USER
+                - name: GF_SECURITY_ADMIN_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.grafana.admin.existingSecret }}
+                      key: GF_SECURITY_ADMIN_PASSWORD
+              {{- end }}
+              {{- if .Values.grafana.persistence.enabled }}
+              volumeMounts:
+                - name: grafana-data
+                  mountPath: /var/lib/grafana
+          volumes:
+            - name: grafana-data
+              persistentVolumeClaim:
+                claimName: {{ include "openshift-grafana.fullname" . }}-pvc
+              {{- end }}
+  {{- if .Values.grafana.route.enabled }}
+  route:
+    spec:
+      {{- with .Values.grafana.route.host }}
+      host: {{ . | quote }}
+      {{- end }}
+      tls:
+        termination: edge
+        insecureEdgeTerminationPolicy: Redirect
+  {{- end }}

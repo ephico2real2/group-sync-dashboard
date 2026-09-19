@@ -1,0 +1,33 @@
+{{- /*
+Who may reach Grafana: the routers (the Route, when enabled) and pods in this namespace (a
+dashboard that proxies or embeds it). Everything else is refused. Add peers under
+networkPolicy.extraFrom for another namespace's callers.
+*/ -}}
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "openshift-grafana.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "openshift-grafana.labels" . | nindent 4 }}
+spec:
+  # The operator labels the instance's pods `app: <Grafana name>` — measured on v5.24.0; a selector
+  # that matches no pod is a policy that protects nothing, silently.
+  podSelector:
+    matchLabels:
+      app: {{ include "openshift-grafana.fullname" . }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              policy-group.network.openshift.io/ingress: ""
+        - podSelector: {}
+        {{- with .Values.networkPolicy.extraFrom }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      ports:
+        - port: 3000
+          protocol: TCP
+{{- end }}

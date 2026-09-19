@@ -1,0 +1,60 @@
+{{- /*
+The Thanos datasource, applied to the instance by instanceSelector. NAME and uid are both fixed
+(values thanos.datasource): a dashboard exported with `${DS_PROMETHEUS}` binds by name through
+GrafanaDashboard.spec.datasources[].datasourceName; one that hard-codes a uid binds by uid.
+
+Two values come in through valuesFrom and never through the manifest: the bearer token (the
+ServiceAccount's Secret) and the service CA (the injected ConfigMap) — so the rendered YAML carries
+no secret and no certificate, and a rotation of either reaches Grafana without a render.
+*/ -}}
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDatasource
+metadata:
+  name: {{ include "openshift-grafana.fullname" . }}-thanos
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "openshift-grafana.labels" . | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  uid: {{ .Values.thanos.datasource.uid | quote }}
+  instanceSelector:
+    matchLabels:
+      {{- include "openshift-grafana.instanceSelector" . | nindent 6 }}
+  valuesFrom:
+    - targetPath: secureJsonData.httpHeaderValue1
+      valueFrom:
+        secretKeyRef:
+          name: {{ include "openshift-grafana.fullname" . }}-thanos-token
+          key: token
+    - targetPath: secureJsonData.tlsCACert
+      valueFrom:
+        configMapKeyRef:
+          name: {{ include "openshift-grafana.fullname" . }}-service-ca
+          key: service-ca.crt
+  datasource:
+    name: {{ .Values.thanos.datasource.name | quote }}
+    type: prometheus
+    access: proxy
+    {{- if eq .Values.thanos.scope "namespace" }}
+    url: https://{{ .Values.thanos.querier.service }}:{{ .Values.thanos.querier.tenancyPort }}
+    {{- else }}
+    url: https://{{ .Values.thanos.querier.service }}:{{ .Values.thanos.querier.clusterPort }}
+    {{- end }}
+    isDefault: {{ .Values.thanos.datasource.isDefault }}
+    editable: false
+    jsonData:
+      timeInterval: {{ .Values.thanos.datasource.timeInterval | quote }}
+      httpHeaderName1: Authorization
+      tlsAuthWithCACert: true
+      # GET, not Grafana's default POST: the tenancy port's kube-rbac-proxy maps the HTTP method to
+      # the RBAC verb, so a POSTed query is authorised as `create pods` and `view` refuses it —
+      # measured on CRC: "403 Forbidden (verb=create, resource=pods)". GET is `get pods`.
+      httpMethod: GET
+      {{- if eq .Values.thanos.scope "namespace" }}
+      # The tenancy port authorises per query on this parameter; it is not optional there.
+      customQueryParameters: namespace={{ .Release.Namespace }}
+      {{- end }}
+    secureJsonData:
+      httpHeaderValue1: "Bearer ${token}"
+      tlsCACert: "${service-ca.crt}"

@@ -629,6 +629,23 @@ class ClusterClient:
             timeout=self._timeout,
         )
 
+    #: The ConfigMap the console-operator publishes for every authenticated identity — a Role in
+    #: openshift-config-managed grants `get` on it to system:authenticated (measured on 4.22) — so a
+    #: pod's own ServiceAccount can learn the console's URL without a grant of its own.
+    CONSOLE_PUBLIC = "/api/v1/namespaces/openshift-config-managed/configmaps/console-public"
+
+    def console_url(self) -> str | None:
+        """The web console's public URL from `openshift-config-managed/console-public`, or None when the
+        cluster does not publish one (not OpenShift; the ConfigMap withheld). The KPI page's Observe
+        door is built on it (#157) when the chart sets no `console.url`."""
+        with self._client() as client:
+            try:
+                body = self._get(client, self.CONSOLE_PUBLIC, {})
+            except ClusterError:
+                return None
+        url = (body.get("data") or {}).get("consoleURL") if isinstance(body, dict) else None
+        return url.rstrip("/") if isinstance(url, str) and url.startswith("https://") else None
+
     def fetch(self) -> tuple[list[GroupSyncView] | None, list[GroupView]]:
         """One poll's worth of reads. Raises ClusterError with a classified outcome.
 

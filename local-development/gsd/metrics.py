@@ -109,6 +109,7 @@ class RuntimeSignals:
         # The report service's last self-reported system usage, pulled with the usage feed.
         self._report_system: dict | None = None
         self._report_system_at: str | None = None
+        self._console_url: str | None = None
 
     def membership_change_totals(self, store, cluster_ids) -> dict[tuple[str, str], int]:
         """Advance each cluster's watermark over the rows committed since the last call and return
@@ -131,6 +132,15 @@ class RuntimeSignals:
                     self._login_totals[key] = self._login_totals.get(key, 0) + n
                 self._login_watermark[cluster] = newest
             return dict(self._login_totals)
+
+    def note_console_url(self, url: str | None) -> None:
+        """The host cluster's console URL, as the poll thread discovered it (#157)."""
+        with self._lock:
+            self._console_url = url
+
+    def console_url(self) -> str | None:
+        with self._lock:
+            return self._console_url
 
     def note_report_system(self, view: dict | None, at: str) -> None:
         """The report service's self-report as the usage feed carried it; None when the feed had

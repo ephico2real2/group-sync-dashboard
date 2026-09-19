@@ -1,0 +1,102 @@
+{{- /*
+Blocks `helm install` until Grafana serves, or fails with the reason: the operator's CSV (when
+installed here) reaches Succeeded, the Grafana CR reports its reconcile complete, the datasource
+reports no error, the Deployment has a ready replica. A Job in the main manifest is not waited on;
+a post-install hook is. Argo runs it as a Sync hook in the last wave.
+*/ -}}
+{{- if .Values.wait.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "openshift-grafana.fullname" . }}-wait
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "openshift-grafana.labels" . | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true,Replace=true
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: {{ add .Values.wait.waitSeconds 120 }}
+  ttlSecondsAfterFinished: {{ .Values.wait.ttlSecondsAfterFinished }}
+  template:
+    metadata:
+      labels:
+        {{- include "openshift-grafana.labels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "openshift-grafana.fullname" . }}-wait
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: wait
+          image: "{{ .Values.wait.image.repository }}:{{ .Values.wait.image.tag }}"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          env:
+            - name: NAMESPACE
+              value: {{ .Release.Namespace | quote }}
+            - name: GRAFANA
+              value: {{ include "openshift-grafana.fullname" . | quote }}
+            - name: DATASOURCE
+              value: {{ include "openshift-grafana.fullname" . }}-thanos
+            - name: OPERATOR_INSTALLED
+              value: {{ .Values.operator.install | quote }}
+            - name: WAIT_SECONDS
+              value: {{ .Values.wait.waitSeconds | quote }}
+            - name: INTERVAL
+              value: {{ .Values.wait.intervalSeconds | quote }}
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              set -euo pipefail
+              log() { echo "$(date -u +%H:%M:%SZ) $*"; }
+              fail() { echo "FAIL: $*" >&2; exit 1; }
+              deadline=$(( $(date +%s) + WAIT_SECONDS ))
+              remaining() { echo $(( deadline - $(date +%s) )); }
+
+              if [ "$OPERATOR_INSTALLED" = "true" ]; then
+                log "waiting for grafana-operator's CSV to succeed in $NAMESPACE"
+                while :; do
+                  phase="$(oc get csv -n "$NAMESPACE" -o jsonpath='{range .items[?(@.spec.displayName=="Grafana Operator")]}{.status.phase}{end}' 2>/dev/null || true)"
+                  [ -z "$phase" ] && phase="$(oc get csv -n "$NAMESPACE" -o name 2>/dev/null | grep -i 'grafana-operator' | head -1 | xargs -r oc get -n "$NAMESPACE" -o jsonpath='{.status.phase}' || true)"
+                  case "$phase" in
+                    Succeeded) log "csv Succeeded"; break ;;
+                    Failed) fail "grafana-operator's CSV is in phase Failed. Inspect: oc get csv -n $NAMESPACE" ;;
+                  esac
+                  [ "$(remaining)" -le 0 ] && fail "grafana-operator's CSV did not reach Succeeded in ${WAIT_SECONDS}s (last phase: ${phase:-none}). Inspect: oc get subscription,installplan,csv -n $NAMESPACE"
+                  log "csv phase: ${phase:-none}; $(remaining)s left"
+                  sleep "$INTERVAL"
+                done
+              fi
+
+              log "waiting for Grafana/$GRAFANA to reconcile"
+              while :; do
+                stage="$(oc get grafana "$GRAFANA" -n "$NAMESPACE" -o jsonpath='{.status.stage}/{.status.stageStatus}' 2>/dev/null || true)"
+                ready="$(oc get deployment "${GRAFANA}-deployment" -n "$NAMESPACE" -o jsonpath='{.status.readyReplicas}' 2>/dev/null || true)"
+                if [ "$stage" = "complete/success" ] && [ "${ready:-0}" -ge 1 ]; then log "Grafana reconciled and ready"; break; fi
+                [ "$(remaining)" -le 0 ] && fail "Grafana/$GRAFANA is not ready in ${WAIT_SECONDS}s (stage: ${stage:-none}, readyReplicas: ${ready:-0}). Inspect: oc describe grafana $GRAFANA -n $NAMESPACE; oc logs -n $NAMESPACE deploy/${GRAFANA}-deployment"
+                log "stage: ${stage:-none}, readyReplicas: ${ready:-0}; $(remaining)s left"
+                sleep "$INTERVAL"
+              done
+
+              log "checking the datasource"
+              while :; do
+                err="$(oc get grafanadatasource "$DATASOURCE" -n "$NAMESPACE" -o jsonpath='{.status.lastMessage}' 2>/dev/null || true)"
+                applied="$(oc get grafanadatasource "$DATASOURCE" -n "$NAMESPACE" -o jsonpath='{.status.conditions[?(@.type=="DatasourceSynchronized")].status}' 2>/dev/null || true)"
+                if [ "$applied" = "True" ]; then log "datasource synchronised"; break; fi
+                [ "$(remaining)" -le 0 ] && fail "GrafanaDatasource/$DATASOURCE did not synchronise in time (${err:-no message}). Inspect: oc describe grafanadatasource $DATASOURCE -n $NAMESPACE"
+                log "datasource: ${err:-not yet applied}; $(remaining)s left"
+                sleep "$INTERVAL"
+              done
+              log "done"
+{{- end }}

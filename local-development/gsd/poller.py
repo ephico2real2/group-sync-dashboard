@@ -748,6 +748,7 @@ class Poller:
             # A CPU baseline once a cycle, so a page's rate spans at most one poll interval rather
             # than the gap between two page requests (gsd/kpi/system.py#SystemMonitor).
             self.system_monitor.view()
+        self._discover_console(cluster)
         # Reporting rides the same tail: the snapshot after the checkpoint (so the copy is the
         # smallest it can be), the usage pull after that. _run_cluster's leadership check is a
         # cycle old after the poll's network I/O, so re-check before each operation. Both checks are
@@ -761,6 +762,21 @@ class Poller:
             log.warning("%s: report usage pull skipped; leadership was lost after the snapshot", cluster.name)
             return
         self._pull_report_usage()
+
+    def _discover_console(self, cluster: ClusterConfig) -> None:
+        """The host cluster's console URL, once a cycle, for the KPI page's Observe door (#157): read
+        from openshift-config-managed/console-public with the pod's own identity. Only the host's
+        thread asks — the console the reader is signed in to is the host's — and a failure to read
+        it is a None the page renders as "no console link", never an error in the poll."""
+        if self.signals is None:
+            return
+        host = self.settings.host_cluster()
+        if host is None or cluster.name != host.name:
+            return
+        try:
+            self.signals.note_console_url(ClusterClient(cluster, timeout=self.settings.request_timeout_seconds).console_url())
+        except Exception:  # noqa: BLE001 - a discovery must never stop the poll
+            log.exception("%s: console discovery failed; the poll continues", cluster.name)
 
     def _rollup_kpi(self, cluster: ClusterConfig) -> None:
         """The daily KPI rollup (#156): the leader writes today's row for this cluster once, after

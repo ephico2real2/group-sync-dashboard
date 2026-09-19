@@ -1,0 +1,47 @@
+{{- /*
+The wait Job's identity. Release-managed rather than hooked, so it exists before the hook runs and
+is removed with the release. A Role, not a ClusterRole: every read is in this namespace.
+*/ -}}
+{{- if .Values.wait.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "openshift-grafana.fullname" . }}-wait
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "openshift-grafana.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "openshift-grafana.fullname" . }}-wait
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "openshift-grafana.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["operators.coreos.com"]
+    resources: ["clusterserviceversions", "subscriptions"]
+    verbs: ["get", "list"]
+  - apiGroups: ["grafana.integreatly.org"]
+    resources: ["grafanas", "grafanadatasources"]
+    verbs: ["get", "list"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "openshift-grafana.fullname" . }}-wait
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "openshift-grafana.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "openshift-grafana.fullname" . }}-wait
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "openshift-grafana.fullname" . }}-wait
+    namespace: {{ .Release.Namespace }}
+{{- end }}

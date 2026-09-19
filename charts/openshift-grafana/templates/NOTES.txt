@@ -1,0 +1,34 @@
+{{ include "openshift-grafana.fullname" . }} — an isolated Grafana in {{ .Release.Namespace }}, reading
+OpenShift's user-workload metrics through Thanos ({{ .Values.thanos.scope }} scope).
+
+  Instance:    oc get grafana {{ include "openshift-grafana.fullname" . }} -n {{ .Release.Namespace }}
+  Datasource:  oc get grafanadatasource {{ include "openshift-grafana.fullname" . }}-thanos -n {{ .Release.Namespace }}
+{{- if .Values.grafana.route.enabled }}
+  Route:       oc get route -n {{ .Release.Namespace }} -l app.kubernetes.io/instance={{ .Release.Name }}
+{{- else }}
+  Not exposed: grafana.route.enabled is false — port-forward, or set it true for an edge Route.
+{{- end }}
+{{- if not .Values.grafana.admin.existingSecret }}
+  Admin:       oc extract secret/{{ include "openshift-grafana.fullname" . }}-admin-credentials -n {{ .Release.Namespace }} --to=-
+{{- end }}
+
+Attach a dashboard by selecting this instance:
+
+  apiVersion: grafana.integreatly.org/v1beta1
+  kind: GrafanaDashboard
+  spec:
+    instanceSelector:
+      matchLabels:
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    datasources:
+      - inputName: DS_PROMETHEUS
+        datasourceName: {{ .Values.thanos.datasource.name | quote }}
+    configMapRef: {name: <your-configmap>, key: <your-file>.json}
+
+Prerequisite, once per cluster (cluster-admin): user-workload monitoring on —
+  oc -n openshift-monitoring create configmap cluster-monitoring-config --from-literal=config.yaml='enableUserWorkload: true'
+{{- if and .Values.operatorGroup.create (not .Values.operator.install) }}
+
+Note: operatorGroup.create is true but operator.install is false — no OperatorGroup was rendered;
+the operator you reuse brings its own.
+{{- end }}
