@@ -151,6 +151,38 @@ class TestCgroupSampler:
         (tmp_path / "cgroup" / "cpu.max").write_text("what\n")
         assert s.cpu() is None
         assert s.memory() is not None
+        # A zero period is garbled too: it divided, and the ZeroDivisionError escaped SystemMonitor.view
+        # into a 500 on /api/kpi (review of #156, Codex).
+        (tmp_path / "cgroup" / "cpu.max").write_text("50000 0\n")
+        assert s.cpu() is None
+        assert SystemMonitor(s, None).view() == {"memory": {"used_bytes": 105410560, "limit_bytes": 536870912}}
+
+    def test_bandwidth_lines_absent_omit_the_throttling_families_never_zero(self, tmp_path):
+        """Review of #156 (Grok, K3): a cpu.stat with only the usage lines (no quota, an older kernel)
+        read as nr_periods 0 / nr_throttled 0 — samples of 0 on the declared families. Absent lines
+        omit those families; a partial set is garbled and omits the cpu sample."""
+        s = _sampler(tmp_path)
+        (tmp_path / "cgroup" / "cpu.stat").write_text("usage_usec 5058284\nuser_usec 4000000\nsystem_usec 1058284\n")
+        c = s.cpu()
+        assert c.usage_seconds == pytest.approx(5.058284) and c.periods is None and c.throttled_seconds is None
+        # prometheus_client names a counter family without its `_total` suffix.
+        families = {f.name: f for f in render_prom(defs.PUBLIC_KPIS, Context(component="dashboard", system=s))}
+        assert families["gsd_process_cpu_usage_seconds"].samples[0].value == pytest.approx(5.058284)
+        for name in ("gsd_process_cpu_periods", "gsd_process_cpu_throttled_periods", "gsd_process_cpu_throttled_seconds"):
+            assert families[name].samples == [], name
+        (tmp_path / "cgroup" / "cpu.stat").write_text("usage_usec 5058284\nnr_periods 10\n")
+        assert s.cpu() is None, "a partial set of bandwidth lines is garbled"
+
+    def test_the_throttled_share_is_clamped_and_absent_without_bandwidth_lines(self):
+        """Review of #156 (Grok, K4): a cgroup reset moves nr_throttled backwards; the share is clamped
+        to [0, 1], and None when either sample lacks the bandwidth lines."""
+        a = Cpu(usage_seconds=10.0, limit_cores=0.5, periods=100, throttled_periods=10, throttled_seconds=0.1, monotonic=1000.0)
+        b = Cpu(usage_seconds=12.5, limit_cores=0.5, periods=150, throttled_periods=5, throttled_seconds=0.6, monotonic=1010.0)
+        assert cpu_rate(a, b).throttled_fraction == 0.0
+        c = Cpu(usage_seconds=13.0, limit_cores=0.5, periods=160, throttled_periods=200, throttled_seconds=0.6, monotonic=1020.0)
+        assert cpu_rate(b, c).throttled_fraction == 1.0
+        d = Cpu(usage_seconds=14.0, limit_cores=None, periods=None, throttled_periods=None, throttled_seconds=None, monotonic=1030.0)
+        assert cpu_rate(c, d).throttled_fraction is None and cpu_rate(c, d).cores_used == pytest.approx(0.1)
 
     def test_the_rate_uses_the_monotonic_clock_and_cannot_go_negative(self):
         a = Cpu(usage_seconds=10.0, limit_cores=0.5, periods=100, throttled_periods=1, throttled_seconds=0.1, monotonic=1000.0)
@@ -276,6 +308,9 @@ class TestWatermarkCounters:
         store.upsert_cluster("crc", "https://x", True)
         store.record_poll("crc", "ok", None)
         at = datetime.now(UTC)
+        # `ldap` is an identity provider the cluster knows (an Identity names it) — the label's bound.
+        store.replace_users("crc", [{"user_name": "alice", "full_name": None, "created_at": None,
+                                     "providers": ["ldap"], "has_identity": True}], _iso(at))
         store.record_login_events("crc", [
             {"pod_name": "p", "user_name": u, "outcome": o, "at": (at - timedelta(minutes=i)).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
              "provider": prov, "ldap_result_code": None, "detail": None, "observed_at": _iso(at)}
@@ -292,10 +327,48 @@ class TestWatermarkCounters:
         assert len(s) == len(defs.LOGIN_OUTCOMES) * 2
         assert not any("alice" in k or "bob" in k or "ghost" in k for k in s)
 
+    def test_a_provider_that_is_not_an_identity_provider_folds_into_other(self):
+        """Review of #156 (Grok, K1): login_event.provider is a parsed log field. /metrics is public,
+        so a value that is not one of the cluster's identity providers — a person's name in a garbled
+        line, say — must never become a label. It folds into `other`; the known providers, from the
+        Identity objects, are the bound."""
+        store = Store(":memory:")
+        store.upsert_cluster("crc", "https://x", True)
+        store.record_poll("crc", "ok", None)
+        store.replace_users("crc", [{"user_name": "alice", "full_name": None, "created_at": None,
+                                     "providers": ["ldap"], "has_identity": True}], _iso(datetime.now(UTC)))
+        at = datetime.now(UTC)
+        store.record_login_events("crc", [
+            {"pod_name": "p", "user_name": u, "outcome": "success", "at": (at - timedelta(minutes=i)).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+             "provider": prov, "ldap_result_code": None, "detail": None, "observed_at": _iso(at)}
+            for i, (u, prov) in enumerate([("alice", "ldap"), ("bob", "bob.smith"), ("carol", "ldap")])
+        ])
+        s = _series(_scrape(store, RuntimeSignals()), "gsd_login_attempts_total")
+        assert s['gsd_login_attempts_total{cluster="crc",outcome="success",provider="ldap"}'] == 2.0
+        assert s['gsd_login_attempts_total{cluster="crc",outcome="success",provider="other"}'] == 1.0
+        assert not any("bob.smith" in key for key in s)
+        assert {key.split('provider="')[1].rstrip('"}') for key in s} == {"ldap", "unknown", "other"}
+
     def test_unwired_signals_declare_the_families_and_sample_nothing(self):
         text = _scrape(_churn_store())
         assert "# HELP gsd_membership_changes_total " in text
         assert _series(text, "gsd_membership_changes_total") == {}
+
+
+    def test_the_watermark_queries_seek_their_index(self):
+        """Review of #156 (Grok, N2): without (cluster_id, id) the planner walked every row of the
+        cluster on every scrape. Migration 16 adds the two indexes; the plan must name them."""
+        store = Store(":memory:")
+        plans = {
+            "membership": store._conn.execute(
+                "EXPLAIN QUERY PLAN SELECT change, COUNT(*), MAX(id) FROM membership_event WHERE cluster_id=? AND id>? GROUP BY 1",
+                ("c", 0)).fetchall(),
+            "login": store._conn.execute(
+                "EXPLAIN QUERY PLAN SELECT outcome, provider, COUNT(*), MAX(id) FROM login_event WHERE cluster_id=? AND id>? GROUP BY 1, 2",
+                ("c", 0)).fetchall(),
+        }
+        assert any("membership_event_by_id (cluster_id=? AND id>?)" in r[3] for r in plans["membership"]), plans["membership"]
+        assert any("login_event_by_id (cluster_id=? AND id>?)" in r[3] for r in plans["login"]), plans["login"]
 
 
 # ── the trends and the shared predicates ─────────────────────────────────────────────────
@@ -334,6 +407,24 @@ class TestTrendsAndPredicates:
         assert (report["groups"], report["empty_groups"], report["unattributed_groups"]) == \
                (counts["total"], counts["empty"], counts["unattributed"])
         assert (len(listed_empty), len(listed_unattributed)) == (counts["empty"], counts["unattributed"])
+
+    def test_the_catalogue_counts_what_the_sql_counts_including_an_empty_string_provider(self, tmp_path):
+        """Review of #156 (Grok, N1): the Groups report counted `not sync_provider` — an empty-string
+        label read as unattributed while `IS NULL` did not. Both read the predicates module now."""
+        from gsd.kpi.predicates import is_empty, is_unattributed
+        store = seed_store(str(tmp_path / "w.db"))
+        try:
+            now = _iso(NOW)
+            rows = store.groups(CLUSTER)
+            rows.append({"name": "blank-label", "member_count": 0, "sync_provider": "", "group_synced_at": None, "ldap_uid": None})
+            store.replace_group_state(CLUSTER, [{k: g[k] for k in ("name", "member_count", "sync_provider", "group_synced_at", "ldap_uid")} for g in rows], now)
+            counts = store.group_counts(CLUSTER)
+            groups = store.groups(CLUSTER)
+            assert sum(1 for g in groups if is_empty(g)) == counts["empty"]
+            assert sum(1 for g in groups if is_unattributed(g)) == counts["unattributed"]
+            assert sum(1 for g in groups if not g["sync_provider"]) == counts["unattributed"] + 1, "the old spelling disagreed"
+        finally:
+            store.close()
 
     def test_people_counts_agree_with_the_lists_they_head(self, tmp_path):
         store = seed_store(str(tmp_path / "w.db"))
@@ -399,6 +490,11 @@ class TestRollup:
             poller._rollup_kpi(cluster)
             assert store.kpi_daily_since(CLUSTER) is None, "a follower never writes"
             Elector.is_leader = True
+            store.record_poll(CLUSTER, "unreachable", "refused")
+            poller._rollup_kpi(cluster)
+            assert store.kpi_daily_since(CLUSTER) is None, \
+                "a failed poll at 00:01 must not write yesterday's counts under today's date (Grok, K5)"
+            store.record_poll(CLUSTER, "ok", None)
             poller._rollup_kpi(cluster)
             assert store.kpi_daily_since(CLUSTER) == rollup.today()
         finally:

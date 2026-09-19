@@ -42,12 +42,12 @@ class Memory:
 
 @dataclass(frozen=True)
 class Cpu:
-    usage_seconds: float         # cpu.stat usage_usec, cumulative
-    limit_cores: float | None    # cpu.max quota/period; None when `max` (unlimited)
-    periods: int                 # cpu.stat nr_periods
-    throttled_periods: int       # cpu.stat nr_throttled
-    throttled_seconds: float     # cpu.stat throttled_usec
-    monotonic: float             # time.monotonic() at the read — for rates
+    usage_seconds: float               # cpu.stat usage_usec, cumulative
+    limit_cores: float | None          # cpu.max quota/period; None when `max` (unlimited)
+    periods: int | None                # cpu.stat nr_periods — None when the file lacks the bandwidth lines
+    throttled_periods: int | None      # cpu.stat nr_throttled
+    throttled_seconds: float | None    # cpu.stat throttled_usec
+    monotonic: float                   # time.monotonic() at the read — for rates
 
 
 @dataclass(frozen=True)
@@ -104,16 +104,26 @@ class CgroupSampler:
         try:
             fields = dict(line.split(None, 1) for line in stat.splitlines() if line.strip())
             usage = int(fields["usage_usec"])
-            periods = int(fields.get("nr_periods", 0))
-            throttled = int(fields.get("nr_throttled", 0))
-            throttled_usec = int(fields.get("throttled_usec", 0))
             q, period = quota.split()
+            if int(period) <= 0:
+                raise ValueError("cpu.max period must be positive")   # a zero period divided (review of #156, Codex)
             limit = None if q == "max" else int(q) / int(period)
+            # The three bandwidth lines travel together; absent (a cgroup with no quota, an older
+            # kernel) they are None and the throttling families are OMITTED — a partial file must
+            # not read as "never throttled" (review of #156, Grok).
+            bandwidth = ("nr_periods", "nr_throttled", "throttled_usec")
+            if all(k in fields for k in bandwidth):
+                periods, throttled, throttled_usec = (int(fields[k]) for k in bandwidth)
+            elif any(k in fields for k in bandwidth):
+                raise ValueError("partial bandwidth lines in cpu.stat")
+            else:
+                periods = throttled = throttled_usec = None
         except (KeyError, ValueError):
             log.warning("cgroup cpu files are not in the v2 shape: cpu.max=%r", quota)
             return None
         return Cpu(usage_seconds=usage / 1_000_000, limit_cores=limit, periods=periods,
-                   throttled_periods=throttled, throttled_seconds=throttled_usec / 1_000_000,
+                   throttled_periods=throttled,
+                   throttled_seconds=None if throttled_usec is None else throttled_usec / 1_000_000,
                    monotonic=time.monotonic())
 
 
@@ -124,10 +134,16 @@ def cpu_rate(previous: Cpu | None, current: Cpu) -> CpuRate | None:
     interval = current.monotonic - previous.monotonic
     if interval <= 0:
         return None
-    periods = current.periods - previous.periods
+    fraction = None
+    if None not in (current.periods, previous.periods, current.throttled_periods, previous.throttled_periods):
+        periods = current.periods - previous.periods
+        throttled = current.throttled_periods - previous.throttled_periods
+        # A cgroup reset moves both counters backwards; a negative share is not a measurement.
+        # Clamped to [0, 1] like cores_used is clamped at 0 (review of #156, Grok).
+        fraction = min(1.0, max(0.0, throttled / periods)) if periods > 0 else None
     return CpuRate(
         cores_used=max(0.0, current.usage_seconds - previous.usage_seconds) / interval,
-        throttled_fraction=(current.throttled_periods - previous.throttled_periods) / periods if periods > 0 else None,
+        throttled_fraction=fraction,
         interval_seconds=interval,
     )
 

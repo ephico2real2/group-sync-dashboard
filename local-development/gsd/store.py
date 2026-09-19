@@ -207,6 +207,10 @@ CREATE INDEX IF NOT EXISTS membership_event_by_user
 -- as migration 8; B2 reuses it.
 CREATE INDEX IF NOT EXISTS membership_event_by_time
     ON membership_event(cluster_id, observed_at);
+-- The KPI watermark (Store.membership_changes_since: `cluster_id=? AND id>?`) is a range seek here
+-- and a scan of the cluster's rows on every scrape without it. Migration 16.
+CREATE INDEX IF NOT EXISTS membership_event_by_id
+    ON membership_event(cluster_id, id);
 
 -- One row per (binding, Group subject). Current state, replaced each refresh: a binding
 -- is fully re-readable from the API, so nothing here is irreplaceable history.
@@ -430,6 +434,8 @@ CREATE TABLE IF NOT EXISTS login_event (
 );
 CREATE INDEX IF NOT EXISTS login_event_lookup ON login_event(cluster_id, at DESC);
 CREATE INDEX IF NOT EXISTS login_event_by_user ON login_event(cluster_id, user_name, at DESC);
+-- The KPI watermark's seek (Store.login_attempts_since), as for membership_event. Migration 16.
+CREATE INDEX IF NOT EXISTS login_event_by_id ON login_event(cluster_id, id);
 -- login_event_by_audit_id (UNIQUE on cluster_id, audit_id WHERE audit_id IS NOT NULL) is created by
 -- migration 10 ONLY, not here: SCHEMA runs before _migrate, and on a database from before 0.17.0 the
 -- column does not exist yet, so an index on it here raised "no such column: audit_id" and aborted
@@ -940,6 +946,14 @@ _MIGRATIONS: list[tuple[int, str, list[str]]] = [
                    value               REAL NOT NULL,
                    PRIMARY KEY(cluster_id, day, metric)
                )""",
+        ],
+    ),
+    (
+        16,
+        "the KPI watermark seeks: (cluster_id, id) on membership_event and login_event (review of #156)",
+        [
+            "CREATE INDEX IF NOT EXISTS membership_event_by_id ON membership_event(cluster_id, id)",
+            "CREATE INDEX IF NOT EXISTS login_event_by_id ON login_event(cluster_id, id)",
         ],
     ),
 ]
@@ -3883,14 +3897,27 @@ class Store:
                             (cluster_id,))
         return {"users": (users or {}).get("n") or 0, "members": (members or {}).get("n") or 0}
 
+    def identity_providers(self, cluster_id: str) -> list[str]:
+        """The identity providers that have issued an Identity on this cluster (ocp_user.providers,
+        from the Identity objects) — the bound on the `provider` label of gsd_login_attempts_total: a
+        login row's provider is a parsed log field, and only a value that is a real IdP may become a
+        public label (review of #156, Grok). One json_each over the cluster's users."""
+        rows = self._rows(
+            "SELECT DISTINCT value AS p FROM ocp_user, json_each(ocp_user.providers) WHERE cluster_id=?",
+            (cluster_id,),
+        )
+        return sorted(r["p"] for r in rows if isinstance(r["p"], str) and r["p"])
+
     def membership_changes_since(self, cluster_id: str, since_id: int) -> tuple[dict[str, int], int]:
         """Membership events with id > `since_id` that are CHANGES (baseline=0: a cluster's first
         observation is "first seen", not churn — #175), counted by `change`, and the newest id seen.
 
         The seam under gsd_membership_changes_total: a counter accumulated from the table by an id
-        watermark rather than kept beside it, so the store stays the source of truth and retention —
-        which deletes OLD rows, always below the watermark — cannot make the counter go backwards.
-        AUTOINCREMENT ids never reuse, so a row committed after this read has a higher id.
+        watermark rather than kept beside it, so the store stays the source of truth and retention
+        cannot make the counter go backwards: it deletes by observed_at, and a row that is already
+        past retention when it ARRIVES (a backlog) may be pruned before a scrape counts it — not
+        counted, never un-counted. AUTOINCREMENT ids never reuse, so a row committed after this read
+        has a higher id. Seeks the (cluster_id, id) index, migration 16.
         """
         # ONE statement for the counts and the watermark: a row committed between two statements
         # would be above the new watermark and never counted. Baseline rows are grouped apart so the

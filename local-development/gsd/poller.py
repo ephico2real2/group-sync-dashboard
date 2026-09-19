@@ -770,6 +770,12 @@ class Poller:
             return
         try:
             from .kpi import rollup
+            # Only after a SUCCESSFUL poll: _after_poll runs on every outcome, and the day's first
+            # cycle can be an `unreachable` at 00:01 — its row would be yesterday's counts under
+            # today's date, and INSERT OR IGNORE would keep it (review of #156, Grok).
+            outcome = next((r["status"] for r in self.store.clusters() if r["id"] == cluster.name), None)
+            if outcome != OK:
+                return
             if rollup.write_if_due(self.store, cluster.name):
                 removed = rollup.prune(self.store, cluster.name)
                 if removed:

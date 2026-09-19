@@ -24,8 +24,11 @@ MEMBERSHIP_CHANGES = ("added", "removed")
 #: The outcome vocabulary, read OFF THE PARSER (the same rule as api.LOGIN_OUTCOMES): loginlog.py is
 #: where an outcome is decided, so a new one must not need a second list edited.
 LOGIN_OUTCOMES = tuple(v for k, v in vars(loginlog).items() if k.startswith("OUTCOME_") and isinstance(v, str))
-#: The provider value for an attempt whose row carries none.
+#: The provider value for an attempt whose row carries none, and for one whose provider is not an
+#: identity provider the cluster knows (`Store.identity_providers`): a login row's provider is a
+#: parsed log field, and /metrics is unauthenticated, so only a real IdP's name becomes a label.
 UNKNOWN_PROVIDER = "unknown"
+OTHER_PROVIDER = "other"
 #: The in-app trend window, and the rollup's.
 TREND_DAYS = 30
 ROLLUP_DAYS = 90
@@ -77,16 +80,21 @@ def _login_attempts(ctx: Context):
     if ctx.signals is None or ctx.store is None:
         return None
     totals = ctx.signals.login_attempt_totals(ctx.store, ctx.cluster_ids)
-    # Pre-seed every outcome under every provider already seen on the cluster, so a new outcome's
-    # first increase() has a baseline; a provider appears with its first attempt.
-    seen = {}
+    # The label is BOUNDED to the cluster's identity providers plus `unknown`: a provider string
+    # that is not one of them — a log field is data, not configuration — folds into `other`. Every
+    # outcome is pre-seeded under every bounded value, so a new outcome's first increase() has a
+    # baseline.
+    known = {cluster: set(ctx.store.identity_providers(cluster)) | {UNKNOWN_PROVIDER} for cluster in ctx.cluster_ids}
+    folded: dict[tuple[str, str, str], int] = {}
     for (cluster, outcome, provider), n in totals.items():
-        seen.setdefault(cluster, set()).add(provider)
+        label = provider if provider in known.get(cluster, ()) else OTHER_PROVIDER
+        folded[(cluster, outcome, label)] = folded.get((cluster, outcome, label), 0) + n
     samples = []
     for cluster in ctx.cluster_ids:
-        for provider in sorted(seen.get(cluster, {UNKNOWN_PROVIDER})):
+        others = {OTHER_PROVIDER} if any(k[0] == cluster and k[2] == OTHER_PROVIDER for k in folded) else set()
+        for provider in sorted(known[cluster] | others):
             for outcome in LOGIN_OUTCOMES:
-                samples.append(Sample((cluster, outcome, provider), totals.get((cluster, outcome, provider), 0)))
+                samples.append(Sample((cluster, outcome, provider), folded.get((cluster, outcome, provider), 0)))
     return samples
 
 
