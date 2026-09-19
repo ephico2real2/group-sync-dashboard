@@ -52,7 +52,11 @@ class RunManager:
         try:
             self._queue.put_nowait(run.id)
         except queue.Full:
+            # Refused is finished: stamp it like every other terminal transition (the render's `finally`,
+            # the window recheck) so the manifest carries its completion and retention ages it from it
+            # (#163) rather than through the id fallback.
             run.status, run.error = "failed", "the render queue is full; try again shortly"
+            run.finished_at = self._clock().strftime("%Y-%m-%dT%H:%M:%SZ")
             self.store.update(run)
             raise QueueFull()
         self.metrics.note_submitted(run.report)

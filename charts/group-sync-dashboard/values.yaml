@@ -1052,6 +1052,14 @@ reporting:
   # per (schedule, cluster) OR younger than days, and is EXEMPT from the manual run-count cap. A manual
   # run is kept days (short) and at most maxRuns, whichever prunes first.
   #
+  # DAYS ARE MEASURED FROM COMPLETION — when the artefact came into existence (the run's finished_at),
+  # not from when it was requested — and "newest" for both keepPerSchedule and maxRuns means most
+  # recently completed. A run that waited in the queue or rendered slowly is as old as its file, not as
+  # old as its ticket (#163). Ages round conservatively: finished_at is kept to whole seconds and a run
+  # is aged from the END of its second, so rounding can only keep an artefact a moment longer. A run
+  # that never completed (the pod died under it) has no finished_at and ages from the request time
+  # its id encodes — a failure record, never a servable artefact.
+  #
   # NOTE — keepPerSchedule is a FLOOR (always keep the newest K), not a ceiling. Setting
   # scheduled.days: 0 disables the age bound, and since keep only ever PROTECTS runs, that disables
   # scheduled deletion entirely: it does NOT mean "keep only the newest K". Scheduled artefacts then
