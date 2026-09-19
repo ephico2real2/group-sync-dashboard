@@ -1,0 +1,66 @@
+[
+  {
+    "source": "KyvernoValidatingPolicy",
+    "policy": "restrict-nco-config-writers",
+    "result": "pass",
+    "count": 3,
+    "category": "RBAC",
+    "severity": "high"
+  },
+  {
+    "source": "kyverno",
+    "policy": "rbac-standards-enforcement",
+    "result": "skip",
+    "count": 486,
+    "category": "Multi-Tenancy",
+    "severity": "high"
+  },
+  {
+    "source": "kyverno",
+    "policy": "namespace-oud-group-allowlist",
+    "result": "skip",
+    "count": 102,
+    "category": "Multi-Tenancy",
+    "severity": "high"
+  },
+  {
+    "source": "kyverno",
+    "policy": "rbac-standards-enforcement",
+    "result": "pass",
+    "count": 58,
+    "category": "Multi-Tenancy",
+    "severity": "high"
+  },
+  {
+    "source": "kyverno",
+    "policy": "rbac-standards-enforcement",
+    "result": "fail",
+    "count": 17,
+    "category": "Multi-Tenancy",
+    "severity": "high"
+  },
+  {
+    "source": "KyvernoValidatingPolicy",
+    "policy": "restrict-nco-config-writers",
+    "result": "pass",
+    "count": 6,
+    "category": "RBAC",
+    "severity": "high"
+  },
+  {
+    "source": "kyverno",
+    "policy": "namespace-oud-group-allowlist",
+    "result": "pass",
+    "count": 3,
+    "category": "Multi-Tenancy",
+    "severity": "high"
+  },
+  {
+    "source": "kyverno",
+    "policy": "namespace-oud-group-allowlist",
+    "result": "fail",
+    "count": 1,
+    "category": "Multi-Tenancy",
+    "severity": "high"
+  }
+]

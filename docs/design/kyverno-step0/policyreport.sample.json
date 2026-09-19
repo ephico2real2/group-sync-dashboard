@@ -1,0 +1,51 @@
+{
+  "apiVersion": "wgpolicyk8s.io/v1alpha2",
+  "kind": "PolicyReport",
+  "metadata": {
+    "name": "418670da-94d4-428d-bef1-c4d76a5ee73b",
+    "namespace": "group-sync-operator",
+    "labels": {
+      "app.kubernetes.io/managed-by": "kyverno"
+    },
+    "ownerReferences": [
+      {
+        "apiVersion": "redhatcop.redhat.io/v1alpha1",
+        "kind": "GroupSync",
+        "name": "autobahnusers-onboarding-groupsync",
+        "uid": "418670da-94d4-428d-bef1-c4d76a5ee73b"
+      }
+    ]
+  },
+  "scope": {
+    "apiVersion": "redhatcop.redhat.io/v1alpha1",
+    "kind": "GroupSync",
+    "name": "autobahnusers-onboarding-groupsync",
+    "namespace": "group-sync-operator",
+    "uid": "418670da-94d4-428d-bef1-c4d76a5ee73b"
+  },
+  "summary": {
+    "error": 0,
+    "fail": 0,
+    "pass": 1,
+    "skip": 0,
+    "warn": 0
+  },
+  "results": [
+    {
+      "category": "RBAC",
+      "message": "success",
+      "policy": "restrict-nco-config-writers",
+      "properties": {
+        "process": "admission review"
+      },
+      "result": "pass",
+      "scored": true,
+      "severity": "high",
+      "source": "KyvernoValidatingPolicy",
+      "timestamp": {
+        "nanos": 0,
+        "seconds": 1789813825
+      }
+    }
+  ]
+}
