@@ -1,0 +1,115 @@
+apiVersion: v1
+data:
+  reference.yaml: "# reference.yaml \u2014 a small reference cluster that reproduces the four measured\
+    \ personas.\n#\n# The SAR oracle (DESIGN \xA75.4), which test_sar_personas.py asserts:\n#\n#   persona\
+    \      fixture RBAC                                   list crb (wide)  update crb (usage)\n#   kubeadmin\
+    \    cluster-admin CRB                              ALLOW            ALLOW\n#   dana.lee     cluster-reader\
+    \ CRB (read verbs, no update)     ALLOW            DENY\n#   lateef.o     no admin CRB           \
+    \                        DENY             DENY\n#   jane.smith   in a group NAMED \"...-cluster-admin\"\
+    \ but with  DENY             DENY\n#                NO ClusterRoleBinding behind it (the decoy)\n\
+    #\n# The decoy is the point: a suggestively-named group must NOT grant the tier \u2014 only a real\n\
+    # (Cluster)RoleBinding reaching one of spec.groups/spec.user does.\n\nmeta:\n  clusterName: mock-openshift\n\
+    \  token: \"mock-token-reference\"\n\ngroupsyncs:\n  - name: ldap-sync\n    namespace: group-sync-operator\n\
+    \    generation: 3\n    schedule: \"*/30 * * * *\"\n    providers:\n      - {name: acme-ldap, kind:\
+    \ rfc2307, filter: \"(objectClass=groupOfNames)\"}\n    lastSyncSuccessTime: \"2026-09-14T08:00:00Z\"\
+    \n    conditions:\n      - {type: ReconcileSuccess, lastTransitionTime: \"2026-09-14T08:00:00Z\"}\n\
+    \  - crdAbsent: false\n\ngroups:\n  # Bound to cluster-admin via cluster-admin-crb \u2192 grants kubeadmin\
+    \ the wide + usage tiers.\n  - name: app-ocp-rbac-demo-cluster-admin\n    syncProvider: acme-ldap\n\
+    \    syncTime: \"2026-09-14T08:00:00Z\"\n    ldapUid: \"cn=ocp-admins,ou=Groups,dc=acme,dc=com\"\n\
+    \    users: [kubeadmin]\n  # Bound to cluster-reader via cluster-reader-crb \u2192 dana.lee gets wide\
+    \ but not usage.\n  - name: cluster-readers\n    syncProvider: acme-ldap\n    syncTime: \"2026-09-14T08:00:00Z\"\
+    \n    users: [dana.lee]\n  # THE DECOY: name ends \"-cluster-admin\" but nothing binds it. jane.smith\
+    \ must stay self.\n  - name: platform-team-cluster-admin\n    syncProvider: acme-ldap\n    syncTime:\
+    \ \"2026-09-14T08:00:00Z\"\n    users: [jane.smith]\n  # An ordinary application group with a namespaced\
+    \ viewer grant to a direct user.\n  - name: acme-app-viewers\n    syncProvider: acme-ldap\n    syncTime:\
+    \ \"2026-09-14T08:00:00Z\"\n    users: [lateef.o]\n  # An empty group (the API returns users: null)\
+    \ \u2014 exercises the null-users branch.\n  - name: empty-team\n    syncProvider: acme-ldap\n   \
+    \ users: null\n  # A legacy group carrying a non-person service account; the target of the hand-made\n\
+    \  # (unmanaged) binding below. Deliberately holds NO persona, so it cannot perturb the oracle.\n\
+    \  - name: legacy-ops\n    syncProvider: acme-ldap\n    users: [svc-legacy]\n  # The reporting-auditor\
+    \ group (rbacAuditors, #100): bound to the report-auditor ClusterRole below,\n  # which grants `list\
+    \ clusterrolebindings` \u2014 the wide-tier gate \u2014 so its members are AUDITORS (wide\n  # read-only,\
+    \ NOT usage). developer is a member, to test the auditor tier on the mock.\n  - name: app-ocp-rbac-demo-report-auditors\n\
+    \    syncProvider: acme-ldap\n    syncTime: \"2026-09-14T08:00:00Z\"\n    users: [developer]\n\nusers:\n\
+    \  entries:\n    - {name: kubeadmin,  fullName: \"Cluster Admin\", creationTimestamp: \"2026-01-01T00:00:00Z\"\
+    ,\n       identities: []}\n    - {name: dana.lee,   fullName: \"Dana Lee\",      creationTimestamp:\
+    \ \"2026-01-02T00:00:00Z\",\n       identities: [\"acme-ldap:dana.lee\"]}\n    - {name: lateef.o,\
+    \   fullName: \"Lateef O.\",     creationTimestamp: \"2026-01-03T00:00:00Z\",\n       identities:\
+    \ [\"acme-ldap:lateef.o\"]}\n    - {name: jane.smith, fullName: \"Jane Smith\",    creationTimestamp:\
+    \ \"2026-01-04T00:00:00Z\",\n       identities: [\"acme-ldap:jane.smith\"]}\n    # The developer persona:\
+    \ member of the reporting-auditor group below, so it exercises the AUDITOR\n    # (wide read-only)\
+    \ tier \u2014 a member of a feature-granting group, for testing \"who belongs to it\".\n    - {name:\
+    \ developer,  fullName: \"Developer\",     creationTimestamp: \"2026-01-05T00:00:00Z\",\n       identities:\
+    \ [\"developer:developer\"]}\n  forbidden: false\n\nidentities:\n  entries:\n    - {userName: dana.lee,\
+    \   creationTimestamp: \"2026-01-02T00:00:00Z\", providerPrefix: acme-ldap}\n    - {userName: lateef.o,\
+    \   creationTimestamp: \"2026-01-03T00:00:00Z\", providerPrefix: acme-ldap}\n    - {userName: jane.smith,\
+    \ creationTimestamp: \"2026-01-04T00:00:00Z\", providerPrefix: acme-ldap}\n    - {userName: developer,\
+    \  creationTimestamp: \"2026-01-05T00:00:00Z\", providerPrefix: developer}\n  forbidden: false\n\n\
+    namespaces:\n  entries:\n    # Two selector dimensions \u2014 company.net/mnemonic AND company.net/app-environment\
+    \ \u2014 mirroring the\n    # real crc-local convention (docs/DESIGN_reporting_selectors_snapshots_and_windows.md\
+    \ \xA76), so the\n    # multi-dimension selector (AND across dimensions, OR within one) is exercisable\
+    \ against the mock.\n    # `team` is kept on the first two so the single-label tests still hold.\n\
+    \    - {name: acme-app, phase: Active, creationTimestamp: \"2026-01-02T00:00:00Z\",\n       labels:\
+    \ {\"team\": \"acme\", \"kubernetes.io/metadata.name\": \"acme-app\",\n                \"company.net/mnemonic\"\
+    : \"acme\", \"company.net/app-environment\": \"prod\"}}\n    - {name: group-sync-operator, phase:\
+    \ Active, creationTimestamp: \"2026-01-01T00:00:00Z\",\n       labels: {\"team\": \"platform\",\n\
+    \                \"company.net/mnemonic\": \"gso\", \"company.net/app-environment\": \"prod\"}}\n\
+    \    - {name: demo-prod, phase: Active, creationTimestamp: \"2026-01-04T00:00:00Z\",\n       labels:\
+    \ {\"company.net/mnemonic\": \"demo\", \"company.net/app-environment\": \"prod\"}}\n    - {name: demo-qa,\
+    \ phase: Active, creationTimestamp: \"2026-01-05T00:00:00Z\",\n       labels: {\"company.net/mnemonic\"\
+    : \"demo\", \"company.net/app-environment\": \"qa\"}}\n    - {name: beta-rnd, phase: Active, creationTimestamp:\
+    \ \"2026-01-06T00:00:00Z\",\n       labels: {\"company.net/mnemonic\": \"beta\", \"company.net/app-environment\"\
+    : \"rnd\"}}\n    - {name: platform-prod, phase: Active, creationTimestamp: \"2026-01-07T00:00:00Z\"\
+    ,\n       labels: {\"company.net/mnemonic\": \"klta\", \"company.net/app-environment\": \"prod\"}}\n\
+    \    # Missing-dimension NEGATIVE case: mnemonic only, no app-environment \u2014 it must drop out\
+    \ of any\n    # two-dimension AND selection on app-environment (adversarial-review note, 2026-09-15).\n\
+    \    - {name: gsd-shared, phase: Active, creationTimestamp: \"2026-01-08T00:00:00Z\",\n       labels:\
+    \ {\"company.net/mnemonic\": \"gsd\"}}\n  forbidden: false\n\nroles:\n  clusterRoles:\n    - name:\
+    \ cluster-admin\n      rules:\n        - {verbs: [\"*\"], apiGroups: [\"*\"], resources: [\"*\"]}\n\
+    \    - name: cluster-reader\n      rules:\n        # Read verbs only \u2014 deliberately NO `update`,\
+    \ which is what excludes the auditor\n        # (dana.lee) from the write-verb usage tier.\n     \
+    \   - {verbs: [get, list, watch], apiGroups: [\"*\"], resources: [\"*\"]}\n    # The reporting-auditor\
+    \ ClusterRole (chart renders <fullname>-report-auditor). Read-only get/list on\n    # identities and\
+    \ RBAC \u2014 `list clusterrolebindings` is what lifts a member to the wide (auditor) tier.\n    -\
+    \ name: group-sync-dashboard-report-auditor\n      rules:\n        - {verbs: [get, list], apiGroups:\
+    \ [\"user.openshift.io\"], resources: [\"users\", \"groups\"]}\n        - {verbs: [get, list], apiGroups:\
+    \ [\"rbac.authorization.k8s.io\"], resources: [\"roles\", \"rolebindings\", \"clusterroles\", \"clusterrolebindings\"\
+    ]}\n  namespacedRoles:\n    - namespace: acme-app\n      name: viewer\n      rules:\n        - {verbs:\
+    \ [get, list], apiGroups: [\"\"], resources: [pods]}\n\nbindings:\n  clusterRoleBindings:\n    - name:\
+    \ cluster-admin-crb\n      roleRef: {kind: ClusterRole, name: cluster-admin}\n      subjects: [{kind:\
+    \ Group, name: app-ocp-rbac-demo-cluster-admin}]\n      labels: {\"rbac.ocp.io/config-source\": \"\
+    gitops\"}\n    - name: cluster-reader-crb\n      roleRef: {kind: ClusterRole, name: cluster-reader}\n\
+    \      subjects: [{kind: Group, name: cluster-readers}]\n      labels: {\"rbac.ocp.io/config-source\"\
+    : \"gitops\"}\n    # A hand-made grant with no config-source label \u2192 the `unmanaged` finding\
+    \ the dashboard\n    # exists to surface; carries an operator-acknowledged exception annotation.\n\
+    \    - name: handmade-reader-crb\n      roleRef: {kind: ClusterRole, name: cluster-reader}\n     \
+    \ subjects: [{kind: Group, name: legacy-ops}]\n      annotations: {\"rbac.ocp.io/unmanaged-exception\"\
+    : \"reviewed 2026-09-10, temporary\"}\n    # Binds the auditor group to the report-auditor role \u2192\
+    \ its members (developer) are wide-tier auditors.\n    - name: report-auditors-crb\n      roleRef:\
+    \ {kind: ClusterRole, name: group-sync-dashboard-report-auditor}\n      subjects: [{kind: Group, name:\
+    \ app-ocp-rbac-demo-report-auditors}]\n      labels: {\"rbac.ocp.io/config-source\": \"gitops\"}\n\
+    \  roleBindings:\n    - namespace: acme-app\n      name: viewer-rb\n      roleRef: {kind: Role, name:\
+    \ viewer}\n      subjects: [{kind: User, name: lateef.o}]\n\noperatorConfigs:\n  namespaceConfigs:\n\
+    \    - name: acme-nsconfig\n      conditions:\n        - {type: ReconcileSuccess, lastTransitionTime:\
+    \ \"2026-09-14T08:00:00Z\"}\n  groupConfigs: []\n  namespaceConfigsCrdAbsent: false\n  groupConfigsCrdAbsent:\
+    \ false\n\nnodes:\n  entries:\n    - {name: master-0, labels: {\"node-role.kubernetes.io/master\"\
+    : \"\", \"node-role.kubernetes.io/control-plane\": \"\"}}\n    - {name: master-1, labels: {\"node-role.kubernetes.io/master\"\
+    : \"\"}}\n    - {name: worker-0, labels: {\"node-role.kubernetes.io/worker\": \"\"}}\n  forbidden:\
+    \ false\n\noauth:\n  identityProviders:\n    - name: acme-ldap\n      ldapUrl: \"ldaps://openldap.acme.svc:636/dc=acme,dc=com?uid?sub?(&(uid=*)(memberOf=cn=ocp-admins,ou=Groups,dc=acme,dc=com))\"\
+    \n  forbidden: false\n  crdAbsent: false\n\noauthPods:\n  namespace: openshift-authentication\n  entries:\n\
+    \    - {name: oauth-openshift-6d8f9c7b4-abcde, phase: Running}\n    - {name: oauth-openshift-6d8f9c7b4-fghij,\
+    \ phase: Running}\n    - {name: oauth-openshift-6d8f9c7b4-pending, phase: Pending}\n  forbidden: false\n\
+    \nauditLog:\n  node: master-0\n  dir: oauth-server\n  malformed416: false\n  files:\n    - name: \"\
+    audit-2026-09-01T00-00-00.000.log\"     # a rotated backup (lumberjack form)\n      lines:\n     \
+    \   - {kind: session, decision: allow, user: dana.lee, at: \"2026-09-01T09:00:00.000000Z\", code:\
+    \ 302}\n    - name: audit.log                                # the live file\n      lines:\n     \
+    \   - {kind: credential, decision: allow, user: jane.smith, at: \"2026-09-03T10:15:27.234567Z\", code:\
+    \ 302, provider: acme-ldap}\n        - {kind: cli,        decision: deny,  user: lateef.o,   at: \"\
+    2026-09-03T10:16:01.000000Z\", code: 401}\n        - {kind: session,    decision: allow, user: dana.lee,\
+    \   at: \"2026-09-03T10:17:44.500000Z\", code: 302}\n\npodLog:\n  namespace: openshift-authentication\n\
+    \  lines:\n    - '2026-09-03T10:15:27.234567Z I0903 10:15:27.234567 1 login.go:191] Login with provider\
+    \ \"acme-ldap\" succeeded for \"jane.smith\"'\n    - '2026-09-03T10:16:01.000000Z I0903 10:16:01.000000\
+    \ 1 basicauth.go:48] Login with provider \"acme-ldap\" failed for login \"lateef.o\"'\n"
+kind: ConfigMap
+metadata:
+  name: mock-fixture
