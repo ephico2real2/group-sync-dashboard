@@ -29,6 +29,7 @@ KEPT_OFF = {
     "session.idleTimeout.enabled": "C4: it signs people out — a session policy the platform team chooses",
     "rbac.namespaces": "C3: a grant (get/list namespaces, core group) the chart does not otherwise need — off under the 0.14.0 rule; the namespace report attests absence only with it",
     "reporting.window.enabled": "P4: an operational rail the operator opts into (a timezone + hours + days); off = automated runs are never gated",
+    "monitoring.grafanaDashboard.cr.enabled": "#161: a GrafanaDashboard CR needs grafana-operator's CRD before the release renders — on only where the operator (the openshift-grafana chart) is installed",
 }
 
 # Switches the release flipped; the docs below must not describe them as off.

@@ -22,7 +22,7 @@ Attach a dashboard by selecting this instance:
         app.kubernetes.io/instance: {{ .Release.Name }}
     datasources:
       - inputName: DS_PROMETHEUS
-        datasourceName: {{ .Values.thanos.datasource.name | quote }}
+        datasourceName: {{ .Values.thanos.datasource.uid | quote }}   # the uid: substituted verbatim into the panels
     configMapRef: {name: <your-configmap>, key: <your-file>.json}
 
 Prerequisite, once per cluster (cluster-admin): user-workload monitoring on —

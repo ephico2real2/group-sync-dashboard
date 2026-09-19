@@ -53,6 +53,8 @@ declare — it only *overrides*, and the table says which way:
 | `logLevel` | `INFO` | `DEBUG` | lab override |
 | `authLogLevel.manage` / `.enabled` | `false` / `false` | `false` / `false` | inherits the default: the lab reads the AUDIT LOG, which names the person at the default verbosity, so the auth-loglevel Job (a post-upgrade hook) is not needed; the one-time convergence to Normal is done, so management is off (set `manage=true` only for the pod-log source) |
 | `monitoring.serviceMonitor.enabled` / `monitoring.prometheusRule.enabled` | `false` / `false` | `true` / `true` | lab override — the M5 Pro's CRC runs full cluster monitoring and user-workload monitoring is on, so the scrape and the rules are validated here; the chart default stays off under the 0.14.0 rule for clusters without Prometheus |
+| `monitoring.grafanaDashboard.cr.enabled` | `false` | `true` | lab override — the openshift-grafana chart runs in this namespace, so the GrafanaDashboard CR hands it the board (#161) |
+| `grafana.url` / `grafana.dashboardUid` | `""` / `""` | `https://grafana-openshift-grafana-route-group-sync-dashboard.apps-crc.testing` / `gsd-group-sync-dashboard` | lab override — the KPI page's Grafana door opens the board on the lab's own Grafana |
 | `loginCapture.enabled` | `true` | `true` | redundant — the default since chart 0.14.0 |
 | `loginCapture.source` | `pod-log` | `audit-log` | lab override — a ClusterRole on `get nodes/proxy`, read-only; the audit log names the person at the default verbosity and keeps history |
 | `oauthProxy.apiTokenAccess.enabled` | `true` | `true` | redundant — the default since chart 0.14.0 |

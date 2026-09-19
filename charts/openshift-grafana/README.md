@@ -77,9 +77,11 @@ Two details the reference architecture gets wrong and this chart gets right, bot
 ## Attaching your dashboard
 
 The datasource's **name and uid are both fixed** (`thanos.datasource.name` — *OpenShift Thanos* —
-and `.uid` — `openshift-thanos`). A dashboard exported with an input (`${DS_PROMETHEUS}`) binds by
-name; one that hard-codes a uid binds by uid. Pin only one and every exported community dashboard of
-the other kind silently mis-binds.
+and `.uid` — `openshift-thanos`). A dashboard that hard-codes a uid binds by uid. A dashboard exported
+with an input (`${DS_PROMETHEUS}`) is bound through `GrafanaDashboard.spec.datasources[]`, whose
+`datasourceName` the operator substitutes **verbatim** into the panels' `uid` fields — so give it the
+**uid**: measured on CRC, the name rendered in the browser (a name fallback) while Grafana's query API
+answered *Data source not found*.
 
 ```yaml
 apiVersion: grafana.integreatly.org/v1beta1
@@ -92,7 +94,7 @@ spec:
       app.kubernetes.io/instance: obs        # your release name
   datasources:
     - inputName: DS_PROMETHEUS
-      datasourceName: OpenShift Thanos
+      datasourceName: openshift-thanos      # the uid, see above
   configMapRef:
     name: my-board
     key: my-board.json

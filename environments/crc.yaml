@@ -81,6 +81,17 @@ monitoring:
     enabled: true
   prometheusRule:
     enabled: true
+  grafanaDashboard:
+    # The openshift-grafana chart runs in this namespace as release `grafana` (#162); the CR hands
+    # it the board, bound to its "OpenShift Thanos" datasource by name (#161).
+    cr:
+      enabled: true
+
+# The KPI page's Grafana door (#157): the openshift-grafana release's Route on CRC, opening the
+# board the CR above provisions.
+grafana:
+  url: https://grafana-openshift-grafana-route-group-sync-dashboard.apps-crc.testing
+  dashboardUid: gsd-group-sync-dashboard
 
 # ---------------------------------------------------------------------------
 # Reporting — the namespace-access multi-dimension selector (P2, 0.21.0+)

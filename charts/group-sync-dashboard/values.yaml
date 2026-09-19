@@ -2074,3 +2074,22 @@ monitoring:
     # Grafana folder, written as the `grafana_folder` annotation the sidecar's
     # folderAnnotation setting reads. Empty writes no annotation.
     folder: ""
+    # The GrafanaDashboard CR for grafana-operator v5 (#161), OFF by default: the CR's kind must
+    # exist before the release is rendered, so it is for a cluster where the operator — the
+    # openshift-grafana chart, or a platform team's — is already installed. On, the CR points the
+    # operator at the ConfigMap above and binds the board's DS_PROMETHEUS input to a datasource:
+    # the operator substitutes `datasource` for every `${DS_PROMETHEUS}` in the JSON, verbatim, into
+    # the panels' `uid` fields — so give it the datasource's UID (the openshift-grafana chart's is
+    # `openshift-thanos`). Measured on CRC: substituting the NAME rendered in the browser (which falls
+    # back to a name lookup) but Grafana's query API answered "Data source not found". Without the
+    # binding the board's datasource variable starts empty and Grafana picks its first Prometheus,
+    # silently the wrong one when there are two. `instanceSelector` selects the Grafana CR; the
+    # openshift-grafana chart labels its instance app.kubernetes.io/instance: <its release name>.
+    cr:
+      enabled: false
+      instanceSelector:
+        app.kubernetes.io/instance: grafana
+      datasource: openshift-thanos
+      # The GrafanaDashboard must live in the ConfigMap's namespace; this lets it match a Grafana
+      # instance in another one.
+      allowCrossNamespaceImport: true

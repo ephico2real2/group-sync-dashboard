@@ -629,11 +629,13 @@ spec:
   # datasource it has — the wrong one, silently, when there are two.
   datasources:
     - inputName: DS_PROMETHEUS
-      datasourceName: Prometheus
+      datasourceName: openshift-thanos   # the datasource's UID: substituted verbatim into the panels
 ```
 
-The chart does not ship that CR: the operator's CRD has two incompatible API versions in the wild
-and the `instanceSelector` is yours to know.
+Since #161 the chart ships that CR on request — `monitoring.grafanaDashboard.cr.enabled: true`, with
+`.instanceSelector` and `.datasource` (the uid) — for a cluster where the operator, such as the
+`openshift-grafana` chart, is already installed; it stays off by default because the CR's kind must
+exist before the release renders.
 
 ### ArgoCD
 

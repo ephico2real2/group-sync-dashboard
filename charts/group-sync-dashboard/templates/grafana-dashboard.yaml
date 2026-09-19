@@ -60,4 +60,34 @@ metadata:
 data:
   group-sync-dashboard.json: |
 {{ $json | indent 4 }}
-{{ end }}
+{{- /*
+The GrafanaDashboard CR (#161), only when monitoring.grafanaDashboard.cr.enabled: grafana-operator v5
+reads the ConfigMap above through configMapRef and applies the board to the instance the selector
+names, with the DS_PROMETHEUS input bound to the datasource's UID (the operator substitutes the
+value verbatim into the panels' uid fields; a name resolves in the browser only). A separate document rather than
+a mode of the ConfigMap: the ConfigMap is a core resource that cannot fail an install; the CR needs
+its CRD first (the openshift-grafana chart ships it under crds/).
+*/ -}}
+{{- $cr := ($dashboard.cr | default dict) }}
+{{- if $cr.enabled }}
+---
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: {{ include "gsd.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gsd.labels" . | nindent 4 }}
+spec:
+  allowCrossNamespaceImport: {{ $cr.allowCrossNamespaceImport | default false }}
+  instanceSelector:
+    matchLabels:
+      {{- toYaml ($cr.instanceSelector | default dict) | nindent 6 }}
+  configMapRef:
+    name: {{ include "gsd.fullname" . }}-grafana-dashboard
+    key: group-sync-dashboard.json
+  datasources:
+    - inputName: DS_PROMETHEUS
+      datasourceName: {{ $cr.datasource | quote }}
+{{- end }}
+{{- end }}
