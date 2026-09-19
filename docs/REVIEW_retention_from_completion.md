@@ -66,7 +66,27 @@ Every other terminal transition stamps in `runs.py` (the render's `finally`, the
   watermark `since_id` walks it); retention ordering and listing ordering answer different questions.
 - **Cursor's boundary test** — pinned the `<` predicate F1 removes.
 
-## Validation
+## Validation, pass 1
 
 `tests/test_reporting_server.py`: 61 passed. Full hermetic suite from `local-development/`
 (`--deselect tests/test_ui.py --deselect tests/test_live_smoke.py`): 3468 passed, 13 skipped.
+
+## Pass 2 — the confirmation, at `916200a`
+
+Seven claims (`review_brief_163b.md`), the same three reviewers. OB3 re-ran the differential at
+9,036 runs (3 seeds × 6 `now` values × 2 caps): head vs `main` symmetric difference 0, and 72 for
+`f3c9f61` — the harness still sees the gap it was built for; Codex's independent 200-run
+differential: `ALL_DOOMED_SETS_IDENTICAL=True`. P1 (the predicate), P3 (the clocks are UTC), P4 (the
+refusal stamp changes nothing else — every reader of `finished_at` traced) and P5 (the fail-before
+matrix: exactly rounding/wrong-type/naive-now/refused fail against `f3c9f61`'s code; four behavioural
+failures and one ImportError against `main`'s) CONFIRMED by all three with artefacts.
+
+| # | Claim | Grok | OB3 | Codex | Decision |
+|---|---|---|---|---|---|
+| P2 | No exception escapes `retention_stamp` for a manifest `_load` accepts | REFUTED (the id) | REFUTED (the id) | REFUTED (the id) | **F7, accepted.** `_load` never read the id: the index key was the directory name, `Run.id` whatever the manifest said, and the fallback's `strptime(id[:15])` sat outside the `try`. A hand-edited id that is not a stamp raised out of every prune — the F2 hole on the other field, and a regression against `main`, whose string comparison could not raise. OB3 also measured a non-string id breaking `list()` (GET /runs and the usage pull 500) and an id that is a stamp but not its directory's name being doomed every hour and never leaving (`rmtree(_dir(run.id))`). The loader now refuses a manifest whose id is not its directory's name or does not parse, with the warning an unreadable manifest gets; 300 system-minted manifests reload identically (OB3's load-identity run). `test_a_hand_edited_id_does_not_stop_retention` |
+| P6 | The C8 rejection: no path yields `done` + no stamp; an unstamped run has no artefact | REFUTED — a SIGKILL between the file write and the `done` persist leaves files under a `failed` run | CONFIRMED (drove every terminal transition through the real RunManager; `done + None on disk: []`) | REFUTED — the same window; "the rejected protection could save concrete files" | **Rejection stands; the sentence was imprecise.** The window exists, but the download handler (`gsd/reporting/server.py`, the `run.status != "done"` check) answers 404 for any run that is not `done`, so the files under a restart-failed run are not servable by anyone — "no artefact" means no *servable* artefact, and that is what retention protects. Cursor's mtime-based stamp and Codex's delete-on-restart were both rejected: the first reinstates a stamp for a run that never completed, the second adds a deletion path for files the next prune removes anyway |
+| P7 | The five surfaces say the same thing | REFUTED | REFUTED | REFUTED | **F9, accepted.** Two docstring sentences and the CHANGELOG still said a queue refusal is unstamped — false at `916200a` — and the CHANGELOG contradicted itself in one entry; "every other terminal transition" was also wrong (the restart flip cannot stamp: the pod died at no known instant). Reworded per OB3's patch; Cursor's request that `values.yaml` and the README name the fallback added as one sentence each. Cursor's prose-agreement test rejected: it pins words, not behaviour |
+| N1 | (volunteered, OB3) the startup seed of the last-success gauge catches `ValueError` only | — | found | — | **Accepted.** The manifest F2 makes retention tolerate — a JSON number in `finished_at` on a done, scheduled run — raised `TypeError` out of `build_report_app`: a crashloop on the very input retention now survives. One token; `test_a_hand_edited_finished_at_does_not_crashloop_the_seed` |
+
+Validation, pass 2: `tests/test_reporting_server.py` 63 passed; full hermetic suite 3471 passed,
+13 skipped.

@@ -422,7 +422,7 @@ class TestTheArtifactStore:
         assert survivors == {"20260906T110000.000000Z-early", "20260906T110200.000000Z-fast2"}, \
             "the cap keeps the most recently COMPLETED runs, not the most recently requested"
 
-    # ---- Fix A (C2 / C4): the exact end-of-second predicate ------------------------------------------
+    # ---- F1 (review C2 / C4; OB3 pass-1 Fix A): the exact end-of-second predicate ----------------------
     def test_completion_rounding_can_never_delete_early(self, tmp_path):
         """#163. finished_at is persisted to whole seconds. A run that finished at exactly the cutoff second
         is aged from the END of that second, so it is NOT older than the bound — deleting it would be
@@ -449,7 +449,7 @@ class TestTheArtifactStore:
         mk("20260901T000001.000000Z-before", at_cutoff - timedelta(seconds=1))
         assert store.prune(scheduled_keep=2, scheduled_days=90, manual_days=3, manual_max_runs=500, now=now) == 1
 
-    # ---- Fix B (C1, volunteered): a wrong-typed finished_at must not stop retention ---------------------
+    # ---- F2 (review C1, OB3 Fix B): a wrong-typed finished_at must not stop retention -------------------
     def test_a_hand_edited_finished_at_of_the_wrong_type_does_not_stop_retention(self, tmp_path):
         """The manifest is a hand-readable JSON file and the loader is deliberately tolerant of its shape.
         A `finished_at` that is not a string (a JSON number, say) raised TypeError out of retention_stamp,
@@ -470,7 +470,38 @@ class TestTheArtifactStore:
         assert store.prune(scheduled_keep=2, scheduled_days=90, manual_days=3, manual_max_runs=500, now=now) == 2
         assert store.list(limit=10)[0] == []
 
-    # ---- Fix C (C5): the fallback pinned on the runs that actually take it (replaces test 4) ----------
+    def test_a_hand_edited_id_does_not_stop_retention(self, tmp_path):
+        """Review of #163, pass 2 (OB3, P2). `_load` never looked at the id, and `retention_stamp`'s
+        fallback parses `id[:15]`, so a manifest whose id was hand-edited to something that is not a
+        stamp — or not a string — raised ValueError/TypeError out of the first prune that reached it,
+        `_maybe_prune` swallowed it, and no run in the store was pruned again (main's string comparison
+        could not raise on it). An id that is a stamp but not its directory's name was doomed every hour
+        and never left: deletion is by `_dir(run.id)`. The loader refuses all three the way it refuses
+        an unreadable manifest — a warning, the directory left alone — and every other run still prunes."""
+        good = "20260701T000000.000000Z-good"
+
+        def manifest(dirname, **over):
+            m = Run(id=good, report="compliance-snapshot", cluster=CLUSTER, params={}, formats=["html"],
+                    generated_by="root", generated_by_note="n", schedule=None, requested_at="2026-07-01T00:00:00Z",
+                    status="failed", error="the report service restarted before this run finished").public()
+            m.update(over)
+            (tmp_path / dirname).mkdir()
+            (tmp_path / dirname / "run.json").write_text(json.dumps(m), encoding="utf-8")
+
+        manifest("garbage", id="garbage")                                            # not a stamp
+        manifest("20260801T000000.000000Z-num", id=20260801)                         # not a string
+        manifest("20260801T000000.000000Z-moved", id="20260801T000000.000000Z-else")  # a stamp, not this directory
+        manifest(good, status="done", error=None, finished_at="2026-07-01T00:00:05Z")
+        store = ArtifactStore(str(tmp_path))
+        assert [r.id for r in store.list(limit=10)[0]] == [good], "an id that is not its directory's stamp is not indexed"
+        now = datetime(2026, 9, 6, 12, 0, tzinfo=UTC)
+        assert store.prune(scheduled_keep=2, scheduled_days=90, manual_days=3, manual_max_runs=500, now=now) == 1
+        assert store.list(limit=10)[0] == []
+        assert sorted(p.name for p in tmp_path.iterdir()) == \
+            ["20260801T000000.000000Z-moved", "20260801T000000.000000Z-num", "garbage"], \
+            "the refused directories are the operator's to remove, never prune's"
+
+    # ---- F3 (review C5, OB3 Fix C): the fallback pinned on the runs that actually take it ---------------
     def test_a_run_that_never_completed_ages_from_its_id(self, tmp_path):
         """#163's documented fallback, on the runs that take it. `finished_at` has been in every manifest
         since the first release, so the fallback is not a legacy path: it is the run the pod died under
@@ -497,7 +528,7 @@ class TestTheArtifactStore:
         now = datetime(2026, 9, 6, 12, 0, tzinfo=UTC)
         assert store.prune(scheduled_keep=2, scheduled_days=90, manual_days=3, manual_max_runs=500, now=now) == 2
 
-    # ---- Fix D (optional, volunteered): a queue refusal is a terminal transition — stamp it ------------
+    # ---- F6 (OB3 Fix D, accepted): a queue refusal is a terminal transition — stamp it -----------------
     def test_a_run_refused_by_a_full_queue_is_stamped_finished(self, tmp_path):
         """Every terminal transition stamps finished_at — the render's `finally` and the window recheck
         (test_a_recheck_failed_run_is_counted_finished asserts it) — except the queue refusal in submit(),
@@ -1103,4 +1134,29 @@ class TestScheduleLastSuccessSurvivesRestart:
         line = next(l for l in m.splitlines()
                     if l.startswith('gsd_report_schedule_last_success_timestamp{schedule="nightly"}'))
         expect = datetime(2026, 9, 15, 9, 0, 5, tzinfo=UTC).timestamp()   # the newest DONE run's finished_at
+        assert abs(float(line.split()[-1]) - expect) < 1.0, line
+
+    def test_a_hand_edited_finished_at_does_not_crashloop_the_seed(self, tmp_path):
+        """Review of #163, pass 2 (OB3, volunteered). The seed skips a hand-edited stamp "not a crashloop" —
+        for the wrong SHAPE only: a JSON number raised TypeError out of build_report_app, so the one
+        manifest retention now tolerates (F2) restarted the pod for ever when its run was done and
+        scheduled. Skipped like a malformed one; the newest GOOD done run seeds the gauge."""
+        snapshots, artifacts = seeded_dirs(tmp_path)
+
+        def manifest(rid, fin):
+            m = Run(id=rid, report="groups", cluster=CLUSTER, params={}, formats=["html"],
+                    generated_by="schedule:nightly", generated_by_note="n", schedule="nightly",
+                    requested_at="2026-09-14T00:00:00Z", status="done", origin="schedule").public()
+            m["finished_at"] = fin
+            (artifacts / rid).mkdir()
+            (artifacts / rid / "run.json").write_text(json.dumps(m), encoding="utf-8")
+
+        manifest("20260915T090000.000000Z-edit", 1757926805)                  # newest, a JSON number
+        manifest("20260914T090000.000000Z-good", "2026-09-14T09:00:03Z")
+        app = build_report_app(_settings(snapshots, artifacts), secret=SECRET, clock=lambda: FROZEN)
+        with TestClient(app) as client:
+            m = client.get(f"{REPORT_PREFIX}/metrics").text
+        line = next(l for l in m.splitlines()
+                    if l.startswith('gsd_report_schedule_last_success_timestamp{schedule="nightly"}'))
+        expect = datetime(2026, 9, 14, 9, 0, 3, tzinfo=UTC).timestamp()
         assert abs(float(line.split()[-1]) - expect) < 1.0, line

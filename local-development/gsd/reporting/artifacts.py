@@ -63,13 +63,15 @@ _RUN_FIELDS = frozenset(f.name for f in fields(Run))
 def retention_stamp(run: Run) -> datetime:
     """When the artefact came into existence, for retention: `finished_at` (persisted to whole seconds by
     the worker), or, for a run that never completed, the request time the id encodes. `finished_at` has
-    been in every manifest since the first release, so the fallback is not a legacy path — it is LIVE:
-    the run the pod died under (`_load` marks it failed; there is no completion to stamp) and the run a
-    full queue refused (`RunManager.submit` fails it without a stamp). Both sources are UTC and
-    second-precision; the id's fraction is dropped so they compare alike. A hand-edited stamp — the
-    wrong shape, or not a string at all — is skipped like a missing one, never raised: `_maybe_prune`
-    swallows every exception, so one bad manifest would otherwise switch retention off for the whole
-    store. The id is NOT the retention key (#163): it is minted at request time, and a run that waited
+    been in every manifest since the first release, so the fallback is not a legacy path — it is LIVE
+    for the run the pod died under (`_load` marks it failed; the instant it died is unknown, so there is
+    no completion to stamp), and for a run a full queue refused before `RunManager.submit` stamped the
+    refusal (manifests written by 0.24.0 and earlier). Both sources are UTC and second-precision; the
+    id's fraction is dropped so they compare alike. A hand-edited stamp — the wrong shape, or not a
+    string at all — is skipped like a missing one, never raised: `_maybe_prune` swallows every
+    exception, so one bad manifest would otherwise switch retention off for the whole store. The id
+    itself is validated by `_load` (its first 15 characters must parse), so the fallback cannot raise
+    either. The id is NOT the retention key (#163): it is minted at request time, and a run that waited
     is older by id than by artefact."""
     if run.finished_at:
         try:
@@ -100,7 +102,17 @@ class ArtifactStore:
                 data = json.loads(manifest.read_text(encoding="utf-8"))
                 # Drop keys this build does not know (a newer manifest on rollback) rather than let
                 # Run(**data) TypeError and silently lose the run from the index (design §5).
-                self._runs[d.name] = Run(**{k: v for k, v in data.items() if k in _RUN_FIELDS})
+                run = Run(**{k: v for k, v in data.items() if k in _RUN_FIELDS})
+                # The id names the directory (deletion is `rmtree(_dir(run.id))`) and is the retention
+                # date of last resort (`retention_stamp` parses `id[:15]`). A hand-edited id that is not
+                # the directory's name, or not a stamp, raised out of every prune — and `_maybe_prune`
+                # swallows that, so ONE manifest switched retention off for the whole store (review of
+                # #163, pass 2). Refused here with the warning an unreadable manifest gets; the
+                # directory is left for the operator.
+                if run.id != d.name:
+                    raise ValueError(f"manifest id {run.id!r} is not the directory's name")
+                datetime.strptime(d.name[:15], "%Y%m%dT%H%M%S")
+                self._runs[d.name] = run
             except (OSError, ValueError, TypeError) as exc:
                 log.warning("skipping unreadable run manifest %s: %s", manifest, exc)
         # A run that was 'running' when the pod died is failed, and the manifest says so.
@@ -204,10 +216,11 @@ class ArtifactStore:
         delete an artefact seconds old, and "newest" ranked a fast late request above a slow early one.
         Retention protects an artefact, and the artefact exists from completion. Both tiers use the one
         stamp (`retention_stamp`), so the semantic is the same everywhere; a run that never completed
-        (refused by a full queue, or the pod died under it) falls back to the id. Queued/running runs are
-        never doomed: they are still the worker's, and deleting their directory made GET /runs/{id} a 404
-        after a 202 while the worker skipped them silently (review of C3, Cursor). Deletion is by run
-        directory, so the index and the disk cannot disagree for long."""
+        (the pod died under it, or a full queue refused it before this release stamped the refusal) falls
+        back to the id. Queued/running runs are never doomed: they are still the worker's, and deleting
+        their directory made GET /runs/{id} a 404 after a 202 while the worker skipped them silently
+        (review of C3, Cursor). Deletion is by run directory, so the index and the disk cannot disagree
+        for long."""
         overrides = overrides or {}
         if now.tzinfo is None:
             # The stamps are aware (UTC). Comparing one against a naive `now` raises TypeError, and
