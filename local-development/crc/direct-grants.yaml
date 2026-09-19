@@ -1,0 +1,91 @@
+# The hand-made grants the dashboard's risk story runs on — the "Exposure by namespace" table, the
+# unmanaged-grant discovery, the auditor persona. Deliberately OUTSIDE the policy system: none of these
+# carries rbac.ocp.io/config-source, because a grant the operator did not make is exactly what the
+# dashboard exists to surface. Read off the old cluster's Namespace-audit tab on 2026-09-18
+# (reports/2026-09-18_design-programme-release/screenshots/06-namespace-audit.png, the Exposure table:
+# highest privilege, people, grants) after the move found none of them committed.
+#
+#   oc apply -f local-development/crc/direct-grants.yaml
+#
+# Users named here need no User object: RBAC binds a name, and jdoe / asmith / bwilliams /
+# tmp-contractor-9931 exist only as names, which is the "person who left" the risk copy describes.
+# The console's own per-login view bindings in openshift-console-user-settings are NOT here — the
+# console creates them as people log in, and the walk's logins recreate them.
+#
+# cluster-reader -> dana.lee is the one the operator ruled permanent (2026-08-10, memory
+# deliberate-unmanaged-bindings): the auditor persona holds cluster-reader, not cluster-admin, and the
+# dashboard counts it as a direct user grant on purpose — that is the audit working, not drift.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: cluster-reader
+subjects:
+  - kind: User
+    name: dana.lee
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: ClusterRole
+  name: cluster-reader
+  apiGroup: rbac.authorization.k8s.io
+---
+# The second cluster-wide direct grant the table showed (highest privilege edit, 2 people: dana.lee, jdoe).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: jdoe-edit
+subjects:
+  - kind: User
+    name: jdoe
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: ClusterRole
+  name: edit
+  apiGroup: rbac.authorization.k8s.io
+---
+# legacy-payments: admin, 3 people, 3 grants — High.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: asmith-admin
+  namespace: legacy-payments
+subjects:
+  - {kind: User, name: asmith, apiGroup: rbac.authorization.k8s.io}
+roleRef: {kind: ClusterRole, name: admin, apiGroup: rbac.authorization.k8s.io}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: bwilliams-admin
+  namespace: legacy-payments
+subjects:
+  - {kind: User, name: bwilliams, apiGroup: rbac.authorization.k8s.io}
+roleRef: {kind: ClusterRole, name: admin, apiGroup: rbac.authorization.k8s.io}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: jdoe-admin
+  namespace: legacy-payments
+subjects:
+  - {kind: User, name: jdoe, apiGroup: rbac.authorization.k8s.io}
+roleRef: {kind: ClusterRole, name: admin, apiGroup: rbac.authorization.k8s.io}
+---
+# legacy-reporting: edit, 2 people, 2 grants — Medium. tmp-contractor-9931 is the contractor who left.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: jdoe-edit
+  namespace: legacy-reporting
+subjects:
+  - {kind: User, name: jdoe, apiGroup: rbac.authorization.k8s.io}
+roleRef: {kind: ClusterRole, name: edit, apiGroup: rbac.authorization.k8s.io}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: tmp-contractor-9931-edit
+  namespace: legacy-reporting
+subjects:
+  - {kind: User, name: tmp-contractor-9931, apiGroup: rbac.authorization.k8s.io}
+roleRef: {kind: ClusterRole, name: edit, apiGroup: rbac.authorization.k8s.io}

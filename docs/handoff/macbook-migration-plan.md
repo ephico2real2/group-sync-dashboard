@@ -69,6 +69,7 @@ type or click it and there is no way around that, usually because it is interact
 | 4.7 | cert-manager operator | Manual | subscription plus the ClusterIssuer pair |
 | 4.8 | deploy the app | **Script** | `release-crc.sh` — builds, pushes, deploys and verifies the commit in-pod. The one fully automated step |
 | 4.9 | re-apply the mock cluster | **Script** | `deploy-mock.sh` — was the slowest manual part of the move until 2026-09-18; now one command, with `--verify` |
+| 4.9b | application namespaces and hand-made grants | **Script** | three `oc apply` lines and two labels; everything the dashboard's tabs and the NCO policies act on |
 | 4.10 | LDAP lab and cluster trust | Manual | only if you need LDAP. `setup-local-ldap-testing/` plus `MISSING-STEPS.md` for what the seeds do not create |
 | 4.3b | restore the Claude Code setup | **Script** | two scripts in order: the repo root's `restore.sh`, then `2026-09-18-design-programme/restore.sh`. Proven against an empty home |
 | 5 | verification | **Script** | the check block, then `capture-screenshots.py` for the pictures |
@@ -588,6 +589,34 @@ oc set volume deploy/group-sync-dashboard --add --name mock-creds \
 > The committed `DESIGN_mock_cluster.md` / `mock-app/README.md` describe a **self-generated ephemeral
 > CA** — that **diverges** from the live wiring (cert-manager Issuers/Certificates, CA hand-copied into
 > `mock-cluster-creds`). Follow §4.9 above, not the doc verbatim.
+
+### 4.9b — The application namespaces and the hand-made grants (found missing on the M5 Pro, 2026-09-19)
+
+The old cluster had **110 namespaces**, and the ones the dashboard's Namespaces tab, the namespace-access
+selector and the NCO baseline policies act on — `demo-*`, `beta-*`, `jeff-*`, `gsd-preexist`, the
+`legacy-*` direct-grant demo, `oud-poc-spark` — had all been created by hand and were committed nowhere.
+The rebuild found only the `klt-*` Kyverno fixtures. The list was read off the old cluster's own
+Namespace-audit screenshot (`reports/2026-09-18_design-programme-release/screenshots/06-namespace-audit.png`,
+MNEMONIC and APP-ENVIRONMENT columns) and is committed now, in three places:
+
+```sh
+# 1) the RBAC repo's own namespaces (spar-*, trno-*, oud-poc-{trino,crossfamily,platform}) and the klt-* fixtures
+cd ~/gitRepos/openshift-rbac-automation/working-sessions/policies
+oc apply -f bda-namespace.yaml -f oud-group-namespace.yaml -f kyverno-label-test-namespaces.yaml
+# 2) the dashboard's lab namespaces, labelled as the old cluster had them
+cd "$NDASH"
+oc apply -f local-development/crc/namespaces.yaml
+oc label ns group-sync-dashboard company.net/mnemonic=gsd --overwrite   # Helm-created namespaces: a label, not a manifest
+oc label ns group-sync-operator  company.net/mnemonic=gso --overwrite
+# 3) the hand-made grants the Exposure table and the auditor persona run on — outside the policy system on purpose
+oc apply -f local-development/crc/direct-grants.yaml
+```
+
+Measured after applying: NCO bound the synced groups **row for row as the screenshot's "via groups"
+column** (beta-prod 1, beta-rnd/uat 2, demo-prod and demo-production 1, demo-qa/rnd/uat 2, jeff-qa/rnd 2,
+oud-poc-spark 1, oud-poc-trino 1); `dana.lee` can list nodes and is not cluster-admin. The console's
+per-login `view` bindings in `openshift-console-user-settings` are not in any file — the console makes
+them as people log in.
 
 ### 4.10 — LDAP lab + cluster-wide trust (only if the LDAP integration is needed)
 
