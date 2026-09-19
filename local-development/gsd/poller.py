@@ -575,9 +575,10 @@ class Poller:
     """Runs one polling thread per enabled cluster."""
 
     def __init__(self, store: StorageBackend, settings: Settings,
-                 elector: LeaderElector | None = None, signals=None):
+                 elector: LeaderElector | None = None, signals=None, system_monitor=None):
         self.store = store
         self.settings = settings
+        self.system_monitor = system_monitor
         # The process-event metrics seam (gsd/metrics.py RuntimeSignals), duck-typed and
         # optional so this module never imports the metrics module and every existing
         # caller keeps working. Reports poll durations, backup failures and — passed
@@ -742,6 +743,11 @@ class Poller:
         self.store.maintain()
         self._maybe_backup()
         self._prune_history(cluster)
+        self._rollup_kpi(cluster)
+        if self.system_monitor is not None:
+            # A CPU baseline once a cycle, so a page's rate spans at most one poll interval rather
+            # than the gap between two page requests (gsd/kpi/system.py#SystemMonitor).
+            self.system_monitor.view()
         # Reporting rides the same tail: the snapshot after the checkpoint (so the copy is the
         # smallest it can be), the usage pull after that. _run_cluster's leadership check is a
         # cycle old after the poll's network I/O, so re-check before each operation. Both checks are
@@ -755,6 +761,29 @@ class Poller:
             log.warning("%s: report usage pull skipped; leadership was lost after the snapshot", cluster.name)
             return
         self._pull_report_usage()
+
+    def _rollup_kpi(self, cluster: ClusterConfig) -> None:
+        """The daily KPI rollup (#156): the leader writes today's row for this cluster once, after
+        the day's first successful poll, and prunes rows past the rollup's retention. Best-effort
+        like retention: a rollup failure is logged and the poll continues."""
+        if self.elector is not None and not self.elector.is_leader:
+            return
+        try:
+            from .kpi import rollup
+            # Only after a SUCCESSFUL poll: _after_poll runs on every outcome, and the day's first
+            # cycle can be an `unreachable` at 00:01 — its row would be yesterday's counts under
+            # today's date, and INSERT OR IGNORE would keep it (review of #156, Grok).
+            outcome = next((r["status"] for r in self.store.clusters() if r["id"] == cluster.name), None)
+            if outcome != OK:
+                return
+            if rollup.write_if_due(self.store, cluster.name):
+                removed = rollup.prune(self.store, cluster.name)
+                if removed:
+                    if self.signals is not None:
+                        self.signals.note_retention("kpi_daily", removed)
+                    log.info("%s: pruned %d kpi_daily row(s)", cluster.name, removed)
+        except Exception:  # noqa: BLE001 - the rollup must never stop the poll
+            log.exception("%s: daily KPI rollup failed; the poll continues", cluster.name)
 
     def _maybe_report_snapshot(self) -> None:
         """A fresh read-only copy for the report pod, at most every reporting_snapshot_interval_seconds.
@@ -806,6 +835,11 @@ class Poller:
                 added = self.store.record_report_runs(body["runs"], now_iso())
                 if added:
                     log.debug("recorded %d report run(s) from the report service", added)
+                # The report service's self-reported system usage rides the feed (#156); a feed
+                # without it (an older build) clears the last one rather than leaving it stale.
+                if self.signals is not None:
+                    system = body.get("system")
+                    self.signals.note_report_system(system if isinstance(system, dict) else None, now_iso())
                 if not body.get("truncated"):
                     break
                 # A truncated page must move the cursor, or the bounded loop spends its remaining

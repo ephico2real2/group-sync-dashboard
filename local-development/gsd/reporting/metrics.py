@@ -56,8 +56,11 @@ class ReportSignals:
 
 
 class ReportCollector:
-    def __init__(self, signals: ReportSignals, store, runs, snapshot_dir: str, snapshot_probe):
+    def __init__(self, signals: ReportSignals, store, runs, snapshot_dir: str, snapshot_probe,
+                 system=None, volume: str | None = None):
         self.signals, self.store, self.runs, self.snapshot_dir, self.snapshot_probe = signals, store, runs, snapshot_dir, snapshot_probe
+        # The KPI module's sources (#156): this process's cgroup sampler and the artefact volume.
+        self.system, self.volume = system, volume
 
     def collect(self):
         snap = self.signals.snapshot()
@@ -102,9 +105,17 @@ class ReportCollector:
         info = GaugeMetricFamily("gsd_report_build_info", "Version of the report service (always 1).", labels=["version"])
         info.add_metric([__version__], 1)
         yield info
+        # The KPI module's public families under component="report" (#156): the process's own cgroup
+        # and volume. The churn counters need the dashboard's store and are absent here by construction
+        # — no store, no signals — declared empty, never sampled.
+        from ..kpi import COMPONENT_REPORT, Context
+        from ..kpi.definitions import PUBLIC_KPIS
+        from ..kpi.render_prom import render
+        yield from render(PUBLIC_KPIS, Context(component=COMPONENT_REPORT, system=self.system, volume=self.volume))
 
 
-def build_report_registry(signals: ReportSignals, store, runs, snapshot_dir: str, snapshot_probe) -> CollectorRegistry:
+def build_report_registry(signals: ReportSignals, store, runs, snapshot_dir: str, snapshot_probe,
+                          system=None, volume: str | None = None) -> CollectorRegistry:
     reg = CollectorRegistry()
-    reg.register(ReportCollector(signals, store, runs, snapshot_dir, snapshot_probe))
+    reg.register(ReportCollector(signals, store, runs, snapshot_dir, snapshot_probe, system=system, volume=volume))
     return reg

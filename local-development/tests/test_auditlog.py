@@ -175,6 +175,20 @@ class TestIdentityClassification:
         assert row["identity_match"] is None and row["outcome"] == loginlog.OUTCOME_FAILED
         assert row["status_code"] == 401 and "Authentication failed" in row["detail"]
 
+    def test_a_path_provider_the_oauth_cr_does_not_configure_is_not_a_provider(self):
+        """The path is the client's text — POST /login/<anything> — and the column it fills is the
+        `provider` label of gsd_login_attempts_total on the unauthenticated /metrics (#156), so only
+        a name the OAuth CR configures may reach it; otherwise the identity match, as a CLI login
+        already does. An unreadable CR trusts the path, as identity_match_for trusts the Identity
+        (OB3, review of #156)."""
+        index = IdentityIndex({"user1.example": ["ldap-local:x"]}, {"developer", "ldap-local"}, ())
+        at = datetime.now(UTC)
+        row = audit_event_dict(parse_audit_line(_event("user1.example", "deny", at, uri="/login/evil%2Fx")), NODE, "x", index)
+        assert row["provider"] == "ldap-local" and row["identity_match"] == "ldap-local"
+        assert audit_event_dict(parse_audit_line(_event("nobody", "deny", at, uri="/login/" + "A" * 40)), NODE, "x", index)["provider"] is None
+        assert audit_event_dict(parse_audit_line(_event("nobody", "deny", at, uri="/login/developer")), NODE, "x", index)["provider"] == "developer"
+        assert audit_event_dict(parse_audit_line(_event("nobody", "deny", at, uri="/login/whatever")), NODE, "x", IdentityIndex({}, None, ()))["provider"] == "whatever"
+
 
 class TestLinesAndNames:
     def test_only_whole_lines_are_consumed(self):

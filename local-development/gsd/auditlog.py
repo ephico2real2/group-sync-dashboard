@@ -301,13 +301,27 @@ class IdentityIndex:
                                 self.plain_suffix_providers)
 
 
+def configured_path_provider(name: str | None, index: IdentityIndex | None) -> str | None:
+    """The provider `/login/<idp>` names, if the OAuth CR configures it; else None.
+
+    The path is the CLIENT's text — a POST to /login/<anything> — and the column it fills is
+    exported as the `provider` label of gsd_login_attempts_total on the unauthenticated /metrics
+    (gsd/kpi/definitions.py), so an unconfigured name must be dropped here, not exported. With no
+    index, or a CR that could not be read (`configured` None), the path is trusted — the same
+    choice identity_match_for makes for an Identity's provider (OB3, review of #156)."""
+    if name is None or index is None or index.configured is None:
+        return name
+    return name if name in index.configured else None
+
+
 def audit_event_dict(login: AuditLogin, node: str, observed_at: str, index: IdentityIndex | None = None) -> dict:
     """The store row for an audit login — gsd/logincapture.py#event_dict's shape, plus the columns
     this source owns. `pod_name` carries the NODE: it is "the unit of log this was read from" in
     the dedup key, and a node is that unit here. The provider is the path's when the path names
-    one, else the identity match (a CLI login names none, and its User's Identity does)."""
+    one the OAuth CR configures (configured_path_provider), else the identity match (a CLI login
+    names none, and its User's Identity does)."""
     match = index.match(login.user_name) if index is not None else None
-    provider = login.provider or match
+    provider = configured_path_provider(login.provider, index) or match
     reason = "" if login.decision == "allow" else (
         f" — {login.error_message}" if login.error_message else " (the audit log records no cause)")
     target = login.client_id if login.kind != KIND_CREDENTIAL else login.request_path

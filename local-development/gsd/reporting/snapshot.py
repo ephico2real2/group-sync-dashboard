@@ -31,6 +31,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from ..kpi.predicates import GROUP_EMPTY, GROUP_UNATTRIBUTED
 from ..store import Store, _MIGRATIONS, _harden
 
 log = logging.getLogger(__name__)
@@ -524,8 +525,10 @@ class Snapshot:
         one = lambda sql, *p: int((self._row(sql, (cluster_id, *p)) or {"n": 0})["n"] or 0)  # noqa: E731
         return {
             "groups": one("SELECT COUNT(*) AS n FROM group_state WHERE cluster_id=?"),
-            "empty_groups": one("SELECT COUNT(*) AS n FROM group_state WHERE cluster_id=? AND member_count=0"),
-            "unattributed_groups": one("SELECT COUNT(*) AS n FROM group_state WHERE cluster_id=? AND sync_provider IS NULL"),
+            # The dashboard's own predicates (gsd/kpi/predicates.py), so the signed figure and the
+            # KPI band count the same groups.
+            "empty_groups": one(f"SELECT COUNT(*) AS n FROM group_state WHERE cluster_id=? AND {GROUP_EMPTY}"),
+            "unattributed_groups": one(f"SELECT COUNT(*) AS n FROM group_state WHERE cluster_id=? AND {GROUP_UNATTRIBUTED}"),
             "members": one("SELECT COUNT(DISTINCT user_name) AS n FROM group_member WHERE cluster_id=?"),
             "users": one("SELECT COUNT(*) AS n FROM ocp_user WHERE cluster_id=?"),
             "users_logged_in": one("SELECT COUNT(*) AS n FROM ocp_user WHERE cluster_id=? AND has_identity=1"),
