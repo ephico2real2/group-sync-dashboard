@@ -76,8 +76,8 @@ def build_report_app(settings: ReportSettings, *, secret: bytes | None = None, c
         if _r.status == "done" and _r.schedule and _r.finished_at and _r.schedule not in _seeded:
             try:
                 _when = datetime.strptime(_r.finished_at, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC).timestamp()
-            except ValueError:
-                continue                                            # a hand-edited timestamp is skipped, not a crashloop
+            except (ValueError, TypeError):
+                continue                                            # a hand-edited timestamp, of any shape or type, is skipped, not a crashloop
             _seeded.add(_r.schedule)
             signals.note_schedule_success(_r.schedule, _when)
 

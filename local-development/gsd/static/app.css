@@ -35,13 +35,21 @@
   /* 4.56:1 on --page. Was #898781 at 3.41:1, which failed WCAG 1.4.3 for normal text —
      and this token colours table headers, KPI labels, axis text and every empty state,
      so it was the single most widespread contrast failure on the page. */
-  --text-muted: #74726d;
+  /* 5.42:1 on the card, 4.76:1 on a HOVERED row. Held to the row surfaces, not the card: the
+     drill's chevron and .change-baseline sit in zebra and hovered cells, and #74726d measured
+     4.44 on zebra and 4.11 on hover — a text token that passes on the card and fails where the
+     text actually is (#184). */
+  --text-muted: #6a6863;
   --gridline: #e1e0d9;
   --baseline: #c3c2b7;
   --border: rgba(11, 11, 11, 0.10);
-  /* 4.55:1. Used as link text (.drill, .back) as well as the chart stroke, so it has to
-     clear the 4.5 text bar, not just the 3:1 for graphical objects. */
+  /* The chart stroke and the owner dot — a graphical object, 3:1. It USED to be the link colour
+     too, at 4.55:1 on the card; measured on the rows the links actually sit in, it was 4.32 on
+     zebra and 3.99 on hover (#184), so links have their own token below. */
   --series-1: #2874d0;
+  /* Link text (.drill, .back), held to 4.5:1 on EVERY surface a link sits on: 5.65 card,
+     5.36 zebra, 4.96 hovered row (Codex's measurement in the review of #183, confirmed). */
+  --drill-text: #1a65bb;
   --series-1-wash: color-mix(in srgb, var(--series-1) 10%, transparent);
   /* status-good and status-critical are BOTH a badge glyph and running text
      (.change-added / .change-removed / .err), so both are held to 4.5:1. status-warning is
@@ -175,11 +183,12 @@
     --text-primary: #ffffff;
     --text-secondary: #c3c2b7;
     --status-warning-edge: #c48704;
-    --text-muted: #898781;
+    --text-muted: #918f89;  /* 5.39 card / 4.92 zebra / 4.79 hover; #898781 was 4.43 / 4.32 on the rows (#184) */
     --gridline: #2c2c2a;
     --baseline: #383835;
     --border: rgba(255, 255, 255, 0.10);
     --series-1: #3987e5;
+    --drill-text: #4b97ed;  /* 5.76 card / 5.27 zebra / 5.13 hover; series-1 was 4.38 / 4.26 on the rows (#184) */
     --series-1-wash: color-mix(in srgb, var(--series-1) 14%, transparent);
     --series-2: #d95926;
     --series-3: #199e70;
@@ -228,11 +237,12 @@
   --text-primary: #ffffff;
   --text-secondary: #c3c2b7;
   --status-warning-edge: #c48704;
-  --text-muted: #898781;
+  --text-muted: #918f89;  /* 5.39 card / 4.92 zebra / 4.79 hover; #898781 was 4.43 / 4.32 on the rows (#184) */
   --gridline: #2c2c2a;
   --baseline: #383835;
   --border: rgba(255, 255, 255, 0.10);
   --series-1: #3987e5;
+  --drill-text: #4b97ed;  /* 5.76 card / 5.27 zebra / 5.13 hover; series-1 was 4.38 / 4.26 on the rows (#184) */
   --series-1-wash: color-mix(in srgb, var(--series-1) 14%, transparent);
   --series-2: #d95926;
   --series-3: #199e70;
@@ -652,7 +662,7 @@ tbody tr:nth-child(even) td { background: var(--zebra); }
    itself, and needs no keydown shim to emulate any of it. Reset to look like text. */
 .drill {
   background: none; border: 0; padding: 0; margin: 0; font: inherit; text-align: left;
-  color: var(--series-1); cursor: pointer;
+  color: var(--drill-text); cursor: pointer;
   text-decoration: underline; text-decoration-style: dotted;
   text-underline-offset: 3px; text-decoration-color: var(--baseline);
 }
@@ -661,7 +671,7 @@ tbody tr:nth-child(even) td { background: var(--zebra); }
    navigates by had no focus ring at all. The underline going solid is a supplement to the
    ring, never a replacement for it. */
 .drill:hover, .drill:focus-visible {
-  text-decoration-style: solid; text-decoration-color: var(--series-1);
+  text-decoration-style: solid; text-decoration-color: var(--drill-text);
 }
 .drill::after { content: " ›"; color: var(--text-muted); }
 .change-baseline { color: var(--text-muted); font-weight: 600; }   /* first observed: not an addition, not the added colour (review of #167, pass 2) */
@@ -714,7 +724,7 @@ svg .hit { fill: transparent; cursor: pointer; }
 }
 
 .empty-note { color: var(--text-muted); font-size: var(--text-md); padding: var(--space-5) 0; }
-.back { background: none; border: 0; padding: 0; color: var(--series-1); cursor: pointer; font-size: var(--text-md); }
+.back { background: none; border: 0; padding: 0; color: var(--drill-text); cursor: pointer; font-size: var(--text-md); }
 .filterbar-note { font-size: var(--text-sm); color: var(--text-muted); }
 code { font-family: var(--font-mono); font-size: var(--text-sm); }
 .err { color: var(--status-critical); }
