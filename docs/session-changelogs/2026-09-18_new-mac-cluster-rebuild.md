@@ -205,7 +205,7 @@ Outcome in one line: **the lab rebuilt on the M5 Pro from the charts' values fil
   `dashboard reports the mock cluster ok`) — the #197 fix on the merged tree.
 - The operator's rulings this session: the GitOps chart's review can wait; OB3 runs at `effort: max`.
 
-## Part 8 — the issue list, from the top (2026-09-19 08:3x → ) — PRs #200, #201, #202, #203, #205, #206
+## Part 8 — the issue list, from the top (2026-09-19 08:3x → ) — PRs #200, #201, #202, #203, #205, #206, #207
 
 Post-merge, the operator's "now let us look our issues and what is pending and start to complete the
 issues". Small PRs first (#200 the vault fallback for `registry-creds.sh`; #201 the new CRC's namespaces
@@ -235,6 +235,28 @@ that carry code: #202 (#163) and #206 (#156).
   are not servable: the download handler answers 404 for any run not `done`); Cursor's prose-agreement test.
 - Measured: reporting suite 61 → 63 passed; full hermetic suite 3468 → 3471 passed, 13 skipped. Both
   passes' decisions are on the PR (comments of 2026-09-19).
+
+### #156 — the KPI module (2026-09-19 11:3x → 15:0x) — commits `8c946d2`, `a7d2f58`, `8b89b0c`, `c245897`, `64bb82f`, PR #206
+
+- `gsd/kpi/`: one definition per KPI with a privacy class the Prometheus renderer enforces (it REFUSES
+  an internal definition); cgroup v2 self-report for both pods under `component`; churn and login
+  counters accumulated from the event tables under an id watermark; `kpi_daily` (migration 15) written
+  by the leader once a day; the group predicates spelled once and read by the store, the snapshot and,
+  after review, the Groups report. Measured on CRC at `8c946d2`: dashboard 81 MB of 512Mi, 0.5 CPU, 5 of
+  120 periods throttled; report 62 MB of 768Mi; `/api/kpi` 200 at the wide tier, 403 for `jdoe`.
+- **Found by the live check** (before any report landed): a CPU rate minted over 0.0 s between the two
+  cluster threads' usage pulls — a 5 s floor and a per-cycle baseline (`a7d2f58`). The operator's
+  "everything as designed in our kpi mock up" → own bytes, report volume and the timeline start added
+  (`8b89b0c`).
+- **Review pass 1** (Grok, Codex, OB3 — `docs/REVIEW_kpi_module.md`): **found by all three** the `provider`
+  label had no bound of the dashboard's own — bounded to the Identity-derived providers plus `unknown`
+  (else `other`), and at the source by OB3's `configured_path_provider` after it drove `/login/evil%2Fx`
+  into the column; **found by Grok and Codex** zeros from a partial `cpu.stat`, a zero period that 500'd
+  `/api/kpi` and the usage feed, an unclamped throttled share, the rollup running after a FAILED poll,
+  the Groups report's fourth spelling of the predicates; **found by Grok, Codex and OB3** the watermark
+  queries scanning the cluster per scrape (OB3: measured at 300k rows) — migration 16. **Rejected:**
+  pruning by watermark, a two-value anonymised provider class, a separate retention family.
+- Measured: `tests/test_kpi.py` 28 → 37; full hermetic suite 3512 → 3522 passed, 13 skipped.
 
 ---
 
