@@ -16,6 +16,9 @@
 #
 # This file never prints a secret. --check prints lengths only.
 #
+# Precedence: the environment (CI) > the local podman login > the vaulted copy in the private
+# claude-config repository (needs ~/.vault-key). The last is what makes a new machine one command.
+#
 # The CRC internal registry does NOT come through here: release-crc.sh logs in with
 # `oc whoami -t`, a token minted at login rather than a stored password.
 
@@ -70,8 +73,37 @@ PY
   unset _rc_creds
 fi
 
+# No local login yet: the vaulted copy, if this machine holds the key. The ciphertext lives in the
+# private claude-config repository (`gh repo clone ephico2real2/claude-config`), encrypted with
+# ~/.claude/tools/vault.sh and a passphrase only the operator has; decrypting it here is how a NEW
+# machine gets the credential without anyone typing the token again (2026-09-19). The file is the
+# `auths` entry podman itself writes, so the same parser reads it. Read to stdout only — nothing is
+# written to disk — and it is a fallback: a `podman login` on this machine always wins above.
+if [ -z "${REGISTRY_USERNAME:-}" ] || [ -z "${REGISTRY_PASSWORD:-}" ]; then
+  _rc_vault="${REGISTRY_CREDS_VAULT:-$HOME/gitRepos/claude-config/2026-09-18-design-programme/secrets/quay-robot.json.vault}"
+  if [ "$REGISTRY" = "quay.io" ] && [ -f "$_rc_vault" ] && [ -x "$HOME/.claude/tools/vault.sh" ]; then
+    _rc_creds=$("$HOME/.claude/tools/vault.sh" view "$_rc_vault" 2>/dev/null | REGISTRY="$REGISTRY" python3 -c '
+import base64, json, os, sys
+reg = os.environ["REGISTRY"]
+entry = json.load(sys.stdin).get("auths", {}).get(reg) or {}
+if entry.get("auth"):
+    user, _, pw = base64.b64decode(entry["auth"]).decode("utf-8").partition(":")
+    if user and pw:
+        print(user); print(pw); sys.exit(0)
+sys.exit(1)
+') && {
+      REGISTRY_USERNAME=$(printf '%s\n' "$_rc_creds" | sed -n 1p)
+      REGISTRY_PASSWORD=$(printf '%s\n' "$_rc_creds" | sed -n 2p)
+      _rc_source_of_truth="the vault (${_rc_vault##*/}, decrypted with ~/.vault-key)"
+    }
+    unset _rc_creds
+  fi
+  unset _rc_vault
+fi
+
 if [ -z "${REGISTRY_USERNAME:-}" ] || [ -z "${REGISTRY_PASSWORD:-}" ]; then
   echo "no credential for ${REGISTRY}. Run:  podman login ${REGISTRY}" >&2
+  echo "   (or, on a new machine: clone ephico2real2/claude-config, recreate ~/.vault-key, and run this again)" >&2
   [ "$_rc_sourced" = "1" ] && return 1 || exit 1
 fi
 export REGISTRY_USERNAME REGISTRY_PASSWORD
