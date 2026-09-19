@@ -2452,7 +2452,11 @@ class TestLookup:
         fresh Groups tab the line is the plain door, and the counts appear only for a kind this session already
         holds (the audit tab visited first). Either way the text is carried to the lookup."""
         dash.click("#tab-groups")
-        dash.wait_for_selector("#f-group-search")
+        # The tab's OWN cycle must land before fetch is hooked: the click paints first and fetches
+        # after an await, so a hook installed on the search box's appearance recorded the tab's
+        # burst as "typing fetched" whenever the machine was quick — green on CI's main by timing,
+        # red on a laptop and on #207's run. The rows are the proof the burst has completed.
+        dash.wait_for_selector("tr[data-group]")
         dash.evaluate("() => { window.__urls = []; const f = window.fetch;"
                       " window.fetch = (...a) => { window.__urls.push(String(a[0])); return f(...a); }; }")
         dash.fill("#f-group-search", "demo")
