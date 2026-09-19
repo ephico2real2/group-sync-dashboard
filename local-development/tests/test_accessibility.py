@@ -60,6 +60,32 @@ def _block(css: str, pattern: str) -> dict[str, str]:
 PALETTES = ("default", "deuter", "protan", "trit", "contrast")
 
 
+def _rgba(css: str, theme: str, token: str) -> tuple[float, float, float, float]:
+    """A translucent token (`--zebra: rgba(r, g, b, a)`) from the theme's block — the light block for
+    "light", the explicit dark block for "dark" (its OS-dark twin is held identical by
+    test_the_os_dark_palette_twins_match)."""
+    block = re.search(r":root\s*\{(.*?)\n\}", css, re.S) if theme == "light" \
+        else re.search(r':root\[data-theme="dark"\]\s*\{(.*?)\n\}', css, re.S)
+    assert block, f"no token block for {theme}"
+    m = re.search(rf"--{token}:\s*rgba\((\d+),\s*(\d+),\s*(\d+),\s*([0-9.]+)\)", block.group(1))
+    assert m, f"--{token} is not an rgba() in the {theme} block — the row-surface maths assumes it is"
+    return tuple(float(v) for v in m.groups())
+
+
+def _rgb(hex_colour: str) -> tuple[int, int, int]:
+    h = hex_colour.lstrip("#")
+    return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
+
+
+def _over(rgba: tuple[float, float, float, float], under: str) -> str:
+    """Source-over compositing of a translucent colour on an opaque one, as the browser paints a
+    zebra cell: result = a*over + (1-a)*under, per channel, rounded to the nearest 8-bit value."""
+    r, g, b, a = rgba
+    return "#%02x%02x%02x" % tuple(round(a * c + (1 - a) * u) for c, u in zip((r, g, b), _rgb(under)))
+
+
+
+
 def _palette_block(css: str, theme: str, palette: str) -> dict[str, str]:
     """The tokens a palette overrides for one theme (#152). Light palettes are `:root[data-palette]`;
     dark ones are the explicit `:root[data-theme="dark"][data-palette]` block — the OS-dark twin
@@ -83,6 +109,17 @@ def themes():
     for theme, base in (("light", light), ("dark", dark)):
         for palette in PALETTES[1:]:
             out[f"{theme}/{palette}"] = {**base, **_palette_block(css, theme, palette)}
+    # THE ROW SURFACES, COMPOSITED (#184). A table cell is not the card: zebra rows lay --zebra
+    # (translucent) over --surface-1, and a hovered .rowlink lays --series-1-wash — color-mix(in srgb,
+    # var(--series-1) 10%, transparent) — over it. Text in those cells is read against the composed
+    # colour, and the drill link that passed 4.55:1 on the card measured 4.32 on zebra and 3.99 on
+    # hover. Two pseudo-tokens per variant, computed from the stylesheet the same way the browser
+    # composites them, so the bar is held where the text actually is.
+    for key, tokens in out.items():
+        theme = key.split("/")[0]
+        zebra = _rgba(css, theme, "zebra")
+        tokens["row-zebra"] = _over(zebra, tokens["surface-1"])
+        tokens["row-hover"] = _mix(tokens["series-1"], tokens["surface-1"], 0.10)   # --series-1-wash over the card
     return out
 
 
@@ -101,7 +138,7 @@ TEXT_ON_CARD = [
     ("text-muted", "surface-1", AA_TEXT, "muted copy on a card"),
     ("status-good", "surface-1", AA_TEXT, ".change-added"),
     ("status-critical", "surface-1", AA_TEXT, ".change-removed and .err"),
-    ("series-1", "surface-1", AA_TEXT, ".drill and .back link text"),
+    ("drill-text", "surface-1", AA_TEXT, ".drill and .back link text"),
 ]
 GRAPHICAL = [
     ("status-warning", "surface-1", AA_LARGE_OR_GRAPHIC, "badge glyph only, never text"),
@@ -111,6 +148,19 @@ GRAPHICAL = [
 # td.num.warn is text at weight 600 (#152 defined the token the Users tab had been referencing
 # through a hard-coded fallback), so it is held to the text bar, unlike the badge amber.
 WARN_TEXT = [("warn", "surface-1", AA_TEXT, "td.num.warn"), ("warn", "page", AA_TEXT, "td.num.warn on a bare row")]
+# Text that lives in table cells is held to the bar on the composed ROW surfaces, not only the card
+# (#184): the link on a zebra row and on a hovered row, the muted chevron and .change-baseline beside
+# it, and the body/secondary copy every cell carries. These are the pairs that were never checked.
+# The status tokens (.change-added, .change-removed, td.num.warn) are NOT in this list yet: measured on
+# 2026-09-19 with these same surfaces, they fail 4.5 on the rows in eight of the ten theme x palette
+# variants (4.01-4.44), and each palette block tunes them separately — a change to ten blocks that
+# is its own issue on the design system, filed from #184's PR, not a rider on the link fix.
+TEXT_ON_ROWS = [
+    (token, surface, AA_TEXT, f"{why} on a {'zebra' if surface == 'row-zebra' else 'hovered'} row")
+    for surface in ("row-zebra", "row-hover")
+    for token, why in (("drill-text", ".drill link text"), ("text-muted", ".drill::after and .change-baseline"),
+                       ("text-secondary", "secondary cell copy"), ("text-primary", "cell copy"))
+]
 # Active tab labels sit on the page; the accent also tints a card edge and the hero numeral.
 # Derived from the stylesheet, not hardcoded: a hardcoded list silently stops covering a
 # new tab, which is exactly what happened when `policy` and `nsaudit` were added — the
@@ -126,7 +176,7 @@ TABS = [(token, "page", AA_TEXT, f"active {token} label") for token in TAB_NAMES
 @pytest.mark.parametrize("theme", VARIANTS)
 @pytest.mark.parametrize(
     "token,background,required,why",
-    TEXT_ON_PAGE + TEXT_ON_CARD + GRAPHICAL + TABS + WARN_TEXT,
+    TEXT_ON_PAGE + TEXT_ON_CARD + GRAPHICAL + TABS + WARN_TEXT + TEXT_ON_ROWS,
     ids=lambda v: v if isinstance(v, str) else str(v),
 )
 def test_contrast(themes, theme, token, background, required, why):
