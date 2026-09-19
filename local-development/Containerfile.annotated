@@ -445,10 +445,13 @@ RUN --mount=type=bind,from=build,source=/image-proof.py,target=/tmp/image-proof.
 # 2. Every library of every packed binary resolves — asked of the dynamic loader itself
 #    (`ld.so --list` is what the `ldd` command runs underneath), not of `--version`, which only
 #    exercises what a binary happens to load on its way to printing a string. A missing library
-#    reads "not found" in the listing. The loader's path is the x86-64 one because this image is
-#    built for linux/amd64 only; a second architecture would need its own.
-RUN for b in jq bash curl coreutils; do \
-      out=$(/lib64/ld-linux-x86-64.so.2 --list "/usr/bin/$b" 2>&1) || exit 1; \
+#    reads "not found" in the listing. The loader is found by glob rather than named, because its
+#    path is per architecture — /lib64/ld-linux-x86-64.so.2 on amd64, /lib/ld-linux-aarch64.so.1 on
+#    arm64 (not under /lib64 at all; measured on both bases) — and exactly one must match: a second
+#    loader, or none, fails the build with the matches printed rather than proving nothing.
+RUN set -- /lib*/ld-linux-*.so.*; [ $# -eq 1 ] && [ -x "$1" ] || { echo "expected one dynamic loader, found: $*" >&2; exit 1; }; ld=$1 \
+ && for b in jq bash curl coreutils; do \
+      out=$("$ld" --list "/usr/bin/$b" 2>&1) || exit 1; \
       case "$out" in *'not found'*) echo "$b: $out" >&2; exit 1;; esac; \
     done \
  && echo "every packed binary resolves"
