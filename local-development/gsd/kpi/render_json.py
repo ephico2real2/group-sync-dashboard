@@ -36,15 +36,39 @@ def render(kpis: tuple[Kpi, ...], ctx: Context) -> dict:
     return out
 
 
+def posture(store, cluster_id: str, grace: timedelta, now: datetime) -> dict:
+    """The access-posture figures for one cluster, from the scalar queries the cluster rows and
+    /metrics already use — the KPI band and the Clusters table (#157) read this block, so the page
+    adds no arithmetic of its own. CR states are derived the way the CR list derives them."""
+    from .. import state as st
+    groups = store.group_counts(cluster_id)
+    findings = store.count_bindings_by_finding(cluster_id)
+    states: dict[str, int] = {}
+    for cr in store.groupsyncs(cluster_id):
+        state = st.compute_state(st.parse_time(cr.get("last_sync_at")), cr.get("schedule"), now, grace)
+        states[state] = states.get(state, 0) + 1
+    return {
+        "groups": groups,
+        "bindings": {k: findings.get(k, 0) for k in ("ok", "dangling", "unresolved", "built_in")},
+        "groupsyncs": {"total": sum(states.values()), "states": states,
+                       "oldest_last_sync": store.oldest_last_sync(cluster_id)},
+    }
+
+
 def page_payload(ctx: Context, *, dashboard_system: dict | None, report_system: dict | None,
-                 report_system_at: str | None, last_poll: dict[str, str | None], now: datetime | None = None) -> dict:
+                 report_system_at: str | None, last_poll: dict[str, str | None], now: datetime | None = None,
+                 grace: timedelta = timedelta(seconds=120), thresholds: dict | None = None,
+                 links: dict | None = None) -> dict:
     """The /api/kpi body. `dashboard_system` is this process's own sample (taken now); `report_system`
-    the report service's last self-report, pulled with the usage feed, and `report_system_at` when."""
+    the report service's last self-report, pulled with the usage feed, and `report_system_at` when.
+    `thresholds` are the configured amber marks the page draws on every meter and names in its rule
+    line; `links` the doors out (grafana, observe) — absent when not configured."""
     now = now or datetime.now(UTC)
     kpis = render(ALL_KPIS, ctx)
-    trends = {}
+    trends, postures = {}, {}
     if ctx.store is not None:
         since_day = (now - timedelta(days=ROLLUP_DAYS)).strftime("%Y-%m-%d")
+        since_at = (now - timedelta(days=TREND_DAYS)).strftime("%Y-%m-%dT%H:%M:%SZ")
         for cluster in ctx.cluster_ids:
             retained = ctx.store.history_retained_since(cluster)
             trends[cluster] = {
@@ -53,6 +77,8 @@ def page_payload(ctx: Context, *, dashboard_system: dict | None, report_system: 
                 # Where the recorded report timeline starts — the mock's "timeline starts …": the
                 # pull began with the reporting module, not with the cluster's history.
                 "report_timeline_since": ctx.store.report_volume(cluster, "9999")["since"],
+                # Per-day buckets over the window, for the sparklines.
+                "activity": ctx.store.daily_activity(cluster, since_at),
                 "daily": {
                     "since": ctx.store.kpi_daily_since(cluster),
                     "window_days": ROLLUP_DAYS,
@@ -60,9 +86,13 @@ def page_payload(ctx: Context, *, dashboard_system: dict | None, report_system: 
                 },
                 "as_of": last_poll.get(cluster),
             }
+            postures[cluster] = posture(ctx.store, cluster, grace, now)
     return {
         "as_of": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "kpis": kpis,
+        "posture": postures,
+        "thresholds": thresholds or {},
+        "links": links or {},
         "trends": trends,
         "system": {
             "dashboard": {"as_of": now.strftime("%Y-%m-%dT%H:%M:%SZ"), **(dashboard_system or {})} if dashboard_system else None,

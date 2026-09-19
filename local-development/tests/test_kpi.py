@@ -562,3 +562,36 @@ class TestReportService:
         s = _series(text, "gsd_process_memory_bytes")
         assert s == {'gsd_process_memory_bytes{component="report"}': 105410560.0}
         assert "# HELP gsd_membership_changes_total " in text and _series(text, "gsd_membership_changes_total") == {}
+
+
+class TestPageSettings:
+    """#157: every threshold is configuration, and the doors are links only when configured."""
+
+    def test_thresholds_and_doors_load_from_the_config_and_reach_the_payload(self, tmp_path):
+        from gsd.config import ConfigError, load_settings
+        import yaml
+        cfg = tmp_path / "gsd.yaml"
+        cfg.write_text(yaml.safe_dump({"clusters": [{"name": "c1", "apiUrl": "https://x", "tokenEnv": "T"}],
+                                       "kpiThrottledWarnPercent": 2.5, "grafanaUrl": "https://g.example/",
+                                       "grafanaDashboardUid": "abc", "consoleUrl": "https://c.example/"}))
+        s = load_settings(cfg)
+        assert (s.kpi_memory_warn_percent, s.kpi_cpu_warn_percent, s.kpi_throttled_warn_percent, s.kpi_disk_warn_percent) == (80.0, 80.0, 2.5, 80.0)
+        assert (s.grafana_url, s.grafana_dashboard_uid, s.console_url) == ("https://g.example", "abc", "https://c.example")
+        cfg.write_text(yaml.safe_dump({"clusters": [{"name": "c1", "apiUrl": "https://x", "tokenEnv": "T"}], "kpiDiskWarnPercent": 0}))
+        with pytest.raises(ConfigError):
+            load_settings(cfg)
+
+    def test_the_payload_carries_posture_thresholds_and_only_configured_links(self, tmp_path):
+        db = str(tmp_path / "gsd.db")
+        _seed(db)
+        app = build_app(_settings(db, grafana_url="https://g.example", kpi_disk_warn_percent=70.0), run_poller=False)
+        app.state.tier_resolver = _MapResolver({"root": "all"})
+        with TestClient(app) as client:
+            body = client.get("/api/kpi", headers=H("root")).json()
+        assert body["thresholds"] == {"memory_percent": 80.0, "cpu_percent": 80.0, "throttled_percent": 1.0, "disk_percent": 70.0}
+        assert body["links"] == {"grafana": "https://g.example"}
+        p = body["posture"]["c1"]
+        assert set(p) == {"groups", "bindings", "groupsyncs"}
+        assert set(p["bindings"]) == {"ok", "dangling", "unresolved", "built_in"}
+        assert p["groups"]["total"] == 3, "the visibility seed's three groups"
+        assert set(body["trends"]["c1"]["activity"]) == {"membership", "logins", "syncs", "reports"}

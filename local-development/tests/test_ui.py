@@ -1056,7 +1056,7 @@ class TestTheShellAtPhoneWidth:
     """#166, measured on the live cluster before the fix: at 375 px the nine-tab bar was 676 px wide,
     `document.documentElement.scrollWidth` 696, and five tabs sat past the edge of a bar that could
     not scroll — unreachable. The shell owns the bar (#152), so the check runs on every tab."""
-    TABS = ["home", "overview", "groups", "users", "bindings", "policy", "nsaudit", "logins", "usage"]
+    TABS = ["home", "overview", "kpi", "groups", "users", "bindings", "policy", "nsaudit", "logins", "usage"]
 
     @pytest.mark.parametrize("tab", TABS)
     def test_no_horizontal_overflow_and_every_tab_inside_the_viewport(self, dash, tab):
@@ -1202,6 +1202,102 @@ class TestAppearanceAndColours:
 
     def test_the_controls_are_in_the_static_header_not_the_filter_bar(self, dash):
         assert dash.evaluate("() => document.querySelector('header.top #pref-mode') !== null && document.querySelector('#filters #pref-mode') === null")
+
+
+class TestKpiPage:
+    """#157 — the KPI page, to docs/design/overview-kpi-mock.html: both pods' self-report, the
+    access-posture band, the four trends, the clusters table and the doors out, every number from
+    /api/kpi (#156). The harness runs on a laptop with no cgroup, so the dashboard's block carries
+    the disk and its own bytes and says the cgroup is unavailable — never 0."""
+
+    def _open(self, dash):
+        dash.click("#tab-kpi")
+        dash.wait_for_selector(".kpi-page .kband .kpi", timeout=10_000)
+        return dash
+
+    def test_the_five_sections_render_from_the_payload(self, dash):
+        self._open(dash)
+        headings = [h.split("\n")[0].strip() for h in dash.locator("section.kpi-page > h2").all_inner_texts()]
+        assert headings[:4] == ["System status", "Access posture", "Trends", "Clusters"]
+        assert dash.locator(".kpi-page .kband .kpi").count() == 6
+        assert dash.locator(".kpi-page .trend").count() == 4
+        assert dash.locator(".kpi-page .comp").count() == 2
+        assert dash.locator(".kpi-page .kdoor").count() == 1
+        # The band's figures are the clusters' sums: groups from /api/kpi's posture, not invented.
+        groups = int(dash.locator('.kpi-page .kpi[data-kpi="groups"] .value').inner_text().replace(",", ""))
+        rows = dash.locator(".kpi-page tbody tr")
+        assert rows.count() == 2
+        per_cluster = [int(rows.nth(i).locator("td").nth(2).inner_text().replace(",", "")) for i in range(rows.count())]
+        assert groups == sum(per_cluster)
+
+    def test_the_cluster_selector_is_hidden_and_the_page_is_fleet_wide(self, dash):
+        self._open(dash)
+        assert dash.locator("#f-cluster").count() == 0
+        assert dash.locator("#scope-note").inner_text().strip() == ""
+
+    def test_status_is_never_colour_alone_and_the_mark_sits_at_the_threshold(self, dash):
+        self._open(dash)
+        # every state carries a word and a glyph (the .badge convention)
+        for i in range(dash.locator(".kpi-page .badge").count()):
+            b = dash.locator(".kpi-page .badge").nth(i)
+            assert b.inner_text().strip() and b.locator(".glyph").count() == 1
+        # the amber mark is drawn where the configured threshold says, on every measured track
+        marks = dash.evaluate("""() => [...document.querySelectorAll('.kpi-page .track')].map(t => ({
+            th: t.dataset.th, prop: getComputedStyle(t).getPropertyValue('--th').trim(),
+            label: t.getAttribute('aria-label')}))""")
+        assert marks, "no meter rendered"
+        for m in marks:
+            assert m["prop"] == f"{m['th']}%", m
+            assert m["label"], m
+        # the rule line names the thresholds it applied
+        rule = dash.locator(".kpi-page .comp .rule").first.inner_text()
+        assert ">80% memory" in rule and ">1% throttled periods" in rule
+
+    def test_no_cgroup_reads_as_unavailable_not_zero(self, dash):
+        self._open(dash)
+        dashboard = dash.locator('.kpi-page .comp[data-comp="dashboard"]')
+        # a laptop has no cgroup v2: the memory and CPU meters are unmeasured, the disk is measured
+        vals = dashboard.locator(".meter-val").all_inner_texts()
+        assert vals[0] == "unavailable" and vals[1] == "unavailable" and vals[2] == "unavailable"
+        assert "node disk" in vals[3]
+        assert "unmeasured, not zero" in dashboard.locator(".sub").first.inner_text()
+        # the report service has not reported: unavailable, in words
+        report = dash.locator('.kpi-page .comp[data-comp="report"]')
+        assert "unavailable" in report.locator(".badge").inner_text()
+
+    def test_trends_state_the_retention_edge_and_the_report_timeline(self, dash):
+        self._open(dash)
+        retains = dash.locator(".kpi-page .trend .retain").all_inner_texts()
+        assert any("history retained since" in r for r in retains)
+        assert any("timeline starts" in r or "no report run recorded yet" in r for r in retains)
+        assert dash.locator(".kpi-page .spark").count() == 4
+
+    def test_the_doors_render_only_when_configured(self, dash):
+        self._open(dash)
+        # the fixture configures neither Grafana nor the console: prose, no dead buttons
+        assert dash.locator(".kpi-page .kdoor .btn").count() == 0
+        assert "grafana.url" in dash.locator(".kpi-page .kdoor p").inner_text()
+
+    def test_a_cluster_row_opens_its_overview(self, dash):
+        self._open(dash)
+        dash.locator(".kpi-page tbody tr").first.click()
+        dash.wait_for_function("() => location.hash.includes('page=overview') && location.hash.includes('cluster=crc-local')")
+
+    def test_holds_at_phone_width_with_the_table_scrolling_in_its_own_container(self, dash):
+        dash.set_viewport_size({"width": 375, "height": 740})
+        self._open(dash)
+        dash.wait_for_timeout(300)
+        width = dash.evaluate("() => [document.documentElement.scrollWidth, innerWidth]")
+        assert width[0] <= width[1], f"the page scrolls sideways ({width[0]} > {width[1]})"
+        table = dash.evaluate("() => { const s = document.querySelector('.kpi-page .scroll-x'); return [s.scrollWidth, s.clientWidth]; }")
+        assert table[0] > table[1], "the clusters table must scroll inside its own container, not clip"
+
+    def test_reduced_motion_stops_the_heartbeat(self, dash):
+        self._open(dash)
+        dash.emulate_media(reduced_motion="reduce")
+        assert dash.evaluate("() => getComputedStyle(document.querySelector('.kpi-page .beat')).animationName") == "none"
+        dash.emulate_media(reduced_motion="no-preference")
+        assert dash.evaluate("() => getComputedStyle(document.querySelector('.kpi-page .beat')).animationName") == "kpi-beat"
 
 
 class TestNamespaces:
@@ -6005,7 +6101,7 @@ class TestReportsTab:
             page.click("#tab-reports")
             page.wait_for_selector("#tab-reports[aria-current='page']")
             page.wait_for_timeout(300)
-            assert page.evaluate("() => document.querySelectorAll('button.tab').length") == 10   # Home joined the strip (#158)
+            assert page.evaluate("() => document.querySelectorAll('button.tab').length") == 11   # Home joined the strip (#158); KPIs (#157)
             assert page.evaluate("() => [document.documentElement.scrollWidth <= innerWidth, [...document.querySelectorAll('button.tab')].filter(t => t.getBoundingClientRect().right > innerWidth).map(t => t.id)]") == [True, []]
             assert not errors
         finally:
