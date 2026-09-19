@@ -844,7 +844,7 @@ page draws on every meter and names in its rule line; `links` carries the doors 
 `grafana_dashboard_uid`, `console`, `observe`) and omits any that is not configured. `console` is
 the chart's `console.url` or, when that is empty, the URL the poll thread discovered from
 `openshift-config-managed/console-public`; `observe` is the console's namespace-workloads dashboard
-scoped to the pod's own namespace (`…/monitoring/dashboards/dashboard-k8s-resources-workloads-namespace?project-dropdown-value=<ns>&namespace=<ns>&type=ALL_OPTION_KEY`).
+scoped to the pod's own namespace (`…/dev-monitoring/ns/<ns>?dashboard=dashboard-k8s-resources-workloads-namespace` — the namespace in the path, because the console's project selector, which the graphs' tenancy requests carry, is set only from a `/ns/<name>` path segment).
 
 ### `GET /api/whoami`
 

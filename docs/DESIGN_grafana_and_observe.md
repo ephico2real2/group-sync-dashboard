@@ -59,21 +59,48 @@ The console's monitoring plugin renders the same Grafana-JSON dashboards the pla
 one a team wants for its own project is **Kubernetes / Compute Resources / Namespace (Workloads)**:
 
 ```text
-https://<console>/monitoring/dashboards/dashboard-k8s-resources-workloads-namespace
-    ?project-dropdown-value=<namespace>&namespace=<namespace>&type=ALL_OPTION_KEY
+https://<console>/dev-monitoring/ns/<namespace>?dashboard=dashboard-k8s-resources-workloads-namespace
 ```
 
-The parameters are the plugin's own, read from its source (openshift/monitoring-plugin, read through
-the GitHub API on 2026-09-19):
+The namespace rides in the **path**, and that is the whole point. The first form shipped on
+2026-09-19 was the admin-perspective URL with the namespace in the query string
+(`/monitoring/dashboards/<board>?project-dropdown-value=<ns>&namespace=<ns>&type=ALL_OPTION_KEY`),
+taken from the plugin's own parameter names; it rendered for kubeadmin and showed a non-admin
+"Project: All Projects" with every graph on *Bad Request*. Measured the same day (Playwright, the
+CRC `developer` user given `view` on the namespace, the last-used project primed to All Projects):
 
-| Parameter | Where the plugin reads it | Meaning |
-|---|---|---|
-| `project-dropdown-value` | `web/src/shared/constants/query-params.ts` — `OpenshiftProject = 'project-dropdown-value'` | the console's project selector |
-| `namespace`, `type` | `web/src/features/legacy-dashboards/hooks/useLegacyDashboards.ts` — every dashboard variable is read by its name: `params.get(v.name)` | the board's own template variables |
-| `ALL_OPTION_KEY` | `web/src/features/legacy-dashboards/utils/utils.ts` — `MONITORING_DASHBOARDS_VARIABLE_ALL_OPTION_KEY = 'ALL_OPTION_KEY'` | the "All" option of a variable |
+| door URL | project selector | the graphs' `query_range` sent | result |
+|---|---|---|---|
+| `/monitoring/dashboards/<board>?project-dropdown-value=<ns>&…` | All Projects | `namespace=` absent | "An error occurred" (400) |
+| `/dev-monitoring/ns/<ns>?dashboard=<board>` | the namespace | `namespace=<ns>` | renders |
+
+Why, from the 4.22 sources (read through the GitHub API, `release-4.22`):
+
+- A reader without cluster-wide `get prometheuses/api` (every non-admin) is routed through the
+  console's **tenancy** proxy (`/api/prometheus-tenancy/…`), whose prom-label-proxy refuses a request
+  with no `namespace=` parameter: `The "namespace" query parameter must be provided` (measured on
+  thanos-querier :9092 with a lab user's token — that is the "Bad Request"). A cluster-admin goes
+  through `/api/prometheus/…`, where the parameter is never needed — which is why kubeadmin never
+  saw the failure.
+- The plugin's **graph panels take that parameter from the console's project selector**, not from the
+  board's `$namespace` variable: `web/src/components/query-browser.tsx` — `const [namespace] =
+  useActiveNamespace();` → `buildPrometheusUrl({… namespace …})`. `project-dropdown-value` only
+  templates the PromQL (`useLegacyDashboards.ts`, `getAllVariables`); it never moves the selector.
+- The selector is set from a `/ns/<name>` **path** segment or, failing that, the user's last-used
+  project (`console-app/src/providers/detect-context/namespace.ts` — `getNamespace(pathname)`, then
+  `getValueForNamespace(preferred, last, …)`; the stored value is `console.lastNamespace` in the
+  user's `openshift-console-user-settings` ConfigMap). kubeadmin's happened to be
+  `group-sync-dashboard`, which made the first form *look* right on this lab.
+- `/dev-monitoring/ns/<ns>?dashboard=<board>` is the plugin's namespaced route
+  (`MpCmoLegacyDevDashboardsPage`; `QueryParams.Dashboard`): the console sets the selector from the
+  path, then the plugin redirects to the admin form with `project-dropdown-value`, `namespace` and
+  `type=ALL_OPTION_KEY` filled — the final URL is the one above, with the selector already right.
 
 The dashboard id exists on 4.22 as the ConfigMap
-`openshift-config-managed/grafana-dashboard-k8s-resources-workloads-namespace`.
+`openshift-config-managed/dashboard-k8s-resources-workloads-namespace` (labelled
+`console.openshift.io/odc-dashboard: "true"`, which is what keeps it in the list once a project is
+selected). A reader still needs `get pods` in the namespace — the tenancy proxy's SubjectAccessReview —
+so a `view` grant on the release namespace is the precondition for anyone who is not cluster-admin.
 
 ### 2.2 What is discovered, and how
 

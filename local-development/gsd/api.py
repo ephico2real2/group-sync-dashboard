@@ -2233,18 +2233,27 @@ def build_app(
     def kpi_links() -> dict:
         """The doors out of the KPI page (#157). The console's URL is the chart's `console.url` when
         set, else what the poll thread discovered from openshift-config-managed/console-public;
-        `observe` is the console's namespace-workloads dashboard scoped to THIS pod's namespace —
-        the monitoring plugin reads the project selector from `project-dropdown-value` and every
-        dashboard variable by name from the query string (`namespace`, `type`; `ALL_OPTION_KEY` is
-        its "All" — openshift/monitoring-plugin query-params.ts, useLegacyDashboards.ts)."""
+        `observe` is the console's namespace-workloads dashboard scoped to THIS pod's namespace.
+
+        The namespace rides in the PATH (`/dev-monitoring/ns/<ns>?dashboard=<board>`), never only in
+        the query string: the console sets its project selector from a `/ns/<name>` path segment
+        (console-app detect-context/namespace.ts, `getNamespace(pathname)`) or from the user's
+        last-used project, and the plugin's graph panels put THAT selector — not the board's
+        `$namespace` variable — on the tenancy proxy's `namespace=` parameter
+        (monitoring-plugin query-browser.tsx, `useActiveNamespace()`). The admin-perspective form
+        `/monitoring/dashboards/<board>?project-dropdown-value=<ns>` only templates the PromQL, so
+        a reader whose last project was "All Projects" got `namespace=` empty and prom-label-proxy's
+        400 (measured 2026-09-19 as a `view`-only user; a cluster-admin never hits the tenancy proxy
+        and never saw it). The dev-monitoring route redirects to the admin form with the selector
+        already set — measured on 4.22 for both kinds of user."""
         console = settings.console_url or signals.console_url()
         links = {k: v for k, v in (("grafana", settings.grafana_url),
                                    ("grafana_dashboard_uid", settings.grafana_dashboard_uid),
                                    ("console", console)) if v}
         if console:
             ns = own_namespace()
-            links["observe"] = (f"{console}/monitoring/dashboards/dashboard-k8s-resources-workloads-namespace"
-                                f"?project-dropdown-value={quote(ns)}&namespace={quote(ns)}&type=ALL_OPTION_KEY"
+            links["observe"] = (f"{console}/dev-monitoring/ns/{quote(ns, safe='')}"
+                                "?dashboard=dashboard-k8s-resources-workloads-namespace"
                                 if ns else f"{console}/monitoring/dashboards")
         return links
 

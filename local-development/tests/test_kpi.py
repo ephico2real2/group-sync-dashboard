@@ -659,16 +659,21 @@ class TestObserveDoor:
     """#157: the Observe door opens the console's namespace-workloads dashboard for THIS pod's
     namespace, on a console URL the chart names or the poll thread discovers."""
 
-    def test_the_link_is_the_namespace_workloads_board_with_the_plugins_parameters(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("GSD_NAMESPACE", "team a")
+    def test_the_link_carries_the_namespace_in_the_path_so_the_tenancy_proxy_gets_it(self, tmp_path, monkeypatch):
+        """The console's project selector — what the graph panels send as the tenancy proxy's
+        `namespace=` — is set from a `/ns/<name>` PATH segment, not from any query parameter; the
+        earlier `?project-dropdown-value=` form left a non-admin reader on "All Projects" and a 400
+        (measured 2026-09-19). The namespace is path-quoted: a slash in it must not add a segment."""
+        monkeypatch.setenv("GSD_NAMESPACE", "team a/b")
         db = str(tmp_path / "gsd.db")
         _seed(db)
         app = build_app(_settings(db, console_url="https://console.example"), run_poller=False)
         app.state.tier_resolver = _MapResolver({"root": "all"})
         with TestClient(app) as client:
             links = client.get("/api/kpi", headers=H("root")).json()["links"]
-        assert links["observe"] == ("https://console.example/monitoring/dashboards/dashboard-k8s-resources-workloads-namespace"
-                                    "?project-dropdown-value=team%20a&namespace=team%20a&type=ALL_OPTION_KEY")
+        assert links["observe"] == ("https://console.example/dev-monitoring/ns/team%20a%2Fb"
+                                    "?dashboard=dashboard-k8s-resources-workloads-namespace")
+        assert "project-dropdown-value" not in links["observe"]
 
     def test_a_discovered_console_serves_when_the_chart_names_none_and_a_named_one_wins(self, tmp_path, monkeypatch):
         monkeypatch.setenv("GSD_NAMESPACE", "ns1")
@@ -680,7 +685,7 @@ class TestObserveDoor:
             assert "observe" not in client.get("/api/kpi", headers=H("root")).json()["links"], "nothing discovered yet: no dead link"
             app.state.signals.note_console_url("https://discovered.example")
             links = client.get("/api/kpi", headers=H("root")).json()["links"]
-            assert links["console"] == "https://discovered.example" and links["observe"].startswith("https://discovered.example/monitoring/dashboards/dashboard-k8s")
+            assert links["console"] == "https://discovered.example" and links["observe"] == "https://discovered.example/dev-monitoring/ns/ns1?dashboard=dashboard-k8s-resources-workloads-namespace"
         app2 = build_app(_settings(db, console_url="https://named.example"), run_poller=False)
         app2.state.tier_resolver = _MapResolver({"root": "all"})
         app2.state.signals.note_console_url("https://discovered.example")
