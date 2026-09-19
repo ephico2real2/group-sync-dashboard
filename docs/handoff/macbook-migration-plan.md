@@ -68,7 +68,7 @@ type or click it and there is no way around that, usually because it is interact
 | 4.6b | operators and monitoring | Manual | OperatorHub installs; monitoring is ON now that the machine can carry it |
 | 4.7 | cert-manager operator | Manual | subscription plus the ClusterIssuer pair |
 | 4.8 | deploy the app | **Script** | `release-crc.sh` — builds, pushes, deploys and verifies the commit in-pod. The one fully automated step |
-| 4.9 | re-apply the mock cluster | Manual | five sub-steps, mostly live-only with no committed manifest. The slowest part of the move |
+| 4.9 | re-apply the mock cluster | **Script** | `deploy-mock.sh` — was the slowest manual part of the move until 2026-09-18; now one command, with `--verify` |
 | 4.10 | LDAP lab and cluster trust | Manual | only if you need LDAP. `setup-local-ldap-testing/` plus `MISSING-STEPS.md` for what the seeds do not create |
 | 4.3b | restore the Claude Code setup | **Script** | two scripts in order: the repo root's `restore.sh`, then `2026-09-18-design-programme/restore.sh`. Proven against an empty home |
 | 5 | verification | **Script** | the check block, then `capture-screenshots.py` for the pictures |
@@ -518,7 +518,20 @@ helm list -n group-sync-dashboard           # expect chart 0.32.0 / app 0.24.0, 
 > `release-crc.sh`'s scope is **exactly two images**. It does **not** create the mock backend,
 > cert-manager chains, the LDAP lab, cluster trust, or the `mock-creds` volume patch. Those are §4.9–§4.10.
 
-### 4.9 — Re-apply the mock cluster (all live-only, mostly no committed manifest)
+### 4.9 — Re-apply the mock cluster (one script since 2026-09-18)
+
+**Run the script; the manual sequence below is kept only as the explanation of what it does.**
+
+```sh
+cd local-development/mock-app/deploy
+./deploy-mock.sh              # build+push, PKI, workload, creds, and the dashboard patch
+./deploy-mock.sh --verify     # check only — including the volume patch people forget
+```
+
+It was written from the live cluster and verified against it: the token it derives equals the deployed
+secret byte for byte, and the `ca.crt` it builds has the same SHA-256 fingerprint as the running one.
+`DEPLOY.md` beside it explains each step and why the order matters. Everything below is that same
+sequence by hand.
 
 ```sh
 # 1) build + push the mock image (release-crc.sh does NOT build this)
@@ -526,16 +539,17 @@ cd "$NDASH/local-development/mock-app"
 podman build -f containerfile/Containerfile -t mock-openshift .
 # tag + push to the CRC internal registry as mock-openshift:test (same podman login flow release-crc.sh uses)
 
-# 2) the mock cert-manager chain — use the carried manifest (NO committed YAML reproduces it)
+# 2) the mock cert-manager chain — COMMITTED; nothing needs carrying
 oc apply -n group-sync-dashboard -f local-development/mock-app/deploy/certmanager-tls.yaml
 #   chain: Issuer mock-selfsigned (SelfSigned) -> Certificate mock-ca (isCA, secret mock-ca)
 #          -> Issuer mock-ca-issuer (CA) -> Certificate mock-tls
 #          (dnsNames: mock-openshift, .svc, .svc.cluster.local, localhost; ip 127.0.0.1; secret mock-tls)
 oc get certificate -n group-sync-dashboard mock-ca mock-tls    # wait for both Ready
 
-# 3) the mock backend Deployment + Service (NO committed manifest — capture from the old cluster if you
-#    still have it: `oc get deploy/svc mock-openshift -o yaml`; else re-author: image .../mock-openshift:test,
-#    volume certs -> secret mock-tls; Service ClusterIP 6443 -> 6443)
+# 3) the mock backend Deployment + Service — COMMITTED since 2026-09-18, captured off the old cluster
+oc apply -n group-sync-dashboard \
+  -f local-development/mock-app/deploy/mock-openshift-deployment.yaml \
+  -f local-development/mock-app/deploy/mock-openshift-service.yaml
 
 # 4) the mock-cluster-creds secret — ca.crt MUST equal the mock-ca CA or the dashboard's TLS verify fails
 oc create secret generic mock-cluster-creds -n group-sync-dashboard \
@@ -648,9 +662,9 @@ both authenticate and the adversarial-review pass completes.
 - **The `mock-creds` volume is invisible to Helm** (`helm get manifest | grep -c mock-creds = 0`). A fresh
   install renders the dashboard **without** it and the mock poll **fails silently** (files absent at
   `/etc/gsd/mock`) while the release still reports a clean rollout. **Re-patch after every fresh install.**
-- **The mock cert-manager chain + mock backend have NO committed manifest** (repo grep hits only docs).
-  The chain is in the carried `mock-certmanager.yaml`; the Deployment/Service must be captured from the
-  live cluster (`oc get -o yaml`) **before** discarding the old CRC, or re-authored from §4.9.
+- **~~The mock chain and backend have no committed manifest~~ — CLOSED 2026-09-18.** All of it is in
+  git now: the chain in `certmanager-tls.yaml`, and the Deployment and Service captured off the live
+  cluster before it was discarded. Nothing needs carrying and nothing needs re-authoring.
 - **`mock-cluster-creds.ca.crt` must equal the `mock-ca` CA.** If the cert-manager chain is recreated the
   CA changes, so regenerate the secret from the **new** `mock-ca` or the dashboard's `CERT_REQUIRED` TLS
   verify to the mock fails (UNREACHABLE). (`mock-tls`'s stale `last-applied` annotation is a red herring,

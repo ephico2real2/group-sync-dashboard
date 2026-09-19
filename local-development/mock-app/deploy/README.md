@@ -38,3 +38,19 @@ The mock's `Deployment`, `Service` (`mock-openshift:6443`) and the `mock-cluster
 (token + CA) are still applied to CRC out of band, not from a committed manifest. Capturing the full
 mock CRC wiring as manifests is tracked separately; this file preserves the one piece that has
 already bitten us — the serving certificate — so it travels in git.
+
+## The Deployment and Service (captured from CRC, 2026-09-18)
+
+`mock-openshift-deployment.yaml` and `mock-openshift-service.yaml` were read off the running cluster
+before it was deleted. Until then these existed **only** on that cluster: the migration runbook's §4.9
+told you to re-author them by hand, which is no longer necessary.
+
+```sh
+oc apply -n group-sync-dashboard -f mock-openshift-deployment.yaml -f mock-openshift-service.yaml
+```
+
+Runtime fields are stripped (`uid`, `resourceVersion`, `clusterIP`, `managedFields`, status), so both
+apply cleanly to a fresh cluster. Both were validated with `oc apply --dry-run=server` before commit.
+
+Order still matters: `certmanager-tls.yaml` first, because the Deployment mounts the `mock-tls` secret
+that chain issues.
