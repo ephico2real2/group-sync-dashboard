@@ -32,9 +32,23 @@ oc get secret mock-ca -n group-sync-dashboard -o jsonpath='{.data.tls\.crt}' | b
 oc rollout restart deploy/group-sync-dashboard -n group-sync-dashboard
 ```
 
-## What is **not** here yet
+## `mock-openshift.yaml` — the Deployment and Service
 
-The mock's `Deployment`, `Service` (`mock-openshift:6443`) and the `mock-cluster-creds` Secret
-(token + CA) are still applied to CRC out of band, not from a committed manifest. Capturing the full
-mock CRC wiring as manifests is tracked separately; this file preserves the one piece that has
-already bitten us — the serving certificate — so it travels in git.
+The mock's `Deployment` and `Service` (`mock-openshift:6443`), committed on 2026-09-18 after the move to
+the new MacBook made them the thing to re-author from memory. The Deployment loads the cert-manager
+chain above through `MOCK_CA_IN=/certs` (the `mock-tls` Secret carries exactly the `ca.crt`, `tls.crt`,
+`tls.key` the image reads), runs under `restricted-v2`, and sets `OPENSSL_armcap=0` — CRC on Apple
+Silicon advertises CPU features the hardware lacks and the `cryptography` wheel's OpenSSL dies with
+SIGILL without it (measured; details in the manifest and in
+`docs/handoff/macbook-migration-plan.md` §4.6).
+
+```bash
+oc apply -n group-sync-dashboard -f certmanager-tls.yaml     # first: the pod mounts the Secret it issues
+oc apply -n group-sync-dashboard -f mock-openshift.yaml
+```
+
+## What is **not** here
+
+The `mock-cluster-creds` Secret (token + CA) and the `mock-creds` volume on the dashboard Deployment are
+per-install steps that Helm cannot see; `docs/handoff/macbook-migration-plan.md` §4.9 steps 4–5 are the
+commands, and they are re-applied after every fresh install of the chart.

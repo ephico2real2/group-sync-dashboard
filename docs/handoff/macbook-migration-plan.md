@@ -445,10 +445,34 @@ back. Over-subscription is what preempted the report pod 29 times in three hours
 
 **Architecture, if the new Mac is Apple Silicon.** This laptop builds `amd64` (measured:
 `podman info` → `amd64/linux`) and the images on quay are **single-architecture**, not manifest lists.
-An arm64 CRC cannot run them. Nothing breaks for the lab, because `release-crc.sh` builds locally and
-will produce arm64 natively on the new machine. What does break is pulling `quay.io/ephico2real/...`
-onto an arm64 cluster — rebuild and push from the new Mac, or publish a manifest list, before relying
-on the external registry there.
+An arm64 CRC cannot run them. What does break is pulling `quay.io/ephico2real/...` onto an arm64
+cluster — rebuild and push from the new Mac, or publish a manifest list, before relying on the external
+registry there.
+
+**Measured on the M5 Pro, 2026-09-18 — three things the sentence "release-crc.sh builds arm64 natively"
+hid, each with its fix:**
+
+1. **The Containerfiles named the x86-64 loader.** The hardened image's proof step ran
+   `/lib64/ld-linux-x86-64.so.2 --list` and failed the build at that `RUN` on arm64; the bases are
+   manifest lists for both architectures and every packed library is named by soname, so that was the
+   only amd64-specific line. Fixed by finding the loader with a guarded glob (`/lib*/ld-linux-*.so.*`;
+   it is `/lib/ld-linux-aarch64.so.1` on arm64, not under `/lib64`). Both images then built and the
+   in-pod commit verified.
+2. **The registry route resolves to `127.0.0.1` inside the podman machine.** gvproxy hands the VM the
+   host's resolver answer, and on the VM `127.0.0.1` is the VM. `podman push` failed with
+   `dial tcp 127.0.0.1:80: connect: connection refused`. The host's CRC daemon answers at gvproxy's host
+   address (`192.168.127.254`, HTTP 401 from the registry), so add it inside the VM once — `/etc/hosts`
+   there persists across `podman machine stop/start`:
+   ```sh
+   podman machine ssh -- sudo sh -c 'echo "192.168.127.254 default-route-openshift-image-registry.apps-crc.testing" >> /etc/hosts'
+   ```
+3. **`cryptography` ≥ 48 dies with SIGILL (exit 132) on the CRC node**, in the mock image (the dashboard
+   image is unaffected). The wheel's statically linked OpenSSL trusts the guest kernel's HWCAP, which under
+   Virtualization.framework advertises `sve2`/`svei8mm` the silicon does not implement, and the assembly
+   path it selects traps. Bisected in a pod on the node: 48.0.0/49.0.0/50.0.1 exit 132, 46.0.3 and below
+   import. `OPENSSL_armcap=0` makes 50.0.1 import and generate a 2048-bit RSA key; it is set on the mock
+   Deployment in `local-development/mock-app/deploy/mock-openshift.yaml`. Harmless on amd64 and on real
+   arm64 hosts.
 
 ### 4.6b — Operators + cluster monitoring (install after `crc start`)
 
@@ -533,9 +557,11 @@ oc apply -n group-sync-dashboard -f local-development/mock-app/deploy/certmanage
 #          (dnsNames: mock-openshift, .svc, .svc.cluster.local, localhost; ip 127.0.0.1; secret mock-tls)
 oc get certificate -n group-sync-dashboard mock-ca mock-tls    # wait for both Ready
 
-# 3) the mock backend Deployment + Service (NO committed manifest — capture from the old cluster if you
-#    still have it: `oc get deploy/svc mock-openshift -o yaml`; else re-author: image .../mock-openshift:test,
-#    volume certs -> secret mock-tls; Service ClusterIP 6443 -> 6443)
+# 3) the mock backend Deployment + Service — COMMITTED since 2026-09-18 (it had to be re-authored on the
+#    new Mac; it will not be a third time): image .../mock-openshift:test, MOCK_CA_IN=/certs from the
+#    mock-tls Secret, Service ClusterIP 6443, OPENSSL_armcap=0 for CRC on Apple Silicon (see §4.6)
+oc apply -n group-sync-dashboard -f local-development/mock-app/deploy/mock-openshift.yaml
+oc rollout status deploy/mock-openshift -n group-sync-dashboard
 
 # 4) the mock-cluster-creds secret — ca.crt MUST equal the mock-ca CA or the dashboard's TLS verify fails
 oc create secret generic mock-cluster-creds -n group-sync-dashboard \
@@ -552,6 +578,21 @@ oc set volume deploy/group-sync-dashboard --add --name mock-creds \
 > `mock-cluster-creds`). Follow §4.9 above, not the doc verbatim.
 
 ### 4.10 — LDAP lab + cluster-wide trust (only if the LDAP integration is needed)
+
+**The trust half is not optional on this lab, and "Path B" does not cover it.** The LDAP README's paths
+describe how the *chart* gets its CA (copied vs injected); the *cluster's* trust in the root is a
+separate step the old CRC had (`proxy/cluster.spec.trustedCA: ldap-enterprise-ca-bundle`, measured) and
+the rebuild must repeat. After `15-bootstrap-cert-manager-ca.sh apply` and the server deploy:
+
+```sh
+cd ~/gitRepos/group-sync-operator-helm-chart/setup-local-ldap-testing
+./15-bootstrap-cert-manager-ca.sh trust-cluster   # backs up proxy/cluster, publishes the root, patches, waits for the merge
+oc get proxy cluster -o jsonpath='{.spec.trustedCA.name}{"\n"}'   # ldap-enterprise-ca-bundle
+```
+
+Measured 2026-09-18 on the new CRC: the bundle went 146 → 147 certificates, then the MCO rolled the
+single node — the API answers `ServiceUnavailable` for the duration, so run it when nothing else is
+mid-flight. The fuller rework below is a later PR; this one command is the rebuild step.
 
 This is the `crc-*` cert-manager rework. **Do not duplicate it here** — follow the separate plan carried
 in §2.4:
@@ -590,8 +631,12 @@ oc exec deploy/group-sync-dashboard -n group-sync-dashboard -- <the commit-stamp
 oc logs deploy/group-sync-dashboard -n group-sync-dashboard | grep -Ei 'poll|cluster|mock'
 #   mock must NOT show token/ca files absent — that means the §4.9 step 5 volume patch is missing (silent fail)
 
-# reporting UI reachable via the Route
-oc get route -n group-sync-dashboard -o jsonpath='{.items[0].spec.host}{"\n"}'   # curl / open it
+# reporting UI reachable via the Route. The chart's Route sets spec.subdomain and leaves spec.host EMPTY,
+# so the name is in status.ingress, not spec — and CRC on macOS writes each Route's spec.host into
+# /etc/hosts (its admin-helper log shows `hosts:[""] ... "input rejected"` for this one), so the
+# router-assigned name must be added by hand, with the same helper crc uses:
+oc get route -n group-sync-dashboard -o jsonpath='{.items[0].status.ingress[0].host}{"\n"}'
+/usr/local/crc/crc-admin-helper-darwin add 127.0.0.1 group-sync-dashboard.apps-crc.testing
 
 # review pipeline works
 cursor agent login && cursor --version       # non-interactive review fails until logged in
