@@ -236,7 +236,7 @@ that carry code: #202 (#163) and #206 (#156).
 - Measured: reporting suite 61 → 63 passed; full hermetic suite 3468 → 3471 passed, 13 skipped. Both
   passes' decisions are on the PR (comments of 2026-09-19).
 
-### #156 — the KPI module (2026-09-19 11:3x → 15:0x) — commits `8c946d2`, `a7d2f58`, `8b89b0c`, `c245897`, `64bb82f`, PR #206
+### #156 — the KPI module (2026-09-19 12:1x → 13:0x) — commits `8c946d2`, `a7d2f58`, `8b89b0c`, `c245897`, `64bb82f`, PR #206
 
 - `gsd/kpi/`: one definition per KPI with a privacy class the Prometheus renderer enforces (it REFUSES
   an internal definition); cgroup v2 self-report for both pods under `component`; churn and login
