@@ -36,6 +36,16 @@ verify() {
   oc get certificate mock-ca mock-tls -n "$NS" 2>/dev/null || echo "  WARNING: the cert-manager chain is missing"
   oc get secret mock-cluster-creds -n "$NS" >/dev/null 2>&1 \
     && echo "  secret mock-cluster-creds present" || echo "  WARNING: mock-cluster-creds absent"
+  if oc get configmap mock-fixture -n "$NS" >/dev/null 2>&1; then
+    want=$(oc get deploy mock-openshift -n "$NS" \
+      -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="MOCK_FIXTURE")].value}' 2>/dev/null)
+    key=$(basename "${want:-unknown}")
+    oc get configmap mock-fixture -n "$NS" -o jsonpath="{.data.${key//./\\.}}" >/dev/null 2>&1 \
+      && echo "  configmap mock-fixture holds ${key}, which MOCK_FIXTURE asks for" \
+      || echo "  WARNING: mock-fixture does not hold ${key} — the pod will not start"
+  else
+    echo "  WARNING: configmap mock-fixture absent — the pod cannot start"
+  fi
   # The volume patch is invisible to Helm and is the step most often forgotten: without it the
   # dashboard reports the mock cluster's token and ca files as absent, and fails silently.
   if oc get deploy group-sync-dashboard -n "$NS" -o json 2>/dev/null \
@@ -61,15 +71,22 @@ if [ "$BUILD" = true ]; then
   podman push --tls-verify=false "${REGISTRY}/${NS}/${IMAGE}:${TAG}"
 fi
 
-say "1/4  the cert-manager chain (must precede the workload)"
+say "1/5  the cert-manager chain (must precede the workload)"
 oc apply -n "$NS" -f certmanager-tls.yaml
 oc wait --for=condition=Ready certificate/mock-tls -n "$NS" --timeout=120s
 
-say "2/4  the workload"
+say "2/5  the fixture ConfigMap (the Deployment mounts it at /fixtures)"
+# MISSED on the first cut of this script and caught by the operator: without this the pod cannot
+# start, because MOCK_FIXTURE points inside a volume that would not exist. The live ConfigMap was
+# byte-for-byte identical to the committed fixture, so it is simply rebuilt from the file.
+oc create configmap mock-fixture -n "$NS" --from-file="../fixtures/${FIXTURE}" \
+  --dry-run=client -o yaml | oc apply -f -
+
+say "3/5  the workload"
 oc apply -n "$NS" -f mock-openshift-deployment.yaml -f mock-openshift-service.yaml
 oc rollout status deploy/mock-openshift -n "$NS" --timeout=180s
 
-say "3/4  the credentials the dashboard reads"
+say "4/5  the credentials the dashboard reads"
 # ca.crt MUST be the mock-ca root, or the dashboard's TLS verification of the mock fails.
 # The token is not a secret: it is meta.token from the fixture the pod serves.
 ca=$(oc get secret mock-ca -n "$NS" -o jsonpath='{.data.tls\.crt}' | base64 -d)
@@ -79,7 +96,7 @@ oc create secret generic mock-cluster-creds -n "$NS" \
   --from-literal=token="$tok" --from-literal=ca.crt="$ca" \
   --dry-run=client -o yaml | oc apply -f -
 
-say "4/4  wire it into the dashboard (invisible to Helm — re-apply after EVERY helm install)"
+say "5/5  wire it into the dashboard (invisible to Helm — re-apply after EVERY helm install)"
 oc patch deploy group-sync-dashboard -n "$NS" --type=json -p '[
   {"op":"add","path":"/spec/template/spec/volumes/-",
    "value":{"name":"mock-creds","secret":{"secretName":"mock-cluster-creds","defaultMode":420}}},
