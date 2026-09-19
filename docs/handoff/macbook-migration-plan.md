@@ -525,6 +525,21 @@ oc -n openshift-monitoring get pods               # prometheus-k8s / alertmanage
 > §4.6 sizing of 16384 MB already leaves headroom; drop other operators first if the node saturates,
 > per the report-pod preemption seen at 99% CPU requests, issue #97).
 
+**Enable user-workload monitoring (done on the M5 Pro, 2026-09-19).** Cluster monitoring on is not
+enough for the app's own series: those are scraped by the *user-workload* Prometheus, which exists
+only once a cluster-admin turns it on — one ConfigMap, once per cluster, and a chart cannot own it
+(the ConfigMap is the platform's, shared with every other monitoring setting). This is the one
+prerequisite the `openshift-grafana` chart (#162) states; without it Thanos serves no user metrics.
+
+```sh
+oc -n openshift-monitoring create configmap cluster-monitoring-config \
+  --from-literal=config.yaml='enableUserWorkload: true'       # or add the key to the existing ConfigMap's config.yaml
+sleep 60; oc get pods -n openshift-user-workload-monitoring    # prometheus-user-workload-0, thanos-ruler-user-workload-0
+```
+
+Then `environments/crc.yaml` turns the app chart's ServiceMonitor, rules and GrafanaDashboard CR on,
+and the Grafana chart installs into the app's namespace (`docs/DESIGN_grafana_and_observe.md` §1, §4).
+
 ### 4.7 — cert-manager operator (prerequisite for ALL mock + LDAP certs)
 
 Install **cert-manager Operator for Red Hat OpenShift** (observed `cert-manager-operator.v1.19.1`).
