@@ -54,6 +54,14 @@ data:
     groupCountCliffDropRatio: {{ .Values.config.alerts.groupCountCliff.dropRatio }}
     groupCountCliffWindowHours: {{ .Values.config.alerts.groupCountCliff.windowHours }}
     groupCountCliffSilence: {{ .Values.config.alerts.groupCountCliff.silence | join "," | quote }}
+    # The KPI page's thresholds and doors (values.yaml `kpi`, `grafana`, `console`).
+    kpiMemoryWarnPercent: {{ .Values.kpi.thresholds.memoryPercent }}
+    kpiCpuWarnPercent: {{ .Values.kpi.thresholds.cpuPercent }}
+    kpiThrottledWarnPercent: {{ .Values.kpi.thresholds.throttledPercent }}
+    kpiDiskWarnPercent: {{ .Values.kpi.thresholds.diskPercent }}
+    grafanaUrl: {{ .Values.grafana.url | quote }}
+    grafanaDashboardUid: {{ .Values.grafana.dashboardUid | quote }}
+    consoleUrl: {{ .Values.console.url | quote }}
     userActivityEnabled: {{ .Values.config.userActivity.enabled }}
     userActivityVisibility: {{ .Values.config.userActivity.visibility | quote }}
     userActivityFlushSeconds: {{ .Values.config.userActivity.flushSeconds }}

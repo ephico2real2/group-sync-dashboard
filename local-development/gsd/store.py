@@ -3968,6 +3968,32 @@ class Store:
         return {"attempts": row.get("attempts") or 0, "successes": row.get("successes") or 0,
                 "providers": row.get("providers") or 0}
 
+    def daily_activity(self, cluster_id: str, since_at: str) -> dict[str, list[dict]]:
+        """Per-UTC-day buckets since `since_at` for the KPI page's sparklines (#157): membership
+        changes (baseline rows excluded), login attempts and successes, sync events, report runs.
+        Four GROUP BY day aggregates over the indexed time columns; no names."""
+        return {
+            "membership": self._rows(
+                """SELECT substr(observed_at, 1, 10) AS day,
+                          SUM(CASE WHEN change='added' THEN 1 ELSE 0 END) AS added,
+                          SUM(CASE WHEN change='removed' THEN 1 ELSE 0 END) AS removed
+                     FROM membership_event WHERE cluster_id=? AND observed_at>=? AND baseline=0
+                    GROUP BY day ORDER BY day""", (cluster_id, since_at)),
+            "logins": self._rows(
+                """SELECT substr(at, 1, 10) AS day, COUNT(*) AS attempts,
+                          SUM(CASE WHEN outcome='success' THEN 1 ELSE 0 END) AS successes
+                     FROM login_event WHERE cluster_id=? AND at>=? GROUP BY day ORDER BY day""",
+                (cluster_id, since_at)),
+            "syncs": self._rows(
+                """SELECT substr(observed_at, 1, 10) AS day, COUNT(*) AS syncs
+                     FROM sync_event WHERE cluster_id=? AND observed_at>=? GROUP BY day ORDER BY day""",
+                (cluster_id, since_at)),
+            "reports": self._rows(
+                """SELECT substr(requested_at, 1, 10) AS day, COUNT(*) AS runs
+                     FROM report_run WHERE cluster_id=? AND requested_at>=? GROUP BY day ORDER BY day""",
+                (cluster_id, since_at)),
+        }
+
     def report_volume(self, cluster_id: str, since_at: str) -> dict:
         """Report runs recorded for this cluster since `since_at`, and where the recorded timeline
         starts — the mock's "Report volume · timeline starts …" (docs/design/overview-kpi-mock.html).

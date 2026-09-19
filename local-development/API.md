@@ -784,9 +784,20 @@ and logins — governance data about the clusters, not about the reader.
                     "samples": [{"cluster": "crc-local", "value": 41}]},
     "gsd_process_memory_limit_bytes": {"…": "…", "samples": null}
   },
+  "posture": {
+    "crc-local": {"groups": {"total": 62, "empty": 1, "unattributed": 2},
+                  "bindings": {"ok": 31, "dangling": 5, "unresolved": 6, "built_in": 157},
+                  "groupsyncs": {"total": 3, "states": {"ok": 3}, "oldest_last_sync": "2026-09-19T13:30:00Z"}}
+  },
+  "thresholds": {"memory_percent": 80, "cpu_percent": 80, "throttled_percent": 1, "disk_percent": 80},
+  "links": {"grafana": "https://grafana.example.com", "console": "https://console-openshift-console.apps.example.com"},
   "trends": {
     "crc-local": {
       "window_days": 30,
+      "activity": {"membership": [{"day": "2026-09-19", "added": 3, "removed": 2}],
+                   "logins": [{"day": "2026-09-19", "attempts": 6, "successes": 2}],
+                   "syncs": [{"day": "2026-09-19", "syncs": 48}],
+                   "reports": []},
       "history_retained_since": {"membership_event": "2026-08-20T00:00:00Z", "sync_event": null, "binding_event": null},
       "report_timeline_since": "2026-09-16T02:00:00Z",
       "daily": {"since": "2026-09-19", "window_days": 90,
@@ -823,7 +834,12 @@ poll thread takes a baseline every cycle). Every trend carries `history_retained
 retention prunes the event tables and a trend that ignores the cut lies about a quiet month;
 `report_timeline_since` is the first report run the dashboard ever recorded for the cluster; and
 `daily.since` is where the rollup — written once a day by the leader, for the counts that have no
-history — actually starts.
+history — actually starts. `activity` is the window's per-UTC-day buckets, for the page's sparklines.
+`posture` is each served cluster's access-posture figures from the same scalar queries the cluster
+rows and `/metrics` use, and `groupsyncs.states` the CRs' derived states, so the KPI page (#157) adds no
+arithmetic of its own. `thresholds` are the configured amber marks (`kpi.thresholds.*` in the chart) the
+page draws on every meter and names in its rule line; `links` carries the doors out (`grafana`,
+`grafana_dashboard_uid`, `console`) and omits any that is not configured.
 
 ### `GET /api/whoami`
 
