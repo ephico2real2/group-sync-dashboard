@@ -257,9 +257,11 @@ RUN --mount=type=bind,from=build,source=/image-proof.py,target=/tmp/image-proof.
 
 # Every library of every packed binary resolves, asked of the dynamic loader itself (a missing
 # one reads "not found"); `--version` only exercises what a binary loads on the way to a string.
-# x86-64 loader path: this image is built for linux/amd64 only.
-RUN for b in jq bash curl coreutils; do \
-      out=$(/lib64/ld-linux-x86-64.so.2 --list "/usr/bin/$b" 2>&1) || exit 1; \
+# The loader is found by glob, not named: /lib64/ld-linux-x86-64.so.2 on amd64 and /lib/ld-linux-aarch64.so.1
+# on arm64 (measured on both bases) — exactly one must match, so a stray second loader also fails the build.
+RUN set -- /lib*/ld-linux-*.so.*; [ $# -eq 1 ] && [ -x "$1" ] || { echo "expected one dynamic loader, found: $*" >&2; exit 1; }; ld=$1 \
+ && for b in jq bash curl coreutils; do \
+      out=$("$ld" --list "/usr/bin/$b" 2>&1) || exit 1; \
       case "$out" in *'not found'*) echo "$b: $out" >&2; exit 1;; esac; \
     done \
  && echo "every packed binary resolves"
