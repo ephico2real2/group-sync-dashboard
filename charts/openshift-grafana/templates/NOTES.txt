@@ -6,10 +6,12 @@ OpenShift's user-workload metrics through Thanos ({{ .Values.thanos.scope }} sco
 {{- if .Values.grafana.route.enabled }}
   Route:       oc get route -n {{ .Release.Namespace }} -l app.kubernetes.io/instance={{ .Release.Name }}
 {{- else }}
-  Not exposed: grafana.route.enabled is false — port-forward, or set it true for an edge Route.
+  Not exposed: grafana.route.enabled is false — port-forward, or set it true for a Route.
 {{- end }}
-{{- if not .Values.grafana.admin.existingSecret }}
-  Admin:       oc extract secret/{{ include "openshift-grafana.fullname" . }}-admin-credentials -n {{ .Release.Namespace }} --to=-
+{{- if eq .Values.grafana.auth.mode "openshift" }}
+  Login:       the cluster's (oauth-proxy); {{ .Values.grafana.auth.adminUser }} is Grafana's admin, everyone the SubjectAccessReview admits is a Viewer.
+{{- else }}
+  Login:       Grafana's own form; the admin credentials are in secret/{{ .Values.grafana.admin.existingSecret | default (printf "%s-admin" (include "openshift-grafana.fullname" .)) }}.
 {{- end }}
 
 Attach a dashboard by selecting this instance:
@@ -25,8 +27,13 @@ Attach a dashboard by selecting this instance:
         datasourceName: {{ .Values.thanos.datasource.uid | quote }}   # the uid: substituted verbatim into the panels
     configMapRef: {name: <your-configmap>, key: <your-file>.json}
 
-Prerequisite, once per cluster (cluster-admin): user-workload monitoring on —
+User-workload monitoring is the one prerequisite (cluster-admin, once per cluster). Without it the
+user-workload Prometheus does not exist and Thanos serves no user metrics: the datasource is green,
+the panels are empty. If it is not on yet, run (or add the key to the existing ConfigMap's config.yaml):
   oc -n openshift-monitoring create configmap cluster-monitoring-config --from-literal=config.yaml='enableUserWorkload: true'
+  oc get pods -n openshift-user-workload-monitoring     # prometheus-user-workload-0 appears within a minute
+The post-install gate checks it when its identity may read openshift-monitoring, and fails with that
+command when the key is absent:  oc logs -n {{ .Release.Namespace }} job/{{ include "openshift-grafana.fullname" . }}-wait
 {{- if and .Values.operatorGroup.create (not .Values.operator.install) }}
 
 Note: operatorGroup.create is true but operator.install is false — no OperatorGroup was rendered;

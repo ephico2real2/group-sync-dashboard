@@ -18,6 +18,7 @@ metadata:
     argocd.argoproj.io/sync-wave: "2"
 spec:
   uid: {{ .Values.thanos.datasource.uid | quote }}
+  resyncPeriod: {{ .Values.thanos.datasource.resyncPeriod | quote }}
   instanceSelector:
     matchLabels:
       {{- include "openshift-grafana.instanceSelector" . | nindent 6 }}

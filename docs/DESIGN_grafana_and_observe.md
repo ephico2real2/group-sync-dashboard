@@ -173,17 +173,50 @@ the same way from the ServiceAccount's token Secret into `secureJsonData.httpHea
 rendered YAML carries neither, a rotation of either reaches Grafana with no render, and
 `tlsSkipVerify` — the reference architecture's shortcut — appears nowhere (a test asserts it).
 
-### 3.5 The instance, the Route, the NetworkPolicy
+### 3.5 The login: the cluster's, not Grafana's
 
-- Admin credentials: the operator's generated `<name>-admin-credentials` unless
-  `grafana.admin.existingSecret` names a Secret from your secret manager.
-- `grafana.route.enabled: false` by default; `true` renders an edge-terminated Route the router names
-  (or `grafana.route.host`).
-- The NetworkPolicy admits the router namespace (`policy-group.network.openshift.io/ingress`) and
-  same-namespace pods on 3000, nothing else. **Measured:** the operator labels the instance's pods
-  `app: <Grafana name>`, not `<name>-grafana` — the first draft's selector matched no pod and
-  protected nothing, silently. With the right selector, `curl` from the dashboard pod (same
-  namespace) answers 200 and a probe pod in `openshift-gitops` times out.
+The first cut used Grafana's own login form with the operator-generated admin — the reference
+architecture's "add OAuth later" order — and the operator's first click from the KPI page landed on a
+username/password prompt. That is not the end state. `grafana.auth.mode: openshift` (the default)
+puts an `openshift/oauth-proxy` sidecar in front of Grafana, the same proxy the dashboard runs:
+
+- the operator's ServiceAccount is the OAuth client (`serviceaccounts.openshift.io/oauth-redirectreference.primary`
+  names the chart's Route, so the redirect follows whatever host the router assigns);
+- `-openshift-sar` gates entry — by default "may `get` the release's namespace", the `view` role and
+  above, the same people the namespace-scoped datasource serves (`grafana.auth.oauthProxy.sar` for
+  another review);
+- the proxy hands Grafana the identity as `X-Forwarded-User`; Grafana's `auth.proxy` trusts that
+  header **from 127.0.0.1 only** (`whitelist`) — the sidecar shares the pod's network namespace, so
+  a same-namespace caller on Grafana's own port cannot forge a user (**measured:** a forged header
+  from the dashboard pod on 3000 answers 401);
+- the login form is off; the identity matching `GF_SECURITY_ADMIN_USER` (`grafana.auth.adminUser`,
+  `kubeadmin` on the lab) is Grafana's server admin, everyone else signs up as Viewer.
+
+**Measured, the click path:** the KPI page's door → the proxy's 302 to `oauth-openshift` → the
+cluster login → OpenShift's one-time consent for the service-account client (every SA OAuth client
+prompts once per user) → Grafana as `login: kubeadmin, isGrafanaAdmin: true`; the second visit goes
+straight in.
+
+Two Services exist on purpose: the operator's `<name>-service:3000` (Grafana itself, where the
+operator provisions through the admin credentials — the `<name>-admin` Secret the chart generates
+once and keeps) and the chart's `<name>-proxy:8443` (the service CA signs its certificate; the
+reencrypt Route fronts it). In-cluster, both names resolve; only the proxy is a door. The
+NetworkPolicy admits the router namespace on 8443 only, and same-namespace pods (the operator; a
+platform operator elsewhere goes under `networkPolicy.extraFrom`) on 3000 and 8443. **Measured:** the
+operator labels the pods `app: <Grafana name>`, not `<name>-grafana` — the first draft's selector
+matched no pod and protected nothing; with the right one a probe from `openshift-gitops` times out.
+
+`grafana.auth.mode: grafana` keeps Grafana's own form and the operator's edge Route, for a cluster
+without the OpenShift OAuth server.
+
+### 3.5b After a restart
+
+Grafana's database is an `emptyDir` unless `grafana.persistence.enabled` is on, so the pod restart
+the auth change caused emptied it, and the datasource and the board were gone until the operator's
+next resync re-applied them — **measured:** ten minutes of "No data" at the operator's default. The
+chart sets `thanos.datasource.resyncPeriod: 2m` and the app chart's CR `resyncPeriod: 2m`; a
+consumer's own `GrafanaDashboard` should do the same, or turn persistence on where a StorageClass
+exists.
 
 ### 3.6 The board, provisioned (#161)
 
@@ -217,6 +250,17 @@ Both values are validated at load as an absolute `http(s)://` base without query
 
 ---
 
+### 3.8 The one prerequisite, surfaced by the chart
+
+User-workload monitoring cannot be a chart's to switch on (`cluster-monitoring-config` is the
+platform's, shared with every other monitoring setting), so the chart *surfaces* it: `NOTES.txt`
+prints the command after every install, and the wait Job checks it when its identity may read the
+ConfigMap — `wait.verifyUserWorkloadMonitoring: true` grants that one read (a Role in
+`openshift-monitoring` scoped to the ConfigMap's name, a cluster-admin opt-in) and the Job then
+fails the install with the exact command when the key is absent; without the grant it logs "not
+verified" and the command. A `lookup` in NOTES could not do this: Helm turns a forbidden lookup into
+a failed install (measured on CRC as a namespace-only identity).
+
 ## 4. What CRC runs now, and how to verify it
 
 ```sh
@@ -224,9 +268,11 @@ export KUBECONFIG=~/.kube/crc.kubeconfig
 oc get pods -n openshift-user-workload-monitoring                 # prometheus-user-workload-0, thanos-ruler-user-workload-0
 oc get servicemonitor,prometheusrule -n group-sync-dashboard       # two ServiceMonitors, one PrometheusRule
 oc get grafana,grafanadatasource,grafanadashboard -n group-sync-dashboard
-oc extract secret/grafana-openshift-grafana-admin-credentials -n group-sync-dashboard --to=-
-H=$(oc get route grafana-openshift-grafana-route -n group-sync-dashboard -o jsonpath='{.spec.host}')
-curl -sk -u "admin:<password>" "https://$H/api/datasources/uid/openshift-thanos/health"   # {"status":"OK"}
+oc extract secret/grafana-openshift-grafana-admin -n group-sync-dashboard --to=-      # Grafana's own admin (kubeadmin)
+H=$(oc get route grafana-openshift-grafana -n group-sync-dashboard -o jsonpath='{.spec.host}')
+curl -sk -o /dev/null -w '%{http_code} %{redirect_url}\n' "https://$H/"                 # 302 to oauth-openshift
+oc exec -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard -- \
+  curl -s -u "kubeadmin:<password>" http://grafana-openshift-grafana-service:3000/api/datasources/uid/openshift-thanos/health   # {"status":"OK"}
 oc exec -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard -- \
   curl -s -H "X-Forwarded-User: kubeadmin" http://127.0.0.1:8080/api/kpi | jq .links
 ```

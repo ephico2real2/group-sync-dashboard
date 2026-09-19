@@ -538,7 +538,15 @@ sleep 60; oc get pods -n openshift-user-workload-monitoring    # prometheus-user
 ```
 
 Then `environments/crc.yaml` turns the app chart's ServiceMonitor, rules and GrafanaDashboard CR on,
-and the Grafana chart installs into the app's namespace (`docs/DESIGN_grafana_and_observe.md` §1, §4).
+and the Grafana chart installs into the app's namespace (`docs/DESIGN_grafana_and_observe.md` §1, §4):
+
+```sh
+helm install grafana charts/openshift-grafana -n group-sync-dashboard \
+  --set grafana.route.enabled=true --set wait.verifyUserWorkloadMonitoring=true --wait --timeout 15m
+# the KPI page's door: grafana.url in environments/crc.yaml is this release's Route host
+oc get route grafana-openshift-grafana -n group-sync-dashboard -o jsonpath='{.spec.host}'
+```
+
 
 ### 4.7 — cert-manager operator (prerequisite for ALL mock + LDAP certs)
 

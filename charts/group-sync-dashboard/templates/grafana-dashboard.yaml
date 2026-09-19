@@ -80,6 +80,7 @@ metadata:
     {{- include "gsd.labels" . | nindent 4 }}
 spec:
   allowCrossNamespaceImport: {{ $cr.allowCrossNamespaceImport | default false }}
+  resyncPeriod: {{ $cr.resyncPeriod | default "10m" | quote }}
   instanceSelector:
     matchLabels:
       {{- toYaml ($cr.instanceSelector | default dict) | nindent 6 }}

@@ -45,28 +45,50 @@ grafana:
   # Extra labels on the Grafana CR, for a consumer's instanceSelector (the reference architecture
   # uses `dashboards: grafana`). The release's instance label is always present.
   labels: {}
-  # grafana-operator generates `<name>-admin-credentials` (user admin, a random password) when this
-  # is empty. Name your own Secret (keys GF_SECURITY_ADMIN_USER / GF_SECURITY_ADMIN_PASSWORD) to
-  # bring credentials from your secret manager.
+  # WHO MAY OPEN IT, AND AS WHOM.
+  #   openshift (default) — an openshift/oauth-proxy sidecar in front of Grafana: the click from the
+  #     dashboard's KPI page lands on the cluster's login (or straight in, when already signed in),
+  #     and the OpenShift identity becomes the Grafana user through auth.proxy — no second password.
+  #     `sar` gates who gets in: empty means "may get the release's namespace" (the `view` role and
+  #     above), the same people the namespace-scoped Thanos datasource serves.
+  #   grafana — Grafana's own login form, with the admin credentials below. For a cluster without
+  #     the OpenShift OAuth server.
+  auth:
+    mode: openshift
+    # The OpenShift username that is Grafana's server admin (the proxied identity that matches
+    # GF_SECURITY_ADMIN_USER). Every other identity signs up as Viewer.
+    adminUser: kubeadmin
+    oauthProxy:
+      image: registry.redhat.io/openshift4/ose-oauth-proxy-rhel9:v4.15
+      imagePullPolicy: IfNotPresent
+      port: 8443
+      # A SubjectAccessReview the proxy requires, as JSON; empty = get the release's namespace.
+      sar: ""
+      # The absolute session cap, a Go duration.
+      cookieExpire: 4h
+      # Set to reuse a cookie secret across releases; empty generates one and keeps it across upgrades.
+      cookieSecret: ""
+  # The admin credentials Grafana itself holds (the operator provisions through them). Empty: the
+  # chart generates `<name>-admin` once (user `auth.adminUser`, a random password) and keeps it
+  # across upgrades. Name your own Secret (keys GF_SECURITY_ADMIN_USER / GF_SECURITY_ADMIN_PASSWORD)
+  # to bring credentials from your secret manager.
   admin:
     existingSecret: ""
-  # Grafana's own config.ini, as the operator's `config` map of sections.
+  # Grafana's own config.ini, as the operator's `config` map of sections. The auth sections are
+  # written by the chart from `auth.mode`; add anything else here.
   config:
     log:
       mode: console
       level: info
-    auth:
-      disable_login_form: "false"
-    auth.anonymous:
-      enabled: "false"
   # Persist Grafana's own database (users, saved state). Off: an emptyDir, fine for provisioned
   # dashboards that live in CRs.
   persistence:
     enabled: false
     size: 2Gi
     storageClassName: ""
-  # Expose Grafana. Off by default — a consumer opts in; the operator creates an edge-terminated
-  # Route the router names (host empty) or the host given.
+  # Expose Grafana. Off by default — a consumer opts in. With auth.mode openshift the chart renders a
+  # reencrypt Route to the proxy (the service CA signs the proxy's certificate); with mode grafana the
+  # operator creates an edge Route to Grafana itself. Host empty: the router names it.
   route:
     enabled: false
     host: ""
@@ -95,12 +117,21 @@ thanos:
     uid: openshift-thanos
     isDefault: true
     timeInterval: 30s
+    # How often the operator re-applies the datasource. Grafana's database is an emptyDir unless
+    # persistence is on, so a pod restart (a config change, a node drain) empties it and the
+    # datasource is gone until the next resync — measured on CRC: 10 minutes of "No data" after the
+    # auth change rolled the pod. Two minutes is one PUT per two minutes; a consumer's
+    # GrafanaDashboard should set the same.
+    resyncPeriod: 2m
   # TLS to thanos-querier is verified against the service CA, injected by the service-ca operator
   # into a ConfigMap this chart annotates (`service.beta.openshift.io/inject-cabundle`). Never
   # `tlsSkipVerify`.
 
-# Who may reach Grafana's pod. The Route's router and this namespace's pods by default; add
-# peers (namespaceSelector / podSelector entries) for a dashboard that embeds Grafana.
+# Who may reach Grafana's pod. The Route's router (the proxy port only) and this namespace's pods
+# (the proxy port and Grafana's 3000 — the operator provisions through 3000; with a platform
+# operator in ANOTHER namespace, add its namespace under extraFrom). Grafana trusts the identity
+# header from 127.0.0.1 only (auth.proxy.whitelist), so a same-namespace caller on 3000 cannot
+# forge a user.
 networkPolicy:
   enabled: true
   # Extra `from` peers, appended to the router and same-namespace rules.
@@ -110,6 +141,11 @@ networkPolicy:
 # Grafana instance to report ready, so `helm install` returns a working Grafana or a named failure.
 wait:
   enabled: true
+  # Let the gate READ openshift-monitoring/cluster-monitoring-config, so it fails with the exact
+  # command when user-workload monitoring is off instead of reporting "not verified". Renders a
+  # Role + RoleBinding in openshift-monitoring scoped to that one ConfigMap — a cluster-admin step
+  # in a namespace the consumer does not own, hence off by default (the same rule as thanos.scope).
+  verifyUserWorkloadMonitoring: false
   waitSeconds: 600
   intervalSeconds: 10
   image:

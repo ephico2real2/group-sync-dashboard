@@ -64,6 +64,23 @@ spec:
               deadline=$(( $(date +%s) + WAIT_SECONDS ))
               remaining() { echo $(( deadline - $(date +%s) )); }
 
+              # The prerequisite, checked when this identity may read it: a cluster-admin's install fails
+              # here with the exact command when user-workload monitoring is off; a namespace-only
+              # identity gets "not verified" and the command, never a false pass. `lookup` in NOTES could
+              # not do this — Helm turns a forbidden lookup into a failed install (measured on CRC).
+              UWM_CMD="oc -n openshift-monitoring create configmap cluster-monitoring-config --from-literal=config.yaml='enableUserWorkload: true'"
+              if cfg="$(oc get configmap cluster-monitoring-config -n openshift-monitoring -o jsonpath='{.data.config\.yaml}' 2>/tmp/uwm.err)"; then
+                if printf '%s\n' "$cfg" | grep -Eq '^[[:space:]]*enableUserWorkload:[[:space:]]*true[[:space:]]*$'; then
+                  log "user-workload monitoring: ON"
+                else
+                  fail "user-workload monitoring is OFF (openshift-monitoring/cluster-monitoring-config lacks enableUserWorkload: true), so Thanos serves no user metrics. Cluster-admin, once per cluster: $UWM_CMD — or add the key to the existing ConfigMap's config.yaml. Then re-run: helm upgrade."
+                fi
+              elif grep -q "not found" /tmp/uwm.err; then
+                fail "user-workload monitoring is OFF (openshift-monitoring/cluster-monitoring-config does not exist). Cluster-admin, once per cluster: $UWM_CMD. Then re-run: helm upgrade."
+              else
+                log "user-workload monitoring: not verified (this identity may not read openshift-monitoring/cluster-monitoring-config). If it is not on: $UWM_CMD"
+              fi
+
               if [ "$OPERATOR_INSTALLED" = "true" ]; then
                 log "waiting for grafana-operator's CSV to succeed in $NAMESPACE"
                 while :; do

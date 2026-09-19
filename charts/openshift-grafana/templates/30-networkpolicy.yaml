@@ -19,6 +19,27 @@ spec:
       app: {{ include "openshift-grafana.fullname" . }}
   policyTypes: [Ingress]
   ingress:
+    {{- if eq .Values.grafana.auth.mode "openshift" }}
+    # The router reaches the proxy only; Grafana's own port is for this namespace (the operator's
+    # provisioning) and any peer named below.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              policy-group.network.openshift.io/ingress: ""
+      ports:
+        - port: {{ .Values.grafana.auth.oauthProxy.port }}
+          protocol: TCP
+    - from:
+        - podSelector: {}
+        {{- with .Values.networkPolicy.extraFrom }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      ports:
+        - port: 3000
+          protocol: TCP
+        - port: {{ .Values.grafana.auth.oauthProxy.port }}
+          protocol: TCP
+    {{- else }}
     - from:
         - namespaceSelector:
             matchLabels:
@@ -30,4 +51,5 @@ spec:
       ports:
         - port: 3000
           protocol: TCP
+    {{- end }}
 {{- end }}

@@ -428,7 +428,7 @@ ArgoCD section explains for the cookie.
 | `monitoring.serviceMonitor.enabled` | `false` | needs the Prometheus Operator CRDs (OpenShift ships them; the install fails on the unknown kind where they are absent). Off by default because the reference cluster runs no Prometheus; rendering with it on is verified |
 | `monitoring.serviceMonitor.interval` / `.scrapeTimeout` | `30s` / `10s` | every series is recomputed from SQLite on scrape and each scrape takes a read snapshot. Faster buys no resolution — the data only changes once per poll |
 | `monitoring.serviceMonitor.labels` | `{}` | extra metadata labels. Usually how a cluster's Prometheus selects which ServiceMonitors it owns |
-| `monitoring.prometheusRule.enabled` | `false` | **fourteen** alerts — two of them render only with `reporting.enabled` (the default) — sixteen with `backup.offsite.enabled`; see below |
+| `monitoring.prometheusRule.enabled` | `false` | **seventeen** alerts — two of them render only with `reporting.enabled` (the default) — nineteen with `backup.offsite.enabled`; see below |
 | `monitoring.prometheusRule.labels` | `{}` | as above, for rule selection |
 | `monitoring.prometheusRule.overdueSeconds` | `7200` | a GroupSync has not synced for this long |
 | `monitoring.prometheusRule.notPollingSeconds` | `600` | catches a dead poll loop, which the health endpoints cannot. **Must stay above ~2× `config.pollIntervalSeconds`** or it fires continuously on a healthy deployment |
@@ -554,7 +554,7 @@ evaluated. That is a statement of intent, not an isolation boundary — OpenShif
 `basic-user` to `system:authenticated`, which already grants `get`/`list` on clusterroles to
 every authenticated identity including this one.
 
-#### The fourteen alerts (sixteen with `backup.offsite`)
+#### The seventeen alerts (nineteen with `backup.offsite`)
 
 | Alert | Fires on | `for` |
 |---|---|---|
@@ -574,6 +574,9 @@ every authenticated identity including this one.
 | `GroupSyncDashboardReportSnapshotStale` | `gsd_report_snapshot_age_seconds` above four snapshot intervals — the dashboard's leader is not writing copies, so a report would print stale data with an honest "data as of" line. Rendered only with `reporting.enabled` | `for.reportSnapshot`, `30m` |
 | `GroupSyncDashboardOffsiteBackupStale` | *(`backup.offsite.enabled` only)* the CronJob last succeeded more than `offsiteBackupStaleSeconds` ago — nothing newer is off the volume | `for.offsiteBackupStale`, `30m` |
 | `GroupSyncDashboardOffsiteBackupUnobserved` | *(`backup.offsite.enabled` only)* `kube_cronjob_status_last_successful_time` has no series for the CronJob: it has never succeeded, or kube-state-metrics is not scraped here — in which case the stale alert can never fire and this is the only signal | `for.offsiteBackupUnobserved`, `1h` |
+| `GroupSyncDashboardPodThrottled` | a pod's throttled share of scheduler periods above `kpi.thresholds.throttledPercent` (1 %) over 15m — the saturation signal the KPI page marks amber; raise its CPU limit | `for.podThrottled`, `15m` |
+| `GroupSyncDashboardPodMemoryHigh` | a pod above `kpi.thresholds.memoryPercent` (80 %) of its cgroup memory limit — the next step is the OOM kill | `for.podMemoryHigh`, `15m` |
+| `GroupSyncDashboardVolumeDiskFull` | the filesystem under a pod's volume above `kpi.thresholds.diskPercent` (80 %) — on a hostPath volume, the node's disk | `for.volumeDiskFull`, `30m` |
 
 The WAL pair and the last three are the ones with no other symptom: the pod stays Ready,
 every other metric looks normal, and the first visible sign is a full volume, a latency

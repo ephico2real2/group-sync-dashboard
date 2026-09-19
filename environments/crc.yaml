@@ -90,7 +90,7 @@ monitoring:
 # The KPI page's Grafana door (#157): the openshift-grafana release's Route on CRC, opening the
 # board the CR above provisions.
 grafana:
-  url: https://grafana-openshift-grafana-route-group-sync-dashboard.apps-crc.testing
+  url: https://grafana-openshift-grafana-group-sync-dashboard.apps-crc.testing
   dashboardUid: gsd-group-sync-dashboard
 
 # ---------------------------------------------------------------------------

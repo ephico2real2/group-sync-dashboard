@@ -117,21 +117,59 @@ class TestDatasource:
 
 @needs_helm
 class TestInstance:
-    def test_no_route_by_default_and_an_edge_route_on_request(self):
-        assert "route" not in _one(_render(), "Grafana")["spec"]
-        g = _one(_render("grafana.route.enabled=true", "grafana.route.host=g.apps.example"), "Grafana")
-        assert g["spec"]["route"]["spec"]["host"] == "g.apps.example"
-        assert g["spec"]["route"]["spec"]["tls"]["termination"] == "edge"
+    def test_no_route_by_default_and_a_named_host_on_request(self):
+        docs = _render()
+        assert "route" not in _one(docs, "Grafana")["spec"] and "Route" not in _kinds(docs)
+        route = _one(_render("grafana.route.enabled=true", "grafana.route.host=g.apps.example"), "Route")
+        assert route["spec"]["host"] == "g.apps.example"
 
-    def test_admin_credentials_are_the_operators_unless_a_secret_is_named(self):
-        assert "disableDefaultAdminSecret" not in _one(_render(), "Grafana")["spec"]
-        g = _one(_render("grafana.admin.existingSecret=creds"), "Grafana")
+    def test_admin_credentials_are_the_charts_secret_unless_one_is_named(self):
+        docs = _render()
+        g = _one(docs, "Grafana")
         assert g["spec"]["disableDefaultAdminSecret"] is True
+        env = g["spec"]["deployment"]["spec"]["template"]["spec"]["containers"][0]["env"]
+        assert {e["valueFrom"]["secretKeyRef"]["name"] for e in env} == {"obs-openshift-grafana-admin"}
+        assert _one(docs, "Secret", "-admin")["data"]["GF_SECURITY_ADMIN_USER"] == "a3ViZWFkbWlu"   # kubeadmin: the proxied identity that is admin
+        g = _one(_render("grafana.admin.existingSecret=creds"), "Grafana")
         env = g["spec"]["deployment"]["spec"]["template"]["spec"]["containers"][0]["env"]
         assert {e["valueFrom"]["secretKeyRef"]["name"] for e in env} == {"creds"}
 
+    def test_openshift_login_is_the_default_and_the_header_is_trusted_from_the_loopback_only(self):
+        """The click from the KPI page lands on the cluster's login; the OpenShift identity is the
+        Grafana user. Measured on CRC: a forged X-Forwarded-User on 3000 from a same-namespace pod
+        answers 401, and an unauthenticated request through the proxy is a 302 to the OAuth server."""
+        docs = _render("grafana.route.enabled=true")
+        g = _one(docs, "Grafana")["spec"]
+        assert g["config"]["auth.proxy"] == {"enabled": "true", "header_name": "X-Forwarded-User", "header_property": "username",
+                                             "auto_sign_up": "true", "whitelist": "127.0.0.1"}
+        assert g["config"]["auth"]["disable_login_form"] == "true"
+        containers = {c["name"]: c for c in g["deployment"]["spec"]["template"]["spec"]["containers"]}
+        args = containers["oauth-proxy"]["args"]
+        assert "-provider=openshift" in args and "-upstream=http://127.0.0.1:3000" in args
+        assert '-openshift-sar={"resource":"namespaces","verb":"get","name":"team-a"}' in args
+        assert "-openshift-service-account=obs-openshift-grafana-sa" in args
+        ref = g["serviceAccount"]["metadata"]["annotations"]["serviceaccounts.openshift.io/oauth-redirectreference.primary"]
+        assert '"name":"obs-openshift-grafana"' in ref
+        assert "route" not in g, "the operator's edge Route is off; the chart's reencrypt Route fronts the proxy"
+        route = _one(docs, "Route")
+        assert route["spec"]["to"]["name"] == "obs-openshift-grafana-proxy" and route["spec"]["tls"]["termination"] == "reencrypt"
+        svc = _one(docs, "Service")
+        assert svc["metadata"]["annotations"]["service.beta.openshift.io/serving-cert-secret-name"] == "obs-openshift-grafana-proxy-tls"
+        np = _one(docs, "NetworkPolicy")["spec"]["ingress"]
+        router = [r for r in np if any("namespaceSelector" in f for f in r["from"])][0]
+        assert [p["port"] for p in router["ports"]] == [8443], "the router reaches the proxy only"
+
+    def test_grafana_login_mode_renders_no_proxy(self):
+        docs = _render("grafana.auth.mode=grafana", "grafana.route.enabled=true")
+        g = _one(docs, "Grafana")["spec"]
+        assert "auth.proxy" not in g["config"] and g["config"]["auth"]["disable_login_form"] == "false"
+        assert [c["name"] for c in g["deployment"]["spec"]["template"]["spec"]["containers"]] == ["grafana"]
+        assert g["route"]["spec"]["tls"]["termination"] == "edge"
+        assert "Route" not in _kinds(docs) and "Service" not in _kinds(docs)
+        assert not [d for d in docs if d["kind"] == "Secret" and d["metadata"]["name"].endswith("oauth-cookie")]
+
     def test_the_networkpolicy_admits_the_router_and_the_namespace_only(self):
-        np = _one(_render(), "NetworkPolicy")
+        np = _one(_render("grafana.auth.mode=grafana"), "NetworkPolicy")
         # the operator's own pod label (`app: <Grafana name>`, measured on v5.24.0) — a selector that
         # matches no pod protected nothing on the first CRC install
         assert np["spec"]["podSelector"] == {"matchLabels": {"app": "obs-openshift-grafana"}}
@@ -145,6 +183,18 @@ class TestInstance:
         ann = job["metadata"]["annotations"]
         assert ann["helm.sh/hook"] == "post-install,post-upgrade" and ann["argocd.argoproj.io/hook"] == "Sync"
         assert job["spec"]["activeDeadlineSeconds"] == 720
+        script = job["spec"]["template"]["spec"]["containers"][0]["args"][0]
+        assert "enableUserWorkload: true" in script, "the gate names the one prerequisite's command"
+
+    def test_verifying_user_workload_monitoring_is_a_cluster_admin_opt_in(self):
+        assert not [d for d in _render() if d["metadata"]["name"].endswith("uwm-check")]
+        docs = _render("wait.verifyUserWorkloadMonitoring=true")
+        role = [d for d in docs if d["kind"] == "Role" and d["metadata"]["name"].endswith("uwm-check")][0]
+        assert role["metadata"]["namespace"] == "openshift-monitoring"
+        assert role["rules"] == [{"apiGroups": [""], "resources": ["configmaps"], "resourceNames": ["cluster-monitoring-config"], "verbs": ["get"]}]
+
+    def test_the_datasource_resyncs_every_two_minutes(self):
+        assert _one(_render(), "GrafanaDatasource")["spec"]["resyncPeriod"] == "2m"
 
 
 @needs_helm

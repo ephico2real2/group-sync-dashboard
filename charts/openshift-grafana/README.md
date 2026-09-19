@@ -74,6 +74,14 @@ Two details the reference architecture gets wrong and this chart gets right, bot
   ServiceAccount's token Secret the same way — through `valuesFrom` — so the rendered manifest
   carries neither a token nor a certificate, and a rotation of either reaches Grafana with no render.
 
+## After a restart
+
+Grafana's database is an `emptyDir` unless `grafana.persistence.enabled` is on, so a pod restart (a
+config change, a node drain) empties it: the datasource and every provisioned board are gone until
+the operator's next resync re-applies them. Measured on CRC: ten minutes of "No data" at the
+operator's default. The chart sets `thanos.datasource.resyncPeriod: 2m`; set the same
+`spec.resyncPeriod` on your `GrafanaDashboard`, or turn persistence on where a StorageClass exists.
+
 ## Attaching your dashboard
 
 The datasource's **name and uid are both fixed** (`thanos.datasource.name` — *OpenShift Thanos* —

@@ -44,4 +44,39 @@ subjects:
   - kind: ServiceAccount
     name: {{ include "openshift-grafana.fullname" . }}-wait
     namespace: {{ .Release.Namespace }}
+{{- if .Values.wait.verifyUserWorkloadMonitoring }}
+---
+{{- /*
+The read that lets the gate say ON or OFF rather than "not verified": one ConfigMap, by name, in
+openshift-monitoring. A cluster-admin step (values wait.verifyUserWorkloadMonitoring).
+*/ -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "openshift-grafana.fullname" . }}-{{ .Release.Namespace }}-uwm-check
+  namespace: openshift-monitoring
+  labels:
+    {{- include "openshift-grafana.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["cluster-monitoring-config"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "openshift-grafana.fullname" . }}-{{ .Release.Namespace }}-uwm-check
+  namespace: openshift-monitoring
+  labels:
+    {{- include "openshift-grafana.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "openshift-grafana.fullname" . }}-{{ .Release.Namespace }}-uwm-check
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "openshift-grafana.fullname" . }}-wait
+    namespace: {{ .Release.Namespace }}
+{{- end }}
 {{- end }}
