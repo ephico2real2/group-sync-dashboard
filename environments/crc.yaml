@@ -149,3 +149,8 @@ clusters:
     # on the mock, so their tier is computed by SAR (not forced to self), and the admin tabs render.
     visibility: inherit
     identity: same-as-host
+
+# The KPI page's Observe door (#157): CRC's console route. Grafana is not installed on CRC, so that
+# door stays off and the page says so in prose.
+console:
+  url: https://console-openshift-console.apps-crc.testing

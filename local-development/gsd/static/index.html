@@ -1449,8 +1449,11 @@ const KPI_MI = 1024 * 1024;
 
 function kpiBytes(n) {
   if (n == null) return "—";
-  if (n >= 1024 * KPI_MI) return `${(n / (1024 * KPI_MI)).toFixed(n >= 10 * 1024 * KPI_MI ? 0 : 1)}Gi`;
-  if (n >= KPI_MI) return `${(n / KPI_MI).toFixed(1)}Mi`;
+  // One decimal below ten units, none above, and never a trailing ".0": a 512Mi limit reads
+  // "512Mi" (measured on CRC: "512.0Mi" was the first render), a 3.8Mi database "3.8Mi".
+  const unit = (v, suffix) => `${(v >= 10 ? v.toFixed(0) : v.toFixed(1)).replace(/\.0$/, "")}${suffix}`;
+  if (n >= 1024 * KPI_MI) return unit(n / (1024 * KPI_MI), "Gi");
+  if (n >= KPI_MI) return unit(n / KPI_MI, "Mi");
   return `${Math.round(n / 1024)}Ki`;
 }
 
