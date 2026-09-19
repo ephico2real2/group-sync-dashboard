@@ -554,6 +554,9 @@ CREATE TABLE IF NOT EXISTS report_run (
 );
 CREATE INDEX IF NOT EXISTS report_run_by_time ON report_run(requested_at DESC);
 CREATE INDEX IF NOT EXISTS report_run_by_user ON report_run(generated_by, requested_at DESC);
+-- The KPI page's per-cluster reads (Store.report_volume, daily_activity): a seek here, a scan
+-- of every run without it. Migration 17.
+CREATE INDEX IF NOT EXISTS report_run_by_cluster_time ON report_run(cluster_id, requested_at);
 
 -- The daily KPI rollup (#156): one row per (cluster, UTC day, metric), written by the leader on the
 -- first successful poll of each day. The counts it holds (groups, bindings, people) have NO history
@@ -954,6 +957,13 @@ _MIGRATIONS: list[tuple[int, str, list[str]]] = [
         [
             "CREATE INDEX IF NOT EXISTS membership_event_by_id ON membership_event(cluster_id, id)",
             "CREATE INDEX IF NOT EXISTS login_event_by_id ON login_event(cluster_id, id)",
+        ],
+    ),
+    (
+        17,
+        "report_run: (cluster_id, requested_at) for the KPI page's per-cluster reads (review of #157)",
+        [
+            "CREATE INDEX IF NOT EXISTS report_run_by_cluster_time ON report_run(cluster_id, requested_at)",
         ],
     ),
 ]
@@ -3967,6 +3977,32 @@ class Store:
         row = row or {}
         return {"attempts": row.get("attempts") or 0, "successes": row.get("successes") or 0,
                 "providers": row.get("providers") or 0}
+
+    def daily_activity(self, cluster_id: str, since_at: str) -> dict[str, list[dict]]:
+        """Per-UTC-day buckets since `since_at` for the KPI page's sparklines (#157): membership
+        changes (baseline rows excluded), login attempts and successes, sync events, report runs.
+        Four GROUP BY day aggregates over the indexed time columns; no names."""
+        return {
+            "membership": self._rows(
+                """SELECT substr(observed_at, 1, 10) AS day,
+                          SUM(CASE WHEN change='added' THEN 1 ELSE 0 END) AS added,
+                          SUM(CASE WHEN change='removed' THEN 1 ELSE 0 END) AS removed
+                     FROM membership_event WHERE cluster_id=? AND observed_at>=? AND baseline=0
+                    GROUP BY day ORDER BY day""", (cluster_id, since_at)),
+            "logins": self._rows(
+                """SELECT substr(at, 1, 10) AS day, COUNT(*) AS attempts,
+                          SUM(CASE WHEN outcome='success' THEN 1 ELSE 0 END) AS successes
+                     FROM login_event WHERE cluster_id=? AND at>=? GROUP BY day ORDER BY day""",
+                (cluster_id, since_at)),
+            "syncs": self._rows(
+                """SELECT substr(observed_at, 1, 10) AS day, COUNT(*) AS syncs
+                     FROM sync_event WHERE cluster_id=? AND observed_at>=? GROUP BY day ORDER BY day""",
+                (cluster_id, since_at)),
+            "reports": self._rows(
+                """SELECT substr(requested_at, 1, 10) AS day, COUNT(*) AS runs
+                     FROM report_run WHERE cluster_id=? AND requested_at>=? GROUP BY day ORDER BY day""",
+                (cluster_id, since_at)),
+        }
 
     def report_volume(self, cluster_id: str, since_at: str) -> dict:
         """Report runs recorded for this cluster since `since_at`, and where the recorded timeline

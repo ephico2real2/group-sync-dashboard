@@ -65,9 +65,11 @@ def table_rows() -> list[tuple[str, str, str]]:
         cells = [c.strip() for c in line.strip("|").split("|")]
         if len(cells) != 4:
             continue
-        keys = [k.strip().strip("`") for k in cells[0].split("/")]
-        defaults = [d.strip().strip("`") for d in cells[1].split("/")]
-        actuals = [a.strip().strip("`") for a in cells[2].split("/")]
+        # Compound rows join their halves with a spaced slash (`a` / `.b`); split on THAT, so a
+        # value that is a URL (console.url, #157) is one cell and not three.
+        keys = [k.strip().strip("`") for k in cells[0].split(" / ")]
+        defaults = [d.strip().strip("`") for d in cells[1].split(" / ")]
+        actuals = [a.strip().strip("`") for a in cells[2].split(" / ")]
         assert len(keys) == len(defaults) == len(actuals), f"ragged row: {line}"
         parent = keys[0].rsplit(".", 1)[0]
         for key, default, actual in zip(keys, defaults, actuals):

@@ -58,6 +58,7 @@ REPO = pathlib.Path(__file__).resolve().parents[1]
 TABS = [
     ("Home",            "00-home.png"),
     ("Overview",        "01-overview.png"),
+    ("KPIs",            "01b-kpis.png"),
     ("Groups",          "02-groups.png"),
     ("Users",           "03-users.png"),
     ("Access granted",  "04-access-granted.png"),

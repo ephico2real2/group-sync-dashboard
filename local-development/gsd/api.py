@@ -2239,7 +2239,14 @@ def build_app(
             "scope": "all",
             "viewer": trusted_viewer(request),
             **page_payload(ctx, dashboard_system=system_monitor.view(), report_system=report_system,
-                           report_system_at=report_system_at, last_poll=last_poll),
+                           report_system_at=report_system_at, last_poll=last_poll, grace=grace,
+                           thresholds={"memory_percent": settings.kpi_memory_warn_percent,
+                                       "cpu_percent": settings.kpi_cpu_warn_percent,
+                                       "throttled_percent": settings.kpi_throttled_warn_percent,
+                                       "disk_percent": settings.kpi_disk_warn_percent},
+                           links={k: v for k, v in (("grafana", settings.grafana_url),
+                                                    ("grafana_dashboard_uid", settings.grafana_dashboard_uid),
+                                                    ("console", settings.console_url)) if v}),
         }
 
     @app.get("/api/whoami")

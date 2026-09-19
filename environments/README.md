@@ -50,6 +50,7 @@ declare — it only *overrides*, and the table says which way:
 | key | chart default | crc.yaml | verdict |
 |---|---|---|---|
 | `config.unmanagedAudit.mode` | `log` | `log` | redundant — already the default |
+| `console.url` | `""` | `https://console-openshift-console.apps-crc.testing` | lab override — the KPI page's Observe → Dashboards door (#157) opens CRC's console; Grafana stays unset, there is none on CRC |
 | `logLevel` | `INFO` | `DEBUG` | lab override |
 | `authLogLevel.manage` / `.enabled` | `false` / `false` | `false` / `false` | inherits the default: the lab reads the AUDIT LOG, which names the person at the default verbosity, so the auth-loglevel Job (a post-upgrade hook) is not needed; the one-time convergence to Normal is done, so management is off (set `manage=true` only for the pod-log source) |
 | `loginCapture.enabled` | `true` | `true` | redundant — the default since chart 0.14.0 |

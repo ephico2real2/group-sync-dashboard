@@ -1056,7 +1056,7 @@ class TestTheShellAtPhoneWidth:
     """#166, measured on the live cluster before the fix: at 375 px the nine-tab bar was 676 px wide,
     `document.documentElement.scrollWidth` 696, and five tabs sat past the edge of a bar that could
     not scroll — unreachable. The shell owns the bar (#152), so the check runs on every tab."""
-    TABS = ["home", "overview", "groups", "users", "bindings", "policy", "nsaudit", "logins", "usage"]
+    TABS = ["home", "overview", "kpi", "groups", "users", "bindings", "policy", "nsaudit", "logins", "usage"]
 
     @pytest.mark.parametrize("tab", TABS)
     def test_no_horizontal_overflow_and_every_tab_inside_the_viewport(self, dash, tab):
@@ -1202,6 +1202,220 @@ class TestAppearanceAndColours:
 
     def test_the_controls_are_in_the_static_header_not_the_filter_bar(self, dash):
         assert dash.evaluate("() => document.querySelector('header.top #pref-mode') !== null && document.querySelector('#filters #pref-mode') === null")
+
+
+class TestKpiPage:
+    """#157 — the KPI page, to docs/design/overview-kpi-mock.html: both pods' self-report, the
+    access-posture band, the four trends, the clusters table and the doors out, every number from
+    /api/kpi (#156). The harness runs on a laptop with no cgroup, so the dashboard's block carries
+    the disk and its own bytes and says the cgroup is unavailable — never 0."""
+
+    def _open(self, dash):
+        dash.click("#tab-kpi")
+        dash.wait_for_selector(".kpi-page .kband .kpi", timeout=10_000)
+        return dash
+
+    def test_the_five_sections_render_from_the_payload(self, dash):
+        self._open(dash)
+        headings = [h.split("\n")[0].strip() for h in dash.locator("section.kpi-page > h2").all_inner_texts()]
+        assert headings[:4] == ["System status", "Access posture", "Trends", "Clusters"]
+        assert dash.locator(".kpi-page .kband .kpi").count() == 6
+        assert dash.locator(".kpi-page .trend").count() == 4
+        assert dash.locator(".kpi-page .comp").count() == 2
+        assert dash.locator(".kpi-page .kdoor").count() == 1
+        # The band's figures are the clusters' sums: groups from /api/kpi's posture, not invented.
+        groups = int(dash.locator('.kpi-page .kpi[data-kpi="groups"] .value').inner_text().replace(",", ""))
+        rows = dash.locator(".kpi-page tbody tr")
+        assert rows.count() == 2
+        per_cluster = [int(rows.nth(i).locator("td").nth(2).inner_text().replace(",", "")) for i in range(rows.count())]
+        assert groups == sum(per_cluster)
+
+    def test_the_cluster_selector_is_hidden_and_the_page_is_fleet_wide(self, dash):
+        self._open(dash)
+        assert dash.locator("#f-cluster").count() == 0
+        assert dash.locator("#scope-note").inner_text().strip() == ""
+
+    def test_status_is_never_colour_alone_and_the_mark_sits_at_the_threshold(self, dash):
+        self._open(dash)
+        # every state carries a word and a glyph (the .badge convention)
+        for i in range(dash.locator(".kpi-page .badge").count()):
+            b = dash.locator(".kpi-page .badge").nth(i)
+            assert b.inner_text().strip() and b.locator(".glyph").count() == 1
+        # the amber mark is drawn where the configured threshold says, on every measured track
+        marks = dash.evaluate("""() => [...document.querySelectorAll('.kpi-page .track')].map(t => ({
+            th: t.dataset.th, prop: getComputedStyle(t).getPropertyValue('--th').trim(),
+            label: t.getAttribute('aria-label')}))""")
+        assert marks, "no meter rendered"
+        for m in marks:
+            assert m["prop"] == f"{m['th']}%", m
+            assert m["label"], m
+        # the rule line names the thresholds it applied
+        rule = dash.locator(".kpi-page .comp .rule").first.inner_text()
+        assert ">80% memory" in rule and ">1% throttled periods" in rule
+
+    def test_no_cgroup_reads_as_unavailable_not_zero(self, dash):
+        self._open(dash)
+        dashboard = dash.locator('.kpi-page .comp[data-comp="dashboard"]')
+        # a laptop has no cgroup v2: the memory and CPU meters are unmeasured, the disk is measured
+        vals = dashboard.locator(".meter-val").all_inner_texts()
+        assert vals[0] == "unavailable" and vals[1] == "unavailable" and vals[2] == "unavailable"
+        assert "node disk" in vals[3]
+        assert "unmeasured, not zero" in dashboard.locator(".sub").first.inner_text()
+        # the report service has not reported: unavailable, in words
+        report = dash.locator('.kpi-page .comp[data-comp="report"]')
+        assert "unavailable" in report.locator(".badge").inner_text()
+
+    def test_trends_state_the_retention_edge_and_the_report_timeline(self, dash):
+        self._open(dash)
+        retains = dash.locator(".kpi-page .trend .retain").all_inner_texts()
+        assert any("history retained since" in r for r in retains)
+        assert any("timeline starts" in r or "no report run recorded yet" in r for r in retains)
+        assert dash.locator(".kpi-page .spark").count() == 4
+
+    def test_the_doors_render_only_when_configured(self, dash):
+        self._open(dash)
+        # the fixture configures neither Grafana nor the console: prose, no dead buttons
+        assert dash.locator(".kpi-page .kdoor .btn").count() == 0
+        assert "grafana.url" in dash.locator(".kpi-page .kdoor p").inner_text()
+
+    def test_a_cluster_row_opens_its_overview(self, dash):
+        self._open(dash)
+        dash.locator(".kpi-page tbody tr").first.click()
+        dash.wait_for_function("() => location.hash.includes('page=overview') && location.hash.includes('cluster=crc-local')")
+
+    def test_holds_at_phone_width_with_the_table_scrolling_in_its_own_container(self, dash):
+        dash.set_viewport_size({"width": 375, "height": 740})
+        self._open(dash)
+        dash.wait_for_timeout(300)
+        width = dash.evaluate("() => [document.documentElement.scrollWidth, innerWidth]")
+        assert width[0] <= width[1], f"the page scrolls sideways ({width[0]} > {width[1]})"
+        table = dash.evaluate("() => { const s = document.querySelector('.kpi-page .scroll-x'); return [s.scrollWidth, s.clientWidth]; }")
+        assert table[0] > table[1], "the clusters table must scroll inside its own container, not clip"
+
+    def test_a_shared_day_across_clusters_is_one_summed_point(self, dash):
+        """Review of #157 (Grok, P6): the sparkline concatenated the clusters' per-day rows and the
+        Map kept the last cluster's — a day both clusters had rows for read as one cluster's figure
+        while the tile summed both. The buckets are summed per day before the polyline is drawn."""
+        self._open(dash)
+        points = dash.evaluate("""() => {
+          const day = new Date().toISOString().slice(0, 10);
+          const k = data.kpi;
+          for (const c of Object.keys(k.trends)) k.trends[c].activity.reports = [{ day, runs: c === 'crc-local' ? 2 : 3 }];
+          document.getElementById('main').innerHTML = kpiPage();
+          const svg = document.querySelectorAll('.kpi-page .spark')[3];
+          return svg.getAttribute('aria-label');
+        }""")
+        assert points.endswith("5 over the last seven days"), points
+
+    # A cgroup sample with the mock's own figures (docs/design/overview-kpi-mock.html): 19.3 % of 512Mi,
+    # 1.10 % throttled over a 1 % mark, the node disk 83 % full.
+    MOCK_SAMPLE = """() => { data.kpi.system.dashboard = {as_of: data.kpi.as_of,
+        memory: {used_bytes: 103600000, limit_bytes: 536870912},
+        cpu: {limit_cores: 0.5, usage_seconds: 100, periods: 20853, throttled_periods: 230, throttled_seconds: 8.71,
+              cores_used: 0.004, throttled_fraction: 0.011, rate_interval_seconds: 60},
+        disk: {used_bytes: 50e9, total_bytes: 60e9}, data: {db_bytes: 1, wal_bytes: 0, backups: {count: 0, bytes: 0}}};
+      render(); }"""
+
+    def test_the_throttled_track_is_scaled_so_position_reads(self, dash):
+        """The mock draws the 1 % throttle mark at 20 % of its track (a track to 5 %). On a 0–100 % track the
+        mark sat 3 px from the left edge and the mock's 1.10 % (watch) and 0.05 % (healthy) filled within half a
+        pixel of each other (measured at 1280 px) — the position the rule line promises read nothing."""
+        self._open(dash)
+        dash.evaluate(self.MOCK_SAMPLE)
+        rows = dash.evaluate("""() => [...document.querySelectorAll('.comp[data-comp="dashboard"] .meter-row')].map(m => ({
+            label: m.querySelector('.meter-lab').innerText, th: m.querySelector('.track').dataset.th,
+            width: +m.querySelector('.fill').dataset.width, warn: m.querySelector('.fill').classList.contains('warn'),
+            aria: m.querySelector('.track').getAttribute('aria-label')}))""")
+        by = {r["label"]: r for r in rows}
+        assert by["MEMORY"]["th"] == "80" and abs(by["MEMORY"]["width"] - 19.3) < 0.1 and not by["MEMORY"]["warn"]
+        assert by["THROTTLED"]["th"] == "20" and abs(by["THROTTLED"]["width"] - 22.0) < 0.1 and by["THROTTLED"]["warn"], by["THROTTLED"]
+        assert by["THROTTLED"]["aria"] == "Throttled: 1.1% of the limit, amber above 1% on a track to 5%", by["THROTTLED"]["aria"]
+        assert "watch" in dash.locator('.comp[data-comp="dashboard"] .badge').inner_text()
+
+    def test_the_fill_the_badge_and_the_rule_come_from_one_decision(self, dash):
+        """A threshold the payload does not carry must not split the decision: the fill's class, the badge word
+        and the rule line are one comparison per meter, so they agree whatever the input. With two comparisons
+        the badge said watch (50 > null is true in JavaScript) over a green fill."""
+        self._open(dash)
+        agree = dash.evaluate("""() => { data.kpi.system.dashboard = {as_of: data.kpi.as_of, memory: {used_bytes: 100, limit_bytes: 200},
+            data: {db_bytes: 1, wal_bytes: 0, backups: {count: 0, bytes: 0}}};
+          data.kpi.thresholds = Object.assign({}, data.kpi.thresholds, {memory_percent: null}); render();
+          const c = document.querySelector('.comp[data-comp="dashboard"]');
+          return {badge: c.querySelector('.badge').innerText.trim(), warnFills: c.querySelectorAll('.fill.warn').length,
+                  rule: c.querySelector('.rule').innerText.startsWith('Watch:')}; }""")
+        assert (agree["badge"] == "watch") == (agree["warnFills"] > 0) == agree["rule"], agree
+
+    def test_an_over_threshold_fill_clears_graphical_contrast_on_its_track(self, dash):
+        """1.4.11: the fill's extent against the track's wash IS the meter, so the two composited colours —
+        not the tokens — must be 3:1 apart. The badge amber measured 2.70:1 on --page-2 in light."""
+        self._open(dash)
+        dash.evaluate(self.MOCK_SAMPLE)
+        pair = dash.evaluate("""() => { const fill = document.querySelector('.comp[data-comp="dashboard"] .fill.warn');
+            return [getComputedStyle(fill).backgroundColor, getComputedStyle(fill.parentElement).backgroundColor]; }""")
+
+        def luminance(css):
+            r, g, b = (int(v) for v in css[css.index("(") + 1:css.index(")")].split(",")[:3])
+            lin = lambda c: (c / 255) / 12.92 if c / 255 <= 0.04045 else (((c / 255) + 0.055) / 1.055) ** 2.4  # noqa: E731
+            return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
+
+        hi, lo = sorted((luminance(pair[0]), luminance(pair[1])), reverse=True)
+        assert (hi + 0.05) / (lo + 0.05) >= 3.0, pair
+
+    def test_the_sparkline_ends_on_the_payloads_as_of_day(self, dash):
+        """The buckets are the server's UTC days, so the line's day list comes from the payload's as-of, not the
+        browser's clock: a reader on the other side of midnight UTC sees the thirty days the server bucketed."""
+        self._open(dash)
+        aria = dash.evaluate("""() => { const day = new Date(Date.now() - 3 * 86400000).toISOString().slice(0, 10);
+            data.kpi.as_of = day + 'T12:00:00Z';
+            data.kpi.trends['crc-local'].activity.membership = [{day, added: 4, removed: 0}];
+            render(); return document.querySelector('.trend svg').getAttribute('aria-label'); }""")
+        assert aria.endswith("0, 0, 0, 0, 0, 0, 4 over the last seven days"), aria
+
+    def test_the_bindings_tile_counts_every_tier_the_access_tab_counts(self, dash, server):
+        """The seed's cluster holds ten group bindings: one ok, one dangling, one unresolved, one unmanaged (hand-made
+        on a synced group), six built-in. The tile's figure plus its built-in note is the Access granted tab's
+        headline; a posture that dropped the unmanaged tier read 3 + 6 for a cluster with 10."""
+        self._open(dash)
+        total = httpx.get(f"{server}/api/clusters/crc-local/bindings/findings").json()["total"]
+        value = int(dash.locator('.kpi-page .kpi[data-kpi="bindings"] .value').inner_text().replace(",", ""))
+        note = dash.locator('.kpi-page .kpi[data-kpi="bindings"] .note').inner_text()
+        builtin = int(note.split("+")[1].split(" ")[0].replace(",", ""))
+        assert (value, builtin, total) == (4, 6, 10)
+
+    def test_the_kpi_page_follows_the_hosts_headline_not_the_selected_remote(self, page, scoped_server):
+        """The KPI page is fleet-wide and /api/kpi is gated on the host's tier, like the report ticket. Read per
+        SELECTED cluster, a host administrator with a self-only remote selected was refused the payload the server
+        had just served, and a self reader with a wide remote selected got Loading… for a fetch the guard in
+        refresh() never makes. Both guards read the host's headline."""
+        p = _open_as(page, scoped_server, "root")
+        p.evaluate("""() => {
+          data.whoami.visibility.clusters = Object.assign({}, data.whoami.visibility.clusters,
+            { east: { policy: "self-only", identity: "none", scope: "self" } });
+          data.clusters = (data.clusters || []).concat([{ id: "east", visibility: { policy: "self-only", scope: "self" } }]);
+          view.cluster = "east"; view.page = "kpi"; render();
+        }""")
+        assert p.evaluate("() => narrowedReader()") is True, "the selected remote is narrowed for root"
+        assert p.evaluate("() => narrowedOnHost()") is False, "root is wide on the host"
+        assert p.locator("#main .scope-refusal").count() == 0, "a host administrator must not be refused the fleet page over the selected remote"
+        p.evaluate("""() => {
+          data.whoami.visibility.scope = "self";
+          data.whoami.visibility.clusters = Object.assign({}, data.whoami.visibility.clusters,
+            { west: { policy: "remote-sar", identity: "same-as-host", scope: "all" } });
+          data.clusters = (data.clusters || []).concat([{ id: "west", visibility: { policy: "remote-sar", scope: "all" } }]);
+          view.cluster = "west"; data.kpi = null; render();
+        }""")
+        assert p.locator("#main .scope-refusal").count() == 1, "narrowed on the host is refused, not left on Loading…"
+        # a designed 403 that reaches the renderer is the same card, never an exception
+        p.evaluate("() => { data.whoami.visibility.scope = 'all'; view.cluster = null; data.kpi = {forbidden: true}; render(); }")
+        assert p.locator("#main .scope-refusal").count() == 1
+
+
+    def test_reduced_motion_stops_the_heartbeat(self, dash):
+        self._open(dash)
+        dash.emulate_media(reduced_motion="reduce")
+        assert dash.evaluate("() => getComputedStyle(document.querySelector('.kpi-page .beat')).animationName") == "none"
+        dash.emulate_media(reduced_motion="no-preference")
+        assert dash.evaluate("() => getComputedStyle(document.querySelector('.kpi-page .beat')).animationName") == "kpi-beat"
 
 
 class TestNamespaces:
@@ -2238,7 +2452,11 @@ class TestLookup:
         fresh Groups tab the line is the plain door, and the counts appear only for a kind this session already
         holds (the audit tab visited first). Either way the text is carried to the lookup."""
         dash.click("#tab-groups")
-        dash.wait_for_selector("#f-group-search")
+        # The tab's OWN cycle must land before fetch is hooked: the click paints first and fetches
+        # after an await, so a hook installed on the search box's appearance recorded the tab's
+        # burst as "typing fetched" whenever the machine was quick — green on CI's main by timing,
+        # red on a laptop and on #207's run. The rows are the proof the burst has completed.
+        dash.wait_for_selector("tr[data-group]")
         dash.evaluate("() => { window.__urls = []; const f = window.fetch;"
                       " window.fetch = (...a) => { window.__urls.push(String(a[0])); return f(...a); }; }")
         dash.fill("#f-group-search", "demo")
@@ -6005,7 +6223,7 @@ class TestReportsTab:
             page.click("#tab-reports")
             page.wait_for_selector("#tab-reports[aria-current='page']")
             page.wait_for_timeout(300)
-            assert page.evaluate("() => document.querySelectorAll('button.tab').length") == 10   # Home joined the strip (#158)
+            assert page.evaluate("() => document.querySelectorAll('button.tab').length") == 11   # Home joined the strip (#158); KPIs (#157)
             assert page.evaluate("() => [document.documentElement.scrollWidth <= innerWidth, [...document.querySelectorAll('button.tab')].filter(t => t.getBoundingClientRect().right > innerWidth).map(t => t.id)]") == [True, []]
             assert not errors
         finally:

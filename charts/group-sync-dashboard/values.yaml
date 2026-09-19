@@ -1940,6 +1940,31 @@ rbacAuditors:
 # ---------------------------------------------------------------------------
 # Monitoring
 # ---------------------------------------------------------------------------
+# The KPI page (#156, #157): the administrator-tier page that renders the KPI module — both pods'
+# self-reported system usage, the access-posture band, the in-app trends, the clusters table and
+# the doors out to a metrics stack. Every threshold is configuration, not a magic number, and the
+# tile states the rule that produced its colour ("amber: memory > 80 % of limit"); the amber mark is
+# drawn on the meter's track so position reads without colour.
+kpi:
+  thresholds:
+    # Percentages of the cgroup limit (memory, CPU) and of the volume's filesystem (disk).
+    memoryPercent: 80
+    cpuPercent: 80
+    # Share of scheduler periods in which the pod was throttled. Throttling is the saturation
+    # signal, not CPU %: the reference dashboard measured 1.10 % while CPU read as headroom.
+    throttledPercent: 1
+    diskPercent: 80
+
+# The doors out of the KPI page. OpenShift removed its bundled Grafana in 4.11, so Grafana is
+# optional and operator-owned: the "Open in Grafana" link renders only when `grafana.url` is set
+# (with `dashboardUid`, it opens the board directly). The console's Observe → Dashboards always
+# ships; `console.url` is the console's route, and the link is omitted when it is empty.
+grafana:
+  url: ""
+  dashboardUid: ""
+console:
+  url: ""
+
 # Both default OFF, by operator decision (2026-09-05) under the chart's on-by-default rule: the
 # reference cluster runs no Prometheus (built-in monitoring disabled to save resources), so a
 # ServiceMonitor and rules there are objects nobody reads, and on a cluster without the

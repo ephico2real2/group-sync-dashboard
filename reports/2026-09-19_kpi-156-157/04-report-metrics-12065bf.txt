@@ -1,0 +1,9 @@
+gsd_process_memory_bytes{component="report"} 6.539264e+07
+gsd_process_memory_limit_bytes{component="report"} 8.05306368e+08
+gsd_process_cpu_usage_seconds_total{component="report"} 0.306699
+gsd_process_cpu_limit_cores{component="report"} 0.5
+gsd_process_cpu_periods_total{component="report"} 164.0
+gsd_process_cpu_throttled_periods_total{component="report"} 3.0
+gsd_process_cpu_throttled_seconds_total{component="report"} 0.140266
+gsd_volume_disk_used_bytes{component="report"} 4.5658161152e+10
+gsd_volume_disk_total_bytes{component="report"} 1.28243970048e+11

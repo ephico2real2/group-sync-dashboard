@@ -373,7 +373,7 @@ function goBack() {
 const PAGE_LABEL = {
   home: "home", overview: "overview", groups: "all groups", users: "all users", bindings: "access granted",
   policy: "RBAC policy", nsaudit: "namespace audit", logins: "logins", usage: "usage",
-  reports: "reports", lookup: "search",
+  reports: "reports", lookup: "search", kpi: "KPIs",
 };
 
 function backLabel() {
@@ -978,7 +978,10 @@ function renderFilters() {
   const goneOption = known ? "" : `<option value="${esc(view.cluster)}" selected>${esc(view.cluster)} — not configured</option>`;
   const fleetOption = view.page === "overview" && !view.groupsync
     ? `<option value=""${view.cluster ? "" : " selected"}>all clusters</option>` : "";
-  let html = view.page === "usage" ? "" : `<label for="f-cluster">Cluster</label>
+  // Fleet-wide pages have no cluster to select: Usage (per-pod activity) and the KPI page (#157),
+  // which reads every served cluster at once and would otherwise claim a scope it does not have.
+  const fleetWide = view.page === "usage" || view.page === "kpi";
+  let html = fleetWide ? "" : `<label for="f-cluster">Cluster</label>
     <select id="f-cluster">${fleetOption}${goneOption}${opts}</select>`;
   if (view.page === "bindings" && !narrowedReader()) {
     html += searchBoxHtml("bindingSearch");
@@ -1043,6 +1046,7 @@ function renderFilters() {
     <nav class="tabs" aria-label="Dashboard sections">
       ${tab("home", "Home")}
       ${tab("overview", "Overview")}
+      ${tab("kpi", "KPIs")}
       ${tab("groups", "Groups")}
       ${tab("users", "Users")}
       ${tab("bindings", "Access granted")}
@@ -1432,6 +1436,306 @@ function clusterDetail(c) {
   ${alertsCard(mine, 1)}
   ${groupsyncTable(data.groupsyncs, c.id)}
   ${configsCard([{ cluster: c.id, oc: data.operatorConfigs }])}`;
+}
+
+/* ── The KPI page (#157), built to docs/design/overview-kpi-mock.html ─────────────────────────
+   Every number comes from /api/kpi (#156), /api/clusters (the rows' status) and /api/version
+   (the leader): the page adds no query of its own — it SUMS the per-cluster figures the payload
+   carries and formats them. Nothing here is derived from a capped page, and no tile invents a
+   threshold — the amber marks come from the payload (`thresholds`, chart values kpi.thresholds.*)
+   and each meter's rule line names the one it applied. */
+
+const KPI_MI = 1024 * 1024;
+
+function kpiBytes(n) {
+  if (n == null) return "—";
+  // One decimal below ten units, none above, and never a trailing ".0": a 512Mi limit reads
+  // "512Mi" (measured on CRC: "512.0Mi" was the first render), a 3.8Mi database "3.8Mi".
+  const unit = (v, suffix) => `${(v >= 10 ? v.toFixed(0) : v.toFixed(1)).replace(/\.0$/, "")}${suffix}`;
+  if (n >= 1024 * KPI_MI) return unit(n / (1024 * KPI_MI), "Gi");
+  if (n >= KPI_MI) return unit(n / KPI_MI, "Mi");
+  return `${Math.round(n / 1024)}Ki`;
+}
+
+function kpiPct(n, digits = 1) {
+  return n == null ? "—" : `${n.toFixed(digits)}%`;
+}
+
+function kpiNum(n) {
+  return n == null ? "—" : Number(n).toLocaleString("en-US");
+}
+
+/* The Throttled track's full scale, as a multiple of its threshold: the mock draws the 1 % mark at
+   20 % of the track (docs/design/overview-kpi-mock.html, `--th:20%`, 1.10 % as a 22 % fill). On a
+   0–100 % track the 1 % mark sat 3 px from the left edge and the mock's 1.10 % (watch) and 0.05 %
+   (healthy) filled within half a pixel of each other (OB3 measured it at 1280 px, review of #157) —
+   position read nothing. */
+const KPI_THROTTLE_SCALE = 5;
+
+/* One meter: label, the track with the amber mark at the threshold, the fill, the value. `over` is the
+   component's decision — kpiComponent compares each meter ONCE and passes the result here — so the
+   fill's colour, the pill and the rule line come from a single comparison. `scale` is the track's full
+   width as a percentage: 100 for memory, CPU and disk; the threshold × KPI_THROTTLE_SCALE for
+   throttling. The mark and the fill are both drawn against it. `pct` null renders an unmeasured track. */
+function kpiMeter(label, pct, thresholdPct, over, valueHtml, scale = 100) {
+  const mark = thresholdPct == null ? 101 : +((thresholdPct / scale) * 100).toFixed(4);
+  const width = pct == null ? 0 : +Math.max(0, Math.min(100, (pct / scale) * 100)).toFixed(4);
+  return `<div class="meter-row">
+    <span class="meter-lab">${esc(label)}</span>
+    <span class="track" data-th="${mark}" data-scale="${scale}" role="img"
+          aria-label="${esc(label)}: ${pct == null ? "unavailable" : kpiPct(pct)} of the limit${thresholdPct == null ? "" : `, amber above ${thresholdPct}%`}${scale === 100 ? "" : ` on a track to ${scale}%`}">
+      <span class="fill${over ? " warn" : ""}${pct == null ? " none" : ""}" data-width="${width}"></span>
+    </span>
+    <span class="meter-val">${valueHtml}</span>
+  </div>`;
+}
+
+/* A component's card in the system strip. `ownLine` renders the mock's second sub-line — the
+   component's own bytes beside the filesystem it lives on. The state the badge shows is also
+   stamped as data-state on the card, so a test can read it without parsing the badge. */
+function kpiComponent(name, sys, th, ownLine) {
+  if (!sys) {
+    return `<div class="comp" data-comp="${esc(name)}" data-state="unknown"><div class="comp-top"><span class="comp-name">${esc(name)}</span>
+      <span class="badge unknown"><span class="glyph" aria-hidden="true"></span>unavailable</span></div>
+      <div class="empty-note">No self-report yet${name === "report" ? " — arrives with the next usage pull, or the report service predates it" : ""}.</div></div>`;
+  }
+  const mem = sys.memory || {}, cpu = sys.cpu || {}, disk = sys.disk || {};
+  const memPct = mem.limit_bytes ? (mem.used_bytes / mem.limit_bytes) * 100 : null;
+  const cpuPct = cpu.limit_cores && cpu.cores_used != null ? (cpu.cores_used / cpu.limit_cores) * 100 : null;
+  const thrPct = cpu.throttled_fraction == null ? null : cpu.throttled_fraction * 100;
+  const diskPct = disk.total_bytes ? (disk.used_bytes / disk.total_bytes) * 100 : null;
+  // THE ONE DECISION PER METER: an unmeasured value or an absent threshold is never over. The
+  // fill, the pill and the rule line below all read these four booleans and nothing else.
+  const over = (pct, limit) => pct != null && limit != null && pct > limit;
+  const memOver = over(memPct, th.memory_percent), cpuOver = over(cpuPct, th.cpu_percent);
+  const thrOver = over(thrPct, th.throttled_percent), diskOver = over(diskPct, th.disk_percent);
+  const overs = [];
+  if (memOver) overs.push(`memory ${kpiPct(memPct)} > ${th.memory_percent}%`);
+  if (cpuOver) overs.push(`CPU ${kpiPct(cpuPct)} > ${th.cpu_percent}%`);
+  if (thrOver) overs.push(`throttled ${kpiPct(thrPct, 2)} > ${th.throttled_percent}%`);
+  if (diskOver) overs.push(`disk ${kpiPct(diskPct, 0)} > ${th.disk_percent}%`);
+  const state = overs.length ? "warning" : "ok";
+  const cores = cpu.cores_used == null ? "—" : cpu.cores_used < 0.01 ? "&lt;0.01" : cpu.cores_used.toFixed(2);
+  const limitCores = cpu.limit_cores == null ? "no limit" : `${cpu.limit_cores} cores`;
+  const noCgroup = !sys.memory && !sys.cpu;
+  const thrSub = noCgroup ? "no cgroup v2 sample on this host — memory, CPU and throttling are unmeasured, not zero"
+    : cpu.periods == null ? "no CPU quota on this cgroup — nothing to throttle"
+    : `${kpiNum(cpu.throttled_periods)} throttled / ${kpiNum(cpu.periods)} periods · ${(cpu.throttled_seconds || 0).toFixed(2)}s total`
+      + (thrOver ? ` — over the ${th.throttled_percent}% mark, which is why this reads <em>watch</em>` : "");
+  const diskLabel = name === "report" ? "Artefacts" : "Data volume";
+  const own = name === "report" ? sys.artifacts : sys.data;
+  const ownBytes = own ? (name === "report" ? own.bytes : own.db_bytes + own.wal_bytes + (own.backups ? own.backups.bytes : 0)) : null;
+  const diskVal = `<b>${ownBytes == null ? "—" : kpiBytes(ownBytes)}</b>${name === "report" && own ? ` · ${kpiNum(own.files)} files` : ""}`
+    + (diskPct == null ? "" : ` · node disk ${kpiPct(diskPct, 0)} full`);
+  return `<div class="comp" data-comp="${esc(name)}" data-state="${state}">
+    <div class="comp-top"><span class="comp-name">${esc(name)}</span>
+      <span class="badge ${state}"><span class="glyph" aria-hidden="true"></span>${state === "ok" ? "healthy" : "watch"}</span></div>
+    <div class="meters">
+      ${kpiMeter("Memory", memPct, th.memory_percent, memOver, !sys.memory ? "unavailable"
+        : `<b>${kpiPct(memPct)}</b> of ${mem.limit_bytes ? kpiBytes(mem.limit_bytes) : "no limit"}`)}
+      ${kpiMeter("CPU", cpuPct, th.cpu_percent, cpuOver, !sys.cpu ? "unavailable" : `<b>${cores}</b> / ${limitCores}`)}
+      ${kpiMeter("Throttled", thrPct, th.throttled_percent, thrOver, !sys.cpu || cpu.periods == null ? "unavailable"
+        : `<b>${thrPct == null ? "—" : kpiPct(thrPct, 2)}</b> of periods`,
+        th.throttled_percent == null ? 100 : th.throttled_percent * KPI_THROTTLE_SCALE)}
+      ${kpiMeter(diskLabel, diskPct, th.disk_percent, diskOver, diskVal)}
+    </div>
+    <div class="sub">${thrSub}</div>
+    ${ownLine(own, disk)}
+    <div class="rule">${overs.length ? `<strong>Watch:</strong> ${esc(overs.join(" · "))}. ` : ""}The mark on each track is the amber
+      threshold — &gt;${th.memory_percent}% memory, &gt;${th.cpu_percent}% CPU, &gt;${th.throttled_percent}% throttled periods,
+      &gt;${th.disk_percent}% disk. Position against the mark reads without colour.${name === "report"
+        ? " Throttling is the saturation signal, not CPU% — a service at 30% being throttled is mis-sized."
+        : " A hostpath volume's own size means nothing; the node disk it lives on is the number."}</div>
+  </div>`;
+}
+
+/* A 30-day sparkline from per-day buckets: one point per UTC day in the window, zero where the day
+   has no row, so a quiet week is a flat line rather than a missing one. The window ENDS on the
+   payload's as-of day, not on the browser's clock: the buckets are the server's whole UTC days
+   (page_payload starts them at the first day's midnight), and a browser on the other side of
+   midnight UTC would otherwise plot an empty last day and drop the first (OB3, review of #157). */
+function kpiSpark(days, rows, key, label, stroke, asOf) {
+  const byDay = new Map((rows || []).map((r) => [r.day, Number(r[key]) || 0]));
+  const end = new Date(asOf);
+  const last = isNaN(end.getTime()) ? new Date() : end;
+  const points = [];
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date(last.getTime() - i * 86400000).toISOString().slice(0, 10);
+    points.push(byDay.get(d) || 0);
+  }
+  const max = Math.max(1, ...points);
+  const step = 120 / Math.max(1, points.length - 1);
+  const poly = points.map((v, i) => `${(i * step).toFixed(1)},${(28 - (v / max) * 24).toFixed(1)}`).join(" ");
+  return `<svg class="spark" width="100%" height="30" viewBox="0 0 120 30" preserveAspectRatio="none" role="img"
+      aria-label="${esc(label)}: ${points.slice(-7).join(", ")} over the last seven days">
+      <polyline fill="none" stroke="${stroke}" stroke-width="1.8" points="${poly}"/></svg>`;
+}
+
+/* The tiles remember their last value so a change PULSES and a repaint does not: the flash class is
+   added only when the rendered figure differs from the previous render's. */
+const kpiLast = new Map();
+function kpiTile(id, label, value, note, flag) {
+  const changed = kpiLast.has(id) && kpiLast.get(id) !== String(value);
+  kpiLast.set(id, String(value));
+  return `<div class="kpi${flag ? ` flag-${flag}` : ""}${changed ? " flash" : ""}" data-kpi="${id}">
+    <div class="label">${esc(label)}</div><div class="value">${value}</div><div class="note">${note}</div></div>`;
+}
+
+const KPI_REFUSAL = `This page reports the dashboard's own pods, the fleet's access posture and its trends —
+         governance data about the clusters, not about the reader.`;
+
+function kpiPage() {
+  const k = data.kpi;
+  if (!k) return `<section class="card"><h2>KPIs</h2><div class="empty-note">Loading…</div></section>`;
+  // A designed 403 absorbed by guard403 (a first cycle whose whoami had not yet declared the tier, or
+  // a request the proxy let through with no identity): the same card, not a TypeError on a payload
+  // that carries no blocks — the Reports tab's `cat.forbidden` rule (OB3, review of #157).
+  if (k.forbidden) return refusalCard("KPIs", KPI_REFUSAL);
+  const th = k.thresholds || {};
+  const clusters = Object.keys(k.posture || {});
+  const cs = (data.clusters || []).filter((c) => clusters.includes(c.id));
+  const sum = (f) => clusters.reduce((n, c) => n + (f(k.posture[c]) || 0), 0);
+  const groups = sum((p) => p.groups.total), empty = sum((p) => p.groups.empty), unattr = sum((p) => p.groups.unattributed);
+  const dangling = sum((p) => p.bindings.dangling), unresolved = sum((p) => p.bindings.unresolved);
+  // Every tier but built-in — the Access granted tab's headline less its built-in tile. `unmanaged`
+  // (a hand-made grant on a synced group) is a binding on the cluster whichever section lists it
+  // (OB3, review of #157: the tile read 3 of the seed's 4).
+  const bindings = sum((p) => p.bindings.ok + p.bindings.dangling + p.bindings.unresolved + (p.bindings.unmanaged || 0));
+  const builtin = sum((p) => p.bindings.built_in);
+  const up = cs.filter((c) => c.status === "ok").length;
+  const leader = data.version ? data.version.leader : null;
+  const review = dangling + unresolved;
+  const churn = (c, key) => (k.kpis[key].samples || []).filter((s) => s.cluster === c).reduce((n, s) => n + s.value, 0);
+  const added = clusters.reduce((n, c) => n + churn(c, "membership_added_30d"), 0);
+  const removed = clusters.reduce((n, c) => n + churn(c, "membership_removed_30d"), 0);
+  const attempts = clusters.reduce((n, c) => n + churn(c, "login_attempts_30d"), 0);
+  const successes = clusters.reduce((n, c) => n + churn(c, "login_successes_30d"), 0);
+  const providers = clusters.reduce((n, c) => n + churn(c, "login_providers_30d"), 0);
+  const runs = clusters.reduce((n, c) => n + churn(c, "report_runs_30d"), 0);
+  const crTotal = sum((p) => p.groupsyncs.total), crOk = sum((p) => p.groupsyncs.states.ok);
+  const crOverdue = sum((p) => p.groupsyncs.states.overdue), crLate = sum((p) => p.groupsyncs.states.late);
+  // Per-day buckets summed ACROSS clusters — a day both clusters have rows for is one point, the
+  // sum, so the sparkline's last point agrees with the tile (review of #157, Grok: the first cut
+  // concatenated the rows and the Map kept the last cluster's).
+  const mergeDays = (key, fields) => {
+    const byDay = new Map();
+    clusters.forEach((c) => (((k.trends[c] || {}).activity || {})[key] || []).forEach((r) => {
+      const row = byDay.get(r.day) || { day: r.day };
+      fields.forEach((f) => { row[f] = (row[f] || 0) + (Number(r[f]) || 0); });
+      byDay.set(r.day, row);
+    }));
+    return [...byDay.values()];
+  };
+  const retained = clusters.map((c) => ((k.trends[c] || {}).history_retained_since || {}).membership_event).filter(Boolean).sort()[0];
+  const reportSince = clusters.map((c) => (k.trends[c] || {}).report_timeline_since).filter(Boolean).sort()[0];
+  const ownLineDashboard = (own, disk) => own
+    ? `<div class="sub">gsd.db ${kpiBytes(own.db_bytes)} + WAL ${kpiBytes(own.wal_bytes)}${own.backups ? ` + ${own.backups.count} backups ${kpiBytes(own.backups.bytes)}` : ""}${disk.total_bytes ? `, on a ${kpiBytes(disk.total_bytes)} volume that shares the node's disk (${kpiBytes(disk.used_bytes)} of ${kpiBytes(disk.total_bytes)} used)` : ""}</div>` : "";
+  const ownLineReport = (own, disk) => disk.total_bytes
+    ? `<div class="sub">${kpiBytes(disk.used_bytes)} of ${kpiBytes(disk.total_bytes)} used on the artefact volume's disk</div>` : "";
+  const links = k.links || {};
+  const grafana = links.grafana
+    ? `${links.grafana}${links.grafana_dashboard_uid ? `/d/${encodeURIComponent(links.grafana_dashboard_uid)}` : ""}?from=now-30d&to=now${clusters.length === 1 ? `&var-cluster=${encodeURIComponent(clusters[0])}` : ""}`
+    : null;
+  const observe = links.console ? `${links.console}/monitoring/dashboards` : null;
+  const window = k.trends[clusters[0]] ? k.trends[clusters[0]].window_days : 30;
+  const oldest = cs.map((c) => c.oldest_last_sync).filter(Boolean).sort()[0];
+  return `
+  <section class="card kpi-page">
+    <h2>System status <span class="asof"><span class="beat" aria-hidden="true"></span>updated <span data-kpi-ago="${esc(k.as_of)}">${esc(ago(k.as_of))}</span> · refresh ${POLL_INTERVAL_MS / 1000}s</span></h2>
+    <div class="sys">
+      ${kpiComponent("dashboard", k.system.dashboard, th, ownLineDashboard)}
+      ${kpiComponent("report", k.system.report, th, ownLineReport)}
+    </div>
+  </section>
+  <section class="card kpi-page">
+    <h2>Access posture <span class="asof">as of last poll · ${clusters.length} cluster${clusters.length === 1 ? "" : "s"} · ${esc(clusters.join(" + "))}</span></h2>
+    <div class="kband">
+      ${kpiTile("groups", "Groups", kpiNum(groups), clusters.map((c) => `${kpiNum(k.posture[c].groups.total)} ${esc(c)}`).join(" · "))}
+      ${kpiTile("empty", "Empty", kpiNum(empty), "no members", empty ? "warning" : "")}
+      ${kpiTile("unattributed", "Unattributed", kpiNum(unattr), "no sync provider")}
+      ${kpiTile("review", "To review", kpiNum(review), `${kpiNum(unresolved)} unresolved · ${kpiNum(dangling)} dangling`, review ? "warning" : "")}
+      ${kpiTile("bindings", "Bindings", kpiNum(bindings), `+${kpiNum(builtin)} built-in`)}
+      ${kpiTile("up", "Clusters up", `${up}<span class="of">/${cs.length}</span>`, leader === true ? "leader held" : leader === false ? "standing by — not the leader" : "single replica", up < cs.length ? "critical" : "")}
+    </div>
+  </section>
+  <section class="card kpi-page">
+    <h2>Trends <span class="asof">in-app from append-only history · ${window}d${grafana ? " · deeper series in Grafana" : ""}</span></h2>
+    <div class="trends">
+      <div class="trend">
+        <div class="label">Membership churn</div>
+        <div class="value">${kpiNum(added + removed)}<span class="delta ${added - removed > 0 ? "up" : added - removed < 0 ? "down" : "flat"}">${added - removed >= 0 ? "+" : ""}${kpiNum(added - removed)} ${added - removed > 0 ? "▲" : added - removed < 0 ? "▼" : "="}</span></div>
+        ${kpiSpark(window, mergeDays("membership", ["added", "removed"]).map((r) => ({ day: r.day, n: r.added + r.removed })), "n", "membership changes per day", "var(--status-good)", k.as_of)}
+        <div class="retain">${kpiNum(added)} joiners · ${kpiNum(removed)} leavers · ${window}d${retained ? ` · history retained since ${esc(retained.slice(0, 10))}` : ""}</div>
+      </div>
+      <div class="trend">
+        <div class="label">Login outcomes</div>
+        <div class="value">${attempts ? kpiPct((successes / attempts) * 100) : "—"}<span class="delta flat">${kpiNum(successes)} ok</span></div>
+        ${kpiSpark(window, mergeDays("logins", ["attempts", "successes"]), "attempts", "login attempts per day", "var(--series-1)", k.as_of)}
+        <div class="retain">${kpiNum(attempts)} attempts · ${kpiNum(providers)} provider${providers === 1 ? "" : "s"}</div>
+      </div>
+      <div class="trend">
+        <div class="label">Sync cadence</div>
+        <div class="value">${kpiNum(crOk)}<span class="of">/${kpiNum(crTotal)}</span>${crOverdue ? `<span class="delta down">${kpiNum(crOverdue)} overdue ▼</span>` : crLate ? `<span class="delta flat">${kpiNum(crLate)} late</span>` : `<span class="delta up">all ok</span>`}</div>
+        ${kpiSpark(window, mergeDays("syncs", ["syncs"]), "syncs", "syncs observed per day", "var(--status-good)", k.as_of)}
+        <div class="retain">${clusters.map((c) => `${esc(c)} ${kpiNum(k.posture[c].groupsyncs.states.ok || 0)} ok`).join(" · ")}${oldest ? ` · oldest sync ${esc(ago(oldest))}` : ""}</div>
+      </div>
+      <div class="trend">
+        <div class="label">Report volume</div>
+        <div class="value">${kpiNum(runs)}<span class="delta ${runs ? "up" : "flat"}">${runs ? `+${kpiNum(runs)} ▲` : "none"}</span></div>
+        ${kpiSpark(window, mergeDays("reports", ["runs"]), "runs", "report runs per day", "var(--series-1)", k.as_of)}
+        <div class="retain">${reportSince ? `timeline starts ${esc(reportSince.slice(0, 10))}` : "no report run recorded yet"}</div>
+      </div>
+    </div>
+  </section>
+  <section class="card kpi-page">
+    <h2>Clusters</h2>
+    <div class="scroll-x"><table>
+      <thead><tr><th>Cluster</th><th>State</th><th class="num">Groups</th><th class="num">Empty</th><th class="num">Unattrib.</th><th class="num">To review</th><th>GroupSync</th></tr></thead>
+      <tbody>${cs.map((c) => {
+        const p = k.posture[c.id]; const st = p.groupsyncs.states;
+        const crNote = !p.groupsyncs.total ? "no CRs" : st.overdue ? `${st.overdue} overdue` : st.late ? `${st.late} late` : "all ok";
+        return `<tr class="rowlink" data-cluster="${esc(c.id)}" tabindex="0">
+          <td class="mono cname">${esc(c.id)}</td>
+          <td>${c.status === "ok" ? `<span class="badge ok"><span class="glyph" aria-hidden="true"></span>up</span>` : sevBadge("critical", c.status || "never polled")}</td>
+          <td class="num">${kpiNum(p.groups.total)}</td><td class="num">${kpiNum(p.groups.empty)}</td>
+          <td class="num">${kpiNum(p.groups.unattributed)}</td><td class="num${p.bindings.dangling + p.bindings.unresolved ? " warn" : ""}">${kpiNum(p.bindings.dangling + p.bindings.unresolved)}</td>
+          <td><span class="chip${st.overdue ? " crit" : ""}">${p.groupsyncs.total} CR${p.groupsyncs.total === 1 ? "" : "s"} · ${crNote}</span></td></tr>`; }).join("")}
+      </tbody></table></div>
+  </section>
+  <section class="card kpi-page">
+    <div class="kdoor">
+      <p><strong>Deeper series live in your metrics stack.</strong> OpenShift removed its bundled Grafana in 4.11, so Grafana is
+        optional and operator-owned — the link appears only when <span class="mono">grafana.url</span> is configured. The console's
+        Observe dashboards always ship${observe ? "" : " — set <span class=\"mono\">console.url</span> to link them"}.</p>
+      <div class="btns">
+        ${grafana ? `<a class="btn" href="${esc(grafana)}" target="_blank" rel="noopener">Open in Grafana <span class="ext">↗</span></a>` : ""}
+        ${observe ? `<a class="btn ghost" href="${esc(observe)}" target="_blank" rel="noopener">Observe → Dashboards <span class="ext">↗ console</span></a>` : ""}
+      </div>
+    </div>
+  </section>`;
+}
+
+/* The heartbeat: "updated Ns ago" counts on the real as-of, once a second, and only while the span
+   exists — one timer for the page, never one per render. */
+let kpiAgoTimer = null;
+function wireKpi() {
+  const main = $("main");
+  // The meters' geometry is data: the mark's position and the fill's width are set here, on the
+  // elements, rather than as inline style literals in the markup (tests/test_type_scale.py's rule).
+  main.querySelectorAll(".track[data-th]").forEach((el) => el.style.setProperty("--th", `${el.dataset.th}%`));
+  main.querySelectorAll(".fill[data-width]").forEach((el) => { el.style.width = `${el.dataset.width}%`; });
+  main.querySelectorAll("tr.rowlink[data-cluster]").forEach((tr) => {
+    const open = () => { navigate({ page: "overview", cluster: tr.dataset.cluster }); render(); refresh(); };
+    tr.onclick = open;
+    tr.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); } };
+  });
+  if (kpiAgoTimer == null) {
+    kpiAgoTimer = setInterval(() => {
+      const span = document.querySelector("[data-kpi-ago]");
+      if (!span) { clearInterval(kpiAgoTimer); kpiAgoTimer = null; return; }
+      span.textContent = ago(span.dataset.kpiAgo);
+    }, 1000);
+  }
 }
 
 function overviewPage() {
@@ -4783,6 +5087,19 @@ function render() {
   } else if (view.page === "policy") {
     main.innerHTML = policyPage();
     wireDrilldown();
+  } else if (view.page === "kpi") {
+    // The same tier rule as the Overview, in the same words: the page is about the clusters and
+    // the dashboard's own pods, and answers nothing a reader can ask about themselves. Keyed on the
+    // HOST's headline, as Reports is and as the fetch is: the page is fleet-wide, so a narrowed
+    // remote left selected must not refuse a host administrator (review of #157, Grok).
+    if (!readerTierKnown()) {
+      main.innerHTML = `<section class="card"><div class="empty-note">Loading…</div></section>`;
+    } else if (narrowedOnHost()) {
+      main.innerHTML = refusalCard("KPIs", KPI_REFUSAL);
+    } else {
+      main.innerHTML = kpiPage();
+      wireKpi();
+    }
   } else if (view.page === "logins") {
     main.innerHTML = loginsPage();
     // wireDrilldown, not a handler of its own: a username here goes to the SAME user page the
@@ -4845,7 +5162,7 @@ function render() {
   // per-pod dashboard activity, not per-cluster, so naming a cluster would claim a scope the
   // page does not have.
   $("scope-note").textContent =
-    view.cluster && view.page !== "usage" ? ` - ${view.cluster}` : "";
+    view.cluster && view.page !== "usage" && view.page !== "kpi" ? ` - ${view.cluster}` : "";
   // UTC, like every other time on the page, and labelled so.
   //
   // This was `toTimeString()` — the browser's LOCAL zone — while fmtTime() renders UTC with
@@ -5182,6 +5499,12 @@ async function refresh(opts = {}) {
     }
     // Not cluster-scoped: this is who used the DASHBOARD, which has no cluster dimension.
     // Fetched only on its own tab, so the other pages do not pay for it.
+    // The KPI page (#157): one payload, the KPI module's (#156) — every number on the page comes
+    // from it. Administrator tier: a narrowed reader gets the designed 403, rendered as the refusal
+    // card, so the fetch is skipped for a reader already known to be narrowed.
+    if (view.page === "kpi" && !narrowedOnHost()) {
+      want.kpi = guard403(get("/api/kpi"));
+    }
     if (view.page === "reports" && reportingEnabled() && !narrowedOnHost()) {
       // Through the proxy to the REPORT SERVICE, with the ticket the dashboard minted. A 403 here
       // is the same designed refusal as everywhere else and renders as the same card.
@@ -5219,6 +5542,19 @@ async function refresh(opts = {}) {
       data.events = view.groupsync ? got.events : null;
     }
     if ("findings" in got) data.findings = got.findings;
+    if ("kpi" in got) data.kpi = got.kpi;
+    // The KPI page decides again from the whoami that just arrived, as Reports does: the fetch was
+    // chosen from the previous cycle's identity, so a reader promoted mid-session would otherwise
+    // sit on "Loading…" for a poll interval, and a demoted one would keep the payload in memory.
+    if (view.page === "kpi" && got.whoami) {
+      if (narrowedOnHost()) {
+        data.kpi = null;
+      } else if (got.whoami.authenticated && !("kpi" in got)) {
+        const body = await guard403(get("/api/kpi"));
+        if (superseded()) return;
+        data.kpi = body;
+      }
+    }
     if ("myAccess" in got) data.myAccess = got.myAccess;
     // THE ACCESS GRANTED TAB DECIDES AGAIN FROM THE WHOAMI THAT JUST ARRIVED. The requests
     // above were chosen from the previous cycle's identity — unknown on the first cycle, and
@@ -5330,6 +5666,7 @@ async function refresh(opts = {}) {
       data.groupsMeta, data.group, data.user, data.users, data.events, data.logins, data.access,
       data.usage, data.findings, data.operatorConfigs, data.userBindings, data.whoami, data.myAccess, data.home,
       data.reportCatalog, data.reportRuns, data.fleet,   // #172: the fleet tables render from it
+      data.kpi,   // #157 (review, Codex): left out, a poll whose only change was a KPI never repainted the page
       // #167: the namespace list and page ride the same wire (review, Codex — left out, a poll whose
       // only change was a label or a grant skipped the repaint the comment above forbids skipping).
       data.namespaces, data.ns,

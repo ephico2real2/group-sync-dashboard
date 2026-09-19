@@ -320,6 +320,18 @@ class Settings:
     group_count_cliff_window_hours: float = 24.0
     # Exact names or fnmatch globs. A match is reported as silenced, never dropped.
     group_count_cliff_silence: tuple[str, ...] = ()
+    # The KPI page's thresholds (#157): the amber mark on each system meter, as percentages. Every
+    # threshold is configuration, and the tile states the rule that produced its colour.
+    kpi_memory_warn_percent: float = 80.0
+    kpi_cpu_warn_percent: float = 80.0
+    kpi_throttled_warn_percent: float = 1.0
+    kpi_disk_warn_percent: float = 80.0
+    # The doors out of the KPI page (#157). Grafana is optional and operator-owned — OpenShift removed
+    # its bundled Grafana in 4.11 — so the link renders only when a URL is set; the console's
+    # Observe → Dashboards always ships, at consoleUrl when set.
+    grafana_url: str = ""
+    grafana_dashboard_uid: str = ""
+    console_url: str = ""
 
     # Whether the oauth-proxy sidecar is in front of us. The app cannot detect this for
     # itself, and it must not infer it from the presence of X-Forwarded-User — that header
@@ -884,6 +896,39 @@ def _require(raw: dict, key: str, where: str) -> object:
     return raw[key]
 
 
+def _door_url(value: object, yaml_key: str) -> str:
+    """An http(s) base URL the KPI page may append a path and query to — the doors out (#157). A
+    `javascript:` or `data:` value would be a live script in an href the page renders; refused at
+    load, so a bad value is a failed start rather than a link (review of #157, Codex)."""
+    from urllib.parse import urlsplit
+    text = str(value or "").strip().rstrip("/")
+    if not text:
+        return ""
+    parts = urlsplit(text)
+    if parts.scheme.lower() not in ("http", "https") or not parts.netloc or parts.query or parts.fragment:
+        raise ConfigError(f"{yaml_key} must be an http(s) base URL without query or fragment; got {text!r}")
+    return text
+
+
+def _kpi_settings(raw: dict) -> dict:
+    """The KPI page's thresholds and doors (values.yaml `kpi`, `grafana`, `console`)."""
+    out = {}
+    for key, env, yaml_key, default in (
+        ("kpi_memory_warn_percent", "GSD_KPI_MEMORY_WARN_PERCENT", "kpiMemoryWarnPercent", 80.0),
+        ("kpi_cpu_warn_percent", "GSD_KPI_CPU_WARN_PERCENT", "kpiCpuWarnPercent", 80.0),
+        ("kpi_throttled_warn_percent", "GSD_KPI_THROTTLED_WARN_PERCENT", "kpiThrottledWarnPercent", 1.0),
+        ("kpi_disk_warn_percent", "GSD_KPI_DISK_WARN_PERCENT", "kpiDiskWarnPercent", 80.0),
+    ):
+        value = _num_setting(raw, env, yaml_key, default, float)
+        if not 0 < value <= 100:
+            raise ConfigError(f"{yaml_key} must be a percentage in (0, 100]; got {value!r}")
+        out[key] = value
+    out["grafana_url"] = _door_url(os.environ.get("GSD_GRAFANA_URL") or raw.get("grafanaUrl", ""), "grafanaUrl")
+    out["grafana_dashboard_uid"] = os.environ.get("GSD_GRAFANA_DASHBOARD_UID") or str(raw.get("grafanaDashboardUid", "") or "")
+    out["console_url"] = _door_url(os.environ.get("GSD_CONSOLE_URL") or raw.get("consoleUrl", ""), "consoleUrl")
+    return out
+
+
 def _cliff_settings(raw: dict) -> dict:
     """config.alerts.groupCountCliff, validated. Refuses rather than clamps: unlike the
     SQLite knobs, a threshold that cannot fire (ratio > 1) or always fires (ratio <= 0) is
@@ -1106,6 +1151,7 @@ def load_settings(path: str | Path) -> Settings:
             raw, "GSD_UNMANAGED_AUDIT_MAX_PER_CYCLE", "unmanagedAuditMaxPerCycle", 20, int
         ),
         **_cliff_settings(raw),
+        **_kpi_settings(raw),
         sqlite_wal_checkpoint_mb=_num_setting(
             raw, "GSD_SQLITE_WAL_CHECKPOINT_MB", "sqliteWalCheckpointMb", 8.0, float
         ),
