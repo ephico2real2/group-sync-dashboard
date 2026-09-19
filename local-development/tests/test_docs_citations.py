@@ -231,13 +231,22 @@ def _index() -> dict[str, list[pathlib.Path]]:
 INDEX = _index()
 
 
-def _resolve(cited: str) -> pathlib.Path | None:
+APP_CHART = REPO / "charts" / "group-sync-dashboard"
+
+
+def _resolve(cited: str, near: pathlib.Path | None = None) -> pathlib.Path | None:
     """Resolve a cited path, accepting the shorthand the docs actually use.
 
     Docs cite `poller.py` and `charts/group-sync-dashboard/values.yaml` interchangeably.
     Exact-from-root wins, then a unique suffix match, then a unique basename. An ambiguous
     basename (README.md exists five times) resolves to None and is reported rather than guessed
     at, because guessing invents a pass or a failure.
+
+    `near` is the citing document's directory. A second chart (#162) made `values.yaml`,
+    `Chart.yaml` and `_helpers.tpl` ambiguous by basename, and twenty-five anchored checks of the
+    application chart's files went from verified to silently skipped (review of #209, OB3 N3). A
+    document inside a chart cites that chart's files; every other document's bare chart-file
+    citation is the application chart's, which is how the docs were written before there were two.
     """
     direct = REPO / cited
     if direct.is_file():
@@ -248,7 +257,15 @@ def _resolve(cited: str) -> pathlib.Path | None:
         suffixed = [c for c in candidates if str(c).endswith(cited)]
         if len(suffixed) == 1:
             return suffixed[0]
-    return candidates[0] if len(candidates) == 1 else None
+    if len(candidates) == 1:
+        return candidates[0]
+    if near is not None and len(candidates) > 1:
+        own_chart = next((d for d in (near, *near.parents) if (d / "Chart.yaml").is_file()), None)
+        home = own_chart if own_chart is not None else APP_CHART
+        inside = [c for c in candidates if home in c.parents]
+        if len(inside) == 1:
+            return inside[0]
+    return None
 
 
 def _python_symbols(path: pathlib.Path) -> set[str]:
@@ -417,13 +434,23 @@ def test_no_citation_uses_a_line_number():
     )
 
 
+def test_a_bare_chart_file_citation_resolves_by_the_citing_document():
+    """With two charts, `values.yaml` alone names two files: a document outside any chart means the
+    application chart's, a document inside charts/openshift-grafana means that chart's."""
+    assert _resolve("values.yaml", near=REPO / "docs") == APP_CHART / "values.yaml"
+    assert _resolve("_helpers.tpl", near=REPO / "docs" / "specs") == APP_CHART / "templates" / "_helpers.tpl"
+    grafana = REPO / "charts" / "openshift-grafana"
+    assert _resolve("values.yaml", near=grafana) == grafana / "values.yaml"
+    assert len(INDEX["config.py"]) > 1 and _resolve("config.py", near=REPO / "docs") is None, "still ambiguous: no chart owns it"
+
+
 def test_most_citations_resolve_to_a_file():
     """Guards the resolver, not the docs.
 
     If `_resolve` broke, every citation would return None, every check below would skip, and this
     suite would pass while verifying nothing.
     """
-    unresolved = [(md.name, n, path) for md, n, path, _ in CITATIONS if _resolve(path) is None]
+    unresolved = [(md.name, n, path) for md, n, path, _ in CITATIONS if _resolve(path, near=md.parent) is None]
     ratio = 1 - len(unresolved) / len(CITATIONS)
     assert ratio > 0.9, (
         f"only {ratio:.0%} of {len(CITATIONS)} citations resolve to a file — the resolver is "
@@ -437,7 +464,7 @@ def test_most_citations_resolve_to_a_file():
     ids=[f"{md.name}:{n}->{path}#{a}" for md, n, path, a in ANCHORED],
 )
 def test_the_anchor_exists_in_the_cited_file(md, doc_line, cited, anchor):
-    target = _resolve(cited)
+    target = _resolve(cited, near=md.parent)
     if target is None:
         pytest.skip(f"{cited} does not resolve to exactly one file")
 

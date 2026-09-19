@@ -15,7 +15,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import unquote
+from urllib.parse import unquote, urlsplit
 
 import httpx
 
@@ -636,15 +636,26 @@ class ClusterClient:
 
     def console_url(self) -> str | None:
         """The web console's public URL from `openshift-config-managed/console-public`, or None when the
-        cluster does not publish one (not OpenShift; the ConfigMap withheld). The KPI page's Observe
-        door is built on it (#157) when the chart sets no `console.url`."""
-        with self._client() as client:
-            try:
+        cluster does not publish one (not OpenShift; the ConfigMap withheld; the token unresolvable —
+        the poll itself reports that). The KPI page's Observe door is built on it (#157) when the chart
+        sets no `console.url`, so the value is held to the same rule as `console.url` (config._door_url):
+        an https base with a host and no query or fragment — the page appends a path and a query to it.
+        `https://` alone would otherwise become a door to `https:`."""
+        try:
+            with self._client() as client:
                 body = self._get(client, self.CONSOLE_PUBLIC, {})
-            except ClusterError:
-                return None
+        except ClusterError:
+            return None
         url = (body.get("data") or {}).get("consoleURL") if isinstance(body, dict) else None
-        return url.rstrip("/") if isinstance(url, str) and url.startswith("https://") else None
+        if not isinstance(url, str):
+            return None
+        url = url.strip().rstrip("/")
+        parts = urlsplit(url)
+        # `?` and `#` themselves, not the parsed parts: a bare trailing `?` parses as no query and
+        # would still put two query strings in the door.
+        if parts.scheme != "https" or not parts.netloc or "?" in url or "#" in url:
+            return None
+        return url
 
     def fetch(self) -> tuple[list[GroupSyncView] | None, list[GroupView]]:
         """One poll's worth of reads. Raises ClusterError with a classified outcome.

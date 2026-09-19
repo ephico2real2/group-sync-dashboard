@@ -7,6 +7,8 @@ Route are the ones a consuming team will actually choose between.
 
 from __future__ import annotations
 
+import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -168,15 +170,86 @@ class TestInstance:
         assert "Route" not in _kinds(docs) and "Service" not in _kinds(docs)
         assert not [d for d in docs if d["kind"] == "Secret" and d["metadata"]["name"].endswith("oauth-cookie")]
 
-    def test_the_networkpolicy_admits_the_router_and_the_namespace_only(self):
+    def test_the_networkpolicy_admits_the_routers_and_the_namespace_only(self):
+        """Both router topologies (review of #209, OB3 G5): pod-network routers arrive from
+        openshift-ingress, HostNetwork routers (bare metal, CRC) from the node, which OVN-Kubernetes
+        labels through the openshift-host-network namespace — the pair the ingress operator's own
+        canary policy admits. A policy that names only the first works on a single node (a policy
+        never blocks the resident node) and refuses the Route from every other node of a multi-node
+        HostNetwork cluster."""
+        routers = [{"namespaceSelector": {"matchLabels": {"policy-group.network.openshift.io/ingress": ""}}},
+                   {"namespaceSelector": {"matchLabels": {"policy-group.network.openshift.io/host-network": ""}}}]
         np = _one(_render("grafana.auth.mode=grafana"), "NetworkPolicy")
         # the operator's own pod label (`app: <Grafana name>`, measured on v5.24.0) — a selector that
         # matches no pod protected nothing on the first CRC install
         assert np["spec"]["podSelector"] == {"matchLabels": {"app": "obs-openshift-grafana"}}
-        froms = np["spec"]["ingress"][0]["from"]
-        assert {"namespaceSelector": {"matchLabels": {"policy-group.network.openshift.io/ingress": ""}}} in froms
-        assert {"podSelector": {}} in froms and len(froms) == 2
+        [rule] = np["spec"]["ingress"]
+        assert rule["from"] == [*routers, {"podSelector": {}}]
+        assert rule["ports"] == [{"port": 3000, "protocol": "TCP"}]
+        # with the OpenShift login the routers reach the proxy's port only; Grafana's own port stays
+        # for this namespace
+        proxy, own = _one(_render(), "NetworkPolicy")["spec"]["ingress"]
+        assert proxy["from"] == routers and proxy["ports"] == [{"port": 8443, "protocol": "TCP"}]
+        assert own["from"] == [{"podSelector": {}}] and {p["port"] for p in own["ports"]} == {3000, 8443}
         assert "NetworkPolicy" not in _kinds(_render("networkPolicy.enabled=false"))
+
+    def test_the_wait_role_grants_exactly_the_reads_the_script_makes(self):
+        """Every `oc get` in the script, read off the rendered Job, against the Role's rules: a read the
+        Role lacks fails the gate at runtime; a grant the script never uses is a grant for nothing
+        (review of #209, Codex G2 / OB3 F3a)."""
+        docs = _render()
+        script = _one(docs, "Job")["spec"]["template"]["spec"]["containers"][0]["args"][0]
+        reads = set()
+        for m in re.finditer(r"oc get (\S+)( (\S+))?", script):
+            if "Inspect:" in script[script.rfind("\n", 0, m.start()):m.start()]:
+                continue                           # the command a FAIL message hands the human, not a read
+            kind, arg = m.group(1), m.group(3) or ""
+            if kind == "-n":                       # `oc get -n NS -o jsonpath=... <type/name>` (the xargs form)
+                kind, arg = "clusterserviceversion", "name"
+            named = arg not in ("", "-n", "-o") and not arg.startswith("-")
+            reads.add((kind, "get" if named else "list"))
+        # the one read outside the namespace — cluster-monitoring-config — is behind
+        # wait.verifyUserWorkloadMonitoring and its own Role in openshift-monitoring
+        assert reads == {("csv", "list"), ("clusterserviceversion", "get"), ("grafana", "get"),
+                         ("deployment", "get"), ("grafanadatasource", "get"), ("configmap", "get")}, reads
+        rules = {(g, r, v) for rule in _one(docs, "Role", "wait")["rules"]
+                 for g in rule["apiGroups"] for r in rule["resources"] for v in rule["verbs"]}
+        assert rules == {("operators.coreos.com", "clusterserviceversions", "get"),
+                         ("operators.coreos.com", "clusterserviceversions", "list"),
+                         ("grafana.integreatly.org", "grafanas", "get"),
+                         ("grafana.integreatly.org", "grafanadatasources", "get"),
+                         ("apps", "deployments", "get")}, rules
+        assert not [d for d in docs if d["kind"] == "Role" and d["metadata"]["namespace"] == "openshift-monitoring"]
+        uwm = _one(_render("wait.verifyUserWorkloadMonitoring=true"), "Role", "uwm-check")
+        assert uwm["metadata"]["namespace"] == "openshift-monitoring"
+        assert uwm["rules"] == [{"apiGroups": [""], "resources": ["configmaps"], "resourceNames": ["cluster-monitoring-config"], "verbs": ["get"]}]
+
+    def test_the_wait_script_sees_a_succeeded_csv_beside_a_replaced_one(self, tmp_path):
+        """The rendered script, run under bash with an `oc` shim: during an OLM upgrade the replaced
+        CSV (Replacing) and its successor (Succeeded) both match the displayName filter for a while.
+        The gate must read that as the operator serving, not wait out the deadline on a phase string
+        no case matches (the first draft's range had no separator: "SucceededReplacing" — review of
+        #209, OB3 F3b)."""
+        job = _one(_render("wait.waitSeconds=2", "wait.intervalSeconds=1"), "Job")
+        container = job["spec"]["template"]["spec"]["containers"][0]
+        shim = tmp_path / "bin"
+        shim.mkdir()
+        (shim / "oc").write_text(
+            "#!/bin/bash\n"
+            "case \"$*\" in\n"
+            "  *'get csv'*jsonpath*) printf 'Succeeded\\nReplacing\\n' ;;\n"      # what the range prints, one per line
+            "  *'get grafana '*) printf 'complete/success' ;;\n"
+            "  *'get deployment '*) printf '1' ;;\n"
+            "  *lastMessage*) printf '' ;;\n"
+            "  *DatasourceSynchronized*) printf 'True' ;;\n"
+            "  *) echo \"unexpected: $*\" >&2; exit 2 ;;\n"
+            "esac\n")
+        (shim / "oc").chmod(0o755)
+        env = {e["name"]: e["value"] for e in container["env"]}
+        env["PATH"] = f"{shim}:{os.environ['PATH']}"
+        done = subprocess.run([*container["command"], container["args"][0]], env=env, capture_output=True, text=True, timeout=60)
+        assert done.returncode == 0, done.stdout + done.stderr
+        assert "csv Succeeded" in done.stdout and "done" in done.stdout
 
     def test_the_wait_job_is_a_helm_and_argo_hook(self):
         job = _one(_render(), "Job")
@@ -195,6 +268,31 @@ class TestInstance:
 
     def test_the_datasource_resyncs_every_two_minutes(self):
         assert _one(_render(), "GrafanaDatasource")["spec"]["resyncPeriod"] == "2m"
+
+
+class TestReadme:
+    """Two README statements that a template cannot back are held here (review of #209, OB3 G1/F4):
+    the install command's timeout and the rights the default shape needs."""
+
+    def test_the_install_example_gives_helm_a_timeout_above_the_gate(self):
+        """Helm waits for a hook only up to --timeout (5m by default) while the gate allows
+        wait.waitSeconds + 120s: an install that is still pulling images at 5m would be reported failed
+        by a README that omitted the flag."""
+        readme = (CHART / "README.md").read_text()
+        install = re.search(r"helm install .*?(?=\n```)", readme, re.S).group(0)
+        timeout = re.search(r"--timeout (\d+)m", install)
+        assert timeout, install
+        gate = yaml.safe_load((CHART / "values.yaml").read_text())["wait"]["waitSeconds"] + 120
+        assert int(timeout.group(1)) * 60 >= gate, (timeout.group(0), gate)
+
+    def test_the_readme_does_not_promise_project_rights_for_the_default_shape(self):
+        """On a cluster with no operator the default shape creates cluster-scoped CRDs and an
+        OperatorGroup, neither within a project admin's rights (measured on 4.22: the `admin`
+        ClusterRole holds no `create` on operatorgroups)."""
+        readme = (CHART / "README.md").read_text()
+        assert "installs it with ordinary project rights" not in readme
+        row = next(l for l in readme.splitlines() if l.startswith("| Rights needed"))
+        assert "cluster-admin" in row.split("|")[2], row
 
 
 @needs_helm

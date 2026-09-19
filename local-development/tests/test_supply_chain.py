@@ -308,8 +308,10 @@ class TestWhatIsSignedAndHow:
         assert image[0]["with"]["push-to-registry"] is False
         chart = [s for s in _jobs(HELM)["release"]["steps"] if "attest-build-provenance" in (s.get("uses") or "")]
         assert len(chart) == 1
-        # every package the run created, both charts when both are new (review of #209)
-        assert chart[0]["with"]["subject-path"] == ".cr-release-packages/*.tgz"
+        # every NEW package the run created and nothing else — the plan step's list (review of
+        # #209: a `*.tgz` glob would also attest a changed-but-unbumped chart's package that
+        # chart-releaser never uploads)
+        assert chart[0]["with"]["subject-path"] == "${{ steps.plan.outputs.subjects }}"
 
     def test_the_install_guide_gives_the_verification_commands(self) -> None:
         text = INSTALL_GUIDE.read_text()

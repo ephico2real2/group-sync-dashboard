@@ -248,7 +248,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
       - name: helm lint
-        run: helm lint charts/group-sync-dashboard
+        # Every chart chart-releaser packages (it walks charts/), not only the application's: a
+        # second chart that only the pytest render tests touch is linted by nothing else.
+        run: |
+          for chart in charts/*/; do
+            helm lint "${chart%/}"
+          done
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.14"   # keep in step with the tests job and the Containerfile

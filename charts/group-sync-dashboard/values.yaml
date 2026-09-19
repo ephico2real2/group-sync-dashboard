@@ -2068,9 +2068,10 @@ monitoring:
   # is deliberately not templated, so it renders byte-identical to
   # dashboards/group-sync-dashboard.json.
   #
-  # NOT SHIPPED: a GrafanaDashboard CR. grafana-operator v5 reads this ConfigMap through
-  # spec.configMapRef — the chart README carries the CR. Shipping one would pick between two
-  # incompatible CR API versions and need an instanceSelector the chart cannot know.
+  # A GrafanaDashboard CR pointing grafana-operator v5 at this ConfigMap renders on request
+  # (cr.enabled below, #161) and stays off by default: the CR needs its CRD before the release
+  # renders, and its instanceSelector and datasource uid are the consumer's to name — both are
+  # refused empty at render time.
   grafanaDashboard:
     enabled: ""
     # Extra metadata labels, e.g. a sidecar configured with a non-default label.

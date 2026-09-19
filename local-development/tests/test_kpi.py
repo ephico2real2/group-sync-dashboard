@@ -712,6 +712,28 @@ class TestObserveDoor:
         c._client = lambda: httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(200, json={"data": {"consoleURL": "javascript:x"}})), base_url="https://x")
         assert c.console_url() is None, "only an https URL is a console"
 
+    def test_discovery_holds_the_url_to_the_door_rule_and_never_raises(self, monkeypatch):
+        """The same rule as the chart's console.url (config._door_url): an https base WITH a host and no
+        query or fragment, because the page appends a path and a query to it — `https://` alone
+        became a door to `https:` (rstrip ate the slashes) and `https://c/?x=1` a door with two query
+        strings. And a token that cannot be resolved is the poll's failure to report, not a traceback
+        from discovery every cycle: _client() raises ClusterError before any request (review of #209,
+        OB3 F6)."""
+        import httpx
+        from gsd.config import ClusterConfig
+        from gsd.kube import ClusterClient
+
+        def client_for(url):
+            c = ClusterClient(ClusterConfig("host", "https://api.example:6443", token_env="T"))
+            c._client = lambda: httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(200, json={"data": {"consoleURL": url}})), base_url="https://x")
+            return c
+
+        assert client_for("https://console.example/").console_url() == "https://console.example"
+        for bad in ("https://", "https:///monitoring", "https://c.example/?x=1", "https://c.example/#f", "https://c.example?"):
+            assert client_for(bad).console_url() is None, bad
+        monkeypatch.delenv("T", raising=False)
+        assert ClusterClient(ClusterConfig("host", "https://api.example:6443", token_env="T")).console_url() is None
+
     def test_the_poll_thread_discovers_on_the_host_only_and_never_fails_the_poll(self, tmp_path, monkeypatch):
         from gsd.config import ClusterConfig
         from gsd.poller import Poller

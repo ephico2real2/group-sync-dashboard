@@ -141,6 +141,8 @@ networkPolicy:
 
 # The post-install gate: waits for the operator's CSV to succeed (when installed here) and the
 # Grafana instance to report ready, so `helm install` returns a working Grafana or a named failure.
+# Helm waits for the gate only up to its own --timeout (default 5m): pass --timeout above
+# waitSeconds + 120s, or the release is marked failed while the gate is still counting.
 wait:
   enabled: true
   # Let the gate READ openshift-monitoring/cluster-monitoring-config, so it fails with the exact

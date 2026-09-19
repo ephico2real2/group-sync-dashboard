@@ -8,8 +8,13 @@ that ships a `GrafanaDashboard` CR.
 ```sh
 helm repo add group-sync-dashboard https://ephico2real2.github.io/group-sync-dashboard
 helm install obs group-sync-dashboard/openshift-grafana -n my-team --create-namespace \
-  --set grafana.route.enabled=true
+  --set grafana.route.enabled=true --timeout 15m
 ```
+
+`--timeout 15m` because Helm waits for the post-install gate only up to its own timeout (5m by
+default) while the gate counts `wait.waitSeconds` (600 s) plus the Job's own 120 s: on a cluster
+that pulls the operator and Grafana images cold, the default would mark the release failed while
+the gate was still counting (measured: a warm CRC install took 45 s; the gate's ceiling is 12 min).
 
 One `helm install`, no operator pre-installed, returns a Grafana whose Thanos datasource reports
 *"Successfully queried the Prometheus API"* (measured on CRC, OpenShift 4.22, grafana-operator
@@ -57,7 +62,7 @@ what to inspect.
 |---|---|---|
 | What renders | OperatorGroup (own namespace), Subscription, the instance | the instance only |
 | Who runs the operator | this namespace's own grafana-operator, serving this namespace | a platform team's AllNamespaces operator |
-| Rights needed | OLM in this namespace | project rights only |
+| Rights needed | create OperatorGroup and Subscription — not in the `admin` ClusterRole (measured: it holds no `create` on operatorgroups), so a cluster-admin or a Role that grants it; plus the CRDs on the very first install (above) | project rights only |
 
 `operatorGroup.create: false` reuses an OperatorGroup the namespace already has (OLM allows one per
 namespace) — make sure it targets this namespace. grafana-operator v5.24.0 supports OwnNamespace,
@@ -67,7 +72,7 @@ SingleNamespace, MultiNamespace and AllNamespaces (measured on its CSV), so both
 
 | `thanos.scope` | Port | Sees | Authorised by | Objects outside the namespace |
 |---|---|---|---|---|
-| `namespace` (default) | 9092, the tenancy port | this namespace's metrics (`namespace=<release namespace>` on every query) | a `view` RoleBinding **in the release's namespace**, created by the chart | none |
+| `namespace` (default) | 9092, the tenancy port | this namespace's metrics (`namespace=<release namespace>` on every query) | a `view` RoleBinding **in the release's namespace**, created by the chart | none — unless `wait.verifyUserWorkloadMonitoring` is on, which adds a one-ConfigMap `get` Role for the gate in `openshift-monitoring` (below) |
 | `cluster` | 9091 | every metric on the cluster | a RoleBinding to `cluster-monitoring-view` in `openshift-monitoring`, created by the chart | that RoleBinding — a privileged step, for a central observability Grafana |
 
 Two details the reference architecture gets wrong and this chart gets right, both measured:

@@ -84,12 +84,15 @@ spec:
               if [ "$OPERATOR_INSTALLED" = "true" ]; then
                 log "waiting for grafana-operator's CSV to succeed in $NAMESPACE"
                 while :; do
-                  phase="$(oc get csv -n "$NAMESPACE" -o jsonpath='{range .items[?(@.spec.displayName=="Grafana Operator")]}{.status.phase}{end}' 2>/dev/null || true)"
-                  [ -z "$phase" ] && phase="$(oc get csv -n "$NAMESPACE" -o name 2>/dev/null | grep -i 'grafana-operator' | head -1 | xargs -r oc get -n "$NAMESPACE" -o jsonpath='{.status.phase}' || true)"
-                  case "$phase" in
-                    Succeeded) log "csv Succeeded"; break ;;
-                    Failed) fail "grafana-operator's CSV is in phase Failed. Inspect: oc get csv -n $NAMESPACE" ;;
-                  esac
+                  # One phase per line: during an OLM upgrade the replaced CSV (phase Replacing) and its
+                  # successor match the same displayName for a while, and a range without a separator
+                  # would print "SucceededReplacing" — a value no case below matches — until the old one
+                  # is deleted. Any Succeeded line is the operator serving.
+                  phases="$(oc get csv -n "$NAMESPACE" -o jsonpath='{range .items[?(@.spec.displayName=="Grafana Operator")]}{.status.phase}{"\n"}{end}' 2>/dev/null || true)"
+                  [ -z "$phases" ] && phases="$(oc get csv -n "$NAMESPACE" -o name 2>/dev/null | grep -i 'grafana-operator' | head -1 | xargs -r oc get -n "$NAMESPACE" -o jsonpath='{.status.phase}' || true)"
+                  phase="$(printf '%s\n' "$phases" | grep -v '^$' | tr '\n' ',' | sed 's/,$//' || true)"
+                  if printf '%s\n' "$phases" | grep -qx Succeeded; then log "csv Succeeded"; break; fi
+                  if printf '%s\n' "$phases" | grep -qx Failed; then fail "grafana-operator's CSV is in phase Failed. Inspect: oc get csv -n $NAMESPACE"; fi
                   [ "$(remaining)" -le 0 ] && fail "grafana-operator's CSV did not reach Succeeded in ${WAIT_SECONDS}s (last phase: ${phase:-none}). Inspect: oc get subscription,installplan,csv -n $NAMESPACE"
                   log "csv phase: ${phase:-none}; $(remaining)s left"
                   sleep "$INTERVAL"

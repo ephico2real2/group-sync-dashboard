@@ -31,6 +31,11 @@ User-workload monitoring is the one prerequisite (cluster-admin, once per cluste
 user-workload Prometheus does not exist and Thanos serves no user metrics: the datasource is green,
 the panels are empty. If it is not on yet, run (or add the key to the existing ConfigMap's config.yaml):
   oc -n openshift-monitoring create configmap cluster-monitoring-config --from-literal=config.yaml='enableUserWorkload: true'
+{{- if .Values.wait.enabled }}
+
+The post-install gate waits up to {{ .Values.wait.waitSeconds }}s (+120s): run helm install/upgrade with
+--timeout above that ({{ div (add .Values.wait.waitSeconds 120) 60 | add 1 }}m); Helm's default of 5m gives up on the gate first.
+{{- end }}
   oc get pods -n openshift-user-workload-monitoring     # prometheus-user-workload-0 appears within a minute
 The post-install gate checks it when its identity may read openshift-monitoring, and fails with that
 command when the key is absent:  oc logs -n {{ .Release.Namespace }} job/{{ include "openshift-grafana.fullname" . }}-wait

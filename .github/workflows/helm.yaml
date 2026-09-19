@@ -90,6 +90,7 @@ jobs:
           echo "Chart.yaml version: $version"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           new=false
+          subjects=""
           for chart in charts/*/; do
             name=$(awk '/^name:/{print $2; exit}' "$chart/Chart.yaml")
             cv=$(awk '/^version:/{print $2; exit}' "$chart/Chart.yaml")
@@ -99,9 +100,14 @@ jobs:
             else
               echo "will publish a new release: ${name}-${cv}"
               new=true
+              # The attestation's subjects are exactly the packages this run uploads: chart-releaser
+              # also packages a changed-but-unbumped chart and then skips its upload, and a `*.tgz`
+              # glob would attest bytes nobody can `helm pull` (review of #209, OB3 G10).
+              subjects="${subjects:+${subjects},}.cr-release-packages/${name}-${cv}.tgz"
             fi
           done
           echo "new=${new}" >> "$GITHUB_OUTPUT"
+          echo "subjects=${subjects}" >> "$GITHUB_OUTPUT"
 
       # ── Label the image this chart version deploys ────────────────────────────────────────────
       #
@@ -217,8 +223,9 @@ jobs:
         if: steps.plan.outputs.new == 'true' && vars.SUPPLY_CHAIN_SIGNING != 'false'
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          # Every package this run created — both charts when both are new (review of #209).
-          subject-path: .cr-release-packages/*.tgz
+          # Every package this run created and nothing else — both charts when both are new; the
+          # plan step's comma-separated list (the action takes a list of paths).
+          subject-path: ${{ steps.plan.outputs.subjects }}
 
       - name: Read the chart attestation back
         if: steps.plan.outputs.new == 'true' && vars.SUPPLY_CHAIN_SIGNING != 'false'
@@ -226,9 +233,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.plan.outputs.version }}
+          SUBJECTS: ${{ steps.plan.outputs.subjects }}
         run: |
           set -euo pipefail
-          for pkg in .cr-release-packages/*.tgz; do
+          for pkg in ${SUBJECTS//,/ }; do
             gh attestation verify "$pkg" \
               --repo "${GITHUB_REPOSITORY}" \
               --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/helm.yaml"

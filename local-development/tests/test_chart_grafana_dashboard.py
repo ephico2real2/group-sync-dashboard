@@ -256,6 +256,33 @@ class TestTheConfigMap:
 
 @needs_helm
 class TestTheOperatorCr:
+    def test_the_template_no_longer_claims_to_ship_no_cr(self):
+        """The header comment said "No CR is shipped here on purpose" while the same file rendered
+        one (#161, review of #209, OB3 N1): a comment that contradicts the block below it."""
+        text = (CHART / "templates" / "grafana-dashboard.yaml").read_text()
+        assert "kind: GrafanaDashboard" in text
+        assert "No CR is shipped" not in text
+        assert "NOT SHIPPED: a GrafanaDashboard CR" not in (CHART / "values.yaml").read_text()
+
+    def test_an_empty_datasource_binding_refuses_the_render(self):
+        """grafana-operator refuses a datasources[] entry whose datasourceName is empty (content/
+        resolver.go: "input or datasource empty") and the board never appears — refuse at render."""
+        args = ["helm", "template", "t", str(CHART), "-n", "x", "--set", "ingress.host=h",
+                "--set", "monitoring.grafanaDashboard.enabled=true", "--set", "monitoring.grafanaDashboard.cr.enabled=true",
+                "--set", "monitoring.grafanaDashboard.cr.datasource="]
+        done = subprocess.run(args, capture_output=True, text=True, timeout=120)
+        assert done.returncode != 0, done.stdout
+        assert "cr.datasource" in done.stderr
+
+    def test_an_empty_instance_selector_refuses_the_render(self):
+        """An empty selector with allowCrossNamespaceImport matches EVERY Grafana the operator sees."""
+        args = ["helm", "template", "t", str(CHART), "-n", "x", "--set", "ingress.host=h",
+                "--set", "monitoring.grafanaDashboard.enabled=true", "--set", "monitoring.grafanaDashboard.cr.enabled=true",
+                "--set", "monitoring.grafanaDashboard.cr.instanceSelector=null"]
+        done = subprocess.run(args, capture_output=True, text=True, timeout=120)
+        assert done.returncode != 0, done.stdout
+        assert "cr.instanceSelector" in done.stderr
+
     def test_off_by_default_and_never_without_the_configmap(self):
         """#161 (review of #209, Grok N9): the CR lives INSIDE the ConfigMap's switch, so it can never
         point at a ConfigMap that is not rendered; bound to the datasource by uid (measured: the

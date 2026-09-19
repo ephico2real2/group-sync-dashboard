@@ -2,10 +2,10 @@
 Grafana dashboard, delivered the way Grafana sidecars expect it: a ConfigMap carrying the
 `grafana_dashboard: "1"` label (kube-prometheus-stack, the community OpenShift Grafana
 deployments, and grafana-operator v5's sidecar mode all watch for it). grafana-operator v5
-can also point a GrafanaDashboard CR at this ConfigMap by name (spec.configMapRef) — the
-chart README shows the ten-line CR. No CR is shipped here on purpose: a ConfigMap is a core
-resource that cannot fail an install or an Argo dry-run, while the CR has two incompatible
-API versions in the wild and needs an instanceSelector the chart cannot know.
+can also point a GrafanaDashboard CR at this ConfigMap by name (spec.configMapRef): that CR is
+rendered below on request (monitoring.grafanaDashboard.cr.enabled, #161) and stays off by
+default, because a ConfigMap is a core resource that cannot fail an install or an Argo dry-run
+while the CR needs its CRD before the release renders.
 
 THE JSON IS A PLAIN FILE, loaded with .Files.Get, and that placement is load-bearing. Helm
 runs the template engine over templates/ only; a file read with .Files.Get is returned
@@ -70,6 +70,16 @@ its CRD first (the openshift-grafana chart ships it under crds/).
 */ -}}
 {{- $cr := ($dashboard.cr | default dict) }}
 {{- if $cr.enabled }}
+{{- /* The operator refuses a datasources[] entry whose datasourceName is empty ("invalid datasource
+       input rule ... input or datasource empty", content/resolver.go) and the board never appears; an
+       empty selector with allowCrossNamespaceImport matches EVERY Grafana on the cluster. Both refuse
+       the render instead. */ -}}
+{{- if not $cr.datasource }}
+{{- fail "monitoring.grafanaDashboard.cr.datasource must name the datasource's uid (the openshift-grafana chart's is openshift-thanos): grafana-operator rejects a GrafanaDashboard whose DS_PROMETHEUS binding is empty" }}
+{{- end }}
+{{- if not ($cr.instanceSelector | default dict) }}
+{{- fail "monitoring.grafanaDashboard.cr.instanceSelector must name the Grafana instance's labels (the openshift-grafana chart's is app.kubernetes.io/instance: <its release>): an empty selector would apply the board to every Grafana the operator can see" }}
+{{- end }}
 ---
 apiVersion: grafana.integreatly.org/v1beta1
 kind: GrafanaDashboard
