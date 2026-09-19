@@ -363,8 +363,8 @@ A values file that cannot host it — the proxy off, `persistence.enabled=false`
 a `ReadWriteOnce`/`ReadWriteOncePod` data claim, or `rbac.bindings=false` — is **refused by `helm
 upgrade` with the value named**; set `reporting.enabled=false` explicitly to keep such an install as
 it is. The token Secret is generated once and reused (the `oauth-cookie` pattern); under ArgoCD
-(`helm template` has no cluster) pre-create it and add `data.token` to `ignoreDifferences`, as the
-ArgoCD section explains for the cookie.
+(`helm template` has no cluster) the Application ignores both Secrets' `data` with
+`RespectIgnoreDifferences=true`, as the ArgoCD section shows.
 
 ### Workload
 
@@ -1058,7 +1058,25 @@ spec:
       selfHeal: true
     syncOptions:
       - CreateNamespace=true
+      # ignoreDifferences below also govern the SYNC, not only the diff: without this Argo applies
+      # the rendered Secrets as-is and rotates the values every sync (Argo's sync-options.md).
+      - RespectIgnoreDifferences=true
   ignoreDifferences:
+    # The two generated-once Secrets. The chart reuses the existing value through Helm's `lookup`,
+    # which is ALWAYS empty under Argo's `helm template` (no cluster): every render mints a new
+    # session key and a new report token, so without this entry every sync signed every session
+    # out and broke the dashboard→report-service call. The first sync creates them; later syncs
+    # leave `data` alone (RespectIgnoreDifferences above).
+    - group: ""
+      kind: Secret
+      name: group-sync-dashboard-oauth-cookie
+      jsonPointers:
+        - /data
+    - group: ""
+      kind: Secret
+      name: group-sync-dashboard-report-token
+      jsonPointers:
+        - /data
     # Without this, the injected CA bundle is reverted on every sync.
     - group: ""
       kind: ConfigMap

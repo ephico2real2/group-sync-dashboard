@@ -145,6 +145,52 @@ architecture's `dashboards: grafana`).
 | `wait.enabled` / `.waitSeconds` / `.intervalSeconds` | `true` / `600` / `10` | the post-install gate |
 | `wait.image.repository` / `.tag` | `registry.redhat.io/openshift4/ose-cli` / `latest` | the gate's `oc` image |
 
+## Argo CD, Flux, Kustomize — what each renderer does with this chart
+
+Three things in this chart depend on *how* it is rendered, and each of the three tools renders
+differently (read from their sources on 2026-09-19: argo-cd `util/helm/cmd.go`, `controller/state.go`,
+`reposerver/cache/cache.go`; helm-controller `internal/action/install.go`).
+
+| | Helm / **Flux** (a real install through the Helm SDK) | **Argo CD** (`helm template --api-versions <live list> --include-crds`, no cluster) | **Kustomize `helmCharts`** (bare `helm template`) |
+|---|---|---|---|
+| `crds/` | installed first | rendered (`--include-crds`), applied with the rest | rendered only with `includeCRDs: true` |
+| the wait gate (`helm.sh/hook` + `argocd.argoproj.io/hook: Sync`) | a Helm hook | an Argo Sync hook, in the Subscription's wave | a plain Job, applied once |
+| the generated Secrets (`<name>-admin`, `<name>-oauth-cookie`) — `lookup` reuses what exists | stable across upgrades | **`lookup` is always empty**: every render mints new values → permanent drift, and a sync would rotate Grafana's admin password and sign every session out | the same, on every `kubectl apply` |
+
+The Secrets are the one that needs an Application-side rule. Ignore their `data` in the diff **and**
+tell the sync to respect that (Argo's own words, `sync-options.md`: without `RespectIgnoreDifferences`
+"the desired state is applied as-is"); the first sync creates them with random values, every later
+sync leaves them alone:
+
+```yaml
+spec:
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+      - RespectIgnoreDifferences=true
+  ignoreDifferences:
+    - group: ""
+      kind: Secret
+      name: obs-openshift-grafana-admin          # <release>-openshift-grafana-admin
+      jsonPointers: ["/data"]
+    - group: ""
+      kind: Secret
+      name: obs-openshift-grafana-oauth-cookie   # auth.mode openshift only
+      jsonPointers: ["/data"]
+    - group: route.openshift.io
+      kind: Route
+      name: obs-openshift-grafana
+      jsonPointers: ["/status"]                  # the router writes status; argo-cd#2370
+```
+
+Or take the values path and keep the secrets out of the render entirely: `grafana.admin.existingSecret`
+(a Secret you create, keys `GF_SECURITY_ADMIN_USER` / `GF_SECURITY_ADMIN_PASSWORD`) and
+`grafana.auth.oauthProxy.cookieSecret` — the only choice for a plain Kustomize apply, which has no
+`ignoreDifferences`. Nothing in the chart reads the cluster at render time otherwise: the OAuth
+redirect is a *reference* to the Route (`serviceaccounts.openshift.io/oauth-redirectreference.primary`),
+resolved by the OAuth server, not a host the render must know — the failure mode a `lookup` of the
+apps domain had under Argo on 2026-09-03 (the application chart's README, "Deploying with ArgoCD").
+
 ## Reading the result
 
 ```sh
