@@ -1,0 +1,56 @@
+{{- /*
+The wait Job's identity. Release-managed rather than hooked, so it exists before the hook runs and
+is removed with the release. A Role, not a ClusterRole: every read is in this namespace.
+*/ -}}
+{{- if .Values.wait.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "openshift-grafana.fullname" . }}-wait
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "openshift-grafana.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "openshift-grafana.fullname" . }}-wait
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "openshift-grafana.labels" . | nindent 4 }}
+rules:
+  # Exactly what the script reads (review of #209, Codex and Grok): CSVs are LISTED (the operator's
+  # CSV is found by its displayName), the instance, the datasource and the Deployment are GOT by name.
+  - apiGroups: ["operators.coreos.com"]
+    resources: ["clusterserviceversions"]
+    verbs: ["get", "list"]
+  - apiGroups: ["grafana.integreatly.org"]
+    resources: ["grafanas", "grafanadatasources"]
+    verbs: ["get"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get"]
+  # The one write: an annotation on the chart's own service-ca ConfigMap, which re-enqueues the
+  # datasource in the operator (it watches the ConfigMaps a datasource reads) when a reconcile
+  # raced the instance and is sitting in backoff — see the script.
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["{{ include "openshift-grafana.fullname" . }}-service-ca"]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "openshift-grafana.fullname" . }}-wait
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "openshift-grafana.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "openshift-grafana.fullname" . }}-wait
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "openshift-grafana.fullname" . }}-wait
+    namespace: {{ .Release.Namespace }}
+{{- end }}

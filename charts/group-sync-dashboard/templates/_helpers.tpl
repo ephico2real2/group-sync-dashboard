@@ -805,3 +805,18 @@ false
 {{- end -}}
 {{- end -}}
 {{- end -}}
+
+{{- /*
+The KPI page's doors (grafana.url, console.url): empty is unset — the Grafana door absent, the console
+discovered. A value must be an http(s) URL with a host and no query or fragment, the rule the app's
+_door_url enforces at start; refused HERE so a `javascript:` value cannot reach a release and crash
+the pod after a successful upgrade (review of #157 and #209, Codex and Grok).
+*/ -}}
+{{- define "gsd.doorUrl" -}}
+{{- $key := index . 0 }}{{- $value := index . 1 }}
+{{- if $value }}
+{{- if not (regexMatch "^https?://[^/?#[:space:]]+(/[^?#[:space:]]*)?$" $value) }}
+{{- fail (printf "%s must be an http(s) URL with a host and no query or fragment; got %q" $key $value) }}
+{{- end }}
+{{- end }}
+{{- end -}}

@@ -1,0 +1,42 @@
+apiVersion: v2
+name: openshift-grafana
+description: >-
+  An isolated Grafana instance in your own namespace, wired to OpenShift's Thanos querier
+  (user-workload monitoring) through grafana-operator v5 — installable by any team, with no
+  application-specific content. Deploy it before a chart that ships a GrafanaDashboard CR.
+type: application
+version: 0.1.0
+# grafana-operator's channel v5; the crds/ copies are from the CSV this was verified against.
+appVersion: "5.24.0"
+kubeVersion: ">=1.28.0-0"
+keywords: [grafana, openshift, monitoring, thanos, grafana-operator]
+home: https://github.com/ephico2real2/group-sync-dashboard
+sources:
+  - https://github.com/ephico2real2/group-sync-dashboard/tree/main/charts/openshift-grafana
+maintainers:
+  - name: ephico2real2
+annotations:
+  artifacthub.io/category: monitoring-logging
+  artifacthub.io/operator: "false"
+  artifacthub.io/prerelease: "false"
+  artifacthub.io/crds: |
+    - kind: Grafana
+      version: v1beta1
+      name: grafanas.grafana.integreatly.org
+      displayName: Grafana
+      description: A Grafana instance managed by grafana-operator v5 (a copy, installed only when absent)
+    - kind: GrafanaDatasource
+      version: v1beta1
+      name: grafanadatasources.grafana.integreatly.org
+      displayName: GrafanaDatasource
+      description: A datasource applied to matching Grafana instances
+    - kind: GrafanaDashboard
+      version: v1beta1
+      name: grafanadashboards.grafana.integreatly.org
+      displayName: GrafanaDashboard
+      description: A dashboard applied to matching Grafana instances
+    - kind: GrafanaFolder
+      version: v1beta1
+      name: grafanafolders.grafana.integreatly.org
+      displayName: GrafanaFolder
+      description: A folder applied to matching Grafana instances

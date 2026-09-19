@@ -1,0 +1,162 @@
+{{- /*
+The instance. Labelled with the release's instance label (and grafana.labels), which is what the
+chart's datasource and every consumer's GrafanaDashboard select it by.
+
+auth.mode openshift adds an openshift/oauth-proxy sidecar and turns Grafana's auth.proxy on: the proxy
+authenticates against the cluster (the ServiceAccount the operator creates is the OAuth client — the
+redirect annotation names the chart's Route), requires the SubjectAccessReview in `sar`, and hands
+Grafana the identity as X-Forwarded-User; Grafana trusts that header from 127.0.0.1 ONLY (the sidecar
+shares the pod's network namespace), so a same-namespace caller on 3000 cannot forge a user. The
+login form is off; the identity that matches GF_SECURITY_ADMIN_USER is the server admin, every other
+signs up as Viewer.
+*/ -}}
+{{- $openshift := eq .Values.grafana.auth.mode "openshift" }}
+{{- $adminSecret := .Values.grafana.admin.existingSecret | default (printf "%s-admin" (include "openshift-grafana.fullname" .)) }}
+{{- $sar := .Values.grafana.auth.oauthProxy.sar | default (printf "{\"resource\":\"namespaces\",\"verb\":\"get\",\"name\":\"%s\"}" .Release.Namespace) }}
+apiVersion: grafana.integreatly.org/v1beta1
+kind: Grafana
+metadata:
+  name: {{ include "openshift-grafana.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "openshift-grafana.labels" . | nindent 4 }}
+    {{- with .Values.grafana.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  disableDefaultAdminSecret: true
+  config:
+    {{- toYaml .Values.grafana.config | nindent 4 }}
+    {{- if $openshift }}
+    auth:
+      disable_login_form: "true"
+      disable_signout_menu: "true"
+    auth.anonymous:
+      enabled: "false"
+    auth.proxy:
+      enabled: "true"
+      header_name: X-Forwarded-User
+      header_property: username
+      auto_sign_up: "true"
+      # Only the sidecar, over the pod's loopback, may assert the identity header.
+      whitelist: "127.0.0.1"
+    users:
+      auto_assign_org_role: Viewer
+    {{- else }}
+    auth:
+      disable_login_form: "false"
+    auth.anonymous:
+      enabled: "false"
+    {{- end }}
+  {{- if $openshift }}
+  serviceAccount:
+    metadata:
+      annotations:
+        # The ServiceAccount IS the OAuth client; the reference names the chart's Route, so the
+        # redirect follows the host the router assigns.
+        serviceaccounts.openshift.io/oauth-redirectreference.primary: {{ dict "kind" "OAuthRedirectReference" "apiVersion" "v1" "reference" (dict "kind" "Route" "name" (include "openshift-grafana.fullname" .)) | toJson | quote }}
+  {{- end }}
+  {{- if .Values.grafana.persistence.enabled }}
+  persistentVolumeClaim:
+    spec:
+      accessModes: [ReadWriteOnce]
+      resources:
+        requests:
+          storage: {{ .Values.grafana.persistence.size }}
+      {{- with .Values.grafana.persistence.storageClassName }}
+      storageClassName: {{ . | quote }}
+      {{- end }}
+  {{- end }}
+  deployment:
+    spec:
+      template:
+        spec:
+          containers:
+            - name: grafana
+              resources:
+                {{- toYaml .Values.grafana.resources | nindent 16 }}
+              env:
+                - name: GF_SECURITY_ADMIN_USER
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ $adminSecret }}
+                      key: GF_SECURITY_ADMIN_USER
+                - name: GF_SECURITY_ADMIN_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ $adminSecret }}
+                      key: GF_SECURITY_ADMIN_PASSWORD
+              {{- if .Values.grafana.persistence.enabled }}
+              volumeMounts:
+                - name: grafana-data
+                  mountPath: /var/lib/grafana
+              {{- end }}
+            {{- if $openshift }}
+            - name: oauth-proxy
+              image: {{ .Values.grafana.auth.oauthProxy.image }}
+              imagePullPolicy: {{ .Values.grafana.auth.oauthProxy.imagePullPolicy }}
+              args:
+                - -provider=openshift
+                - -https-address=:{{ .Values.grafana.auth.oauthProxy.port }}
+                - -http-address=
+                - -email-domain=*
+                - -upstream=http://127.0.0.1:3000
+                - -tls-cert=/etc/tls/private/tls.crt
+                - -tls-key=/etc/tls/private/tls.key
+                - -cookie-secret-file=/etc/proxy/secrets/session_secret
+                - -cookie-expire={{ .Values.grafana.auth.oauthProxy.cookieExpire }}
+                - -openshift-service-account={{ include "openshift-grafana.fullname" . }}-sa
+                - -openshift-sar={{ $sar }}
+                - -pass-user-headers
+                - -skip-provider-button
+              ports:
+                - name: https
+                  containerPort: {{ .Values.grafana.auth.oauthProxy.port }}
+                  protocol: TCP
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: [ALL]
+              resources:
+                requests: {cpu: 10m, memory: 32Mi}
+                limits: {memory: 64Mi}
+              volumeMounts:
+                - name: proxy-tls
+                  mountPath: /etc/tls/private
+                  readOnly: true
+                - name: proxy-cookie
+                  mountPath: /etc/proxy/secrets
+                  readOnly: true
+            {{- end }}
+          {{- if or .Values.grafana.persistence.enabled $openshift }}
+          volumes:
+            {{- if .Values.grafana.persistence.enabled }}
+            - name: grafana-data
+              persistentVolumeClaim:
+                claimName: {{ include "openshift-grafana.fullname" . }}-pvc
+            {{- end }}
+            {{- if $openshift }}
+            - name: proxy-tls
+              secret:
+                secretName: {{ include "openshift-grafana.fullname" . }}-proxy-tls
+            - name: proxy-cookie
+              secret:
+                secretName: {{ include "openshift-grafana.fullname" . }}-oauth-cookie
+            {{- end }}
+          {{- end }}
+  {{- if and .Values.grafana.route.enabled (not $openshift) }}
+  route:
+    # the chart's labels on the operator's Route too, so a discovery by label finds it in either mode
+    metadata:
+      labels:
+        {{- include "openshift-grafana.labels" . | nindent 8 }}
+    spec:
+      {{- with .Values.grafana.route.host }}
+      host: {{ . | quote }}
+      {{- end }}
+      tls:
+        termination: edge
+        insecureEdgeTerminationPolicy: Redirect
+  {{- end }}

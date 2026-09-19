@@ -1,0 +1,15 @@
+{{- /*
+The service CA bundle, injected by OpenShift's service-ca operator into `service-ca.crt` of any
+ConfigMap carrying this annotation. thanos-querier's serving certificate chains to it, so the
+datasource verifies TLS against this bundle instead of `tlsSkipVerify: true`.
+*/ -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "openshift-grafana.fullname" . }}-service-ca
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "openshift-grafana.labels" . | nindent 4 }}
+  annotations:
+    service.beta.openshift.io/inject-cabundle: "true"
+data: {}

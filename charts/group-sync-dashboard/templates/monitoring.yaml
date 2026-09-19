@@ -64,7 +64,7 @@ spec:
           configMap:
             name: openshift-service-ca.crt
             key: service-ca.crt
-        serverName: {{ include "gsd.fullname" . }}.{{ .Release.Namespace }}.svc
+        serverName: {{ printf "%s.%s.svc" (include "gsd.fullname" .) .Release.Namespace | quote }}
       {{- end }}
       interval: {{ .Values.monitoring.serviceMonitor.interval }}
       scrapeTimeout: {{ .Values.monitoring.serviceMonitor.scrapeTimeout }}
@@ -98,7 +98,7 @@ spec:
           configMap:
             name: openshift-service-ca.crt
             key: service-ca.crt
-        serverName: {{ include "gsd.reportName" . }}.{{ .Release.Namespace }}.svc
+        serverName: {{ printf "%s.%s.svc" (include "gsd.reportName" .) .Release.Namespace | quote }}
       {{- end }}
       interval: {{ .Values.monitoring.serviceMonitor.interval }}
       scrapeTimeout: {{ .Values.monitoring.serviceMonitor.scrapeTimeout }}
@@ -342,7 +342,7 @@ spec:
           labels: {severity: warning}
           annotations:
             summary: "the dashboard cannot pull the report service's usage feed"
-            description: "Check the report pod, the -report-token Secret in both pods, and TLS (oc logs deploy/{{ include "gsd.fullname" . }} -c dashboard | grep 'report usage pull')."
+            description: {{ printf "Check the report pod, the -report-token Secret in both pods, and TLS (oc logs deploy/%s -c dashboard | grep 'report usage pull')." (include "gsd.fullname" .) | quote }}
         # The newest snapshot the report service would render from is older than four snapshot
         # intervals: the dashboard's leader is not writing copies (reporting off on one side, the
         # data claim not mounted, or a VACUUM INTO failing — see the dashboard log).
@@ -354,4 +354,28 @@ spec:
             summary: "the report service's data copy is stale"
             description: "gsd_report_snapshot_age_seconds is above four snapshot intervals; reports would print stale data with an honest 'data as of' line."
         {{- end }}
+        # The KPI module's self-report (#156), on the thresholds the KPI page draws (kpi.thresholds.*).
+        # Throttling is the saturation signal, not CPU%: a pod at 30 % CPU that is being throttled is
+        # mis-sized (#97, the report pod preempted 29× on a saturated node with no metric saying so).
+        - alert: GroupSyncDashboardPodThrottled
+          expr: max by (component) (rate(gsd_process_cpu_throttled_periods_total[15m]) / rate(gsd_process_cpu_periods_total[15m])) > {{ divf .Values.kpi.thresholds.throttledPercent 100 }}
+          for: {{ .Values.monitoring.prometheusRule.for.podThrottled }}
+          labels: {severity: warning}
+          annotations:
+            summary: "the {{ "{{ $labels.component }}" }} pod is CPU-throttled"
+            description: "More than {{ .Values.kpi.thresholds.throttledPercent }}% of scheduler periods throttled over 15m ({{ "{{ $value | humanizePercentage }}" }}): raise its CPU limit (resources.limits.cpu) — the KPI page reads it as watch."
+        - alert: GroupSyncDashboardPodMemoryHigh
+          expr: max by (component) (gsd_process_memory_bytes / gsd_process_memory_limit_bytes) > {{ divf .Values.kpi.thresholds.memoryPercent 100 }}
+          for: {{ .Values.monitoring.prometheusRule.for.podMemoryHigh }}
+          labels: {severity: warning}
+          annotations:
+            summary: "the {{ "{{ $labels.component }}" }} pod is near its memory limit"
+            description: "Above {{ .Values.kpi.thresholds.memoryPercent }}% of the cgroup limit ({{ "{{ $value | humanizePercentage }}" }}) for {{ .Values.monitoring.prometheusRule.for.podMemoryHigh }}: the next step is the OOM kill; raise resources.limits.memory."
+        - alert: GroupSyncDashboardVolumeDiskFull
+          expr: max by (component) (gsd_volume_disk_used_bytes / gsd_volume_disk_total_bytes) > {{ divf .Values.kpi.thresholds.diskPercent 100 }}
+          for: {{ .Values.monitoring.prometheusRule.for.volumeDiskFull }}
+          labels: {severity: warning}
+          annotations:
+            summary: "the filesystem under the {{ "{{ $labels.component }}" }} pod's volume is {{ "{{ $value | humanizePercentage }}" }} full"
+            description: "Above {{ .Values.kpi.thresholds.diskPercent }}% — on a hostPath volume that is the node's disk, and a full one stops the database's WAL and the report artefacts alike."
 {{- end }}

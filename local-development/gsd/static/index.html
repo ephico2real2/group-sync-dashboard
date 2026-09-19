@@ -1636,7 +1636,10 @@ function kpiPage() {
   const grafana = links.grafana
     ? `${links.grafana}${links.grafana_dashboard_uid ? `/d/${encodeURIComponent(links.grafana_dashboard_uid)}` : ""}?from=now-30d&to=now${clusters.length === 1 ? `&var-cluster=${encodeURIComponent(clusters[0])}` : ""}`
     : null;
-  const observe = links.console ? `${links.console}/monitoring/dashboards` : null;
+  // Built server-side (api.py#kpi_links): the console's namespace-workloads dashboard scoped to the
+  // pod's own namespace, the console discovered from openshift-config-managed/console-public when
+  // the chart names none.
+  const observe = links.observe || null;
   const window = k.trends[clusters[0]] ? k.trends[clusters[0]].window_days : 30;
   const oldest = cs.map((c) => c.oldest_last_sync).filter(Boolean).sort()[0];
   return `
@@ -1705,8 +1708,8 @@ function kpiPage() {
   <section class="card kpi-page">
     <div class="kdoor">
       <p><strong>Deeper series live in your metrics stack.</strong> OpenShift removed its bundled Grafana in 4.11, so Grafana is
-        optional and operator-owned — the link appears only when <span class="mono">grafana.url</span> is configured. The console's
-        Observe dashboards always ship${observe ? "" : " — set <span class=\"mono\">console.url</span> to link them"}.</p>
+        operator-owned${grafana ? " — this link opens the board on the Grafana in this namespace" : " — no Grafana was discovered in this namespace yet (the openshift-grafana chart installs one; <span class=\"mono\">grafana.url</span> names one elsewhere)"}. The console's
+        Observe dashboards always ship${observe ? " — the link opens this namespace's workloads board" : " — the console's URL could not be discovered; set <span class=\"mono\">console.url</span> to link them"}.</p>
       <div class="btns">
         ${grafana ? `<a class="btn" href="${esc(grafana)}" target="_blank" rel="noopener">Open in Grafana <span class="ext">↗</span></a>` : ""}
         ${observe ? `<a class="btn ghost" href="${esc(observe)}" target="_blank" rel="noopener">Observe → Dashboards <span class="ext">↗ console</span></a>` : ""}

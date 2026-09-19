@@ -1,0 +1,21 @@
+{{- include "openshift-grafana.validate" . -}}
+{{- /*
+One OperatorGroup per namespace — OLM refuses to reconcile a namespace with two. A namespace that
+already carries one (another operator installed here) must set operatorGroup.create=false and make
+sure the existing group targets this namespace (OwnNamespace). Rendered only with the Subscription:
+without an operator to install, the group is pointless.
+*/ -}}
+{{- if and .Values.operator.install .Values.operatorGroup.create }}
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: {{ include "openshift-grafana.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "openshift-grafana.labels" . | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+spec:
+  targetNamespaces:
+    - {{ .Release.Namespace }}
+{{- end }}

@@ -22,6 +22,27 @@ Route:
 
 Confirm what is actually running — the pod reports the commit it was built from:
   curl -sk https://{{ include "gsd.routeHost" . | default "<the host above>" }}/api/version
+{{- $discovery := ((.Values.grafana.discovery | default dict).selector | default "") }}
+
+The KPI page's doors and the Grafana board (chart README, "Prerequisites — the Grafana and Observe
+integration"): user-workload monitoring on (the OpenShift engineers, once per cluster; the
+openshift-grafana chart's post-install Job reports it); a Grafana in this namespace —
+{{- if .Values.grafana.url }}
+  grafana.url is set: {{ .Values.grafana.url }}
+{{- else if $discovery }}
+  discovered by the Route labelled {{ $discovery }} in {{ .Release.Namespace }} (the openshift-grafana
+  chart's: helm install grafana <repo>/openshift-grafana -n {{ .Release.Namespace }} --timeout 15m);
+  until one exists the page says so instead of drawing a dead button
+{{- else }}
+  neither grafana.url nor grafana.discovery.selector is set: no "Open in Grafana" door renders
+{{- end }}
+{{- if not (.Capabilities.APIVersions.Has "grafana.integreatly.org/v1beta1") }}
+  — this cluster does not serve grafana.integreatly.org/v1beta1 yet, so the GrafanaDashboard CR was
+  not rendered; the next helm upgrade after grafana-operator lands renders it
+{{- end }}
+and `view` on {{ .Release.Namespace }} for every reader group (the console's namespace dashboard and
+Grafana's login both check `get pods` here):
+  oc adm policy add-role-to-group view <group> -n {{ .Release.Namespace }}
 
 {{- if not .Values.persistence.enabled }}
 
