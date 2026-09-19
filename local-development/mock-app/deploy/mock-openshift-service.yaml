@@ -5,12 +5,14 @@ metadata:
     app: mock-openshift
   name: mock-openshift
 spec:
+  clusterIP: 10.217.4.230
+  clusterIPs:
+  - 10.217.4.230
+  ipFamilies:
+  - IPv4
+  ipFamilyPolicy: SingleStack
   ports:
   - name: https
     port: 6443
-    protocol: TCP
-    targetPort: 6443
   selector:
     app: mock-openshift
-  type: ClusterIP
-

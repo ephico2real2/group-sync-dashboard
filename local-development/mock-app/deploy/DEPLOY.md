@@ -115,3 +115,49 @@ FIXTURE=paging.yaml ./deploy-mock.sh --no-build   # serve a different scenario
 ```
 
 The full format, including every key and the `/_mock/*` control surface, is in `../README.md`.
+
+## Re-capturing the manifests from a live cluster
+
+The three manifests here were read off a running CRC. `capture.sh` beside them regenerates all three,
+so they can be refreshed rather than hand-edited when the live shape changes.
+
+### Prerequisite: krew, then neat
+
+`kubectl-neat` strips what the API server and admission controllers inject into a live object. There is
+**no Homebrew formula** for it (checked 2026-09-18), so it installs through krew, kubectl's plugin
+manager:
+
+```sh
+# krew itself, if you do not have it — https://krew.sigs.k8s.io/docs/user-guide/setup/install/
+kubectl krew install neat
+export PATH="$HOME/.krew/bin:$PATH"     # add this to your shell profile
+kubectl neat version                     # 2.0.4 here
+```
+
+krew prints a warning that plugins are not audited by its maintainers. That is worth reading once and
+is the reason this is a documented prerequisite rather than something a script installs for you.
+
+### Why neat alone is not enough
+
+Measured on these three objects. neat removes the injected defaults a hand-strip misses — empty
+`resources: {}` and `securityContext: {}`, `status`, `managedFields`, the last-applied annotation. But
+it deliberately **keeps** cluster-specific metadata, which is correct for a round-trip and wrong for a
+manifest in git:
+
+| neat keeps | why it must go |
+|---|---|
+| `metadata.namespace` | the manifest should not pin a namespace the caller chooses |
+| `creationTimestamp: null` | noise |
+| `deployment.kubernetes.io/revision` | this cluster's rollout counter |
+| `kubectl.kubernetes.io/restartedAt` | the time someone last bounced the pod |
+
+So `capture.sh` pipes `oc get -o yaml` through `kubectl neat`, then a second pass that drops those.
+The result is smaller than either alone: the Deployment is **1,671 bytes**, against 1,720 hand-stripped
+and 1,883 from neat by itself, with **zero** residual clutter lines.
+
+```sh
+./capture.sh          # rewrites all three and validates them with oc apply --dry-run=server
+```
+
+It verifies as it goes: all three reported `configured (server dry run)`, and the ConfigMap's payload
+is still byte-for-byte identical to `../fixtures/reference.yaml` at 10,685 bytes.
