@@ -228,7 +228,14 @@ class TestRuntimeStageOrder:
         assert "COPY --chmod=0644 image-proof.py /image-proof.py" in BY_NAME["build"], (
             "staged in the build stage with a mode the runtime user can read"
         )
-        loader = next(l for l in RUNTIME if "ld-linux-x86-64.so.2 --list" in l)
+        # The loader is FOUND, not named: /lib64/ld-linux-x86-64.so.2 on amd64, /lib/ld-linux-aarch64.so.1
+        # on arm64 (measured on both bases, 2026-09-18 — the first arm64 build failed on the named path).
+        # The glob must match exactly one executable, so a second loader or none fails the build with
+        # the matches printed, rather than proving nothing.
+        loader = next(l for l in RUNTIME if '"$ld" --list' in l)
+        assert "set -- /lib*/ld-linux-*.so.*" in loader, "the loader is located by glob, never by name"
+        assert '[ $# -eq 1 ] && [ -x "$1" ]' in loader, "exactly one executable loader, or the build fails"
+        assert "ld-linux-x86-64" not in loader and "ld-linux-aarch64" not in loader
         for b in ("jq", "bash", "curl", "coreutils"):
             assert b in loader
         assert "not found" in loader and "2>&1" in loader
@@ -264,7 +271,7 @@ class TestPackStage:
     # interpreter the base provides, and variable assignments.
     SHELL_WORDS = {
         "for", "do", "done", "if", "then", "else", "fi", "while", "case", "esac", "in",
-        "command", "test", "echo", "exit", "printf", "read", "python3.14",
+        "command", "test", "echo", "exit", "printf", "read", "set", "python3.14",
     }
 
     def test_every_program_the_final_stage_runs_is_packed(self) -> None:
@@ -282,8 +289,8 @@ class TestPackStage:
                 continue
             body = re.sub(r"^RUN(?:\s+--mount=\S+)*\s+", "", line)
             for word in pattern.findall(body):
-                if word.endswith("=") or word.startswith("/lib64/ld-linux"):
-                    continue                 # an assignment; the loader is the base's
+                if word.endswith("=") or word.startswith("/lib"):
+                    continue                 # an assignment; the loader glob is the base's
                 seen.add(word)
         programs = seen - self.SHELL_WORDS
         assert programs, "no programs parsed from the final stage; the parser is broken"
