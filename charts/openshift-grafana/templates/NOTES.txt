@@ -27,18 +27,21 @@ Attach a dashboard by selecting this instance:
         datasourceName: {{ .Values.thanos.datasource.uid | quote }}   # the uid: substituted verbatim into the panels
     configMapRef: {name: <your-configmap>, key: <your-file>.json}
 
-User-workload monitoring is the one prerequisite (cluster-admin, once per cluster). Without it the
-user-workload Prometheus does not exist and Thanos serves no user metrics: the datasource is green,
-the panels are empty. If it is not on yet, run (or add the key to the existing ConfigMap's config.yaml):
+PREREQUISITE — user-workload monitoring (cluster-admin, once per cluster; the OpenShift engineers).
+Without it the user-workload Prometheus does not exist and Thanos serves no user metrics: the
+datasource is green, the panels are empty. The post-install Job VERIFIES it with no grant (it resolves
+prometheus-user-workload.openshift-user-workload-monitoring.svc, a Service the platform creates only
+when it is on) and REPORTS it — it never fails the install on it:
+  oc logs -n {{ .Release.Namespace }} job/{{ include "openshift-grafana.fullname" . }}-wait | grep 'user-workload monitoring'
+If it says OFF, ask them to run (or add the key to the existing ConfigMap's config.yaml):
   oc -n openshift-monitoring create configmap cluster-monitoring-config --from-literal=config.yaml='enableUserWorkload: true'
+  oc get pods -n openshift-user-workload-monitoring     # prometheus-user-workload-0 appears within a minute
+Nothing to re-install afterwards.
 {{- if .Values.wait.enabled }}
 
 The post-install gate waits up to {{ .Values.wait.waitSeconds }}s (+120s): run helm install/upgrade with
 --timeout above that ({{ div (add .Values.wait.waitSeconds 120) 60 | add 1 }}m); Helm's default of 5m gives up on the gate first.
 {{- end }}
-  oc get pods -n openshift-user-workload-monitoring     # prometheus-user-workload-0 appears within a minute
-The post-install gate checks it when its identity may read openshift-monitoring, and fails with that
-command when the key is absent:  oc logs -n {{ .Release.Namespace }} job/{{ include "openshift-grafana.fullname" . }}-wait
 {{- if and .Values.operatorGroup.create (not .Values.operator.install) }}
 
 Note: operatorGroup.create is true but operator.install is false — no OperatorGroup was rendered;

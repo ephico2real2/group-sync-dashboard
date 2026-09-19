@@ -180,3 +180,36 @@ subjects:
     name: {{ include "gsd.serviceAccountName" . }}
     namespace: {{ .Release.Namespace }}
 {{- end }}
+{{- $selector := ((.Values.grafana.discovery | default dict).selector | default "") }}
+{{- if and .Values.rbac.create (not .Values.grafana.url) $selector }}
+---
+# The KPI page's Grafana door, discovered (#157): the poll thread lists the Routes carrying
+# grafana.discovery.selector in the pod's OWN namespace and takes the one match. A namespaced Role —
+# the only namespace the dashboard reads a Route from is its own — and read verbs only, rendered
+# only while discovery is on (a `grafana.url` set, or an empty selector, renders nothing).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "gsd.fullname" . }}-grafana-discovery
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "gsd.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["route.openshift.io"]
+    resources: ["routes"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "gsd.fullname" . }}-grafana-discovery
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "gsd.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "gsd.fullname" . }}-grafana-discovery
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "gsd.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

@@ -64,7 +64,7 @@ spec:
           configMap:
             name: openshift-service-ca.crt
             key: service-ca.crt
-        serverName: {{ include "gsd.fullname" . }}.{{ .Release.Namespace }}.svc
+        serverName: {{ printf "%s.%s.svc" (include "gsd.fullname" .) .Release.Namespace | quote }}
       {{- end }}
       interval: {{ .Values.monitoring.serviceMonitor.interval }}
       scrapeTimeout: {{ .Values.monitoring.serviceMonitor.scrapeTimeout }}
@@ -98,7 +98,7 @@ spec:
           configMap:
             name: openshift-service-ca.crt
             key: service-ca.crt
-        serverName: {{ include "gsd.reportName" . }}.{{ .Release.Namespace }}.svc
+        serverName: {{ printf "%s.%s.svc" (include "gsd.reportName" .) .Release.Namespace | quote }}
       {{- end }}
       interval: {{ .Values.monitoring.serviceMonitor.interval }}
       scrapeTimeout: {{ .Values.monitoring.serviceMonitor.scrapeTimeout }}
@@ -342,7 +342,7 @@ spec:
           labels: {severity: warning}
           annotations:
             summary: "the dashboard cannot pull the report service's usage feed"
-            description: "Check the report pod, the -report-token Secret in both pods, and TLS (oc logs deploy/{{ include "gsd.fullname" . }} -c dashboard | grep 'report usage pull')."
+            description: {{ printf "Check the report pod, the -report-token Secret in both pods, and TLS (oc logs deploy/%s -c dashboard | grep 'report usage pull')." (include "gsd.fullname" .) | quote }}
         # The newest snapshot the report service would render from is older than four snapshot
         # intervals: the dashboard's leader is not writing copies (reporting off on one side, the
         # data claim not mounted, or a VACUUM INTO failing — see the dashboard log).

@@ -33,6 +33,20 @@ SA_CA = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
 SA_NAMESPACE = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
 
 
+def own_namespace() -> str | None:
+    """The namespace this pod runs in, from the ServiceAccount mount, or GSD_NAMESPACE outside a
+    cluster; None when neither says. Shared by the elector, the KPI page's doors (#157) and the
+    poll thread's Route discovery."""
+    env = os.environ.get("GSD_NAMESPACE")
+    if env:
+        return env
+    try:
+        with open(SA_NAMESPACE, encoding="utf-8") as handle:
+            return handle.read().strip() or None
+    except OSError:
+        return None
+
+
 def _in_cluster() -> bool:
     return os.path.isfile(SA_TOKEN)
 

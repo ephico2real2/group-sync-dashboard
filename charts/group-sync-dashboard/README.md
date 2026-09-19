@@ -21,7 +21,22 @@ group membership, so it ships authenticated and you turn the proxy *off* deliber
   `openshift-authentication`) and supply `ingress.host` and `ingress.className` yourself.
 * A default StorageClass, or set `persistence.storageClass` / `persistence.existingClaim`.
 * Cluster admin **once**, to create the ClusterRole. The dashboard needs no admin at runtime.
-* The Prometheus Operator CRDs, only if you enable `monitoring.serviceMonitor` or `monitoring.prometheusRule`. The Grafana dashboard (`monitoring.grafanaDashboard`) is a plain ConfigMap and needs no CRD.
+* The Prometheus Operator CRDs — OpenShift ships them — because `monitoring.serviceMonitor` and
+  `monitoring.prometheusRule` are on by default (set both `false` on a Kubernetes without them). The
+  Grafana dashboard (`monitoring.grafanaDashboard`) is a plain ConfigMap and needs no CRD.
+
+### Prerequisites — the Grafana and Observe integration
+
+The KPI page's two doors (**Open in Grafana**, **Observe → Dashboards**) and the shipped Grafana board
+are on by default and work with nothing set, given four things that are not this chart's to create.
+Each names who provides it; `docs/DESIGN_grafana_and_observe.md` is the design.
+
+| Prerequisite | Who | How you know |
+|---|---|---|
+| **User-workload monitoring on** (`openshift-monitoring/cluster-monitoring-config`: `enableUserWorkload: true`) — the ServiceMonitor is scraped, the rules evaluated and Thanos serves the series the board and the Observe dashboard draw | the OpenShift engineers, once per cluster: `oc -n openshift-monitoring create configmap cluster-monitoring-config --from-literal=config.yaml='enableUserWorkload: true'` | the `openshift-grafana` chart's post-install Job verifies and reports it (`oc logs job/<release>-openshift-grafana-wait`); nothing to re-install afterwards |
+| **A Grafana in this namespace** — the `openshift-grafana` chart from this repository (`helm install grafana …/openshift-grafana -n <this namespace> --timeout 15m`, release name `grafana` for the default `cr.instanceSelector`), or any grafana-operator v5 Grafana plus `grafana.url` | the team, or a platform team's operator | the Route resolves the door: `grafana.url` empty is discovered by `grafana.discovery.selector`; the `GrafanaDashboard` CR renders once the cluster serves `grafana.integreatly.org/v1beta1` (the next `helm upgrade` after the operator lands) |
+| **The console** — discovered from `openshift-config-managed/console-public`, which every authenticated identity may read | the platform (nothing to do); `console.url` for a console the cluster does not publish | `/api/kpi`'s `links.console` |
+| **`view` on this namespace for the readers** — the Observe dashboard and Grafana's OpenShift login both authorise through a SubjectAccessReview for `get pods` here; a reader without it sees an empty board or a 403 | the team: `oc adm policy add-role-to-group view <group> -n <this namespace>` for each reader group | `oc auth can-i get pods -n <this namespace> --as=<user>` (note: `--as` drops OpenShift group membership — test with the user's own token) |
 
 ## Values
 
@@ -147,7 +162,8 @@ container starting, which is a louder failure than the one above but still not a
 | `config.alerts.groupCountCliff.enabled` | `true` | read-only, no extra RBAC, one indexed query per cluster per read. Off removes the kind and the rule together |
 | `config.alerts.groupCountCliff.minMembers` / `.dropRatio` / `.windowHours` | `10` / `0.5` / `24` | the floor is what keeps the default quiet — below ten, half is one or two people. Ratio outside `(0, 1]`, floor below 1 or non-positive window refuse the render |
 | `kpi.thresholds.memoryPercent` / `.cpuPercent` / `.throttledPercent` / `.diskPercent` | `80` / `80` / `1` / `80` | the KPI page's amber marks, drawn on each meter's track and named in the tile's rule line; a percentage outside `(0, 100]` refuses the render |
-| `grafana.url` / `grafana.dashboardUid` | `""` / `""` | the "Open in Grafana" door on the KPI page renders only when the URL is set — Grafana is optional and operator-owned since OpenShift 4.11 removed the bundled one. The URL must be an absolute `http(s)://` base without query or fragment — a `javascript:` or scheme-less value refuses the render |
+| `grafana.url` / `grafana.dashboardUid` | `""` / `gsd-group-sync-dashboard` | the "Open in Grafana" door on the KPI page. Empty URL means **discovered**: the poll thread takes the one Route carrying `grafana.discovery.selector` in the pod's own namespace (the `openshift-grafana` chart's, in the same namespace) — through a namespaced `get`/`list` Role on routes the chart renders while discovery is on. Set the URL for a Grafana elsewhere; it must be an absolute `http(s)://` base without query or fragment — a `javascript:` or scheme-less value refuses the render. The uid is the shipped board's, so the door opens the board itself |
+| `grafana.discovery.selector` | `app.kubernetes.io/name=openshift-grafana` | the label selector the Route is found by; empty switches discovery and its Role off |
 | `console.url` | `""` | the console the KPI page's Observe door opens (this namespace's workloads board); empty means discovered from `openshift-config-managed/console-public` by the pod's own identity; the same rule: an absolute `http(s)://` base or the render is refused |
 | `config.alerts.groupCountCliff.silence` | `[]` | exact names or fnmatch globs. Silenced cliffs are still reported (`group_count_cliff_silenced`), dimmed on the Overview. The other silence is the Group annotation `groupsync-dashboard.io/silence-group-count-cliff=true` or `=until=YYYY-MM-DD`, read on every poll, never written |
 | `logLevel` | `INFO` | `DEBUG` \| `INFO` \| `WARNING` \| `ERROR` \| `CRITICAL`, and nothing else — see [Dashboard log verbosity](#dashboard-log-verbosity--loglevel) for what each promises and which look-alike values are refused |
@@ -425,10 +441,10 @@ ArgoCD section explains for the cookie.
 | `rbac.namespaces` | `false` | adds `get`/`list` on `namespaces` (core group). Lets the report service's namespace report attest **absence** — "this namespace exists and has no grants" — instead of "none observed". Off by default: extra RBAC |
 | `reporting.namespaceMetadata.labels` | `[]` | the Namespace label keys the poll captures per namespace, so the namespace-access report can select on them. Bounded — only these keys, never the whole label map; adding a key needs no migration. Needs `rbac.namespaces=true`; the render refuses labels set while it is off. e.g. `[company.net/mnemonic]` |
 | `reporting.namespaceSelector.labels` | `[]` | the captured DIMENSIONS the namespace-access report offers. Each MUST be one of `reporting.namespaceMetadata.labels` or the render fails. The form renders one multi-select per entry, combined AND across dimensions and OR within one; the dropdown values are auto-discovered from the namespaces. `[]` hides the selector. Set to your cluster's real metadata label keys — e.g. `[company.net/mnemonic, company.net/app-environment]` |
-| `monitoring.serviceMonitor.enabled` | `false` | needs the Prometheus Operator CRDs (OpenShift ships them; the install fails on the unknown kind where they are absent). Off by default because the reference cluster runs no Prometheus; rendering with it on is verified |
+| `monitoring.serviceMonitor.enabled` | `true` | needs the Prometheus Operator CRDs (OpenShift ships them; the install fails on the unknown kind where they are absent — set it `false` on a bare Kubernetes without them). On by default since 0.36.0: user-workload monitoring is on on the clusters this chart is for |
 | `monitoring.serviceMonitor.interval` / `.scrapeTimeout` | `30s` / `10s` | every series is recomputed from SQLite on scrape and each scrape takes a read snapshot. Faster buys no resolution — the data only changes once per poll |
 | `monitoring.serviceMonitor.labels` | `{}` | extra metadata labels. Usually how a cluster's Prometheus selects which ServiceMonitors it owns |
-| `monitoring.prometheusRule.enabled` | `false` | **seventeen** alerts — two of them render only with `reporting.enabled` (the default) — nineteen with `backup.offsite.enabled`; see below |
+| `monitoring.prometheusRule.enabled` | `true` | **seventeen** alerts — two of them render only with `reporting.enabled` (the default) — nineteen with `backup.offsite.enabled`; see below |
 | `monitoring.prometheusRule.labels` | `{}` | as above, for rule selection |
 | `monitoring.prometheusRule.overdueSeconds` | `7200` | a GroupSync has not synced for this long |
 | `monitoring.prometheusRule.notPollingSeconds` | `600` | catches a dead poll loop, which the health endpoints cannot. **Must stay above ~2× `config.pollIntervalSeconds`** or it fires continuously on a healthy deployment |
@@ -438,6 +454,7 @@ ArgoCD section explains for the cookie.
 | `monitoring.prometheusRule.offsiteBackupStaleSeconds` | `43200` | seconds since the off-volume CronJob last succeeded (`kube_cronjob_status_last_successful_time`, kube-state-metrics). Two slots of `backup.offsite.schedule`. Rendered only with `backup.offsite.enabled` |
 | `monitoring.prometheusRule.for.*` | see below | the `for:` duration on each alert |
 | `monitoring.grafanaDashboard.enabled` | `""` | `""` **follows `monitoring.serviceMonitor.enabled`**; `true`/`false` are explicit; anything else refuses to render. A ConfigMap labelled `grafana_dashboard: "1"` carrying `dashboards/group-sync-dashboard.json` byte-for-byte — no CRD, cannot fail an install |
+| `monitoring.grafanaDashboard.cr.enabled` | `true` | the `GrafanaDashboard` CR for grafana-operator v5 (#161), rendered **only where the cluster serves `grafana.integreatly.org/v1beta1`** (`.Capabilities.APIVersions` — live on install/upgrade, `--api-versions` under `helm template`, the cluster's list under Argo CD): a cluster without the operator installs cleanly and gets the CR on the first upgrade after the `openshift-grafana` chart lands. `.instanceSelector` (default the `openshift-grafana` release `grafana`) and `.datasource` (the datasource **uid**, default `openshift-thanos`) are refused empty |
 | `monitoring.grafanaDashboard.folder` | `""` | written as the `grafana_folder` annotation the sidecar's `folderAnnotation` reads |
 | `monitoring.grafanaDashboard.labels` / `.annotations` | `{}` / `{}` | extra metadata, e.g. a sidecar configured with a non-default label |
 
@@ -635,10 +652,11 @@ spec:
       datasourceName: openshift-thanos   # the datasource's UID: substituted verbatim into the panels
 ```
 
-Since #161 the chart ships that CR on request — `monitoring.grafanaDashboard.cr.enabled: true`, with
-`.instanceSelector` and `.datasource` (the uid) — for a cluster where the operator, such as the
-`openshift-grafana` chart, is already installed; it stays off by default because the CR's kind must
-exist before the release renders.
+Since #161 the chart ships that CR — `monitoring.grafanaDashboard.cr.enabled`, on by default, with
+`.instanceSelector` and `.datasource` (the uid) — rendered only where the cluster serves the CR's
+API (`.Capabilities.APIVersions.Has "grafana.integreatly.org/v1beta1"`), so a cluster without the
+operator installs cleanly and picks the CR up on the first upgrade after the `openshift-grafana`
+chart lands.
 
 ### ArgoCD
 

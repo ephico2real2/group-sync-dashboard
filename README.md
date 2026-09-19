@@ -178,7 +178,7 @@ ones most likely to matter:
 | `config.backup.enabled` | `true` | Leave on. The only protection for that history, though it lands on the same volume |
 | `config.userActivity.visibility` | `self` | `all` lets everyone see everyone's dashboard usage. It is identifiable personnel data |
 | `config.unmanagedAudit.mode` | `log` | `log` publishes each hand-made grant it finds to the pod log; `off` silences that log only. Writes nothing either way — see below |
-| `monitoring.serviceMonitor.enabled` | `false` | Needs the Prometheus Operator CRDs |
+| `monitoring.serviceMonitor.enabled` | `true` | Needs the Prometheus Operator CRDs (OpenShift ships them); on with `monitoring.prometheusRule.enabled` and the GrafanaDashboard CR since chart 0.36.0 — the chart README’s "Prerequisites — the Grafana and Observe integration" |
 | `replicaCount` | `1` | Leave at 1. Above one, each pod keeps its own database and history diverges — see the chart README's Scaling section |
 | `config.pollIntervalSeconds` | `60` | Poll cadence, and the error bar on "when did this person lose access?" |
 | `logLevel` | `INFO` | `DEBUG` \| `INFO` \| `WARNING` \| `ERROR` \| `CRITICAL`, and nothing else. `DEBUG` adds this app's own reasoning — login-capture accounting per pod, poll timing, row counts, which replica holds the Lease. Not the same setting as `authLogLevel`; the [chart README](charts/group-sync-dashboard/README.md#dashboard-log-verbosity--loglevel) lists what is refused and why |

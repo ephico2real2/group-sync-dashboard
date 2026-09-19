@@ -110,6 +110,7 @@ class RuntimeSignals:
         self._report_system: dict | None = None
         self._report_system_at: str | None = None
         self._console_url: str | None = None
+        self._grafana_url: str | None = None
 
     def membership_change_totals(self, store, cluster_ids) -> dict[tuple[str, str], int]:
         """Advance each cluster's watermark over the rows committed since the last call and return
@@ -141,6 +142,15 @@ class RuntimeSignals:
     def console_url(self) -> str | None:
         with self._lock:
             return self._console_url
+
+    def note_grafana_url(self, url: str | None) -> None:
+        """The Grafana Route in the pod's own namespace, as the poll thread discovered it (#157)."""
+        with self._lock:
+            self._grafana_url = url
+
+    def grafana_url(self) -> str | None:
+        with self._lock:
+            return self._grafana_url
 
     def note_report_system(self, view: dict | None, at: str) -> None:
         """The report service's self-report as the usage feed carried it; None when the feed had

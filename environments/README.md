@@ -52,9 +52,6 @@ declare — it only *overrides*, and the table says which way:
 | `config.unmanagedAudit.mode` | `log` | `log` | redundant — already the default |
 | `logLevel` | `INFO` | `DEBUG` | lab override |
 | `authLogLevel.manage` / `.enabled` | `false` / `false` | `false` / `false` | inherits the default: the lab reads the AUDIT LOG, which names the person at the default verbosity, so the auth-loglevel Job (a post-upgrade hook) is not needed; the one-time convergence to Normal is done, so management is off (set `manage=true` only for the pod-log source) |
-| `monitoring.serviceMonitor.enabled` / `monitoring.prometheusRule.enabled` | `false` / `false` | `true` / `true` | lab override — the M5 Pro's CRC runs full cluster monitoring and user-workload monitoring is on, so the scrape and the rules are validated here; the chart default stays off under the 0.14.0 rule for clusters without Prometheus |
-| `monitoring.grafanaDashboard.cr.enabled` | `false` | `true` | lab override — the openshift-grafana chart runs in this namespace, so the GrafanaDashboard CR hands it the board (#161) |
-| `grafana.url` / `grafana.dashboardUid` | `""` / `""` | `https://grafana-openshift-grafana-group-sync-dashboard.apps-crc.testing` / `gsd-group-sync-dashboard` | lab override — the KPI page's Grafana door opens the board on the lab's own Grafana |
 | `loginCapture.enabled` | `true` | `true` | redundant — the default since chart 0.14.0 |
 | `loginCapture.source` | `pod-log` | `audit-log` | lab override — a ClusterRole on `get nodes/proxy`, read-only; the audit log names the person at the default verbosity and keeps history |
 | `oauthProxy.apiTokenAccess.enabled` | `true` | `true` | redundant — the default since chart 0.14.0 |
@@ -81,9 +78,10 @@ them became redundant on chart 0.14.0 (`loginCapture`, `apiTokenAccess`) and wer
 that reason: the file records what this cluster runs with, whichever way the default moves. That
 costs one line each and buys a diff that shows intent. The Grafana dashboard override that validated
 B3 through grafana-operator v5 was removed with chart 0.14.0 and its `""` default follows the
-ServiceMonitor — which the M5 Pro's CRC keeps ON since 2026-09-19 (user-workload monitoring is on),
-so the board ships, and the `openshift-grafana` release in the same namespace reads it through the
-GrafanaDashboard CR (#161).
+ServiceMonitor — ON by default since chart 0.36.0 (2026-09-19), with the rules and the GrafanaDashboard
+CR, so the board ships and the `openshift-grafana` release in the same namespace reads it through the
+CR (#161); the KPI page's doors are discovered. `crc.yaml` sets none of it, on purpose: the lab
+runs the default and would notice if the default stopped working.
 
 ### The reporting feature block and the cluster list are configured in `crc.yaml`, not tracked here
 

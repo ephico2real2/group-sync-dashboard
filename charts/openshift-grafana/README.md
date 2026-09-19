@@ -7,8 +7,7 @@ that ships a `GrafanaDashboard` CR.
 
 ```sh
 helm repo add group-sync-dashboard https://ephico2real2.github.io/group-sync-dashboard
-helm install obs group-sync-dashboard/openshift-grafana -n my-team --create-namespace \
-  --set grafana.route.enabled=true --timeout 15m
+helm install obs group-sync-dashboard/openshift-grafana -n my-team --create-namespace --timeout 15m
 ```
 
 `--timeout 15m` because Helm waits for the post-install gate only up to its own timeout (5m by
@@ -36,9 +35,11 @@ creates the four CRDs under `crds/` when they are absent, and a CustomResourceDe
 cluster-scoped — that needs the right to create CRDs, which a project Role does not carry. Once the
 CRDs exist (this chart's first install, or any grafana-operator already on the cluster), everything
 else lives in the namespace the chart installs into, and with the default `thanos.scope: namespace`
-a team installs and upgrades it with ordinary project rights. The gate prints the prerequisite's
-command after every install and, when it may read `openshift-monitoring` (`wait.verifyUserWorkloadMonitoring`),
-fails the install with it when user-workload monitoring is off.
+a team installs and upgrades it with ordinary project rights. The gate **verifies** the prerequisite
+after every install with no grant at all — it resolves `prometheus-user-workload.openshift-user-workload-monitoring.svc`,
+a Service the platform creates only when user-workload monitoring is on (measured on 4.22) — and
+**reports** it in the Job's log with the command for the OpenShift engineers; it never fails the
+install on it, and nothing needs re-installing once they run it.
 
 ## How the install order works
 
@@ -72,7 +73,7 @@ SingleNamespace, MultiNamespace and AllNamespaces (measured on its CSV), so both
 
 | `thanos.scope` | Port | Sees | Authorised by | Objects outside the namespace |
 |---|---|---|---|---|
-| `namespace` (default) | 9092, the tenancy port | this namespace's metrics (`namespace=<release namespace>` on every query) | a `view` RoleBinding **in the release's namespace**, created by the chart | none — unless `wait.verifyUserWorkloadMonitoring` is on, which adds a one-ConfigMap `get` Role for the gate in `openshift-monitoring` (below) |
+| `namespace` (default) | 9092, the tenancy port | this namespace's metrics (`namespace=<release namespace>` on every query) | a `view` RoleBinding **in the release's namespace**, created by the chart | none |
 | `cluster` | 9091 | every metric on the cluster | a RoleBinding to `cluster-monitoring-view` in `openshift-monitoring`, created by the chart | that RoleBinding — a privileged step, for a central observability Grafana |
 
 Two details the reference architecture gets wrong and this chart gets right, both measured:
@@ -136,7 +137,7 @@ architecture's `dashboards: grafana`).
 | `grafana.admin.existingSecret` | `""` | your Secret with `GF_SECURITY_ADMIN_USER` / `GF_SECURITY_ADMIN_PASSWORD`; empty lets the operator generate `<name>-admin-credentials` |
 | `grafana.config` | log/auth basics | Grafana's `config.ini`, as the operator's sections map |
 | `grafana.persistence.enabled` / `.size` / `.storageClassName` | `false` / `2Gi` / `""` | persist Grafana's own database |
-| `grafana.route.enabled` / `.host` | `false` / `""` | an edge-terminated Route (the router names it when the host is empty) |
+| `grafana.route.enabled` / `.host` | `true` / `""` | the Route (reencrypt to the proxy under the OpenShift login; edge to Grafana under `mode: grafana`), the router naming it when the host is empty; it carries the chart's labels in either mode, so an application in the namespace can discover Grafana's URL by `app.kubernetes.io/name=openshift-grafana` |
 | `grafana.resources` | 100m / 256Mi, limit 512Mi | the container's resources |
 | `thanos.scope` | `namespace` | `namespace` or `cluster`, above |
 | `thanos.datasource.name` / `.uid` / `.isDefault` / `.timeInterval` | `OpenShift Thanos` / `openshift-thanos` / `true` / `30s` | the datasource as dashboards bind to it |

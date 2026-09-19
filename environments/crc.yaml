@@ -71,27 +71,13 @@ loginCapture:
   source: audit-log
 
 # The M5 Pro's CRC (28 GB, 10 CPUs) runs full cluster monitoring, and user-workload monitoring was
-# switched on 2026-09-19 (openshift-monitoring/cluster-monitoring-config: enableUserWorkload: true),
-# so the ServiceMonitor and the rules are ON here: prometheus-user-workload scrapes /metrics, Thanos
-# serves the series to the openshift-grafana chart's datasource in this namespace, and the Grafana
-# dashboard ConfigMap follows the ServiceMonitor on. (The old reference cluster ran no Prometheus,
-# which is why the chart default stays off under the 0.14.0 rule.)
-monitoring:
-  serviceMonitor:
-    enabled: true
-  prometheusRule:
-    enabled: true
-  grafanaDashboard:
-    # The openshift-grafana chart runs in this namespace as release `grafana` (#162); the CR hands
-    # it the board, bound to its datasource by uid, `openshift-thanos` (#161).
-    cr:
-      enabled: true
-
-# The KPI page's Grafana door (#157): the openshift-grafana release's Route on CRC, opening the
-# board the CR above provisions.
-grafana:
-  url: https://grafana-openshift-grafana-group-sync-dashboard.apps-crc.testing
-  dashboardUid: gsd-group-sync-dashboard
+# switched on 2026-09-19 (openshift-monitoring/cluster-monitoring-config: enableUserWorkload: true).
+# Everything the KPI page's doors and the Grafana board need is the chart's DEFAULT since 0.36.0:
+# the ServiceMonitor, the rules, the board's ConfigMap and — because this cluster serves
+# grafana.integreatly.org/v1beta1 (the openshift-grafana chart runs in this namespace as release
+# `grafana`, #162) — the GrafanaDashboard CR bound to its datasource by uid (#161); `grafana.url`
+# and `console.url` are discovered (the release's Route by label, console-public). Nothing to set
+# here, and that is the point: this file must not carry what a default install already does.
 
 # ---------------------------------------------------------------------------
 # Reporting — the namespace-access multi-dimension selector (P2, 0.21.0+)

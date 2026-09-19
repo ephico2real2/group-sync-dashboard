@@ -63,6 +63,7 @@ data:
     {{- include "gsd.doorUrl" (list "console.url" .Values.console.url) }}
     grafanaUrl: {{ .Values.grafana.url | quote }}
     grafanaDashboardUid: {{ .Values.grafana.dashboardUid | quote }}
+    grafanaRouteSelector: {{ ((.Values.grafana.discovery | default dict).selector | default "") | quote }}
     consoleUrl: {{ .Values.console.url | quote }}
     userActivityEnabled: {{ .Values.config.userActivity.enabled }}
     userActivityVisibility: {{ .Values.config.userActivity.visibility | quote }}

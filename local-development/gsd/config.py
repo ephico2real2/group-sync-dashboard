@@ -331,6 +331,10 @@ class Settings:
     # Observe → Dashboards always ships, at consoleUrl when set.
     grafana_url: str = ""
     grafana_dashboard_uid: str = ""
+    # Empty grafana_url means DISCOVERED: the poll thread reads the Route carrying this label
+    # selector in the pod's own namespace — the openshift-grafana chart labels its Route with its
+    # own name. Empty selector switches discovery off.
+    grafana_route_selector: str = ""
     console_url: str = ""
 
     # Whether the oauth-proxy sidecar is in front of us. The app cannot detect this for
@@ -925,8 +929,24 @@ def _kpi_settings(raw: dict) -> dict:
         out[key] = value
     out["grafana_url"] = _door_url(os.environ.get("GSD_GRAFANA_URL") or raw.get("grafanaUrl", ""), "grafanaUrl")
     out["grafana_dashboard_uid"] = os.environ.get("GSD_GRAFANA_DASHBOARD_UID") or str(raw.get("grafanaDashboardUid", "") or "")
+    out["grafana_route_selector"] = _label_selector(
+        os.environ.get("GSD_GRAFANA_ROUTE_SELECTOR") or str(raw.get("grafanaRouteSelector", "") or ""), "grafanaRouteSelector")
     out["console_url"] = _door_url(os.environ.get("GSD_CONSOLE_URL") or raw.get("consoleUrl", ""), "consoleUrl")
     return out
+
+
+def _label_selector(value: str, key: str) -> str:
+    """A Kubernetes equality label selector, `k=v[,k=v]`, or empty. Refused at load like the door
+    URLs: the value lands verbatim in a list request's query string, so a stray character would
+    make discovery a 400 every cycle rather than a config error at start."""
+    value = (value or "").strip()
+    if not value:
+        return ""
+    for pair in value.split(","):
+        k, eq, v = pair.strip().partition("=")
+        if not eq or not re.fullmatch(r"[A-Za-z0-9./_-]+", k) or not re.fullmatch(r"[A-Za-z0-9._-]*", v):
+            raise ConfigError(f"{key} must be a label selector of the form key=value[,key=value]; got {value!r}")
+    return value
 
 
 def _cliff_settings(raw: dict) -> dict:

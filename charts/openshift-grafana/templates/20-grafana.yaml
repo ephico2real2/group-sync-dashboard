@@ -148,6 +148,10 @@ spec:
           {{- end }}
   {{- if and .Values.grafana.route.enabled (not $openshift) }}
   route:
+    # the chart's labels on the operator's Route too, so a discovery by label finds it in either mode
+    metadata:
+      labels:
+        {{- include "openshift-grafana.labels" . | nindent 8 }}
     spec:
       {{- with .Values.grafana.route.host }}
       host: {{ . | quote }}

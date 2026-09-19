@@ -34,7 +34,7 @@ from .config import (
     VISIBILITY_REMOTE_SAR, VISIBILITY_SELF_ONLY, Settings, load_settings,
 )
 from .kube import TIER_ALL, TIER_SELF, TierResolver
-from .leader import LeaderElector
+from .leader import LeaderElector, own_namespace
 from .metrics import RuntimeSignals, build_registry
 from .poller import Poller
 from .reporting import REPORT_PREFIX
@@ -309,20 +309,6 @@ def _refusal_reason(row: dict) -> str | None:
     if row.get("known_user") or row.get("has_history"):
         return REFUSAL_NOT_GATED
     return REFUSAL_NO_RECORD
-
-
-def own_namespace() -> str | None:
-    """The namespace this pod runs in, from the ServiceAccount mount (the leader elector's source),
-    or GSD_NAMESPACE outside a cluster; None when neither says."""
-    from .leader import SA_NAMESPACE
-    env = os.environ.get("GSD_NAMESPACE")
-    if env:
-        return env
-    try:
-        with open(SA_NAMESPACE, encoding="utf-8") as handle:
-            return handle.read().strip() or None
-    except OSError:
-        return None
 
 
 def build_app(
@@ -2232,7 +2218,9 @@ def build_app(
 
     def kpi_links() -> dict:
         """The doors out of the KPI page (#157). The console's URL is the chart's `console.url` when
-        set, else what the poll thread discovered from openshift-config-managed/console-public;
+        set, else what the poll thread discovered from openshift-config-managed/console-public; the
+        Grafana URL is the chart's `grafana.url` when set, else the Route the poll thread found by
+        `grafana.discovery.selector` in the pod's own namespace (the openshift-grafana chart's);
         `observe` is the console's namespace-workloads dashboard scoped to THIS pod's namespace.
 
         The namespace rides in the PATH (`/dev-monitoring/ns/<ns>?dashboard=<board>`), never only in
@@ -2247,7 +2235,8 @@ def build_app(
         and never saw it). The dev-monitoring route redirects to the admin form with the selector
         already set — measured on 4.22 for both kinds of user."""
         console = settings.console_url or signals.console_url()
-        links = {k: v for k, v in (("grafana", settings.grafana_url),
+        grafana = settings.grafana_url or signals.grafana_url()
+        links = {k: v for k, v in (("grafana", grafana),
                                    ("grafana_dashboard_uid", settings.grafana_dashboard_uid),
                                    ("console", console)) if v}
         if console:

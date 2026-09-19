@@ -754,12 +754,90 @@ class TestObserveDoor:
             signals = RuntimeSignals()
             settings = _settings(str(tmp_path / "w.db"))
             poller = Poller(store, settings, signals=signals)
-            poller._discover_console(ClusterConfig("c2", "https://x", token_env="T"))
+            poller._discover_doors(ClusterConfig("c2", "https://x", token_env="T"))
             assert calls == [] and signals.console_url() is None, "only the host's thread asks"
-            poller._discover_console(ClusterConfig("c1", "https://x", token_env="T"))
+            poller._discover_doors(ClusterConfig("c1", "https://x", token_env="T"))
             assert calls == ["c1"] and signals.console_url() == "https://c.example"
         finally:
             store.close()
+
+    def test_the_grafana_door_is_the_labelled_route_in_the_pods_namespace_unless_the_chart_names_one(self, tmp_path, monkeypatch):
+        """Chart 0.36.0: `grafana.url` empty means discovered — the one Route carrying
+        `grafana.discovery.selector` in the pod's own namespace (the openshift-grafana chart's), read by
+        the host's poll thread with the pod's identity; a chart-named URL wins and is never looked up;
+        an empty selector is off; a failed rediscovery never blanks a door already known."""
+        import httpx
+        from gsd.config import ClusterConfig
+        from gsd.kube import ClusterClient
+        from gsd.poller import Poller
+
+        def route_client(items):
+            c = ClusterClient(ClusterConfig("host", "https://api.example:6443", token_env="T"))
+            seen = {}
+            def handle(r):
+                seen["path"], seen["selector"] = r.url.raw_path.decode().split("?")[0], r.url.params.get("labelSelector")
+                return httpx.Response(200, json={"items": items})
+            c._client = lambda: httpx.Client(transport=httpx.MockTransport(handle), base_url="https://x")
+            return c, seen
+        route = {"metadata": {"name": "grafana-openshift-grafana"}, "spec": {"host": "grafana.apps.example", "tls": {"termination": "reencrypt"}}}
+        c, seen = route_client([route])
+        assert c.route_url("team a", "app.kubernetes.io/name=openshift-grafana") == "https://grafana.apps.example"
+        assert seen == {"path": "/apis/route.openshift.io/v1/namespaces/team%20a/routes", "selector": "app.kubernetes.io/name=openshift-grafana"}
+        assert route_client([])[0].route_url("ns", "k=v") is None, "no Route yet: no door, not an error"
+        assert route_client([route, route])[0].route_url("ns", "k=v") is None, "two matches is a choice for grafana.url"
+        assert route_client([{"spec": {"host": "plain.apps.example"}}])[0].route_url("ns", "k=v") is None, "no TLS: not a door"
+        assert route_client([{"spec": {"host": "bad host/../x", "tls": {}}}])[0].route_url("ns", "k=v") is None
+
+        calls = []
+        class Client:
+            def __init__(self, cluster, timeout=None):
+                pass
+            def console_url(self):
+                return "https://c.example"
+            def route_url(self, namespace, selector):
+                calls.append((namespace, selector))
+                return None if len(calls) > 1 else "https://g.example"
+        monkeypatch.setattr("gsd.poller.ClusterClient", Client)
+        monkeypatch.setenv("GSD_NAMESPACE", "team-a")
+        store = seed_store(str(tmp_path / "w.db"))
+        try:
+            host = ClusterConfig("c1", "https://x", token_env="T")
+            signals = RuntimeSignals()
+            poller = Poller(store, _settings(str(tmp_path / "w.db"), grafana_route_selector="app.kubernetes.io/name=openshift-grafana"), signals=signals)
+            poller._discover_doors(host)
+            assert calls == [("team-a", "app.kubernetes.io/name=openshift-grafana")] and signals.grafana_url() == "https://g.example"
+            poller._discover_doors(host)
+            assert signals.grafana_url() == "https://g.example", "a None rediscovery must not blank the door"
+            calls.clear()
+            named = Poller(store, _settings(str(tmp_path / "w.db"), grafana_url="https://named.example",
+                                            grafana_route_selector="app.kubernetes.io/name=openshift-grafana"), signals=RuntimeSignals())
+            named._discover_doors(host)
+            off = Poller(store, _settings(str(tmp_path / "w.db"), grafana_route_selector=""), signals=RuntimeSignals())
+            off._discover_doors(host)
+            assert calls == [], "a chart-named URL and an empty selector never look up a Route"
+            # the door: the chart's URL wins over a discovered one; the discovered one serves otherwise
+            app = build_app(_settings(str(tmp_path / "w.db"), grafana_route_selector="k=v"), run_poller=False)
+            app.state.tier_resolver = _MapResolver({"root": "all"})
+            app.state.signals.note_grafana_url("https://g.example")
+            with TestClient(app) as client:
+                links = client.get("/api/kpi", headers=H("root")).json()["links"]
+            assert links["grafana"] == "https://g.example" and "grafana_dashboard_uid" not in links, "an empty uid is omitted, as before"
+        finally:
+            store.close()
+
+    def test_a_bad_route_selector_refuses_to_start(self, tmp_path):
+        """The selector lands verbatim in a list request's query string: refused at load, like the door
+        URLs, rather than a 400 every poll cycle."""
+        import yaml
+        from gsd.config import ConfigError, load_settings
+        for bad in ("nope", "a=b,c", "k=v w", "k==v"):
+            cfg = tmp_path / "c.yaml"
+            cfg.write_text(yaml.safe_dump({"clusters": [{"name": "c1", "apiUrl": "https://x", "tokenEnv": "T"}], "grafanaRouteSelector": bad}))
+            with pytest.raises(ConfigError, match="grafanaRouteSelector"):
+                load_settings(str(cfg))
+        cfg = tmp_path / "c.yaml"
+        cfg.write_text(yaml.safe_dump({"clusters": [{"name": "c1", "apiUrl": "https://x", "tokenEnv": "T"}], "grafanaRouteSelector": " app.kubernetes.io/name=openshift-grafana,tier=a_b "}))
+        assert load_settings(str(cfg)).grafana_route_selector == "app.kubernetes.io/name=openshift-grafana,tier=a_b"
 
     def test_a_failed_rediscovery_does_not_drop_a_known_console(self, tmp_path, monkeypatch):
         """Review of #209 (Grok, N6): a one-cycle 403 or timeout returned None and overwrote the URL the
@@ -780,9 +858,9 @@ class TestObserveDoor:
             signals = RuntimeSignals()
             poller = Poller(store, _settings(str(tmp_path / "w.db")), signals=signals)
             host = ClusterConfig("c1", "https://x", token_env="T")
-            poller._discover_console(host)
+            poller._discover_doors(host)
             assert signals.console_url() == "https://c.example"
-            poller._discover_console(host)
+            poller._discover_doors(host)
             assert signals.console_url() == "https://c.example", "a None rediscovery must not blank the door"
         finally:
             store.close()

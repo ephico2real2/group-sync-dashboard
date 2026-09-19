@@ -242,7 +242,7 @@ class TestDerivations:
         assert {"GroupSyncDashboardReportUsagePullFailing", "GroupSyncDashboardReportSnapshotStale"} <= set(rules)
         policy = _exact(docs, "NetworkPolicy", "t-group-sync-dashboard-report")
         assert len(policy["spec"]["ingress"]) == 2
-        without = _exact(_render(), "NetworkPolicy", "t-group-sync-dashboard-report")
+        without = _exact(_render("monitoring.serviceMonitor.enabled=false"), "NetworkPolicy", "t-group-sync-dashboard-report")
         assert len(without["spec"]["ingress"]) == 1
 
     def test_off_renders_none_of_it(self):

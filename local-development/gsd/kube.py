@@ -15,7 +15,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import unquote, urlsplit
+from urllib.parse import quote, unquote, urlsplit
 
 import httpx
 
@@ -656,6 +656,28 @@ class ClusterClient:
         if parts.scheme != "https" or not parts.netloc or "?" in url or "#" in url:
             return None
         return url
+
+    def route_url(self, namespace: str, selector: str) -> str | None:
+        """The public URL of the one Route in `namespace` carrying `selector`, or None: the KPI page's
+        Grafana door when the chart sets no `grafana.url` (#157). The openshift-grafana chart labels
+        its Route `app.kubernetes.io/name=openshift-grafana` — the default selector. Held to the door
+        rule like the console: https only (a Route without TLS is not a door the page will open),
+        exactly one match (two Grafanas in a namespace is a choice the operator makes with
+        `grafana.url`). Needs `get`/`list` on routes in that namespace — the chart's Role."""
+        path = f"/apis/route.openshift.io/v1/namespaces/{quote(namespace, safe='')}/routes"
+        try:
+            with self._client() as client:
+                body = self._get(client, path, {"labelSelector": selector})
+        except ClusterError:
+            return None
+        items = body.get("items") if isinstance(body, dict) else None
+        if not isinstance(items, list) or len(items) != 1 or not isinstance(items[0], dict):
+            return None
+        spec = items[0].get("spec") or {}
+        host = spec.get("host") if isinstance(spec, dict) else None
+        if not isinstance(host, str) or not spec.get("tls") or not re.fullmatch(r"[A-Za-z0-9.-]+", host.strip()):
+            return None
+        return f"https://{host.strip()}"
 
     def fetch(self) -> tuple[list[GroupSyncView] | None, list[GroupView]]:
         """One poll's worth of reads. Raises ClusterError with a classified outcome.

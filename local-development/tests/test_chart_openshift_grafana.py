@@ -119,11 +119,19 @@ class TestDatasource:
 
 @needs_helm
 class TestInstance:
-    def test_no_route_by_default_and_a_named_host_on_request(self):
+    def test_a_route_by_default_named_by_the_router_a_host_on_request_and_off_on_request(self):
+        """On by default (operator decision 2026-09-19): the router names the host; the Route carries the
+        chart's labels in BOTH login modes, which is what a group-sync-dashboard in the namespace
+        discovers its Grafana door by (`app.kubernetes.io/name=openshift-grafana`)."""
         docs = _render()
-        assert "route" not in _one(docs, "Grafana")["spec"] and "Route" not in _kinds(docs)
-        route = _one(_render("grafana.route.enabled=true", "grafana.route.host=g.apps.example"), "Route")
-        assert route["spec"]["host"] == "g.apps.example"
+        route = _one(docs, "Route")
+        assert "host" not in route["spec"], "the router names it"
+        assert route["metadata"]["labels"]["app.kubernetes.io/name"] == "openshift-grafana"
+        assert _one(_render("grafana.route.host=g.apps.example"), "Route")["spec"]["host"] == "g.apps.example"
+        off = _render("grafana.route.enabled=false")
+        assert "route" not in _one(off, "Grafana")["spec"] and "Route" not in _kinds(off)
+        operator_route = _one(_render("grafana.auth.mode=grafana"), "Grafana")["spec"]["route"]
+        assert operator_route["metadata"]["labels"]["app.kubernetes.io/name"] == "openshift-grafana"
 
     def test_admin_credentials_are_the_charts_secret_unless_one_is_named(self):
         docs = _render()
@@ -162,7 +170,7 @@ class TestInstance:
         assert [p["port"] for p in router["ports"]] == [8443], "the router reaches the proxy only"
 
     def test_grafana_login_mode_renders_no_proxy(self):
-        docs = _render("grafana.auth.mode=grafana", "grafana.route.enabled=true")
+        docs = _render("grafana.auth.mode=grafana")
         g = _one(docs, "Grafana")["spec"]
         assert "auth.proxy" not in g["config"] and g["config"]["auth"]["disable_login_form"] == "false"
         assert [c["name"] for c in g["deployment"]["spec"]["template"]["spec"]["containers"]] == ["grafana"]
@@ -208,10 +216,8 @@ class TestInstance:
                 kind, arg = "clusterserviceversion", "name"
             named = arg not in ("", "-n", "-o") and not arg.startswith("-")
             reads.add((kind, "get" if named else "list"))
-        # the one read outside the namespace — cluster-monitoring-config — is behind
-        # wait.verifyUserWorkloadMonitoring and its own Role in openshift-monitoring
         assert reads == {("csv", "list"), ("clusterserviceversion", "get"), ("grafana", "get"),
-                         ("deployment", "get"), ("grafanadatasource", "get"), ("configmap", "get")}, reads
+                         ("deployment", "get"), ("grafanadatasource", "get")}, reads
         rules = {(g, r, v) for rule in _one(docs, "Role", "wait")["rules"]
                  for g in rule["apiGroups"] for r in rule["resources"] for v in rule["verbs"]}
         assert rules == {("operators.coreos.com", "clusterserviceversions", "get"),
@@ -219,10 +225,7 @@ class TestInstance:
                          ("grafana.integreatly.org", "grafanas", "get"),
                          ("grafana.integreatly.org", "grafanadatasources", "get"),
                          ("apps", "deployments", "get")}, rules
-        assert not [d for d in docs if d["kind"] == "Role" and d["metadata"]["namespace"] == "openshift-monitoring"]
-        uwm = _one(_render("wait.verifyUserWorkloadMonitoring=true"), "Role", "uwm-check")
-        assert uwm["metadata"]["namespace"] == "openshift-monitoring"
-        assert uwm["rules"] == [{"apiGroups": [""], "resources": ["configmaps"], "resourceNames": ["cluster-monitoring-config"], "verbs": ["get"]}]
+        assert not [d for d in docs if d["kind"] == "Role" and d["metadata"]["namespace"] != "team-a"]
 
     def test_the_wait_script_sees_a_succeeded_csv_beside_a_replaced_one(self, tmp_path):
         """The rendered script, run under bash with an `oc` shim: during an OLM upgrade the replaced
@@ -259,12 +262,38 @@ class TestInstance:
         script = job["spec"]["template"]["spec"]["containers"][0]["args"][0]
         assert "enableUserWorkload: true" in script, "the gate names the one prerequisite's command"
 
-    def test_verifying_user_workload_monitoring_is_a_cluster_admin_opt_in(self):
-        assert not [d for d in _render() if d["metadata"]["name"].endswith("uwm-check")]
-        docs = _render("wait.verifyUserWorkloadMonitoring=true")
-        role = [d for d in docs if d["kind"] == "Role" and d["metadata"]["name"].endswith("uwm-check")][0]
-        assert role["metadata"]["namespace"] == "openshift-monitoring"
-        assert role["rules"] == [{"apiGroups": [""], "resources": ["configmaps"], "resourceNames": ["cluster-monitoring-config"], "verbs": ["get"]}]
+    def test_user_workload_monitoring_is_verified_by_dns_and_reported_never_failed_on(self, tmp_path):
+        """The operator, 2026-09-19: "it is just a job that runs to verify, and then the OpenShift engineers
+        enable it." The gate resolves the Service the platform creates only with UWM on — no grant, no
+        object outside the namespace — and logs ON or OFF with the command; the rendered script, run
+        under bash with an oc shim, completes with OFF on a host where that name does not resolve."""
+        docs = _render()
+        assert not [d for d in docs if d["metadata"].get("namespace") not in (None, "team-a")], "nothing outside the namespace"
+        job = _one(_render("wait.waitSeconds=2", "wait.intervalSeconds=1"), "Job")
+        container = job["spec"]["template"]["spec"]["containers"][0]
+        script = container["args"][0]
+        assert "getent hosts prometheus-user-workload.openshift-user-workload-monitoring.svc" in script
+        assert "enableUserWorkload: true" in script, "the gate names the one prerequisite's command"
+        assert "cluster-monitoring-config -n openshift-monitoring -o jsonpath" not in script, "no read of the platform's ConfigMap"
+        shim = tmp_path / "bin"
+        shim.mkdir()
+        (shim / "oc").write_text(
+            "#!/bin/bash\n"
+            "case \"$*\" in\n"
+            "  *'get csv'*jsonpath*) printf 'Succeeded\\n' ;;\n"
+            "  *'get grafana '*) printf 'complete/success' ;;\n"
+            "  *'get deployment '*) printf '1' ;;\n"
+            "  *lastMessage*) printf '' ;;\n"
+            "  *DatasourceSynchronized*) printf 'True' ;;\n"
+            "  *) echo \"unexpected: $*\" >&2; exit 2 ;;\n"
+            "esac\n")
+        (shim / "oc").chmod(0o755)
+        env = {e["name"]: e["value"] for e in container["env"]}
+        env["PATH"] = f"{shim}:{os.environ['PATH']}"
+        done = subprocess.run([*container["command"], script], env=env, capture_output=True, text=True, timeout=60)
+        assert done.returncode == 0, done.stdout + done.stderr
+        assert "user-workload monitoring: OFF" in done.stdout and "enableUserWorkload: true" in done.stdout
+        assert "done" in done.stdout, "the gate went on to finish"
 
     def test_the_datasource_resyncs_every_two_minutes(self):
         assert _one(_render(), "GrafanaDatasource")["spec"]["resyncPeriod"] == "2m"

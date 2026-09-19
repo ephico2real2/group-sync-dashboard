@@ -269,24 +269,41 @@ showed three "dashboard" lines from three pod generations in thirty minutes.
 
 ### 3.7 The door
 
-`grafana.url` (and `grafana.dashboardUid`) in the app chart's values make the door: the page builds
-`<url>/d/<uid>?from=now-30d&to=now`, plus `&var-cluster=<id>` when exactly one cluster is served.
-Both values are validated at load as an absolute `http(s)://` base without query or fragment — a
-`javascript:` value reached the href in review and now refuses the render. On the lab,
-`environments/crc.yaml` points at the `openshift-grafana` release's Route.
+The page builds `<url>/d/<uid>?from=now-30d&to=now`, plus `&var-cluster=<id>` when exactly one
+cluster is served. `grafana.dashboardUid` defaults to the shipped board's uid (it is fixed in the
+JSON); `grafana.url` set wins and is validated at load as an absolute `http(s)://` base without
+query or fragment — a `javascript:` value reached the href in review and now refuses the render.
+
+`grafana.url` **empty means discovered** (chart 0.36.0, the operator's "it just works" of
+2026-09-19), the same shape as the console: the host cluster's poll thread lists the Routes carrying
+`grafana.discovery.selector` in the pod's own namespace (`ClusterClient.route_url`;
+`Poller._discover_doors`) and takes the one match — `https://<host>` when the Route has TLS, None
+for zero or several matches (two Grafanas in a namespace is a choice for `grafana.url`) or a Route
+without TLS. The default selector is the `openshift-grafana` chart's own `app.kubernetes.io/name`
+label, which its Route carries in both login modes (the operator-created edge Route gets the chart's
+labels through the CR's `route.metadata`). The read needs `get`/`list` on routes in that one
+namespace — a namespaced Role and RoleBinding the app chart renders while discovery is on, nothing
+cluster-scoped. As with the console, a failed rediscovery never blanks a door already known, and a
+door with neither a URL nor a discovery renders prose. The lab sets nothing: `environments/crc.yaml`
+inherits the defaults and the door resolves to the `grafana` release's Route.
 
 ---
 
 ### 3.8 The one prerequisite, surfaced by the chart
 
 User-workload monitoring cannot be a chart's to switch on (`cluster-monitoring-config` is the
-platform's, shared with every other monitoring setting), so the chart *surfaces* it: `NOTES.txt`
-prints the command after every install, and the wait Job checks it when its identity may read the
-ConfigMap — `wait.verifyUserWorkloadMonitoring: true` grants that one read (a Role in
-`openshift-monitoring` scoped to the ConfigMap's name, a cluster-admin opt-in) and the Job then
-fails the install with the exact command when the key is absent; without the grant it logs "not
-verified" and the command. A `lookup` in NOTES could not do this: Helm turns a forbidden lookup into
-a failed install (measured on CRC as a namespace-only identity).
+platform's, shared with every other monitoring setting), so the chart *verifies and reports* it
+(the operator, 2026-09-19: "it is just a job that runs to verify, and then the OpenShift engineers
+enable it"): the wait Job resolves `prometheus-user-workload.openshift-user-workload-monitoring.svc`,
+a Service the cluster-monitoring-operator creates only when user-workload monitoring is on — a DNS
+lookup, so no grant in any namespace (measured from a namespace-only pod on 4.22: resolves when on;
+`getent` exits 2 for a Service that does not exist) — and logs ON, or OFF with the exact command.
+It never fails the install on it, and nothing needs re-installing once the engineers run the
+command. The first draft read `cluster-monitoring-config` through an opt-in Role in
+`openshift-monitoring` and failed the install when the key was absent; that made the check a
+cluster-admin step in a namespace the consumer does not own, and a failed install for a
+prerequisite the consumer cannot fix. A `lookup` in NOTES could not do this either: Helm turns a
+forbidden lookup into a failed install (measured on CRC as a namespace-only identity).
 
 ## 4. What CRC runs now, and how to verify it
 
@@ -304,8 +321,10 @@ oc exec -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard -- \
   curl -s -H "X-Forwarded-User: kubeadmin" http://127.0.0.1:8080/api/kpi | jq .links
 ```
 
-The last command answers the four links the page renders — `grafana`, `grafana_dashboard_uid`,
-`console` (discovered) and `observe` (the namespace-workloads board).
+The last command answers the four links the page renders — `grafana` (discovered from the Route),
+`grafana_dashboard_uid`, `console` (discovered) and `observe` (the namespace-workloads board). The
+gate's verdict on the prerequisite:
+`oc logs -n group-sync-dashboard job/grafana-openshift-grafana-wait | grep 'user-workload monitoring'`.
 
 ## 5. Records
 

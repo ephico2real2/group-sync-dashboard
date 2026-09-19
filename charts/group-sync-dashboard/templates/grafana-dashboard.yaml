@@ -69,7 +69,11 @@ a mode of the ConfigMap: the ConfigMap is a core resource that cannot fail an in
 its CRD first (the openshift-grafana chart ships it under crds/).
 */ -}}
 {{- $cr := ($dashboard.cr | default dict) }}
-{{- if $cr.enabled }}
+{{- /* Only where the cluster serves the CRD: .Capabilities.APIVersions is the live API on install and
+       upgrade (and the --api-versions list under helm template / Argo CD's render), so a default
+       install on a cluster with no grafana-operator renders no CR and cannot fail on an unknown kind;
+       the next upgrade after the operator lands renders it. */ -}}
+{{- if and $cr.enabled (.Capabilities.APIVersions.Has "grafana.integreatly.org/v1beta1") }}
 {{- /* The operator refuses a datasources[] entry whose datasourceName is empty ("invalid datasource
        input rule ... input or datasource empty", content/resolver.go) and the board never appears; an
        empty selector with allowCrossNamespaceImport matches EVERY Grafana on the cluster. Both refuse

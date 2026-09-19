@@ -22,14 +22,11 @@ KEPT_OFF = {
     "authLogLevel.enabled": "same decision as manage",
     "oauthProxy.skipProviderButton": "operator decision 2026-09-05: people log in from the OpenShift screen",
     "oauthProxy.requestLogging": "review finding: oauth-proxy logs the full request URI, the OAuth callback code included",
-    "monitoring.serviceMonitor.enabled": "operator decision 2026-09-05: the reference cluster runs no Prometheus; needs the Operator CRDs",
-    "monitoring.prometheusRule.enabled": "same decision; rendering with both on was verified before the default went back",
     "rbac.identities": "C2: a grant (get/list identities.user.openshift.io) the chart does not otherwise need, so off under the 0.14.0 rule",
     "backup.offsite.enabled": "B1: needs a destination the chart cannot choose (a second claim or a bucket and a credential); a CronJob with nowhere to write is a red Job every six hours",
     "session.idleTimeout.enabled": "C4: it signs people out — a session policy the platform team chooses",
     "rbac.namespaces": "C3: a grant (get/list namespaces, core group) the chart does not otherwise need — off under the 0.14.0 rule; the namespace report attests absence only with it",
     "reporting.window.enabled": "P4: an operational rail the operator opts into (a timezone + hours + days); off = automated runs are never gated",
-    "monitoring.grafanaDashboard.cr.enabled": "#161: a GrafanaDashboard CR needs grafana-operator's CRD before the release renders — on only where the operator (the openshift-grafana chart) is installed",
 }
 
 # Switches the release flipped; the docs below must not describe them as off.
@@ -37,6 +34,12 @@ FLIPPED = (
     "podDisruptionBudget.enabled",
     "loginCapture.enabled",
     "oauthProxy.apiTokenAccess.enabled",
+    # 0.36.0 (operator decision 2026-09-19): user-workload monitoring is on on the clusters this chart
+    # is for, so the ServiceMonitor, the rules and the GrafanaDashboard CR (rendered only where the
+    # cluster serves its API) ship on
+    "monitoring.serviceMonitor.enabled",
+    "monitoring.prometheusRule.enabled",
+    "monitoring.grafanaDashboard.cr.enabled",
 )
 
 # Documents an operator follows. Records (reviews, the changelog's history, superseded designs and

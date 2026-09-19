@@ -17,7 +17,7 @@ from datetime import UTC, datetime, timedelta
 
 from .config import ClusterConfig, Settings
 from .kube import OK, ClusterClient, ClusterError, GroupSyncView, GroupView, dn_equal
-from .leader import LeaderElector
+from .leader import LeaderElector, own_namespace
 from .logincapture import capture_once
 from .audit import plan_audit_stamps
 from .storage import StorageBackend
@@ -748,7 +748,7 @@ class Poller:
             # A CPU baseline once a cycle, so a page's rate spans at most one poll interval rather
             # than the gap between two page requests (gsd/kpi/system.py#SystemMonitor).
             self.system_monitor.view()
-        self._discover_console(cluster)
+        self._discover_doors(cluster)
         # Reporting rides the same tail: the snapshot after the checkpoint (so the copy is the
         # smallest it can be), the usage pull after that. _run_cluster's leadership check is a
         # cycle old after the poll's network I/O, so re-check before each operation. Both checks are
@@ -763,25 +763,40 @@ class Poller:
             return
         self._pull_report_usage()
 
-    def _discover_console(self, cluster: ClusterConfig) -> None:
-        """The host cluster's console URL, once a cycle, for the KPI page's Observe door (#157): read
-        from openshift-config-managed/console-public with the pod's own identity. Only the host's
-        thread asks — the console the reader is signed in to is the host's — and a failure to read
-        it never stops the poll and never blanks a console already known."""
+    def _discover_doors(self, cluster: ClusterConfig) -> None:
+        """The KPI page's doors, once a cycle, with the pod's own identity (#157): the host cluster's
+        console URL from openshift-config-managed/console-public, and the Grafana Route carrying
+        `grafana_route_selector` in the pod's own namespace. Only the host's thread asks — the console
+        the reader is signed in to is the host's, and the Route is beside the pod — and a failure to
+        read either never stops the poll and never blanks a door already known."""
         if self.signals is None:
             return
         host = self.settings.host_cluster()
         if host is None or cluster.name != host.name:
             return
+        client = ClusterClient(cluster, timeout=self.settings.request_timeout_seconds)
         try:
-            url = ClusterClient(cluster, timeout=self.settings.request_timeout_seconds).console_url()
+            url = client.console_url()
         except Exception:  # noqa: BLE001 - a discovery must never stop the poll
             log.exception("%s: console discovery failed; the poll continues", cluster.name)
-            return
+            url = None
         # None never overwrites a URL already known: a one-cycle 403 or timeout would otherwise drop
         # the door the previous cycle discovered (review of #209, Grok).
         if url is not None:
             self.signals.note_console_url(url)
+        selector = self.settings.grafana_route_selector
+        if self.settings.grafana_url or not selector:
+            return                         # a configured URL wins; an empty selector is "off"
+        namespace = own_namespace()
+        if not namespace:
+            return
+        try:
+            url = client.route_url(namespace, selector)
+        except Exception:  # noqa: BLE001
+            log.exception("%s: grafana discovery failed; the poll continues", cluster.name)
+            url = None
+        if url is not None:
+            self.signals.note_grafana_url(url)
 
     def _rollup_kpi(self, cluster: ClusterConfig) -> None:
         """The daily KPI rollup (#156): the leader writes today's row for this cluster once, after

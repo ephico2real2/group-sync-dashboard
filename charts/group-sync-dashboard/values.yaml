@@ -1956,28 +1956,34 @@ kpi:
     diskPercent: 80
 
 # The doors out of the KPI page. OpenShift removed its bundled Grafana in 4.11, so Grafana is
-# optional and operator-owned: the "Open in Grafana" link renders only when `grafana.url` is set
-# (with `dashboardUid`, it opens the board directly). The console's Observe → Dashboards always
-# ships: the door opens the console's namespace-workloads board scoped to the pod's own namespace.
-# `console.url` empty (the default) means DISCOVERED — the poll thread reads the console's public
-# URL from openshift-config-managed/console-public, which every authenticated identity may read on
-# OpenShift; set it only for a console the cluster does not publish, or a different one.
+# operator-owned — the openshift-grafana chart in this repository, or a platform team's. Both URLs
+# empty (the default) mean DISCOVERED by the poll thread with the pod's own identity:
+#   - `grafana.url`: the one Route carrying `grafana.discovery.selector` in the pod's own namespace
+#     (the openshift-grafana chart labels its Route with its name), read through a Role in that
+#     namespace the chart renders while the selector is non-empty; `dashboardUid` is the shipped
+#     board's uid, so the door opens the board itself with 30 days pre-filled;
+#   - `console.url`: the console's public URL from openshift-config-managed/console-public, which
+#     every authenticated identity may read on OpenShift.
+# Set a URL to override discovery (a Grafana in another namespace, a console the cluster does not
+# publish); set the selector empty to switch Grafana discovery — and its Role — off. A door with
+# neither a URL nor a discovery renders prose, never a dead button.
 grafana:
   url: ""
-  dashboardUid: ""
+  dashboardUid: gsd-group-sync-dashboard
+  discovery:
+    selector: app.kubernetes.io/name=openshift-grafana
 console:
   url: ""
 
-# Both default OFF, by operator decision (2026-09-05) under the chart's on-by-default rule: the
-# reference cluster runs no Prometheus (built-in monitoring disabled to save resources), so a
-# ServiceMonitor and rules there are objects nobody reads, and on a cluster without the
-# Prometheus Operator CRDs applying them fails the install outright. Rendering with both on was
-# verified before the default went back — lint, template, a server-side dry run against the CRDs
-# and a live deploy on the reference cluster (chart 0.14.0 review record) — so turning them on is
-# a values change and nothing else. OpenShift ships the CRDs; set both true where Prometheus runs.
+# Both ON (operator decision 2026-09-19, chart 0.36.0): user-workload monitoring is on on the
+# enterprise clusters this chart is for, so the ServiceMonitor is scraped and the rules evaluated
+# from the first install, and the KPI page's Grafana board has series to draw. They were off from
+# 0.14.0 while the reference cluster ran no Prometheus; the render with both on was verified then
+# and every release since. OpenShift ships the Prometheus Operator CRDs; on a bare Kubernetes
+# without them, set both false — applying either fails the install outright.
 monitoring:
   serviceMonitor:
-    enabled: false
+    enabled: true
     # 30s: every series is recomputed from SQLite on scrape and each scrape takes the
     # store's lock. Faster buys no resolution — the data only changes once per poll.
     interval: 30s
@@ -1985,7 +1991,7 @@ monitoring:
     labels: {}
 
   prometheusRule:
-    enabled: false
+    enabled: true
     labels: {}
     # Thresholds live here rather than inside the exporter, so they can be seen and tuned.
     # The metric is a unix timestamp, so the rule expresses staleness against real time.
@@ -2081,9 +2087,11 @@ monitoring:
     # Grafana folder, written as the `grafana_folder` annotation the sidecar's
     # folderAnnotation setting reads. Empty writes no annotation.
     folder: ""
-    # The GrafanaDashboard CR for grafana-operator v5 (#161), OFF by default: the CR's kind must
-    # exist before the release is rendered, so it is for a cluster where the operator — the
-    # openshift-grafana chart, or a platform team's — is already installed. On, the CR points the
+    # The GrafanaDashboard CR for grafana-operator v5 (#161), ON by default and rendered only when
+    # the cluster serves grafana.integreatly.org/v1beta1 (Helm's .Capabilities.APIVersions — the live
+    # API on install and upgrade, `--api-versions` under helm template, the cluster's list under Argo
+    # CD): a cluster without the operator installs cleanly and picks the CR up on the first upgrade
+    # after the openshift-grafana chart (or a platform team's operator) lands. The CR points the
     # operator at the ConfigMap above and binds the board's DS_PROMETHEUS input to a datasource:
     # the operator substitutes `datasource` for every `${DS_PROMETHEUS}` in the JSON, verbatim, into
     # the panels' `uid` fields — so give it the datasource's UID (the openshift-grafana chart's is
@@ -2093,7 +2101,7 @@ monitoring:
     # silently the wrong one when there are two. `instanceSelector` selects the Grafana CR; the
     # openshift-grafana chart labels its instance app.kubernetes.io/instance: <its release name>.
     cr:
-      enabled: false
+      enabled: true
       instanceSelector:
         app.kubernetes.io/instance: grafana
       datasource: openshift-thanos

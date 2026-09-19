@@ -86,11 +86,14 @@ grafana:
     enabled: false
     size: 2Gi
     storageClassName: ""
-  # Expose Grafana. Off by default — a consumer opts in. With auth.mode openshift the chart renders a
-  # reencrypt Route to the proxy (the service CA signs the proxy's certificate); with mode grafana the
-  # operator creates an edge Route to Grafana itself. Host empty: the router names it.
+  # Expose Grafana. On by default (operator decision 2026-09-19: a default install just works — a
+  # Grafana nobody can open is not one). With auth.mode openshift the chart renders a reencrypt Route
+  # to the proxy (the service CA signs the proxy's certificate) and the OpenShift login guards it;
+  # with mode grafana the operator creates an edge Route to Grafana itself. Host empty: the router
+  # names it. The Route carries the chart's `app.kubernetes.io/name: openshift-grafana` label in
+  # either mode, so an application in the namespace can discover Grafana's URL by that label.
   route:
-    enabled: false
+    enabled: true
     host: ""
   resources:
     requests: {cpu: 100m, memory: 256Mi}
@@ -145,11 +148,10 @@ networkPolicy:
 # waitSeconds + 120s, or the release is marked failed while the gate is still counting.
 wait:
   enabled: true
-  # Let the gate READ openshift-monitoring/cluster-monitoring-config, so it fails with the exact
-  # command when user-workload monitoring is off instead of reporting "not verified". Renders a
-  # Role + RoleBinding in openshift-monitoring scoped to that one ConfigMap — a cluster-admin step
-  # in a namespace the consumer does not own, hence off by default (the same rule as thanos.scope).
-  verifyUserWorkloadMonitoring: false
+  # The gate also VERIFIES user-workload monitoring — always, with no grant: it resolves the
+  # prometheus-user-workload Service's name, which exists only when the platform has it on — and
+  # REPORTS the result. Off, the install still completes and the log carries the command for the
+  # OpenShift engineers; nothing needs re-installing once they run it.
   waitSeconds: 600
   intervalSeconds: 10
   image:
