@@ -2588,6 +2588,10 @@ function reportPickerCard(reports, pick, cat) {
 }
 
 function reportFormCard(spec, cat) {
+  // #143 phase 2: a manual run's reviewer is the signed-in person unless they typed another
+  if (spec.name === "access-certification" && cat.viewer && (view.reportForm[spec.name] || {}).reviewer === undefined) {
+    view.reportForm[spec.name] = { ...(view.reportForm[spec.name] || {}), reviewer: cat.viewer };
+  }
   const form = view.reportForm[spec.name] || {};
   // The mnemonic selector (B3, §3.7): per-cluster label + captured values from the catalogue. Empty when
   // the deployment configures no selector or the snapshot has none — the control then hides.
@@ -2660,6 +2664,7 @@ function reportFormCard(spec, cat) {
       ${cat.pdf && cat.pdf.enabled ? `<label class="filterbar-note"><input type="checkbox" id="report-want-pdf" checked> PDF</label>` : ""}
       <label class="filterbar-note"><input type="checkbox" id="report-want-html" checked> HTML</label>
       <span class="filterbar-note">json is always written · cluster <span class="mono">${esc(view.cluster || "")}</span></span>
+      <span class="filterbar-note" id="report-totals" aria-live="polite">${esc(view.reportTotals && view.reportTotals.spec === spec.name ? view.reportTotals.text : "")}</span>
     </div>
     ${status}
   </section>`;
@@ -2695,6 +2700,12 @@ function paramField(spec, p, form) {
     return `<div class="report-field">${label}<input id="${id}" type="date" data-param="${esc(p.name)}" value="${esc(raw !== undefined ? raw : (p.default || ""))}">${hint}</div>`;
   }
   if (p.type === "csv") return `<div class="report-field">${label}${lookupControl(spec, p, form)}${hint}</div>`;
+  if (p.type === "namespaces") {
+    // #143 phase 2: the discovered namespaces as a picker when the poll listed them (rbac.namespaces); the
+    // text field otherwise — a deployment without the grant keeps the manual entry, with Enter to add.
+    const found = data.reportDiscovered && (view.cluster in data.reportDiscovered) && data.reportDiscovered[view.cluster].namespaces;
+    return `<div class="report-field">${label}${lookupControl(spec, found && found.values.length ? p : { ...p, source: "" }, form)}${hint}</div>`;
+  }
   const val = raw !== undefined ? raw : (p.default === null ? "" : p.default);
   return `<div class="report-field">${label}<input id="${id}" type="text" data-param="${esc(p.name)}" value="${esc(val)}" autocomplete="off" spellcheck="false">${hint}</div>`;
 }
@@ -2940,6 +2951,32 @@ function clearReportPreview() {
   // that no longer describe any selection must not stay on screen (#143).
   closeNsPreview();
 }
+// #143 phase 3: what the run would produce — build() on the service, nothing rendered or stored — shown
+// beside Generate as "N namespaces · M group bindings · will truncate". Debounced, versioned like the count
+// preview, never blocking Generate; a 422 shows the refusal so the reader fixes the field before running.
+let _totalsTimer = null, _totalsVersion = 0, _totalsKey = null;
+function scheduleTotals(spec) {
+  clearTimeout(_totalsTimer);
+  const version = ++_totalsVersion, cluster = view.cluster;
+  if (!spec || !cluster) return;
+  _totalsKey = `${cluster}|${spec}`;
+  _totalsTimer = setTimeout(async () => {
+    const params = Object.assign({}, view.reportForm[spec] || {});
+    let text;
+    try {
+      const r = await (await reportFetch("/api/preview", { method: "POST", headers: { "Content-Type": "application/json" },
+                                                            body: JSON.stringify({ report: spec, cluster, params }) })).json();
+      const parts = Object.entries(r.totals || {}).filter(([, v]) => typeof v === "number").map(([k, v]) => `${v} ${k.replace(/_/g, " ")}`);
+      text = parts.join(" · ") + (r.truncated ? " · will truncate" : "");
+    } catch (e) {
+      text = e.status === 422 ? `preview: ${e.detail || "the parameters were refused"}` : "";   // a preview error never blocks Generate
+    }
+    if (version !== _totalsVersion || view.cluster !== cluster || view.report !== spec) return;
+    view.reportTotals = { spec, text };
+    const el = $("report-totals"); if (el) el.textContent = text;   // in place: no repaint under the reader
+  }, 500);
+}
+
 function schedulePreview(spec) {
   if (spec !== "namespace-access") { clearReportPreview(); return; }
   clearTimeout(_previewTimer);
@@ -3082,6 +3119,7 @@ function wireReports() {
         f[el.dataset.param] = readParamEl(el);
         if (spec === "namespace-access") schedulePreview(spec);   // re-evaluate: an explicit name XORs the count away
       }
+      scheduleTotals(spec);
     };
   });
   const link = $("report-status-link");
@@ -3090,9 +3128,10 @@ function wireReports() {
   // typed text lives in view.reportLookupText so the repaint keeps it and the caret returns by id.
   const openSpec = view.report && data.reportCatalog && (data.reportCatalog.reports || []).find((r) => r.name === view.report);
   if (openSpec && $("report-form") && openSpec.params.some((p) => p.source)) ensureDiscovered();   // only a form with a lookup pays for one
+  if (openSpec && $("report-form") && _totalsKey !== `${view.cluster}|${openSpec.name}`) scheduleTotals(openSpec.name);   // #143: once per form+cluster as it opens
   const formOf = () => view.reportForm[view.report] || (view.reportForm[view.report] = {});
   const listOf = (name) => { const f = formOf(); const v = f[name]; return Array.isArray(v) ? v : (typeof v === "string" && v ? v.split(",").map((x) => x.trim()).filter(Boolean) : []); };
-  const after = (name) => { if (view.report === "namespace-access") schedulePreview(view.report); render(); };
+  const after = (name) => { if (view.report === "namespace-access") schedulePreview(view.report); scheduleTotals(view.report); render(); };
   document.querySelectorAll("[data-switch]").forEach((el) => {
     el.onclick = () => { const f = formOf(); f[el.dataset.switch] = el.getAttribute("aria-checked") !== "true"; after(el.dataset.switch); };
   });

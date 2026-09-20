@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import re
+import threading
 import secrets
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
@@ -26,7 +27,7 @@ from .. import TITLE, __version__
 from ..activity import USER_HEADER
 from . import REPORT_PREFIX, TICKET_HEADER
 from .artifacts import FORMATS, ArtifactStore, Run, new_run_id
-from .catalogue import REGISTRY, ValidationError, validate_params
+from .catalogue import REGISTRY, RunContext, ValidationError, validate_params
 from .catalogue.common import validate_selector_map
 from .config import ReportSettings, load_report_settings, retention_overrides
 from .metrics import ReportSignals, build_report_registry
@@ -51,6 +52,12 @@ class Principal(BaseModel):
     kind: str            # "viewer" | "service"
     name: str
     note: str
+
+
+class PreviewRequest(BaseModel):
+    report: str = Field(description="A catalogue name, e.g. namespace-access.")
+    cluster: str = Field(description="The cluster id as the dashboard names it.", pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$")
+    params: dict = Field(default_factory=dict, description="Parameters per the report's spec; unknown keys are refused.")
 
 
 class RunRequest(BaseModel):
@@ -228,7 +235,7 @@ def build_report_app(settings: ReportSettings, *, secret: bytes | None = None, c
                     raise HTTPException(status_code=404, detail=f"unknown cluster {cluster!r} in the snapshot")
                 found = snap.discovered(cluster, labels[0] if labels else "", settings.namespace_group_label)
         except (SnapshotError, OSError):
-            found = {k: {"values": [], "truncated": False} for k in ("providers", "roles", "users", "groups", "mnemonics", "oud-groups")}
+            found = {k: {"values": [], "truncated": False} for k in ("providers", "roles", "users", "groups", "mnemonics", "oud-groups", "namespaces")}
         return {"cluster": cluster, "discovered": found, "namespaceGroupLabel": settings.namespace_group_label}
 
     @app.get(f"{REPORT_PREFIX}/api/snapshot")
@@ -389,6 +396,54 @@ def build_report_app(settings: ReportSettings, *, secret: bytes | None = None, c
         # The single-cluster shape is unchanged (the page and the trigger read `id`); a fan-out answers
         # with every run it queued.
         return created[0].public() if body.cluster is not None else {"runs": [r.public() for r in created]}
+
+    preview_slot = threading.Semaphore(1)
+
+    @app.post(f"{REPORT_PREFIX}/api/preview")
+    def preview_run(body: PreviewRequest, p: Principal = Depends(principal)) -> dict:
+        """The totals a run would produce, from build() alone: nothing rendered, nothing stored (#143 phase 3).
+
+        The one read-only POST beside the run POST: the body is a report, a cluster and its parameters, and
+        the answer is the report's `totals` and whether its rows would be cut — "N namespaces · M bindings ·
+        will truncate" beside Generate. One preview at a time (429 when busy), the parameters validated
+        exactly as a run's (422), the newest snapshot read (503 without one).
+        """
+        if body.report not in REGISTRY or body.report not in settings.enabled_reports:
+            raise HTTPException(status_code=404, detail=f"unknown or disabled report {body.report!r}")
+        spec, build = REGISTRY[body.report]
+        try:
+            params = validate_params(spec, body.params)
+        except ValidationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if params.get("selectors"):
+            unknown = sorted(k for k in params["selectors"] if k not in tuple(settings.namespace_selector_labels))
+            if unknown:
+                raise HTTPException(status_code=422, detail="selector label(s) not configured on this deployment: " + ", ".join(unknown))
+        if not preview_slot.acquire(blocking=False):
+            raise HTTPException(status_code=429, detail="a preview is already running; try again shortly")
+        try:
+            try:
+                path = newest_snapshot(settings.snapshot_dir)
+            except SnapshotError as exc:
+                raise HTTPException(status_code=503, detail=f"no snapshot to preview against: {exc}") from exc
+            with Snapshot(path) as snap:
+                info = snap.info()
+                cluster = snap.cluster(body.cluster)
+                if cluster is None:
+                    raise HTTPException(status_code=404, detail=f"unknown cluster {body.cluster!r} in the snapshot")
+                at = now()
+                ctx = RunContext(settings=settings, cluster=cluster, now=at, run_id="preview",
+                                 generated_by=p.name, generated_by_note="preview", snapshot_stamp=info.stamp,
+                                 snapshot_age_seconds=info.age_seconds(at), schema_version=info.schema_version,
+                                 namespace_selector_labels=settings.namespace_selector_labels)
+                try:
+                    built = build(snap, ctx, params)
+                except ValidationError as exc:
+                    raise HTTPException(status_code=422, detail=str(exc)) from exc
+        finally:
+            preview_slot.release()
+        return {"report": body.report, "cluster": body.cluster, "totals": built.totals, "truncated": built.truncated,
+                "snapshot": info.stamp}
 
     @app.get(f"{REPORT_PREFIX}/api/runs")
     def list_runs(p: Principal = Depends(principal),

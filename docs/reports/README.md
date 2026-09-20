@@ -69,6 +69,22 @@ offers every csv here as a lookup discovered from the snapshot. The old `subject
 `group_prefix` and `user` keys are gone: a schedule still naming one is refused with `unknown parameter`
 — rename it as above.
 
+Three things the Reports tab does around a manual run (#143):
+
+- **`namespaces` is a picker.** The explicit names of `namespace-access` (under Advanced) are offered from
+  the namespaces the poller listed for the cluster, like the other lookups; Enter still adds a name the poll
+  never saw, and a deployment whose poller cannot list namespaces gets the plain text field.
+- **The reviewer is you.** `access-certification`'s `reviewer` opens as the signed-in name; an edit, even a
+  blank one, is kept until the page is reloaded. A schedule names its reviewer in `params:`.
+- **The totals before the run.** Beside Generate, the form shows what the run would produce — for
+  `namespace-access` "1 namespaces · 4 group bindings · 2 user bindings", with "· will truncate" when a cap
+  bites — from `POST /report/api/preview` (`{"report", "cluster", "params"}` → `{"totals", "truncated",
+  "snapshot"}`): the report's own `build()` over the newest snapshot, nothing rendered or stored, one at a
+  time (a second preview while one runs gets `429`, and the form simply waits for its next change). A
+  parameter the run would refuse shows the refusal there first ("preview: select at least one
+  namespace…"); Generate is never disabled by it. String parameters are trimmed on the way in, so a
+  required field holding only spaces is refused as blank.
+
 ## Scheduling
 
 Automated runs are configured under `reporting.schedules` in the chart's `charts/group-sync-dashboard/values.yaml`.

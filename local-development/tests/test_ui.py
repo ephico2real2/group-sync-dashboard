@@ -6243,8 +6243,11 @@ class TestReportsTab:
             login = page.locator("#report-pick-login-activity")
             assert login.is_disabled() and "reporting.reports.loginActivity.enabled" in login.inner_text()
             page.click("#report-pick-namespace-access")
-            page.fill("#report-param-namespace-access-namespaces", "prod-ns")
-            page.locator("#report-param-namespace-access-namespaces").dispatch_event("change")
+            # #143 phase 2: the explicit names are an Advanced picker over the discovered namespaces;
+            # Enter adds a name the poll never listed
+            page.click("details.report-advanced summary")
+            page.fill("#report-lookup-namespace-access-namespaces", "prod-ns"); page.press("#report-lookup-namespace-access-namespaces", "Enter")
+            page.wait_for_selector('.rp-tag[data-name="prod-ns"]')
             gen = page.locator("#report-generate")
             gen.focus()
             gen.click()
@@ -6297,7 +6300,7 @@ class TestReportsTab:
             assert page.locator("#report-selector-0").get_attribute("data-selector-label") == "company.net/mnemonic"
             assert page.locator("#report-selector-1").get_attribute("data-selector-label") == "company.net/app-environment"
             assert page.locator("#report-selector-0 option").evaluate_all("es => es.map(o => o.value)") == ["beta", "demo"]
-            assert page.locator("#report-param-namespace-access-namespaces").count() == 1      # advanced field kept
+            assert page.locator("#report-lookup-namespace-access-namespaces").count() == 1     # advanced field kept (a picker since #143)
             page.select_option("#report-selector-0", ["beta", "demo"]); page.locator("#report-selector-0").dispatch_event("change")
             page.select_option("#report-selector-1", ["prod"]); page.locator("#report-selector-1").dispatch_event("change")
             assert page.evaluate("() => view.reportForm['namespace-access'].selectors") == {
@@ -6504,6 +6507,7 @@ class TestReportsTab:
             page.evaluate("""() => {
                 window._gate = null;
                 let call = 0;
+                data.reportDiscovered = { "crc-local": {} };      // #143: the namespaces picker's lookup is settled, so the stub counts preview GETs only
                 reportGet = async () => {
                     call += 1;
                     if (call === 1) return {namespaces: 3, names: ["beta-prod", "demo-prod", "demo-production"]};
@@ -6969,6 +6973,50 @@ class TestReportsTab:
             assert seg.count() == 3 and page.locator('[data-seg="group_by"][aria-checked="true"]').get_attribute("data-value") == "mnemonic"
             page.click('[data-seg="group_by"][data-value="oud-group"]')
             page.wait_for_function("() => (view.reportForm['namespace-access'] || {}).group_by === 'oud-group'")
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_the_namespace_picker_the_reviewer_prefill_and_the_totals_preview(self, browser, reporting_server):
+        # #143 phases 2–3: the explicit-names field is a picker over the poll's namespaces (Enter still adds an
+        # unlisted one); a manual access-certification run's reviewer is the signed-in name until it is edited;
+        # the totals of what the run would produce sit beside Generate, from POST /api/preview, debounced and
+        # never in the way of Generate (a 422 shows the refusal instead of a number).
+        import json as _json, re as _re
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        previews: list[dict] = []
+        page.on("request", lambda r: previews.append(_json.loads(r.post_data)) if r.url.endswith("/api/preview") and r.method == "POST" else None)
+        try:
+            page.goto(base + "#page=reports&cluster=crc-local&report=namespace-access")
+            page.wait_for_selector("#report-form.r-access")
+            page.click("details.report-advanced summary")
+            page.wait_for_function("() => document.querySelectorAll('[data-lookup-opt=\"namespaces\"]').length > 0")
+            listed = page.locator('[data-lookup-opt="namespaces"]').evaluate_all("es => es.map(e => e.dataset.value)")
+            assert listed == sorted(listed) and len(listed) >= 1, listed                 # the poll's namespaces, in order
+            # the preview runs for the form as it opened: this report needs a scope, so it says so — the
+            # refusal beside Generate before the run is refused, with Generate untouched
+            page.wait_for_function("() => document.getElementById('report-totals').textContent.startsWith('preview:')", timeout=15_000)
+            assert "select at least one namespace" in page.locator("#report-totals").inner_text()
+            assert previews and previews[0] == {"report": "namespace-access", "cluster": "crc-local", "params": {}}, previews
+            assert page.locator("#report-generate").is_enabled()
+            # picking one namespace gives the totals of that run
+            page.click(f'[data-lookup-opt="namespaces"][data-value="{listed[0]}"]')
+            page.wait_for_selector(f'.rp-tag[data-name="{listed[0]}"]')
+            page.wait_for_function("() => document.getElementById('report-totals').textContent.startsWith('1 namespaces')", timeout=15_000)
+            totals = page.locator("#report-totals").inner_text()
+            assert _re.fullmatch(r"1 namespaces · \d+ group bindings · \d+ user bindings", totals), (totals, previews)
+            assert previews[-1]["params"]["namespaces"] == [listed[0]], previews[-1]
+            # the reviewer prefill
+            page.goto(base + "#page=reports&cluster=crc-local&report=access-certification")
+            page.wait_for_selector("#report-form.r-compliance")
+            assert page.locator("#report-param-access-certification-reviewer").input_value() == "root"
+            page.fill("#report-param-access-certification-reviewer", "  "); page.locator("#report-param-access-certification-reviewer").dispatch_event("change")
+            page.goto(base + "#page=reports&cluster=crc-local&report=groups")
+            page.wait_for_selector("#report-form.r-identity")
+            page.goto(base + "#page=reports&cluster=crc-local&report=access-certification")
+            page.wait_for_selector("#report-form.r-compliance")
+            assert page.locator("#report-param-access-certification-reviewer").input_value() == "  ", "an edit, even a blank one, is kept"
             assert not errors, errors
         finally:
             ctx.close()
