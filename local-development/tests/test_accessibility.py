@@ -60,6 +60,22 @@ def _block(css: str, pattern: str) -> dict[str, str]:
 PALETTES = ("default", "deuter", "protan", "trit", "contrast")
 
 
+def _composite(over: tuple[float, float, float], alpha: float, under: str, theme: str) -> str:
+    """Source-over compositing of a translucent colour on an opaque one, as the browser paints a zebra
+    or hovered cell: a*over + (1-a)*under per channel — rounded AWAY from the theme's text, not to the
+    nearest value. Chromium quantises the alpha to 8 bits and truncates the blend (measured on the
+    seeded page, OB3's review of #204: the light 10 % wash over #fcfcfb paints #e6eef6 where round()
+    says #e7eef7), so a token solved to the nearest-rounded surface can land one 8-bit step short of the
+    bar on the pixel a reader sees (light/deuter --status-good #0071b0: 4.51 by round(), 4.49 painted).
+    Every text token is darker than every surface in the light theme and lighter in the dark one, so the
+    worst case is floor() in light and ceil() in dark; a value that clears the bar here clears it under
+    either rounding."""
+    import math
+    rnd = math.floor if theme == "light" else math.ceil
+    return "#%02x%02x%02x" % tuple(min(255, max(0, rnd(alpha * c + (1 - alpha) * u)))
+                                  for c, u in zip(over, _rgb(under)))
+
+
 def _wash_fraction(css: str, theme: str, token: str) -> float:
     """The N of `--token: color-mix(in srgb, var(--x) N%, transparent)` in the theme's own block."""
     block = re.search(r':root\[data-theme="dark"\]\s*\{(.*?)\n\}', css, re.S).group(1) if theme == "dark" \
@@ -130,12 +146,12 @@ def themes():
     # composites them, so the bar is held where the text actually is.
     for key, tokens in out.items():
         theme = key.split("/")[0]
-        zebra = _rgba(css, theme, "zebra")
-        tokens["row-zebra"] = _over(zebra, tokens["surface-1"])
+        r, g, b, a = _rgba(css, theme, "zebra")
+        tokens["row-zebra"] = _composite((r, g, b), a, tokens["surface-1"], theme)
         # --series-1-wash's own percentage, per theme: 10 % light, 14 % dark. Hard-coded at 10 % for both,
         # the dark hover surface here was lighter than the one the browser paints and the dark status
         # text passed at 4.5 while measuring 4.29-4.39 on the real row (#204 review).
-        tokens["row-hover"] = _mix(tokens["series-1"], tokens["surface-1"], _wash_fraction(css, theme, "series-1-wash"))
+        tokens["row-hover"] = _composite(_rgb(tokens["series-1"]), _wash_fraction(css, theme, "series-1-wash"), tokens["surface-1"], theme)
     return out
 
 
@@ -169,9 +185,12 @@ WARN_TEXT = [("warn", "surface-1", AA_TEXT, "td.num.warn"), ("warn", "page", AA_
 # it, and the body/secondary copy every cell carries. These are the pairs that were never checked.
 # The status tokens (.change-added, .change-removed, td.num.warn) joined the list with #204: measured
 # on 2026-09-19 with these same surfaces they failed 4.5 on the rows in eight of the ten theme x
-# palette variants (4.01-4.44); every palette block was re-tuned by the smallest hue-preserving step
-# that clears the bar on the hovered row (the worst surface), 1-10 % toward black or white — the dark
-# ones against the 14 % wash the dark sheet really paints (the review caught the fixture's 10 %).
+# palette variants (31 pairs, 3.96-4.44; light/contrast only through --warn, which no palette
+# overrode); every block was re-tuned by the smallest hue-preserving step that clears the bar on the
+# hovered row (the worst surface) toward black (light) or white (dark) — the dark ones against the
+# 14 % wash the dark sheet really paints, and all of them against the compositor's own truncation
+# (the review of #204 caught both: the fixture's 10 % for both themes, and round() where Chromium
+# floors).
 TEXT_ON_ROWS = [
     (token, surface, AA_TEXT, f"{why} on a {'zebra' if surface == 'row-zebra' else 'hovered'} row")
     for surface in ("row-zebra", "row-hover")
