@@ -1129,17 +1129,30 @@ reporting:
     complianceSnapshot: {enabled: true}
     accessCertification: {enabled: true}
 
+  # Which formats a run stores when the request names none — by ORIGIN (#149 R3). A schedule fires
+  # unattended and its document is printed from the HTML on demand, so no PDF; a person's manual run
+  # gets the PDF. json is always written. A defaulted pdf is dropped where pdf.enabled is false.
+  formats:
+    scheduled: [html, json]
+    manual: [html, json, pdf]
+
   # Unattended runs. Each entry is a CronJob on the report image that POSTs one run with the
   # service token and waits for it (exit status = run status). Nothing is mailed; the artefact
   # lands in the artefact store like any other. `report` must be an enabled catalogue name.
+  # A schedule is CLUSTER-AGNOSTIC (#149 R1): the service resolves every enabled cluster from its
+  # snapshot and produces one run per cluster, each tagged schedule:<name>; `cluster:` pins one.
+  # `enabled: false` keeps the CronJob and suspends it (R4) — its definition, history and audit
+  # stay, nothing fires; remove the entry to retire it. `formats:` overrides the scheduled default.
   # e.g.
   # schedules:
-  #   - name: weekly-compliance
-  #     schedule: "0 6 * * 1"
+  #   - name: quarterly-compliance
+  #     schedule: "0 6 1 1,4,7,10 *"
   #     report: compliance-snapshot
-  #     cluster: crc-local
+  #   - name: biweekly-namespace-access
+  #     schedule: "0 6 1,16 * *"
+  #     report: namespace-access
   #     params: {}
-  #     formats: [html, pdf]
+  #     enabled: false
   schedules: []
 
   resources:

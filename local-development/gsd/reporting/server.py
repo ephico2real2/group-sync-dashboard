@@ -55,9 +55,12 @@ class Principal(BaseModel):
 
 class RunRequest(BaseModel):
     report: str = Field(description="A catalogue name, e.g. namespace-access.")
-    cluster: str = Field(description="The cluster id as the dashboard names it.", pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$")
+    cluster: str | None = Field(default=None, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$",
+                                description="The cluster id as the dashboard names it. A viewer names one; a service "
+                                            "caller may omit it, and the run fans out to every enabled cluster in the snapshot (R1).")
     params: dict = Field(default_factory=dict, description="Parameters per the report's spec; unknown keys are refused.")
-    formats: list[str] = Field(default_factory=lambda: ["html", "pdf"], description="Subset of html, pdf; json is always written.")
+    formats: list[str] | None = Field(default=None, description="Subset of html, pdf; json is always written. Omitted: "
+                                                                 "the deployment's default for the run's origin (R3).")
     schedule: str | None = Field(default=None, description="Service callers only: the schedule name this run is for.")
 
 
@@ -287,11 +290,19 @@ def build_report_app(settings: ReportSettings, *, secret: bytes | None = None, c
                 raise HTTPException(
                     status_code=422,
                     detail="selector label(s) not configured on this deployment: " + ", ".join(unknown))
-        bad = sorted(set(body.formats) - {"html", "pdf"})
-        if bad:
-            raise HTTPException(status_code=422, detail=f"unknown format(s) {bad}; json is always written")
-        if "pdf" in body.formats and not settings.pdf_enabled:
-            raise HTTPException(status_code=422, detail="PDF output is disabled on this deployment (reporting.pdf.enabled)")
+        # Origin-aware formats (R3): a request that names none gets the deployment's default for HOW it
+        # was made — a person's run the PDF, an unattended one HTML (printed on demand). A defaulted PDF
+        # on a PDF-less deployment is simply dropped; only an EXPLICIT pdf is refused.
+        if body.formats is None:
+            formats = [f for f in (settings.formats_manual if p.kind == "viewer" else settings.formats_scheduled)
+                       if f != "pdf" or settings.pdf_enabled]
+        else:
+            bad = sorted(set(body.formats) - {"html", "pdf"})
+            if bad:
+                raise HTTPException(status_code=422, detail=f"unknown format(s) {bad}; json is always written")
+            if "pdf" in body.formats and not settings.pdf_enabled:
+                raise HTTPException(status_code=422, detail="PDF output is disabled on this deployment (reporting.pdf.enabled)")
+            formats = body.formats
         if body.schedule:
             if p.kind != "service":
                 raise HTTPException(status_code=422, detail="only the service token may name a schedule")
@@ -320,15 +331,44 @@ def build_report_app(settings: ReportSettings, *, secret: bytes | None = None, c
             raise HTTPException(status_code=409, detail="outside the reporting window",
                                 headers={"Retry-After": str(retry)})
         by = f"schedule:{body.schedule}" if body.schedule else p.name
-        run = Run(id=new_run_id(requested), report=body.report, cluster=body.cluster, params=params,
-                  formats=sorted(set(body.formats)), generated_by=by,
-                  generated_by_note="unattended (service token)" if p.kind == "service" else p.note,
-                  schedule=body.schedule, requested_at=requested.strftime("%Y-%m-%dT%H:%M:%SZ"), origin=origin)
-        try:
-            runs.submit(run)
-        except QueueFull as exc:
-            raise HTTPException(status_code=429, detail="the render queue is full; try again shortly") from exc
-        return run.public()
+        # Cluster-agnostic scheduling (R1): a schedule never names a cluster — the service resolves them
+        # from the snapshot, one run per enabled cluster, each tagged schedule:<name>. A viewer chooses
+        # a cluster in the nav and must name it; a service caller may still pin one.
+        if body.cluster is None:
+            if p.kind == "viewer":
+                raise HTTPException(status_code=422, detail="a viewer run names its cluster")
+            try:
+                with Snapshot(newest_snapshot(settings.snapshot_dir)) as snap:
+                    targets = [c["id"] for c in snap.clusters() if c.get("enabled", 1)]
+            except SnapshotError as exc:
+                raise HTTPException(status_code=503, detail=f"no snapshot to resolve clusters from: {exc}") from exc
+            if not targets:
+                raise HTTPException(status_code=422, detail="the snapshot has no enabled cluster to run against")
+        else:
+            targets = [body.cluster]
+        created: list[Run] = []
+        for cluster in targets:
+            # One instant, one id per cluster: the suffix is four hex digits, so a fan-out over many
+            # clusters could repeat one (a hundred clusters: ~7 %); keep drawing until it is unique here.
+            run_id = new_run_id(requested)
+            while any(r.id == run_id for r in created):
+                run_id = new_run_id(requested)
+            run = Run(id=run_id, report=body.report, cluster=cluster, params=params,
+                      formats=sorted(set(formats)), generated_by=by,
+                      generated_by_note="unattended (service token)" if p.kind == "service" else p.note,
+                      schedule=body.schedule, requested_at=requested.strftime("%Y-%m-%dT%H:%M:%SZ"), origin=origin)
+            try:
+                runs.submit(run)
+            except QueueFull as exc:
+                if created:   # the fan-out was cut short: say which ran and which did not
+                    raise HTTPException(status_code=429, detail="the render queue filled after "
+                                        f"{len(created)} of {len(targets)} clusters were queued: " +
+                                        ", ".join(r.cluster for r in created)) from exc
+                raise HTTPException(status_code=429, detail="the render queue is full; try again shortly") from exc
+            created.append(run)
+        # The single-cluster shape is unchanged (the page and the trigger read `id`); a fan-out answers
+        # with every run it queued.
+        return created[0].public() if body.cluster is not None else {"runs": [r.public() for r in created]}
 
     @app.get(f"{REPORT_PREFIX}/api/runs")
     def list_runs(p: Principal = Depends(principal),

@@ -1160,3 +1160,82 @@ class TestScheduleLastSuccessSurvivesRestart:
                     if l.startswith('gsd_report_schedule_last_success_timestamp{schedule="nightly"}'))
         expect = datetime(2026, 9, 14, 9, 0, 3, tzinfo=UTC).timestamp()
         assert abs(float(line.split()[-1]) - expect) < 1.0, line
+
+
+class TestClusterAgnosticSchedulesAndOriginFormats:
+    """#149 R1 + R3: a schedule names no cluster and the service fans the run out to every enabled
+    cluster in its snapshot; formats default by origin when the request names none."""
+
+    def _client(self, tmp_path, **over):
+        snapshots, artifacts = seeded_dirs(tmp_path)
+        return TestClient(build_report_app(_settings(snapshots, artifacts, **over), secret=SECRET, clock=lambda: FROZEN))
+
+    def _two_cluster_client(self, tmp_path, **over):
+        from tests.reporting_seed import seed_store, write_snapshot
+        snapshots, artifacts = tmp_path / "snapshots", tmp_path / "artifacts"
+        snapshots.mkdir(); artifacts.mkdir()
+        store = seed_store(str(tmp_path / "writer.db"))
+        try:
+            store.upsert_cluster("prod-east", "https://api.prod-east:6443", True)
+            store.upsert_cluster("retired", "https://api.retired:6443", False)      # disabled: never a target
+            write_snapshot(store, snapshots)
+        finally:
+            store.close()
+        return TestClient(build_report_app(_settings(snapshots, artifacts, **over), secret=SECRET, clock=lambda: FROZEN))
+
+    def test_a_schedule_without_a_cluster_fans_out_to_every_enabled_cluster(self, tmp_path):
+        with self._two_cluster_client(tmp_path) as client:
+            r = client.post(f"{REPORT_PREFIX}/api/runs", json={"report": "groups", "schedule": "nightly"}, headers=SERVICE)
+            assert r.status_code == 202, r.text
+            runs = r.json()["runs"]
+            assert sorted(x["cluster"] for x in runs) == [CLUSTER, "prod-east"]      # `retired` is enabled=0
+            assert {x["generated_by"] for x in runs} == {"schedule:nightly"}
+            assert len({x["id"] for x in runs}) == 2, "one id per cluster"
+            for x in runs:
+                assert client.get(f"{REPORT_PREFIX}/api/runs/{x['id']}", headers=SERVICE).status_code == 200
+
+    def test_a_pinned_cluster_keeps_the_single_run_shape(self, tmp_path):
+        with self._two_cluster_client(tmp_path) as client:
+            r = client.post(f"{REPORT_PREFIX}/api/runs", json={"report": "groups", "cluster": "prod-east", "schedule": "nightly"}, headers=SERVICE)
+            assert r.status_code == 202 and r.json()["cluster"] == "prod-east" and "runs" not in r.json()
+
+    def test_a_viewer_must_name_its_cluster(self, tmp_path):
+        ticket = {TICKET_HEADER: mint(SECRET, "root", "all", 300, now=int(FROZEN.timestamp())), USER_HEADER: "root"}
+        with self._client(tmp_path) as client:
+            r = client.post(f"{REPORT_PREFIX}/api/runs", json={"report": "groups"}, headers=ticket)
+            assert r.status_code == 422 and "names its cluster" in r.json()["detail"]
+
+    def test_formats_default_by_origin_and_json_is_implied(self, tmp_path):
+        ticket = {TICKET_HEADER: mint(SECRET, "root", "all", 300, now=int(FROZEN.timestamp())), USER_HEADER: "root"}
+        with self._client(tmp_path) as client:
+            manual = client.post(f"{REPORT_PREFIX}/api/runs", json={"report": "groups", "cluster": CLUSTER}, headers=ticket).json()
+            scheduled = client.post(f"{REPORT_PREFIX}/api/runs", json={"report": "groups", "cluster": CLUSTER, "schedule": "nightly"}, headers=SERVICE).json()
+            assert manual["formats"] == ["html", "pdf"], manual
+            assert scheduled["formats"] == ["html"], scheduled          # no pdf unattended; json always written
+            explicit = client.post(f"{REPORT_PREFIX}/api/runs", json={"report": "groups", "cluster": CLUSTER, "schedule": "nightly", "formats": ["pdf"]}, headers=SERVICE).json()
+            assert explicit["formats"] == ["pdf"], "an explicit list overrides the origin default"
+
+    def test_the_deployment_overrides_the_origin_defaults(self, tmp_path):
+        ticket = {TICKET_HEADER: mint(SECRET, "root", "all", 300, now=int(FROZEN.timestamp())), USER_HEADER: "root"}
+        with self._client(tmp_path, formats_scheduled=("html", "pdf"), formats_manual=("html",)) as client:
+            manual = client.post(f"{REPORT_PREFIX}/api/runs", json={"report": "groups", "cluster": CLUSTER}, headers=ticket).json()
+            scheduled = client.post(f"{REPORT_PREFIX}/api/runs", json={"report": "groups", "cluster": CLUSTER, "schedule": "nightly"}, headers=SERVICE).json()
+            assert manual["formats"] == ["html"] and scheduled["formats"] == ["html", "pdf"]
+
+    def test_a_defaulted_pdf_is_dropped_where_pdf_is_off_but_an_explicit_one_is_refused(self, tmp_path):
+        ticket = {TICKET_HEADER: mint(SECRET, "root", "all", 300, now=int(FROZEN.timestamp())), USER_HEADER: "root"}
+        with self._client(tmp_path, pdf_enabled=False) as client:
+            manual = client.post(f"{REPORT_PREFIX}/api/runs", json={"report": "groups", "cluster": CLUSTER}, headers=ticket)
+            assert manual.status_code == 202 and manual.json()["formats"] == ["html"]
+            explicit = client.post(f"{REPORT_PREFIX}/api/runs", json={"report": "groups", "cluster": CLUSTER, "formats": ["pdf"]}, headers=ticket)
+            assert explicit.status_code == 422
+
+    def test_the_formats_env_accepts_json_and_refuses_a_typo(self, monkeypatch):
+        from gsd.reporting.config import _formats_env
+        monkeypatch.setenv("GSD_REPORT_FORMATS_SCHEDULED", "html, json")
+        assert _formats_env("GSD_REPORT_FORMATS_SCHEDULED", ("x",)) == ("html",)
+        monkeypatch.setenv("GSD_REPORT_FORMATS_SCHEDULED", "")
+        assert _formats_env("GSD_REPORT_FORMATS_SCHEDULED", ("html",)) == ("html",)
+        monkeypatch.setenv("GSD_REPORT_FORMATS_SCHEDULED", "html,pfd")
+        with pytest.raises(SystemExit):
+            _formats_env("GSD_REPORT_FORMATS_SCHEDULED", ("html",))

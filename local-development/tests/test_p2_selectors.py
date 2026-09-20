@@ -114,6 +114,47 @@ class TestTriggerParamsJson:
         assert rc == 1
 
 
+class TestTriggerClusterAgnosticAndFormats:
+    """#149 R1/R3: the trigger names no cluster and no formats unless the schedule pins them, and a
+    fan-out answer (`runs`) is waited for whole — the Job fails if ANY cluster's run failed."""
+
+    def _tok(self, tmp_path):
+        tok = tmp_path / "token"; tok.write_text("secret"); return str(tok)
+
+    def test_no_cluster_and_no_formats_are_sent_unless_given(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(trigger.httpx, "Client", _FakeClient)
+        rc = trigger.main(["--url", "https://x", "--report", "groups", "--schedule", "weekly", "--token-file", self._tok(tmp_path)])
+        assert rc == 0
+        body = _FakeClient.captured["json"]
+        assert "cluster" not in body and "formats" not in body, body
+        rc = trigger.main(["--url", "https://x", "--report", "groups", "--schedule", "weekly", "--token-file", self._tok(tmp_path),
+                           "--cluster", "prod-east", "--format", "pdf"])
+        assert rc == 0 and _FakeClient.captured["json"]["cluster"] == "prod-east" and _FakeClient.captured["json"]["formats"] == ["pdf"]
+
+    def test_a_fan_out_is_waited_for_whole_and_one_failure_fails_the_job(self, monkeypatch, tmp_path, capsys):
+        class _Resp:
+            status_code = 202
+            def __init__(self, body): self._b = body
+            def json(self): return self._b
+        polls = {"a": ["running", "done"], "b": ["running", "running", "failed"]}
+        class _Client:
+            def __init__(self, **kw): pass
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def post(self, path, json=None):
+                return _Resp({"runs": [{"id": "a", "cluster": "crc-local"}, {"id": "b", "cluster": "prod-east"}]})
+            def get(self, path):
+                run_id = path.rsplit("/", 1)[1]
+                status = polls[run_id].pop(0) if len(polls[run_id]) > 1 else polls[run_id][0]
+                return _Resp({"id": run_id, "cluster": "x", "status": status, "error": "boom" if status == "failed" else None})
+        monkeypatch.setattr(trigger.httpx, "Client", _Client)
+        monkeypatch.setattr(trigger.time, "sleep", lambda s: None)
+        rc = trigger.main(["--url", "https://x", "--report", "groups", "--schedule", "weekly", "--token-file", self._tok(tmp_path), "--wait"])
+        assert rc == 1, "one cluster's run failed: the Job fails"
+        out = capsys.readouterr().out
+        assert '"clusters": ["crc-local", "prod-east"]' in out and '"status": "done"' in out and '"status": "failed"' in out
+
+
 class _FakeResp409:
     status_code = 409
     text = "outside the reporting window"

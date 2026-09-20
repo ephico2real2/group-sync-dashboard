@@ -89,6 +89,10 @@ spec:
               value: {{ .Values.reporting.retention.manual.days | quote }}
             - name: GSD_REPORT_MANUAL_RETENTION_MAX_RUNS
               value: {{ .Values.reporting.retention.manual.maxRuns | quote }}
+            - name: GSD_REPORT_FORMATS_SCHEDULED
+              value: {{ join "," ((.Values.reporting.formats | default dict).scheduled | default (list "html" "json")) | quote }}
+            - name: GSD_REPORT_FORMATS_MANUAL
+              value: {{ join "," ((.Values.reporting.formats | default dict).manual | default (list "html" "json" "pdf")) | quote }}
             - name: GSD_REPORT_MARKING
               value: {{ .Values.reporting.marking | quote }}
             - name: GSD_REPORT_ENABLED_REPORTS

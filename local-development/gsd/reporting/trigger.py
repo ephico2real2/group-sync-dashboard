@@ -1,7 +1,11 @@
 """The schedule Job's one command: POST a run with the service token, optionally wait for it.
 
     python3.14 -m gsd.reporting.trigger --url https://<svc>:8443 --report compliance-snapshot \
-        --cluster crc-local [--param window_days=30]... [--format pdf --format html] --schedule weekly --wait
+        --schedule weekly --wait [--cluster crc-local] [--param window_days=30]... [--format html]
+
+A schedule is cluster-agnostic (R1): with no --cluster the service fans the run out to every enabled
+cluster in its snapshot and answers with all of them; --cluster pins one. Formats default by origin
+in the service (R3: a schedule stores html+json); --format overrides for this schedule only.
 
 Exit 0 when the run finished `done`, 1 on any refusal or a `failed` run — so the Job's status is
 the run's status and kube_job_status_failed can alert on it.
@@ -22,7 +26,7 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="gsd.reporting.trigger")
     ap.add_argument("--url", required=True, help="the report Service, e.g. https://gsd-report.ns.svc:8443")
     ap.add_argument("--report", required=True)
-    ap.add_argument("--cluster", required=True)
+    ap.add_argument("--cluster", default="", help="pin one cluster; omitted = every enabled cluster in the snapshot")
     ap.add_argument("--param", action="append", default=[], help="k=v, repeatable — scalar params only")
     ap.add_argument("--params-json", default="",
                     help="the params as a JSON object; required for structured params like `selectors` "
@@ -52,8 +56,12 @@ def main(argv: list[str] | None = None) -> int:
         token = fh.read().strip().decode("utf-8")
     headers = {"Authorization": f"Bearer {token}"}
     verify = a.ca_file or True
-    body = {"report": a.report, "cluster": a.cluster, "params": params,
-            "formats": a.format or ["html", "pdf"], "schedule": a.schedule}
+    body = {"report": a.report, "params": params, "schedule": a.schedule}
+    if a.cluster:
+        body["cluster"] = a.cluster
+    if a.format:
+        body["formats"] = a.format
+
     with httpx.Client(base_url=a.url, headers=headers, verify=verify, timeout=30.0) as c:
         r = c.post("/report/api/runs", json=body)
         if r.status_code == 409:
@@ -66,20 +74,28 @@ def main(argv: list[str] | None = None) -> int:
         if r.status_code != 202:
             print(f"refused: {r.status_code} {r.text}", file=sys.stderr)
             return 1
-        run = r.json()
-        print(json.dumps({"submitted": run["id"], "report": a.report}))
+        answer = r.json()
+        pending = {x["id"]: x for x in (answer["runs"] if "runs" in answer else [answer])}
+        print(json.dumps({"submitted": sorted(pending), "report": a.report,
+                          "clusters": sorted(x.get("cluster", "") for x in pending.values())}))
         if not a.wait:
             return 0
+        # Every run of the fan-out is waited for; the Job fails if ANY failed, and says which.
         deadline = time.monotonic() + a.timeout
-        while time.monotonic() < deadline:
+        failed = 0
+        while pending and time.monotonic() < deadline:
             time.sleep(2)
-            run = c.get(f"/report/api/runs/{run['id']}").json()
-            if run["status"] in ("done", "failed"):
-                print(json.dumps({"id": run["id"], "status": run["status"], "sha256": run.get("sha256"),
-                                  "bytes": run.get("bytes"), "error": run.get("error")}))
-                return 0 if run["status"] == "done" else 1
-    print("timed out waiting for the run", file=sys.stderr)
-    return 1
+            for run_id in list(pending):
+                run = c.get(f"/report/api/runs/{run_id}").json()
+                if run["status"] in ("done", "failed"):
+                    print(json.dumps({"id": run["id"], "cluster": run.get("cluster"), "status": run["status"],
+                                      "sha256": run.get("sha256"), "bytes": run.get("bytes"), "error": run.get("error")}))
+                    failed += run["status"] == "failed"
+                    del pending[run_id]
+        if pending:
+            print(f"timed out waiting for {len(pending)} run(s): {', '.join(sorted(pending))}", file=sys.stderr)
+            return 1
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

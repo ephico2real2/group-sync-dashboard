@@ -2,7 +2,11 @@
 {{- range $s := .Values.reporting.schedules }}
 ---
 # One CronJob per reporting.schedules[] entry: the report image's trigger module POSTs a run with
-# the service token and waits, so the Job's status IS the run's status.
+# the service token and waits, so the Job's status IS the run's status. The schedule is
+# cluster-agnostic (#149 R1): the service resolves every enabled cluster from its snapshot and the
+# Job waits for all of them; `cluster:` pins one. Formats default by origin in the service (R3:
+# html+json for a schedule); `formats:` overrides. `enabled: false` keeps the CronJob and suspends
+# it (R4) — definition, history and audit stay, nothing fires.
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -11,6 +15,9 @@ metadata:
   labels: {{- include "gsd.reportScheduleLabels" $ | nindent 4 }}
 spec:
   schedule: {{ $s.schedule | quote }}
+  {{- if and (hasKey $s "enabled") (not $s.enabled) }}
+  suspend: true
+  {{- end }}
   {{- $window := ($.Values.reporting | default dict).window | default dict }}
   {{- if eq (include "gsd.reportWindowEnabled" $) "true" }}
   # Fire the cron in the reporting window's zone so its schedule times land INSIDE the window; without
@@ -55,8 +62,10 @@ spec:
                 - {{ include "gsd.reportUrl" $ }}
                 - --report
                 - {{ $s.report | quote }}
+                {{- with $s.cluster }}
                 - --cluster
-                - {{ $s.cluster | quote }}
+                - {{ . | quote }}
+                {{- end }}
                 - --schedule
                 - {{ $s.name | quote }}
                 - --wait
@@ -64,7 +73,7 @@ spec:
                 - --params-json
                 - {{ toJson . | quote }}
                 {{- end }}
-                {{- range $f := ($s.formats | default (list "html" "pdf")) }}
+                {{- range $f := ($s.formats | default list) }}
                 - --format
                 - {{ $f | quote }}
                 {{- end }}
