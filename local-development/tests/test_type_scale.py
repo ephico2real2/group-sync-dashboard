@@ -238,3 +238,17 @@ def test_a_nested_comment_opener_is_seen(css):
     assert poisoned != css
     with pytest.raises(AssertionError):
         test_comments_do_not_nest(poisoned)
+
+
+def test_a_single_ladder_step_is_written_as_its_token(css):
+    """Review of #218 (OB3): an `optical:` note argues for a literal OFF the ladder. A declaration whose
+    whole value is one px figure that IS a ladder step (`margin-top: 2px` = --space-1) is not optical,
+    it is the token unspelled — the drift the ladder exists to prevent (the frontend-design skill:
+    promote hard-coded values). Shorthands mixing an off-ladder figure with a step are left to the
+    existing rule."""
+    space = {int(px) for _, px in re.findall(r"--space-(\d+):\s*(\d+)px", css)}
+    props = ("padding|padding-top|padding-right|padding-bottom|padding-left|gap|row-gap|column-gap"
+             "|margin|margin-top|margin-right|margin-bottom|margin-left")
+    offenders = [line.strip() for line, _, value in _declarations(css, props)
+                 if re.fullmatch(r"(\d+)px", value) and int(value[:-2]) in space]
+    assert not offenders, "a ladder step spelled as a literal:\n  " + "\n  ".join(offenders)
