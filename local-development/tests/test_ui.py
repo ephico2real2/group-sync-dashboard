@@ -582,6 +582,21 @@ class TestGroupDrilldown:
         dash.locator(f"tr[data-group='{name}']").click()
         dash.wait_for_selector("#back-groups")
 
+    def test_the_hover_rail_does_not_paint_under_the_first_cells_text(self, dash):
+        # #219 (OB3, review of #204): the 3px inset hover rail sat under the first cell's ink — the glyph
+        # began at x=1 with the rail spanning x=0..2. The first column keeps 3px clear, header and cells
+        # together, so the column stays aligned at rest.
+        dash.locator("button[data-nav='groups']").click()
+        dash.wait_for_selector("tr[data-group]")
+        gap = dash.evaluate("""() => {
+            const td = document.querySelector('tr.rowlink td:first-child');
+            const th = td.closest('table').querySelector('th:first-child');
+            const edge = (el) => { const r = document.createRange(); r.selectNodeContents(el); const b = [...r.getClientRects()].filter(b => b.width > 0)[0]; return b.left - el.getBoundingClientRect().left; };
+            return [edge(td), edge(th)];
+        }""")
+        assert gap[0] >= 3, f"the first cell's text starts {gap[0]:.1f}px in, under the 3px hover rail"
+        assert abs(gap[0] - gap[1]) <= 0.5, gap                       # the header is aligned with its column
+
     def test_members_are_listed_with_join_time(self, dash):
         self._open_group(dash, "app-ocp-rbac-alpha-ns-admin")
         body = dash.locator("body").inner_text()

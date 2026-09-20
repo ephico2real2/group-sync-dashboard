@@ -990,6 +990,12 @@ th { text-transform: uppercase; letter-spacing: 0.05em; }
 /* The accent rail on hover, matching the lead-card treatment: the section's colour is how
    this page says "this one", and reusing it for hover keeps one vocabulary. */
 .rowlink:hover td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+/* The rail is INSET because an outward shadow would be clipped by .scroll-x — so the first column
+   keeps its ink clear of it (#219: the "− left" glyph's ink began at x=1 under a rail spanning
+   x=0..2). Header and cells together, so the column stays aligned at rest; :where() keeps the
+   specificity at td:first-child's own so .kpi-page's wider padding, .risk-row's rail and
+   .report-table's cells still win. */
+:where(table:has(tr.rowlink)) td:first-child, :where(table:has(tr.rowlink)) th:first-child { padding-left: 3px; /* optical: the rail's own width */ }
 
 /* Buttons and the disclosure lift very slightly. 1px, not the skill's 2px: these sit in
    dense table headers where a 2px lift reads as the row jumping. */
