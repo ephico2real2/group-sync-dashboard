@@ -63,22 +63,29 @@ minted Secrets survive either way). `--values` applies to both modes.
 |---|---|---|---|---|---|
 | `./release-crc.sh` | Helm | this worktree | built `<ver>-<sha>`; an existing clean tag is reused | `environments/crc.yaml` (`-f`) | clean tree, token session |
 | `--allow-dirty` | Helm | worktree | `<ver>-<sha>-dirty`, never reused | same | — |
-| `--values X` | Helm | worktree | as above | `X` via `-f`; `X` may be untracked or edited (outside the build context, so not "dirty") | `X` exists |
+| `--values X` | Helm | worktree | as above | `X` via `-f`; an `X` outside `local-development/` may be untracked or edited (outside the build context, so not "dirty") | `X` exists |
 | `--argocd` | Argo | GitHub at HEAD | built, handed to the Application as `helm.parameters` | the Application's default | commit on a remote branch |
 | `--argocd --values X` | Argo | GitHub at HEAD | same | `valueFiles: [../../X]` | `X` committed, clean, pushed |
-| `--argocd <branch>` | Argo | GitHub at `<branch>` | the chart's default — the published quay image, which lags main | default | branch on origin |
+| `--argocd <branch>` | Argo | GitHub at `<branch>` | the chart's default — the published quay image, which lags main; no in-pod commit check | default | branch on origin (fetched; the waiter wants its commit synced) |
 | `--argocd <branch> --values X` | Argo | GitHub at `<branch>` | same | `[../../X]` | `X` present at `origin/<branch>` |
-| `--build-only` | untouched | — | built + pushed | — | — |
+| `--build-only` | untouched | — | built, **not** pushed (no credentials needed) | — | — |
 | `--allow-dirty --argocd` | **refused** | | | | Argo deploys a commit; a dirty tree has none |
 
 `X` is repository-relative (`environments/other.yaml`). Same tagging and verification rules as the
-external script: `<version>-<git-sha>`, the commit stamp verified inside the image before the push
-and read back out of the running pod afterwards. Helm mode deploys with `helm upgrade --install
--f <values> --set image.*`; nothing is written back into the tree — `helm get values`, or the
-Application's spec, records what is deployed. The typical loop: iterate with the bare script (or
-`--values` for a local variant), `--argocd` on the pushed head before the PR is called ready,
-`--argocd main` after a merge once the app release is cut. `./argocd-wait.sh` is the waiter the
-Argo modes use (Synced/Healthy, or the sync's failure).
+external script: `<version>-<git-sha>`, the commit stamp verified inside both images before the
+push and read back out of the running dashboard pod afterwards (not in `--argocd <branch>`, which
+deploys the chart's published image, not one this script built). A clean commit whose two tags are
+already in the registry is reused without building; one tag without the other is rebuilt whole.
+Helm mode deploys with `helm upgrade --install -f <values> --set image.*`; the Argo modes write
+the Application once (`gitops/argocd-application-dashboard.yaml` with the revision, the image
+parameters and the values file merged in, one `oc apply`) so the controller never sees the file's
+`main` in between. Nothing is written back into the tree — `helm get values`, or the Application's
+spec, records what is deployed. The typical loop: iterate with the bare script (or `--values` for
+a local variant), `--argocd` on the pushed head before the PR is called ready, `--argocd main`
+after a merge once the app release is cut. `./argocd-wait.sh` is the waiter the Argo modes use: it
+accepts Synced/Healthy/Succeeded only once the status was computed for the current spec
+(`status.sync.comparedTo.source`) and for the expected commit, and names the failed hook or
+resource on timeout.
 
 ## Tests
 

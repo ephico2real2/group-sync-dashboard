@@ -23,22 +23,23 @@
 #                                                                tag is reused
 #   --allow-dirty                   Helm     worktree            <ver>-<sha>-dirty,    same               —
 #                                                                never reused
-#   --values X                      Helm     worktree            as above              X (-f); X may be   X exists
-#                                                                                      untracked/edited —
-#                                                                                      it is outside the
-#                                                                                      build context, so
-#                                                                                      it is not "dirty"
+#   --values X                      Helm     worktree            as above              X (-f); X outside  X exists
+#                                                                                      local-development/
+#                                                                                      may be untracked
+#                                                                                      or edited: not in
+#                                                                                      the build context,
+#                                                                                      so not "dirty"
 #   --argocd                        Argo     GitHub @ HEAD       built, handed to the  the Application's  commit on a
 #                                                                Application as        default (crc.yaml) remote branch
 #                                                                helm.parameters
 #   --argocd --values X             Argo     GitHub @ HEAD       same                  valueFiles          X committed,
 #                                                                                      [../../X]          clean, pushed
 #   --argocd <branch>               Argo     GitHub @ <branch>   the chart's default   default            branch on
-#                                                                (the PUBLISHED quay                      origin
-#                                                                image — lags main)
+#                                                                (the PUBLISHED quay                      origin; no
+#                                                                image — lags main)                       in-pod check
 #   --argocd <branch> --values X    Argo     GitHub @ <branch>   same                  [../../X]          X present at
 #                                                                                                         origin/<branch>
-#   --build-only                    (none)   —                   built + pushed        —                  —
+#   --build-only                    (none)   —                   built, NOT pushed     —                  —
 #   --allow-dirty --argocd          REFUSED: Argo deploys a commit and a dirty tree has none — the image
 #                                   would not match the chart Argo reads, and uncommitted chart edits
 #                                   would silently not deploy.
@@ -83,7 +84,8 @@ expect=""
 for arg in "$@"; do
   case "$expect" in
     revision) [ "${arg#--}" = "$arg" ] && { ARGO_REVISION="$arg"; expect=""; continue; }; expect="" ;;
-    values) VALUES_FILE="$arg"; expect=""; continue ;;
+    values) case "$arg" in --*) echo "--values needs a path, got ${arg}" >&2; exit 2 ;; esac
+            VALUES_FILE="$arg"; expect=""; continue ;;
   esac
   case "$arg" in
     --build-only) BUILD_ONLY=true ;;
@@ -112,12 +114,28 @@ else
   RELEASE_VALUES="${RELEASE_VALUES:-../environments/crc.yaml}"
   ARGO_VALUES=""                                       # the Application's own default
 fi
+
+# --argocd <branch>: the branch is resolved on origin FIRST. A fetch that fails must not fall
+# through to a stale remote-tracking ref (measured by review: with the remote unreachable,
+# `fetch || true` accepted a file that no longer existed there), and the commit it resolves to is
+# what the waiter has to see synced — the Application's symbolic `targetRevision: main` does not
+# change when main moves, so without it the previous sync's status would satisfy the waiter.
+EXPECTED_REVISION=""
+if [ "$ARGOCD" = true ] && [ -n "$ARGO_REVISION" ]; then
+  if ! git fetch -q origin "$ARGO_REVISION"; then
+    echo "ERROR: could not fetch origin/${ARGO_REVISION}; Argo CD reads from there, and a stale local copy proves nothing." >&2
+    exit 1
+  fi
+  EXPECTED_REVISION=$(git rev-parse --verify --quiet "refs/remotes/origin/${ARGO_REVISION}^{commit}") || {
+    echo "ERROR: origin/${ARGO_REVISION} is not a branch on the remote." >&2; exit 1; }
+fi
+
+# The values file under Argo is read from the repository: at origin/<branch> for the branch path,
+# at this commit (so committed and clean) for the build path. Checked at the top level — an exit
+# inside a command substitution would only leave the subshell.
 if [ "$ARGOCD" = true ] && [ -n "$VALUES_FILE" ]; then
-  # Checked here, at the top level: inside $(argo_values_patch) an exit would only leave the subshell.
   if [ -n "$ARGO_REVISION" ]; then
-    # The Application will read the file from origin/<branch>, whatever this tree holds.
-    git fetch -q origin "$ARGO_REVISION" 2>/dev/null || true
-    if ! git cat-file -e "origin/${ARGO_REVISION}:${VALUES_FILE}" 2>/dev/null; then
+    if ! git cat-file -e "${EXPECTED_REVISION}:${VALUES_FILE}" 2>/dev/null; then
       echo "ERROR: --values ${VALUES_FILE} does not exist on origin/${ARGO_REVISION}; Argo CD reads it from there." >&2; exit 1
     fi
   else
@@ -129,28 +147,47 @@ if [ "$ARGOCD" = true ] && [ -n "$VALUES_FILE" ]; then
     fi
   fi
 fi
-argo_values_patch() {
-  # A JSON-patch op for the Application's valueFiles, or nothing to leave the file's default.
-  [ -n "$ARGO_VALUES" ] || return 0
-  printf ',{"op":"replace","path":"/spec/source/helm/valueFiles","value":["%s"]}' "$ARGO_VALUES"
+
+# ONE write to the Application. The committed file is the base; the revision, the image parameters
+# and the values file are merged into it locally and the result applied in a single request — an
+# apply of the file followed by a patch would let the controller see the file's `main` with the
+# published image in between and start syncing it (review finding). Merging locally also means the
+# next apply carries the same fields in last-applied, so a run without --values or without an
+# image really does return to the file's defaults. Arguments: revision, then the four image values
+# or nothing (the branch path: the chart's default image, parameters cleared).
+apply_application() {
+  local revision="$1"; shift
+  local patch
+  patch=$(python3 - "$revision" "$ARGO_VALUES" "$@" <<'PY'
+import json, sys
+revision, values, *image = sys.argv[1:]
+helm = {"parameters": [
+    {"name": "image.repository", "value": image[0]}, {"name": "image.tag", "value": image[1]},
+    {"name": "reporting.image.repository", "value": image[2]}, {"name": "reporting.image.tag", "value": image[3]},
+] if image else []}
+if values:
+    helm["valueFiles"] = [values]
+print(json.dumps({"spec": {"source": {"targetRevision": revision, "helm": helm}}}))
+PY
+)
+  oc patch --local -f ../gitops/argocd-application-dashboard.yaml --type merge -p "$patch" -o json \
+    | oc apply -f - >/dev/null
+  # A spec change refreshes the comparison; a re-run on the same branch does not — force it, or
+  # the waiter sits through the controller's polling interval (3 min by default).
+  oc annotate application "${APP_NAME}" -n "${ARGO_NAMESPACE}" --overwrite argocd.argoproj.io/refresh=normal >/dev/null
 }
 
-# --argocd <branch> with no build: point the Application at that revision and its chart's default
+# --argocd <branch> with no build: point the Application at that branch and its chart's default
 # image, e.g. `--argocd main` after a merge. Any other --argocd use builds this commit first.
 if [ "$ARGOCD" = true ] && [ -n "$ARGO_REVISION" ]; then
-  echo "argocd  : ${APP_NAME} -> revision ${ARGO_REVISION}, the chart's default image"
+  echo "argocd  : ${APP_NAME} -> revision ${ARGO_REVISION} (${EXPECTED_REVISION:0:10}), the chart's default image"
   if helm status "${IMAGE}" -n "${NAMESPACE}" >/dev/null 2>&1; then
     echo "helm    : uninstalling release ${IMAGE} (the PVCs and the minted Secrets survive)"
     helm uninstall "${IMAGE}" -n "${NAMESPACE}" --wait --timeout 5m
   fi
-  oc apply -f ../gitops/argocd-application-dashboard.yaml >/dev/null
   [ -n "$ARGO_VALUES" ] && echo "values  : ${VALUES_FILE} (the Application's valueFiles)"
-  oc patch application "${APP_NAME}" -n "${ARGO_NAMESPACE}" --type json -p "[
-    {\"op\": \"replace\", \"path\": \"/spec/source/targetRevision\", \"value\": \"${ARGO_REVISION}\"},
-    {\"op\": \"remove\", \"path\": \"/spec/source/helm/parameters\"}$(argo_values_patch)]" 2>/dev/null \
-  || oc patch application "${APP_NAME}" -n "${ARGO_NAMESPACE}" --type json -p "[
-    {\"op\": \"replace\", \"path\": \"/spec/source/targetRevision\", \"value\": \"${ARGO_REVISION}\"}$(argo_values_patch)]"
-  exec ./argocd-wait.sh "${APP_NAME}" "${ARGO_NAMESPACE}"
+  apply_application "$ARGO_REVISION"
+  exec ./argocd-wait.sh "${APP_NAME}" "${ARGO_NAMESPACE}" "${ARGOCD_WAIT_TIMEOUT:-900}" "${EXPECTED_REVISION}"
 fi
 
 VERSION=$(python3 -c "import re,pathlib;print(re.search(r'^version = \"(.+?)\"',pathlib.Path('pyproject.toml').read_text(),re.M).group(1))")
@@ -166,7 +203,7 @@ if [ "$ARGOCD" != true ] && [ -n "$VALUES_FILE" ]; then
   # cannot reach the tag. (--argocd mode refused an uncommitted one above.)
   case "$VALUES_FILE" in
     local-development/*) ;;
-    *) DIRTY="$(printf '%s\n' "$DIRTY" | grep -v -- " ${VALUES_FILE}\$" || true)" ;;
+    *) DIRTY="$(git -C "$REPO_ROOT" status --porcelain -- . ":(exclude,top,literal)${VALUES_FILE}")" ;;
   esac
 fi
 if [ -n "$DIRTY" ]; then
@@ -187,6 +224,33 @@ echo "version : ${VERSION}"
 echo "commit  : ${COMMIT}  (branch ${BRANCH})"
 echo "tag     : ${TAG}"
 
+# Immutable tags: an existing <version>-<sha> is never overwritten. A CLEAN commit whose BOTH
+# images are already in the registry is the same source, so it is REUSED without building — a
+# Helm→Argo handover of the same commit does not rebuild — but a -dirty tag is a snapshot of
+# nothing reproducible and is refused. One tag present without the other (an interrupted push)
+# is rebuilt and pushed whole: the same commit under the same tag is the same source.
+REPORT_IMAGE="${IMAGE}-report"
+REPORT_REF="${REGISTRY}/${NAMESPACE}/${REPORT_IMAGE}:${TAG}"
+BUILD=true
+if [ "$BUILD_ONLY" != true ]; then
+  have_dash=false; have_report=false
+  oc get istag "${IMAGE}:${TAG}" -n "${NAMESPACE}" >/dev/null 2>&1 && have_dash=true
+  oc get istag "${REPORT_IMAGE}:${TAG}" -n "${NAMESPACE}" >/dev/null 2>&1 && have_report=true
+  if [ "$have_dash" = true ] || [ "$have_report" = true ]; then
+    case "$TAG" in
+      *-dirty)
+        echo "ERROR: ${TAG} already exists in the registry." >&2
+        echo "       Tags are immutable — commit your changes so the tag advances." >&2
+        exit 1 ;;
+    esac
+  fi
+  if [ "$have_dash" = true ] && [ "$have_report" = true ]; then
+    echo "reused  : ${TAG} is already in the registry, both images (the same commit); not building"
+    BUILD=false
+  fi
+fi
+
+if [ "$BUILD" = true ]; then
 podman build \
   --build-arg "GIT_COMMIT=${COMMIT}" \
   --build-arg "GIT_BRANCH=${BRANCH}" \
@@ -204,7 +268,6 @@ echo "built   : ${IMAGE}:${TAG} (stamp verified)"
 # THE REPORT IMAGE, same commit, same tag (C3, docs/specs/SPEC_C3_reporting_microservice.md §3.3): the
 # chart resolves reporting.image.* at the dashboard's appVersion, so the lab release must ship both
 # images from one build or the report pod would pull a tag this registry does not hold.
-REPORT_IMAGE="${IMAGE}-report"
 podman build \
   --build-arg "GIT_COMMIT=${COMMIT}" \
   --build-arg "GIT_BRANCH=${BRANCH}" \
@@ -220,28 +283,9 @@ echo "built   : ${REPORT_IMAGE}:${TAG} (stamp verified)"
 if [ "$BUILD_ONLY" = true ]; then exit 0; fi
 
 podman login -u kubeadmin -p "$(oc whoami -t)" --tls-verify=false "${REGISTRY}" >/dev/null
-
-# Immutable tags: an existing <version>-<sha> is never overwritten. A CLEAN commit already in the
-# registry is the same source, so it is REUSED — a Helm→Argo handover of the same commit does not
-# rebuild — but a -dirty tag is a snapshot of nothing reproducible and is refused as before.
-PUSH=true
-if oc get istag "${IMAGE}:${TAG}" -n "${NAMESPACE}" >/dev/null 2>&1; then
-  case "$TAG" in
-    *-dirty)
-      echo "ERROR: ${TAG} already exists in the registry." >&2
-      echo "       Tags are immutable — commit your changes so the tag advances." >&2
-      exit 1 ;;
-    *)
-      echo "reused  : ${TAG} is already in the registry (the same commit); not rebuilding"
-      PUSH=false ;;
-  esac
-fi
-
-if [ "$PUSH" = true ]; then
 podman tag "${IMAGE}:${TAG}" "${REF}"
 podman push --tls-verify=false "${REF}" >/dev/null
 echo "pushed  : ${REF}"
-REPORT_REF="${REGISTRY}/${NAMESPACE}/${REPORT_IMAGE}:${TAG}"
 podman tag "${REPORT_IMAGE}:${TAG}" "${REPORT_REF}"
 podman push --tls-verify=false "${REPORT_REF}" >/dev/null
 echo "pushed  : ${REPORT_REF}"
@@ -295,17 +339,10 @@ if [ "$ARGOCD" = true ]; then
     echo "helm    : uninstalling release ${IMAGE} (the PVCs and the minted Secrets survive)"
     helm uninstall "${IMAGE}" -n "${NAMESPACE}" --wait --timeout 5m
   fi
-  oc apply -f ../gitops/argocd-application-dashboard.yaml >/dev/null
   echo "argocd  : ${APP_NAME} -> revision ${COMMIT}, image ${TAG}"
   [ -n "$ARGO_VALUES" ] && echo "values  : ${VALUES_FILE} (the Application's valueFiles)"
-  oc patch application "${APP_NAME}" -n "${ARGO_NAMESPACE}" --type json -p "[
-    {\"op\":\"replace\",\"path\":\"/spec/source/targetRevision\",\"value\":\"${COMMIT}\"},
-    {\"op\":\"add\",\"path\":\"/spec/source/helm/parameters\",\"value\":[
-      {\"name\":\"image.repository\",\"value\":\"${INTERNAL%:*}\"},
-      {\"name\":\"image.tag\",\"value\":\"${TAG}\"},
-      {\"name\":\"reporting.image.repository\",\"value\":\"${REPORT_INTERNAL%:*}\"},
-      {\"name\":\"reporting.image.tag\",\"value\":\"${TAG}\"}]}$(argo_values_patch)]"
-  ./argocd-wait.sh "${APP_NAME}" "${ARGO_NAMESPACE}"
+  apply_application "$COMMIT" "${INTERNAL%:*}" "$TAG" "${REPORT_INTERNAL%:*}" "$TAG"
+  ./argocd-wait.sh "${APP_NAME}" "${ARGO_NAMESPACE}" "${ARGOCD_WAIT_TIMEOUT:-900}" "$(git rev-parse HEAD)"
 else
   if oc get application "${APP_NAME}" -n "${ARGO_NAMESPACE}" >/dev/null 2>&1; then
     echo "argocd  : deleting Application ${APP_NAME} — Helm takes the release over (the PVCs and the minted Secrets survive)"
