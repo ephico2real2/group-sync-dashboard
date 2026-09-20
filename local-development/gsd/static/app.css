@@ -1087,7 +1087,19 @@ tr.report-pick:hover td:first-child::before, tr.report-pick.current td:first-chi
 .rp-title { font-family: var(--font-mono); font-weight: 700; font-size: var(--text-md); letter-spacing: -.015em;
   color: var(--text-primary); white-space: nowrap; }
 tr.report-pick.current .rp-title { color: var(--rk); }
+.rp-key { display: block; font-family: var(--font-mono); font-size: var(--text-micro); color: var(--text-muted); margin-top: 2px; } /* optical: the key hangs just under its title (#173) */
+.rp-count { font-weight: 400; margin-left: var(--space-3); vertical-align: middle; }
 .rp-desc { color: var(--text-secondary); font-size: var(--text-md); max-width: 62ch; }
+/* #173: the form a click opens carries its report's colour on its edge; the bar above it names where
+   Back goes and which report this is. */
+.report-panel { --rk: var(--accent); border-left: 4px solid var(--rk); }
+.report-panel.r-access { --rk: var(--k-access); }
+.report-panel.r-rbac { --rk: var(--k-rbac); }
+.report-panel.r-identity { --rk: var(--k-identity); }
+.report-panel.r-activity { --rk: var(--k-activity); }
+.report-panel.r-compliance { --rk: var(--k-compliance); }
+.panelbar { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); flex-wrap: wrap;
+  margin-bottom: var(--space-3); font-size: var(--text-sm); }
 .rp-off { color: var(--text-muted); font-style: italic; }
 tr.report-pick[aria-disabled="true"] { opacity: .5; cursor: not-allowed;
   background: linear-gradient(90deg, color-mix(in srgb, var(--rk) 7%, transparent), transparent 44%); }

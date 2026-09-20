@@ -6286,7 +6286,7 @@ class TestReportsTab:
                         {label: "company.net/app-environment", values: ["prod"]},
                     ],
                 };
-                view.reportPick = "namespace-access";
+                view.report = "namespace-access";
                 render();
             }""")
             assert page.locator('[data-param="selectors"]').count() == 2                       # one select per dimension
@@ -6356,7 +6356,7 @@ class TestReportsTab:
                 data.reportCatalog.namespaceSelectorDimensions = {
                     "crc-local": [{label: "__proto__", values: ["prod"]}]
                 };
-                view.reportPick = "namespace-access";
+                view.report = "namespace-access";
                 render();
             }""")
             page.select_option("#report-selector-0", ["prod"])
@@ -6383,7 +6383,7 @@ class TestReportsTab:
                 spec.params = spec.params.filter((p) => p.name !== "selectors");   // old pod: no selectors spec
                 delete data.reportCatalog.namespaceSelectorDimensions;
                 data.reportCatalog.namespaceSelectors = {"crc-local": {label: "company.net/mnemonic", values: ["demo", "gsd"]}};
-                view.reportPick = "namespace-access";
+                view.report = "namespace-access";
                 render();
             }""")
             assert page.locator("#report-mnemonics").count() == 1
@@ -6408,7 +6408,7 @@ class TestReportsTab:
                 data.reportCatalog.namespaceSelectorDimensions = {
                     "crc-local": [{label: "company.net/mnemonic", values: ["demo"]}]
                 };
-                view.reportPick = "namespace-access";
+                view.report = "namespace-access";
                 view.reportForm["namespace-access"] = { selectors: {"company.net/mnemonic": ["demo"]} };
                 render();
                 schedulePreview("namespace-access");
@@ -6465,7 +6465,7 @@ class TestReportsTab:
                 data.reportCatalog.namespaceSelectorDimensions = {
                     "crc-local": [{label: "company.net/mnemonic", values: ["beta", "demo"]}]
                 };
-                view.reportPick = "namespace-access";
+                view.report = "namespace-access";
                 render();
             }""")
             btn = page.locator("#report-preview-view")
@@ -6508,7 +6508,7 @@ class TestReportsTab:
                 data.reportCatalog.namespaceSelectorDimensions = {
                     "crc-local": [{label: "company.net/mnemonic", values: ["beta", "demo"]}]
                 };
-                view.reportPick = "namespace-access";
+                view.report = "namespace-access";
                 render();
             }""")
             page.select_option("#report-selector-0", ["beta", "demo"])
@@ -6542,7 +6542,7 @@ class TestReportsTab:
                 data.reportCatalog.namespaceSelectorDimensions = {
                     "crc-local": [{label: "company.net/mnemonic", values: ["beta", "demo"]}]
                 };
-                view.reportPick = "namespace-access";
+                view.report = "namespace-access";
                 render();
             }""")
             page.select_option("#report-selector-0", ["beta"])
@@ -6571,7 +6571,7 @@ class TestReportsTab:
                 data.reportCatalog.namespaceSelectorDimensions = {
                     "crc-local": [{label: "company.net/mnemonic", values: ["beta", "demo"]}]
                 };
-                view.reportPick = "namespace-access";
+                view.report = "namespace-access";
                 render();
             }""")
             page.select_option("#report-selector-0", ["beta"])
@@ -6610,10 +6610,84 @@ class TestReportsTab:
             page.click("#report-pick-access-certification")
             page.wait_for_function("""() => {
                 const f = document.getElementById('report-form');
-                if (!f || view.reportPick !== 'access-certification') return false;
+                if (!f || view.report !== 'access-certification') return false;
                 const r = f.getBoundingClientRect();
                 return r.bottom > 0 && r.top >= -8 && r.top < 200;
             }""")
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_a_report_is_a_position_deep_link_back_forward_and_the_labelled_back_control(self, browser, reporting_server):
+        # #173: `#page=reports&report=<key>` opens that form; a fresh Reports tab is the catalogue alone;
+        # the click pushes a position so Back closes the form and Forward reopens it; the back control
+        # names where the reader came from (the previous report, or "all reports"), through backLabel().
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.click('button.tab:text-is("Reports")')
+            page.wait_for_selector("#report-picker table.report-table")
+            assert page.locator("#report-form").count() == 0, "no report chosen: the catalogue alone"
+            assert page.locator("#report-picker .rp-count").inner_text().strip() == "10 available"   # login-activity is off
+            assert page.locator("#report-pick-groups .rp-key").inner_text().strip() == "groups"
+            page.click("#report-pick-groups")
+            page.wait_for_selector("#report-form.r-identity")
+            assert page.evaluate("() => location.hash") == "#page=reports&cluster=crc-local&report=groups"
+            assert page.locator("#report-back").inner_text() == "← all reports"
+            page.click("#report-pick-users")                                   # a second report: the bar names the first
+            page.wait_for_selector("#report-form h3:text-is('Users')")
+            assert page.locator("#report-back").inner_text() == "← Groups and membership changes"
+            page.click("#report-back")                                        # history.back(): the previous report
+            page.wait_for_selector("#report-form h3:text-is('Groups and membership changes')")
+            page.go_back()                                                    # and the browser's own Back: the catalogue
+            page.wait_for_function("() => view.report === null && !document.getElementById('report-form')")
+            page.go_forward()
+            page.wait_for_selector("#report-form h3:text-is('Groups and membership changes')")
+            # a deep link, pasted: the form opens, the back control rises to the catalogue
+            page.goto(base + "#page=reports&cluster=crc-local&report=access-matrix")
+            page.wait_for_selector("#report-form h3:text-is('Access matrix')")
+            assert page.locator("#report-back").inner_text() == "← all reports"
+            page.click("#report-back")
+            page.wait_for_function("() => view.report === null && !document.getElementById('report-form')")
+            assert page.locator("#report-picker").count() == 1
+            # a key the catalogue does not carry opens nothing rather than the first report
+            page.goto(base + "#page=reports&cluster=crc-local&report=no-such-report")
+            page.wait_for_selector("#report-picker table.report-table")
+            assert page.locator("#report-form").count() == 0
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_every_report_opens_by_click_or_keyboard_with_its_panel_top_in_view_at_phone_width(self, browser, reporting_server):
+        # #173 DoD: on every viewport the click (or Enter/Space on the focused row) lands the panel's top
+        # inside the viewport, without the reader scrolling; at 375 px the page never scrolls sideways and
+        # the catalogue table scrolls inside its own container.
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            for width, height in ((375, 740), (1280, 800)):
+                page.set_viewport_size({"width": width, "height": height})
+                page.goto(base + "#page=reports&cluster=crc-local")
+                page.wait_for_selector("#report-picker table.report-table")
+                keys = page.locator("tr.report-pick[tabindex='0']").evaluate_all("es => es.map(e => e.dataset.report)")
+                assert len(keys) == 10
+                for i, key in enumerate(keys):
+                    row = page.locator(f"#report-pick-{key}")
+                    if i % 2:
+                        row.focus(); page.keyboard.press("Enter")
+                    else:
+                        row.click()
+                    page.wait_for_function("""(key) => {
+                        const f = document.getElementById('report-form');
+                        if (!f || view.report !== key) return false;
+                        const r = f.getBoundingClientRect();
+                        return r.top >= -1 && r.top < innerHeight && r.bottom > 0;
+                    }""", arg=key, timeout=5_000)
+                    wide = page.evaluate("""() => [...document.querySelectorAll('body *')]
+                        .filter(e => e.getBoundingClientRect().right > innerWidth + 1)
+                        .slice(0, 6).map(e => e.tagName.toLowerCase() + (e.id ? '#' + e.id : '') + (e.className && typeof e.className === 'string' ? '.' + e.className.split(' ').join('.') : ''))""")
+                    assert page.evaluate("() => document.documentElement.scrollWidth <= innerWidth"), (width, key, wide)
+                    assert page.evaluate("() => getComputedStyle(document.querySelector('.report-table-wrap')).overflowX") == "auto"
             assert not errors, errors
         finally:
             ctx.close()
@@ -6636,7 +6710,7 @@ class TestReportsTab:
                         {label: "company.net/app-environment", values: ["prod", "qa"]},
                     ]
                 };
-                view.reportPick = "namespace-access";
+                view.report = "namespace-access";
                 render();
             }""")
             clear = page.locator("#report-preview-clear")
