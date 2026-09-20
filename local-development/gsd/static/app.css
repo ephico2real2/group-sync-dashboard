@@ -990,6 +990,15 @@ th { text-transform: uppercase; letter-spacing: 0.05em; }
 /* The accent rail on hover, matching the lead-card treatment: the section's colour is how
    this page says "this one", and reusing it for hover keeps one vocabulary. */
 .rowlink:hover td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+/* The rail is INSET because an outward shadow would be clipped by .scroll-x — so the first column
+   keeps its ink clear of it (#219: the user-History "− left" glyph's ink began at x=1 under a rail
+   spanning x=0..2). Header and cells together, so the column stays aligned at rest. Both :where()s
+   zero what they wrap, so this rule is (0,0,1) — the generic th/td's own, beaten by source order only
+   — while every class-qualified table padding (.kpi-page's 18px, .audit-table's 0, .report-table's)
+   stays authoritative whether it comes earlier or later (review of #226: Grok measured the (0,1,1) the
+   first cut had, which beat .audit-table by order; Codex proposed the second :where()). Today
+   .audit-table, .report-table and .risk-row carry no tr.rowlink anyway. */
+:where(table:has(tr.rowlink)) td:where(:first-child), :where(table:has(tr.rowlink)) th:where(:first-child) { padding-left: 3px; /* optical: the rail's own width */ }
 
 /* Buttons and the disclosure lift very slightly. 1px, not the skill's 2px: these sit in
    dense table headers where a 2px lift reads as the row jumping. */
