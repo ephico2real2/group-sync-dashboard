@@ -182,7 +182,10 @@ type: application
 # no template or default changes; appVersion unchanged.
 # CHART 0.42.0 (2026-09-20), MINOR: clusters as labelled Secrets (#230 S1) — a namespaced Role on
 # secrets (get, list, watch) and the clusterConfig.secrets.enabled switch, on by default; migration 19.
-version: 0.42.0
+# CHART 0.42.1 (2026-09-20), PATCH: visibility.clusterConfigViewSar / .clusterConfigManageSar —
+# the cluster-configuration tier's two SAR questions (#230), defaulting to get/create secrets in
+# the release namespace; no other template or default change.
+version: 0.42.1
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,

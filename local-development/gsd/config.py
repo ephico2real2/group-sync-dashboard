@@ -558,6 +558,40 @@ class Settings:
     visibility_usage_admin_sar_subresource: str = ""
     visibility_usage_admin_sar_verb: str = "update"
     visibility_usage_admin_sar_namespace: str = ""
+
+    # THE CLUSTER-CONFIGURATION TIER — two levels of its own (#230; the operator's ruling of
+    # 2026-09-20, "a new tier boss — look at how argocd does it"). Argo CD's RBAC carries a
+    # first-class `clusters` resource with `get` and `create/update/delete` actions, granted to
+    # roles bound to SSO groups, default-deny. We carry no policy file — every tier here is a
+    # SubjectAccessReview against the host cluster, so OpenShift groups and RoleBindings already
+    # ARE that mapping — so the tier is a named pair of SAR questions about the very objects this
+    # surface exposes, the cluster Secrets themselves:
+    #
+    #   clusterconfig:view    (Argo `clusters, get`)     — `get secrets` in the dashboard's namespace
+    #   clusterconfig:manage  (Argo `clusters, create…`) — `create secrets` in that namespace
+    #
+    # It reads as what it is: you may SEE cluster credentials if you may read the Secrets that hold
+    # them, and CHANGE them if you may create those Secrets. Measured on CRC 2026-09-20: the
+    # `cluster-reader` ClusterRole — the deliberate auditor persona, which passes the WIDE tier by
+    # design — has ZERO of its 172 rules covering core/`secrets`, and `oc auth can-i {get,list,
+    # create,update,delete} secrets` answers `no` for a non-admin; so the auditor fails both levels
+    # by construction and a cluster-admin passes both. No borrowed Usage-tab question and no new
+    # vocabulary for an operator to learn.
+    #
+    # Each level is asked SEPARATELY and has its own resolver and cache: `manage` does not imply
+    # `view` in code, so a site may grant them apart. An empty namespace here means THE POD'S OWN
+    # (the namespace the Secrets live in), not a cluster-scoped check — the opposite of the wide
+    # tier's empty, because these questions are namespaced by nature.
+    visibility_clusterconfig_view_sar_api_group: str = ""
+    visibility_clusterconfig_view_sar_resource: str = "secrets"
+    visibility_clusterconfig_view_sar_subresource: str = ""
+    visibility_clusterconfig_view_sar_verb: str = "get"
+    visibility_clusterconfig_view_sar_namespace: str = ""
+    visibility_clusterconfig_manage_sar_api_group: str = ""
+    visibility_clusterconfig_manage_sar_resource: str = "secrets"
+    visibility_clusterconfig_manage_sar_subresource: str = ""
+    visibility_clusterconfig_manage_sar_verb: str = "create"
+    visibility_clusterconfig_manage_sar_namespace: str = ""
     # How long a viewer's tier verdict may be reused before it is re-decided.
     #
     # THE WORST-CASE STALENESS WINDOW, stated where the number lives: the SAR evaluates live RBAC,
@@ -927,6 +961,31 @@ def _usage_visibility_sar_setting(raw: dict) -> tuple[str, str, str, str, str]:
                         "update clusterrolebindings.rbac.authorization.k8s.io")
 
 
+_CLUSTERCONFIG_VIEW_SAR_DEFAULTS = {
+    "ApiGroup": "",
+    "Resource": "secrets",
+    "Verb": "get",
+    "Namespace": "",
+}
+
+_CLUSTERCONFIG_MANAGE_SAR_DEFAULTS = dict(_CLUSTERCONFIG_VIEW_SAR_DEFAULTS, Verb="create")
+
+
+def _clusterconfig_view_sar_setting(raw: dict) -> tuple[str, str, str, str, str]:
+    """`clusterconfig:view` (chart: visibility.clusterConfigViewSar) — Argo's `clusters, get`.
+    See Settings for the measurement behind the default."""
+    return _sar_setting(raw, "visibilityClusterConfigViewSar", _CLUSTERCONFIG_VIEW_SAR_DEFAULTS,
+                        "get secrets")
+
+
+def _clusterconfig_manage_sar_setting(raw: dict) -> tuple[str, str, str, str, str]:
+    """`clusterconfig:manage` (chart: visibility.clusterConfigManageSar) — Argo's `clusters,
+    create/update/delete`. Its own setting, never derived from the view one: a site may grant the
+    two apart, and one parser serving both would let a custom view question silently move manage."""
+    return _sar_setting(raw, "visibilityClusterConfigManageSar", _CLUSTERCONFIG_MANAGE_SAR_DEFAULTS,
+                        "create secrets")
+
+
 def _bool_setting(raw: dict, env_name: str, yaml_key: str, default: bool) -> bool:
     """Env wins over the ConfigMap. Accepts the YAML spellings, not Python truthiness.
 
@@ -1202,6 +1261,8 @@ def load_settings(path: str | Path) -> Settings:
 
     admin_sar = _visibility_sar_setting(raw)
     usage_admin_sar = _usage_visibility_sar_setting(raw)
+    clusterconfig_view_sar = _clusterconfig_view_sar_setting(raw)
+    clusterconfig_manage_sar = _clusterconfig_manage_sar_setting(raw)
     cookie_expire = _duration_setting(raw, "GSD_SESSION_COOKIE_EXPIRE", "sessionCookieExpire", 14400)
     idle_enabled, idle_seconds, idle_warning = _idle_timeout_setting(raw, cookie_expire)
     if raw.get("reportingUrl") and int(_num_setting(raw, "GSD_REPORTING_SNAPSHOT_INTERVAL_SECONDS", "reportingSnapshotIntervalSeconds", 300, int)) < 60:
@@ -1294,6 +1355,16 @@ def load_settings(path: str | Path) -> Settings:
         visibility_usage_admin_sar_subresource=usage_admin_sar[2],
         visibility_usage_admin_sar_verb=usage_admin_sar[3],
         visibility_usage_admin_sar_namespace=usage_admin_sar[4],
+        visibility_clusterconfig_view_sar_api_group=clusterconfig_view_sar[0],
+        visibility_clusterconfig_view_sar_resource=clusterconfig_view_sar[1],
+        visibility_clusterconfig_view_sar_subresource=clusterconfig_view_sar[2],
+        visibility_clusterconfig_view_sar_verb=clusterconfig_view_sar[3],
+        visibility_clusterconfig_view_sar_namespace=clusterconfig_view_sar[4],
+        visibility_clusterconfig_manage_sar_api_group=clusterconfig_manage_sar[0],
+        visibility_clusterconfig_manage_sar_resource=clusterconfig_manage_sar[1],
+        visibility_clusterconfig_manage_sar_subresource=clusterconfig_manage_sar[2],
+        visibility_clusterconfig_manage_sar_verb=clusterconfig_manage_sar[3],
+        visibility_clusterconfig_manage_sar_namespace=clusterconfig_manage_sar[4],
         visibility_tier_ttl_seconds=_num_setting(
             raw, "GSD_VISIBILITY_TIER_TTL_SECONDS", "visibilityTierTtlSeconds",
             VISIBILITY_TIER_TTL_DEFAULT, int
