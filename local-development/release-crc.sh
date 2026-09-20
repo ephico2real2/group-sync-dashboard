@@ -12,9 +12,28 @@
 # both were called "0.3.1". A commit-derived tag makes that impossible to miss: the tag
 # changes when the source does.
 #
-#   ./local-development/release-crc.sh              build + push + deploy
+#   ./local-development/release-crc.sh              build + push + deploy through Helm (the no-git loop)
 #   ./local-development/release-crc.sh --build-only
 #   ./local-development/release-crc.sh --allow-dirty   uncommitted tree (tagged -dirty)
+#   ./local-development/release-crc.sh --argocd        build + push, then deploy through the Argo CD
+#                                                      Application at THIS commit with THIS image
+#   ./local-development/release-crc.sh --argocd main   the Application back on main (its chart's default image)
+#
+# TWO MANAGERS, ONE RELEASE, NEVER BOTH (#212). The release name and namespace are the same under
+# Helm and under Argo CD, so the modes hand over: Helm mode deletes the Argo Application first
+# (its cascade removes what Argo created; the data and artefacts PVCs carry helm.sh/resource-policy:
+# keep and the minted Secrets were never Argo's, so history, sessions and tickets survive), then
+# installs from this worktree; --argocd uninstalls the Helm release first (the same survivors),
+# then points gitops/argocd-application-dashboard.yaml at the commit and the image just built and
+# waits for Synced/Healthy. Helm cannot adopt objects Argo created (measured: "cannot be imported
+# into the current release"), which is why the handover is a delete-and-install and not an adopt.
+#
+# --argocd NEEDS THE COMMIT ON GITHUB: Argo pulls the chart from the repository, not from this
+# tree, so an unpushed commit cannot be synced — the script refuses with the push to run. It also
+# needs the image PASSED to the Application: the chart's default is the last PUBLISHED image
+# (quay.io …:<appVersion>), which lags main whenever the app version is not bumped — measured on
+# the first Argo sync of the dashboard: the published report image understood snapshot schema 12
+# against main's 17 and answered readyz 503 until the built tag was handed over.
 #
 # Immutability rule: a given <version>-<sha> tag always means the same source. Pushing a
 # different image under an existing tag is refused rather than silently overwritten.
@@ -27,13 +46,36 @@ NAMESPACE="${NAMESPACE:-group-sync-dashboard}"
 IMAGE="${IMAGE:-group-sync-dashboard}"
 BUILD_ONLY=false
 ALLOW_DIRTY=false
+ARGOCD=false
+ARGO_REVISION=""
+APP_NAME="${APP_NAME:-group-sync-dashboard}"          # the Application in openshift-gitops
+ARGO_NAMESPACE="${ARGO_NAMESPACE:-openshift-gitops}"
+expect_revision=false
 for arg in "$@"; do
+  if [ "$expect_revision" = true ]; then ARGO_REVISION="$arg"; expect_revision=false; continue; fi
   case "$arg" in
     --build-only) BUILD_ONLY=true ;;
     --allow-dirty) ALLOW_DIRTY=true ;;
+    --argocd) ARGOCD=true; expect_revision=true ;;
     *) echo "unknown argument: $arg" >&2; exit 2 ;;
   esac
 done
+
+# --argocd <branch> with no build: point the Application at that revision and its chart's default
+# image, e.g. `--argocd main` after a merge. Any other --argocd use builds this commit first.
+if [ "$ARGOCD" = true ] && [ -n "$ARGO_REVISION" ]; then
+  echo "argocd  : ${APP_NAME} -> revision ${ARGO_REVISION}, the chart's default image"
+  if helm status "${IMAGE}" -n "${NAMESPACE}" >/dev/null 2>&1; then
+    echo "helm    : uninstalling release ${IMAGE} (the PVCs and the minted Secrets survive)"
+    helm uninstall "${IMAGE}" -n "${NAMESPACE}" --wait --timeout 5m
+  fi
+  oc apply -f ../gitops/argocd-application-dashboard.yaml >/dev/null
+  oc patch application "${APP_NAME}" -n "${ARGO_NAMESPACE}" --type json -p "[
+    {\"op\": \"replace\", \"path\": \"/spec/source/targetRevision\", \"value\": \"${ARGO_REVISION}\"},
+    {\"op\": \"remove\", \"path\": \"/spec/source/helm/parameters\"}]" 2>/dev/null \
+  || oc patch application "${APP_NAME}" -n "${ARGO_NAMESPACE}" --type merge -p "{\"spec\":{\"source\":{\"targetRevision\":\"${ARGO_REVISION}\"}}}"
+  exec ./argocd-wait.sh "${APP_NAME}" "${ARGO_NAMESPACE}"
+fi
 
 VERSION=$(python3 -c "import re,pathlib;print(re.search(r'^version = \"(.+?)\"',pathlib.Path('pyproject.toml').read_text(),re.M).group(1))")
 COMMIT=$(git rev-parse --short=10 HEAD)
@@ -145,6 +187,34 @@ if [ ! -f "$RELEASE_VALUES" ]; then
 fi
 echo "release : ${RELEASE_VALUES}"
 
+if [ "$ARGOCD" = true ]; then
+  # The commit must be on the remote the Application pulls from.
+  if ! git branch -r --contains "${COMMIT%-dirty}" 2>/dev/null | grep -q .; then
+    echo "ERROR: commit ${COMMIT} is not on any remote branch; Argo CD pulls from GitHub, not this tree." >&2
+    echo "       Push it first:  git push -u origin ${BRANCH}" >&2
+    exit 1
+  fi
+  if helm status "${IMAGE}" -n "${NAMESPACE}" >/dev/null 2>&1; then
+    echo "helm    : uninstalling release ${IMAGE} (the PVCs and the minted Secrets survive)"
+    helm uninstall "${IMAGE}" -n "${NAMESPACE}" --wait --timeout 5m
+  fi
+  oc apply -f ../gitops/argocd-application-dashboard.yaml >/dev/null
+  echo "argocd  : ${APP_NAME} -> revision ${COMMIT}, image ${TAG}"
+  oc patch application "${APP_NAME}" -n "${ARGO_NAMESPACE}" --type merge -p "{\"spec\":{\"source\":{
+    \"targetRevision\":\"${COMMIT}\",
+    \"helm\":{\"parameters\":[
+      {\"name\":\"image.repository\",\"value\":\"${INTERNAL%:*}\"},
+      {\"name\":\"image.tag\",\"value\":\"${TAG}\"},
+      {\"name\":\"reporting.image.repository\",\"value\":\"${REPORT_INTERNAL%:*}\"},
+      {\"name\":\"reporting.image.tag\",\"value\":\"${TAG}\"}]}}}}"
+  ./argocd-wait.sh "${APP_NAME}" "${ARGO_NAMESPACE}"
+else
+  if oc get application "${APP_NAME}" -n "${ARGO_NAMESPACE}" >/dev/null 2>&1; then
+    echo "argocd  : deleting Application ${APP_NAME} — Helm takes the release over (the PVCs and the minted Secrets survive)"
+    oc delete application "${APP_NAME}" -n "${ARGO_NAMESPACE}" --timeout=5m
+    # the hook identity Argo's cascade leaves behind would refuse Helm's adoption
+    oc delete sa,role,rolebinding "${IMAGE}-secrets-mint" -n "${NAMESPACE}" --ignore-not-found >/dev/null
+  fi
 helm upgrade --install "${IMAGE}" ../charts/group-sync-dashboard \
   --namespace "${NAMESPACE}" --create-namespace \
   -f "$RELEASE_VALUES" \
@@ -152,6 +222,7 @@ helm upgrade --install "${IMAGE}" ../charts/group-sync-dashboard \
   --set image.tag="${TAG}" \
   --set reporting.image.repository="${REPORT_INTERNAL%:*}" \
   --set reporting.image.tag="${TAG}"
+fi
 oc rollout status "deploy/${IMAGE}" -n "${NAMESPACE}" --timeout=300s
 if oc get "deploy/${IMAGE}-report" -n "${NAMESPACE}" >/dev/null 2>&1; then
   oc rollout status "deploy/${IMAGE}-report" -n "${NAMESPACE}" --timeout=300s
