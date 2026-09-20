@@ -7161,6 +7161,154 @@ class TestReportsTab:
             ctx.close()
 
 
+class TestReportFormsReview:
+    """Review of #222 (OB3): what the ParamSpec shell lost on a repaint, where a keyboard reader's focus
+    went, what a refused parameter told the reader, and what the lookups' arrival did to a reader who
+    had scrolled. Every case here was measured failing on 7fa4a6e (the Grok pass at 57b2c5c fixed four
+    of them without a UI test; the menu rebuild, the loading head and the ×/Clear/segment focus paths are
+    OB3's)."""
+
+    def _open(self, browser, base, report="access-matrix", cls="r-access"):
+        ctx, page, errors = _reports_page(browser, base, "root")
+        page.goto(base + f"#page=reports&cluster=crc-local&report={report}")
+        page.wait_for_selector(f"#report-form.{cls}")
+        if report == "access-matrix":
+            page.wait_for_function("() => document.querySelectorAll('#report-subject .rp-opt').length > 0")
+        return ctx, page, errors
+
+    @staticmethod
+    def _options(page, name="users"):
+        return page.evaluate(f"() => [...document.querySelectorAll('[data-lookup-opt=\"{name}\"]')].filter(o => !o.hidden).map(o => o.dataset.value)")
+
+    def test_the_lookup_menu_widens_again_after_a_repaint_under_a_query(self, browser, reporting_server):
+        # measured: "zzz", a repaint (a chip elsewhere, the poll, the lookups' arrival), then "kube" left the
+        # menu at "No match — press Enter to add" although kubeadmin was discovered — the narrowing only hid
+        # nodes, and the repaint under "zzz" had painted none
+        base, _, _ = reporting_server
+        ctx, page, errors = self._open(browser, base)
+        try:
+            users = page.locator("#report-lookup-access-matrix-users")
+            users.fill("zzz")
+            assert self._options(page) == [] and "No match" in page.locator("#report-lookup-access-matrix-users-menu").inner_text()
+            page.evaluate("() => render()")                                # the poll's repaint, under the query
+            assert users.input_value() == "zzz"                            # the typed text survives it
+            users.fill("kube")
+            assert self._options(page) == ["kubeadmin"], self._options(page)
+            users.fill("")
+            assert self._options(page) == ["alice", "gatekeeper", "kubeadmin"]
+            # and a chip added from the rebuilt menu is a real pick
+            page.click('[data-lookup-opt="users"][data-value="kubeadmin"]')
+            page.wait_for_selector('.rp-tag[data-name="kubeadmin"]')
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_the_advanced_disclosure_stays_open_across_a_repaint(self, browser, reporting_server):
+        # measured: opened with nothing typed under it, it closed on the first chip added in the Subject block
+        base, _, _ = reporting_server
+        ctx, page, errors = self._open(browser, base)
+        try:
+            page.click("details.report-advanced summary")
+            page.wait_for_function("() => document.querySelector('details.report-advanced').open")
+            page.click('[data-lookup-opt="users"][data-value="alice"]')
+            page.wait_for_selector('.rp-tag[data-name="alice"]')
+            assert page.evaluate("() => document.querySelector('details.report-advanced').open") is True
+            page.evaluate("() => render()")                                # and the poll's repaint
+            assert page.evaluate("() => document.querySelector('details.report-advanced').open") is True
+            page.click("details.report-advanced summary")                  # closed by the reader stays closed
+            page.wait_for_function("() => !document.querySelector('details.report-advanced').open")
+            page.evaluate("() => render()")
+            assert page.evaluate("() => document.querySelector('details.report-advanced').open") is False
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_a_refused_parameter_is_named_in_the_run_status(self, browser, reporting_server):
+        # measured: window_days=0 → 422 "window_days must be between 1 and 3650"; the page said "the parameters
+        # were refused (see the fields)" and the field carried no visible invalid state
+        base, _, _ = reporting_server
+        ctx, page, errors = self._open(browser, base, "groups", "r-identity")
+        try:
+            page.fill("#report-param-groups-window_days", "0"); page.locator("#report-param-groups-window_days").dispatch_event("change")
+            page.click("#report-generate")
+            page.wait_for_selector("#report-status")
+            page.wait_for_function("() => view.reportRun && view.reportRun.status === 'failed'")
+            assert "window_days must be between 1 and 3650" in page.locator("#report-status").inner_text()
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_keyboard_focus_survives_the_repaint_of_idless_controls(self, browser, reporting_server):
+        # measured: Enter or Space on an option, Enter on a chip's ×, Enter on Clear and Enter on a segmented
+        # button all left document.activeElement on <body>; only the switch and the input kept theirs
+        base, _, _ = reporting_server
+        ctx, page, errors = self._open(browser, base)
+        try:
+            active = lambda: page.evaluate("() => [document.activeElement.tagName, document.activeElement.id, document.activeElement.dataset.value || '']")
+            page.focus('[data-lookup-opt="users"][data-value="alice"]'); page.keyboard.press("Enter")
+            page.wait_for_selector('.rp-tag[data-name="alice"]')
+            assert active() == ["INPUT", "report-lookup-access-matrix-users", ""], active()
+            page.focus('[data-lookup-opt="users"][data-value="alice"]'); page.keyboard.press(" ")
+            page.wait_for_function("() => !document.querySelector('.rp-tag[data-name=\"alice\"]')")
+            assert active() == ["INPUT", "report-lookup-access-matrix-users", ""], active()
+            page.focus("#report-lookup-access-matrix-groups"); page.keyboard.type("hand-typed"); page.keyboard.press("Enter")
+            page.wait_for_selector('.rp-tag[data-name="hand-typed"]')
+            page.focus('[data-lookup-remove="groups"][data-value="hand-typed"]'); page.keyboard.press("Enter")
+            page.wait_for_function("() => !document.querySelector('.rp-tag[data-name=\"hand-typed\"]')")
+            assert active() == ["INPUT", "report-lookup-access-matrix-groups", ""], active()
+            page.click('[data-lookup-opt="users"][data-value="alice"]'); page.wait_for_selector('.rp-tag[data-name="alice"]')
+            page.focus("#report-subject-clear"); page.keyboard.press("Enter")
+            page.wait_for_function("() => document.getElementById('report-subject-count').textContent === 'all subjects'")
+            assert active() == ["INPUT", "report-lookup-access-matrix-users", ""], active()
+            page.goto(base + "#page=reports&cluster=crc-local&report=namespace-access"); page.wait_for_selector("#report-form.r-access")
+            page.click("details.report-advanced summary")
+            page.focus('[data-seg="group_by"][data-value="oud-group"]'); page.keyboard.press("Enter")
+            page.wait_for_function("() => (view.reportForm['namespace-access'] || {}).group_by === 'oud-group'")
+            assert active() == ["BUTTON", "report-param-namespace-access-group_by-oud-group", "oud-group"], active()
+            assert page.locator("#report-param-namespace-access-group_by-oud-group").get_attribute("aria-checked") == "true"
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_the_lookups_arrival_repaints_without_moving_a_reader_who_scrolled(self, browser, reporting_server):
+        # measured: a reader who scrolled to the top within the fetch's window was put back at the form
+        # (0 → 1956 px) by a second landing the instant scroll no longer needs — the repaint alone leaves
+        # the form's top where the landing put it (12 px), which the second half pins
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.set_viewport_size({"width": 375, "height": 740})
+            page.goto(base + "#page=reports&cluster=crc-local"); page.wait_for_selector("#report-picker table.report-table")
+            page.evaluate("() => { document.getElementById('report-pick-access-matrix').click(); window.scrollTo(0, 0); }")
+            page.wait_for_function("() => data.reportDiscovered && ('crc-local' in data.reportDiscovered) && document.querySelectorAll('#report-subject .rp-opt').length > 0")
+            page.wait_for_timeout(200)
+            assert page.evaluate("() => scrollY") == 0
+            # a reader who did not scroll is still landed after the arrival's repaint
+            page.goto(base + "#page=reports&cluster=crc-local"); page.wait_for_selector("#report-picker table.report-table")
+            page.evaluate("() => { delete data.reportDiscovered['crc-local']; }")
+            page.click("#report-pick-access-certification")
+            page.wait_for_function("() => data.reportDiscovered && ('crc-local' in data.reportDiscovered) && document.querySelectorAll('#report-subject .rp-opt').length > 0")
+            page.wait_for_timeout(200)
+            top = page.evaluate("() => document.getElementById('report-form').getBoundingClientRect().top")
+            assert -1 <= top < 100, top
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_a_pending_lookup_says_loading_not_none_discovered(self, browser, reporting_server):
+        # measured: after the first fetch data.reportDiscovered is an object, so every later paint while a
+        # fetch was in flight (a cluster switch) headed the menu "none discovered"
+        base, _, _ = reporting_server
+        ctx, page, errors = self._open(browser, base)
+        try:
+            page.evaluate("() => { reportGet = () => new Promise(() => {}); delete data.reportDiscovered['crc-local']; render(); }")
+            heads = page.locator(".rp-menu-head").all_inner_texts()
+            assert heads and all(h.lower().endswith("loading…") for h in heads), heads
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+
 def test_no_reports_tab_when_the_feature_is_off(dash):
     assert dash.locator('button.tab:text-is("Reports")').count() == 0
     assert dash.evaluate("fetch('/api/report/ticket').then(r => r.status)") == 404

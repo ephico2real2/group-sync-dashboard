@@ -108,7 +108,10 @@ def build(snap: Snapshot, ctx: RunContext, params: dict) -> Built:
     label_map = snap.namespace_label_map(cid, group_label) if group_label else {}
     if not label_map:
         group_label = ""     # nothing captured for this cluster: the headings stay as they were (review of #222, Grok)
-    pairs = sorted(zip(names, keys), key=lambda nk: (nk[0] == CLUSTER_SCOPE, label_map.get(nk[0]) is None, label_map.get(nk[0], ""), nk[0]))
+    # Sorted only when a grouping applies: an explicit list's order is the reader's (behaviour of the
+    # base branch — review of #222, OB3: the head re-sorted "prod-ns,dev-ns" alphabetically with no label).
+    pairs = sorted(zip(names, keys), key=lambda nk: (nk[0] == CLUSTER_SCOPE, label_map.get(nk[0]) is None, label_map.get(nk[0], ""), nk[0])) \
+        if group_label else list(zip(names, keys))
     for n, key in pairs:
         bucket = "cluster-scoped" if n == CLUSTER_SCOPE else (label_map.get(n) or f"(no {params['group_by']})") if group_label else ""
         g_rows = [g for g in groups if g["binding_namespace"] == key]
