@@ -56,7 +56,10 @@ def _run(tmp_path, argv, env, shim_case: str):
 
 class TestRender:
     def test_no_generated_value_is_ever_rendered_and_the_pods_mount_the_minted_names(self):
-        docs = _render()
+        # WITH a schedule: the CronJob renders only then, and its mount is the one the first draft
+        # missed (review of #215, Grok M8 — the range scope is `$`, so a replace on `.` skipped it)
+        docs = _render("reporting.schedules[0].name=nightly", "reporting.schedules[0].report=namespace-access", "reporting.schedules[0].schedule=0 1 * * *")
+        assert [d for d in docs if d["kind"] == "CronJob"], "the schedule must render a CronJob for this test to mean anything"
         secrets = [d["metadata"]["name"] for d in docs if d["kind"] == "Secret"]
         assert not [n for n in secrets if n.endswith(("-oauth-cookie", "-oauth-session", "-report-token", "-report-shared-token"))], secrets
         text = subprocess.run(["helm", "template", "t", str(CHART), "-n", "x", "--set", "ingress.host=h"], capture_output=True, text=True).stdout
@@ -66,6 +69,7 @@ class TestRender:
                   if "secret" in v}
         assert ("Deployment", "t-group-sync-dashboard-oauth-session") in mounts
         assert ("Deployment", "t-group-sync-dashboard-report-shared-token") in mounts
+        assert ("CronJob", "t-group-sync-dashboard-report-shared-token") in mounts, "a schedule Job needs the token too"
         assert not [m for m in mounts if m[1].endswith(("-oauth-cookie", "-report-token"))], mounts
 
     def test_the_hook_shape(self):
@@ -77,6 +81,11 @@ class TestRender:
         for kind in ("ServiceAccount", "Role", "RoleBinding"):
             a = _one(docs, kind, "-secrets-mint")["metadata"]["annotations"]
             assert a["helm.sh/hook"] == "pre-install,pre-upgrade" and a["helm.sh/hook-weight"] == "-10", "the identity is a hook ahead of the Job"
+            # Argo runs a phase's hooks lowest wave first: the identity must sit BELOW the Job's wave or a
+            # first Argo install starts the Job with no ServiceAccount (review of #215, Grok M2)
+            assert int(a["argocd.argoproj.io/sync-wave"]) < int(ann["argocd.argoproj.io/sync-wave"]), (kind, a)
+        alert = (CHART / "templates" / "monitoring.yaml").read_text()
+        assert "-shared-token Secret" in alert and "-report-token Secret" not in alert, "the usage-pull alert names the Secret an operator will find (Grok N3)"
         role = _one(docs, "Role", "-secrets-mint")
         assert role["rules"][0]["resourceNames"] == ["t-group-sync-dashboard-oauth-session", "t-group-sync-dashboard-oauth-cookie",
                                                      "t-group-sync-dashboard-report-shared-token", "t-group-sync-dashboard-report-token"]
@@ -99,17 +108,17 @@ class TestRender:
 class TestTheScript:
     def test_absent_secrets_are_minted_with_the_right_keys_and_lengths(self, tmp_path):
         _, argv, env = _job(_render())
-        done, calls = _run(tmp_path, argv, env, """
-  'get secret '*) exit 1 ;;
-  'create secret generic '*) exit 0 ;;""")
+        done, calls = _run(tmp_path, argv, env, f"""
+  'get secret '*) echo 'Error from server (NotFound): secrets "x" not found' >&2; exit 1 ;;
+  'create secret generic t-group-sync-dashboard-oauth-session '*) cp /tmp/session_secret {tmp_path}/session_secret; exit 0 ;;
+  'create secret generic t-group-sync-dashboard-report-shared-token '*) cp /tmp/token {tmp_path}/token; exit 0 ;;""")
         assert done.returncode == 0, done.stdout + done.stderr
         creates = [c for c in calls if c.startswith("create secret generic")]
         assert len(creates) == 2, calls
-        cookie = next(c for c in creates if "-oauth-session" in c)
-        token = next(c for c in creates if "-shared-token" in c)
-        assert re.search(r"--from-literal=session_secret=[A-Za-z0-9]{32}$", cookie), cookie
-        assert re.search(r"--from-literal=token=[A-Za-z0-9]{48}$", token), token
+        assert "--from-file=session_secret=/tmp/session_secret" in next(c for c in creates if "-oauth-session" in c)
+        assert "--from-file=token=/tmp/token" in next(c for c in creates if "-shared-token" in c)
         assert done.stdout.count("(minted)") == 2
+        assert re.fullmatch(rb"[A-Za-z0-9]{32}", (tmp_path / "session_secret").read_bytes()) and re.fullmatch(rb"[A-Za-z0-9]{48}", (tmp_path / "token").read_bytes())
 
     def test_existing_secrets_are_kept_and_nothing_is_created(self, tmp_path):
         _, argv, env = _job(_render())
@@ -128,20 +137,47 @@ class TestTheScript:
   'get secret t-group-sync-dashboard-report-shared-token '*) exit 1 ;;
   'get secret t-group-sync-dashboard-oauth-cookie -n x -o jsonpath={{.data.session_secret}}') printf '{old_cookie}' ;;
   'get secret t-group-sync-dashboard-report-token -n x -o jsonpath={{.data.token}}') printf '{old_token}' ;;
+  'create secret generic t-group-sync-dashboard-oauth-session '*) cp /tmp/session_secret {tmp_path}/cookie; exit 0 ;;
+  'create secret generic t-group-sync-dashboard-report-shared-token '*) cp /tmp/token {tmp_path}/token; exit 0 ;;""")
+        assert done.returncode == 0, done.stdout + done.stderr
+        assert (tmp_path / "cookie").read_bytes() == b"old-cookie-key-32-chars-long-!!!"
+        assert (tmp_path / "token").read_bytes() == b"old-token"
+        assert done.stdout.count("carried over from") == 2
+
+    def test_the_carried_value_survives_byte_for_byte_and_a_read_error_is_not_absent(self, tmp_path):
+        """A command substitution strips a trailing newline; the copy goes through a file instead
+        (Grok N2). And a Forbidden on the legacy read is a failed Job to retry, never "absent → mint a
+        new value" (Grok N6)."""
+        import base64
+        _, argv, env = _job(_render())
+        with_newline = base64.b64encode(b"old-key-with-newline\n").decode()
+        done, calls = _run(tmp_path, argv, env, f"""
+  'get secret t-group-sync-dashboard-oauth-session '*) echo 'Error from server (NotFound): secrets "x" not found' >&2; exit 1 ;;
+  'get secret t-group-sync-dashboard-report-shared-token '*) echo 'Error from server (NotFound): secrets "x" not found' >&2; exit 1 ;;
+  'get secret t-group-sync-dashboard-oauth-cookie -n x -o jsonpath={{.data.session_secret}}') printf '{with_newline}' ;;
+  'get secret t-group-sync-dashboard-report-token -n x -o jsonpath={{.data.token}}') echo 'Error from server (NotFound): secrets "t-group-sync-dashboard-report-token" not found' >&2; exit 1 ;;
+  'create secret generic t-group-sync-dashboard-oauth-session '*) cp /tmp/session_secret {tmp_path}/carried; exit 0 ;;
   'create secret generic '*) exit 0 ;;""")
         assert done.returncode == 0, done.stdout + done.stderr
-        creates = [c for c in calls if c.startswith("create secret generic")]
-        assert "--from-literal=session_secret=old-cookie-key-32-chars-long-!!!" in next(c for c in creates if "-oauth-session" in c)
-        assert "--from-literal=token=old-token" in next(c for c in creates if "-shared-token" in c)
-        assert done.stdout.count("carried over from") == 2
+        assert (tmp_path / "carried").read_bytes() == b"old-key-with-newline\n", "the trailing newline survived"
+        assert "--from-file=session_secret=/tmp/session_secret" in "\n".join(calls)
+        assert "carried over from" in done.stdout and "(minted)" in done.stdout, "the cookie carried, the token (no legacy) minted"
+        # a Forbidden on the legacy read: fail, do not mint
+        (tmp_path / "calls").unlink()
+        done, calls = _run(tmp_path, argv, env, """
+  'get secret t-group-sync-dashboard-oauth-session '*) echo 'Error from server (NotFound): x' >&2; exit 1 ;;
+  'get secret t-group-sync-dashboard-oauth-cookie '*) echo 'Error from server (Forbidden): secrets "x" is forbidden' >&2; exit 1 ;;
+  'create secret generic '*) exit 0 ;;""")
+        assert done.returncode == 1 and "could not read secret" in done.stderr
+        assert not [c for c in calls if c.startswith("create")], "no mint on a read error"
 
     def test_a_lost_race_is_kept_and_a_real_failure_fails(self, tmp_path):
         _, argv, env = _job(_render())
         done, _ = _run(tmp_path, argv, env, """
-  'get secret '*) exit 1 ;;
+  'get secret '*) echo 'Error from server (NotFound): x' >&2; exit 1 ;;
   'create secret generic '*) echo 'Error from server (AlreadyExists): secrets "x" already exists' >&2; exit 1 ;;""")
         assert done.returncode == 0 and done.stdout.count("appeared meanwhile; kept") == 2, done.stdout + done.stderr
         done, _ = _run(tmp_path, argv, env, """
-  'get secret '*) exit 1 ;;
+  'get secret '*) echo 'Error from server (NotFound): x' >&2; exit 1 ;;
   'create secret generic '*) echo 'Error from server (Forbidden): secrets is forbidden' >&2; exit 1 ;;""")
         assert done.returncode == 1 and "FAIL: could not create" in done.stderr

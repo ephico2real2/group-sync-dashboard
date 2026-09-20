@@ -93,7 +93,7 @@ spec:
           volumes:
             - name: report-token
               secret:
-                secretName: {{ include "gsd.reportName" $ }}-token
+                secretName: {{ include "gsd.reportName" $ }}-shared-token
                 defaultMode: 288
             - name: tmp
               emptyDir: {}
