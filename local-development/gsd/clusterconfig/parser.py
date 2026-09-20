@@ -89,6 +89,17 @@ def parse_secret(obj: dict, *, host_name: str | None) -> ClusterConfig | Finding
         return finding("host-cluster-not-from-secret",
                        "the host cluster is values.yaml clusters[0] and is never sourced from a Secret")
 
+    # Argo's scoping and routing keys (`namespaces`, `clusterResources`, `project`, `shard` —
+    # util/db/cluster.go SecretToCluster) narrow what Argo reads on that cluster or route it to a
+    # shard. This contract has no equivalent: a Secret copied from Argo with `namespaces: team-a`
+    # would be read as a FULL cluster — the opposite of what its author declared — so it is refused
+    # with the key named rather than silently over-read (design review of #230, OB2).
+    for key in ("namespaces", "clusterResources", "project", "shard"):
+        if key in data:
+            return finding("unsupported-config-key",
+                           f"data.{key}: Argo CD's scope/routing key; this contract reads the whole "
+                           "cluster and cannot honour it")
+
     raw_config = data.get("config")
     if raw_config is None or not raw_config.strip():
         return finding("config-missing", "data.config is required: a JSON object")
@@ -135,7 +146,15 @@ def parse_secret(obj: dict, *, host_name: str | None) -> ClusterConfig | Finding
     # caData → that bundle for this cluster alone; insecure: true → verification off. Both named at once
     # is refused, the same rule load_settings applies to insecureSkipVerify beside caBundleFile.
     ca_data = None
-    if tls.get("caData"):
+    # PRESENCE, not truthiness (review of #235, Codex C7): `caData: ""` beside `insecure: true` used to
+    # slip past this refusal and poll insecurely, and an empty caData alone silently became the
+    # trusted-bundle mode — in both cases the operator declared one thing and got another. An empty
+    # value is a malformed declaration, not an absent key.
+    if "caData" in tls:
+        if not str(tls.get("caData") or "").strip():
+            return finding("unsupported-config-key",
+                           "tlsClientConfig.caData is empty: omit the key for the dashboard's trust "
+                           "store, or give a base64 PEM bundle")
         if insecure:
             return finding("insecure-with-ca", "tlsClientConfig.caData and tlsClientConfig.insecure=true are both set: choose one")
         try:

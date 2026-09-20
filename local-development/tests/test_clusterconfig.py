@@ -8,6 +8,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import os
 import re
 import threading
 
@@ -188,9 +189,28 @@ class TestRegistryAndReader:
         client = _Paged({})
         clusters, findings = discover(client, "ns", host_name="host", values_names=("host", "west"))
         assert all(p == path and params["labelSelector"] == LABEL_SELECTOR for p, params in client.calls) and len(client.calls) == 2
-        assert [(c.name, c.source) for c in clusters] == [("east", "secret:a-first"), ("west", "secret:d-shadow"), ("north", "secret:e-oauth")]
-        assert sorted((f.secret, f.code) for f in findings) == [("b-dup", "duplicate-cluster-name"), ("c-bad", "config-not-json"),
+        # `east` is declared twice, so NEITHER Secret loads it — a duplicate name is fail-closed, not
+        # first-wins, because first-by-metadata.name would let `aaa-anything` replace a cluster's
+        # server and token (design review of #230, OB2). Each Secret gets a finding naming the other.
+        assert [(c.name, c.source) for c in clusters] == [("west", "secret:d-shadow"), ("north", "secret:e-oauth")]
+        assert sorted((f.secret, f.code) for f in findings) == [("a-first", "duplicate-cluster-name"),
+                                                                ("b-dup", "duplicate-cluster-name"), ("c-bad", "config-not-json"),
                                                                 ("d-shadow", "shadows-values-entry"), ("e-oauth", "oauth-exchange-not-built")]
+        dup = {f.secret: f.detail for f in findings if f.code == "duplicate-cluster-name"}
+        assert "b-dup" in dup["a-first"] and "a-first" in dup["b-dup"], "each names the other"
+        assert "neither is loaded" in dup["a-first"]
+
+    def test_argos_scope_and_routing_keys_are_refused_with_the_key_named(self):
+        """A Secret copied from Argo CD carrying `namespaces: team-a` declares a NARROWED cluster;
+        this contract reads the whole cluster, so honouring the copy silently would read far more
+        than its author declared. Refused, with the key named (design review of #230, OB2)."""
+        for key, value in (("namespaces", "team-a,team-b"), ("clusterResources", "false"),
+                           ("project", "platform"), ("shard", "1")):
+            obj = _secret("argo-copy")
+            obj["data"][key] = base64.b64encode(value.encode()).decode()
+            parsed = parse_secret(obj, host_name="host")
+            assert isinstance(parsed, Finding), f"{key} was accepted"
+            assert parsed.code == "unsupported-config-key" and key in parsed.detail
 
     def test_a_403_on_the_list_raises_for_the_caller_to_record(self):
         client = _FakeClient({"/api/v1/namespaces/ns/secrets": FORBIDDEN})
@@ -403,6 +423,72 @@ class TestChart:
         assert ok and _config_data(out)["clusterSecretsEnabled"] is False
 
 
+class TestDiscoveryFailureDoesNotRetire:
+    """A failed LIST is "we could not look", never "they were deleted" (review of #235, Grok C6).
+
+    On a FRESH process the registry has no previous set to stand on, so every Secret-sourced
+    cluster looks absent; retiring them would take the whole fleet out of the served set because
+    one API call timed out — and their rows would say `retired` to every reader until a later
+    cycle put them back.
+    """
+
+    def test_a_failed_start_discovery_spares_secret_sourced_rows_and_still_retires_dropped_values(self, tmp_path):
+        db = str(tmp_path / "gsd.db"); _seed(db)
+        settings = _settings(db)
+        store = Store(db)
+        try:
+            # Two rows from an earlier life: one discovered from a Secret, one from the values list
+            # that the configuration has since dropped.
+            store.upsert_cluster("east", "https://api.east.example:6443", True,
+                                 source="secret:gsd-cluster-east", credential="bearer")
+            store.upsert_cluster("dropped", "https://api.dropped.example:6443", True,
+                                 source="values", credential="file")
+            store.retire_absent_clusters(["c1"], keep_sources=("secret:",))
+            rows = {r["id"]: r for r in store.clusters()}
+            assert rows["east"]["enabled"] == 1, "a failed LIST retired a Secret-sourced cluster"
+            assert rows["dropped"]["enabled"] == 0, "a values cluster the config dropped is still retired"
+            # and with no failure, the Secret row retires like any other
+            store.retire_absent_clusters(["c1"])
+            assert {r["id"]: r["enabled"] for r in store.clusters()}["east"] == 0
+        finally:
+            store.close()
+
+
+class TestTheCredentialNeverLeavesTheSecret:
+    """The invariant the operator set: a cluster's credential lives in its Secret and nowhere else.
+
+    The interesting path is not our own code printing it — it is the REMOTE printing it back at us.
+    A cluster controls its error bodies, and anything that echoes the request (a proxy's 502 page, a
+    debug handler) returns our bearer token inside `response.text`, which `_get` copies into the
+    ClusterError message — persisted by `record_poll` and served on /api/clusters (review of #235,
+    Codex C8).
+    """
+
+    def test_a_remote_that_echoes_the_authorization_header_does_not_get_it_stored(self):
+        import httpx
+
+        from gsd.config import ClusterConfig as CC
+        from gsd.kube import UNREACHABLE, ClusterClient, ClusterError
+
+        token = "sha256~a-very-secret-token-value"
+        cluster = CC(name="east", api_url="https://api.east.example:6443", token_env="T_EAST")
+        os.environ["T_EAST"] = token
+        try:
+            client = ClusterClient(cluster)
+            body = ('{"kind":"Status","message":"upstream refused: '
+                    f'Authorization: Bearer {token}"}}')
+            transport = httpx.MockTransport(lambda _: httpx.Response(500, text=body))
+            with httpx.Client(transport=transport, base_url=cluster.api_url) as http:
+                with pytest.raises(ClusterError) as exc:
+                    client._get(http, "/api/v1/namespaces", {})
+            assert exc.value.outcome == UNREACHABLE
+            assert token not in exc.value.message, "the remote's echo carried our token into a stored error"
+            assert "<redacted>" in exc.value.message
+            assert "upstream refused" in exc.value.message, "the diagnostic itself is still useful"
+        finally:
+            os.environ.pop("T_EAST", None)
+
+
 class TestClusterConfigTier:
     """The cluster-configuration tier (#230; the operator's ruling of 2026-09-20, "a new tier boss
     — look at how argocd does it").
@@ -490,6 +576,96 @@ class TestClusterConfigTier:
         with TestClient(app) as c:
             for who in ("root", "auditor", "viewer"):
                 assert c.get("/api/clusterconfigs", headers=H(who)).status_code == 403
+
+    def test_restrictions_off_does_not_open_the_surface(self, tmp_path):
+        """`visibility.enabled=false` must not, as a side effect, hand the auditor the wiring.
+
+        The wide views widen in that state by design — the deployment has said it trusts everyone
+        its proxy admits for cluster DATA. This surface is not cluster data: it says how the fleet
+        is wired. Usage made the same call (usage_scope stays self); we go further and still ask,
+        so a cluster-admin keeps the tab (review of #235, Grok C2)."""
+        db = str(tmp_path / "off.db"); _seed(db)
+        settings = _settings(db, view_restrictions_enabled=False)
+        settings.cluster_registry.namespace = "ns"
+        settings.cluster_registry.replace(
+            [parse_secret(_secret(), host_name="c1")], [], at="2026-09-20T16:05:12Z")
+        app = build_app(settings, run_poller=False)
+        app.state.tier_resolver = _MapResolver({"auditor": "all", "root": "all"})
+        app.state.clusterconfig_view_resolver = _MapResolver({"root": "all"})   # auditor absent
+        with TestClient(app) as c:
+            assert c.get("/api/clusters", headers=H("auditor")).status_code == 200
+            assert c.get("/api/clusterconfigs", headers=H("auditor")).status_code == 403
+            assert c.get("/api/clusterconfigs", headers=H("root")).status_code == 200
+
+    def test_build_app_constructs_two_resolvers_with_two_questions_and_two_caches(self, tmp_path):
+        """The share-one-resolver mutant: one instance, its cache keyed by viewer alone, so a
+        `view` verdict would answer `manage`. Also pins that construction no longer depends on
+        the wide-view switch."""
+        db = str(tmp_path / "two.db"); _seed(db)
+        app = build_app(_settings(db), run_poller=False)          # no injection: the real path
+        v = app.state.clusterconfig_view_resolver
+        m = app.state.clusterconfig_manage_resolver
+        assert v is not None and m is not None and v is not m
+        assert v._attributes["verb"] == "get" and m._attributes["verb"] == "create"
+        assert v._attributes["resource"] == "secrets" == m._attributes["resource"]
+        assert v._cache is not m._cache
+
+    def test_a_namespace_admin_who_is_not_a_cluster_admin_is_refused_the_ordered_ladder(self, make_app):
+        """The privilege INVERSION the ordering prevents (design review of #235, OB2).
+
+        `get`/`create secrets` in the dashboard's namespace is held by the stock `admin`
+        ClusterRole, so asked alone it is not a higher bar than the wide tier — it is a different
+        one. Measured on CRC 2026-09-20, a member of `app-ocp-rbac-alpha-cluster-admin` (bound to
+        ClusterRole/admin by one of the lab's seven such ClusterRoleBindings):
+
+            oc auth can-i list clusterrolebindings   --as-group=…  -> no
+            oc auth can-i update clusterrolebindings --as-group=…  -> no
+            oc auth can-i get    secrets -n <ns>     --as-group=…  -> yes
+            oc auth can-i create secrets -n <ns>     --as-group=…  -> yes
+
+        That reader is narrowed to `self` on every other tab; without the ordering they would hold
+        the fleet's credential store. The mutant that drops the admin rung fails here.
+        """
+        # `nsadmin` passes the secrets questions and NOT the administrator rung — the measured shape.
+        app = make_app(view=_MapResolver({"root": "all", "nsadmin": "all"}),
+                       manage=_MapResolver({"root": "all", "nsadmin": "all"}))
+        app.state.tier_resolver = _MapResolver({"root": "all"})       # nsadmin is self on the wide tier
+        with TestClient(app) as c:
+            assert c.get("/api/clusterconfigs", headers=H("nsadmin")).status_code == 403
+            assert c.get("/api/clusterconfigs", headers=H("root")).status_code == 200
+
+    def test_the_admin_rung_is_asked_directly_past_both_escape_hatches(self, tmp_path):
+        """The rung is not `viewer_scope` or `usage_scope`: each carries a widening escape hatch
+        that would dissolve it — viewer_scope widens when `visibility.enabled` is off, and
+        usage_scope widens for EVERY viewer when `userActivity.visibility: all`. Neither is a
+        statement about who administers the cluster, which is all this rung asks."""
+        db = str(tmp_path / "hatch.db"); _seed(db)
+        settings = _settings(db, view_restrictions_enabled=False, user_activity_visibility="all")
+        settings.cluster_registry.namespace = "ns"
+        settings.cluster_registry.replace(
+            [parse_secret(_secret(), host_name="c1")], [], at="2026-09-20T16:05:12Z")
+        app = build_app(settings, run_poller=False)
+        app.state.tier_resolver = _MapResolver({"root": "all"})        # nsadmin: self
+        app.state.clusterconfig_view_resolver = _MapResolver({"root": "all", "nsadmin": "all"})
+        with TestClient(app) as c:
+            assert c.get("/api/clusterconfigs", headers=H("nsadmin")).status_code == 403
+            assert c.get("/api/clusterconfigs", headers=H("root")).status_code == 200
+
+    def test_an_unknown_namespace_refuses_rather_than_asking_a_cluster_scoped_question(self, tmp_path, monkeypatch):
+        """`get secrets` with no namespace is a CLUSTER-SCOPED question — broader than the one the
+        operator configured, and passed by identities the namespaced one refuses. Outside a cluster
+        (no ServiceAccount mount, no GSD_NAMESPACE) the tier must refuse, not widen (review of #235,
+        Codex C4)."""
+        monkeypatch.delenv("GSD_NAMESPACE", raising=False)
+        monkeypatch.setattr("gsd.api.own_namespace", lambda: None)
+        db = str(tmp_path / "nons.db"); _seed(db)
+        settings = _settings(db)
+        settings.cluster_registry.replace(
+            [parse_secret(_secret(), host_name="c1")], [], at="2026-09-20T16:05:12Z")
+        app = build_app(settings, run_poller=False)
+        app.state.tier_resolver = _MapResolver({"root": "all"})
+        with TestClient(app) as c:
+            assert c.get("/api/clusterconfigs", headers=H("root")).status_code == 403
 
     def test_the_two_levels_have_their_own_defaults_and_caches(self):
         """`manage` is not derived from `view`: separate settings, separate questions."""

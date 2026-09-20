@@ -545,13 +545,35 @@ class ClusterClient:
         self.cluster = cluster
         self._timeout = timeout
 
+    def _redact(self, text: str) -> str:
+        """Strip this cluster's own credential out of anything we are about to quote.
+
+        A remote cluster controls its error bodies, and an API server (or anything in front of it)
+        that echoes the request — a proxy's 502 page, a debug handler — hands our own bearer token
+        back inside `response.text`, which `_get` copies into the ClusterError message. That message
+        is persisted by `record_poll` and served on /api/clusters, so a credential that never touched
+        the database arrives there by way of the remote's reply (review of #235, Codex C8). The token
+        is the one string we can always recognise, so it is the one we remove.
+
+        Never raises: a credential that cannot be resolved is simply nothing to redact, and a
+        diagnostic must not become the reason a poll fails.
+        """
+        try:
+            token = self.cluster.resolve_token()
+        except Exception:  # noqa: BLE001
+            return text
+        if token and len(token) >= 8 and token in text:
+            return text.replace(token, "<redacted>")
+        return text
+
     def _get(self, client: httpx.Client, path: str, params: dict[str, Any]) -> dict:
         try:
             response = client.get(path, params=params)
         except httpx.HTTPError as exc:
             # Connect errors, TLS failures and timeouts are all "we could not talk to it",
-            # which is operationally different from "it said no".
-            raise ClusterError(UNREACHABLE, f"{type(exc).__name__}: {exc}") from exc
+            # which is operationally different from "it said no". Redacted too: an httpx error can
+            # carry the request URL, and a malformed apiUrl could put a credential in one.
+            raise ClusterError(UNREACHABLE, self._redact(f"{type(exc).__name__}: {exc}")) from exc
 
         if response.status_code == 401:
             raise ClusterError(AUTH_FAILED, "401 Unauthorized — token invalid or expired")
@@ -562,7 +584,8 @@ class ClusterClient:
             )
         if response.status_code >= 400:
             raise ClusterError(
-                UNREACHABLE, f"HTTP {response.status_code} on {path}: {response.text[:200]}"
+                UNREACHABLE,
+                f"HTTP {response.status_code} on {path}: {self._redact(response.text[:200])}",
             )
         try:
             return response.json()

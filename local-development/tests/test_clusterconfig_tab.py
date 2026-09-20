@@ -491,6 +491,35 @@ class TestClusterConfigTier:
                 assert "identity" in r.json()["detail"]
             assert host.calls == before, "nothing reached the API server"
 
+    def test_the_pure_auditor_persona_is_refused_by_the_questions_themselves(self, rig):
+        """The operator's rule (2026-09-20): each level gates on its OWN SAR alone — no composition with
+        the administrator question, because RBAC is additive and whoever passes `get`/`create secrets`
+        can do the same with `oc`. The "no auditor" ruling survives by MEASUREMENT: the chart's auditor
+        role carries no rule over `secrets`, so the pure auditor answers no to both questions. Here the
+        auditor holds the wide tier and neither cluster-config level — exactly that shape."""
+        assert rig.get("/api/clusterconfigs", headers=H("auditor")).status_code == 403
+        assert [r.status_code for r in self._writes(rig, "auditor")] == [403, 403, 403, 403]
+        assert rig.get("/api/whoami", headers=H("auditor")).json()["clusterconfig"] == {"view": False, "manage": False}
+
+    def test_visibility_disabled_does_not_open_this_surface(self, tmp_path, monkeypatch):
+        """The ordinary wide views widen when `visibility.enabled` is off; this one must not, or the
+        switch would re-admit the persona the tier exists to exclude. There is no `restrict`
+        short-circuit in the gate, and without the proxy there is no trustworthy identity either."""
+        import dataclasses
+        db = str(tmp_path / "vis.db"); _seed(db)
+        settings = dataclasses.replace(_settings(db), cluster_secrets_writes_enabled=True,
+                                       view_restrictions_enabled=False)
+        settings.cluster_registry.namespace = NS
+        settings.cluster_registry.replace([parse_secret(_secret(), host_name="c1")], [], at="2026-09-20T16:05:12Z")
+        host = _Host({"gsd-cluster-east": _secret()})
+        monkeypatch.setattr("gsd.api.ClusterClient", lambda cfg, timeout=15.0: host)
+        monkeypatch.setattr("gsd.api.own_namespace", lambda: NS)
+        app = build_app(settings, run_poller=False)
+        with TestClient(app) as c:
+            assert c.get("/api/clusterconfigs", headers=H("anyone")).status_code == 403
+            assert [r.status_code for r in self._writes(c, "anyone")] == [403, 403, 403, 403]
+            assert c.get("/api/whoami", headers=H("anyone")).json().get("clusterconfig", {"view": False})["view"] is False
+
     def test_no_resolver_fails_closed(self, rig):
         """Argo's `policy.default: deny`: an instance that built no resolver — restrictions off, or no
         host cluster to review against — refuses rather than falling back to the wide tier."""

@@ -1136,19 +1136,33 @@ class Poller:
         # The runtime cluster source first (SPEC_S1): one synchronous discovery so a restart does not
         # retire a Secret-sourced cluster for a cycle. A failed LIST is the registry's error, not a
         # failed start.
+        discovery_failed = False
         if self.settings.cluster_secrets_enabled:
             try:
                 self._discover_once()
             except Exception:  # noqa: BLE001
                 log.exception("cluster Secret discovery raised at start; the values clusters poll")
+                discovery_failed = True
+            else:
+                # A LIST that came back with an error is a failure too: `_discover_once` swallows
+                # ClusterError into registry.fail, which keeps the PREVIOUS set — and on a fresh
+                # process the previous set is empty (review of #235, Grok C6).
+                discovery_failed = bool(self.settings.cluster_registry.error)
         # Reconcile the stored clusters against the configuration BEFORE polling: a cluster the
         # config no longer names is retired (enabled=0, history kept), so it leaves the served set
         # instead of lingering as `ok` with frozen data and stale alerts (#96). Config changes roll
         # the pod, so this runs on every change — retire/add on the fly.
         effective = self.settings.effective_clusters()
-        retired = self.store.retire_absent_clusters([c.name for c in effective])
+        # When the discovery could not look, absence proves nothing about a Secret-sourced cluster:
+        # spare those rows rather than retiring the whole fleet on one failed LIST (Grok C6).
+        keep = ("secret:",) if discovery_failed else ()
+        retired = self.store.retire_absent_clusters([c.name for c in effective], keep_sources=keep)
         if retired:
             log.info("retired %d cluster(s) no longer in the configuration", retired)
+        if discovery_failed:
+            log.warning("cluster Secret discovery failed at start (%s); Secret-sourced clusters keep "
+                        "their rows and are left for the next cycle rather than retired",
+                        self.settings.cluster_registry.error or "raised")
         for cluster in effective:
             self.store.upsert_cluster(cluster.name, cluster.api_url, cluster.enabled,
                                       source=cluster.source, credential=cluster.credential_kind)

@@ -54,17 +54,16 @@ during implementation is written back under "Orchestrator's notes", in the same 
   (Codex C5, Grok, review of #237). `clusterconfig_allows` refuses a nameless reader at the gate, so
   every audit line names a person by construction.
 
-- **The ladder is ORDERED, and S1 owns the rung.** OB2's design review measured (CRC 2026-09-20) that
-  `get`/`create secrets` in the release namespace is held by the stock `admin` ClusterRole: a member of
-  a group bound to `ClusterRole/admin` by ClusterRoleBinding — the lab has seven such bindings —
-  answers NO to `list clusterrolebindings` and NO to `update clusterrolebindings` but YES to both
-  secrets questions, so asked alone this tier would hand the fleet's credential store to a reader the
-  dashboard holds at `self` on every other tab. Each level therefore asks the administrator rung first
-  and then its own question. **S1 implements the rung** by asking the administrator question directly
-  through the wide resolver, past both escape hatches (`userActivity.visibility: all` and
-  `visibility.enabled: false`); OB2's own patch used `usage_scope()`, which dissolves under exactly
-  those two, and is NOT what ships. S2 re-implements nothing: it gates on `require_clusterconfig_view`
-  and `require_clusterconfig_manage` as S1 defines them, so there is one definition.
+- **Each level gates on its OWN SAR alone — no admin-rung composition (the operator, 2026-09-20).** An
+  earlier design review proposed ordering the levels behind the administrator question, because a
+  namespace administrator (`ClusterRole/admin` bound by ClusterRoleBinding) passes `get`/`create secrets`
+  while failing the RBAC questions the other tiers ask. The operator reversed it: *"A user with cluster
+  admin and auditor is fine. That is how Kubernetes RBAC works. As long as the user has the role needed
+  or can get the right SAR needed, we are good."* RBAC is additive, the SAR **is** the action's own
+  question, and anyone who passes it can do the same thing with `oc` — the dashboard's ServiceAccount
+  performing the write grants nobody a permission they lack. The "no auditor" ruling still holds by
+  measurement rather than by composition: the pure auditor persona (the chart's auditor role alone)
+  answers `no` to both questions. S2 adds no ordering of its own; the levels are S1's to define.
 
 - **The write gate adds an identity requirement of its own, which is S2's.** `visibilityEnabled: false`
   is a documented choice about READING — every tier answers `all` and, with the proxy off, there is no

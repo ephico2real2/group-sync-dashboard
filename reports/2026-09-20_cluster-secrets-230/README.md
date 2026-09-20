@@ -94,3 +94,94 @@ log: 0
 
 The rig stays deployed: S2's walk uses it. The four Secrets from an earlier CRC-API probe of the same
 modes (`crc-tls-*`, since deleted) show as retired rows — the "history kept" rule, visible.
+
+## 3. The cluster-configuration tier — `validate-tier.sh` (the auditor is refused, live)
+
+The operator's ruling (2026-09-20): this surface is cluster-admin only and the reporting auditor may
+neither view nor change it. The route first shipped on `require_admin_tier` — the WIDE tier, which
+`gsd/api.py` says in its own words that `cluster-reader`, the deliberate auditor persona, also passes.
+The tier is now two levels of its own, modelled on Argo CD's first-class `clusters` resource and asked
+natively as SubjectAccessReviews about the Secrets this surface exposes. Run against the deployed head
+through the pod's loopback (the dashboard trusts `X-Forwarded-User` from its proxy, so the loopback can
+put any identity in front of the gate — which is what makes the auditor probe possible).
+
+**The two questions, and who answers yes** — `oc` on the lab:
+
+```
+cluster-reader rules covering core/secrets: 0 of 172 rules
+kubeadmin  can-i get    secrets -n group-sync-dashboard : yes
+lateef.o   can-i get    secrets -n group-sync-dashboard : no
+kubeadmin  can-i create secrets -n group-sync-dashboard : yes
+lateef.o   can-i create secrets -n group-sync-dashboard : no
+```
+
+**The wide tier admits the reader; the new tier does not** — the same identity, two routes:
+
+```
+lateef.o  /api/clusters       -> 200  ...,"dangling_bindings":0,"unresolved_bindings":0,...
+lateef.o  /api/clusterconfigs -> 403  {"detail":"For cluster-configuration administrators only. This view
+                                       reports how this instance is wired to its clusters — which Secret
+                                       configures each one, the kind of credential it holds and how its
+                                       certificate is trusted."}
+kubeadmin /api/clusterconfigs -> 200
+```
+
+**The refusal names nothing** — no cluster, no Secret, no namespace (`leaks: none`), so the sentence that
+reaches the refused person is not a map for the next attempt. **And no other route carries the wiring**:
+`secret:gsd-cluster` appears 0 times in `/api/clusters`, `/api/kpi` and `/metrics` for that reader.
+
+**The fleet still polls under the gate**, and the retired rows prove the other half of the contract —
+four clusters from earlier probes whose Secrets are gone are `retired: true, enabled: false`, their rows
+kept (#96), not deleted:
+
+```
+crc-local        values                           tls {"insecure":false,"ca":"serviceAccount"}  ok
+mock-trusted     secret:gsd-cluster-mock-trusted  tls {"insecure":false,"ca":"trusted-bundle"}  ok
+mock-privateca   secret:gsd-cluster-mock-privateca tls {"insecure":false,"ca":"caData"}         ok
+mock-selfsigned  secret:gsd-cluster-mock-selfsigned tls {"insecure":true,"ca":null}             ok
+crc-tls-cadata / crc-tls-default / crc-tls-insecure / mock   retired=True enabled=False
+findings: [{"secret":"gsd-cluster-mock-refusal","code":"insecure-with-ca",
+            "detail":"tlsClientConfig.caData and tlsClientConfig.insecure=true are both set: choose one"}]
+```
+
+**The tier is on `/metrics`**, pre-seeded and counting — the two probes above are the `allowed` and
+`denied` of this run:
+
+```
+gsd_visibility_tier_checks_total{outcome="allowed",threshold="clusterconfig_view"} 1.0
+gsd_visibility_tier_checks_total{outcome="denied",threshold="clusterconfig_view"}  1.0
+gsd_visibility_tier_checks_total{outcome="unreachable",threshold="clusterconfig_view"} 0.0
+```
+
+### The ordered ladder — what this lab can and cannot prove
+
+Re-run on the reviewed head `cce529b` (`running : cce529befc — verified in-pod`), the section above
+unchanged. The ladder (the administrator rung, then the level's own question) is pinned by tests; what
+the lab adds is the measurement the finding rests on and one honest limit.
+
+**The auditor case is proven live.** `lateef.o` passes the WIDE tier on this lab — `oc auth can-i list
+clusterrolebindings` with his groups answers **yes**, and the admin-gated
+`/api/clusters/crc-local/bindings/findings` serves him **200** — and is refused **403** on
+`/api/clusterconfigs`, because `get secrets` answers **no** for him. That is exactly the operator's
+ruling: the reader the wide tier admits does not get this surface.
+
+**The ordering case cannot be demonstrated with a live persona here, and is not claimed to be.**
+`jane.smith` is the shape the finding describes — a member of `app-ocp-rbac-alpha-cluster-admin`, bound
+to `ClusterRole/admin` by one of the lab's seven such ClusterRoleBindings, so `get secrets` and `create
+secrets` answer **yes** for her while the stock role grants neither `list` nor `update
+clusterrolebindings`. But on THIS lab she also holds other group bindings that answer **yes** to `list
+clusterrolebindings`, so she passes the administrator rung too and the surface serves her **200** —
+consistent with the configured policy, and not a counter-example. The rung's effect is pinned instead by
+`TestClusterConfigTier::test_a_namespace_admin_who_is_not_a_cluster_admin_is_refused_the_ordered_ladder`
+and `…_asked_directly_past_both_escape_hatches`, both of which fail when the rung is removed
+(mutant-checked).
+
+```
+lateef.o    list clusterrolebindings (with groups) : yes    get secrets : no    /api/clusterconfigs : 403
+jane.smith  list clusterrolebindings (with groups) : yes    get secrets : yes   /api/clusterconfigs : 200
+            (stock ClusterRole/admin alone: list no, update no, get secrets yes, create secrets yes)
+```
+
+A probe with `oc auth can-i --as=<user>` **without** `--as-group` answers `no` to `get secrets` for
+jane.smith: user impersonation does not carry OpenShift Group membership, while the dashboard's
+resolver supplies the viewer's groups to its SubjectAccessReview. Any future probe must pass the groups.

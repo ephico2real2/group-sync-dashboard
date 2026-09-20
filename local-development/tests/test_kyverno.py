@@ -758,3 +758,23 @@ def test_f8_the_results_family_does_not_materialise_the_rows(tmp_path, monkeypat
     assert len(samples) == 30
     assert {tuple(x.labels): x.value for x in samples}[("c1", "ValidatingPolicy", "fail")] == 1
     assert {tuple(x.labels): x.value for x in samples}[("c1", "other", "pass")] == 1
+
+
+# V1 (OB1-lite's re-read of #228): an Unknown condition is "not True" too — `test_f6` pinned only status False, so a
+# rewrite of the reader's `!= "True"` to `== "False"` survived the suite (measured: 37 passed under that mutant).
+def test_v1_an_unknown_condition_is_a_note_like_a_false_one():
+    unknown = policy_view("ValidatingPolicy", _lab_policy(ready=False, conditions=[
+        {"type": "WebhookConfigured", "status": "Unknown", "reason": "Pending", "message": "webhook not yet reconciled"}]))
+    assert unknown.ready is False and unknown.note == "WebhookConfigured: webhook not yet reconciled", unknown.note
+
+
+# V2 (the same re-read): the module's own prose must not contradict F1 and F6 — the reader no longer takes the first
+# group that answers, and `note` is no longer `status.conditionStatus.message`. A comment that describes the code as
+# it WAS is how the next reader is misled.
+def test_v2_the_docstrings_say_what_f1_and_f6_made_the_code_do():
+    reader = (REPO / "local-development/gsd/kyverno/reader.py").read_text()
+    store = (REPO / "local-development/gsd/store.py").read_text()
+    assert "The first that answers is the one read" not in reader, "REPORT_GROUPS' comment still describes the pre-F1 reader"
+    assert "`openreports.io/v1alpha1` first, then" not in reader, "the module docstring still describes the pre-F1 reader"
+    assert "#: `status.conditionStatus.message` — the controller's own word" not in reader, "PolicyView.note's comment still describes the pre-F6 note"
+    assert "-- status.conditionStatus.message, the controller's own word" not in store, "kyverno_policy.note's schema comment still describes the pre-F6 note"

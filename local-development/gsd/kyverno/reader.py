@@ -1,8 +1,9 @@
 """Read one cluster's Kyverno state: the policies of the CEL kinds, the reports' results, the breaker.
 
-Runtime discovery, not configuration (finding 7): `openreports.io/v1alpha1` first, then
-`wgpolicyk8s.io/v1alpha2`; neither served means Kyverno is not installed, which is a state the caller
-records as absent — never as zero results. Every LIST follows the API server's continue tokens
+Runtime discovery, not configuration (finding 7): every served report group is read
+(`openreports.io/v1alpha1`, `wgpolicyk8s.io/v1alpha2`) and `api_group` names the one carrying Kyverno's
+reports; neither served means Kyverno is not installed, which is a state the caller records as absent —
+never as zero results. Every LIST follows the API server's continue tokens
 (`ClusterClient._list_all`), because reports carry only `managed-by: kyverno` and are filtered client-side
 (finding 8). A CEL result is keyed by policy and resource, never by rule (finding 5: `rule` is empty).
 """
@@ -19,7 +20,7 @@ from . import CEL_KINDS, CEL_SOURCES, CONTROLLED_KINDS, GENERATED_SOURCES, LEGAC
 
 log = logging.getLogger(__name__)
 
-#: The report API groups, in the order tried. The first that answers is the one read.
+#: The report API groups, in the order tried. Every one served is read; `api_group` is the first that carried reports.
 REPORT_GROUPS: tuple[tuple[str, str, str, str], ...] = (
     ("openreports.io/v1alpha1", "/apis/openreports.io/v1alpha1", "reports", "clusterreports"),
     ("wgpolicyk8s.io/v1alpha2", "/apis/wgpolicyk8s.io/v1alpha2", "policyreports", "clusterpolicyreports"),
@@ -54,8 +55,8 @@ class PolicyView:
     #: `status.generated`: a generated ValidatingAdmissionPolicy stands in for this policy, and its rows carry
     #: `source: ValidatingAdmissionPolicy` with `policy: vpol-<name>` (discovery §3).
     generated: bool = False
-    #: `status.conditionStatus.message` — the controller's own word, e.g. "Policy is ready for reporting" or an
-    #: RBAC gap the policy's Ready condition does not say (discovery §2).
+    #: A `status.conditionStatus.conditions[]` entry that is not True (`<type>: <message>`, e.g. an RBAC gap), or
+    #: the controller's `message` only when nothing failed and the policy is still not ready (review of #228, OB3).
     note: str = ""
 
 
