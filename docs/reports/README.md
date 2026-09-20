@@ -50,16 +50,24 @@ control per parameter. Anything omitted uses the report's default.
 
 | Report | Parameters (type) |
 |---|---|
-| `namespace-access` | `selectors` (selector-map), `mnemonics` (csv), `namespaces` (namespaces), `include_members` (bool) |
-| `access-matrix` | `subject_kind` (enum), `namespace_prefix` (str) |
+| `namespace-access` | `selectors` (selector-map), `mnemonics` (csv, deprecated), `namespaces` (namespaces), `include_members` (bool), `group_by` (enum: `mnemonic` / `app-environment` / `oud-group`) |
+| `access-matrix` | `users` (csv), `groups` (csv), `namespace_prefix` (str) |
 | `privileged-access` | `include_members` (bool), `roles` (csv) |
-| `groups` | `window_days` (int), `include_members` (bool) |
-| `users` | `providers` (csv) |
-| `login-activity` | `window_days` (int), `user` (str) |
-| `dormant-access` | `dormant_days` (int) |
+| `groups` | `groups` (csv), `window_days` (int), `include_members` (bool) |
+| `users` | `users` (csv), `providers` (csv) |
+| `login-activity` | `window_days` (int), `users` (csv), `groups` (csv) |
+| `dormant-access` | `users` (csv), `groups` (csv), `dormant_days` (int) |
 | `groupsync-health` | `window_days` (int) |
-| `access-certification` | `campaign` (str), `due` (date), `reviewer` (str), `scope` (enum), `include_members` (bool), `group_prefix` (str) |
+| `access-certification` | `campaign` (str, required), `due` (date, required), `reviewer` (str, required), `users` (csv), `groups` (csv), `group_mnemonic` (csv), `include_members` (bool) |
 | `binding-findings`, `compliance-snapshot` | none (cluster + format only) |
+
+`users` and `groups` are the **Subject scope** the subject-centric reports share (#149 R7): empty means
+every subject; naming users only leaves groups out, and the other way round; `login-activity` and
+`dormant-access` read groups as "members of". `group_mnemonic` names business mnemonics that resolve to
+the exact group the namespaces carrying them pin (`reporting.namespaceGroupLabel`). The Reports tab
+offers every csv here as a lookup discovered from the snapshot. The old `subject_kind`, `scope`,
+`group_prefix` and `user` keys are gone: a schedule still naming one is refused with `unknown parameter`
+— rename it as above.
 
 ## Scheduling
 

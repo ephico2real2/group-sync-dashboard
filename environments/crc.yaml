@@ -99,6 +99,8 @@ reporting:
     labels:
       - company.net/mnemonic
       - company.net/app-environment
+  # #149 R7: the exact-group label; the poller captures it and the forms resolve mnemonics through it.
+  namespaceGroupLabel: company.net/oud-group
   namespaceSelector:
     # The Reports form OFFERS these as selector dimensions (must be a subset of the captured keys).
     labels:

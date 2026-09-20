@@ -360,6 +360,23 @@ class TestDerivations:
         assert _json.loads({e["name"]: e.get("value") for d in _render() if d.get("kind") == "Deployment" and d["metadata"]["name"].endswith("-report")
                             for e in d["spec"]["template"]["spec"]["containers"][0]["env"]}["GSD_REPORT_SCHEDULES"]) == []
 
+    def test_the_exact_group_label_reaches_both_pods_and_needs_the_namespaces_grant(self):
+        # #149 R7: the report pod resolves mnemonics through it; the poller captures it as a third label
+        # whether or not the operator listed it; without the Namespace grant it is refused like the labels.
+        docs = _render("rbac.namespaces=true", "reporting.namespaceGroupLabel=company.net/oud-group",
+                       "reporting.namespaceMetadata.labels[0]=company.net/mnemonic")
+        report = {e["name"]: e.get("value") for d in docs if d.get("kind") == "Deployment" and d["metadata"]["name"].endswith("-report")
+                  for e in d["spec"]["template"]["spec"]["containers"][0]["env"]}
+        assert report["GSD_REPORT_NAMESPACE_GROUP_LABEL"] == "company.net/oud-group"
+        ok, out = _render_text(rbac__namespaces="true", reporting__namespaceGroupLabel="company.net/oud-group",
+                               **{"reporting.namespaceMetadata.labels[0]": "company.net/mnemonic"})
+        assert ok, out
+        assert _config_data(out)["namespaceMetadataLabels"] == ["company.net/mnemonic", "company.net/oud-group"]
+        ok, out = _render_text(rbac__namespaces="true", reporting__namespaceGroupLabel="company.net/mnemonic",
+                               **{"reporting.namespaceMetadata.labels[0]": "company.net/mnemonic"})
+        assert _config_data(out)["namespaceMetadataLabels"] == ["company.net/mnemonic"], "already listed: not appended twice"
+        ok, out = _render_text(reporting__namespaceGroupLabel="company.net/oud-group")
+        assert not ok and "namespaceGroupLabel is set but rbac.namespaces is false" in out
     def test_a_quoted_false_pauses_the_cronjob_and_the_status_page_alike(self):
         # Review of #221 (OB3): report-cronjob.yaml suspends on the literal word false (a quoted "false" or a
         # --set-string is a non-empty string), and the service reads `enabled` as a boolean. Rendered as the

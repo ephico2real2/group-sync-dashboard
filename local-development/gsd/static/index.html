@@ -2498,7 +2498,12 @@ async function reportFetch(path, init = {}, retried = false) {
   const res = await fetch(prefix + path, Object.assign({}, init, { headers }));
   if (res.redirected) { const err = new Error("the dashboard session has ended"); err.sessionEnded = true; throw err; }
   if (res.status === 401 && !retried) return reportFetch(path, init, true);
-  if (!res.ok) { const err = new Error(`${res.status} ${res.statusText} on ${prefix + path}`); err.status = res.status; throw err; }
+  if (!res.ok) {
+    const err = new Error(`${res.status} ${res.statusText} on ${prefix + path}`); err.status = res.status;
+    // A 422 names the parameter it refused; carry that detail so the form can say it (review of #222, Grok).
+    if (res.status === 422) { try { const body = await res.json(); err.detail = typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail); } catch (e) { /* no body */ } }
+    throw err;
+  }
   return res;
 }
 async function reportGet(path) { return (await reportFetch(path)).json(); }
@@ -2627,36 +2632,137 @@ function reportFormCard(spec, cat) {
            <button type="button" class="linkish" id="report-preview-clear"${hasSelectors ? "" : " hidden"}>Clear</button>
            <button type="button" class="linkish" id="report-preview-view"${(view.reportPreviewNames || []).length ? "" : " hidden"}>view namespaces</button></div>`;
     }
-    const id = `report-param-${spec.name}-${p.name}`;
-    const val = form[p.name] !== undefined ? form[p.name] : (Array.isArray(p.default) ? p.default.join(",") : (p.default === null ? "" : p.default));
-    const label = `<label for="${id}">${esc(p.name)}${p.required ? " *" : ""}</label>`;
-    let input;
-    if (p.type === "bool") input = `<input id="${id}" type="checkbox" data-param="${esc(p.name)}"${val === true || val === "true" ? " checked" : ""}>`;
-    else if (p.type === "enum") input = `<select id="${id}" data-param="${esc(p.name)}">${p.choices.map((c) => `<option value="${esc(c)}"${c === val ? " selected" : ""}>${esc(c)}</option>`).join("")}</select>`;
-    else if (p.type === "int") input = `<input id="${id}" type="number" data-param="${esc(p.name)}" value="${esc(val)}"${p.lo != null ? ` min="${p.lo}"` : ""}${p.hi != null ? ` max="${p.hi}"` : ""}>`;
-    else if (p.type === "date") input = `<input id="${id}" type="date" data-param="${esc(p.name)}" value="${esc(val)}">`;
-    else input = `<input id="${id}" type="text" data-param="${esc(p.name)}" value="${esc(val)}" autocomplete="off" spellcheck="false">`;
-    return `<div class="report-field">${label}${input}<span class="muted">${esc(p.help)}</span></div>`;
+    return paramField(spec, p, form);
   };
   const run = view.reportRun;
   const status = run ? reportRunStatus(run) : "";
   const [kcat] = REPORT_KIND[spec.name] || ["access"];
+  // #149 R7: one ParamSpec-driven shell for all eleven reports — the main grid, the Subject scope as one
+  // framed block, optional fields under Advanced (open when one of them is set), no cluster field (the
+  // nav chose it), a pinned action bar. The selector-map Scope keeps its own block above.
+  const subject = spec.params.filter((p) => p.group === "subject");
+  const main = spec.params.filter((p) => !p.group && !p.advanced);   // `mnemonics`/`selectors` render through field()'s own cases
+  const advanced = spec.params.filter((p) => !p.group && p.advanced);
+  const advancedSet = advanced.some((p) => form[p.name] !== undefined && form[p.name] !== "" && String(form[p.name]) !== String(Array.isArray(p.default) ? p.default.join(",") : p.default))
+    || !!(view.reportAdvancedOpen || {})[spec.name];   // opened by the reader: a repaint (the lookups' arrival) must not close it (review of #222, Grok)
+  const formats = [cat.pdf && cat.pdf.enabled ? "PDF" : "", "HTML", "JSON"].filter(Boolean).join(" · ");
   return `<section class="card report-panel r-${esc(kcat)}" id="report-form">
     <div class="panelbar"><button type="button" class="back" id="report-back">${backLabel()}</button>
       <span class="muted">${esc(spec.title)} · <span class="mono">${esc(spec.name)}</span></span></div>
     <h3>${esc(spec.title)}</h3>
     <div class="filterbar-note">${esc(spec.summary)}</div>
-    <div class="report-fields">${spec.params.map(field).join("")}
-      <div class="report-field"><label for="report-cluster">cluster</label>
-        <input id="report-cluster" type="text" value="${esc(view.cluster || "")}" readonly><span class="muted">The cluster selected above.</span></div>
-    </div>
-    <div class="ns-controls mt-4">
-      <button type="button" class="btn" id="report-generate"${view.reportSubmitting || !view.cluster ? " disabled" : ""}>Generate</button>
+    ${subject.length ? subjectBlock(spec, subject, form) : ""}
+    <div class="report-fields">${main.map(field).join("")}</div>
+    ${advanced.length ? `<details class="report-advanced" id="report-advanced"${advancedSet ? " open" : ""}><summary>Advanced</summary>
+      <div class="report-fields">${advanced.map(field).join("")}</div></details>` : ""}
+    <div class="ns-controls mt-4 report-actions">
+      <button type="button" class="btn" id="report-generate"${view.reportSubmitting || !view.cluster ? " disabled" : ""}>Generate <span class="mono muted">${esc(formats)}</span></button>
       ${cat.pdf && cat.pdf.enabled ? `<label class="filterbar-note"><input type="checkbox" id="report-want-pdf" checked> PDF</label>` : ""}
       <label class="filterbar-note"><input type="checkbox" id="report-want-html" checked> HTML</label>
+      <span class="filterbar-note">json is always written · cluster <span class="mono">${esc(view.cluster || "")}</span></span>
     </div>
     ${status}
   </section>`;
+}
+
+/* #149 R7 — one control per ParamSpec type. Every control writes view.reportForm[spec][name] and
+   re-renders; text-like inputs keep the data-param onchange path. The id scheme
+   report-param-<spec>-<name> is kept for text, number and date inputs (tests and the preview use it). */
+function paramField(spec, p, form) {
+  const id = `report-param-${spec.name}-${p.name}`;
+  const raw = form[p.name];
+  const label = `<label for="${id}">${esc(p.name)}${p.required ? ' <span class="req" title="required">*</span>' : ""}</label>`;
+  const hint = `<span class="muted hint" title="${esc(p.help)}">${esc(p.help)}</span>`;
+  if (p.type === "bool") {
+    const on = raw !== undefined ? (raw === true || raw === "true") : p.default === true;
+    return `<div class="report-field">${label}
+      <button type="button" class="rp-switch${on ? " on" : ""}" id="${id}" role="switch" aria-checked="${on}" data-switch="${esc(p.name)}">
+        <span class="rp-track" aria-hidden="true"><span class="rp-knob"></span></span><span class="rp-lab">${on ? "On" : "Off"}</span></button>${hint}</div>`;
+  }
+  if (p.type === "enum") {
+    const val = raw !== undefined && raw !== "" ? raw : p.default;
+    return `<div class="report-field">${label}
+      <div class="rp-seg" role="radiogroup" id="${id}" aria-label="${esc(p.name)}">${p.choices.map((c) =>
+        `<button type="button" id="${id}-${esc(c)}" role="radio" aria-checked="${c === val}" class="${c === val ? "sel" : ""}" data-seg="${esc(p.name)}" data-value="${esc(c)}">${esc(c)}</button>`).join("")}</div>${hint}</div>`;
+  }
+  if (p.type === "int") {
+    const val = raw !== undefined && raw !== "" ? raw : p.default;
+    return `<div class="report-field">${label}<div class="rp-num">
+      <input id="${id}" type="number" data-param="${esc(p.name)}" value="${esc(val)}"${p.lo != null ? ` min="${p.lo}"` : ""}${p.hi != null ? ` max="${p.hi}"` : ""}>
+      ${p.unit ? `<span class="rp-unit">${esc(p.unit)}</span>` : ""}</div>${hint}</div>`;
+  }
+  if (p.type === "date") {
+    return `<div class="report-field">${label}<input id="${id}" type="date" data-param="${esc(p.name)}" value="${esc(raw !== undefined ? raw : (p.default || ""))}">${hint}</div>`;
+  }
+  if (p.type === "csv") return `<div class="report-field">${label}${lookupControl(spec, p, form)}${hint}</div>`;
+  const val = raw !== undefined ? raw : (p.default === null ? "" : p.default);
+  return `<div class="report-field">${label}<input id="${id}" type="text" data-param="${esc(p.name)}" value="${esc(val)}" autocomplete="off" spellcheck="false">${hint}</div>`;
+}
+
+// The Subject scope: users and/or groups as one framed block, a live count, Clear (empty = all).
+function subjectBlock(spec, params, form) {
+  const chosen = params.reduce((n, p) => n + (Array.isArray(form[p.name]) ? form[p.name].length : 0), 0);
+  return `<div class="rp-scope subj" id="report-subject">
+    <div class="rp-scope-top"><span class="t">Subjects <span class="rp-auto">lookup · discovered</span></span><span class="and muted">empty = all · pick users and/or groups, one or more</span></div>
+    <div class="report-fields">${params.map((p) => `<div class="report-field"><label>${esc(p.name)}</label>${lookupControl(spec, p, form)}<span class="muted hint" title="${esc(p.help)}">${esc(p.help)}</span></div>`).join("")}</div>
+    <div class="rp-scope-foot"><span class="rp-count-live" id="report-subject-count">${chosen ? `${chosen} selected` : "all subjects"}</span>
+      <button type="button" class="linkish" id="report-subject-clear"${chosen ? "" : " hidden"}>Clear</button></div>
+  </div>`;
+}
+
+const LOOKUP_HEAD = { users: "User objects", groups: "synced groups", providers: "identity providers", roles: "roles bound on the cluster",
+                      mnemonics: "namespace mnemonics", "oud-groups": "exact groups pinned by namespaces" };
+
+// A tag input over a discovered lookup: click a value to add, its × (or clicking it again) to remove,
+// type to narrow the menu (substring, case-insensitive), Enter to add a value the set does not carry.
+function lookupControl(spec, p, form) {
+  const chosen = Array.isArray(form[p.name]) ? form[p.name] : (typeof form[p.name] === "string" && form[p.name] ? form[p.name].split(",").map((x) => x.trim()).filter(Boolean) : []);
+  const id = `report-lookup-${spec.name}-${p.name}`;
+  const found = p.source && data.reportDiscovered && (view.cluster in data.reportDiscovered) && data.reportDiscovered[view.cluster][p.source];
+  const values = found ? found.values : [];
+  const typed = (view.reportLookupText || {})[id] || "";
+  const settled = !!(data.reportDiscovered && (view.cluster in data.reportDiscovered));   // the cluster's answer is in, whatever it held
+  return `<div class="rp-lookup" data-lookup="${esc(p.name)}">
+    <div class="rp-tags" data-lookup-tags="${esc(p.name)}">${chosen.map((v) => `<span class="rp-tag" data-name="${esc(v)}">${esc(v)} <button type="button" class="rp-tag-x" aria-label="remove ${esc(v)}" data-lookup-remove="${esc(p.name)}" data-value="${esc(v)}">×</button></span>`).join("")}
+      <input id="${id}" type="text" data-lookup-input="${esc(p.name)}" data-lookup-source="${esc(p.source || "")}" value="${esc(typed)}" placeholder="${p.source ? `pick ${esc(p.source)}…` : "type a value, Enter to add"}" autocomplete="off" spellcheck="false" aria-label="${esc(p.name)}"></div>
+    ${p.source ? `<div class="rp-menu" id="${id}-menu" role="listbox" aria-label="${esc(LOOKUP_HEAD[p.source] || p.source)}">
+      <div class="rp-menu-head">${esc(LOOKUP_HEAD[p.source] || p.source)} · ${found ? `${values.length} discovered${found.truncated ? " (first 5000)" : ""}` : (settled ? "none discovered" : "loading…")}</div>
+      <div data-menu-body>${lookupMenuBody(p.name, values, chosen, typed)}</div>
+    </div>` : ""}
+  </div>`;
+}
+
+// The menu's options for one query — the first 200 matches of the discovered set. One function for the
+// paint and for typing: the first cut painted only the matches of the text typed so far, and a repaint
+// under a query that matched nothing left a menu with no option nodes for later typing to reveal
+// (review of #222, OB3 — measured: "zzz", a repaint, "kube" → no match, though kubeadmin was discovered).
+function lookupMenuBody(name, values, chosen, typed) {
+  const q = typed.toLowerCase();
+  const shown = values.filter((v) => !q || v.toLowerCase().includes(q));
+  return `${shown.slice(0, 200).map((v) => `<div class="rp-opt${chosen.includes(v) ? " sel" : ""}" role="option" aria-selected="${chosen.includes(v)}" tabindex="0" data-lookup-opt="${esc(name)}" data-value="${esc(v)}">${esc(v)}</div>`).join("")}
+      ${q && !shown.length ? `<div class="rp-nomatch">No match — press Enter to add “${esc(typed)}”</div>` : ""}
+      ${shown.length > 200 ? `<div class="rp-nomatch">${shown.length - 200} more — keep typing to narrow</div>` : ""}`;
+}
+
+// The discovered lookups for the cluster in the nav, fetched once per cluster when a form opens.
+function ensureDiscovered() {
+  if (!view.cluster || !reportingEnabled()) return;
+  data.reportDiscovered = data.reportDiscovered || {};
+  // Presence, not truthiness: whatever the answer's shape, one fetch settles the cluster — a stubbed or
+  // odd reply that left the key unset re-fetched on every paint (an infinite render loop, measured).
+  if (view.cluster in data.reportDiscovered || data.reportDiscovered[`pending:${view.cluster}`]) return;
+  data.reportDiscovered[`pending:${view.cluster}`] = true;
+  const forCluster = view.cluster;
+  reportGet(`/api/discovered?cluster=${encodeURIComponent(forCluster)}`)
+    .then((r) => { data.reportDiscovered[forCluster] = (r && r.discovered) || {}; })
+    .catch(() => { data.reportDiscovered[forCluster] = {}; })            // a 404/503: the menus say "none discovered"
+    .finally(() => {
+      delete data.reportDiscovered[`pending:${forCluster}`];
+      // The lookups' arrival repaints the menus; it does NOT land again — the landing is instant now,
+      // so nothing is in flight for a repaint to cancel, and a reader who scrolled in the meantime
+      // keeps their place (review of #222, Grok).
+      if (view.page === "reports" && view.report) render();
+    });
 }
 
 function reportRunStatus(run) {
@@ -2938,7 +3044,10 @@ function landReportForm() {
   const bar = document.querySelector("header.top");
   const pos = bar ? getComputedStyle(bar).position : "";
   const shell = bar && (pos === "sticky" || pos === "fixed") ? bar.getBoundingClientRect().height : 0;
-  window.scrollTo({ top: form.getBoundingClientRect().top + window.scrollY - shell - 12, behavior: "smooth" });
+  // Instant, not smooth: a smooth scroll is an animation the browser cancels on the next scroll-affecting
+  // event, and on a long form at phone width it was measured stopping 110 px in (the lookups' menus
+  // had just been painted). The landing is the point; the reader's eye follows a cut fine.
+  window.scrollTo({ top: form.getBoundingClientRect().top + window.scrollY - shell - 12 });
 }
 
 function wireReports() {
@@ -2986,6 +3095,68 @@ function wireReports() {
   });
   const link = $("report-status-link");
   if (link) link.onclick = () => { navigate({ page: "reporting" }); render(); refresh(); };
+  // #149 R7: the ParamSpec shell's controls. Each writes the form state and repaints; the lookup's
+  // typed text lives in view.reportLookupText so the repaint keeps it and the caret returns by id.
+  const openSpec = view.report && data.reportCatalog && (data.reportCatalog.reports || []).find((r) => r.name === view.report);
+  if (openSpec && $("report-form") && openSpec.params.some((p) => p.source)) ensureDiscovered();   // only a form with a lookup pays for one
+  const formOf = () => view.reportForm[view.report] || (view.reportForm[view.report] = {});
+  const listOf = (name) => { const f = formOf(); const v = f[name]; return Array.isArray(v) ? v : (typeof v === "string" && v ? v.split(",").map((x) => x.trim()).filter(Boolean) : []); };
+  const after = (name) => { if (view.report === "namespace-access") schedulePreview(view.report); render(); };
+  document.querySelectorAll("[data-switch]").forEach((el) => {
+    el.onclick = () => { const f = formOf(); f[el.dataset.switch] = el.getAttribute("aria-checked") !== "true"; after(el.dataset.switch); };
+  });
+  document.querySelectorAll("[data-seg]").forEach((el) => {
+    el.onclick = () => { formOf()[el.dataset.seg] = el.dataset.value; after(el.dataset.seg); };
+  });
+  document.querySelectorAll("[data-lookup-input]").forEach((el) => {
+    const name = el.dataset.lookupInput;
+    view.reportLookupText = view.reportLookupText || {};
+    el.oninput = () => {
+      // narrow the menu in place — no repaint under a typing reader; rebuilt from the discovered set,
+      // not from the nodes on screen (review of #222, OB3)
+      view.reportLookupText[el.id] = el.value;
+      const body = document.querySelector(`#${CSS.escape(el.id)}-menu [data-menu-body]`); if (!body) return;
+      const found = data.reportDiscovered && (view.cluster in data.reportDiscovered) && data.reportDiscovered[view.cluster][el.dataset.lookupSource];
+      body.innerHTML = lookupMenuBody(name, found ? found.values : [], listOf(name), el.value.trim());
+      wireLookupOptions(body);
+    };
+    el.onkeydown = (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault(); const v = el.value.trim(); if (!v) return;
+        const list = listOf(name); if (!list.includes(v)) list.push(v);
+        formOf()[name] = list; view.reportLookupText[el.id] = ""; after(name);
+      } else if (e.key === "Backspace" && !el.value) {
+        const list = listOf(name); if (list.length) { list.pop(); formOf()[name] = list; after(name); }
+      }
+    };
+  });
+  // An option, a × and Clear have no id, so render()'s by-id restore would leave a keyboard reader on
+  // <body>; each puts focus back on the lookup's input (review of #222, Grok and OB3).
+  const refocusLookup = (name) => { const again = document.querySelector(`[data-lookup-input="${CSS.escape(name)}"]`); if (again) again.focus({ preventScroll: true }); };
+  const wireLookupOptions = (root) => root.querySelectorAll("[data-lookup-opt]").forEach((el) => {
+    const pick = () => {
+      const name = el.dataset.lookupOpt, v = el.dataset.value, list = listOf(name);
+      formOf()[name] = list.includes(v) ? list.filter((x) => x !== v) : list.concat([v]);
+      const input = document.querySelector(`[data-lookup-input="${CSS.escape(name)}"]`); if (input) view.reportLookupText[input.id] = "";
+      after(name); refocusLookup(name);
+    };
+    el.onclick = pick;
+    el.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(); } };
+  });
+  wireLookupOptions(document);
+  document.querySelectorAll("[data-lookup-remove]").forEach((el) => {
+    el.onclick = () => { const name = el.dataset.lookupRemove; formOf()[name] = listOf(name).filter((x) => x !== el.dataset.value); after(name); refocusLookup(name); };
+  });
+  const adv = $("report-advanced");
+  if (adv) {
+    // Recorded on the summary's click, not only on `toggle`: the toggle event is queued as a task, so a
+    // repaint racing it read the old state (review of #222, OB3 — the reader's close was undone).
+    const rec = (open) => { view.reportAdvancedOpen = view.reportAdvancedOpen || {}; view.reportAdvancedOpen[view.report] = open; };
+    adv.querySelector("summary").onclick = () => rec(!adv.open);
+    adv.ontoggle = () => rec(adv.open);
+  }
+  const clearSubject = $("report-subject-clear");
+  if (clearSubject) clearSubject.onclick = () => { const f = formOf(); delete f.users; delete f.groups; render(); refocusLookup("users"); };
   const back = $("report-back");
   // The catalogue that Back repaints has no #report-back, so render()'s by-id restore would drop the
   // keyboard reader's focus on <body>; the row this form belongs to is where it goes (review of #173).
@@ -3045,7 +3216,7 @@ async function generateReport(refocus = false) {
     }
     data.reportRuns = await guard403(reportGet("/api/runs?limit=1"));
   } catch (e) {
-    view.reportRun = { id: "—", status: "failed", error: e.status === 422 ? "the parameters were refused (see the fields)" : e.message };
+    view.reportRun = { id: "—", status: "failed", error: e.status === 422 ? `the parameters were refused: ${e.detail || e.message}` : e.message };
   } finally {
     view.reportSubmitting = false; render();
     if (refocus) { const g = $("report-generate"); if (g) g.focus({ preventScroll: true }); }

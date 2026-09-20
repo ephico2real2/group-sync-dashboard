@@ -988,10 +988,22 @@ reporting:
     #     - company.net/mnemonic            # <- replace with your enterprise's actual metadata labels
     #     - company.net/app-environment
     labels: []
+  # The Namespace label that pins an EXACT group (#149 R7) — carried by some namespaces only, the ones
+  # that name the group governing them. The report forms resolve a business mnemonic to that group
+  # through it (a naming convention was measured unreliable: beta → app-ocp-rbac-spar-ns-audit, alpha →
+  # bda-rbac-trino-alpha-users), and offer the captured values as a direct group lookup. The poller
+  # captures it as a third namespace label whether or not it is listed under namespaceMetadata.labels.
+  # "" hides the mnemonic and exact-group lookups. ENTERPRISE-SPECIFIC, like the labels above.
+  namespaceGroupLabel: ""
   namespaceSelector:
     # The captured DIMENSIONS the namespace-access report offers (P2, multi-dimension). Each MUST be one
     # of namespaceMetadata.labels; the form renders one multi-select per entry, AND'd across, OR within.
     # [] hides the selector.
+    #
+    # ORDER MATTERS: the FIRST entry is the business mnemonic — the "mnemonics" lookup lists its values,
+    # access-certification resolves group_mnemonic through it (with namespaceGroupLabel), and
+    # namespace-access's group_by "mnemonic" groups by it; the SECOND is the app environment
+    # (group_by "app-environment"). Listed the other way round, a mnemonic resolves environments.
     #
     # Same ENTERPRISE-SPECIFIC keys as namespaceMetadata.labels — set to your cluster's real metadata
     # labels on a remote/production cluster, NOT the company.net/* examples. e.g.

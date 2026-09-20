@@ -38,6 +38,10 @@ SPEC = ReportSpec(
         ParamSpec("namespaces", "namespaces", None,
                   "Advanced: explicit namespace names, at most 50; `(cluster-scoped)` for cluster-wide bindings."),
         ParamSpec("include_members", "bool", False, "Expand group rosters. Off by default — a file that gets emailed has no reader log — and recorded in the provenance when on."),
+        ParamSpec("group_by", "enum", "mnemonic", "Sort and group the namespaces by a metadata label — the mnemonic or the "
+                  "app-environment every namespace carries, or the exact-group label some pin (the rest fall under "
+                  "'(no oud-group)'). Groups the output; it does not filter.",
+                  choices=("mnemonic", "app-environment", "oud-group"), advanced=True),
     ),
     validator=_validate_selection,
 )
@@ -93,7 +97,23 @@ def build(snap: Snapshot, ctx: RunContext, params: dict) -> Built:
     rosters = snap.group_rosters(cid, sorted({g["group_name"] for g in groups if g["finding"] in ("ok", "unmanaged")})) if include_members else {}
     sections: list[Section] = []
     truncated = False
-    for n, key in zip(names, keys):
+    # #149 R7: the sections come out grouped by a namespace label, the group named in each heading.
+    # The label keys: the mnemonic is the first captured selector dimension, the app-environment the
+    # second (the estate convention company.net/mnemonic + company.net/app-environment), the exact
+    # group the deployment's namespace group label. A namespace without the label sits last.
+    labels = list(ctx.settings.namespace_selector_labels)
+    by_key = {"mnemonic": labels[0] if labels else "", "app-environment": labels[1] if len(labels) > 1 else "",
+              "oud-group": ctx.settings.namespace_group_label}
+    group_label = by_key.get(params["group_by"], "")
+    label_map = snap.namespace_label_map(cid, group_label) if group_label else {}
+    if not label_map:
+        group_label = ""     # nothing captured for this cluster: the headings stay as they were (review of #222, Grok)
+    # Sorted only when a grouping applies: an explicit list's order is the reader's (behaviour of the
+    # base branch — review of #222, OB3: the head re-sorted "prod-ns,dev-ns" alphabetically with no label).
+    pairs = sorted(zip(names, keys), key=lambda nk: (nk[0] == CLUSTER_SCOPE, label_map.get(nk[0]) is None, label_map.get(nk[0], ""), nk[0])) \
+        if group_label else list(zip(names, keys))
+    for n, key in pairs:
+        bucket = "cluster-scoped" if n == CLUSTER_SCOPE else (label_map.get(n) or f"(no {params['group_by']})") if group_label else ""
         g_rows = [g for g in groups if g["binding_namespace"] == key]
         u_rows = [u for u in users if u["binding_namespace"] == key]
         g_rows, t1 = cut(g_rows)
@@ -124,7 +144,10 @@ def build(snap: Snapshot, ctx: RunContext, params: dict) -> Built:
                     blocks.append(roster_table(f"Members of {g['group_name']}", rosters[g["group_name"]]))
         if exists is None and n != CLUSTER_SCOPE and n not in observed:
             blocks.append(Note("Neither a Namespace object nor a binding in it was observed; this report cannot say whether the namespace exists.", "warning"))
-        sections.append(Section(f"Namespace: {n}" if n != CLUSTER_SCOPE else "Cluster-scoped bindings", blocks, page_break=True))
+        heading = f"Namespace: {n}" if n != CLUSTER_SCOPE else "Cluster-scoped bindings"
+        if bucket and n != CLUSTER_SCOPE:
+            heading = f"{bucket} · {heading}"
+        sections.append(Section(heading, blocks, page_break=True))
     if selector_capped:
         sections.insert(0, Section("Coverage", [Note(
             f"The selector matched more than {MAX_NAMESPACES} namespaces; this report covers the first "

@@ -209,7 +209,27 @@ def build_report_app(settings: ReportSettings, *, secret: bytes | None = None, c
                 "pdf": {"enabled": settings.pdf_enabled, "variant": settings.pdf_variant},
                 "viewer": p.name if p.kind == "viewer" else None,
                 "namespaceSelectors": selectors,
-                "namespaceSelectorDimensions": dimensions}
+                "namespaceSelectorDimensions": dimensions,
+                "namespaceGroupLabel": settings.namespace_group_label}
+
+    @app.get(f"{REPORT_PREFIX}/api/discovered")
+    def discovered_lookups(cluster: str = Query(..., pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$", description="the cluster id"),
+                           p: Principal = Depends(principal)) -> dict:
+        """The discovered lookups a report form offers for one cluster: users, groups, providers, roles, mnemonics, exact groups.
+
+        Fetched when a form opens, for the cluster in the nav, NOT on the catalogue load — the catalogue
+        stays one query for the whole estate (V4-F1), and a form pays six small reads for one cluster
+        (#149 R7). Each set is cut at 5000 with `truncated` said; a missing snapshot is an empty answer.
+        """
+        labels = list(settings.namespace_selector_labels)
+        try:
+            with Snapshot(newest_snapshot(settings.snapshot_dir)) as snap:
+                if snap.cluster(cluster) is None:
+                    raise HTTPException(status_code=404, detail=f"unknown cluster {cluster!r} in the snapshot")
+                found = snap.discovered(cluster, labels[0] if labels else "", settings.namespace_group_label)
+        except (SnapshotError, OSError):
+            found = {k: {"values": [], "truncated": False} for k in ("providers", "roles", "users", "groups", "mnemonics", "oud-groups")}
+        return {"cluster": cluster, "discovered": found, "namespaceGroupLabel": settings.namespace_group_label}
 
     @app.get(f"{REPORT_PREFIX}/api/snapshot")
     def snapshot_info(p: Principal = Depends(principal)) -> dict:

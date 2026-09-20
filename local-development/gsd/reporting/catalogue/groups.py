@@ -12,7 +12,8 @@ SPEC = ReportSpec(
     summary="Every synced group: provider, member count, last sync, bindings, cliff silence; the empty and unattributed lists; joins and leaves in the window.",
     values_key="groups",
     params=(
-        ParamSpec("window_days", "int", 30, "Membership changes observed in the last N days.", lo=1, hi=3650),
+        ParamSpec("groups", "csv", [], "Only these groups (empty = every synced group).", source="groups"),
+        ParamSpec("window_days", "int", 30, "Membership changes observed in the last N days.", lo=1, hi=3650, unit="days"),
         ParamSpec("include_members", "bool", False, "Rosters for every group. Recorded in the provenance when on."),
     ),
 )
@@ -22,8 +23,14 @@ def build(snap: Snapshot, ctx: RunContext, params: dict) -> Built:
     cid = ctx.cluster["id"]
     since = window_start(ctx.now, params["window_days"])
     groups = snap.groups(cid)
+    if params["groups"]:
+        picked = set(params["groups"])
+        groups = [g for g in groups if g["name"] in picked]
     changes = snap.membership_changes(cid, since)
     change_counts = snap.membership_change_counts(cid, since)
+    if params["groups"]:   # the scope narrows the changes and their counts too (review of #222, Grok)
+        changes = [c for c in changes if c["group_name"] in picked]
+        change_counts = {"added": sum(1 for c in changes if c["change"] == "added"), "removed": sum(1 for c in changes if c["change"] == "removed")}
     retained = snap.history_retained_since(cid)["membership_event"]
     inventory, t1 = cut([[g["name"], g["sync_provider"] or "unattributed", g["member_count"], g["group_synced_at"] or "", g["bindings"], g["cliff_silence"] or ""] for g in groups])
     shown_changes, t2 = cut([[c["observed_at"], c["change"], c["group_name"], c["user_name"], c["group_synced_at"] or ""] for c in changes])

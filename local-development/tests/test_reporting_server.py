@@ -1393,6 +1393,24 @@ class TestReportingStatus:
             _schedules_env()
 
 
+class TestDiscoveredLookups:
+    """#149 R7: the discovered lookups a form offers, per cluster, on their own endpoint — never on the
+    catalogue load, which stays one query for the estate (V4-F1)."""
+
+    def test_the_lookups_come_per_cluster_and_the_catalogue_does_not_carry_them(self, tmp_path):
+        snapshots, artifacts = seeded_dirs(tmp_path)
+        app = build_report_app(_settings(snapshots, artifacts, namespace_selector_labels=("company.net/mnemonic",),
+                                         namespace_group_label="company.net/oud-group"), secret=SECRET, clock=lambda: FROZEN)
+        with TestClient(app) as client:
+            cat = client.get(f"{REPORT_PREFIX}/api/reports", headers=_viewer()).json()
+            assert "discovered" not in cat and cat["namespaceGroupLabel"] == "company.net/oud-group"
+            d = client.get(f"{REPORT_PREFIX}/api/discovered?cluster={CLUSTER}", headers=_viewer()).json()
+            assert d["cluster"] == CLUSTER and d["discovered"]["users"]["values"] == ["alice", "bob", "erin"]
+            assert d["discovered"]["providers"]["values"] == ["corp_ldap"] and "team-a" in d["discovered"]["groups"]["values"]
+            assert set(d["discovered"]) == {"providers", "roles", "users", "groups", "mnemonics", "oud-groups"}
+            assert client.get(f"{REPORT_PREFIX}/api/discovered?cluster=nope", headers=_viewer()).status_code == 404
+            assert client.get(f"{REPORT_PREFIX}/api/discovered", headers=_viewer()).status_code == 422
+            assert client.get(f"{REPORT_PREFIX}/api/discovered?cluster={CLUSTER}").status_code == 401
 class TestReportingStatusReview:
     """Review of #221 (OB3): the late predicate's grace sits after the fire; the per-schedule retention
     override the page calls effective is the one the prune applies; the optional keys are validated at
