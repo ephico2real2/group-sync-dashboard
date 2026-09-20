@@ -1,0 +1,10 @@
+# A merge patch for the openshift-gitops ArgoCD CR (see README.md): match RBAC subjects on the token's
+# `name` claim as well as `groups`, and grant kubeadmin role:admin — Dex's OpenShift connector does not
+# carry kubeadmin's virtual system:cluster-admins group, so the default policy gives the UI no role.
+spec:
+  rbac:
+    scopes: "[groups, name]"
+    policy: |
+      g, system:cluster-admins, role:admin
+      g, cluster-admins, role:admin
+      g, kubeadmin, role:admin
