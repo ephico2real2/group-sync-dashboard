@@ -158,6 +158,8 @@ const STATES = {
 const view = { page: "home", homeShow: {}, cluster: null, groupsync: null, groupFilter: "all", bindingFilter: "review",
                 report: null, reportLanded: null, reportFocusRow: null, reportForm: {},
                 kyvernoControlled: false, kyvernoPolicy: null, kyvernoKind: null,   // #170: the Kyverno page's filters (filters, not positions)
+                run: null,   // #229: the Library page's open run — a position (`#page=library&run=<id>`), like `report` on Reports
+                libraryOpen: {},   // #229: which "all N →" lists are expanded — view state, not a position
                 /* #149 R5: the status page's history filters and page. Filters, not positions (the
                    groupFilter reasoning): a shared link opens the page, not a filtered slice of it. */
                 historyFilter: { report: "", origin: "", status: "", cluster: "" }, historyPage: 0, reportRun: null, reportSubmitting: false, reportPreview: "",
@@ -226,7 +228,7 @@ let searchComposingIn = null;
    state are not: they live in `view` precisely because the page repaints on a timer (60s), one of them
    is a Set, and pushing an entry per sort click would bury the positions a reader wants Back to
    reach under a pile of them. */
-const POSITION_KEYS = ["page", "cluster", "groupsync", "group", "user", "ns", "report"];
+const POSITION_KEYS = ["page", "cluster", "groupsync", "group", "user", "ns", "report", "run"];
 
 function currentPosition() {
   const pos = {};
@@ -276,6 +278,8 @@ function applyPosition(pos) {
   const nextReport = view.page === "reports" ? (pos.report || null) : null;
   if (nextReport !== view.report) { view.reportRun = null; closeNsPreview(); }
   view.report = nextReport;
+  // #229: an open run belongs to the Library page the same way — no other page's position carries one
+  view.run = view.page === "library" ? (pos.run || null) : null;
       view.alertPage = 1;   // #172: the alerts card's page is view state, never a position
   // `cluster` is part of the position, not context around it. Without it, Back after a cluster
   // switch restores a group name against whichever cluster is now selected — and group names
@@ -476,6 +480,8 @@ window.addEventListener("hashchange", () => {
 let data = { clusters: [], alerts: [], groupsyncs: null, groups: null, events: null,
              kyverno: null,   // #170: the module's payload for the selected cluster
              reportCatalog: null, reportRuns: null, reportTicket: null,
+             library: null,   // #229: every run the service holds, for the Library tab
+             libraryRun: null,   // #229: the positioned run by id — a history past the listing's page still opens (Codex)
              group: null, user: null, logins: null, access: null,
              /* The /users envelope whole — rows, scope, viewer, truncated, limit — because the
                 Users tab states the truncation and renders the banner from the wire's fields. */
@@ -1082,6 +1088,7 @@ function renderFilters() {
       ${tab("logins", "Logins")}
       ${tab("usage", "Usage")}
       ${reportingEnabled() ? tab("reports", "Reports") : ""}
+      ${reportingEnabled() ? tab("library", "Library") : ""}
     </nav>`;
   // FOCUS AND CARET SURVIVE THE REBUILD, and this is load-bearing rather than polish. This function
   // replaces the whole bar's innerHTML, render() calls it before every repaint, and the page repaints
@@ -2969,6 +2976,332 @@ function wireReporting() {
     el.onclick = () => downloadArtifact(el.dataset.artifact, el.dataset.format);
   });
 }
+
+/* ─── #229 E1: the Library page — docs/design/report-library-mock.html, docs/specs/SPEC_E1_report_library.md ──
+   A new canvas beside the untouched Reports and Reporting-status pages: one section per configured
+   report (the enabled catalogue crossed with the schedules), headed the way people ask for it, each run
+   with its formats, its failure reason and its standing under retention — which the SERVICE computes
+   (`expires_at`, `retained_by`) by the ranking its prune deletes by; the page only prints it. */
+// The run the position names, by id: null off the library or without a position; `{asked, notFound}` on a 404.
+async function libraryPositionRun() {
+  if (view.page !== "library" || !view.run) return null;
+  const asked = view.run;
+  try { return { ...(await reportGet(`/api/runs/${encodeURIComponent(asked)}`)), asked }; }
+  catch (err) { if (err && err.status === 404) return { asked, notFound: true }; throw err; }
+}
+
+const LIBRARY_RUNS = "/api/runs?limit=1000";   // the API's maximum page; a longer history is said, not cut silently
+
+function libraryNewestFirst(a, b) {
+  // the service's own order: completion (the request time for a run that never completed), the id breaking ties
+  const stamp = (r) => r.finished_at || r.id.slice(0, 15).replace(/(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})/, "$1-$2-$3T$4:$5:$6Z");
+  const d = new Date(stamp(b)) - new Date(stamp(a));
+  return d !== 0 ? d : (a.id < b.id ? 1 : -1);
+}
+
+function fmtBytes(n) {
+  if (n == null) return "—";
+  if (n < 1024) return `${n} B`;
+  if (n < 1048576) return `${(n / 1024).toFixed(n < 10240 ? 1 : 0)} KB`;
+  return `${(n / 1048576).toFixed(1)} MB`;
+}
+
+/* The standing in words. `retained_by` is the service's reason (SPEC E1 §3); `expires_at` the EARLIEST the
+   run can go. One of the newest K is kept whatever its age — so "at least until" — and longer while it stays
+   among them; beyond K, or manual, the date is the date. */
+function libraryExpiry(run) {
+  if (run.status === "queued" || run.status === "running") return { words: "no expiry (in flight)", date: "" };
+  const by = run.retained_by || "";
+  const m = /^newest:(\d+)\/(\d+)/.exec(by);
+  if (m) return run.expires_at
+    ? { words: `newest ${m[1]} of ${m[2]} · kept at least until`, date: fmtStamp(run.expires_at) }
+    : { words: `newest ${m[1]} of ${m[2]} · kept while it is`, date: "" };
+  // `manual:cap` is the run beyond the cap, and prune's next pass deletes it whatever its age; a run under the
+  // cap with no age bound says `manual:0d` and falls through to "kept indefinitely", as `age:0d` does
+  if (by === "manual:cap") return { words: "beyond the manual run cap — goes on the next prune", date: "" };
+  if (run.expires_at) return { words: `expires ${untilShort(run.expires_at)}`, date: fmtStamp(run.expires_at) };
+  return { words: "kept indefinitely", date: "" };
+}
+
+function libraryExpiryHtml(run) {
+  const w = libraryExpiry(run);
+  return `<span class="expiry">${esc(w.words)}${w.date ? ` · <span class="mono">${w.date}</span>` : ""}</span>`;
+}
+
+function libraryShortTitle(title) {
+  return title.replace(/ report$/i, "").replace(/ snapshot$/i, "").replace(/ and membership changes$/i, "");
+}
+
+/* "Quarterly compliance", "Daily namespace access", "Weekly groups", "Groups — 1st & 16th, paused": the service's own
+   `cadence` (cron.py `describe`) in front of the report's short title — never a regex on the schedule's name. The
+   heading takes the cadence's NAMED word alone (Daily, Weekly, Weekdays, Monthly, Quarterly, Yearly — "Weekly Mon
+   groups" is not how anyone says it; the weekday and the clock are in the section's sub-line), the whole cadence
+   minus its clock when it has no such word ("1st & 16th"), and the title alone when the service could only echo
+   the cron expression. */
+function librarySpokenHead(sched, report) {
+  const short = libraryShortTitle(report.title);
+  const cadence = sched.cadence || "";
+  const named = /^(Daily|Weekly|Weekdays|Monthly|Quarterly|Yearly)\b/.exec(cadence);
+  const cad = named ? named[1] : cadence === sched.schedule ? "" : cadence.replace(/\s+\d{1,2}:\d{2}$/, "");
+  if (!sched.enabled) return cad ? `${short} — ${cad}, paused` : `${short} — paused`;
+  return cad ? `${cad} ${short.charAt(0).toLowerCase()}${short.slice(1)}` : short;
+}
+
+function libraryFormats(run) {
+  const bytes = run.bytes || {};
+  const keys = Object.keys(bytes);
+  if (run.status !== "done" || !keys.length) return "";
+  return `<div class="fmts">${keys.map((f) =>
+    `<button type="button" class="btn" data-artifact="${esc(run.id)}" data-format="${esc(f)}" id="lib-${esc(run.id)}-${esc(f)}">.${esc(f)} · ${esc(fmtBytes(bytes[f]))}</button>`).join("")}</div>`;
+}
+
+function libraryRunCard(run, featured) {
+  const reason = run.status === "failed" && run.error ? `<div class="reason">${esc(String(run.error).split(/\r?\n/)[0])}</div>` : "";
+  const asof = run.snapshot_stamp ? ` · data as of ${fmtStamp(run.snapshot_stamp)}` : "";
+  // an <article>, not a <button>: the format chips inside are buttons, and a button cannot contain one
+  return `<article class="run${featured ? " featured" : ""}" data-run="${esc(run.id)}" id="run-${esc(run.id)}" tabindex="0" role="button" aria-label="Open run ${esc(run.id)}">
+    <div class="when">${fmtStamp(run.requested_at)} <span class="muted">(${esc(ago(run.requested_at))})</span></div>
+    <div class="meta"><span class="mono">${esc(run.cluster)}</span>${asof}</div>
+    ${libraryFormats(run)}
+    ${reason}
+    <div class="row">${stateBadge(run.status)}${libraryExpiryHtml(run)}</div>
+  </article>`;
+}
+
+function libraryClusterBlocks(runs, key) {
+  const byCluster = {};
+  runs.forEach((r) => { (byCluster[r.cluster] = byCluster[r.cluster] || []).push(r); });
+  const groups = Object.keys(byCluster).sort().map((c) => ({ cluster: c, runs: byCluster[c].sort(libraryNewestFirst) }));
+  const many = groups.length > 1;
+  return groups.map((g) => {
+    const [featured, ...earlier] = g.runs;
+    const expandKey = `${key}:${g.cluster}`;
+    const open = !!view.libraryOpen[expandKey];
+    const shown = open ? earlier : earlier.slice(0, 2);
+    const more = earlier.length > 2;
+    return `${many ? `<div class="cluster-head">${esc(g.cluster)}</div>` : ""}
+      ${libraryRunCard(featured, true)}
+      ${shown.map((r) => libraryRunCard(r, false)).join("")}
+      ${more ? `<button type="button" class="linkish" data-expand="${esc(expandKey)}" id="lib-expand-${esc(expandKey)}">${open ? "fewer" : `all ${g.runs.length} →`}</button>` : ""}`;
+  }).join("");
+}
+
+// the link opens the Reports tab with this report's form selected: the words name that action, the arrow says it leaves the page
+// `sid` is the section's id: a report with two schedules has two sections, and an id minted from the
+// report alone would repeat — focus restore lands on the first (review of #233, Grok).
+function libraryGenerateLink(name, again, sid) {
+  return `<button type="button" class="linkish" data-goto-reports="${esc(name)}" id="lib-gen-${esc(sid || name)}">${again ? "Generate another" : "Generate this report"} →</button>`;
+}
+
+function librarySections() {
+  const enabled = ((data.reportCatalog && data.reportCatalog.reports) || []).filter((r) => r.enabled);
+  const schedules = (data.reportStatus && data.reportStatus.schedules) || [];
+  const sections = [];
+  enabled.forEach((report) => {
+    const mine = schedules.filter((s) => s.report === report.name);
+    // Manual runs belong to the REPORT, not to a schedule: a report with two schedules has two sections, and
+    // listing its manual runs under both put every card and its chips on the page twice under one id (review of
+    // #233, OB3 — measured). They are listed once, under the report's first section; the rest carry none.
+    if (mine.length) mine.forEach((sched, i) => sections.push({ report, sched, manuals: i === 0 }));
+    else sections.push({ report, sched: null, manuals: true });
+  });
+  return sections;
+}
+
+function librarySectionHtml(sec, allRuns) {
+  const { report, sched } = sec;
+  const [kcat, klabel] = REPORT_KIND[report.name] || ["access", "report"];
+  const sid = sched ? `sec-${sched.name}` : `sec-${report.name}`;
+  const title = sched ? librarySpokenHead(sched, report) : report.title;
+  const scheduled = sched ? allRuns.filter((r) => r.schedule === sched.name) : [];
+  const manuals = sec.manuals ? allRuns.filter((r) => r.report === report.name && !r.schedule) : [];
+  const paused = !!(sched && !sched.enabled);
+  const empty = !scheduled.length && !manuals.length;
+  const chips = [`<span class="rp-chip k-${esc(kcat)}">${esc(klabel)}</span>`];
+  if (sched) {
+    chips.push(stateBadge(sched.status, sched.status === "disabled" ? "paused" : sched.status));
+    if (scheduled.length) chips.push(`<span class="rp-chip rp-count">${scheduled.length} scheduled</span>`);
+    if (manuals.length) chips.push(`<span class="rp-chip rp-count">${manuals.length} manual</span>`);
+  } else if (manuals.length) {
+    chips.push(`<span class="rp-chip rp-count">${manuals.length} manual</span>`);
+  }
+  let body = "";
+  if (empty) {
+    if (paused) body = `<div class="empty-note">Paused — CronJob suspended. Previous fire ${fmtStamp(sched.previous_fire)}. No run in the library.</div>${libraryGenerateLink(report.name, false, sid)}`;
+    else if (sched) body = `<div class="empty-note">No run yet.${sched.next_fire ? ` Next ${esc(sched.cadence)} · ${fmtStamp(sched.next_fire)} (${esc(untilShort(sched.next_fire))}).` : ""}</div>${libraryGenerateLink(report.name, false, sid)}`;
+    else body = `<div class="empty-note">No schedule and no run yet.</div>${libraryGenerateLink(report.name)}`;
+  } else {
+    if (sched && scheduled.length) body += libraryClusterBlocks(scheduled, sid);
+    else if (!sched && manuals.length) body += libraryClusterBlocks(manuals, sid);
+    if (sched && manuals.length) body += `<h3 class="subh">Manual runs</h3>${libraryClusterBlocks(manuals, `${sid}:manual`)}`;
+    body += `<div class="sec-foot">${libraryGenerateLink(report.name, true, sched ? sid : null)}</div>`;
+  }
+  const sub = sched
+    ? `<span class="mono">${esc(sched.name)}</span> · ${esc(sched.cadence)}${sched.cadence !== sched.schedule ? ` · <span class="mono">${esc(sched.schedule)}</span>` : ""} · keep ${sched.retention.keepPerSchedule} newest · ${sched.retention.days}d${sched.retention.overridden ? " (overridden)" : ""}`
+    : esc(report.summary);
+  return `<section class="card lib-sec r-${esc(kcat)}${paused ? " paused" : ""}${empty ? " compact" : ""}" id="${esc(sid)}">
+    <h2>${esc(title)} ${chips.join(" ")}</h2>
+    <div class="filterbar-note">${sub}</div>
+    ${body}
+  </section>`;
+}
+
+function libraryParamRows(run, spec) {
+  const named = {};
+  ((spec && spec.params) || []).forEach((p) => { named[p.name] = p; });
+  const src = run.params || {};
+  const rows = [];
+  if (src.selectors && typeof src.selectors === "object") {
+    Object.keys(src.selectors).forEach((label) => { const v = src.selectors[label]; if (v && v.length) rows.push([label, v.join(", ")]); });
+  }
+  Object.keys(src).forEach((k) => {
+    if (k === "selectors") return;
+    const v = src[k];
+    if (v == null || v === "" || (Array.isArray(v) && !v.length)) return;
+    rows.push([named[k] ? named[k].name : k, typeof v === "boolean" ? (v ? "On" : "Off") : Array.isArray(v) ? v.join(", ") : String(v)]);
+  });
+  return rows.length
+    ? rows.map(([k, v]) => `<div class="kv"><span class="k">${esc(k)}</span><span class="v mono">${esc(v)}</span></div>`).join("")
+    : `<div class="kv"><span class="k">parameters</span><span class="v muted">none set</span></div>`;
+}
+
+function libraryDuration(run) {
+  if (run.render_seconds != null) return `${run.render_seconds}s`;
+  if (run.started_at && run.finished_at) return `${((new Date(run.finished_at) - new Date(run.started_at)) / 1000).toFixed(3)}s`;
+  return "—";
+}
+
+/* The run drawer: `view.run` is a position (`#page=library&run=<id>`), so the drawer is rendered from it and
+   survives every repaint; closing navigates back to the library. An unknown id says so — never a blank. */
+function libraryDrawer(allRuns) {
+  const id = view.run;
+  const run = allRuns.find((r) => r.id === id) || null;
+  const spec = run ? ((data.reportCatalog && data.reportCatalog.reports) || []).find((r) => r.name === run.report) : null;
+  const [kcat] = (run && REPORT_KIND[run.report]) || ["access"];
+  let inner;
+  if (!run) {
+    inner = `<button type="button" class="back linkish" id="drawer-close">← Library</button>
+      <h2 id="drawer-title">Run not found</h2>
+      <p class="note-found">No run with that id is in the library.</p>`;
+  } else {
+    const bytes = run.bytes || {};
+    const fmts = Object.keys(bytes).length
+      ? Object.keys(bytes).map((f) => `<button type="button" class="btn" data-artifact="${esc(run.id)}" data-format="${esc(f)}" id="drawer-${esc(f)}">.${esc(f)} · ${esc(fmtBytes(bytes[f]))}</button>`).join("")
+      : `<span class="muted">no artefacts</span>`;
+    const kv = (k, v) => `<div class="kv"><span class="k">${k}</span><span class="v mono">${v}</span></div>`;
+    inner = `<button type="button" class="back linkish" id="drawer-close">← Library</button>
+      <h2 id="drawer-title">${esc(spec ? spec.title : run.report)}</h2>
+      <div class="filterbar-note"><span class="mono">${esc(run.id)}</span></div>
+      ${kv("report", esc(run.report))}
+      ${kv("cluster", esc(run.cluster))}
+      ${libraryParamRows(run, spec)}
+      ${kv("requested", fmtStamp(run.requested_at))}
+      ${kv("started", fmtStamp(run.started_at))}
+      ${kv("finished", fmtStamp(run.finished_at))}
+      ${kv("duration", esc(libraryDuration(run)))}
+      ${kv("data as of", run.snapshot_stamp ? fmtStamp(run.snapshot_stamp) : "—")}
+      ${kv("sha256", esc(run.sha256 || "—"))}
+      <div class="kv"><span class="k">formats</span><span class="v">${fmts}</span></div>
+      <div class="kv"><span class="k">generated by</span><span class="v">${run.generated_by && run.generated_by.startsWith("schedule:") ? `<span class="mono">${esc(run.generated_by)}</span>` : esc(run.generated_by)}</span></div>
+      ${kv("schedule", esc(run.schedule || "—"))}
+      <div class="kv"><span class="k">status</span><span class="v">${stateBadge(run.status)}</span></div>
+      ${run.status === "failed" && run.error ? `<div class="kv"><span class="k">error</span><span class="v err">${esc(run.error)}</span></div>` : ""}
+      <div class="kv"><span class="k">expiry</span><span class="v">${libraryExpiryHtml(run)}</span></div>
+      <div class="acts">
+        ${run.status === "done" && bytes.html ? `<button type="button" class="btn btn-acc" data-open-html="${esc(run.id)}" id="drawer-open-html">Open .html in a new tab</button>` : ""}
+        <button type="button" class="btn" id="drawer-copy-link">Copy link</button>
+        <button type="button" class="btn" id="drawer-close-2">Close</button>
+      </div>
+      <p class="filterbar-note mt-3">Open .html fetches with the ticket and opens it here — the artefact URL is not a pasteable link; this run's position is.</p>`;
+  }
+  return `<div class="overlay" id="library-overlay"><aside class="drawer r-${esc(kcat)}" id="library-drawer" role="dialog" aria-labelledby="drawer-title">${inner}</aside></div>`;
+}
+
+function libraryPage() {
+  if (!reportingEnabled()) return `<section class="card"><div class="empty-note">Reporting is not enabled on this deployment.</div></section>`;
+  if (!readerTierKnown()) return `<section class="card"><div class="empty-note">Loading…</div></section>`;
+  const what = `The library holds the generated reports — documents about the cluster's own RBAC surface, its groups and its users.`;
+  if (narrowedOnHost()) return refusalCard("Library", what);
+  const cat = data.reportCatalog, st = data.reportStatus, lib = data.library, pr = data.libraryRun;
+  if ((cat && cat.forbidden) || (st && st.forbidden) || (lib && lib.forbidden) || (pr && pr.forbidden)) return refusalCard("Library", what);
+  if (!cat || !st || !lib) return `<section class="card"><div class="empty-note">Loading…</div></section>`;
+  const allRuns = (lib.runs || []).slice();
+  // The listing is the API's first page (1 000); a positioned run past it is fetched by id and joined here,
+  // so a pasted link to an old run opens it rather than "Run not found" (review of #233, Codex).
+  const positioned = data.libraryRun;
+  if (positioned && positioned.asked === view.run && !positioned.notFound && !allRuns.some((r) => r.id === positioned.id)) {
+    const { asked, ...run } = positioned; allRuns.push(run);
+  }
+  const sections = librarySections();
+  const nSched = (st.schedules || []).length, nPaused = (st.schedules || []).filter((s) => !s.enabled).length;
+  const jumps = sections.map((sec) => {
+    const id = sec.sched ? `sec-${sec.sched.name}` : `sec-${sec.report.name}`;
+    return `<a href="#${esc(id)}" data-jump="${esc(id)}">${esc(sec.sched ? librarySpokenHead(sec.sched, sec.report) : sec.report.title)}</a>`;
+  }).join("");
+  return `<section class="card" id="library-lead">
+      <h2>Library <span class="rp-chip rp-count">${lib.total} run${lib.total === 1 ? "" : "s"} · ${nSched} schedule${nSched === 1 ? "" : "s"}${nPaused ? ` · ${nPaused} paused` : ""}</span></h2>
+      <div class="filterbar-note">Where the reports are, and which one you want. Organised by the catalogue crossed with <code>reporting.schedules[]</code> — the Reports tab generates; Reporting status is the service. No personnel data beyond <code>generated_by</code>.</div>
+      ${lib.truncated ? `<div class="truncation-note">The newest ${allRuns.length} of ${lib.total} runs are here; the rest are on the Reporting-status page's history.</div>` : ""}
+      <nav class="jumps" aria-label="Reports in this library">${jumps}</nav>
+    </section>
+    ${sections.length ? sections.map((sec) => librarySectionHtml(sec, allRuns)).join("") : `<section class="card"><div class="empty-note">No report is enabled on this deployment.</div></section>`}
+    ${view.run ? libraryDrawer(allRuns) : ""}`;
+}
+
+async function openArtifactInNewTab(runId) {
+  // fetched with the ticket, opened as a blob: the artefact URL itself is ticket-gated and cannot be pasted
+  const res = await reportFetch(`/api/runs/${encodeURIComponent(runId)}/artifact?format=html&download=false`);
+  const blob = await res.blob();
+  const url = URL.createObjectURL(new Blob([blob], { type: "text/html" }));
+  window.open(url, "_blank", "noopener");
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
+function wireLibrary() {
+  const main = $("main");
+  main.querySelectorAll("[data-run]").forEach((el) => {
+    // The drawer is a dialog and its first control must take the focus. render() restores the focus BY ID after
+    // the repaint, and the card that was clicked (or held Enter) keeps its id across it — so the restore put a
+    // reader back on the card BEHIND the overlay, where Escape (handled on the overlay) never fired and Tab walked
+    // the cards' chips behind the dialog; only a cold link, with nothing focused, reached the drawer (review of
+    // #233, OB3 — measured). The card gives the focus up before the repaint, so nothing is restored and the
+    // first-control focus below stands.
+    const open = () => { navigate({ run: el.dataset.run }); el.blur(); render(); };
+    el.onclick = (e) => { if (!e.target.closest("[data-artifact]")) open(); };
+    el.onkeydown = (e) => { if ((e.key === "Enter" || e.key === " ") && e.target === el) { e.preventDefault(); open(); } };
+  });
+  main.querySelectorAll("[data-artifact]").forEach((el) => {
+    el.onclick = (e) => { e.stopPropagation(); downloadArtifact(el.dataset.artifact, el.dataset.format); };
+  });
+  main.querySelectorAll("[data-expand]").forEach((el) => {
+    el.onclick = () => { view.libraryOpen[el.dataset.expand] = !view.libraryOpen[el.dataset.expand]; render(); };
+  });
+  main.querySelectorAll("[data-goto-reports]").forEach((el) => {
+    el.onclick = () => { navigate({ page: "reports", report: el.dataset.gotoReports, run: null }); render(); refresh(); };
+  });
+  main.querySelectorAll("[data-jump]").forEach((el) => {
+    // an in-page jump, not a position: the hash is the app's, so scroll by hand and leave the URL alone
+    el.onclick = (e) => { e.preventDefault(); const t = $(el.dataset.jump); if (t) { t.scrollIntoView({ block: "start" }); t.focus && t.setAttribute("tabindex", "-1"); t.focus(); } };
+  });
+  const close = () => { const back = view.run ? $(`run-${view.run}`) : null; navigate({ run: null }); render(); const again = back && $(back.id); if (again) again.focus(); };
+  ["drawer-close", "drawer-close-2"].forEach((id) => { const b = $(id); if (b) b.onclick = close; });
+  const overlay = $("library-overlay");
+  if (overlay) {
+    overlay.onclick = (e) => { if (e.target === overlay) close(); };
+    overlay.onkeydown = (e) => { if (e.key === "Escape") close(); };
+    // a run opened by link or click: the drawer's first control takes focus unless the reader is already inside it
+    if (!overlay.contains(document.activeElement)) { const first = $("drawer-close"); if (first) first.focus(); }
+  }
+  const copy = $("drawer-copy-link");
+  if (copy) copy.onclick = () => {
+    const link = location.origin + location.pathname + location.search + hashFor(currentPosition());
+    const done = () => { copy.textContent = "Copied"; };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(link).then(done, done); else done();
+  };
+  const openHtml = $("drawer-open-html");
+  if (openHtml) openHtml.onclick = () => { openArtifactInNewTab(openHtml.dataset.openHtml).catch((err) => { openHtml.textContent = `Could not open: ${err.message}`; }); };
+}
+
 
 // A <select multiple> serialises its `value` as the FIRST option only; a report param that takes a list
 // (mnemonics) needs every selected value, so read the element by kind (B3, §3.7).
@@ -5778,6 +6111,9 @@ function render() {
   } else if (view.page === "reporting") {
     main.innerHTML = reportingPage();
     wireReporting();
+  } else if (view.page === "library") {
+    main.innerHTML = libraryPage();
+    wireLibrary();
   } else if (view.page === "usage") {
     main.innerHTML = usagePage();
   } else if (view.page === "bindings") {
@@ -6199,6 +6535,17 @@ async function refresh(opts = {}) {
       want.reportStatus = guard403(reportGet("/api/status"));
       want.reportHistory = (async (asked) => { const r = await guard403(reportGet(asked)); return r && !r.forbidden ? { ...r, asked } : r; })(historyQuery());
     }
+    if (view.page === "library" && reportingEnabled() && !narrowedOnHost()) {
+      // #229: the library is the catalogue crossed with the schedules, over every run the service holds
+      // (limit is the API's maximum; a history past it is said on the page, not silently cut)
+      want.reportCatalog = guard403(reportGet("/api/reports"));
+      want.reportStatus = guard403(reportGet("/api/status"));
+      want.library = guard403(reportGet(LIBRARY_RUNS));
+      // guarded like the three above: a 403 here (a reader demoted between polls, a ticket the service refuses)
+      // otherwise threw past them into the catch below and replaced the page with "Dashboard API error … may have
+      // been deleted" — where the listing's own 403 paints the refusal card (review of #233, OB3 — measured)
+      want.libraryRun = guard403(libraryPositionRun());
+    }
     if (view.page === "usage") {
       // 403 is the DESIGNED answer when the OAuth proxy is off: there is no authenticated
       // identity to scope personnel data to. Letting it fall to the catch below replaced
@@ -6290,6 +6637,8 @@ async function refresh(opts = {}) {
     if ("reportRuns" in got) data.reportRuns = got.reportRuns;
     if ("reportStatus" in got) data.reportStatus = got.reportStatus;
     if ("reportHistory" in got && got.reportHistory && historyQuery() === (got.reportHistory.asked || historyQuery())) data.reportHistory = got.reportHistory;
+    if ("library" in got) data.library = got.library;
+    if ("libraryRun" in got) data.libraryRun = got.libraryRun;
     // The report requests above were chosen on the PREVIOUS cycle's host tier, before this
     // cycle's whoami arrived — the same race the Access granted tab reconciles below. A reader
     // promoted mid-session otherwise saw "Loading…" for a whole cycle; a demoted one must not
@@ -6306,6 +6655,19 @@ async function refresh(opts = {}) {
         const [status, history] = await Promise.all([guard403(reportGet("/api/status")), guard403(reportGet(historyQuery()))]);
         if (superseded()) return;
         data.reportStatus = status; data.reportHistory = history;
+      }
+    }
+    if (view.page === "library" && reportingEnabled() && got.whoami) {
+      // #229: the same catch-up as the two pages above — the requests were chosen on the previous cycle's tier
+      if (narrowedOnHost()) {
+        data.reportCatalog = null; data.reportStatus = null; data.library = null; data.reportTicket = null;
+      } else if (got.whoami.authenticated && !("library" in got)) {
+        data.reportTicket = null;
+        const [catalog, status, library] = await Promise.all([
+          guard403(reportGet("/api/reports")), guard403(reportGet("/api/status")), guard403(reportGet(LIBRARY_RUNS)),
+        ]);
+        if (superseded()) return;
+        data.reportCatalog = catalog; data.reportStatus = status; data.library = library;
       }
     }
     if (view.page === "reports" && reportingEnabled() && got.whoami) {
@@ -6375,6 +6737,8 @@ async function refresh(opts = {}) {
       // service's clock stamp that nothing renders: with it, no two polls ever matched and the page
       // repainted every minute, dropping the reader's selection (review of #221, OB3 — measured).
       data.reportStatus && { ...data.reportStatus, as_of: null }, data.reportHistory,
+      data.library,   // #229: a run that finished, or aged out, must repaint the library (the #157/#167/#228 omission)
+      data.libraryRun,
       data.kpi,   // #157 (review, Codex): left out, a poll whose only change was a KPI never repainted the page
       data.kyverno,   // #170 (review, Codex): the same omission would have left a Kyverno-only change unpainted
       // #167: the namespace list and page ride the same wire (review, Codex — left out, a poll whose

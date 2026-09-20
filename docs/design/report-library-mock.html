@@ -1,0 +1,1151 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Library — OCP Access Tracking Dashboard</title>
+<script>
+(function () {
+  var html = document.documentElement, query = new URLSearchParams(location.search);
+  function pick(param, key, allowed) {
+    var v = query.get(param) || "";
+    if (allowed.indexOf(v) < 0) {
+      try { v = localStorage.getItem(key) || ""; } catch (e) { v = ""; }
+    }
+    return allowed.indexOf(v) >= 0 ? v : "";
+  }
+  var mode = pick("mode", "gsd-mode", ["light", "dark"]);
+  var palette = pick("theme", "gsd-palette", ["deuter", "protan", "trit", "contrast"]);
+  if (mode) html.setAttribute("data-theme", mode);
+  if (palette) html.setAttribute("data-palette", palette);
+})();
+</script>
+<style>
+:root {
+  color-scheme: light;
+  --surface-1: #fcfcfb;
+  --page: #f9f9f7;
+  --page-2: #eef0f4;
+  --text-primary: #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted: #6a6863;
+  --gridline: #e1e0d9;
+  --baseline: #c3c2b7;
+  --border: rgba(11, 11, 11, 0.10);
+  --series-1: #2874d0;
+  --drill-text: #1a65bb;
+  --series-1-wash: color-mix(in srgb, var(--series-1) 10%, transparent);
+  --status-good: #097d09;
+  --status-warning: #c48704;
+  --status-critical: #c43838;
+  --status-unknown: #74726d;
+  --zebra: rgba(11, 11, 11, 0.025);
+  --tab-home: #3d5a80;
+  --tab-overview: #2873cd;
+  --tab-groups: #108172;
+  --tab-bindings: #6d4bc7;
+  --tab-policy: #9333ea;
+  --tab-nsaudit: #b3306e;
+  --tab-users: #0e7490;
+  --tab-logins: #597b0a;
+  --tab-usage: #c2410c;
+  --tab-reports: #5b6470;
+  --tab-kpi: #4a55a3;
+  --tab-kyverno: #0b6e7a;
+  /* Library: bookmark-ribbon magenta, hue ~310. 8.74:1 on --page #f9f9f7 (WCAG relative luminance). */
+  --tab-library: #7a2468;
+  --k-access: #4f6b57; --k-rbac: #8a5a3c; --k-identity: #4a5c7a; --k-activity: #7a5170; --k-compliance: #6a6440;
+  --accent: var(--tab-library);
+  --font-ui: "Space Grotesk", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --text-micro: 10px; --text-xs: 11px; --text-sm: 12px; --text-md: 13px;
+  --text-base: 14px; --text-lg: 15px; --text-xl: 18px;
+  --space-1: 2px; --space-2: 4px; --space-3: 6px; --space-4: 8px; --space-5: 10px;
+  --space-6: 12px; --space-7: 14px; --space-8: 16px; --space-9: 18px; --space-10: 20px;
+  --radius-xs: 2px; --radius-sm: 4px; --radius-md: 6px; --radius-lg: 10px;
+  --radius-pill: 999px; --radius-round: 50%;
+  --elev-1: 0 1px 2px rgba(11,11,11,0.05), 0 1px 8px rgba(11,11,11,0.04);
+  --warn: #ae5009;
+}
+@media screen and (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --surface-1: #1a1a19;
+    --page: #0d0d0d;
+    --page-2: #14161c;
+    --text-primary: #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted: #918f89;
+    --gridline: #2c2c2a;
+    --baseline: #383835;
+    --border: rgba(255, 255, 255, 0.10);
+    --series-1: #3987e5;
+    --drill-text: #4b97ed;
+    --series-1-wash: color-mix(in srgb, var(--series-1) 14%, transparent);
+    --status-critical: #db6f6f;
+    --status-good: #14a614;
+    --status-unknown: #898781;
+    --zebra: rgba(255, 255, 255, 0.035);
+    --warn: #c48704;
+    --tab-home: #8fb3dd;
+    --tab-overview: #2d7ad7;
+    --tab-groups: #12907f;
+    --tab-bindings: #8468d0;
+    --tab-policy: #a855f7;
+    --tab-nsaudit: #e0559a;
+    --tab-users: #22a5c9;
+    --tab-logins: #678e0b;
+    --tab-usage: #d9490d;
+    --tab-reports: #98a2b3;
+    --tab-kpi: #9aa3e6;
+    --tab-kyverno: #5cc4cf;
+    --tab-library: #d489c0; /* 7.53:1 on dark --page #0d0d0d */
+    --k-access: #7fae8b; --k-rbac: #c8946a; --k-identity: #8ea3c8; --k-activity: #c090b4; --k-compliance: #b3aa72;
+    --elev-1: 0 1px 2px rgba(0,0,0,0.5), 0 1px 10px rgba(0,0,0,0.35);
+  }
+}
+@media screen {
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --surface-1: #1a1a19;
+  --page: #0d0d0d;
+  --page-2: #14161c;
+  --text-primary: #ffffff;
+  --text-secondary: #c3c2b7;
+  --text-muted: #918f89;
+  --gridline: #2c2c2a;
+  --baseline: #383835;
+  --border: rgba(255, 255, 255, 0.10);
+  --series-1: #3987e5;
+  --drill-text: #4b97ed;
+  --series-1-wash: color-mix(in srgb, var(--series-1) 14%, transparent);
+  --status-critical: #db6f6f;
+  --status-good: #14a614;
+  --status-unknown: #898781;
+  --zebra: rgba(255, 255, 255, 0.035);
+  --warn: #c48704;
+  --tab-home: #8fb3dd;
+  --tab-overview: #2d7ad7;
+  --tab-groups: #12907f;
+  --tab-bindings: #8468d0;
+  --tab-policy: #a855f7;
+  --tab-nsaudit: #e0559a;
+  --tab-users: #22a5c9;
+  --tab-logins: #678e0b;
+  --tab-usage: #d9490d;
+  --tab-reports: #98a2b3;
+  --tab-kpi: #9aa3e6;
+  --tab-kyverno: #5cc4cf;
+  --tab-library: #d489c0;
+  --k-access: #7fae8b; --k-rbac: #c8946a; --k-identity: #8ea3c8; --k-activity: #c090b4; --k-compliance: #b3aa72;
+  --elev-1: 0 1px 2px rgba(0,0,0,0.5), 0 1px 10px rgba(0,0,0,0.35);
+}
+}
+:root[data-palette="deuter"], :root[data-palette="protan"] {
+  --status-good: #0071af; --status-warning: #c18600; --status-critical: #b24e00; --warn: #906300;
+}
+:root[data-palette="trit"] {
+  --status-good: #007b5a; --status-warning: #cb76a5; --status-critical: #b24e00; --warn: #94597a;
+}
+:root[data-palette="contrast"] {
+  --status-good: #076607; --status-warning: #9c6b03; --status-critical: #a42727; --text-muted: #575551;
+}
+* { box-sizing: border-box; }
+html, body { max-width: 100%; overflow-x: hidden; }
+body {
+  --accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);
+  margin: 0;
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: var(--text-base);
+  line-height: 1.5;
+  background:
+    radial-gradient(1200px 520px at 50% -12%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 70%),
+    linear-gradient(180deg, var(--page-2), var(--page) 420px);
+  background-attachment: fixed;
+  background-color: var(--page);
+  min-height: 100dvh;
+}
+body[data-page="library"] { --accent: var(--tab-library); }
+.wrap { max-width: 1180px; margin: 0 auto; padding: var(--space-10) var(--space-10) 64px; min-width: 0; }
+.skip { position: absolute; left: -9999px; }
+.skip:focus { left: var(--space-10); top: var(--space-10); z-index: 40; background: var(--surface-1); padding: var(--space-3) var(--space-5); }
+header.top {
+  display: flex; align-items: baseline; gap: var(--space-6); flex-wrap: wrap;
+  padding-bottom: var(--space-7); border-bottom: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
+  margin-bottom: var(--space-6);
+}
+header.top h1 { font-size: var(--text-xl); margin: 0; letter-spacing: -0.01em; }
+header.top .sub { color: var(--text-muted); font-size: var(--text-sm); }
+header.top .spacer { flex: 1; }
+.shell-prefs { display: inline-flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+.shell-prefs .pref { display: inline-flex; align-items: center; gap: var(--space-3); }
+.shell-prefs label { color: var(--text-secondary); font-size: var(--text-sm); }
+@media (max-width: 520px) {
+  .shell-prefs .pref { flex-direction: column; align-items: flex-start; gap: 0; }
+}
+select, button, a.btn {
+  font: inherit; font-size: var(--text-md); color: var(--text-primary);
+  background: var(--surface-1); border: 1px solid var(--border);
+  border-radius: var(--radius-md); padding: 5px 9px; cursor: pointer;
+}
+button:hover, select:hover { border-color: var(--baseline); }
+.tabs { display: inline-flex; gap: var(--space-2); flex-wrap: wrap; max-width: 100%; }
+.tab {
+  position: relative;
+  background: none; border: 0; border-radius: var(--radius-md) var(--radius-md) 0 0;
+  padding: 7px var(--space-6) 9px; font-size: var(--text-md); font-weight: 500;
+  color: var(--text-secondary); cursor: default;
+  transition: color 160ms ease, background-color 160ms ease;
+}
+.tab:hover { color: var(--text-primary); background: var(--zebra); }
+.tab[aria-current="page"] { color: var(--accent); font-weight: 700; }
+.tab[aria-current="page"]::after {
+  content: ""; position: absolute; left: 8px; right: 8px; bottom: 0; height: 3px;
+  background: var(--accent); border-radius: 3px 3px 0 0;
+}
+@media (forced-colors: active) {
+  .tab[aria-current="page"]::after { background: Highlight; forced-color-adjust: none; }
+}
+.card {
+  background: var(--surface-1); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); padding: var(--space-8); margin-bottom: var(--space-7);
+  box-shadow: var(--elev-1); min-width: 0; max-width: 100%;
+}
+main > .card:first-child { border-top: 2px solid color-mix(in srgb, var(--accent) 55%, transparent); }
+.card > h2, .card > h3 { font-family: var(--font-ui); letter-spacing: -0.01em; margin: 0 0 var(--space-4); }
+.card > h2 { font-size: var(--text-lg); }
+.card > h3 { font-size: var(--text-md); color: var(--text-secondary); }
+.card > h2::before, .card > h3::before {
+  content: ""; display: inline-block; vertical-align: middle;
+  width: 3px; height: 0.95em; margin-right: var(--space-4); border-radius: var(--radius-xs);
+  background: var(--rk, var(--accent));
+}
+.badge {
+  display: inline-flex; align-items: center; gap: var(--space-3);
+  font-size: var(--text-sm); font-weight: 500; color: var(--text-primary);
+  border: 1px solid var(--border); border-radius: var(--radius-pill); padding: 2px 9px 2px 7px;
+  white-space: nowrap;
+}
+.badge .glyph { width: 9px; height: 9px; flex: none; display: inline-block; }
+.badge.ok .glyph { background: var(--status-good); border-radius: var(--radius-round); }
+.badge.warning .glyph { background: var(--status-warning); clip-path: polygon(50% 0, 100% 100%, 0 100%); }
+.badge.critical .glyph { background: var(--status-critical); border-radius: 1px; }
+.badge.unknown .glyph { border: 1.5px solid var(--status-unknown); border-radius: var(--radius-round); background: none; }
+.muted { color: var(--text-muted); }
+.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.empty-note { color: var(--text-muted); font-size: var(--text-md); padding: var(--space-5) 0; }
+.filterbar-note { font-size: var(--text-sm); color: var(--text-muted); }
+.linkish {
+  background: none; border: 0; padding: 0; cursor: pointer;
+  font: inherit; font-size: var(--text-sm); color: var(--drill-text); text-decoration: underline;
+}
+.linkish:hover { color: var(--text-primary); }
+.back { background: none; border: 0; padding: 0; color: var(--drill-text); cursor: pointer; font-size: var(--text-md); }
+.err { color: var(--status-critical); }
+.rp-chip {
+  display: inline-block; font-family: var(--font-mono); font-size: var(--text-micro); font-weight: 500;
+  letter-spacing: .02em; padding: var(--space-1) var(--space-4); border-radius: 5px;
+  border: 1px solid currentColor; white-space: nowrap;
+}
+.rp-chip.k-access { color: var(--k-access); }
+.rp-chip.k-rbac { color: var(--k-rbac); }
+.rp-chip.k-identity { color: var(--k-identity); }
+.rp-chip.k-activity { color: var(--k-activity); }
+.rp-chip.k-compliance { color: var(--k-compliance); }
+.rp-count { font-weight: 400; margin-left: var(--space-3); vertical-align: middle; color: var(--text-muted); border-color: var(--border); }
+.scope-refusal {
+  margin-top: var(--space-3); padding: var(--space-5) var(--space-6);
+  border-left: 3px solid var(--status-warning);
+  background: color-mix(in srgb, var(--status-warning) 8%, transparent);
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  font-size: var(--text-md); color: var(--text-secondary);
+}
+.scope-refusal strong { color: var(--text-primary); }
+.lib-sec { --rk: var(--accent); border-left: 4px solid var(--rk); }
+.lib-sec.r-access { --rk: var(--k-access); }
+.lib-sec.r-rbac { --rk: var(--k-rbac); }
+.lib-sec.r-identity { --rk: var(--k-identity); }
+.lib-sec.r-activity { --rk: var(--k-activity); }
+.lib-sec.r-compliance { --rk: var(--k-compliance); }
+.lib-sec.paused { opacity: 0.78; border-left-style: dashed; }
+.lib-sec.compact { padding: var(--space-6) var(--space-8); }
+.lib-sec.compact .empty-note { padding: var(--space-2) 0 0; }
+.lib-sec h2 { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
+.jumps { display: flex; flex-wrap: wrap; gap: var(--space-3); margin: var(--space-5) 0 0; }
+.jumps a {
+  font-family: var(--font-mono); font-size: var(--text-micro); color: var(--text-secondary);
+  text-decoration: none; border: 1px solid var(--border); border-radius: var(--radius-pill);
+  padding: 2px 9px; background: var(--zebra);
+}
+.jumps a:hover { color: var(--text-primary); border-color: var(--accent); }
+.run {
+  display: block; width: 100%; text-align: left; font: inherit; color: inherit;
+  background: transparent; border: 1px solid var(--border); border-radius: var(--radius-md);
+  padding: var(--space-5) var(--space-6); margin: 0 0 var(--space-4);
+  cursor: pointer; min-width: 0; max-width: 100%;
+  transition: border-color 160ms ease, transform 160ms ease, background-color 160ms ease;
+}
+.run:hover { border-color: var(--rk, var(--accent)); transform: translateY(-1px); background: var(--zebra); }
+.run:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.run.featured {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--rk) 10%, transparent), transparent 56%);
+  padding: var(--space-6) var(--space-7);
+}
+.run .when { font-family: var(--font-mono); font-size: var(--text-md); font-weight: 600; overflow-wrap: anywhere; }
+.run .meta { font-size: var(--text-sm); color: var(--text-muted); margin-top: var(--space-1); overflow-wrap: anywhere; }
+.run .fmts { display: flex; flex-wrap: wrap; gap: var(--space-3); margin-top: var(--space-4); }
+.sec-foot { margin-top: var(--space-4); }
+.run .row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-4); margin-top: var(--space-4); }
+.cluster-head {
+  font-family: var(--font-mono); font-size: var(--text-xs); letter-spacing: .06em; text-transform: uppercase;
+  color: var(--text-muted); margin: var(--space-5) 0 var(--space-3);
+}
+.subh { font-size: var(--text-md); font-weight: 600; margin: var(--space-7) 0 var(--space-4); color: var(--text-secondary); }
+.subh::before {
+  content: ""; display: inline-block; width: 3px; height: 0.85em; margin-right: var(--space-3);
+  border-radius: var(--radius-xs); background: var(--rk); vertical-align: middle;
+}
+.expiry { font-size: var(--text-sm); color: var(--text-secondary); overflow-wrap: anywhere; }
+.reason { font-size: var(--text-sm); color: var(--status-critical); margin-top: var(--space-3); overflow-wrap: anywhere; }
+.shape-ex {
+  margin-top: var(--space-7); padding: var(--space-5) var(--space-6);
+  border: 1px dashed var(--border); border-radius: var(--radius-md);
+  background: var(--zebra); opacity: 0.72;
+}
+.shape-ex .ghost {
+  font-size: var(--text-sm); color: var(--text-muted); padding: var(--space-4);
+  border: 1px dashed var(--baseline); border-radius: var(--radius-sm); margin-bottom: var(--space-3);
+}
+.overlay {
+  position: fixed; inset: 0; z-index: 30;
+  background: color-mix(in srgb, var(--page) 56%, transparent);
+  display: flex; justify-content: flex-end; align-items: stretch;
+}
+.overlay[hidden] { display: none; }
+.drawer {
+  width: min(440px, 100%); max-width: 100%; height: 100%; overflow-x: hidden; overflow-y: auto;
+  background: var(--surface-1); border-left: 4px solid var(--rk, var(--accent));
+  box-shadow: var(--elev-1); padding: var(--space-8); min-width: 0;
+}
+.drawer h2 { margin: 0 0 var(--space-4); font-size: var(--text-lg); overflow-wrap: anywhere; }
+.kv { display: grid; grid-template-columns: minmax(88px, 34%) 1fr; gap: var(--space-3) var(--space-5);
+  padding: var(--space-3) 0; border-bottom: 1px solid var(--gridline); font-size: var(--text-sm); }
+.kv .k { color: var(--text-muted); font-size: var(--text-xs); letter-spacing: .04em; text-transform: uppercase; overflow-wrap: anywhere; min-width: 0; }
+.kv .v { overflow-wrap: anywhere; min-width: 0; }
+.drawer .acts { display: flex; flex-wrap: wrap; gap: var(--space-4); margin-top: var(--space-6); }
+.btn-acc {
+  background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 600;
+}
+.note-found { padding: var(--space-6) 0; color: var(--text-secondary); }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition-duration: 0.01ms !important; }
+}
+:where(button, a, select):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+</style>
+</head>
+<body data-page="library">
+<a class="skip" href="#main">Skip to main content</a>
+<div class="wrap">
+  <header class="top">
+    <h1>OCP Access Tracking Dashboard</h1>
+    <span class="sub">crc-local · report service 0.24.0</span>
+    <span class="spacer"></span>
+    <span class="shell-prefs">
+      <span class="pref"><label for="pref-mode">Appearance</label>
+        <select id="pref-mode">
+          <option value="">Auto</option>
+          <option value="light">Light</option>
+          <option value="dark">Dark</option>
+        </select>
+      </span>
+      <span class="pref"><label for="pref-palette">Colours</label>
+        <select id="pref-palette">
+          <option value="">Default</option>
+          <option value="deuter">Deuteranopia-safe</option>
+          <option value="protan">Protanopia-safe</option>
+          <option value="trit">Tritanopia-safe</option>
+          <option value="contrast">High contrast</option>
+        </select>
+      </span>
+    </span>
+  </header>
+  <!-- Tab strip: live app order (index.html 1072–1085) + Library current. Accent is label text + 3px bar (app.css 936–944), wrapping like tab-redesign-mock.html. -->
+  <nav class="tabs" aria-label="Dashboard sections" id="tabs"></nav>
+  <main id="main"></main>
+</div>
+
+<template id="two-cluster-shape">
+  <aside class="shape-ex">
+    <p class="filterbar-note"><strong>Shape example — how two clusters look.</strong> Not live data; the lab has one cluster (crc-local).</p>
+    <div class="cluster-head">crc-local</div>
+    <div class="ghost">the runs of this cluster, newest first</div>
+    <div class="cluster-head">second cluster</div>
+    <div class="ghost">the runs of that cluster, newest first</div>
+  </aside>
+</template>
+
+<template id="refusal-card">
+  <section class="card">
+    <h2>Library</h2>
+    <div class="scope-refusal"><strong>Withheld, not empty.</strong> Reports are documents about the cluster's own RBAC surface, its groups and its users.
+      <strong>For administrators only.</strong> Nothing on this page is broken and nothing is
+      missing from the cluster — this view is simply not part of yours.</div>
+  </section>
+</template>
+
+<div class="overlay" id="overlay" hidden>
+  <aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title"></aside>
+</div>
+
+<script type="application/json" id="reports-json">{"reports":[{"name":"namespace-access","title":"Namespace access report","summary":"Per namespace: every group binding classified with who it reaches, every direct user grant, findings first.","enabled":true,"values_key":"reporting.reports.namespaceAccess.enabled","needs":[],"params":[{"name":"selectors","type":"selector-map","default":null,"help":"Select namespaces by the estate's grouping labels (the Reports form offers one multi-select per configured dimension). Values within a dimension match ANY; the dimensions are AND'd. Leave the explicit names empty when using this.","choices":[],"lo":null,"hi":null,"required":false,"source":"","unit":"","advanced":false,"group":""},{"name":"mnemonics","type":"csv","default":null,"help":"Deprecated single-dimension form — maps to the first configured selector label. Prefer `selectors`; leave the explicit names empty when using this.","choices":[],"lo":null,"hi":null,"required":false,"source":"","unit":"","advanced":false,"group":""},{"name":"namespaces","type":"namespaces","default":null,"help":"Explicit namespace names, at most 50; `(cluster-scoped)` for cluster-wide bindings. Instead of the Scope — one or the other, not both.","choices":[],"lo":null,"hi":null,"required":false,"source":"namespaces","unit":"","advanced":true,"group":""},{"name":"include_members","type":"bool","default":false,"help":"Expand group rosters. Off by default — a file that gets emailed has no reader log — and recorded in the provenance when on.","choices":[],"lo":null,"hi":null,"required":false,"source":"","unit":"","advanced":false,"group":""},{"name":"group_by","type":"enum","default":"mnemonic","help":"Sort and group the namespaces by a metadata label — the mnemonic or the app-environment every namespace carries, or the exact-group label some pin (the rest fall under '(no oud-group)'). Groups the output; it does not filter.","choices":["mnemonic","app-environment","oud-group"],"lo":null,"hi":null,"required":false,"source":"","unit":"","advanced":true,"group":""}]},{"name":"access-matrix","title":"Access matrix","summary":"Every subject (group or direct user), the namespaces it is bound in and the role granted — the 'who has access where' sheet, by role name.","enabled":true,"values_key":"reporting.reports.accessMatrix.enabled","needs":[],"params":[{"name":"users","type":"csv","default":[],"help":"Only these users (empty = every subject).","choices":[],"lo":null,"hi":null,"required":false,"source":"users","unit":"","advanced":false,"group":"subject"},{"name":"groups","type":"csv","default":[],"help":"Only these groups (empty = every subject).","choices":[],"lo":null,"hi":null,"required":false,"source":"groups","unit":"","advanced":false,"group":"subject"},{"name":"namespace_prefix","type":"str","default":"","help":"Only namespaces starting with this prefix (empty = all, including cluster scope).","choices":[],"lo":null,"hi":null,"required":false,"source":"","unit":"","advanced":true,"group":""}]},{"name":"privileged-access","title":"Privileged access review","summary":"Every subject holding cluster-admin at any scope, or admin/edit cluster-wide, with the people behind each group.","enabled":true,"values_key":"reporting.reports.privilegedAccess.enabled","needs":[],"params":[{"name":"include_members","type":"bool","default":true,"help":"Rosters of the privileged groups. ON by default here: a privileged-access review without names is not a review. Recorded in the provenance.","choices":[],"lo":null,"hi":null,"required":false,"source":"","unit":"","advanced":false,"group":""},{"name":"roles","type":"csv","default":["cluster-admin","admin","edit"],"help":"Role names that count as privileged.","choices":[],"lo":null,"hi":null,"required":false,"source":"roles","unit":"","advanced":false,"group":""}]},{"name":"binding-findings","title":"RBAC binding findings","summary":"Dangling, unresolved and unmanaged group bindings and direct user grants; system:* virtual groups are omitted (a platform built-in, not a person's grant).","enabled":true,"values_key":"reporting.reports.bindingFindings.enabled","needs":[],"params":[]},{"name":"groups","title":"Groups and membership changes","summary":"Every synced group: provider, member count, last sync, bindings, cliff silence; the empty and unattributed lists; joins and leaves in the window.","enabled":true,"values_key":"reporting.reports.groups.enabled","needs":[],"params":[{"name":"groups","type":"csv","default":[],"help":"Only these groups (empty = every synced group).","choices":[],"lo":null,"hi":null,"required":false,"source":"groups","unit":"","advanced":false,"group":""},{"name":"window_days","type":"int","default":30,"help":"Membership changes observed in the last N days.","choices":[],"lo":1,"hi":3650,"required":false,"source":"","unit":"days","advanced":false,"group":""},{"name":"include_members","type":"bool","default":false,"help":"Rosters for every group. Recorded in the provenance when on.","choices":[],"lo":null,"hi":null,"required":false,"source":"","unit":"","advanced":false,"group":""}]},{"name":"users","title":"Users","summary":"Every User object (a login), its identity providers, group count and direct grants; manual accounts; synced members who have never logged in.","enabled":true,"values_key":"reporting.reports.users.enabled","needs":[],"params":[{"name":"users","type":"csv","default":[],"help":"Only these users (empty = every User object).","choices":[],"lo":null,"hi":null,"required":false,"source":"users","unit":"","advanced":false,"group":""},{"name":"providers","type":"csv","default":[],"help":"Only users with an identity from these providers (empty = all).","choices":[],"lo":null,"hi":null,"required":false,"source":"providers","unit":"","advanced":false,"group":""}]},{"name":"login-activity","title":"Login activity","summary":"Attempts by outcome and provider, per-user successes and failures, and rejected attempts resolved against the login gate.","enabled":true,"values_key":"reporting.reports.loginActivity.enabled","needs":["loginCapture"],"params":[{"name":"window_days","type":"int","default":30,"help":"Attempts in the last N days.","choices":[],"lo":1,"hi":3650,"required":false,"source":"","unit":"days","advanced":false,"group":""},{"name":"users","type":"csv","default":[],"help":"Only these users (empty = everyone).","choices":[],"lo":null,"hi":null,"required":false,"source":"users","unit":"","advanced":false,"group":"subject"},{"name":"groups","type":"csv","default":[],"help":"Only members of these groups (empty = everyone).","choices":[],"lo":null,"hi":null,"required":false,"source":"groups","unit":"","advanced":false,"group":"subject"}]},{"name":"dormant-access","title":"Dormant and unusable access","summary":"Members with access who have never logged in, members outside the login gate, gate members with no access, and — with login capture — nobody-in-N-days.","enabled":true,"values_key":"reporting.reports.dormantAccess.enabled","needs":[],"params":[{"name":"users","type":"csv","default":[],"help":"Only these users (empty = every subject).","choices":[],"lo":null,"hi":null,"required":false,"source":"users","unit":"","advanced":false,"group":"subject"},{"name":"groups","type":"csv","default":[],"help":"Only these groups (empty = every subject).","choices":[],"lo":null,"hi":null,"required":false,"source":"groups","unit":"","advanced":false,"group":"subject"},{"name":"dormant_days","type":"int","default":90,"help":"With login capture on: a member whose last successful login is older than this is listed as dormant.","choices":[],"lo":1,"hi":3650,"required":false,"source":"","unit":"days","advanced":false,"group":""}]},{"name":"groupsync-health","title":"GroupSync and policy-operator health","summary":"Every GroupSync CR with its computed state, schedule and last sync; reconcile errors (current vs stale); syncs in the window; NamespaceConfig/GroupConfig health.","enabled":true,"values_key":"reporting.reports.groupsyncHealth.enabled","needs":[],"params":[{"name":"window_days","type":"int","default":30,"help":"Sync events in the last N days.","choices":[],"lo":1,"hi":3650,"required":false,"source":"","unit":"days","advanced":false,"group":""}]},{"name":"compliance-snapshot","title":"Compliance snapshot","summary":"One page of KPIs — groups, users, bindings, findings, privileged grants, dormant access, sync health — and the coverage statement that says what this evidence can attest.","enabled":true,"values_key":"reporting.reports.complianceSnapshot.enabled","needs":[],"params":[]},{"name":"access-certification","title":"Access certification pack","summary":"Per group (with roster) and per directly-bound user: every binding held, with Approve / Revoke / Comment columns and a sign-off block for the named reviewer.","enabled":true,"values_key":"reporting.reports.accessCertification.enabled","needs":[],"params":[{"name":"campaign","type":"str","default":"","help":"Campaign name printed on every page (e.g. 'Q3 2026 access review').","choices":[],"lo":null,"hi":null,"required":true,"source":"","unit":"","advanced":false,"group":""},{"name":"due","type":"date","default":"","help":"Due date, YYYY-MM-DD.","choices":[],"lo":null,"hi":null,"required":true,"source":"","unit":"","advanced":false,"group":""},{"name":"reviewer","type":"str","default":"","help":"The reviewer this pack is for (a name; printed, not verified).","choices":[],"lo":null,"hi":null,"required":true,"source":"","unit":"","advanced":false,"group":""},{"name":"users","type":"csv","default":[],"help":"Only these users (empty = every subject).","choices":[],"lo":null,"hi":null,"required":false,"source":"users","unit":"","advanced":false,"group":"subject"},{"name":"groups","type":"csv","default":[],"help":"Only these groups (empty = every subject).","choices":[],"lo":null,"hi":null,"required":false,"source":"groups","unit":"","advanced":false,"group":"subject"},{"name":"group_mnemonic","type":"csv","default":[],"help":"Business mnemonics: each resolves to the exact group its namespaces pin (the namespace group label), never by naming convention.","choices":[],"lo":null,"hi":null,"required":false,"source":"mnemonics","unit":"","advanced":false,"group":""},{"name":"include_members","type":"bool","default":true,"help":"Rosters of each group — a certification without names cannot be signed. Recorded in the provenance.","choices":[],"lo":null,"hi":null,"required":false,"source":"","unit":"","advanced":false,"group":""}]}],"pdf":{"enabled":true,"variant":"pdf/a-2b"},"viewer":null,"namespaceSelectors":{"crc-local":{"label":"company.net/mnemonic","values":["alpha","beta","demo","gsd","gso","jeff","klt","klta","kltb","kltc","spar","toolongx","trno"]},"mock":{"label":"company.net/mnemonic","values":["acme","beta","demo","gsd","gso","klta"]}},"namespaceSelectorDimensions":{"crc-local":[{"label":"company.net/mnemonic","values":["alpha","beta","demo","gsd","gso","jeff","klt","klta","kltb","kltc","spar","toolongx","trno"]},{"label":"company.net/app-environment","values":["prod","production","qa","rnd","uat"]}],"mock":[{"label":"company.net/mnemonic","values":["acme","beta","demo","gsd","gso","klta"]},{"label":"company.net/app-environment","values":["prod","qa","rnd"]}]},"namespaceGroupLabel":"company.net/oud-group"}</script>
+<script type="application/json" id="status-json">{"service":{"version":"0.24.0","pdf":{"enabled":true,"variant":"pdf/a-2b"},"reports_enabled":11,"formats":{"scheduled":["html","json"],"manual":["html","pdf","json"]}},"window":{"enabled":true,"open_now":false,"timezone":"America/New_York","start":"22:00","end":"06:00","days":["Mon","Tue","Wed","Thu","Fri","Sat","Sun"],"next_change":"opens","next_change_at":"2026-09-21T02:00:00Z","refused_since_start":0},"retention":{"scheduled":{"keepPerSchedule":2,"days":90},"manual":{"days":3,"maxRuns":500}},"in_flight":{"running":0,"queued":0},"schedules":[{"name":"nightly-namespace-access","report":"namespace-access","schedule":"0 22 * * *","cadence":"Daily 22:00","enabled":true,"retention":{"keepPerSchedule":2,"days":90,"overridden":false},"last_success":"2026-09-20T06:16:31Z","next_fire":"2026-09-21T02:00:00Z","previous_fire":"2026-09-20T02:00:00Z","status":"ok"},{"name":"quarterly-compliance","report":"compliance-snapshot","schedule":"0 6 1 1,4,7,10 *","cadence":"Quarterly 06:00","enabled":true,"retention":{"keepPerSchedule":12,"days":2555,"overridden":true},"last_success":null,"next_fire":"2026-10-01T10:00:00Z","previous_fire":"2026-07-01T10:00:00Z","status":"never"},{"name":"biweekly-groups","report":"groups","schedule":"0 6 1,16 * *","cadence":"1st & 16th 06:00","enabled":false,"retention":{"keepPerSchedule":2,"days":90,"overridden":false},"last_success":null,"next_fire":null,"previous_fire":"2026-09-16T10:00:00Z","status":"disabled"}],"as_of":"2026-09-20T13:10:40Z"}</script>
+<script type="application/json" id="runs-json">
+{
+  "total": 8,
+  "runs": [
+    {
+      "id": "20260920T080125.338303Z-ed61",
+      "report": "access-certification",
+      "cluster": "crc-local",
+      "generated_by": "kubeadmin",
+      "schedule": null,
+      "status": "done",
+      "requested_at": "2026-09-20T08:01:25Z",
+      "started_at": "2026-09-20T08:01:25Z",
+      "finished_at": "2026-09-20T08:01:25Z",
+      "error": null,
+      "sha256": "2be91a9f2f2e02daa159823eb5d59048df4ab965a014315a11056516492b9973",
+      "snapshot_stamp": "2026-09-20T08:00:05.934877Z",
+      "formats": [
+        "html",
+        "pdf"
+      ],
+      "bytes": {
+        "html": 8912,
+        "json": 9518,
+        "pdf": 34745
+      },
+      "render_seconds": 0.074,
+      "params": {
+        "campaign": "Walk 2026-09-20",
+        "due": "2026-10-31",
+        "group_mnemonic": [
+          "alpha"
+        ],
+        "groups": [
+          "app-ocp-rbac-alpha-cluster-admin"
+        ],
+        "include_members": true,
+        "reviewer": "walk",
+        "users": []
+      }
+    },
+    {
+      "id": "20260920T075444.550867Z-52a9",
+      "report": "access-certification",
+      "cluster": "crc-local",
+      "generated_by": "kubeadmin",
+      "schedule": null,
+      "status": "done",
+      "requested_at": "2026-09-20T07:54:44Z",
+      "started_at": "2026-09-20T07:54:44Z",
+      "finished_at": "2026-09-20T07:54:44Z",
+      "error": null,
+      "sha256": "a24d9de1fc695592bd314584a58b8b62e001cc6f78c7fda0fba02906b3404a6a",
+      "snapshot_stamp": "2026-09-20T07:54:05.943580Z",
+      "formats": [
+        "html",
+        "pdf"
+      ],
+      "bytes": {
+        "html": 8089,
+        "json": 8165,
+        "pdf": 33442
+      },
+      "render_seconds": 0.42,
+      "params": {
+        "campaign": "Walk 2026-09-20",
+        "due": "2026-10-31",
+        "group_mnemonic": [
+          "alpha"
+        ],
+        "groups": [
+          "app-ocp-rbac-alpha-cluster-admin"
+        ],
+        "include_members": true,
+        "reviewer": "walk",
+        "users": []
+      }
+    },
+    {
+      "id": "20260920T061631.075114Z-ede4",
+      "report": "namespace-access",
+      "cluster": "crc-local",
+      "generated_by": "schedule:nightly-namespace-access",
+      "schedule": "nightly-namespace-access",
+      "status": "done",
+      "requested_at": "2026-09-20T06:16:31Z",
+      "started_at": "2026-09-20T06:16:31Z",
+      "finished_at": "2026-09-20T06:16:31Z",
+      "error": null,
+      "sha256": "c29796652a62ec56bb11d96f0792fcae5fd12c08c2d8a2a243b4fd6ce7eb0470",
+      "snapshot_stamp": "2026-09-20T06:16:25.211390Z",
+      "formats": [
+        "html"
+      ],
+      "bytes": {
+        "html": 15880,
+        "json": 21495
+      },
+      "render_seconds": 0.035,
+      "params": {
+        "include_members": false,
+        "mnemonics": null,
+        "namespaces": null,
+        "selectors": {
+          "company.net/mnemonic": [
+            "demo",
+            "beta"
+          ]
+        }
+      }
+    },
+    {
+      "id": "20260920T020001.372931Z-7da2",
+      "report": "namespace-access",
+      "cluster": "crc-local",
+      "generated_by": "schedule:nightly-namespace-access",
+      "schedule": "nightly-namespace-access",
+      "status": "done",
+      "requested_at": "2026-09-20T02:00:01Z",
+      "started_at": "2026-09-20T02:00:01Z",
+      "finished_at": "2026-09-20T02:00:01Z",
+      "error": null,
+      "sha256": "5499bf24f619c21f42988a2c2ba18e2aff8f0058eaa9466fc37d0bfaa5698fbc",
+      "snapshot_stamp": "2026-09-20T01:56:31.752891Z",
+      "formats": [
+        "html",
+        "pdf"
+      ],
+      "bytes": {
+        "html": 15880,
+        "json": 21497,
+        "pdf": 43903
+      },
+      "render_seconds": 0.488,
+      "params": {
+        "include_members": false,
+        "mnemonics": null,
+        "namespaces": null,
+        "selectors": {
+          "company.net/mnemonic": [
+            "demo",
+            "beta"
+          ]
+        }
+      }
+    },
+    {
+      "id": "20260919T155255.901591Z-9e10",
+      "report": "namespace-access",
+      "cluster": "crc-local",
+      "generated_by": "jane.smith",
+      "schedule": null,
+      "status": "done",
+      "requested_at": "2026-09-19T15:52:55Z",
+      "started_at": "2026-09-19T15:52:55Z",
+      "finished_at": "2026-09-19T15:52:55Z",
+      "error": null,
+      "sha256": "76c972c277cfeefcd68c2a0ce7ffe7775057030cec00660ae90e6e8f5459625d",
+      "snapshot_stamp": "2026-09-19T15:52:02.085229Z",
+      "formats": [
+        "html",
+        "pdf"
+      ],
+      "bytes": {
+        "html": 14215,
+        "json": 18527,
+        "pdf": 39468
+      },
+      "render_seconds": 0.087,
+      "params": {
+        "include_members": true,
+        "mnemonics": null,
+        "namespaces": null,
+        "selectors": {
+          "company.net/mnemonic": [
+            "demo"
+          ]
+        }
+      }
+    },
+    {
+      "id": "20260919T150459.139669Z-8741",
+      "report": "namespace-access",
+      "cluster": "crc-local",
+      "generated_by": "jane.smith",
+      "schedule": null,
+      "status": "done",
+      "requested_at": "2026-09-19T15:04:59Z",
+      "started_at": "2026-09-19T15:04:59Z",
+      "finished_at": "2026-09-19T15:04:59Z",
+      "error": null,
+      "sha256": "fbf04ae0cdb27f7bdddcd85b2c71811e176067085405c515f8da9752ffa6c95d",
+      "snapshot_stamp": "2026-09-19T15:04:02.089960Z",
+      "formats": [
+        "html",
+        "pdf"
+      ],
+      "bytes": {
+        "html": 7456,
+        "json": 7120,
+        "pdf": 31715
+      },
+      "render_seconds": 0.233,
+      "params": {
+        "include_members": true,
+        "mnemonics": null,
+        "namespaces": null,
+        "selectors": {
+          "company.net/mnemonic": [
+            "klt"
+          ]
+        }
+      }
+    },
+    {
+      "id": "20260919T020013.766694Z-d3eb",
+      "report": "namespace-access",
+      "cluster": "crc-local",
+      "generated_by": "schedule:nightly-namespace-access",
+      "schedule": "nightly-namespace-access",
+      "status": "failed",
+      "requested_at": "2026-09-19T02:00:13Z",
+      "started_at": "2026-09-19T02:00:13Z",
+      "finished_at": "2026-09-19T02:00:13Z",
+      "error": "no namespace matches company.net/mnemonic in (demo, beta)",
+      "sha256": null,
+      "snapshot_stamp": null,
+      "formats": [
+        "html",
+        "pdf"
+      ],
+      "bytes": {},
+      "render_seconds": 0.0,
+      "params": {
+        "include_members": false,
+        "mnemonics": null,
+        "namespaces": null,
+        "selectors": {
+          "company.net/mnemonic": [
+            "demo",
+            "beta"
+          ]
+        }
+      }
+    },
+    {
+      "id": "20260919T020001.264993Z-1c36",
+      "report": "namespace-access",
+      "cluster": "crc-local",
+      "generated_by": "schedule:nightly-namespace-access",
+      "schedule": "nightly-namespace-access",
+      "status": "failed",
+      "requested_at": "2026-09-19T02:00:01Z",
+      "started_at": "2026-09-19T02:00:01Z",
+      "finished_at": "2026-09-19T02:00:01Z",
+      "error": "no namespace matches company.net/mnemonic in (demo, beta)",
+      "sha256": null,
+      "snapshot_stamp": null,
+      "formats": [
+        "html",
+        "pdf"
+      ],
+      "bytes": {},
+      "render_seconds": 0.001,
+      "params": {
+        "include_members": false,
+        "mnemonics": null,
+        "namespaces": null,
+        "selectors": {
+          "company.net/mnemonic": [
+            "demo",
+            "beta"
+          ]
+        }
+      }
+    }
+  ]
+}
+</script>
+<script>
+(function () {
+  const REPORTS = JSON.parse(document.getElementById("reports-json").textContent);
+  const STATUS = JSON.parse(document.getElementById("status-json").textContent);
+  const RUNS = JSON.parse(document.getElementById("runs-json").textContent);
+  const NOW = new Date(STATUS.as_of);
+  const FAILED_DEMO = "20260919T020013.766694Z-d3eb";
+  const REPORT_KIND = {
+    "namespace-access": ["access", "access"],
+    "access-matrix": ["access", "access"],
+    "privileged-access": ["access", "access"],
+    "binding-findings": ["rbac", "rbac"],
+    "groups": ["identity", "identity"],
+    "users": ["identity", "identity"],
+    "login-activity": ["activity", "activity"],
+    "dormant-access": ["activity", "activity"],
+    "groupsync-health": ["compliance", "health"],
+    "compliance-snapshot": ["compliance", "compliance"],
+    "access-certification": ["compliance", "compliance"]
+  };
+  const TABS = [
+    ["home", "Home"], ["overview", "Overview"], ["kpi", "KPIs"], ["groups", "Groups"],
+    ["users", "Users"], ["bindings", "Access granted"], ["policy", "RBAC policy"],
+    ["kyverno", "Kyverno"], ["nsaudit", "Namespace audit"], ["logins", "Logins"],
+    ["usage", "Usage"], ["reports", "Reports"], ["library", "Library"]
+  ];
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  function stateBadge(state, label) {
+    const shape = { done: "ok", ok: "ok", failed: "critical", late: "warning", running: "unknown",
+                    queued: "unknown", never: "unknown", disabled: "unknown" }[state] || "unknown";
+    return `<span class="badge ${shape} st-${esc(state)}"><span class="glyph" aria-hidden="true"></span>${esc(label || state)}</span>`;
+  }
+  function fmtStamp(iso) {
+    return iso ? esc(iso.replace("T", " ").replace(/:\d\d(?:\.\d+)?Z$/, "").replace("Z", "")) : "—";
+  }
+  function untilShort(iso) {
+    if (!iso) return "";
+    const secs = Math.round((new Date(iso).getTime() - NOW.getTime()) / 1000);
+    const a = Math.abs(secs);
+    const span = a < 3600 ? `${Math.max(1, Math.round(a / 60))}m` : a < 86400 ? `${Math.floor(a / 3600)}h ${Math.floor((a % 3600) / 60)}m` : `${Math.round(a / 86400)}d`;
+    return secs >= 0 ? `in ${span}` : `${span} ago`;
+  }
+  function ago(iso) {
+    if (!iso) return "never";
+    const secs = Math.floor((NOW.getTime() - new Date(iso).getTime()) / 1000);
+    if (!isFinite(secs)) return "—";
+    const n = Math.abs(secs);
+    const word = n < 60 ? `${n}s` : n < 3600 ? `${Math.floor(n / 60)}m` : n < 86400 ? `${Math.floor(n / 3600)}h` : `${Math.floor(n / 86400)}d`;
+    return secs < 0 ? `in ${word}` : `${word} ago`;
+  }
+  function fmtBytes(n) {
+    if (n == null) return "—";
+    if (n < 1024) return n + " B";
+    if (n < 1048576) return (n / 1024).toFixed(n < 10240 ? 1 : 0) + " KB";
+    return (n / 1048576).toFixed(1) + " MB";
+  }
+  function isoZ(d) {
+    return d.toISOString().replace(/\.\d{3}Z$/, "Z");
+  }
+  function retentionStamp(run) {
+    if (run.finished_at) {
+      const d = new Date(run.finished_at);
+      if (!isNaN(d.getTime())) return d;
+    }
+    const s = run.id.slice(0, 15);
+    return new Date(s.replace(/(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})/, "$1-$2-$3T$4:$5:$6Z"));
+  }
+  function newestFirst(a, b) {
+    const da = retentionStamp(a).getTime() - retentionStamp(b).getTime();
+    return da !== 0 ? -da : (a.id < b.id ? 1 : -1);
+  }
+  /* computed by the service (R4) — same decisions prune() makes */
+  function computeExpiry(runs, status) {
+    const out = {};
+    const schedG = status.retention.scheduled;
+    const manG = status.retention.manual;
+    const overrides = {};
+    (status.schedules || []).forEach((s) => { overrides[s.name] = s.retention; });
+    runs.forEach((r) => {
+      if (r.status === "queued" || r.status === "running") {
+        out[r.id] = { expires_at: null, retained_by: null };
+      }
+    });
+    const finished = runs.filter((r) => r.status === "done" || r.status === "failed");
+    const manuals = finished.filter((r) => !r.schedule).sort(newestFirst);
+    manuals.forEach((r, i) => {
+      if (manG.maxRuns > 0 && i >= manG.maxRuns) {
+        out[r.id] = { expires_at: null, retained_by: "manual:cap" };
+        return;
+      }
+      if (manG.days > 0) {
+        const exp = new Date(retentionStamp(r).getTime() + 1000 + manG.days * 86400000);
+        out[r.id] = { expires_at: isoZ(exp), retained_by: "manual:" + manG.days + "d" };
+      } else {
+        out[r.id] = { expires_at: null, retained_by: "manual:cap" };
+      }
+    });
+    const byKey = {};
+    finished.filter((r) => r.schedule).sort(newestFirst).forEach((r) => {
+      const k = r.schedule + "\0" + r.cluster;
+      (byKey[k] = byKey[k] || []).push(r);
+    });
+    Object.keys(byKey).forEach((k) => {
+      const parts = k.split("\0"), name = parts[0], cluster = parts[1];
+      const ret = overrides[name] || schedG;
+      const keep = ret.keepPerSchedule, days = ret.days;
+      byKey[k].forEach((r, i) => {
+        if (keep > 0 && i < keep) {
+          const exp = days > 0 ? isoZ(new Date(retentionStamp(r).getTime() + 1000 + days * 86400000)) : null;
+          out[r.id] = { expires_at: exp, retained_by: "newest:" + (i + 1) + "/" + keep + " of " + name + " on " + cluster };
+        } else if (days > 0) {
+          const exp = new Date(retentionStamp(r).getTime() + 1000 + days * 86400000);
+          out[r.id] = { expires_at: isoZ(exp), retained_by: "age:" + days + "d" };
+        } else {
+          out[r.id] = { expires_at: null, retained_by: "age:0d" };
+        }
+      });
+    });
+    return out;
+  }
+  function expiryWords(run, exp) {
+    if (run.status === "queued" || run.status === "running") {
+      return { words: "no expiry (in flight)", date: "" };
+    }
+    if (!exp) return { words: "—", date: "" };
+    if (exp.retained_by && exp.retained_by.indexOf("newest:") === 0) {
+      const m = exp.retained_by.match(/^newest:(\d+)\/(\d+)/);
+      // prune(): one of the newest K is kept whatever its age; once K newer runs exist it is kept while younger than
+      // the age bound — so the date is the EARLIEST it can go, and it lives longer while it stays among the K.
+      return exp.expires_at
+        ? { words: "newest " + m[1] + " of " + m[2] + " · kept at least until", date: fmtStamp(exp.expires_at) }
+        : { words: "newest " + m[1] + " of " + m[2] + " · kept while it is", date: "" };
+    }
+    if (exp.retained_by === "manual:cap") {
+      return { words: "beyond the newest " + STATUS.retention.manual.maxRuns + " manual runs — goes on the next prune", date: "" };
+    }
+    if (exp.expires_at) {
+      return { words: "expires " + untilShort(exp.expires_at), date: fmtStamp(exp.expires_at) };
+    }
+    return { words: "kept indefinitely", date: "" };
+  }
+  function expiryHtml(run, exp) {
+    const w = expiryWords(run, exp);
+    return `<!-- computed by the service (R4) --><span class="expiry">${esc(w.words)}${w.date ? ` · <span class="mono">${w.date}</span>` : ""}</span>`;
+  }
+  function shortTitle(title) {
+    return title.replace(/ report$/i, "").replace(/ snapshot$/i, "").replace(/ and membership changes$/i, "");
+  }
+  function spokenHead(sched, report) {
+    const short = shortTitle(report.title);
+    // the cadence in words is the service's own (: "Daily 22:00", "Quarterly 06:00",
+    // "1st & 16th 06:00") with its clock time dropped — never derived from the schedule's name
+    const cad = sched.cadence.replace(/\s+\d{1,2}:\d{2}$/, "");
+    if (!sched.enabled) return short + " — " + cad + ", paused";
+    return cad + " " + short.charAt(0).toLowerCase() + short.slice(1);
+  }
+  function firstLine(err) {
+    return (err || "").split(/\r?\n/)[0];
+  }
+  function formatsHtml(run, stop) {
+    if (run.status !== "done") return "";
+    const bytes = run.bytes || {};
+    const keys = Object.keys(bytes);
+    if (!keys.length) return "";
+    return `<div class="fmts">${keys.map((f) =>
+      `<button type="button" class="btn" data-artifact="${esc(run.id)}" data-format="${esc(f)}">.${esc(f)} · ${esc(fmtBytes(bytes[f]))}</button>`
+    ).join("")}</div>`;
+  }
+  function runCard(run, exp, featured) {
+    const reason = run.status === "failed" && run.error
+      ? `<div class="reason">${esc(firstLine(run.error))}</div>` : "";
+    const asof = run.snapshot_stamp ? ` · data as of ${fmtStamp(run.snapshot_stamp)}` : "";
+    // an <article>, not a <button>: the format chips inside are buttons, and a button cannot contain one (the parser
+    // closed the card at the first chip, leaving the formats and the status outside its box)
+    return `<article class="run${featured ? " featured" : ""}" data-run="${esc(run.id)}" id="run-${esc(run.id)}" tabindex="0" role="button"
+      aria-label="Open run ${esc(run.id)}">
+      <div class="when">${fmtStamp(run.requested_at)} <span class="muted">(${esc(ago(run.requested_at))})</span></div>
+      <div class="meta"><span class="mono">${esc(run.cluster)}</span>${asof}</div>
+      ${formatsHtml(run)}
+      ${reason}
+      <div class="row">${stateBadge(run.status)}${expiryHtml(run, exp)}</div>
+    </article>`;
+  }
+  function groupByCluster(runs) {
+    const m = {};
+    runs.forEach((r) => { (m[r.cluster] = m[r.cluster] || []).push(r); });
+    return Object.keys(m).sort().map((c) => ({ cluster: c, runs: m[c].sort(newestFirst) }));
+  }
+  function clusterBlocks(runs, expMap, bound) {
+    const groups = groupByCluster(runs);
+    const many = groups.length > 1;
+    return groups.map((g) => {
+      const featured = g.runs[0];
+      const earlier = g.runs.slice(1);
+      const shown = bound ? earlier.slice(0, 2) : earlier;
+      const more = bound && earlier.length > 2;
+      return `${many ? `<div class="cluster-head">${esc(g.cluster)}</div>` : ""}
+        ${runCard(featured, expMap[featured.id], true)}
+        ${shown.map((r) => runCard(r, expMap[r.id], false)).join("")}
+        ${more ? `<button type="button" class="linkish" data-expand="${g.runs.length}">all ${g.runs.length} →</button>
+          <div hidden data-rest>${earlier.slice(2).map((r) => runCard(r, expMap[r.id], false)).join("")}</div>` : ""}`;
+    }).join("");
+  }
+  // the link opens the Reports tab with this report's form selected (#page=reports&report=<name>): the words
+  // name that action, and the arrow says it leaves the page — the app's "… →" convention
+  function generateLink(name, again) {
+    return `<button type="button" class="linkish" data-goto-reports="${esc(name)}">${again ? "Generate another" : "Generate this report"} →</button>`;
+  }
+  function paramRows(run, spec) {
+    const params = (spec && spec.params) || [];
+    const named = {};
+    params.forEach((p) => { named[p.name] = p; });
+    const src = run.params || {};
+    const rows = [];
+    if (src.selectors && typeof src.selectors === "object") {
+      Object.keys(src.selectors).forEach((lab) => {
+        const v = src.selectors[lab];
+        if (v && v.length) rows.push([lab, v.join(", ")]);
+      });
+    }
+    Object.keys(src).forEach((k) => {
+      if (k === "selectors") return;
+      const v = src[k];
+      if (v == null || v === "" || (Array.isArray(v) && !v.length)) return;
+      const specP = named[k];
+      const label = specP ? specP.name : k;
+      const shown = typeof v === "boolean" ? (v ? "On" : "Off") : Array.isArray(v) ? v.join(", ") : String(v);
+      rows.push([label, shown]);
+    });
+    return rows.length
+      ? rows.map(([k, v]) => `<div class="kv"><span class="k">${esc(k)}</span><span class="v mono">${esc(v)}</span></div>`).join("")
+      : `<div class="kv"><span class="k">parameters</span><span class="v muted">none set</span></div>`;
+  }
+  function durationOf(run) {
+    if (run.render_seconds != null) return run.render_seconds + "s";
+    if (run.started_at && run.finished_at) {
+      const s = (new Date(run.finished_at) - new Date(run.started_at)) / 1000;
+      return s.toFixed(3) + "s";
+    }
+    return "—";
+  }
+  function buildSections() {
+    const enabled = (REPORTS.reports || []).filter((r) => r.enabled);
+    const schedules = STATUS.schedules || [];
+    const allRuns = RUNS.runs || [];
+    const expMap = computeExpiry(allRuns, STATUS);
+    const sections = [];
+    enabled.forEach((report) => {
+      const mine = schedules.filter((s) => s.report === report.name);
+      if (mine.length) mine.forEach((sched) => sections.push({ report, sched }));
+      else sections.push({ report, sched: null });
+    });
+    return { sections, allRuns, expMap };
+  }
+  function sectionHtml(sec, allRuns, expMap, showShape) {
+    const report = sec.report, sched = sec.sched;
+    const [kcat, klabel] = REPORT_KIND[report.name] || ["access", "report"];
+    const sid = sched ? "sec-" + sched.name : "sec-" + report.name;
+    const title = sched ? spokenHead(sched, report) : report.title;
+    const scheduled = sched
+      ? allRuns.filter((r) => r.schedule === sched.name).sort(newestFirst)
+      : [];
+    const manuals = allRuns.filter((r) => r.report === report.name && !r.schedule).sort(newestFirst);
+    const paused = sched && !sched.enabled;
+    const empty = !scheduled.length && !manuals.length;
+    const chips = [
+      `<span class="rp-chip k-${esc(kcat)}">${esc(klabel)}</span>`
+    ];
+    if (sched) {
+      chips.push(stateBadge(sched.status, sched.status === "disabled" ? "paused" : sched.status));
+      if (scheduled.length) chips.push(`<span class="rp-chip rp-count">${scheduled.length} scheduled</span>`);
+      if (manuals.length) chips.push(`<span class="rp-chip rp-count">${manuals.length} manual</span>`);
+    } else if (manuals.length) {
+      chips.push(`<span class="rp-chip rp-count">${manuals.length} manual</span>`);
+    }
+    let body = "";
+    if (empty) {
+      if (sched && !sched.enabled) {
+        body = `<div class="empty-note">Paused — CronJob suspended. Previous fire ${fmtStamp(sched.previous_fire) || "—"}. No run in the library.</div>${generateLink(report.name)}`;
+      } else if (sched) {
+        body = `<div class="empty-note">No run yet.${sched.next_fire ? ` Next ${esc(sched.cadence)} · ${fmtStamp(sched.next_fire)} (${esc(untilShort(sched.next_fire))}).` : ""}</div>${generateLink(report.name)}`;
+      } else {
+        body = `<div class="empty-note">No schedule and no run yet.</div>${generateLink(report.name)}`;
+      }
+    } else {
+      if (sched && scheduled.length) body += clusterBlocks(scheduled, expMap, true);
+      else if (!sched && manuals.length) body += clusterBlocks(manuals, expMap, true);
+      if (sched && manuals.length) {
+        body += `<h3 class="subh">Manual runs</h3>${clusterBlocks(manuals, expMap, true)}`;
+      }
+      if (showShape) body += document.getElementById("two-cluster-shape").innerHTML;
+      body += `<div class="sec-foot">${generateLink(report.name, true)}</div>`;
+    }
+    return `<section class="card lib-sec r-${esc(kcat)}${paused ? " paused" : ""}${empty ? " compact" : ""}" id="${esc(sid)}">
+      <h2>${esc(title)} ${chips.join(" ")}</h2>
+      ${sched ? `<div class="filterbar-note"><span class="mono">${esc(sched.name)}</span> · ${esc(sched.cadence)}${sched.cadence !== sched.schedule ? ` · <span class="mono">${esc(sched.schedule)}</span>` : ""} · keep ${sched.retention.keepPerSchedule} newest · ${sched.retention.days}d${sched.retention.overridden ? " (overridden)" : ""}</div>` : `<div class="filterbar-note">${esc(report.summary)}</div>`}
+      ${body}
+    </section>`;
+  }
+  function paint() {
+    const { sections, allRuns, expMap } = buildSections();
+    const nSched = (STATUS.schedules || []).length;
+    const nPaused = (STATUS.schedules || []).filter((s) => !s.enabled).length;
+    const jumps = sections.map((sec) => {
+      const id = sec.sched ? "sec-" + sec.sched.name : "sec-" + sec.report.name;
+      const label = sec.sched ? spokenHead(sec.sched, sec.report) : sec.report.title;
+      return `<a href="#${esc(id)}">${esc(label)}</a>`;
+    }).join("");
+    const firstWithRuns = sections.findIndex((sec) => {
+      const scheduled = sec.sched ? allRuns.some((r) => r.schedule === sec.sched.name) : false;
+      const manuals = allRuns.some((r) => r.report === sec.report.name && !r.schedule);
+      return scheduled || manuals;
+    });
+    document.getElementById("main").innerHTML = `
+      <section class="card" id="library-lead">
+        <h2>Library <span class="rp-chip rp-count">${RUNS.total} run${RUNS.total === 1 ? "" : "s"} · ${nSched} schedule${nSched === 1 ? "" : "s"}${nPaused ? " · " + nPaused + " paused" : ""}</span></h2>
+        <div class="filterbar-note">Where the reports are, and which one you want. Organised by the catalogue crossed with <code>reporting.schedules[]</code> — the Reports tab generates; Reporting status is the service. No personnel data beyond <code>generated_by</code>.</div>
+        <nav class="jumps" aria-label="Reports in this library">${jumps}</nav>
+      </section>
+      ${sections.map((sec, i) => sectionHtml(sec, allRuns, expMap, i === firstWithRuns)).join("")}`;
+    document.getElementById("main").querySelectorAll("[data-run]").forEach((el) => {
+      el.addEventListener("click", (e) => {
+        if (e.target.closest("[data-artifact]")) return;
+        openRun(el.getAttribute("data-run"), el);
+      });
+      el.addEventListener("keydown", (e) => {   // the card is a role=button: Enter and Space open it
+        if ((e.key === "Enter" || e.key === " ") && e.target === el) { e.preventDefault(); openRun(el.getAttribute("data-run"), el); }
+      });
+    });
+    document.getElementById("main").querySelectorAll("[data-artifact]").forEach((el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+      });
+    });
+    document.getElementById("main").querySelectorAll("[data-expand]").forEach((el) => {
+      el.addEventListener("click", (e) => {
+        e.preventDefault();
+        const rest = el.nextElementSibling;
+        if (rest && rest.hasAttribute("data-rest")) {
+          rest.hidden = !rest.hidden;
+          el.textContent = rest.hidden ? "all " + el.getAttribute("data-expand") + " →" : "fewer";
+        }
+      });
+    });
+    document.getElementById("main").querySelectorAll("[data-goto-reports]").forEach((el) => {
+      el.addEventListener("click", () => {
+        location.hash = "#page=reports&report=" + encodeURIComponent(el.getAttribute("data-goto-reports"));
+      });
+    });
+  }
+  let lastFocus = null;
+  function hashParams() {
+    return new URLSearchParams((location.hash || "").replace(/^#/, ""));
+  }
+  function setHash(runId) {
+    const p = new URLSearchParams();
+    p.set("page", "library");
+    if (runId) p.set("run", runId);
+    history.replaceState(null, "", "#" + p.toString());
+  }
+  function specFor(name) {
+    return (REPORTS.reports || []).find((r) => r.name === name) || null;
+  }
+  function openRun(id, fromEl) {
+    lastFocus = fromEl || document.getElementById("run-" + id);
+    const overlay = document.getElementById("overlay");
+    const drawer = document.getElementById("drawer");
+    const run = (RUNS.runs || []).find((r) => r.id === id);
+    const spec = run ? specFor(run.report) : null;
+    const [kcat] = (run && REPORT_KIND[run.report]) || ["access"];
+    drawer.className = "drawer r-" + kcat;
+    drawer.style.setProperty("--rk", "var(--k-" + kcat + ")");
+    if (!run) {
+      drawer.innerHTML = `<button type="button" class="back" id="drawer-close">← Library</button>
+        <h2 id="drawer-title">Run not found</h2>
+        <p class="note-found">No run with that id is in the library.</p>`;
+    } else {
+      const exp = computeExpiry(RUNS.runs, STATUS)[run.id];
+      const bytes = run.bytes || {};
+      const fmts = Object.keys(bytes).length
+        ? Object.keys(bytes).map((f) =>
+            `<button type="button" class="btn" data-artifact="${esc(run.id)}" data-format="${esc(f)}">.${esc(f)} · ${esc(fmtBytes(bytes[f]))}</button>`).join("")
+        : `<span class="muted">no artefacts</span>`;
+      const htmlBtn = run.status === "done" && bytes.html
+        ? `<button type="button" class="btn btn-acc" data-open-html="${esc(run.id)}">Open .html in a new tab</button>` : "";
+      drawer.innerHTML = `<button type="button" class="back" id="drawer-close">← Library</button>
+        <h2 id="drawer-title">${esc(spec ? spec.title : run.report)}</h2>
+        <div class="filterbar-note"><span class="mono">${esc(run.id)}</span></div>
+        <div class="kv"><span class="k">report</span><span class="v mono">${esc(run.report)}</span></div>
+        <div class="kv"><span class="k">cluster</span><span class="v mono">${esc(run.cluster)}</span></div>
+        ${paramRows(run, spec)}
+        <div class="kv"><span class="k">requested</span><span class="v mono">${fmtStamp(run.requested_at)}</span></div>
+        <div class="kv"><span class="k">started</span><span class="v mono">${fmtStamp(run.started_at)}</span></div>
+        <div class="kv"><span class="k">finished</span><span class="v mono">${fmtStamp(run.finished_at)}</span></div>
+        <div class="kv"><span class="k">duration</span><span class="v mono">${esc(durationOf(run))}</span></div>
+        <div class="kv"><span class="k">data as of</span><span class="v mono">${run.snapshot_stamp ? fmtStamp(run.snapshot_stamp) : "—"}</span></div>
+        <div class="kv"><span class="k">sha256</span><span class="v mono">${esc(run.sha256 || "—")}</span></div>
+        <div class="kv"><span class="k">formats</span><span class="v">${fmts}</span></div>
+        <div class="kv"><span class="k">generated by</span><span class="v">${run.generated_by && run.generated_by.indexOf("schedule:") === 0 ? `<span class="mono">${esc(run.generated_by)}</span>` : esc(run.generated_by)}</span></div>
+        <div class="kv"><span class="k">schedule</span><span class="v mono">${esc(run.schedule || "—")}</span></div>
+        <div class="kv"><span class="k">status</span><span class="v">${stateBadge(run.status)}</span></div>
+        ${run.status === "failed" && run.error ? `<div class="kv"><span class="k">error</span><span class="v err">${esc(run.error)}</span></div>` : ""}
+        <div class="kv"><span class="k">expiry</span><span class="v">${expiryHtml(run, exp)}</span></div>
+        <div class="acts">
+          ${htmlBtn}
+          <button type="button" class="btn" id="copy-link">Copy link</button>
+          <button type="button" class="btn" id="drawer-close-2">Close</button>
+        </div>
+        <p class="filterbar-note mt-3">Open .html fetches with the ticket and opens a blob — the artefact URL is not a pasteable link; this run position is.</p>`;
+    }
+    overlay.hidden = false;
+    setHash(id);
+    const closer = document.getElementById("drawer-close");
+    if (closer) closer.focus();
+    const copy = document.getElementById("copy-link");
+    if (copy) copy.addEventListener("click", () => {
+      const url = location.pathname + location.search + "#page=library&run=" + encodeURIComponent(id);
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(location.origin + url.replace(/^\/?/, "/")).catch(function () {});
+      }
+      setHash(id);
+      copy.textContent = "Copied";
+    });
+    ["drawer-close", "drawer-close-2"].forEach((cid) => {
+      const b = document.getElementById(cid);
+      if (b) b.addEventListener("click", closeDrawer);
+    });
+    overlay.onclick = (e) => { if (e.target === overlay) closeDrawer(); };
+  }
+  function closeDrawer() {
+    document.getElementById("overlay").hidden = true;
+    setHash(null);
+    if (lastFocus && lastFocus.focus) lastFocus.focus();
+  }
+  function applyHash() {
+    const p = hashParams();
+    const run = p.get("run");
+    if (run) openRun(run);
+    else document.getElementById("overlay").hidden = true;
+  }
+  document.getElementById("tabs").innerHTML = TABS.map(([id, label]) =>
+    `<button type="button" class="tab" id="tab-${id}" data-nav="${id}"${id === "library" ? ' aria-current="page"' : ""}>${label}</button>`
+  ).join("");
+  [["pref-mode", "data-theme", "gsd-mode", "mode"], ["pref-palette", "data-palette", "gsd-palette", "theme"]].forEach(([id, attr, key, param]) => {
+    const sel = document.getElementById(id); if (!sel) return;
+    const fromUrl = new URLSearchParams(location.search).get(param) || "";
+    let saved = ""; try { saved = localStorage.getItem(key) || ""; } catch (e) {}
+    const start = fromUrl || saved;
+    if (start) { document.documentElement.setAttribute(attr, start); sel.value = start; }
+    sel.addEventListener("change", () => {
+      const v = sel.value;
+      v ? document.documentElement.setAttribute(attr, v) : document.documentElement.removeAttribute(attr);
+      try { v ? localStorage.setItem(key, v) : localStorage.removeItem(key); } catch (e) {}
+      const u = new URL(location.href);
+      v ? u.searchParams.set(param, v) : u.searchParams.delete(param);
+      history.replaceState(null, "", u);
+    });
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !document.getElementById("overlay").hidden) closeDrawer();
+  });
+  window.addEventListener("hashchange", applyHash);
+  paint();
+  applyHash();   // the second state: open with #page=library&run=20260919T020013.766694Z-d3eb, or click any run
+})();
+</script>
+</body>
+</html>
