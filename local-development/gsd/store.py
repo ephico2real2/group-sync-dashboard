@@ -602,7 +602,7 @@ CREATE TABLE IF NOT EXISTS kyverno_policy (
     failure_policy      TEXT NOT NULL,
     ready               INTEGER,            -- NULL when the status carries no Ready condition
     generated           INTEGER NOT NULL DEFAULT 0,  -- status.generated: a generated admission policy stands in
-    note                TEXT NOT NULL DEFAULT '',    -- status.conditionStatus.message, the controller's own word
+    note                TEXT NOT NULL DEFAULT '',    -- a conditionStatus condition that is not True, else the message when not ready
     observed_at         TEXT NOT NULL,
     PRIMARY KEY(cluster_id, kind, namespace, name)
 );
