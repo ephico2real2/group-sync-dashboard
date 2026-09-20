@@ -89,6 +89,21 @@ mode (pinned by a test), `tls: null` is documented as "retired only", and the ta
 earlier validation round's and can be deleted when the lab is free; one of them is what surfaced this, so it
 is worth keeping until the walk confirms the rendering.
 
+## #244's CA-experience items, and what this PR does with them
+
+Two of #244's five items were routed here; items 1–3 stay there as reader/API follow-up.
+
+- **Item 5 (`tls: null`)** — done, with the cause corrected by measurement; see the section above.
+- **Item 4 (validate the pasted PEM before writing; the connection test does the real handshake)** —
+  **already on this head, and tested.** `validate()` refuses `caData` that is absent, not base64, or not a
+  PEM, as `ca-data-invalid` naming the field, **before any request reaches the API server** (three
+  parametrised cases). The connection test builds its probe client from the entered material —
+  `ClusterConfig.verify()` returns `ssl.create_default_context(cadata=…)` — so the handshake is the real
+  one, against the pasted bundle. **Deferred to #244**: showing the subject / issuer / `notAfter` the PEM
+  resolved to. That needs an X.509 parser, and the image ships none — `cryptography` is not a runtime
+  dependency (`pyproject.toml` lists fastapi, uvicorn, httpx, croniter, PyYAML, prometheus-client) — so
+  adding one is a supply-chain decision for #244, not a cheap change here.
+
 ## Re-validation
 
 Round 1's fixes and the tier: the full hermetic suite, the UI suite (serial) and `helm lint` +
