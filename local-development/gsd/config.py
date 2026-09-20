@@ -468,6 +468,10 @@ class Settings:
     # replaces its contents, everything else reads. Excluded from equality and repr — it holds the
     # in-memory credentials, and two Settings are the same configuration whatever was discovered.
     cluster_secrets_enabled: bool = True
+    # SPEC_S2 C6: the tab's writes (create, rotate, delete). OFF by default — the dashboard is a reader
+    # (test_r6_the_api_is_read_only, the chart's only-write-is-the-lease guard): off, no write route is
+    # registered and the chart renders no write verb; on, the four routes and the three verbs exist.
+    cluster_secrets_writes_enabled: bool = False
     cluster_registry: "ClusterRegistry" = field(default_factory=lambda: _registry(), compare=False, repr=False)
     kyverno_metrics_url: str = ""
     kyverno_events_retention_days: int = 90
@@ -1322,6 +1326,7 @@ def load_settings(path: str | Path) -> Settings:
         ),
         kyverno_enabled=_bool_setting(raw, "GSD_KYVERNO_ENABLED", "kyvernoEnabled", True),
         cluster_secrets_enabled=_bool_setting(raw, "GSD_CLUSTER_SECRETS_ENABLED", "clusterSecretsEnabled", True),
+        cluster_secrets_writes_enabled=_bool_setting(raw, "GSD_CLUSTER_SECRETS_WRITES_ENABLED", "clusterSecretsWritesEnabled", False),
         kyverno_metrics_url=str(os.environ.get("GSD_KYVERNO_METRICS_URL") or raw.get("kyvernoMetricsUrl") or "").strip(),
         kyverno_events_retention_days=_num_setting(
             raw, "GSD_KYVERNO_EVENTS_RETENTION_DAYS", "kyvernoEventsRetentionDays", 90, int

@@ -84,6 +84,7 @@ data:
     kyvernoEventsRetentionDays: {{ .Values.kyverno.eventsRetentionDays }}
     # Clusters as labelled Secrets (#230, SPEC_S1): the discovery switch; the Role is cluster-secrets-rbac.yaml.
     clusterSecretsEnabled: {{ .Values.clusterConfig.secrets.enabled }}
+    clusterSecretsWritesEnabled: {{ .Values.clusterConfig.secrets.writes.enabled }}
     # Retention on the irreplaceable history; 0 keeps forever. See values.yaml config.retention.
     membershipEventsRetentionDays: {{ .Values.config.retention.membershipEventsDays }}
     syncEventsRetentionDays: {{ .Values.config.retention.syncEventsDays }}

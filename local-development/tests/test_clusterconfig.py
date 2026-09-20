@@ -345,7 +345,7 @@ class TestApi:
         c, store = client
         assert c.get("/api/clusterconfigs", headers=H("alice")).status_code == 403
         body = c.get("/api/clusterconfigs", headers=H("root")).json()
-        assert body["secrets"] == {"enabled": True, "namespace": "ns", "label": LABEL_SELECTOR,
+        assert body["secrets"] == {"enabled": True, "writes": False, "namespace": "ns", "label": LABEL_SELECTOR,
                                    "last_discovery": "2026-09-20T16:05:12Z", "error": None}
         by = {x["id"]: x for x in body["clusters"]}
         assert by["c1"]["host"] is True and by["c1"]["source"] == "values" and by["c1"]["credential"] == "file"
@@ -381,6 +381,7 @@ class TestApi:
 
 class TestChart:
     def test_the_role_grants_read_only_on_secrets_in_the_release_namespace_and_the_switch_removes_it(self):
+        # S2's writes switch (off by default) adds the write verbs when on — tests/test_clusterconfig_tab.py holds it.
         docs = _render()
         role = next(d for d in docs if d.get("kind") == "Role" and d["metadata"]["name"].endswith("-cluster-secrets"))
         assert role["metadata"]["namespace"] == "x"

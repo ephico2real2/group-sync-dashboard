@@ -158,6 +158,11 @@ const STATES = {
 const view = { page: "home", homeShow: {}, cluster: null, groupsync: null, groupFilter: "all", bindingFilter: "review",
                 report: null, reportLanded: null, reportFocusRow: null, reportForm: {},
                 kyvernoControlled: false, kyvernoPolicy: null, kyvernoKind: null,   // #170: the Kyverno page's filters (filters, not positions)
+                /* #230 S2: the Cluster Configurations form's state, so a poll's repaint never destroys what the
+                   reader typed; the open rotate panel; the armed delete; the messages under the form and the cards. */
+                clusterForm: { name: "", server: "", token: "", caMode: "caData", caPem: "", visibility: "self-only", identity: "none",
+                               labels: {}, labelKey: "", labelVal: "", test: null },
+                clusterRotate: null, clusterDeleteArmed: null, clusterMsg: {},
                 /* #149 R5: the status page's history filters and page. Filters, not positions (the
                    groupFilter reasoning): a shared link opens the page, not a filtered slice of it. */
                 historyFilter: { report: "", origin: "", status: "", cluster: "" }, historyPage: 0, reportRun: null, reportSubmitting: false, reportPreview: "",
@@ -475,6 +480,7 @@ window.addEventListener("hashchange", () => {
 // cluster nobody had asked yet.
 let data = { clusters: [], alerts: [], groupsyncs: null, groups: null, events: null,
              kyverno: null,   // #170: the module's payload for the selected cluster
+             clusterconfigs: null,   // #230 S2: every cluster with its source, for the Cluster Configurations tab
              reportCatalog: null, reportRuns: null, reportTicket: null,
              group: null, user: null, logins: null, access: null,
              /* The /users envelope whole — rows, scope, viewer, truncated, limit — because the
@@ -1082,6 +1088,7 @@ function renderFilters() {
       ${tab("logins", "Logins")}
       ${tab("usage", "Usage")}
       ${reportingEnabled() ? tab("reports", "Reports") : ""}
+      ${tab("clusters", "Cluster Configurations")}
     </nav>`;
   // FOCUS AND CARET SURVIVE THE REBUILD, and this is load-bearing rather than polish. This function
   // replaces the whole bar's innerHTML, render() calls it before every repaint, and the page repaints
@@ -5127,6 +5134,341 @@ function wireKyverno() {
   });
 }
 
+/* ─── #230 S2: the Cluster Configurations tab — docs/specs/SPEC_S2_cluster_configurations_tab.md, the agreed
+   mock docs/design/cluster-configurations-mock.html. One payload (GET /api/clusterconfigs, S1 C5): every cluster
+   with WHERE its configuration came from, the credential's KIND only, the three TLS modes, D2's words, the poll
+   outcome, the current discovery's findings; and the form that writes the same labelled Secret a GitOps process
+   would, with its YAML twin beside it. The form's state lives in view.clusterForm so a poll's repaint never
+   destroys what the reader typed (the Reports form's rule). */
+const CLUSTERS_REFUSAL = `This page lists every cluster this dashboard reads, where each one's configuration came
+  from, and the credential kind that authenticates it — and it writes cluster Secrets. How the fleet is wired is
+  not a self reader's business.`;
+const CC_VIS_MEAN = {
+  inherit: "the host's tier decides",
+  "self-only": "nobody is wide on this cluster",
+  hidden: "polled and alerted on, never served through /api (404 like an unknown id)",
+};
+const CC_ID_MEAN = {
+  none: "fails closed: person-scoped views answer 403 there, cluster health still shows",
+  "same-as-host": "the host's username is the same person on this cluster (clusters share an identity provider)",
+};
+const CC_OAUTH_REASON = "the password-for-token exchange is #119 P2, not built yet";
+const CC_LABEL = "groupsync-dashboard.io/secret-type";
+
+function ccBadge(shape, word) {
+  return `<span class="badge ${shape}"><span class="glyph" aria-hidden="true"></span>${esc(word)}</span>`;
+}
+function ccSourceKind(c) {
+  if (c.host) return "in-cluster";
+  return String(c.source || "").indexOf("secret:") === 0 ? "secret" : "values";
+}
+function ccSourceChip(c) {
+  const kind = ccSourceKind(c);
+  const word = kind === "secret" ? `Secret ${c.source.slice(7)}` : kind === "in-cluster" ? "in-cluster" : "values";
+  return `<span class="rp-chip cc-src-${kind}">${esc(word)}</span>`;
+}
+function ccLabelChips(labels) {
+  const keys = Object.keys(labels || {});
+  if (!keys.length) return `<span class="muted">none</span>`;
+  return `<span class="cc-chips">${keys.map((k) => `<span class="rp-chip cc-chip">${esc(`${k}=${labels[k]}`)}</span>`).join("")}</span>`;
+}
+function ccConnection(c) {
+  const st = c.status || "never";
+  const shape = st === "ok" ? "ok" : st === "never" ? "unknown" : "critical";
+  let out = ccBadge(shape, st);
+  if (st === "ok") out += " reachable";
+  out += ` <span class="mono">${c.last_poll ? fmtStamp(c.last_poll) : "never"}</span>`;
+  if (c.error) out += `<div class="err">${esc(c.error)}</div>`;
+  if (st === "never") out += `<div class="cc-consq">${esc(MEANS.cl_never)}</div>`;
+  return out;
+}
+function ccCredential(c) {
+  const kind = c.credential === "bearer" ? "bearerToken" : c.credential === "in-cluster" ? "serviceAccount" : c.credential;
+  // a retired row from before S1 recorded the kind carries "": say so rather than printing a bare badge
+  let out = kind ? `${esc(kind)} ${ccBadge("ok", "set")}` : `<span class="muted">unknown</span>`;
+  const secretRow = ccSourceKind(c) === "secret";
+  if (secretRow && !c.retired && ccWritesOn()) {
+    const open = view.clusterRotate === c.id;
+    out += ` <button type="button" class="linkish" id="cc-rotate-${esc(c.id)}" data-cc-rotate="${esc(c.id)}">Rotate</button>`;
+    if (open) {
+      out += `<div class="cc-panel"><label for="cc-rotate-token-${esc(c.id)}">New bearer token</label>
+        <input id="cc-rotate-token-${esc(c.id)}" type="password" autocomplete="new-password">
+        <div class="cc-acts"><button type="button" class="btn" id="cc-rotate-go-${esc(c.id)}" data-cc-rotate-go="${esc(c.id)}">Overwrite token</button></div>
+        <p class="filterbar-note" id="cc-rotate-msg-${esc(c.id)}">${esc(view.clusterMsg[`rotate:${c.id}`] || "")}</p></div>`;
+    }
+  } else if (c.host) {
+    out += ` <span class="cc-hint">read-only — the pod's own ServiceAccount</span>`;
+  } else if (ccSourceKind(c) === "values") {
+    out += ` <span class="cc-hint">read-only — declared in the chart's values</span>`;
+  } else if (secretRow && !c.retired) {
+    out += ` <span class="cc-hint">rotate it where the Secret is written — this deployment's writes are off</span>`;
+  }
+  return out;
+}
+function ccWritesOn() {
+  const d = data.clusterconfigs;
+  return !!(d && d.secrets && d.secrets.writes);
+}
+function ccTls(c) {
+  const t = c.tls || {};
+  if (!c.tls) return `<span class="muted">—</span>`;
+  return t.insecure ? ccBadge("warning", "insecure") : `${ccBadge("ok", "verified")} <span class="mono">ca: ${esc(t.ca || "")}</span>`;
+}
+function ccClusterCard(c) {
+  const secretRow = ccSourceKind(c) === "secret";
+  const armed = view.clusterDeleteArmed === c.id;
+  let foot;
+  if (c.retired) {
+    foot = `<div class="cc-foot">its Secret is gone — the history is kept, the cluster is disabled</div>`;
+  } else if (secretRow && !ccWritesOn()) {
+    foot = `<div class="cc-foot">declared by its Secret — delete it there; this deployment's writes are off</div>`;
+  } else if (secretRow) {
+    foot = `<div class="cc-acts"><button type="button" class="btn" id="cc-delete-${esc(c.id)}" data-cc-delete="${esc(c.id)}">${armed ? "Confirm delete" : "Delete"}</button>
+      <span class="cc-hint" id="cc-delete-msg-${esc(c.id)}">${esc(armed ? "Removes the Secret. Cluster history stays, disabled." : (view.clusterMsg[`delete:${c.id}`] || ""))}</span></div>`;
+  } else if (c.host) {
+    foot = `<div class="cc-foot">the pod's own in-cluster ServiceAccount — not a Secret</div>`;
+  } else {
+    foot = `<div class="cc-foot">declared in the chart's values — remove it there</div>`;
+  }
+  const vis = c.visibility ? `<span class="rp-chip">${esc(c.visibility)}</span> <span class="cc-hint">${esc(CC_VIS_MEAN[c.visibility] || "")}</span>` : `<span class="muted">—</span>`;
+  const ident = c.identity ? `<span class="rp-chip">${esc(c.identity)}</span> <span class="cc-hint">${esc(CC_ID_MEAN[c.identity] || "")}</span>` : `<span class="muted">—</span>`;
+  return `<article class="card cc-cluster" id="cc-cluster-${esc(c.id)}" data-cc-cluster="${esc(c.id)}">
+    <div class="row-wrap"><h2>${esc(c.id)} ${ccSourceChip(c)} ${ccBadge(c.enabled ? "ok" : "unknown", c.enabled ? "enabled" : "disabled")}</h2></div>
+    <div class="cc-kv"><span class="k">server</span><span class="v mono">${esc(c.api_url)}</span></div>
+    <div class="cc-kv"><span class="k">credential</span><span class="v">${ccCredential(c)}</span></div>
+    <div class="cc-kv"><span class="k">tls</span><span class="v">${ccTls(c)}</span></div>
+    <div class="cc-kv"><span class="k">labels</span><span class="v">${ccLabelChips(c.labels)}</span></div>
+    <div class="cc-kv"><span class="k">visibility</span><span class="v">${vis}</span></div>
+    <div class="cc-kv"><span class="k">identity</span><span class="v">${ident}</span></div>
+    <div class="cc-kv"><span class="k">connection</span><span class="v">${ccConnection(c)}</span></div>
+    ${foot}</article>`;
+}
+function ccFinding(f) {
+  return `<article class="card cc-finding">
+    <div class="cc-kv"><span class="k">secret</span><span class="v mono">${esc(f.secret)}</span></div>
+    <div class="cc-kv"><span class="k">code</span><span class="v mono">${esc(f.code)}</span></div>
+    <div class="cc-kv"><span class="k">detail</span><span class="v">${esc(f.detail)}</span></div></article>`;
+}
+/* The Secret the form will write, as GitOps would write it — the API's own object with the credential redacted
+   (SPEC_S2 C2: a test holds the two equal field for field). */
+function ccYaml(d) {
+  const f = view.clusterForm;
+  const name = f.name || "<name>";
+  const tls = { insecure: f.caMode === "insecure" };
+  if (f.caMode === "caData") tls.caData = "<redacted>";
+  const cfg = { tlsClientConfig: tls, bearerToken: "<redacted>" };
+  const labels = [`    ${CC_LABEL}: cluster`].concat(Object.keys(f.labels).map((k) => `    ${k}: ${f.labels[k]}`));
+  return ["apiVersion: v1", "kind: Secret", "metadata:", `  name: gsd-cluster-${name}`,
+    `  namespace: ${(d.secrets && d.secrets.namespace) || "<namespace>"}`, "  labels:", labels.join("\n"),
+    "  annotations:", "    groupsync-dashboard.io/managed-by: ui", "type: Opaque", "stringData:",
+    `  name: ${name}`, `  server: ${f.server || ""}`, "  config: |", `    ${JSON.stringify(cfg)}`,
+    `  visibility: ${f.visibility}`, `  identity: ${f.identity}`, '  enabled: "true"'].join("\n");
+}
+function ccAddForm(d) {
+  const f = view.clusterForm;
+  const opt = (v, cur, label) => `<option value="${esc(v)}"${v === cur ? " selected" : ""}>${esc(label)}</option>`;
+  const ca = (v, label) => `<label class="cc-choice" for="cc-ca-${v}"><input type="radio" name="cc-ca-mode" id="cc-ca-${v}" value="${v}"${f.caMode === v ? " checked" : ""}> ${label}</label>`;
+  const labelChips = Object.keys(f.labels).length
+    ? `<span class="cc-chips">${Object.keys(f.labels).map((k) => `<span class="rp-chip cc-chip">${esc(`${k}=${f.labels[k]}`)} <button type="button" class="linkish" data-cc-drop-label="${esc(k)}">remove</button></span>`).join("")}</span>`
+    : `<span class="muted">none</span>`;
+  const test = f.test;
+  const testHtml = !test ? "" : test.pending ? `<p class="filterbar-note" id="cc-test-result">Testing…</p>`
+    : `<div class="cc-panel" id="cc-test-result">
+        <div class="cc-kv"><span class="k">reachable</span><span class="v">${test.reachable ? ccBadge("ok", "yes") : ccBadge("critical", "no")}</span></div>
+        <div class="cc-kv"><span class="k">server version</span><span class="v mono">${esc(test.server_version || "—")}</span></div>
+        <div class="cc-kv"><span class="k">identity</span><span class="v mono">${esc(test.identity || "—")}</span></div>
+        ${test.error ? `<div class="err">${esc(test.error)}</div>` : ""}</div>`;
+  return `<section class="card" id="cc-add"><h2>Add cluster</h2>
+    <div class="filterbar-note">${ccWritesOn() ? "Writes" : "Describes"} a labelled Secret in <span class="mono">${esc((d.secrets && d.secrets.namespace) || "the pod's namespace")}</span>.
+      The same object from the UI or from a repository — GitOps parity.${d.secrets && d.secrets.enabled === false ? " <strong>Discovery is switched off for this deployment</strong>: a Secret written here is not read." : ""}</div>
+    <div class="cc-grid"><form id="cc-form" novalidate>
+      <div class="cc-field"><label for="cc-name">Name</label>
+        <input id="cc-name" autocomplete="off" value="${esc(f.name)}">
+        <span class="cc-hint">cluster id the dashboard shows and keys on. Secret name becomes <span class="mono">gsd-cluster-&lt;name&gt;</span>.</span></div>
+      <div class="cc-field"><label for="cc-server">Server</label>
+        <input id="cc-server" autocomplete="off" inputmode="url" value="${esc(f.server)}"></div>
+      <div class="cc-field"><span class="cc-lbl">Credential kind</span>
+        <div class="cc-choices">
+          <label class="cc-choice" for="cc-cred-bearer"><input type="radio" name="cc-cred" id="cc-cred-bearer" value="bearerToken" checked> bearer token</label>
+          <label class="cc-choice" for="cc-cred-oauth"><input type="radio" name="cc-cred" id="cc-cred-oauth" value="oauth" disabled> username + password</label>
+        </div>
+        <p class="cc-hint" id="cc-oauth-reason">${esc(CC_OAUTH_REASON)}</p>
+        <label for="cc-token">Bearer token</label>
+        <input id="cc-token" type="password" autocomplete="new-password" value="${esc(f.token)}">
+        <label for="cc-oauth-user">Username</label><input id="cc-oauth-user" disabled>
+        <label for="cc-oauth-password">Password</label><input id="cc-oauth-password" type="password" disabled></div>
+      <div class="cc-field"><span class="cc-lbl">CA</span>
+        <div class="cc-choices">${ca("caData", "paste PEM")}${ca("trustedBundle", "use the trusted bundle")}${ca("insecure", "insecure")}</div>
+        <div class="cc-stack" id="cc-ca-pem-wrap"${f.caMode === "caData" ? "" : " hidden"}><label for="cc-ca-pem">CA PEM</label>
+          <textarea id="cc-ca-pem" rows="4">${esc(f.caPem)}</textarea></div>
+        <p class="cc-hint" id="cc-ca-bundle-note"${f.caMode === "trustedBundle" ? "" : " hidden"}>the dashboard's own trust store — the chart's <span class="mono">trustedCA</span> bundles (the injected OpenShift CA, the enterprise bundle) plus the system store.</p>
+        <div class="cc-warn" id="cc-ca-insecure-warn"${f.caMode === "insecure" ? "" : " hidden"}><strong>insecure</strong> — the API server certificate is not verified. Anyone on the path can impersonate the cluster.</div></div>
+      <div class="cc-field"><label for="cc-visibility">Visibility</label>
+        <select id="cc-visibility">${["inherit", "self-only", "hidden"].map((v) => opt(v, f.visibility, `${v} — ${CC_VIS_MEAN[v]}`)).join("")}</select></div>
+      <div class="cc-field"><label for="cc-identity">Identity</label>
+        <select id="cc-identity">${["none", "same-as-host"].map((v) => opt(v, f.identity, `${v} — ${CC_ID_MEAN[v]}`)).join("")}</select></div>
+      <div class="cc-field"><span class="cc-lbl">Labels</span>
+        <div class="ns-controls">
+          <label for="cc-label-key">key</label><input id="cc-label-key" autocomplete="off" value="${esc(f.labelKey)}">
+          <label for="cc-label-val">value</label><input id="cc-label-val" autocomplete="off" value="${esc(f.labelVal)}">
+          <button type="button" class="btn" id="cc-label-add">Add label</button></div>
+        <div id="cc-label-chips">${labelChips}</div></div>
+      ${ccWritesOn() ? `<div class="cc-acts">
+        <button type="button" class="btn" id="cc-test">Test connection</button>
+        <button type="button" class="btn cc-btn-acc" id="cc-create">Create Secret</button></div>`
+      : `<div class="filterbar-note" id="cc-writes-off"><strong>This deployment does not write Secrets</strong> — the dashboard is a
+          reader by design, and <code>clusterConfig.secrets.writes.enabled</code> is off (the default). Copy the YAML beside
+          the form and apply it the way your other Secrets arrive; the next discovery picks it up. Turning the switch on is
+          the deliberate decision to let the dashboard mint cluster access.</div>`}
+      <p class="filterbar-note" id="cc-form-msg">${esc(view.clusterMsg.form || "")}</p>
+      ${testHtml}
+    </form><aside class="card cc-yaml-pane"><h3>as GitOps would write it</h3>
+      <div class="cc-acts"><button type="button" class="btn" id="cc-yaml-copy">Copy</button><span class="cc-hint" id="cc-yaml-copy-msg">${esc(view.clusterMsg.copy || "")}</span></div>
+      <pre class="cc-yaml" id="cc-yaml">${esc(ccYaml(d))}</pre>
+      <p class="filterbar-note">The UI writes this Secret; Argo CD, Flux, Kustomize or Vault can write the same label. A controller that prunes
+        the namespace will still delete a UI-written Secret unless it honours <span class="mono">groupsync-dashboard.io/managed-by: ui</span>.</p>
+    </aside></div></section>`;
+}
+function clusterConfigPage() {
+  const d = data.clusterconfigs;
+  if (!d) return `<section class="card"><h2>Cluster Configurations</h2><div class="empty-note">Loading…</div></section>`;
+  if (d.forbidden) return refusalCard("Cluster Configurations", CLUSTERS_REFUSAL);
+  const clusters = d.clusters || [];
+  const n = { "in-cluster": 0, values: 0, secret: 0 };
+  clusters.forEach((c) => { n[ccSourceKind(c)] += 1; });
+  const s = d.secrets || {};
+  const head = `<section class="card" id="cc-head">
+    <h2>Cluster Configurations <span class="rp-chip rp-count">${clusters.length} cluster${clusters.length === 1 ? "" : "s"}</span></h2>
+    <div class="filterbar-note">Every cluster the dashboard reads, and where its configuration came from — a card per cluster, the live set. Administrator tier.</div>
+    <div class="cc-kv"><span class="k">namespace</span><span class="v mono">${esc(s.namespace || "—")}</span></div>
+    <div class="cc-kv"><span class="k">selector</span><span class="v"><code class="mono">${esc(s.label || "")}</code></span></div>
+    <div class="cc-kv"><span class="k">by source</span><span class="v cc-chips">
+      <span class="rp-chip cc-src-in-cluster">in-cluster ${n["in-cluster"]}</span>
+      <span class="rp-chip cc-src-values">values ${n.values}</span>
+      <span class="rp-chip cc-src-secret">Secret ${n.secret}</span></span></div>
+    <div class="cc-kv"><span class="k">discovery</span><span class="v">${s.enabled === false ? "switched off (<code>clusterConfig.secrets.enabled: false</code>)"
+      : `${n.secret} Secret${n.secret === 1 ? "" : "s"} carry the discovery label · last read <span class="mono">${s.last_discovery ? fmtStamp(s.last_discovery) : "never"}</span>${s.error ? `<div class="err">${esc(s.error)}</div>` : ""}`}</span></div>
+    <div class="ns-controls"><a class="btn cc-btn-acc" id="cc-add-jump" href="#cc-add">Add cluster</a></div></section>`;
+  const findings = (d.findings || []).map(ccFinding).join("")
+    || `<div class="empty-note">No malformed Secrets. A Secret that fails to parse is a finding with the code named, never a crashed pod.</div>`;
+  return head + clusters.map(ccClusterCard).join("")
+    + `<section class="card" id="cc-findings"><h2>Findings</h2>${findings}</section>`
+    + ccAddForm(d);
+}
+async function apiSend(path, method, body) {
+  const res = await fetch(path, { method, headers: { Accept: "application/json", "Content-Type": "application/json", "X-GSD-Interaction": "1" },
+                                 body: body === undefined ? undefined : JSON.stringify(body) });
+  if (res.redirected || !(res.headers.get("Content-Type") || "").includes("json")) {
+    const err = new Error("the dashboard session has ended"); err.sessionEnded = true; throw err;
+  }
+  const payload = await res.json();
+  if (!res.ok) {
+    const err = new Error(payload && payload.detail ? String(payload.detail) : `${res.status} ${res.statusText}`);
+    err.status = res.status; throw err;
+  }
+  return payload;
+}
+function ccReadForm() {
+  const f = view.clusterForm;
+  const read = (id, key) => { const el = $(id); if (el) f[key] = el.value; };
+  read("cc-name", "name"); read("cc-server", "server"); read("cc-token", "token"); read("cc-ca-pem", "caPem");
+  read("cc-visibility", "visibility"); read("cc-identity", "identity"); read("cc-label-key", "labelKey"); read("cc-label-val", "labelVal");
+  const mode = document.querySelector('input[name="cc-ca-mode"]:checked');
+  if (mode) f.caMode = mode.value;
+}
+function ccBody() {
+  const f = view.clusterForm;
+  const tls = { mode: f.caMode };
+  if (f.caMode === "caData") tls.caData = btoa(unescape(encodeURIComponent(f.caPem || "")));
+  return { name: f.name.trim(), server: f.server.trim(), credential: { kind: "bearerToken", token: f.token },
+           tls, visibility: f.visibility, identity: f.identity, labels: { ...f.labels } };
+}
+function wireClusterConfig() {
+  const d = data.clusterconfigs;
+  if (!d || d.forbidden) return;
+  // The form's inputs write into view.clusterForm on every keystroke and the YAML pane follows in place —
+  // no render(): the page repaints on the poll from that state, so nothing typed is lost.
+  ["cc-name", "cc-server", "cc-token", "cc-ca-pem", "cc-visibility", "cc-identity", "cc-label-key", "cc-label-val"].forEach((id) => {
+    const el = $(id); if (!el) return;
+    const sync = () => { ccReadForm(); const pre = $("cc-yaml"); if (pre) pre.textContent = ccYaml(d); };
+    el.oninput = sync; el.onchange = sync;
+  });
+  document.querySelectorAll('input[name="cc-ca-mode"]').forEach((el) => {
+    el.onchange = () => { ccReadForm(); render(); };
+  });
+  const addLabel = $("cc-label-add");
+  if (addLabel) addLabel.onclick = () => {
+    ccReadForm();
+    const k = (view.clusterForm.labelKey || "").trim(), v = (view.clusterForm.labelVal || "").trim();
+    if (!k) return;
+    view.clusterForm.labels[k] = v; view.clusterForm.labelKey = ""; view.clusterForm.labelVal = "";
+    render();
+  };
+  document.querySelectorAll("[data-cc-drop-label]").forEach((el) => {
+    el.onclick = () => { delete view.clusterForm.labels[el.dataset.ccDropLabel]; render(); };
+  });
+  const copy = $("cc-yaml-copy");
+  if (copy) copy.onclick = async () => {
+    try { await navigator.clipboard.writeText(ccYaml(d)); view.clusterMsg.copy = "Copied"; }
+    catch (e) { view.clusterMsg.copy = "Copy failed"; }
+    render();
+  };
+  const test = $("cc-test");
+  if (test) test.onclick = async () => {
+    ccReadForm();
+    view.clusterForm.test = { pending: true }; view.clusterMsg.form = ""; render();
+    try { view.clusterForm.test = await apiSend("/api/clusterconfigs/test", "POST", ccBody()); }
+    catch (e) { view.clusterForm.test = null; view.clusterMsg.form = e.message; }
+    render();
+  };
+  const create = $("cc-create");
+  if (create) create.onclick = async () => {
+    ccReadForm();
+    const f = view.clusterForm;
+    if (!f.name.trim() || !f.server.trim() || !f.token) { view.clusterMsg.form = "name, server and a bearer token are required."; render(); return; }
+    view.clusterMsg.form = "Creating…"; render();
+    try {
+      const r = await apiSend("/api/clusterconfigs", "POST", ccBody());
+      view.clusterMsg.form = `Secret ${r.secret} created — discovery ${r.discovery}; the card appears when the next read lands.`;
+      view.clusterForm = ccEmptyForm();
+    } catch (e) { view.clusterMsg.form = e.message; }
+    render(); refresh();
+  };
+  document.querySelectorAll("[data-cc-rotate]").forEach((el) => {
+    el.onclick = () => { view.clusterRotate = view.clusterRotate === el.dataset.ccRotate ? null : el.dataset.ccRotate; render(); };
+  });
+  document.querySelectorAll("[data-cc-rotate-go]").forEach((el) => {
+    el.onclick = async () => {
+      const id = el.dataset.ccRotateGo;
+      const field = $(`cc-rotate-token-${id}`);
+      const token = field ? field.value : "";
+      if (!token) { view.clusterMsg[`rotate:${id}`] = "a bearer token is required."; render(); return; }
+      try {
+        await apiSend(`/api/clusterconfigs/${encodeURIComponent(id)}/credential`, "PUT", { token });
+        view.clusterMsg[`rotate:${id}`] = "token overwritten in place — the old token is gone from the cluster on the write. The value is never shown.";
+      } catch (e) { view.clusterMsg[`rotate:${id}`] = e.message; }
+      if (field) field.value = "";
+      render(); refresh();
+    };
+  });
+  document.querySelectorAll("[data-cc-delete]").forEach((el) => {
+    el.onclick = async () => {
+      const id = el.dataset.ccDelete;
+      if (view.clusterDeleteArmed !== id) { view.clusterDeleteArmed = id; render(); return; }
+      view.clusterDeleteArmed = null;
+      try {
+        const r = await apiSend(`/api/clusterconfigs/${encodeURIComponent(id)}`, "DELETE");
+        view.clusterMsg[`delete:${id}`] = `Secret ${r.secret} deleted — the cluster retires ${r.retired}, its history kept.`;
+      } catch (e) { view.clusterMsg[`delete:${id}`] = e.message; }
+      render(); refresh();
+    };
+  });
+}
+function ccEmptyForm() {
+  return { name: "", server: "", token: "", caMode: "caData", caPem: "", visibility: "self-only", identity: "none",
+           labels: {}, labelKey: "", labelVal: "", test: null };
+}
+
 function nsAuditPage() {
   const ub = data.userBindings;
   if (!ub) return `<section class="card"><div class="empty-note">Loading…</div></section>`;
@@ -5741,6 +6083,9 @@ function render() {
   } else if (view.page === "kyverno") {
     main.innerHTML = kyvernoPage();
     wireKyverno();
+  } else if (view.page === "clusters") {
+    main.innerHTML = clusterConfigPage();
+    wireClusterConfig();
   } else if (view.page === "kpi") {
     // The same tier rule as the Overview, in the same words: the page is about the clusters and
     // the dashboard's own pods, and answers nothing a reader can ask about themselves. Keyed on the
@@ -6186,6 +6531,10 @@ async function refresh(opts = {}) {
     if (view.page === "kpi" && !narrowedOnHost()) {
       want.kpi = guard403(get("/api/kpi"));
     }
+    // The Cluster Configurations page (#230 S2): one payload, administrator tier on the host — the KPI rule.
+    if (view.page === "clusters" && !narrowedOnHost()) {
+      want.clusterconfigs = guard403(get("/api/clusterconfigs"));
+    }
     if (view.page === "reports" && reportingEnabled() && !narrowedOnHost()) {
       // Through the proxy to the REPORT SERVICE, with the ticket the dashboard minted. A 403 here
       // is the same designed refusal as everywhere else and renders as the same card.
@@ -6231,6 +6580,16 @@ async function refresh(opts = {}) {
     }
     if ("findings" in got) data.findings = got.findings;
     if ("kpi" in got) data.kpi = got.kpi;
+    if ("clusterconfigs" in got) data.clusterconfigs = got.clusterconfigs;
+    if (view.page === "clusters" && got.whoami) {   // decided again from the whoami that just arrived — the KPI rule below
+      if (narrowedOnHost()) {
+        data.clusterconfigs = { forbidden: true };
+      } else if (got.whoami.authenticated && !("clusterconfigs" in got)) {
+        const body = await guard403(get("/api/clusterconfigs"));
+        if (superseded()) return;
+        data.clusterconfigs = body;
+      }
+    }
     // The KPI page decides again from the whoami that just arrived, as Reports does: the fetch was
     // chosen from the previous cycle's identity, so a reader promoted mid-session would otherwise
     // sit on "Loading…" for a poll interval, and a demoted one would keep the payload in memory.
@@ -6377,6 +6736,7 @@ async function refresh(opts = {}) {
       data.reportStatus && { ...data.reportStatus, as_of: null }, data.reportHistory,
       data.kpi,   // #157 (review, Codex): left out, a poll whose only change was a KPI never repainted the page
       data.kyverno,   // #170 (review, Codex): the same omission would have left a Kyverno-only change unpainted
+      data.clusterconfigs,   // #230 S2: a discovery that lands a new cluster must repaint the tab
       // #167: the namespace list and page ride the same wire (review, Codex — left out, a poll whose
       // only change was a label or a grant skipped the repaint the comment above forbids skipping).
       data.namespaces, data.ns,

@@ -215,6 +215,32 @@ class TestNoPatchVerbAtAnyAuditMode:
                     f"docs/reference-architecture.md in the same commit."
                 )
 
+    def test_the_cluster_secret_writes_are_the_one_opt_in_exception_and_exactly_that(self):
+        """The carve-out, exact (SPEC_S2 C6, #230): with `clusterConfig.secrets.writes.enabled` — OFF by
+        default, so the rule above holds the default render — the `-cluster-secrets` Role, and only it,
+        gains create/update/delete on `secrets`, and only in the release namespace. Any other write verb,
+        any other resource, any ClusterRole, still fails: the test above runs on this render too."""
+        import yaml
+        ok, out = render(clusterConfig__secrets__writes__enabled="true")
+        assert ok, out
+        writes = {"patch", "update", "create", "delete", "deletecollection", "*"}
+        for doc in yaml.safe_load_all(out):
+            if not doc or doc.get("kind") not in ("ClusterRole", "Role"):
+                continue
+            name = doc["metadata"]["name"]
+            if name.endswith("-secrets-mint"):
+                continue
+            for rule in doc.get("rules") or []:
+                offending = set(rule.get("verbs") or []) & writes
+                if not offending:
+                    continue
+                if name.endswith("-cluster-secrets"):
+                    assert doc["kind"] == "Role" and doc["metadata"]["namespace"] == "default"
+                    assert set(rule["resources"]) == {"secrets"} and rule["apiGroups"] == [""]
+                    assert offending == {"create", "update", "delete"}, sorted(offending)
+                else:
+                    assert set(rule.get("resources") or []) == {"leases"}, (name, rule)
+
 
 class TestLoginCaptureReadsOneNamespaceOnly:
     """The dashboard's log read, and the one thing that must never widen.

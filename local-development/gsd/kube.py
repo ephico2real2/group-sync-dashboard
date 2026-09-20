@@ -569,6 +569,26 @@ class ClusterClient:
         except ValueError as exc:
             raise ClusterError(UNREACHABLE, f"non-JSON response from {path}: {exc}") from exc
 
+    def _send(self, client: httpx.Client, method: str, path: str, *, json: Any = None) -> dict | None:
+        """The write twin of `_get` (SPEC_S2 §S2.1): one request with a body, the same status → outcome
+        mapping, `None` for an empty answer (a 204, a DELETE's Status object is returned as JSON)."""
+        try:
+            response = client.request(method, path, json=json)
+        except httpx.HTTPError as exc:
+            raise ClusterError(UNREACHABLE, f"{type(exc).__name__}: {exc}") from exc
+        if response.status_code == 401:
+            raise ClusterError(AUTH_FAILED, "401 Unauthorized — token invalid or expired")
+        if response.status_code == 403:
+            raise ClusterError(FORBIDDEN, f"403 Forbidden on {method} {path} — the ServiceAccount lacks {method.lower()} permission here")
+        if response.status_code >= 400:
+            raise ClusterError(UNREACHABLE, f"HTTP {response.status_code} on {method} {path}: {response.text[:200]}")
+        if not response.content:
+            return None
+        try:
+            return response.json()
+        except ValueError as exc:
+            raise ClusterError(UNREACHABLE, f"non-JSON response from {method} {path}: {exc}") from exc
+
     def _list_all(self, client: httpx.Client, path: str) -> list[dict]:
         """List every object, following the API server's continue tokens.
 

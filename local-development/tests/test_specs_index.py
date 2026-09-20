@@ -31,7 +31,7 @@ HEADER_ROW = re.compile(r"^\| (?P<key>Release|Version on release|Issue|Status) \
 
 def _index_rows() -> dict[str, dict[str, str]]:
     rows = {m["id"]: m.groupdict() for m in INDEX_ROW.finditer(INDEX.read_text())}
-    assert len(rows) == 14, f"expected fourteen index rows (the programme's thirteen and S1), matched {sorted(rows)}"
+    assert len(rows) == 15, f"expected fifteen index rows (the programme's thirteen, S1 and S2), matched {sorted(rows)}"
     return rows
 
 
@@ -76,9 +76,13 @@ def test_every_spec_file_has_an_index_row() -> None:
 
 
 def test_issue_numbers_are_unique_and_follow_the_implementation_order() -> None:
-    """The issues were created in ladder order, so the numbers rise down the table."""
+    """The issues were created in ladder order, so the numbers rise down the table. The programme's
+    thirteen have one issue each; the S batch is one issue (#230) in three steps, so its rows share it."""
     issues = [int(ROWS[fid]["issue"]) for fid in _ordered_ids()]
-    assert issues == sorted(issues) and len(set(issues)) == len(issues), issues
+    assert issues == sorted(issues), issues
+    programme = [int(ROWS[fid]["issue"]) for fid in _ordered_ids() if not fid.startswith("S")]
+    assert len(set(programme)) == len(programme), programme
+    assert len({int(ROWS[fid]["issue"]) for fid in _ordered_ids() if fid.startswith("S")}) == 1, "the S batch is #230"
 
 
 def _ordered_ids() -> list[str]:

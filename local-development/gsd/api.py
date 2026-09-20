@@ -33,7 +33,7 @@ from .config import (
     IDENTITY_NONE, IDENTITY_SAME_AS_HOST, VISIBILITY_HIDDEN, VISIBILITY_INHERIT,
     VISIBILITY_REMOTE_SAR, VISIBILITY_SELF_ONLY, Settings, load_settings,
 )
-from .kube import TIER_ALL, TIER_SELF, TierResolver
+from .kube import TIER_ALL, TIER_SELF, ClusterClient, TierResolver
 from .kyverno import CONTROLLED_KINDS
 from .leader import LeaderElector, own_namespace
 from .metrics import RuntimeSignals, build_registry
@@ -960,11 +960,129 @@ def build_app(
             })
         return {
             "viewer": trusted_viewer(request), "scope": "all",
-            "secrets": {"enabled": settings.cluster_secrets_enabled, "namespace": registry.namespace,
+            "secrets": {"enabled": settings.cluster_secrets_enabled, "writes": bool(settings.cluster_secrets_enabled and settings.cluster_secrets_writes_enabled),
+                        "namespace": registry.namespace,
                         "label": LABEL_SELECTOR, "last_discovery": registry.last_discovery, "error": registry.error},
             "clusters": clusters,
             "findings": [f.public() for f in registry.findings()],
         }
+
+    # ── SPEC_S2: the Cluster Configurations tab's writes ─────────────────────────────────────────────
+    # Four routes, each: the administrator tier first, the writes switch second, then the writer module,
+    # which validates through the same parser discovery runs and touches only labelled Secrets in the
+    # pod's own namespace. A successful write wakes the discovery thread so the tab sees the result
+    # within seconds. The credential reaches no response and no log line (tests pin it).
+
+    def _writes_gate(request: Request) -> tuple[str, str, ClusterClient]:
+        require_admin_tier(request)
+        if not settings.cluster_secrets_enabled:
+            raise HTTPException(status_code=409, detail="cluster Secret discovery is switched off for this deployment")
+        namespace = own_namespace()
+        host = settings.host_cluster()
+        if not namespace or host is None:
+            raise HTTPException(status_code=409, detail="no namespace or no host cluster: the pod's ServiceAccount mount names neither")
+        return trusted_viewer(request) or "anonymous", namespace, ClusterClient(host, timeout=settings.request_timeout_seconds)
+
+    def _write_error(exc: Exception) -> HTTPException:
+        from .clusterconfig.writer import WriteFailed, WriteRefused
+        if isinstance(exc, WriteRefused):
+            return HTTPException(status_code=409 if exc.conflict else 422, detail=f"{exc.code}: {exc.detail}")
+        if isinstance(exc, WriteFailed):
+            return HTTPException(status_code=502, detail=f"{exc.outcome}: {exc.message}")
+        raise exc
+
+    def _create_request(body: dict):
+        from .clusterconfig.writer import CreateRequest
+        cred = body.get("credential") or {}
+        tls = body.get("tls") or {}
+        labels = body.get("labels") or {}
+        if not isinstance(labels, dict):
+            raise HTTPException(status_code=422, detail="labels: must be an object of string to string")
+        return CreateRequest(
+            name=str(body.get("name") or "").strip(), server=str(body.get("server") or "").strip(),
+            credential_kind=str(cred.get("kind") or "bearerToken"), token=cred.get("token"),
+            tls_mode=str(tls.get("mode") or "trustedBundle"), ca_data=tls.get("caData"),
+            visibility=str(body.get("visibility") or "self-only"), identity=str(body.get("identity") or "none"),
+            labels={str(k): str(v) for k, v in labels.items()},
+        )
+
+    def _taken() -> dict[str, str]:
+        return {c.name: c.source for c in settings.effective_clusters()}
+
+    def _secret_cluster(name: str) -> tuple[str, str]:
+        """(cluster id, Secret name) for a Secret-sourced cluster, or the refusal the contract names."""
+        from .clusterconfig.writer import WriteRefused
+        cluster = settings.cluster(name)
+        if cluster is None:
+            raise HTTPException(status_code=404, detail=f"unknown cluster {name!r}")
+        if not cluster.source.startswith("secret:"):
+            raise _write_error(WriteRefused("not-a-secret-cluster",
+                                            f"{name} is declared by {cluster.source}; only a Secret-sourced cluster is written here",
+                                            conflict=True))
+        return cluster.name, cluster.source.split(":", 1)[1]
+
+    def _request_discovery() -> str:
+        p = getattr(app.state, "poller", None)
+        if p is None:
+            return "on the next cadence"
+        p.request_discovery()
+        return "requested"
+
+    # The write routes exist only when the deployment turns them on (SPEC_S2 C6): the dashboard is a reader
+    # by design — test_r6_the_api_is_read_only holds the default schema to GET/HEAD/OPTIONS, and the chart
+    # renders the matching verbs behind the same switch. Off, the routes are not registered: a POST is a plain 405, never a route that refuses.
+    writes_on = settings.cluster_secrets_enabled and settings.cluster_secrets_writes_enabled
+    if writes_on:
+        @app.post("/api/clusterconfigs", status_code=201)
+        def create_cluster_config(request: Request, body: dict) -> dict:
+            """SPEC_S2 C2: write a labelled Secret for a new cluster."""
+            from .clusterconfig import writer
+            viewer, namespace, host_client = _writes_gate(request)
+            req = _create_request(body)
+            try:
+                secret = writer.create(host_client, namespace, req, host_name=settings.host_cluster().name,
+                                       taken=_taken(), viewer=viewer)
+            except (writer.WriteRefused, writer.WriteFailed) as exc:
+                raise _write_error(exc) from exc
+            return {"secret": secret, "cluster": req.name, "discovery": _request_discovery()}
+
+        @app.put("/api/clusterconfigs/{name}/credential")
+        def rotate_cluster_credential(request: Request, name: str, body: dict) -> dict:
+            """SPEC_S2 C3: replace the bearer token in place; Secret-sourced clusters only."""
+            from .clusterconfig import writer
+            viewer, namespace, host_client = _writes_gate(request)
+            cluster_id, secret = _secret_cluster(name)
+            try:
+                writer.rotate(host_client, namespace, secret, str(body.get("token") or ""), viewer=viewer, cluster=cluster_id)
+            except (writer.WriteRefused, writer.WriteFailed) as exc:
+                raise _write_error(exc) from exc
+            return {"secret": secret, "cluster": cluster_id, "discovery": _request_discovery()}
+
+        @app.delete("/api/clusterconfigs/{name}")
+        def delete_cluster_config(request: Request, name: str) -> dict:
+            """SPEC_S2 C4: delete the Secret; the next discovery retires the cluster, its rows kept."""
+            from .clusterconfig import writer
+            viewer, namespace, host_client = _writes_gate(request)
+            cluster_id, secret = _secret_cluster(name)
+            try:
+                writer.delete(host_client, namespace, secret, viewer=viewer, cluster=cluster_id)
+            except (writer.WriteRefused, writer.WriteFailed) as exc:
+                raise _write_error(exc) from exc
+            _request_discovery()
+            return {"secret": secret, "cluster": cluster_id, "retired": "on the next discovery"}
+
+        @app.post("/api/clusterconfigs/test")
+        def test_cluster_config(request: Request, body: dict) -> dict:
+            """SPEC_S2 C5: the connection test — the same parser, then /version and users/~; nothing stored."""
+            from .clusterconfig import writer
+            viewer, namespace, _ = _writes_gate(request)
+            body = {**body, "name": body.get("name") or "probe", "labels": {}}
+            req = _create_request(body)
+            try:
+                return writer.test_connection(req, namespace, host_name=settings.host_cluster().name,
+                                              timeout=settings.request_timeout_seconds, viewer=viewer)
+            except (writer.WriteRefused, writer.WriteFailed) as exc:
+                raise _write_error(exc) from exc
 
     @app.get("/api/clusters")
     @consistent
@@ -2823,6 +2941,7 @@ def build_app(
     app.state.store = store
     app.state.signals = signals
     app.state.settings = settings
+    app.state.poller = poller if run_poller else None   # SPEC_S2: a write wakes discovery; None without a poller
     # The visibility seam, published for the handlers and for tests to substitute: a fake
     # resolver here (any object with resolve(viewer) -> "all" | "self") is how a test
     # forces the all tier, the self tier, or an indeterminate answer without a cluster.

@@ -1125,7 +1125,7 @@ class TestTheShellAtPhoneWidth:
     """#166, measured on the live cluster before the fix: at 375 px the nine-tab bar was 676 px wide,
     `document.documentElement.scrollWidth` 696, and five tabs sat past the edge of a bar that could
     not scroll — unreachable. The shell owns the bar (#152), so the check runs on every tab."""
-    TABS = ["home", "overview", "kpi", "groups", "users", "bindings", "policy", "kyverno", "nsaudit", "logins", "usage"]
+    TABS = ["home", "overview", "kpi", "groups", "users", "bindings", "policy", "kyverno", "nsaudit", "logins", "usage", "clusters"]
 
     @pytest.mark.parametrize("tab", TABS)
     def test_no_horizontal_overflow_and_every_tab_inside_the_viewport(self, dash, tab):
@@ -4154,7 +4154,7 @@ def scoped_server(tmp_path_factory):
     """The seeded app behind a simulated oauth proxy, restrictions ON (the D1 default)."""
     db = str(tmp_path_factory.mktemp("gsd-vis") / "ui.db")
     _seed(db)
-    global _SCOPED_DB
+    global _SCOPED_DB, _SCOPED_APP
     _SCOPED_DB = db   # the kyverno_store fixture writes the module's rows into this app's store (#170)
     settings = Settings(
         clusters=[
@@ -4166,10 +4166,12 @@ def scoped_server(tmp_path_factory):
         # Identity is believable here, unlike in the plain `server` fixture: the tier is
         # keyed off X-Forwarded-User, which is exactly what the proxy would set.
         oauth_proxy_enabled=True,
+        cluster_secrets_writes_enabled=True,   # #230 S2: the Cluster Configurations tests drive the write path
     )
     port = _free_port()
     app = build_app(settings, run_poller=False)
     app.state.tier_resolver = _TierByName()
+    _SCOPED_APP = app   # the Cluster Configurations tests set the discovered clusters on its registry (#230 S2)
     config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
     srv = uvicorn.Server(config)
     thread = threading.Thread(target=srv.run, daemon=True)
@@ -4190,6 +4192,7 @@ def scoped_server(tmp_path_factory):
 
 
 _SCOPED_DB: str | None = None
+_SCOPED_APP = None
 
 
 @pytest.fixture
@@ -6440,6 +6443,138 @@ class TestTabUplifts:
         assert review[1] == (review[0] != "0"), review     # the severity itself: the rails-at-zero test below
 
 
+class TestClusterConfigPage:
+    """#230 S2: the Cluster Configurations tab, from the agreed mock — the cards from a cold URL, the source
+    chips, Rotate/Delete on Secret rows only, the YAML twin following the form, the disabled oauth choice with
+    its reason, the refusal card, a create through the form landing as a card, 375 px, focus."""
+
+    @pytest.fixture
+    def cc_rig(self, scoped_server, monkeypatch):
+        """One discovered cluster on the scoped app's registry, and the write path over an in-memory host."""
+        from gsd.clusterconfig import parse_secret
+        from test_clusterconfig import _secret
+        from test_clusterconfig_tab import _Host
+        app = _SCOPED_APP
+        settings = app.state.settings
+        assert settings.cluster_secrets_writes_enabled, "the scoped server turns the writes on for this class"
+        host = _Host({"gsd-cluster-east": _secret(labels={"environment": "prod"})})
+        east = parse_secret(_secret(labels={"environment": "prod"}), host_name="crc-local")
+        settings.cluster_registry.namespace = "gsd-ns"
+        settings.cluster_registry.replace([east], [], at="2026-09-20T16:05:12Z")
+        monkeypatch.setattr("gsd.api.ClusterClient", lambda cfg, timeout=15.0: host)
+        monkeypatch.setattr("gsd.api.own_namespace", lambda: "gsd-ns")
+        yield scoped_server, host, settings
+        settings.cluster_registry.replace([], [], at="2026-09-20T23:59:59Z")
+
+    def test_the_cards_from_a_cold_url_with_rotate_and_delete_on_the_secret_row_only(self, page, cc_rig):
+        base, host, settings = cc_rig
+        errors: list[str] = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.set_extra_http_headers({"X-Forwarded-User": "root"})
+        page.goto(f"{base}/#page=clusters")
+        page.wait_for_selector("#cc-cluster-east")
+        assert page.locator("#cc-head").inner_text().replace("\n", " ").find("3 clusters") >= 0
+        assert "gsd-ns" in page.locator("#cc-head").inner_text()
+        # the source chips: the host is in-cluster, the second values entry is values, the discovered one names its Secret
+        assert page.locator("#cc-cluster-crc-local .rp-chip.cc-src-in-cluster").count() == 1
+        assert page.locator("#cc-cluster-prod-east .rp-chip.cc-src-values").count() == 1
+        assert page.locator("#cc-cluster-east .rp-chip.cc-src-secret").inner_text() == "Secret gsd-cluster-east"
+        assert page.locator("#cc-rotate-east").count() == 1 and page.locator("#cc-delete-east").count() == 1
+        assert page.locator("#cc-cluster-crc-local [data-cc-rotate], #cc-cluster-prod-east [data-cc-rotate]").count() == 0
+        assert page.locator("#cc-cluster-crc-local [data-cc-delete], #cc-cluster-prod-east [data-cc-delete]").count() == 0
+        east = page.locator("#cc-cluster-east").inner_text()
+        assert "bearerToken" in east and "trusted-bundle" in east and "environment=prod" in east and "self-only" in east
+        assert "never polled" in east
+        assert "No malformed Secrets" in page.locator("#cc-findings").inner_text()
+        assert page.locator("#cc-cred-oauth").is_disabled() and "#119 P2, not built yet" in page.locator("#cc-oauth-reason").inner_text()
+        assert not errors
+
+    def test_the_yaml_twin_follows_the_form_and_the_ca_mode(self, page, cc_rig):
+        base, host, settings = cc_rig
+        _open_as(page, base, "root")
+        page.click("#tab-clusters"); page.wait_for_selector("#cc-form")
+        page.fill("#cc-name", "west"); page.fill("#cc-server", "https://api.west.example:6443")
+        yaml = page.locator("#cc-yaml").inner_text()
+        assert "name: gsd-cluster-west" in yaml and "server: https://api.west.example:6443" in yaml
+        assert '"bearerToken":"<redacted>"' in yaml and '"caData":"<redacted>"' in yaml
+        assert "groupsync-dashboard.io/secret-type: cluster" in yaml and "managed-by: ui" in yaml
+        assert "namespace: gsd-ns" in yaml
+        page.click("#cc-ca-insecure"); page.wait_for_selector("#cc-ca-insecure-warn:not([hidden])")
+        yaml = page.locator("#cc-yaml").inner_text()
+        assert '"insecure":true' in yaml and "caData" not in yaml
+        assert page.evaluate("() => document.getElementById('cc-name').value") == "west", "the typed name survived the repaint"
+        page.click("#cc-ca-trustedBundle"); page.wait_for_selector("#cc-ca-bundle-note:not([hidden])")
+        assert '"insecure":false' in page.locator("#cc-yaml").inner_text()
+
+    def test_with_writes_off_the_tab_is_read_only_and_the_yaml_is_the_deliverable(self, page, cc_rig):
+        base, host, settings = cc_rig
+        _open_as(page, base, "root")
+        page.click("#tab-clusters"); page.wait_for_selector("#cc-create")
+        # the page decides from the payload's `secrets.writes`, so the off state is one field away
+        page.evaluate("() => { data.clusterconfigs.secrets.writes = false; render(); }")
+        assert page.locator("#cc-create").count() == 0 and page.locator("#cc-test").count() == 0
+        assert "does not write Secrets" in page.locator("#cc-writes-off").inner_text()
+        assert page.locator("#cc-rotate-east").count() == 0 and page.locator("#cc-delete-east").count() == 0
+        assert "writes are off" in page.locator("#cc-cluster-east").inner_text()
+        page.fill("#cc-name", "gitops-one")
+        assert "name: gsd-cluster-gitops-one" in page.locator("#cc-yaml").inner_text()
+
+    def test_a_narrowed_reader_gets_the_refusal_card(self, page, cc_rig):
+        base, host, settings = cc_rig
+        _open_as(page, base, "alice")
+        page.click("#tab-clusters")
+        page.wait_for_function("() => document.body.innerText.includes('Withheld, not empty')")
+        assert page.locator("#cc-form").count() == 0
+
+    def test_a_create_through_the_form_writes_the_secret_and_lands_as_a_card_after_the_discovery(self, page, cc_rig):
+        from gsd.clusterconfig import parse_secret
+        base, host, settings = cc_rig
+        _open_as(page, base, "root")
+        page.click("#tab-clusters"); page.wait_for_selector("#cc-form")
+        page.fill("#cc-name", "west"); page.fill("#cc-server", "https://api.west.example:6443")
+        page.fill("#cc-token", "tok-west-1234"); page.click("#cc-ca-trustedBundle")
+        page.fill("#cc-label-key", "environment"); page.fill("#cc-label-val", "test"); page.click("#cc-label-add")
+        page.wait_for_function("() => document.body.innerText.includes('environment=test')")
+        page.click("#cc-create")
+        page.wait_for_function("() => document.getElementById('cc-form-msg').innerText.includes('created')")
+        written = host.secrets["gsd-cluster-west"]
+        assert written["metadata"]["labels"] == {"groupsync-dashboard.io/secret-type": "cluster", "environment": "test"}
+        assert written["metadata"]["annotations"] == {"groupsync-dashboard.io/managed-by": "ui"}
+        assert "tok-west-1234" not in page.locator("#main").inner_text()
+        assert page.evaluate("() => document.getElementById('cc-name').value") == "", "the form is cleared after the write"
+        # the discovery the write requested: the poller would replace the registry from the namespace's Secrets
+        east = settings.cluster_registry.discovered()
+        settings.cluster_registry.replace(east + [parse_secret(written, host_name="crc-local")], [], at="2026-09-20T16:06:00Z")
+        page.evaluate("() => refresh({ auto: true })")
+        page.wait_for_selector("#cc-cluster-west")
+        card = page.locator("#cc-cluster-west").inner_text()
+        assert "Secret gsd-cluster-west" in card and "environment=test" in card and "trusted-bundle" in card
+        # rotate and delete from the card
+        page.click("#cc-rotate-west"); page.wait_for_selector("#cc-rotate-token-west")
+        page.fill("#cc-rotate-token-west", "tok-west-5678"); page.click("#cc-rotate-go-west")
+        page.wait_for_function("() => (document.getElementById('cc-rotate-msg-west') || {innerText: ''}).innerText.includes('overwritten')")
+        import base64 as _b64, json as _json
+        assert _json.loads(_b64.b64decode(host.secrets["gsd-cluster-west"]["data"]["config"]))["bearerToken"] == "tok-west-5678"
+        page.click("#cc-delete-west")
+        assert page.locator("#cc-delete-west").inner_text() == "Confirm delete"
+        page.click("#cc-delete-west")
+        page.wait_for_function("() => (document.getElementById('cc-delete-msg-west') || {innerText: ''}).innerText.includes('deleted')")
+        assert "gsd-cluster-west" not in host.secrets
+
+    def test_the_page_fits_375_and_focus_survives_a_poll(self, page, cc_rig):
+        base, host, settings = cc_rig
+        _open_as(page, base, "root")
+        page.click("#tab-clusters"); page.wait_for_selector("#cc-form")
+        page.focus("#cc-server"); page.keyboard.type("https://a")
+        page.evaluate("() => refresh({ auto: true })")
+        page.wait_for_function("() => !document.getElementById('main').classList.contains('stale')")
+        assert page.evaluate("() => [document.activeElement.id, document.getElementById('cc-server').value]") == ["cc-server", "https://a"]
+        page.set_viewport_size({"width": 375, "height": 740}); page.wait_for_timeout(300)
+        assert page.evaluate("() => document.documentElement.scrollWidth <= innerWidth")
+        beyond = page.evaluate("() => [...document.querySelectorAll('#main *')].filter(e => e.getBoundingClientRect().right > innerWidth + 1).length")
+        assert beyond == 0
+
+
 class TestKyvernoPage:
     """#170: the Kyverno page's three states, the deprecated-family and breaker notes, the visible
     controlled-kind filter, the policy narrowing and the history — every number from the wire."""
@@ -6589,7 +6724,7 @@ class TestReportsTab:
             page.click("#tab-reports")
             page.wait_for_selector("#tab-reports[aria-current='page']")
             page.wait_for_timeout(300)
-            assert page.evaluate("() => document.querySelectorAll('button.tab').length") == 12   # Home joined the strip (#158); KPIs (#157); Kyverno (#170)
+            assert page.evaluate("() => document.querySelectorAll('button.tab').length") == 13   # Home joined the strip (#158); KPIs (#157); Kyverno (#170); Cluster Configurations (#230)
             assert page.evaluate("() => [document.documentElement.scrollWidth <= innerWidth, [...document.querySelectorAll('button.tab')].filter(t => t.getBoundingClientRect().right > innerWidth).map(t => t.id)]") == [True, []]
             assert not errors
         finally:
