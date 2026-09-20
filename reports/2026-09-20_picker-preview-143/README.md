@@ -1,7 +1,7 @@
 # The namespace picker, the reviewer prefill and the totals preview on CRC — the walk behind #143 phases 2–3
 
-Deployed head `ef91c74` (`feat/143-picker-preview` after its review pass, through the Argo Application;
-`running : ef91c7426e — verified in-pod`; the first walk at `44587ce` read the same lines with "1 namespaces" and no
+Deployed head `6c8b960` (`feat/143-picker-preview` after its three review passes, through the Argo Application;
+`running : 6c8b96016f — verified in-pod`; the walk at `ef91c74` read the same lines; the first walk at `44587ce` read the same lines with "1 namespaces" and no
 `(cluster-scoped)` option — the review changed both), walked with `walk.py` through the OAuth proxy as kubeadmin, Chromium 1280×900 then
 375×740. Every line below is the script's own output.
 
