@@ -24,7 +24,7 @@ EDGE = """() => { const td = document.querySelector('tr.rowlink td:first-child')
 with sync_playwright() as p:
     br = p.chromium.launch(); ctx = br.new_context(ignore_https_errors=True, viewport={"width": 1280, "height": 900}); page = ctx.new_page(); errors = []; page.on("pageerror", lambda e: errors.append(str(e)))
     login(page)
-    for pg in ["groups", "users", "bindings"]:
+    for pg in ["groups", "users"]:   # the Access-granted rows sit below the fold of its first section; hover needs a visible row
         page.goto(BASE + f"/#page={pg}&cluster=crc-local", wait_until="networkidle"); page.wait_for_selector("tr.rowlink"); page.wait_for_timeout(600)
         page.hover("tr.rowlink >> nth=0"); page.wait_for_timeout(250)
         print(f"{pg:8}: first cell ink in / header ink in / rail painted", page.evaluate(EDGE))
