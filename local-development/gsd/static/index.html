@@ -2763,7 +2763,7 @@ function reportingSchedulesCard(st) {
     <div class="filterbar-note">Declared in <code>reporting.schedules[]</code> and fired by their CronJobs inside the run window (<code>generated_by = schedule:&lt;name&gt;</code>).
       <code>enabled: false</code> pauses one without deleting it; "Retention" is its effective policy — keep the N newest, or anything younger than the age, whichever keeps more.</div>
     ${rows.length === 0 ? `<div class="empty-note">No schedule is configured. Add one under <code>reporting.schedules[]</code> in the chart's values.</div>` : `<div class="scroll-x"><table>
-      <thead><tr><th>Schedule</th><th>Report</th><th>Cadence</th><th>Retention</th><th>Enabled</th><th>Last success</th><th>Next</th><th>Status</th></tr></thead>
+      <thead><tr><th>Schedule</th><th>Report</th><th>Cadence${st.window.enabled ? ` <span class="muted">(${esc(st.window.timezone)})</span>` : ""}</th><th>Retention</th><th>Enabled</th><th>Last success <span class="muted">(UTC)</span></th><th>Next <span class="muted">(UTC)</span></th><th>Status</th></tr></thead>
       <tbody>${rows.map((s) => `<tr class="${s.enabled ? "" : "paused"}" data-schedule="${esc(s.name)}">
         <td class="mono">${esc(s.name)}</td><td class="mono">${esc(s.report)}</td>
         <td>${esc(s.cadence)}${s.cadence !== s.schedule ? `<br><span class="mono muted">${esc(s.schedule)}</span>` : ""}</td>
@@ -2773,7 +2773,7 @@ function reportingSchedulesCard(st) {
         <td class="mono${s.next_fire ? "" : " muted"}">${s.next_fire ? `${fmtStamp(s.next_fire)} <span class="muted">(${esc(untilShort(s.next_fire))})</span>` : "—"}</td>
         <td>${stateBadge(s.status)}</td>
       </tr>`).join("")}</tbody></table></div>
-    <div class="filterbar-note mt-3"><code>enabled: false</code> keeps a schedule's definition, history and audit trail — the CronJob is suspended (Paused, Next —). Remove the stanza only to retire it. A schedule names no cluster: the service runs it for every enabled cluster in its snapshot.</div>`}
+    <div class="filterbar-note mt-3"><code>enabled: false</code> keeps a schedule's definition, history and audit trail — the CronJob is suspended (Paused, Next —). Remove the stanza only to retire it. A schedule names no cluster: the service runs it for every enabled cluster in its snapshot. The cadence is read in the CronJob's zone${st.window.enabled ? ` (the run window's, ${esc(st.window.timezone)})` : " (the cluster's)"}; every instant on this page is UTC, as the service stamps it.</div>`}
   </section>`;
 }
 
