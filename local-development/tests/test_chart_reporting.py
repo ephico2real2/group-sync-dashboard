@@ -300,6 +300,9 @@ class TestDerivations:
                       "--params-json", '"subject_kind":"groups"', "--format html"):
             assert piece in command, (piece, command)
         assert "suspend" not in cron["spec"]
+        # never retried by Kubernetes (review of PR #220, OB3): a retry re-POSTs the whole fan-out
+        assert cron["spec"]["jobTemplate"]["spec"]["backoffLimit"] == 0
+        assert "--timeout" in command and "840" in command
 
     def test_a_schedule_is_cluster_agnostic_by_default_and_names_no_format(self):
         # #149 R1/R3: no `cluster`, no `formats` — the service fans out over its snapshot's clusters and
