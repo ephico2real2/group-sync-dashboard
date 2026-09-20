@@ -151,9 +151,29 @@ class TestReader:
         assert out.reports == 5, "the unmanaged report is not Kyverno's"
         assert out.legacy_results == 2 and out.other_results == 1
         assert sorted((r.resource_kind, r.result) for r in out.results) == [("Deployment", "fail"), ("GroupConfig", "pass"), ("NamespaceConfig", "fail"), ("Pod", "warn")]
-        # every CEL kind was asked for; the four the cluster lacks answered 404 and are simply absent
-        assert sum(1 for c in client.calls if "/apis/policies.kyverno.io/v1/" in c) == len(CEL_KINDS)
+        # every CEL kind was asked for — the cluster collection and its namespaced twin; the ones the cluster
+        # lacks answered 404 and are simply absent
+        assert sum(1 for c in client.calls if "/apis/policies.kyverno.io/v1/" in c) == 2 * len(CEL_KINDS)
         assert out.breaker is None
+
+    def test_read_lists_a_namespaced_twin_as_the_family_kind_and_joins_its_rows(self):
+        # 09-19 §5: a NamespacedValidatingPolicy in klt-pass-both writes `source: KyvernoValidatingPolicy` with the
+        # policy namespace-qualified. The first cut listed the five cluster collections only (review of #228,
+        # Grok and Codex): a cluster using namespaced policies alone read "policies: 0" beside its rows.
+        table = _lab_table()
+        table["/apis/policies.kyverno.io/v1/namespacedvalidatingpolicies"] = {"items": [
+            {**_policy("require-owner"), "metadata": {"name": "require-owner", "namespace": "klt-pass-both"}}]}
+        table["/apis/wgpolicyk8s.io/v1alpha2/policyreports"]["items"].append(
+            _report("ConfigMap", "cm-1", [_result("klt-pass-both/require-owner", "fail")], namespace="klt-pass-both", uid="u9"))
+        out = read(_FakeClient(table))
+        assert out.policy_kinds_served == ("ValidatingPolicy",), "the twin is the family's kind, listed once"
+        assert sorted((p.kind, p.namespace or "", p.name) for p in out.policies) == [
+            ("ValidatingPolicy", "", "restrict-nco-config-writers"), ("ValidatingPolicy", "klt-pass-both", "require-owner")]
+        import tempfile, os
+        s = Store(os.path.join(tempfile.mkdtemp(), "n.db")); s.upsert_cluster("c1", "https://x", True)
+        s.replace_kyverno("c1", out, NOW)
+        joined = {p["policy"]: p["results"]["fail"] for p in s.kyverno_policies("c1")}
+        assert joined["klt-pass-both/require-owner"] == 1, joined
 
     def test_read_prefers_openreports_when_served_and_answers_none_when_neither_is(self):
         out = read(_FakeClient(_lab_table(openreports=True)))
@@ -272,6 +292,12 @@ class TestApiAndMetrics:
         assert c.get("/api/clusters/c1/kyverno?controlled=true", headers=H("root")).json()["total"] == 3
         assert c.get("/api/clusters/c1/kyverno?problems=false&limit=1", headers=H("root")).json()["truncated"] is True
         assert c.get("/api/clusters/c1/kyverno?policy=restrict-nco-config-writers", headers=H("root")).json()["total"] == 1
+        # a ValidatingPolicy and a MutatingPolicy may share a name: `kind` with `policy` names one (Codex)
+        r = read(_FakeClient(_lab_table()))
+        r.results.append(ResultView("MutatingPolicy", "restrict-nco-config-writers", "Namespace", "", "n", "u8", "v1", "fail", "", "", "", "admission review", 1, False))
+        store.replace_kyverno("c1", r, NOW)
+        assert c.get("/api/clusters/c1/kyverno?policy=restrict-nco-config-writers", headers=H("root")).json()["total"] == 2
+        assert c.get("/api/clusters/c1/kyverno?policy=restrict-nco-config-writers&kind=MutatingPolicy", headers=H("root")).json()["total"] == 1
         assert [p["name"] for p in body["policies_list"]] == ["restrict-nco-config-writers"] and body["policies_list"][0]["results"]["pass"] == 1
 
     def test_no_metric_label_can_carry_a_resource_name_or_namespace(self, client):
@@ -281,6 +307,8 @@ class TestApiAndMetrics:
             assert k.privacy == "public" and set(k.labels) <= {"cluster", "kind", "policy_kind", "result"}, k.name
         text = _text(store, ("c1", "c2"))
         assert 'gsd_kyverno_results{cluster="c1",policy_kind="ValidatingPolicy",result="fail"} 1.0' in text
+        assert store.kyverno_result_counts("c1") == {("ValidatingPolicy", "pass"): 1, ("ValidatingPolicy", "fail"): 1,
+                                                    ("ValidatingPolicy", "warn"): 1, ("other", "fail"): 1}   # one aggregate per scrape, never the rows
         assert 'gsd_kyverno_legacy_results{cluster="c1"} 2.0' in text
         assert "gsd_kyverno_report_breaker_drops{" not in text, "no drop observed: the family is absent, never 0"
         assert 'cluster="c2"' not in text, "a cluster where nothing was found emits nothing"

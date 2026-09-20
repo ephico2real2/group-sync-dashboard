@@ -6496,6 +6496,25 @@ class TestKyvernoPage:
         p.set_viewport_size({"width": 375, "height": 740}); p.wait_for_timeout(300)
         assert p.evaluate("() => document.documentElement.scrollWidth <= innerWidth")
 
+    def test_the_switch_keeps_focus_and_a_kyverno_only_change_repaints_on_the_poll(self, page, scoped_server, kyverno_store):
+        # Review of #228 (Grok, Codex): nulling the payload and painting Loading… first destroyed #kyverno-controlled,
+        # so the by-id restore left a keyboard reader on <body>; and the auto-refresh fingerprint omitted
+        # data.kyverno, so a poll whose only change was Kyverno's updated memory and skipped the DOM.
+        from test_kyverno import _FakeClient, _lab_table, read
+        kyverno_store.replace_kyverno("crc-local", read(_FakeClient(_lab_table())), "2026-09-20T12:00:00Z")
+        p = _open_as(page, scoped_server, "root")
+        p.click("#tab-kyverno")
+        p.wait_for_selector("#kyverno-controlled")
+        p.focus("#kyverno-controlled")
+        with p.expect_request(lambda r: "/kyverno?" in r.url and "controlled=true" in r.url):
+            p.keyboard.press("Enter")
+        p.wait_for_function("() => document.body.innerText.includes('Findings · 2')")
+        assert p.evaluate("() => [document.activeElement.id, document.getElementById('kyverno-controlled').getAttribute('aria-checked')]") == ["kyverno-controlled", "true"]
+        kyverno_store.replace_kyverno("crc-local", None, "2026-09-20T12:05:00Z")
+        p.evaluate("() => refresh({ auto: true })")
+        p.wait_for_function("() => document.body.innerText.includes('No policy-report API group is served')")
+        assert p.locator("#main .kpis").count() == 0
+
 
 class TestReportsTab:
     def test_the_fixtures_report_service_keeps_wall_time(self, reporting_server):

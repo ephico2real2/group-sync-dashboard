@@ -157,7 +157,7 @@ const STATES = {
 
 const view = { page: "home", homeShow: {}, cluster: null, groupsync: null, groupFilter: "all", bindingFilter: "review",
                 report: null, reportLanded: null, reportFocusRow: null, reportForm: {},
-                kyvernoControlled: false, kyvernoPolicy: null,   // #170: the Kyverno page's two filters (filters, not positions)
+                kyvernoControlled: false, kyvernoPolicy: null, kyvernoKind: null,   // #170: the Kyverno page's filters (filters, not positions)
                 /* #149 R5: the status page's history filters and page. Filters, not positions (the
                    groupFilter reasoning): a shared link opens the page, not a filtered slice of it. */
                 historyFilter: { report: "", origin: "", status: "", cluster: "" }, historyPage: 0, reportRun: null, reportSubmitting: false, reportPreview: "",
@@ -307,7 +307,7 @@ function applyPosition(pos) {
       data.logins = null; data.access = null; data.findings = null;
       data.operatorConfigs = null; data.userBindings = null; data.myAccess = null;
       data.namespaces = null; data.ns = null;
-      data.kyverno = null; view.kyvernoPolicy = null;   // #170: a policy name is this cluster's
+      data.kyverno = null; view.kyvernoPolicy = null; view.kyvernoKind = null;   // #170: a policy name is this cluster's
       data.home = null;   // #158: the answer is the selected cluster's
       // The Users-tab chips name providers and populations of THIS cluster; carried across, a
       // `provider:corp-ldap` chip on a cluster with no such provider would hide every row — the
@@ -5030,14 +5030,14 @@ function kyvernoPage() {
       : `<div class="scroll-x"><table>
         <thead><tr><th>Kind</th><th>Policy</th><th>Admission</th><th>Background</th><th>Actions</th><th>Failure policy</th><th>Ready</th>
           <th class="num">Pass</th><th class="num">Fail</th><th class="num">Warn</th><th class="num">Error</th><th class="num">Skip</th></tr></thead>
-        <tbody>${policies.map((p) => `<tr class="rowlink" data-kyverno-policy="${esc(p.policy)}">
+        <tbody>${policies.map((p) => `<tr class="rowlink" data-kyverno-policy="${esc(p.policy)}" data-kyverno-kind="${esc(p.kind)}">
           <td><span class="chip mono">${esc(p.kind)}</span>${p.generated ? ` <span class="chip" title="status.generated: a Kubernetes ValidatingAdmissionPolicy stands in for this policy; Kyverno's own webhook and background scan stand down, and its rows come from the admission policy's reports.">generated</span>` : ""}</td>
           <td><button type="button" class="drill mono">${esc(p.policy)}</button></td>
           <td>${p.admission ? "on" : `<span class="muted">off</span>`}</td>
           <td>${p.background ? "on" : `<span class="muted">off</span>`}</td>
           <td class="mono">${(p.actions || []).map(esc).join(", ") || `<span class="muted">—</span>`}</td>
           <td class="mono">${esc(p.failure_policy)}</td>
-          <td>${p.ready === null ? `<span class="muted">—</span>` : p.ready ? "yes" : `<span class="warn">no</span>`}${p.note ? ` <span class="muted">· ${esc(p.note)}</span>` : ""}</td>
+          <td>${p.ready === null ? `<span class="muted">—</span>` : p.ready ? "yes" : `<span class="err">no</span>`}${p.note ? ` <span class="muted">· ${esc(p.note)}</span>` : ""}</td>
           <td class="num">${p.results.pass}</td>
           <td class="num${p.results.fail ? " warn" : ""}">${p.results.fail}</td>
           <td class="num">${p.results.warn}</td>
@@ -5107,12 +5107,19 @@ const CEL_KIND_WORDS = "ValidatingPolicy, MutatingPolicy, GeneratingPolicy, Dele
 const KYVERNO_HISTORY_WORDS = "as long as the deployment's retention keeps them (<code>kyverno.eventsRetentionDays</code>)";
 
 function wireKyverno() {
+  // refresh() only — the filter bar's standing rule (#f-state, #f-outcome). Nulling the payload and painting
+  // Loading… first destroyed #kyverno-controlled, so render()'s by-id restore found nothing and a keyboard
+  // reader landed on <body> (review of #228, Grok and Codex). The old rows stay until the new answer lands.
   const sw = $("kyverno-controlled");
-  if (sw) sw.onclick = () => { view.kyvernoControlled = !view.kyvernoControlled; data.kyverno = null; render(); refresh(); };
+  if (sw) sw.onclick = () => {
+    view.kyvernoControlled = !view.kyvernoControlled;
+    sw.classList.toggle("on", view.kyvernoControlled); sw.setAttribute("aria-checked", String(view.kyvernoControlled));
+    refresh();
+  };
   const all = $("kyverno-all-policies");
-  if (all) all.onclick = () => { view.kyvernoPolicy = null; data.kyverno = null; render(); refresh(); };
+  if (all) all.onclick = () => { view.kyvernoPolicy = null; view.kyvernoKind = null; refresh(); };
   document.querySelectorAll("[data-kyverno-policy]").forEach((el) => {
-    el.onclick = () => { view.kyvernoPolicy = el.dataset.kyvernoPolicy; data.kyverno = null; render(); refresh(); };
+    el.onclick = () => { view.kyvernoPolicy = el.dataset.kyvernoPolicy; view.kyvernoKind = el.dataset.kyvernoKind; refresh(); };
   });
 }
 
@@ -6150,7 +6157,7 @@ async function refresh(opts = {}) {
       // filters on the wire (the controlled-kind switch, one policy) — the server does the narrowing.
       if (view.page === "kyverno" && !narrowedReader()) {
         const q = new URLSearchParams({ controlled: view.kyvernoControlled ? "true" : "false" });
-        if (view.kyvernoPolicy) q.set("policy", view.kyvernoPolicy);
+        if (view.kyvernoPolicy) { q.set("policy", view.kyvernoPolicy); if (view.kyvernoKind) q.set("kind", view.kyvernoKind); }
         want.kyverno = clusterGone(guard403(get(`${base}/kyverno?${q}`)));
       }
       if (view.page === "nsaudit") {
@@ -6365,6 +6372,7 @@ async function refresh(opts = {}) {
       // repainted every minute, dropping the reader's selection (review of #221, OB3 — measured).
       data.reportStatus && { ...data.reportStatus, as_of: null }, data.reportHistory,
       data.kpi,   // #157 (review, Codex): left out, a poll whose only change was a KPI never repainted the page
+      data.kyverno,   // #170 (review, Codex): the same omission would have left a Kyverno-only change unpainted
       // #167: the namespace list and page ride the same wire (review, Codex — left out, a poll whose
       // only change was a label or a grant skipped the repaint the comment above forbids skipping).
       data.namespaces, data.ns,

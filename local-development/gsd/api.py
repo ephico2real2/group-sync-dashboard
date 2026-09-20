@@ -1988,7 +1988,10 @@ def build_app(
         problems: bool = Query(default=True, description="Only fail/warn/error results (the page's default); false lists every result."),
         controlled: bool = Query(default=False, description="Include results on Pods, ReplicaSets and Jobs — usually a "
                                                             "controller's copies of one finding; off by default, said on the page."),
-        policy: str | None = Query(default=None, max_length=253, description="Only one policy's results."),
+        policy: str | None = Query(default=None, max_length=253, description="Only one policy's results (its wire string: "
+                                                                            "namespace/name for a namespaced policy)."),
+        kind: str | None = Query(default=None, pattern=r"^[A-Za-z]{1,40}$", description="With `policy`, the policy's kind — "
+                                                                                       "a ValidatingPolicy and a MutatingPolicy may share a name."),
         limit: int = Query(default=500, ge=1, le=5000, description="Maximum result rows; `total` says how many match."),
     ) -> dict:
         """The Kyverno policy module (#165, #170): the CEL policies, their reports' results, the history.
@@ -2010,7 +2013,7 @@ def build_app(
                "enabled": settings.kyverno_enabled, **summary}
         if summary.get("present"):
             rows, total = store.kyverno_results(cluster_id, problems_only=problems, include_controlled=controlled,
-                                                policy=policy, limit=limit)
+                                                policy=policy, kind=kind, limit=limit)
             out.update({"policies_list": store.kyverno_policies(cluster_id), "rows": rows, "total": total,
                         "truncated": len(rows) < total, "events": store.kyverno_events(cluster_id),
                         "controlled_kinds": list(CONTROLLED_KINDS)})

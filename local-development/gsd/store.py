@@ -3835,9 +3835,18 @@ class Store:
             out.append(d)
         return out
 
+    def kyverno_result_counts(self, cluster_id: str) -> dict[tuple[str, str], int]:
+        """{(policy_kind, result): n} — one aggregate, for the metrics (review of #228, Codex: the first cut
+        materialised every row per scrape, 16.7 MiB at 10 000 rows)."""
+        return {(r["policy_kind"], r["result"]): r["n"] for r in self._rows(
+            "SELECT policy_kind, result, COUNT(*) AS n FROM kyverno_result WHERE cluster_id=? GROUP BY policy_kind, result",
+            (cluster_id,))}
+
     def kyverno_results(self, cluster_id: str, *, problems_only: bool = True, include_controlled: bool = True,
-                        policy: str | None = None, limit: int = 500) -> tuple[list[dict], int]:
-        """The rows, worst first, and the total the filters match (the page states a cut)."""
+                        policy: str | None = None, kind: str | None = None, limit: int = 500) -> tuple[list[dict], int]:
+        """The rows, worst first, and the total the filters match (the page states a cut). `policy` narrows to
+        one policy's wire string and `kind` to one policy kind — together they name ONE policy (a
+        ValidatingPolicy and a MutatingPolicy may share a name; review of #228, Codex)."""
         where = ["cluster_id=?"]; params: list = [cluster_id]
         if problems_only:
             where.append("result IN ('fail','warn','error')")
@@ -3845,6 +3854,8 @@ class Store:
             where.append("controlled=0")
         if policy:
             where.append("policy=?"); params.append(policy)
+        if kind:
+            where.append("policy_kind=?"); params.append(kind)
         clause = " AND ".join(where)
         total = self._row(f"SELECT COUNT(*) AS n FROM kyverno_result WHERE {clause}", tuple(params))["n"]
         rows = self._rows(

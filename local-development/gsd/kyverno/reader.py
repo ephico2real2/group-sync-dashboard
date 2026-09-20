@@ -24,11 +24,19 @@ REPORT_GROUPS: tuple[tuple[str, str, str, str], ...] = (
     ("openreports.io/v1alpha1", "/apis/openreports.io/v1alpha1", "reports", "clusterreports"),
     ("wgpolicyk8s.io/v1alpha2", "/apis/wgpolicyk8s.io/v1alpha2", "policyreports", "clusterpolicyreports"),
 )
-#: The CEL policy kinds' collection paths. The discovery API's preferred version on 1.19.1 is `v1`
-#: (discovery §1: v1 served, v1beta1 storage); a cluster serving only an older version answers 404
-#: here and the family reads as absent — said, not hidden.
-POLICY_PATHS: tuple[tuple[str, str], ...] = tuple((kind, f"/apis/policies.kyverno.io/v1/{kind.lower()[:-1]}ies")
-                                                   for kind in CEL_KINDS)
+def _policy_collection(kind: str) -> str:
+    return f"/apis/policies.kyverno.io/v1/{kind.lower()[:-1]}ies"
+
+
+#: The CEL policy kinds' collection paths — the cluster kind, then its `Namespaced<Kind>` twin, both tagged
+#: with the FAMILY kind, because a namespaced policy's results carry the family's `source` and the
+#: `namespace/name` wire string (the 09-19 probe: `KyvernoValidatingPolicy`, `klt-pass-both/step0-…`), and
+#: kyverno_policies() joins on exactly that (review of #228, Grok and Codex: the first cut listed the five
+#: cluster collections only, so a cluster using namespaced policies alone read "policies: 0"). The discovery
+#: API's preferred version on 1.19.1 is `v1` (discovery §1); a cluster serving only an older version answers
+#: 404 here and the kind reads as absent — said, not hidden.
+POLICY_PATHS: tuple[tuple[str, str], ...] = tuple((kind, _policy_collection(name))
+                                                   for kind in CEL_KINDS for name in (kind, f"Namespaced{kind}"))
 MANAGED_BY = "app.kubernetes.io/managed-by"
 KYVERNO = "kyverno"
 
@@ -220,7 +228,8 @@ def read(cluster_client, metrics_url: str = "") -> KyvernoRead | None:
                 if exc.message.startswith(f"HTTP 404 on {path}"):
                     continue
                 raise
-            served.append(kind)
+            if kind not in served:
+                served.append(kind)
             out.policies.extend(policy_view(kind, obj) for obj in items)
         out.policy_kinds_served = tuple(served)
 

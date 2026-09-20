@@ -46,10 +46,9 @@ def _results(ctx: Context):
     samples = []
     for cluster in found:
         counts: dict[tuple[str, str], int] = {(k, r): 0 for k in POLICY_KINDS for r in RESULTS}
-        rows, _ = ctx.store.kyverno_results(cluster, problems_only=False, limit=1_000_000)
-        for row in rows:
-            key = (row["policy_kind"] if row["policy_kind"] in POLICY_KINDS else "other", row["result"])
-            counts[key] = counts.get(key, 0) + 1
+        for (kind, result), n in ctx.store.kyverno_result_counts(cluster).items():
+            key = (kind if kind in POLICY_KINDS else "other", result)
+            counts[key] = counts.get(key, 0) + n
         samples.extend(Sample((cluster, kind, result), n) for (kind, result), n in counts.items())
     return samples
 

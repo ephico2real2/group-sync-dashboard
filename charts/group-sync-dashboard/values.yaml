@@ -1234,8 +1234,8 @@ rbac:
 # Kyverno policy module  (#165, #170) — the CEL policy family, read through the policy reports
 # ---------------------------------------------------------------------------
 kyverno:
-  # Grants get/list on the policy reports (wgpolicyk8s.io, openreports.io) and the five CEL policy
-  # kinds (policies.kyverno.io), and turns the poller's read on. Auto-detected per cluster: a cluster
+  # Grants list on the policy reports (wgpolicyk8s.io, openreports.io) and the five CEL policy kinds
+  # with their namespaced twins (policies.kyverno.io), and turns the poller's read on. Auto-detected per cluster: a cluster
   # serving no policy-report API group records "not installed" and the page says so — never zero
   # results. Read-only; no /status, no write verb. The deprecated ClusterPolicy/Policy family is
   # not read (the API says it will be removed in a future release); its results are counted so the

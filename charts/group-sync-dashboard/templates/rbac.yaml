@@ -119,19 +119,20 @@ rules:
   {{- if .Values.kyverno.enabled }}
   # The Kyverno policy module (#170): the policy reports — both report groups, so the reader's runtime
   # discovery (openreports.io first, then wgpolicyk8s.io) is a read and never a 403 — and the five CEL
-  # policy kinds with their namespaced twins. Explicit and read-only: no `/status`, no write verb, and
-  # never the deprecated kyverno.io family.
+  # policy kinds with their namespaced twins. Explicit and least-privilege: `list` only — the reader never
+  # GETs one object, and the group discovery is API discovery, which every authenticated identity has —
+  # no `/status`, no write verb, and never the deprecated kyverno.io family.
   - apiGroups: ["wgpolicyk8s.io"]
     resources: ["policyreports", "clusterpolicyreports"]
-    verbs: ["get", "list"]
+    verbs: ["list"]
   - apiGroups: ["openreports.io"]
     resources: ["reports", "clusterreports"]
-    verbs: ["get", "list"]
+    verbs: ["list"]
   - apiGroups: ["policies.kyverno.io"]
     resources: ["validatingpolicies", "mutatingpolicies", "generatingpolicies", "deletingpolicies", "imagevalidatingpolicies",
                 "namespacedvalidatingpolicies", "namespacedmutatingpolicies", "namespacedgeneratingpolicies",
                 "namespaceddeletingpolicies", "namespacedimagevalidatingpolicies"]
-    verbs: ["get", "list"]
+    verbs: ["list"]
   {{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1

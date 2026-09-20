@@ -384,13 +384,13 @@ class TestDerivations:
         docs = _render()
         role = next(d for d in docs if d.get("kind") == "ClusterRole" and d["metadata"]["name"].endswith("-reader"))
         rules = {(tuple(r["apiGroups"]), tuple(r["resources"]), tuple(r["verbs"])) for r in role["rules"]}
-        assert (("wgpolicyk8s.io",), ("policyreports", "clusterpolicyreports"), ("get", "list")) in rules
-        assert (("openreports.io",), ("reports", "clusterreports"), ("get", "list")) in rules
+        assert (("wgpolicyk8s.io",), ("policyreports", "clusterpolicyreports"), ("list",)) in rules
+        assert (("openreports.io",), ("reports", "clusterreports"), ("list",)) in rules
         cel = next(r for r in role["rules"] if r["apiGroups"] == ["policies.kyverno.io"])
         assert set(cel["resources"]) == {"validatingpolicies", "mutatingpolicies", "generatingpolicies", "deletingpolicies",
                                          "imagevalidatingpolicies", "namespacedvalidatingpolicies", "namespacedmutatingpolicies",
                                          "namespacedgeneratingpolicies", "namespaceddeletingpolicies", "namespacedimagevalidatingpolicies"}
-        assert cel["verbs"] == ["get", "list"]
+        assert cel["verbs"] == ["list"], "list only: the reader never GETs one object"
         assert not any("kyverno.io" == g for r in role["rules"] for g in r["apiGroups"]), "the deprecated family is never read"
         assert not any(res.endswith("/status") for r in role["rules"] for res in r["resources"])
         ok, out = _render_text()

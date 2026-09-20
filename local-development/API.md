@@ -794,8 +794,9 @@ Three states, rendered distinctly: **`present: null`** — never polled since th
 clean cluster), and **`breaker_drops`** — `kyverno_breaker_drops` as last scraped from the reports
 controller when `kyverno.metricsUrl` is set; `null` is "no drop observed, or not scraped", never 0.
 `?problems=false` lists every result; `?controlled=true` includes Pods, ReplicaSets and Jobs (usually a
-controller's copies of one finding — off by default and said on the page); `?policy=` narrows to one
-policy; `total` and `truncated` say what `limit` cut. A result is keyed by policy and resource, never by
+controller's copies of one finding — off by default and said on the page); `?policy=` (the wire string —
+`namespace/name` for a namespaced policy) with `?kind=` narrows to one policy — a `ValidatingPolicy` and a
+`MutatingPolicy` may share a name; `total` and `truncated` say what `limit` cut. A result is keyed by policy and resource, never by
 rule: the CEL engine writes no rule name. `events` are the problems (fail/warn/error) that appeared or
 cleared between two polls, newest first — the reports themselves are owned by their resource and carry
 no history.
