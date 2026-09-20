@@ -1,0 +1,805 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cluster Configurations — OCP Access Tracking Dashboard</title>
+<script>
+(function () {
+  var html = document.documentElement, query = new URLSearchParams(location.search);
+  function pick(param, key, allowed) {
+    var v = query.get(param) || "";
+    if (allowed.indexOf(v) < 0) {
+      try { v = localStorage.getItem(key) || ""; } catch (e) { v = ""; }
+    }
+    return allowed.indexOf(v) >= 0 ? v : "";
+  }
+  var mode = pick("mode", "gsd-mode", ["light", "dark"]);
+  var palette = pick("theme", "gsd-palette", ["deuter", "protan", "trit", "contrast"]);
+  if (mode) html.setAttribute("data-theme", mode);
+  if (palette) html.setAttribute("data-palette", palette);
+})();
+</script>
+<style>
+:root {
+  color-scheme: light;
+  --surface-1: #fcfcfb;
+  --page: #f9f9f7;
+  --page-2: #eef0f4;
+  --text-primary: #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted: #6a6863;
+  --gridline: #e1e0d9;
+  --baseline: #c3c2b7;
+  --border: rgba(11, 11, 11, 0.10);
+  --series-1: #2874d0;
+  --drill-text: #1a65bb;
+  --series-1-wash: color-mix(in srgb, var(--series-1) 10%, transparent);
+  --status-good: #097d09;
+  --status-warning: #c48704;
+  --status-critical: #c43838;
+  --status-unknown: #74726d;
+  --zebra: rgba(11, 11, 11, 0.025);
+  --tab-home: #3d5a80;
+  --tab-overview: #2873cd;
+  --tab-groups: #108172;
+  --tab-bindings: #6d4bc7;
+  --tab-policy: #9333ea;
+  --tab-nsaudit: #b3306e;
+  --tab-users: #0e7490;
+  --tab-logins: #597b0a;
+  --tab-usage: #c2410c;
+  --tab-reports: #5b6470;
+  --tab-kpi: #4a55a3;
+  --tab-kyverno: #0b6e7a;
+  --tab-library: #7a2468;
+  /* Cluster Configurations: bronze, hue ~27. 8.90:1 on --page #f9f9f7; apart from --tab-usage #c2410c (hue 17) on lightness. */
+  --tab-clusters: #6b3a12;
+  --k-access: #4f6b57; --k-rbac: #8a5a3c; --k-identity: #4a5c7a; --k-activity: #7a5170; --k-compliance: #6a6440;
+  --accent: var(--tab-clusters);
+  --font-ui: "Space Grotesk", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --text-micro: 10px; --text-xs: 11px; --text-sm: 12px; --text-md: 13px;
+  --text-base: 14px; --text-lg: 15px; --text-xl: 18px;
+  --space-1: 2px; --space-2: 4px; --space-3: 6px; --space-4: 8px; --space-5: 10px;
+  --space-6: 12px; --space-7: 14px; --space-8: 16px; --space-9: 18px; --space-10: 20px;
+  --radius-xs: 2px; --radius-sm: 4px; --radius-md: 6px; --radius-lg: 10px;
+  --radius-pill: 999px; --radius-round: 50%;
+  --elev-1: 0 1px 2px rgba(11,11,11,0.05), 0 1px 8px rgba(11,11,11,0.04);
+  --warn: #ae5009;
+}
+@media screen and (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --surface-1: #1a1a19;
+    --page: #0d0d0d;
+    --page-2: #14161c;
+    --text-primary: #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted: #918f89;
+    --gridline: #2c2c2a;
+    --baseline: #383835;
+    --border: rgba(255, 255, 255, 0.10);
+    --series-1: #3987e5;
+    --drill-text: #4b97ed;
+    --series-1-wash: color-mix(in srgb, var(--series-1) 14%, transparent);
+    --status-critical: #db6f6f;
+    --status-good: #14a614;
+    --status-unknown: #898781;
+    --zebra: rgba(255, 255, 255, 0.035);
+    --warn: #c48704;
+    --tab-home: #8fb3dd;
+    --tab-overview: #2d7ad7;
+    --tab-groups: #12907f;
+    --tab-bindings: #8468d0;
+    --tab-policy: #a855f7;
+    --tab-nsaudit: #e0559a;
+    --tab-users: #22a5c9;
+    --tab-logins: #678e0b;
+    --tab-usage: #d9490d;
+    --tab-reports: #98a2b3;
+    --tab-kpi: #9aa3e6;
+    --tab-kyverno: #5cc4cf;
+    --tab-library: #d489c0;
+    --tab-clusters: #e0a060; /* 8.67:1 on dark --page #0d0d0d */
+    --k-access: #7fae8b; --k-rbac: #c8946a; --k-identity: #8ea3c8; --k-activity: #c090b4; --k-compliance: #b3aa72;
+    --elev-1: 0 1px 2px rgba(0,0,0,0.5), 0 1px 10px rgba(0,0,0,0.35);
+  }
+}
+@media screen {
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --surface-1: #1a1a19;
+  --page: #0d0d0d;
+  --page-2: #14161c;
+  --text-primary: #ffffff;
+  --text-secondary: #c3c2b7;
+  --text-muted: #918f89;
+  --gridline: #2c2c2a;
+  --baseline: #383835;
+  --border: rgba(255, 255, 255, 0.10);
+  --series-1: #3987e5;
+  --drill-text: #4b97ed;
+  --series-1-wash: color-mix(in srgb, var(--series-1) 14%, transparent);
+  --status-critical: #db6f6f;
+  --status-good: #14a614;
+  --status-unknown: #898781;
+  --zebra: rgba(255, 255, 255, 0.035);
+  --warn: #c48704;
+  --tab-home: #8fb3dd;
+  --tab-overview: #2d7ad7;
+  --tab-groups: #12907f;
+  --tab-bindings: #8468d0;
+  --tab-policy: #a855f7;
+  --tab-nsaudit: #e0559a;
+  --tab-users: #22a5c9;
+  --tab-logins: #678e0b;
+  --tab-usage: #d9490d;
+  --tab-reports: #98a2b3;
+  --tab-kpi: #9aa3e6;
+  --tab-kyverno: #5cc4cf;
+  --tab-library: #d489c0;
+  --tab-clusters: #e0a060;
+  --k-access: #7fae8b; --k-rbac: #c8946a; --k-identity: #8ea3c8; --k-activity: #c090b4; --k-compliance: #b3aa72;
+  --elev-1: 0 1px 2px rgba(0,0,0,0.5), 0 1px 10px rgba(0,0,0,0.35);
+}
+}
+:root[data-palette="deuter"], :root[data-palette="protan"] {
+  --status-good: #0071af; --status-warning: #c18600; --status-critical: #b24e00; --warn: #906300;
+}
+:root[data-palette="trit"] {
+  --status-good: #007b5a; --status-warning: #cb76a5; --status-critical: #b24e00; --warn: #94597a;
+}
+:root[data-palette="contrast"] {
+  --status-good: #076607; --status-warning: #9c6b03; --status-critical: #a42727; --text-muted: #575551;
+}
+* { box-sizing: border-box; }
+html, body { max-width: 100%; overflow-x: hidden; }
+body {
+  --accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);
+  margin: 0;
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: var(--text-base);
+  line-height: 1.5;
+  background:
+    radial-gradient(1200px 520px at 50% -12%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 70%),
+    linear-gradient(180deg, var(--page-2), var(--page) 420px);
+  background-attachment: fixed;
+  background-color: var(--page);
+  min-height: 100dvh;
+}
+body[data-page="clusters"] { --accent: var(--tab-clusters); }
+.wrap { max-width: 1180px; margin: 0 auto; padding: var(--space-10) var(--space-10) 64px; min-width: 0; }
+.skip { position: absolute; left: -9999px; }
+.skip:focus { left: var(--space-10); top: var(--space-10); z-index: 40; background: var(--surface-1); padding: var(--space-3) var(--space-5); }
+header.top {
+  display: flex; align-items: baseline; gap: var(--space-6); flex-wrap: wrap;
+  padding-bottom: var(--space-7); border-bottom: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
+  margin-bottom: var(--space-6);
+}
+header.top h1 { font-size: var(--text-xl); margin: 0; letter-spacing: -0.01em; }
+header.top .sub { color: var(--text-muted); font-size: var(--text-sm); }
+header.top .spacer { flex: 1; }
+.shell-prefs { display: inline-flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+.shell-prefs .pref { display: inline-flex; align-items: center; gap: var(--space-3); }
+.shell-prefs label { color: var(--text-secondary); font-size: var(--text-sm); }
+@media (max-width: 520px) {
+  .shell-prefs .pref { flex-direction: column; align-items: flex-start; gap: 0; }
+}
+select, button, a.btn, input, textarea {
+  font: inherit; font-size: var(--text-md); color: var(--text-primary);
+  background: var(--surface-1); border: 1px solid var(--border);
+  border-radius: var(--radius-md); padding: 5px 9px; cursor: pointer;
+  max-width: 100%;
+}
+input, textarea { cursor: text; width: 100%; }
+textarea { font-family: var(--font-mono); resize: vertical; min-height: 4.5em; overflow-wrap: anywhere; }
+button:hover, select:hover, a.btn:hover { border-color: var(--baseline); }
+a.btn { text-decoration: none; display: inline-block; }
+.tabs { display: inline-flex; gap: var(--space-2); flex-wrap: wrap; max-width: 100%; }
+.tab {
+  position: relative;
+  background: none; border: 0; border-radius: var(--radius-md) var(--radius-md) 0 0;
+  padding: 7px var(--space-6) 9px; font-size: var(--text-md); font-weight: 500;
+  color: var(--text-secondary); cursor: default;
+  transition: color 160ms ease, background-color 160ms ease;
+}
+.tab:hover { color: var(--text-primary); background: var(--zebra); }
+.tab[aria-current="page"] { color: var(--accent); font-weight: 700; }
+.tab[aria-current="page"]::after {
+  content: ""; position: absolute; left: 8px; right: 8px; bottom: 0; height: 3px;
+  background: var(--accent); border-radius: 3px 3px 0 0;
+}
+@media (forced-colors: active) {
+  .tab[aria-current="page"]::after { background: Highlight; forced-color-adjust: none; }
+}
+.card {
+  background: var(--surface-1); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); padding: var(--space-8); margin-bottom: var(--space-7);
+  box-shadow: var(--elev-1); min-width: 0; max-width: 100%;
+}
+main > .card:first-child { border-top: 2px solid color-mix(in srgb, var(--accent) 55%, transparent); }
+.card > h2, .card > h3 { font-family: var(--font-ui); letter-spacing: -0.01em; margin: 0 0 var(--space-4); }
+.card > h2 { font-size: var(--text-lg); }
+.card > h3 { font-size: var(--text-md); color: var(--text-secondary); }
+.card > h2::before, .card > h3::before {
+  content: ""; display: inline-block; vertical-align: middle;
+  width: 3px; height: 0.95em; margin-right: var(--space-4); border-radius: var(--radius-xs);
+  background: var(--rk, var(--accent));
+}
+.badge {
+  display: inline-flex; align-items: center; gap: var(--space-3);
+  font-size: var(--text-sm); font-weight: 500; color: var(--text-primary);
+  border: 1px solid var(--border); border-radius: var(--radius-pill); padding: 2px 9px 2px 7px;
+  white-space: nowrap;
+}
+.badge .glyph { width: 9px; height: 9px; flex: none; display: inline-block; }
+.badge.ok .glyph { background: var(--status-good); border-radius: var(--radius-round); }
+.badge.warning .glyph { background: var(--status-warning); clip-path: polygon(50% 0, 100% 100%, 0 100%); }
+.badge.critical .glyph { background: var(--status-critical); border-radius: 1px; }
+.badge.unknown .glyph { border: 1.5px solid var(--status-unknown); border-radius: var(--radius-round); background: none; }
+.muted { color: var(--text-muted); }
+.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.empty-note { color: var(--text-muted); font-size: var(--text-md); padding: var(--space-5) 0; }
+.filterbar-note { font-size: var(--text-sm); color: var(--text-muted); overflow-wrap: anywhere; }
+.linkish {
+  background: none; border: 0; padding: 0; cursor: pointer;
+  font: inherit; font-size: var(--text-sm); color: var(--drill-text); text-decoration: underline;
+}
+.linkish:hover { color: var(--text-primary); }
+.err { color: var(--status-critical); overflow-wrap: anywhere; }
+.rp-chip {
+  display: inline-block; font-family: var(--font-mono); font-size: var(--text-micro); font-weight: 500;
+  letter-spacing: .02em; padding: var(--space-1) var(--space-4); border-radius: 5px;
+  border: 1px solid currentColor; white-space: normal; overflow-wrap: anywhere; max-width: 100%;
+}
+.rp-chip.src-values { color: var(--k-rbac); }
+.rp-chip.src-secret { color: var(--k-identity); }
+.rp-chip.src-in-cluster { color: var(--k-access); }
+.rp-count { font-weight: 400; margin-left: var(--space-3); vertical-align: middle; color: var(--text-muted); border-color: var(--border); }
+.chips { display: flex; flex-wrap: wrap; gap: var(--space-3); min-width: 0; }
+.ns-controls { display: flex; align-items: center; gap: var(--space-4); flex-wrap: wrap; margin-bottom: var(--space-5); }
+.ns-controls label { font-size: var(--text-sm); color: var(--text-secondary); }
+.row-wrap { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-4); }
+.grow { flex: 1; min-width: 0; }
+.kv { display: grid; grid-template-columns: minmax(88px, 34%) 1fr; gap: var(--space-3) var(--space-5);
+  padding: var(--space-3) 0; border-bottom: 1px solid var(--gridline); font-size: var(--text-sm); min-width: 0; }
+.kv .k { color: var(--text-muted); font-size: var(--text-xs); letter-spacing: .04em; text-transform: uppercase; overflow-wrap: anywhere; min-width: 0; }
+.kv .v { overflow-wrap: anywhere; min-width: 0; }
+.btn-acc { background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 600; }
+.shape-ex {
+  margin-top: var(--space-7); padding: var(--space-5) var(--space-6);
+  border: 1px dashed var(--border); border-radius: var(--radius-md);
+  background: var(--zebra); opacity: 0.86;
+}
+.shape-ex > .card { margin-bottom: 0; box-shadow: none; }
+.field { display: flex; flex-direction: column; gap: var(--space-2); margin: 0 0 var(--space-6); min-width: 0; }
+.field > span.lbl, .field > label { font-size: var(--text-sm); color: var(--text-secondary); }
+.hint { font-size: var(--text-sm); color: var(--text-muted); overflow-wrap: anywhere; }
+.choices { display: flex; flex-direction: column; gap: var(--space-3); }
+.choice { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--space-3); min-width: 0; }
+.choice input { width: auto; flex: none; }
+.warn-box {
+  margin-top: var(--space-3); padding: var(--space-5) var(--space-6);
+  border-left: 3px solid var(--status-warning);
+  background: color-mix(in srgb, var(--status-warning) 8%, transparent);
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  font-size: var(--text-md); color: var(--text-secondary); overflow-wrap: anywhere;
+}
+.warn-box strong { color: var(--text-primary); }
+.add-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-7); min-width: 0; }
+@media (min-width: 900px) {
+  .add-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+}
+.yaml-pane { min-width: 0; }
+.yaml {
+  font-family: var(--font-mono); font-size: var(--text-sm); white-space: pre-wrap;
+  overflow-wrap: anywhere; word-break: break-word; margin: 0; max-width: 100%;
+  background: var(--zebra); border: 1px solid var(--border); border-radius: var(--radius-md);
+  padding: var(--space-6);
+}
+.acts { display: flex; flex-wrap: wrap; gap: var(--space-4); margin-top: var(--space-4); }
+.foot { margin-top: var(--space-5); font-size: var(--text-sm); color: var(--text-secondary); overflow-wrap: anywhere; }
+.consq { font-size: var(--text-sm); color: var(--text-secondary); margin-top: var(--space-3); overflow-wrap: anywhere; }
+h2 .chips { display: inline-flex; vertical-align: middle; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition-duration: 0.01ms !important; }
+}
+:where(button, a, select, input, textarea):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+</style>
+</head>
+<body data-page="clusters">
+<a class="skip" href="#main">Skip to main content</a>
+<div class="wrap">
+  <header class="top">
+    <h1>OCP Access Tracking Dashboard</h1>
+    <span class="sub">crc-local</span>
+    <span class="spacer"></span>
+    <span class="shell-prefs">
+      <span class="pref"><label for="pref-mode">Appearance</label>
+        <select id="pref-mode">
+          <option value="">Auto</option>
+          <option value="light">Light</option>
+          <option value="dark">Dark</option>
+        </select>
+      </span>
+      <span class="pref"><label for="pref-palette">Colours</label>
+        <select id="pref-palette">
+          <option value="">Default</option>
+          <option value="deuter">Deuteranopia-safe</option>
+          <option value="protan">Protanopia-safe</option>
+          <option value="trit">Tritanopia-safe</option>
+          <option value="contrast">High contrast</option>
+        </select>
+      </span>
+    </span>
+  </header>
+  <!-- Tab strip: live app order (index.html 1070–1085) + Library (#229) + Cluster Configurations current. -->
+  <nav class="tabs" aria-label="Dashboard sections" id="tabs"></nav>
+  <main id="main"></main>
+</div>
+
+<script type="application/json" id="api-clusters-json">[{"id":"crc-local","api_url":"https://kubernetes.default.svc","enabled":true,"reachable":true,"status":"ok","last_poll":"2026-09-20T15:04:12Z","error":null,"groupsync_count":3,"groupsync_operator_present":true,"group_count":62,"empty_groups":0,"unattributed_groups":0,"oldest_last_sync":"2026-09-20T14:00:01Z","operator_configs":{"total":6,"failing":0},"visibility":{"policy":"inherit","scope":"all"},"dangling_bindings":0,"unresolved_bindings":6,"builtin_bindings":155}]</script>
+<script type="application/json" id="crc-values-yaml">"clusters:\n  - name: crc-local\n    apiUrl: https://kubernetes.default.svc\n    tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token\n    caBundleFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt\n    enabled: true\n  - name: mock\n    apiUrl: https://mock-openshift:6443\n    tokenFile: /etc/gsd/mock/token\n    caBundleFile: /etc/gsd/mock/ca.crt\n    enabled: true\n    # The mock is a demo cluster whose fixture makes kubeadmin cluster-admin and developer an editor.\n    # A second cluster defaults to self-only/identity:none — the chart never ASSUMES a host identity\n    # means the same thing elsewhere. Here we STATE it: a host-authenticated reader is the same identity\n    # on the mock, so their tier is computed by SAR (not forced to self), and the admin tabs render.\n    visibility: inherit\n    identity: same-as-host\n"</script>
+<script type="application/json" id="ns-secrets-json">[{"name":"builder-dockercfg-9ksbw","type":"kubernetes.io/dockercfg","labels":null,"keys":[".dockercfg"]},{"name":"default-dockercfg-ss7kk","type":"kubernetes.io/dockercfg","labels":null,"keys":[".dockercfg"]},{"name":"deployer-dockercfg-xdxp2","type":"kubernetes.io/dockercfg","labels":null,"keys":[".dockercfg"]},{"name":"grafana-openshift-grafana-admin","type":"Opaque","labels":null,"keys":["GF_SECURITY_ADMIN_PASSWORD","GF_SECURITY_ADMIN_USER"]},{"name":"grafana-openshift-grafana-csv-reclaim-dockercfg-g9kg4","type":"kubernetes.io/dockercfg","labels":null,"keys":[".dockercfg"]},{"name":"grafana-openshift-grafana-installplan-approver-dockercfg-zkhmg","type":"kubernetes.io/dockercfg","labels":null,"keys":[".dockercfg"]},{"name":"grafana-openshift-grafana-oauth-cookie","type":"Opaque","labels":null,"keys":["session_secret"]},{"name":"grafana-openshift-grafana-proxy-tls","type":"kubernetes.io/tls","labels":null,"keys":["tls.crt","tls.key"]},{"name":"grafana-openshift-grafana-sa-dockercfg-h74rd","type":"kubernetes.io/dockercfg","labels":null,"keys":[".dockercfg"]},{"name":"grafana-openshift-grafana-secrets-dockercfg-7dj2w","type":"kubernetes.io/dockercfg","labels":null,"keys":[".dockercfg"]},{"name":"grafana-openshift-grafana-thanos-dockercfg-cs26s","type":"kubernetes.io/dockercfg","labels":null,"keys":[".dockercfg"]},{"name":"grafana-openshift-grafana-thanos-token","type":"kubernetes.io/service-account-token","labels":{"app.kubernetes.io/instance":"grafana","app.kubernetes.io/managed-by":"Helm","app.kubernetes.io/name":"openshift-grafana","app.kubernetes.io/version":"5.24.0","helm.sh/chart":"openshift-grafana-0.2.1","kubernetes.io/legacy-token-last-used":"2026-09-20"},"keys":["ca.crt","namespace","service-ca.crt","token"]},{"name":"grafana-openshift-grafana-wait-dockercfg-lkr95","type":"kubernetes.io/dockercfg","labels":null,"keys":[".dockercfg"]},{"name":"grafana-operator-controller-manager-dockercfg-9zdk8","type":"kubernetes.io/dockercfg","labels":null,"keys":[".dockercfg"]},{"name":"group-sync-dashboard-dockercfg-bmgpv","type":"kubernetes.io/dockercfg","labels":null,"keys":[".dockercfg"]},{"name":"group-sync-dashboard-oauth-session","type":"Opaque","labels":null,"keys":["session_secret"]},{"name":"group-sync-dashboard-report-dockercfg-4wlc8","type":"kubernetes.io/dockercfg","labels":null,"keys":[".dockercfg"]},{"name":"group-sync-dashboard-report-shared-token","type":"Opaque","labels":null,"keys":["token"]},{"name":"group-sync-dashboard-report-tls","type":"kubernetes.io/tls","labels":null,"keys":["tls.crt","tls.key"]},{"name":"group-sync-dashboard-secrets-mint-dockercfg-cvb46","type":"kubernetes.io/dockercfg","labels":null,"keys":[".dockercfg"]},{"name":"group-sync-dashboard-tls","type":"kubernetes.io/tls","labels":null,"keys":["tls.crt","tls.key"]},{"name":"mock-ca","type":"kubernetes.io/tls","labels":{"controller.cert-manager.io/fao":"true"},"keys":["ca.crt","tls.crt","tls.key"]},{"name":"mock-cluster-creds","type":"Opaque","labels":null,"keys":["ca.crt","token"]},{"name":"mock-tls","type":"kubernetes.io/tls","labels":{"controller.cert-manager.io/fao":"true"},"keys":["ca.crt","tls.crt","tls.key"]}]</script>
+<script type="application/json" id="clusterconfigs-json">{"namespace":"group-sync-dashboard","findings":[],"clusters":[{"name":"crc-local","server":"https://kubernetes.default.svc","source":"in-cluster","labels":{},"credential":{"kind":"serviceAccount","set":true},"tls":{"insecure":false,"ca":"serviceAccount"},"visibility":"inherit","identity":"same-as-host","enabled":true,"connection":{"status":"ok","last_poll":"2026-09-20T15:04:12Z","error":null}},{"name":"mock","server":"https://mock-openshift:6443","source":"values","labels":{},"credential":{"kind":"bearerToken","set":true},"tls":{"insecure":false,"ca":"caData"},"visibility":"inherit","identity":"same-as-host","enabled":true,"connection":{"status":"never","last_poll":null,"error":"the Argo Application overrides the list to crc-local alone"}}]}</script>
+<script type="application/json" id="shape-examples-json">{"cluster":{"name":"ocp-east","server":"https://api.ocp-east.example.com:6443","source":"secret:gsd-cluster-ocp-east","labels":{"groupsync-dashboard.io/secret-type":"cluster","environment":"prod"},"credential":{"kind":"bearerToken","set":true},"tls":{"insecure":false,"ca":"caData"},"visibility":"self-only","identity":"none","enabled":true,"connection":{"status":"never","last_poll":null,"error":null}},"finding":{"secret":"gsd-cluster-example-malformed","field":"config.execProviderConfig","message":"refused: execProviderConfig is not a supported config key","observed_at":"2026-09-20T15:04:12Z"}}</script>
+<script>
+(function () {
+  const CONFIG = JSON.parse(document.getElementById("clusterconfigs-json").textContent);
+  const SHAPE = JSON.parse(document.getElementById("shape-examples-json").textContent);
+  const LIVE = JSON.parse(document.getElementById("api-clusters-json").textContent);
+  const SECRETS = JSON.parse(document.getElementById("ns-secrets-json").textContent);
+  const VALUES_YAML = JSON.parse(document.getElementById("crc-values-yaml").textContent);
+  const SELECTOR = "groupsync-dashboard.io/secret-type=cluster";
+  const MEANS_NEVER = "never polled — there are no counts yet, which is not the same as zero";
+  const VIS_MEAN = {
+    inherit: "the host's tier decides",
+    "self-only": "nobody is wide on this cluster",
+    hidden: "polled and alerted on, never served through /api (404 like an unknown id)"
+  };
+  const ID_MEAN = {
+    none: "fails closed: person-scoped views answer 403 there, cluster health still shows",
+    "same-as-host": "the host's username is the same person on this cluster (clusters share an identity provider)"
+  };
+  const TABS = [
+    ["home", "Home"], ["overview", "Overview"], ["kpi", "KPIs"], ["groups", "Groups"],
+    ["users", "Users"], ["bindings", "Access granted"], ["policy", "RBAC policy"],
+    ["kyverno", "Kyverno"], ["nsaudit", "Namespace audit"], ["logins", "Logins"],
+    ["usage", "Usage"], ["reports", "Reports"], ["library", "Library"],
+    ["clusters", "Cluster Configurations"]
+  ];
+  const formLabels = {};
+  const esc = function (s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+      return ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c];
+    });
+  };
+  function badge(shape, word) {
+    return '<span class="badge ' + shape + '"><span class="glyph" aria-hidden="true"></span>' + esc(word) + "</span>";
+  }
+  function sourceKind(src) {
+    if (src === "in-cluster") return "in-cluster";
+    if (src === "values") return "values";
+    if (String(src).indexOf("secret:") === 0) return "secret";
+    return "values";
+  }
+  function sourceChip(src) {
+    const kind = sourceKind(src);
+    const word = kind === "secret" ? "Secret " + src.slice(7) : src;
+    return '<span class="rp-chip src-' + kind + '">' + esc(word) + "</span>";
+  }
+  function tokenFileFor(name) {
+    const parts = VALUES_YAML.split(/\n\s*-\s+name:\s+/);
+    for (let i = 1; i < parts.length; i += 1) {
+      if (parts[i].indexOf(name) === 0) {
+        const m = parts[i].match(/tokenFile:\s+(\S+)/);
+        return m ? m[1] : "";
+      }
+    }
+    return "";
+  }
+  function labelChips(labels) {
+    const keys = labels ? Object.keys(labels) : [];
+    if (!keys.length) return '<span class="muted">none</span>';
+    return '<span class="chips">' + keys.map(function (k) {
+      return '<span class="rp-chip">' + esc(k + "=" + labels[k]) + "</span>";
+    }).join("") + "</span>";
+  }
+  function connBadge(conn) {
+    const st = conn && conn.status;
+    if (st === "ok") return badge("ok", "ok");
+    if (st === "error") return badge("critical", "error");
+    return badge("unknown", "never");
+  }
+  function isSecret(c) { return sourceKind(c.source) === "secret"; }
+  function clusterCard(c, opts) {
+    const o = opts || {};
+    const cred = c.credential || {};
+    const tls = c.tls || {};
+    const conn = c.connection || {};
+    const path = tokenFileFor(c.name);
+    let credV = esc(cred.kind || "") + " " + (cred.set ? badge("ok", "set") : badge("unknown", "unset"));
+    if (isSecret(c)) {
+      credV += ' <button type="button" class="linkish" data-rotate="' + esc(c.name) + '">Rotate</button>';
+      credV += '<div hidden data-rotate-panel="' + esc(c.name) + '">' +
+        '<label for="rotate-' + esc(c.name) + '">New bearer token</label>' +
+        '<input id="rotate-' + esc(c.name) + '" type="password" autocomplete="new-password">' +
+        '<div class="acts"><button type="button" class="btn" data-rotate-go="' + esc(c.name) + '">Overwrite token</button></div>' +
+        '<p class="filterbar-note" data-rotate-msg="' + esc(c.name) + '"></p></div>';
+    } else if (c.source === "in-cluster") {
+      credV += ' <span class="hint">read-only — the pod\'s own ServiceAccount' +
+        (path ? ' (<span class="mono">' + esc(path) + "</span>)" : "") + "</span>";
+    } else {
+      credV += ' <span class="hint">read-only — declared in the chart\'s values' +
+        (path ? ' (<span class="mono">' + esc(path) + "</span>)" : "") + "</span>";
+    }
+    const tlsWord = tls.insecure
+      ? badge("warning", "insecure")
+      : badge("ok", "verified") + ' <span class="mono">ca: ' + esc(tls.ca || "") + "</span>";
+    const vis = '<span class="rp-chip">' + esc(c.visibility) + "</span> <span class='hint'>" + esc(VIS_MEAN[c.visibility] || "") + "</span>";
+    const ident = '<span class="rp-chip">' + esc(c.identity) + "</span> <span class='hint'>" + esc(ID_MEAN[c.identity] || "") + "</span>";
+    let connV = connBadge(conn);
+    if (conn.status === "ok") connV += " reachable";
+    connV += ' <span class="mono">' + esc(conn.last_poll || "never") + "</span>";
+    if (conn.error) connV += '<div class="err">' + esc(conn.error) + "</div>";
+    if (conn.status === "never") connV += '<div class="consq">' + esc(MEANS_NEVER) + "</div>";
+    let foot = "";
+    if (isSecret(c)) {
+      foot = '<div class="acts"><button type="button" class="btn" data-delete="' + esc(c.name) + '">Delete</button>' +
+        '<span class="hint" data-delete-msg="' + esc(c.name) + '"></span></div>';
+    } else if (c.source === "values") {
+      foot = '<div class="foot">declared in the chart\'s values — remove it there</div>';
+    } else {
+      foot = '<div class="foot">the pod\'s own in-cluster ServiceAccount — not a Secret</div>';
+    }
+    return '<article class="card" id="cluster-' + esc(c.name) + '">' +
+      '<div class="row-wrap"><h2>' + esc(c.name) + " " + sourceChip(c.source) + " " +
+        badge(c.enabled ? "ok" : "unknown", c.enabled ? "enabled" : "disabled") +
+      '</h2></div>' +
+      '<div class="kv"><span class="k">server</span><span class="v mono">' + esc(c.server) + "</span></div>" +
+      '<div class="kv"><span class="k">credential</span><span class="v">' + credV + "</span></div>" +
+      '<div class="kv"><span class="k">tls</span><span class="v">' + tlsWord + "</span></div>" +
+      '<div class="kv"><span class="k">labels</span><span class="v">' + labelChips(c.labels) + "</span></div>" +
+      '<div class="kv"><span class="k">visibility</span><span class="v">' + vis + "</span></div>" +
+      '<div class="kv"><span class="k">identity</span><span class="v">' + ident + "</span></div>" +
+      '<div class="kv"><span class="k">connection</span><span class="v">' + connV + "</span></div>" +
+      foot + "</article>";
+  }
+  function sourceCounts(list) {
+    const n = { values: 0, secret: 0, "in-cluster": 0 };
+    list.forEach(function (c) { n[sourceKind(c.source)] += 1; });
+    return n;
+  }
+  function labelledSecretCount() {
+    return SECRETS.filter(function (s) {
+      return s.labels && s.labels["groupsync-dashboard.io/secret-type"] === "cluster";
+    }).length;
+  }
+  function findingRow(f) {
+    return '<article class="card">' +
+      '<div class="kv"><span class="k">secret</span><span class="v mono">' + esc(f.secret) + "</span></div>" +
+      '<div class="kv"><span class="k">field</span><span class="v mono">' + esc(f.field) + "</span></div>" +
+      '<div class="kv"><span class="k">message</span><span class="v">' + esc(f.message) + "</span></div>" +
+      '<div class="kv"><span class="k">observed</span><span class="v mono">' + esc(f.observed_at) + "</span></div>" +
+      "</article>";
+  }
+  function yamlFromForm() {
+    const name = (document.getElementById("add-name") || {}).value || "<name>";
+    const server = (document.getElementById("add-server") || {}).value || "";
+    const vis = (document.getElementById("add-visibility") || {}).value || "self-only";
+    const ident = (document.getElementById("add-identity") || {}).value || "none";
+    const caMode = (document.querySelector('input[name="add-ca-mode"]:checked') || {}).value || "pem";
+    const tls = { insecure: caMode === "insecure" };
+    if (caMode === "pem") tls.caData = "<redacted>";
+    const cfg = { bearerToken: "<redacted>", tlsClientConfig: tls };
+    const labs = ["    groupsync-dashboard.io/secret-type: cluster"];
+    Object.keys(formLabels).forEach(function (k) {
+      labs.push("    " + k + ": " + formLabels[k]);
+    });
+    const lines = [
+      "apiVersion: v1",
+      "kind: Secret",
+      "metadata:",
+      "  name: gsd-cluster-" + name,
+      "  namespace: " + CONFIG.namespace,
+      "  labels:",
+      labs.join("\n"),
+      "  annotations:",
+      "    groupsync-dashboard.io/managed-by: ui",
+      "type: Opaque",
+      "stringData:",
+      "  name: " + name,
+      "  server: " + server,
+      "  config: |",
+      "    " + JSON.stringify(cfg),
+      "  visibility: " + vis,
+      "  identity: " + ident,
+      '  enabled: "true"'
+    ];
+    return lines.join("\n");
+  }
+  function refreshYaml() {
+    const pre = document.getElementById("yaml-preview");
+    if (pre) pre.textContent = yamlFromForm();
+  }
+  function refreshCa() {
+    const mode = (document.querySelector('input[name="add-ca-mode"]:checked') || {}).value;
+    const pem = document.getElementById("add-ca-pem-wrap");
+    const warn = document.getElementById("add-ca-insecure-warn");
+    const bundle = document.getElementById("add-ca-bundle-note");
+    if (pem) pem.hidden = mode !== "pem";
+    if (warn) warn.hidden = mode !== "insecure";
+    if (bundle) bundle.hidden = mode !== "bundle";
+    refreshYaml();
+  }
+  function refreshLabelChips() {
+    const box = document.getElementById("add-label-chips");
+    if (!box) return;
+    const keys = Object.keys(formLabels);
+    box.innerHTML = keys.length
+      ? keys.map(function (k) {
+          return '<span class="rp-chip">' + esc(k + "=" + formLabels[k]) +
+            ' <button type="button" class="linkish" data-drop-label="' + esc(k) + '">remove</button></span>';
+        }).join("")
+      : '<span class="muted">none</span>';
+    box.querySelectorAll("[data-drop-label]").forEach(function (b) {
+      b.addEventListener("click", function () {
+        delete formLabels[b.getAttribute("data-drop-label")];
+        refreshLabelChips();
+        refreshYaml();
+      });
+    });
+  }
+  function headHtml() {
+    const n = sourceCounts(CONFIG.clusters);
+    const match = labelledSecretCount();
+    return '<section class="card" id="head">' +
+      "<h2>Cluster Configurations " +
+        '<span class="rp-chip rp-count">' + CONFIG.clusters.length + " cluster" + (CONFIG.clusters.length === 1 ? "" : "s") + "</span></h2>" +
+      '<div class="filterbar-note">Every cluster the dashboard reads, and where its configuration came from — a card per object in <code>clusters[]</code>, the lab\'s live set. Administrator tier.</div>' +
+      '<div class="kv"><span class="k">namespace</span><span class="v mono">' + esc(CONFIG.namespace) + "</span></div>" +
+      '<div class="kv"><span class="k">selector</span><span class="v"><code class="mono">' + esc(SELECTOR) + "</code></span></div>" +
+      '<div class="kv"><span class="k">by source</span><span class="v chips">' +
+        '<span class="rp-chip src-in-cluster">in-cluster ' + n["in-cluster"] + "</span>" +
+        '<span class="rp-chip src-values">values ' + n.values + "</span>" +
+        '<span class="rp-chip src-secret">Secret ' + n.secret + "</span></span></div>" +
+      '<div class="kv"><span class="k">secrets here</span><span class="v">' +
+        SECRETS.length + " in the namespace · " + match + " carry the discovery label</span></div>" +
+      '<div class="ns-controls"><a class="btn btn-acc" id="add-cluster-jump" href="#add-cluster">Add cluster</a></div>' +
+      "</section>";
+  }
+  function clustersHtml() {
+    const rows = CONFIG.clusters.map(function (c) { return clusterCard(c, {}); }).join("");
+    return rows +
+      '<aside class="shape-ex" id="shape-cluster">' +
+        '<p class="filterbar-note"><strong>Shape example — a Secret-sourced cluster.</strong> Not live; the lab has no Secret carrying <code>groupsync-dashboard.io/secret-type</code>. This is the issue §1 object <span class="mono">gsd-cluster-ocp-east</span>.</p>' +
+        clusterCard(SHAPE.cluster, { shape: true }) +
+      "</aside>";
+  }
+  function findingsHtml() {
+    const live = (CONFIG.findings || []).map(findingRow).join("") ||
+      '<div class="empty-note">No malformed Secrets. A Secret that fails to parse is a finding with the field named, never a crashed pod.</div>';
+    return '<section class="card" id="findings"><h2>Findings</h2>' + live +
+      '<aside class="shape-ex">' +
+        '<p class="filterbar-note"><strong>Shape example — a malformed Secret.</strong> Not live. <code>observed_at</code> reuses crc-local\'s <code>last_poll</code> so this block invents no stamp.</p>' +
+        findingRow(SHAPE.finding) +
+      "</aside></section>";
+  }
+  function addHtml() {
+    return '<section class="card" id="add-cluster"><h2>Add cluster</h2>' +
+      '<div class="filterbar-note">Writes a labelled Secret in <span class="mono">' + esc(CONFIG.namespace) +
+      "</span>. The same object from the UI or from a repository — GitOps parity.</div>" +
+      '<div class="add-grid"><form id="add-form" novalidate>' +
+        '<div class="field"><label for="add-name">Name</label>' +
+          '<input id="add-name" name="add-name" autocomplete="off" required>' +
+          '<span class="hint">cluster id the dashboard shows and keys on. Secret name becomes <span class="mono">gsd-cluster-&lt;name&gt;</span>.</span></div>' +
+        '<div class="field"><label for="add-server">Server</label>' +
+          '<input id="add-server" name="add-server" autocomplete="off" inputmode="url" required></div>' +
+        '<div class="field"><span class="lbl">Credential kind</span>' +
+          '<div class="choices">' +
+            '<label class="choice" for="add-cred-kind-bearer"><input type="radio" name="add-cred-kind" id="add-cred-kind-bearer" value="bearerToken" checked> bearer token</label>' +
+            '<label class="choice" for="add-cred-kind-oauth"><input type="radio" name="add-cred-kind" id="add-cred-kind-oauth" value="oauth" disabled> username + password</label>' +
+          "</div>" +
+          '<p class="hint" id="add-oauth-reason">the password-for-token exchange is #119 P2, not built yet</p>' +
+          '<label for="add-token">Bearer token</label>' +
+          '<input id="add-token" name="add-token" type="password" autocomplete="new-password">' +
+          '<label for="add-oauth-user">Username</label>' +
+          '<input id="add-oauth-user" name="add-oauth-user" disabled>' +
+          '<label for="add-oauth-password">Password</label>' +
+          '<input id="add-oauth-password" name="add-oauth-password" type="password" disabled>' +
+        "</div>" +
+        '<div class="field"><span class="lbl">CA</span>' +
+          '<div class="choices">' +
+            '<label class="choice" for="add-ca-mode-pem"><input type="radio" name="add-ca-mode" id="add-ca-mode-pem" value="pem" checked> paste PEM</label>' +
+            '<label class="choice" for="add-ca-mode-bundle"><input type="radio" name="add-ca-mode" id="add-ca-mode-bundle" value="bundle"> use the trusted bundle</label>' +
+            '<label class="choice" for="add-ca-mode-insecure"><input type="radio" name="add-ca-mode" id="add-ca-mode-insecure" value="insecure"> insecure</label>' +
+          "</div>" +
+          '<div id="add-ca-pem-wrap"><label for="add-ca-pem">CA PEM</label>' +
+            '<textarea id="add-ca-pem" name="add-ca-pem" rows="4"></textarea></div>' +
+          '<p class="hint" id="add-ca-bundle-note" hidden>use the trusted bundle — the chart\'s shared <span class="mono">GSD_TRUSTED_CA_FILE</span>.</p>' +
+          '<div class="warn-box" id="add-ca-insecure-warn" hidden><strong>insecure</strong> — the API server certificate is not verified. Anyone on the path can impersonate the cluster.</div>' +
+        "</div>" +
+        '<div class="field"><label for="add-visibility">Visibility</label>' +
+          '<select id="add-visibility" name="add-visibility">' +
+            '<option value="inherit">inherit — ' + esc(VIS_MEAN.inherit) + "</option>" +
+            '<option value="self-only" selected>self-only — ' + esc(VIS_MEAN["self-only"]) + "</option>" +
+            '<option value="hidden">hidden — ' + esc(VIS_MEAN.hidden) + "</option>" +
+          "</select></div>" +
+        '<div class="field"><label for="add-identity">Identity</label>' +
+          '<select id="add-identity" name="add-identity">' +
+            '<option value="none" selected>none — ' + esc(ID_MEAN.none) + "</option>" +
+            '<option value="same-as-host">same-as-host — ' + esc(ID_MEAN["same-as-host"]) + "</option>" +
+          "</select></div>" +
+        '<div class="field"><span class="lbl">Labels</span>' +
+          '<div class="ns-controls">' +
+            '<label for="add-label-key">key</label><input id="add-label-key" name="add-label-key" autocomplete="off">' +
+            '<label for="add-label-val">value</label><input id="add-label-val" name="add-label-val" autocomplete="off">' +
+            '<button type="button" class="btn" id="add-label-add">Add label</button>' +
+          "</div>" +
+          '<div class="chips" id="add-label-chips"></div></div>' +
+        '<div class="acts">' +
+          '<button type="button" class="btn" id="add-test">Test connection</button>' +
+          '<button type="button" class="btn btn-acc" id="add-create">Create Secret</button>' +
+        "</div>" +
+        '<p class="filterbar-note" id="add-form-msg"></p>' +
+        '<aside class="shape-ex" id="test-result" hidden>' +
+          '<p class="filterbar-note"><strong>Shape example — a connection test result.</strong> Not a live probe. The body a test would return: reachable, the server version, the SA\'s identity.</p>' +
+          '<div class="kv"><span class="k">reachable</span><span class="v">yes</span></div>' +
+          '<div class="kv"><span class="k">server version</span><span class="v mono">&lt;from /version&gt;</span></div>' +
+          '<div class="kv"><span class="k">identity</span><span class="v mono">&lt;the ServiceAccount the token authenticates as&gt;</span></div>' +
+        "</aside>" +
+      '</form><aside class="yaml-pane card">' +
+        "<h3>as GitOps would write it</h3>" +
+        '<div class="acts"><button type="button" class="btn" id="yaml-copy">Copy</button>' +
+          '<span class="hint" id="yaml-copy-msg"></span></div>' +
+        '<pre class="yaml" id="yaml-preview"></pre>' +
+        '<p class="filterbar-note">The UI writes this Secret; Argo CD, Flux, Kustomize or Vault can write the same label. A controller that prunes the namespace will still delete a UI-written Secret unless it honours <span class="mono">groupsync-dashboard.io/managed-by: ui</span>.</p>' +
+      "</aside></div></section>";
+  }
+  function bindRotateDelete() {
+    document.querySelectorAll("[data-rotate]").forEach(function (b) {
+      b.addEventListener("click", function () {
+        const name = b.getAttribute("data-rotate");
+        const panel = document.querySelector('[data-rotate-panel="' + name + '"]');
+        if (panel) panel.hidden = !panel.hidden;
+      });
+    });
+    document.querySelectorAll("[data-rotate-go]").forEach(function (b) {
+      b.addEventListener("click", function () {
+        const name = b.getAttribute("data-rotate-go");
+        const field = document.getElementById("rotate-" + name);
+        const msg = document.querySelector('[data-rotate-msg="' + name + '"]');
+        if (field) field.value = "";
+        if (msg) msg.textContent = "token overwritten in place — the old token is gone from the cluster on the write. The value is never shown.";
+      });
+    });
+    document.querySelectorAll("[data-delete]").forEach(function (b) {
+      b.addEventListener("click", function () {
+        const name = b.getAttribute("data-delete");
+        const msg = document.querySelector('[data-delete-msg="' + name + '"]');
+        if (b.getAttribute("data-armed") !== "1") {
+          b.setAttribute("data-armed", "1");
+          b.textContent = "Confirm delete";
+          if (msg) msg.textContent = "Removes the Secret. Cluster history stays, disabled.";
+          return;
+        }
+        const idx = CONFIG.clusters.findIndex(function (c) { return c.name === name; });
+        if (idx >= 0) {
+          CONFIG.clusters.splice(idx, 1);
+          paint();
+          return;
+        }
+        if (msg) msg.textContent = "Shape example — would delete Secret " + name + "; history stays, disabled.";
+      });
+    });
+  }
+  function bindForm() {
+    ["add-name", "add-server", "add-token", "add-ca-pem", "add-visibility", "add-identity"].forEach(function (id) {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener("input", refreshYaml);
+      if (el) el.addEventListener("change", refreshYaml);
+    });
+    document.querySelectorAll('input[name="add-ca-mode"]').forEach(function (el) {
+      el.addEventListener("change", refreshCa);
+    });
+    const addLab = document.getElementById("add-label-add");
+    if (addLab) addLab.addEventListener("click", function () {
+      const k = (document.getElementById("add-label-key").value || "").trim();
+      const v = (document.getElementById("add-label-val").value || "").trim();
+      if (!k) return;
+      formLabels[k] = v;
+      document.getElementById("add-label-key").value = "";
+      document.getElementById("add-label-val").value = "";
+      refreshLabelChips();
+      refreshYaml();
+    });
+    const test = document.getElementById("add-test");
+    if (test) test.addEventListener("click", function () {
+      const box = document.getElementById("test-result");
+      if (box) box.hidden = false;
+    });
+    const create = document.getElementById("add-create");
+    if (create) create.addEventListener("click", function () {
+      const name = (document.getElementById("add-name").value || "").trim();
+      const server = (document.getElementById("add-server").value || "").trim();
+      const token = document.getElementById("add-token").value || "";
+      const msg = document.getElementById("add-form-msg");
+      if (!name || !server || !token) {
+        if (msg) msg.textContent = "name, server and a bearer token are required.";
+        return;
+      }
+      if (CONFIG.clusters.some(function (c) { return c.name === name; })) {
+        if (msg) msg.textContent = "a cluster with that name is already listed — a Secret would win over values.";
+        return;
+      }
+      const caMode = (document.querySelector('input[name="add-ca-mode"]:checked') || {}).value;
+      const labs = {};
+      Object.keys(formLabels).forEach(function (k) { labs[k] = formLabels[k]; });
+      labs["groupsync-dashboard.io/secret-type"] = "cluster";
+      CONFIG.clusters.push({
+        name: name,
+        server: server,
+        source: "secret:gsd-cluster-" + name,
+        labels: labs,
+        credential: { kind: "bearerToken", set: true },
+        tls: { insecure: caMode === "insecure", ca: caMode === "bundle" ? "trusted-bundle" : (caMode === "insecure" ? "caData" : "caData") },
+        visibility: document.getElementById("add-visibility").value,
+        identity: document.getElementById("add-identity").value,
+        enabled: true,
+        connection: { status: "never", last_poll: null, error: null }
+      });
+      Object.keys(formLabels).forEach(function (k) { delete formLabels[k]; });
+      paint();
+      const row = document.getElementById("cluster-" + name);
+      if (row && row.scrollIntoView) row.scrollIntoView({ block: "start" });
+    });
+    const copy = document.getElementById("yaml-copy");
+    if (copy) copy.addEventListener("click", function () {
+      const text = yamlFromForm();
+      const done = document.getElementById("yaml-copy-msg");
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(function () {
+          if (done) done.textContent = "Copied";
+        }).catch(function () {
+          if (done) done.textContent = "Copy failed";
+        });
+      } else if (done) done.textContent = "Copy failed";
+    });
+    const form = document.getElementById("add-form");
+    if (form) form.addEventListener("submit", function (e) { e.preventDefault(); });
+    refreshLabelChips();
+    refreshCa();
+  }
+  function paint() {
+    document.getElementById("main").innerHTML = headHtml() + clustersHtml() + findingsHtml() + addHtml();
+    bindRotateDelete();
+    bindForm();
+  }
+  document.getElementById("tabs").innerHTML = TABS.map(function (pair) {
+    const id = pair[0], label = pair[1];
+    return '<button type="button" class="tab" id="tab-' + id + '" data-nav="' + id + '"' +
+      (id === "clusters" ? ' aria-current="page"' : "") + ">" + label + "</button>";
+  }).join("");
+  [["pref-mode", "data-theme", "gsd-mode", "mode"], ["pref-palette", "data-palette", "gsd-palette", "theme"]].forEach(function (row) {
+    const sel = document.getElementById(row[0]); if (!sel) return;
+    const fromUrl = new URLSearchParams(location.search).get(row[3]) || "";
+    let saved = ""; try { saved = localStorage.getItem(row[2]) || ""; } catch (e) {}
+    const start = fromUrl || saved;
+    if (start) { document.documentElement.setAttribute(row[1], start); sel.value = start; }
+    sel.addEventListener("change", function () {
+      const v = sel.value;
+      v ? document.documentElement.setAttribute(row[1], v) : document.documentElement.removeAttribute(row[1]);
+      try { v ? localStorage.setItem(row[2], v) : localStorage.removeItem(row[2]); } catch (e) {}
+      const u = new URL(location.href);
+      v ? u.searchParams.set(row[3], v) : u.searchParams.delete(row[3]);
+      history.replaceState(null, "", u);
+    });
+  });
+  paint();
+  void LIVE;
+})();
+</script>
+</body>
+</html>
