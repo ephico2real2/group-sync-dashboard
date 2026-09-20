@@ -123,7 +123,7 @@ Outcome in one line: **#212 finished and #216 merged (the script's two managers,
   route; `as_of` repainted the page every poll; the filter race. All accepted from its patch. Record:
   `docs/REVIEW_reporting_status_page.md`. Walked at `cb74ce1` (`reports/2026-09-20_reporting-status-149/`).
 
-## Part 6 — #149 R7, the report forms (02:5x → 03:33) — PR #222 (open, retargeted to main)
+## Part 6 — #149 R7, the report forms (02:5x → 04:2x) — PR #222 (merged `5e6b699`)
 
 - `35f1460` (backend): `ParamSpec` `source`/`unit`/`advanced`/`group`; the Subject scope replacing the kind
   toggle; `group_mnemonic` resolved to the exact group through `reporting.namespaceGroupLabel` (the poller
@@ -157,6 +157,23 @@ Outcome in one line: **#212 finished and #216 merged (the script's two managers,
   hermetic 3884 passed, 15 skipped; `helm lint` clean. `docs/REVIEW_report_forms.md`. OB3 still running.
 - `b528151`/`df9ebfb` — `main` (#221 at `650ec09`, 03:13) merged in; the first resolution dropped #220's
   CHANGELOG line, **found by a diff of the tail against main** and restored. #222 retargeted to `main`.
+- `d886e78` (04:0x) — **OB3 on `7fa4a6e`** (470k tokens, 49 min; a labelled snapshot, a Playwright harness
+  with fetch counts, focus after every id-less control, scroll positions, reduced-motion emulation): the
+  same as Grok and Codex, and five more, **accepted** — a certification naming a mnemonic the deployment
+  cannot resolve built a clean empty pack (0/0, nothing said, four states measured) → a failed run with
+  the reason, the Scope line printing the resolved groups; the mnemonic key is a POSITION
+  (`namespaceSelector.labels[0]`) → documented in `values.yaml` and the chart README; an explicit list
+  re-sorted when nothing grouped it → the reader's order; the lookup menu lost by a repaint under a
+  non-matching query ("zzz", a repaint, "kube" → no match) → rebuilt from the discovered set; "none
+  discovered" while a fetch was pending → "loading…"; Enter on ×/Clear/a segment dropped focus → refocus
+  / ids; the Advanced state recorded on the click too (the `toggle` event is a queued task). OB3's
+  premise check: Chromium animates `scrollTo({behavior:"smooth"})` under reduced motion regardless of the
+  stylesheet — the instant landing was right for everyone. **Not taken**: `default_from` on the ParamSpec
+  (the page prefills in #224), the `oud-groups` set on the wire (noted). Three catalogue tests and four
+  UI tests fail on the head without the fixes (measured); the class-rule guard caught its own wrapper
+  class (a data attribute now). Hermetic 3886 passed, 15 skipped; UI 457 passed; `helm lint` clean;
+  chart 0.40.1. CI green on `d886e78`; **merged** at `5e6b699` (04:2x) — the evidence with pictures on
+  #149 (pinned to `66e8715`), the decisions on the PR.
 
 ---
 
@@ -172,7 +189,22 @@ Outcome in one line: **#212 finished and #216 merged (the script's two managers,
   GET (the lookup settled first); an unscoped namespace-access form previews "select at least one
   namespace…" — the test asserts the refusal, then `1 namespaces · …` after a pick. Hermetic 3882 passed
   (the discovered key-set assertion widened after), UI 452 passed; the Reports class 31 passed after the
-  merge of #222's pass (`44587ce`). Review: Grok, Codex xhigh and OB3 launched on `44587ce`.
+  merge of #222's pass (`44587ce`). Review: Grok, Codex xhigh and OB3 launched on `44587ce`; deployed to
+  CRC through Argo (`running : 44587ce783 — verified in-pod`) and walked (`reports/2026-09-20_picker-preview-143/`,
+  `6be9506`): 106 namespaces in the picker, `'group-sync' → ['group-sync-dashboard', 'group-sync-operator']`,
+  the preview POST → `200 {"totals":{"namespaces":1,"group_bindings":0,"user_bindings":0},"truncated":false}`,
+  `reviewer: prefilled 'kubeadmin'`, an unscoped form → `preview: select at least one namespace…`, 375 px
+  no overflow, `errors : []`.
+- `ef91c74` (04:3x) — **Grok and Codex xhigh** refuted the same three claims, **accepted**: the totals
+  stayed beside Generate after either Clear and painted cluster A's beside cluster B for the debounce
+  (both Clears schedule them; keyed by cluster); the tests pinned "sorted and non-empty" and Generate
+  once, the 429 test never re-POSTed (the seed's list, the exact sentence, the release after the join, a
+  422 inside `build()`, an unconfigured selector label); the README's answer shape and "when a cap bites".
+  Volunteered and taken: `(cluster-scoped)` offered first (Grok); "1 namespaces" → singular (Codex, the
+  twenty-entry noun table **rejected**). **Rejected**: pre-slot target validation (the run POST is
+  asynchronous by design), dropping `aria-live`. #222 merged meanwhile; the forms pass merged in and #224
+  retargeted to `main`. Hermetic 3892 passed, 15 skipped; UI 459 passed; `helm lint` clean.
+  `docs/REVIEW_picker_preview.md`. OB3's pass on #224 still running.
 
 ---
 
