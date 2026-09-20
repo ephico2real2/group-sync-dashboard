@@ -265,6 +265,44 @@ Outcome in one line: **#212 finished and #216 merged (the script's two managers,
 
 ---
 
+## Part 9 — #219, the hover rail (07:2x → 08:5x) — PR #226 (merged `2581539`)
+
+- `b350c14` (07:2x): OB3's rule from the review of #204, applied as proposed — every `.rowlink` table's first
+  column keeps 3 px clear of the inset rail; one test (fails on `main`: "starts 0.0px in"). Deployed and walked
+  at `67cca41` (`reports/2026-09-20_hover-rail-219/`): `first cell ink in / header ink in / rail painted [3, 3, True]`
+  on Groups and Users.
+- `08a8ab0` — **Grok**: the specificity story was wrong (`:where()` zeroed the `:has()` only → `(0,1,1)`; the
+  KPI page's 18 px won by source order; the claim's table list false) → the comment and CHANGELOG say what the
+  cascade does; the issue's own table (the user-History "− left" row, bob by position) and two preserved tables
+  tested. `6f269ed` — **Codex**: a synthetic `.audit-table` with a rowlink row measured 3 px (its own 0 lost by
+  order) → the second `:where()` on `:first-child`, the rule at `(0,0,1)`, a synthetic probe `[0, 3]`.
+  `3fddd47` — **OB3** (fifteen rowlink tables hovered and pixel-diffed on three sheets: rail x = 0..2, ink from
+  x = 3, zero ink pixels under it): the stale "(0,1,1)" comment the Codex pass left, the own-padding test, the
+  fifteen-table sweep. UI 479 passed; guards 526; CI green; **merged** (08:5x); #219 closed.
+
+## Part 10 — #170 step 0 and the Kyverno module (07:5x → ) — PRs #227 (merged), #228 (open)
+
+- `9042b22` (08:0x): a discovery record measured on the lab. **Found by OB3 (re-measuring on CRC with the
+  v1.19.1 and OTel sources) and Grok (from the source)**: the record was right where it measured and wrong
+  where it interpreted — finding 10's cause is the per-policy opt-in (`status.conditionStatus.message: "skip
+  generating ValidatingAdmissionPolicy: not enabled."`), not the CEL, and a generated policy reports under the
+  VAP alone; 9 CEL results (6 + 3) with no `rule` key; `source.go` has four `Kyverno<Kind>` sources and no
+  `KyvernoDeletingPolicy`; three breaker circuits on three endpoints; `resource_namespace` is a label on three of
+  Kyverno's own families; two Group-matching `ClusterPolicy` objects can never report (an RBAC gap); "removed
+  in 1.20" unsourced; the time misstated — and the **merged 09-19 step-0 record (PR #205) had probed finding 10
+  already and was not cited** (a forensic failure: the docs index was not grepped before writing). All corrected
+  at `a5df364`; `docs/REVIEW_kyverno_discovery.md`; CI green; brought up to date with `main` (`10bb8df`).
+- `0989e4b` (09:1x) — the module, built to the corrected facts: the reader (runtime discovery, paging, the
+  family by `source`, generated policies mapped to their policy, the resource UID in the key, all three breakers
+  summed), the store (migration 18, three-valued presence, the appeared/cleared history), the binding-cadence
+  stage, `GET /api/clusters/{id}/kyverno`, four public metrics with no name and no namespace, the chart's grants
+  (0.41.0), the Kyverno tab. **Found on the way**: `ago()` recursed on a future instant until the stack blew (a
+  fixture stamp 40 min ahead of the browser killed the page) — fixed; the migration pins moved to 18; a UI wait
+  matched "Loading…"'s empty-note (a race in the full run) — keyed on the payload. Hermetic 3927 passed, 15
+  skipped; UI 476 passed; helm lint clean; guards 536. Deployed to CRC; the walk, the three seats and CI pending.
+
+---
+
 ## Numbers
 
 | | |
