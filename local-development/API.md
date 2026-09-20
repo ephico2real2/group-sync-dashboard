@@ -78,7 +78,7 @@ credential-less `curl`, so refusing the same per-CR identity behind login would 
 `ldap_filter` and `error_message`, both of which can embed directory DNs and the gate group.
 Administrators receive the full row, unchanged.
 
-**`bindings/findings`, `operator-configs`, `kyverno` and `kpi` are the administrator tier** (`403` at self). The
+**`bindings/findings`, `operator-configs`, `kyverno`, `kpi` and `clusterconfigs` are the administrator tier** (`403` at self). The
 Access granted tab at the narrowed tier reads the reader's own path instead — `/users/{name}`
 for their own name, whose `bindings` carry `via_group` — which the gate never withheld.
 They describe objects too, but that is not the test. A binding row names which *group* holds
@@ -131,6 +131,52 @@ never-polled cluster and an unreachable one are different states, and rendering 
 `status` distinguishes `ok` / `auth_failed` / `forbidden` / `unreachable`. `forbidden`
 matters most: a ServiceAccount that can list GroupSyncs but not Groups produces a
 half-populated view that otherwise looks exactly like a cluster with no groups.
+
+### `GET /api/clusterconfigs`
+
+Administrator tier. Every cluster this instance knows with **where it came from** — the values list
+(`source: values`), a labelled Secret in the pod's own namespace (`source: secret:<metadata.name>`,
+`docs/specs/SPEC_S1_cluster_secrets.md`, #230) — the credential's **kind** and never its value, the
+Secret's other labels, the D2 options as resolved, the poll outcome the cluster table holds, and the
+current discovery cycle's findings. The Cluster Configurations tab (#230 S2) is built on it; the
+writes are S2's.
+
+```json
+{
+  "viewer": "kubeadmin", "scope": "all",
+  "secrets": {"enabled": true, "namespace": "group-sync-dashboard",
+              "label": "groupsync-dashboard.io/secret-type=cluster",
+              "last_discovery": "2026-09-20T16:05:12Z", "error": null},
+  "clusters": [
+    {"id": "crc-local", "source": "values", "host": true, "api_url": "https://kubernetes.default.svc",
+     "enabled": true, "credential": "in-cluster", "labels": {},
+     "visibility": "inherit", "identity": "same-as-host",
+     "status": "ok", "last_poll": "2026-09-20T16:05:40Z", "error": null, "retired": false},
+    {"id": "ocp-east", "source": "secret:gsd-cluster-ocp-east", "host": false,
+     "api_url": "https://api.ocp-east.example.com:6443", "enabled": true, "credential": "bearer",
+     "labels": {"environment": "prod"}, "visibility": "self-only", "identity": "none",
+     "status": "unreachable", "last_poll": "2026-09-20T16:05:41Z",
+     "error": "ConnectError: [Errno -2] Name or service not known", "retired": false},
+    {"id": "ocp-old", "source": "secret:gsd-cluster-ocp-old", "host": false, "api_url": "https://api.ocp-old.example.com:6443",
+     "enabled": false, "credential": "bearer", "labels": {}, "visibility": null, "identity": null,
+     "status": "ok", "last_poll": "2026-09-19T02:00:00Z", "error": null, "retired": true}
+  ],
+  "findings": [
+    {"secret": "gsd-cluster-broken", "code": "config-not-json",
+     "detail": "Expecting value: line 1 column 1"}
+  ]
+}
+```
+
+A **`retired`** cluster is one the store still holds but no source names any more — its Secret vanished, or
+its values entry was removed: `enabled: false`, its history kept (#96), listed so the reader knows why it
+is gone rather than finding it missing. `credential` is `in-cluster` (the host's ServiceAccount token path), `file` (a values entry's
+`tokenFile`/`tokenEnv`), `bearer` (a Secret's `bearerToken`) or `oauth` (a Secret's
+`username`/`password` — listed, with the finding `oauth-exchange-not-built`, and not polled until
+#119 P2). `findings[].code` is one of the closed set in `gsd/clusterconfig/__init__.py`; a `discovery-failed`
+finding (the LIST itself failed — the Role absent, the API unreachable) carries `secret: "-"` and the
+previous set of discovered clusters stands. `secrets.enabled=false` (`clusterConfig.secrets.enabled`)
+answers the values list alone with `last_discovery: null`.
 
 ## GroupSync CRs
 

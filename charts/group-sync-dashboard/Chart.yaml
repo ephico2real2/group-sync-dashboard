@@ -180,7 +180,9 @@ type: application
 # and <reportName>-shared-token, carried over from the old names on the first upgrade.
 # CHART 0.41.1 (2026-09-20), PATCH: the chart README gains "Deploying with Flux or Kustomize" (#212);
 # no template or default changes; appVersion unchanged.
-version: 0.41.1
+# CHART 0.42.0 (2026-09-20), MINOR: clusters as labelled Secrets (#230 S1) — a namespaced Role on
+# secrets (get, list, watch) and the clusterConfig.secrets.enabled switch, on by default; migration 19.
+version: 0.42.0
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,

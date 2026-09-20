@@ -36,7 +36,9 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS cluster (
     id                  TEXT PRIMARY KEY,   -- the configured name; used in API paths
     api_url             TEXT NOT NULL,
-    enabled             INTEGER NOT NULL DEFAULT 1
+    enabled             INTEGER NOT NULL DEFAULT 1,
+    source              TEXT NOT NULL DEFAULT 'values',   -- values | secret:<metadata.name> (SPEC_S1)
+    credential          TEXT NOT NULL DEFAULT ''          -- the KIND only: in-cluster | file | bearer | oauth
 );
 
 -- One row per OBSERVED sync, written only when lastSyncSuccessTime CHANGES (PLAN §6).
@@ -1073,6 +1075,14 @@ _MIGRATIONS: list[tuple[int, str, list[str]]] = [
             "CREATE INDEX IF NOT EXISTS kyverno_result_event_by_time ON kyverno_result_event(cluster_id, observed_at)",
         ],
     ),
+    (
+        19,
+        "cluster.source / cluster.credential: clusters declared as labelled Secrets (#230, SPEC_S1)",
+        [
+            "ALTER TABLE cluster ADD COLUMN source TEXT NOT NULL DEFAULT 'values'",
+            "ALTER TABLE cluster ADD COLUMN credential TEXT NOT NULL DEFAULT ''",
+        ],
+    ),
 ]
 
 
@@ -1839,18 +1849,21 @@ class Store:
 
     # -- configuration -----------------------------------------------------------------
 
-    def upsert_cluster(self, cluster_id: str, api_url: str, enabled: bool) -> None:
+    def upsert_cluster(self, cluster_id: str, api_url: str, enabled: bool, *,
+                       source: str = "values", credential: str = "") -> None:
         with self._tx() as conn:
             conn.execute(
-                """INSERT INTO cluster(id, api_url, enabled) VALUES(?,?,?)
+                """INSERT INTO cluster(id, api_url, enabled, source, credential) VALUES(?,?,?,?,?)
                    ON CONFLICT(id) DO UPDATE SET api_url=excluded.api_url,
-                                                 enabled=excluded.enabled""",
-                (cluster_id, api_url, int(enabled)),
+                                                 enabled=excluded.enabled,
+                                                 source=excluded.source,
+                                                 credential=excluded.credential""",
+                (cluster_id, api_url, int(enabled), source, credential),
             )
 
     def clusters(self) -> list[dict]:
         return self._rows(
-            """SELECT c.id, c.api_url, c.enabled,
+            """SELECT c.id, c.api_url, c.enabled, c.source, c.credential,
                       p.status, p.message, p.observed_at AS last_poll
                  FROM cluster c LEFT JOIN poll_outcome p ON p.cluster_id = c.id
                 ORDER BY c.id"""

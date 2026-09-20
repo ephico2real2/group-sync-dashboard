@@ -444,7 +444,7 @@ def build_app(
                 ttl_seconds=float(settings.visibility_tier_ttl_seconds),
                 observe=functools.partial(signals.note_tier_check, "admin"),
             )
-    for c in settings.clusters:
+    for c in settings.effective_clusters():
         policy, identity = settings.cluster_policy(c.name)
         if c is local_cluster or policy == VISIBILITY_INHERIT:
             continue
@@ -453,7 +453,7 @@ def build_app(
         log.info("%s: per-cluster visibility policy %s, identity %s", c.name, policy, identity)
     if not settings.view_restrictions_enabled and any(
         settings.cluster_policy(c.name)[0] in (VISIBILITY_SELF_ONLY, VISIBILITY_REMOTE_SAR)
-        for c in settings.clusters
+        for c in settings.effective_clusters()
     ):
         log.warning(
             "clusters[].visibility policies are set but view restrictions are OFF, so every "
@@ -745,8 +745,9 @@ def build_app(
         else:
             # Still register configured clusters so the overview lists them as
             # never-polled rather than omitting them entirely.
-            for cluster in settings.clusters:
-                store.upsert_cluster(cluster.name, cluster.api_url, cluster.enabled)
+            for cluster in settings.effective_clusters():
+                store.upsert_cluster(cluster.name, cluster.api_url, cluster.enabled,
+                                     source=cluster.source, credential=cluster.credential_kind)
         activity.start()
         yield
         # Before the store closes: stop() does a final flush, and the buffer is only in
@@ -916,6 +917,53 @@ def build_app(
             "dangling_bindings": counts.get("dangling", 0),
             "unresolved_bindings": counts.get("unresolved", 0),
             "builtin_bindings": counts.get("built_in", 0),
+        }
+
+    @app.get("/api/clusterconfigs")
+    @consistent
+    def list_cluster_configs(request: Request) -> dict:
+        """Every cluster this instance knows with WHERE it came from (SPEC_S1 C5): the values list, a
+        labelled Secret (`secret:<name>`), the host; the credential's KIND and never its value; the
+        Secret's other labels; the D2 options; the poll outcome the cluster table holds; and the
+        current discovery cycle's findings. Administrator tier: the sources and the findings describe
+        how the fleet is wired, which is not a self reader's business. The Cluster Configurations
+        tab (#230 S2) is built on this payload; the writes are S2's too."""
+        require_admin_tier(request)
+        from .clusterconfig import LABEL_SELECTOR
+        registry = settings.cluster_registry
+        host = settings.host_cluster()
+        polled = {row["id"]: row for row in store.clusters()}
+        clusters = []
+        for c in settings.effective_clusters():
+            row = polled.get(c.name) or {}
+            visibility, identity = settings.cluster_policy(c.name)
+            clusters.append({
+                "id": c.name, "source": c.source, "host": host is not None and c.name == host.name,
+                "api_url": c.api_url, "enabled": c.enabled, "credential": c.credential_kind,
+                "labels": dict(c.labels), "visibility": visibility, "identity": identity,
+                "status": row.get("status"), "last_poll": row.get("last_poll"), "error": row.get("message"),
+                "retired": False,
+            })
+        # A cluster the store still holds but no source names any more — a Secret that vanished, a values
+        # entry removed — is retired (enabled=0, history kept, #96). The tab shows it as such rather than
+        # letting it disappear: its rows are still there, and the reader should know why.
+        named = {c["id"] for c in clusters}
+        for row in polled.values():
+            if row["id"] in named:
+                continue
+            clusters.append({
+                "id": row["id"], "source": row["source"], "host": False, "api_url": row["api_url"],
+                "enabled": False, "credential": row["credential"], "labels": {},
+                "visibility": None, "identity": None,
+                "status": row.get("status"), "last_poll": row.get("last_poll"), "error": row.get("message"),
+                "retired": True,
+            })
+        return {
+            "viewer": trusted_viewer(request), "scope": "all",
+            "secrets": {"enabled": settings.cluster_secrets_enabled, "namespace": registry.namespace,
+                        "label": LABEL_SELECTOR, "last_discovery": registry.last_discovery, "error": registry.error},
+            "clusters": clusters,
+            "findings": [f.public() for f in registry.findings()],
         }
 
     @app.get("/api/clusters")
@@ -2407,7 +2455,7 @@ def build_app(
             clusters: dict[str, dict] = {}
             host = settings.host_cluster()
             scope = None
-            for c in settings.clusters:
+            for c in settings.effective_clusters():
                 # A disabled cluster is not served (#96): it must not appear in visibility.clusters
                 # either, or whoami would name a cluster the selector and every tab omit.
                 if not c.enabled:
@@ -2610,7 +2658,7 @@ def build_app(
             store.clusters()
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(status_code=503, detail=f"store unavailable: {exc}") from exc
-        return {"status": "ready", "clusters": len(settings.clusters)}
+        return {"status": "ready", "clusters": len(settings.effective_clusters())}
 
     # Served from the image, not from a CDN. Falls back to the CDN only when the vendored
     # bundle is absent — a source checkout that has never been through a container build —

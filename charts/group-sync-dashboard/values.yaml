@@ -1256,6 +1256,26 @@ kyverno:
   eventsRetentionDays: 90
 
 # ---------------------------------------------------------------------------
+# Cluster configuration as labelled Secrets  (#230, docs/specs/SPEC_S1_cluster_secrets.md)
+# ---------------------------------------------------------------------------
+# Argo CD's model: a Secret in THIS namespace labelled `groupsync-dashboard.io/secret-type: cluster`
+# is a cluster — `name` (the id the dashboard shows), `server`, `config` (JSON: bearerToken or
+# oauth{username,password}; tlsClientConfig{caData,insecure}), and the D2 options `visibility`,
+# `identity`, `enabled`. The dashboard LISTs them by that label on the binding cadence and polls
+# each like a `clusters[]` entry; written by hand, by the Cluster Configurations tab (S2) or by any
+# GitOps process, the app sees the same object. `clusters[]` above stays the bootstrap source and
+# the host is ALWAYS clusters[0]: a Secret naming the host is refused as a finding. A Secret that
+# does not parse is a finding on the tab, never a crashed pod; one that vanishes disables its
+# cluster and keeps its history.
+#
+# The grant is a namespaced Role: get, list, watch on secrets in the release namespace ONLY (the
+# writes the tab needs are S2's, behind their own switch). The credential never leaves the Secret and
+# the process's memory — not the database, not a log line, not a response, not /metrics.
+clusterConfig:
+  secrets:
+    enabled: true
+
+# ---------------------------------------------------------------------------
 # Login capture  (reads the oauth-server's logs)
 # ---------------------------------------------------------------------------
 # Grants the DASHBOARD read access to the oauth-server's pod logs, which is where the "who logged in"

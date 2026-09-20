@@ -108,6 +108,9 @@ def _trusted_ca_context() -> ssl.SSLContext | None:
     return context
 
 
+SA_TOKEN_PATH = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+
+
 @dataclass(frozen=True)
 class ClusterConfig:
     """One observed cluster.
@@ -129,6 +132,28 @@ class ClusterConfig:
     # serves by default — the direction that matters is that it never widens.
     visibility: str | None = None
     identity: str | None = None
+    # A Secret-sourced cluster (docs/specs/SPEC_S1_cluster_secrets.md): the credential lives in the
+    # process's memory, read from the Secret each discovery — never on disk, never in a repr, never
+    # compared (two configs that differ only by a rotated token are the same cluster).
+    token_value: str | None = field(default=None, repr=False, compare=False)
+    ca_data: str | None = field(default=None, repr=False, compare=False)   # PEM text from tlsClientConfig.caData
+    oauth_username: str | None = field(default=None, repr=False, compare=False)
+    oauth_password: str | None = field(default=None, repr=False, compare=False)
+    source: str = "values"                       # values | secret:<metadata.name>
+    labels: tuple[tuple[str, str], ...] = ()     # the Secret's other labels, the fleet's metadata for the tab
+
+    @property
+    def credential_kind(self) -> str:
+        """What authenticates this cluster, as a word the API may say: in-cluster (the pod's SA token
+        path), file (a values entry's tokenFile/tokenEnv), bearer (a Secret's bearerToken), oauth (a
+        Secret's username/password — #119 P2, not resolvable yet). Never the value."""
+        if self.oauth_username is not None or self.oauth_password is not None:
+            return "oauth"
+        if self.token_value is not None:
+            return "bearer"
+        if self.token_file == SA_TOKEN_PATH:
+            return "in-cluster"
+        return "file"
 
     def resolve_token(self) -> str:
         """Read the token at the moment it is needed.
@@ -137,6 +162,16 @@ class ClusterConfig:
         the token is rotated, and a long-lived process that cached the value at startup
         would keep presenting the stale one until restarted (PLAN §13 Q1).
         """
+        if self.token_value is not None:
+            if not self.token_value.strip():
+                raise ConfigError(f"cluster {self.name!r}: the Secret's bearerToken is empty")
+            return self.token_value.strip()
+        if self.oauth_username is not None or self.oauth_password is not None:
+            # The kind parses and is listed so the tab can say what the Secret declares; exchanging it
+            # for a token against the remote OAuth server is #119 P2 and is not built.
+            raise ConfigError(
+                f"cluster {self.name!r}: username/password exchange against the OAuth server is #119 P2, not built"
+            )
         if self.token_file:
             try:
                 token = Path(self.token_file).read_text(encoding="utf-8").strip()
@@ -167,6 +202,14 @@ class ClusterConfig:
         """
         if self.insecure_skip_verify:
             return False
+
+        # A Secret-sourced cluster carries its CA as text (tlsClientConfig.caData, decoded at parse
+        # time — a bundle that does not load was refused there, so this cannot raise for a parsed one).
+        if self.ca_data:
+            try:
+                return ssl.create_default_context(cadata=self.ca_data)
+            except ssl.SSLError as exc:
+                raise ConfigError(f"cluster {self.name!r}: the Secret's caData does not load: {exc}") from exc
 
         # An explicit per-cluster bundle always wins.
         bundle = self.ca_bundle_file
@@ -202,6 +245,9 @@ class Settings:
     """Process-wide settings."""
 
     clusters: list[ClusterConfig] = field(default_factory=list)
+    """The values-declared clusters — the bootstrap source, strict at load. The runtime source is
+    `cluster_registry` (labelled Secrets, docs/specs/SPEC_S1_cluster_secrets.md); read the two merged
+    through `effective_clusters()` / `cluster()`, never this list alone, except for the host."""
     poll_interval_seconds: int = 60
     """PLAN §6: 60s, far finer than the fastest schedule seen in practice."""
 
@@ -399,6 +445,12 @@ class Settings:
     # cluster; empty = the breaker's truncation state is unknown). `kyverno_events_retention_days`
     # bounds the appeared/cleared history like the other event tables.
     kyverno_enabled: bool = True
+    # Clusters declared as labelled Secrets in the pod's own namespace, discovered on the binding
+    # cadence (SPEC_S1). The registry is the one mutable thing on Settings: the discovery thread
+    # replaces its contents, everything else reads. Excluded from equality and repr — it holds the
+    # in-memory credentials, and two Settings are the same configuration whatever was discovered.
+    cluster_secrets_enabled: bool = True
+    cluster_registry: "ClusterRegistry" = field(default_factory=lambda: _registry(), compare=False, repr=False)
     kyverno_metrics_url: str = ""
     kyverno_events_retention_days: int = 90
 
@@ -528,8 +580,13 @@ class Settings:
     # `namespaceMetadataLabels` (rendered with toJson), the same convention as the audit lists.
     namespace_metadata_labels: tuple[str, ...] = ()
 
+    def effective_clusters(self) -> list[ClusterConfig]:
+        """The values list with the Secret-sourced clusters merged (SPEC_S1 C2: a Secret shadows a
+        values entry of the same name; the host is never replaced)."""
+        return self.cluster_registry.merge(list(self.clusters))
+
     def cluster(self, name: str) -> ClusterConfig | None:
-        for c in self.clusters:
+        for c in self.effective_clusters():
             if c.name == name:
                 return c
         return None
@@ -1246,8 +1303,14 @@ def load_settings(path: str | Path) -> Settings:
             raw, "GSD_SYNC_EVENTS_RETENTION_DAYS", "syncEventsRetentionDays", 730, int
         ),
         kyverno_enabled=_bool_setting(raw, "GSD_KYVERNO_ENABLED", "kyvernoEnabled", True),
+        cluster_secrets_enabled=_bool_setting(raw, "GSD_CLUSTER_SECRETS_ENABLED", "clusterSecretsEnabled", True),
         kyverno_metrics_url=str(os.environ.get("GSD_KYVERNO_METRICS_URL") or raw.get("kyvernoMetricsUrl") or "").strip(),
         kyverno_events_retention_days=_num_setting(
             raw, "GSD_KYVERNO_EVENTS_RETENTION_DAYS", "kyvernoEventsRetentionDays", 90, int
         ),
     )
+
+
+def _registry():
+    from .clusterconfig.registry import ClusterRegistry   # local: clusterconfig imports ClusterConfig from here
+    return ClusterRegistry()
