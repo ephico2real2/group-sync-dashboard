@@ -60,6 +60,31 @@ def _block(css: str, pattern: str) -> dict[str, str]:
 PALETTES = ("default", "deuter", "protan", "trit", "contrast")
 
 
+def _composite(over: tuple[float, float, float], alpha: float, under: str, theme: str) -> str:
+    """Source-over compositing of a translucent colour on an opaque one, as the browser paints a zebra
+    or hovered cell: a*over + (1-a)*under per channel — rounded AWAY from the theme's text, not to the
+    nearest value. Chromium quantises the alpha to 8 bits and truncates the blend (measured on the
+    seeded page, OB3's review of #204: the light 10 % wash over #fcfcfb paints #e6eef6 where round()
+    says #e7eef7), so a token solved to the nearest-rounded surface can land one 8-bit step short of the
+    bar on the pixel a reader sees (light/deuter --status-good #0071b0: 4.51 by round(), 4.49 painted).
+    Every text token is darker than every surface in the light theme and lighter in the dark one, so the
+    worst case is floor() in light and ceil() in dark; a value that clears the bar here clears it under
+    either rounding."""
+    import math
+    rnd = math.floor if theme == "light" else math.ceil
+    return "#%02x%02x%02x" % tuple(min(255, max(0, rnd(alpha * c + (1 - alpha) * u)))
+                                  for c, u in zip(over, _rgb(under)))
+
+
+def _wash_fraction(css: str, theme: str, token: str) -> float:
+    """The N of `--token: color-mix(in srgb, var(--x) N%, transparent)` in the theme's own block."""
+    block = re.search(r':root\[data-theme="dark"\]\s*\{(.*?)\n\}', css, re.S).group(1) if theme == "dark" \
+        else re.search(r":root\s*\{(.*?)\n\}", css, re.S).group(1)
+    m = re.search(rf"--{token}:\s*color-mix\(in srgb,\s*var\(--[a-z0-9-]+\)\s*(\d+(?:\.\d+)?)%", block)
+    assert m, f"--{token} is not a color-mix wash in the {theme} block"
+    return float(m.group(1)) / 100
+
+
 def _rgba(css: str, theme: str, token: str) -> tuple[float, float, float, float]:
     """A translucent token (`--zebra: rgba(r, g, b, a)`) from the theme's block — the light block for
     "light", the explicit dark block for "dark" (its OS-dark twin is held identical by
@@ -108,7 +133,11 @@ def themes():
     out = {"light": light, "dark": dark}
     for theme, base in (("light", light), ("dark", dark)):
         for palette in PALETTES[1:]:
-            out[f"{theme}/{palette}"] = {**base, **_palette_block(css, theme, palette)}
+            # The unconditional `:root[data-palette]` block matches DARK roots too, at the same specificity
+            # as the dark base and later in the sheet, so a dark variant inherits every light-palette
+            # token its own dark block does not restate (#204 review: a palette `--warn` leaked into dark).
+            leak = _palette_block(css, "light", palette) if theme == "dark" else {}
+            out[f"{theme}/{palette}"] = {**base, **leak, **_palette_block(css, theme, palette)}
     # THE ROW SURFACES, COMPOSITED (#184). A table cell is not the card: zebra rows lay --zebra
     # (translucent) over --surface-1, and a hovered .rowlink lays --series-1-wash — color-mix(in srgb,
     # var(--series-1) 10%, transparent) — over it. Text in those cells is read against the composed
@@ -117,9 +146,12 @@ def themes():
     # composites them, so the bar is held where the text actually is.
     for key, tokens in out.items():
         theme = key.split("/")[0]
-        zebra = _rgba(css, theme, "zebra")
-        tokens["row-zebra"] = _over(zebra, tokens["surface-1"])
-        tokens["row-hover"] = _mix(tokens["series-1"], tokens["surface-1"], 0.10)   # --series-1-wash over the card
+        r, g, b, a = _rgba(css, theme, "zebra")
+        tokens["row-zebra"] = _composite((r, g, b), a, tokens["surface-1"], theme)
+        # --series-1-wash's own percentage, per theme: 10 % light, 14 % dark. Hard-coded at 10 % for both,
+        # the dark hover surface here was lighter than the one the browser paints and the dark status
+        # text passed at 4.5 while measuring 4.29-4.39 on the real row (#204 review).
+        tokens["row-hover"] = _composite(_rgb(tokens["series-1"]), _wash_fraction(css, theme, "series-1-wash"), tokens["surface-1"], theme)
     return out
 
 
@@ -151,15 +183,21 @@ WARN_TEXT = [("warn", "surface-1", AA_TEXT, "td.num.warn"), ("warn", "page", AA_
 # Text that lives in table cells is held to the bar on the composed ROW surfaces, not only the card
 # (#184): the link on a zebra row and on a hovered row, the muted chevron and .change-baseline beside
 # it, and the body/secondary copy every cell carries. These are the pairs that were never checked.
-# The status tokens (.change-added, .change-removed, td.num.warn) are NOT in this list yet: measured on
-# 2026-09-19 with these same surfaces, they fail 4.5 on the rows in eight of the ten theme x palette
-# variants (4.01-4.44), and each palette block tunes them separately — a change to ten blocks that
-# is its own issue on the design system, filed from #184's PR, not a rider on the link fix.
+# The status tokens (.change-added, .change-removed, td.num.warn) joined the list with #204: measured
+# on 2026-09-19 with these same surfaces they failed 4.5 on the rows in eight of the ten theme x
+# palette variants (31 pairs, 3.96-4.44; light/contrast only through --warn, which no palette
+# overrode); every block was re-tuned by the smallest hue-preserving step that clears the bar on the
+# hovered row (the worst surface) toward black (light) or white (dark) — the dark ones against the
+# 14 % wash the dark sheet really paints, and all of them against the compositor's own truncation
+# (the review of #204 caught both: the fixture's 10 % for both themes, and round() where Chromium
+# floors).
 TEXT_ON_ROWS = [
     (token, surface, AA_TEXT, f"{why} on a {'zebra' if surface == 'row-zebra' else 'hovered'} row")
     for surface in ("row-zebra", "row-hover")
     for token, why in (("drill-text", ".drill link text"), ("text-muted", ".drill::after and .change-baseline"),
-                       ("text-secondary", "secondary cell copy"), ("text-primary", "cell copy"))
+                       ("text-secondary", "secondary cell copy"), ("text-primary", "cell copy"),
+                       ("status-good", ".change-added"), ("status-critical", ".change-removed"),
+                       ("warn", "td.num.warn"))
 ]
 # Active tab labels sit on the page; the accent also tints a card edge and the hero numeral.
 # Derived from the stylesheet, not hardcoded: a hardcoded list silently stops covering a
@@ -267,7 +305,7 @@ def test_a_palette_overrides_only_the_status_hues():
         for theme in ("light", "dark"):
             names = set(_palette_block(css, theme, palette))
             assert names, f"{theme}/{palette} defines nothing"
-            allowed = {"status-good", "status-warning", "status-warning-edge", "status-critical", "text-muted"}
+            allowed = {"status-good", "status-warning", "status-warning-edge", "status-critical", "text-muted", "warn"}
             assert names <= allowed, f"{theme}/{palette} overrides {sorted(names - allowed)}"
 
 
@@ -302,3 +340,38 @@ def test_home_text_clears_aa_on_the_surfaces_it_actually_sits_on(themes, variant
         if r < AA_TEXT:
             failures.append(f"{label}: {fg} on {bg} is {r:.2f}:1")
     assert not failures, f"{variant} — Home text under {AA_TEXT}:1:\n  " + "\n  ".join(failures)
+
+
+def _hue(hex_colour: str) -> float:
+    import colorsys
+    h = hex_colour.lstrip("#")
+    r, g, b = (int(h[i:i + 2], 16) / 255 for i in (0, 2, 4))
+    return colorsys.rgb_to_hls(r, g, b)[0] * 360
+
+
+# Warning text and critical text are read side by side (td.num.warn next to .change-removed on the Users
+# tab); when a palette put both on the same hue they were told apart by weight alone. The bar is the
+# Okabe-Ito reference's own separation between its two warm colours, vermilion (27°) and orange (41°):
+# 14°. The light CVD palettes inherited the default amber and sat 0.5° from their vermilion critical
+# (#204 review); each carries its own warning hue now.
+@pytest.mark.parametrize("theme", VARIANTS)
+def test_warning_text_keeps_its_own_hue_beside_critical(themes, theme):
+    t = themes[theme]
+    d = abs(_hue(t["warn"]) - _hue(t["status-critical"]))
+    d = min(d, 360 - d)
+    assert d >= 14, f"{theme}: --warn {t['warn']} and --status-critical {t['status-critical']} are {d:.1f}° apart"
+
+
+# The KPI page's critical chip is text on a chip whose default background is the translucent --zebra,
+# inside a row that may be hovered: zebra over the hover wash over the card is a fourth surface the row
+# table does not model, and the text measured 4.06-4.31 there (#204 review). The chip paints an opaque
+# token surface of its own, and the text is held to the bar on that surface.
+@pytest.mark.parametrize("theme", VARIANTS)
+def test_the_kpi_critical_chip_text_sits_on_an_opaque_vetted_surface(themes, theme):
+    rule = re.search(r"\.kpi-page \.chip\.crit\s*\{([^}]*)\}", CSS.read_text(), re.S)
+    assert rule, "the KPI critical-chip rule is missing"
+    background = re.search(r"background:\s*var\(--([a-z0-9-]+)\)", rule.group(1))
+    assert background, "the KPI critical chip needs its own opaque token background"
+    t = themes[theme]
+    got = ratio(t["status-critical"], t[background.group(1)])
+    assert got >= AA_TEXT, f"{theme}: KPI critical chip text is {got:.2f}:1 on --{background.group(1)}"
