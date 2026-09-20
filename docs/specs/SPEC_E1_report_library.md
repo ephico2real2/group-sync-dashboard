@@ -23,6 +23,11 @@ with the reason, under "Orchestrator's notes".
 
 ## Orchestrator's notes
 
+- The walk at `586e763`: "Copy link" writes the app's full position, `#page=library&cluster=crc-local&run=<id>`
+  — `hashFor(currentPosition())`, the shape every position in the app carries (`#page=groups&cluster=…`).
+  §2.6's `#page=library&run=<id>` is the minimal form the router accepts and opens the same drawer; the
+  copied link carries the cluster because a reader on a two-cluster dashboard must land on the right one.
+
 - Implementation (2026-09-20), the type-scale guards: the drawer took its report-kind rail from an inline
   `style="--rk: …"`, which `test_inline_styles_carry_no_literal_at_all` refuses; it carries `class="drawer
   r-<kind>"` and app.css sets `--rk` per kind, as `.report-panel.r-<kind>` and `.lib-sec.r-<kind>` do. The
