@@ -18,6 +18,12 @@ every reviewer hold the code to. "Design" is the code, file by file, applied wit
 check on every Old text. A deviation found necessary during implementation is written back here, in
 the same pull request, under "Orchestrator's notes", with the reason.
 
+The flows this contract produces are drawn — as mermaid and as ASCII — in
+[`docs/DESIGN_cluster_connection_flows.md`](../DESIGN_cluster_connection_flows.md): the connection
+path with every refusal point, the three TLS modes as a decision, the credential modes and which
+object holds which secret, and the tier gate on the surface. The log vocabulary those pictures are
+read against is `gsd/clusterconfig/events.py` (#245).
+
 ## Orchestrator's notes
 
 - **The operator's ruling on the tier (2026-09-20, relayed during implementation):** this surface is

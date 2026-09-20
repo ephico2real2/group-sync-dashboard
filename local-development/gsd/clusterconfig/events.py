@@ -1,0 +1,126 @@
+"""The event vocabulary for the cluster-connection path (#245).
+
+WHY A VOCABULARY RATHER THAN log.info() AT EACH SITE. Measured on main (`62c385a`) before this
+existed: `parser.py` 0 log calls, `registry.py` 0, `reader.py` 2 — so nothing recorded that
+discovery ran, which TLS mode a cluster resolved to, or that one vanished. Meanwhile the pod wrote
+1 784 lines in 90 minutes of which 1 082 were `httpx`'s request URLs. An operator grepping for a
+cluster problem found the library's chatter, not the module that owns the connection. Adding
+`log.info(...)` at each site would have fixed the silence and left three other problems: every call
+site deciding its own field names, every call site responsible for redaction, and no way to pull one
+cluster's story out of a fleet's interleaved log.
+
+THE SHAPE: `event-name key=value key="value with spaces"`. Greppable by a person
+(`grep 'cluster=ocp-east'`), parseable by a machine, and no commitment to JSON — which would have
+made the lines unreadable in a terminal, which is where they are read.
+
+THE FIVE RULES, from the issue's design comment:
+
+1. TRANSITIONS AT INFO, STATES AT DEBUG. A discovery cycle that changes nothing logs nothing, so a
+   line always means something happened. At forty clusters the alternative is an unreadable INFO.
+2. `phase=` ON EVERY FAILURE, from the closed set below, so the first question — where did it
+   break? — is answered by the line itself rather than by reading code.
+3. `outcome=` REUSES THE API'S FINDING CODES (`clusterconfig.FINDING_CODES` plus the connection
+   outcomes). The log and the page then speak one vocabulary: #244's page sentence and this line are
+   two renderings of one fact, not two descriptions that drift.
+4. `action=` IS THE FIX, NOT THE DIAGNOSIS — what to change, in the operator's terms. `detail=`
+   keeps the raw exception beneath it as evidence. A line that says only what broke makes the reader
+   do the translation; this module is the one that knows the translation.
+5. REDACTION LIVES HERE, never at the call site. One place to prove, and the test drives a failure in
+   every phase with a token and a password present and greps the whole captured log for both.
+"""
+
+from __future__ import annotations
+
+import logging
+import re
+
+#: Where in the connection a failure happened. Closed, and ordered as the path runs, because the
+#: order is the diagnosis: a `tls` failure means parse and credential already succeeded.
+PHASES = ("discovery", "parse", "credential", "tls", "connect", "poll")
+
+#: Values that are structurally secret whatever their content. A credential is not redacted by
+#: matching a pattern — patterns miss — it is redacted because the caller handed it here as one.
+_MASK = "<redacted>"
+
+#: A token long enough to be worth removing. Below this a "secret" is not one, and replacing a
+#: two-character string would corrupt every line it appeared in.
+_MIN_SECRET = 8
+
+_NEEDS_QUOTING = re.compile(r"[\s\"=]")
+
+
+def redact(text: str, secrets: object) -> str:
+    """Remove every known secret from text, longest first.
+
+    LONGEST FIRST IS NOT COSMETIC. A password that is a substring of a token (or a token that
+    contains one) would otherwise leave the longer value partly intact: replacing the short one
+    first cuts the long one in half and the remaining halves are still the credential. Sorting by
+    length descending removes the containing value before its substring can fragment it.
+
+    BEFORE TRUNCATION, ALWAYS — the same order `ClusterClient._redact` states and for the same
+    reason (review of #235, the Fable seat): `text[:200]` then redact misses a token straddling the
+    cut and misses every JWT, which is longer than the window. Callers pass the full text; the
+    truncation below happens after.
+
+    Never raises. A diagnostic must not become the reason a poll fails, so anything unstringable is
+    simply not redacted against.
+    """
+    out = str(text)
+    try:
+        values = [str(s) for s in secrets if s]
+    except TypeError:
+        return out
+    for secret in sorted(values, key=len, reverse=True):
+        if len(secret) >= _MIN_SECRET and secret in out:
+            out = out.replace(secret, _MASK)
+    return out
+
+
+def _format_value(value: object) -> str:
+    text = "" if value is None else str(value)
+    if text == "" or _NEEDS_QUOTING.search(text):
+        return '"' + text.replace('"', "'") + '"'
+    return text
+
+
+def event(log: logging.Logger, level: int, name: str, *, secrets: object = (),
+          detail_limit: int = 300, **fields: object) -> None:
+    """Emit one `event-name key=value` line, redacted.
+
+    `secrets` is the credentials in play at this call site — the caller knows them, this function
+    does not have to guess. `detail_limit` truncates only `detail`, and only after redaction.
+
+    Fields whose value is None are dropped rather than rendered as `key=None`: an absent field is
+    absent, and `tls=None` would read as a mode called None.
+    """
+    rendered = []
+    for key, value in fields.items():
+        if value is None:
+            continue
+        text = redact(str(value), secrets)
+        if key == "detail" and len(text) > detail_limit:
+            text = text[:detail_limit] + "…"
+        rendered.append(f"{key}={_format_value(text)}")
+    # The name itself is never a secret, but it is redacted with everything else rather than
+    # exempted: an exemption is a hole somebody eventually puts a formatted string through.
+    log.log(level, "%s", " ".join([redact(name, secrets), *rendered]))
+
+
+def failure(log: logging.Logger, name: str, *, phase: str, outcome: str, action: str,
+            detail: object = None, secrets: object = (), **fields: object) -> None:
+    """A failure line: phase, outcome, the fix, and the evidence — in that order.
+
+    WARNING rather than ERROR by default, matching the chart's documented ladder: one cluster
+    unreachable is "degraded but scoped", not "an operator must act; nothing self-heals". A poll
+    that recovers next cycle must not page anybody.
+
+    `phase` is asserted against the closed set, because a typo'd phase is worse than no phase: it
+    reads as a real one and greps as nothing.
+    """
+    assert phase in PHASES, f"unknown phase {phase!r}; the set is {PHASES}"
+    # ORDER IS PART OF THE DESIGN: what and where (`phase`, `outcome`), then which (the caller's
+    # `cluster=`, `secret=`, `tls=`), then the fix, then the evidence. `detail` is the only field
+    # that can be hundreds of characters, so it goes last — a long exception must not push the
+    # identifying facts off the end of a terminal, and `action` is the part to read first anyway.
+    event(log, logging.WARNING, name, phase=phase, outcome=outcome, **fields,
+          action=action, detail=detail, secrets=secrets)

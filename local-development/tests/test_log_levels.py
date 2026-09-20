@@ -37,18 +37,27 @@ REPO = pathlib.Path(__file__).resolve().parents[2]
 PROBE = r"""
 import io, json, logging, os, sys
 sys.path.insert(0, %(dev)r)
-from gsd.api import _resolve_log_level, _quiet_transport_framing
+from gsd.api import (_resolve_log_level, _quiet_transport_framing,
+                     _apply_http_log_level, _apply_per_logger_levels)
 
 level, complaint = _resolve_log_level(os.environ.get("GSD_LOG_LEVEL"))
 stream = io.StringIO()
 logging.basicConfig(level=level, format="%%(levelname)s %%(name)s %%(message)s", stream=stream)
 _quiet_transport_framing()
+http_complaints = _apply_http_log_level()
+levels_complaints = _apply_per_logger_levels()
+# uvicorn's access logger carries propagate=False and its own handler in the real process, so it is
+# given this stream here: the pin is about the LEVEL the setting applies, not uvicorn's plumbing.
+logging.getLogger("uvicorn.access").propagate = True
 
 for name in ("debug", "info", "warning", "error", "critical"):
     getattr(logging.getLogger("gsd.probe"), name)(name + "-line")
 # The framing logger the pin is about, and the semantic one it must NOT touch.
 logging.getLogger("httpcore.http11").debug("httpcore-line")
 logging.getLogger("httpx").info("httpx-line")
+logging.getLogger("httpx").warning("httpx-failed-request")
+logging.getLogger("uvicorn.access").info("access-line")
+logging.getLogger("gsd.clusterconfig").debug("clusterconfig-line")
 
 text = stream.getvalue()
 print(json.dumps({
@@ -58,16 +67,26 @@ print(json.dumps({
                 if n + "-line" in text],
     "httpcore": "httpcore-line" in text,
     "httpx": "httpx-line" in text,
+    "httpx_warning": "httpx-failed-request" in text,
+    "access": "access-line" in text,
+    "clusterconfig": "clusterconfig-line" in text,
+    "http_complaints": http_complaints,
+    "levels_complaints": levels_complaints,
 }))
 """
 
 
-def probe(value: str | None, *, debug_http: bool = False) -> dict:
+def probe(value: str | None, *, debug_http: bool = False, http: str | None = None,
+          levels: str | None = None) -> dict:
     env = {"PATH": "/usr/bin:/bin", "HOME": "/nonexistent"}
     if value is not None:
         env["GSD_LOG_LEVEL"] = value
     if debug_http:
         env["GSD_DEBUG_HTTP"] = "true"
+    if http is not None:
+        env["GSD_HTTP_LOG_LEVEL"] = http
+    if levels is not None:
+        env["GSD_LOG_LEVELS"] = levels
     dev = str(REPO / "local-development")
     done = subprocess.run(
         [sys.executable, "-c", PROBE % {"dev": dev}],
@@ -157,15 +176,42 @@ class TestDebugIsTheAppsOwnReasoning:
             "framing and the app's own ten lines are buried in it"
         )
 
-    def test_httpx_is_deliberately_left_alone(self) -> None:
-        """Its lines are SEMANTIC — which API call, against what, with which status.
+    def test_httpx_has_its_own_variable_and_no_longer_rides_gsd_log_level(self) -> None:
+        """This test used to assert the opposite, and the reversal is the point — so the reasoning
+        it replaces is kept here rather than deleted.
 
-        `HTTP Request: GET <url> "200 OK"` is the record of what the poller actually asked the
-        cluster for, it costs 12 lines a cycle rather than 356, and the chart README documents it as
-        intentionally present at the default. Pinning it too would have been the easy over-reach.
+        IT SAID: httpx's lines are SEMANTIC — which API call, against what, with which status — the
+        record of what the poller actually asked for, costing 12 lines a cycle against httpcore's
+        356. On that measurement, pinning httpx too would have been the easy over-reach, and leaving
+        it alone was right.
+
+        WHAT CHANGED IS THE FLEET, NOT THE ARGUMENT (#245). Measured on the lab at FOUR clusters,
+        60s refresh: 1 082 of the pod's 1 784 lines in 90 minutes were those URLs — 61%, and roughly
+        10 000 an hour at the forty clusters the cluster-configuration module exists to serve. The
+        lines the operator was missing were our own. So httpx moved to its own variable rather than
+        being pinned: `GSD_HTTP_LOG_LEVEL=INFO` restores the old behaviour exactly, which is the
+        test below.
         """
-        assert probe("INFO")["httpx"], "httpx's request lines vanished from INFO"
-        assert probe("DEBUG")["httpx"], "httpx's request lines vanished from DEBUG"
+        assert not probe("DEBUG")["httpx"], (
+            "httpx's request lines are back at DEBUG by default: at four clusters that was 61% of "
+            "the pod's output, and the module's own lines are what it buries"
+        )
+        assert probe("DEBUG", http="INFO")["httpx"], (
+            "GSD_HTTP_LOG_LEVEL=INFO no longer restores the per-request record, so the old "
+            "behaviour is a deleted feature rather than a value"
+        )
+
+    def test_a_failed_request_still_speaks_at_the_default(self) -> None:
+        """WARNING, not OFF. A request that fails is worth a line; the routine 200s are not."""
+        assert probe("INFO")["httpx_warning"], (
+            "httpx is silenced rather than thresholded, so a failing request says nothing"
+        )
+
+    def test_uvicorns_access_lines_are_reachable_at_last(self) -> None:
+        """They were governed by nothing: the logger carries propagate=False and its own handler, so
+        `GSD_LOG_LEVEL` could neither raise nor lower them and /readyz wrote a line forever."""
+        assert not probe("INFO")["access"], "uvicorn's access lines are back at the default"
+        assert probe("INFO", http="INFO")["access"], "GSD_HTTP_LOG_LEVEL=INFO must restore them"
 
     def test_the_framing_is_thresholded_not_deleted(self) -> None:
         """A TLS handshake failing against a corporate CA is a real thing to have to diagnose, and
@@ -293,3 +339,59 @@ class TestTheDocsAdvertiseExactlyWhatWorks:
                     f"{path} mentions {word!r} while describing logLevel. It is not an accepted "
                     f"value, and naming it reads as a menu of things that might work"
                 )
+
+
+class TestTheHttpRecordIsSeparableFromTheAppsReasoning:
+    """#245's ask: "a different log variable for the HTTP logs". Separable means BOTH directions."""
+
+    def test_the_app_can_be_loud_while_the_request_record_stays_quiet(self) -> None:
+        """The case that motivated the variable: an operator debugging one cluster wants the
+        module's reasoning, not ten thousand URLs an hour."""
+        got = probe("DEBUG", levels="gsd.clusterconfig=DEBUG")
+        assert got["clusterconfig"] and not got["httpx"]
+
+    def test_the_request_record_can_be_loud_while_the_app_stays_quiet(self) -> None:
+        """The other direction, which is a real question too: "what calls went out?" without the
+        app's own narration."""
+        got = probe("WARNING", http="INFO")
+        assert got["httpx"] and not got["clusterconfig"]
+
+    def test_the_http_level_is_deliberately_independent_of_gsd_log_level(self) -> None:
+        """A consequence worth stating rather than discovering: because the HTTP loggers carry their
+        OWN level, `GSD_LOG_LEVEL=ERROR` does not silence a failed request. That is the point of a
+        separate variable — the two answer different questions — but it does mean the way to quieten
+        the request record is `GSD_HTTP_LOG_LEVEL`, never the app's level.
+        """
+        assert probe("ERROR")["httpx_warning"], (
+            "a failing request went silent because the APP's level was raised; the HTTP record has "
+            "its own variable precisely so that cannot happen"
+        )
+        assert not probe("ERROR", http="CRITICAL")["httpx_warning"]
+
+
+class TestPerLoggerOverridesDegradeRatherThanCrash:
+    """The same contract as every other log setting here: a diagnostic aid must not be an outage."""
+
+    def test_an_entry_that_is_not_name_equals_level_is_skipped_and_said(self) -> None:
+        got = probe("INFO", levels="gsd.clusterconfig")
+        assert got["levels_complaints"] and "name=LEVEL" in got["levels_complaints"][0]
+
+    def test_a_bad_level_leaves_that_logger_alone_and_says_which(self) -> None:
+        got = probe("INFO", levels="gsd.clusterconfig=CHATTY")
+        assert got["levels_complaints"] and "gsd.clusterconfig" in got["levels_complaints"][0]
+
+    def test_a_good_entry_beside_a_bad_one_still_applies(self) -> None:
+        """One typo must not discard the pairs that parsed."""
+        got = probe("WARNING", levels="nonsense,gsd.clusterconfig=DEBUG")
+        assert got["clusterconfig"] and got["levels_complaints"]
+
+    def test_unset_changes_nothing_and_says_nothing(self) -> None:
+        assert probe("INFO")["levels_complaints"] == []
+
+    def test_a_bad_http_level_falls_back_to_warning_and_does_not_echo_the_value(self) -> None:
+        """An environment variable is a place credentials get miswired — the same reason
+        `_resolve_log_level` refuses to repeat a rejected value."""
+        got = probe("INFO", http="sha256~not-a-level-but-a-token")
+        assert got["http_complaints"] and not got["httpx"]
+        assert "sha256~" not in got["http_complaints"][0]
+        assert "30-character" in got["http_complaints"][0], "the length is the one fact it does report"

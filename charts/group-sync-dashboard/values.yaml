@@ -542,6 +542,34 @@ config:
 # this dashboard reads. If the Logins tab is empty, that is the one to check — not this one.
 logLevel: INFO
 
+# The HTTP REQUEST RECORD, separately from this app's own reasoning (#245). Governs `httpx`
+# (outbound: one line per API call the poller makes) and `uvicorn.access` (inbound: one line per
+# request served, including /readyz and /metrics).
+#
+# WHY IT IS ITS OWN VALUE, AND WHY THE DEFAULT MOVED. httpx's `HTTP Request: GET <url> "200 OK"`
+# lines used to sit at INFO, deliberately — they are semantic, and at ONE cluster they cost about 12
+# lines a cycle. MEASURED ON A FOUR-CLUSTER LAB at a 60s refresh: 1 082 of the pod's 1 784 lines in
+# 90 minutes were those URLs — 61%, and roughly 10 000 an hour at forty clusters. The reasoning was
+# not wrong; the fleet outgrew it. The cluster-connection module now logs the facts those lines were
+# a proxy for (which cluster, which phase, what outcome), so the URLs are the same story told worse.
+#
+# WARNING keeps the failures and drops the routine 200s. Set INFO to restore the full per-request
+# record exactly as it was. uvicorn's access lines were previously unreachable by any setting at
+# all — its logger carries propagate=False and its own handler — so this is the first time they can
+# be turned down.
+httpLogLevel: WARNING
+
+# PER-LOGGER OVERRIDES, for raising one concern without raising the fleet (#245). A comma-separated
+# list of `logger=LEVEL`, applied after the two values above.
+#
+#   clusterConfigLogLevels: "gsd.clusterconfig=DEBUG"        one module's reasoning, nothing else
+#   clusterConfigLogLevels: "gsd.clusterconfig=DEBUG,httpx=INFO"   that, plus the request record
+#
+# Before this, diagnosing one cluster's connection meant GSD_LOG_LEVEL=DEBUG, which turns on every
+# module at once across every polling cluster. An unparseable entry is skipped with a warning rather
+# than failing the pod; the last entry wins for a repeated logger.
+clusterConfigLogLevels: ""
+
 # Timezone for LOG LINES ONLY. Set it to whoever reads the logs at 3am — correlating an
 # incident against a wall clock is easier than doing UTC arithmetic under pressure.
 #

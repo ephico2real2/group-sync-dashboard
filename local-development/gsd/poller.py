@@ -11,6 +11,7 @@ cluster's data hostage for the duration of the timeout.
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 from datetime import UTC, datetime, timedelta
@@ -24,6 +25,75 @@ from .storage import StorageBackend
 from .timeutil import now_iso
 
 log = logging.getLogger(__name__)
+
+
+def _log_poll_failure(cluster: ClusterConfig, exc: ClusterError) -> None:
+    """A poll failure that names the phase, what was in force, and the fix (#245).
+
+    WHAT THIS REPLACES. The line was `poll <name> failed: <message> (<outcome>)`, and for the
+    commonest real failure — a CA the dashboard does not trust — the whole of it was
+    `ConnectError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed (_ssl.c:1082)`. True,
+    and it names neither the trust store that was consulted nor either way out, so the reader who
+    most needs help gets a stack-trace fragment.
+
+    THE TLS CASE IS SEPARATED FROM THE REST because it is the one where the fix depends on the mode
+    in force: a cluster on the shared bundle is fixed fleet-wide (add the CA to it), a cluster with
+    its own `caData` is fixed alone (replace that Secret's bundle), and a cluster already running
+    `insecure` cannot be failing verification at all. `phase=tls` rather than `connect` for the same
+    reason: the socket opened; the certificate is what was refused.
+
+    The credential is passed to the emit helper as a secret so a token echoed back inside an error
+    body cannot reach the log — `ClusterClient._redact` already scrubs its own, and this is the
+    second boundary, for the messages it does not build.
+    """
+    from .clusterconfig.events import failure
+    mode = cluster.tls_mode
+    tls = "insecure" if mode["insecure"] else mode["ca"]
+    verify_failed = "CERTIFICATE_VERIFY_FAILED" in exc.message or "SSLCertVerificationError" in exc.message
+    if verify_failed and not mode["insecure"]:
+        if mode["ca"] == "caData":
+            action = (f"this cluster pins its own CA: replace tlsClientConfig.caData in Secret "
+                      f"{cluster.source.split(':', 1)[-1]} with the CA that signs its API server")
+        elif mode["ca"] == "trusted-bundle":
+            action = ("add the CA to the chart's trustedCA.existingConfigMap (fleet-wide), or set "
+                      "tlsClientConfig.caData on this cluster's Secret (this cluster only)")
+        else:
+            action = (f"the CA comes from {mode['ca']}: point it at the CA that signs this "
+                      f"cluster's API server")
+        failure(log, "cluster-unreachable", phase="tls", outcome="cert-verify-failed",
+                action=action, cluster=cluster.name, source=cluster.source, tls=tls,
+                store=os.environ.get("GSD_TRUSTED_CA_FILE") or "system",
+                detail=exc.message, secrets=_credentials(cluster))
+        return
+    failure(log, "cluster-unreachable", phase="poll", outcome=exc.outcome,
+            action=_POLL_ACTIONS.get(exc.outcome, "see the cluster's row for the last error"),
+            cluster=cluster.name, source=cluster.source, tls=tls, credential=cluster.credential_kind,
+            detail=exc.message, secrets=_credentials(cluster))
+
+
+#: What to do about each poll outcome. The codes are `gsd.kube`'s, so the log and the cluster row
+#: say the same word for the same failure.
+_POLL_ACTIONS = {
+    "auth_failed": "the token is invalid or expired: rotate it in this cluster's Secret",
+    "forbidden": "grant this cluster's ServiceAccount the dashboard's reader ClusterRole",
+    "unreachable": "check the cluster's API URL is right and reachable from this pod",
+}
+
+
+def _credentials(cluster: ClusterConfig) -> tuple[str, ...]:
+    """This cluster's secret values, for the emit helper to strip. Never raises: a credential that
+    cannot be resolved is simply nothing to redact against (the same contract as `_redact`)."""
+    out = []
+    try:
+        token = cluster.resolve_token()
+        if token:
+            out.append(token)
+    except Exception:  # noqa: BLE001 - a diagnostic must not fail a poll
+        pass
+    for value in (cluster.oauth_password, cluster.oauth_username):
+        if value:
+            out.append(value)
+    return tuple(out)
 
 # How often a non-leader re-checks whether it has become the leader. Deliberately decoupled
 # from the poll interval: this costs a flag read, while tying it to the poll interval makes
@@ -119,7 +189,7 @@ def poll_once(
     try:
         groupsyncs, groups = client.fetch()
     except ClusterError as exc:
-        log.warning("poll %s failed: %s (%s)", cluster.name, exc.message, exc.outcome)
+        _log_poll_failure(cluster, exc)
         store.record_poll(cluster.name, exc.outcome, exc.message)
         return exc.outcome
 
@@ -642,6 +712,11 @@ class Poller:
         # its own thread without stopping the poller. Keyed by cluster name; the host's is never set.
         self._cluster_stops: dict[str, threading.Event] = {}
         self._threads_lock = threading.Lock()
+        # The discovery cycle's id and the shape it last saw (#245): the id goes on every line one
+        # cycle emits so a fleet's log greps to one story, and the shape is what "changed" compares
+        # against — a Secret edited in place changes no name, and that is the edit a reader needs.
+        self._discovery_cycle = 0
+        self._discovered_shape: dict[str, tuple] = {}
         # 0 so the first cycle after start takes one immediately: a pod that
         # has just come up is exactly when you want a copy on disk.
         self._next_backup = 0.0
@@ -1063,13 +1138,21 @@ class Poller:
         own namespace by label; the registry is replaced on success and keeps the previous set on a
         failed LIST, which becomes the cycle's one finding. Only the leader writes the cluster rows."""
         from .clusterconfig import discover
+        from .clusterconfig.events import event, failure
         registry = self.settings.cluster_registry
         host = self.settings.host_cluster()
         namespace = own_namespace()
         registry.namespace = namespace
         at = now_iso()
+        # One id per cycle, on every line the cycle emits, so a fleet's interleaved log greps to one
+        # cycle's story (#245). Monotonic and small rather than a uuid: it is read by a person.
+        self._discovery_cycle += 1
+        cycle = self._discovery_cycle
         if host is None or not namespace:
             registry.fail(at, "no host cluster or no namespace: the pod's ServiceAccount mount names neither")
+            failure(log, "discovery-failed", phase="discovery", outcome="discovery-failed",
+                    action="check the pod's ServiceAccount mount and the chart's clusters list",
+                    cycle=cycle, detail="no host cluster or no namespace: the mount names neither")
             return
         try:
             clusters, findings = discover(
@@ -1077,14 +1160,37 @@ class Poller:
                 host_name=host.name, values_names=tuple(c.name for c in self.settings.clusters))
         except ClusterError as exc:
             registry.fail(at, f"{exc.outcome}: {exc.message}")
-            log.warning("cluster Secret discovery failed (%s: %s); the previous set stands", exc.outcome, exc.message)
+            failure(log, "discovery-failed", phase="discovery", outcome="discovery-failed",
+                    action=("grant the ServiceAccount list on secrets in this namespace, or check "
+                            "the API server is reachable — the previous set stands meanwhile"),
+                    cycle=cycle, namespace=namespace, result=exc.outcome, detail=exc.message)
             return
         before = {c.name for c in registry.discovered()}
+        before_shape = self._discovered_shape
         registry.replace(clusters, findings, at=at)
         after = {c.name for c in clusters}
-        if before != after or findings:
-            log.info("cluster Secrets: %d cluster(s) discovered in %s (%s), %d finding(s)",
-                     len(clusters), namespace, ", ".join(sorted(after)) or "none", len(findings))
+        # TRANSITIONS, NOT STATES (#245). A cycle that changed nothing logs nothing, so a line in
+        # the log always means something happened — the property that makes INFO readable at forty
+        # clusters. The shape is compared, not just the names: a Secret edited in place (a new
+        # token, a different TLS mode) changes no name and is exactly what a reader needs to see.
+        shape = {c.name: (c.source, c.credential_kind, c.tls_mode["ca"] or "insecure",
+                          c.visibility, c.identity, c.enabled) for c in clusters}
+        self._discovered_shape = shape
+        added, removed = sorted(after - before), sorted(before - after)
+        changed = sorted(n for n in after & before if shape.get(n) != before_shape.get(n))
+        if added or removed or changed or findings:
+            event(log, logging.INFO, "discovery", cycle=cycle, namespace=namespace,
+                  seen=len(clusters) + len(findings), accepted=len(clusters), refused=len(findings),
+                  added=",".join(added) or None, removed=",".join(removed) or None,
+                  changed=",".join(changed) or None)
+        for name in added + changed:
+            c = next(x for x in clusters if x.name == name)
+            mode = c.tls_mode
+            event(log, logging.INFO, "cluster-resolved", cycle=cycle, cluster=c.name,
+                  source=c.source, credential=c.credential_kind,
+                  tls="insecure" if mode["insecure"] else mode["ca"],
+                  visibility=c.visibility or "inherit", identity=c.identity or "none",
+                  enabled=str(c.enabled).lower())
         if self.elector is not None and not self.elector.is_leader:
             return
         for cluster in clusters:
