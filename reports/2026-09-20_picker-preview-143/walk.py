@@ -48,7 +48,7 @@ def main():
         print("typeahead: 'group-sync' →", narrowed)
         pick = narrowed[0] if narrowed else listed[0]
         page.click(f'[data-lookup-opt="namespaces"][data-value="{pick}"]'); page.wait_for_selector(f'.rp-tag[data-name="{pick}"]')
-        page.wait_for_function("() => /^\\d+ namespaces/.test(document.getElementById('report-totals').textContent)", timeout=20_000)
+        page.wait_for_function("() => /^\\d+ namespaces?/.test(document.getElementById('report-totals').textContent)", timeout=20_000)
         print("totals  :", pick, "→", page.locator("#report-totals").inner_text())
         last = previews[-1]; print("preview : POST", last[1], "→", last[0], last[2][:160])
         print("generate: enabled", page.locator("#report-generate").is_enabled())
