@@ -151,15 +151,17 @@ WARN_TEXT = [("warn", "surface-1", AA_TEXT, "td.num.warn"), ("warn", "page", AA_
 # Text that lives in table cells is held to the bar on the composed ROW surfaces, not only the card
 # (#184): the link on a zebra row and on a hovered row, the muted chevron and .change-baseline beside
 # it, and the body/secondary copy every cell carries. These are the pairs that were never checked.
-# The status tokens (.change-added, .change-removed, td.num.warn) are NOT in this list yet: measured on
-# 2026-09-19 with these same surfaces, they fail 4.5 on the rows in eight of the ten theme x palette
-# variants (4.01-4.44), and each palette block tunes them separately — a change to ten blocks that
-# is its own issue on the design system, filed from #184's PR, not a rider on the link fix.
+# The status tokens (.change-added, .change-removed, td.num.warn) joined the list with #204: measured
+# on 2026-09-19 with these same surfaces they failed 4.5 on the rows in eight of the ten theme x
+# palette variants (4.01-4.44); every palette block was re-tuned by the smallest hue-preserving step
+# that clears the bar on the hovered row (the worst surface), 1-9 % toward black or white.
 TEXT_ON_ROWS = [
     (token, surface, AA_TEXT, f"{why} on a {'zebra' if surface == 'row-zebra' else 'hovered'} row")
     for surface in ("row-zebra", "row-hover")
     for token, why in (("drill-text", ".drill link text"), ("text-muted", ".drill::after and .change-baseline"),
-                       ("text-secondary", "secondary cell copy"), ("text-primary", "cell copy"))
+                       ("text-secondary", "secondary cell copy"), ("text-primary", "cell copy"),
+                       ("status-good", ".change-added"), ("status-critical", ".change-removed"),
+                       ("warn", "td.num.warn"))
 ]
 # Active tab labels sit on the page; the accent also tints a card edge and the hero numeral.
 # Derived from the stylesheet, not hardcoded: a hardcoded list silently stops covering a

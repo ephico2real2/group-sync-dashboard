@@ -55,12 +55,12 @@
      (.change-added / .change-removed / .err), so both are held to 4.5:1. status-warning is
      only ever a glyph, so it is held to 3:1 (WCAG 1.4.11) — at 4.5:1 an amber turns brown
      and stops reading as a warning at all. */
-  --status-good: #0a880a;
+  --status-good: #097d09;
   --status-warning: #c48704;
   /* The partial-export edge sits on the PAGE gradient, not a card; the badge amber is 2.9:1 there,
      so the edge gets its own darker amber in the light theme (review of C1, second pass). */
   --status-warning-edge: #b45309;
-  --status-critical: #d03b3b;
+  --status-critical: #c43838;
   --status-unknown: #74726d;
   /* Categorical slots, fixed order. Used for the OWNING CR, not for individual groups:
      there are 62 groups and only ~2 CRs, and past ~7 hues carrying meaning adjacent
@@ -172,7 +172,7 @@
      fell back to hard-coded Tailwind-slate hex and rendered off the system in both themes. The
      third, --accent-soft, is derived on body — see there. */
   --line: #c3c2b7;                                                  /* a chip's resting border */
-  --warn: #b45309;  /* td.num.warn is TEXT at weight 600, so 4.5:1 — the warning-edge amber, not the 3:1 glyph amber */
+  --warn: #ae5009;  /* td.num.warn is TEXT at weight 600, so 4.5:1 on card, zebra AND hovered rows (4.55 on hover, #204) — the warning-edge amber, not the 3:1 glyph amber */
 }
 @media screen and (prefers-color-scheme: dark) {
   :root:where(:not([data-theme="light"])) {
@@ -201,7 +201,7 @@
     /* Lightened to 4.50:1; at #d03b3b it was 3.62:1 against the dark surface and failed
        as .change-removed and .err text. The light theme keeps the deeper red, which
        already passes there — the same hex cannot serve both. */
-    --status-critical: #d75858;
+    --status-critical: #da6767;
     /* Dark keeps the brighter green. The light theme's #0a880a reaches 4.5:1 on a white
        card but only 3.76:1 here, and .change-added renders it as text. */
     --status-good: #0ca30c;
@@ -252,7 +252,7 @@
   --series-7: #9085e9;
   --series-8: #e66767;
   --zebra: rgba(255, 255, 255, 0.035);
-  --status-critical: #d75858;
+  --status-critical: #da6767;
   /* Dark keeps the brighter green. The light theme's #0a880a reaches 4.5:1 on a white
      card but only 3.76:1 here, and .change-added renders it as text. */
   --status-good: #0ca30c;
@@ -290,22 +290,22 @@
    OS-dark twin of each dark block must stay token-identical to the explicit one — a test holds
    them together. */
 :root[data-palette="deuter"] {
-  --status-good: #0072b2;  /* 5.05:1 on the card */
+  --status-good: #0071b0;  /* 4.51:1 on a hovered row, 5.13 on the card (#204) */
   --status-warning: #c18600;  /* 3.06:1 on the card */
   --status-warning-edge: #b17a00;  /* 3.62:1 on the card */
-  --status-critical: #bf5400;  /* 4.56:1 on the card */
+  --status-critical: #b24e00;  /* 4.51:1 on a hovered row, 5.14 on the card (#204) */
 }
 :root[data-palette="protan"] {
-  --status-good: #0072b2;  /* 5.05:1 on the card */
+  --status-good: #0071b0;  /* 4.51:1 on a hovered row, 5.13 on the card (#204) */
   --status-warning: #c18600;  /* 3.06:1 on the card */
   --status-warning-edge: #b17a00;  /* 3.62:1 on the card */
-  --status-critical: #bf5400;  /* 4.56:1 on the card */
+  --status-critical: #b24e00;  /* 4.51:1 on a hovered row, 5.14 on the card (#204) */
 }
 :root[data-palette="trit"] {
-  --status-good: #008360;  /* 4.63:1 on the card */
+  --status-good: #007b5a;  /* 4.51:1 on a hovered row, 5.14 on the card (#204) */
   --status-warning: #cb76a5;  /* 3.07:1 on the card */
   --status-warning-edge: #c46499;  /* 3.63:1 on the card */
-  --status-critical: #bf5400;  /* 4.56:1 on the card */
+  --status-critical: #b24e00;  /* 4.51:1 on a hovered row, 5.14 on the card (#204) */
 }
 :root[data-palette="contrast"] {
   --status-good: #076607;  /* 7.02:1 on the card */
@@ -316,22 +316,22 @@
 }
 @media screen and (prefers-color-scheme: dark) {
   :root:where(:not([data-theme="light"]))[data-palette="deuter"] {
-    --status-good: #0088d5;  /* 4.55:1 on the card */
+    --status-good: #1492d8;  /* 4.53:1 on a hovered row, 5.09 on the card (#204) */
     --status-warning: #e69f00;  /* 7.73:1 on the card */
     --status-warning-edge: #e69f00;  /* 7.73:1 on the card */
-    --status-critical: #d75f00;  /* 4.58:1 on the card */
+    --status-critical: #da6c14;  /* 4.53:1 on a hovered row, 5.09 on the card (#204) */
   }
   :root:where(:not([data-theme="light"]))[data-palette="protan"] {
-    --status-good: #0088d5;  /* 4.55:1 on the card */
+    --status-good: #1492d8;  /* 4.53:1 on a hovered row, 5.09 on the card (#204) */
     --status-warning: #e69f00;  /* 7.73:1 on the card */
     --status-warning-edge: #e69f00;  /* 7.73:1 on the card */
-    --status-critical: #d75f00;  /* 4.58:1 on the card */
+    --status-critical: #da6c14;  /* 4.53:1 on a hovered row, 5.09 on the card (#204) */
   }
   :root:where(:not([data-theme="light"]))[data-palette="trit"] {
     --status-good: #009e73;  /* 5.09:1 on the card */
     --status-warning: #cc79a7;  /* 5.69:1 on the card */
     --status-warning-edge: #cc79a7;  /* 5.69:1 on the card */
-    --status-critical: #d75f00;  /* 4.58:1 on the card */
+    --status-critical: #da6c14;  /* 4.53:1 on a hovered row, 5.09 on the card (#204) */
   }
   :root:where(:not([data-theme="light"]))[data-palette="contrast"] {
     --status-good: #0ec00e;  /* 7.10:1 on the card */
@@ -343,18 +343,18 @@
 }
 @media screen {
 :root[data-theme="dark"][data-palette="deuter"] {
-  --status-good: #0088d5;  /* 4.55:1 on the card */
+  --status-good: #1492d8;  /* 4.53:1 on a hovered row, 5.09 on the card (#204) */
   --status-warning: #e69f00;  /* 7.73:1 on the card */
   --status-warning-edge: #e69f00;  /* 7.73:1 on the card */
-  --status-critical: #d75f00;  /* 4.58:1 on the card */
+  --status-critical: #da6c14;  /* 4.53:1 on a hovered row, 5.09 on the card (#204) */
 }
 }
 @media screen {
 :root[data-theme="dark"][data-palette="protan"] {
-  --status-good: #0088d5;  /* 4.55:1 on the card */
+  --status-good: #1492d8;  /* 4.53:1 on a hovered row, 5.09 on the card (#204) */
   --status-warning: #e69f00;  /* 7.73:1 on the card */
   --status-warning-edge: #e69f00;  /* 7.73:1 on the card */
-  --status-critical: #d75f00;  /* 4.58:1 on the card */
+  --status-critical: #da6c14;  /* 4.53:1 on a hovered row, 5.09 on the card (#204) */
 }
 }
 @media screen {
@@ -362,7 +362,7 @@
   --status-good: #009e73;  /* 5.09:1 on the card */
   --status-warning: #cc79a7;  /* 5.69:1 on the card */
   --status-warning-edge: #cc79a7;  /* 5.69:1 on the card */
-  --status-critical: #d75f00;  /* 4.58:1 on the card */
+  --status-critical: #da6c14;  /* 4.53:1 on a hovered row, 5.09 on the card (#204) */
 }
 }
 @media screen {
