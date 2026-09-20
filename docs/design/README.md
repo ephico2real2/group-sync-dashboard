@@ -5,7 +5,7 @@ artifacts (not shipped pages); the implemented pages live under `local-developme
 
 | Mockup | For |
 |---|---|
-| [`reporting-status-mock.html`](reporting-status-mock.html) | The reporting status / schedules / history UI — see issue #149 |
+| [`reporting-status-mock.html`](reporting-status-mock.html) | **Implemented** (#149 R5) — the reporting status / schedules / history UI at `#page=reporting` |
 | [`report-form-mock.html`](report-form-mock.html) | The report input forms redesign — one ParamSpec-driven shell, discovered lookups with type-ahead, subject scopes — see issue #149 |
 | [`landing-access-mock.html`](landing-access-mock.html) | The self-scoped "Your access" landing page every user gets — what you can reach, where it came from, what changed — see issue #158 |
 | [`overview-kpi-mock.html`](overview-kpi-mock.html) | The administrator Overview makeover — system status, access posture, trends, Grafana/Observe links — see issue #157 |
@@ -13,7 +13,7 @@ artifacts (not shipped pages); the implemented pages live under `local-developme
 | [`tab-feature-contract.md`](tab-feature-contract.md) | What a tab redesign may **not** remove — captured from the running dashboard and the render functions — see issue #153 |
 | [`drilldown-mock.html`](drilldown-mock.html) | The drill-down experience — one pattern-matched lookup over users, groups **and** namespaces, then group → member → user → via-group, with the namespace as the third drillable entity — see issues #166 and #167 |
 | [`cluster-overview-mock.html`](cluster-overview-mock.html) | The Cluster Overview relaid onto the shared design system — cluster tiles that shrink as the fleet grows, paged alerts, and every status carrying its consequence — see issue #157 |
-| [`reports-page-mock.html`](reports-page-mock.html) | The Reports page as used — the catalogue (bolder names, a colour gradient per report) and the per-report form a click opens immediately, in view, as a shareable position — see issue #149 |
+| [`reports-page-mock.html`](reports-page-mock.html) | **Implemented** (#173) — the Reports page as used: the catalogue (bolder names, a colour gradient per report) and the per-report form a click opens immediately, in view, as a shareable position; design lineage #149 |
 | [`data-requirements.md`](data-requirements.md) | What every mock renders, where each number comes from today, and the ten gaps that stand between the mocks and real pages — see issues #156, #167, #149, #158 |
 | [`inventory-2026-09-17.md`](inventory-2026-09-17.md) | The dated inventory: every finished mock, its owning issue, its review rendering, the decisions it embodies, and what was retired |
 | [`kyverno-research-2026-09-17.md`](kyverno-research-2026-09-17.md) | The Kyverno research record — ten findings, each cited to the v1.19.1 source or shipped CRDs, and the correction to #165's removal-date claim |

@@ -378,9 +378,10 @@ def build_report_app(settings: ReportSettings, *, secret: bytes | None = None, c
                   cluster: str | None = Query(default=None, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$", description="Only runs against this cluster."),
                   limit: int = Query(default=100, ge=1, le=1000, description="Page size, newest first. `total` and `truncated` describe the filtered set."),
                   offset: int = Query(default=0, ge=0, description="Page offset.")) -> dict:
-        """Runs, newest first, with status, sizes and the data sha256 — the Reports tab's recent-runs table and
-        the status page's history (#149 R5: every filter runs across the whole history, server-side; `facets`
-        lists the reports and clusters the history holds, for the menus)."""
+        """Runs, newest first, with status, sizes and the data sha256: the status page's history.
+
+        Every filter runs across the whole history, server-side (#149 R5); `facets` lists the reports and
+        clusters the history holds, for the menus."""
         rows, total = store.list(report=report, origin=origin, status=status, cluster=cluster, limit=limit, offset=offset)
         return {"runs": [r.public() for r in rows], "total": total, "limit": limit, "offset": offset,
                 "truncated": offset + len(rows) < total, "queued": runs.queued(), "facets": store.facets()}
@@ -389,11 +390,13 @@ def build_report_app(settings: ReportSettings, *, secret: bytes | None = None, c
 
     @app.get(f"{REPORT_PREFIX}/api/status")
     def reporting_status(p: Principal = Depends(principal)) -> dict:
-        """The status page's three cards (#149 R5/R6), assembled from what the service already holds — its
-        configuration, the run window, the run store, the signals — and the schedules the chart handed it.
-        No cluster call: next and previous fire instants come from each schedule's cron expression, the
-        suspend state from its `enabled`; kube-state-metrics would need Prometheus access and RBAC the
-        service does not have, and would only restate what the expression already determines."""
+        """The status page's three cards: the service, the run window and retention; the schedules; in-flight counts.
+
+        Assembled from what the service already holds (#149 R5/R6) — its configuration, the run window, the
+        run store, the signals — and the schedules the chart handed it. No cluster call: next and previous
+        fire instants come from each schedule's cron expression, the suspend state from its `enabled`;
+        kube-state-metrics would need Prometheus access and RBAC the service does not have, and would only
+        restate what the expression already determines."""
         from . import cron
         at = now()
         change, when = settings.window.next_change(at)
