@@ -28,7 +28,20 @@ proposed mechanism did not hold.
 | C11 | Tests as mutant pins | REFUTED — 2 survive | REFUTED — the shared-resolver mutant survived | — | **Accepted**: both surviving mutants are now pinned, and every pin in this record was re-run against its mutant before being called a pin. |
 | — | **The ladder is not ordered** | — | — | **OB2 design pass, REFUTED** | **Accepted, re-implemented.** See below. |
 
-## The ordering finding, and the one deviation
+## The ordering finding — accepted, then reversed by the operator
+
+**Superseded (2026-09-20, later the same day).** The operator: *"A user with cluster admin and auditor
+is fine. That is how Kubernetes RBAC works. As long as the user has the role needed or can get the right
+SAR needed, we are good."* The composition below was removed; each level asks its own question alone.
+The reasons are in `docs/specs/SPEC_S1_cluster_secrets.md` — RBAC is additive; the SAR asks the action's
+own question, so anyone who passes it can do the thing with `oc` and the ServiceAccount is not a confused
+deputy; and the auditor ruling holds without composition, measured. **Everything else the review earned
+is kept** (C2, C4, C7, C8, C6, the duplicate-name and Argo-key refusals) — those are the real protections.
+
+The finding is recorded because what it measured is still true and still shapes the contract: these
+questions are not a *higher* bar than the wide tier, they are the bar that matches the action.
+
+## The ordering finding as it was argued, and the one deviation
 
 OB2's design pass measured what the other seats did not ask: `get`/`create secrets` in a namespace is
 held by the stock `admin` ClusterRole, so asked **alone** the two questions are not a higher bar than
@@ -53,6 +66,22 @@ blunt override), and `viewer_scope` widens for everyone when `visibility.enabled
 statement about who administers the cluster, which is all the rung asks — so the administrator question
 is asked **directly** through `_decide`, past both escape hatches. Pinned by
 `test_the_admin_rung_is_asked_directly_past_both_escape_hatches`, which fails against OB2's own shape.
+
+## The two deep seats (OB3, and the Fable seat scoped to the tier, the TLS modes and the credential)
+
+Both ran on `cce529b`; their claims are judged against the rule as it stands after the reversal.
+
+| # | Finding | Seat | Decision |
+|---|---|---|---|
+| C6 | **A reproduced widening**: `_discover_once` replaces the registry before it retires the row, and only the leader writes at all — so in that window (indefinitely on a standby) `settings.cluster(id)` is None while the row says enabled=1, and `cluster_policy`'s defensive default for an unknown id is the WIDEST one. A cluster its Secret made `self-only` was served to a wide-tier reader as `inherit`/`all`. | OB3 | **Accepted.** `list_clusters` now walks rows through `is_served()`, the predicate that owns the whole rule — whose docstring predicted exactly this ("the rule has four copies in this file and the fifth site forgot a limb"). The other three sites were already right. Pinned; fails on the old filter. |
+| C11/M3 | The shared-resolver mutant survived OB3's run | OB3 | Already dead: the pin added from C3 (`…two_resolvers_with_two_questions_and_two_caches`) kills it — re-verified against the mutant. |
+| C9/M7 | The chart render guard had no test | OB3 | **Accepted**: three pins mirroring `usageAdminSar`'s, including that a nilled block does not move the other level's verb. Verified against the guard deleted. |
+| F5 | A value present but not base64/UTF-8 was reported as the key being **absent** — a wrong diagnosis that sends the operator to the wrong line | OB3 | **Accepted**: reported against the key's own code, with no new finding code (the set is a page contract). |
+| F3(3) | `_redact` truncated first, so a token straddling the 200-character cut — and every JWT — survived | Fable | **Accepted**: redact, then truncate. Pinned with a straddling fixture. |
+| F3(1) | `data.server` admitted `https://user:token@host`, and `api_url` is served at **every** tier | Fable | **Accepted**: `server` is host[:port] only — userinfo, query and fragment refused by name, with the reason in the message. |
+| F1(b) | With `visibility.enabled=false` the chart renders no `system:auth-delegator` binding, so a tier that asks a SAR anyway refuses **everyone** with only a log line | Fable | **Accepted**: the binding renders whenever `clusterConfig.secrets.enabled` is on; the existing "no grant without a user" test now names the new user; the README says it. |
+| F1(a), F2, F3 (paths 1–2) | No route leaks the wiring (37 routes, 108 requests swept); the TLS mapping matches the record; no credential reaches a sink | Fable | Holds. |
+| C1–C5, C7, C10 | The gate, the independence, the contract, the modes, the migration | OB3 | Hold, with C2/C4 already fixed from the earlier seats. |
 
 ## Re-validation
 

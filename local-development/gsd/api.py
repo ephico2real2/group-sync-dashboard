@@ -441,9 +441,6 @@ def build_app(
     # auth-delegator role, so the SubjectAccessReview fails and the surface refuses everyone until
     # that grant exists. That is the fail-closed direction for a view naming cluster credentials,
     # and the chart's README says so beside the two values.
-    # The wide tier's own instance under a name the gate can close over: `resolver` is assigned
-    # inside _clusterconfig_tier too, which would make the outer one unreachable there.
-    wide_tier_resolver = resolver
     # The namespace the two questions are asked IN. Unknown (no ServiceAccount mount, no
     # GSD_NAMESPACE) must not silently become a CLUSTER-SCOPED `get secrets` — a different and far
     # broader question than the one the operator configured (review of #235, Codex C4). None here
@@ -728,7 +725,15 @@ def build_app(
         NO `restrict` SHORT-CIRCUIT (review of #235, Grok C2): the wide views widen when
         `visibility.enabled` is off, and copying that here would re-admit the very persona this
         tier exists to exclude. Without the proxy there is no trustworthy identity either, and
-        `trusted_viewer` returns None — which refuses, for the same reason."""
+        `trusted_viewer` returns None — which refuses, for the same reason.
+
+        AND NO COMPOSITION WITH ANOTHER TIER (the operator's ruling of 2026-09-20, which reversed an
+        earlier ordering): each level asks ITS OWN question and nothing else. RBAC is additive, so
+        holding the auditor role AND a namespace-admin grant is not a contradiction to resolve; the
+        SAR asks the action's own question, so whoever passes it can already read or create that
+        Secret with `oc` — refusing them here protects nothing, and because the question IS the
+        action, the ServiceAccount that performs the write is not a confused deputy. The auditor is
+        excluded by the plain question, measured: the pure auditor persona answers `no` to both."""
         injected = (clusterconfig_view_resolver if level == "view" else clusterconfig_manage_resolver)
         built = (clusterconfig_view_tier if level == "view" else clusterconfig_manage_tier)
         state = getattr(app.state, f"clusterconfig_{level}_resolver", None)
@@ -746,29 +751,6 @@ def build_app(
             signals.note_decision(label, TIER_SELF)
             return TIER_SELF
         if not viewer or resolver is None:
-            signals.note_decision(label, TIER_SELF)
-            return TIER_SELF
-        # THE LADDER IS ORDERED (design review of #235, OB2): the administrator rung is asked FIRST,
-        # and only then this level's own question. `get`/`create secrets` in this namespace is held by
-        # the stock `admin` ClusterRole, so asked alone it is not a higher bar than the wide tier but a
-        # DIFFERENT one — measured on CRC 2026-09-20: a member of `app-ocp-rbac-alpha-cluster-admin`,
-        # bound to ClusterRole/admin by a ClusterRoleBinding (the lab has seven such bindings), answers
-        #     list clusterrolebindings   no      <- narrowed to `self` on every tab
-        #     update clusterrolebindings no
-        #     get secrets    -n <ns>     yes     <- would have passed clusterconfig:view
-        #     create secrets -n <ns>     yes     <- and :manage
-        # so the fleet's credential store would open to a reader the dashboard narrows everywhere else.
-        # Ordering also holds the other way: `cluster-reader` is an AGGREGATED ClusterRole, so a site
-        # that aggregates `get secrets` into it cannot thereby hand auditors this surface.
-        #
-        # ASKED DIRECTLY, not through viewer_scope or usage_scope: each of those carries an escape
-        # hatch that would dissolve this rung — viewer_scope widens when `visibility.enabled` is off,
-        # and usage_scope widens for everyone when `userActivity.visibility: all`. Neither is a
-        # statement about who administers the cluster, which is the only thing this rung asks.
-        admin_state = getattr(app.state, "tier_resolver", None)
-        _, admin_scope = _decide(viewer, admin_state if admin_state is not None else wide_tier_resolver,
-                                 tier_resolver)
-        if admin_scope != TIER_ALL:
             signals.note_decision(label, TIER_SELF)
             return TIER_SELF
         try:
@@ -1317,11 +1299,19 @@ def build_app(
             # A retired cluster (removed from config, marked enabled=0 at poll start) or one disabled
             # in config is not served: its history is kept but it leaves the selector, so it never
             # shows as `ok` with frozen data or stale alerts (#96).
-            if not row["enabled"]:
+            #
+            # THE PREDICATE, not two of its three limbs (review of #235, OB3 C6). A Secret-sourced
+            # cluster can now leave the CONFIGURATION while its row still says enabled=1 — the
+            # discovery replaces the registry first and retires the row second, and on a non-leader
+            # replica the row is not rewritten until the leader's own cycle. In that window
+            # `settings.cluster(id)` is None, and `cluster_policy`'s defensive default for an
+            # unknown id is the WIDEST one, so a cluster its Secret made `self-only` was served to a
+            # wide-tier reader as `inherit`/`all`. `is_served` owns the whole rule and its docstring
+            # predicted this: "the rule has four copies in this file and the fifth site forgot a
+            # limb". The other three sites already walk rows through it.
+            if not is_served(row["id"]):
                 continue
             policy, _ = settings.cluster_policy(row["id"])
-            if policy == VISIBILITY_HIDDEN:
-                continue
             # Decided PER CLUSTER (docs/ACCESS_CONTROL.md §11): a host administrator is not an
             # administrator of a self-only remote, and the card must not say otherwise.
             _, scope = viewer_scope(request, row["id"])

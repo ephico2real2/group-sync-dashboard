@@ -566,6 +566,10 @@ class ClusterClient:
             return text.replace(token, "<redacted>")
         return text
 
+    # REDACT BEFORE TRUNCATING, always (review of #235, the Fable seat): `text[:200]` then redact
+    # misses a token that straddles the cut, and misses every JWT, which is longer than the window.
+    # The order is the whole fix, so it is stated where the call is made, not only here.
+
     def _get(self, client: httpx.Client, path: str, params: dict[str, Any]) -> dict:
         try:
             response = client.get(path, params=params)
@@ -585,7 +589,7 @@ class ClusterClient:
         if response.status_code >= 400:
             raise ClusterError(
                 UNREACHABLE,
-                f"HTTP {response.status_code} on {path}: {self._redact(response.text[:200])}",
+                f"HTTP {response.status_code} on {path}: {self._redact(response.text)[:200]}",
             )
         try:
             return response.json()
