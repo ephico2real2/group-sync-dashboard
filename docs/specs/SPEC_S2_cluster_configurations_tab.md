@@ -117,6 +117,36 @@ during implementation is written back under "Orchestrator's notes", in the same 
   endpoints, `mock-trusted` (leaf signed by the CA the cluster's trusted bundle carries → the default
   mode), `mock-privateca` (its own CA → only `caData` works), `mock-selfsigned` (bare self-signed → only
   `insecure: true`), each with a labelled Secret. S2's walk (C9) is against that rig.
+- **A failure sentence is scrubbed of the request's own credential before it leaves the writer (the
+  coordinator's pass, 2026-09-20).** S1's `_get` redacts the host's own token from what a remote echoes;
+  S2's `_send` now does the same, redacting before truncating. But the token a caller asked us to WRITE
+  is in the request body, which a validating webhook or a proxy's error page can quote back on a 4xx,
+  and that sentence became the 502 detail (Codex C2 measured the sentinel in it). The host client cannot
+  recognise that token, so the writer scrubs every form it put on the wire — the plain token, and for a
+  rotate the base64 `data.config` blob that encodes it, which a plain-text search cannot see through
+  (the first test of the scrub failed on exactly that). The connection test's `error` goes through the
+  same scrub. Tested with a host whose 4xx echoes the body, on create, rotate and the probe.
+- **Rotate refuses a `config` that does not decode, rather than replacing it.** The design said "every
+  other key kept"; the code fell back to `{}` when the stored config failed to parse and would have written
+  `{"bearerToken": …}` over a caData cluster, silently moving it to the default trust store. Such a Secret
+  is a `config-not-json` finding the reader already names, and discovery lists only parseable Secrets, so
+  the path is reached only when the Secret changed under the tab; rotate now answers `409 config-not-json`
+  and writes nothing.
+- **The YAML twin quotes label KEYS as well as values.** `on`, `yes` and `true` are valid Kubernetes label
+  keys and YAML 1.1 booleans unquoted, so `{True: …}` came back where the API writes `{"true": …}` — the
+  same drift round 1 fixed for values. The equality test adds the key `on`.
+- **Retracted: a "refusal flash" on a cold `#page=clusters`.** The coordinator's pass hypothesised that an
+  administrator on a cold URL saw the refusal card for the instant before whoami landed (`ccMayView()` is
+  false until then). A MutationObserver armed from before the first paint counted the refusal's sentence
+  on the unchanged page: **zero** — the cold URL paints no refusal. The hypothesis was wrong; the render
+  branch stays as it was, and the byte-for-byte twin (below) is the change that pass kept.
+- **The twin is equal BYTE FOR BYTE, `config` included.** The writer emits `json.dumps(config,
+  separators=(",", ":"))` and the pane's `config` is a `|-` block (strip), so `JSON.stringify` under it
+  produces the same bytes — whitespace, key order (`tlsClientConfig` then `bearerToken`) and no trailing
+  newline. The UI test compares `stringData` as strings and the whole document, not the parsed JSON.
+- **The test fake stores what the API server stores.** `_Host` folds `stringData` into `data` (base64)
+  on every POST/PUT and keeps no `stringData`, so a create → rotate → rediscover round trip in a test
+  is the production shape (Codex C13 on round 1: the fake used to lose every key but `config`).
 
 ## Contract
 

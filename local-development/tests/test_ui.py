@@ -6538,7 +6538,7 @@ class TestClusterConfigPage:
         yaml = page.locator("#cc-yaml").inner_text()
         assert 'name: "gsd-cluster-west"' in yaml and 'server: "https://api.west.example:6443"' in yaml   # quoted: the twin must parse back as strings
         assert '"bearerToken":"<redacted>"' in yaml and '"caData":"<redacted>"' in yaml
-        assert 'groupsync-dashboard.io/secret-type: "cluster"' in yaml and 'managed-by: "ui"' in yaml
+        assert '"groupsync-dashboard.io/secret-type": "cluster"' in yaml and 'managed-by: "ui"' in yaml   # keys quoted too (K4)
         assert 'namespace: "gsd-ns"' in yaml
         page.click("#cc-ca-insecure"); page.wait_for_selector("#cc-ca-insecure-warn:not([hidden])")
         yaml = page.locator("#cc-yaml").inner_text()
@@ -6678,17 +6678,21 @@ class TestClusterConfigPage:
         page.click("#cc-label-add")
         page.fill("#cc-label-key", "team"); page.fill("#cc-label-val", "platform:core")
         page.click("#cc-label-add")
+        # and a KEY that is a YAML 1.1 boolean — `on` is a valid label key, and unquoted it parsed as True
+        page.fill("#cc-label-key", "on"); page.fill("#cc-label-val", "call")
+        page.click("#cc-label-add")
         page.wait_for_timeout(200)
         twin = _yaml.safe_load(page.locator("#cc-yaml").inner_text())
         want = secret_object(CreateRequest(name="west", server="https://api.west.example:6443",
                                            credential_kind="bearerToken", token="s3cr3t",
                                            tls_mode="trustedBundle",
-                                           labels={"managed": "true", "team": "platform:core"}),
+                                           labels={"managed": "true", "team": "platform:core", "on": "call"}),
                              "gsd-ns", redact=True)
         assert twin["metadata"] == want["metadata"], (twin["metadata"], want["metadata"])
-        assert {k: v for k, v in twin["stringData"].items() if k != "config"} == \
-               {k: v for k, v in want["stringData"].items() if k != "config"}
-        assert json.loads(twin["stringData"]["config"]) == json.loads(want["stringData"]["config"])
+        # BYTE FOR BYTE, `config` included: the string, not the parsed object — whitespace, key order and
+        # the absent trailing newline all agree, so applying the pane yields the API's exact Secret.
+        assert twin["stringData"] == want["stringData"], (twin["stringData"]["config"], want["stringData"]["config"])
+        assert twin == want
         assert "s3cr3t" not in page.locator("#cc-yaml").inner_text()   # the twin never carries the credential
 
     def test_the_administrator_keeps_every_control(self, page, cc_rig):

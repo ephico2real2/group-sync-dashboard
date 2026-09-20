@@ -1113,7 +1113,7 @@ def build_app(
         }
 
     # ── SPEC_S2: the Cluster Configurations tab's writes ─────────────────────────────────────────────
-    # Four routes, each: the administrator tier first, the writes switch second, then the writer module,
+    # Four routes, each: a proxy-verified identity and `clusterconfig:manage` first, the writes switch second, then the writer module,
     # which validates through the same parser discovery runs and touches only labelled Secrets in the
     # pod's own namespace. A successful write wakes the discovery thread so the tab sees the result
     # within seconds. The credential reaches no response and no log line (tests pin it).

@@ -104,6 +104,40 @@ Two of #244's five items were routed here; items 1–3 stay there as reader/API 
   dependency (`pyproject.toml` lists fastapi, uvicorn, httpx, croniter, PyYAML, prometheus-client) — so
   adding one is a supply-chain decision for #244, not a cheap change here.
 
+## The coordinator's own pass on the merged head (2026-09-20, before round 2)
+
+The fork that ran round 1 died on its session limit before launching round 2; this one merged `origin/main`
+(#241, #243, #242 — two index conflicts, S2 and T1 both kept, sixteen rows) and read the whole branch
+against the operator's rulings before the seats were launched. Findings, each with its test:
+
+| # | Finding | Decision |
+|---|---|---|
+| K1 | **The CHANGELOG's S2 entry still described the withdrawn ladder** — "the tier is ordered: each level asks the administrator rung first" — the instruction the operator reversed the same afternoon ("each level gates on its own SAR"). The code, API.md's tier section and S1's entry were right; this sentence was not. | **Fixed**: the entry states the no-composition ruling and why. |
+| K2 | **`_send` did not redact** the host's own token from an echoed error, where S1's `_get` does (the f3081db rule: redact, then truncate). And no client can redact the token a caller asked us to WRITE, which is in the request body a webhook or proxy can quote on a 4xx — Codex C2 had measured the sentinel in the 502 on round 1 and the round-1 fix covered only the app's own refusal bodies. | **Fixed**: `_send` mirrors `_get`; the writer scrubs every form it put on the wire (the plain token; on rotate the base64 `data.config` blob too — the first run of the new test failed on that form) from `WriteFailed` and the probe's `error`. Four tests: the writer on create and rotate over an echoing host, the real `_send` over an httpx transport that echoes (redacted, then cut), and the API-level pin driving an echoing host into the 502 and an echoing remote into the connection test. All four fail on the round-1 head. |
+| K3 | **Rotate replaced an unparseable config** with `{"bearerToken": …}`, dropping `tlsClientConfig`. | **Fixed**: `409 config-not-json`, nothing written; a test with two broken configs and an empty one. |
+| K4 | **The twin left label keys unquoted** — `on`/`yes`/`true` are valid keys and YAML booleans. | **Fixed** in `ccYaml()`; the page-vs-API equality test adds the key `on`. |
+| K5 | **Hypothesis: a cold `#page=clusters` flashed the refusal card** to an administrator before whoami landed (`ccMayView()` is false until then). | **RETRACTED — refuted by measurement.** A MutationObserver armed from before the first paint (the first version observed `documentElement`, which does not exist when an init script runs, and threw; the second observes `document` until the root appears) counted the refusal's sentence on the UNCHANGED page: zero. The "Loading…" branch and its test were removed again; the page renders as the round-1 head did. |
+| K8 | **The twin was equal only once parsed**, not byte for byte: `json.dumps` writes `", "`/`": "`, `JSON.stringify` writes none, and the pane's `config: \|` block adds a trailing newline (round 1 measured `config_bytes_equal False`). The coordinator asked for byte equality. | **Fixed**: compact separators in `secret_object`, `\|-` on the page; the UI test compares `stringData` as strings and the whole document; the writer test pins the exact bytes. Fails on the round-1 head (the label key trips first; the string comparison second). |
+| K6 | **Stale "administrator tier" wording** on the routes in `API.md`, the chart README's row, `values.yaml`'s comment, the page's head card and an `api.py` comment — "administrator tier" is this codebase's word for the WIDE tier, which the auditor passes. | **Fixed**: each names `clusterconfig:manage` and the identity requirement. |
+| K7 | **The test fake kept `stringData`** where the API server stores `data` (Codex C13, round 1). | **Fixed**: `_Host` folds `stringData` into `data` on every write. |
+
+**The `tls: null` item, re-read against the lab's own record.** The coordinator's message called
+`gsd-cluster-tls-default` "live and polling". The S1 lab record (`reports/2026-09-20_cluster-secrets-230/README.md`,
+the retired-rows block) lists `crc-tls-default` as `retired=True enabled=False`, and the code path agrees: a Secret
+with no `config` key is refused by the parser as `config-missing` (`gsd/clusterconfig/parser.py`), so it is never in
+`effective_clusters()`, and `retire_absent_clusters` marks its row `enabled=0` — a retired row does not poll; its
+`unreachable` / `CERTIFICATE_VERIFY_FAILED` is the frozen last outcome from before its Secret lost `config`. The
+predecessor's decision stands: a live row always reports its effective mode (`ClusterConfig.tls_mode` supplies
+`trusted-bundle` when nothing overrides it — tested), a retired row's `tls` is `null` because nothing describes how
+it was trusted any more, and the tab renders that as "unknown — its source no longer describes it", never a dash.
+Reporting `trusted-bundle` for a retired row would state a fact the store does not hold. If the lab shows that
+Secret polling when it is next free, that is a new finding against this reading and the row's `retired` flag is
+the thing to measure first.
+
+## Round 2 — the seats on the merged, fixed head
+
+Filled in below when the seats return.
+
 ## Re-validation
 
 Round 1's fixes and the tier: the full hermetic suite, the UI suite (serial) and `helm lint` +

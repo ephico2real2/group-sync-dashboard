@@ -1283,8 +1283,9 @@ clusterConfig:
     # and removes the exception. Turning it on is the decision to let the dashboard mint cluster
     # access. On, the Role above
     # gains create, update and delete on secrets in the release namespace and the four write routes
-    # exist (the app still touches only Secrets carrying the label, in its own namespace, at the
-    # administrator tier, one audit log line per write); off, no write route is registered and the tab
+    # exist (the app still touches only Secrets carrying the label, in its own namespace, only for a
+    # reader holding clusterconfig:manage — visibility.clusterConfigManageSar — with a proxy-verified
+    # identity, one audit log line per write); off, no write route is registered and the tab
     # is read-only — the form still produces the Secret's YAML for a GitOps process to apply. The
     # credential never reaches a response, a log line, the database or /metrics either way.
     writes:

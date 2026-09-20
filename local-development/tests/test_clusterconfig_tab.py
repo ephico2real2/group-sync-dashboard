@@ -32,15 +32,30 @@ PEM = base64.b64encode(
 ).decode()
 
 
+def _as_stored(obj: dict) -> dict:
+    """What the API server hands back for a Secret written with `stringData`: the keys folded into
+    `data`, base64, and no `stringData` at all (the Kubernetes contract — review of #237, Codex C13:
+    the fake used to keep `stringData`, so a create→rotate round trip lost every key but `config`)."""
+    stored = {k: v for k, v in obj.items() if k != "stringData"}
+    data = dict(obj.get("data") or {})
+    for k, v in (obj.get("stringData") or {}).items():
+        data[k] = base64.b64encode(str(v).encode("utf-8")).decode("ascii")
+    stored["data"] = data
+    return stored
+
+
 class _Host(ClusterClient):
     """The host cluster's client over an in-memory namespace: GET/POST/PUT/DELETE on Secrets, every
-    request recorded; `refuse` makes the API server answer 403 on writes."""
+    request recorded, every stored object in the API server's shape (`data`, base64); `refuse` makes
+    the API server answer 403 on writes; `echo` makes it answer a 422 that quotes the request body,
+    the way a validating webhook or a proxy's error page can."""
 
-    def __init__(self, secrets=None, *, refuse=False):
+    def __init__(self, secrets=None, *, refuse=False, echo=False):
         super().__init__(ClusterConfig(name="c1", api_url="https://host", token_env="T"))
-        self.secrets = dict(secrets or {})
+        self.secrets = {k: _as_stored(v) for k, v in (secrets or {}).items()}
         self.calls: list[tuple[str, str]] = []
         self.refuse = refuse
+        self.echo = echo
 
     def _client(self):
         import contextlib
@@ -57,13 +72,16 @@ class _Host(ClusterClient):
         self.calls.append((method, path))
         if self.refuse:
             raise ClusterError(FORBIDDEN, f"403 Forbidden on {method} {path}")
+        if self.echo:
+            import json as _json
+            raise ClusterError(UNREACHABLE, f"HTTP 422 on {method} {path}: admission webhook denied the request: {_json.dumps(json)}")
         if method == "POST":
-            self.secrets[json["metadata"]["name"]] = json
-            return json
+            self.secrets[json["metadata"]["name"]] = _as_stored(json)
+            return self.secrets[json["metadata"]["name"]]
         name = path.rsplit("/", 1)[1]
         if method == "PUT":
-            self.secrets[name] = json
-            return json
+            self.secrets[name] = _as_stored(json)
+            return self.secrets[name]
         if method == "DELETE":
             self.secrets.pop(name, None)
             return {"kind": "Status", "status": "Success"}
@@ -89,8 +107,9 @@ class TestWriter:
         assert {k: v for k, v in live["stringData"].items() if k != "config"} == \
                {k: v for k, v in twin["stringData"].items() if k != "config"} == \
                {"name": "west", "server": "https://api.west.example:6443", "visibility": "self-only", "identity": "none", "enabled": "true"}
-        assert json.loads(live["stringData"]["config"]) == {"tlsClientConfig": {"insecure": False}, "bearerToken": TOKEN}
-        assert json.loads(twin["stringData"]["config"]) == {"tlsClientConfig": {"insecure": False}, "bearerToken": "<redacted>"}
+        # the exact bytes the page's JSON.stringify produces: compact, tlsClientConfig first
+        assert live["stringData"]["config"] == '{"tlsClientConfig":{"insecure":false},"bearerToken":"%s"}' % TOKEN
+        assert twin["stringData"]["config"] == '{"tlsClientConfig":{"insecure":false},"bearerToken":"<redacted>"}'
         parsed = parse_secret(live, host_name="c1")
         assert isinstance(parsed, ClusterConfig) and parsed.name == "west" and parsed.credential_kind == "bearer"
         assert parsed.tls_mode == {"insecure": False, "ca": "trusted-bundle"} and parsed.labels == (("environment", "prod"),)
@@ -136,6 +155,59 @@ class TestWriter:
         with pytest.raises(WriteRefused) as exc:
             create(host, NS, _req(), host_name="c1", taken={}, viewer="root")
         assert exc.value.code == "secret-exists" and exc.value.conflict
+
+    def test_an_api_server_that_echoes_the_request_hands_back_no_credential(self, caplog):
+        """A validating webhook, or a proxy's error page, can quote the request body on a 4xx — and the
+        body carries the token the caller asked us to write. That sentence becomes the 502 detail and a
+        log line, so it is scrubbed before it is raised (review of #237, Codex C2, measured: the sentinel
+        reached the 502 body). The host client cannot do this — it recognises only ITS token."""
+        host = _Host(echo=True)
+        with caplog.at_level(logging.DEBUG), pytest.raises(WriteFailed) as exc:
+            create(host, NS, _req(), host_name="c1", taken={}, viewer="root")
+        assert exc.value.outcome == UNREACHABLE and "admission webhook" in exc.value.message
+        assert TOKEN not in exc.value.message and "<redacted>" in exc.value.message and TOKEN not in caplog.text
+        with pytest.raises(WriteFailed) as exc:
+            rotate(_Host({"gsd-cluster-east": _secret()}, echo=True), NS, "gsd-cluster-east", "rotated-token-9999", viewer="root", cluster="east")
+        assert "rotated-token-9999" not in exc.value.message and "<redacted>" in exc.value.message
+
+    def test_rotate_refuses_a_config_that_does_not_parse_rather_than_replacing_it(self):
+        """Writing `{"bearerToken": …}` over a config that failed to decode would silently drop the
+        cluster's tlsClientConfig — a caData cluster would come back trusting the default bundle. The
+        reader already names such a Secret `config-not-json`; rotate says the same and writes nothing."""
+        for broken in ("not json at all", "[1, 2]"):
+            host = _Host({"gsd-cluster-east": _secret(config=broken)})
+            with pytest.raises(WriteRefused) as exc:
+                rotate(host, NS, "gsd-cluster-east", "new-token-1234", viewer="root", cluster="east")
+            assert exc.value.code == "config-not-json" and "new-token-1234" not in str(exc.value)
+            assert not any(m == "PUT" for m, _ in host.calls)
+        # and a config the API server stores with no JSON at all — an empty value — is the same refusal
+        host = _Host({"gsd-cluster-east": {**_secret(), "data": {**_secret()["data"], "config": ""}}})
+        with pytest.raises(WriteRefused) as exc:
+            rotate(host, NS, "gsd-cluster-east", "new-token-1234", viewer="root", cluster="east")
+        assert exc.value.code == "config-not-json"
+
+    def test_send_redacts_the_hosts_own_token_from_an_echoed_error_before_truncating(self, tmp_path):
+        """The real `_send`, over an httpx transport that echoes the request — the write twin of the
+        `_get` rule S1's review set (redact, THEN cut to 200 characters: a JWT is longer than the window)."""
+        import httpx
+        token_file = tmp_path / "token"; token_file.write_text("host-token-" + "x" * 300)
+        cfg = ClusterConfig(name="c1", api_url="https://host", token_file=str(token_file))
+        hc = ClusterClient(cfg)
+        seen = {}
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["auth"] = request.headers.get("authorization", "")
+            return httpx.Response(422, text=f"bad request: {seen['auth']} :: {request.content.decode()}")
+        client = httpx.Client(transport=httpx.MockTransport(handler), base_url="https://host",
+                              headers={"Authorization": f"Bearer {cfg.resolve_token()}"})
+        with pytest.raises(ClusterError) as exc:
+            hc._send(client, "POST", "/api/v1/namespaces/ns/secrets", json={"stringData": {"config": "{}"}})
+        assert exc.value.outcome == UNREACHABLE and "<redacted>" in exc.value.message
+        assert "host-token-" not in exc.value.message and len(exc.value.message) < 300
+        with pytest.raises(ClusterError) as exc:
+            hc._send(httpx.Client(transport=httpx.MockTransport(lambda r: (_ for _ in ()).throw(
+                httpx.ConnectError(f"refused for Bearer {cfg.resolve_token()}"))), base_url="https://host"),
+                "DELETE", "/api/v1/namespaces/ns/secrets/x")
+        assert "host-token-" not in exc.value.message and "<redacted>" in exc.value.message
 
     def test_a_403_from_the_api_server_names_the_chart_switch(self):
         with pytest.raises(WriteFailed) as exc:
@@ -290,7 +362,7 @@ class TestApi:
         assert r.status_code == 201, r.text
         assert r.json() == {"secret": "gsd-cluster-west", "cluster": "west", "discovery": "requested"}
         assert app.state.poller.woken == 1
-        assert host.secrets["gsd-cluster-west"]["stringData"]["name"] == "west"
+        assert base64.b64decode(host.secrets["gsd-cluster-west"]["data"]["name"]) == b"west"   # stored as the API server stores it
         assert TOKEN not in r.text and TOKEN not in caplog.text
         assert "cluster Secret gsd-cluster-west created by root for cluster west" in caplog.text
 
@@ -384,11 +456,31 @@ class TestApi:
         assert all(r["tls"] is not None for r in rows.values() if not r["retired"]), \
             "a listed, live cluster always has an effective mode"
 
-    def test_the_credential_reaches_no_response_no_log_record_no_row_and_no_metric(self, rig, caplog):
+    def test_the_credential_reaches_no_response_no_log_record_no_row_and_no_metric(self, rig, caplog, monkeypatch):
         c, app, host, settings = rig
         with caplog.at_level(logging.DEBUG):
             texts = [c.post("/api/clusterconfigs", json=self.BODY, headers=H("root")).text,
                      c.put("/api/clusterconfigs/east/credential", json={"token": TOKEN}, headers=H("root")).text]
+            # THE API SERVER'S OWN ECHO (review of #237, Codex C2 — measured on the earlier head: the
+            # sentinel reached the 502 body): a webhook or a proxy that quotes the request on a 4xx.
+            host.echo = True
+            echoed = c.post("/api/clusterconfigs", json={**self.BODY, "name": "echoed"}, headers=H("root"))
+            assert echoed.status_code == 502 and "admission webhook" in echoed.text and "<redacted>" in echoed.text
+            texts.append(echoed.text)
+            texts.append(c.put("/api/clusterconfigs/east/credential", json={"token": TOKEN}, headers=H("root")).text)
+            host.echo = False
+            # and a REMOTE that echoes the probe's bearer on the connection test
+            class _Echo(ClusterClient):
+                def _client(self):
+                    import contextlib
+                    return contextlib.nullcontext(object())
+                def _get(self, client, path, params):
+                    raise ClusterError(UNREACHABLE, f"HTTP 500 on {path}: upstream saw Bearer {TOKEN}")
+            monkeypatch.setattr("gsd.clusterconfig.writer.ClusterClient", _Echo)
+            probe = c.post("/api/clusterconfigs/test", json=self.BODY, headers=H("root"))
+            assert probe.status_code == 200 and probe.json()["reachable"] is False and "<redacted>" in probe.json()["error"]
+            texts.append(probe.text)
+            monkeypatch.undo()
             texts += [c.get(p, headers=H("root")).text for p in ("/api/clusterconfigs", "/api/clusters", "/readyz", "/metrics")]
             # THE REFUSAL PATHS TOO, not only the happy ones: a 422 or 409 is where a handler is most
             # tempted to echo the request back for context, and the request carries the token

@@ -84,7 +84,9 @@ def secret_object(req: CreateRequest, namespace: str, *, redact: bool = False) -
         "metadata": {"name": secret_name_for(req.name), "namespace": namespace, "labels": labels,
                      "annotations": {MANAGED_BY_ANNOTATION: MANAGED_BY_UI}},
         "type": "Opaque",
-        "stringData": {"name": req.name, "server": req.server, "config": json.dumps(config),
+        # Compact separators: the page's twin is JSON.stringify under a `|-` block, and the promise is that
+        # the two Secrets are equal BYTE FOR BYTE, `config` included — not merely equal once parsed.
+        "stringData": {"name": req.name, "server": req.server, "config": json.dumps(config, separators=(",", ":")),
                        "visibility": req.visibility, "identity": req.identity, "enabled": "true"},
     }
 
@@ -130,11 +132,26 @@ def _labelled(obj: dict) -> bool:
     return labels.get(SECRET_TYPE_LABEL) == SECRET_TYPE_CLUSTER
 
 
-def _failed(exc: ClusterError) -> WriteFailed:
+def _scrub(text: str, *secrets: str | None) -> str:
+    """Remove the request's own credential from a sentence about to leave this module. The host
+    client redacts ITS token from what the API server echoes; the token a caller asked us to write is
+    in the request body, which a 4xx from the API server (or a proxy's error page) can quote back —
+    and that sentence becomes a 502 detail, a connection-test `error` and a log line. So every
+    failure message passes through here before it is raised (review of #237, Codex C2: an echoing
+    API server put the sentinel into the 502 body). Each caller names EVERY form it put on the wire:
+    the plain token, and — for a rotate, whose body is `data` — the base64 blob that encodes it, which
+    a plain-text search cannot see through (measured: the first test of this scrub failed on it)."""
+    for secret in secrets:
+        if secret and len(secret.strip()) >= 8 and secret.strip() in text:
+            text = text.replace(secret.strip(), "<redacted>")
+    return text
+
+
+def _failed(exc: ClusterError, *secrets: str | None) -> WriteFailed:
     if exc.outcome == FORBIDDEN:
         return WriteFailed(FORBIDDEN, "the ServiceAccount may not write Secrets here — the chart's "
                                      "clusterConfig.secrets.writes switch renders the grant")
-    return WriteFailed(exc.outcome, exc.message)
+    return WriteFailed(exc.outcome, _scrub(exc.message, *secrets))
 
 
 def create(host_client: ClusterClient, namespace: str, req: CreateRequest, *, host_name: str | None,
@@ -148,13 +165,13 @@ def create(host_client: ClusterClient, namespace: str, req: CreateRequest, *, ho
             host_client._get(client, _path(namespace, name), {})
         except ClusterError as exc:
             if not exc.message.startswith("HTTP 404"):
-                raise _failed(exc) from exc
+                raise _failed(exc, req.token) from exc
         else:
             raise WriteRefused("secret-exists", f"Secret {name} already exists in {namespace}", conflict=True)
         try:
             host_client._send(client, "POST", _path(namespace), json=obj)
         except ClusterError as exc:
-            raise _failed(exc) from exc
+            raise _failed(exc, req.token) from exc
     log.info("cluster Secret %s created by %s for cluster %s", name, viewer, req.name)
     return name
 
@@ -179,12 +196,19 @@ def rotate(host_client: ClusterClient, namespace: str, name: str, token: str, *,
     with host_client._client() as client:
         obj = _read_ours(host_client, client, namespace, name)
         data = obj.get("data") or {}
+        # The API server always answers with `data` (base64), whatever shape wrote the Secret. A config
+        # that does not decode to a JSON object is REFUSED, not replaced: writing `{"bearerToken": …}`
+        # over it would silently drop the cluster's tlsClientConfig — a caData cluster would come back
+        # trusting the default bundle — and a Secret in that state is a `config-not-json` finding the
+        # reader already names, so the person can see what to fix. Discovery lists only parseable
+        # Secrets, so this is reached only when the Secret changed under the tab.
         try:
-            config = json.loads(base64.b64decode(data.get("config") or "", validate=True).decode("utf-8") or "{}")
-        except (binascii.Error, UnicodeDecodeError, ValueError):
-            config = {}
+            config = json.loads(base64.b64decode(data.get("config") or "", validate=True).decode("utf-8"))
+        except (binascii.Error, UnicodeDecodeError, ValueError) as exc:
+            raise WriteRefused("config-not-json", f"Secret {name}: data.config does not decode to JSON ({type(exc).__name__}); "
+                                                  "fix the Secret where it is written, then rotate") from None
         if not isinstance(config, dict):
-            config = {}
+            raise WriteRefused("config-not-json", f"Secret {name}: data.config is not a JSON object; fix the Secret where it is written, then rotate")
         config.pop("oauth", None)
         config["bearerToken"] = token.strip()
         data["config"] = base64.b64encode(json.dumps(config).encode("utf-8")).decode("ascii")
@@ -193,7 +217,7 @@ def rotate(host_client: ClusterClient, namespace: str, name: str, token: str, *,
         try:
             host_client._send(client, "PUT", _path(namespace, name), json=obj)
         except ClusterError as exc:
-            raise _failed(exc) from exc
+            raise _failed(exc, token, data["config"]) from exc
     log.info("cluster Secret %s credential rotated by %s for cluster %s", name, viewer, cluster)
 
 
@@ -233,7 +257,9 @@ def test_connection(req: CreateRequest, namespace: str, *, host_name: str | None
             # Grok). The order is the assertion.
             out["reachable"] = True
     except ClusterError as exc:
-        out["error"] = f"{exc.outcome}: {exc.message}"
+        # The probe client redacts its own token from what the remote echoes; scrubbed again here so the
+        # sentence that reaches the page never depends on which client raised it.
+        out["error"] = _scrub(f"{exc.outcome}: {exc.message}", req.token)
     log.info("connection test by %s against %s: %s", viewer, req.server,
              "reachable" if out["reachable"] else "unreachable")
     return out

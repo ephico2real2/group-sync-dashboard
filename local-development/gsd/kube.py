@@ -602,13 +602,17 @@ class ClusterClient:
         try:
             response = client.request(method, path, json=json)
         except httpx.HTTPError as exc:
-            raise ClusterError(UNREACHABLE, f"{type(exc).__name__}: {exc}") from exc
+            raise ClusterError(UNREACHABLE, self._redact(f"{type(exc).__name__}: {exc}")) from exc
         if response.status_code == 401:
             raise ClusterError(AUTH_FAILED, "401 Unauthorized — token invalid or expired")
         if response.status_code == 403:
             raise ClusterError(FORBIDDEN, f"403 Forbidden on {method} {path} — the ServiceAccount lacks {method.lower()} permission here")
         if response.status_code >= 400:
-            raise ClusterError(UNREACHABLE, f"HTTP {response.status_code} on {method} {path}: {response.text[:200]}")
+            # Redacted before truncated, as _get does: a write carries a BODY, and an API server (or a
+            # proxy in front of it) that echoes the request on a 4xx hands the host's own credential
+            # back inside response.text. The body's OWN secret — the token a caller asked us to write —
+            # is not this client's to recognise; the writer scrubs that one (review of #237, Codex C2).
+            raise ClusterError(UNREACHABLE, f"HTTP {response.status_code} on {method} {path}: {self._redact(response.text)[:200]}")
         if not response.content:
             return None
         try:

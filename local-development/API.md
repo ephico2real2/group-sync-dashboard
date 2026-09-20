@@ -204,7 +204,9 @@ answers the values list alone with `last_discovery: null`.
 
 ### The Cluster Configurations tab's writes (#230 S2)
 
-Four routes, all administrator tier, all **registered only when** `clusterConfig.secrets.writes.enabled`
+Four routes, all `clusterconfig:manage` (above — never the wide tier) and each needing a proxy-verified
+identity to audit the change to (no identity, or the tier machinery off, is `403` before anything reaches
+the API server), all **registered only when** `clusterConfig.secrets.writes.enabled`
 (`GSD_CLUSTER_SECRETS_WRITES_ENABLED`) is on — **off by default**: the dashboard is a reader by design,
 and with the switch off a write-only path is a `404` and a POST on the read path a `405` (a route that was
 never registered, not one that refuses); `GET /api/clusterconfigs` says which in `secrets.writes`. They write only in the pod's own namespace and only Secrets carrying
