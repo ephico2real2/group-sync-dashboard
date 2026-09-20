@@ -135,12 +135,23 @@ if [ "$BUILD_ONLY" = true ]; then exit 0; fi
 
 podman login -u kubeadmin -p "$(oc whoami -t)" --tls-verify=false "${REGISTRY}" >/dev/null
 
+# Immutable tags: an existing <version>-<sha> is never overwritten. A CLEAN commit already in the
+# registry is the same source, so it is REUSED — a Helm→Argo handover of the same commit does not
+# rebuild — but a -dirty tag is a snapshot of nothing reproducible and is refused as before.
+PUSH=true
 if oc get istag "${IMAGE}:${TAG}" -n "${NAMESPACE}" >/dev/null 2>&1; then
-  echo "ERROR: ${TAG} already exists in the registry." >&2
-  echo "       Tags are immutable — commit your changes so the tag advances." >&2
-  exit 1
+  case "$TAG" in
+    *-dirty)
+      echo "ERROR: ${TAG} already exists in the registry." >&2
+      echo "       Tags are immutable — commit your changes so the tag advances." >&2
+      exit 1 ;;
+    *)
+      echo "reused  : ${TAG} is already in the registry (the same commit); not rebuilding"
+      PUSH=false ;;
+  esac
 fi
 
+if [ "$PUSH" = true ]; then
 podman tag "${IMAGE}:${TAG}" "${REF}"
 podman push --tls-verify=false "${REF}" >/dev/null
 echo "pushed  : ${REF}"
@@ -148,6 +159,7 @@ REPORT_REF="${REGISTRY}/${NAMESPACE}/${REPORT_IMAGE}:${TAG}"
 podman tag "${REPORT_IMAGE}:${TAG}" "${REPORT_REF}"
 podman push --tls-verify=false "${REPORT_REF}" >/dev/null
 echo "pushed  : ${REPORT_REF}"
+fi
 
 INTERNAL="image-registry.openshift-image-registry.svc:5000/${NAMESPACE}/${IMAGE}:${TAG}"
 REPORT_INTERNAL="image-registry.openshift-image-registry.svc:5000/${NAMESPACE}/${REPORT_IMAGE}:${TAG}"
