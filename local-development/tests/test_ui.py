@@ -6706,12 +6706,15 @@ class TestReportsTab:
                         row.focus(); page.keyboard.press("Enter")
                     else:
                         row.click()
-                    page.wait_for_function("""(key) => {
-                        const f = document.getElementById('report-form');
-                        if (!f || view.report !== key) return false;
-                        const r = f.getBoundingClientRect();
-                        return r.top >= -1 && r.top < innerHeight && r.bottom > 0;
-                    }""", arg=key, timeout=5_000)
+                    try:
+                        page.wait_for_function("""(key) => {
+                            const f = document.getElementById('report-form');
+                            if (!f || view.report !== key) return false;
+                            const r = f.getBoundingClientRect();
+                            return r.top >= -1 && r.top < innerHeight && r.bottom > 0;
+                        }""", arg=key, timeout=5_000)
+                    except Exception as exc:     # name the key and where its form sits, not just "timeout"
+                        raise AssertionError((width, key, page.evaluate("() => { const f = document.getElementById('report-form'); return f ? [view.report, Math.round(f.getBoundingClientRect().top), innerHeight, scrollY, document.documentElement.scrollHeight] : 'no form'; }"))) from exc
                     wide = page.evaluate("""() => [...document.querySelectorAll('body *')]
                         .filter(e => e.getBoundingClientRect().right > innerWidth + 1)
                         .slice(0, 6).map(e => e.tagName.toLowerCase() + (e.id ? '#' + e.id : '') + (e.className && typeof e.className === 'string' ? '.' + e.className.split(' ').join('.') : ''))""")
@@ -6907,6 +6910,65 @@ class TestReportsTab:
             page.wait_for_selector("#reporting-status .status-strip")
             assert page.evaluate("() => document.documentElement.scrollWidth <= innerWidth")
             assert page.evaluate("() => getComputedStyle(document.querySelector('.status-strip')).gridTemplateColumns.split(' ').length") == 2
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_the_paramspec_shell_renders_one_control_per_type_and_posts_the_form(self, browser, reporting_server):
+        # #149 R7: bool → switch, enum → segmented, int → number with unit, csv with a source → a tag input
+        # over the discovered lookup with type-ahead (Enter adds a value the set lacks), optional fields
+        # under Advanced, the Subject scope as one block with a count and Clear, no cluster field, the
+        # action bar naming the formats; the POST carries what the controls hold.
+        import json as _json
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.goto(base + "#page=reports&cluster=crc-local&report=access-matrix")
+            page.wait_for_selector("#report-form.r-access")
+            assert page.locator("#report-cluster").count() == 0, "no cluster field: the nav chose it"
+            assert "JSON" in page.locator("#report-generate").inner_text() and "HTML" in page.locator("#report-generate").inner_text()
+            # the Subject scope: two lookups over the discovered users and groups
+            page.wait_for_function("() => document.querySelectorAll('#report-subject .rp-opt').length > 0")
+            users = page.locator('[data-lookup-opt="users"]').evaluate_all("es => es.map(e => e.dataset.value)")
+            assert "alice" in users and len(users) >= 2                             # the UI fixture's own User objects
+            assert page.locator("#report-subject-count").inner_text() == "all subjects"
+            page.click('[data-lookup-opt="users"][data-value="alice"]')
+            page.wait_for_selector('.rp-tag[data-name="alice"]')
+            page.fill("#report-lookup-access-matrix-groups", "alpha-ns-admin")       # type-ahead narrows the menu (substring)
+            assert page.evaluate("() => [...document.querySelectorAll('[data-lookup-opt=\"groups\"]')].filter(o => !o.hidden).map(o => o.dataset.value)") == ["app-ocp-rbac-alpha-ns-admin"]
+            page.click('[data-lookup-opt="groups"][data-value="app-ocp-rbac-alpha-ns-admin"]')
+            page.wait_for_selector('.rp-tag[data-name="app-ocp-rbac-alpha-ns-admin"]')
+            page.fill("#report-lookup-access-matrix-groups", "not-discovered"); page.press("#report-lookup-access-matrix-groups", "Enter")
+            page.wait_for_selector('.rp-tag[data-name="not-discovered"]')            # Enter adds a value the set lacks
+            assert page.locator("#report-subject-count").inner_text() == "3 selected"
+            page.click('[data-lookup-remove="groups"][data-value="not-discovered"]')
+            page.wait_for_function("() => document.getElementById('report-subject-count').textContent === '2 selected'")
+            # Advanced holds the prefix, closed until it is set
+            assert page.locator("details.report-advanced").get_attribute("open") is None
+            page.click("details.report-advanced summary")
+            page.fill("#report-param-access-matrix-namespace_prefix", "prod"); page.locator("#report-param-access-matrix-namespace_prefix").dispatch_event("change")
+            with page.expect_request(lambda r: r.url.endswith("/api/runs") and r.method == "POST") as info:
+                page.click("#report-generate")
+            body = _json.loads(info.value.post_data)
+            assert body["params"] == {"users": ["alice"], "groups": ["app-ocp-rbac-alpha-ns-admin"], "namespace_prefix": "prod"}
+            assert "cluster" in body and "subject_kind" not in body["params"]
+            # Clear empties the scope
+            page.click("#report-subject-clear")
+            page.wait_for_function("() => document.getElementById('report-subject-count').textContent === 'all subjects'")
+            # a switch, a segmented control and a unit on the other forms
+            page.goto(base + "#page=reports&cluster=crc-local&report=groups")
+            page.wait_for_selector("#report-form.r-identity")
+            assert page.locator(".rp-num .rp-unit").inner_text() == "days"
+            sw = page.locator('[data-switch="include_members"]')
+            assert sw.get_attribute("aria-checked") == "false" and sw.inner_text().strip() == "Off"
+            sw.click(); page.wait_for_function("() => document.querySelector('[data-switch=\"include_members\"]').getAttribute('aria-checked') === 'true'")
+            page.goto(base + "#page=reports&cluster=crc-local&report=namespace-access")
+            page.wait_for_selector("#report-form.r-access")
+            page.click("details.report-advanced summary")
+            seg = page.locator('[data-seg="group_by"]')
+            assert seg.count() == 3 and page.locator('[data-seg="group_by"][aria-checked="true"]').get_attribute("data-value") == "mnemonic"
+            page.click('[data-seg="group_by"][data-value="oud-group"]')
+            page.wait_for_function("() => (view.reportForm['namespace-access'] || {}).group_by === 'oud-group'")
             assert not errors, errors
         finally:
             ctx.close()
