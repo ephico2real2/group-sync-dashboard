@@ -270,6 +270,13 @@ jobs:
           # available here, which is the assumption that made this job fail.
           pip install pytest PyYAML
           pytest tests/test_chart_strategy.py -q
+      - name: Every deployer's render — plain Helm, Argo CD's, Kustomize's (#212)
+        working-directory: local-development
+        # kubectl and Helm 3 come with the runner image; kustomize's inflator runs `helm version -c`,
+        # which Helm 4 removed, so this step is where the Kustomize case actually executes.
+        run: |
+          helm version --short; kubectl version --client
+          pytest tests/test_chart_renderers.py -q -rs
 
   diagrams:
     # The GROUND TRUTH for the mermaid blocks. tests/test_docs_diagrams.py checks the

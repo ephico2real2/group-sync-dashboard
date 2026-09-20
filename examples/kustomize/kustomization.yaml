@@ -1,0 +1,35 @@
+# Both charts through Kustomize's Helm inflator, from the published chart repository (#212).
+#
+#   kubectl kustomize --enable-helm examples/kustomize | oc apply -f -
+#
+# Two settings do the work a plain `helm template` cannot: `includeCRDs` renders the openshift-grafana
+# chart's crds/ (Helm installs them itself; a template render does not), and `apiVersions` tells the
+# dashboard chart the cluster serves grafana.integreatly.org/v1beta1 so its GrafanaDashboard CR renders
+# (`.Capabilities.APIVersions` is empty in an offline render). Argo CD passes the live list itself;
+# Kustomize has to be told. Drop the apiVersions line on a cluster with no grafana-operator.
+#
+# What Kustomize does NOT do that Helm and Argo do: run hooks as hooks. The charts' hook Jobs are
+# applied as plain Jobs — fine on the first apply; a later apply with a changed Job template is
+# refused (a Job's template is immutable), so delete the Job first. The generated Secrets are minted
+# by those Jobs on the cluster and never rendered, so a re-apply never rotates them.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: group-sync-dashboard
+helmCharts:
+  - name: openshift-grafana
+    repo: https://ephico2real2.github.io/group-sync-dashboard
+    version: 0.2.0
+    releaseName: grafana
+    namespace: group-sync-dashboard
+    includeCRDs: true
+    apiVersions: [grafana.integreatly.org/v1beta1]
+  - name: group-sync-dashboard
+    repo: https://ephico2real2.github.io/group-sync-dashboard
+    version: 0.37.0
+    releaseName: group-sync-dashboard
+    namespace: group-sync-dashboard
+    includeCRDs: true
+    apiVersions: [grafana.integreatly.org/v1beta1]
+    # the chart's defaults are the install (the local cluster through the pod's own ServiceAccount);
+    # put this cluster's overrides under valuesInline
+    valuesInline: {}

@@ -1061,6 +1061,12 @@ spec:
       # ignoreDifferences below also govern the SYNC, not only the diff (Argo's sync-options.md).
       - RespectIgnoreDifferences=true
   ignoreDifferences:
+    # Two reads of the cluster remain at render time and are safe here by design: the apps-domain
+    # lookup only runs on the Ingress path (route.enabled=false) and fails the render loudly, and the
+    # auditors' Group-collision guard only runs for `rbacAuditors.groups[].createLocal: true` — and
+    # under Argo it CANNOT run (no cluster at render), so a createLocal group must not already exist
+    # on the cluster, or Argo would adopt an LDAP-synced Group and fight the sync. Keep createLocal
+    # off under Argo unless the group is the chart's own.
     # Since 0.37.0 the generated-once Secrets (the session key, the report token) are minted on the
     # cluster by the secrets-mint hook and never rendered, so they need no entry here: nothing to
     # diff, nothing to rotate. (Before 0.37.0 the chart reused them through Helm's `lookup`, which
