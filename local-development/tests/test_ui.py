@@ -617,8 +617,8 @@ class TestGroupDrilldown:
         assert h["tdInk"] >= 3, f"− left starts {h['tdInk']:.1f}px in, under the rail"
 
     def test_the_kpi_clusters_keep_their_padding_and_the_audit_table_takes_no_rule(self, dash):
-        # Preservation (Grok): :where() keeps the rule at (0,1,1), so .kpi-page's 18px — the same
-        # specificity, later in the file — still wins; the audit table carries no rowlink and never sees it.
+        # Preservation: the rule is (0,0,1) — both halves in :where() — so .kpi-page's 18px (0,1,1) wins by
+        # specificity wherever it sits; the audit table carries no rowlink and never sees it (Grok, Codex, OB3).
         dash.locator("button[data-nav='kpi']").click()
         dash.wait_for_selector(".kpi-page table tr.rowlink")
         assert dash.evaluate("() => parseFloat(getComputedStyle(document.querySelector('.kpi-page tr.rowlink td:first-child')).paddingLeft)") == 18
@@ -637,6 +637,19 @@ class TestGroupDrilldown:
             const pads = [...host.querySelectorAll('td')].map(td => parseFloat(getComputedStyle(td).paddingLeft));
             host.remove(); return pads; }""")
         assert probe == [0, 3], probe
+
+    def test_a_tables_own_padding_rule_beats_the_clearance_wherever_it_sits(self, dash):
+        # OB3: a (0,1,1) rule — the shape of .kpi-page td, .audit-table td and .report-table td — placed BEFORE
+        # app.css, where source order cannot help it: it must still win, which only specificity can do.
+        dash.locator("button[data-nav='groups']").click()
+        dash.wait_for_selector("tr[data-group]")
+        pad = dash.evaluate("""() => {
+            const s = document.createElement('style'); s.textContent = '.own-padding td { padding-left: 17px }';
+            document.head.prepend(s);
+            const table = document.querySelector('tr.rowlink').closest('table'); table.classList.add('own-padding');
+            const v = getComputedStyle(table.querySelector('tr.rowlink td:first-child')).paddingLeft;
+            table.classList.remove('own-padding'); s.remove(); return v; }""")
+        assert pad == "17px", f"the rail clearance beat a table's own padding rule placed before it in the sheet: {pad}"
 
     def test_members_are_listed_with_join_time(self, dash):
         self._open_group(dash, "app-ocp-rbac-alpha-ns-admin")
@@ -7689,6 +7702,64 @@ class TestReportFormsReview:
             assert not errors, errors
         finally:
             ctx.close()
+
+
+class TestRowlinkRailClearance:
+    """#219, review of PR #226 (OB3): one selector, `:where(table:has(tr.rowlink))`, reaches fifteen tables across
+    the tabs and drilldowns; every one keeps its first column's ink clear of the 3 px hover rail, header aligned.
+    The sweep is what covers the CHANGELOG's "every rowlink table" — the single-table tests above cover the rule."""
+
+    SWEEP_JS = """() => [...document.querySelectorAll('table:has(tr.rowlink)')].map((table) => {
+        const td = table.querySelector('tr.rowlink td:first-child');
+        const th = table.querySelector('th:first-child');
+        const edge = (el) => { const r = document.createRange(); r.selectNodeContents(el);
+            const b = [...r.getClientRects()].filter(b => b.width > 0)[0];
+            return b ? b.left - el.getBoundingClientRect().left : null; };
+        return { first: th ? th.textContent.trim() : '', td: edge(td), th: th ? edge(th) : null };
+    })"""
+
+    def _clear(self, page, where):
+        tables = page.evaluate(self.SWEEP_JS)
+        assert tables, f"{where}: no rowlink table rendered"
+        for t in tables:
+            assert t["td"] is not None and t["td"] >= 3, f"{where} [{t['first']}]: the first cell's text starts {t['td']:.1f}px in, under the 3px hover rail"
+            assert t["th"] is None or abs(t["td"] - t["th"]) <= 0.5, f"{where} [{t['first']}]: the header starts {t['th']}px in, its cells {t['td']}px"
+        return len(tables)
+
+    def test_every_rowlink_table_keeps_its_first_column_clear_of_the_rail(self, dash, server):
+        def go(hash_, wait):
+            dash.goto(f"{server}/{hash_}")
+            dash.wait_for_selector(f"body[data-page='{hash_[6:].split('&')[0]}'] {wait}")
+        dash.wait_for_selector("tr[data-cr]")
+        seen = self._clear(dash, "#page=overview (fleet)")
+        dash.goto(f"{server}/#page=overview&cluster=crc-local")
+        dash.wait_for_selector("#back"); dash.wait_for_selector("tr[data-cr]")
+        seen += self._clear(dash, "#page=overview&cluster=crc-local")
+        for hash_, wait in (("#page=kpi", ".kpi-page tr.rowlink"), ("#page=groups&cluster=crc-local", "tr[data-group]"),
+                            ("#page=users&cluster=crc-local", "tr[data-user]"), ("#page=nsaudit&cluster=crc-local", "tr[data-ns]")):
+            go(hash_, wait)
+            seen += self._clear(dash, hash_)
+        go("#page=groups&cluster=crc-local", "tr[data-group]")
+        dash.locator("tr[data-group='app-ocp-rbac-alpha-ns-admin']").click()
+        dash.wait_for_selector("#back-groups"); dash.wait_for_selector("tr.rowlink[data-user]")
+        seen += self._clear(dash, "group members")
+        dash.locator(".drill[data-user='bob']").first.click()
+        dash.wait_for_selector("text=Group memberships"); dash.wait_for_selector("td.change-removed")
+        seen += self._clear(dash, "bob's history")
+        go("#page=users&cluster=crc-local", "tr[data-user]")
+        dash.locator("tr[data-user='alice']").click()
+        dash.wait_for_selector("text=Group memberships"); dash.wait_for_selector("tr.rowlink[data-group]")
+        seen += self._clear(dash, "alice's memberships")
+        go("#page=nsaudit&cluster=crc-local", "tr[data-ns='prod-ns']")
+        dash.locator("tr[data-ns='prod-ns'] button.drill").click()
+        dash.wait_for_selector("text=Who reaches it"); dash.wait_for_selector("tr.rowlink[data-group]")
+        seen += self._clear(dash, "prod-ns")
+        go("#page=lookup&cluster=crc-local", ".door")
+        for q, wait in (("demo", "tr[data-ns='prod-ns']"), ("rbac alpha", "tr[data-group]"), ("alice", "tr[data-user]")):
+            dash.fill("#f-lookup-search", q)
+            dash.wait_for_selector(wait)
+            seen += self._clear(dash, f"lookup {q!r}")
+        assert seen == 15, seen   # the tables this sweep reaches on the seed; a station rendering none fails above
 
 
 def test_no_reports_tab_when_the_feature_is_off(dash):
