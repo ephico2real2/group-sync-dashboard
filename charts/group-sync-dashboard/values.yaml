@@ -1256,6 +1256,26 @@ kyverno:
   eventsRetentionDays: 90
 
 # ---------------------------------------------------------------------------
+# Cluster configuration as labelled Secrets  (#230, docs/specs/SPEC_S1_cluster_secrets.md)
+# ---------------------------------------------------------------------------
+# Argo CD's model: a Secret in THIS namespace labelled `groupsync-dashboard.io/secret-type: cluster`
+# is a cluster — `name` (the id the dashboard shows), `server`, `config` (JSON: bearerToken or
+# oauth{username,password}; tlsClientConfig{caData,insecure}), and the D2 options `visibility`,
+# `identity`, `enabled`. The dashboard LISTs them by that label on the binding cadence and polls
+# each like a `clusters[]` entry; written by hand, by the Cluster Configurations tab (S2) or by any
+# GitOps process, the app sees the same object. `clusters[]` above stays the bootstrap source and
+# the host is ALWAYS clusters[0]: a Secret naming the host is refused as a finding. A Secret that
+# does not parse is a finding on the tab, never a crashed pod; one that vanishes disables its
+# cluster and keeps its history.
+#
+# The grant is a namespaced Role: get, list, watch on secrets in the release namespace ONLY (the
+# writes the tab needs are S2's, behind their own switch). The credential never leaves the Secret and
+# the process's memory — not the database, not a log line, not a response, not /metrics.
+clusterConfig:
+  secrets:
+    enabled: true
+
+# ---------------------------------------------------------------------------
 # Login capture  (reads the oauth-server's logs)
 # ---------------------------------------------------------------------------
 # Grants the DASHBOARD read access to the oauth-server's pod logs, which is where the "who logged in"
@@ -1985,6 +2005,40 @@ visibility:
     apiGroup: rbac.authorization.k8s.io
     resource: clusterrolebindings
     verb: update
+    namespace: ""
+
+  # THE CLUSTER-CONFIGURATION TIER — two levels of its own (#230), modelled on Argo CD's RBAC,
+  # where a first-class `clusters` resource carries `get` and `create/update/delete` actions.
+  # We hold no policy file: every tier here is a SubjectAccessReview against this cluster, so
+  # OpenShift groups and RoleBindings already are that mapping. The two questions are therefore
+  # asked about the very objects the surface exposes — the cluster Secrets themselves:
+  #
+  #   clusterConfigViewSar   (Argo `clusters, get`)      -> the Cluster Configurations tab and
+  #                                                         GET /api/clusterconfigs
+  #   clusterConfigManageSar (Argo `clusters, create…`)  -> the write routes and the form's
+  #                                                         Create / Rotate / Delete / Test (#230 S2)
+  #
+  # It reads as what it is: you may SEE cluster credentials if you may read the Secrets that hold
+  # them, and CHANGE them if you may create those Secrets.
+  #
+  # WHY NOT THE WIDE `adminSar`, measured on CRC 2026-09-20: `cluster-reader` — the deliberate
+  # auditor persona, which passes the wide tier by design — has ZERO of its 172 rules covering
+  # core/`secrets`, and `oc auth can-i {get,list,create,update,delete} secrets` answers `no`. So
+  # the auditor fails both levels by construction and a cluster-admin passes both.
+  #
+  # An empty `namespace` means THIS RELEASE'S namespace, where the cluster Secrets live — the
+  # opposite of `adminSar`'s empty, which means a cluster-scoped check, because these questions
+  # are namespaced by nature. Point them at your own question (a dedicated `fleet-admin`
+  # ClusterRole, say) and both levels move independently: `manage` is never derived from `view`.
+  clusterConfigViewSar:
+    apiGroup: ""
+    resource: secrets
+    verb: get
+    namespace: ""
+  clusterConfigManageSar:
+    apiGroup: ""
+    resource: secrets
+    verb: create
     namespace: ""
 
 # ---------------------------------------------------------------------------

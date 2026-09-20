@@ -385,7 +385,17 @@ class TestVisibilitySignals:
             'gsd_visibility_tier_checks_total{outcome="forbidden",threshold="admin"}'] == 1
         assert found[
             'gsd_visibility_tier_checks_total{outcome="unreachable",threshold="usage"}'] == 0
-        assert len(found) == 12, "2 thresholds x 6 outcomes, nothing else"
+        # The cluster-configuration tier's two levels (#230) are thresholds like the others, so a
+        # check neither of them has ever run still reports 0 rather than being absent.
+        assert found[
+            'gsd_visibility_tier_checks_total{outcome="denied",threshold="clusterconfig_view"}'] == 0
+        assert found[
+            'gsd_visibility_tier_checks_total{outcome="allowed",threshold="clusterconfig_manage"}'] == 0
+        # Named, not counted: a bare number says nothing about WHICH threshold went missing, and
+        # this assertion is the one that catches a new resolver whose label was never pre-seeded.
+        assert {label.split('threshold="')[1].rstrip('"}') for label in found} == {
+            "admin", "usage", "clusterconfig_view", "clusterconfig_manage"}
+        assert len(found) == 4 * 6, "4 thresholds x 6 outcomes, nothing else"
 
     def test_decisions_count_what_was_served(self):
         from gsd.metrics import RuntimeSignals

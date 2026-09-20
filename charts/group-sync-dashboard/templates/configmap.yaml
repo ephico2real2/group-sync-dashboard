@@ -82,6 +82,8 @@ data:
     kyvernoEnabled: {{ .Values.kyverno.enabled }}
     kyvernoMetricsUrl: {{ .Values.kyverno.metricsUrl | quote }}
     kyvernoEventsRetentionDays: {{ .Values.kyverno.eventsRetentionDays }}
+    # Clusters as labelled Secrets (#230, SPEC_S1): the discovery switch; the Role is cluster-secrets-rbac.yaml.
+    clusterSecretsEnabled: {{ .Values.clusterConfig.secrets.enabled }}
     # Retention on the irreplaceable history; 0 keeps forever. See values.yaml config.retention.
     membershipEventsRetentionDays: {{ .Values.config.retention.membershipEventsDays }}
     syncEventsRetentionDays: {{ .Values.config.retention.syncEventsDays }}
@@ -103,6 +105,16 @@ data:
     visibilityUsageAdminSarResource: {{ include "gsd.usageVisibilitySarResource" . | quote }}
     visibilityUsageAdminSarVerb: {{ include "gsd.usageVisibilitySarVerb" . | quote }}
     visibilityUsageAdminSarNamespace: {{ include "gsd.usageVisibilitySarNamespace" . | quote }}
+    {{- /* The cluster-configuration tier's two levels (#230): view = Argo's `clusters, get`, manage
+           = its `create/update/delete`, asked as SARs about the Secrets this surface exposes. */}}
+    visibilityClusterConfigViewSarApiGroup: {{ include "gsd.clusterConfigSarField" (dict "ctx" . "block" "clusterConfigViewSar" "field" "apiGroup" "default" "") | quote }}
+    visibilityClusterConfigViewSarResource: {{ include "gsd.clusterConfigSarField" (dict "ctx" . "block" "clusterConfigViewSar" "field" "resource" "default" "secrets") | quote }}
+    visibilityClusterConfigViewSarVerb: {{ include "gsd.clusterConfigSarField" (dict "ctx" . "block" "clusterConfigViewSar" "field" "verb" "default" "get") | quote }}
+    visibilityClusterConfigViewSarNamespace: {{ include "gsd.clusterConfigSarField" (dict "ctx" . "block" "clusterConfigViewSar" "field" "namespace" "default" "") | quote }}
+    visibilityClusterConfigManageSarApiGroup: {{ include "gsd.clusterConfigSarField" (dict "ctx" . "block" "clusterConfigManageSar" "field" "apiGroup" "default" "") | quote }}
+    visibilityClusterConfigManageSarResource: {{ include "gsd.clusterConfigSarField" (dict "ctx" . "block" "clusterConfigManageSar" "field" "resource" "default" "secrets") | quote }}
+    visibilityClusterConfigManageSarVerb: {{ include "gsd.clusterConfigSarField" (dict "ctx" . "block" "clusterConfigManageSar" "field" "verb" "default" "create") | quote }}
+    visibilityClusterConfigManageSarNamespace: {{ include "gsd.clusterConfigSarField" (dict "ctx" . "block" "clusterConfigManageSar" "field" "namespace" "default" "") | quote }}
     # Unquoted: the app casts this with int(), and a quoted value would still parse but the
     # other numeric keys here are unquoted and one convention is worth keeping.
     visibilityTierTtlSeconds: {{ include "gsd.visibilityTierTtl" . }}
