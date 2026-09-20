@@ -159,7 +159,7 @@ class TestARefusalIsAnnouncedOnceNotEveryCycle:
 
     @pytest.fixture(autouse=True)
     def _env(self, monkeypatch):
-        from tests.test_clusterconfig import _Host
+        from test_clusterconfig import _Host
         monkeypatch.setattr("gsd.poller.own_namespace", lambda: "ns")
         monkeypatch.setattr("gsd.poller.ClusterClient", _Host)
         self.host = _Host
@@ -365,7 +365,7 @@ class TestTheCycleIsQuietWhenNothingChanged:
 
     @pytest.fixture(autouse=True)
     def _env(self, monkeypatch):
-        from tests.test_clusterconfig import _Host  # the harness the module's own tests use
+        from test_clusterconfig import _Host  # the harness the module's own tests use
         monkeypatch.setattr("gsd.poller.own_namespace", lambda: "ns")
         monkeypatch.setattr("gsd.poller.ClusterClient", _Host)
         _Host.secrets = {"items": [_secret("gsd-cluster-east", cluster="east")]}
