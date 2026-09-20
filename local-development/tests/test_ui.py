@@ -6643,10 +6643,19 @@ class TestReportsTab:
             page.wait_for_function("() => view.report === null && !document.getElementById('report-form')")
             page.go_forward()
             page.wait_for_selector("#report-form h3:text-is('Groups and membership changes')")
-            # a deep link, pasted: the form opens, the back control rises to the catalogue
+            # a deep link, pasted: the form opens AND is landed in view once the catalogue has arrived (the
+            # deployed page left it at 849 px on an 800 px viewport before the arrival rule); the back
+            # control rises to the catalogue
             page.goto(base + "#page=reports&cluster=crc-local&report=access-matrix")
             page.wait_for_selector("#report-form h3:text-is('Access matrix')")
+            page.wait_for_function("""() => { const r = document.getElementById('report-form').getBoundingClientRect();
+                                             return r.top >= -1 && r.top < innerHeight; }""")
             assert page.locator("#report-back").inner_text() == "← all reports"
+            # the poll's repaint of the same position must not scroll again
+            page.wait_for_timeout(900)                      # let the landing's smooth scroll finish
+            page.evaluate("() => window.scrollTo(0, 0)"); page.wait_for_timeout(100)
+            page.evaluate("() => render()"); page.wait_for_timeout(600)
+            assert page.evaluate("() => window.scrollY") == 0
             page.click("#report-back")
             page.wait_for_function("() => view.report === null && !document.getElementById('report-form')")
             assert page.locator("#report-picker").count() == 1

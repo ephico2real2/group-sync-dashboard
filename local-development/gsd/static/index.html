@@ -156,7 +156,7 @@ const STATES = {
 };
 
 const view = { page: "home", homeShow: {}, cluster: null, groupsync: null, groupFilter: "all", bindingFilter: "review",
-                report: null, reportForm: {}, reportRun: null, reportSubmitting: false, reportPreview: "",
+                report: null, reportLanded: null, reportForm: {}, reportRun: null, reportSubmitting: false, reportPreview: "",
                 reportPreviewNames: [], reportPreviewCount: null,   // #143: the names behind the count
                 /* Free-text group search. A FILTER, so it lives here rather than in POSITION_KEYS —
                    same reasoning as groupFilter: it narrows what a page shows, it is not a place, and
@@ -2795,9 +2795,8 @@ function wireReports() {
       const changed = view.report !== next;
       if (changed) clearReportPreview();                 // don't carry a count across reports
       navigate({ report: next });                         // #173: a position — a link, Back, Forward
-      render();
+      render();                                           // lands the form (the arrival rule in render())
       if (changed && next === "namespace-access") schedulePreview(next);   // recompute a retained selection (V2-F1)
-      landReportForm();
     };
     el.onclick = choose;
     el.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); choose(); } };
@@ -5148,6 +5147,12 @@ function render() {
   } else if (view.page === "reports") {
     main.innerHTML = reportsPage();
     wireReports();
+    // #173: the form is landed in view once per ARRIVAL at a report position — a click, a pasted
+    // link (whose form only exists once the catalogue has arrived, a render later), Forward — and
+    // never on the poll's repaint of the same position. Measured on the deployed page: the click
+    // landed at 100 px, the same link on a fresh load left the form at 849 on an 800 px viewport.
+    const landed = view.report && $("report-form") ? view.report : null;
+    if (landed !== view.reportLanded) { view.reportLanded = landed; if (landed) landReportForm(); }
   } else if (view.page === "usage") {
     main.innerHTML = usagePage();
   } else if (view.page === "bindings") {
