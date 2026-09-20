@@ -940,7 +940,7 @@ def build_app(
             clusters.append({
                 "id": c.name, "source": c.source, "host": host is not None and c.name == host.name,
                 "api_url": c.api_url, "enabled": c.enabled, "credential": c.credential_kind,
-                "labels": dict(c.labels), "visibility": visibility, "identity": identity,
+                "labels": dict(c.labels), "visibility": visibility, "identity": identity, "tls": c.tls_mode,
                 "status": row.get("status"), "last_poll": row.get("last_poll"), "error": row.get("message"),
                 "retired": False,
             })
@@ -954,7 +954,7 @@ def build_app(
             clusters.append({
                 "id": row["id"], "source": row["source"], "host": False, "api_url": row["api_url"],
                 "enabled": False, "credential": row["credential"], "labels": {},
-                "visibility": None, "identity": None,
+                "visibility": None, "identity": None, "tls": None,
                 "status": row.get("status"), "last_poll": row.get("last_poll"), "error": row.get("message"),
                 "retired": True,
             })

@@ -130,10 +130,14 @@ def parse_secret(obj: dict, *, host_name: str | None) -> ClusterConfig | Finding
     insecure = tls.get("insecure", False)
     if not isinstance(insecure, bool):
         return finding("unsupported-config-key", "tlsClientConfig.insecure: must be a boolean")
+    # Trust is one of three (the operator's ruling, 2026-09-20 — SPEC_S1 notes): no caData → the
+    # dashboard's own trust store (GSD_TRUSTED_CA_FILE + the system store, ClusterConfig.verify's default);
+    # caData → that bundle for this cluster alone; insecure: true → verification off. Both named at once
+    # is refused, the same rule load_settings applies to insecureSkipVerify beside caBundleFile.
     ca_data = None
     if tls.get("caData"):
         if insecure:
-            return finding("insecure-with-ca", "tlsClientConfig.insecure=true beside caData: choose one")
+            return finding("insecure-with-ca", "tlsClientConfig.caData and tlsClientConfig.insecure=true are both set: choose one")
         try:
             ca_data = base64.b64decode(str(tls["caData"]), validate=True).decode("utf-8")
             ssl.create_default_context(cadata=ca_data)    # load it now: a bundle that does not load is a finding here

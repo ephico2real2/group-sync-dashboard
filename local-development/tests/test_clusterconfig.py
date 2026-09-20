@@ -116,6 +116,34 @@ class TestParser:
         c = parse_secret(_secret(config={"bearerToken": "t", "tlsClientConfig": {"insecure": True}}), host_name=None)
         assert c.verify() is False
 
+    def test_the_three_trust_modes_and_the_refusal_that_names_both_fields(self, tmp_path, monkeypatch):
+        """The operator's ruling (2026-09-20): no caData → the dashboard's own trust store; caData → that bundle
+        alone; insecure → off; caData beside insecure refused naming both. The wire says the mode, never the PEM."""
+        import shutil, ssl, subprocess
+        monkeypatch.delenv("GSD_TRUSTED_CA_FILE", raising=False)
+        default = parse_secret(_secret(), host_name=None)
+        assert default.tls_mode == {"insecure": False, "ca": "trusted-bundle"} and default.verify() is True, \
+            "mode 1 with no bundle mounted is the system store (httpx verify=True)"
+        if shutil.which("openssl"):
+            subprocess.run(["openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1", "-nodes",
+                            "-keyout", str(tmp_path / "k.pem"), "-out", str(tmp_path / "trusted.pem"), "-days", "2", "-subj", "/CN=trusted"],
+                           check=True, capture_output=True)
+            monkeypatch.setenv("GSD_TRUSTED_CA_FILE", str(tmp_path / "trusted.pem"))
+            from gsd import config as cfg
+            cfg._ca_cache.clear()
+            assert isinstance(default.verify(), ssl.SSLContext), "mode 1 with the chart's bundle mounted is that context"
+            pem = (tmp_path / "trusted.pem").read_text()
+            override = parse_secret(_secret(config={"bearerToken": "t", "tlsClientConfig": {"caData": base64.b64encode(pem.encode()).decode()}}), host_name=None)
+            assert override.tls_mode == {"insecure": False, "ca": "caData"} and pem not in json.dumps(override.tls_mode)
+        off = parse_secret(_secret(config={"bearerToken": "t", "tlsClientConfig": {"insecure": True}}), host_name=None)
+        assert off.tls_mode == {"insecure": True, "ca": None} and off.verify() is False
+        both = parse_secret(_secret(config={"bearerToken": "t", "tlsClientConfig": {"caData": "bm90IGEgcGVt", "insecure": True}}), host_name=None)
+        assert both.code == "insecure-with-ca" and "caData" in both.detail and "insecure" in both.detail
+        # a values entry says its mode the same way
+        assert ClusterConfig("h", "https://x", token_file="/var/run/secrets/kubernetes.io/serviceaccount/token",
+                             ca_bundle_file="/var/run/secrets/kubernetes.io/serviceaccount/ca.crt").tls_mode == {"insecure": False, "ca": "serviceAccount"}
+        assert ClusterConfig("r", "https://x", token_env="X", ca_bundle_file="/etc/gsd/r/ca.crt").tls_mode == {"insecure": False, "ca": "caBundleFile"}
+
     def test_a_finding_refuses_a_code_outside_the_closed_set(self):
         with pytest.raises(ValueError):
             Finding("x", "made-up", "y")
@@ -324,7 +352,9 @@ class TestApi:
         assert by["east"] == {"id": "east", "source": "secret:gsd-cluster-east", "host": False,
                               "api_url": "https://api.east.example:6443", "enabled": True, "credential": "bearer",
                               "labels": {"environment": "prod"}, "visibility": "self-only", "identity": "none",
+                              "tls": {"insecure": False, "ca": "trusted-bundle"},
                               "status": None, "last_poll": None, "error": None, "retired": False}
+        assert by["c1"]["tls"] == {"insecure": False, "ca": "trusted-bundle"}
         assert body["findings"] == [{"secret": "gsd-cluster-broken", "code": "config-not-json", "detail": "Expecting value"}]
         # a cluster the store holds but no source names — its Secret vanished — is listed as retired, never dropped
         store.upsert_cluster("gone", "https://api.gone.example:6443", False, source="secret:gsd-cluster-gone", credential="bearer")

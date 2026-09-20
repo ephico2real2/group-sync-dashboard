@@ -20,6 +20,18 @@ the same pull request, under "Orchestrator's notes", with the reason.
 
 ## Orchestrator's notes
 
+- **The operator's ruling on TLS trust (2026-09-20, relayed during implementation):** a cluster's trust is
+  one of three, said explicitly — (1) DEFAULT, no `tlsClientConfig.caData`: verify against the dashboard's
+  own trust store, `GSD_TRUSTED_CA_FILE` (the chart's `trustedCA.*` bundle: the injected OpenShift CA + the
+  enterprise ConfigMap, colon-joined) plus the system store — `ClusterConfig.verify()`'s existing third mode;
+  (2) OVERRIDE, `tlsClientConfig.caData` (base64 PEM) — the named-bundle mode, this cluster only; (3)
+  `tlsClientConfig.insecure: true` — verification off. `caData` together with `insecure: true` is REFUSED
+  as a finding naming both fields (the rule `load_settings` applies to `insecureSkipVerify` beside
+  `caBundleFile`). `GET /api/clusterconfigs` reports the mode per cluster as
+  `tls: {insecure: bool, ca: "caData" | "trusted-bundle" | "serviceAccount" | "caBundleFile" | null}` and
+  never the PEM. The C1 table below said modes 2 and 3 and the refusal; mode 1 was implied by the parser's
+  fall-through and is now stated; the `tls` field is added to C5's payload; a test per mode and one for
+  the refusal in `tests/test_clusterconfig.py`.
 - The host cluster is never sourced from a Secret. The oauth-proxy authenticates the reader against
   the host (`values.yaml` `clusters[0]`, `Settings.host_cluster()`), so a Secret that names the host's
   `name` or `https://kubernetes.default.svc` would let whoever can write a Secret in the namespace
@@ -106,8 +118,9 @@ stringData:
 |---|---|---|
 | `bearerToken` | yes | the credential, kind `bearer`; non-empty string |
 | `oauth` | parsed | `{"username", "password"}` → kind `oauth`; **not resolvable in S1** (finding `oauth-exchange-not-built`, #119 P2) |
-| `tlsClientConfig.caData` | yes | base64 PEM, decoded and loaded into the SSL context at parse time; a bundle that does not load is a finding |
-| `tlsClientConfig.insecure` | yes | boolean; `true` with `caData` is refused (the values rule, `load_settings`) |
+| *(no `tlsClientConfig.caData`)* | default | mode 1: the dashboard's own trust store — `GSD_TRUSTED_CA_FILE` (the chart's `trustedCA.*` bundles) plus the system store; `tls.ca = "trusted-bundle"` |
+| `tlsClientConfig.caData` | yes | mode 2: base64 PEM, decoded and loaded into the SSL context at parse time, this cluster only; a bundle that does not load is a finding; `tls.ca = "caData"` |
+| `tlsClientConfig.insecure` | yes | mode 3: boolean, verification off; `tls.insecure = true`. `true` beside `caData` is refused (`insecure-with-ca`, both fields named — the values rule, `load_settings`) |
 | `username` / `password` (Argo's HTTP basic) | **refused** | `unsupported config key: username` — OpenShift's API server takes no basic auth |
 | `execProviderConfig`, `awsAuthConfig`, `proxyUrl`, `disableCompression`, `tlsClientConfig.certData` / `keyData` / `serverName` | **refused** | `unsupported config key: <key>` — the pod runs no exec plugins, holds no client certificates |
 | any other key | **refused** | `unsupported config key: <key>` |
@@ -169,11 +182,12 @@ gets the same 403 the other administrator endpoints give.
   "clusters": [
     {"id": "crc-local", "source": "values", "host": true, "api_url": "https://kubernetes.default.svc",
      "enabled": true, "credential": "in-cluster", "labels": {},
-     "visibility": "inherit", "identity": "same-as-host",
+     "visibility": "inherit", "identity": "same-as-host", "tls": {"insecure": false, "ca": "serviceAccount"},
      "status": "ok", "last_poll": "2026-09-20T16:05:40Z", "error": null},
     {"id": "ocp-east", "source": "secret:gsd-cluster-ocp-east", "host": false,
      "api_url": "https://api.ocp-east.example.com:6443", "enabled": true, "credential": "bearer",
      "labels": {"environment": "prod"}, "visibility": "self-only", "identity": "none",
+     "tls": {"insecure": false, "ca": "caData"},
      "status": "unreachable", "last_poll": "2026-09-20T16:05:41Z",
      "error": "ConnectError: [Errno -2] Name or service not known"}
   ],

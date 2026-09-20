@@ -150,15 +150,16 @@ writes are S2's.
   "clusters": [
     {"id": "crc-local", "source": "values", "host": true, "api_url": "https://kubernetes.default.svc",
      "enabled": true, "credential": "in-cluster", "labels": {},
-     "visibility": "inherit", "identity": "same-as-host",
+     "visibility": "inherit", "identity": "same-as-host", "tls": {"insecure": false, "ca": "serviceAccount"},
      "status": "ok", "last_poll": "2026-09-20T16:05:40Z", "error": null, "retired": false},
     {"id": "ocp-east", "source": "secret:gsd-cluster-ocp-east", "host": false,
      "api_url": "https://api.ocp-east.example.com:6443", "enabled": true, "credential": "bearer",
      "labels": {"environment": "prod"}, "visibility": "self-only", "identity": "none",
+     "tls": {"insecure": false, "ca": "caData"},
      "status": "unreachable", "last_poll": "2026-09-20T16:05:41Z",
      "error": "ConnectError: [Errno -2] Name or service not known", "retired": false},
     {"id": "ocp-old", "source": "secret:gsd-cluster-ocp-old", "host": false, "api_url": "https://api.ocp-old.example.com:6443",
-     "enabled": false, "credential": "bearer", "labels": {}, "visibility": null, "identity": null,
+     "enabled": false, "credential": "bearer", "labels": {}, "visibility": null, "identity": null, "tls": null,
      "status": "ok", "last_poll": "2026-09-19T02:00:00Z", "error": null, "retired": true}
   ],
   "findings": [
@@ -168,7 +169,14 @@ writes are S2's.
 }
 ```
 
-A **`retired`** cluster is one the store still holds but no source names any more — its Secret vanished, or
+**`tls`** says how the cluster's API server certificate is verified, one of three (the operator's ruling,
+2026-09-20): `{"insecure": false, "ca": "trusted-bundle"}` — the default when the Secret names no
+`tlsClientConfig.caData`: the dashboard's own trust store, `GSD_TRUSTED_CA_FILE` (the chart's `trustedCA.*`
+bundles — the injected OpenShift CA and the enterprise ConfigMap, colon-joined) plus the system store;
+`{"insecure": false, "ca": "caData"}` — the Secret's own base64 PEM, this cluster alone; `{"insecure": true,
+"ca": null}` — verification off. A values entry reports `caBundleFile` or `serviceAccount` (the pod's SA CA
+path) the same way. `caData` beside `insecure: true` is refused as the finding `insecure-with-ca`, naming both
+fields. The PEM itself is never on the wire. A **`retired`** cluster is one the store still holds but no source names any more — its Secret vanished, or
 its values entry was removed: `enabled: false`, its history kept (#96), listed so the reader knows why it
 is gone rather than finding it missing. `credential` is `in-cluster` (the host's ServiceAccount token path), `file` (a values entry's
 `tokenFile`/`tokenEnv`), `bearer` (a Secret's `bearerToken`) or `oauth` (a Secret's

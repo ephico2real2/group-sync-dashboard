@@ -109,6 +109,7 @@ def _trusted_ca_context() -> ssl.SSLContext | None:
 
 
 SA_TOKEN_PATH = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+SA_CA_PATH = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
 
 
 @dataclass(frozen=True)
@@ -141,6 +142,23 @@ class ClusterConfig:
     oauth_password: str | None = field(default=None, repr=False, compare=False)
     source: str = "values"                       # values | secret:<metadata.name>
     labels: tuple[tuple[str, str], ...] = ()     # the Secret's other labels, the fleet's metadata for the tab
+
+    @property
+    def tls_mode(self) -> dict:
+        """How this cluster's API server certificate is verified, for the wire (SPEC_S1 notes, the
+        operator's ruling of 2026-09-20): `insecure` — verification off; `ca` — `caData` (a Secret's own
+        bundle), `caBundleFile` (a values entry's named file), `serviceAccount` (the pod's SA CA path),
+        or `trusted-bundle` (the default: GSD_TRUSTED_CA_FILE — the chart's trustedCA bundles — plus the
+        system store). Never the PEM."""
+        if self.insecure_skip_verify:
+            return {"insecure": True, "ca": None}
+        if self.ca_data:
+            return {"insecure": False, "ca": "caData"}
+        if self.ca_bundle_file == SA_CA_PATH:
+            return {"insecure": False, "ca": "serviceAccount"}
+        if self.ca_bundle_file:
+            return {"insecure": False, "ca": "caBundleFile"}
+        return {"insecure": False, "ca": "trusted-bundle"}
 
     @property
     def credential_kind(self) -> str:
