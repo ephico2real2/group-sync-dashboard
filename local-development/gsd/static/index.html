@@ -5037,7 +5037,7 @@ function kyvernoPage() {
           <td>${p.background ? "on" : `<span class="muted">off</span>`}</td>
           <td class="mono">${(p.actions || []).map(esc).join(", ") || `<span class="muted">—</span>`}</td>
           <td class="mono">${esc(p.failure_policy)}</td>
-          <td>${p.ready === null ? `<span class="muted">—</span>` : p.ready ? "yes" : `<span class="warn">no</span>`}${p.note ? ` <span class="muted" title="${esc(p.note)}">·</span>` : ""}</td>
+          <td>${p.ready === null ? `<span class="muted">—</span>` : p.ready ? "yes" : `<span class="warn">no</span>`}${p.note ? ` <span class="muted">· ${esc(p.note)}</span>` : ""}</td>
           <td class="num">${p.results.pass}</td>
           <td class="num${p.results.fail ? " warn" : ""}">${p.results.fail}</td>
           <td class="num">${p.results.warn}</td>
