@@ -7995,13 +7995,57 @@ class TestLibraryPage:
             page.wait_for_selector("#sec-weekly")
             assert page.evaluate("() => document.documentElement.scrollWidth <= innerWidth")
             page.focus("[id='run-20990201T000000.000000Z-lib1']")
+            # the poll's only change is one run's status — a fingerprint without data.library skips the repaint
+            # and the card keeps saying done (review of #233, Grok: the earlier form never changed the store)
+            run = report_app.state.store.get("20990201T000000.000000Z-lib1")
+            run.status = "failed"; run.error = "poll-only status change"
+            report_app.state.store.update(run)
             page.clock.fast_forward(61_000)
-            page.wait_for_timeout(500)
+            page.wait_for_function("() => (document.getElementById('run-20990201T000000.000000Z-lib1') || {innerText: ''}).innerText.includes('poll-only status change')")
             assert page.evaluate("() => document.activeElement.id") == "run-20990201T000000.000000Z-lib1", "the poll's repaint dropped the focus"
+            run.status = "done"; run.error = None; report_app.state.store.update(run)
             page.keyboard.press("Enter")
             page.wait_for_selector("#library-drawer")
             assert page.evaluate("() => document.documentElement.scrollWidth <= innerWidth")
             assert page.evaluate("() => document.getElementById('library-drawer').scrollWidth <= document.getElementById('library-drawer').clientWidth")
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_two_schedules_on_one_report_mint_distinct_generate_ids(self, browser, reporting_server):
+        # review of #233 (Grok): the id came from the report alone, so a second schedule repeated it
+        base, _, report_app = reporting_server
+        self._seed(report_app)
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.goto(base + "#page=library&cluster=crc-local")
+            page.wait_for_selector("#sec-weekly")
+            ids = page.evaluate("() => Array.from(document.querySelectorAll('[data-goto-reports]')).map((b) => b.id)")
+            assert len(ids) == len(set(ids)), ids
+            assert "lib-gen-sec-weekly" in ids and "lib-gen-users" in ids, ids
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_a_positioned_run_beyond_the_listings_page_still_opens(self, browser, reporting_server):
+        # review of #233 (Codex): the drawer searched the first 1 000 rows only; an older run answered
+        # "Run not found" while GET /runs/{id} answered 200
+        base, _, report_app = reporting_server
+        self._seed(report_app)
+        target = "20990131T000000.000000Z-lib0"
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            def omit_target(route):
+                response = route.fetch(); body = response.json()
+                body["runs"] = [r for r in body["runs"] if r["id"] != target]
+                body["total"] = max(1001, body["total"]); body["truncated"] = True
+                route.fulfill(status=response.status, headers=response.headers, json=body)
+            page.route("**/report/api/runs?limit=1000", omit_target)
+            with page.expect_request(lambda r: r.url.endswith(f"/report/api/runs/{target}")):
+                page.goto(base + f"#page=library&cluster=crc-local&run={target}")
+            page.wait_for_selector("#library-drawer")
+            text = page.locator("#library-drawer").inner_text()
+            assert "Run not found" not in text and target in text and "no namespace matches company.net/mnemonic" in text
             assert not errors, errors
         finally:
             ctx.close()

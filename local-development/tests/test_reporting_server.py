@@ -1599,6 +1599,17 @@ class TestRetentionStanding:
         store.prune(now=at, **args)
         return store.get(run_id) is not None
 
+    def test_a_per_schedule_override_drives_the_real_prune_boundary(self, tmp_path):
+        # review of #233 (Codex): with every case on the globals, prune() passing `overrides=None` survived
+        store = ArtifactStore(str(tmp_path))
+        run_id = "20260101T060000.000000Z-w1"
+        self._mk(store, run_id, "2026-01-01T06:00:00Z", schedule="weekly")
+        over = {"overrides": {"weekly": (0, 1)}}
+        standing = store.retention(**self.GLOBALS, **over)[run_id]
+        assert (standing.expires_at, standing.retained_by) == ("2026-01-02T06:00:01Z", "age:1d")
+        assert self._prune_keeps(store, self._at(standing.expires_at) - timedelta(seconds=1), run_id, **over)
+        assert not self._prune_keeps(store, self._at(standing.expires_at), run_id, **over)
+
     def test_manual_within_the_cap_ages_from_completion_and_the_words_name_the_days(self, tmp_path):
         store = ArtifactStore(str(tmp_path))
         self._mk(store, "20260901T120000.000000Z-m1", "2026-09-01T12:00:00Z")

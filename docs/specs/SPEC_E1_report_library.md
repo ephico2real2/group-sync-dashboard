@@ -23,6 +23,17 @@ with the reason, under "Orchestrator's notes".
 
 ## Orchestrator's notes
 
+- Review of #233 (2026-09-20, Grok, Codex — `docs/REVIEW_report_library.md`): the generate link's id is minted from
+  the SECTION (`lib-gen-sec-<schedule>`) when the section belongs to a schedule, from the report when it does not —
+  a report with two schedules repeated one id. The positioned run is fetched by id (`libraryPositionRun()` →
+  `data.libraryRun`, in the fingerprint) and joined to the listing, so a run past the API's first page opens
+  rather than "Run not found". `manual:cap`'s words are the page's, not the mock's: "held by the manual run cap
+  alone" when no age bound applies (the mock's "goes on the next prune" is false with `manual_days` 0), "expires …"
+  when one does — §3's rule, the same ranking. Rejected: re-basing `ago()`/`untilShort()` on the service's
+  `as_of` — every page reads the browser clock for relative words, and one page drifting from the rest is the
+  worse defect; and stripping `cluster` from the library's position — the position is the app's, and a reader on a
+  two-cluster dashboard must land on the right one.
+
 - The walk at `586e763`: "Copy link" writes the app's full position, `#page=library&cluster=crc-local&run=<id>`
   — `hashFor(currentPosition())`, the shape every position in the app carries (`#page=groups&cluster=…`).
   §2.6's `#page=library&run=<id>` is the minimal form the router accepts and opens the same drawer; the

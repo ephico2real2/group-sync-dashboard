@@ -33,6 +33,11 @@ def _index_rows() -> dict[str, dict[str, str]]:
     rows = {m["id"]: m.groupdict() for m in INDEX_ROW.finditer(INDEX.read_text())}
     programme = sorted(fid for fid in rows if fid[0] in "ABCD")
     assert len(programme) == 13, f"expected the programme's thirteen index rows, matched {programme}"
+    # the alternation admits `—` for the E batch only; a programme row must still carry its milestone
+    # (review of #233, Codex — A1's R1 mutated to `—` passed before this line)
+    wrong = {fid: rows[fid]["release"] for fid in programme if not re.fullmatch(r"R\d", rows[fid]["release"])}
+    assert not wrong, f"programme rows require an R<number> release: {wrong}"
+    assert all(rows[fid]["release"] == "—" for fid in rows if fid[0] == "E"), "a post-programme row carries `—`"
     return rows
 
 

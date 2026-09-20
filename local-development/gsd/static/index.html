@@ -481,6 +481,7 @@ let data = { clusters: [], alerts: [], groupsyncs: null, groups: null, events: n
              kyverno: null,   // #170: the module's payload for the selected cluster
              reportCatalog: null, reportRuns: null, reportTicket: null,
              library: null,   // #229: every run the service holds, for the Library tab
+             libraryRun: null,   // #229: the positioned run by id — a history past the listing's page still opens (Codex)
              group: null, user: null, logins: null, access: null,
              /* The /users envelope whole — rows, scope, viewer, truncated, limit — because the
                 Users tab states the truncation and renders the banner from the wire's fields. */
@@ -2981,6 +2982,14 @@ function wireReporting() {
    report (the enabled catalogue crossed with the schedules), headed the way people ask for it, each run
    with its formats, its failure reason and its standing under retention — which the SERVICE computes
    (`expires_at`, `retained_by`) by the ranking its prune deletes by; the page only prints it. */
+// The run the position names, by id: null off the library or without a position; `{asked, notFound}` on a 404.
+async function libraryPositionRun() {
+  if (view.page !== "library" || !view.run) return null;
+  const asked = view.run;
+  try { return { ...(await reportGet(`/api/runs/${encodeURIComponent(asked)}`)), asked }; }
+  catch (err) { if (err && err.status === 404) return { asked, notFound: true }; throw err; }
+}
+
 const LIBRARY_RUNS = "/api/runs?limit=1000";   // the API's maximum page; a longer history is said, not cut silently
 
 function libraryNewestFirst(a, b) {
@@ -3077,8 +3086,10 @@ function libraryClusterBlocks(runs, key) {
 }
 
 // the link opens the Reports tab with this report's form selected: the words name that action, the arrow says it leaves the page
-function libraryGenerateLink(name, again) {
-  return `<button type="button" class="linkish" data-goto-reports="${esc(name)}" id="lib-gen-${esc(name)}">${again ? "Generate another" : "Generate this report"} →</button>`;
+// `sid` is the section's id: a report with two schedules has two sections, and an id minted from the
+// report alone would repeat — focus restore lands on the first (review of #233, Grok).
+function libraryGenerateLink(name, again, sid) {
+  return `<button type="button" class="linkish" data-goto-reports="${esc(name)}" id="lib-gen-${esc(sid || name)}">${again ? "Generate another" : "Generate this report"} →</button>`;
 }
 
 function librarySections() {
@@ -3112,14 +3123,14 @@ function librarySectionHtml(sec, allRuns) {
   }
   let body = "";
   if (empty) {
-    if (paused) body = `<div class="empty-note">Paused — CronJob suspended. Previous fire ${fmtStamp(sched.previous_fire)}. No run in the library.</div>${libraryGenerateLink(report.name)}`;
-    else if (sched) body = `<div class="empty-note">No run yet.${sched.next_fire ? ` Next ${esc(sched.cadence)} · ${fmtStamp(sched.next_fire)} (${esc(untilShort(sched.next_fire))}).` : ""}</div>${libraryGenerateLink(report.name)}`;
+    if (paused) body = `<div class="empty-note">Paused — CronJob suspended. Previous fire ${fmtStamp(sched.previous_fire)}. No run in the library.</div>${libraryGenerateLink(report.name, false, sid)}`;
+    else if (sched) body = `<div class="empty-note">No run yet.${sched.next_fire ? ` Next ${esc(sched.cadence)} · ${fmtStamp(sched.next_fire)} (${esc(untilShort(sched.next_fire))}).` : ""}</div>${libraryGenerateLink(report.name, false, sid)}`;
     else body = `<div class="empty-note">No schedule and no run yet.</div>${libraryGenerateLink(report.name)}`;
   } else {
     if (sched && scheduled.length) body += libraryClusterBlocks(scheduled, sid);
     else if (!sched && manuals.length) body += libraryClusterBlocks(manuals, sid);
     if (sched && manuals.length) body += `<h3 class="subh">Manual runs</h3>${libraryClusterBlocks(manuals, `${sid}:manual`)}`;
-    body += `<div class="sec-foot">${libraryGenerateLink(report.name, true)}</div>`;
+    body += `<div class="sec-foot">${libraryGenerateLink(report.name, true, sched ? sid : null)}</div>`;
   }
   const sub = sched
     ? `<span class="mono">${esc(sched.name)}</span> · ${esc(sched.cadence)}${sched.cadence !== sched.schedule ? ` · <span class="mono">${esc(sched.schedule)}</span>` : ""} · keep ${sched.retention.keepPerSchedule} newest · ${sched.retention.days}d${sched.retention.overridden ? " (overridden)" : ""}`
@@ -3211,6 +3222,12 @@ function libraryPage() {
   if ((cat && cat.forbidden) || (st && st.forbidden) || (lib && lib.forbidden)) return refusalCard("Library", what);
   if (!cat || !st || !lib) return `<section class="card"><div class="empty-note">Loading…</div></section>`;
   const allRuns = (lib.runs || []).slice();
+  // The listing is the API's first page (1 000); a positioned run past it is fetched by id and joined here,
+  // so a pasted link to an old run opens it rather than "Run not found" (review of #233, Codex).
+  const positioned = data.libraryRun;
+  if (positioned && positioned.asked === view.run && !positioned.notFound && !allRuns.some((r) => r.id === positioned.id)) {
+    const { asked, ...run } = positioned; allRuns.push(run);
+  }
   const sections = librarySections();
   const nSched = (st.schedules || []).length, nPaused = (st.schedules || []).filter((s) => !s.enabled).length;
   const jumps = sections.map((sec) => {
@@ -6514,6 +6531,7 @@ async function refresh(opts = {}) {
       want.reportCatalog = guard403(reportGet("/api/reports"));
       want.reportStatus = guard403(reportGet("/api/status"));
       want.library = guard403(reportGet(LIBRARY_RUNS));
+      want.libraryRun = libraryPositionRun();
     }
     if (view.page === "usage") {
       // 403 is the DESIGNED answer when the OAuth proxy is off: there is no authenticated
@@ -6607,6 +6625,7 @@ async function refresh(opts = {}) {
     if ("reportStatus" in got) data.reportStatus = got.reportStatus;
     if ("reportHistory" in got && got.reportHistory && historyQuery() === (got.reportHistory.asked || historyQuery())) data.reportHistory = got.reportHistory;
     if ("library" in got) data.library = got.library;
+    if ("libraryRun" in got) data.libraryRun = got.libraryRun;
     // The report requests above were chosen on the PREVIOUS cycle's host tier, before this
     // cycle's whoami arrived — the same race the Access granted tab reconciles below. A reader
     // promoted mid-session otherwise saw "Loading…" for a whole cycle; a demoted one must not
@@ -6706,6 +6725,7 @@ async function refresh(opts = {}) {
       // repainted every minute, dropping the reader's selection (review of #221, OB3 — measured).
       data.reportStatus && { ...data.reportStatus, as_of: null }, data.reportHistory,
       data.library,   // #229: a run that finished, or aged out, must repaint the library (the #157/#167/#228 omission)
+      data.libraryRun,
       data.kpi,   // #157 (review, Codex): left out, a poll whose only change was a KPI never repainted the page
       data.kyverno,   // #170 (review, Codex): the same omission would have left a Kyverno-only change unpainted
       // #167: the namespace list and page ride the same wire (review, Codex — left out, a poll whose
