@@ -26,6 +26,7 @@ same pull request, under "Orchestrator's notes", with the reason.
 
 The operator's rulings this spec rests on, one line each, verbatim where quoted:
 
+- 2026-09-20 (#230, and it SUPERSEDES the two rulings below wherever they are read as ordering the rungs): *"A user with cluster admin and auditor is fine. That is how Kubernetes RBAC works. As long as the user has the role needed or can get the right SAR needed, we are good."* Each tier asks its own SAR and **composes nothing**: RBAC is additive, so holding the auditor role beside a namespace or cluster admin grant is the model working, not a contradiction; the SAR is the ACTION'S OWN question, so whoever passes `create secrets` can write the Secret with `oc` and the dashboard's ServiceAccount performing the write grants nobody a permission they lack; and the "no auditor" ruling holds anyway, because the pure auditor persona (`lateef.o`, the chart's role alone) answers `no` to both cluster-admin questions. What protects the surface is therefore fail-closed resolution, the absence of a `restrict` short-circuit, a resolver and cache per level, and the question asked in the resolved namespace — not a ladder.
 - 2026-09-20 (#239): *"we can learn a lot from argocd — we can create multiple tiers for this kind of stuff: dashboard_auditor_tier, dashboard_cluster_admin_tier"*.
 - 2026-09-20 (#230): *"we can create a new tier boss — look at how argocd does it"* — the cluster-configuration tier is Argo CD's `clusters` resource expressed in OpenShift RBAC: a named pair of SAR questions (`get secrets` / `create secrets` in the dashboard's namespace), default deny.
 - 2026-09-20 (#230, tier ruling): the Cluster Configurations surface is **cluster-admin only — the auditor must neither view nor change it**; every route behind it, a reader who fails it gets the refusal card, never a partial view.
@@ -107,9 +108,12 @@ $ oc auth can-i get    pods/log -n openshift-authentication --as=$U $GROUPS
 
 `dana.lee`'s three `no` answers carry the reason *RBAC: clusterrole "database-admin" not found* — a
 dangling binding in one of her groups, which the SAR reports and which changes nothing: `allowed`
-is false. **`bob.wilson` is the #230 ruling violated on this very cluster:** a member of the chart's
+is false. **`bob.wilson` is the case the operator's ruling of 2026-09-20 settles:** a member of the chart's
 auditor Group who, through `app-ocp-rbac-alpha-cluster-developer-crb` → ClusterRole `edit`, passes
-both cluster-admin levels — the auditor who may view and change the fleet's credentials. Confirmed by
+both cluster-admin levels. He is **admitted, deliberately** — he holds `create secrets` in that
+namespace and can write the cluster Secret with `oc` whatever the dashboard shows him, so refusing him
+here would protect nothing and only puzzle him. What the "no auditor" ruling actually excludes is the
+auditor *persona* — the role alone — which answers `no` to both questions (`lateef.o`, measured). Confirmed by
 subtraction: the same question with only his auditor and audit Groups answers `no`; with the
 `…-alpha-cluster-developer` Group alone, `yes`. Every persona resolves the same on the mock cluster (`local-development/mock-app/fixtures/reference.yaml#persona`,
 `local-development/mock-app/tests/test_sar_personas.py#ORACLE`), whose fixture reproduces
@@ -140,9 +144,11 @@ question (the settings exist for that).
 `admin` cluster-wide: he **fails** the auditor and admin tiers and **passes both cluster-admin
 levels** — and the same is true of anyone given `admin` or `edit` by a RoleBinding in the dashboard's
 namespace (measured on `jeff` in `jeff-qa`: `get secrets` → `yes`, `create secrets` → `yes`).
-That is exactly the *"no tier implies another"* rule showing its cost: a reader who may rotate the
-fleet's credentials but may not open the RBAC policy tab — and, in `bob.wilson`'s case, an auditor who
-may rotate them. The model keeps the operator's questions
+That is the *"no tier implies another"* rule showing its consequence, and the operator accepted it on
+2026-09-20: a reader may be able to rotate the fleet's credentials while unable to open the RBAC policy
+tab, because those are two different grants and each gate asks for the one it needs. Such a reader can
+already do both things with `oc`; the dashboard is not the boundary, RBAC is. The model keeps the
+operator's questions
 (they read as what they are) and states the consequence on the README row for
 `visibility.clusterAdminSar`: **a RoleBinding to `admin`/`edit` in the dashboard's namespace is a
 grant of the Cluster Configurations surface**; today that namespace holds none for a human
