@@ -181,7 +181,7 @@ its values entry was removed: `enabled: false`, its history kept (#96), listed s
 is gone rather than finding it missing. `credential` is `in-cluster` (the host's ServiceAccount token path), `file` (a values entry's
 `tokenFile`/`tokenEnv`), `bearer` (a Secret's `bearerToken`) or `oauth` (a Secret's
 `username`/`password` — listed, with the finding `oauth-exchange-not-built`, and not polled until
-#119 P2). `findings[].code` is one of the closed set in `gsd/clusterconfig/__init__.py`; a `discovery-failed`
+#119 P2). A bearer token is minted by a cluster, so it lives inline in that cluster's own Secret — `gsd-cluster-<name>` carries the full ServiceAccount token in `config.bearerToken`; rotation replaces it in place. A shared username/password (the fleet's LDAP service account) is NOT written per cluster: #119 P2 adds `credentialRef: <credential Secret>` for that. `findings[].code` is one of the closed set in `gsd/clusterconfig/__init__.py`; a `discovery-failed`
 finding (the LIST itself failed — the Role absent, the API unreachable) carries `secret: "-"` and the
 previous set of discovered clusters stands. `secrets.enabled=false` (`clusterConfig.secrets.enabled`)
 answers the values list alone with `last_discovery: null`.

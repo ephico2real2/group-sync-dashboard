@@ -38,6 +38,7 @@ the same pull request, under "Orchestrator's notes", with the reason.
   replace the identity every tier decision rests on. It is refused as a finding
   (`host-cluster-not-from-secret`), which departs from Argo CD, where an in-cluster Secret *overrides*
   the built-in entry — Argo has no reader tier to protect.
+- **The operator's ruling on where a credential lives (2026-09-20):** "A bearer token is minted by a cluster, so it lives inline in that cluster's own Secret — `gsd-cluster-<name>` carries the full ServiceAccount token in `config.bearerToken`; rotation replaces it in place. A shared username/password (the fleet's LDAP service account) is NOT written per cluster: #119 P2 adds `credentialRef: <credential Secret>` for that." S1's reader accepts `config.oauth{{username,password}}` inline and refuses it at poll time (`oauth-exchange-not-built`), as briefed; P2 adds `credentialRef` beside it and the inline form stays for a per-cluster password if one exists.
 - Discovery runs on the binding cadence (`bindingIntervalSeconds`, 300 s), not a WATCH. The watch with
   `resourceVersion` resumption and `410 Gone` re-list (Kubernetes API concepts, cited below) is the
   same mechanism #170 step 3 owes the Kyverno reader; both land together so there is one
