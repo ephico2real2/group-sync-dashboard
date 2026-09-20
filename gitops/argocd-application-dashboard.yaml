@@ -1,0 +1,94 @@
+# The dashboard chart installed by OpenShift GitOps from THIS git repository — charts/group-sync-dashboard
+# on main with environments/crc.yaml — as release `group-sync-dashboard` into group-sync-dashboard, the
+# same namespace and release name the Helm loop used. One instance, not two: the chart's ClusterRoles
+# and ClusterRoleBindings are named by the release, so a second release of the same name elsewhere
+# would take those bindings over and cut the first one off (rendered and read on 2026-09-20).
+#
+#   oc apply -f gitops/argocd-repo-github.yaml          # once
+#   oc apply -f gitops/argocd-application-dashboard.yaml
+#   oc -n openshift-gitops get application group-sync-dashboard -w
+#
+# The cutover from a Helm release: `helm uninstall group-sync-dashboard -n group-sync-dashboard` keeps
+# the data and artefacts PVCs (helm.sh/resource-policy: keep) and the two minted Secrets (Helm never
+# owned them), so history, sessions and tickets carry over; the first sync adopts the rest.
+#
+# Iterating on a branch: point targetRevision at it, or pause (`argocd app set group-sync-dashboard
+# --sync-policy none`) and use release-crc.sh — never both at once, Argo's prune and selfHeal would
+# undo a hand-installed release.
+#
+# What this instance does NOT have: the lab's mock cluster — crc.yaml lists it, but its credentials
+# Secret and volume were patched onto the Helm release's Deployment by hand; Argo would strip the
+# patch on every self-heal, so the clusters list is overridden to crc-local alone.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: group-sync-dashboard
+  namespace: openshift-gitops
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/ephico2real2/group-sync-dashboard.git
+    targetRevision: main
+    path: charts/group-sync-dashboard
+    helm:
+      releaseName: group-sync-dashboard
+      valueFiles:
+        - ../../environments/crc.yaml
+      valuesObject:
+        clusters:
+          - name: crc-local
+            apiUrl: https://kubernetes.default.svc
+            tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+            caBundleFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+            enabled: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: group-sync-dashboard
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - RespectIgnoreDifferences=true
+      - ServerSideApply=true
+    retry:
+      limit: 3
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 5m
+  ignoreDifferences:
+    # the chart README's ArgoCD section, verbatim reasons
+    - group: ""
+      kind: ConfigMap
+      name: group-sync-dashboard-trusted-ca
+      jsonPointers:
+        - /data
+    - group: ""
+      kind: PersistentVolumeClaim
+      name: group-sync-dashboard-data
+      jsonPointers:
+        - /spec/volumeName
+        - /spec/storageClassName
+    - group: ""
+      kind: PersistentVolumeClaim
+      name: group-sync-dashboard-report-artifacts
+      jsonPointers:
+        - /spec/volumeName
+        - /spec/storageClassName
+    - group: ""
+      kind: ServiceAccount
+      jsonPointers:
+        - /secrets
+        - /imagePullSecrets
+        - /metadata/annotations/openshift.io~1internal-registry-pull-secret-ref
+    - group: route.openshift.io
+      kind: Route
+      name: group-sync-dashboard
+      jsonPointers:
+        - /status
