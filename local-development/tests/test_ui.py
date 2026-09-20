@@ -5202,7 +5202,7 @@ class TestAccessGrantedSelfTier:
         p.evaluate("() => refresh()")
         p.wait_for_function("() => data.whoami && data.whoami.visibility && data.whoami.visibility.scope === 'all'", timeout=10_000)
         p.wait_for_function("() => window.__reportGets.length >= 2", timeout=10_000)
-        assert p.evaluate("() => window.__reportGets") == ["/api/reports", "/api/runs?limit=50"]
+        assert p.evaluate("() => window.__reportGets") == ["/api/reports", "/api/runs?limit=1"]   # the count only (#149 R5)
         assert p.evaluate("() => data.reportCatalog !== null") is True
 
     def test_reports_follow_the_hosts_headline_not_the_selected_remote(self, page, scoped_server):
@@ -6907,6 +6907,63 @@ class TestReportsTab:
             page.wait_for_selector("#reporting-status .status-strip")
             assert page.evaluate("() => document.documentElement.scrollWidth <= innerWidth")
             assert page.evaluate("() => getComputedStyle(document.querySelector('.status-strip')).gridTemplateColumns.split(' ').length") == 2
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_an_automatic_refresh_that_changed_nothing_leaves_the_status_page_alone(self, browser, reporting_server):
+        # Review of #221 (OB3): the status payload carries `as_of`, the service's clock, which nothing
+        # renders — and with it in the fingerprint no two polls ever matched, so the page repainted every
+        # minute and dropped the reader's text selection (measured: 84 selected characters → 0; the
+        # Reports page kept its 2147). The fingerprint reads the payload without the stamp.
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.goto(base + "#page=reporting&cluster=crc-local")
+            page.wait_for_selector("#reporting-status .status-strip")
+            probe = page.evaluate("""async () => {
+                await refresh({ auto: true });
+                const before = document.getElementById('reporting-status');
+                const range = document.createRange(); range.selectNodeContents(before.querySelector('.status-strip'));
+                getSelection().removeAllRanges(); getSelection().addRange(range);
+                const selected = getSelection().toString().length;
+                await new Promise(r => setTimeout(r, 1100));          // the service stamps as_of to the second
+                await refresh({ auto: true });
+                return { repainted: before !== document.getElementById('reporting-status'), selected, kept: getSelection().toString().length };
+            }""")
+            assert probe["repainted"] is False and probe["kept"] == probe["selected"] > 0, probe
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_the_status_page_catches_up_on_the_refresh_that_promotes_the_host_tier(self, browser, reporting_server):
+        # Review of #221 (OB3): the Reports page reconciles its requests against the whoami that just
+        # arrived (test_reports_catch_up_on_the_refresh_that_promotes_the_host_tier); the status page only
+        # cleared on a demotion, so a reader promoted mid-session saw "← reports / Loading…" for a whole
+        # cycle (measured: zero /api/status calls on the promoting refresh).
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "alice")
+        calls: list[str] = []
+        page.on("request", lambda r: calls.append(r.url.split("/report")[-1]) if "/report/api/status" in r.url else None)
+        try:
+            page.goto(base + "#page=reporting&cluster=crc-local")
+            page.wait_for_selector(".refusal, .card:has-text('For administrators only')", timeout=10_000)
+            page.set_extra_http_headers({"X-Forwarded-User": "root", "X-Forwarded-Email": "root@example.com"})
+            page.evaluate("() => refresh()")
+            page.wait_for_selector("#reporting-status .status-strip", timeout=10_000)
+            assert calls == ["/api/status"], calls
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_a_span_of_fifty_nine_and_three_quarter_minutes_is_not_sixty(self, browser, reporting_server):
+        # Review of #221 (OB3): untilShort() floored the hours and rounded the minutes, so 3 h 59 m 45 s
+        # read "in 3h 60m" for the last thirty seconds of every hour.
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            got = page.evaluate("() => untilShort(new Date(Date.now() + (3 * 3600 + 59 * 60 + 45) * 1000).toISOString())")
+            assert got == "in 3h 59m", got
             assert not errors, errors
         finally:
             ctx.close()

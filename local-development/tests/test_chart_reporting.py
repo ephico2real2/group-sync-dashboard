@@ -345,9 +345,9 @@ class TestDerivations:
         # #149 R6: the status page reads cadence, enabled and retention from the chart's own values.
         import json as _json
         env = {e["name"]: e.get("value") for d in _render(
-            "reporting.schedules[0].name=quarterly", "reporting.schedules[0].schedule=0 6 1 1\,4\,7\,10 *",
+            "reporting.schedules[0].name=quarterly", r"reporting.schedules[0].schedule=0 6 1 1\,4\,7\,10 *",
             "reporting.schedules[0].report=compliance-snapshot", "reporting.schedules[0].retention.keepPerSchedule=12",
-            "reporting.schedules[1].name=paused", "reporting.schedules[1].schedule=0 6 1\,16 * *",
+            "reporting.schedules[1].name=paused", r"reporting.schedules[1].schedule=0 6 1\,16 * *",
             "reporting.schedules[1].report=namespace-access", "reporting.schedules[1].enabled=false",
             "reporting.schedules[1].params.foo=bar")
             if d.get("kind") == "Deployment" and d["metadata"]["name"].endswith("-report")
@@ -359,6 +359,26 @@ class TestDerivations:
         ], got                                                    # params stay out; enabled only when set
         assert _json.loads({e["name"]: e.get("value") for d in _render() if d.get("kind") == "Deployment" and d["metadata"]["name"].endswith("-report")
                             for e in d["spec"]["template"]["spec"]["containers"][0]["env"]}["GSD_REPORT_SCHEDULES"]) == []
+
+    def test_a_quoted_false_pauses_the_cronjob_and_the_status_page_alike(self):
+        # Review of #221 (OB3): report-cronjob.yaml suspends on the literal word false (a quoted "false" or a
+        # --set-string is a non-empty string), and the service reads `enabled` as a boolean. Rendered as the
+        # value itself, "false" reached the pod as the string "false", which `is not False` — the page said On
+        # with a next fire, above a CronJob that would never fire. The helper now emits the CronJob's decision.
+        import json as _json, subprocess as _sp
+        done = _sp.run(["helm", "template", "t", str(CHART), "-n", "x", "--set", "ingress.host=h", "--set", "reporting.enabled=true",
+                        "--set", "persistence.accessMode=ReadWriteMany",
+                        "--set", "reporting.schedules[0].name=a", "--set", "reporting.schedules[0].schedule=0 6 * * *",
+                        "--set", "reporting.schedules[0].report=groups", "--set-string", "reporting.schedules[0].enabled=false"],
+                       capture_output=True, text=True, timeout=120)
+        assert done.returncode == 0, done.stderr
+        import yaml as _yaml
+        docs = [d for d in _yaml.safe_load_all(done.stdout) if d]
+        cron = next(d for d in docs if d.get("kind") == "CronJob")
+        env = {e["name"]: e.get("value") for d in docs if d.get("kind") == "Deployment" and d["metadata"]["name"].endswith("-report")
+               for e in d["spec"]["template"]["spec"]["containers"][0]["env"]}
+        assert cron["spec"]["suspend"] is True
+        assert _json.loads(env["GSD_REPORT_SCHEDULES"]) == [{"name": "a", "schedule": "0 6 * * *", "report": "groups", "enabled": False}]
 
     def test_the_origin_formats_reach_the_report_pod(self):
         env = {e["name"]: e.get("value") for d in _render() if d.get("kind") == "Deployment" and d["metadata"]["name"].endswith("-report")

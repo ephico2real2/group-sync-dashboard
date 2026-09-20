@@ -1391,3 +1391,82 @@ class TestReportingStatus:
         monkeypatch.setenv("GSD_REPORT_SCHEDULES", "not json")
         with pytest.raises(SystemExit):
             _schedules_env()
+
+
+class TestReportingStatusReview:
+    """Review of #221 (OB3): the late predicate's grace sits after the fire; the per-schedule retention
+    override the page calls effective is the one the prune applies; the optional keys are validated at
+    startup like the required ones."""
+
+    NIGHTLY = ({"name": "nightly", "schedule": "0 2 * * *", "report": "groups"},)
+
+    @staticmethod
+    def _done(run_id, day, schedule="nightly"):
+        return Run(id=run_id, report="groups", cluster=CLUSTER, params={}, formats=["html"], generated_by=f"schedule:{schedule}",
+                   generated_by_note="unattended", schedule=schedule, origin="schedule", requested_at=f"{day}T02:00:00Z",
+                   started_at=f"{day}T02:00:01Z", finished_at=f"{day}T02:02:00Z", status="done", sha256="ab" * 32)
+
+    def _status(self, tmp_path, at, schedules=NIGHTLY, seed=(), in_flight=None, **over):
+        tmp_path.mkdir(exist_ok=True)
+        snapshots, artifacts = seeded_dirs(tmp_path)
+        store = ArtifactStore(str(artifacts))
+        for r in seed:
+            store.create(r)
+        app = build_report_app(_settings(snapshots, artifacts, schedules=schedules, max_queued_runs=0, **over), secret=SECRET, clock=lambda: at)
+        if in_flight is not None:
+            app.state.store.create(in_flight)
+        with TestClient(app) as client:
+            return client.get(f"{REPORT_PREFIX}/api/status", headers=SERVICE).json()
+
+    def test_a_schedule_that_just_fired_is_ok_while_its_run_renders_and_late_half_an_hour_on(self, tmp_path):
+        # Before the fix `last_success < previous_fire - 30 min` was true the instant the fire passed
+        # (yesterday's success is a day older), so every healthy schedule read `late` until its run
+        # finished — measured at fire + 1 s with the run in flight, and at fire + 5 min.
+        yesterday = self._done("20260919T020000.000000Z-aaaa", "2026-09-19")
+        running = Run(id="20260920T020000.000000Z-bbbb", report="groups", cluster=CLUSTER, params={}, formats=["html"],
+                      generated_by="schedule:nightly", generated_by_note="unattended", schedule="nightly", origin="schedule",
+                      requested_at="2026-09-20T02:00:00Z", started_at="2026-09-20T02:00:01Z", status="running")
+        by = lambda s: {x["name"]: x for x in s["schedules"]}["nightly"]  # noqa: E731
+        just_fired = by(self._status(tmp_path / "a", datetime(2026, 9, 20, 2, 0, 1, tzinfo=UTC), seed=[yesterday], in_flight=running))
+        assert just_fired["previous_fire"] == "2026-09-20T02:00:00Z" and just_fired["last_success"] == "2026-09-19T02:02:00Z"
+        assert just_fired["status"] == "ok", just_fired
+        assert by(self._status(tmp_path / "b", datetime(2026, 9, 20, 2, 29, tzinfo=UTC), seed=[yesterday]))["status"] == "ok"
+        assert by(self._status(tmp_path / "c", datetime(2026, 9, 20, 2, 31, tzinfo=UTC), seed=[yesterday]))["status"] == "late"
+        # a success after the fire is ok whatever the hour; no success ever is never
+        today = self._done("20260920T020000.000000Z-cccc", "2026-09-20")
+        assert by(self._status(tmp_path / "d", datetime(2026, 9, 20, 12, 0, tzinfo=UTC), seed=[yesterday, today]))["status"] == "ok"
+        assert by(self._status(tmp_path / "e", datetime(2026, 9, 20, 12, 0, tzinfo=UTC)))["status"] == "never"
+
+    def test_the_retention_override_the_page_reports_is_the_one_the_prune_applies(self, tmp_path):
+        # `ArtifactStore.prune(overrides=...)` has existed since the two-tier retention and nothing passed
+        # it; #221 is the first to declare an override (environments/crc.yaml) and to display it as the
+        # effective policy. Three runs of a quarterly schedule, all older than the global 90 days: the
+        # globals keep the newest 2, the override (12 newest, 2555 days) keeps all three.
+        quarterly = ({"name": "quarterly", "schedule": "0 6 1 1,4,7,10 *", "report": "groups", "retention": {"keepPerSchedule": 12, "days": 2555}},)
+        snapshots, artifacts = seeded_dirs(tmp_path)
+        store = ArtifactStore(str(artifacts))
+        for i, day in enumerate(("2026-01-01", "2026-04-01", "2026-07-01")):
+            store.create(self._done(f"{day.replace('-', '')}T060000.000000Z-q{i:03d}", day, schedule="quarterly"))
+        at = datetime(2026, 9, 20, 12, 0, tzinfo=UTC)
+        settings = _settings(snapshots, artifacts, schedules=quarterly, max_queued_runs=0)
+        app = build_report_app(settings, secret=SECRET, clock=lambda: at)
+        with TestClient(app) as client:
+            s = client.get(f"{REPORT_PREFIX}/api/status", headers=SERVICE).json()
+            assert s["schedules"][0]["retention"] == {"keepPerSchedule": 12, "days": 2555, "overridden": True}
+            app.state.runs._last_prune = -10**9            # the hourly gate: due now
+            app.state.runs._maybe_prune()
+            assert client.get(f"{REPORT_PREFIX}/api/runs", headers=SERVICE).json()["total"] == 3, "the prune applied the globals, not the override the page shows"
+        from gsd.reporting.config import retention_overrides            # the one reading both sides share
+        assert retention_overrides(settings) == {"quarterly": (12, 2555)}
+
+    def test_the_schedules_env_refuses_a_malformed_retention_or_enabled_at_startup(self, monkeypatch):
+        # Before: a `retention: {days: "twelve"}` passed startup and GET /report/api/status was a 500.
+        from gsd.reporting.config import _schedules_env
+        good = {"name": "n", "schedule": "0 2 * * *", "report": "groups"}
+        for bad in ({"retention": {"days": "twelve"}}, {"retention": {"keepPerSchedule": None}}, {"retention": [1, 2]},
+                    {"retention": {"days": -1}}, {"retention": {"weeks": 2}}, {"retention": {"days": True}}, {"enabled": "false"}, {"enabled": 0}):
+            monkeypatch.setenv("GSD_REPORT_SCHEDULES", json.dumps([good | bad]))
+            with pytest.raises(SystemExit, match="GSD_REPORT_SCHEDULES: schedule 'n'"):
+                _schedules_env()
+        monkeypatch.setenv("GSD_REPORT_SCHEDULES", json.dumps([good | {"retention": {"days": 12}, "enabled": False}]))
+        assert _schedules_env()[0]["retention"] == {"days": 12}
