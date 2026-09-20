@@ -55,7 +55,7 @@ def main():
         print("bindings: KPIs", tiles(page))
         shot(page, "04-bindings-review-rail.png")
         page.goto(BASE + "/#page=usage", wait_until="networkidle"); page.wait_for_selector(".kpis .kpi"); page.wait_for_timeout(600)
-        leads = page.evaluate("() => [...document.querySelectorAll('#main .filterbar-note strong')].map(s => s.textContent).filter(t => ['Times', 'An interaction', 'Not logins.'].includes(t))")
+        leads = page.evaluate("() => [...document.querySelectorAll('#main section.card:last-of-type .filterbar-note > strong:first-child')].map(s => s.textContent)")
         print("usage   : lead words", leads)
         shot(page, "05-usage-footnote.png")
         page.set_viewport_size({"width": 375, "height": 740})
