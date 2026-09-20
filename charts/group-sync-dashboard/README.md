@@ -58,7 +58,7 @@ Each names who provides it; `docs/DESIGN_grafana_and_observe.md` is the design.
 | `oauthProxy.image` | `registry.redhat.io/openshift4/ose-oauth-proxy-rhel9:v4.15` | needs registry.redhat.io credentials, which the cluster's global pull secret normally already carries. Override to the internal imagestream or a mirror if not — see `values.yaml` |
 | `oauthProxy.imagePullPolicy` | `IfNotPresent` | the image is already on the node as an imagestream |
 | `oauthProxy.port` | `8443` | |
-| `oauthProxy.cookieSecret` | `""` | empty: the session key is minted on the cluster by the `secrets-mint` hook (`<fullname>-oauth-session`), once, never rendered; a value renders that Secret plainly |
+| `oauthProxy.cookieSecret` | `""` | empty: the session key is minted on the cluster by the `secrets-mint` hook (`<fullname>-oauth-session`), once, never rendered; a value renders that Secret plainly, with `helm.sh/resource-policy: keep` (and `Prune=false,Delete=false` under Argo), so clearing it later keeps the key and every session. Giving a value to a release whose key the hook minted needs `oc delete secret <fullname>-oauth-session` first under Helm — Helm cannot adopt an object it did not create — and signs every session out once |
 | `oauthProxy.cookie.expire` | `4h` | absolute session cap, a Go duration. There is deliberately no `refresh` key: measured on `provider=openshift`, `-cookie-refresh` force-clears the session at every interval instead of sliding it, so the chart refuses a values file that sets it |
 | `session.idleTimeout.enabled` | `false` | signs people out after inactivity: the page counts pointer, keyboard and tab-visibility activity, shows a countdown, and at zero sends the browser to the proxy's `sign_out`, which ends the session. Off because it is a session policy. Refused without `oauthProxy.enabled` |
 | `session.idleTimeout.minutes` | `30` | whole minutes of inactivity before sign-out; the countdown is the last `warningSeconds` of that window; must be shorter than `oauthProxy.cookie.expire` or the render is refused (the cap would end every session first) |
@@ -1198,4 +1198,14 @@ explicitly when you genuinely want that gone:
 
 ```bash
 oc delete pvc group-sync-dashboard-data -n group-sync-dashboard
+```
+
+Since 0.37.0 the two minted Secrets survive an uninstall as well — the hook created them, Helm
+never owned them — so a reinstall keeps every session and every ticket. Delete them when you want
+the keys gone, together with the hook's identity, which a hook-only ServiceAccount, Role and
+RoleBinding leave behind:
+
+```bash
+oc delete secret group-sync-dashboard-oauth-session group-sync-dashboard-report-shared-token -n group-sync-dashboard
+oc delete sa,role,rolebinding group-sync-dashboard-secrets-mint -n group-sync-dashboard
 ```

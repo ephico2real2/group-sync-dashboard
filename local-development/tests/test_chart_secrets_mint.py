@@ -97,7 +97,7 @@ class TestRender:
         docs = _render("oauthProxy.cookieSecret=fixed")
         assert _one(docs, "Secret", "-oauth-session")["data"]["session_secret"] == "Zml4ZWQ="
         assert _job(docs)[2]["MINT_COOKIE"] == "false" and _job(docs)[2]["MINT_TOKEN"] == "true"
-        # the proxy off: no cookie at all; the token still minted
+        # the proxy off: no cookie, and no token either — reporting is refused without the proxy, so no hook
         docs = _render("oauthProxy.enabled=false", "visibility.enabled=false", "route.enabled=false", "ingress.enabled=true", "trustedCA.injected.enabled=false", "loginCapture.enabled=false", "reporting.enabled=false")
         assert not [d for d in docs if d["metadata"]["name"].endswith("-secrets-mint")], "nothing to mint: no hook"
         docs = _render("secretsMint.enabled=false")
@@ -191,3 +191,24 @@ class TestTheScript:
   'get secret '*) echo 'Error from server (NotFound): x' >&2; exit 1 ;;
   'create secret generic '*) echo 'Error from server (Forbidden): secrets is forbidden' >&2; exit 1 ;;""")
         assert done.returncode == 1 and "FAIL: could not create" in done.stderr
+
+
+class TestTheBringYourOwnKeyAndTheDocs:
+    def test_the_supplied_cookie_secret_is_kept_when_the_value_is_cleared_again(self):
+        """A bring-your-own key that is later cleared: without `keep`, Helm deletes the Secret in the
+        same apply that rolls the Deployment onto it (the pre-upgrade mint kept it; the post-upgrade
+        mint runs only after a --wait that cannot end), and Argo prunes it in the Deployment's wave."""
+        secret = _one(_render("oauthProxy.cookieSecret=fixed"), "Secret", "-oauth-session")
+        ann = secret["metadata"]["annotations"]
+        assert ann["helm.sh/resource-policy"] == "keep"
+        assert ann["argocd.argoproj.io/sync-options"] == "Prune=false,Delete=false"
+        secret = _one(_render("oauthProxy.cookieSecret=fixed", "argocd.enabled=false"), "Secret", "-oauth-session")
+        assert "argocd.argoproj.io/sync-options" not in secret["metadata"]["annotations"]
+
+    def test_the_docs_say_what_survives_and_how_to_switch(self):
+        values = (CHART / "values.yaml").read_text()
+        assert "the token Secret (generated once, reused)" not in values, "the lookup era, described as current"
+        readme = (CHART / "README.md").read_text()
+        uninstall = readme[readme.index("## Uninstall"):]
+        assert "group-sync-dashboard-oauth-session" in uninstall and "group-sync-dashboard-report-shared-token" in uninstall, "what an uninstall leaves behind"
+        assert "oc delete secret <fullname>-oauth-session" in readme and "oc delete secret <fullname>-oauth-session" in values, "switching cookieSecret on an existing release"

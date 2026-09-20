@@ -964,7 +964,8 @@ backup:
 # dashboard's API stays GET-only.
 #
 # DEFAULT ON. The chart supplies everything: the image (same appVersion as image.*, published by
-# the same workflow), a PVC for artefacts, the token Secret (generated once, reused), the Service,
+# the same workflow), a PVC for artefacts, the token Secret (minted on the cluster by the
+# secrets-mint hook, only if absent — never rendered), the Service,
 # the NetworkPolicy, the TLS certificate (service-ca). Refused at render with oauthProxy.enabled=false
 # (no proxy, no route in, no trusted identity), persistence.enabled=false (nothing a second pod can
 # mount), replicaCount>1 (each replica holds its own history), rbac.bindings=false (nine of eleven
@@ -1634,7 +1635,12 @@ oauthProxy:
   # Cookie signing key. Leave empty (the default) and the secrets-mint hook creates
   # <fullname>-oauth-session ON THE CLUSTER, once, only if absent — never in a manifest, so no
   # renderer (Helm, Flux, Argo CD, Kustomize) rotates it. A value here renders that Secret plainly
-  # instead — deterministic, so it does not drift either — and the mint is skipped for it.
+  # instead — deterministic, so it does not drift either — and the mint is skipped for it. The
+  # rendered Secret carries helm.sh/resource-policy: keep (and Prune=false,Delete=false under Argo),
+  # so clearing the value later leaves the Secret — and every session — in place: the hook finds it
+  # and keeps it. The other way round, giving a value to a release whose key the hook minted, needs
+  # `oc delete secret <fullname>-oauth-session` first under Helm (Helm cannot adopt an object it did
+  # not create); the key changes, so every session is signed out once.
   cookieSecret: ""
 
   # Session lifetime: ONE absolute number, measured from login, deliberately NOT sliding.
