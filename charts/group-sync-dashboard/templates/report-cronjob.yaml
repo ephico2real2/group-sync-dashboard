@@ -35,7 +35,10 @@ spec:
   startingDeadlineSeconds: 600
   jobTemplate:
     spec:
-      backoffLimit: 1
+      # Never retried by Kubernetes: a retry pod would POST the whole fan-out again after a 202 and
+      # render every cluster twice. A failed run is failed; the next fire is the retry. The trigger
+      # repeats, in-process, only a POST that never reached the service (review of PR #220).
+      backoffLimit: 0
       activeDeadlineSeconds: 900
       template:
         metadata:
@@ -72,6 +75,10 @@ spec:
                 - --schedule
                 - {{ $s.name | quote }}
                 - --wait
+                # sized from the Job's deadline, with a minute for the pod to start and report: the wait is
+                # N × render on one worker for a fan-out, and a timeout is a failed Job with no duplicate
+                - --timeout
+                - "840"
                 {{- with ($s.params | default dict) }}
                 - --params-json
                 - {{ toJson . | quote }}

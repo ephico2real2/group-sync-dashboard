@@ -1171,7 +1171,7 @@ class TestClusterAgnosticSchedulesAndOriginFormats:
         return TestClient(build_report_app(_settings(snapshots, artifacts, **over), secret=SECRET, clock=lambda: FROZEN))
 
     def _two_cluster_client(self, tmp_path, **over):
-        from tests.reporting_seed import seed_store, write_snapshot
+        from reporting_seed import seed_store, write_snapshot     # the module's own convention: CI's `pytest tests/` has no `tests` package
         snapshots, artifacts = tmp_path / "snapshots", tmp_path / "artifacts"
         snapshots.mkdir(); artifacts.mkdir()
         store = seed_store(str(tmp_path / "writer.db"))
@@ -1231,6 +1231,15 @@ class TestClusterAgnosticSchedulesAndOriginFormats:
             assert sorted(x["id"] for x in r["runs"]) == ["20260920T000000.000000Z-aaaa", "20260920T000000.000000Z-bbbb"]
             r = client.post(f"{REPORT_PREFIX}/api/runs", json={"report": "groups", "cluster": CLUSTER, "schedule": "again"}, headers=SERVICE).json()
             assert r["id"] == "20260920T000000.000000Z-cccc", "the repeated aaaa was skipped: it is in the store"
+
+    def test_an_unlistable_snapshot_directory_is_503_not_500(self, tmp_path):
+        # Review of PR #220 (OB3): the resolver caught SnapshotError only; an OSError from listing the
+        # directory (a lost mount permission) was a 500. A 503 like a missing snapshot.
+        with self._client(tmp_path) as client:
+            bad = tmp_path / "not-a-dir"; bad.write_text("x")
+            object.__setattr__(client.app.state.settings, "snapshot_dir", str(bad))   # frozen: point the resolver at a file
+            r = client.post(f"{REPORT_PREFIX}/api/runs", json={"report": "groups", "schedule": "nightly"}, headers=SERVICE)
+            assert r.status_code == 503, r.text
 
     def test_a_pinned_cluster_keeps_the_single_run_shape(self, tmp_path):
         with self._two_cluster_client(tmp_path) as client:

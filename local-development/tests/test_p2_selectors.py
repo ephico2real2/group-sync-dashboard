@@ -168,6 +168,27 @@ class TestTriggerClusterAgnosticAndFormats:
         assert rc == 1 and "queued no run" in capsys.readouterr().err
 
 
+    def test_a_post_that_never_reached_the_service_is_repeated_but_a_read_timeout_is_not(self, monkeypatch, tmp_path):
+        # Review of PR #220 (OB3): with the Job's backoffLimit at 0 the trigger owns the retry, and only for a
+        # POST the service never saw; a ReadTimeout may have queued the fan-out and is not repeated.
+        calls = {"n": 0}
+        class _Flaky(_FakeClient):
+            def post(self, path, json=None):
+                calls["n"] += 1
+                if calls["n"] < 3:
+                    raise trigger.httpx.ConnectError("connection refused")
+                return _FakeResp()
+        monkeypatch.setattr(trigger.httpx, "Client", _Flaky)
+        monkeypatch.setattr(trigger.time, "sleep", lambda s: None)
+        rc = trigger.main(["--url", "https://x", "--report", "groups", "--schedule", "weekly", "--token-file", self._tok(tmp_path)])
+        assert rc == 0 and calls["n"] == 3
+        class _Slow(_FakeClient):
+            def post(self, path, json=None): raise trigger.httpx.ReadTimeout("slow")
+        monkeypatch.setattr(trigger.httpx, "Client", _Slow)
+        with pytest.raises(trigger.httpx.ReadTimeout):
+            trigger.main(["--url", "https://x", "--report", "groups", "--schedule", "weekly", "--token-file", self._tok(tmp_path)])
+
+
 class _FakeResp409:
     status_code = 409
     text = "outside the reporting window"

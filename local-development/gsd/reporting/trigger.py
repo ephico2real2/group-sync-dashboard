@@ -22,6 +22,27 @@ import time
 import httpx
 
 
+#: Only a POST that never REACHED the service is repeated, and only here, in-process: the Job's own
+#: Kubernetes retry is off (backoffLimit 0) because a retry pod would POST the whole fan-out again
+#: after a 202 and render every cluster twice (review of PR #220, OB3). A read timeout is not repeated —
+#: the request may have queued.
+POST_ATTEMPTS, POST_RETRY_SECONDS = 3, 10
+
+
+def _post(c: httpx.Client, body: dict) -> httpx.Response:
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            return c.post("/report/api/runs", json=body)
+        except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+            if attempt >= POST_ATTEMPTS:
+                raise
+            print(f"POST did not reach the service ({type(exc).__name__}: {exc}); "
+                  f"retrying in {POST_RETRY_SECONDS}s ({attempt}/{POST_ATTEMPTS})", file=sys.stderr)
+            time.sleep(POST_RETRY_SECONDS)
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="gsd.reporting.trigger")
     ap.add_argument("--url", required=True, help="the report Service, e.g. https://gsd-report.ns.svc:8443")
@@ -63,7 +84,7 @@ def main(argv: list[str] | None = None) -> int:
         body["formats"] = a.format
 
     with httpx.Client(base_url=a.url, headers=headers, verify=verify, timeout=30.0) as c:
-        r = c.post("/report/api/runs", json=body)
+        r = _post(c, body)
         if r.status_code == 409:
             # The reporting window is closed (design §5): a schedule firing outside its window is a SKIP,
             # not a failure. Exit 0 so the CronJob is not marked failed and does not retry into the

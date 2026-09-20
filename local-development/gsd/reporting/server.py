@@ -340,7 +340,7 @@ def build_report_app(settings: ReportSettings, *, secret: bytes | None = None, c
             try:
                 with Snapshot(newest_snapshot(settings.snapshot_dir)) as snap:
                     targets = [c["id"] for c in snap.clusters() if c.get("enabled", 1)]
-            except SnapshotError as exc:
+            except (SnapshotError, OSError) as exc:      # OSError: the directory cannot be listed (a lost mount permission)
                 raise HTTPException(status_code=503, detail=f"no snapshot to resolve clusters from: {exc}") from exc
             if not targets:
                 raise HTTPException(status_code=422, detail="the snapshot has no enabled cluster to run against")
