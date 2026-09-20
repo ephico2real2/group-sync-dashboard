@@ -1,0 +1,154 @@
+# CRC — local development cluster.
+#
+# Pass with every upgrade:
+#   helm upgrade --install group-sync-dashboard charts/group-sync-dashboard \
+#     -n group-sync-dashboard -f environments/crc.yaml
+#
+# No host is set here, deliberately. The chart's default Route asks the router for
+# <fullname>.<apps domain> via spec.subdomain, which on CRC gives
+# group-sync-dashboard.apps-crc.testing — the same URL the Ingress path used to derive by
+# lookup. Setting route.host would pin a value the cluster already gets right, and pinning it
+# is what once made a changed default appear not to work.
+
+# Bearer-token access to /api, for cluster-report.py and any external aggregator.
+# The caller still needs cluster-wide RBAC read; see docs/api-access.md.
+oauthProxy:
+  apiTokenAccess:
+    enabled: true
+
+# Unmanaged-grant discovery. `log` is the chart default now, so this is redundant — kept
+# explicit because a release file should state what it wants rather than inherit it, and
+# because that keeps the intent if the default ever moves again.
+config:
+  unmanagedAudit:
+    mode: "log"
+
+# THE DASHBOARD'S OWN log level, on DEBUG for this lab at the operator's request. This is a severity
+# for THIS Python process — not the cluster's verbosity, and not `authLogLevel` below. The two are
+# adjacent here on purpose: they are the pair that gets confused, and the whole reason the Logins tab
+# once looked broken while capture was working.
+#
+# DEBUG is affordable now in a way it was not before. It used to mean 366 lines a cycle of which 356
+# were httpcore socket framing, measured in this pod; the framing is pinned to WARNING, so DEBUG is
+# ~11 lines and every one of them is the app's own reasoning — per-pod login-capture accounting, the
+# poll cycle's timing, row counts per read, which replica holds the Lease and how stale its renewal
+# is. Set GSD_DEBUG_HTTP=true on the container if a TLS handshake ever needs the framing back.
+#
+# It lives HERE rather than in a `--set` because the deploy script passes this file on every upgrade
+# and Helm resets to chart defaults the moment either is given — a `--set logLevel=DEBUG` would be
+# silently dropped by the next `helm upgrade -f` that did not repeat it.
+logLevel: INFO
+
+# Login capture, on for this lab, from the oauth-server AUDIT LOG since chart 0.19.0 (D1). The two
+# halves are still separate decisions:
+#
+#   authLogLevel  raises `spec.logLevel` on the authentication OPERATOR CR — NOT the OAuth CR — so the
+#                 oauth-server's POD LOG names the person logging in. Only the pod-log source needs it.
+#                 A cluster-scoped write, so it runs under its own ServiceAccount, never the dashboard's.
+#   loginCapture  lets the DASHBOARD read a log. `source: pod-log` is a Role on pods/log in
+#                 openshift-authentication; `source: audit-log` is a ClusterRole on `get nodes/proxy`
+#                 (+ `list nodes`) — read-only, cluster-wide, chosen here because the audit log names
+#                 the person at the DEFAULT verbosity and keeps history back to the rotated files.
+#
+# ON A SHARED CLUSTER, READ THIS FIRST: toggling the level rolls oauth-openshift, which at one replica
+# is a login outage rather than a rolling update. CRC has one replica. See
+# docs/LOGIN_CAPTURE_QUICKCHECK.md (§6 for the audit-log source), which is also how to verify the whole
+# path end to end.
+#
+# Management OFF: this cluster captures logins from the AUDIT LOG (loginCapture.source: audit-log,
+# below), which names the person at the DEFAULT verbosity — the oauth operator's log level never needs
+# raising, so the auth-loglevel Job is not needed here. That Job is a post-install/post-upgrade HOOK, so
+# with manage:true it ran on EVERY upgrade and, on the CPU-saturated CRC node, could not schedule and
+# hung the whole upgrade. The one-time convergence back to Normal is complete (the operator CR is at
+# Normal), so manage:false no longer risks stranding the cluster in Debug. Set manage:true only for the
+# pod-log login source, which is the one that needs the elevated verbosity.
+authLogLevel:
+  manage: false
+  enabled: false
+
+loginCapture:
+  enabled: true
+  source: audit-log
+
+# The M5 Pro's CRC (28 GB, 10 CPUs) runs full cluster monitoring, and user-workload monitoring was
+# switched on 2026-09-19 (openshift-monitoring/cluster-monitoring-config: enableUserWorkload: true).
+# Everything the KPI page's doors and the Grafana board need is the chart's DEFAULT since 0.36.0:
+# the ServiceMonitor, the rules, the board's ConfigMap and — because this cluster serves
+# grafana.integreatly.org/v1beta1 (the openshift-grafana chart runs in this namespace as release
+# `grafana`, #162) — the GrafanaDashboard CR bound to its datasource by uid (#161); `grafana.url`
+# and `console.url` are discovered (the release's Route by label, console-public). Nothing to set
+# here, and that is the point: this file must not carry what a default install already does.
+
+# ---------------------------------------------------------------------------
+# Reporting — the namespace-access multi-dimension selector (P2, 0.21.0+)
+# ---------------------------------------------------------------------------
+# This cluster's namespaces carry enterprise metadata — company.net/mnemonic (the app mnemonic)
+# and company.net/app-environment (prod/qa/uat/...). Capture BOTH keys on the poll and offer BOTH
+# as selector DIMENSIONS in the Reports form, so the namespace-access report can be scoped by
+# "mnemonic in {demo, beta} AND app-environment in {prod}" — AND across dimensions, OR within.
+# The dropdown VALUES are auto-discovered from the namespaces; nothing is hard-coded here.
+#
+# rbac.namespaces is REQUIRED: without the grant to list Namespace objects the poller never reads
+# their labels, so the selector would always be empty (the chart guard refuses the combination).
+rbac:
+  namespaces: true
+
+reporting:
+  namespaceMetadata:
+    # The poller CAPTURES these label keys from every Namespace (bounded set).
+    labels:
+      - company.net/mnemonic
+      - company.net/app-environment
+  namespaceSelector:
+    # The Reports form OFFERS these as selector dimensions (must be a subset of the captured keys).
+    labels:
+      - company.net/mnemonic
+      - company.net/app-environment
+  # P4 — the global reporting window, ON per the mandate to turn on every reporting feature we added.
+  # It gates AUTOMATED runs (schedules and service-token callers) to a night window; a human's manual
+  # run from the Reports tab is NEVER gated. The CronJob below gets spec.timeZone = this zone so its
+  # schedule time lands inside the window (else the run would 409-skip).
+  window:
+    enabled: true
+    timezone: "America/New_York"
+    start: "22:00"
+    end: "06:00"
+    days: [Mon, Tue, Wed, Thu, Fri, Sat, Sun]
+  # One nightly schedule to exercise the window + the CronJob. namespace-access scoped by the mnemonic
+  # dimension (P2), so the schedule shows both features working together. Fires 22:00 New York, inside
+  # the window; a manual trigger outside the window would 409 -> the Job records a skip, not a failure.
+  schedules:
+    - name: nightly-namespace-access
+      schedule: "0 22 * * *"
+      report: namespace-access
+      cluster: crc-local
+      params:
+        selectors:
+          company.net/mnemonic: [demo, beta]
+
+# ---------------------------------------------------------------------------
+# Clusters the dashboard polls
+# ---------------------------------------------------------------------------
+# crc-local is this cluster (the in-pod ServiceAccount token). The mock OpenShift API server
+# (local-development/mock-app, Service mock-openshift:6443) is added as a SECOND cluster so the
+# namespace-access report and the P2 multi-dimension selector can be exercised against its fixture
+# namespaces too. Its token + CA live in the mock-cluster-creds Secret, mounted at /etc/gsd/mock by
+# the mock-creds volume (patched onto the Deployment; preserved across `helm upgrade` by 3-way merge).
+clusters:
+  - name: crc-local
+    apiUrl: https://kubernetes.default.svc
+    tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+    caBundleFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+    enabled: true
+  - name: mock
+    apiUrl: https://mock-openshift:6443
+    tokenFile: /etc/gsd/mock/token
+    caBundleFile: /etc/gsd/mock/ca.crt
+    enabled: true
+    # The mock is a demo cluster whose fixture makes kubeadmin cluster-admin and developer an editor.
+    # A second cluster defaults to self-only/identity:none — the chart never ASSUMES a host identity
+    # means the same thing elsewhere. Here we STATE it: a host-authenticated reader is the same identity
+    # on the mock, so their tier is computed by SAR (not forced to self), and the admin tabs render.
+    visibility: inherit
+    identity: same-as-host
+
