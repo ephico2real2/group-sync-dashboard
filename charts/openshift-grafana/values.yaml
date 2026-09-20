@@ -160,3 +160,10 @@ wait:
     repository: registry.redhat.io/openshift4/ose-cli
     tag: latest
   ttlSecondsAfterFinished: 600
+  # For BOTH hook Jobs (this gate and the secrets mint — the same image, a shell and `oc` calls).
+  # A namespace whose ResourceQuota requires requests refuses a pod that has none, and the install
+  # fails at the hook; a LimitRange would otherwise pick the numbers. Measured: `oc` peaks under
+  # 100Mi; the limit leaves room for a large CSV list.
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {memory: 256Mi}

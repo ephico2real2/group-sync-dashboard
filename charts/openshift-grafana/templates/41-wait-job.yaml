@@ -38,6 +38,8 @@ spec:
       containers:
         - name: wait
           image: "{{ .Values.wait.image.repository }}:{{ .Values.wait.image.tag }}"
+          resources:
+            {{- toYaml .Values.wait.resources | nindent 12 }}
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
