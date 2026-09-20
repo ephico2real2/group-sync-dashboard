@@ -17,6 +17,7 @@ import shutil
 import threading
 from dataclasses import asdict, dataclass, field, fields
 from datetime import UTC, datetime, timedelta
+from typing import NamedTuple
 from pathlib import Path
 
 log = logging.getLogger(__name__)
@@ -83,6 +84,30 @@ def retention_stamp(run: Run) -> datetime:
 
 def new_run_id(now: datetime) -> str:
     return now.strftime("%Y%m%dT%H%M%S.%fZ") + "-" + secrets.token_hex(2)
+
+
+class Retention(NamedTuple):
+    """One run's standing under the two-tier rules, decided by the same ranking `prune()` deletes by.
+
+    `expires_at` is the EARLIEST instant the run can go: `retention_stamp + 1 s + days`, the instant
+    `older_than` starts answering true; None when no age bound applies. `retained_by` says why it is
+    held now (`newest:<n>/<keep> of <schedule> on <cluster>` — kept whatever its age, so at least until
+    `expires_at`; `age:<days>d`; `manual:<days>d` — `manual:0d` under a cap with no age bound, like `age:0d`;
+    `manual:cap` beyond the cap, gone on the next prune); None for a queued or running run.
+    `doomed_at` is prune's own answer: the instant it deletes the run, `datetime.min` for one already
+    beyond a count cap, None while the rank protects it or no bound applies. The page reads the first
+    two (#229); prune reads the third. One ranking, two readers — the words on the page can never
+    disagree with the deletion."""
+    expires_at: str | None
+    retained_by: str | None
+    doomed_at: datetime | None
+
+
+_ALWAYS = datetime.min.replace(tzinfo=UTC)
+
+
+def _stamp(d: datetime) -> str:
+    return d.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 class ArtifactStore:
@@ -246,45 +271,72 @@ class ArtifactStore:
             # off silently. The clocks here are UTC by contract, so a naive instant is read as UTC.
             now = now.replace(tzinfo=UTC)
 
-        def older_than(run: Run, day_bound: int) -> bool:
-            # End-of-second, deliberately: finished_at is persisted to whole seconds, so a run that
-            # finished at hh:mm:ss.9 is stamped hh:mm:ss. It is older than the bound once the END of
-            # that second is at or before the cutoff (`<=`, exactly): rounding can never delete a run a
-            # moment early, a run stamped on the cutoff second survives until the next, and for a run
-            # that finished the second it was requested the decision is the one main made from its id.
-            return day_bound > 0 and retention_stamp(run) + timedelta(seconds=1) <= now - timedelta(days=day_bound)
-
-        # Both tiers order by the same key, so "newest" means the same thing everywhere: most recently
-        # COMPLETED, the id (request order) breaking ties within one second.
-        def newest_first(run: Run) -> tuple[datetime, str]:
-            return (retention_stamp(run), run.id)
-
+        # The ranking and the end-of-second bound live in `_retention` (one plan, read by the prune and
+        # by the API): a run is deleted once its `doomed_at` — the END of its stamped second plus the
+        # age bound — is at or before now, exactly the `<=` the closure here tested before #229.
         with self._lock:
-            finished = [r for r in self._runs.values() if r.status in ("done", "failed")]
-            doomed: list[Run] = []
-
-            # Manual tier: keep the newest `manual_max_runs`, then drop anything older than `manual_days`.
-            manual = sorted((r for r in finished if not r.schedule), key=newest_first, reverse=True)
-            if manual_max_runs > 0:
-                doomed += manual[manual_max_runs:]
-                manual = manual[:manual_max_runs]
-            doomed += [r for r in manual if older_than(r, manual_days)]
-
-            # Scheduled tier: per (schedule, cluster) keep the newest K; beyond K keep only while young.
-            by_key: dict[tuple[str, str], list[Run]] = {}
-            for r in sorted((r for r in finished if r.schedule), key=newest_first, reverse=True):
-                by_key.setdefault((r.schedule, r.cluster), []).append(r)
-            for (name, _cluster), group in by_key.items():
-                keep, days = overrides.get(name, (scheduled_keep, scheduled_days))
-                doomed += [r for i, r in enumerate(group)
-                           if not (keep > 0 and i < keep) and older_than(r, days)]
-
+            plan = self._retention(scheduled_keep=scheduled_keep, scheduled_days=scheduled_days,
+                                   manual_days=manual_days, manual_max_runs=manual_max_runs, overrides=overrides)
+            doomed = [self._runs[run_id] for run_id, standing in plan.items()
+                      if standing.doomed_at is not None and standing.doomed_at <= now and run_id in self._runs]
             for r in doomed:
                 shutil.rmtree(self._dir(r.id), ignore_errors=True)
                 self._runs.pop(r.id, None)
         if doomed:
             log.info("pruned %d report run(s)", len(doomed))
         return len(doomed)
+
+    def _retention(self, *, scheduled_keep: int, scheduled_days: int, manual_days: int, manual_max_runs: int,
+                   overrides: dict[str, tuple[int, int]] | None) -> dict[str, Retention]:
+        """Every finished run's standing (`Retention`), under the caller's lock. THE ranking: prune()
+        deletes by `doomed_at`, the API prints `expires_at`/`retained_by` (#229). `doomed_at` is
+        `retention_stamp + 1 s + days` — end-of-second, exactly as `older_than` tested it before this
+        refactor (a run stamped on the cutoff second survives until the next). Manual tier: the newest
+        `manual_max_runs` are kept, then aged by `manual_days`; beyond the cap a run is doomed now.
+        Scheduled tier: per (schedule, cluster) the newest `keep` whatever their age, the rest while
+        younger than `days`; a bound of 0 is disabled. Queued/running runs are absent (never doomed).
+        A run beyond the cap is doomed NOW, and its word says so alone — `manual:cap` — because it is the one
+        standing the page cannot read off `expires_at`: a run under the cap with no age bound carries
+        `manual:0d` (kept indefinitely, like `age:0d`), or the two printed the same sentence for a run that
+        is kept and one that goes within the hour (review of #233, OB3 — measured)."""
+        overrides = overrides or {}
+
+        def bound(run: Run, days: int) -> datetime | None:
+            return retention_stamp(run) + timedelta(seconds=1) + timedelta(days=days) if days > 0 else None
+
+        def newest_first(run: Run) -> tuple[datetime, str]:
+            return (retention_stamp(run), run.id)
+
+        finished = [r for r in self._runs.values() if r.status in ("done", "failed")]
+        plan: dict[str, Retention] = {}
+        manual = sorted((r for r in finished if not r.schedule), key=newest_first, reverse=True)
+        for i, r in enumerate(manual):
+            if manual_max_runs > 0 and i >= manual_max_runs:
+                plan[r.id] = Retention(None, "manual:cap", _ALWAYS)
+            elif manual_days > 0:
+                at = bound(r, manual_days)
+                plan[r.id] = Retention(_stamp(at), f"manual:{manual_days}d", at)
+            else:
+                plan[r.id] = Retention(None, f"manual:{manual_days}d", None)
+        by_key: dict[tuple[str, str], list[Run]] = {}
+        for r in sorted((r for r in finished if r.schedule), key=newest_first, reverse=True):
+            by_key.setdefault((r.schedule, r.cluster), []).append(r)
+        for (name, cluster), group in by_key.items():
+            keep, days = overrides.get(name, (scheduled_keep, scheduled_days))
+            for i, r in enumerate(group):
+                at = bound(r, days)
+                if keep > 0 and i < keep:
+                    plan[r.id] = Retention(_stamp(at) if at else None, f"newest:{i + 1}/{keep} of {name} on {cluster}", None)
+                else:
+                    plan[r.id] = Retention(_stamp(at) if at else None, f"age:{days}d", at)
+        return plan
+
+    def retention(self, *, scheduled_keep: int, scheduled_days: int, manual_days: int, manual_max_runs: int,
+                  overrides: dict[str, tuple[int, int]] | None = None) -> dict[str, Retention]:
+        """The standing of every finished run, for the API (#229) — the same plan `prune()` deletes by."""
+        with self._lock:
+            return self._retention(scheduled_keep=scheduled_keep, scheduled_days=scheduled_days,
+                                   manual_days=manual_days, manual_max_runs=manual_max_runs, overrides=overrides)
 
     def disk_bytes(self) -> int:
         total = 0

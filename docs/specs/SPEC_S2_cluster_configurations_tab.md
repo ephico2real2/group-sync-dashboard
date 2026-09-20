@@ -214,8 +214,8 @@ Administrator tier; registered only when `clusterConfig.secrets.writes.enabled` 
   clusterConfig.secrets.writes switch renders the grant"}`; any other API error is `502` with the
   server's sentence.
 - On success: one log line `cluster Secret gsd-cluster-<name> created by <viewer> for cluster <name>`
-  (the viewer from the proxy's trusted header — `trusted_viewer(request)` —, the verb, the Secret;
-  never a field of the request), `request_discovery()`, `201 {"secret": "gsd-cluster-<name>",
+  (the viewer from the proxy's trusted header — `trusted_viewer(request)` —, the verb, the Secret and
+  the cluster id; never a credential-bearing field — the token, the CA, a label), `request_discovery()`, `201 {"secret": "gsd-cluster-<name>",
   "cluster": "<name>", "discovery": "requested"}`.
 
 ### C3 — `PUT /api/clusterconfigs/{name}/credential` (rotate)

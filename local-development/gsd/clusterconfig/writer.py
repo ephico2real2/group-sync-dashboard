@@ -20,7 +20,7 @@ import re
 from dataclasses import dataclass, field
 
 from ..config import ClusterConfig
-from ..kube import AUTH_FAILED, FORBIDDEN, UNREACHABLE, ClusterClient, ClusterError
+from ..kube import AUTH_FAILED, FORBIDDEN, UNREACHABLE, ClusterClient, ClusterError, redact_text
 from . import SECRET_TYPE_CLUSTER, SECRET_TYPE_LABEL
 from .parser import Finding, parse_secret
 
@@ -38,6 +38,7 @@ TLS_MODES = ("caData", "trustedBundle", "insecure")
 _LABEL_NAME = re.compile(r"^[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$")
 _LABEL_PREFIX = re.compile(r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$")
 OAUTH_NOT_BUILT = "the password-for-token exchange is #119 P2, not built yet"
+MIN_TOKEN_LENGTH = 8   # the redactor's floor (kube.redact_text); no cluster mints a shorter bearer
 
 
 class WriteRefused(Exception):
@@ -110,6 +111,11 @@ def validate(req: CreateRequest, namespace: str, *, host_name: str | None,
         raise WriteRefused("credential-missing", "credential.kind must be bearerToken")
     if not (req.token or "").strip():
         raise WriteRefused("credential-missing", "a bearer token is required")
+    if len(req.token.strip()) < MIN_TOKEN_LENGTH:
+        # No cluster mints a bearer token this short (a ServiceAccount token is a JWT, an OpenShift
+        # OAuth token `sha256~…`), so it is a paste error — and it is also the redactor's floor, below
+        # which an echoed value could not be scrubbed without wiping the sentence (round 2, Codex C7).
+        raise WriteRefused("credential-missing", f"a bearer token is at least {MIN_TOKEN_LENGTH} characters; this one looks truncated")
     if req.tls_mode not in TLS_MODES:
         raise WriteRefused("unsupported-config-key", f"tls.mode must be one of {', '.join(TLS_MODES)}")
     if req.tls_mode == "caData":
@@ -149,27 +155,13 @@ def _labelled(obj: dict) -> bool:
 
 
 def _scrub(text: str, *secrets: str | None) -> str:
-    """Remove the request's own credential from a sentence about to leave this module. The host
-    client redacts ITS token from what the API server echoes; the token a caller asked us to write is
-    in the request body, which a 4xx from the API server (or a proxy's error page) can quote back —
-    and that sentence becomes a 502 detail, a connection-test `error` and a log line. So every
-    failure message passes through here before it is raised (review of #237, Codex C2: an echoing
-    API server put the sentinel into the 502 body). Each caller names EVERY form it put on the wire:
-    the plain token, and — for a rotate, whose body is `data` — the base64 blob that encodes it, which
-    a plain-text search cannot see through (measured: the first test of this scrub failed on it).
-    And the JSON-ESCAPED forms (round 2, Grok C7): the echo is `json.dumps` of a Secret whose `config`
-    is already a JSON string, so a token holding `"`, `\\` or a non-ASCII character appears once- and
-    twice-escaped, never raw. The floor stays at eight characters so a short value cannot wipe the
-    sentence (the `_redact` rule)."""
-    for secret in secrets:
-        raw = (secret or "").strip()
-        if not raw:
-            continue
-        once = json.dumps(raw)[1:-1]
-        for form in (raw, once, json.dumps(once)[1:-1]):
-            if len(form) >= 8 and form in text:
-                text = text.replace(form, "<redacted>")
-    return text
+    """The request's own credential, in every spelling, out of a sentence about to leave this module —
+    `kube.redact_text`, the one redactor. The host client cannot recognise the token a caller asked us
+    to write, so the writer names it (and, on rotate, the base64 `data.config` blob that encodes it),
+    both to `_send` — which redacts BEFORE truncating — and here, for the connection test's `error`
+    (review of #237: Codex C2 measured the sentinel in a 502; round 2, Codex C7 and Grok C7 the
+    escaped spellings and the truncation boundary)."""
+    return redact_text(text, *secrets)
 
 
 def _failed(exc: ClusterError, *secrets: str | None) -> WriteFailed:
@@ -194,7 +186,7 @@ def create(host_client: ClusterClient, namespace: str, req: CreateRequest, *, ho
         else:
             raise WriteRefused("secret-exists", f"Secret {name} already exists in {namespace}", conflict=True)
         try:
-            host_client._send(client, "POST", _path(namespace), json=obj)
+            host_client._send(client, "POST", _path(namespace), json=obj, secrets=(req.token, obj["stringData"]["config"]))
         except ClusterError as exc:
             raise _failed(exc, req.token, obj["stringData"]["config"]) from exc
     log.info("cluster Secret %s created by %s for cluster %s", name, viewer, req.name)
@@ -218,6 +210,8 @@ def rotate(host_client: ClusterClient, namespace: str, name: str, token: str, *,
     """C3: replace `config.bearerToken` in place, every other key kept; the old token is gone on the write."""
     if not (token or "").strip():
         raise WriteRefused("credential-missing", "a bearer token is required")
+    if len(token.strip()) < MIN_TOKEN_LENGTH:
+        raise WriteRefused("credential-missing", f"a bearer token is at least {MIN_TOKEN_LENGTH} characters; this one looks truncated")
     with host_client._client() as client:
         obj = _read_ours(host_client, client, namespace, name)
         data = obj.get("data") or {}
@@ -240,7 +234,7 @@ def rotate(host_client: ClusterClient, namespace: str, name: str, token: str, *,
         obj["data"] = data
         obj.pop("stringData", None)
         try:
-            host_client._send(client, "PUT", _path(namespace, name), json=obj)
+            host_client._send(client, "PUT", _path(namespace, name), json=obj, secrets=(token, data["config"]))
         except ClusterError as exc:
             # The object carries the resourceVersion it was read with, so a Secret GitOps (or another
             # tab) rewrote between the read and this PUT is a 409 from the API server — a named conflict

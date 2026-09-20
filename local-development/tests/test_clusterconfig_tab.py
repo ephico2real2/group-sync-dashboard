@@ -176,11 +176,49 @@ class TestWriter:
         a token with a quote or a backslash appears once- and twice-escaped — never raw — and the raw
         search left its tail in the 502."""
         for token in ('xx"sekrit-bearer-9f8e7d', 'back\\slash-sekrit-9f8e7d', 'ünïcode-sekrit-9f8e7d'):
-            host = _Host(echo=True)
+            host = _Host(echo=True)   # an ASCII-escaped echo; the raw-UTF-8 echo is the next loop
             with pytest.raises(WriteFailed) as exc:
                 create(host, NS, _req(token=token), host_name="c1", taken={}, viewer="root")
             assert exc.value.outcome == UNREACHABLE and "<redacted>" in exc.value.message
             assert "sekrit-9f8e7d" not in exc.value.message and "sekrit-bearer-9f8e7d" not in exc.value.message, token
+        # a proxy that echoes the body raw (UTF-8, not \u-escaped): the same spellings, un-ASCII'd
+        from gsd.kube import redact_text
+        for token in ('ünïcode-sekrit-9f8e7d', 'quo"te-sekrit-9f8e7d'):
+            for echoed in (json.dumps({"config": json.dumps({"bearerToken": token}, ensure_ascii=False)}, ensure_ascii=False),
+                           json.dumps({"bearerToken": token}), token):
+                out = redact_text(f"denied: {echoed}", token)
+                assert "sekrit-9f8e7d" not in out and "<redacted>" in out, (token, echoed)
+
+    def test_a_token_straddling_the_truncation_cut_leaves_no_head_in_the_sentence(self):
+        """Round 2 (Codex C7): `_send` cut the echoed body to 200 characters BEFORE the writer scrubbed
+        the request's token, so a token crossing byte 200 left its head. The secrets now reach `_send`."""
+        import httpx
+        token = "request-secret-" + "z" * 300
+        hc = ClusterClient(ClusterConfig(name="c1", api_url="https://host", token_value="host-token-abcdef"))
+        client = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(400, text=("A" * 190) + token)), base_url="https://host")
+        with pytest.raises(ClusterError) as exc:
+            hc._send(client, "POST", "/api/v1/namespaces/ns/secrets", json={}, secrets=(token,))
+        assert "request-se" not in exc.value.message and "<redacted>" in exc.value.message
+        # and through the writer: the create passes its secrets to _send
+        class _Cut(_Host):
+            def _send(self, client, method, path, *, json=None, secrets=()):
+                self.calls.append((method, path))
+                import json as _json
+                return ClusterClient._send(hc, httpx.Client(transport=httpx.MockTransport(
+                    lambda r: httpx.Response(422, text=("A" * 190) + _json.dumps(json))), base_url="https://host"),
+                    method, path, json=json, secrets=secrets)
+        with pytest.raises(WriteFailed) as exc:
+            create(_Cut(), NS, _req(token=token), host_name="c1", taken={}, viewer="root")
+        assert "request-se" not in exc.value.message and "<redacted>" in exc.value.message
+
+    def test_a_bearer_token_shorter_than_the_redactors_floor_is_refused_as_a_typo(self):
+        """Round 2 (Codex C7): a seven-character token could not be scrubbed from an echo without wiping
+        the sentence. No cluster mints one that short, so it is refused before anything is sent."""
+        for fn in (lambda: validate(_req(token="short7"), NS, host_name="c1", taken={}),
+                   lambda: rotate(_Host({"gsd-cluster-east": _secret()}), NS, "gsd-cluster-east", "short7", viewer="root", cluster="east")):
+            with pytest.raises(WriteRefused) as exc:
+                fn()
+            assert exc.value.code == "credential-missing" and "8 characters" in exc.value.detail and "short7" not in str(exc.value)
 
     def test_rotate_names_a_conflict_when_the_secret_changed_under_the_tab(self):
         """Round 2 (Grok C16): the PUT carries the resourceVersion it was read with; GitOps writing in

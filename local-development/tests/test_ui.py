@@ -6877,11 +6877,11 @@ class TestReportsTab:
             page.click("#tab-reports")
             page.wait_for_selector("#tab-reports[aria-current='page']")
             page.wait_for_timeout(300)
-            # 12, not 13: the strip is PERSONA-dependent now. Cluster Configurations appears only for
+            # 13, not 14: the strip is PERSONA-dependent now. Cluster Configurations appears only for
             # a reader the `clusterconfig:view` level admits (#230), and this walk runs as alice, who
-            # is not one — an auditor must not learn the surface exists; root counts 13 in
-            # TestClusterConfigPage.
-            assert page.evaluate("() => document.querySelectorAll('button.tab').length") == 12
+            # is not one — an auditor must not learn the surface exists; root counts 14 in
+            # TestClusterConfigPage. Home (#158), KPIs (#157), Kyverno (#170), Library (#229) are in.
+            assert page.evaluate("() => document.querySelectorAll('button.tab').length") == 13
             assert page.evaluate("() => [document.documentElement.scrollWidth <= innerWidth, [...document.querySelectorAll('button.tab')].filter(t => t.getBoundingClientRect().right > innerWidth).map(t => t.id)]") == [True, []]
             assert not errors
         finally:
@@ -8182,3 +8182,285 @@ class TestRowlinkRailClearance:
 def test_no_reports_tab_when_the_feature_is_off(dash):
     assert dash.locator('button.tab:text-is("Reports")').count() == 0
     assert dash.evaluate("fetch('/api/report/ticket').then(r => r.status)") == 404
+
+
+class TestLibraryPage:
+    """#229 (SPEC E1): the Library tab — a new canvas beside the untouched Reports and Reporting-status pages.
+    One section per enabled report crossed with the fixture's schedules (`weekly` on groups, `paused-ns` on
+    namespace-access), headed by the service's cadence in words; each run with its formats, its failure reason
+    and the standing the SERVICE computed (`expires_at`/`retained_by`); a run is a position; the drawer never
+    blanks on an unknown id; 375 px without sideways scroll; focus survives the poll's repaint."""
+
+    @staticmethod
+    def _seed(report_app):
+        from gsd.reporting.artifacts import Run
+        store = report_app.state.store
+        if store.get("20990201T000000.000000Z-lib1") is None:
+            store.create(Run(id="20990201T000000.000000Z-lib1", report="groups", cluster="crc-local", params={"window_days": 30},
+                             formats=["html"], generated_by="schedule:weekly", generated_by_note="unattended", schedule="weekly",
+                             requested_at="2099-02-01T00:00:00Z", started_at="2099-02-01T00:00:00Z", finished_at="2099-02-01T00:00:01Z",
+                             status="done", sha256="ef" * 32, bytes={"html": 15880, "json": 21495}, render_seconds=0.035))
+            store.write("20990201T000000.000000Z-lib1", "html", b"<!doctype html><p>library</p>")
+            store.create(Run(id="20990131T000000.000000Z-lib0", report="groups", cluster="crc-local", params={},
+                             formats=["html"], generated_by="schedule:weekly", generated_by_note="unattended", schedule="weekly",
+                             requested_at="2099-01-31T00:00:00Z", started_at="2099-01-31T00:00:00Z", finished_at="2099-01-31T00:00:01Z",
+                             status="failed", error="no namespace matches company.net/mnemonic in (demo, beta)\nsecond line"))
+            store.create(Run(id="20990202T000000.000000Z-libm", report="users", cluster="crc-local", params={"providers": ["ldap"]},
+                             formats=["html", "pdf"], generated_by="jane.smith", generated_by_note="n", schedule=None,
+                             requested_at="2099-02-02T00:00:00Z", started_at="2099-02-02T00:00:00Z", finished_at="2099-02-02T00:00:02Z",
+                             status="done", sha256="ab" * 32, bytes={"html": 7456, "json": 7120, "pdf": 31715}, render_seconds=0.233))
+
+    def test_the_sections_are_the_catalogue_crossed_with_the_schedules_from_a_cold_url(self, browser, reporting_server):
+        base, _, report_app = reporting_server
+        self._seed(report_app)
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.goto(base + "#page=library&cluster=crc-local")
+            page.wait_for_selector("#library-lead")
+            assert page.locator("#tab-library[aria-current='page']").count() == 1
+            assert page.evaluate("() => document.querySelectorAll('button.tab').length") == 13   # Reports and Library, with reporting on
+            heads = page.evaluate("() => [...document.querySelectorAll('.lib-sec h2')].map(h => h.firstChild.textContent.trim())")
+            # the fixture's schedules: `weekly` (0 6 * * 1 → "Weekly Mon 06:00") on groups, `paused-ns` on namespace-access
+            assert "Weekly groups" in heads, heads   # the cadence's named word alone: "Weekly Mon" stays in the sub-line
+            assert any(h.startswith("Namespace access — ") and h.endswith(", paused") for h in heads), heads
+            assert "Users" in heads and "Compliance snapshot" in heads and len(heads) == 10, heads   # every enabled report, once
+            assert page.locator("#sec-paused-ns.paused").count() == 1
+            paused = page.locator("#sec-paused-ns").inner_text()
+            # the section says paused whether or not a manual run of the report exists (another test may have generated one)
+            assert "paused" in paused and ("Paused — CronJob suspended" in paused or "Manual runs" in paused or "1 manual" in paused), paused
+            weekly = page.locator("#sec-weekly")
+            assert "Manual runs" not in weekly.inner_text()
+            text = weekly.inner_text()
+            assert ".html · 16 KB" in text and ".json · 21 KB" in text, text
+            assert "no namespace matches company.net/mnemonic in (demo, beta)" in text and "second line" not in text
+            # the standing is the service's: the failed run is the second newest of `weekly`, kept whatever its age
+            cards = page.evaluate("() => [...document.querySelectorAll('#sec-weekly .run')].map(c => [c.id, c.querySelector('.expiry').textContent])")
+            assert cards[0][0] == "run-20990201T000000.000000Z-lib1" and cards[0][1].startswith("newest 1 of 2 · kept at least until · 2099-05-02 00:00"), cards
+            assert any(c[0] == "run-20990131T000000.000000Z-lib0" and c[1].startswith("newest 2 of 2") for c in cards), cards
+            users = page.locator("#sec-users").inner_text()
+            assert ".pdf · 31 KB" in users and "expires" in users and "1 manual" in users, users
+            assert page.locator("#lib-gen-users").inner_text() == "Generate another →"
+            # a report with no run at all — other tests generate access-matrix and namespace-access runs, dormant-access none
+            assert page.locator("#lib-gen-dormant-access").inner_text() == "Generate this report →"
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_a_run_is_a_position_the_drawer_opens_from_and_closes_back_to(self, browser, reporting_server):
+        base, _, report_app = reporting_server
+        self._seed(report_app)
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.goto(base + "#page=library&cluster=crc-local&run=20990131T000000.000000Z-lib0")
+            page.wait_for_selector("#library-drawer")
+            drawer = page.locator("#library-drawer").inner_text()
+            assert "Groups and membership changes" in drawer and "schedule:weekly" in drawer and "failed" in drawer
+            assert "no namespace matches company.net/mnemonic in (demo, beta)" in drawer and "second line" in drawer, "the whole error, in the drawer"
+            assert "newest 2 of 2 · kept at least until" in drawer and "no artefacts" in drawer
+            assert page.evaluate("() => document.activeElement.id") == "drawer-close"
+            page.click("#drawer-copy-link")
+            page.wait_for_function("() => document.getElementById('drawer-copy-link').textContent === 'Copied'")   # the clipboard write settles first
+            page.keyboard.press("Escape")
+            page.wait_for_function("() => !document.getElementById('library-drawer')")
+            assert page.evaluate("() => location.hash") == "#page=library&cluster=crc-local"
+            assert page.evaluate("() => document.activeElement.id") == "run-20990131T000000.000000Z-lib0", "focus returns to the card"
+            # a click opens the done run; its .html opens in a new tab through the ticket
+            page.click("[id='run-20990201T000000.000000Z-lib1']")   # a run id carries a dot: not a bare #selector
+            page.wait_for_selector("#drawer-open-html")
+            assert page.evaluate("() => location.hash") == "#page=library&cluster=crc-local&run=20990201T000000.000000Z-lib1"
+            with ctx.expect_page() as popup:
+                page.click("#drawer-open-html")
+            assert "library" in popup.value.content()
+            page.goto(base + "#page=library&cluster=crc-local&run=nope")   # a hash change on the open page: wait for the new drawer's words
+            page.wait_for_function("() => (document.getElementById('library-drawer') || {}).innerText?.includes('No run with that id is in the library.')")
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_phone_width_and_the_polls_repaint_keep_the_page_and_the_focus(self, browser, reporting_server):
+        base, _, report_app = reporting_server
+        self._seed(report_app)
+        ctx, page, errors = _reports_page(browser, base, "root", fake_clock=True)
+        try:
+            page.set_viewport_size({"width": 375, "height": 740})
+            page.goto(base + "#page=library&cluster=crc-local")
+            page.wait_for_selector("#sec-weekly")
+            assert page.evaluate("() => document.documentElement.scrollWidth <= innerWidth")
+            page.focus("[id='run-20990201T000000.000000Z-lib1']")
+            # the poll's only change is one run's status — a fingerprint without data.library skips the repaint
+            # and the card keeps saying done (review of #233, Grok: the earlier form never changed the store)
+            run = report_app.state.store.get("20990201T000000.000000Z-lib1")
+            run.status = "failed"; run.error = "poll-only status change"
+            report_app.state.store.update(run)
+            page.clock.fast_forward(61_000)
+            page.wait_for_function("() => (document.getElementById('run-20990201T000000.000000Z-lib1') || {innerText: ''}).innerText.includes('poll-only status change')")
+            assert page.evaluate("() => document.activeElement.id") == "run-20990201T000000.000000Z-lib1", "the poll's repaint dropped the focus"
+            run.status = "done"; run.error = None; report_app.state.store.update(run)
+            page.keyboard.press("Enter")
+            page.wait_for_selector("#library-drawer")
+            assert page.evaluate("() => document.documentElement.scrollWidth <= innerWidth")
+            assert page.evaluate("() => document.getElementById('library-drawer').scrollWidth <= document.getElementById('library-drawer').clientWidth")
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_two_schedules_on_one_report_mint_distinct_generate_ids(self, browser, reporting_server):
+        # review of #233 (Grok): the id came from the report alone, so a second schedule repeated it
+        base, _, report_app = reporting_server
+        self._seed(report_app)
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.goto(base + "#page=library&cluster=crc-local")
+            page.wait_for_selector("#sec-weekly")
+            ids = page.evaluate("() => Array.from(document.querySelectorAll('[data-goto-reports]')).map((b) => b.id)")
+            assert len(ids) == len(set(ids)), ids
+            assert "lib-gen-sec-weekly" in ids and "lib-gen-users" in ids, ids
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_a_positioned_run_beyond_the_listings_page_still_opens(self, browser, reporting_server):
+        # review of #233 (Codex): the drawer searched the first 1 000 rows only; an older run answered
+        # "Run not found" while GET /runs/{id} answered 200
+        base, _, report_app = reporting_server
+        self._seed(report_app)
+        target = "20990131T000000.000000Z-lib0"
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            def omit_target(route):
+                response = route.fetch(); body = response.json()
+                body["runs"] = [r for r in body["runs"] if r["id"] != target]
+                body["total"] = max(1001, body["total"]); body["truncated"] = True
+                route.fulfill(status=response.status, headers=response.headers, json=body)
+            page.route("**/report/api/runs?limit=1000", omit_target)
+            with page.expect_request(lambda r: r.url.endswith(f"/report/api/runs/{target}")):
+                page.goto(base + f"#page=library&cluster=crc-local&run={target}")
+            page.wait_for_selector("#library-drawer")
+            text = page.locator("#library-drawer").inner_text()
+            assert "Run not found" not in text and target in text and "no namespace matches company.net/mnemonic" in text
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_a_drawer_opened_by_click_or_enter_takes_the_focus_and_escape_closes_it(self, browser, reporting_server):
+        # OB3 (#233): render() restores the focus BY ID after the repaint, and the card that was clicked (or held
+        # Enter) keeps its id — so the restore put the reader back on the card BEHIND the overlay: Escape, handled
+        # on the overlay, never fired, and Tab walked the cards' chips behind the dialog. Only the cold-URL path
+        # (nothing focused) reached the drawer's first control.
+        base, _, report_app = reporting_server
+        self._seed(report_app)
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.goto(base + "#page=library&cluster=crc-local")
+            page.wait_for_selector("[id='run-20990201T000000.000000Z-lib1']")
+            page.focus("[id='run-20990201T000000.000000Z-lib1']")
+            page.keyboard.press("Enter")
+            page.wait_for_selector("#library-drawer")
+            assert page.evaluate("() => document.activeElement.id") == "drawer-close", "the dialog takes the focus"
+            page.keyboard.press("Tab")
+            assert page.evaluate("() => !!document.activeElement.closest('#library-overlay')"), "Tab stays inside the dialog"
+            page.keyboard.press("Escape")
+            page.wait_for_function("() => !document.getElementById('library-drawer')")
+            assert page.evaluate("() => [location.hash, document.activeElement.id]") == ["#page=library&cluster=crc-local", "run-20990201T000000.000000Z-lib1"]
+            page.click("[id='run-20990201T000000.000000Z-lib1'] .when")   # a mouse click, off the format chips
+            page.wait_for_selector("#library-drawer")
+            assert page.evaluate("() => document.activeElement.id") == "drawer-close"
+            page.keyboard.press("Escape")
+            page.wait_for_function("() => !document.getElementById('library-drawer')")
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_manual_runs_of_a_two_schedule_report_are_listed_once(self, browser, reporting_server):
+        # OB3 (#233): a report with two schedules has two sections, and every manual run of the report was rendered
+        # under BOTH — the same `run-<id>` and chip ids twice on one page, so the by-id focus restore and the
+        # drawer's return focus landed on the first. The runs belong to the report: once, under its first section.
+        base, _, report_app = reporting_server
+        self._seed(report_app)
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            def two_schedules(route):
+                response = route.fetch(); body = response.json()
+                weekly = next(s for s in body["schedules"] if s["name"] == "weekly")
+                body["schedules"].append({**weekly, "name": "twice", "schedule": "0 6 1,16 * *", "cadence": "1st & 16th 06:00"})
+                route.fulfill(status=response.status, headers=response.headers, json=body)
+
+            def with_a_manual_groups_run(route):
+                response = route.fetch(); body = response.json()
+                body["runs"].insert(0, {"id": "20990203T000000.000000Z-gman", "report": "groups", "cluster": "crc-local", "params": {},
+                                        "formats": ["html"], "generated_by": "jane.smith", "generated_by_note": "n", "schedule": None,
+                                        "requested_at": "2099-02-03T00:00:00Z", "status": "done", "started_at": "2099-02-03T00:00:00Z",
+                                        "finished_at": "2099-02-03T00:00:02Z", "error": None, "sha256": "ab" * 32, "snapshot_stamp": None,
+                                        "bytes": {"json": 100}, "pdf_variant": None, "render_seconds": 0.1, "origin": "viewer",
+                                        "expires_at": "2099-02-06T00:00:03Z", "retained_by": "manual:3d"})
+                body["total"] += 1
+                route.fulfill(status=response.status, headers=response.headers, json=body)
+            page.route("**/report/api/status", two_schedules)
+            page.route("**/report/api/runs?limit=1000", with_a_manual_groups_run)
+            page.goto(base + "#page=library&cluster=crc-local")
+            page.wait_for_selector("#sec-twice")
+            assert page.evaluate("() => document.querySelectorAll(\"[id='run-20990203T000000.000000Z-gman']\").length") == 1
+            assert "Manual runs" in page.locator("#sec-weekly").inner_text() and "Manual runs" not in page.locator("#sec-twice").inner_text()
+            dups = page.evaluate("() => { const seen = {}, d = []; document.querySelectorAll('[id]').forEach((e) => { if (seen[e.id]) d.push(e.id); seen[e.id] = 1; }); return d; }")
+            assert dups == [], dups
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_a_refused_positioned_run_is_the_refusal_card_not_the_error_panel(self, browser, reporting_server):
+        # OB3 (#233): the positioned run's fetch was the one library request outside guard403, so a 403 on it — a
+        # reader demoted between polls, a ticket the service refuses — replaced the whole page with "Dashboard API
+        # error … The object may have been deleted", where the listing's own 403 paints the refusal card.
+        base, _, report_app = reporting_server
+        self._seed(report_app)
+        target = "20990201T000000.000000Z-lib1"
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.route(f"**/report/api/runs/{target}", lambda route: route.fulfill(status=403, json={"detail": "For administrators only."}))
+            page.goto(base + f"#page=library&cluster=crc-local&run={target}")
+            page.wait_for_function("() => document.querySelector('#main').innerText.includes('For administrators only')")
+            text = page.locator("#main").inner_text()
+            assert "Dashboard API error" not in text and "Withheld, not empty" in text, text
+            assert page.locator("#library-drawer").count() == 0 and page.locator(".run").count() == 0
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_the_manual_cap_words_say_goes_or_kept_as_the_service_decides(self, browser, reporting_server):
+        # OB3 (#233): `manual:cap` is the run the next prune deletes; `manual:0d` the run kept with no age bound
+        base, _, report_app = reporting_server
+        self._seed(report_app)
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            standing = {"retained_by": "manual:cap"}
+
+            def with_the_standing(route):
+                response = route.fetch(); body = response.json()
+                for r in body["runs"]:
+                    if r["id"] == "20990202T000000.000000Z-libm":
+                        r["expires_at"], r["retained_by"] = None, standing["retained_by"]
+                route.fulfill(status=response.status, headers=response.headers, json=body)
+            page.route("**/report/api/runs?limit=1000", with_the_standing)
+            page.goto(base + "#page=library&cluster=crc-local")
+            page.wait_for_selector("[id='run-20990202T000000.000000Z-libm']")
+            words = page.locator("[id='run-20990202T000000.000000Z-libm'] .expiry").inner_text()
+            assert words == "beyond the manual run cap — goes on the next prune", words
+            standing["retained_by"] = "manual:0d"
+            page.evaluate("() => refresh()")
+            page.wait_for_function("() => document.querySelector(\"[id='run-20990202T000000.000000Z-libm'] .expiry\").textContent === 'kept indefinitely'")
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_a_narrowed_reader_gets_the_refusal_card(self, browser, reporting_server):
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "alice")
+        try:
+            page.goto(base + "#page=library&cluster=crc-local")
+            page.wait_for_selector("#main .card")
+            page.wait_for_function("() => document.querySelector('#main').innerText.includes('Library')")
+            text = page.locator("#main").inner_text()
+            assert "lib1" not in text and "jane.smith" not in text
+            assert not errors, errors
+        finally:
+            ctx.close()
