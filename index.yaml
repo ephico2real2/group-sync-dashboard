@@ -3,6 +3,27 @@ entries:
   group-sync-dashboard:
   - apiVersion: v2
     appVersion: 0.24.0
+    created: "2026-09-20T02:44:42.777790321Z"
+    description: Read-only observability for the redhat-cop group-sync-operator
+    digest: a4c9b4f4be26af7094ecf6c75254c9f1dcc24b02f4069986563fbf1184bec5df
+    home: https://github.com/ephico2real2/group-sync-dashboard
+    keywords:
+    - openshift
+    - ldap
+    - rbac
+    - groupsync
+    - observability
+    maintainers:
+    - name: ephico2real
+    name: group-sync-dashboard
+    sources:
+    - https://github.com/ephico2real2/group-sync-dashboard
+    type: application
+    urls:
+    - group-sync-dashboard-0.37.0.tgz
+    version: 0.37.0
+  - apiVersion: v2
+    appVersion: 0.24.0
     created: "2026-09-20T01:10:22.479598565Z"
     description: Read-only observability for the redhat-cop group-sync-operator
     digest: 413c863f60b65e4b26870f113202b0ff64a09cdc5297514721b7ca57c8eb46c7
@@ -869,6 +890,56 @@ entries:
       artifacthub.io/prerelease: "false"
     apiVersion: v2
     appVersion: 5.24.0
+    created: "2026-09-20T02:44:42.982951815Z"
+    description: An isolated Grafana instance in your own namespace, wired to OpenShift's
+      Thanos querier (user-workload monitoring) through grafana-operator v5 — installable
+      by any team, with no application-specific content. Deploy it before a chart
+      that ships a GrafanaDashboard CR.
+    digest: 159f03d55a9ef58fba7e833ee6aff8ba3bc1ddfe795ce96a3712c07eac1c02e3
+    home: https://github.com/ephico2real2/group-sync-dashboard
+    keywords:
+    - grafana
+    - openshift
+    - monitoring
+    - thanos
+    - grafana-operator
+    kubeVersion: '>=1.28.0-0'
+    maintainers:
+    - name: ephico2real2
+    name: openshift-grafana
+    sources:
+    - https://github.com/ephico2real2/group-sync-dashboard/tree/main/charts/openshift-grafana
+    type: application
+    urls:
+    - openshift-grafana-0.2.1.tgz
+    version: 0.2.1
+  - annotations:
+      artifacthub.io/category: monitoring-logging
+      artifacthub.io/crds: |
+        - kind: Grafana
+          version: v1beta1
+          name: grafanas.grafana.integreatly.org
+          displayName: Grafana
+          description: A Grafana instance managed by grafana-operator v5 (a copy, installed only when absent)
+        - kind: GrafanaDatasource
+          version: v1beta1
+          name: grafanadatasources.grafana.integreatly.org
+          displayName: GrafanaDatasource
+          description: A datasource applied to matching Grafana instances
+        - kind: GrafanaDashboard
+          version: v1beta1
+          name: grafanadashboards.grafana.integreatly.org
+          displayName: GrafanaDashboard
+          description: A dashboard applied to matching Grafana instances
+        - kind: GrafanaFolder
+          version: v1beta1
+          name: grafanafolders.grafana.integreatly.org
+          displayName: GrafanaFolder
+          description: A folder applied to matching Grafana instances
+      artifacthub.io/operator: "false"
+      artifacthub.io/prerelease: "false"
+    apiVersion: v2
+    appVersion: 5.24.0
     created: "2026-09-20T01:17:04.059332718Z"
     description: An isolated Grafana instance in your own namespace, wired to OpenShift's
       Thanos querier (user-workload monitoring) through grafana-operator v5 — installable
@@ -992,4 +1063,4 @@ entries:
     urls:
     - openshift-grafana-0.1.0.tgz
     version: 0.1.0
-generated: "2026-09-20T01:17:04.059429149Z"
+generated: "2026-09-20T02:44:42.983109474Z"
