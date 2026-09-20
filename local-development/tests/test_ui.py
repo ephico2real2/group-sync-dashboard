@@ -6259,20 +6259,81 @@ class TestTabUplifts:
         box = dash.evaluate("() => { const t = document.querySelector('#main table'); const s = t.closest('.scroll-x'); return [t.scrollWidth <= s.clientWidth || s.scrollWidth > s.clientWidth, s.getBoundingClientRect().right <= innerWidth]; }")
         assert box == [True, True], box
 
-    def test_the_usage_footnote_keeps_its_three_thoughts(self, browser, reporting_server):
-        # the `server` fixture runs without the proxy, so usage is "not being recorded" there; the reporting
-        # fixture has the proxy on and records the administrator's own visit
+    BASE_FOOTNOTE = (
+        "Times render in the server's timezone; the Day column is a UTC date. That split is deliberate "
+        "rather than an oversight: the day is a stored bucket, computed server-side when the activity was "
+        "recorded, so re-labelling it local would misstate rows already written, and re-bucketing would "
+        "make the same column mean one thing before a deploy and another after. Near midnight a session "
+        "can therefore sit on the following UTC day. An interaction is one deliberate action — opening the "
+        "dashboard, switching tab, drilling in, changing a filter — not one HTTP request: the page refreshes "
+        "itself every 60s and counting those measured how long a tab was left open rather than whether "
+        "anyone used it. Reading time is invisible, so a long look at one page counts once. These are not "
+        "logins either: the proxy owns this dashboard's session, so nothing here records a sign-in to it. "
+        "Logins to the cluster are a separate record with a separate source — the oauth-server's own log — "
+        "and they are on the Logins tab.").split()
+
+    def test_the_usage_footnote_keeps_the_bases_words(self, browser, reporting_server):
+        # Review of #225 (OB3; Codex): three paragraphs, the base's words — the lead-ins are the sentences' own
+        # first words in <strong>, nothing dropped ("Not logins. The proxy…" had replaced "These are not logins
+        # either: the proxy…" — five words gone, a split inside a sentence). The `server` fixture runs without
+        # the proxy, so usage is "not being recorded" there; the reporting fixture records the visit.
         base, _, _ = reporting_server
         ctx, page, errors = _reports_page(browser, base, "root")
         try:
             page.goto(base + "#page=usage")
-            page.wait_for_function("() => document.body.dataset.page === 'usage' && document.querySelectorAll('#main .filterbar-note').length >= 3")
-            notes = [" ".join(t.split()) for t in page.locator("#main .filterbar-note").all_inner_texts()]
-            assert [n.split(" ")[0] for n in notes[-3:]] == ["Times", "An", "Not"], notes[-3:]
-            assert "UTC date" in notes[-3] and "not one HTTP request" in notes[-2] and "oauth-server's own log" in notes[-1]
+            page.wait_for_function("() => document.body.dataset.page === 'usage' && document.body.innerText.includes('Times render')")
+            notes = page.evaluate("() => [...document.querySelectorAll('#main section.card:last-of-type .filterbar-note')].filter(n => !n.classList.contains('truncation-note')).map(n => n.innerText)")
+            assert len(notes) == 3, notes
+            assert " ".join(notes).split() == self.BASE_FOOTNOTE
+            leads = page.evaluate("() => [...document.querySelectorAll('#main section.card:last-of-type .filterbar-note > strong:first-child')].map(s => s.textContent)")
+            assert leads == ["Times", "An interaction", "These are not logins either:"], leads
             assert not errors, errors
         finally:
             ctx.close()
+
+    def test_the_users_and_bindings_rails_go_when_the_counts_are_zero(self, dash):
+        # Review of #225 (OB3): a head that flagged the problem tiles unconditionally passed every test above
+        dash.locator("button[data-nav='users']").click()
+        dash.wait_for_selector("tr[data-user]")
+        users = dash.evaluate("""() => { data.users.never_logged_in_members.count = 0;
+            data.users.users.forEach(u => { if ((u.group_count || 0) === 0 && u.logged_in !== false) u.group_count = 1; }); render();
+            return [...document.querySelectorAll('.kpis .kpi')].map(k => [k.querySelector('.label').textContent, k.querySelector('.value').textContent, k.classList.contains('flag-warning')]); }""")
+        assert users[2:] == [["Logged in, no synced group", "0", False], ["Synced, never logged in", "0", False]], users
+        dash.locator("button[data-nav='bindings']").click()
+        dash.wait_for_function("() => data.findings && data.findings.counts && document.body.innerText.includes('Need review')")
+        # the rail follows the worst finding present: critical with a dangling binding, warning with unresolved only,
+        # none at zero — the same severities the sections' badges and the Overview tile carry (OB3, M8)
+        review = dash.evaluate("""() => { const c = data.findings.counts; const out = [];
+            for (const [d, u] of [[1, 0], [0, 2], [0, 0]]) { c.dangling = d; c.unresolved = u; render();
+              const k = [...document.querySelectorAll('.kpis .kpi')].find(k => k.querySelector('.label').textContent === 'Need review');
+              out.push([k.querySelector('.value').textContent, k.classList.contains('flag-critical'), k.classList.contains('flag-warning'), k.querySelector('.value').classList.contains('muted')]); }
+            return out; }""")
+        assert review == [["1", True, False, False], ["2", False, True, False], ["0", False, False, True]], review
+
+    def test_every_groups_tile_holds_under_the_state_filter(self, dash):
+        # Review of #225 (OB3): all three tiles, not the first — a head that counted Empty from the rows on
+        # screen read 1 under the `unattributed` filter and passed the test above
+        dash.locator("button[data-nav='groups']").click()
+        dash.wait_for_selector("#groups-kpis")
+        tiles = lambda: dash.evaluate("() => [...document.querySelectorAll('#groups-kpis .kpi')].map(k => [k.querySelector('.label').textContent, k.querySelector('.value').textContent, k.classList.contains('flag-warning')])")
+        whole = [["Groups on this cluster", "4", False], ["Empty", "2", True], ["Unattributed", "1", True]]
+        for state, rows in (("unattributed", 1), ("empty", 2), ("all", SYNCED_GROUPS)):
+            dash.select_option("#f-state", state); dash.locator("#f-state").dispatch_event("change")
+            dash.wait_for_function(f"() => document.querySelectorAll('tr[data-group]').length === {rows}")
+            assert tiles() == whole, (state, tiles())
+
+    def test_a_provider_chip_is_one_line_at_every_width(self, dash):
+        # Review of #225 (OB3): the Provider column is allotted less than its max-content width by the table's
+        # auto layout, and `ldap-local` broke at its hyphen into a two-line pill — at 1280 px as at 375
+        for width in (1280, 375):
+            dash.set_viewport_size({"width": width, "height": 800})
+            dash.locator("button[data-nav='users']").click()
+            dash.wait_for_selector("tr[data-user] td:nth-child(3) .chip")
+            lines = dash.evaluate("""() => [...document.querySelectorAll('tr[data-user] td:nth-child(3) .chip')].map(c => {
+                const r = document.createRange(); r.selectNodeContents(c);
+                return [c.textContent, new Set([...r.getClientRects()].filter(b => b.width > 0).map(b => Math.round(b.top))).size]; })""")
+            assert lines and all(n == 1 for _, n in lines), (width, lines)
+            assert dash.evaluate("() => document.documentElement.scrollWidth <= innerWidth")
 
     def test_the_owner_note_says_how_the_dot_is_coloured(self, dash):
         # Review of #225 (Codex, Grok): crSlot() indexes the provider label in the cluster's sorted, flattened
@@ -6292,8 +6353,8 @@ class TestTabUplifts:
     def test_the_bindings_review_kpi_carries_the_rail_when_anything_needs_one(self, dash):
         dash.locator("button[data-nav='bindings']").click()
         dash.wait_for_selector(".kpis .kpi")
-        review = dash.evaluate("() => { const k = [...document.querySelectorAll('.kpis .kpi')].find(k => k.querySelector('.label').textContent === 'Need review'); return [k.querySelector('.value').textContent, k.classList.contains('flag-warning')]; }")
-        assert review[1] == (review[0] != "0"), review
+        review = dash.evaluate("() => { const k = [...document.querySelectorAll('.kpis .kpi')].find(k => k.querySelector('.label').textContent === 'Need review'); return [k.querySelector('.value').textContent, k.classList.contains('flag-critical') || k.classList.contains('flag-warning')]; }")
+        assert review[1] == (review[0] != "0"), review     # the severity itself: the rails-at-zero test below
 
 
 class TestReportsTab:

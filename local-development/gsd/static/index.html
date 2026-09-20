@@ -2403,7 +2403,7 @@ function usagePage() {
       page counts once.
     </div>
     <div class="filterbar-note mt-2">
-      <strong>Not logins.</strong> The proxy owns this dashboard's session, so
+      <strong>These are not logins either:</strong> the proxy owns this dashboard's session, so
       nothing here records a sign-in to it. Logins to the <strong>cluster</strong> are a separate
       record with a separate source — the oauth-server's own log — and they are on the
       <strong>Logins</strong> tab.
@@ -4340,7 +4340,7 @@ function bindingsPage() {
         <div class="value">${d.total || 0}</div></div>
       <div class="kpi"><div class="label">Grant a real group</div>
         <div class="value muted">${c.ok || 0}</div></div>
-      <div class="kpi${review ? " flag-warning" : ""}"><div class="label">Need review</div>
+      <div class="kpi${review ? (c.dangling ? " flag-critical" : " flag-warning") : ""}"><div class="label">Need review</div>
         <div class="value ${review ? "" : "muted"}">${review}</div></div>
       <div class="kpi"><div class="label">Built-in</div>
         <div class="value muted">${c.built_in || 0}</div></div>
