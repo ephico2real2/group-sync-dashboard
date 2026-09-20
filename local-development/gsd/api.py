@@ -3029,6 +3029,12 @@ def create_app() -> FastAPI:
 #: set at render time; this is the second boundary, for a container configured directly.
 LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
 
+#: The longest logger name `GSD_LOG_LEVELS` will look up. `logging.getLogger(name)` CREATES the
+#: logger and a placeholder for every dotted prefix of it, each keyed by a copy of that prefix — a
+#: 100 000-character value of `a.a.a…` made 50 016 loggers and 2.2 GB of RSS inside `create_app`
+#: (review of #247, second pass, OB2 C5). The longest name this app owns is under 40 characters.
+MAX_LOGGER_NAME = 200
+
 
 def _resolve_log_level(raw: str | None) -> tuple[int, str | None]:
     """One GSD_LOG_LEVEL value to a logging level, never raising. Returns (level, complaint).
@@ -3195,34 +3201,69 @@ def _apply_per_logger_levels() -> list[str]:
     raw = os.environ.get("GSD_LOG_LEVELS")
     if raw is None or not raw.strip():
         return []
-    complaints: list[str] = []
+    # ONE COMPLAINT PER KIND OF MISTAKE, NOT PER ENTRY (second pass, Codex C5): a 100 000-character
+    # `x,x,…` produced 50 000 warning records — 9.7 MB — inside the factory. Counted, the message
+    # stays exact for the one typo and bounded for the flood.
+    malformed = 0
+    root_entries = 0
+    too_long: list[int] = []
+    bad_level: list[int] = []
     for pair in raw.split(","):
         if not pair.strip():
             continue
         name, sep, value = pair.partition("=")
         name, value = name.strip(), value.strip().upper()
         if not sep or not name:
-            complaints.append(
-                f"GSD_LOG_LEVELS has an entry that is not name=LEVEL, so it was skipped. The "
-                f"format is a comma-separated list, e.g. gsd.clusterconfig=DEBUG,httpx=INFO."
-            )
+            malformed += 1
+            continue
+        if len(name) > MAX_LOGGER_NAME:
+            # Refused BEFORE `getLogger` sees it: the lookup is what allocates.
+            too_long.append(len(name))
             continue
         if logging.getLogger(name) is logging.getLogger():
             # `root=CRITICAL` would silence every logger at once — `logging.getLogger("root")` IS
             # the root logger — with no complaint and no line saying so (review of #247, OB3 C4).
             # The root's level is GSD_LOG_LEVEL's job, and one setting per level is the contract.
-            complaints.append(
-                "GSD_LOG_LEVELS names the root logger, which is skipped: that would set every "
-                "logger at once and override GSD_LOG_LEVEL silently. Set GSD_LOG_LEVEL instead."
-            )
+            root_entries += 1
             continue
         if value not in LOG_LEVELS:
-            complaints.append(
-                f"GSD_LOG_LEVELS has a {len(name)}-character logger name set to a value that is "
-                f"not a log level this app accepts, so that logger is unchanged. Neither the name "
-                f"nor the value is repeated here, in case something other than a log setting was "
-                f"wired into it. Use one of {', '.join(LOG_LEVELS)}."
-            )
+            bad_level.append(len(name))
             continue
         logging.getLogger(name).setLevel(getattr(logging, value))
+    complaints: list[str] = []
+    if malformed:
+        complaints.append(
+            f"GSD_LOG_LEVELS has {_count(malformed, 'entry', 'entries')} not of the form name=LEVEL, "
+            f"skipped. The format is a comma-separated list, e.g. gsd.clusterconfig=DEBUG,httpx=INFO."
+        )
+    if too_long:
+        complaints.append(
+            f"GSD_LOG_LEVELS has {_count(len(too_long), 'logger name', 'logger names')} longer than "
+            f"{MAX_LOGGER_NAME} characters (the longest is {max(too_long)}), skipped: no logger this "
+            f"app has is that long, and looking one up allocates a logger per dotted part."
+        )
+    if root_entries:
+        complaints.append(
+            f"GSD_LOG_LEVELS names the root logger ({_count(root_entries, 'entry', 'entries')}), "
+            f"skipped: that would set every logger at once and override GSD_LOG_LEVEL silently. "
+            f"Set GSD_LOG_LEVEL instead."
+        )
+    if len(bad_level) == 1:
+        complaints.append(
+            f"GSD_LOG_LEVELS has a {bad_level[0]}-character logger name set to a value that is "
+            f"not a log level this app accepts, so that logger is unchanged. Neither the name "
+            f"nor the value is repeated here, in case something other than a log setting was "
+            f"wired into it. Use one of {', '.join(LOG_LEVELS)}."
+        )
+    elif bad_level:
+        complaints.append(
+            f"GSD_LOG_LEVELS has {len(bad_level)} logger names set to values that are not log "
+            f"levels this app accepts, so those loggers are unchanged. Neither the names nor the "
+            f"values are repeated here, in case something other than a log setting was wired into "
+            f"it. Use one of {', '.join(LOG_LEVELS)}."
+        )
     return complaints
+
+
+def _count(n: int, singular: str, plural: str) -> str:
+    return f"{n} {singular if n == 1 else plural}"

@@ -23,6 +23,7 @@ reason.
 from __future__ import annotations
 
 import json
+import logging
 import pathlib
 import re
 import subprocess
@@ -392,6 +393,24 @@ class TestPerLoggerOverridesDegradeRatherThanCrash:
         got = probe("INFO", levels="root=CRITICAL")
         assert got["emitted"] == LADDER["INFO"], "the root level must be GSD_LOG_LEVEL's, untouched"
         assert got["levels_complaints"] and "GSD_LOG_LEVEL instead" in got["levels_complaints"][0]
+
+    def test_a_pathological_dotted_name_creates_no_loggers(self, monkeypatch) -> None:
+        """OB2 C5: `logging.getLogger` makes a placeholder per dotted prefix, so a 100 000-character
+        `a.a.a…` allocated 50 016 loggers and 2.2 GB inside the factory — an OOM crash-loop with no
+        complaint. Refused by length before the lookup."""
+        from gsd.api import _apply_per_logger_levels
+        before = len(logging.Logger.manager.loggerDict)
+        monkeypatch.setenv("GSD_LOG_LEVELS", "a." * 50_000 + "=DEBUG")
+        complaints = _apply_per_logger_levels()
+        assert len(complaints) == 1 and "skipped" in complaints[0], complaints
+        assert len(logging.Logger.manager.loggerDict) == before, "the lookup allocated a logger per dotted prefix"
+
+    def test_fifty_thousand_bad_entries_are_one_complaint_not_fifty_thousand(self, monkeypatch) -> None:
+        """Codex C5: `x,` × 50 000 produced 50 000 warning records — 9.7 MB — inside the factory."""
+        from gsd.api import _apply_per_logger_levels
+        monkeypatch.setenv("GSD_LOG_LEVELS", "x," * 50_000)
+        complaints = _apply_per_logger_levels()
+        assert len(complaints) == 1 and "50000 entries" in complaints[0], complaints
 
     def test_a_good_entry_beside_a_bad_one_still_applies(self) -> None:
         """One typo must not discard the pairs that parsed."""

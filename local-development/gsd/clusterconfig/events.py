@@ -53,8 +53,11 @@ _MIN_SECRET = 4
 
 _NEEDS_QUOTING = re.compile(r"[\s\"=]")
 
-#: Everything a terminal or a log pipeline reads as structure rather than text.
-_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+#: Everything a terminal or a log pipeline reads as structure rather than text: the C0 and C1
+#: controls, and the two Unicode line separators — `str.splitlines()` breaks on U+0085, U+2028 and
+#: U+2029 too, so a Python-side pipeline saw a forged second line through the first escape set
+#: (second pass, OB2 C2).
+_CONTROL = re.compile("[\x00-\x1f\x7f-\x9f\u2028\u2029]")
 
 
 def redact(text: str, secrets: object) -> str:
@@ -70,13 +73,24 @@ def redact(text: str, secrets: object) -> str:
     cut and misses every JWT, which is longer than the window. Callers pass the full text; the
     truncation below happens after.
 
-    Never raises. A diagnostic must not become the reason a poll fails, so anything unstringable is
-    simply not redacted against.
+    Never raises — and the first version did (second pass: Grok C2, OB2 C2, Codex C2): it caught
+    `TypeError` alone, so a value whose `__str__` raised anything else escaped through a log call.
+    A diagnostic must not become the reason a poll fails, so anything unstringable is simply not
+    redacted against, and the other secrets are still removed.
     """
-    out = str(text)
     try:
-        values = [str(s) for s in secrets if s]
-    except TypeError:
+        out = str(text)
+    except Exception:  # noqa: BLE001 - see the docstring: never raises
+        return "<unprintable>"
+    values: list[str] = []
+    try:
+        for secret in secrets:
+            try:
+                if secret:
+                    values.append(str(secret))
+            except Exception:  # noqa: BLE001 - one unstringable secret must not stop the others
+                continue
+    except Exception:  # noqa: BLE001 - `secrets` not iterable at all
         return out
     for secret in sorted(values, key=len, reverse=True):
         if len(secret) >= _MIN_SECRET and secret in out:
@@ -93,12 +107,13 @@ def _format_value(value: object) -> str:
 cluster-resolved cycle=999 cluster=forged` produced TWO physical log lines, the second
     of which reads exactly like a real event. Quoting does not help — a newline inside quotes is
     still a newline to every terminal, `grep`, and key=value parser in the pipeline. So `
-`, ``,
+`, `
+`,
     `	` and the rest become their escapes, and the value stays one line whatever the remote sends.
     """
     text = "" if value is None else str(value)
     text = _CONTROL.sub(lambda m: {"\n": "\\n", "\r": "\\r", "\t": "\\t"}.get(
-        m.group(), f"\\x{ord(m.group()):02x}"), text)
+        m.group(), f"\\u{ord(m.group()):04x}" if ord(m.group()) > 0xFF else f"\\x{ord(m.group()):02x}"), text)
     if text == "" or _NEEDS_QUOTING.search(text):
         return '"' + text.replace('"', "'") + '"'
     return text

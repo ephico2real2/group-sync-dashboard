@@ -17,8 +17,8 @@ import time
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlsplit
 
-from .config import ClusterConfig, Settings
-from .kube import OK, UNREACHABLE, ClusterClient, ClusterError, GroupSyncView, GroupView, dn_equal
+from .config import IDENTITY_NONE, VISIBILITY_SELF_ONLY, ClusterConfig, ConfigError, Settings
+from .kube import AUTH_FAILED, OK, UNREACHABLE, ClusterClient, ClusterError, GroupSyncView, GroupView, dn_equal
 from .leader import LeaderElector, own_namespace
 from .logincapture import capture_once
 from .audit import plan_audit_stamps
@@ -26,6 +26,15 @@ from .storage import StorageBackend
 from .timeutil import now_iso
 
 log = logging.getLogger(__name__)
+
+#: The discovery story — what the fleet is and what changed — is the cluster-configuration module's,
+#: and `gsd.clusterconfig=DEBUG` is the documented way to raise it alone (the chart's
+#: `clusterConfigLogLevels`, the README, the worked example in DESIGN_cluster_connection_flows.md).
+#: The poller emits those lines because it is what holds the previous cycle, but it emits them under
+#: the module's name — once the reader stopped logging, nothing did, and the documented knob raised
+#: nothing (review of #247, second pass: Grok C6, OB2 C6). `cluster-unreachable` stays on `gsd.poller`:
+#: polling is this module's concern.
+discovery_log = logging.getLogger("gsd.clusterconfig")
 
 
 def _log_poll_failure(cluster: ClusterConfig, exc: ClusterError) -> None:
@@ -49,11 +58,17 @@ def _log_poll_failure(cluster: ClusterConfig, exc: ClusterError) -> None:
     HTTP 200 without…`). Only a transport message is matched, case-insensitively, against the
     phrases OpenSSL and CPython actually produce; a remote's body is never matched at all.
 
-    THREE PHASES, NOT TWO. `tls` when the certificate was refused, `connect` when the socket never
-    came up (DNS, refused, timeout — every transport failure that is not a certificate) and `poll`
-    when the cluster answered and said no, or answered garbage. The middle one existed in the
-    vocabulary and was never emitted, which Grok and OB3 both caught — a phase nothing logs is a
-    promise the log does not keep.
+    FOUR PHASES, AND PROVENANCE BEFORE WORDS. `credential` or `tls` when the client could not be
+    BUILT: `ClusterClient._client` raises `from` the ConfigError when the token or the CA bundle this
+    pod is configured with cannot be read, and the remote wrote nothing — that message has no
+    identifier prefix, so it fell through to `poll` and told the reader to check an API URL that was
+    never dialled (second pass: Grok C3, OB2 C3, Codex C3). The chained cause says "local" with no
+    string test at all. Then `tls` when the certificate was refused; `connect` when the TRANSPORT
+    failed — the socket never came up (DNS, refused, connect timeout) or it did and no HTTP came
+    back (read timeout, a non-HTTP answer) — with an action that says which, because "check DNS" is
+    wrong advice for a server that accepted the connection; and `poll` when the cluster answered
+    HTTP and said no, or answered garbage JSON. `connect` existed in the vocabulary and was never
+    emitted, which Grok and OB3 both caught — a phase nothing logs is a promise the log does not keep.
 
     The credential is passed to the emit helper so a token echoed inside an error body cannot reach
     the log — `ClusterClient._redact` scrubs its own, and this is the second boundary.
@@ -63,9 +78,26 @@ def _log_poll_failure(cluster: ClusterConfig, exc: ClusterError) -> None:
     tls = "insecure" if mode["insecure"] else mode["ca"]
     secrets = _credentials(cluster)
     message = exc.message or ""
+    if isinstance(exc.__cause__, ConfigError):
+        # The client was never built: a token file, a token variable or a CA bundle on THIS pod.
+        if exc.outcome == AUTH_FAILED:
+            failure(log, "cluster-unreachable", phase="credential", outcome=exc.outcome,
+                    action=("the token could not be read from where this cluster's configuration "
+                            "points (tokenFile, tokenEnv or the Secret's bearerToken): fix that "
+                            "source — the cluster was never asked"),
+                    cluster=cluster.name, source=cluster.source, tls=tls,
+                    credential=cluster.credential_kind, detail=message, secrets=secrets)
+        else:
+            failure(log, "cluster-unreachable", phase="tls", outcome=exc.outcome,
+                    action=(f"the CA comes from {mode['ca']} and could not be loaded: point it at "
+                            f"a readable PEM bundle — no connection was attempted"),
+                    cluster=cluster.name, source=cluster.source, tls=tls,
+                    store=cluster.ca_bundle_file or mode["ca"], detail=message, secrets=secrets)
+        return
     # `<ExceptionType>: …` is the one shape this process gives a transport failure; anything else
     # is a remote's answer, and a remote's words decide nothing here.
-    transport = message.split(":", 1)[0].strip().isidentifier()
+    kind = message.split(":", 1)[0].strip()
+    transport = kind.isidentifier()
     lowered = message.lower()
     verify_failed = transport and any(
         phrase in lowered for phrase in
@@ -96,8 +128,7 @@ def _log_poll_failure(cluster: ClusterConfig, exc: ClusterError) -> None:
 
     if transport and exc.outcome == UNREACHABLE:
         failure(log, "cluster-unreachable", phase="connect", outcome=exc.outcome,
-                action=("check the cluster's API URL is right and reachable from this pod "
-                        "(DNS, NetworkPolicy, a proxy, or the cluster being down)"),
+                action=_TRANSPORT_ACTIONS.get(kind, _TRANSPORT_ACTION_DEFAULT),
                 cluster=cluster.name, source=cluster.source, tls=tls,
                 credential=cluster.credential_kind, detail=message, secrets=secrets)
         return
@@ -107,6 +138,26 @@ def _log_poll_failure(cluster: ClusterConfig, exc: ClusterError) -> None:
             cluster=cluster.name, source=cluster.source, tls=tls, credential=cluster.credential_kind,
             detail=message, secrets=secrets)
 
+
+#: What to do about a transport failure, by the httpx exception `ClusterClient._get` names before
+#: the colon. The default is the socket that never opened; the named kinds are the ones where it
+#: DID, and "check DNS and NetworkPolicy" would send the reader to a problem they do not have
+#: (second pass, OB2 C3, measured on loopback: `ReadTimeout: timed out` and
+#: `RemoteProtocolError: illegal status line` both carried the DNS advice).
+_TRANSPORT_ACTION_DEFAULT = ("check the cluster's API URL is right and reachable from this pod "
+                             "(DNS, NetworkPolicy, a proxy, or the cluster being down)")
+_TRANSPORT_ACTIONS = {
+    "ReadTimeout": ("the connection opened but the API server did not answer within "
+                    "requestTimeoutSeconds: raise it, or check the API server's load and any proxy "
+                    "in between"),
+    "WriteTimeout": ("the connection opened but the request could not be sent within "
+                     "requestTimeoutSeconds: check the API server's load and any proxy in between"),
+    "RemoteProtocolError": ("the connection opened but what answered was not HTTP: check that this "
+                            "URL is the API server and not a proxy, a wrong port, or a TLS "
+                            "endpoint dialled as plain HTTP"),
+    "ReadError": ("the connection opened and then dropped before an answer: check a proxy or "
+                  "load balancer in between, or the API server restarting"),
+}
 
 #: What to do about each poll outcome. The codes are `gsd.kube`'s, so the log and the cluster row
 #: say the same word for the same failure.
@@ -129,21 +180,31 @@ def _cluster_shape(cluster: ClusterConfig) -> tuple:
     credential and the CA are included as a DIGEST, never as themselves: this value is compared,
     logged about and held in memory, and none of those are places a credential belongs.
 
-    SPURIOUS CHATTER. `visibility` and `identity` were compared raw, so a Secret that spelled out
-    the value it was already defaulting to — omitted `visibility` becoming an explicit `self-only`
-    — read as a change. They are normalised to the words the log prints, so what is compared is
-    what a reader would see.
+    SPURIOUS CHATTER, AND THE DEFAULT IS THE SERVED ONE. `visibility` and `identity` were compared
+    raw, so a Secret that spelled out the value it was already defaulting to read as a change. They
+    are normalised — and to the words `Settings.cluster_policy` SERVES, not the words the first fix
+    printed: every cluster in this set is Secret-sourced, so an omitted visibility is `self-only`,
+    and the first version's `inherit` was the host's default. That was worse than chatter (second
+    pass, Grok C1): writing `visibility: inherit` on such a Secret WIDENS it to the host's tier, and
+    the shape read it as no change while the `cluster-resolved` line had been claiming `inherit`
+    all along.
+
+    LABELS TOO (second pass, OB2 C1, Codex C1): the Secret's other labels are the tab's fleet
+    metadata (`company.net/mnemonic`), set by the operator and never regenerated by a controller,
+    so an edit to one is a change a reader should see and cannot chatter on its own.
     """
     import hashlib
+    import json
     mode = cluster.tls_mode
-    secret_material = "|".join([cluster.token_value or "", cluster.ca_data or "",
-                                cluster.oauth_username or "", cluster.oauth_password or "",
-                                cluster.token_file or "", cluster.token_env or ""])
+    # A JSON list, not a delimiter join: `token="a|b"` and `token="a", ca="b"` must not digest alike.
+    secret_material = json.dumps([cluster.token_value or "", cluster.ca_data or "",
+                                  cluster.oauth_username or "", cluster.oauth_password or "",
+                                  cluster.token_file or "", cluster.token_env or ""])
     return (
         cluster.source, cluster.credential_kind,
         "insecure" if mode["insecure"] else mode["ca"],
-        cluster.visibility or "inherit", cluster.identity or "none", cluster.enabled,
-        cluster.api_url,
+        cluster.visibility or VISIBILITY_SELF_ONLY, cluster.identity or IDENTITY_NONE, cluster.enabled,
+        cluster.api_url, cluster.labels,
         hashlib.sha256(secret_material.encode()).hexdigest()[:12],
     )
 
@@ -1235,6 +1296,7 @@ class Poller:
         failed LIST, which becomes the cycle's one finding. Only the leader writes the cluster rows."""
         from .clusterconfig import discover
         from .clusterconfig.events import event, failure
+        log = discovery_log    # the discovery story is the module's; see `discovery_log`
         registry = self.settings.cluster_registry
         host = self.settings.host_cluster()
         namespace = own_namespace()
@@ -1278,6 +1340,11 @@ class Poller:
         finding_set = {(f.secret, f.code) for f in findings}
         self._discovered_shape, self._discovery_findings = shape, finding_set
         added, removed = sorted(after - before), sorted(before - after)
+        for name in removed:
+            # A cluster that left the fleet has nothing left to redact against; keeping its last
+            # token would make the cache a place a credential outlives its configuration (second
+            # pass, OB2 C2 — true for a file-sourced cluster, whose token lives nowhere else).
+            _LAST_TOKEN.pop(name, None)
         changed = sorted(n for n in after & before if shape.get(n) != before_shape.get(n))
         new_findings = sorted(f"{secret}:{code}" for secret, code in finding_set - before_findings)
         cleared = sorted(f"{secret}:{code}" for secret, code in before_findings - finding_set)
@@ -1306,7 +1373,7 @@ class Poller:
             event(log, logging.INFO, "cluster-resolved", cycle=cycle, cluster=c.name,
                   source=c.source, credential=c.credential_kind,
                   tls="insecure" if mode["insecure"] else mode["ca"],
-                  visibility=c.visibility or "inherit", identity=c.identity or "none",
+                  visibility=c.visibility or VISIBILITY_SELF_ONLY, identity=c.identity or IDENTITY_NONE,
                   enabled=str(c.enabled).lower())
         if self.elector is not None and not self.elector.is_leader:
             return

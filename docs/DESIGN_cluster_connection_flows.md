@@ -34,8 +34,8 @@ flowchart TD
     F -- "oauth" --> FF["phase=credential<br/>outcome=oauth-exchange-not-built<br/>not polled until 119 P2"]
     F -- "bearer, in-cluster, file" --> G["Choose the TLS mode<br/>see flow 2"]
     G --> H["Connect to the API server"]
-    H --> H2{"Socket opened?"}
-    H2 -- "no" --> HF["phase=connect<br/>outcome=unreachable<br/>DNS, refused, timeout, a proxy"]
+    H --> H2{"Transport completed?"}
+    H2 -- "no" --> HF["phase=connect<br/>outcome=unreachable<br/>DNS, refused, a timeout, a proxy, a non-HTTP answer<br/>the action says whether the socket opened"]
     H2 -- "yes" --> I{"Certificate verified?"}
     I -- "no" --> IF["phase=tls<br/>outcome=cert-verify-failed<br/>action names the store and the fix for the mode in force"]
     I -- "yes" --> J["Poll: GroupSyncs, Groups, bindings"]
@@ -63,8 +63,9 @@ flowchart TD
           │
           ▼
   Connect ─────────────────────────► [FAIL] phase=connect     outcome=unreachable
-          │ socket opened                                      DNS, refused, timeout, a proxy
-          ▼
+          │ transport completed                                DNS, refused, a timeout, a proxy,
+          ▼                                                    a non-HTTP answer — the action says
+                                                               whether the socket opened
   Verify the certificate ──────────► [FAIL] phase=tls         outcome=cert-verify-failed
           │ verified                                           action names the store AND the fix
           ▼                                                    for the mode in force (flow 2)
@@ -77,7 +78,8 @@ flowchart TD
   stops the other clusters. Read the phase first: it tells you how far it got.
   connect vs tls vs poll is decided by WHO WROTE THE MESSAGE: a transport error this
   process built (`ConnectError: …`) is connect or tls; anything the remote answered
-  is poll, whatever its body says.
+  is poll, whatever its body says. A client that could not be BUILT — a token file or
+  a CA bundle this pod cannot read — is credential or tls, and no socket was dialled.
 ```
 
 ---
@@ -91,7 +93,9 @@ malformed declaration and not an absent key (review of #235).
 
 ```mermaid
 flowchart TD
-    A["tlsClientConfig in the Secret's config"] --> B{"caData key present?"}
+    A["tlsClientConfig in the Secret's config"] --> O{"an object, only caData/insecure,<br/>insecure a boolean?"}
+    O -- "no" --> RO["REFUSED<br/>outcome=unsupported-config-key<br/>the key or the type, named"]
+    O -- "yes" --> B{"caData key present?"}
     B -- "no" --> C{"insecure: true?"}
     C -- "yes" --> I["Mode: insecure<br/>verification off<br/>tls=insecure"]
     C -- "no" --> F["Mode: trusted-bundle<br/>GSD_TRUSTED_CA_FILE plus the system store<br/>tls=trusted-bundle"]
@@ -109,6 +113,9 @@ flowchart TD
 ```text
                  tlsClientConfig
                         │
+         an object, only caData/insecure, ──no──► REFUSED outcome=unsupported-config-key
+         insecure a boolean?                              (the key or the type, named)
+                        │ yes
                  caData KEY present?
                         │
             no ─────────┴───────── yes

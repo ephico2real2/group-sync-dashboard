@@ -146,6 +146,22 @@ class TestRedaction:
         """A diagnostic must not become the reason a poll fails."""
         assert redact("text", 7) == "text"
 
+    def test_a_secret_whose_str_raises_does_not_stop_the_others(self):
+        """Second pass (Grok, OB2, Codex C2): only TypeError was caught, against a docstring that
+        says never."""
+        class Bad:
+            def __str__(self):
+                raise ValueError("no str")
+        assert redact(f"x {TOKEN} y", (Bad(), TOKEN)) == "x <redacted> y"
+
+    def test_a_unicode_line_separator_cannot_forge_a_second_line(self, caplog):
+        """OB2 C2: `str.splitlines()` breaks on U+0085 and U+2028 too, and the first escape set
+        stopped at 0x7f."""
+        with caplog.at_level(logging.INFO):
+            event(logging.getLogger("gsd.test"), logging.INFO, "cluster-unreachable",
+                  detail="timeout cluster-resolved cycle=999\u0085x\u2028y")
+        assert len(caplog.messages[0].splitlines()) == 1, caplog.messages[0].splitlines()
+
 
 class TestARefusalIsAnnouncedOnceNotEveryCycle:
     """The flood this change exists to prevent, and the way the first version reintroduced it.
@@ -176,7 +192,7 @@ class TestARefusalIsAnnouncedOnceNotEveryCycle:
     def test_a_refusal_speaks_once_and_then_stops(self, tmp_path, caplog):
         self.host.secrets = {"items": [_secret("gsd-cluster-bad", cluster="bad", config=None)]}
         poller = self._poller(tmp_path)
-        with caplog.at_level(logging.DEBUG, logger="gsd.poller"):
+        with caplog.at_level(logging.DEBUG, logger="gsd"):
             poller._discover_once()
             first = list(caplog.messages)
             caplog.clear()
@@ -194,7 +210,7 @@ class TestARefusalIsAnnouncedOnceNotEveryCycle:
         poller = self._poller(tmp_path)
         poller._discover_once()
         self.host.secrets = {"items": []}
-        with caplog.at_level(logging.INFO, logger="gsd.poller"):
+        with caplog.at_level(logging.INFO, logger="gsd"):
             poller._discover_once()
         assert any("refused_cleared=gsd-cluster-bad:config-missing" in m for m in caplog.messages)
 
@@ -202,7 +218,7 @@ class TestARefusalIsAnnouncedOnceNotEveryCycle:
         self.host.secrets = {"items": [_secret("gsd-cluster-a", cluster="same"),
                                        _secret("gsd-cluster-b", cluster="same")]}
         poller = self._poller(tmp_path)
-        with caplog.at_level(logging.WARNING, logger="gsd.poller"):
+        with caplog.at_level(logging.WARNING, logger="gsd"):
             poller._discover_once()
         refusals = [m for m in caplog.messages if "outcome=duplicate-cluster-name" in m]
         assert len(refusals) == 2 and any("gsd-cluster-b" in m for m in refusals)
@@ -211,7 +227,7 @@ class TestARefusalIsAnnouncedOnceNotEveryCycle:
         self.host.secrets = {"items": [_secret("gsd-cluster-o", cluster="oa",
                                                config={"oauth": {"username": "u", "password": PASSWORD}})]}
         poller = self._poller(tmp_path)
-        with caplog.at_level(logging.WARNING, logger="gsd.poller"):
+        with caplog.at_level(logging.WARNING, logger="gsd"):
             poller._discover_once()
         line = next(m for m in caplog.messages if "outcome=oauth-exchange-not-built" in m)
         assert "action=" in line and PASSWORD not in line
@@ -233,7 +249,7 @@ class TestARefusalIsAnnouncedOnceNotEveryCycle:
             clusters=[ClusterConfig("host", "https://kubernetes.default.svc", token_env="X"),
                       ClusterConfig("dup", "https://dup:6443", token_env="Y")],
             db_path=str(tmp_path / "p.db"))
-        with caplog.at_level(logging.WARNING, logger="gsd.poller"):
+        with caplog.at_level(logging.WARNING, logger="gsd"):
             Poller(store, settings)._discover_once()
         line = next(m for m in caplog.messages if "outcome=shadows-values-entry" in m)
         # The cluster LOADS, so the line must not call it a refusal.
@@ -250,7 +266,7 @@ class TestARefusalIsAnnouncedOnceNotEveryCycle:
                             lambda *a, **k: (_ for _ in ()).throw(
                                 ClusterError(UNREACHABLE, f"HTTP 502 on /api/v1: proxy echoed Bearer {TOKEN}")))
         poller = self._poller(tmp_path)
-        with caplog.at_level(logging.WARNING, logger="gsd.poller"):
+        with caplog.at_level(logging.WARNING, logger="gsd"):
             poller._discover_once()
         line = next(m for m in caplog.messages if m.startswith("discovery-failed "))
         assert TOKEN not in line and "<redacted>" in line, line
@@ -347,6 +363,45 @@ class TestTheFailureNamesTheFix:
                 UNREACHABLE, "non-JSON response from /apis: Expecting value: line 1 column 1 (char 0)"))
         assert "phase=poll" in caplog.messages[-1], caplog.messages[-1]
 
+    def test_an_unreadable_ca_bundle_is_a_tls_failure_that_names_the_file(self, caplog):
+        """Second pass (Grok, OB2, Codex C3): `_client()` wraps a ConfigError for a CA bundle this
+        pod cannot read; that message has no identifier prefix, so it fell to `phase=poll` with
+        "check the API URL" — for a file missing on THIS pod and a connection never dialled."""
+        from gsd.kube import ClusterClient
+        from gsd.poller import _log_poll_failure
+        cfg = ClusterConfig("c", "https://127.0.0.1:1", token_value="t" * 20, ca_bundle_file="/nonexistent/ca.pem")
+        with pytest.raises(ClusterError) as caught:
+            ClusterClient(cfg)._client()
+        with caplog.at_level(logging.WARNING):
+            _log_poll_failure(cfg, caught.value)
+        line = caplog.messages[-1]
+        assert "phase=tls" in line and "store=/nonexistent/ca.pem" in line and "API URL" not in line, line
+
+    def test_an_unreadable_token_file_is_a_credential_failure_not_a_rotation(self, caplog):
+        from gsd.kube import ClusterClient
+        from gsd.poller import _log_poll_failure
+        cfg = ClusterConfig("c", "https://127.0.0.1:1", token_file="/nonexistent/token")
+        with pytest.raises(ClusterError) as caught:
+            ClusterClient(cfg)._client()
+        with caplog.at_level(logging.WARNING):
+            _log_poll_failure(cfg, caught.value)
+        line = caplog.messages[-1]
+        assert "phase=credential" in line and "outcome=auth_failed" in line, line
+        assert "rotate it in this cluster's Secret" not in line, line
+
+    @pytest.mark.parametrize("message,expect", [
+        ("ReadTimeout: timed out", "did not answer within"),
+        ("RemoteProtocolError: illegal status line: bytearray(b'\\x00\\x01')", "was not HTTP"),
+    ])
+    def test_a_transport_that_opened_is_not_told_to_check_dns(self, caplog, message, expect):
+        """OB2 C3, measured on loopback: both carried the DNS advice, for a socket that had opened."""
+        from gsd.poller import _log_poll_failure
+        cfg = ClusterConfig("c", "https://127.0.0.1:1", token_value="t" * 20, insecure_skip_verify=True)
+        with caplog.at_level(logging.WARNING):
+            _log_poll_failure(cfg, ClusterError(UNREACHABLE, message))
+        line = caplog.messages[-1]
+        assert "phase=connect" in line and expect in line and "DNS" not in line, line
+
     def test_a_403_names_the_grant_rather_than_the_status(self, caplog):
         from gsd.poller import _log_poll_failure
         cluster = ClusterConfig(name="c", api_url="https://api.example.com:6443", token_value="t" * 20)
@@ -382,7 +437,7 @@ class TestTheCycleIsQuietWhenNothingChanged:
 
     def test_the_first_cycle_speaks_and_the_second_is_silent(self, tmp_path, caplog):
         poller = self._poller(tmp_path)
-        with caplog.at_level(logging.INFO, logger="gsd.poller"):
+        with caplog.at_level(logging.INFO, logger="gsd"):
             poller._discover_once()
             first = list(caplog.messages)
             caplog.clear()
@@ -400,17 +455,75 @@ class TestTheCycleIsQuietWhenNothingChanged:
         self.host.secrets = {"items": [_secret("gsd-cluster-east", cluster="east",
                                                config={"bearerToken": TOKEN,
                                                        "tlsClientConfig": {"insecure": True}})]}
-        with caplog.at_level(logging.INFO, logger="gsd.poller"):
+        with caplog.at_level(logging.INFO, logger="gsd"):
             poller._discover_once()
         assert any("changed=east" in m for m in caplog.messages)
         assert any("cluster-resolved" in m and "tls=insecure" in m for m in caplog.messages)
 
     def test_the_cycle_id_ties_a_clusters_lines_to_one_cycle(self, tmp_path, caplog):
         poller = self._poller(tmp_path)
-        with caplog.at_level(logging.INFO, logger="gsd.poller"):
+        with caplog.at_level(logging.INFO, logger="gsd"):
             poller._discover_once()
         cycles = {m.split("cycle=")[1].split()[0] for m in caplog.messages if "cycle=" in m}
         assert len(cycles) == 1, f"one cycle emitted several ids: {cycles}"
+
+    def test_the_resolved_line_says_the_visibility_the_tier_actually_serves(self, tmp_path, caplog):
+        """The same lie on the line a reader greps: `visibility=inherit` for a Secret the tier
+        serves as `self-only`."""
+        self.host.secrets = {"items": [_secret("gsd-cluster-east", cluster="east")]}
+        with caplog.at_level(logging.INFO, logger="gsd"):
+            self._poller(tmp_path)._discover_once()
+        line = next(m for m in caplog.messages if m.startswith("cluster-resolved "))
+        assert "visibility=self-only" in line and "identity=none" in line, line
+
+    def test_a_label_edited_on_the_secret_is_reported_as_changed(self, tmp_path, caplog):
+        """OB2 C1 and Codex C1: the Secret's other labels are the tab's fleet metadata, and an edit
+        to one was invisible."""
+        poller = self._poller(tmp_path)
+        self.host.secrets = {"items": [_secret("gsd-cluster-east", cluster="east")]}
+        poller._discover_once()
+        item = _secret("gsd-cluster-east", cluster="east")
+        item["metadata"]["labels"]["company.net/mnemonic"] = "EAST"
+        self.host.secrets = {"items": [item]}
+        with caplog.at_level(logging.INFO, logger="gsd"):
+            poller._discover_once()
+        assert any("changed=east" in m for m in caplog.messages), caplog.messages
+
+    def test_a_cluster_that_left_the_fleet_leaves_the_token_cache(self, tmp_path):
+        """OB2 C2: for a file-sourced cluster the cache was the one place its token outlived its
+        configuration; a removed cluster has nothing left to redact against."""
+        import gsd.poller as poller_module
+        poller = self._poller(tmp_path)
+        self.host.secrets = {"items": [_secret("gsd-cluster-east", cluster="east")]}
+        poller._discover_once()
+        poller_module._credentials(next(c for c in poller.settings.cluster_registry.discovered()
+                                        if c.name == "east"))
+        assert "east" in poller_module._LAST_TOKEN
+        self.host.secrets = {"items": []}
+        poller._discover_once()
+        assert "east" not in poller_module._LAST_TOKEN
+
+    def test_the_discovery_story_is_emitted_under_the_documented_logger(self, tmp_path, caplog):
+        """Grok C6 and OB2 C6: `clusterConfigLogLevels: "gsd.clusterconfig=DEBUG"` — the values
+        file's own example — raised nothing once the reader stopped logging, because the poller
+        emitted under `gsd.poller`. The discovery story is the module's; the poller says so."""
+        self.host.secrets = {"items": [_secret("gsd-cluster-east", cluster="east")]}
+        with caplog.at_level(logging.INFO, logger="gsd"):
+            self._poller(tmp_path)._discover_once()
+        names = {r.name for r in caplog.records if r.getMessage().split()[0] in ("discovery", "cluster-resolved")}
+        assert names == {"gsd.clusterconfig"}, names
+
+    def test_the_values_example_names_a_logger_that_emits(self, tmp_path, caplog):
+        import pathlib
+        import re
+        values = (pathlib.Path(__file__).resolve().parents[2] / "charts/group-sync-dashboard/values.yaml").read_text()
+        advertised = re.search(r'clusterConfigLogLevels: "([a-z.]+)=DEBUG"', values).group(1)
+        self.host.secrets = {"items": [_secret("gsd-cluster-east", cluster="east")]}
+        with caplog.at_level(logging.DEBUG, logger="gsd"):
+            self._poller(tmp_path)._discover_once()
+        assert any(r.name == advertised for r in caplog.records), (
+            f"values.yaml advertises {advertised}=DEBUG but nothing was emitted under it: "
+            f"{sorted({r.name for r in caplog.records})}")
 
 
 class TestTheHolesTheSeatsFound:
@@ -516,10 +629,24 @@ class TestTheHolesTheSeatsFound:
         assert findings, "a credential in that field must be a finding"
         assert TOKEN not in whole and PASSWORD not in whole, whole
 
-    def test_spelling_out_a_default_is_not_a_change(self, tmp_path):
-        """Grok C2: a Secret that wrote `visibility: self-only` where it had been omitted — the same
-        value, spelled — read as a change, so a steady fleet chattered."""
+    def test_spelling_out_the_served_default_is_not_a_change_and_inherit_is(self):
+        """Grok C2 (first pass): a Secret that spelled out the value it was already defaulting to
+        read as a change. Grok C1 (second pass): the first fix normalised to `inherit`, the HOST's
+        default — every cluster here is Secret-sourced and `Settings.cluster_policy` serves
+        `self-only` for an omitted visibility, so `visibility: inherit` is a WIDENING, and the
+        shape read it as nothing while the log claimed `inherit` all along."""
         from gsd.poller import _cluster_shape
         base = dict(name="c", api_url="https://h:6443", token_value="t" * 20, source="secret:s")
-        assert _cluster_shape(ClusterConfig(visibility=None, identity=None, **base)) == \
-               _cluster_shape(ClusterConfig(visibility="inherit", identity="none", **base))
+        omitted = _cluster_shape(ClusterConfig(visibility=None, identity=None, **base))
+        assert omitted == _cluster_shape(ClusterConfig(visibility="self-only", identity="none", **base))
+        assert omitted != _cluster_shape(ClusterConfig(visibility="inherit", identity="none", **base)), (
+            "omitted → inherit widens this cluster to the host's tier; the shape must see it")
+
+    def test_the_digest_cannot_be_fooled_by_a_delimiter_inside_a_value(self):
+        """Codex C1: a `|`-joined digest read `tokenFile="x|", tokenEnv="y"` and `tokenFile="x",
+        tokenEnv="|y"` alike — the same joined string, two different configurations. (The first
+        version of this pin used values that did not collide under the join, and the mutant lived.)"""
+        from gsd.poller import _cluster_shape
+        base = dict(name="c", api_url="https://h:6443", source="values")
+        assert _cluster_shape(ClusterConfig(token_file="x|", token_env="y", **base)) != \
+               _cluster_shape(ClusterConfig(token_file="x", token_env="|y", **base))
