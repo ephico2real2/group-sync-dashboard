@@ -300,6 +300,52 @@ Outcome in one line: **#212 finished and #216 merged (the script's two managers,
   fixture stamp 40 min ahead of the browser killed the page) — fixed; the migration pins moved to 18; a UI wait
   matched "Loading…"'s empty-note (a race in the full run) — keyed on the payload. Hermetic 3927 passed, 15
   skipped; UI 476 passed; helm lint clean; guards 536. Deployed to CRC; the walk, the three seats and CI pending.
+- `60eeb0f` (06:50) — the walk at `0989e4b` (`reports/2026-09-20_kyverno-170/`): 115 reports, 667 legacy results
+  not shown, 9 CEL results, three breakers summed (12 505, no drop), `errors : []`, 375 px without overflow.
+- `d9a6f38`, `599039b` (07:08) — **Found by OB3** (N1–N3) and CI: three pins the module moved — the schema at 18
+  in the binding-events upgrade test, `kyverno_result_event: None` in `history_retained_since`, the environments
+  README row quoting `crc.yaml`'s `kyverno.metricsUrl` verbatim (the guard compares the two columns).
+- `da46d4e` (07:22) — **Grok's and Codex's pass** (`docs/REVIEW_kyverno_module.md`): **Accepted** the `Namespaced<Kind>`
+  twins listed under the family kind (Grok N1 / Codex M2 — a cluster using namespaced policies alone read
+  `policies: 0` beside its rows), `?kind=` beside `?policy=` (Codex M5 — two kinds sharing a name answered
+  `total=2`), `kyverno_result_counts()` for the metrics (Codex M6 — every scrape materialised every row: 82 ms
+  and 16.7 MiB at 10 000 rows), the CHANGELOG entry (both — lost in a `git stash` cycle around the merge of
+  `main`), `list`-only grants (Codex M7), the switch keeping focus and `data.kyverno` in the auto-refresh
+  fingerprint (both, M8). **Rejected** Grok's Unreleased-section guard (it would refuse every release:
+  `prepare-release.py` empties the section — eight `test_prepare_release` failures, measured) and Codex's opt-in
+  default (the operator's rule: switches default on). Re-walked at this head (`84b4a03`).
+- `9e8ef02` (07:46) — **OB3's pass** (its column in the record): **Accepted** F1 every served report group read
+  and the one carrying Kyverno's reports named (a served-but-empty `openreports.io` group masked 115 reports —
+  its test failed on the head); F4 `kyverno_metrics_url_for()` — the in-cluster breaker URL was handed to
+  every cluster; N4/F6 readiness from `status.conditionStatus` — no CEL CRD defines `status.conditions`, and
+  the page had printed the VAP-generation message as the readiness note (the lab's status, `oc get
+  validatingpolicies … | jq .status`); F7 `breaker_configured`; F2 `max_length=317`; the policy buttons' ids;
+  N5 step 3's watch and the LIST cost (330 KB / 0.28 s for 112 reports) now said as deferred. **Kept** OB3's
+  Unreleased guard (it skips when the section is absent) over Grok's. OB3's harness and five mutant pins folded
+  into `tests/test_kyverno.py` (37) and `TestKyvernoPage` (5); its 10 000-row timing test dropped (it measures,
+  pins nothing). Hermetic 3964 passed, 15 skipped; UI 485; helm lint clean. Deployed; re-walked (`4392d5a`):
+  the policy row reads `yes` alone, `breaker_configured: true` on the loopback, breaker_total 12 839.
+- `4f93ad1` (08:21) — **#228 merged** on the head's green rollup (`mergeStateStatus CLEAN`; `gh run list
+  --commit` does not index the docs commit's run). The evidence with pictures on #170; deferred to its next PR:
+  the audit-log denials (step 5), the readiness signal (step 6), the metadata watch with 410 recovery (step 3).
+
+### #229 — the report library, the issue and the mock (08:30 → 09:30)
+
+- **The operator**: scheduled reports run, but where are they? Measured before answering: `/report/api/status`
+  (three schedules; `nightly-namespace-access` ok, last success 06:16; `quarterly-compliance` never;
+  `biweekly-groups` paused) and `/report/api/runs` (8 runs — 4 scheduled, 4 manual; 6 done, 2 failed). The
+  history table with download buttons EXISTS, on the Reporting-status page behind one `linkish` button: no
+  expiry, no run detail, no reason for a failed run, no schedule → report link. **The operator's ruling**: the
+  Reports and Reporting-status pages stay as they are; the library is a new tab, a new canvas, one section per
+  configured report, headed the way people say it ("the quarterly reports"). Issue #229 written on those facts.
+- **Cursor Grok** drafted the mock in the background from the issue, the two pages' source, the three committed
+  mocks and the lab's payloads embedded verbatim. **Found by the render-check, not by reading**: the output
+  was cut off mid-string and resumed with a sentence spliced into a template literal — a syntax error, a blank
+  page; run cards were `<button>`s containing `<button>` chips (invalid — the parser closed each card at the
+  first chip); "goes when a newer one lands" was wrong against `prune()` (rank < K is kept whatever its age);
+  "Nightly" was a regex on the schedule's *name* (now the service's `cadence`); the drawer opened on load; a
+  long label overlapped its value at 375 px. All six fixed; 375/768/1280 in both themes, no errors, no
+  horizontal scroll, the unknown-run sentence. Published as an artifact for the operator; not committed.
 
 ---
 
