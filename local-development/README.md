@@ -66,10 +66,11 @@ minted Secrets survive either way). `--values` applies to both modes.
 | `--values X` | Helm | worktree | as above | `X` via `-f`; an `X` outside `local-development/` may be untracked or edited (outside the build context, so not "dirty") | `X` exists |
 | `--argocd` | Argo | GitHub at HEAD | built, handed to the Application as `helm.parameters` | the Application's default | commit on a remote branch |
 | `--argocd --values X` | Argo | GitHub at HEAD | same | `valueFiles: [../../X]` | `X` committed, clean, pushed |
-| `--argocd <branch>` | Argo | GitHub at `<branch>` | the chart's default — the published quay image, which lags main; no in-pod commit check | default | branch on origin (fetched; the waiter wants its commit synced) |
+| `--argocd <branch>` | Argo | GitHub at `<branch>` | the chart's default — the published quay image, which lags main; no in-pod commit check | default | branch on origin (fetched by full ref before the Helm release goes; the waiter wants its commit synced) |
 | `--argocd <branch> --values X` | Argo | GitHub at `<branch>` | same | `[../../X]` | `X` present at `origin/<branch>` |
 | `--build-only` | untouched | — | built, **not** pushed (no credentials needed) | — | — |
 | `--allow-dirty --argocd` | **refused** | | | | Argo deploys a commit; a dirty tree has none |
+| `--build-only --argocd`, `--build-only --values X` | **refused** | | | | neither applies to a build |
 
 `X` is repository-relative (`environments/other.yaml`). Same tagging and verification rules as the
 external script: `<version>-<git-sha>`, the commit stamp verified inside both images before the

@@ -43,6 +43,8 @@
 #   --allow-dirty --argocd          REFUSED: Argo deploys a commit and a dirty tree has none — the image
 #                                   would not match the chart Argo reads, and uncommitted chart edits
 #                                   would silently not deploy.
+#   --build-only --argocd|--values  REFUSED: neither applies to a build (measured by review: `--argocd main
+#                                   --build-only` ran the cutover with nothing built).
 #
 # Typical loop: iterate with the bare script (or --values for a local variant); before merging,
 # --argocd on the pushed head; after a merge, --argocd main — once the app release is cut, because
@@ -83,8 +85,8 @@ ARGO_NAMESPACE="${ARGO_NAMESPACE:-openshift-gitops}"
 expect=""
 for arg in "$@"; do
   case "$expect" in
-    revision) [ "${arg#--}" = "$arg" ] && { ARGO_REVISION="$arg"; expect=""; continue; }; expect="" ;;
-    values) case "$arg" in --*) echo "--values needs a path, got ${arg}" >&2; exit 2 ;; esac
+    revision) case "$arg" in -*) ;; *) ARGO_REVISION="$arg"; expect=""; continue ;; esac; expect="" ;;
+    values) case "$arg" in -*) echo "--values needs a path, got ${arg}" >&2; exit 2 ;; esac
             VALUES_FILE="$arg"; expect=""; continue ;;
   esac
   case "$arg" in
@@ -99,6 +101,11 @@ done
 if [ "$ARGOCD" = true ] && [ "$ALLOW_DIRTY" = true ]; then
   echo "ERROR: --allow-dirty and --argocd do not combine: Argo CD deploys a commit, and a dirty tree has none." >&2
   echo "       Commit (and push) to test through Argo, or drop --argocd for the local Helm loop." >&2
+  exit 2
+fi
+if [ "$BUILD_ONLY" = true ] && { [ "$ARGOCD" = true ] || [ -n "$VALUES_FILE" ]; }; then
+  # `--argocd main --build-only` would run the branch path — a full cutover with nothing built.
+  echo "ERROR: --build-only combines with --allow-dirty only; --argocd and --values do not apply to a build." >&2
   exit 2
 fi
 
@@ -122,12 +129,13 @@ fi
 # change when main moves, so without it the previous sync's status would satisfy the waiter.
 EXPECTED_REVISION=""
 if [ "$ARGOCD" = true ] && [ -n "$ARGO_REVISION" ]; then
-  if ! git fetch -q origin "$ARGO_REVISION"; then
-    echo "ERROR: could not fetch origin/${ARGO_REVISION}; Argo CD reads from there, and a stale local copy proves nothing." >&2
+  # By the full ref, read back from FETCH_HEAD: a single-branch clone's refspec never creates
+  # refs/remotes/origin/<branch>, and a fetch of a branch that is not there fails — both measured.
+  if ! git fetch -q origin "refs/heads/${ARGO_REVISION}"; then
+    echo "ERROR: branch ${ARGO_REVISION} is not on origin, or origin is unreachable; Argo CD reads from there." >&2
     exit 1
   fi
-  EXPECTED_REVISION=$(git rev-parse --verify --quiet "refs/remotes/origin/${ARGO_REVISION}^{commit}") || {
-    echo "ERROR: origin/${ARGO_REVISION} is not a branch on the remote." >&2; exit 1; }
+  EXPECTED_REVISION=$(git rev-parse --verify --quiet 'FETCH_HEAD^{commit}')
 fi
 
 # The values file under Argo is read from the repository: at origin/<branch> for the branch path,
@@ -176,6 +184,15 @@ PY
   # the waiter sits through the controller's polling interval (3 min by default).
   oc annotate application "${APP_NAME}" -n "${ARGO_NAMESPACE}" --overwrite argocd.argoproj.io/refresh=normal >/dev/null
 }
+
+# The values file Helm reads from this tree, before anything is built or pushed for it.
+if [ "$ARGOCD" != true ] && [ ! -f "$RELEASE_VALUES" ]; then
+  echo "ERROR: no release values file at ${RELEASE_VALUES}" >&2
+  echo "       Deploying without one resets the release to chart defaults and silently" >&2
+  echo "       drops whatever a previous upgrade configured." >&2
+  echo "       Fix: RELEASE_VALUES=<path>, or restore ../environments/crc.yaml." >&2
+  exit 1
+fi
 
 # --argocd <branch> with no build: point the Application at that branch and its chart's default
 # image, e.g. `--argocd main` after a merge. Any other --argocd use builds this commit first.
@@ -319,13 +336,6 @@ REPORT_INTERNAL="image-registry.openshift-image-registry.svc:5000/${NAMESPACE}/$
 #
 # Passing -f every time makes the upgrade declarative: the file is the desired state and --set
 # carries only what genuinely varies per invocation (the tag just built).
-if [ ! -f "$RELEASE_VALUES" ]; then
-  echo "ERROR: no release values file at ${RELEASE_VALUES}" >&2
-  echo "       Deploying without one resets the release to chart defaults and silently" >&2
-  echo "       drops whatever a previous upgrade configured." >&2
-  echo "       Fix: RELEASE_VALUES=<path>, or restore ../environments/crc.yaml." >&2
-  exit 1
-fi
 echo "release : ${RELEASE_VALUES}"
 
 if [ "$ARGOCD" = true ]; then
@@ -344,7 +354,21 @@ if [ "$ARGOCD" = true ]; then
   apply_application "$COMMIT" "${INTERNAL%:*}" "$TAG" "${REPORT_INTERNAL%:*}" "$TAG"
   ./argocd-wait.sh "${APP_NAME}" "${ARGO_NAMESPACE}" "${ARGOCD_WAIT_TIMEOUT:-900}" "$(git rev-parse HEAD)"
 else
-  if oc get application "${APP_NAME}" -n "${ARGO_NAMESPACE}" >/dev/null 2>&1; then
+  # Only NotFound means Argo does not own the release. Any other failure (no token, no RBAC on
+  # openshift-gitops, the API away) must not read as "absent": Helm would install under an
+  # Application whose selfHeal undoes it (review finding).
+  probe_err=$(oc get application "${APP_NAME}" -n "${ARGO_NAMESPACE}" -o name 2>&1 >/dev/null) && app_state=present || {
+    case "$probe_err" in
+      *NotFound*|*"not found"*) app_state=absent ;;
+      *) echo "ERROR: cannot tell whether Application ${APP_NAME} exists: ${probe_err}" >&2; exit 1 ;;
+    esac; }
+  if [ "$app_state" = present ]; then
+    # A sync mid-run (a hook Job) would re-create objects the finalizer is deleting, and Helm cannot
+    # adopt them; let the operation finish first, bounded.
+    for _ in $(seq 1 20); do
+      [ "$(oc get application "${APP_NAME}" -n "${ARGO_NAMESPACE}" -o jsonpath='{.status.operationState.phase}' 2>/dev/null)" = Running ] || break
+      echo "argocd  : a sync is running; waiting for it before the handover"; sleep 15
+    done
     echo "argocd  : deleting Application ${APP_NAME} — Helm takes the release over (the PVCs and the minted Secrets survive)"
     oc delete application "${APP_NAME}" -n "${ARGO_NAMESPACE}" --timeout=5m
     # the hook identity Argo's cascade leaves behind would refuse Helm's adoption

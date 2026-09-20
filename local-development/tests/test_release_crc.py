@@ -31,7 +31,13 @@ case "$(basename "$0") $*" in
   "oc patch --local "*)  cat "$STUB_APP_FILE" 2>/dev/null || echo '{}' ;;   # the merged object, as JSON on stdout
   "oc apply -f -")       cat > "$STUB_APPLIED" ;;
   "oc get application "*" -o json") cat "$STUB_APP_JSON" ;;
-  "oc get application "*) exit "${STUB_APP_EXISTS:-1}" ;;
+  "oc get application "*" -o name")
+      case "${STUB_APP_EXISTS:-notfound}" in
+        present) echo application.argoproj.io/group-sync-dashboard ;;
+        notfound) echo 'Error from server (NotFound): applications.argoproj.io "group-sync-dashboard" not found' >&2; exit 1 ;;
+        *) echo 'error: You must be logged in to the server (Unauthorized)' >&2; exit 1 ;;
+      esac ;;
+  "oc get application "*) exit 0 ;;
   "helm status "*)       exit "${STUB_HELM_EXISTS:-1}" ;;
   "podman run "*)        echo "$STUB_COMMIT" ;;
 esac
@@ -128,20 +134,44 @@ def test_allow_dirty_and_argocd_are_refused_either_way(lab):
 
 def test_local_values_variant_is_not_dirty_but_a_lookalike_is(lab):
     (lab["repo"] / "environments" / "crc-local.yaml").write_text("logLevel: INFO\n")
-    r = run(lab, "--values", "environments/crc-local.yaml", "--build-only")
+    r = run(lab, "--values", "environments/crc-local.yaml")
     assert r.returncode == 0, r.stderr
     assert "dirty" not in r.stdout + r.stderr
+    assert f"-f {lab['repo']}/environments/crc-local.yaml" in calls(lab)
     # a regex over porcelain would have exempted this file too: `.` matched any character
-    (lab["repo"] / "environments" / "crc-local.yaml").unlink()
     (lab["repo"] / "environments" / "crc-localXyaml").write_text("x: 1\n")
-    r = run(lab, "--values", "environments/crc-local.yaml", "--build-only")
+    r = run(lab, "--values", "environments/crc-local.yaml")
     assert r.returncode == 1 and "uncommitted changes" in r.stderr
 
 
 def test_a_values_file_under_local_development_is_still_dirty(lab):
     (lab["repo"] / "local-development" / "mine.yaml").write_text("x: 1\n")
-    r = run(lab, "--values", "local-development/mine.yaml", "--build-only")
+    r = run(lab, "--values", "local-development/mine.yaml")
     assert r.returncode == 1 and "uncommitted changes" in r.stderr
+
+
+def test_a_missing_helm_values_file_is_refused_before_any_build(lab):
+    r = run(lab, "--values", "environments/nope.yaml")
+    assert r.returncode == 1 and "no release values file" in r.stderr
+    assert "podman" not in calls(lab)
+
+
+def test_build_only_refuses_argocd_and_values_and_a_dash_revision_is_not_one(lab):
+    for args in (("--argocd", "main", "--build-only"), ("--build-only", "--argocd"), ("--values", "environments/crc.yaml", "--build-only")):
+        r = run(lab, *args)
+        assert r.returncode == 2 and "do not apply to a build" in r.stderr, args
+    r = run(lab, "--argocd", "-x")
+    assert r.returncode == 2 and "unknown argument: -x" in r.stderr
+    assert calls(lab) == ""
+
+
+def test_helm_mode_probe_accepts_only_notfound_as_absent(lab):
+    r = run(lab, STUB_APP_EXISTS="unauthorized")
+    assert r.returncode == 1 and "cannot tell whether Application" in r.stderr
+    assert "helm upgrade" not in calls(lab)
+    r = run(lab, STUB_APP_EXISTS="present")
+    assert r.returncode == 0, r.stderr
+    assert "oc delete application" in calls(lab) and "helm upgrade" in calls(lab)
 
 
 # --- the Argo values checks --------------------------------------------------------------------
@@ -150,8 +180,18 @@ def test_argocd_branch_fetch_failure_is_fatal(lab):
     _git(lab["repo"], "remote", "set-url", "origin", str(lab["tmp"] / "gone.git"))
     r = run(lab, "--argocd", "main", "--values", "environments/crc.yaml")
     assert r.returncode == 1, r.stdout + r.stderr
-    assert "could not fetch origin/main" in r.stderr
+    assert "branch main is not on origin, or origin is unreachable" in r.stderr
     assert "helm" not in calls(lab) and "oc" not in calls(lab)
+
+
+def test_argocd_branch_works_in_a_single_branch_clone(lab):
+    _git(lab["repo"], "config", "remote.origin.fetch", "+refs/heads/main:refs/remotes/origin/main")
+    _git(lab["repo"], "checkout", "-qb", "topic")
+    (lab["repo"] / "environments" / "topic.yaml").write_text("x: 1\n")
+    _git(lab["repo"], "add", "-A"); _git(lab["repo"], "commit", "-qm", "topic"); _git(lab["repo"], "push", "-q", "origin", "topic")
+    synced_status(lab, _git(lab["repo"], "rev-parse", "HEAD"))
+    r = run(lab, "--argocd", "topic", "--values", "environments/topic.yaml")
+    assert r.returncode == 0, r.stdout + r.stderr          # refs/remotes/origin/topic never exists here; FETCH_HEAD does
 
 
 def test_argocd_branch_values_must_exist_on_origin(lab):

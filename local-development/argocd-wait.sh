@@ -15,11 +15,12 @@ set -euo pipefail
 APP="${1:?application name}"; NS="${2:-openshift-gitops}"; TIMEOUT="${3:-900}"; EXPECTED="${4:-}"
 INTERVAL="${ARGOCD_WAIT_INTERVAL:-15}"
 start=$(date +%s)
+errfile=$(mktemp -t argocd-wait); trap 'rm -f "$errfile"' EXIT
 while :; do
   # A failed `oc` (the API away for a moment) must not end the waiter: under pipefail the process
   # substitution would exit before its echo, `read` would fail at EOF and set -e would take the
   # script with it, silently. So the pipeline is allowed to fail and the line is then empty.
-  read -r same rev_ok sync health phase revision msg < <( (oc get application "$APP" -n "$NS" -o json | python3 -c '
+  read -r same rev_ok sync health phase revision msg < <( (oc get application "$APP" -n "$NS" -o json 2>"$errfile" | python3 -c '
 import json, sys
 expected = sys.argv[1]
 a = json.load(sys.stdin); st = a.get("status", {}); sy = st.get("sync", {}); op = st.get("operationState", {})
@@ -30,7 +31,7 @@ print("current" if same else "stale", "rev-ok" if rev_ok else "rev-old", sy.get(
       op.get("phase", "?"), rev or "?", op.get("message", "").replace("\n", " ")[:100])
 ' "$EXPECTED") 2>/dev/null || true; echo)
   note=""
-  [ -z "${same:-}" ] && note="(application status unavailable) "
+  [ -z "${same:-}" ] && note="(application status unavailable: $(head -c 120 "$errfile" | tr -d '\n')) "
   [ "${same:-}" = stale ] && note="(status is for the previous spec) "
   [ "${rev_ok:-}" = rev-old ] && note="${note}(revision ${revision:-?}, want ${EXPECTED:0:10}) "
   printf '%s  %-10s %-12s %-10s %s%s\n' "$(date -u +%H:%M:%SZ)" "${sync:-?}" "${health:-?}" "${phase:-?}" "$note" "${msg:-}"
