@@ -79,8 +79,10 @@ Both flags ARE on (chart 3.9.1 defaults, read with `helm get values -a`):
 `status.generated: false` and none of the cluster's 11 `ValidatingAdmissionPolicy` objects is
 Kyverno's (they are OpenShift's own). The CRD says why: `spec.autogen.validatingAdmissionPolicy.enabled`
 — *"Enabled specifies whether to generate a Kubernetes ValidatingAdmissionPolicy. Optional. Defaults
-to false."* Generation is **per policy, opt-in**; the chart flag only permits it. (That policy also
-could not be translated anyway: its `resource.Post(...)` SubjectAccessReview has no VAP equivalent.)
+to false."* Generation is **per policy, opt-in**; the chart flag only permits it. (Whether that policy's
+`resource.Post(...)` SubjectAccessReview would survive as a VAP is a question the generator never asks: it
+checks its own RBAC, this opt-in and the pod-controller autogen only, and copies `variables`/`validations`
+verbatim — `kyverno-discovery-2026-09-20.md` §3.)
 
 Measured with a probe (§5): with `autogen.validatingAdmissionPolicy.enabled: true` Kyverno creates
 `vpol-<name>` and `vpol-<name>-binding`, owner-referenced to the policy, labelled
@@ -116,8 +118,10 @@ does not need — `v1alpha1` is the only version those CRDs serve. An issue on t
 ## What this settles for #170
 
 - Read `wgpolicyk8s.io/v1alpha2` only; treat `openreports.io` as optional.
-- Model a result with the nine fields above; key on `(source, policy, result)`; join namespaced CEL
-  policies by `namespace/name`.
+- Model a result with the nine fields above (a legacy row adds `rule`); the shipped key is
+  `(policy kind, policy, resource uid)` with the worse of two results keeping the row —
+  `kyverno-discovery-2026-09-20.md` §5 supersedes the `(source, policy, result)` key first written here; join
+  namespaced CEL policies by `namespace/name`.
 - Reports are per object: a "finding" is a `fail` result, an object is its `scope`, and `skip` is
   "not applicable", not a count.
 - Finding 10: no double reporting was observed, and VAP-enforced admissions may not be reported at

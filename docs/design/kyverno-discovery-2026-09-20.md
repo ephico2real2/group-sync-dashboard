@@ -20,7 +20,8 @@ admission, background, cleanup and reports controllers (`oc get pods -n kyverno`
 
 So finding 7's discovery order holds (`openreports.io/v1alpha1` first, then `wgpolicyk8s.io/v1alpha2`) and
 on this install the second is what answers. The research's "`policies.kyverno.io/v1alpha1`" is one of three
-served versions here; the reader lists policies through the discovery API's preferred version (`v1`).
+served versions here; the reader lists policies at `v1`, the discovery API's preferred version — pinned in
+`reader.py`, not discovered (§5).
 
 ## 2. The reports and what is in them
 
@@ -42,7 +43,9 @@ true`, `validationFailureAction: Audit`). Two of them produce all 667 of the 673
 controller's log says why, 20 times: *"reports-controller is missing RBAC to list/watch this resource —
 grant it via reportsController.rbac.clusterRole.extraResources"* (`groups.user.openshift.io is forbidden`),
 while the policies' own status says only `Ready`. A live policy whose kind cannot be scanned is a state the
-page must show, like truncation. The module does not read the legacy family (#165's scope) — but it must
+page must show, like truncation — shipped for the CEL kinds only, as the policy's failing
+`RBACPermissionsGranted` condition message (`reader.py` `policy_view`); for the legacy family it is not shown in
+this release. The module does not read the legacy family (#165's scope) — but it must
 **say** it is there: a page that showed 9 results on a cluster carrying 676 would read as a clean cluster.
 "N results from the deprecated `ClusterPolicy`/`Policy` family are not shown; the API says that family
 *will be removed in a future release*" (its `deprecationWarning`; no version is named — the research
@@ -99,22 +102,32 @@ this scrape), `kyverno_policy_results_total` and `kyverno_validating_policy_resu
 
 ## 5. What this settles for the build
 
-- **Reader:** discover `openreports.io/v1alpha1`, else `wgpolicyk8s.io/v1alpha2` (here); LIST both report
-  kinds paginated, keep `results[].source` in the CEL set — `KyvernoValidatingPolicy` (measured),
+- **Reader:** read every SERVED report group — `openreports.io/v1alpha1`, `wgpolicyk8s.io/v1alpha2` (here
+  only the second) — and name the one carrying Kyverno's reports, never only the first found: which group a
+  cluster serves is decided by the CRDs installed, not by `--openreportsEnabled`, so a group another tool
+  installed must not mask the reports as "installed, 0 results" (review of #228, OB3; `reader.py` `read()`);
+  LIST both report kinds of each paginated, keep `results[].source` in the CEL set — `KyvernoValidatingPolicy` (measured),
   `KyvernoMutatingPolicy`, `KyvernoGeneratingPolicy`, `KyvernoImageValidatingPolicy` (the four constants of
   `pkg/utils/report/source.go` at v1.19.1; there is **no** `KyvernoDeletingPolicy` — a `DeletingPolicy`
   has no report path in `ToPolicyReportResult`) — plus `ValidatingAdmissionPolicy` / `MutatingAdmissionPolicy`
   rows whose `policy` is `vpol-<name>` / `mpol-<name>` (`generate-vap.go:34`, `generate-map.go:60`), shown as that policy's (§3); count `kyverno` as
   "not shown (deprecated family)" and anything else as unknown, never as deprecated.
-- **Store:** one row per `(cluster, source, policy, resource uid, result)` — `source` because a
-  `ValidatingPolicy` and a `MutatingPolicy` may share a name; `policy` as the wire string, which is
-  `namespace/name` for the namespaced kinds (`cache.MetaNamespaceKeyFunc`, `results.go:97`); the resource's
+- **Store:** one row per `(cluster, policy kind, policy, resource uid)` — the kind the result's `source` maps
+  to (`KyvernoValidatingPolicy` and a generated `ValidatingAdmissionPolicy` row both land under
+  `ValidatingPolicy`, §3; the kind, because a `ValidatingPolicy` and a `MutatingPolicy` may share a name);
+  `result` is NOT part of the key — two reports can name the same policy and resource (an admission report and
+  a background one) and the worse of two results keeps the row (`store.py` `replace_kyverno`); `policy` as the
+  wire string, which is `namespace/name` for the namespaced kinds (`cache.MetaNamespaceKeyFunc`,
+  `results.go:97`), a generated policy's `vpol-`/`mpol-` prefix stripped; the resource's
   `uid` (the report's own name) so a deleted-and-recreated resource is a new row set — with the `scope`'s
   `apiVersion`, `kind`, `namespace`, `name`, the result's `timestamp` (re-stamped by every background scan:
   221 results were re-stamped, none changed value, between the dump behind this record at 10:57 UTC and a
-  re-dump at 11:21 UTC — it is "last evaluated", not "first seen"), the `message`, `severity`, `category`, `properties.process`, `properties.exceptions` and
-  `properties.binding`; `rule` kept nullable for the day the CEL engine fills it, never part of the key.
-- **Definitions:** policies from the five `policies.kyverno.io` kinds through the preferred version, with
+  re-dump at 11:21 UTC — it is "last evaluated", not "first seen"), the `message`, `severity`, `category` and
+  `properties.process`. Not stored in this release: `rule` (the CEL engine writes none, finding 5, and the row
+  is never keyed by it), `properties.exceptions` and `properties.binding`.
+- **Definitions:** policies from the five `policies.kyverno.io` kinds and their five `Namespaced*` twins,
+  listed at `policies.kyverno.io/v1` — the preferred version on 1.19.1, pinned in `reader.py` rather than
+  discovered; a cluster serving no `v1` answers 404 and that kind reads as absent, said on the page — with
   `evaluation.admission/background`, `validationActions`, `failurePolicy` — the page says whether a policy
   can produce reports at all (`background: false` + `Audit` means admission-time only).
 - **Denials:** `validationActions: [Deny]` would build no report (finding 2) — the audit-log path stands;
