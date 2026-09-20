@@ -346,6 +346,54 @@ Outcome in one line: **#212 finished and #216 merged (the script's two managers,
   "Nightly" was a regex on the schedule's *name* (now the service's `cadence`); the drawer opened on load; a
   long label overlapped its value at 375 px. All six fixed; 375/768/1280 in both themes, no errors, no
   horizontal scroll, the unknown-run sentence. Published as an artifact for the operator; not committed.
+- **Operator**: "I love the design" — the mock committed as `docs/design/report-library-mock.html` (`240e25d`
+  on `feat/229-report-library`); the link words settled as "Generate this report →" / "Generate another →".
+  The implementation handed to a background fork (spec first: `docs/specs/SPEC_E1_report_library.md`).
+
+### #230 — cluster configuration as labelled Secrets; #119 answered (10:0x → 11:3x)
+
+- **Operator**: "did we extend authentication to other clusters with username/password?" Answered from the
+  code, posted on #119: tokens only (`ClusterConfig` has `tokenFile`/`tokenEnv`, no password field); the
+  chart mounts a fixed volume set so a remote entry's `tokenFile` names a path nothing mounts; #119's
+  design (PR #120) has neither P1 nor P2 built. **Operator**: a new direction — clusters as labelled Secrets,
+  Argo CD's model, a Cluster Configurations tab, GitOps parity. Researched and cited (Argo's
+  `argocd.argoproj.io/secret-type: cluster` contract, `argocd cluster add`'s `argocd-manager` SA, the
+  informer, the ApplicationSet cluster generator's label selection); issue **#230** written with the Secret
+  contract, discovery, the tab, the security stance and the S1/S2/S3 decomposition; S1 handed to a fork.
+- **Operator**: token renewal "the way Kubernetes does it". Researched: the OAuth server's
+  `grant_types_supported` measured on CRC as `authorization_code, implicit` — no refresh tokens, renewal is
+  re-authentication; `oc login`'s single request (`openshift-challenging-client`, `X-CSRF-Token`, the 302
+  fragment with `access_token`/`expires_in`); `accessTokenMaxAgeSeconds` default 86400; the kubelet's 80 %
+  rule and client-go's exec plugins (re-invoked on expiry or on a 401). **P2 redesigned** on #119: a
+  `CredentialProvider` module with an `OAuthPassword` provider, the token in memory only, the GroupSync poll
+  as the health call.
+
+### #231 — the Flux example; #232 the handover; #212 closed (10:2x → 11:3x)
+
+- `61999c2` (10:2x) — `examples/flux/helmrelease.yaml` (a `HelmRepository`, one `HelmRelease` per chart,
+  `dependsOn`); validated against the upstream `helm.toolkit.fluxcd.io/v2` / `source.toolkit.fluxcd.io/v1`
+  CRD schemas (jsonschema, the CRDs fetched from the controllers' repositories); each `values` rendered with
+  its chart at the pinned version; the chart README's "Deploying with Flux or Kustomize" (chart 0.41.1 — a
+  packaged README, the CI predicate excludes only Chart.yaml). Flux is not on CRC; the apply is not measured
+  and every document says so.
+- `7158542` (11:1x) — **the three seats** (`docs/REVIEW_flux_example.md`). **Accepted** OB3 C4: `crds:
+  CreateReplace` removed — the openshift-grafana chart's `crds/` contract is "only when absent", OLM owns the
+  CRDs once the operator is in, and helm-controller force-applies them on every upgrade (read at the v1.6.4
+  source); the orchestrator's own draft had documented the hazard instead of removing it — **retracted**.
+  **Accepted** OB3 C3: helm-controller never re-renders a deployed release on the interval, so the
+  `dependsOn` order is load-bearing — said. **Accepted** Codex/Grok/OB3 C8: `timeout: 15m` on the grafana
+  release (the gate's ceiling 720 s vs helm-controller's 5 m default); Grok C8: cluster-scoped Flux ≥ 2.3,
+  OpenShift GitOps is Argo, the OperatorGroup clash; OB3 N1: `tests/test_flux_example.py` (fails on the
+  reviewed head); N2 the Chart.yaml history line. **Rejected** Grok C2 (pin 0.41.1 — unpublished; the example
+  must install when read). 929 passed, 14 skipped; helm lint clean.
+- `79a9d68` (11:3x) — **#231 merged** on the head's green rollup after a merge of main (BEHIND); **#212
+  closed** — Helm, Argo CD, Kustomize, Flux all covered.
+- `88e401f` (11:0x) — **#232 merged**: `docs/HANDOVER_2026-09-20.md`, written when the operator's token was
+  nearly out, then ruled the **living state document** (updated by a small docs PR on every move; PR #234 is
+  update 1). **Found by the operator**: both forks had stopped while waiting on background work — the #229
+  fork's suite had finished (4 guard failures: the specs-index row, three type-scale guards) with nobody to
+  read it; restored from that point. Lesson written into both forks' briefs: never stop without a waiter
+  that wakes you; the orchestrator now watches each fork's suite file and hands the result back.
 
 ---
 
