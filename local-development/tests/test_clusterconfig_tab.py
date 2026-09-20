@@ -69,7 +69,7 @@ class _Host(ClusterClient):
             return copy.deepcopy(self.secrets[name])   # a fresh parse, as the API server's JSON is: a caller's edits do not reach the store
         raise ClusterError(UNREACHABLE, f"HTTP 404 on {path}: not found")
 
-    def _send(self, client, method, path, *, json=None):
+    def _send(self, client, method, path, *, json=None, secrets=()):
         self.calls.append((method, path))
         if self.refuse:
             raise ClusterError(FORBIDDEN, f"403 Forbidden on {method} {path}")
@@ -101,6 +101,7 @@ def _req(**kw) -> CreateRequest:
 class TestWriter:
     def test_the_secret_written_is_the_pages_twin_with_the_credential_substituted_and_parses_as_discovery_would(self):
         live, twin = secret_object(_req(), NS), secret_object(_req(), NS, redact=True)
+        assert json.loads(secret_object(_req(token="  padded-token-1234  "), NS)["stringData"]["config"])["bearerToken"] == "padded-token-1234"   # stored as validate reads it
         assert live["metadata"] == twin["metadata"] == {
             "name": "gsd-cluster-west", "namespace": NS,
             "labels": {SECRET_TYPE_LABEL: "cluster", "environment": "prod"},
@@ -204,8 +205,9 @@ class TestWriter:
             def _send(self, client, method, path, *, json=None, secrets=()):
                 self.calls.append((method, path))
                 import json as _json
+                # the echo puts the body's token ACROSS the 200-character cut, as the first half did
                 return ClusterClient._send(hc, httpx.Client(transport=httpx.MockTransport(
-                    lambda r: httpx.Response(422, text=("A" * 190) + _json.dumps(json))), base_url="https://host"),
+                    lambda r: httpx.Response(422, text=("A" * 190) + _json.loads(json["stringData"]["config"])["bearerToken"])), base_url="https://host"),
                     method, path, json=json, secrets=secrets)
         with pytest.raises(WriteFailed) as exc:
             create(_Cut(), NS, _req(token=token), host_name="c1", taken={}, viewer="root")
@@ -224,7 +226,7 @@ class TestWriter:
         """Round 2 (Grok C16): the PUT carries the resourceVersion it was read with; GitOps writing in
         between is a 409 from the API server — a named conflict, not 'unreachable'."""
         class _Conflict(_Host):
-            def _send(self, client, method, path, *, json=None):
+            def _send(self, client, method, path, *, json=None, secrets=()):
                 self.calls.append((method, path))
                 raise ClusterError(UNREACHABLE, f"HTTP 409 on {method} {path}: the object has been modified; please apply your changes to the latest version")
         host = _Conflict({"gsd-cluster-east": _secret()})
@@ -305,7 +307,7 @@ class TestWriter:
     def test_a_secret_without_our_label_is_never_touched_and_an_absent_one_is_named(self):
         plain = {"metadata": {"name": "other", "labels": {"app": "x"}}, "data": {}}
         host = _Host({"other": plain})
-        for fn in (lambda: rotate(host, NS, "other", "t", viewer="root", cluster="x"),
+        for fn in (lambda: rotate(host, NS, "other", "tok-12345678", viewer="root", cluster="x"),
                    lambda: delete(host, NS, "other", viewer="root", cluster="x")):
             with pytest.raises(WriteRefused) as exc:
                 fn()
@@ -482,6 +484,28 @@ class TestApi:
         c, *_ = rig
         assert c.get("/api/clusterconfigs", headers=H("root")).json()["secrets"]["writes"] is True
 
+    def test_a_rotate_body_with_a_field_the_shape_does_not_carry_is_refused_by_name(self, rig):
+        """Round 2 (OB2 C5): `metadata`/`stringData` beside `token` were dropped silently and the
+        caller answered 200 — against the promise that a field the shape does not carry is refused."""
+        c, app, host, settings = rig
+        before = list(host.calls)
+        r = c.put("/api/clusterconfigs/east/credential", headers=H("root"),
+                  json={"token": "tok-12345678", "metadata": {"namespace": "kube-system"}, "stringData": {"server": "https://evil"}})
+        assert r.status_code == 422 and "metadata" in r.json()["detail"] and "stringData" in r.json()["detail"], r.text
+        assert host.calls == before
+
+    def test_a_post_that_lost_the_race_is_secret_exists_not_unreachable(self, rig):
+        """Round 2 (OB2 C16): two creates that both passed the 404 probe — the second is the API
+        server's 409, which read `502 unreachable: HTTP 409 …` cut mid-sentence."""
+        c, app, host, settings = rig
+        def lost_race(client, method, path, *, json=None, secrets=()):
+            host.calls.append((method, path))
+            raise ClusterError(UNREACHABLE, f"HTTP 409 on {method} {path}: secrets \"gsd-cluster-west\" already exists")
+        host._send = lost_race    # the instance the rig wired into the app; restored by the fixture's teardown
+        r = c.post("/api/clusterconfigs", json=self.BODY, headers=H("root"))
+        assert r.status_code == 409 and r.json()["detail"].startswith("secret-exists:"), r.text
+        assert TOKEN not in r.text
+
     def test_rotate_and_delete_are_for_secret_clusters_only(self, rig):
         c, app, host, settings = rig
         assert c.put("/api/clusterconfigs/nope/credential", json={"token": "t"}, headers=H("root")).status_code == 404
@@ -642,6 +666,17 @@ class TestClusterConfigTier:
         assert [c["id"] for c in body["clusters"]]                            # the cards are there to read
         assert [r.status_code for r in self._writes(rig, "viewer")] == [403, 403, 403, 403]
         assert rig.get("/api/whoami", headers=H("viewer")).json()["clusterconfig"] == {"view": True, "manage": False}
+
+    def test_whoami_answers_manage_from_its_own_question_for_a_manage_only_reader(self, rig):
+        """Round 2 (OB2 C4): `manage` was derived `false` whenever `view` was — a composition the ruling
+        forbids — so the strip and the write routes disagreed for a reader granted `create secrets`
+        without `get secrets`. Each level is its own answer; the page still shows no control without
+        the page."""
+        rig.app.state.clusterconfig_view_resolver = _MapResolver({"root": "all", "viewer": "all"})
+        rig.app.state.clusterconfig_manage_resolver = _MapResolver({"root": "all", "writer": "all"})
+        assert rig.get("/api/whoami", headers=H("writer")).json()["clusterconfig"] == {"view": False, "manage": True}
+        assert rig.get("/api/clusterconfigs", headers=H("writer")).status_code == 403
+        assert rig.post("/api/clusterconfigs/test", json=self.BODY, headers=H("writer")).status_code == 200
 
     def test_the_administrator_holds_both_levels(self, rig):
         assert rig.get("/api/clusterconfigs", headers=H("root")).json()["can"] == {"view": True, "manage": True}

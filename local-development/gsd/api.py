@@ -1240,6 +1240,9 @@ def build_app(
             """SPEC_S2 C3: replace the bearer token in place; Secret-sourced clusters only."""
             from .clusterconfig import writer
             viewer, namespace, host_client = _writes_gate(request)
+            # ONE key. Refused by name like the create body's (the rule above): a `metadata` or a
+            # `stringData` here was dropped silently, and the caller told they got it (round 2, OB2 C5).
+            _reject_unknown("body", body, {"token"})
             cluster_id, secret = _secret_cluster(name)
             try:
                 writer.rotate(host_client, namespace, secret, str(body.get("token") or ""), viewer=viewer, cluster=cluster_id)
@@ -2794,10 +2797,13 @@ def build_app(
             # an auditor must not learn the surface exists by being refused by it. Both levels
             # ride the same cached resolvers the routes ask, so the strip and the routes cannot
             # disagree. Absent for an unauthenticated reader, who has no tab either.
-            cc_view = _clusterconfig_tier(request, "view") == TIER_ALL
+            # EACH LEVEL FROM ITS OWN QUESTION, never derived from the other (the ruling: a level is
+            # its own SAR and composes nothing). `manage` used to read `false` whenever `view` did, so
+            # the strip and the write routes disagreed for a reader granted `create secrets` without
+            # `get` (round 2, OB2 C4). The page still renders no write control without the page.
             out["clusterconfig"] = {
-                "view": cc_view,
-                "manage": _clusterconfig_tier(request, "manage") == TIER_ALL if cc_view else False,
+                "view": _clusterconfig_tier(request, "view") == TIER_ALL,
+                "manage": _clusterconfig_tier(request, "manage") == TIER_ALL,
             }
         return out
 

@@ -6700,6 +6700,32 @@ class TestClusterConfigPage:
         twin = _yaml.safe_load(page.locator("#cc-yaml").inner_text())
         assert twin["metadata"]["labels"]["note"] == "line1\nline2\ttab\r"
 
+    def test_a_poll_whose_only_change_is_a_finding_repaints_the_tab(self, page, cc_rig):
+        """Round 2 (OB2 C11): removing `data.clusterconfigs` from the fingerprint killed NO test — a new
+        cluster also changes whoami's `visibility.clusters`, so that repaint rode another payload. A
+        finding rides nothing else; this is the test the mutant fails."""
+        from gsd.clusterconfig.parser import Finding
+        base, host, settings = cc_rig
+        _open_as(page, base, "root")
+        page.click("#tab-clusters"); page.wait_for_selector("#cc-findings")
+        assert "No malformed Secrets" in page.locator("#cc-findings").inner_text()
+        settings.cluster_registry.replace(settings.cluster_registry.discovered(),
+                                          [Finding(secret="gsd-cluster-bad", code="config-not-json", detail="Expecting value: line 1 column 1")],
+                                          at="2026-09-20T16:07:00Z")
+        page.evaluate("() => refresh({ auto: true })")
+        page.wait_for_function("() => document.getElementById('cc-findings').innerText.includes('gsd-cluster-bad')")
+
+    def test_a_null_whoami_on_a_poll_paints_loading_on_the_tab_never_the_refusal(self, page, cc_rig):
+        """Round 2 (OB2 C3): `whoami: get(...).catch(() => null)` is assigned unconditionally, so a poll
+        whose whoami failed left `data.whoami` null — and render() painted the refusal card for an
+        administrator until the next poll. Indeterminate is "Loading…", the KPI page's rule."""
+        base, host, settings = cc_rig
+        _open_as(page, base, "root")
+        page.click("#tab-clusters"); page.wait_for_selector("#cc-cluster-east")
+        page.evaluate("() => { data.whoami = null; render(); }")
+        text = page.locator("#main").inner_text()
+        assert "Loading" in text and "Withheld, not empty" not in text, text
+
     def test_a_double_click_on_create_sends_one_request(self, page, cc_rig):
         """Round 2 (Grok C16): the second click's POST answered `secret-exists` and overwrote the
         'created' sentence with a failure for a Secret that had just been written."""

@@ -86,7 +86,7 @@ def secret_object(req: CreateRequest, namespace: str, *, redact: bool = False) -
     if req.credential_kind == "oauth":
         config["oauth"] = {"username": "<redacted>", "password": "<redacted>"}
     else:
-        config["bearerToken"] = "<redacted>" if redact else (req.token or "")
+        config["bearerToken"] = "<redacted>" if redact else (req.token or "").strip()   # as validate and rotate read it
     labels = {SECRET_TYPE_LABEL: SECRET_TYPE_CLUSTER, **{str(k): str(v) for k, v in (req.labels or {}).items()}}
     return {
         "apiVersion": "v1", "kind": "Secret",
@@ -188,6 +188,10 @@ def create(host_client: ClusterClient, namespace: str, req: CreateRequest, *, ho
         try:
             host_client._send(client, "POST", _path(namespace), json=obj, secrets=(req.token, obj["stringData"]["config"]))
         except ClusterError as exc:
+            # Two creates that both passed the 404 probe: the second is the API server's 409, the same
+            # refusal the probe would have given (round 2, OB2 C16 — it read "unreachable: HTTP 409 …").
+            if exc.message.startswith("HTTP 409"):
+                raise WriteRefused("secret-exists", f"Secret {name} already exists in {namespace}", conflict=True) from exc
             raise _failed(exc, req.token, obj["stringData"]["config"]) from exc
     log.info("cluster Secret %s created by %s for cluster %s", name, viewer, req.name)
     return name

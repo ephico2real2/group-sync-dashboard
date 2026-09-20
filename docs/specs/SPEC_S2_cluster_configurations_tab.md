@@ -147,6 +147,15 @@ during implementation is written back under "Orchestrator's notes", in the same 
 - **The test fake stores what the API server stores.** `_Host` folds `stringData` into `data` (base64)
   on every POST/PUT and keeps no `stringData`, so a create → rotate → rediscover round trip in a test
   is the production shape (Codex C13 on round 1: the fake used to lose every key but `config`).
+- **Round 2 (four seats on the merged head — `docs/REVIEW_cluster_configurations_tab.md`).** One redactor,
+  `kube.redact_text`, replaces a secret's raw value and its JSON spellings; `_send` takes the body's secrets and
+  redacts before the 200-character cut; a bearer token under eight characters is refused as a typo. `validate()`
+  refuses label keys and values by Kubernetes' own rules, naming the key. The rotate body is held to its one key.
+  A 409 from the API server is a named conflict — `secret-changed` on rotate, `secret-exists` on create — never
+  "unreachable". `/api/whoami` answers `manage` from its own question, never derived from `view`. The tab
+  paints "Loading…" when whoami is null (a poll whose whoami failed), never the refusal — a measured defect,
+  distinct from the retracted cold-URL flash. One Create in flight. `y()` is `JSON.stringify`. The
+  fingerprint's entry has the test that actually needs it (a finding-only poll).
 
 ## Contract
 

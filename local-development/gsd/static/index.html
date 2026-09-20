@@ -6470,8 +6470,17 @@ function render() {
   } else if (view.page === "clusters") {
     // Reached by URL without the level: the refusal card, not the page — and not a fetch either.
     // The tab is absent for this reader, so arriving here is a pasted link or a stale bookmark.
-    main.innerHTML = ccMayView() ? clusterConfigPage() : refusalCard("Cluster Configurations", CLUSTERS_REFUSAL);
-    if (ccMayView()) wireClusterConfig();
+    // But NEVER on silence (the KPI rule): a null whoami — a poll whose whoami request failed keeps
+    // null for it — is indeterminate, and a refusal is a claim about the person. Measured (round 2,
+    // OB2 C3): render() with whoami null painted the refusal card for an administrator on the tab.
+    // (A cold URL never reaches here before whoami: render() runs after the whole boot fetch —
+    // measured too, which is why an earlier "flash" hypothesis was retracted.)
+    if (!readerTierKnown()) {
+      main.innerHTML = `<section class="card"><h2>Cluster Configurations</h2><div class="empty-note">Loading…</div></section>`;
+    } else {
+      main.innerHTML = ccMayView() ? clusterConfigPage() : refusalCard("Cluster Configurations", CLUSTERS_REFUSAL);
+      if (ccMayView()) wireClusterConfig();
+    }
   } else if (view.page === "kpi") {
     // The same tier rule as the Overview, in the same words: the page is about the clusters and
     // the dashboard's own pods, and answers nothing a reader can ask about themselves. Keyed on the

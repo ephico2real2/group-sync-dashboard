@@ -134,9 +134,37 @@ Reporting `trusted-bundle` for a retired row would state a fact the store does n
 Secret polling when it is next free, that is a new finding against this reading and the row's `retired` flag is
 the thing to measure first.
 
-## Round 2 — the seats on the merged, fixed head
+## Round 2 — four seats on `aac7f4e` (the merged, fixed head)
 
-Filled in below when the seats return.
+Cursor Grok 4.6 (ask mode, from source), Codex GPT-5.6 xhigh (an export with the venv; executable probes),
+**OB2 — Fable 5.1, Claude Code Agent** (an export; mutants, a driven page, a patch proved on a copy) and
+**OB3 — Opus 5** (an export; the deep claims). The brief was written before K5's retraction and still described
+a "Loading…" branch and a MutationObserver test on this head; three seats refuted that claim of the brief, not
+the head — recorded under C3 below.
+
+| # | Claim | Grok | Codex | OB2 | OB3 | Decision |
+|---|---|---|---|---|---|---|
+| C1 | Every write behind `require_clusterconfig_manage`, the read behind `…_view`; a revert to `require_admin_tier` fails a test | CONFIRMED | CONFIRMED (five mutants) | CONFIRMED (five mutants run, 4 failed each) | *pending* | Holds. The test was renamed (`…_is_the_manage_level_…`) — round 1's name said "administrator tier". |
+| C2 | An identity required — anonymous, or restrictions off: 403 before the API server | CONFIRMED | CONFIRMED | CONFIRMED | *pending* | Holds. |
+| C3 | No tab, no request without `view`; the refusal card by URL | CONFIRMED on the surface; REFUTED the brief's "Loading…" claim | same | same, and **one real defect**: `render()` with `data.whoami === null` — a poll whose whoami request failed keeps null — painted the refusal card for an administrator until the next poll | *pending* | The brief was stale against K5 (three seats). **OB2's null-whoami case accepted**: the branch paints "Loading…" when whoami is null (the KPI rule) — a *measured* defect this time, with a test that fails on the head; distinct from the retracted cold-URL flash, which OB2 also measured at zero paints before whoami. |
+| C4 | No `restrict` short-circuit, no composition, one definition | CONFIRMED | CONFIRMED (AST: nothing forbidden) | CONFIRMED in the tier; **one composition outside it**: whoami answered `manage: false` whenever `view` was false, so the strip and the routes disagreed for a reader granted `create` without `get` | *pending* | **Accepted**: whoami asks each level on its own; test with a manage-only reader. |
+| C5 | Writes only on labelled Secrets in the pod's namespace; the path and the body attacked | CONFIRMED | CONFIRMED (`../`, `%2E%2E`, `%2F`, values, retired, unknown → no write) | CONFIRMED for create/delete; **the rotate body** accepted `metadata`/`stringData` beside `token` and dropped them silently | *pending* | **Accepted**: `_reject_unknown("body", …, {"token"})` on rotate; test. |
+| C6 | One audit line per write, naming the person, verb and Secret | CONFIRMED | REFUTED the wording — the lines carry `req.name` / `req.server`, which ARE request fields | CONFIRMED | *pending* | **Accepted on the wording, snippet rejected**: the spec now says "never a credential-bearing field"; Codex's narrower lines dropped the cluster id and the server, which the audit needs. |
+| C7 | No credential anywhere, the echo forms included | REFUTED: a JSON-escaped token | REFUTED: JSON-escaped, `< 8` characters, and the 200-character cut happening BEFORE the writer's scrub | REFUTED: the same escaped forms and the short token | *pending* | **Accepted, one redactor**: `kube.redact_text` replaces the raw value and its JSON spellings (once/twice, ASCII and not), longest first; `_send` takes the body's secrets and redacts before truncating; a bearer under eight characters is refused as a typo (no cluster mints one) rather than dropping the floor. Tests: the spellings over an echoing host, a raw-UTF-8 echo, the truncation boundary through the real `_send`, the short token. |
+| C8 | The twin byte for byte | REFUTED: `y()` left a raw newline | REFUTED: the same, with PyYAML folding it to a space | CONFIRMED for every value the form can produce; the newline unreachable from an `<input>` and invalid in Kubernetes | *pending* | **Accepted, Codex's snippet**: `y()` is `JSON.stringify` — a JSON string is a YAML double-quoted scalar. And **the layer**: `validate()` refuses label keys and values by Kubernetes' own rules, naming the key (OB2 F4, Grok C16). |
+| C9 | `tls: null` retired-only; a live row's effective mode | CONFIRMED | CONFIRMED | CONFIRMED | *pending* | Holds — with the lab record's `retired=True` line cited. |
+| C10 | Rotate refuses an unparseable config; the fake stores `data` | CONFIRMED | CONFIRMED (round trip re-parses) | CONFIRMED | *pending* | Holds. |
+| C11 | The fingerprint entry; focus survival | CONFIRMED | CONFIRMED | **REFUTED on "which test fails"**: none — a new cluster also changes whoami's `visibility.clusters`, so that repaint rode another payload; a finding-only poll is what the entry alone carries | *pending* | **Accepted**: `test_a_poll_whose_only_change_is_a_finding_repaints_the_tab`, measured to fail on the mutant. |
+| C12 | 375 px | PLAUSIBLE (no browser) | PLAUSIBLE (Chromium blocked) | CONFIRMED, plus a 273-character error and a 63/63 chip | *pending* | Holds. |
+| C13 | Contrast 8.90 / 8.67 | CONFIRMED | CONFIRMED | CONFIRMED | *pending* | Holds. |
+| C14 | The chart and app switch | CONFIRMED | CONFIRMED | CONFIRMED | *pending* | Holds. |
+| C15 | The default's exception; no "administrator tier" claim left | REFUTED: `list_cluster_configs`'s docstring | REFUTED: the same, the test name, S1's CHANGELOG phrase | CONFIRMED | *pending* | **Accepted** all three; Codex's grep-test rejected (a phrase test pins prose, not behaviour). |
+| C16 | The next real use | 409 on rotate read "unreachable"; a double-click sent two POSTs; a 64-character key reached the wire | 409 is "not a release blocker" | the same 409 (on create too), the double-click, the key; the token stored unstripped | *pending* | **Accepted**: `secret-changed` on a rotate 409, `secret-exists` on a create 409, one Create in flight, labels validated, the token stripped on write. |
+
+**Rejected / routed.** Codex's C3 alternative ("paint Loading on the cold URL") — the cold URL never paints before
+whoami (OB2: 0 paints, whoami at 36.9 ms, first paint at 50.6 ms); the null-whoami guard covers the reachable case.
+Codex's C6 audit lines — see the row. Codex's C15 grep test — see the row. OB2's "no length floor" on the redactor —
+replaced by refusing the short token at validate, so the floor never meets a real credential.
 
 ## Re-validation
 
