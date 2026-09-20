@@ -1,6 +1,6 @@
 # The trailing tabs at the bar on CRC — the walk behind #153
 
-Deployed head `286c222` (`feat/153-tab-uplifts` after its review pass, through the Argo Application; `running : 286c22294d —
+Deployed head `78816f6` (`feat/153-tab-uplifts` after its three review passes, through the Argo Application; `running : 78816f628b —
 verified in-pod`), walked with `walk.py` through the OAuth proxy as kubeadmin, Chromium 1280×900 then
 375×740. Every line below is the script's own output.
 
@@ -12,7 +12,7 @@ verified in-pod`), walked with `walk.py` through the OAuth proxy as kubeadmin, C
 | the Users problem tiles carry the rail when they hold anyone | `['Logged in, no synced group', '53', 'rail'], ['Synced, never logged in', '2', 'rail']` (the two others: no rail) |
 | the provider is a chip | `provider chips on the first row ['ldap-local']` |
 | the review tile's rail | `bindings: … ['Need review', '6', 'rail'] …` |
-| the Usage footnote in three | `usage   : lead words ['Times', 'An interaction', 'Not logins.']` |
+| the Usage footnote in three, the base's words | `usage   : lead words ['Times', 'An interaction', 'These are not logins either:']` |
 | 375 px, every tab | `groups / users / bindings / usage no-x-overflow True` |
 | no uncaught error | `errors  : []` |
 
