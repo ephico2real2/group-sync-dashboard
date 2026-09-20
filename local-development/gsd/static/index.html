@@ -156,7 +156,7 @@ const STATES = {
 };
 
 const view = { page: "home", homeShow: {}, cluster: null, groupsync: null, groupFilter: "all", bindingFilter: "review",
-                reportPick: null, reportForm: {}, reportRun: null, reportSubmitting: false, reportPreview: "",
+                report: null, reportLanded: null, reportFocusRow: null, reportForm: {}, reportRun: null, reportSubmitting: false, reportPreview: "",
                 reportPreviewNames: [], reportPreviewCount: null,   // #143: the names behind the count
                 /* Free-text group search. A FILTER, so it lives here rather than in POSITION_KEYS —
                    same reasoning as groupFilter: it narrows what a page shows, it is not a place, and
@@ -222,7 +222,7 @@ let searchComposingIn = null;
    state are not: they live in `view` precisely because the page repaints on a timer (60s), one of them
    is a Set, and pushing an entry per sort click would bury the positions a reader wants Back to
    reach under a pile of them. */
-const POSITION_KEYS = ["page", "cluster", "groupsync", "group", "user", "ns"];
+const POSITION_KEYS = ["page", "cluster", "groupsync", "group", "user", "ns", "report"];
 
 function currentPosition() {
   const pos = {};
@@ -261,6 +261,17 @@ function applyPosition(pos) {
   view.group = pos.group || null;
   view.user = pos.user || null;
       view.ns = pos.ns || null;   // #167: the namespace page, the third drill-down peer
+  // #173: a selected report is a position (`#page=reports&report=<key>`): a link opens its form, Back
+  // closes it. It belongs to the Reports page the way a group belongs to the Groups page: any other
+  // page's position carries none — so leaving the tab closes the form, the next page's URL and its
+  // `from` are clean, and no other page's back control can name a report (review of #218: `&report=`
+  // rode on every later position, the Reports tab reopened the form, and a group's own back control
+  // read "← Groups and membership changes"). A different report drops the previous run's status — it
+  // belongs to the form it ran from — and closes the names dialog, which describes a selection no
+  // longer on screen: the #144 C6-D rule, whose guard below fires on a page change only.
+  const nextReport = view.page === "reports" ? (pos.report || null) : null;
+  if (nextReport !== view.report) { view.reportRun = null; closeNsPreview(); }
+  view.report = nextReport;
       view.alertPage = 1;   // #172: the alerts card's page is view state, never a position
   // `cluster` is part of the position, not context around it. Without it, Back after a cluster
   // switch restores a group name against whichever cluster is now selected — and group names
@@ -359,7 +370,7 @@ function goBack() {
       // entry: there was nothing behind it in this app, and a pushed entry would make the parent's own
       // back control point at the drill-down the reader just rose from.
       const toFleet = view.page === "overview" && view.cluster && !view.groupsync;
-      navigate({ group: null, user: null, groupsync: null, ns: null,
+      navigate({ group: null, user: null, groupsync: null, ns: null, report: null,
                  ...(toFleet ? { cluster: null } : {}) }, { replace: true });
   refresh();
 }
@@ -384,8 +395,12 @@ function backLabel() {
     // Nothing to return to — a pasted link. goBack() rises to the PARENT of where we are, so the
     // label has to describe that rather than a fixed string: on a GroupSync detail reached by
     // link, "all groups" named a page the button does not open.
+    if (view.report) return "← all reports";   // #173: the parent of a report is the catalogue
     return `← ${PAGE_LABEL[view.page] || "overview"}`;
   }
+  // #173: on the Reports page, the previous position was another report's form, or the catalogue.
+  if (view.page === "reports" && prev.report) return `← ${esc(reportTitle(prev.report))}`;
+  if (view.page === "reports" && view.report && prev.page === "reports") return "← all reports";
   // esc() on every one of these. They now arrive from the URL as well as from the cluster, and
   // this string is written into innerHTML by four callers — so a crafted hash plus one ordinary
   // click ran script in the reader's session. Reproduced with
@@ -1134,7 +1149,7 @@ function renderFilters() {
       // page but the one you were on was unreachable backwards. A drill-down is dropped
       // because it belongs to the page being left, not to the one being opened.
           // #172: the Overview tab opens the FLEET; a cluster is reached from a tile or the selector.
-          navigate({ page: b.dataset.nav, groupsync: null, group: null, user: null, ns: null,
+          navigate({ page: b.dataset.nav, groupsync: null, group: null, user: null, ns: null, report: null,
                      ...(b.dataset.nav === "overview" ? { cluster: null } : {}) });
       // PAINT THE DESTINATION FIRST, then fetch. refresh() used to await every endpoint
       // before rendering, and its first visible act dimmed the tab being LEFT — so the
@@ -2491,8 +2506,17 @@ function reportsPage() {
   if (!cat) return `<section class="card"><div class="empty-note">Loading…</div></section>`;
   if (cat.forbidden) return refusalCard("Reports", `Reports are documents about the cluster's own RBAC surface, its groups and its users.`);
   const reports = cat.reports || [];
-  const pick = reports.find((r) => r.name === view.reportPick) || reports.find((r) => r.enabled) || reports[0];
+  // #173: the form is a position the reader opens — no report selected means the catalogue alone. A
+  // key the catalogue does not carry (a stale link) opens nothing rather than the first report.
+  const pick = reports.find((r) => r.name === view.report && r.enabled) || null;
   return `${reportPickerCard(reports, pick, cat)}${pick ? reportFormCard(pick, cat) : ""}${reportRunsCard()}`;
+}
+
+// The catalogue's title for a report key, for the back control ("← Namespace access report"); the key
+// itself when the catalogue is not loaded, which is still a name the reader recognises.
+function reportTitle(key) {
+  const r = data.reportCatalog && (data.reportCatalog.reports || []).find((x) => x.name === key);
+  return r ? r.title : key;
 }
 
 // #147 reports directory: report name -> [category (rail/chip colour), chip label]. groupsync-health
@@ -2512,23 +2536,25 @@ const REPORT_KIND = {
 };
 
 function reportPickerCard(reports, pick, cat) {
+  const available = reports.filter((r) => r.enabled).length;
   return `<section class="card" id="report-picker">
-    <h2>Reports</h2>
+    <h2>Reports <span class="rp-chip rp-count">${available} available</span></h2>
     <div class="filterbar-note">Generated by the report service from a read-only copy of this dashboard's data
       (${cat.pdf && cat.pdf.enabled ? `PDF ${esc(cat.pdf.variant || "plain")} and HTML` : "HTML only"}). Every document
-      carries the sha256 of its data, the snapshot it was built from, and who generated it.</div>
+      carries the sha256 of its data, the snapshot it was built from, and who generated it.
+      <strong>Click a report</strong> — its form opens right below, already in view.</div>
     <div class="report-table-wrap">
       <table class="report-table" role="listbox" aria-label="Reports">
         <thead><tr><th class="rp-kcol">Kind</th><th>Report</th><th>What it shows</th></tr></thead>
         <tbody>
           ${reports.map((r) => {
             const [kcat, klabel] = REPORT_KIND[r.name] || ["access", "report"];
-            const on = pick && r.name === pick.name;
+            const on = !!pick && r.name === pick.name;   // a boolean: with no pick, `null` rendered aria-selected="null"
             return `<tr class="report-pick r-${esc(kcat)}${on ? " current" : ""}" id="report-pick-${esc(r.name)}"
                 data-report="${esc(r.name)}" role="option" aria-selected="${on}"
                 tabindex="${r.enabled ? "0" : "-1"}"${r.enabled ? "" : ` aria-disabled="true"`}>
               <td class="rp-kind"><span class="rp-chip k-${esc(kcat)}">${esc(klabel)}</span></td>
-              <td class="rp-name"><span class="rp-title">${esc(r.title)}</span></td>
+              <td class="rp-name"><span class="rp-title">${esc(r.title)}</span><span class="rp-key">${esc(r.name)}</span></td>
               <td class="rp-desc">${esc(r.summary)}${r.enabled ? "" : ` <span class="rp-off">(off: ${esc(r.values_key)})</span>`}</td>
             </tr>`;
           }).join("")}
@@ -2596,7 +2622,10 @@ function reportFormCard(spec, cat) {
   };
   const run = view.reportRun;
   const status = run ? reportRunStatus(run) : "";
-  return `<section class="card" id="report-form">
+  const [kcat] = REPORT_KIND[spec.name] || ["access"];
+  return `<section class="card report-panel r-${esc(kcat)}" id="report-form">
+    <div class="panelbar"><button type="button" class="back" id="report-back">${backLabel()}</button>
+      <span class="muted">${esc(spec.title)} · <span class="mono">${esc(spec.name)}</span></span></div>
     <h3>${esc(spec.title)}</h3>
     <div class="filterbar-note">${esc(spec.summary)}</div>
     <div class="report-fields">${spec.params.map(field).join("")}
@@ -2630,14 +2659,14 @@ function reportRunsCard() {
   const rows = r.runs || [];
   return `<section class="card" id="report-runs">
     <h3>Recent runs</h3>
-    ${rows.length === 0 ? `<div class="empty-note">No report has been generated yet.</div>` : `<table>
+    ${rows.length === 0 ? `<div class="empty-note">No report has been generated yet.</div>` : `<div class="scroll-x"><table>
       <thead><tr><th>requested</th><th>report</th><th>cluster</th><th>by</th><th>status</th><th>sha256</th><th></th></tr></thead>
       <tbody>${rows.map((x) => `<tr>
         <td class="mono">${esc(x.requested_at)}</td><td>${esc(x.report)}</td><td>${esc(x.cluster)}</td>
         <td>${esc(x.generated_by)}</td><td>${esc(x.status)}</td><td class="mono">${esc((x.sha256 || "").slice(0, 12))}</td>
         <td>${x.status === "done" ? (x.formats || []).concat(["json"]).map((f) =>
           `<button type="button" class="linkish" data-artifact="${esc(x.id)}" data-format="${esc(f)}">.${esc(f)}</button>`).join(" ") : ""}</td>
-      </tr>`).join("")}</tbody></table>`}
+      </tr>`).join("")}</tbody></table></div>`}
     ${r.truncated ? `<div class="truncation-note">Showing ${rows.length} of ${r.total} runs.</div>` : ""}
   </section>`;
 }
@@ -2753,23 +2782,39 @@ function clearNamespaceAccessSelectors() {
   closeNsPreview();   // empty-selection arm blanks the count; it does not close the names dialog
 }
 
+// #173: the click brings the form into view — no scrolling to find it. Landed by arithmetic rather than
+// scrollIntoView: measured on the mock, scroll-margin-top did not hold under a sticky bar and the panel's
+// title ended up beneath it. The bar's height counts only while it is sticky or fixed (today's header
+// scrolls away, so it is 0); a short form on a short page cannot scroll and correctly does not.
+function landReportForm() {
+  const form = $("report-form"); if (!form) return;
+  const bar = document.querySelector("header.top");
+  const pos = bar ? getComputedStyle(bar).position : "";
+  const shell = bar && (pos === "sticky" || pos === "fixed") ? bar.getBoundingClientRect().height : 0;
+  window.scrollTo({ top: form.getBoundingClientRect().top + window.scrollY - shell - 12, behavior: "smooth" });
+}
+
 function wireReports() {
   document.querySelectorAll(".report-pick").forEach((el) => {
     const choose = () => {
       if (el.getAttribute("aria-disabled") === "true") return;   // a <tr> is not natively disableable
       const next = el.dataset.report;
-      const changed = view.reportPick !== next;
+      const changed = view.report !== next;
       if (changed) clearReportPreview();                 // don't carry a count across reports
-      view.reportPick = next; view.reportRun = null; render();
+      navigate({ report: next });                         // #173: a position — a link, Back, Forward
+      // A click is an arrival even at the report already open: the reader who scrolled back up to the
+      // catalogue and clicked the highlighted row asked for its form, and an unchanged position must
+      // not leave it below the fold (review of #218, OB3 — measured: the form stayed at 1960 px on a
+      // 740 px viewport). Cleared so render()'s arrival rule lands it once more.
+      view.reportLanded = null;
+      render();                                           // lands the form (the arrival rule in render())
       if (changed && next === "namespace-access") schedulePreview(next);   // recompute a retained selection (V2-F1)
-      // #147 reports table: clicking a report snaps its form/running panel into view — the "clean way".
-      const form = $("report-form"); if (form) form.scrollIntoView({ behavior: "smooth", block: "start" });
     };
     el.onclick = choose;
     el.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); choose(); } };
   });
   document.querySelectorAll("[data-param]").forEach((el) => {
-    const spec = view.reportPick || (data.reportCatalog && data.reportCatalog.reports.find((r) => r.enabled) || {}).name;
+    const spec = view.report || (data.reportCatalog && data.reportCatalog.reports.find((r) => r.enabled) || {}).name;
     el.onchange = () => {
       const f = view.reportForm[spec] || (view.reportForm[spec] = {});
       if (el.dataset.param === "selectors" && el.dataset.selectorLabel) {
@@ -2792,6 +2837,10 @@ function wireReports() {
       }
     };
   });
+  const back = $("report-back");
+  // The catalogue that Back repaints has no #report-back, so render()'s by-id restore would drop the
+  // keyboard reader's focus on <body>; the row this form belongs to is where it goes (review of #173).
+  if (back) back.onclick = () => { view.reportFocusRow = view.report; goBack(); };
   const gen = $("report-generate");
   // Whether the click came from the keyboard-focused button matters at the END: the button is
   // disabled while the run is submitted (a disabled element cannot hold focus, so render()'s
@@ -2825,7 +2874,7 @@ function wireReports() {
 
 async function generateReport(refocus = false) {
   const cat = data.reportCatalog;
-  const spec = cat.reports.find((r) => r.name === view.reportPick) || cat.reports.find((r) => r.enabled);
+  const spec = cat.reports.find((r) => r.name === view.report) || cat.reports.find((r) => r.enabled);
   if (!spec || !view.cluster) return;
   const params = Object.assign({}, view.reportForm[spec.name] || {});
   const formats = [];
@@ -5112,6 +5161,18 @@ function render() {
   } else if (view.page === "reports") {
     main.innerHTML = reportsPage();
     wireReports();
+    // #173: the form is landed in view once per ARRIVAL at a report position — a click, a pasted
+    // link (whose form only exists once the catalogue has arrived, a render later), Forward — and
+    // never on the poll's repaint of the same position. Measured on the deployed page: the click
+    // landed at 100 px, the same link on a fresh load left the form at 849 on an 800 px viewport.
+    const landed = view.report && $("report-form") ? view.report : null;
+    if (landed !== view.reportLanded) { view.reportLanded = landed; if (landed) landReportForm(); }
+    if (view.reportFocusRow && view.reportFocusRow !== view.report) {
+      // Back landed on the catalogue (no form): the row of the form just left takes the focus. Back to
+      // another report's form keeps its own #report-back through the by-id restore.
+      const row = view.report ? null : $(`report-pick-${view.reportFocusRow}`); view.reportFocusRow = null;
+      if (row) row.focus();
+    }
   } else if (view.page === "usage") {
     main.innerHTML = usagePage();
   } else if (view.page === "bindings") {
