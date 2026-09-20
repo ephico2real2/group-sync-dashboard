@@ -660,6 +660,9 @@ tbody tr:nth-child(even) td { background: var(--zebra); }
   display: inline-block; padding: 1px 7px; /* optical: a one-line chip */ margin: 0 var(--space-2) var(--space-2) 0;
   border: 1px solid var(--border); border-radius: var(--radius-pill);
   font-size: var(--text-sm); background: var(--zebra);
+  /* A token never breaks inside its pill: the table's auto layout allots the Provider column less than
+     its max-content width, and `ldap-local` split at its hyphen into a two-line pill (review of #153, OB3). */
+  white-space: nowrap;
 }
 
 /* A drillable name must LOOK drillable. Without this the usernames rendered as plain

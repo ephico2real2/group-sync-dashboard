@@ -5829,7 +5829,8 @@ class TestIdentityFirstLogin:
         assert "identity" in alice.inner_text()
         assert "approx." in dash.locator("tr[data-user='kubeadmin']").inner_text()
         assert "exact" not in alice.inner_text().lower()
-        assert "lookup" in alice.locator("span.chip").last.get_attribute("title"), "the chip's title states the caveat"
+        # the status cell's chip — the provider column carries chips of its own since #153
+        assert "lookup" in alice.locator("td:nth-child(2) span.chip").last.get_attribute("title"), "the chip's title states the caveat"
 
     def test_the_identities_note_names_the_state(self, dash):
         dash.locator("button[data-nav='users']").click()
@@ -6184,6 +6185,176 @@ def _reports_page(browser, base, user, fake_clock=False):
     page.goto(base)
     page.wait_for_selector('button.tab:text-is("Overview")', timeout=10_000)   # the nav renders for every tier
     return ctx, page, errors
+
+
+class TestTabUplifts:
+    """#153: the trailing tabs brought to the Namespace-audit bar — presentation only, every feature of
+    docs/design/tab-feature-contract.md kept. The Groups KPIs are the cluster's whole-set counts (the
+    Overview card's, never the rows on screen); a group name is a real button, so the keyboard reaches
+    the drill-down; the problem KPIs carry the warning rail only when they hold anyone."""
+
+    def test_the_groups_kpis_are_the_clusters_counts_not_the_filtered_rows(self, dash):
+        dash.locator("button[data-nav='groups']").click()
+        dash.wait_for_selector("#groups-kpis")
+        tiles = lambda: dash.evaluate("() => [...document.querySelectorAll('#groups-kpis .kpi')].map(k => [k.querySelector('.label').textContent, k.querySelector('.value').textContent, k.classList.contains('flag-warning')])")
+        assert tiles() == [["Groups on this cluster", "4", False], ["Empty", "2", True], ["Unattributed", "1", True]], tiles()
+        # the state filter narrows the rows and leaves the cluster's counts alone
+        dash.select_option("#f-state", "unattributed"); dash.locator("#f-state").dispatch_event("change")
+        dash.wait_for_function("() => document.querySelectorAll('tr[data-group]').length === 1")
+        assert tiles()[0] == ["Groups on this cluster", "4", False]
+        dash.select_option("#f-state", "all"); dash.locator("#f-state").dispatch_event("change")
+        dash.wait_for_function("() => document.querySelectorAll('tr[data-group]').length === 4")
+
+    def test_a_group_name_is_a_button_the_keyboard_can_drill_with(self, dash):
+        dash.locator("button[data-nav='groups']").click()
+        dash.wait_for_selector("tr[data-group] button.drill")
+        dash.focus("tr[data-group='app-ocp-rbac-alpha-ns-admin'] button.drill")
+        dash.keyboard.press("Enter")
+        dash.wait_for_function("() => view.group === 'app-ocp-rbac-alpha-ns-admin'")
+        assert "Owner" in dash.locator("#main").inner_text()                 # the group detail's KPI row
+        back = " ".join(dash.evaluate("() => { view.group = null; render(); return document.getElementById('main').textContent; }").split())
+        assert "keeps its colour when you filter" in back
+
+    def test_the_users_problem_kpis_carry_the_rail_only_when_they_hold_anyone(self, dash):
+        dash.locator("button[data-nav='users']").click()
+        dash.wait_for_selector("tr[data-user]")
+        flagged = dash.evaluate("() => [...document.querySelectorAll('.kpis .kpi')].map(k => [k.querySelector('.label').textContent, k.classList.contains('flag-warning'), k.querySelector('.value').textContent !== '0'])")
+        labels = [f[0] for f in flagged]
+        assert labels == ["Have logged in", "In a synced group", "Logged in, no synced group", "Synced, never logged in"], labels
+        for label, rail, nonzero in flagged:
+            assert rail == (nonzero and label in ("Logged in, no synced group", "Synced, never logged in")), (label, rail, nonzero)
+        # the provider is a chip, one per provider the person logged in through
+        assert dash.locator("tr[data-user='alice'] td:nth-child(3) .chip").all_inner_texts() == ["ldap-local"]
+        assert dash.locator("tr[data-user='kubeadmin'] td:nth-child(3) .chip").all_inner_texts() == ["developer"]
+
+    def test_the_groups_kpis_hide_for_a_never_polled_cluster_and_at_the_self_tier(self, page, scoped_server):
+        # Review of #225 (Codex, Grok): /api/clusters sends integer zeros for a cluster that has never been
+        # polled (`status` null, an empty group_state), and the first cut rendered them as 0 / 0 / 0; a
+        # narrowed reader's list is their own memberships, and the cluster's counts would say its size.
+        p = _open_as(page, scoped_server, "root")
+        p.locator("button[data-nav='groups']").click()
+        p.wait_for_selector("#groups-kpis")
+        shown = p.evaluate("""() => {
+            const cl = data.clusters.find(c => c.id === view.cluster);
+            const saved = Object.fromEntries(["status", "group_count", "empty_groups", "unattributed_groups"].map(k => [k, cl[k]]));
+            Object.assign(cl, { status: null, group_count: 0, empty_groups: 0, unattributed_groups: 0 }); render();
+            const visible = document.getElementById("groups-kpis") !== null;
+            Object.assign(cl, saved); render();
+            return [visible, document.getElementById("groups-kpis") !== null];
+        }""")
+        assert shown == [False, True], "a never-polled cluster rendered healthy-looking zero counts"
+        # the rails read the counts: none at zero
+        rails = p.evaluate("() => { const cl = data.clusters.find(c => c.id === view.cluster); const s = [cl.empty_groups, cl.unattributed_groups]; Object.assign(cl, { empty_groups: 0, unattributed_groups: 0 }); render(); const r = [...document.querySelectorAll('#groups-kpis .kpi')].map(k => k.classList.contains('flag-warning')); [cl.empty_groups, cl.unattributed_groups] = s; render(); return r; }")
+        assert rails == [False, False, False], rails
+        a = _open_as(page, scoped_server, "alice")
+        a.locator("button[data-nav='groups']").click()
+        a.wait_for_selector(".scope-banner")
+        assert a.locator("#groups-kpis").count() == 0
+
+    def test_the_groups_table_scrolls_inside_its_container_at_phone_width(self, dash):
+        dash.set_viewport_size({"width": 375, "height": 740})
+        dash.locator("button[data-nav='groups']").click()
+        dash.wait_for_selector("tr[data-group] button.drill")
+        assert dash.evaluate("() => document.documentElement.scrollWidth <= innerWidth")
+        box = dash.evaluate("() => { const t = document.querySelector('#main table'); const s = t.closest('.scroll-x'); return [t.scrollWidth <= s.clientWidth || s.scrollWidth > s.clientWidth, s.getBoundingClientRect().right <= innerWidth]; }")
+        assert box == [True, True], box
+
+    BASE_FOOTNOTE = (
+        "Times render in the server's timezone; the Day column is a UTC date. That split is deliberate "
+        "rather than an oversight: the day is a stored bucket, computed server-side when the activity was "
+        "recorded, so re-labelling it local would misstate rows already written, and re-bucketing would "
+        "make the same column mean one thing before a deploy and another after. Near midnight a session "
+        "can therefore sit on the following UTC day. An interaction is one deliberate action — opening the "
+        "dashboard, switching tab, drilling in, changing a filter — not one HTTP request: the page refreshes "
+        "itself every 60s and counting those measured how long a tab was left open rather than whether "
+        "anyone used it. Reading time is invisible, so a long look at one page counts once. These are not "
+        "logins either: the proxy owns this dashboard's session, so nothing here records a sign-in to it. "
+        "Logins to the cluster are a separate record with a separate source — the oauth-server's own log — "
+        "and they are on the Logins tab.").split()
+
+    def test_the_usage_footnote_keeps_the_bases_words(self, browser, reporting_server):
+        # Review of #225 (OB3; Codex): three paragraphs, the base's words — the lead-ins are the sentences' own
+        # first words in <strong>, nothing dropped ("Not logins. The proxy…" had replaced "These are not logins
+        # either: the proxy…" — five words gone, a split inside a sentence). The `server` fixture runs without
+        # the proxy, so usage is "not being recorded" there; the reporting fixture records the visit.
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.goto(base + "#page=usage")
+            page.wait_for_function("() => document.body.dataset.page === 'usage' && document.body.innerText.includes('Times render')")
+            notes = page.evaluate("() => [...document.querySelectorAll('#main section.card:last-of-type .filterbar-note')].filter(n => !n.classList.contains('truncation-note')).map(n => n.innerText)")
+            assert len(notes) == 3, notes
+            assert " ".join(notes).split() == self.BASE_FOOTNOTE
+            leads = page.evaluate("() => [...document.querySelectorAll('#main section.card:last-of-type .filterbar-note > strong:first-child')].map(s => s.textContent)")
+            assert leads == ["Times", "An interaction", "These are not logins either:"], leads
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_the_users_and_bindings_rails_go_when_the_counts_are_zero(self, dash):
+        # Review of #225 (OB3): a head that flagged the problem tiles unconditionally passed every test above
+        dash.locator("button[data-nav='users']").click()
+        dash.wait_for_selector("tr[data-user]")
+        users = dash.evaluate("""() => { data.users.never_logged_in_members.count = 0;
+            data.users.users.forEach(u => { if ((u.group_count || 0) === 0 && u.logged_in !== false) u.group_count = 1; }); render();
+            return [...document.querySelectorAll('.kpis .kpi')].map(k => [k.querySelector('.label').textContent, k.querySelector('.value').textContent, k.classList.contains('flag-warning')]); }""")
+        assert users[2:] == [["Logged in, no synced group", "0", False], ["Synced, never logged in", "0", False]], users
+        dash.locator("button[data-nav='bindings']").click()
+        dash.wait_for_function("() => data.findings && data.findings.counts && document.body.innerText.includes('Need review')")
+        # the rail follows the worst finding present: critical with a dangling binding, warning with unresolved only,
+        # none at zero — the same severities the sections' badges and the Overview tile carry (OB3, M8)
+        review = dash.evaluate("""() => { const c = data.findings.counts; const out = [];
+            for (const [d, u] of [[1, 0], [0, 2], [0, 0]]) { c.dangling = d; c.unresolved = u; render();
+              const k = [...document.querySelectorAll('.kpis .kpi')].find(k => k.querySelector('.label').textContent === 'Need review');
+              out.push([k.querySelector('.value').textContent, k.classList.contains('flag-critical'), k.classList.contains('flag-warning'), k.querySelector('.value').classList.contains('muted')]); }
+            return out; }""")
+        assert review == [["1", True, False, False], ["2", False, True, False], ["0", False, False, True]], review
+
+    def test_every_groups_tile_holds_under_the_state_filter(self, dash):
+        # Review of #225 (OB3): all three tiles, not the first — a head that counted Empty from the rows on
+        # screen read 1 under the `unattributed` filter and passed the test above
+        dash.locator("button[data-nav='groups']").click()
+        dash.wait_for_selector("#groups-kpis")
+        tiles = lambda: dash.evaluate("() => [...document.querySelectorAll('#groups-kpis .kpi')].map(k => [k.querySelector('.label').textContent, k.querySelector('.value').textContent, k.classList.contains('flag-warning')])")
+        whole = [["Groups on this cluster", "4", False], ["Empty", "2", True], ["Unattributed", "1", True]]
+        for state, rows in (("unattributed", 1), ("empty", 2), ("all", SYNCED_GROUPS)):
+            dash.select_option("#f-state", state); dash.locator("#f-state").dispatch_event("change")
+            dash.wait_for_function(f"() => document.querySelectorAll('tr[data-group]').length === {rows}")
+            assert tiles() == whole, (state, tiles())
+
+    def test_a_provider_chip_is_one_line_at_every_width(self, dash):
+        # Review of #225 (OB3): the Provider column is allotted less than its max-content width by the table's
+        # auto layout, and `ldap-local` broke at its hyphen into a two-line pill — at 1280 px as at 375
+        for width in (1280, 375):
+            dash.set_viewport_size({"width": width, "height": 800})
+            dash.locator("button[data-nav='users']").click()
+            dash.wait_for_selector("tr[data-user] td:nth-child(3) .chip")
+            lines = dash.evaluate("""() => [...document.querySelectorAll('tr[data-user] td:nth-child(3) .chip')].map(c => {
+                const r = document.createRange(); r.selectNodeContents(c);
+                return [c.textContent, new Set([...r.getClientRects()].filter(b => b.width > 0).map(b => Math.round(b.top))).size]; })""")
+            assert lines and all(n == 1 for _, n in lines), (width, lines)
+            assert dash.evaluate("() => document.documentElement.scrollWidth <= innerWidth")
+
+    def test_the_owner_note_says_how_the_dot_is_coloured(self, dash):
+        # Review of #225 (Codex, Grok): crSlot() indexes the provider label in the cluster's sorted, flattened
+        # provider list — not the CR's position, which the first sentence claimed
+        dash.locator("button[data-nav='groups']").click()
+        dash.wait_for_selector("tr[data-group]")
+        note = dash.locator("#main .filterbar-note").filter(has_text="Owner").inner_text()
+        assert "provider label's position in the cluster's full sorted provider list" in note and "CR's position" not in note
+
+    def test_the_logins_provider_is_a_chip(self, dash):
+        dash.locator("button[data-nav='logins']").click()
+        dash.wait_for_function("() => [...document.querySelectorAll('#main h3')].some(h => h.textContent === 'Every attempt')")
+        rows = dash.locator("#main section.card:has(h3:text-is('Every attempt')) table tbody tr")
+        dash.wait_for_function("() => document.querySelector('#main section.card h3') !== null")
+        assert rows.count() >= 1 and rows.first.locator(".chip.mono").count() >= 1
+
+    def test_the_bindings_review_kpi_carries_the_rail_when_anything_needs_one(self, dash):
+        dash.locator("button[data-nav='bindings']").click()
+        dash.wait_for_selector(".kpis .kpi")
+        review = dash.evaluate("() => { const k = [...document.querySelectorAll('.kpis .kpi')].find(k => k.querySelector('.label').textContent === 'Need review'); return [k.querySelector('.value').textContent, k.classList.contains('flag-critical') || k.classList.contains('flag-warning')]; }")
+        assert review[1] == (review[0] != "0"), review     # the severity itself: the rails-at-zero test below
 
 
 class TestReportsTab:
