@@ -2,7 +2,11 @@
 {{- range $s := .Values.reporting.schedules }}
 ---
 # One CronJob per reporting.schedules[] entry: the report image's trigger module POSTs a run with
-# the service token and waits, so the Job's status IS the run's status.
+# the service token and waits, so the Job's status IS the run's status. The schedule is
+# cluster-agnostic (#149 R1): the service resolves every enabled cluster from its snapshot and the
+# Job waits for all of them; `cluster:` pins one. Formats default by origin in the service (R3:
+# html+json for a schedule); `formats:` overrides. `enabled: false` keeps the CronJob and suspends
+# it (R4) — definition, history and audit stay, nothing fires.
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -11,6 +15,12 @@ metadata:
   labels: {{- include "gsd.reportScheduleLabels" $ | nindent 4 }}
 spec:
   schedule: {{ $s.schedule | quote }}
+  # The literal word false, not Go-template truthiness: a quoted "false" or --set-string is a
+  # non-empty, truthy string, and `not` would leave a paused schedule firing (the window's own
+  # scar, P4 C6/F3; review of PR #220).
+  {{- if and (hasKey $s "enabled") (eq (toString $s.enabled) "false") }}
+  suspend: true
+  {{- end }}
   {{- $window := ($.Values.reporting | default dict).window | default dict }}
   {{- if eq (include "gsd.reportWindowEnabled" $) "true" }}
   # Fire the cron in the reporting window's zone so its schedule times land INSIDE the window; without
@@ -25,7 +35,10 @@ spec:
   startingDeadlineSeconds: 600
   jobTemplate:
     spec:
-      backoffLimit: 1
+      # Never retried by Kubernetes: a retry pod would POST the whole fan-out again after a 202 and
+      # render every cluster twice. A failed run is failed; the next fire is the retry. The trigger
+      # repeats, in-process, only a POST that never reached the service (review of PR #220).
+      backoffLimit: 0
       activeDeadlineSeconds: 900
       template:
         metadata:
@@ -55,18 +68,27 @@ spec:
                 - {{ include "gsd.reportUrl" $ }}
                 - --report
                 - {{ $s.report | quote }}
+                {{- with $s.cluster }}
                 - --cluster
-                - {{ $s.cluster | quote }}
+                - {{ . | quote }}
+                {{- end }}
                 - --schedule
                 - {{ $s.name | quote }}
                 - --wait
+                # sized from the Job's deadline, with a minute for the pod to start and report: the wait is
+                # N × render on one worker for a fan-out, and a timeout is a failed Job with no duplicate
+                - --timeout
+                - "840"
                 {{- with ($s.params | default dict) }}
                 - --params-json
                 - {{ toJson . | quote }}
                 {{- end }}
-                {{- range $f := ($s.formats | default (list "html" "pdf")) }}
+                {{- range $f := ($s.formats | default list) }}
+                {{- if ne (toString $f) "json" }}
+                # json is always written; the trigger's --format takes html and pdf only
                 - --format
                 - {{ $f | quote }}
+                {{- end }}
                 {{- end }}
                 {{- if $.Values.reporting.tls.enabled }}
                 - --ca-file

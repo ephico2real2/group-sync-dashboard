@@ -34,6 +34,20 @@ class ReportConfigError(Exception):
     pass
 
 
+def _formats_env(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
+    """A comma list of html/pdf (json is always written, so a listed `json` is accepted and dropped);
+    unset or empty keeps the default. Anything else is a startup error — a typo must not silently
+    turn every scheduled run into HTML-only or PDF-less."""
+    raw = os.environ.get(name, "")
+    if not raw.strip():
+        return default
+    parts = [p.strip().lower() for p in raw.split(",") if p.strip()]
+    unknown = sorted(set(parts) - {"html", "pdf", "json"})
+    if unknown:
+        raise SystemExit(f"{name}={raw!r}: unknown format(s) {unknown}; allowed html, pdf (json is always written)")
+    return tuple(dict.fromkeys(p for p in parts if p != "json"))
+
+
 def _int_env(name: str, default: int, *, lo: int, hi: int) -> int:
     raw = os.environ.get(name)
     if raw is None or raw == "":
@@ -134,6 +148,11 @@ class ReportSettings:
     scheduled_retention_days: int = 90
     manual_retention_days: int = 3
     manual_retention_max_runs: int = 500
+    #: Origin-aware formats (design R3): what a run stores when the request names none. A schedule
+    #: fires unattended and its document is printed from the HTML on demand, so no PDF by default;
+    #: a person's manual run gets the PDF. `json` is always written and is not listed here.
+    formats_scheduled: tuple[str, ...] = ("html",)
+    formats_manual: tuple[str, ...] = ("html", "pdf")
     marking: str = "Handling: internal — access review evidence"
     #: Which catalogue entries this deployment switched on (the chart derives loginActivity).
     enabled_reports: tuple[str, ...] = REPORT_NAMES
@@ -187,6 +206,8 @@ def load_report_settings() -> ReportSettings:
         scheduled_retention_days=_int_env("GSD_REPORT_SCHEDULED_RETENTION_DAYS", 90, lo=0, hi=3650),
         manual_retention_days=_int_env("GSD_REPORT_MANUAL_RETENTION_DAYS", 3, lo=0, hi=3650),
         manual_retention_max_runs=_int_env("GSD_REPORT_MANUAL_RETENTION_MAX_RUNS", 500, lo=0, hi=100000),
+        formats_scheduled=_formats_env("GSD_REPORT_FORMATS_SCHEDULED", ReportSettings.formats_scheduled),
+        formats_manual=_formats_env("GSD_REPORT_FORMATS_MANUAL", ReportSettings.formats_manual),
         marking=os.environ.get("GSD_REPORT_MARKING", ReportSettings.marking),
         enabled_reports=enabled,
         login_capture_enabled=_bool_env("GSD_REPORT_LOGIN_CAPTURE_ENABLED", False),
