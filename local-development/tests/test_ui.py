@@ -628,6 +628,15 @@ class TestGroupDrilldown:
             return { hasRowlink: !!table.querySelector('tr.rowlink'), pad: parseFloat(getComputedStyle(risk).paddingLeft), border: parseFloat(getComputedStyle(risk).borderLeftWidth),
                      pillFromCell: risk.querySelector('.risk-pill').getBoundingClientRect().left - risk.getBoundingClientRect().left, hover: getComputedStyle(risk).boxShadow }; }""")
         assert a["hasRowlink"] is False and a["pad"] == 10 and a["border"] == 4 and a["pillFromCell"] >= a["pad"] and "inset" not in a["hover"], a
+        # The cascade by construction, not by source order (Codex): a class-qualified table that DID carry a
+        # rowlink row keeps its own padding — .audit-table's 0, an earlier rule — because the rule is (0,0,1).
+        probe = dash.evaluate("""() => { const host = document.createElement('div'); host.style.cssText = 'position:absolute;left:-10000px;top:0';
+            host.innerHTML = '<table class="audit-table"><thead><tr><th>a</th></tr></thead><tbody><tr class="rowlink"><td>x</td></tr></tbody></table>'
+                           + '<table><thead><tr><th>a</th></tr></thead><tbody><tr class="rowlink"><td>x</td></tr></tbody></table>';
+            document.body.appendChild(host);
+            const pads = [...host.querySelectorAll('td')].map(td => parseFloat(getComputedStyle(td).paddingLeft));
+            host.remove(); return pads; }""")
+        assert probe == [0, 3], probe
 
     def test_members_are_listed_with_join_time(self, dash):
         self._open_group(dash, "app-ocp-rbac-alpha-ns-admin")
