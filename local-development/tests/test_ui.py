@@ -5829,7 +5829,8 @@ class TestIdentityFirstLogin:
         assert "identity" in alice.inner_text()
         assert "approx." in dash.locator("tr[data-user='kubeadmin']").inner_text()
         assert "exact" not in alice.inner_text().lower()
-        assert "lookup" in alice.locator("span.chip").last.get_attribute("title"), "the chip's title states the caveat"
+        # the status cell's chip — the provider column carries chips of its own since #153
+        assert "lookup" in alice.locator("td:nth-child(2) span.chip").last.get_attribute("title"), "the chip's title states the caveat"
 
     def test_the_identities_note_names_the_state(self, dash):
         dash.locator("button[data-nav='users']").click()
@@ -6211,7 +6212,8 @@ class TestTabUplifts:
         dash.keyboard.press("Enter")
         dash.wait_for_function("() => view.group === 'app-ocp-rbac-alpha-ns-admin'")
         assert "Owner" in dash.locator("#main").inner_text()                 # the group detail's KPI row
-        assert "keeps its colour when you filter" in dash.evaluate("() => { view.group = null; render(); return document.getElementById('main').textContent; }")
+        back = " ".join(dash.evaluate("() => { view.group = null; render(); return document.getElementById('main').textContent; }").split())
+        assert "keeps its colour when you filter" in back
 
     def test_the_users_problem_kpis_carry_the_rail_only_when_they_hold_anyone(self, dash):
         dash.locator("button[data-nav='users']").click()
@@ -6222,8 +6224,70 @@ class TestTabUplifts:
         for label, rail, nonzero in flagged:
             assert rail == (nonzero and label in ("Logged in, no synced group", "Synced, never logged in")), (label, rail, nonzero)
         # the provider is a chip, one per provider the person logged in through
-        assert dash.locator("tr[data-user='alice'] td:nth-child(3) .chip").count() >= 1
+        assert dash.locator("tr[data-user='alice'] td:nth-child(3) .chip").all_inner_texts() == ["ldap-local"]
+        assert dash.locator("tr[data-user='kubeadmin'] td:nth-child(3) .chip").all_inner_texts() == ["developer"]
+
+    def test_the_groups_kpis_hide_for_a_never_polled_cluster_and_at_the_self_tier(self, page, scoped_server):
+        # Review of #225 (Codex, Grok): /api/clusters sends integer zeros for a cluster that has never been
+        # polled (`status` null, an empty group_state), and the first cut rendered them as 0 / 0 / 0; a
+        # narrowed reader's list is their own memberships, and the cluster's counts would say its size.
+        p = _open_as(page, scoped_server, "root")
+        p.locator("button[data-nav='groups']").click()
+        p.wait_for_selector("#groups-kpis")
+        shown = p.evaluate("""() => {
+            const cl = data.clusters.find(c => c.id === view.cluster);
+            const saved = Object.fromEntries(["status", "group_count", "empty_groups", "unattributed_groups"].map(k => [k, cl[k]]));
+            Object.assign(cl, { status: null, group_count: 0, empty_groups: 0, unattributed_groups: 0 }); render();
+            const visible = document.getElementById("groups-kpis") !== null;
+            Object.assign(cl, saved); render();
+            return [visible, document.getElementById("groups-kpis") !== null];
+        }""")
+        assert shown == [False, True], "a never-polled cluster rendered healthy-looking zero counts"
+        # the rails read the counts: none at zero
+        rails = p.evaluate("() => { const cl = data.clusters.find(c => c.id === view.cluster); const s = [cl.empty_groups, cl.unattributed_groups]; Object.assign(cl, { empty_groups: 0, unattributed_groups: 0 }); render(); const r = [...document.querySelectorAll('#groups-kpis .kpi')].map(k => k.classList.contains('flag-warning')); [cl.empty_groups, cl.unattributed_groups] = s; render(); return r; }")
+        assert rails == [False, False, False], rails
+        a = _open_as(page, scoped_server, "alice")
+        a.locator("button[data-nav='groups']").click()
+        a.wait_for_selector(".scope-banner")
+        assert a.locator("#groups-kpis").count() == 0
+
+    def test_the_groups_table_scrolls_inside_its_container_at_phone_width(self, dash):
+        dash.set_viewport_size({"width": 375, "height": 740})
+        dash.locator("button[data-nav='groups']").click()
+        dash.wait_for_selector("tr[data-group] button.drill")
         assert dash.evaluate("() => document.documentElement.scrollWidth <= innerWidth")
+        box = dash.evaluate("() => { const t = document.querySelector('#main table'); const s = t.closest('.scroll-x'); return [t.scrollWidth <= s.clientWidth || s.scrollWidth > s.clientWidth, s.getBoundingClientRect().right <= innerWidth]; }")
+        assert box == [True, True], box
+
+    def test_the_usage_footnote_keeps_its_three_thoughts(self, browser, reporting_server):
+        # the `server` fixture runs without the proxy, so usage is "not being recorded" there; the reporting
+        # fixture has the proxy on and records the administrator's own visit
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.goto(base + "#page=usage")
+            page.wait_for_function("() => document.body.dataset.page === 'usage' && document.querySelectorAll('#main .filterbar-note').length >= 3")
+            notes = [" ".join(t.split()) for t in page.locator("#main .filterbar-note").all_inner_texts()]
+            assert [n.split(" ")[0] for n in notes[-3:]] == ["Times", "An", "Not"], notes[-3:]
+            assert "UTC date" in notes[-3] and "not one HTTP request" in notes[-2] and "oauth-server's own log" in notes[-1]
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_the_owner_note_says_how_the_dot_is_coloured(self, dash):
+        # Review of #225 (Codex, Grok): crSlot() indexes the provider label in the cluster's sorted, flattened
+        # provider list — not the CR's position, which the first sentence claimed
+        dash.locator("button[data-nav='groups']").click()
+        dash.wait_for_selector("tr[data-group]")
+        note = dash.locator("#main .filterbar-note").filter(has_text="Owner").inner_text()
+        assert "provider label's position in the cluster's full sorted provider list" in note and "CR's position" not in note
+
+    def test_the_logins_provider_is_a_chip(self, dash):
+        dash.locator("button[data-nav='logins']").click()
+        dash.wait_for_function("() => [...document.querySelectorAll('#main h3')].some(h => h.textContent === 'Every attempt')")
+        rows = dash.locator("#main section.card:has(h3:text-is('Every attempt')) table tbody tr")
+        dash.wait_for_function("() => document.querySelector('#main section.card h3') !== null")
+        assert rows.count() >= 1 and rows.first.locator(".chip.mono").count() >= 1
 
     def test_the_bindings_review_kpi_carries_the_rail_when_anything_needs_one(self, dash):
         dash.locator("button[data-nav='bindings']").click()

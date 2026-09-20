@@ -2012,8 +2012,12 @@ function groupsPage() {
   // and /metrics' numbers) — never counted from the rows on screen, which a state filter or the self
   // tier narrows (#153; the contract's whole-set rule). Empty and unattributed carry the warning rail
   // when they hold any group: each is a problem state the state filter can open.
+  // A never-polled cluster (`status` null — the same three-valued contract as `reachable`) has no counts,
+  // only an empty table's zeros; nothing is shown rather than a healthy-looking 0 / 0 / 0 (review of #225,
+  // Codex and Grok).
   const cl = (data.clusters || []).find((c) => c.id === view.cluster);
-  const kpis = cl && !self && typeof cl.group_count === "number" ? `<div class="kpis mb-5" id="groups-kpis">
+  const counted = cl && cl.status !== null && ["group_count", "empty_groups", "unattributed_groups"].every((k) => typeof cl[k] === "number");
+  const kpis = counted && !self ? `<div class="kpis mb-5" id="groups-kpis">
       <div class="kpi"><div class="label">Groups on this cluster</div><div class="value">${cl.group_count}</div></div>
       <div class="kpi${cl.empty_groups ? " flag-warning" : ""}"><div class="label">Empty</div><div class="value${cl.empty_groups ? "" : " muted"}">${cl.empty_groups}</div></div>
       <div class="kpi${cl.unattributed_groups ? " flag-warning" : ""}"><div class="label">Unattributed</div><div class="value${cl.unattributed_groups ? "" : " muted"}">${cl.unattributed_groups}</div></div>
@@ -2064,7 +2068,8 @@ function groupsPage() {
           </tr>`).join("")}</tbody>
         </table></div>
         <div class="filterbar-note mt-4">Select a group to see its members. The <strong>Owner</strong> dot's colour is
-          assigned by the CR's position in the cluster's full provider list, so a group keeps its colour when you filter.</div>`}
+          assigned by the provider label's position in the cluster's full sorted provider list (crSlot), so a group keeps
+          its colour when you filter.</div>`}
   </section>`;
 }
 
@@ -2274,7 +2279,7 @@ function usersPage() {
             <td><button type="button" class="drill">${esc(u.user_name)}</button>${u.full_name
               ? ` <span class="muted">· ${esc(u.full_name)}</span>` : ""}</td>
             <td>${status(u)}</td>
-            <td>${provs(u).length ? provs(u).map((pv) => `<span class="chip mono">${esc(pv)}</span>`).join(" ") : `<span class="muted">—</span>`}</td>
+            <td>${provs(u).length ? provs(u).map((pv) => `<span class="chip mono" title="Identity provider the person has logged in through.">${esc(pv)}</span>`).join(" ") : `<span class="muted">—</span>`}</td>
             <td class="num${(u.group_count || 0) === 0 ? " warn" : ""}">${u.group_count || 0}</td>
             <td>${lastLogin(u)}</td>
             <td class="mono">${u.first_seen_at
@@ -3543,7 +3548,7 @@ function captureSection(d, access) {
               : (r.known_user ? "" : ` <span class="chip">${r.has_history
                   ? "removed from every group" : "no synced group"}</span>`)}</td>
             <td>${outcomeBadge(r.outcome)}${refusalBadge(r.refusal_reason)}</td>
-            <td class="mono muted">${esc(r.provider || "—")}</td>
+            <td>${r.provider ? `<span class="chip mono" title="Identity provider the attempt went through.">${esc(r.provider)}</span>` : `<span class="muted">—</span>`}</td>
             <td class="muted">${esc(r.detail || "")}${r.ldap_result_code != null
               ? ` <span class="mono">(LDAP ${r.ldap_result_code})</span>` : ""}</td>
             <td class="mono muted nowrap">${
