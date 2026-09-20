@@ -224,7 +224,7 @@ Outcome in one line: **#212 finished and #216 merged (the script's two managers,
 
 ---
 
-## Part 8 — #153, the trailing tabs at the bar (05:4x → ) — PR #225 (open)
+## Part 8 — #153, the trailing tabs at the bar (05:4x → 07:1x) — PR #225 (merged `1ef1dc8`)
 
 - Before designing, the six mock tabs and the six live tabs were captured side by side: the live pages
   were already on the token system (#152 had removed the inline styles — one `style=` left, a series
@@ -248,7 +248,20 @@ Outcome in one line: **#212 finished and #216 merged (the script's two managers,
   the sentence says so. Grok's leftover accepted: the Logins provider cell as a chip. Codex's M5
   **accepted on the fact, snippet rejected** (the lead replaces the connective; saying both says it
   twice). The three review tests fail on the page without the fixes; hermetic 3897 passed, 15 skipped; UI
-  471 passed; guards 526. `docs/REVIEW_tab_uplifts.md`. OB3 still running; CI and the re-walk pending.
+  471 passed; guards 526. `docs/REVIEW_tab_uplifts.md`. Deployed and re-walked at `286c222`.
+- `5b48c51` (06:5x) — **OB3** (pinned clones of the head and the base; four seeded servers incl. a
+  never-polled cluster, call counts at every chokepoint for four drill paths, chip line boxes at six
+  widths, contrast from pixels in two modes × five palettes): the same as the others and three more,
+  **accepted** — the footnote's third split sat inside a sentence with five words gone → the base's
+  words restored, led by their own first words (my first-pass "the lead carries the clause" reversed:
+  the contract's "keep the words" is the later ruling); `ldap-local` a two-line pill at every width →
+  `.chip { white-space: nowrap }`, measured safe on every chip site; the Overview tile's critical
+  "Bindings to review" beside a warning "Need review" rail → the rail carries the worst finding
+  present; mutants (unconditional rails, row-counted tiles) passed the first tests → three more pins.
+  OB3's three tests fail on the head without the fixes (measured); hermetic 3897 passed, 15 skipped;
+  UI 474 passed. Deployed and walked at `78816f6` (the footnote's leads as the base's words;
+  `errors : []`); CI green on `6076044`; **merged** at `1ef1dc8` (07:1x); #153 closed with the
+  evidence and pictures.
 
 ---
 
