@@ -11,8 +11,9 @@ SPEC = ReportSpec(
     summary="Attempts by outcome and provider, per-user successes and failures, and rejected attempts resolved against the login gate.",
     values_key="loginActivity", needs=("loginCapture",),
     params=(
-        ParamSpec("window_days", "int", 30, "Attempts in the last N days.", lo=1, hi=3650),
-        ParamSpec("user", "str", "", "One user name (empty = everyone)."),
+        ParamSpec("window_days", "int", 30, "Attempts in the last N days.", lo=1, hi=3650, unit="days"),
+        ParamSpec("users", "csv", [], "Only these users (empty = everyone).", source="users", group="subject"),
+        ParamSpec("groups", "csv", [], "Only members of these groups (empty = everyone).", source="groups", group="subject"),
     ),
 )
 
@@ -35,10 +36,13 @@ def build(snap: Snapshot, ctx: RunContext, params: dict) -> Built:
     cid = ctx.cluster["id"]
     since = window_start(ctx.now, params["window_days"])
     summary = snap.login_summary(cid, since)
-    per_user = snap.login_by_user(cid, since, params["user"] or None)
+    # The subject scope: named users, and the members of named groups (#149 R7).
+    keep = set(params["users"]) | (snap.members_of_groups(cid, params["groups"]) if params["groups"] else set())
+    scoped = bool(params["users"] or params["groups"])
+    per_user = [r for r in snap.login_by_user(cid, since, None) if not scoped or r["user_name"] in keep]
     rejected = snap.rejected_attempts(cid, since)
-    if params["user"]:
-        rejected = [r for r in rejected if r["user_name"] == params["user"]]
+    if scoped:
+        rejected = [r for r in rejected if r["user_name"] in keep]
     status = snap.login_capture_status(cid)
     gate = snap.access_group(cid)
     per_user_rows, t1 = cut([[u["user_name"], u["successes"], u["failures"], u["last_success"] or "", u["last_attempt"]] for u in per_user])

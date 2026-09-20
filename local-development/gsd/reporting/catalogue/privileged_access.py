@@ -14,7 +14,7 @@ SPEC = ReportSpec(
     values_key="privilegedAccess",
     params=(
         ParamSpec("include_members", "bool", True, "Rosters of the privileged groups. ON by default here: a privileged-access review without names is not a review. Recorded in the provenance."),
-        ParamSpec("roles", "csv", list(DEFAULT_ROLES), "Role names that count as privileged (comma-separated)."),
+        ParamSpec("roles", "csv", list(DEFAULT_ROLES), "Role names that count as privileged.", source="roles"),
     ),
 )
 

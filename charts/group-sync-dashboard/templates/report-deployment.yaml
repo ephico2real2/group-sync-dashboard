@@ -112,6 +112,9 @@ spec:
             # The captured Namespace-metadata DIMENSIONS the namespace-access report selects on, as a JSON
             # array (same transport as namespaceMetadataLabels). The report pod reads these; the dashboard
             # poller captures under reporting.namespaceMetadata.labels.
+            # #149 R7: the namespace label that pins an EXACT group; the forms resolve a mnemonic through it.
+            - name: GSD_REPORT_NAMESPACE_GROUP_LABEL
+              value: {{ (.Values.reporting | default dict).namespaceGroupLabel | default "" | quote }}
             - name: GSD_REPORT_NS_SELECTOR_LABELS
               value: {{ (((.Values.reporting | default dict).namespaceSelector) | default dict).labels | default list | toJson | quote }}
             # The global reporting window (design §5). Disabled by default; the timezone defaults to

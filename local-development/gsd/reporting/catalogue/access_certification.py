@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from ..model import KeyValues, Note, Section, Table
 from ..snapshot import Snapshot
-from .common import Built, ParamSpec, ReportSpec, RunContext, cut, ns_label, rank, roster_table
+from .common import Built, ParamSpec, ReportSpec, RunContext, cut, ns_label, rank, roster_table, subject_filter, subject_scope
 
 SPEC = ReportSpec(
     name="access-certification", title="Access certification pack",
@@ -16,30 +16,49 @@ SPEC = ReportSpec(
         ParamSpec("campaign", "str", "", "Campaign name printed on every page (e.g. 'Q3 2026 access review').", required=True),
         ParamSpec("due", "date", "", "Due date, YYYY-MM-DD.", required=True),
         ParamSpec("reviewer", "str", "", "The reviewer this pack is for (a name; printed, not verified).", required=True),
-        ParamSpec("scope", "enum", "all", "Which subjects to certify.", choices=("all", "groups", "users")),
+        *subject_scope(),
+        ParamSpec("group_mnemonic", "csv", [], "Business mnemonics: each resolves to the exact group its namespaces pin "
+                  "(the namespace group label), never by naming convention.", source="mnemonics"),
         ParamSpec("include_members", "bool", True, "Rosters of each group — a certification without names cannot be signed. Recorded in the provenance."),
-        ParamSpec("group_prefix", "str", "", "Only groups starting with this prefix (empty = all)."),
     ),
 )
 
 DECISION_COLS = ["Approve", "Revoke", "Comment"]
 
 
+def _scope_words(params: dict) -> str:
+    parts = []
+    if params.get("users"):
+        parts.append(f"users: {', '.join(params['users'])}")
+    if params.get("groups"):
+        parts.append(f"groups: {', '.join(params['groups'])}")
+    if params.get("group_mnemonic"):
+        parts.append(f"mnemonics: {', '.join(params['group_mnemonic'])}")
+    return "; ".join(parts) or "all"
+
+
 def build(snap: Snapshot, ctx: RunContext, params: dict) -> Built:
     cid = ctx.cluster["id"]
     header = Section("Campaign", [
         KeyValues("Certification", [("Campaign", params["campaign"]), ("Due", params["due"]), ("Reviewer", params["reviewer"]),
-                                    ("Scope", params["scope"]), ("Cluster", cid), ("Data as of", ctx.snapshot_stamp)]),
+                                    ("Scope", _scope_words(params)), ("Cluster", cid), ("Data as of", ctx.snapshot_stamp)]),
         Note("For each line: tick Approve to keep the access as it stands, Revoke to remove it, and write the reason in Comment. Sign the last page. This pack records the state the dashboard observed; it does not change anything.", "note"),
     ])
     sections = [header]
     truncated = False
     include_members = params["include_members"]
     n_groups = n_users = 0
-    if params["scope"] in ("all", "groups"):
+    only_users, only_groups = subject_filter(params)
+    # A mnemonic names groups through the namespaces that pin them; it narrows like a picked group.
+    resolved = snap.groups_for_mnemonics(cid, ctx.settings.namespace_selector_labels[0] if ctx.settings.namespace_selector_labels else "",
+                                         ctx.settings.namespace_group_label, params["group_mnemonic"])
+    if params["group_mnemonic"]:
+        only_groups = (only_groups or set()) | resolved
+        only_users = only_users if only_users is not None else set()
+    if only_groups is None or only_groups:
         g_rows = snap.group_bindings(cid)
-        if params["group_prefix"]:
-            g_rows = [g for g in g_rows if g["group_name"].startswith(params["group_prefix"])]
+        if only_groups:
+            g_rows = [g for g in g_rows if g["group_name"] in only_groups]
         by_group: dict[str, list[dict]] = {}
         for g in g_rows:
             by_group.setdefault(g["group_name"], []).append(g)
@@ -53,8 +72,10 @@ def build(snap: Snapshot, ctx: RunContext, params: dict) -> Built:
                 blocks.append(roster_table(f"Members of {name}", rosters.get(name, [])))
             sections.append(Section(f"Group: {name}", blocks, page_break=True))
             n_groups += 1
-    if params["scope"] in ("all", "users"):
+    if only_users is None or only_users:
         u_rows = snap.user_bindings(cid)
+        if only_users:
+            u_rows = [u for u in u_rows if u["user_name"] in only_users]
         by_user: dict[str, list[dict]] = {}
         for u in u_rows:
             by_user.setdefault(u["user_name"], []).append(u)

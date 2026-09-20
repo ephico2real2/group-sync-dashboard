@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from ..model import KeyValues, Note, Section, Table
 from ..snapshot import Snapshot
-from .common import Built, ParamSpec, ReportSpec, RunContext, cut, window_start
+from .common import subject_scope, Built, ParamSpec, ReportSpec, RunContext, cut, window_start
 
 SPEC = ReportSpec(
     name="dormant-access", title="Dormant and unusable access",
     summary="Members with access who have never logged in, members outside the login gate, gate members with no access, and — with login capture — nobody-in-N-days.",
     values_key="dormantAccess",
-    params=(ParamSpec("dormant_days", "int", 90, "With login capture on: a member whose last successful login is older than this is listed as dormant.", lo=1, hi=3650),),
+    params=(*subject_scope(), ParamSpec("dormant_days", "int", 90, "With login capture on: a member whose last successful login is older than this is listed as dormant.", lo=1, hi=3650, unit="days"),),
 )
 
 
@@ -44,10 +44,12 @@ def build(snap: Snapshot, ctx: RunContext, params: dict) -> Built:
     if ctx.settings.login_capture_enabled:
         last = snap.last_successful_login(cid)
         cutoff = window_start(ctx.now, params["dormant_days"])
+        keep = set(params["users"]) | (snap.members_of_groups(cid, params["groups"]) if params["groups"] else set())
+        scoped = bool(params["users"] or params["groups"])
         capture = snap.login_capture_status(cid)
         rosters = snap.group_rosters(cid, [g["name"] for g in snap.groups(cid)])
         members = {m["user_name"] for ms in rosters.values() for m in ms if m.get("logged_in") == 1}
-        dormant = sorted((u, last.get(u)) for u in members if last.get(u) is None or last[u] < cutoff)
+        dormant = sorted((u, last.get(u)) for u in members if (not scoped or u in keep) and (last.get(u) is None or last[u] < cutoff))
         rows, t2 = cut([[u, l or "no success recorded since capture began"] for u, l in dormant])
         truncated = truncated or t2
         dormant_count = len(dormant)

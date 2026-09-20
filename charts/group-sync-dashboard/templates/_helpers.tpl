@@ -629,6 +629,17 @@ refuse, and loginActivity=true with capture off refuses — a report over a tabl
 {{- /* The reporting.schedules[] entries the report pod's status page describes: name, schedule, report,
 enabled and any per-schedule retention override, as one JSON array (#149 R6). Params, cluster and
 formats are the CronJob's business and stay out of it. */ -}}
+{{- /* The Namespace label keys the poller captures: reporting.namespaceMetadata.labels plus the
+exact-group label (reporting.namespaceGroupLabel, #149 R7) when set and not already listed — the
+report forms resolve a business mnemonic to the group a namespace pins through it, so the poller
+must capture it whether or not the operator listed it. */ -}}
+{{- define "gsd.namespaceMetadataLabels" -}}
+{{- $labels := (((.Values.reporting | default dict).namespaceMetadata) | default dict).labels | default list -}}
+{{- $group := (.Values.reporting | default dict).namespaceGroupLabel | default "" -}}
+{{- if and $group (not (has $group $labels)) -}}{{- $labels = append $labels $group -}}{{- end -}}
+{{- toJson $labels -}}
+{{- end -}}
+
 {{- define "gsd.reportSchedulesJson" -}}
 {{- $out := list -}}
 {{- range $s := ((.Values.reporting | default dict).schedules | default list) -}}
@@ -722,6 +733,10 @@ false
 {{- $nsLabels := $nsMeta.labels | default list -}}
 {{- if and (gt (len $nsLabels) 0) (not .Values.rbac.namespaces) -}}
 {{- fail "reporting.namespaceMetadata.labels is set but rbac.namespaces is false: the poll never lists Namespace objects, so the mnemonic selector would always be empty. Set rbac.namespaces=true (the extra RBAC is the 0.14.0 exception the namespace report already needs) or clear the labels list." -}}
+{{- end -}}
+{{- /* #149 R7: the exact-group label is captured the same way, and needs the same grant. */ -}}
+{{- if and ((.Values.reporting | default dict).namespaceGroupLabel | default "") (not .Values.rbac.namespaces) -}}
+{{- fail "reporting.namespaceGroupLabel is set but rbac.namespaces is false: the poll never lists Namespace objects, so the label could not be captured. Set rbac.namespaces=true or clear it." -}}
 {{- end -}}
 {{- $nsSelector := (.Values.reporting | default dict).namespaceSelector | default dict -}}
 {{- /* .label was removed in 0.22.0 (the selector is multi-dimension now: .labels). Helm ignores unknown

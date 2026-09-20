@@ -35,7 +35,8 @@ def snapshot(tmp_path_factory):
 
 def _ctx(snap, **over) -> RunContext:
     settings = ReportSettings(pdf_enabled=True, pdf_variant="pdf/a-2b", font_regular=FONTS[0], font_bold=FONTS[1],
-                              login_capture_enabled=over.pop("login_capture_enabled", True), namespaces_read_enabled=over.pop("namespaces_read_enabled", False))
+                              login_capture_enabled=over.pop("login_capture_enabled", True), namespaces_read_enabled=over.pop("namespaces_read_enabled", False),
+                              **over)
     info = snap.info()
     return RunContext(settings=settings, cluster=snap.cluster(CLUSTER), now=NOW, run_id="20260906T120000.000000Z-ab12",
                       generated_by="root", generated_by_note="proxy-verified", snapshot_stamp=info.stamp,
@@ -72,7 +73,7 @@ class TestParameters:
         with pytest.raises(ValidationError, match="unknown parameter"):
             validate_params(spec, {"window": 3})
         assert validate_params(spec, {})["window_days"] == 30
-        assert validate_params(spec, {"window_days": "7", "include_members": "true"}) == {"window_days": 7, "include_members": True}
+        assert validate_params(spec, {"window_days": "7", "include_members": "true"}) == {"groups": [], "window_days": 7, "include_members": True}   # #149 R7: the groups dimension
         with pytest.raises(ValidationError, match="between"):
             validate_params(spec, {"window_days": 0})
         with pytest.raises(ValidationError, match="true or false"):
@@ -82,8 +83,14 @@ class TestParameters:
             validate_params(cert, {"campaign": "x", "due": "2026-10-01"})
         with pytest.raises(ValidationError, match="YYYY-MM-DD"):
             validate_params(cert, {"campaign": "x", "due": "next week", "reviewer": "r"})
-        with pytest.raises(ValidationError, match="one of"):
+        with pytest.raises(ValidationError, match="unknown parameter"):      # #149 R7: the kind toggle is gone — the Subject scope subsumes it
             validate_params(cert, {"campaign": "x", "due": "2026-10-01", "reviewer": "r", "scope": "everything"})
+        ok = validate_params(cert, {"campaign": "x", "due": "2026-10-01", "reviewer": "r", "users": "alice, bob", "group_mnemonic": ["beta"]})
+        assert ok["users"] == ["alice", "bob"] and ok["groups"] == [] and ok["group_mnemonic"] == ["beta"]
+        ns, _ = REGISTRY["namespace-access"]
+        with pytest.raises(ValidationError, match="one of"):
+            validate_params(ns, {"namespaces": "prod-ns", "group_by": "owner"})
+        assert validate_params(ns, {"namespaces": "prod-ns"})["group_by"] == "mnemonic"
 
     def test_wrong_shapes_are_422s_not_500s_and_dates_are_real(self):
         """Codex, review C3: an integer where a list of names was expected raised TypeError — a 500 —
@@ -287,3 +294,77 @@ class TestEveryReportBuildsAndRenders:
         assert with_capture.totals["dormant"] == 1, "bob's last success is 120 days old; alice's is yesterday"
         without = _build(snapshot, "dormant-access", login_capture_enabled=False)
         assert without.totals["dormant"] is None
+
+
+class TestSubjectScopeAndLookups:
+    """#149 R7: the Subject scope replaces the kind toggle; a mnemonic resolves to the exact group its
+    namespaces pin; login-activity takes groups; the discovered lookups; namespace-access groups its output."""
+
+    LABELS = dict(namespace_selector_labels=("company.net/mnemonic", "company.net/app-environment"), namespace_group_label="company.net/oud-group")
+
+    def _built(self, snap, name, **params):
+        spec, build = REGISTRY[name]
+        return build(snap, _ctx(snap, **self.LABELS), validate_params(spec, {**DEFAULT_PARAMS.get(name, {}), **params}))
+
+    def _names(self, built, prefix):
+        return [s.title for s in built.sections if s.title.startswith(prefix)]
+
+    def test_access_matrix_subject_scope(self, snapshot):
+        everything = self._built(snapshot, "access-matrix")
+        assert everything.totals["subjects"] >= 3
+        users_only = self._built(snapshot, "access-matrix", users="frank")
+        assert users_only.totals["subjects"] == 1 and users_only.totals["rows"] >= 1     # groups are out: the reader asked for a user
+        groups_only = self._built(snapshot, "access-matrix", groups="team-a")
+        assert groups_only.totals["subjects"] == 1
+        both = self._built(snapshot, "access-matrix", users="frank", groups="team-a")
+        assert both.totals["subjects"] == 2
+
+    def test_access_certification_subject_scope_and_mnemonic(self, snapshot):
+        everything = self._built(snapshot, "access-certification")
+        assert everything.totals["groups"] >= 2 and everything.totals["users"] >= 1
+        one = self._built(snapshot, "access-certification", groups="team-a")
+        assert one.totals == {"groups": 1, "users": 0}
+        assert self._names(one, "Group:") == ["Group: team-a"]
+        # the provenance names the scope in words
+        assert "groups: team-a" in str(one.sections[0].blocks[0].items)
+        # a mnemonic with no exact-group label captured names no group: nothing certified, not everything
+        none = self._built(snapshot, "access-certification", group_mnemonic="beta")
+        assert none.totals == {"groups": 0, "users": 0}
+
+    def test_login_activity_users_and_groups(self, snapshot):
+        spec, build = REGISTRY["login-activity"]
+        assert [p.name for p in spec.params if p.group == "subject"] == ["users", "groups"]
+        by_group = self._built(snapshot, "login-activity", groups="team-a")      # alice, bob
+        by_user = self._built(snapshot, "login-activity", users="alice")
+        everyone = self._built(snapshot, "login-activity")
+        table = lambda b: next(t for s in b.sections if s.title == "Per user" for t in s.blocks)
+        assert {r[0] for r in table(by_group).rows} <= {"alice", "bob"} and len(table(by_group).rows) >= 1
+        assert {r[0] for r in table(by_user).rows} == {"alice"}
+        assert len(table(everyone).rows) >= len(table(by_group).rows)
+
+    def test_the_specs_carry_what_the_shell_renders(self):
+        access, _ = REGISTRY["access-matrix"]
+        j = {p["name"]: p for p in access.as_json(True)["params"]}
+        assert j["users"]["source"] == "users" and j["users"]["group"] == "subject" and j["groups"]["source"] == "groups"
+        assert j["namespace_prefix"]["advanced"] is True
+        assert {p["name"]: p["unit"] for p in REGISTRY["groups"][0].as_json(True)["params"]}["window_days"] == "days"
+        assert {p["name"]: p["source"] for p in REGISTRY["users"][0].as_json(True)["params"]} == {"users": "users", "providers": "providers"}
+        assert {p["name"]: p["source"] for p in REGISTRY["privileged-access"][0].as_json(True)["params"]}["roles"] == "roles"
+        assert "subject_kind" not in {p.name for p in access.params} and "scope" not in {p.name for p in REGISTRY["access-certification"][0].params}
+
+    def test_the_snapshot_lists_the_discovered_lookups(self, snapshot):
+        d = snapshot.discovered(CLUSTER, "company.net/mnemonic", "company.net/oud-group")
+        assert d["providers"]["values"] == ["corp_ldap"]
+        assert "edit" in d["roles"]["values"] and "cluster-admin" in d["roles"]["values"]
+        assert d["users"]["values"] == ["alice", "bob", "erin"]
+        assert "team-a" in d["groups"]["values"] and d["groups"]["truncated"] is False
+        assert snapshot.members_of_groups(CLUSTER, ["team-a", "hand-made"]) == {"alice", "bob", "erin"}
+        assert snapshot.members_of_groups(CLUSTER, []) == set()
+
+    def test_namespace_access_groups_its_sections_by_a_label(self, snapshot):
+        spec, build = REGISTRY["namespace-access"]
+        built = build(snapshot, _ctx(snapshot, **self.LABELS), validate_params(spec, {"namespaces": "prod-ns,dev-ns,(cluster-scoped)", "group_by": "oud-group"}))
+        titles = [s.title for s in built.sections if "Namespace:" in s.title or s.title == "Cluster-scoped bindings"]
+        # no exact-group label captured in the seed: every namespace falls under the same bucket, cluster scope last
+        assert titles[-1] == "Cluster-scoped bindings"
+        assert all(t.startswith("(no oud-group) · Namespace: ") for t in titles[:-1]), titles

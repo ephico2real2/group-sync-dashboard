@@ -169,6 +169,9 @@ class ReportSettings:
     #: Origin-aware formats (design R3): what a run stores when the request names none. A schedule
     #: fires unattended and its document is printed from the HTML on demand, so no PDF by default;
     #: a person's manual run gets the PDF. `json` is always written and is not listed here.
+    #: #149 R7: the namespace label that pins an EXACT group (company.net/oud-group), carried by some
+    #: namespaces only; the mnemonic label is the first selector dimension. Empty hides the lookups.
+    namespace_group_label: str = ""
     #: The chart's reporting.schedules[] (name, schedule, report, enabled, retention) as JSON, so the
     #: status page can show cadence, next fire and effective retention without a cluster call (R6).
     schedules: tuple[dict, ...] = ()
@@ -227,6 +230,7 @@ def load_report_settings() -> ReportSettings:
         scheduled_retention_days=_int_env("GSD_REPORT_SCHEDULED_RETENTION_DAYS", 90, lo=0, hi=3650),
         manual_retention_days=_int_env("GSD_REPORT_MANUAL_RETENTION_DAYS", 3, lo=0, hi=3650),
         manual_retention_max_runs=_int_env("GSD_REPORT_MANUAL_RETENTION_MAX_RUNS", 500, lo=0, hi=100000),
+        namespace_group_label=os.environ.get("GSD_REPORT_NAMESPACE_GROUP_LABEL", "").strip(),
         schedules=_schedules_env(),
         formats_scheduled=_formats_env("GSD_REPORT_FORMATS_SCHEDULED", ReportSettings.formats_scheduled),
         formats_manual=_formats_env("GSD_REPORT_FORMATS_MANUAL", ReportSettings.formats_manual),
