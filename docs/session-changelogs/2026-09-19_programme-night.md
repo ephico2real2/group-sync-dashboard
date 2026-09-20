@@ -204,7 +204,20 @@ Outcome in one line: **#212 finished and #216 merged (the script's two managers,
   twenty-entry noun table **rejected**). **Rejected**: pre-slot target validation (the run POST is
   asynchronous by design), dropping `aria-live`. #222 merged meanwhile; the forms pass merged in and #224
   retargeted to `main`. Hermetic 3892 passed, 15 skipped; UI 459 passed; `helm lint` clean.
-  `docs/REVIEW_picker_preview.md`. OB3's pass on #224 still running.
+  `docs/REVIEW_picker_preview.md`. Deployed and re-walked at `ef91c74` (`27af538`): `(cluster-scoped)` first
+  among 107 options, `1 namespace · 0 group bindings · 0 user bindings`, `errors : []`; the evidence with
+  pictures on #143, pinned to `27af538`.
+- `6c8b960` (05:0x) — **OB3 on `44587ce`** (424k tokens, 52 min; a parity matrix of preview vs run — 422 texts
+  identical on seven inputs — a side-effect diff across five previews, release under real threads, a
+  Playwright drive of every change path): five narrow refutations, all **accepted** — `Snapshot()`'s own
+  `SnapshotError` (a torn or newer-schema copy) sat outside the 503 guard → a 500 per debounce; the
+  lookups' arrival repaint re-created the focused input with its caret at 0 ("abc" then "XYZ" → "XYZabc")
+  → `render()` restores it; the help promised "Overrides the Scope"; a padded `namespace_prefix` on an
+  existing schedule changes meaning under the trimmer → said in the CHANGELOG; the module docstring's "one
+  non-GET". Volunteered and taken: the picker's head counted the offered `(cluster-scoped)` as discovered;
+  one retry ~1.5 s after a 429 (a viewer's own superseded preview can hold the slot). The independent-slot
+  deviation from the issue's text noted on #143. Five of six new tests fail on the head without the fixes
+  (measured). Hermetic 3895 passed, 15 skipped; UI 462 passed. CI and the re-walk pending.
 
 ---
 
