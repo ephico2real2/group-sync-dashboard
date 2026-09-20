@@ -367,6 +367,23 @@ class TestInstance:
         assert done.returncode == 0, done.stdout + done.stderr
         assert "csv Succeeded" in done.stdout and "done" in done.stdout
 
+    def test_every_container_the_chart_renders_carries_resources(self):
+        """A ResourceQuota that requires requests refuses a pod without them — an install that fails at
+        a hook Job on an enterprise namespace. The two hook Jobs share wait.resources."""
+        docs = _render()
+        seen = {}
+        for d in docs:
+            if d["kind"] == "Grafana":
+                for c in d["spec"]["deployment"]["spec"]["template"]["spec"]["containers"]:
+                    seen[f"Grafana/{c['name']}"] = c.get("resources")
+            elif d["kind"] == "Job":
+                for c in d["spec"]["template"]["spec"]["containers"]:
+                    seen[f"{d['metadata']['name']}/{c['name']}"] = c.get("resources")
+        assert set(seen) == {"Grafana/grafana", "Grafana/oauth-proxy", "obs-openshift-grafana-secrets/mint", "obs-openshift-grafana-wait/wait"}, seen
+        for name, res in seen.items():
+            assert res and res.get("requests", {}).get("memory") and res.get("limits", {}).get("memory"), (name, res)
+        assert seen["obs-openshift-grafana-secrets/mint"] == seen["obs-openshift-grafana-wait/wait"] == {"requests": {"cpu": "50m", "memory": "64Mi"}, "limits": {"memory": "256Mi"}}
+
     def test_the_wait_job_is_a_helm_and_argo_hook(self):
         job = _one(_render(), "Job", "-wait")
         ann = job["metadata"]["annotations"]

@@ -336,7 +336,7 @@ the same login; administrators (the wide tier) generate from the **Reports** tab
 | `reporting.tls.enabled` | `true` | HTTPS between the proxy and the report pod and between the poller and it, with the service-ca certificate; the proxy verifies with `-upstream-ca` | independent; the pre-flight below |
 | `reporting.networkPolicy.enabled` / `.monitoringNamespaces` | `true` / `[openshift-user-workload-monitoring, openshift-monitoring]` | ingress to the report pod only from the dashboard pod, the schedule Jobs and — with `monitoring.serviceMonitor.enabled` — Prometheus pods in the named namespaces | the monitoring rule is **derived** from the ServiceMonitor switch |
 | `reporting.pdf.enabled` / `.variant` | `true` / `pdf/a-2b` | PDF output and its archival profile (`""`, `pdf/a-1b`, `pdf/a-2b`, `pdf/a-2u`, `pdf/a-3b`, `pdf/a-3u`, `pdf/a-4`); `3b` embeds the canonical `.json` in the PDF | an unknown variant is refused; a variant with pdf off is ignored (NOTES say so) |
-| `reporting.persistence.enabled` / `.size` / `.storageClass` / `.accessMode` / `.existingClaim` | `true` / `2Gi` / `""` / `ReadWriteOnce` / `""` | where artefacts live; **no** keep annotation — every artefact is regenerable. Off = emptyDir | independent |
+| `reporting.persistence.enabled` / `.size` / `.storageClass` / `.accessMode` / `.existingClaim` | `true` / `2Gi` / `""` / `ReadWriteOnce` / `""` | where artefacts live. Since 0.36.1 the claim carries `helm.sh/resource-policy: keep` and, with `argocd.preservePVC`, the same three sync-options as the data claim: a scheduled report is generated once from its day's snapshot and cannot be regenerated after. Off = emptyDir | independent |
 | `reporting.snapshot.intervalSeconds` / `.keep` | `300` / `2` | how often the leader writes the read-only copy and how many it keeps | below `60` refused (a `VACUUM INTO` holds a read transaction) |
 | `reporting.retention.scheduled.keepPerSchedule` / `.days` | `2` / `90` | scheduled-report retention: keep the newest K per (schedule, cluster) OR younger than `days`; **exempt from the manual run-count cap**. `keepPerSchedule` is a **floor, not a ceiling** — `days: 0` disables scheduled deletion entirely (it does *not* mean "keep only K") | a manual burst can never evict a scheduled report |
 | `reporting.retention.manual.days` / `.maxRuns` | `3` / `500` | on-demand (manual) run retention, whichever bound is hit first; `0` disables a bound. Both tiers age a run from its **completion** (`finished_at`), not its request, and "newest" means most recently completed (#163); a run that never completed ages from its id | a run that waited is as old as its file, not its ticket |
@@ -663,7 +663,7 @@ chart lands.
 | Key | Default | Notes |
 |---|---|---|
 | `argocd.enabled` | `true` | adds the `argocd.argoproj.io/sync-options` annotations below, and nothing else — measured. Kubernetes ignores them without Argo, so a plain `helm install` is unaffected; under Argo, forgetting them costs the PVC on the first prune. Off only if you object to the metadata |
-| `argocd.preservePVC` | `true` | three sync-options on the PVC — see [Deploying with ArgoCD](#deploying-with-argocd) |
+| `argocd.preservePVC` | `true` | three sync-options on both PVCs (the data claim and, since 0.36.1, the report artefacts claim) — see [Deploying with ArgoCD](#deploying-with-argocd) |
 | `argocd.serverSideApplyInjectedCA` | `true` | lets the CA operator keep ownership of the `data` it writes. **Not sufficient alone** — the Application also needs an `ignoreDifferences` entry |
 
 ### Unmanaged-grant discovery
@@ -998,7 +998,7 @@ so `helm.sh/resource-policy: keep` does not protect it. A prune, or deleting the
 Application, destroys the accumulated sync timeline and membership history — the only state
 the Kubernetes API cannot reproduce.
 
-`argocd.preservePVC` applies three protections, covering different moments:
+`argocd.preservePVC` applies three protections to both claims — the data claim and, since 0.36.1, the report artefacts claim — covering different moments:
 
 | Annotation | Protects against |
 |---|---|
@@ -1088,6 +1088,12 @@ spec:
     - group: ""
       kind: PersistentVolumeClaim
       name: group-sync-dashboard-data
+      jsonPointers:
+        - /spec/volumeName
+        - /spec/storageClassName
+    - group: ""
+      kind: PersistentVolumeClaim
+      name: group-sync-dashboard-report-artifacts
       jsonPointers:
         - /spec/volumeName
         - /spec/storageClassName

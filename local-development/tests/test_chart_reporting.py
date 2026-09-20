@@ -141,8 +141,16 @@ class TestTheDefaultRender:
         for kind in ("Deployment", "Service", "NetworkPolicy", "ServiceAccount", "PodDisruptionBudget"):
             assert (kind, "t-group-sync-dashboard-report") in kinds, kind
         assert ("Secret", "t-group-sync-dashboard-report-token") in kinds
+        # 0.36.1: protected like the data claim — a scheduled report is generated once from its day's
+        # snapshot (two-tier retention, #154/#163), so the store is history, not a cache
         pvc = _exact(docs, "PersistentVolumeClaim", "t-group-sync-dashboard-report-artifacts")
-        assert "helm.sh/resource-policy" not in (pvc["metadata"].get("annotations") or {}), "artefacts are regenerable; no keep"
+        data = _exact(docs, "PersistentVolumeClaim", "t-group-sync-dashboard-data")
+        for claim in (pvc, data):
+            ann = claim["metadata"]["annotations"]
+            assert ann["helm.sh/resource-policy"] == "keep"
+            assert ann["argocd.argoproj.io/sync-options"] == "Prune=false,Delete=false,PruneLast=true"
+        off = _exact(_render("argocd.preservePVC=false"), "PersistentVolumeClaim", "t-group-sync-dashboard-report-artifacts")
+        assert "argocd.argoproj.io/sync-options" not in off["metadata"]["annotations"] and off["metadata"]["annotations"]["helm.sh/resource-policy"] == "keep"
         service = _exact(docs, "Service", "t-group-sync-dashboard-report")
         assert _matches({"app.kubernetes.io/component": "report"}, service["metadata"]["labels"])
         proxy = _container(_exact(docs, "Deployment", "t-group-sync-dashboard"), "oauth-proxy")

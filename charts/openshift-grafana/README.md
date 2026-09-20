@@ -143,7 +143,8 @@ architecture's `dashboards: grafana`).
 | `thanos.datasource.name` / `.uid` / `.isDefault` / `.timeInterval` | `OpenShift Thanos` / `openshift-thanos` / `true` / `30s` | the datasource as dashboards bind to it |
 | `networkPolicy.enabled` / `.extraFrom` | `true` / `[]` | who may reach Grafana: the routers and this namespace, plus your peers |
 | `wait.enabled` / `.waitSeconds` / `.intervalSeconds` | `true` / `600` / `10` | the post-install gate |
-| `wait.image.repository` / `.tag` | `registry.redhat.io/openshift4/ose-cli` / `latest` | the gate's `oc` image |
+| `wait.image.repository` / `.tag` | `registry.redhat.io/openshift4/ose-cli` / `latest` | the `oc` image both hook Jobs run (the gate and the secrets mint) |
+| `wait.resources` | `50m` / `64Mi` requests, `256Mi` limit | for both hook Jobs — a namespace whose ResourceQuota requires requests refuses a pod without them and the install fails at the hook |
 
 ## Argo CD, Flux, Kustomize — what each renderer does with this chart
 

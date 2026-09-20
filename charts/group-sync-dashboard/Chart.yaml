@@ -173,7 +173,9 @@ type: application
 # request (#161), OFF by default; six KPI panels on the shipped board; console.url empty now means
 # discovered (#157); grafana.url / console.url refused at render unless http(s). A default upgrade
 # changes only the board's ConfigMap.
-version: 0.36.0
+# CHART 0.36.1 (2026-09-19), PATCH: the report artefacts PVC carries helm.sh/resource-policy: keep
+# and the same Argo sync-options as the data claim (Prune=false,Delete=false,PruneLast=true).
+version: 0.36.1
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,

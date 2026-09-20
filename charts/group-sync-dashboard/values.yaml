@@ -687,6 +687,7 @@ clusters:
 argocd:
   enabled: true
 
+  # On both claims — the data claim and the report artefacts claim (0.36.1):
   # Prune=false     — not removed when it leaves the source
   # Delete=false    — not removed when the Application itself is deleted (cascade)
   # PruneLast=true  — if ever pruned deliberately, it goes after the workload, so the pod is
