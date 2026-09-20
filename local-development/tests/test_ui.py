@@ -616,6 +616,32 @@ class TestGroupDrilldown:
         assert h["text"] == "− left" and h["hasRowlink"] and h["tdPad"] == 3, h
         assert h["tdInk"] >= 3, f"− left starts {h['tdInk']:.1f}px in, under the rail"
 
+    def test_the_hover_rail_paints_beside_the_minus_left_glyph_not_under_it(self, dash):
+        # #219 at the PAINT level (OB1-lite's re-read of #226): every other test here measures geometry — a
+        # Range rect's offset — which is not what the issue was about. This one reads the pixels. At DPR 1 the
+        # hovered first cell's columns 0..2 are the accent alone, column 3 is the row's background, and the
+        # first column carrying ink is >= 3 (4 in practice: the minus's side-bearing). With the (0,0,1) rule
+        # removed the glyph blends under the rail from x = 1 — measured, both ways.
+        import io
+        from PIL import Image
+        dash.goto(dash.url.split("#")[0] + "#page=groups&cluster=crc-local&user=bob")
+        dash.wait_for_selector("td.change-removed")
+        td = dash.evaluate_handle("""() => { const h2 = [...document.querySelectorAll('h2')].find(e => e.textContent.startsWith('History'));
+            return h2.closest('section').querySelector('table tr.rowlink td:first-child'); }""").as_element()
+        td.hover()
+        dash.wait_for_timeout(150)
+        box = td.bounding_box()
+        im = Image.open(io.BytesIO(dash.screenshot(clip={"x": box["x"], "y": box["y"], "width": 40, "height": box["height"]}))).convert("RGB")
+        w, h = im.size
+        px = im.load()
+        accent = px[0, h // 2]                                             # the rail's own colour, read off the rail
+        bg = px[w - 1, h // 2]
+        cols = {x: {px[x, y] for y in range(1, h - 1)} for x in range(w)}   # the row's 1px borders excluded
+        rail_cols = [x for x in range(w) if cols[x] == {accent}]
+        ink_cols = [x for x in range(w) if cols[x] - {bg, accent}]
+        assert accent != bg and rail_cols[:3] == [0, 1, 2] and 3 not in rail_cols, (accent, bg, rail_cols)
+        assert ink_cols and ink_cols[0] >= 3, f"ink under the rail: the first ink column is {ink_cols[:1]}"
+
     def test_the_kpi_clusters_keep_their_padding_and_the_audit_table_takes_no_rule(self, dash):
         # Preservation: the rule is (0,0,1) — both halves in :where() — so .kpi-page's 18px (0,1,1) wins by
         # specificity wherever it sits; the audit table carries no rowlink and never sees it (Grok, Codex, OB3).
