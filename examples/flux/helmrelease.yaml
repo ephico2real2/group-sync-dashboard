@@ -1,0 +1,96 @@
+# Both charts through Flux's helm-controller, from the published chart repository (#212).
+#
+#   kubectl apply -f examples/flux/helmrelease.yaml
+#   flux get helmreleases -n group-sync-dashboard -w
+#
+# Flux is the one renderer here that needs no caveat: helm-controller runs a REAL Helm install through
+# the Helm SDK — the hook Jobs run as hooks (the InstallPlan approver, the CSV reclaim, the secrets
+# mint), `lookup` sees the cluster, and crds/ are installed by Helm itself (`install.crds:
+# CreateReplace` also upgrades them later, which a plain `helm upgrade` never does). Argo CD renders
+# with `helm template` and Kustomize with its inflator; this path is the Helm loop, reconciled.
+#
+# The two releases are ordered: the dashboard's GrafanaDashboard CR needs the grafana-operator's CRD
+# to be served, so the dashboard release `dependsOn` the grafana one — Flux holds it until that
+# release is Ready. Drop the dependsOn and the grafana release on a cluster with no grafana-operator;
+# the dashboard chart then renders no CR (`.Capabilities.APIVersions` is the live list under a real
+# install, as under Argo).
+#
+# Pin the versions: helm-controller resolves a range on every reconcile, and a chart bump the
+# operator did not mean to take is how a fleet drifts. Bump them here, in one commit, per release.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: group-sync-dashboard
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: group-sync-dashboard
+  namespace: group-sync-dashboard
+spec:
+  interval: 1h
+  url: https://ephico2real2.github.io/group-sync-dashboard
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: grafana
+  namespace: group-sync-dashboard
+spec:
+  interval: 10m
+  releaseName: grafana
+  chart:
+    spec:
+      chart: openshift-grafana
+      version: 0.2.1
+      sourceRef:
+        kind: HelmRepository
+        name: group-sync-dashboard
+  install:
+    crds: CreateReplace
+    remediation:
+      retries: 3
+  upgrade:
+    crds: CreateReplace
+    remediation:
+      retries: 3
+  # The chart's defaults: a Manual-approval Subscription with the approver hook, the CSV reclaim.
+  # `operator.package` names the package for a mirrored catalog (charts/openshift-grafana/README.md).
+  values: {}
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: group-sync-dashboard
+  namespace: group-sync-dashboard
+spec:
+  interval: 10m
+  releaseName: group-sync-dashboard
+  dependsOn:
+    - name: grafana
+  chart:
+    spec:
+      chart: group-sync-dashboard
+      version: 0.41.0
+      sourceRef:
+        kind: HelmRepository
+        name: group-sync-dashboard
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  # The same values the Argo CD Application carries (gitops/argocd-application-dashboard.yaml): the
+  # hosting cluster through the pod's ServiceAccount. Everything else is the chart's default — the
+  # Route the router names, the minted session key and report token, `argocd.enabled` annotations
+  # that are inert outside Argo. Site values (a second cluster, the login capture source, the
+  # reporting schedules) go in a ConfigMap referenced by `valuesFrom`, the way environments/crc.yaml
+  # is the lab's.
+  values:
+    clusters:
+      - name: crc-local
+        apiUrl: https://kubernetes.default.svc
+        tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+        caBundleFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        enabled: true

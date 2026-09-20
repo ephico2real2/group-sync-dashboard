@@ -1143,6 +1143,23 @@ strategy. Keep both until you have watched a sync on your own cluster.
 > but no controller running, so the annotations were checked by rendering and applying, not
 > by observing a sync.
 
+## Deploying with Flux or Kustomize
+
+Two more shapes, both from the published chart repository, under `examples/` (#212):
+
+- **Flux** — `examples/flux/helmrelease.yaml`: a `HelmRepository` and one `HelmRelease` per chart,
+  the dashboard's `dependsOn` the grafana one so the `GrafanaDashboard` CR finds its CRD served.
+  helm-controller runs a real Helm install through the SDK, so it is the one renderer that needs no
+  caveat: the hook Jobs run as hooks, `lookup` sees the cluster, and `install.crds: CreateReplace`
+  keeps the openshift-grafana chart's `crds/` upgraded — which a plain `helm upgrade` never does. Both
+  objects validate against the upstream `helm.toolkit.fluxcd.io/v2` and `source.toolkit.fluxcd.io/v1`
+  CRD schemas, and each release's `values` renders with its chart at the pinned version (checked on
+  2026-09-20; Flux is not installed on the lab, so the apply itself is not measured).
+- **Kustomize** — `examples/kustomize/kustomization.yaml`: the `helmCharts` inflator for both charts,
+  with `includeCRDs` and `apiVersions` doing what an offline render cannot know, and the caveat that
+  hook Jobs are applied as plain Jobs (a changed Job template needs the old Job deleted first). Built
+  in CI by `tests/test_chart_renderers.py`.
+
 ## Upgrading
 
 ```bash

@@ -178,7 +178,7 @@ type: application
 # CHART 0.37.0 (2026-09-20), MINOR: the oauth-proxy session key and the shared report token are minted
 # on the cluster by a hook (secretsMint), never rendered; their Secrets are <fullname>-oauth-session
 # and <reportName>-shared-token, carried over from the old names on the first upgrade.
-version: 0.41.0
+version: 0.41.1
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,
