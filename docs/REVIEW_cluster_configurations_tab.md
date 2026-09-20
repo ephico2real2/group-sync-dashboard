@@ -75,6 +75,20 @@ OB2 reviewed the tier as designed and **REFUTED** it on two counts, both accepte
   off, before the manage level is asked, so every audit line names a person. A test drives all four routes
   in that configuration and asserts nothing reached the API server.
 
+## A gap found on the lab while the seats ran (the coordinator, 2026-09-20)
+
+`GET /api/clusterconfigs` reported **`tls: null`** for four leftover rows on CRC, one of them carrying a
+stale `CERTIFICATE_VERIFY_FAILED` — the mode a reader debugging that error needs most. **Accepted on the
+fact; the proposed cause was corrected by measurement.** It is not an absent `tlsClientConfig` (a `config`
+of `{"bearerToken": …}` reports `{"insecure": false, "ca": "trusted-bundle"}` — measured) but an absent
+`config` key, which the reader REFUSES as the finding `config-missing`; such a Secret is therefore never a
+cluster, and the null can only be a **retired** row, whose source no longer describes how it was trusted.
+Reporting `trusted-bundle` there would invent a fact. So: a listed live cluster always reports its effective
+mode (pinned by a test), `tls: null` is documented as "retired only", and the tab renders those rows as
+**unknown — its source no longer describes it** rather than a bare dash. The four leftover Secrets are the
+earlier validation round's and can be deleted when the lab is free; one of them is what surfaced this, so it
+is worth keeping until the walk confirms the rendering.
+
 ## Re-validation
 
 Round 1's fixes and the tier: the full hermetic suite, the UI suite (serial) and `helm lint` +

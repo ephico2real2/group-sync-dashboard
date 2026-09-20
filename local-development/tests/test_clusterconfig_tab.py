@@ -363,6 +363,27 @@ class TestApi:
         assert r.status_code == 200 and r.json()["reachable"] is False
         assert host.calls == [] and "probe" not in {x["id"] for x in c.get("/api/clusterconfigs", headers=H("root")).json()["clusters"]}
 
+    def test_every_listed_cluster_reports_an_effective_tls_mode_and_only_a_retired_row_is_null(self, rig):
+        """Measured on the lab 2026-09-20: four rows reported `tls: null`, one carrying a stale
+        CERTIFICATE_VERIFY_FAILED — the mode a reader debugging that error needs most. The cause is not
+        an absent `tlsClientConfig` (that reports `trusted-bundle`, below) but an absent `config` key,
+        which the reader REFUSES outright, so such a Secret is never a cluster: null can only be a
+        retired row, whose source no longer describes how it was trusted."""
+        from gsd.clusterconfig import parse_secret
+        from gsd.clusterconfig.parser import Finding
+        c, app, host, settings = rig
+        # a Secret with no `config` key is not a cluster at all
+        bare = {"metadata": {"name": "gsd-cluster-bare", "labels": {SECRET_TYPE_LABEL: "cluster"}},
+                "stringData": {"name": "bare", "server": "https://api.bare:6443"}}
+        out = parse_secret(bare, host_name="c1")
+        assert isinstance(out, Finding) and out.code == "config-missing"
+        # a config WITHOUT tlsClientConfig is a cluster, and reports the effective default
+        settings.cluster_registry.replace([parse_secret(_secret(), host_name="c1")], [], at="2026-09-20T16:05:12Z")
+        rows = {x["id"]: x for x in c.get("/api/clusterconfigs", headers=H("root")).json()["clusters"]}
+        assert rows["east"]["tls"] == {"insecure": False, "ca": "trusted-bundle"}
+        assert all(r["tls"] is not None for r in rows.values() if not r["retired"]), \
+            "a listed, live cluster always has an effective mode"
+
     def test_the_credential_reaches_no_response_no_log_record_no_row_and_no_metric(self, rig, caplog):
         c, app, host, settings = rig
         with caplog.at_level(logging.DEBUG):

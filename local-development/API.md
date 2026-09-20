@@ -187,7 +187,12 @@ bundles — the injected OpenShift CA and the enterprise ConfigMap, colon-joined
 `{"insecure": false, "ca": "caData"}` — the Secret's own base64 PEM, this cluster alone; `{"insecure": true,
 "ca": null}` — verification off. A values entry reports `caBundleFile` or `serviceAccount` (the pod's SA CA
 path) the same way. `caData` beside `insecure: true` is refused as the finding `insecure-with-ca`, naming both
-fields. The PEM itself is never on the wire. A **`retired`** cluster is one the store still holds but no source names any more — its Secret vanished, or
+fields. The PEM itself is never on the wire. **A listed cluster always reports an effective mode** — the
+reader supplies `trusted-bundle` when nothing overrides it — so `tls: null` never means "no mode": it appears
+only on a **`retired`** row, whose source no longer describes how it was trusted, and the tab says `unknown`
+there rather than a dash. (A Secret with no `config` key at all is not a cluster: the reader refuses it as the
+finding `config-missing`, and it reaches this payload only as a retired row if it was accepted before.)
+A **`retired`** cluster is one the store still holds but no source names any more — its Secret vanished, or
 its values entry was removed: `enabled: false`, its history kept (#96), listed so the reader knows why it
 is gone rather than finding it missing. `credential` is `in-cluster` (the host's ServiceAccount token path), `file` (a values entry's
 `tokenFile`/`tokenEnv`), `bearer` (a Secret's `bearerToken`) or `oauth` (a Secret's

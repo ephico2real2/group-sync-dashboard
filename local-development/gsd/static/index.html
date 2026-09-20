@@ -5227,9 +5227,19 @@ function ccMayManage() {
   const w = data.whoami;
   return !!(w && w.clusterconfig && w.clusterconfig.manage);
 }
+/* A live cluster ALWAYS has an effective mode — `trusted-bundle` when nothing overrides it — so a
+   bare "—" here would hide the very thing a reader debugging a CERTIFICATE_VERIFY_FAILED needs. The
+   only null is a RETIRED row: its Secret is gone or no longer parses, so nothing describes how it was
+   trusted, and the honest answer is "unknown", said with its reason rather than a dash (measured on
+   the lab 2026-09-20: four leftover rows reported `tls: null`, one of them carrying a stale
+   verify-failed error). */
 function ccTls(c) {
   const t = c.tls || {};
-  if (!c.tls) return `<span class="muted">—</span>`;
+  if (!c.tls) {
+    return c.retired
+      ? `<span class="muted">unknown</span> <span class="cc-hint">its source no longer describes it</span>`
+      : `<span class="muted">—</span>`;
+  }
   return t.insecure ? ccBadge("warning", "insecure") : `${ccBadge("ok", "verified")} <span class="mono">ca: ${esc(t.ca || "")}</span>`;
 }
 function ccClusterCard(c) {
