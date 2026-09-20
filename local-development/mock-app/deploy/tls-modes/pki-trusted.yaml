@@ -1,0 +1,21 @@
+# mock-trusted: the leaf is signed by the CA the LAB'S TRUSTED BUNDLE CARRIES — the ClusterIssuer
+# `ldap-enterprise-ca`, whose root is the one CA in proxy/cluster.spec.trustedCA (ConfigMap
+# openshift-config/ldap-enterprise-ca-bundle) and so in the dashboard's injected GSD_TRUSTED_CA_FILE
+# (measured 2026-09-20: 147 certificates, exactly one non-system root, "LDAP Enterprise Root CA").
+# This is what a real remote cluster looks like when the enterprise PKI signs its API: a labelled
+# Secret with NO caData verifies it — TLS mode 1, the default.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: mock-trusted-tls
+  namespace: group-sync-dashboard
+spec:
+  secretName: mock-trusted-tls
+  duration: 2160h
+  renewBefore: 360h
+  dnsNames:
+    - mock-trusted
+    - mock-trusted.group-sync-dashboard.svc
+    - mock-trusted.group-sync-dashboard.svc.cluster.local
+  privateKey: {algorithm: ECDSA, size: 256}
+  issuerRef: {name: ldap-enterprise-ca, kind: ClusterIssuer}

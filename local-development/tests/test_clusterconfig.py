@@ -8,6 +8,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import re
 import threading
 
 import pytest
@@ -338,6 +339,8 @@ class TestApi:
         settings.cluster_registry.replace([east], [Finding("gsd-cluster-broken", "config-not-json", "Expecting value")], at="2026-09-20T16:05:12Z")
         app = build_app(settings, run_poller=False)
         app.state.tier_resolver = _MapResolver({"root": "all"})
+        # The read route is gated on clusterconfig:view, NOT the wide tier (#230, the operator's
+        # ruling of 2026-09-20): the wide tier admits the auditor persona by design.
         app.state.clusterconfig_view_resolver = _MapResolver({"root": "all"})
         app.state.clusterconfig_manage_resolver = _MapResolver({"root": "all"})
         with TestClient(app) as c:
@@ -348,7 +351,7 @@ class TestApi:
         assert c.get("/api/clusterconfigs", headers=H("alice")).status_code == 403
         body = c.get("/api/clusterconfigs", headers=H("root")).json()
         assert body["secrets"] == {"enabled": True, "writes": False, "namespace": "ns", "label": LABEL_SELECTOR,
-                                   "last_discovery": "2026-09-20T16:05:12Z", "error": None}
+                                   "last_discovery": "2026-09-20T16:05:12Z", "error": None}   # `writes`: S2's switch
         by = {x["id"]: x for x in body["clusters"]}
         assert by["c1"]["host"] is True and by["c1"]["source"] == "values" and by["c1"]["credential"] == "file"
         assert by["east"] == {"id": "east", "source": "secret:gsd-cluster-east", "host": False,
@@ -383,7 +386,6 @@ class TestApi:
 
 class TestChart:
     def test_the_role_grants_read_only_on_secrets_in_the_release_namespace_and_the_switch_removes_it(self):
-        # S2's writes switch (off by default) adds the write verbs when on — tests/test_clusterconfig_tab.py holds it.
         docs = _render()
         role = next(d for d in docs if d.get("kind") == "Role" and d["metadata"]["name"].endswith("-cluster-secrets"))
         assert role["metadata"]["namespace"] == "x"
@@ -399,3 +401,102 @@ class TestChart:
         assert not any(d.get("metadata", {}).get("name", "").endswith("-cluster-secrets") for d in off)
         ok, out = _render_text(clusterConfig__secrets__enabled="false")
         assert ok and _config_data(out)["clusterSecretsEnabled"] is False
+
+
+class TestClusterConfigTier:
+    """The cluster-configuration tier (#230; the operator's ruling of 2026-09-20, "a new tier boss
+    — look at how argocd does it").
+
+    Argo CD's RBAC carries a first-class `clusters` resource with `get` and `create/update/delete`
+    actions; ours is the same two levels asked natively as SubjectAccessReviews about the objects
+    this surface exposes — `get secrets` for view, `create secrets` for manage, in the dashboard's
+    own namespace.
+
+    WHY NOT THE WIDE TIER, measured on CRC 2026-09-20: `oc get clusterrole cluster-reader -o json`
+    has ZERO of its 172 rules covering core/`secrets` and `oc auth can-i {get,list,create,update,
+    delete} secrets` answers `no` — while that same cluster-reader, the deliberate auditor persona,
+    PASSES the wide tier by design (see api.usage_scope). Gating this surface on the wide tier would
+    hand the auditor the fleet's wiring, and at S2 the writes that change it.
+    """
+
+    @pytest.fixture
+    def make_app(self, tmp_path):
+        """A FACTORY, not one app: each case gets its own store, because a TestClient's exit
+        closes it and these cases need several clients."""
+        seq = iter(range(100))
+
+        def _make(view=None, manage=None):
+            db = str(tmp_path / f"gsd{next(seq)}.db"); _seed(db)
+            settings = _settings(db)
+            settings.cluster_registry.namespace = "ns"
+            settings.cluster_registry.replace(
+                [parse_secret(_secret(), host_name="c1")], [], at="2026-09-20T16:05:12Z")
+            app = build_app(settings, run_poller=False)
+            # Everyone passes the WIDE tier here, auditor included — exactly the live situation
+            # this gate exists for, so a passing test cannot be passing for the wrong reason.
+            app.state.tier_resolver = _MapResolver({"root": "all", "auditor": "all", "viewer": "all"})
+            app.state.clusterconfig_view_resolver = view
+            app.state.clusterconfig_manage_resolver = manage
+            return app
+
+        return _make
+
+    def test_the_auditor_passes_the_wide_tier_and_is_still_refused_with_no_cluster_named(self, make_app):
+        app = make_app(view=_MapResolver({"root": "all"}), manage=_MapResolver({"root": "all"}))
+        with TestClient(app) as c:
+            # the same persona the wide tier admits
+            assert c.get("/api/clusters", headers=H("auditor")).status_code == 200
+            refused = c.get("/api/clusterconfigs", headers=H("auditor"))
+            assert refused.status_code == 403
+            body = refused.json()["detail"]
+            assert "cluster-configuration administrators" in body
+            # the refusal names no cluster, no Secret and no namespace: it reaches the refused
+            # person, and a sentence that named the Secret would be a map for the next attempt.
+            # Whole words: "ns" lives inside "instance", which is not a leak.
+            words = set(re.findall(r"[A-Za-z0-9_.-]+", body))
+            assert not words & {"c1", "east", "ns", "gsd-cluster-east", "secrets"}
+            assert c.get("/api/clusterconfigs", headers=H("root")).status_code == 200
+
+    def test_view_and_manage_are_asked_separately_and_manage_does_not_imply_view(self, make_app):
+        # A site may grant the two apart: passing manage alone must NOT open the read route.
+        app = make_app(view=_MapResolver({"root": "all"}),
+                       manage=_MapResolver({"root": "all", "manager": "all"}))
+        with TestClient(app) as c:
+            assert c.get("/api/clusterconfigs", headers=H("manager")).status_code == 403
+            assert c.get("/api/clusterconfigs", headers=H("root")).status_code == 200
+
+    def test_it_fails_closed_on_no_resolver_no_identity_and_an_exploding_check(self, make_app):
+        """Argo's `policy.default: deny` in our vocabulary — a surface naming cluster credentials
+        must not widen because a SubjectAccessReview blipped.
+
+        The no-resolver case leaves the seam None, so the resolver build_app made against the
+        configured cluster answers: it cannot reach one, reports `auth_failed`, and the gate
+        refuses — the live shape of "the check did not come back"."""
+        class _Explodes:
+            def resolve(self, viewer):
+                raise RuntimeError("the API server said no such luck")
+
+        with TestClient(make_app(view=None)) as c:
+            assert c.get("/api/clusterconfigs", headers=H("root")).status_code == 403
+        with TestClient(make_app(view=_MapResolver({"root": "all"}))) as c:
+            assert c.get("/api/clusterconfigs").status_code == 403          # no identity
+        with TestClient(make_app(view=_Explodes())) as c:
+            assert c.get("/api/clusterconfigs", headers=H("root")).status_code == 403
+
+    def test_the_wide_tier_alone_never_opens_it_the_mutant_this_kills(self, make_app):
+        """The mutant: gating the route on `require_admin_tier` again. Everyone here passes the
+        wide tier, so that revert makes this assertion fail."""
+        app = make_app(view=_MapResolver({}))    # nobody passes the new tier
+        with TestClient(app) as c:
+            for who in ("root", "auditor", "viewer"):
+                assert c.get("/api/clusterconfigs", headers=H(who)).status_code == 403
+
+    def test_the_two_levels_have_their_own_defaults_and_caches(self):
+        """`manage` is not derived from `view`: separate settings, separate questions."""
+        from gsd.config import Settings
+        s = Settings(clusters=())
+        assert (s.visibility_clusterconfig_view_sar_verb,
+                s.visibility_clusterconfig_view_sar_resource) == ("get", "secrets")
+        assert (s.visibility_clusterconfig_manage_sar_verb,
+                s.visibility_clusterconfig_manage_sar_resource) == ("create", "secrets")
+        assert s.visibility_clusterconfig_view_sar_api_group == ""      # the core group

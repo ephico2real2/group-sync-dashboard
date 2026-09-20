@@ -7,7 +7,7 @@ API() { oc -n $NS exec deploy/group-sync-dashboard -c dashboard -- sh -c "curl -
 step() { echo; echo "### $1"; }
 step "0. the running head and the Role the chart rendered"
 oc -n $NS get role,rolebinding -l app.kubernetes.io/component=cluster-secrets -o name
-oc -n $NS get cm group-sync-dashboard -o jsonpath='{.data.clusters\.yaml}' | grep -n 'clusterSecretsEnabled'
+oc -n $NS get cm group-sync-dashboard-config -o jsonpath='{.data.clusters\.yaml}' | grep -n 'clusterSecretsEnabled'
 step "1. before: GET /api/clusterconfigs"
 API /api/clusterconfigs | jq -c '{secrets, clusters: [.clusters[] | {id, source, credential, host, status}], findings}'
 step "2. the mock cluster as a labelled Secret (its token and CA from mock-cluster-creds, which the Argo-managed Deployment does not mount — the #119 gap)"
@@ -47,12 +47,14 @@ YAML
 step "3. wait for the discovery cycle, then GET /api/clusterconfigs"
 for i in $(seq 1 40); do
   out=$(API /api/clusterconfigs)
-  echo "$out" | jq -e '.clusters[] | select(.id=="mock")' > /dev/null 2>&1 && break
+  # a cluster retired by an earlier run keeps its Secret-sourced `source` on its row: the discovered one is the row
+  # that is not retired AND carries the finding for the broken Secret beside it (both land in one cycle)
+  echo "$out" | jq -e '(.clusters[] | select(.id=="mock") | select(.retired==false)) and (.findings[] | select(.secret=="gsd-cluster-broken"))' > /dev/null 2>&1 && break
   sleep 15
 done
-echo "$out" | jq -c '{secrets, clusters: [.clusters[] | {id, source, credential, host, labels, visibility, identity, status, last_poll, error}], findings}'
+echo "$out" | jq -c '{secrets, clusters: [.clusters[] | {id, source, credential, host, labels, visibility, identity, tls, status, last_poll, error, retired}], findings}'
 step "4. the poller's log lines for the discovery and the mock cluster"
-oc -n $NS logs deploy/group-sync-dashboard -c dashboard --since=15m | grep -iE 'cluster Secret|cluster mock|refused' | tail -8
+oc -n $NS logs deploy/group-sync-dashboard -c dashboard --since=15m | grep -E 'cluster Secrets:|cluster mock:|Secret gsd-cluster-broken' | tail -6
 step "5. the mock cluster polled: GET /api/clusters"
 for i in $(seq 1 20); do
   st=$(API /api/clusters | jq -r '.[] | select(.id=="mock") | .status')

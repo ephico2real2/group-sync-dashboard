@@ -431,10 +431,11 @@ class TestClusterConfigTier:
             yield c
 
     def _writes(self, c, who):
-        return [c.post("/api/clusterconfigs", json=self.BODY, headers=H(who)),
-                c.put("/api/clusterconfigs/east/credential", json={"token": "t"}, headers=H(who)),
-                c.delete("/api/clusterconfigs/east", headers=H(who)),
-                c.post("/api/clusterconfigs/test", json=self.BODY, headers=H(who))]
+        h = H(who) if who else {}          # no X-Forwarded-User at all: the anonymous caller
+        return [c.post("/api/clusterconfigs", json=self.BODY, headers=h),
+                c.put("/api/clusterconfigs/east/credential", json={"token": "t"}, headers=h),
+                c.delete("/api/clusterconfigs/east", headers=h),
+                c.post("/api/clusterconfigs/test", json=self.BODY, headers=h)]
 
     def test_the_auditor_is_refused_everywhere_and_is_never_told_the_surface_exists(self, rig):
         """The mutant killer: `auditor` passes the WIDE tier, so any route that reverted to
@@ -467,6 +468,28 @@ class TestClusterConfigTier:
             rig.put("/api/clusterconfigs/east/credential", json={"token": "t"}),
             rig.delete("/api/clusterconfigs/east"),
             rig.post("/api/clusterconfigs/test", json=self.BODY))] == [403, 403, 403, 403]
+
+    def test_every_write_refuses_a_caller_with_no_trusted_identity_even_with_restrictions_off(self, tmp_path, monkeypatch):
+        """The anonymous path (OB2 design review, #230 C7). `visibilityEnabled: false` is a documented
+        choice about READING — every tier answers `all` and, with the proxy off, there is no identity
+        at all. A write into the credential store, audited as "anonymous", is not covered by it, so the
+        writes need a proxy-verified viewer AND the tier machinery on."""
+        import dataclasses
+        db = str(tmp_path / "anon.db"); _seed(db)
+        settings = dataclasses.replace(_settings(db), cluster_secrets_writes_enabled=True,
+                                       view_restrictions_enabled=False)    # reads widen; writes must not
+        settings.cluster_registry.namespace = NS
+        settings.cluster_registry.replace([parse_secret(_secret(), host_name="c1")], [], at="2026-09-20T16:05:12Z")
+        host = _Host({"gsd-cluster-east": _secret()})
+        monkeypatch.setattr("gsd.api.ClusterClient", lambda cfg, timeout=15.0: host)
+        monkeypatch.setattr("gsd.api.own_namespace", lambda: NS)
+        app = build_app(settings, run_poller=False)
+        with TestClient(app) as c:
+            before = list(host.calls)
+            for r in self._writes(c, None):
+                assert r.status_code == 403, r.text
+                assert "identity" in r.json()["detail"]
+            assert host.calls == before, "nothing reached the API server"
 
     def test_no_resolver_fails_closed(self, rig):
         """Argo's `policy.default: deny`: an instance that built no resolver — restrictions off, or no

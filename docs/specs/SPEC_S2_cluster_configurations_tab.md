@@ -54,6 +54,25 @@ during implementation is written back under "Orchestrator's notes", in the same 
   (Codex C5, Grok, review of #237). `clusterconfig_allows` refuses a nameless reader at the gate, so
   every audit line names a person by construction.
 
+- **The ladder is ORDERED, and S1 owns the rung.** OB2's design review measured (CRC 2026-09-20) that
+  `get`/`create secrets` in the release namespace is held by the stock `admin` ClusterRole: a member of
+  a group bound to `ClusterRole/admin` by ClusterRoleBinding — the lab has seven such bindings —
+  answers NO to `list clusterrolebindings` and NO to `update clusterrolebindings` but YES to both
+  secrets questions, so asked alone this tier would hand the fleet's credential store to a reader the
+  dashboard holds at `self` on every other tab. Each level therefore asks the administrator rung first
+  and then its own question. **S1 implements the rung** by asking the administrator question directly
+  through the wide resolver, past both escape hatches (`userActivity.visibility: all` and
+  `visibility.enabled: false`); OB2's own patch used `usage_scope()`, which dissolves under exactly
+  those two, and is NOT what ships. S2 re-implements nothing: it gates on `require_clusterconfig_view`
+  and `require_clusterconfig_manage` as S1 defines them, so there is one definition.
+
+- **The write gate adds an identity requirement of its own, which is S2's.** `visibilityEnabled: false`
+  is a documented choice about READING — every tier answers `all` and, with the proxy off, there is no
+  identity at all. A write into the credential store audited as "anonymous" is not covered by that
+  choice, so `_writes_gate` refuses a caller with no proxy-verified viewer or with the tier machinery
+  off, before `clusterconfig:manage` is asked. A test drives all four routes with no
+  `X-Forwarded-User` and `view_restrictions_enabled: false` and asserts nothing reaches the API server.
+
 - **Settings and chart values are S1's to ship** (`visibility_clusterconfig_view_sar_*`,
   `…_manage_sar_*`): this branch implements against those exact names so the two collapse to ONE
   definition when S2 rebases on S1's merge.

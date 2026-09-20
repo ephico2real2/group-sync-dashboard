@@ -20,6 +20,51 @@ the same pull request, under "Orchestrator's notes", with the reason.
 
 ## Orchestrator's notes
 
+- **The operator's ruling on the tier (2026-09-20, relayed during implementation):** this surface is
+  **cluster-admin only — the reporting auditor may neither view nor change it**, and it gets *"a new tier
+  boss — look at how argocd does it"* rather than borrowing an existing gate.
+
+  *The defect this fixes, measured.* The route first shipped on `require_admin_tier`, which is the WIDE
+  tier — and `gsd/api.py` says in its own words why that is not enough: *"the wide tier that cluster-reader
+  — the deliberate auditor persona — also passes"* (`usage_scope`). So an auditor would have read the
+  fleet's wiring, and at S2 held the writes that change it.
+
+  *The model.* Argo CD's RBAC carries a first-class `clusters` resource with `get` and
+  `create/update/delete` actions, granted to roles bound to SSO groups, default-deny. We hold no policy
+  file — every tier here is a SubjectAccessReview against the host cluster, so OpenShift groups and
+  RoleBindings already ARE that mapping — so the tier is a named pair of SAR questions about the very
+  objects this surface exposes, the cluster Secrets themselves:
+
+  | our level | Argo's action | SAR (default) | grants |
+  |---|---|---|---|
+  | `clusterconfig:view` | `clusters, get` | `get secrets` in the dashboard's namespace | the tab and `GET /api/clusterconfigs` |
+  | `clusterconfig:manage` | `clusters, create/update/delete` | `create secrets` in that namespace | the write routes and the form's Create / Rotate / Delete / Test (S2) |
+
+  It reads as what it is: *you may see cluster credentials if you may read the Secrets that hold them; you
+  may change them if you may create those Secrets.*
+
+  *Why these questions work, measured on CRC 2026-09-20:* `oc get clusterrole cluster-reader -o json` has
+  **zero** of its 172 rules covering core/`secrets`, and `oc auth can-i {get,list,create,update,delete}
+  secrets -n group-sync-dashboard` answers `no` for a non-admin subject. The auditor fails both levels by
+  construction; a cluster-admin passes both.
+
+  *Rules.* Fail closed (Argo's `policy.default: deny`): no resolver, no identity, or an errored check →
+  refused. Each level has its **own** resolver instance and cache — never shared with the wide tier's or
+  with each other — and its own metric threshold label, the rule `docs/SPEC_usage_admin_tier.md` already
+  states. `manage` is **not** inferred from `view` in code, so a site may grant them apart. Settings
+  `visibility_clusterconfig_{view,manage}_sar_*` (chart `visibility.clusterConfig{View,Manage}Sar`) let a
+  site point either at its own question, e.g. a dedicated `fleet-admin` ClusterRole; an empty `namespace`
+  means the pod's own, the opposite of the wide tier's empty, because these questions are namespaced by
+  nature.
+
+  *Division of labour.* **S1 ships both resolvers** and gates its read route on `view`; **S2 gates the
+  write routes on `manage` and the tab's very existence on `view`** — a reader who fails `view` gets no tab
+  button, no dispatch and no fetch, and reaching `#page=clusters` by URL shows the refusal card naming
+  itself. Tests here: the auditor persona is refused with no cluster named while passing the wide tier;
+  `manage` alone does not open the read route; it fails closed on a missing resolver, a missing identity
+  and an exploding check; and a mutant reverting the route to `require_admin_tier` fails
+  (`tests/test_clusterconfig.py::TestClusterConfigTier`).
+
 - **The operator's ruling on TLS trust (2026-09-20, relayed during implementation):** a cluster's trust is
   one of three, said explicitly — (1) DEFAULT, no `tlsClientConfig.caData`: verify against the dashboard's
   own trust store, `GSD_TRUSTED_CA_FILE` (the chart's `trustedCA.*` bundle: the injected OpenShift CA + the
@@ -38,6 +83,7 @@ the same pull request, under "Orchestrator's notes", with the reason.
   replace the identity every tier decision rests on. It is refused as a finding
   (`host-cluster-not-from-secret`), which departs from Argo CD, where an in-cluster Secret *overrides*
   the built-in entry — Argo has no reader tier to protect.
+- **The operator's ruling on where a credential lives (2026-09-20):** "A bearer token is minted by a cluster, so it lives inline in that cluster's own Secret — `gsd-cluster-<name>` carries the full ServiceAccount token in `config.bearerToken`; rotation replaces it in place. A shared username/password (the fleet's LDAP service account) is NOT written per cluster: #119 P2 adds `credentialRef: <credential Secret>` for that." S1's reader accepts `config.oauth{{username,password}}` inline and refuses it at poll time (`oauth-exchange-not-built`), as briefed; P2 adds `credentialRef` beside it and the inline form stays for a per-cluster password if one exists.
 - Discovery runs on the binding cadence (`bindingIntervalSeconds`, 300 s), not a WATCH. The watch with
   `resourceVersion` resumption and `410 Gone` re-list (Kubernetes API concepts, cited below) is the
   same mechanism #170 step 3 owes the Kyverno reader; both land together so there is one
@@ -170,8 +216,10 @@ Exactly one of `bearerToken` / `oauth` is required (`credential-missing`, `crede
 
 ### C5 — the API (S2's tab builds on this)
 
-`GET /api/clusterconfigs` — administrator tier (`require_admin_tier`, the host); a narrowed reader
-gets the same 403 the other administrator endpoints give.
+`GET /api/clusterconfigs` — **`clusterconfig:view`** (`require_clusterconfig_view`, the host), the
+cluster-configuration tier's read level, NOT the wide administrator tier. See the Orchestrator's note
+below for why: the wide tier admits the auditor persona by design. A reader who fails it gets a 403
+that names the control and no cluster, Secret or namespace.
 
 ```json
 {

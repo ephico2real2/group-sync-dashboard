@@ -2022,6 +2022,40 @@ visibility:
     verb: update
     namespace: ""
 
+  # THE CLUSTER-CONFIGURATION TIER — two levels of its own (#230), modelled on Argo CD's RBAC,
+  # where a first-class `clusters` resource carries `get` and `create/update/delete` actions.
+  # We hold no policy file: every tier here is a SubjectAccessReview against this cluster, so
+  # OpenShift groups and RoleBindings already are that mapping. The two questions are therefore
+  # asked about the very objects the surface exposes — the cluster Secrets themselves:
+  #
+  #   clusterConfigViewSar   (Argo `clusters, get`)      -> the Cluster Configurations tab and
+  #                                                         GET /api/clusterconfigs
+  #   clusterConfigManageSar (Argo `clusters, create…`)  -> the write routes and the form's
+  #                                                         Create / Rotate / Delete / Test (#230 S2)
+  #
+  # It reads as what it is: you may SEE cluster credentials if you may read the Secrets that hold
+  # them, and CHANGE them if you may create those Secrets.
+  #
+  # WHY NOT THE WIDE `adminSar`, measured on CRC 2026-09-20: `cluster-reader` — the deliberate
+  # auditor persona, which passes the wide tier by design — has ZERO of its 172 rules covering
+  # core/`secrets`, and `oc auth can-i {get,list,create,update,delete} secrets` answers `no`. So
+  # the auditor fails both levels by construction and a cluster-admin passes both.
+  #
+  # An empty `namespace` means THIS RELEASE'S namespace, where the cluster Secrets live — the
+  # opposite of `adminSar`'s empty, which means a cluster-scoped check, because these questions
+  # are namespaced by nature. Point them at your own question (a dedicated `fleet-admin`
+  # ClusterRole, say) and both levels move independently: `manage` is never derived from `view`.
+  clusterConfigViewSar:
+    apiGroup: ""
+    resource: secrets
+    verb: get
+    namespace: ""
+  clusterConfigManageSar:
+    apiGroup: ""
+    resource: secrets
+    verb: create
+    namespace: ""
+
 # ---------------------------------------------------------------------------
 # Reporting auditors (docs/DESIGN_reporting_auditors_and_ns_selector.md §2)
 # ---------------------------------------------------------------------------

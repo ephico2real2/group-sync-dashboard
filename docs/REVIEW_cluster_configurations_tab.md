@@ -48,6 +48,28 @@ would answer. With `view_restrictions_enabled: false` no review is asked for any
 auditor from an administrator and the tier fails closed there too — stated, and the unrestricted tab-walk no
 longer includes this tab.
 
+## The design review (OB2, Fable, live SARs on CRC) — between the rounds
+
+OB2 reviewed the tier as designed and **REFUTED** it on two counts, both accepted:
+
+- **The ladder was not ordered (its C1).** Measured on CRC 2026-09-20 with `oc auth can-i --as --as-group`:
+  a member of a group bound to `ClusterRole/admin` by ClusterRoleBinding — the lab has seven such —
+  answers NO to `list clusterrolebindings` and NO to `update clusterrolebindings` while answering YES to
+  `get secrets` and `create secrets` in the dashboard's namespace, because the stock `admin` ClusterRole
+  grants `secrets` create/get/list/update and only `roles`/`rolebindings` in rbac. Asked alone, this tier
+  would have handed the fleet's credential store — and these writes — to a reader the dashboard holds at
+  `self` on every other tab. **Accepted**: each level asks the administrator rung first, then its own
+  question. **OB2's own fix was rejected on the mechanism**: it asked the rung through `usage_scope()`,
+  which returns `all` for every viewer under `userActivity.visibility: all` and widens for everyone with
+  `visibility.enabled: false` — the rung dissolves under exactly the two escape hatches it must survive.
+  S1 asks the administrator question directly through the wide resolver, past both, with mutant-checked
+  pins; S2 re-implements nothing and gates on S1's `require_clusterconfig_view` / `…_manage`.
+- **The write path admitted an anonymous caller (its C7).** With `visibilityEnabled: false` and the proxy
+  off there is no identity at all, and the write proceeded, audited as `"anonymous"`. **Accepted**, and it
+  is S2's to fix: `_writes_gate` refuses a caller with no proxy-verified viewer or with the tier machinery
+  off, before the manage level is asked, so every audit line names a person. A test drives all four routes
+  in that configuration and asserts nothing reached the API server.
+
 ## Re-validation
 
 Round 1's fixes and the tier: the full hermetic suite, the UI suite (serial) and `helm lint` +

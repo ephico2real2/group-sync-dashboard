@@ -106,6 +106,16 @@ data:
     visibilityUsageAdminSarResource: {{ include "gsd.usageVisibilitySarResource" . | quote }}
     visibilityUsageAdminSarVerb: {{ include "gsd.usageVisibilitySarVerb" . | quote }}
     visibilityUsageAdminSarNamespace: {{ include "gsd.usageVisibilitySarNamespace" . | quote }}
+    {{- /* The cluster-configuration tier's two levels (#230): view = Argo's `clusters, get`, manage
+           = its `create/update/delete`, asked as SARs about the Secrets this surface exposes. */}}
+    visibilityClusterConfigViewSarApiGroup: {{ include "gsd.clusterConfigSarField" (dict "ctx" . "block" "clusterConfigViewSar" "field" "apiGroup" "default" "") | quote }}
+    visibilityClusterConfigViewSarResource: {{ include "gsd.clusterConfigSarField" (dict "ctx" . "block" "clusterConfigViewSar" "field" "resource" "default" "secrets") | quote }}
+    visibilityClusterConfigViewSarVerb: {{ include "gsd.clusterConfigSarField" (dict "ctx" . "block" "clusterConfigViewSar" "field" "verb" "default" "get") | quote }}
+    visibilityClusterConfigViewSarNamespace: {{ include "gsd.clusterConfigSarField" (dict "ctx" . "block" "clusterConfigViewSar" "field" "namespace" "default" "") | quote }}
+    visibilityClusterConfigManageSarApiGroup: {{ include "gsd.clusterConfigSarField" (dict "ctx" . "block" "clusterConfigManageSar" "field" "apiGroup" "default" "") | quote }}
+    visibilityClusterConfigManageSarResource: {{ include "gsd.clusterConfigSarField" (dict "ctx" . "block" "clusterConfigManageSar" "field" "resource" "default" "secrets") | quote }}
+    visibilityClusterConfigManageSarVerb: {{ include "gsd.clusterConfigSarField" (dict "ctx" . "block" "clusterConfigManageSar" "field" "verb" "default" "create") | quote }}
+    visibilityClusterConfigManageSarNamespace: {{ include "gsd.clusterConfigSarField" (dict "ctx" . "block" "clusterConfigManageSar" "field" "namespace" "default" "") | quote }}
     # Unquoted: the app casts this with int(), and a quoted value would still parse but the
     # other numeric keys here are unquoted and one convention is worth keeping.
     visibilityTierTtlSeconds: {{ include "gsd.visibilityTierTtl" . }}
