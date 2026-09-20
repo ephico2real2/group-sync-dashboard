@@ -20,7 +20,11 @@ IN_CLUSTER_SERVER = "https://kubernetes.default.svc"
 
 # The cluster id is used in API paths (PLAN §11): a DNS-label shape keeps it URL-safe and stable.
 _NAME = re.compile(r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")
-_SERVER = re.compile(r"^https://[^/\s]+$")
+# host[:port] and nothing else. `@`, `?` and `#` are refused by name because `api_url` is served at
+# EVERY tier: a `server` of https://user:token@host would publish a credential to a self reader —
+# and the whole point of this contract is that the credential lives in the Secret (review of #235,
+# the Fable seat). A path is refused too, as it always was.
+_SERVER = re.compile(r"^https://[^/\s@?#]+$")
 
 # Argo's `config` keys, each with the reason it is refused, so the finding can say why and not only
 # that (SPEC_S1 C1). `bearerToken`, `oauth` and `tlsClientConfig` are the accepted ones.
@@ -50,9 +54,17 @@ class Finding:
         return {"secret": self.secret, "code": self.code, "detail": self.detail}
 
 
-def _data(obj: dict) -> dict[str, str]:
-    """The Secret's data decoded (the API serves `data` base64; a test fixture may hand `stringData`)."""
+def _data(obj: dict) -> tuple[dict[str, str], set[str]]:
+    """The Secret's data decoded, and the keys whose value did not decode.
+
+    The API serves `data` base64; a test fixture may hand `stringData`. A value that is not base64 or
+    not UTF-8 used to become `""`, which the caller then reported as "data.config is required" — false,
+    and it sends the operator to the wrong line of the manifest (review of #235, OB3 F5). The key is
+    returned as undecodable instead, so the finding says what is actually wrong. No new finding code:
+    each key keeps the one it already owns, because that set is a page contract (SPEC_S1 §S1.2).
+    """
     out: dict[str, str] = {}
+    undecodable: set[str] = set()
     for key, value in (obj.get("stringData") or {}).items():
         out[key] = str(value)
     for key, value in (obj.get("data") or {}).items():
@@ -62,16 +74,25 @@ def _data(obj: dict) -> dict[str, str]:
             out[key] = base64.b64decode(value, validate=True).decode("utf-8")
         except (binascii.Error, UnicodeDecodeError, TypeError, ValueError):
             out[key] = ""
-    return out
+            undecodable.add(key)
+    return out, undecodable
 
 
 def parse_secret(obj: dict, *, host_name: str | None) -> ClusterConfig | Finding:
     meta = obj.get("metadata") or {}
     secret_name = str(meta.get("name") or "?")
-    data = _data(obj)
+    data, undecodable = _data(obj)
 
     def finding(code: str, detail: str) -> Finding:
         return Finding(secret_name, code, detail)
+
+    # A value that is present but did not decode is reported against the key's OWN code, before the
+    # key is read as absent — "data.config is required" for a config that IS there, only malformed,
+    # is a wrong diagnosis and costs the operator the search (review of #235, OB3 F5).
+    for key, code in (("name", "name-missing"), ("server", "server-missing"), ("config", "config-missing")):
+        if key in undecodable:
+            return finding(code, f"data.{key} is present but is not base64-encoded UTF-8 text; write it "
+                                 "under stringData, or base64 it with no line breaks")
 
     name = (data.get("name") or "").strip()
     if not name:
@@ -82,7 +103,7 @@ def parse_secret(obj: dict, *, host_name: str | None) -> ClusterConfig | Finding
     if not server:
         return finding("server-missing", "data.server is required: the API URL")
     if not _SERVER.match(server):
-        return finding("server-invalid", "data.server must be https://host[:port] with no path")
+        return finding("server-invalid", "data.server must be https://host[:port] — no path, and no credentials, query or fragment: this value is shown to every reader")
     if host_name is not None and (name == host_name or server == IN_CLUSTER_SERVER):
         # The departure from Argo (spec notes): the host authenticates the reader; a Secret must not
         # be able to replace it.

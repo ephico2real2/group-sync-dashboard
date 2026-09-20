@@ -1128,11 +1128,19 @@ def build_app(
             # A retired cluster (removed from config, marked enabled=0 at poll start) or one disabled
             # in config is not served: its history is kept but it leaves the selector, so it never
             # shows as `ok` with frozen data or stale alerts (#96).
-            if not row["enabled"]:
+            #
+            # THE PREDICATE, not two of its three limbs (review of #235, OB3 C6). A Secret-sourced
+            # cluster can now leave the CONFIGURATION while its row still says enabled=1 — the
+            # discovery replaces the registry first and retires the row second, and on a non-leader
+            # replica the row is not rewritten until the leader's own cycle. In that window
+            # `settings.cluster(id)` is None, and `cluster_policy`'s defensive default for an
+            # unknown id is the WIDEST one, so a cluster its Secret made `self-only` was served to a
+            # wide-tier reader as `inherit`/`all`. `is_served` owns the whole rule and its docstring
+            # predicted this: "the rule has four copies in this file and the fifth site forgot a
+            # limb". The other three sites already walk rows through it.
+            if not is_served(row["id"]):
                 continue
             policy, _ = settings.cluster_policy(row["id"])
-            if policy == VISIBILITY_HIDDEN:
-                continue
             # Decided PER CLUSTER (docs/ACCESS_CONTROL.md §11): a host administrator is not an
             # administrator of a self-only remote, and the card must not say otherwise.
             _, scope = viewer_scope(request, row["id"])

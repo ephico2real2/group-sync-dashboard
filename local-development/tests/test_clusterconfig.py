@@ -485,8 +485,106 @@ class TestTheCredentialNeverLeavesTheSecret:
             assert token not in exc.value.message, "the remote's echo carried our token into a stored error"
             assert "<redacted>" in exc.value.message
             assert "upstream refused" in exc.value.message, "the diagnostic itself is still useful"
+
         finally:
             os.environ.pop("T_EAST", None)
+    def test_a_token_that_straddles_the_two_hundred_character_cut_is_still_redacted(self):
+        """Redact BEFORE truncating: `text[:200]` then redact misses a token that straddles the cut,
+        and misses every JWT, which is longer than the window (review of #235, the Fable seat)."""
+        import httpx
+
+        from gsd.config import ClusterConfig as CC
+        from gsd.kube import ClusterClient, ClusterError
+
+        token = "sha256~" + "x" * 120
+        cluster = CC(name="east", api_url="https://api.east.example:6443", token_env="T_STRADDLE")
+        os.environ["T_STRADDLE"] = token
+        try:
+            client = ClusterClient(cluster)
+            body = "upstream said: " + "-" * 150 + f" Authorization: Bearer {token} trailing"
+            assert 200 < body.index(token) + len(token), "the fixture must straddle the cut"
+            transport = httpx.MockTransport(lambda _: httpx.Response(500, text=body))
+            with httpx.Client(transport=transport, base_url=cluster.api_url) as http:
+                with pytest.raises(ClusterError) as exc:
+                    client._get(http, "/api/v1/namespaces", {})
+            assert token not in exc.value.message
+            assert token[:40] not in exc.value.message, "a prefix of the token survived the cut"
+        finally:
+            os.environ.pop("T_STRADDLE", None)
+
+
+class TestTheServerValueIsPublicSoItCarriesNoCredential:
+    """`api_url` is served at EVERY tier, so `data.server` must not be able to carry a credential —
+    `https://user:token@host` would publish one to a self reader (review of #235, the Fable seat).
+    The contract's whole claim is that the credential lives in the Secret."""
+
+    @pytest.mark.parametrize("server", [
+        "https://user:sha256~tok@api.east.example:6443",       # userinfo
+        "https://api.east.example:6443?token=sha256~tok",      # query
+        "https://api.east.example:6443#sha256~tok",            # fragment
+        "https://api.east.example:6443/path",                  # path, as before
+    ])
+    def test_a_server_that_is_more_than_host_and_port_is_refused(self, server):
+        obj = _secret()
+        obj["data"]["server"] = base64.b64encode(server.encode()).decode()
+        parsed = parse_secret(obj, host_name="host")
+        assert isinstance(parsed, Finding) and parsed.code == "server-invalid"
+        assert "every reader" in parsed.detail
+
+    def test_the_plain_form_is_still_accepted(self):
+        parsed = parse_secret(_secret(), host_name="host")
+        assert not isinstance(parsed, Finding)
+
+
+class TestUndecodableSecretData:
+    """A value that is present but not base64/UTF-8 is reported against its OWN key (OB3 F5).
+
+    It used to become `""` and be reported as the key being absent — "data.config is required" for a
+    config that is there, only malformed. That is a wrong diagnosis, and the operator pays for it in
+    the wrong part of the manifest.
+    """
+
+    @pytest.mark.parametrize("key,code", [("config", "config-missing"), ("name", "name-missing"),
+                                          ("server", "server-missing")])
+    def test_it_names_the_key_that_did_not_decode(self, key, code):
+        obj = _secret()
+        obj["data"][key] = "!!! not base64 !!!"
+        parsed = parse_secret(obj, host_name="host")
+        assert isinstance(parsed, Finding) and parsed.code == code
+        assert "not base64-encoded UTF-8" in parsed.detail and f"data.{key}" in parsed.detail
+
+
+class TestVanishedSecretIsNotServed:
+    """The window between a Secret vanishing and its row being retired (review of #235, OB3 C6).
+
+    `_discover_once` replaces the registry FIRST and writes `enabled=0` second — and only the leader
+    writes at all, so on a standby replica the row stands until the leader's own 300 s cycle. In that
+    window `settings.cluster(id)` is None while the row still says enabled=1, and `cluster_policy`'s
+    defensive default for an id it cannot find is the WIDEST one. So a cluster its Secret made
+    `self-only` was served to a wide-tier reader as `inherit`/`all` until the row caught up.
+    """
+
+    def test_a_cluster_whose_secret_vanished_leaves_the_served_set_at_once(self, tmp_path):
+        db = str(tmp_path / "gone.db"); _seed(db)
+        settings = _settings(db)
+        settings.cluster_registry.namespace = "ns"
+        settings.cluster_registry.replace(
+            [parse_secret(_secret(), host_name="c1")], [], at="2026-09-20T16:05:12Z")
+        app = build_app(settings, run_poller=False)
+        app.state.tier_resolver = _MapResolver({"root": "all"})
+        store = app.state.store
+        store.upsert_cluster("east", "https://api.east.example:6443", True,
+                             source="secret:gsd-cluster-east", credential="bearer")
+        with TestClient(app) as c:
+            before = {x["id"]: x for x in c.get("/api/clusters", headers=H("root")).json()}
+            assert before["east"]["visibility"] == {"policy": "self-only", "scope": "self"}
+            # the Secret vanishes; the row is NOT retired yet (the leader has not got there, or this
+            # replica never will)
+            settings.cluster_registry.replace([], [], at="2026-09-20T16:10:12Z")
+            after = {x["id"]: x for x in c.get("/api/clusters", headers=H("root")).json()}
+            assert "east" not in after, "a cluster no source names was served, and widened, from its row"
+            # the controls: the other three sites already applied the whole rule
+            assert c.get("/api/clusters/east/groupsyncs", headers=H("root")).status_code == 404
 
 
 class TestClusterConfigTier:
@@ -642,6 +740,20 @@ class TestClusterConfigTier:
         with TestClient(app) as c:
             assert c.get("/api/clusters", headers=H("auditor")).status_code == 200
             assert c.get("/api/clusterconfigs", headers=H("auditor")).status_code == 403
+
+    def test_with_no_proxy_there_is_no_identity_to_ask_about_so_it_refuses(self, tmp_path):
+        """The OTHER way the refusal is reached (OB3 F2-residue): with no proxy, `trusted_viewer`
+        returns None because an unproxied `X-Forwarded-User` is whatever the caller typed. A surface
+        naming cluster credentials must not take an identity on the caller's word."""
+        db = str(tmp_path / "noproxy.db"); _seed(db)
+        settings = _settings(db, oauth_proxy_enabled=False)
+        settings.cluster_registry.namespace = "ns"
+        settings.cluster_registry.replace(
+            [parse_secret(_secret(), host_name="c1")], [], at="2026-09-20T16:05:12Z")
+        app = build_app(settings, run_poller=False)
+        app.state.clusterconfig_view_resolver = _MapResolver({"root": "all"})
+        with TestClient(app) as c:
+            assert c.get("/api/clusterconfigs", headers=H("root")).status_code == 403
 
     def test_the_two_levels_have_their_own_defaults_and_caches(self):
         """`manage` is not derived from `view`: separate settings, separate questions."""

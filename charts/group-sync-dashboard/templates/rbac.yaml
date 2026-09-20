@@ -150,7 +150,7 @@ subjects:
     namespace: {{ .Release.Namespace }}
 {{- end }}
 
-{{- if and .Values.oauthProxy.enabled (or .Values.oauthProxy.apiTokenAccess.enabled (eq (include "gsd.visibilityEnabled" .) "true")) }}
+{{- if and .Values.oauthProxy.enabled (or .Values.oauthProxy.apiTokenAccess.enabled (eq (include "gsd.visibilityEnabled" .) "true") (and .Values.clusterConfig.secrets.enabled (eq (include "gsd.visibilityEnabled" .) "false"))) }}
 ---
 # Delegated authorization for the oauth-proxy, so `Authorization: Bearer <token>` works
 # against /api and the API can be curl'd without a browser.
@@ -180,6 +180,14 @@ subjects:
 # write verb: it only ASKS whether the reader could, it never performs it. Without this grant
 # every review errors and every reader, administrators included, fails closed to the self tier
 # permanently.
+#
+# AND IT RENDERS FOR THE CLUSTER-CONFIGURATION TIER TOO (#230, review of #235 by the Fable seat).
+# That tier is deliberately independent of visibility.enabled — turning cluster-DATA restrictions off
+# must not hand the fleet's wiring to every proxy-admitted reader — so it asks a SubjectAccessReview
+# even when visibility is off. Without this binding in that state every such review errors and the
+# surface refuses EVERYONE, administrators included, with nothing but a log line to say why. Measured
+# before the fix: `helm template --set visibility.enabled=false` rendered no binding while the
+# cluster-secrets Role rendered, and a cluster-admin got 403 with no SubjectAccessReview attempted.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
