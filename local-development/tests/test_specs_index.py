@@ -41,8 +41,8 @@ def _index_rows() -> dict[str, dict[str, str]]:
     wrong = {fid: rows[fid]["release"] for fid in programme if not re.fullmatch(r"R\d", rows[fid]["release"])}
     assert not wrong, f"programme rows require an R<number> release: {wrong}"
     assert all(rows[fid]["release"] == "—" for fid in post), "a post-programme row carries `—`"
-    # the count catches an index row dropped silently; it moves by one per new spec (E1 #229, S1 #230)
-    assert len(rows) == 15, f"expected fifteen index rows (the programme's thirteen, E1 and S1), matched {sorted(rows)}"
+    # the count catches an index row dropped silently; it moves by one per new spec (E1 #229, S1 #230, T1 #239)
+    assert len(rows) == 16, f"expected sixteen index rows (the programme's thirteen, E1, S1 and T1), matched {sorted(rows)}"
     return rows
 
 
