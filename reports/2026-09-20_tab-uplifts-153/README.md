@@ -1,6 +1,6 @@
 # The trailing tabs at the bar on CRC — the walk behind #153
 
-Deployed head `06ef60e` (`feat/153-tab-uplifts`, through the Argo Application; `running : 06ef60e6a6 —
+Deployed head `286c222` (`feat/153-tab-uplifts` after its review pass, through the Argo Application; `running : 286c22294d —
 verified in-pod`), walked with `walk.py` through the OAuth proxy as kubeadmin, Chromium 1280×900 then
 375×740. Every line below is the script's own output.
 
