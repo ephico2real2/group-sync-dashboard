@@ -562,6 +562,39 @@ class Settings:
     visibility_usage_admin_sar_subresource: str = ""
     visibility_usage_admin_sar_verb: str = "update"
     visibility_usage_admin_sar_namespace: str = ""
+
+    # A TIER OF ITS OWN for the Cluster Configurations surface (#230; chart:
+    # visibility.clusterConfigViewSar / .clusterConfigManageSar), two levels, modelled on Argo CD's
+    # first-class `clusters` resource with its `get` and `create/update/delete` actions
+    # (argo-cd.readthedocs.io/en/stable/operator-manual/rbac/). We carry no policy file — every tier
+    # here is a SubjectAccessReview against the host cluster, so OpenShift Groups and RoleBindings
+    # already ARE Argo's "g, group, role" mapping, and the tier is a named pair of questions about
+    # the very objects this surface exposes: the cluster Secrets themselves.
+    #
+    #   view   -> `get secrets`    in the dashboard's namespace -> the tab and GET /api/clusterconfigs
+    #   manage -> `create secrets` in the dashboard's namespace -> the write routes and the form's controls
+    #
+    # WHY THESE QUESTIONS AND NOT THE USAGE TAB'S. Measured on CRC 2026-09-20: `oc get clusterrole
+    # cluster-reader -o json` carries ZERO rules covering `secrets`, so the auditor persona answers
+    # no to get, list, create, update and delete — it fails both levels by construction, which is
+    # what the operator requires ("cluster admin view only and not report auditor"). The gate is also
+    # self-describing: you may SEE cluster credentials if you may read the Secrets that hold them,
+    # and CHANGE them if you may create those Secrets. Borrowing the Usage tab's unrelated
+    # `update clusterrolebindings` would have gated cluster configuration on a different question.
+    #
+    # An empty namespace means the pod's own (leader.own_namespace()), resolved at construction —
+    # not a cluster-scoped check, because these Secrets live in exactly one namespace. A site that
+    # wants its own question (a dedicated `fleet-admin` ClusterRole, say) sets these explicitly.
+    visibility_clusterconfig_view_sar_api_group: str = ""
+    visibility_clusterconfig_view_sar_resource: str = "secrets"
+    visibility_clusterconfig_view_sar_subresource: str = ""
+    visibility_clusterconfig_view_sar_verb: str = "get"
+    visibility_clusterconfig_view_sar_namespace: str = ""
+    visibility_clusterconfig_manage_sar_api_group: str = ""
+    visibility_clusterconfig_manage_sar_resource: str = "secrets"
+    visibility_clusterconfig_manage_sar_subresource: str = ""
+    visibility_clusterconfig_manage_sar_verb: str = "create"
+    visibility_clusterconfig_manage_sar_namespace: str = ""
     # How long a viewer's tier verdict may be reused before it is re-decided.
     #
     # THE WORST-CASE STALENESS WINDOW, stated where the number lives: the SAR evaluates live RBAC,

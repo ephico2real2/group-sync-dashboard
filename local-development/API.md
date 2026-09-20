@@ -78,7 +78,7 @@ credential-less `curl`, so refusing the same per-CR identity behind login would 
 `ldap_filter` and `error_message`, both of which can embed directory DNs and the gate group.
 Administrators receive the full row, unchanged.
 
-**`bindings/findings`, `operator-configs`, `kyverno`, `kpi` and `clusterconfigs` (its writes too) are the administrator tier** (`403` at self). The
+**`bindings/findings`, `operator-configs`, `kyverno` and `kpi` are the administrator tier** (`403` at self); **`clusterconfigs` and its writes are a tier of their own** — `clusterconfig:view` and `clusterconfig:manage`, below. The
 Access granted tab at the narrowed tier reads the reader's own path instead — `/users/{name}`
 for their own name, whose `bindings` carry `via_group` — which the gate never withheld.
 They describe objects too, but that is not the test. A binding row names which *group* holds
@@ -134,7 +134,14 @@ half-populated view that otherwise looks exactly like a cluster with no groups.
 
 ### `GET /api/clusterconfigs`
 
-Administrator tier. Every cluster this instance knows with **where it came from** — the values list
+**`clusterconfig:view`** — a tier of its own, not the wide administrator tier, which admits
+`cluster-reader` (the auditor persona) and must not reach this surface (#230). The level is a
+SubjectAccessReview for `get secrets` in the dashboard's namespace (`visibility.clusterConfigViewSar`);
+`clusterconfig:manage` (`create secrets`, `visibility.clusterConfigManageSar`) grants the four writes
+below. Both fail closed — no trusted identity, no resolver or a resolver that raised is a `403` — and
+`manage` does not imply `view`: a site may grant `get secrets` alone and get a read-only tab. The
+payload's `can: {view, manage}` says which the caller holds, and `/api/whoami` carries the same pair so
+the page can withhold the tab itself. Every cluster this instance knows with **where it came from** — the values list
 (`source: values`), a labelled Secret in the pod's own namespace (`source: secret:<metadata.name>`,
 `docs/specs/SPEC_S1_cluster_secrets.md`, #230) — the credential's **kind** and never its value, the
 Secret's other labels, the D2 options as resolved, the poll outcome the cluster table holds, and the

@@ -338,6 +338,8 @@ class TestApi:
         settings.cluster_registry.replace([east], [Finding("gsd-cluster-broken", "config-not-json", "Expecting value")], at="2026-09-20T16:05:12Z")
         app = build_app(settings, run_poller=False)
         app.state.tier_resolver = _MapResolver({"root": "all"})
+        app.state.clusterconfig_view_resolver = _MapResolver({"root": "all"})
+        app.state.clusterconfig_manage_resolver = _MapResolver({"root": "all"})
         with TestClient(app) as c:
             yield c, app.state.store
 

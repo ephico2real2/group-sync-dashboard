@@ -21,6 +21,43 @@ during implementation is written back under "Orchestrator's notes", in the same 
 
 ## Orchestrator's notes
 
+- **A tier of its own, two levels — the operator's ruling of 2026-09-20 (#230), which SUPERSEDES this
+  spec's original "administrator tier" wording.** The surface is cluster-admin only: *"available to
+  cluster admin view only and not report auditor … we cannot allow auditor view or change this"*, then
+  *"we can create a new tier boss — look at how argocd does it"*. `require_admin_tier` cannot express
+  that: it is the WIDE tier, and `gsd/api.py` says so in its own words at `usage_scope` — *"the wide
+  tier that cluster-reader — the deliberate auditor persona — also passes"*. Every route on this
+  surface therefore asks a tier of its own, modelled on Argo CD's first-class `clusters` resource with
+  its `get` / `create,update,delete` split ([Argo CD RBAC](https://argo-cd.readthedocs.io/en/stable/operator-manual/rbac/)):
+
+  | level | SAR (default) | grants |
+  |---|---|---|
+  | `clusterconfig:view` | `get secrets` in the dashboard's namespace | the tab's existence and `GET /api/clusterconfigs` |
+  | `clusterconfig:manage` | `create secrets` in that namespace | the four write routes and the form's Create / Rotate / Delete / Test |
+
+  Measured on CRC 2026-09-20: `cluster-reader` carries **zero** rules covering `secrets`, so the auditor
+  persona fails both levels by construction. The questions are also self-describing — you may see
+  cluster credentials if you may read the Secrets holding them, and change them if you may create those
+  Secrets — where borrowing the Usage tab's `update clusterrolebindings` would have gated cluster
+  configuration on an unrelated question. Rules: fail closed (Argo's `policy.default: deny`) on no
+  identity, no resolver or a resolver that raised; one resolver and cache per level, shared with
+  nothing; `manage` does not imply `view` in code, so a site may grant them separately and get a
+  read-only tab. `view` gates the tab's EXISTENCE — no button, no dispatch, no fetch — because an
+  auditor must not learn the surface exists by being refused by it; a pasted `#page=clusters` draws the
+  refusal card. **The page no longer defers to the wide tier for this payload** (`narrowedOnHost()` was
+  removed from its fetch plan): the route asks `clusterconfig:view` alone, so a reader the wide tier
+  narrows but this tier admits gets the page the API would answer.
+
+- **The write gate also requires a trusted identity, which closed a hole this review found.** With the
+  oauth proxy off `trusted_viewer` is None and the tier machinery is inert, so the write routes stamped
+  the audit line `anonymous` and proceeded — an unauthenticated caller could mint cluster access
+  (Codex C5, Grok, review of #237). `clusterconfig_allows` refuses a nameless reader at the gate, so
+  every audit line names a person by construction.
+
+- **Settings and chart values are S1's to ship** (`visibility_clusterconfig_view_sar_*`,
+  `…_manage_sar_*`): this branch implements against those exact names so the two collapse to ONE
+  definition when S2 rebases on S1's merge.
+
 - **The mock's payload vs S1's.** The mock built its cards from `{name, server, credential: {kind, set},
   connection: {status, last_poll, error}}`; S1's C5 payload carries `{id, api_url, credential: <kind>,
   status, last_poll, error, retired, host}`. The page reads S1's. `credential` is always "set" for a

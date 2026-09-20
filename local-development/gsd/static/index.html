@@ -1088,7 +1088,7 @@ function renderFilters() {
       ${tab("logins", "Logins")}
       ${tab("usage", "Usage")}
       ${reportingEnabled() ? tab("reports", "Reports") : ""}
-      ${tab("clusters", "Cluster Configurations")}
+      ${ccMayView() ? tab("clusters", "Cluster Configurations") : ""}
     </nav>`;
   // FOCUS AND CARET SURVIVE THE REBUILD, and this is load-bearing rather than polish. This function
   // replaces the whole bar's innerHTML, render() calls it before every repaint, and the page repaints
@@ -5201,13 +5201,31 @@ function ccCredential(c) {
   } else if (ccSourceKind(c) === "values") {
     out += ` <span class="cc-hint">read-only — declared in the chart's values</span>`;
   } else if (secretRow && !c.retired) {
-    out += ` <span class="cc-hint">rotate it where the Secret is written — this deployment's writes are off</span>`;
+    out += ` <span class="cc-hint">rotate it where the Secret is written — ${ccDeploymentWrites()
+      ? "changing cluster configuration is reserved to cluster configuration administrators"
+      : "this deployment's writes are off"}</span>`;
   }
   return out;
 }
+/* Two different reasons the form cannot write, and the page must not confuse them (#230): the
+   DEPLOYMENT's switch (clusterConfig.secrets.writes.enabled) and THIS READER's level
+   (clusterconfig:manage). Both must hold for a write control to exist; each has its own sentence. */
 function ccWritesOn() {
+  return ccDeploymentWrites() && ccMayManage();
+}
+function ccDeploymentWrites() {
   const d = data.clusterconfigs;
   return !!(d && d.secrets && d.secrets.writes);
+}
+/* The reader's levels, from whoami — the same cached decision the routes ask, so the tab strip, the
+   controls and the API cannot disagree. Absent whoami is indeterminate: no tab and no controls. */
+function ccMayView() {
+  const w = data.whoami;
+  return !!(w && w.clusterconfig && w.clusterconfig.view);
+}
+function ccMayManage() {
+  const w = data.whoami;
+  return !!(w && w.clusterconfig && w.clusterconfig.manage);
 }
 function ccTls(c) {
   const t = c.tls || {};
@@ -5221,7 +5239,9 @@ function ccClusterCard(c) {
   if (c.retired) {
     foot = `<div class="cc-foot">its Secret is gone — the history is kept, the cluster is disabled</div>`;
   } else if (secretRow && !ccWritesOn()) {
-    foot = `<div class="cc-foot">declared by its Secret — delete it there; this deployment's writes are off</div>`;
+    foot = `<div class="cc-foot">declared by its Secret — delete it there; ${ccDeploymentWrites()
+      ? "changing cluster configuration is reserved to cluster configuration administrators"
+      : "this deployment's writes are off"}</div>`;
   } else if (secretRow) {
     foot = `<div class="cc-acts"><button type="button" class="btn" id="cc-delete-${esc(c.id)}" data-cc-delete="${esc(c.id)}">${armed ? "Confirm delete" : "Delete"}</button>
       <span class="cc-hint" id="cc-delete-msg-${esc(c.id)}">${esc(armed ? "Removes the Secret. Cluster history stays, disabled." : (view.clusterMsg[`delete:${c.id}`] || ""))}</span></div>`;
@@ -5257,12 +5277,18 @@ function ccYaml(d) {
   const tls = { insecure: f.caMode === "insecure" };
   if (f.caMode === "caData") tls.caData = "<redacted>";
   const cfg = { tlsClientConfig: tls, bearerToken: "<redacted>" };
-  const labels = [`    ${CC_LABEL}: cluster`].concat(Object.keys(f.labels).map((k) => `    ${k}: ${f.labels[k]}`));
-  return ["apiVersion: v1", "kind: Secret", "metadata:", `  name: gsd-cluster-${name}`,
-    `  namespace: ${(d.secrets && d.secrets.namespace) || "<namespace>"}`, "  labels:", labels.join("\n"),
-    "  annotations:", "    groupsync-dashboard.io/managed-by: ui", "type: Opaque", "stringData:",
-    `  name: ${name}`, `  server: ${f.server || ""}`, "  config: |", `    ${JSON.stringify(cfg)}`,
-    `  visibility: ${f.visibility}`, `  identity: ${f.identity}`, '  enabled: "true"'].join("\n");
+  // EVERY operator-supplied scalar is quoted, because this pane's whole promise is that applying it
+  // yields the Secret the API would have written. A label value of `true`, `yes`, `on`, `null` or
+  // `8080` is a YAML boolean/null/int unquoted, and Kubernetes label values are strings — so the
+  // twin and the API object differed (Codex C6 measured `{True: False}` against the API's strings).
+  // Double-quoted style covers colons, `#` and leading/trailing space too.
+  const y = (v) => `"${String(v).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+  const labels = [`    ${CC_LABEL}: ${y("cluster")}`].concat(Object.keys(f.labels).map((k) => `    ${k}: ${y(f.labels[k])}`));
+  return ["apiVersion: v1", "kind: Secret", "metadata:", `  name: ${y(`gsd-cluster-${name}`)}`,
+    `  namespace: ${y((d.secrets && d.secrets.namespace) || "<namespace>")}`, "  labels:", labels.join("\n"),
+    "  annotations:", `    groupsync-dashboard.io/managed-by: ${y("ui")}`, "type: Opaque", "stringData:",
+    `  name: ${y(name)}`, `  server: ${y(f.server || "")}`, "  config: |", `    ${JSON.stringify(cfg)}`,
+    `  visibility: ${y(f.visibility)}`, `  identity: ${y(f.identity)}`, `  enabled: ${y("true")}`].join("\n");
 }
 function ccAddForm(d) {
   const f = view.clusterForm;
@@ -5316,7 +5342,11 @@ function ccAddForm(d) {
       ${ccWritesOn() ? `<div class="cc-acts">
         <button type="button" class="btn" id="cc-test">Test connection</button>
         <button type="button" class="btn cc-btn-acc" id="cc-create">Create Secret</button></div>`
-      : `<div class="filterbar-note" id="cc-writes-off"><strong>This deployment does not write Secrets</strong> — the dashboard is a
+      : ccDeploymentWrites()
+        ? `<div class="filterbar-note" id="cc-writes-off"><strong>This view is read-only for you</strong> — changing cluster
+            configuration is reserved to cluster configuration administrators. Copy the YAML beside the form and hand it to
+            someone who holds that level, or apply it the way your other Secrets arrive; the next discovery picks it up.</div>`
+        : `<div class="filterbar-note" id="cc-writes-off"><strong>This deployment does not write Secrets</strong> — the dashboard is a
           reader by design, and <code>clusterConfig.secrets.writes.enabled</code> is off (the default). Copy the YAML beside
           the form and apply it the way your other Secrets arrive; the next discovery picks it up. Turning the switch on is
           the deliberate decision to let the dashboard mint cluster access.</div>`}
@@ -6084,8 +6114,10 @@ function render() {
     main.innerHTML = kyvernoPage();
     wireKyverno();
   } else if (view.page === "clusters") {
-    main.innerHTML = clusterConfigPage();
-    wireClusterConfig();
+    // Reached by URL without the level: the refusal card, not the page — and not a fetch either.
+    // The tab is absent for this reader, so arriving here is a pasted link or a stale bookmark.
+    main.innerHTML = ccMayView() ? clusterConfigPage() : refusalCard("Cluster Configurations", CLUSTERS_REFUSAL);
+    if (ccMayView()) wireClusterConfig();
   } else if (view.page === "kpi") {
     // The same tier rule as the Overview, in the same words: the page is about the clusters and
     // the dashboard's own pods, and answers nothing a reader can ask about themselves. Keyed on the
@@ -6531,8 +6563,14 @@ async function refresh(opts = {}) {
     if (view.page === "kpi" && !narrowedOnHost()) {
       want.kpi = guard403(get("/api/kpi"));
     }
-    // The Cluster Configurations page (#230 S2): one payload, administrator tier on the host — the KPI rule.
-    if (view.page === "clusters" && !narrowedOnHost()) {
+    // The Cluster Configurations page (#230 S2): one payload, and only for a reader the
+    // `clusterconfig:view` level admits — a reader without it makes NO request, so the surface
+    // leaves no trace for them at all (#230; the tab is absent for them too).
+    // NOT gated on the wide tier (narrowedOnHost) any more: this surface has a tier OF ITS OWN
+    // (#230), and the route asks `clusterconfig:view` alone. A site may grant `get secrets` to
+    // someone the wide tier narrows; deferring to it here would have shown them an empty page the
+    // API would have answered.
+    if (view.page === "clusters" && ccMayView()) {
       want.clusterconfigs = guard403(get("/api/clusterconfigs"));
     }
     if (view.page === "reports" && reportingEnabled() && !narrowedOnHost()) {
@@ -6582,7 +6620,9 @@ async function refresh(opts = {}) {
     if ("kpi" in got) data.kpi = got.kpi;
     if ("clusterconfigs" in got) data.clusterconfigs = got.clusterconfigs;
     if (view.page === "clusters" && got.whoami) {   // decided again from the whoami that just arrived — the KPI rule below
-      if (narrowedOnHost()) {
+      // From THIS surface's own tier, not the wide one (#230): the whoami that just landed carries
+      // the levels, and a reader without `view` is refused here whatever the wide tier says.
+      if (!ccMayView()) {
         data.clusterconfigs = { forbidden: true };
       } else if (got.whoami.authenticated && !("clusterconfigs" in got)) {
         const body = await guard403(get("/api/clusterconfigs"));

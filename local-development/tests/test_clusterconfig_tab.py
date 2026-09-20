@@ -206,6 +206,25 @@ class TestWriter:
         out = probe_connection(_req(), NS, host_name="c1", timeout=5.0, viewer="root")
         assert out["reachable"] is False and out["error"].startswith("auth_failed:")
 
+    def test_an_open_version_with_a_refused_identity_is_not_reachable(self, monkeypatch):
+        """`/version` answers an ANONYMOUS request on OpenShift, so a connection test that set
+        `reachable` there reported a working credential for a token that was expired, revoked or
+        wrong — the one answer this control exists to give (review of #237, Grok)."""
+        class _Probe(ClusterClient):
+            def _client(self):
+                import contextlib
+                return contextlib.nullcontext(object())
+
+            def _get(self, client, path, params):
+                if path == "/version":
+                    return {"gitVersion": "v1.31.6"}
+                raise ClusterError("auth_failed", "401 Unauthorized — token invalid or expired")
+
+        monkeypatch.setattr("gsd.clusterconfig.writer.ClusterClient", _Probe)
+        out = probe_connection(_req(), NS, host_name="c1", timeout=5.0, viewer="root")
+        assert out["reachable"] is False and out["error"].startswith("auth_failed:")
+        assert out["server_version"] == "v1.31.6"     # what was learned is still reported
+
 
 # ── the API ───────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -223,6 +242,10 @@ class TestApi:
         monkeypatch.setattr("gsd.api.own_namespace", lambda: NS)
         app = build_app(settings, run_poller=False)
         app.state.tier_resolver = _MapResolver({"root": "all"})
+        # The Cluster Configurations tier's own two seams (#230): root holds both levels here, and
+        # the tier's tests below drive every other combination.
+        app.state.clusterconfig_view_resolver = _MapResolver({"root": "all"})
+        app.state.clusterconfig_manage_resolver = _MapResolver({"root": "all"})
         with TestClient(app) as c:
             yield c, app, host, settings
 
@@ -236,6 +259,22 @@ class TestApi:
         assert c.put("/api/clusterconfigs/east/credential", json={"token": "t"}, headers=H("alice")).status_code == 403
         assert c.delete("/api/clusterconfigs/east", headers=H("alice")).status_code == 403
         assert c.post("/api/clusterconfigs/test", json=self.BODY, headers=H("alice")).status_code == 403
+
+    @pytest.mark.parametrize("body,where", [
+        ({**BODY, "config": '{"bearerToken": "x"}'}, "body"),
+        ({**BODY, "tls": {"mode": "caData", "caData": PEM, "insecure": True}}, "tls"),
+        ({**BODY, "credential": {"kind": "bearerToken", "token": TOKEN, "execProviderConfig": {}}}, "credential"),
+    ])
+    def test_a_field_the_shape_does_not_carry_is_refused_by_name_never_ignored(self, rig, body, where):
+        """`tls: {mode: caData, caData: …, insecure: true}` answered 201 and wrote `insecure: false`:
+        the caller asked for two contradictory things and was told they got both. The operator's rule
+        for this surface is that caData beside insecure is refused naming both fields, never
+        normalised (#230; review of #237, Codex C4)."""
+        c, _, host, _ = rig
+        before = list(host.calls)
+        r = c.post("/api/clusterconfigs", json=body, headers=H("root"))
+        assert r.status_code == 422 and where in r.json()["detail"]
+        assert host.calls == before, "refused before any request to the API server"
 
     def test_create_writes_the_secret_requests_a_discovery_and_answers_201_without_the_token(self, rig, caplog):
         c, app, host, settings = rig
@@ -276,6 +315,8 @@ class TestApi:
         assert settings.cluster_secrets_writes_enabled is False
         app = build_app(settings, run_poller=False)
         app.state.tier_resolver = _MapResolver({"root": "all"})
+        app.state.clusterconfig_view_resolver = _MapResolver({"root": "all"})
+        app.state.clusterconfig_manage_resolver = _MapResolver({"root": "all"})
         with TestClient(app) as c:
             # a POST on the read path is a 405 (the path exists for GET); the write-only paths are 404s — routes that
             # were never registered, never routes that refuse
@@ -328,6 +369,14 @@ class TestApi:
             texts = [c.post("/api/clusterconfigs", json=self.BODY, headers=H("root")).text,
                      c.put("/api/clusterconfigs/east/credential", json={"token": TOKEN}, headers=H("root")).text]
             texts += [c.get(p, headers=H("root")).text for p in ("/api/clusterconfigs", "/api/clusters", "/readyz", "/metrics")]
+            # THE REFUSAL PATHS TOO, not only the happy ones: a 422 or 409 is where a handler is most
+            # tempted to echo the request back for context, and the request carries the token
+            # (review of #237, Grok). One of each refusal that reaches the body with a credential in it.
+            texts += [c.post("/api/clusterconfigs", json={**self.BODY, "name": "Bad Name"}, headers=H("root")).text,
+                      c.post("/api/clusterconfigs", json={**self.BODY, "tls": {"mode": "caData", "caData": "not-base64!"}}, headers=H("root")).text,
+                      c.post("/api/clusterconfigs", json={**self.BODY, "config": "raw"}, headers=H("root")).text,
+                      c.post("/api/clusterconfigs", json={**self.BODY, "name": "east"}, headers=H("root")).text,
+                      c.post("/api/clusterconfigs/test", json={**self.BODY, "server": "http://insecure"}, headers=H("root")).text]
         assert all(TOKEN not in t for t in texts)
         assert TOKEN not in "\n".join(r.getMessage() for r in caplog.records)
         assert TOKEN not in "\n".join(app.state.store._conn.iterdump())
@@ -347,3 +396,82 @@ class TestChart:
         assert role["rules"] == [{"apiGroups": [""], "resources": ["secrets"], "verbs": ["get", "list", "watch", "create", "update", "delete"]}]
         ok, out = _render_text(clusterConfig__secrets__writes__enabled="true")
         assert ok and _config_data(out)["clusterSecretsWritesEnabled"] is True
+
+
+# ── the Cluster Configurations tier (#230): two levels, Argo's model in OpenShift RBAC ────────────
+#
+# `clusterconfig:view` (default SAR `get secrets` in the dashboard's namespace) gates the tab and the
+# read; `clusterconfig:manage` (`create secrets`) gates the four writes and the form's controls. The
+# wide tier is NOT enough: it admits cluster-reader, the deliberate auditor persona, and the operator
+# ruled this surface cluster-admin-only (2026-09-20). Measured on CRC the same day: cluster-reader
+# carries no rule covering `secrets` at all, so it fails both levels by construction.
+class TestClusterConfigTier:
+    BODY = TestApi.BODY
+
+    @pytest.fixture
+    def rig(self, tmp_path, monkeypatch):
+        """Three personas against one app: `root` holds both levels, `viewer` only `view`, and
+        `auditor` neither — but `auditor` DOES hold the wide tier, which is what makes the mutant
+        test below meaningful."""
+        import dataclasses
+        db = str(tmp_path / "tier.db"); _seed(db)
+        settings = dataclasses.replace(_settings(db), cluster_secrets_writes_enabled=True)
+        settings.cluster_registry.namespace = NS
+        settings.cluster_registry.replace([parse_secret(_secret(), host_name="c1")], [],
+                                          at="2026-09-20T16:05:12Z")
+        host = _Host({"gsd-cluster-east": _secret()})
+        monkeypatch.setattr("gsd.api.ClusterClient", lambda cfg, timeout=15.0: host)
+        monkeypatch.setattr("gsd.api.own_namespace", lambda: NS)
+        app = build_app(settings, run_poller=False)
+        # EVERY persona passes the wide tier, exactly as cluster-reader does on a real cluster.
+        app.state.tier_resolver = _MapResolver({"root": "all", "viewer": "all", "auditor": "all"})
+        app.state.clusterconfig_view_resolver = _MapResolver({"root": "all", "viewer": "all"})
+        app.state.clusterconfig_manage_resolver = _MapResolver({"root": "all"})
+        with TestClient(app) as c:
+            yield c
+
+    def _writes(self, c, who):
+        return [c.post("/api/clusterconfigs", json=self.BODY, headers=H(who)),
+                c.put("/api/clusterconfigs/east/credential", json={"token": "t"}, headers=H(who)),
+                c.delete("/api/clusterconfigs/east", headers=H(who)),
+                c.post("/api/clusterconfigs/test", json=self.BODY, headers=H(who))]
+
+    def test_the_auditor_is_refused_everywhere_and_is_never_told_the_surface_exists(self, rig):
+        """The mutant killer: `auditor` passes the WIDE tier, so any route that reverted to
+        require_admin_tier would answer 200/201 here."""
+        read = rig.get("/api/clusterconfigs", headers=H("auditor"))
+        assert read.status_code == 403
+        assert "east" not in read.text and "gsd-cluster" not in read.text    # no cluster names in a refusal
+        assert [r.status_code for r in self._writes(rig, "auditor")] == [403, 403, 403, 403]
+        who = rig.get("/api/whoami", headers=H("auditor")).json()
+        assert who["clusterconfig"] == {"view": False, "manage": False}      # no tab for this reader
+
+    def test_view_without_manage_reads_the_surface_and_changes_nothing(self, rig):
+        body = rig.get("/api/clusterconfigs", headers=H("viewer")).json()
+        assert body["can"] == {"view": True, "manage": False}
+        assert [c["id"] for c in body["clusters"]]                            # the cards are there to read
+        assert [r.status_code for r in self._writes(rig, "viewer")] == [403, 403, 403, 403]
+        assert rig.get("/api/whoami", headers=H("viewer")).json()["clusterconfig"] == {"view": True, "manage": False}
+
+    def test_the_administrator_holds_both_levels(self, rig):
+        assert rig.get("/api/clusterconfigs", headers=H("root")).json()["can"] == {"view": True, "manage": True}
+        assert rig.get("/api/whoami", headers=H("root")).json()["clusterconfig"] == {"view": True, "manage": True}
+        assert rig.post("/api/clusterconfigs/test", json=self.BODY, headers=H("root")).status_code == 200
+
+    def test_a_reader_with_no_trusted_identity_is_refused(self, rig):
+        """The proxy-off hole: `trusted_viewer` is None, the tier machinery is inert, and the write
+        routes used to stamp the audit line "anonymous" and mint cluster access anyway."""
+        assert rig.get("/api/clusterconfigs").status_code == 403
+        assert [r.status_code for r in (
+            rig.post("/api/clusterconfigs", json=self.BODY),
+            rig.put("/api/clusterconfigs/east/credential", json={"token": "t"}),
+            rig.delete("/api/clusterconfigs/east"),
+            rig.post("/api/clusterconfigs/test", json=self.BODY))] == [403, 403, 403, 403]
+
+    def test_no_resolver_fails_closed(self, rig):
+        """Argo's `policy.default: deny`: an instance that built no resolver — restrictions off, or no
+        host cluster to review against — refuses rather than falling back to the wide tier."""
+        rig.app.state.clusterconfig_view_resolver = None
+        rig.app.state.clusterconfig_manage_resolver = None
+        assert rig.get("/api/clusterconfigs", headers=H("root")).status_code == 403
+        assert [r.status_code for r in self._writes(rig, "root")] == [403, 403, 403, 403]

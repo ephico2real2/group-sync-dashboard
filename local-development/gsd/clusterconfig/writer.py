@@ -217,14 +217,21 @@ def test_connection(req: CreateRequest, namespace: str, *, host_name: str | None
     try:
         with probe._client() as client:
             version = probe._get(client, "/version", {})
-            out["reachable"] = True
             out["server_version"] = version.get("gitVersion")
             try:
                 me = probe._get(client, "/apis/user.openshift.io/v1/users/~", {})
                 out["identity"] = (me.get("metadata") or {}).get("name")
             except ClusterError as exc:
+                # A 404 is an ordinary Kubernetes without the OpenShift user API: the credential
+                # still authenticated, so the test passed. Anything else did not.
                 if not exc.message.startswith("HTTP 404"):
                     raise
+            # REACHABLE IS SET LAST, after the credential has been used for something the API server
+            # actually authorises. `/version` is open on OpenShift — it answers an anonymous request —
+            # so setting it there reported a working connection for a token that was expired, revoked
+            # or simply wrong, which is the one answer this control exists to give (review of #237,
+            # Grok). The order is the assertion.
+            out["reachable"] = True
     except ClusterError as exc:
         out["error"] = f"{exc.outcome}: {exc.message}"
     log.info("connection test by %s against %s: %s", viewer, req.server,

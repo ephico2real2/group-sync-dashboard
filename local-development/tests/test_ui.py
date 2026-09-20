@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import json
 import pathlib
 import socket
 import threading
@@ -1125,7 +1126,12 @@ class TestTheShellAtPhoneWidth:
     """#166, measured on the live cluster before the fix: at 375 px the nine-tab bar was 676 px wide,
     `document.documentElement.scrollWidth` 696, and five tabs sat past the edge of a bar that could
     not scroll — unreachable. The shell owns the bar (#152), so the check runs on every tab."""
-    TABS = ["home", "overview", "kpi", "groups", "users", "bindings", "policy", "kyverno", "nsaudit", "logins", "usage", "clusters"]
+    # "clusters" is NOT walked here: this class runs on the unrestricted app (view_restrictions_enabled
+    # False), where no SubjectAccessReview is asked for anything — so nothing can tell an auditor from an
+    # administrator, and the Cluster Configurations tier fails closed rather than admitting everyone
+    # (#230). Its phone-width check lives in TestClusterConfigPage, which runs restricted and as a
+    # persona that holds the level.
+    TABS = ["home", "overview", "kpi", "groups", "users", "bindings", "policy", "kyverno", "nsaudit", "logins", "usage"]
 
     @pytest.mark.parametrize("tab", TABS)
     def test_no_horizontal_overflow_and_every_tab_inside_the_viewport(self, dash, tab):
@@ -4145,8 +4151,13 @@ class _TierByName:
     controls the tier without a cluster. `root` is the administrator persona; everyone
     else is self."""
 
+    def __init__(self, *names):
+        # Defaults to the wide tier's single administrator persona; the Cluster Configurations
+        # tier (#230) constructs its own with the names that hold each of its two levels.
+        self._names = frozenset(names or ("root",))
+
     def resolve(self, viewer):
-        return "all" if viewer == "root" else "self"
+        return "all" if viewer in self._names else "self"
 
 
 @pytest.fixture(scope="module")
@@ -4171,6 +4182,10 @@ def scoped_server(tmp_path_factory):
     port = _free_port()
     app = build_app(settings, run_poller=False)
     app.state.tier_resolver = _TierByName()
+    # The Cluster Configurations tier (#230): `root` holds both levels, `viewer` reads without
+    # changing, and everyone else — the auditor persona included — holds neither and gets no tab.
+    app.state.clusterconfig_view_resolver = _TierByName("root", "viewer")
+    app.state.clusterconfig_manage_resolver = _TierByName("root")
     _SCOPED_APP = app   # the Cluster Configurations tests set the discovered clusters on its registry (#230 S2)
     config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
     srv = uvicorn.Server(config)
@@ -6495,10 +6510,10 @@ class TestClusterConfigPage:
         page.click("#tab-clusters"); page.wait_for_selector("#cc-form")
         page.fill("#cc-name", "west"); page.fill("#cc-server", "https://api.west.example:6443")
         yaml = page.locator("#cc-yaml").inner_text()
-        assert "name: gsd-cluster-west" in yaml and "server: https://api.west.example:6443" in yaml
+        assert 'name: "gsd-cluster-west"' in yaml and 'server: "https://api.west.example:6443"' in yaml   # quoted: the twin must parse back as strings
         assert '"bearerToken":"<redacted>"' in yaml and '"caData":"<redacted>"' in yaml
-        assert "groupsync-dashboard.io/secret-type: cluster" in yaml and "managed-by: ui" in yaml
-        assert "namespace: gsd-ns" in yaml
+        assert 'groupsync-dashboard.io/secret-type: "cluster"' in yaml and 'managed-by: "ui"' in yaml
+        assert 'namespace: "gsd-ns"' in yaml
         page.click("#cc-ca-insecure"); page.wait_for_selector("#cc-ca-insecure-warn:not([hidden])")
         yaml = page.locator("#cc-yaml").inner_text()
         assert '"insecure":true' in yaml and "caData" not in yaml
@@ -6517,12 +6532,15 @@ class TestClusterConfigPage:
         assert page.locator("#cc-rotate-east").count() == 0 and page.locator("#cc-delete-east").count() == 0
         assert "writes are off" in page.locator("#cc-cluster-east").inner_text()
         page.fill("#cc-name", "gitops-one")
-        assert "name: gsd-cluster-gitops-one" in page.locator("#cc-yaml").inner_text()
+        assert 'name: "gsd-cluster-gitops-one"' in page.locator("#cc-yaml").inner_text()
 
     def test_a_narrowed_reader_gets_the_refusal_card(self, page, cc_rig):
+        # No tab to click any more: a reader without `clusterconfig:view` is not offered the surface
+        # at all (#230), so the refusal is what a pasted URL draws.
         base, host, settings = cc_rig
         _open_as(page, base, "alice")
-        page.click("#tab-clusters")
+        assert page.locator("#tab-clusters").count() == 0
+        page.goto(f"{base}/#page=clusters")
         page.wait_for_function("() => document.body.innerText.includes('Withheld, not empty')")
         assert page.locator("#cc-form").count() == 0
 
@@ -6563,6 +6581,19 @@ class TestClusterConfigPage:
 
     def test_the_page_fits_375_and_focus_survives_a_poll(self, page, cc_rig):
         base, host, settings = cc_rig
+        # A FINDING IS MOUNTED for this one: the findings card renders a Secret name, a code and a
+        # detail on one row, and it is the longest unbroken string the page can draw — the empty
+        # state the other tests leave it in is exactly the state that cannot overflow (review of
+        # #237, Grok).
+        from gsd.clusterconfig import parse_secret
+        from gsd.clusterconfig.parser import Finding
+        from test_clusterconfig import _secret
+        settings.cluster_registry.replace(
+            [parse_secret(_secret(labels={"environment": "prod"}), host_name="crc-local")],
+            [Finding(secret="gsd-cluster-a-rather-long-secret-name-from-gitops",
+                     code="unsupported-config-key",
+                     detail="config.execProviderConfig is not a supported config key for this dashboard")],
+            at="2026-09-20T16:05:12Z")
         _open_as(page, base, "root")
         page.click("#tab-clusters"); page.wait_for_selector("#cc-form")
         page.focus("#cc-server"); page.keyboard.type("https://a")
@@ -6573,6 +6604,79 @@ class TestClusterConfigPage:
         assert page.evaluate("() => document.documentElement.scrollWidth <= innerWidth")
         beyond = page.evaluate("() => [...document.querySelectorAll('#main *')].filter(e => e.getBoundingClientRect().right > innerWidth + 1).length")
         assert beyond == 0
+
+    # ── the tier on the page (#230): two levels, and the tab's very existence is the first one ────
+    def test_the_auditor_gets_no_tab_no_page_and_makes_no_request_for_it(self, page, cc_rig):
+        """The operator's rule: the auditor must not see this surface OR learn that it exists. So the
+        tab button is absent, a pasted #page=clusters shows the refusal card, and — the part a hidden
+        button alone would not give — the page issues no /api/clusterconfigs request at all."""
+        base, host, settings = cc_rig
+        asked: list[str] = []
+        page.on("request", lambda r: asked.append(r.url))
+        _open_as(page, base, "auditor")
+        assert page.locator("#tab-clusters").count() == 0
+        page.goto(f"{base}/#page=clusters"); page.reload()      # a pasted link, parsed cold
+        page.wait_for_function("() => document.body.innerText.includes('Withheld, not empty')")
+        assert "Withheld, not empty" in page.locator("#main").inner_text()
+        assert page.locator("#cc-head").count() == 0 and page.locator("#cc-form").count() == 0
+        page.wait_for_timeout(300)
+        assert [u for u in asked if "/api/clusterconfigs" in u] == []
+
+    def test_a_view_only_reader_reads_the_cards_and_has_no_write_control(self, page, cc_rig):
+        """`clusterconfig:view` without `manage` — the shape a site gets by granting `get secrets`
+        and not `create secrets`: the tab, the cards and the YAML twin, and nothing that writes."""
+        base, host, settings = cc_rig
+        _open_as(page, base, "viewer")
+        assert page.locator("#tab-clusters").count() == 1
+        page.click("#tab-clusters"); page.wait_for_selector("#cc-cluster-east")
+        for control in ("#cc-create", "#cc-test", "#cc-rotate-east", "#cc-delete-east"):
+            assert page.locator(control).count() == 0, control
+        assert page.locator("#cc-yaml").count() == 1                 # the GitOps twin stays: it writes nothing
+        note = page.locator("#cc-writes-off").inner_text()
+        assert "read-only for you" in note and "clusterConfig.secrets.writes.enabled" not in note
+
+    def test_the_yaml_twin_is_the_object_the_api_would_write(self, page, cc_rig):
+        """The pane's whole promise — "as GitOps would write it" — is that applying it yields the
+        Secret the API writes. So the page's YAML is PARSED and compared field for field with
+        writer.secret_object(), not eyeballed (review of #237, Codex C6 and Grok)."""
+        import yaml as _yaml
+        from gsd.clusterconfig.writer import CreateRequest, secret_object
+        base, host, settings = cc_rig
+        _open_as(page, base, "root")
+        page.click("#tab-clusters"); page.wait_for_selector("#cc-form")
+        page.click("#cc-ca-trustedBundle")            # pin the CA mode the comparison is built for
+        # values a naive emitter gets wrong: a label that is a YAML boolean, and one with a colon
+        page.fill("#cc-name", "west"); page.fill("#cc-server", "https://api.west.example:6443")
+        page.fill("#cc-token", "s3cr3t")
+        page.fill("#cc-label-key", "managed"); page.fill("#cc-label-val", "true")
+        page.click("#cc-label-add")
+        page.fill("#cc-label-key", "team"); page.fill("#cc-label-val", "platform:core")
+        page.click("#cc-label-add")
+        page.wait_for_timeout(200)
+        twin = _yaml.safe_load(page.locator("#cc-yaml").inner_text())
+        want = secret_object(CreateRequest(name="west", server="https://api.west.example:6443",
+                                           credential_kind="bearerToken", token="s3cr3t",
+                                           tls_mode="trustedBundle",
+                                           labels={"managed": "true", "team": "platform:core"}),
+                             "gsd-ns", redact=True)
+        assert twin["metadata"] == want["metadata"], (twin["metadata"], want["metadata"])
+        assert {k: v for k, v in twin["stringData"].items() if k != "config"} == \
+               {k: v for k, v in want["stringData"].items() if k != "config"}
+        assert json.loads(twin["stringData"]["config"]) == json.loads(want["stringData"]["config"])
+        assert "s3cr3t" not in page.locator("#cc-yaml").inner_text()   # the twin never carries the credential
+
+    def test_the_administrator_keeps_every_control(self, page, cc_rig):
+        base, host, settings = cc_rig
+        _open_as(page, base, "root")
+        assert page.locator("#tab-clusters").count() == 1    # the strip's count is conditional (Reports too), the tab's presence is the claim
+        page.click("#tab-clusters"); page.wait_for_selector("#cc-cluster-east")
+        for control in ("#cc-create", "#cc-test", "#cc-rotate-east", "#cc-delete-east"):
+            assert page.locator(control).count() == 1, control
+        # and at phone width, where this class's page test cannot reach: every tab inside the viewport
+        page.set_viewport_size({"width": 375, "height": 740}); page.wait_for_timeout(300)
+        assert page.evaluate("() => document.documentElement.scrollWidth <= innerWidth")
+        beyond = page.evaluate("() => [...document.querySelectorAll('button.tab')].filter(t => t.getBoundingClientRect().right > innerWidth).map(t => t.id)")
+        assert beyond == [], beyond
 
 
 class TestKyvernoPage:
@@ -6724,7 +6828,11 @@ class TestReportsTab:
             page.click("#tab-reports")
             page.wait_for_selector("#tab-reports[aria-current='page']")
             page.wait_for_timeout(300)
-            assert page.evaluate("() => document.querySelectorAll('button.tab').length") == 13   # Home joined the strip (#158); KPIs (#157); Kyverno (#170); Cluster Configurations (#230)
+            # 12, not 13: the strip is PERSONA-dependent now. Cluster Configurations appears only for
+            # a reader the `clusterconfig:view` level admits (#230), and this walk runs as alice, who
+            # is not one — an auditor must not learn the surface exists; root counts 13 in
+            # TestClusterConfigPage.
+            assert page.evaluate("() => document.querySelectorAll('button.tab').length") == 12
             assert page.evaluate("() => [document.documentElement.scrollWidth <= innerWidth, [...document.querySelectorAll('button.tab')].filter(t => t.getBoundingClientRect().right > innerWidth).map(t => t.id)]") == [True, []]
             assert not errors
         finally:
