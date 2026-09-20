@@ -397,6 +397,85 @@ Outcome in one line: **#212 finished and #216 merged (the script's two managers,
 
 ---
 
+## Part 11 — the design pass, the tier model and the Fable re-review programme (11:3x → 14:0x)
+
+The account changed mid-session (the previous one hit its weekly limit) and every background fork died with
+it; all three were restored from their worktrees, which is why this part reads as re-entrant. The usage panel
+showed **Fable on a separate weekly pool** from the main limit — recorded as a standing scheduling rule
+(memory *fable-has-a-separate-weekly-pool*): Fable seats never trade against the Opus budget, so re-reviews,
+spec drafts and extra seats run in parallel rather than in turn.
+
+### OB2's design review — four of seven claims refuted (Fable 5.1, live SARs on CRC)
+
+- **The tier ladder was not a ladder.** A user bound to the stock `ClusterRole/admin` by a ClusterRoleBinding —
+  the lab carries **seven** such bindings — answers `no` to `list clusterrolebindings` and `no` to
+  `update clusterrolebindings` but `yes` to `get`/`create secrets`. Measured with `oc auth can-i --as --as-group`.
+- **The S2 head let the auditor, and with restrictions off an anonymous caller, write cluster Secrets** — it was
+  never rebased onto S1's resolver (`git merge-base --is-ancestor` proved it). Fixed in the branch.
+- **#239 did not close #114** and its migration section described no observable change; the compatibility knob
+  was dropped and the claim withdrawn.
+- **#119 rested on a false premise:** the OAuth CR and the GroupSync CR name **different accounts** on the lab
+  (`ocp-oauth-bind-serviceid` vs `ocp-ldap-bind-serviceid`), so `discover: oauth` would have paired one
+  account's password with another's username. `discover: oauth` dropped.
+- **#238 corrected twice:** the minted token must not be written into the GitOps-owned cluster Secret (a second
+  labelled credential object, referenced), and `expirationSeconds` needs a ceiling and a floor — measured,
+  `oc create token --duration 8760h` was honoured, so "bound and expiring" was only as true as the ask.
+- **Found by the S1 fork, in OB2's own fix:** its ordering patch used `usage_scope` as the lower rung, which
+  dissolves under `userActivity.visibility: all` and again when `visibility.enabled` is off. The rung is asked
+  directly instead, past both escape hatches, with two mutant-checked pins. *A correct finding does not make
+  its fix correct* — the fourth time that rule paid this session.
+- **Operator ruling, 2026-09-20, which then reversed the ordering entirely:** *"A user with cluster admin and
+  auditor is fine. That is how Kubernetes RBAC works."* Each tier asks its own SAR and composes nothing — RBAC
+  is additive; the SAR is the action's own question, so whoever passes `create secrets` can write the Secret
+  with `oc` and the dashboard's ServiceAccount grants nobody a permission they lack; and the "no auditor"
+  ruling holds anyway because the pure auditor persona answers `no` to both questions (`lateef.o`, measured).
+
+### The Fable re-review programme (#210) — four of seven done, all four confirming OB3
+
+Run on **`ob1-lite`** (Fable 5.1, default effort — a new agent tier), each re-judging OB3's verdicts against
+**main as it stands**, not the branch as reviewed.
+
+- **#231 (Flux):** holds outright. Re-measured against helm-controller **v1.6.4**, source-controller **v1.9.5**,
+  Helm **v4.2.4** and today's published index; `crds: CreateReplace`'s hazard re-derived at the source; four
+  mutants each caught. The agent retracted a failure of its own harness rather than reporting it.
+- **#228 (Kyverno):** holds — **18 mutants**, each caught by exactly the intended test. **Two gaps found:** a
+  rewrite of the reader's `!= "True"` to `== "False"` **survived the whole suite** (37 passed), and four
+  comments still described the pre-F1/pre-F6 code. → **PR #241**, merged `da4def4`; both fixes proven to fail
+  before and pass after, with the mutant restored and the tree verified clean.
+- **#226 (hover rail):** holds in full — specificity re-measured in Chromium against a `(0,1,1)` variant, both
+  mutations failing exactly the right tests.
+- **#227 (discovery):** every lab and source claim holds (112 reports, `{KyvernoValidatingPolicy: 6,
+  kyverno: 667}`, 0 of 6 CEL rows carrying a `rule` key, the background controller serving **no**
+  `kyverno_breaker_*` line at all), **but six statements in the discovery documents described a module we do
+  not have** — the reader, the store key, the stored fields, the policy list. → **PR #243**, merged `9e2a077`,
+  plus a **paint-level** test for #219: every existing test measured geometry, never ink, which is what the
+  issue was about; it fails with the rule deleted.
+
+### The tier model's spec — PR #242
+
+Drafted on Fable in its own worktree (docs-only, so it could not collide with the three code branches). Its
+persona scan across **497 ClusterRoles** found twelve that pass `update clusterrolebindings` — none bound to a
+human but `cluster-admin`/`system:masters` — and one release trap: `rbac-auditors.yaml`'s guard reads
+`adminSar`, so T2's rename would **fail every default chart render** unless re-pointed. It also measured
+`bob.wilson` — an auditor-group member with cluster-wide `edit` — passing both cluster-admin questions, which
+is the case the operator's no-composition ruling settles: he is admitted deliberately, because he can write
+that Secret with `oc` whatever the dashboard shows him.
+
+### Merged this part
+
+`7f75131` **#240** (the design index says what is implemented — five rows had understated it), `da4def4`
+**#241**, `9e2a077` **#243**. The mock programme finished: ten mocks, eight implemented, two in flight.
+
+### Two process defects, both fixed in place
+
+- A mutant script raised before restoring the file it had mutated, leaving `reader.py` broken in the worktree;
+  caught on the next read, restored, and the proof re-run with the restore in a `finally`.
+- The PR waiter fired on GitHub's optimistic `mergeStateStatus` while a new commit's checks were still
+  registering, so a merge was attempted against a half-registered rollup. Replaced with one that requires
+  **every** check concluded.
+
+---
+
 ## Numbers
 
 | | |
