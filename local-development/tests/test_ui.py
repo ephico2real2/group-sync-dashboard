@@ -6243,8 +6243,11 @@ class TestReportsTab:
             login = page.locator("#report-pick-login-activity")
             assert login.is_disabled() and "reporting.reports.loginActivity.enabled" in login.inner_text()
             page.click("#report-pick-namespace-access")
-            page.fill("#report-param-namespace-access-namespaces", "prod-ns")
-            page.locator("#report-param-namespace-access-namespaces").dispatch_event("change")
+            # #143 phase 2: the explicit names are an Advanced picker over the discovered namespaces;
+            # Enter adds a name the poll never listed
+            page.click("details.report-advanced summary")
+            page.fill("#report-lookup-namespace-access-namespaces", "prod-ns"); page.press("#report-lookup-namespace-access-namespaces", "Enter")
+            page.wait_for_selector('.rp-tag[data-name="prod-ns"]')
             gen = page.locator("#report-generate")
             gen.focus()
             gen.click()
@@ -6297,7 +6300,7 @@ class TestReportsTab:
             assert page.locator("#report-selector-0").get_attribute("data-selector-label") == "company.net/mnemonic"
             assert page.locator("#report-selector-1").get_attribute("data-selector-label") == "company.net/app-environment"
             assert page.locator("#report-selector-0 option").evaluate_all("es => es.map(o => o.value)") == ["beta", "demo"]
-            assert page.locator("#report-param-namespace-access-namespaces").count() == 1      # advanced field kept
+            assert page.locator("#report-lookup-namespace-access-namespaces").count() == 1     # advanced field kept (a picker since #143)
             page.select_option("#report-selector-0", ["beta", "demo"]); page.locator("#report-selector-0").dispatch_event("change")
             page.select_option("#report-selector-1", ["prod"]); page.locator("#report-selector-1").dispatch_event("change")
             assert page.evaluate("() => view.reportForm['namespace-access'].selectors") == {
@@ -6504,6 +6507,7 @@ class TestReportsTab:
             page.evaluate("""() => {
                 window._gate = null;
                 let call = 0;
+                data.reportDiscovered = { "crc-local": {} };      // #143: the namespaces picker's lookup is settled, so the stub counts preview GETs only
                 reportGet = async () => {
                     call += 1;
                     if (call === 1) return {namespaces: 3, names: ["beta-prod", "demo-prod", "demo-production"]};
@@ -6973,6 +6977,133 @@ class TestReportsTab:
         finally:
             ctx.close()
 
+    def test_the_namespace_picker_the_reviewer_prefill_and_the_totals_preview(self, browser, reporting_server):
+        # #143 phases 2–3: the explicit-names field is a picker over the poll's namespaces (Enter still adds an
+        # unlisted one); a manual access-certification run's reviewer is the signed-in name until it is edited;
+        # the totals of what the run would produce sit beside Generate, from POST /api/preview, debounced and
+        # never in the way of Generate (a 422 shows the refusal instead of a number).
+        import json as _json, re as _re
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        previews: list[dict] = []
+        page.on("request", lambda r: previews.append(_json.loads(r.post_data)) if r.url.endswith("/api/preview") and r.method == "POST" else None)
+        try:
+            page.goto(base + "#page=reports&cluster=crc-local&report=namespace-access")
+            page.wait_for_selector("#report-form.r-access")
+            page.click("details.report-advanced summary")
+            page.wait_for_function("() => document.querySelectorAll('[data-lookup-opt=\"namespaces\"]').length > 0")
+            listed = page.locator('[data-lookup-opt="namespaces"]').evaluate_all("es => es.map(e => e.dataset.value)")
+            assert listed == ["(cluster-scoped)", "klt-pass-both", *[f"ns{i}" for i in range(6)], "prod-ns", "quiet-corner"], listed   # the seed's namespaces, in order, behind the one name the poll never lists
+            # the preview runs for the form as it opened: this report needs a scope, so it says so — the
+            # refusal beside Generate before the run is refused, with Generate untouched
+            page.wait_for_function("() => document.getElementById('report-totals').textContent.startsWith('preview:')", timeout=15_000)
+            assert "select at least one namespace" in page.locator("#report-totals").inner_text()
+            assert previews and previews[0] == {"report": "namespace-access", "cluster": "crc-local", "params": {}}, previews
+            assert page.locator("#report-generate").is_enabled()
+            # picking one namespace gives the totals of that run
+            page.click('[data-lookup-opt="namespaces"][data-value="prod-ns"]')
+            page.wait_for_selector('.rp-tag[data-name="prod-ns"]')
+            page.wait_for_function("() => document.getElementById('report-totals').textContent.startsWith('1 namespace ·')", timeout=15_000)
+            totals = page.locator("#report-totals").inner_text()
+            assert totals == "1 namespace · 2 group bindings · 1 user binding", (totals, previews)   # the seed's prod-ns; one of a thing is singular
+            assert previews[-1]["params"]["namespaces"] == ["prod-ns"], previews[-1]
+            assert page.locator("#report-generate").is_enabled()
+            # Clear (the selectors') and a cluster switch leave no confident wrong count beside Generate (Grok)
+            page.evaluate("() => { view.reportForm['namespace-access'] = {}; clearNamespaceAccessSelectors(); }")
+            page.wait_for_function("() => document.getElementById('report-totals').textContent.startsWith('preview:')", timeout=15_000)
+            page.evaluate("() => { view.reportForm['namespace-access'] = { namespaces: ['prod-ns'] }; scheduleTotals('namespace-access'); }")
+            page.wait_for_function("() => document.getElementById('report-totals').textContent.startsWith('1 namespace ·')", timeout=15_000)
+            page.evaluate("() => { navigate({ cluster: 'prod-east', groupsync: null, group: null, user: null }); render(); }")
+            assert page.locator("#report-totals").inner_text() == "", "cluster A's totals must not sit beside cluster B's form"
+            # the reviewer prefill
+            page.goto(base + "#page=reports&cluster=crc-local&report=access-certification")
+            page.wait_for_selector("#report-form.r-compliance")
+            assert page.locator("#report-param-access-certification-reviewer").input_value() == "root"
+            page.fill("#report-param-access-certification-reviewer", "  "); page.locator("#report-param-access-certification-reviewer").dispatch_event("change")
+            page.goto(base + "#page=reports&cluster=crc-local&report=groups")
+            page.wait_for_selector("#report-form.r-identity")
+            page.goto(base + "#page=reports&cluster=crc-local&report=access-certification")
+            page.wait_for_selector("#report-form.r-compliance")
+            assert page.locator("#report-param-access-certification-reviewer").input_value() == "  ", "an edit, even a blank one, is kept"
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_the_caret_survives_the_lookups_arrival_repaint(self, browser, reporting_server):
+        # Review of #224 (OB3): the repaint that lands the lookups re-creates the input and refocuses it by
+        # id, but a fresh input opens with its caret at 0 — measured: "abc" then "XYZ" read "XYZabc", and on
+        # the users lookup "al" then "i" read "ial" with an empty menu. renderFilters() already restores the
+        # filter bar's caret; render() now does the same for the page. The service runs in this process, so
+        # holding its discovered read holds the lookups until the text is typed.
+        import threading as _threading
+        from gsd.reporting.snapshot import Snapshot as _Snapshot
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        orig = _Snapshot.discovered
+        release = _threading.Event()
+        def held(self, *a, **k):
+            release.wait(10); return orig(self, *a, **k)
+        _Snapshot.discovered = held
+        try:
+            page.goto(base + "#page=reports&cluster=crc-local&report=access-matrix")
+            page.wait_for_selector("#report-form")
+            page.focus("#report-lookup-access-matrix-users")
+            page.keyboard.type("al")
+            release.set()
+            page.wait_for_function("() => document.querySelectorAll('[data-lookup-opt=\"users\"]').length > 0", timeout=10_000)
+            page.keyboard.type("i")
+            assert page.locator("#report-lookup-access-matrix-users").input_value() == "ali"
+            assert not errors, errors
+        finally:
+            release.set()
+            _Snapshot.discovered = orig
+            ctx.close()
+
+    def test_the_picker_menu_names_its_source_and_counts_what_the_poll_listed(self, browser, reporting_server):
+        # Review of #224 (OB3): LOOKUP_HEAD had no entry for the new source, so the menu head read the raw
+        # key ("namespaces · 9 discovered"); and with `(cluster-scoped)` offered first the count said 10 for
+        # the nine the poll listed — the token is offered, not discovered.
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.goto(base + "#page=reports&cluster=crc-local&report=namespace-access")
+            page.wait_for_selector("#report-form.r-access")
+            page.click("details.report-advanced summary")
+            page.wait_for_function("() => document.querySelectorAll('[data-lookup-opt=\"namespaces\"]').length > 0")
+            listed = page.locator('[data-lookup-opt="namespaces"]').evaluate_all("es => es.map(e => e.dataset.value)")
+            head = page.locator("#report-lookup-namespace-access-namespaces-menu .rp-menu-head").evaluate("e => e.textContent")
+            assert head == f"namespaces on the cluster · {len(listed) - 1} discovered", (head, listed)
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_a_busy_preview_is_retried_once(self, browser, reporting_server):
+        # Review of #224 (OB3): the slot answers 429 to a second preview — often this viewer's OWN superseded
+        # one, still building after a report switch — and the page painted nothing until the next change.
+        # One retry, ~2 s later; a second busy answer still waits for the next change, as documented.
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.goto(base + "#page=reports&cluster=crc-local&report=groups")
+            page.wait_for_selector("#report-form")
+            page.wait_for_function("() => /^\\d+ groups/.test(document.getElementById('report-totals').textContent)", timeout=15_000)
+            hits = {"n": 0}
+            def busy_once(route):
+                hits["n"] += 1
+                if hits["n"] == 1:
+                    route.fulfill(status=429, content_type="application/json", body='{"detail":"a preview is already running; try again shortly"}')
+                else:
+                    route.continue_()
+            page.route("**/api/preview", busy_once)
+            page.click('[data-switch="include_members"]')          # a change: the first answer is the 429
+            page.wait_for_function("() => document.getElementById('report-totals').textContent === ''", timeout=5_000)
+            page.wait_for_function("() => /^\\d+ groups/.test(document.getElementById('report-totals').textContent)", timeout=6_000)
+            assert hits["n"] == 2, hits
+            assert not errors, errors
+        finally:
+            page.unroute("**/api/preview")
+            ctx.close()
+
     def test_an_automatic_refresh_that_changed_nothing_leaves_the_status_page_alone(self, browser, reporting_server):
         # Review of #221 (OB3): the status payload carries `as_of`, the service's clock, which nothing
         # renders — and with it in the fingerprint no two polls ever matched, so the page repainted every
@@ -7166,7 +7297,7 @@ class TestReportFormsReview:
     went, what a refused parameter told the reader, and what the lookups' arrival did to a reader who
     had scrolled. Every case here was measured failing on 7fa4a6e (the Grok pass at 57b2c5c fixed four
     of them without a UI test; the menu rebuild, the loading head and the ×/Clear/segment focus paths are
-    OB3's)."""
+    OB3's); the reviewer default is #143's prefill."""
 
     def _open(self, browser, base, report="access-matrix", cls="r-access"):
         ctx, page, errors = _reports_page(browser, base, "root")
@@ -7304,6 +7435,30 @@ class TestReportFormsReview:
             page.evaluate("() => { reportGet = () => new Promise(() => {}); delete data.reportDiscovered['crc-local']; render(); }")
             heads = page.locator(".rp-menu-head").all_inner_texts()
             assert heads and all(h.lower().endswith("loading…") for h in heads), heads
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+
+    def test_the_certification_reviewer_defaults_to_the_signed_in_reader(self, browser, reporting_server):
+        # R7: "reviewer/users (ocp_user, default = the signed-in user for a manual run)" — the field was a bare
+        # required string, so a manual run without typing one's own name was a 422
+        base, _, _ = reporting_server
+        ctx, page, errors = self._open(browser, base, "access-certification", "r-compliance")
+        try:
+            assert page.input_value("#report-param-access-certification-reviewer") == "root"
+            page.fill("#report-param-access-certification-campaign", "Q4"); page.locator("#report-param-access-certification-campaign").dispatch_event("change")
+            page.fill("#report-param-access-certification-due", "2026-12-31"); page.locator("#report-param-access-certification-due").dispatch_event("change")
+            with page.expect_request(lambda r: r.url.endswith("/api/runs") and r.method == "POST") as info:
+                page.click("#report-generate")
+            import json as _json
+            body = _json.loads(info.value.post_data)
+            assert body["params"]["reviewer"] == "root" and body["params"]["campaign"] == "Q4"
+            page.wait_for_function("() => view.reportRun && view.reportRun.status === 'done'", timeout=30_000)
+            # overtyped, the reader's word wins and survives a repaint
+            page.fill("#report-param-access-certification-reviewer", "Jane"); page.locator("#report-param-access-certification-reviewer").dispatch_event("change")
+            page.evaluate("() => render()")
+            assert page.input_value("#report-param-access-certification-reviewer") == "Jane"
             assert not errors, errors
         finally:
             ctx.close()

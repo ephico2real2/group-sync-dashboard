@@ -83,7 +83,12 @@ class TestItsOwnContract:
                 default = p.default
                 if type(default).__name__ == "FieldInfo" or "Query" in type(default).__name__:
                     assert getattr(default, "description", None), (route.path, p.name)
-        assert non_get == [("POST", f"{REPORT_PREFIX}/api/runs")]
+        # the run POST, and the read-only preview POST beside it (#143 phase 3: build() for the totals,
+        # nothing rendered, nothing stored — the one-write contract of the dashboard's API is untouched)
+        assert sorted(non_get) == [("POST", f"{REPORT_PREFIX}/api/preview"), ("POST", f"{REPORT_PREFIX}/api/runs")]
+        # and the module says so itself (review of #224, OB3: the docstring still claimed one and only one non-GET)
+        import gsd.reporting.server as _srv
+        assert "api/preview" in _srv.__doc__ and "api/runs" in _srv.__doc__
 
     def test_the_unauthenticated_set_is_exactly_the_probes(self, service):
         client, _, _ = service
@@ -1407,7 +1412,7 @@ class TestDiscoveredLookups:
             d = client.get(f"{REPORT_PREFIX}/api/discovered?cluster={CLUSTER}", headers=_viewer()).json()
             assert d["cluster"] == CLUSTER and d["discovered"]["users"]["values"] == ["alice", "bob", "erin"]
             assert d["discovered"]["providers"]["values"] == ["corp_ldap"] and "team-a" in d["discovered"]["groups"]["values"]
-            assert set(d["discovered"]) == {"providers", "roles", "users", "groups", "mnemonics", "oud-groups"}
+            assert set(d["discovered"]) == {"providers", "roles", "users", "groups", "mnemonics", "oud-groups", "namespaces"}   # namespaces since #143
             assert client.get(f"{REPORT_PREFIX}/api/discovered?cluster=nope", headers=_viewer()).status_code == 404
             assert client.get(f"{REPORT_PREFIX}/api/discovered", headers=_viewer()).status_code == 422
             assert client.get(f"{REPORT_PREFIX}/api/discovered?cluster={CLUSTER}").status_code == 401
@@ -1488,3 +1493,86 @@ class TestReportingStatusReview:
                 _schedules_env()
         monkeypatch.setenv("GSD_REPORT_SCHEDULES", json.dumps([good | {"retention": {"days": 12}, "enabled": False}]))
         assert _schedules_env()[0]["retention"] == {"days": 12}
+
+
+class TestPreviewAndNamespacePicker:
+    """#143 phases 2 and 3: the totals a run would produce, from build() alone; the discovered namespaces."""
+
+    def test_the_preview_answers_totals_without_a_run(self, tmp_path):
+        ticket = {TICKET_HEADER: mint(SECRET, "root", "all", 300, now=int(FROZEN.timestamp())), USER_HEADER: "root"}
+        snapshots, artifacts = seeded_dirs(tmp_path)
+        with TestClient(build_report_app(_settings(snapshots, artifacts), secret=SECRET, clock=lambda: FROZEN)) as client:
+            r = client.post(f"{REPORT_PREFIX}/api/runs", json={"report": "groups", "cluster": CLUSTER}, headers=ticket)   # not this
+            r = client.post(f"{REPORT_PREFIX}/api/preview", json={"report": "namespace-access", "cluster": CLUSTER,
+                                                                  "params": {"namespaces": "prod-ns,dev-ns"}}, headers=ticket)
+            assert r.status_code == 200, r.text
+            body = r.json()
+            assert body["totals"]["namespaces"] == 2 and body["truncated"] is False and body["snapshot"]
+            assert set(body) == {"report", "cluster", "totals", "truncated", "snapshot"}      # the shape docs/reports/README.md states
+            listed = client.get(f"{REPORT_PREFIX}/api/runs", headers=ticket).json()
+            assert all(x["report"] != "namespace-access" for x in listed["runs"]), "a preview stores no run"
+            assert client.post(f"{REPORT_PREFIX}/api/preview", json={"report": "namespace-access", "cluster": CLUSTER, "params": {"nope": 1}}, headers=ticket).status_code == 422
+            assert client.post(f"{REPORT_PREFIX}/api/preview", json={"report": "namespace-access", "cluster": CLUSTER, "params": {}}, headers=ticket).status_code == 422   # no selection
+            assert client.post(f"{REPORT_PREFIX}/api/preview", json={"report": "nope", "cluster": CLUSTER}, headers=ticket).status_code == 404
+            assert client.post(f"{REPORT_PREFIX}/api/preview", json={"report": "groups", "cluster": "nope"}, headers=ticket).status_code == 404
+            assert client.post(f"{REPORT_PREFIX}/api/preview", json={"report": "groups", "cluster": CLUSTER}).status_code == 401
+
+    def test_the_preview_is_503_without_a_snapshot_and_429_when_busy(self, tmp_path):
+        ticket = {TICKET_HEADER: mint(SECRET, "root", "all", 300, now=int(FROZEN.timestamp())), USER_HEADER: "root"}
+        snapshots, artifacts = tmp_path / "s", tmp_path / "a"; snapshots.mkdir(); artifacts.mkdir()
+        with TestClient(build_report_app(_settings(snapshots, artifacts), secret=SECRET, clock=lambda: FROZEN)) as client:
+            assert client.post(f"{REPORT_PREFIX}/api/preview", json={"report": "groups", "cluster": CLUSTER}, headers=ticket).status_code == 503
+        (tmp_path / "b").mkdir()
+        snapshots, artifacts = seeded_dirs(tmp_path / "b")
+        app = build_report_app(_settings(snapshots, artifacts), secret=SECRET, clock=lambda: FROZEN)
+        with TestClient(app) as client:
+            # one slot: while a preview builds, the next is refused, not queued
+            import threading, time as _t
+            from gsd.reporting import server as srv
+            held = threading.Event()
+            orig = srv.REGISTRY["groups"][1]
+            def slow(snap, ctx, params):
+                held.set(); _t.sleep(0.6); return orig(snap, ctx, params)
+            srv.REGISTRY["groups"] = (srv.REGISTRY["groups"][0], slow)
+            try:
+                th = threading.Thread(target=lambda: client.post(f"{REPORT_PREFIX}/api/preview", json={"report": "groups", "cluster": CLUSTER}, headers=ticket))
+                th.start(); held.wait(2)
+                assert client.post(f"{REPORT_PREFIX}/api/preview", json={"report": "groups", "cluster": CLUSTER}, headers=ticket).status_code == 429
+                th.join()
+            finally:
+                srv.REGISTRY["groups"] = (srv.REGISTRY["groups"][0], orig)
+            # the slot is released when the build ends (review of #224, Grok: the test never pinned it) — and on a
+            # refused path too: a 422 raised inside build() must not hold it
+            assert client.post(f"{REPORT_PREFIX}/api/preview", json={"report": "groups", "cluster": CLUSTER}, headers=ticket).status_code == 200
+            assert client.post(f"{REPORT_PREFIX}/api/preview", json={"report": "namespace-access", "cluster": CLUSTER}, headers=ticket).status_code == 422
+            assert client.post(f"{REPORT_PREFIX}/api/preview", json={"report": "groups", "cluster": CLUSTER}, headers=ticket).status_code == 200
+            # an unconfigured selector label is refused as a run refuses it
+            r = client.post(f"{REPORT_PREFIX}/api/preview", json={"report": "namespace-access", "cluster": CLUSTER, "params": {"selectors": {"x/y": ["a"]}}}, headers=ticket)
+            assert r.status_code == 422 and "not configured" in r.json()["detail"]
+
+    def test_the_discovered_namespaces_feed_the_picker_and_a_str_is_trimmed(self, tmp_path):
+        from gsd.reporting.catalogue import REGISTRY, ValidationError, validate_params as vp
+        from reporting_seed import seed_store, write_snapshot
+        store = seed_store(str(tmp_path / "w.db"))
+        store.replace_namespaces(CLUSTER, [{"name": "prod-ns", "created_at": None, "phase": "Active", "metadata": {}},
+                                          {"name": "dev-ns", "created_at": None, "phase": "Active", "metadata": {}}], "2026-09-14T00:00:00Z")
+        d = tmp_path / "snap"; d.mkdir(); path = write_snapshot(store, d); store.close()
+        from gsd.reporting.snapshot import Snapshot
+        with Snapshot(path) as snap:
+            assert snap.discovered(CLUSTER, "", "")["namespaces"]["values"] == ["dev-ns", "prod-ns"]
+        cert = REGISTRY["access-certification"][0]
+        assert vp(cert, {"campaign": " Q3 ", "due": "2026-10-01", "reviewer": " r "})["reviewer"] == "r"
+        with pytest.raises(ValidationError, match="required"):
+            vp(cert, {"campaign": "x", "due": "2026-10-01", "reviewer": "   "})
+
+    def test_the_preview_is_503_when_the_newest_copy_is_unreadable(self, tmp_path):
+        # Review of #224 (OB3): only newest_snapshot() was behind the 503; Snapshot() itself raises
+        # SnapshotError for a copy the service cannot read — torn, or a schema newer than it knows (the
+        # dashboard rolled first) — and that escaped the route as a 500 where readyz says 503.
+        ticket = {TICKET_HEADER: mint(SECRET, "root", "all", 300, now=int(FROZEN.timestamp())), USER_HEADER: "root"}
+        snapshots, artifacts = seeded_dirs(tmp_path)
+        (snapshots / "gsd-20991231T235959.000000Z.db").write_bytes(b"not a database")     # newest by name, unreadable
+        with TestClient(build_report_app(_settings(snapshots, artifacts), secret=SECRET, clock=lambda: FROZEN)) as client:
+            r = client.post(f"{REPORT_PREFIX}/api/preview", json={"report": "groups", "cluster": CLUSTER}, headers=ticket)
+            assert r.status_code == 503 and "not a readable SQLite database" in r.json()["detail"], r.text
+            assert client.get(f"{REPORT_PREFIX}/readyz").status_code == 503                 # the same answer as the probe's

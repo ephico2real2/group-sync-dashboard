@@ -236,12 +236,14 @@ def validate_params(spec: ReportSpec, raw: dict | None) -> dict:
             out[p.name] = [t.strip() for t in _string_items(value, p.name) if t.strip()]
         elif p.type == "selector-map":
             out[p.name] = validate_selector_map(value, p.name)
-        else:  # "str"
+        else:  # "str" — trimmed: a reviewer's name with a trailing space is the same reviewer (#143 phase 2)
             # A string is a string: a number was stringified here while the record said "strings
             # must be strings" (review of C3, second pass, Cursor).
             if not isinstance(value, str):
                 raise ValidationError(f"{p.name} must be a string")
-            s = value
+            s = value.strip()
+            if not s and p.required:
+                raise ValidationError(f"{p.name} is required")
             if len(s) > 200:
                 raise ValidationError(f"{p.name} is longer than 200 characters")
             out[p.name] = s

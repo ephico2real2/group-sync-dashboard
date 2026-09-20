@@ -176,6 +176,28 @@ class TestParameters:
             _build(snapshot, "login-activity", login_capture_enabled=False)
 
 
+class TestTheStrTrimmerAndTheNamespacesHelp:
+    """Review of #224 (OB3)."""
+
+    def test_a_padded_namespace_prefix_is_the_trimmed_prefix(self):
+        # The trim changes what an existing schedule selects: " prod" matched nothing before (no namespace
+        # name starts with a space) and matches prod* now; spaces only meant nothing and mean everything.
+        # Pinned so the change is deliberate and the CHANGELOG's sentence stays true.
+        spec = REGISTRY["access-matrix"][0]
+        assert validate_params(spec, {"namespace_prefix": " prod"})["namespace_prefix"] == "prod"
+        assert validate_params(spec, {"namespace_prefix": "prod "})["namespace_prefix"] == "prod"
+        assert validate_params(spec, {"namespace_prefix": "   "})["namespace_prefix"] == ""
+
+    def test_the_namespaces_help_does_not_promise_an_override(self):
+        # The validator refuses explicit names beside a Scope; the help must not say they override it.
+        spec = REGISTRY["namespace-access"][0]
+        p = next(x for x in spec.params if x.name == "namespaces")
+        assert "override" not in p.help.lower(), p.help
+        assert "not both" in p.help, p.help
+        with pytest.raises(ValidationError, match="not more than one"):
+            validate_params(spec, {"namespaces": ["prod-ns"], "selectors": {"company.net/mnemonic": ["demo"]}})
+
+
 class TestEveryReportBuildsAndRenders:
     @pytest.mark.parametrize("name", REPORT_NAMES)
     def test_builds_seals_and_renders_both_ways(self, snapshot, name):
