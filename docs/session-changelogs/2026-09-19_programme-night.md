@@ -123,7 +123,7 @@ Outcome in one line: **#212 finished and #216 merged (the script's two managers,
   route; `as_of` repainted the page every poll; the filter race. All accepted from its patch. Record:
   `docs/REVIEW_reporting_status_page.md`. Walked at `cb74ce1` (`reports/2026-09-20_reporting-status-149/`).
 
-## Part 6 — #149 R7, the report forms (02:5x → 03:5x) — PR #222 (open, stacked on #221)
+## Part 6 — #149 R7, the report forms (02:5x → 03:33) — PR #222 (open, retargeted to main)
 
 - `35f1460` (backend): `ParamSpec` `source`/`unit`/`advanced`/`group`; the Subject scope replacing the kind
   toggle; `group_mnemonic` resolved to the exact group through `reporting.namespaceGroupLabel` (the poller
@@ -138,7 +138,41 @@ Outcome in one line: **#212 finished and #216 merged (the script's two managers,
 - Live at `7fa4a6e` (`reports/2026-09-20_report-forms-149/`): 61 users / 62 groups / 13 mnemonics
   discovered on CRC, type-ahead, chips, the POST's params, the run done; the snapshot taken 27 s after the
   pod started predated the poller's first capture of the exact-group label — the next one carries it.
-  Review in flight.
+- `57b2c5c` (03:0x) — **Grok's ten findings, accepted**: dormant-access applied the Subject scope to one
+  table of four; the default `group_by` rewrote every heading `(no mnemonic) · …` on a deployment with no
+  captured labels; the users lookup read every row and parsed every providers blob (LIMIT cap+1); Advanced
+  closed on the lookups' arrival (view state now); a keyboard-added chip dropped focus to `<body>`; the
+  arrival re-landed a reader who had scrolled; the 422 detail was dropped; the operator README listed the
+  keys the service refuses; the groups report's filter left the membership changes cluster-wide; a named
+  subject with no binding vanished from the pack (a *Named but not bound* caveat). Chart 0.40.0.
+- `f2ef728` (03:32) — **Codex (xhigh, 274k tokens) on `7fa4a6e`** reached the same ten independently;
+  against `57b2c5c` three remained and were **accepted**: the login summary and its `attempts` total counted
+  the cluster beside scoped users (`users=alice → attempts=3`) — scoped now, the first pass's "said in a
+  note" retracted; a post-open `sqlite3.Error` in `discovered()` 500'd the route (wrapped as
+  `SnapshotError`, the seam's pattern); `.rp-count-live` styled nowhere (the rule, and a guard over every
+  `rp-` class the page writes). Docs: the CHANGELOG's migration sentence, the chart README's
+  `namespaceGroupLabel` row, `docs/DESIGN_reporting_service.md` §7.3's column, a note in SPEC_C3.
+  **Rejected**: an empty `Group:` section for an unbound group; the whole-method rewrite (it dropped the
+  bounded reads); a three-document registry test. Both new tests fail on the old code (measured);
+  hermetic 3884 passed, 15 skipped; `helm lint` clean. `docs/REVIEW_report_forms.md`. OB3 still running.
+- `b528151`/`df9ebfb` — `main` (#221 at `650ec09`, 03:13) merged in; the first resolution dropped #220's
+  CHANGELOG line, **found by a diff of the tail against main** and restored. #222 retargeted to `main`.
+
+---
+
+## Part 7 — #143 phases 2–3, the picker, the prefill, the totals preview (03:1x → ) — PR #224 (open, stacked on #222)
+
+- `6f2c7c4` (03:20): `namespaces` in `discovered()` (`cluster_namespace`, LIMIT cap+1) and the Advanced picker
+  with the text-field fallback; the reviewer prefilled from the catalogue's `viewer`, kept once edited; the
+  str trimmer (a required blank is refused); `POST /report/api/preview` — `build()` only, `Semaphore(1)`
+  → 429, 422/404/503 as a run — and the totals beside Generate, debounced, versioned, keyed once per
+  form+cluster, a 422 shown as the refusal. **Found on the way**: the fixture discovers namespaces, so the
+  PDF test's `page.fill` on the old text field timed out (the picker's id; Advanced opened first); the
+  call-order `reportGet` stub of the view-affordance test counted the picker's lookup fetch as the preview
+  GET (the lookup settled first); an unscoped namespace-access form previews "select at least one
+  namespace…" — the test asserts the refusal, then `1 namespaces · …` after a pick. Hermetic 3882 passed
+  (the discovered key-set assertion widened after), UI 452 passed; the Reports class 31 passed after the
+  merge of #222's pass (`44587ce`). Review: Grok, Codex xhigh and OB3 launched on `44587ce`.
 
 ---
 
