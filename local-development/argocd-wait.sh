@@ -15,7 +15,7 @@ set -euo pipefail
 APP="${1:?application name}"; NS="${2:-openshift-gitops}"; TIMEOUT="${3:-900}"; EXPECTED="${4:-}"
 INTERVAL="${ARGOCD_WAIT_INTERVAL:-15}"
 start=$(date +%s)
-errfile=$(mktemp -t argocd-wait); trap 'rm -f "$errfile"' EXIT
+errfile=$(mktemp "${TMPDIR:-/tmp}/argocd-wait.XXXXXX"); trap 'rm -f "$errfile"' EXIT
 while :; do
   # A failed `oc` (the API away for a moment) must not end the waiter: under pipefail the process
   # substitution would exit before its echo, `read` would fail at EOF and set -e would take the
