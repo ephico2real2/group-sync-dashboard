@@ -58,7 +58,7 @@ Each names who provides it; `docs/DESIGN_grafana_and_observe.md` is the design.
 | `oauthProxy.image` | `registry.redhat.io/openshift4/ose-oauth-proxy-rhel9:v4.15` | needs registry.redhat.io credentials, which the cluster's global pull secret normally already carries. Override to the internal imagestream or a mirror if not — see `values.yaml` |
 | `oauthProxy.imagePullPolicy` | `IfNotPresent` | the image is already on the node as an imagestream |
 | `oauthProxy.port` | `8443` | |
-| `oauthProxy.cookieSecret` | `""` | generated once and reused across upgrades |
+| `oauthProxy.cookieSecret` | `""` | empty: the session key is minted on the cluster by the `secrets-mint` hook (`<fullname>-oauth-session`), once, never rendered; a value renders that Secret plainly |
 | `oauthProxy.cookie.expire` | `4h` | absolute session cap, a Go duration. There is deliberately no `refresh` key: measured on `provider=openshift`, `-cookie-refresh` force-clears the session at every interval instead of sliding it, so the chart refuses a values file that sets it |
 | `session.idleTimeout.enabled` | `false` | signs people out after inactivity: the page counts pointer, keyboard and tab-visibility activity, shows a countdown, and at zero sends the browser to the proxy's `sign_out`, which ends the session. Off because it is a session policy. Refused without `oauthProxy.enabled` |
 | `session.idleTimeout.minutes` | `30` | whole minutes of inactivity before sign-out; the countdown is the last `warningSeconds` of that window; must be shorter than `oauthProxy.cookie.expire` or the render is refused (the cap would end every session first) |
@@ -362,9 +362,8 @@ Service, Secret, ServiceAccount, PVC and NetworkPolicy, a second upstream and a 
 A values file that cannot host it — the proxy off, `persistence.enabled=false`, more than one replica,
 a `ReadWriteOnce`/`ReadWriteOncePod` data claim, or `rbac.bindings=false` — is **refused by `helm
 upgrade` with the value named**; set `reporting.enabled=false` explicitly to keep such an install as
-it is. The token Secret is generated once and reused (the `oauth-cookie` pattern); under ArgoCD
-(`helm template` has no cluster) the Application ignores both Secrets' `data` with
-`RespectIgnoreDifferences=true`, as the ArgoCD section shows.
+it is. The token Secret (`<reportName>-shared-token`) is minted on the cluster by the `secrets-mint` hook,
+once, never rendered — the same for every renderer (Helm, Flux, Argo CD, Kustomize).
 
 ### Workload
 
@@ -663,6 +662,7 @@ chart lands.
 | Key | Default | Notes |
 |---|---|---|
 | `argocd.enabled` | `true` | adds the `argocd.argoproj.io/sync-options` annotations below, and nothing else — measured. Kubernetes ignores them without Argo, so a plain `helm install` is unaffected; under Argo, forgetting them costs the PVC on the first prune. Off only if you object to the metadata |
+| `secretsMint.enabled` / `.image.*` / `.resources` | `true` / the in-cluster `openshift/cli` imagestream / `25m`,`64Mi`→`128Mi` | the hook that mints the session key and the report token on the cluster, only if absent (pre- and post-install/upgrade; PreSync,Sync at wave −1 under Argo). The first upgrade from a chart before 0.37.0 carries the old `-oauth-cookie` / `-report-token` values into the new names, so nobody is signed out. Off = create `<fullname>-oauth-session` (`session_secret`) and `<reportName>-shared-token` (`token`) yourself |
 | `argocd.preservePVC` | `true` | three sync-options on both PVCs (the data claim and, since 0.36.1, the report artefacts claim) — see [Deploying with ArgoCD](#deploying-with-argocd) |
 | `argocd.serverSideApplyInjectedCA` | `true` | lets the CA operator keep ownership of the `data` it writes. **Not sufficient alone** — the Application also needs an `ignoreDifferences` entry |
 
@@ -1058,25 +1058,13 @@ spec:
       selfHeal: true
     syncOptions:
       - CreateNamespace=true
-      # ignoreDifferences below also govern the SYNC, not only the diff: without this Argo applies
-      # the rendered Secrets as-is and rotates the values every sync (Argo's sync-options.md).
+      # ignoreDifferences below also govern the SYNC, not only the diff (Argo's sync-options.md).
       - RespectIgnoreDifferences=true
   ignoreDifferences:
-    # The two generated-once Secrets. The chart reuses the existing value through Helm's `lookup`,
-    # which is ALWAYS empty under Argo's `helm template` (no cluster): every render mints a new
-    # session key and a new report token, so without this entry every sync signed every session
-    # out and broke the dashboard→report-service call. The first sync creates them; later syncs
-    # leave `data` alone (RespectIgnoreDifferences above).
-    - group: ""
-      kind: Secret
-      name: group-sync-dashboard-oauth-cookie
-      jsonPointers:
-        - /data
-    - group: ""
-      kind: Secret
-      name: group-sync-dashboard-report-token
-      jsonPointers:
-        - /data
+    # Since 0.37.0 the generated-once Secrets (the session key, the report token) are minted on the
+    # cluster by the secrets-mint hook and never rendered, so they need no entry here: nothing to
+    # diff, nothing to rotate. (Before 0.37.0 the chart reused them through Helm's `lookup`, which
+    # is always empty under Argo's `helm template`, and every sync rotated them.)
     # Without this, the injected CA bundle is reverted on every sync.
     - group: ""
       kind: ConfigMap

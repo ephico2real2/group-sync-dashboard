@@ -1142,7 +1142,7 @@ flowchart TB
     cr["ClusterRole + Binding<br/>read-only + own Lease"]
     cm["ConfigMap -config<br/>clusters.yaml"]
     tca["ConfigMap -trusted-ca<br/>empty; OpenShift fills it"]
-    sec["Secret -oauth-cookie<br/>generated once, reused"]
+    sec["Secret -oauth-session<br/>minted on the cluster once"]
     tls["Secret -tls<br/>issued by service-ca"]
     dep["Deployment<br/>replicas 1, Recreate"]
     pvc["PVC -data<br/>helm.sh/resource-policy: keep"]
@@ -1154,7 +1154,7 @@ flowchart TB
     rdep["Deployment -report<br/>replicas 1, Recreate (default on)"]
     rsvc["Service -report :8443<br/>service-ca certificate"]
     rpvc["PVC -report-artifacts<br/>no keep annotation"]
-    rsec["Secret -report-token<br/>generated once, mounted in both pods"]
+    rsec["Secret -shared-token<br/>minted on the cluster once, mounted in both pods"]
     rnp["NetworkPolicy -report<br/>ingress: dashboard pod, schedule Jobs, monitoring"]
   end
   dep --> cm & tca & sec & tls & pvc & sa

@@ -140,7 +140,7 @@ class TestTheDefaultRender:
         kinds = {(d["kind"], d["metadata"]["name"]) for d in docs}
         for kind in ("Deployment", "Service", "NetworkPolicy", "ServiceAccount", "PodDisruptionBudget"):
             assert (kind, "t-group-sync-dashboard-report") in kinds, kind
-        assert ("Secret", "t-group-sync-dashboard-report-token") in kinds
+        assert ("Secret", "t-group-sync-dashboard-report-token") not in kinds, "0.37.0: minted on the cluster, never rendered (test_chart_secrets_mint.py)"
         # 0.36.1: protected like the data claim — a scheduled report is generated once from its day's
         # snapshot (two-tier retention, #154/#163), so the store is history, not a cache
         pvc = _exact(docs, "PersistentVolumeClaim", "t-group-sync-dashboard-report-artifacts")

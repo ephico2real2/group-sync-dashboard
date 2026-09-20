@@ -684,6 +684,28 @@ clusters:
 #    `data.ca-bundle.crt` into it. Argo sees live data the manifest lacks, reports
 #    OutOfSync permanently, and with self-heal on will WIPE the CA bundle the pod depends
 #    on — turning every external cluster unreachable on a sync.
+# -----------------------------------------------------------------------------
+# The secrets-mint hook (templates/secrets-mint.yaml, #212)
+# The two generated-once Secrets — the oauth-proxy session key and the shared report token — are
+# created on the cluster by a hook Job, only if absent, never rendered: Helm's `lookup`, which
+# used to reuse them, is empty under `helm template` (Argo CD, Kustomize), so every render minted
+# fresh values and every sync rotated them. On the first upgrade from a chart before 0.37.0 the
+# hook carries the existing values over into the new names (-oauth-session, -shared-token), so
+# nobody is signed out. Off = you create both Secrets under those names yourself.
+# -----------------------------------------------------------------------------
+secretsMint:
+  enabled: true
+  # `oc` is all the Job needs: the in-cluster imagestream every OpenShift cluster ships (the
+  # authLogLevel note explains why not registry.redhat.io). Override on a cluster that mirrors
+  # elsewhere, or on plain Kubernetes.
+  image:
+    repository: image-registry.openshift-image-registry.svc:5000/openshift/cli
+    tag: latest
+    pullPolicy: IfNotPresent
+  resources:
+    requests: {cpu: 25m, memory: 64Mi}
+    limits: {memory: 128Mi}
+
 argocd:
   enabled: true
 
@@ -1609,10 +1631,10 @@ oauthProxy:
   imagePullPolicy: IfNotPresent
   port: 8443
 
-  # Cookie signing key. Leave empty and the chart generates one, then REUSES it across
-  # upgrades by reading back the existing Secret. Generating inline in the container args
-  # instead — as some examples do — silently regenerates on every `helm upgrade` and logs
-  # every user out.
+  # Cookie signing key. Leave empty (the default) and the secrets-mint hook creates
+  # <fullname>-oauth-session ON THE CLUSTER, once, only if absent — never in a manifest, so no
+  # renderer (Helm, Flux, Argo CD, Kustomize) rotates it. A value here renders that Secret plainly
+  # instead — deterministic, so it does not drift either — and the mint is skipped for it.
   cookieSecret: ""
 
   # Session lifetime: ONE absolute number, measured from login, deliberately NOT sliding.

@@ -9,7 +9,7 @@ decomposed into its own PR(s), per the programme's design-first rule.
 
 Adding a **remote** cluster to `clusters:` today is only half-supported. Each entry names file paths
 (`tokenFile`, `caBundleFile`), but the chart mounts a **fixed** set of volumes (`config`, `data`,
-`tmp`, `curlrc`, `report-token`, `service-ca`, `trusted-ca-*`, `oauth-*` — `templates/deployment.yaml`)
+`tmp`, `curlrc`, `report-token` (the volume name; the Secret is `-shared-token` since 0.37.0), `service-ca`, `trusted-ca-*`, `oauth-*` — `templates/deployment.yaml`)
 and provides **no per-cluster volume for a remote cluster's bearer token**. The CA has a path
 (`trustedCA.existingConfigMap` → `GSD_TRUSTED_CA_FILE`, a shared fallback), but the **token does not**.
 Proven during the #117 test: wiring a second cluster required a hand `oc set volumes` patch that Helm
