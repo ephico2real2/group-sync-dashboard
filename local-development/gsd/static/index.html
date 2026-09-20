@@ -2722,7 +2722,7 @@ function subjectBlock(spec, params, form) {
 }
 
 const LOOKUP_HEAD = { users: "User objects", groups: "synced groups", providers: "identity providers", roles: "roles bound on the cluster",
-                      mnemonics: "namespace mnemonics", "oud-groups": "exact groups pinned by namespaces" };
+                      mnemonics: "namespace mnemonics", "oud-groups": "exact groups pinned by namespaces", namespaces: "namespaces on the cluster" };
 
 // A tag input over a discovered lookup: click a value to add, its × (or clicking it again) to remove,
 // type to narrow the menu (substring, case-insensitive), Enter to add a value the set does not carry.
@@ -2737,7 +2737,7 @@ function lookupControl(spec, p, form) {
     <div class="rp-tags" data-lookup-tags="${esc(p.name)}">${chosen.map((v) => `<span class="rp-tag" data-name="${esc(v)}">${esc(v)} <button type="button" class="rp-tag-x" aria-label="remove ${esc(v)}" data-lookup-remove="${esc(p.name)}" data-value="${esc(v)}">×</button></span>`).join("")}
       <input id="${id}" type="text" data-lookup-input="${esc(p.name)}" data-lookup-source="${esc(p.source || "")}" value="${esc(typed)}" placeholder="${p.source ? `pick ${esc(p.source)}…` : "type a value, Enter to add"}" autocomplete="off" spellcheck="false" aria-label="${esc(p.name)}"></div>
     ${p.source ? `<div class="rp-menu" id="${id}-menu" role="listbox" aria-label="${esc(LOOKUP_HEAD[p.source] || p.source)}">
-      <div class="rp-menu-head">${esc(LOOKUP_HEAD[p.source] || p.source)} · ${found ? `${values.length} discovered${found.truncated ? " (first 5000)" : ""}` : (settled ? "none discovered" : "loading…")}</div>
+      <div class="rp-menu-head">${esc(LOOKUP_HEAD[p.source] || p.source)} · ${found ? `${found.values.length} discovered${found.truncated ? " (first 5000)" : ""}` : (settled ? "none discovered" : "loading…")}</div>
       <div data-menu-body>${lookupMenuBody(p.name, values, chosen, typed)}</div>
     </div>` : ""}
   </div>`;
@@ -2971,7 +2971,7 @@ function clearReportPreview() {
 // beside Generate as "N namespaces · M group bindings · will truncate". Debounced, versioned like the count
 // preview, never blocking Generate; a 422 shows the refusal so the reader fixes the field before running.
 let _totalsTimer = null, _totalsVersion = 0, _totalsKey = null;
-function scheduleTotals(spec) {
+function scheduleTotals(spec, retry = false) {
   clearTimeout(_totalsTimer);
   const version = ++_totalsVersion, cluster = view.cluster;
   if (!spec || !cluster) return;
@@ -2986,6 +2986,16 @@ function scheduleTotals(spec) {
       const parts = Object.entries(r.totals || {}).filter(([, v]) => typeof v === "number").map(([k, v]) => `${v} ${v === 1 ? k.replace(/_/g, " ").replace(/s$/, "") : k.replace(/_/g, " ")}`);
       text = parts.join(" · ") + (r.truncated ? " · will truncate" : "");
     } catch (e) {
+      if (e.status === 429 && !retry && version === _totalsVersion && view.cluster === cluster && view.report === spec) {
+        // The slot was busy — often this viewer's OWN superseded preview, still building after a report
+        // switch. One retry once it has likely cleared; a second busy answer waits for the next change, as
+        // documented (review of #224, OB3). Blank meanwhile: the text on screen describes the form before
+        // this change.
+        view.reportTotals = { spec, cluster, text: "" };
+        const busy = $("report-totals"); if (busy) busy.textContent = "";
+        _totalsTimer = setTimeout(() => scheduleTotals(spec, true), 1500);
+        return;
+      }
       text = e.status === 422 ? `preview: ${e.detail || "the parameters were refused"}` : "";   // a preview error never blocks Generate
     }
     if (version !== _totalsVersion || view.cluster !== cluster || view.report !== spec) return;
@@ -5482,7 +5492,13 @@ function render() {
   // keyboard user's focus — on Generate while a report renders, on a table's control — would fall to
   // <body> on every poll. The filter bar restores its own (renderFilters); this is the same rule for
   // the page (the C3 report tab's Generate button is where a repaint happens WHILE the reader waits).
-  const focusedId = document.activeElement && document.activeElement.id;
+  const active = document.activeElement;
+  const focusedId = active && active.id;
+  // The caret too, as renderFilters() keeps the filter bar's: the repaint re-creates a text input, and a
+  // fresh one opens with its caret at 0, so a reader typing into a lookup as the lookups arrived typed into
+  // the FRONT of their own text (measured: "abc" then "XYZ" read "XYZabc"; "al" then "i" read "ial" with an
+  // empty menu — review of #224, OB3).
+  const caret = focusedId && typeof active.selectionStart === "number" ? [active.selectionStart, active.selectionEnd] : null;
   renderFilters();
   const main = $("main");
   if (view.page === "home") {
@@ -5620,7 +5636,12 @@ function render() {
   main.classList.remove("stale");
   if (focusedId && document.activeElement !== document.getElementById(focusedId)) {
     const el = document.getElementById(focusedId);
-    if (el && main.contains(el)) el.focus({ preventScroll: true });
+    if (el && main.contains(el)) {
+      el.focus({ preventScroll: true });
+      if (caret && typeof el.selectionStart === "number") {
+        try { el.setSelectionRange(Math.min(caret[0], el.value.length), Math.min(caret[1], el.value.length)); } catch (e) { /* an input type without a caret */ }
+      }
+    }
   }
 }
 

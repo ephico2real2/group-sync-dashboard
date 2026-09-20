@@ -86,6 +86,9 @@ class TestItsOwnContract:
         # the run POST, and the read-only preview POST beside it (#143 phase 3: build() for the totals,
         # nothing rendered, nothing stored — the one-write contract of the dashboard's API is untouched)
         assert sorted(non_get) == [("POST", f"{REPORT_PREFIX}/api/preview"), ("POST", f"{REPORT_PREFIX}/api/runs")]
+        # and the module says so itself (review of #224, OB3: the docstring still claimed one and only one non-GET)
+        import gsd.reporting.server as _srv
+        assert "api/preview" in _srv.__doc__ and "api/runs" in _srv.__doc__
 
     def test_the_unauthenticated_set_is_exactly_the_probes(self, service):
         client, _, _ = service
@@ -1505,6 +1508,7 @@ class TestPreviewAndNamespacePicker:
             assert r.status_code == 200, r.text
             body = r.json()
             assert body["totals"]["namespaces"] == 2 and body["truncated"] is False and body["snapshot"]
+            assert set(body) == {"report", "cluster", "totals", "truncated", "snapshot"}      # the shape docs/reports/README.md states
             listed = client.get(f"{REPORT_PREFIX}/api/runs", headers=ticket).json()
             assert all(x["report"] != "namespace-access" for x in listed["runs"]), "a preview stores no run"
             assert client.post(f"{REPORT_PREFIX}/api/preview", json={"report": "namespace-access", "cluster": CLUSTER, "params": {"nope": 1}}, headers=ticket).status_code == 422
@@ -1560,3 +1564,15 @@ class TestPreviewAndNamespacePicker:
         assert vp(cert, {"campaign": " Q3 ", "due": "2026-10-01", "reviewer": " r "})["reviewer"] == "r"
         with pytest.raises(ValidationError, match="required"):
             vp(cert, {"campaign": "x", "due": "2026-10-01", "reviewer": "   "})
+
+    def test_the_preview_is_503_when_the_newest_copy_is_unreadable(self, tmp_path):
+        # Review of #224 (OB3): only newest_snapshot() was behind the 503; Snapshot() itself raises
+        # SnapshotError for a copy the service cannot read — torn, or a schema newer than it knows (the
+        # dashboard rolled first) — and that escaped the route as a 500 where readyz says 503.
+        ticket = {TICKET_HEADER: mint(SECRET, "root", "all", 300, now=int(FROZEN.timestamp())), USER_HEADER: "root"}
+        snapshots, artifacts = seeded_dirs(tmp_path)
+        (snapshots / "gsd-20991231T235959.000000Z.db").write_bytes(b"not a database")     # newest by name, unreadable
+        with TestClient(build_report_app(_settings(snapshots, artifacts), secret=SECRET, clock=lambda: FROZEN)) as client:
+            r = client.post(f"{REPORT_PREFIX}/api/preview", json={"report": "groups", "cluster": CLUSTER}, headers=ticket)
+            assert r.status_code == 503 and "not a readable SQLite database" in r.json()["detail"], r.text
+            assert client.get(f"{REPORT_PREFIX}/readyz").status_code == 503                 # the same answer as the probe's

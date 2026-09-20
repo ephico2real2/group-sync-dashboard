@@ -82,7 +82,8 @@ Three things the Reports tab does around a manual run (#143):
   the `namespaces` figure and the artefact's Coverage note says so) — from `POST /report/api/preview`
   (`{"report", "cluster", "params"}` → `{"report", "cluster", "totals", "truncated", "snapshot"}`): the
   report's own `build()` over the newest snapshot, nothing rendered or stored, one at a
-  time (a second preview while one runs gets `429`, and the form simply waits for its next change). A
+  time (a second preview while one runs gets `429`; the form retries once about a second and a half later, then
+  waits for its next change). A
   parameter the run would refuse shows the refusal there first ("preview: select at least one
   namespace…"); Generate is never disabled by it. String parameters are trimmed on the way in, so a
   required field holding only spaces is refused as blank. The picker offers `(cluster-scoped)` first — the

@@ -36,7 +36,7 @@ SPEC = ReportSpec(
                   "Deprecated single-dimension form — maps to the first configured selector label. "
                   "Prefer `selectors`; leave the explicit names empty when using this."),
         ParamSpec("namespaces", "namespaces", None,
-                  "Explicit namespace names, at most 50; `(cluster-scoped)` for cluster-wide bindings. Overrides the Scope.",
+                  "Explicit namespace names, at most 50; `(cluster-scoped)` for cluster-wide bindings. Instead of the Scope — one or the other, not both.",
                   source="namespaces", advanced=True),
         ParamSpec("include_members", "bool", False, "Expand group rosters. Off by default — a file that gets emailed has no reader log — and recorded in the provenance when on."),
         ParamSpec("group_by", "enum", "mnemonic", "Sort and group the namespaces by a metadata label — the mnemonic or the "

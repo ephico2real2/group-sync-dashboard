@@ -7029,6 +7029,81 @@ class TestReportsTab:
         finally:
             ctx.close()
 
+    def test_the_caret_survives_the_lookups_arrival_repaint(self, browser, reporting_server):
+        # Review of #224 (OB3): the repaint that lands the lookups re-creates the input and refocuses it by
+        # id, but a fresh input opens with its caret at 0 — measured: "abc" then "XYZ" read "XYZabc", and on
+        # the users lookup "al" then "i" read "ial" with an empty menu. renderFilters() already restores the
+        # filter bar's caret; render() now does the same for the page. The service runs in this process, so
+        # holding its discovered read holds the lookups until the text is typed.
+        import threading as _threading
+        from gsd.reporting.snapshot import Snapshot as _Snapshot
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        orig = _Snapshot.discovered
+        release = _threading.Event()
+        def held(self, *a, **k):
+            release.wait(10); return orig(self, *a, **k)
+        _Snapshot.discovered = held
+        try:
+            page.goto(base + "#page=reports&cluster=crc-local&report=access-matrix")
+            page.wait_for_selector("#report-form")
+            page.focus("#report-lookup-access-matrix-users")
+            page.keyboard.type("al")
+            release.set()
+            page.wait_for_function("() => document.querySelectorAll('[data-lookup-opt=\"users\"]').length > 0", timeout=10_000)
+            page.keyboard.type("i")
+            assert page.locator("#report-lookup-access-matrix-users").input_value() == "ali"
+            assert not errors, errors
+        finally:
+            release.set()
+            _Snapshot.discovered = orig
+            ctx.close()
+
+    def test_the_picker_menu_names_its_source_and_counts_what_the_poll_listed(self, browser, reporting_server):
+        # Review of #224 (OB3): LOOKUP_HEAD had no entry for the new source, so the menu head read the raw
+        # key ("namespaces · 9 discovered"); and with `(cluster-scoped)` offered first the count said 10 for
+        # the nine the poll listed — the token is offered, not discovered.
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.goto(base + "#page=reports&cluster=crc-local&report=namespace-access")
+            page.wait_for_selector("#report-form.r-access")
+            page.click("details.report-advanced summary")
+            page.wait_for_function("() => document.querySelectorAll('[data-lookup-opt=\"namespaces\"]').length > 0")
+            listed = page.locator('[data-lookup-opt="namespaces"]').evaluate_all("es => es.map(e => e.dataset.value)")
+            head = page.locator("#report-lookup-namespace-access-namespaces-menu .rp-menu-head").evaluate("e => e.textContent")
+            assert head == f"namespaces on the cluster · {len(listed) - 1} discovered", (head, listed)
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_a_busy_preview_is_retried_once(self, browser, reporting_server):
+        # Review of #224 (OB3): the slot answers 429 to a second preview — often this viewer's OWN superseded
+        # one, still building after a report switch — and the page painted nothing until the next change.
+        # One retry, ~2 s later; a second busy answer still waits for the next change, as documented.
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.goto(base + "#page=reports&cluster=crc-local&report=groups")
+            page.wait_for_selector("#report-form")
+            page.wait_for_function("() => /^\\d+ groups/.test(document.getElementById('report-totals').textContent)", timeout=15_000)
+            hits = {"n": 0}
+            def busy_once(route):
+                hits["n"] += 1
+                if hits["n"] == 1:
+                    route.fulfill(status=429, content_type="application/json", body='{"detail":"a preview is already running; try again shortly"}')
+                else:
+                    route.continue_()
+            page.route("**/api/preview", busy_once)
+            page.click('[data-switch="include_members"]')          # a change: the first answer is the 429
+            page.wait_for_function("() => document.getElementById('report-totals').textContent === ''", timeout=5_000)
+            page.wait_for_function("() => /^\\d+ groups/.test(document.getElementById('report-totals').textContent)", timeout=6_000)
+            assert hits["n"] == 2, hits
+            assert not errors, errors
+        finally:
+            page.unroute("**/api/preview")
+            ctx.close()
+
     def test_an_automatic_refresh_that_changed_nothing_leaves_the_status_page_alone(self, browser, reporting_server):
         # Review of #221 (OB3): the status payload carries `as_of`, the service's clock, which nothing
         # renders — and with it in the fingerprint no two polls ever matched, so the page repainted every

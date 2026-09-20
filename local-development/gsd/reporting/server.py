@@ -1,9 +1,10 @@
 """The report service's HTTP API — everything under /report (REPORT_PREFIX).
 
 Its own contract, held by tests/test_reporting_server.py the way tests/test_api_contract.py holds
-the dashboard's: every route documented with a first-line sentence, every Query described, one and
-only one non-GET (POST /report/api/runs — the trigger that must not live on the dashboard), and
-the three unauthenticated paths listed by name. Auth is a dependency (`principal`), so a route
+the dashboard's: every route documented with a first-line sentence, every Query described, exactly
+two non-GETs — POST /report/api/runs, the one write (the trigger that must not live on the dashboard),
+and POST /report/api/preview, read-only (a build for the totals; #143) — and the three unauthenticated
+paths listed by name. Auth is a dependency (`principal`), so a route
 cannot be added without saying who may call it.
 """
 
@@ -423,10 +424,13 @@ def build_report_app(settings: ReportSettings, *, secret: bytes | None = None, c
             raise HTTPException(status_code=429, detail="a preview is already running; try again shortly")
         try:
             try:
-                path = newest_snapshot(settings.snapshot_dir)
-            except SnapshotError as exc:
+                # Snapshot() inside the guard too: a copy the service cannot read — torn, or a schema newer
+                # than it knows (the dashboard rolled first) — raises SnapshotError from the open, and that
+                # escaped as a 500 per debounce where readyz answers 503 (review of #224, OB3).
+                snap = Snapshot(newest_snapshot(settings.snapshot_dir))
+            except (SnapshotError, OSError) as exc:
                 raise HTTPException(status_code=503, detail=f"no snapshot to preview against: {exc}") from exc
-            with Snapshot(path) as snap:
+            with snap:
                 info = snap.info()
                 cluster = snap.cluster(body.cluster)
                 if cluster is None:
