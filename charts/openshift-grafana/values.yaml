@@ -26,12 +26,40 @@ operator:
   # community-operators, the catalog that carries grafana-operator on OpenShift.
   source: community-operators
   sourceNamespace: openshift-marketplace
-  # Automatic: OLM applies the plan; Manual keeps upgrades for a human but the FIRST install
-  # then needs an approval too, which this chart does not automate — prefer Automatic for a
-  # per-namespace instance whose operator only serves that namespace.
-  installPlanApproval: Automatic
+  # The package as the catalog names it — the Subscription's spec.name and the prefix of every CSV
+  # (`<package>.v<version>`) the approver and the reclaim match on. A mirrored catalog that renames
+  # the package sets it here.
+  package: grafana-operator
+  # Manual: OLM stages the InstallPlan and someone approves it — the enterprise norm, and this chart
+  # automates the FIRST approval (installPlanApprover below) so the install is still one shot, while
+  # later upgrades wait for a human. Automatic: OLM approves its own plans; the approver and the
+  # reclaim do not render.
+  installPlanApproval: Manual
   # Pin a CSV for change control; empty lets the channel decide.
   startingCSV: ""
+
+# -------------------- InstallPlan approver (installPlanApproval: Manual) --------------------
+# Approves the InstallPlan for THIS Subscription so a Manual-approval install is unattended; later
+# upgrades still wait for a human. Refuses a plan that does not name the package. Ported from the
+# operator chart (reviewed twice, measured on CRC 2026-09-18/19), on this chart's keys.
+installPlanApprover:
+  enabled: true
+  waitSeconds: 300
+  # 0: a retry re-waits from zero and turns a 5-minute failure into a 30-minute one with the same
+  # message at the end.
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 300
+
+# -------------------- CSV reclaim (installPlanApproval: Manual) --------------------
+# `helm uninstall` removes the Subscription and OLM LEAVES THE CSV, which the next install cannot
+# resolve against ("constraints not satisfiable: @existing/…"). This Job deletes a CSV of this
+# package that is unowned, unreferenced by any Subscription and not an OLM copy — and only after
+# OLM has reported ResolutionFailed — so a reinstall is one shot. A clean install pays nothing:
+# with no candidate in the namespace it exits at once.
+csvReclaim:
+  enabled: true
+  # How long to wait for OLM's verdict (installedCSV, or ResolutionFailed) before deciding.
+  waitSeconds: 120
 
 operatorGroup:
   # ONE OperatorGroup per namespace. A namespace that already has one (the app chart, another

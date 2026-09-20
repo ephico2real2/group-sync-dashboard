@@ -1,0 +1,71 @@
+# The openshift-grafana chart installed by OpenShift GitOps (Argo CD in `openshift-gitops`) from THIS
+# git repository — the chart's source tree at charts/openshift-grafana on main — as release `grafana`
+# in the dashboard's namespace, with nothing but the chart's defaults. The chart is written for this
+# renderer: no `lookup`, the generated Secrets minted on the cluster by a hook, the approver and the
+# reclaim as Sync hooks in the Subscription's wave, the CRDs under crds/ rendered with --include-crds.
+#
+#   oc apply -f gitops/argocd-repo-github.yaml
+#   oc apply -f gitops/argocd-application-grafana.yaml
+#   oc -n openshift-gitops get application grafana -w
+#
+# `helm.releaseName: grafana` matters: the dashboard chart discovers the Grafana Route by label and
+# binds its GrafanaDashboard CR to the instance `app.kubernetes.io/instance: grafana` by default.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: grafana
+  namespace: openshift-gitops
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/ephico2real2/group-sync-dashboard.git
+    targetRevision: main
+    path: charts/openshift-grafana
+    helm:
+      releaseName: grafana
+      # The chart's defaults are the install. Override here only what this cluster differs on, e.g.
+      # a mirrored catalog (operator.source, operator.package) or a pinned CSV (operator.startingCSV).
+      valuesObject: {}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: group-sync-dashboard
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - RespectIgnoreDifferences=true
+    retry:
+      limit: 3
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 5m
+  ignoreDifferences:
+    # The router writes the Route's status (the assigned host, the admitting router); Routes are an
+    # aggregated API, so Argo's CRD status-ignore does not cover them (argo-cd#2370).
+    - group: route.openshift.io
+      kind: Route
+      name: grafana-openshift-grafana
+      jsonPointers:
+        - /status
+    # OpenShift injects a dockercfg pull secret into every ServiceAccount the chart creates.
+    - group: ""
+      kind: ServiceAccount
+      jsonPointers:
+        - /secrets
+        - /imagePullSecrets
+        - /metadata/annotations/openshift.io~1internal-registry-pull-secret-ref
+    # The service-ca operator writes the CA bundle into the ConfigMap the chart ships empty; the gate
+    # annotates it to nudge the operator. Neither is in git.
+    - group: ""
+      kind: ConfigMap
+      name: grafana-openshift-grafana-service-ca
+      jsonPointers:
+        - /data
+        - /metadata/annotations

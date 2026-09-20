@@ -16,7 +16,7 @@ metadata:
 spec:
   channel: {{ .Values.operator.channel | quote }}
   installPlanApproval: {{ .Values.operator.installPlanApproval }}
-  name: grafana-operator
+  name: {{ .Values.operator.package }}
   source: {{ .Values.operator.source }}
   sourceNamespace: {{ .Values.operator.sourceNamespace }}
   {{- with .Values.operator.startingCSV }}

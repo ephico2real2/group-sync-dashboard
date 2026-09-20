@@ -1,0 +1,20 @@
+# The repository connection for OpenShift GitOps: Argo CD reads this Secret (the label is what makes
+# it a repository entry) and lists the repo under Settings → Repositories. This repository is public,
+# so no credential is needed — `url` and `type` are the whole connection. For a private fork add
+# `username` / `password` (a token) or `sshPrivateKey` as stringData, per Argo's declarative setup.
+#
+#   oc apply -f gitops/argocd-repo-github.yaml
+#   oc -n openshift-gitops get secret -l argocd.argoproj.io/secret-type=repository
+apiVersion: v1
+kind: Secret
+metadata:
+  name: repo-group-sync-dashboard
+  namespace: openshift-gitops
+  labels:
+    argocd.argoproj.io/secret-type: repository
+type: Opaque
+stringData:
+  name: group-sync-dashboard
+  project: default
+  type: git
+  url: https://github.com/ephico2real2/group-sync-dashboard.git

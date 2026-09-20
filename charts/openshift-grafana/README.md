@@ -57,6 +57,27 @@ installed here), the Grafana instance reports its reconcile complete with a read
 datasource reports synchronised — so the command returns a working Grafana or a failure that names
 what to inspect.
 
+## Manual approval, one-shot install, one-shot reinstall
+
+The Subscription defaults to `installPlanApproval: Manual` — the enterprise norm: every operator
+upgrade waits for a person. Two hook Jobs keep the *install* unattended, both ported from a sibling
+operator chart's twice-reviewed scripts and measured here on 2026-09-19:
+
+- **`<name>-installplan-approver`** (post-install, weight −1; Argo: a Sync hook in the Subscription's
+  wave — one wave later deadlocks a first sync) approves the plan the Subscription references, or
+  the staged plan that names the package, and waits for it to complete. It refuses a plan that does
+  not name `operator.package`. Later upgrades are yours to approve.
+- **`<name>-csv-reclaim`** (post-install, weight −2, ahead of the approver) clears the CSV a previous
+  `helm uninstall` leaves behind: OLM keeps the CSV, unowned, and the next Subscription cannot resolve
+  against it (`constraints not satisfiable: @existing/…`). Measured on CRC: after `helm uninstall`,
+  `grafana-operator.v5.24.0` stayed `Succeeded` with no owner; on reinstall the reclaim confirmed
+  `ResolutionFailed` from OLM, deleted it, OLM staged `install-n9sl6`, the approver approved it. It
+  deletes only a CSV of this package that is settled, unowned, referenced by no Subscription and not
+  an OLM copy; a clean install pays nothing (no candidate → exits at once).
+
+With `installPlanApproval: Automatic` neither renders — OLM approves its own plans and upgrades
+itself whenever the catalog moves. Both Jobs run the gate's image with `wait.resources`.
+
 ## Two install shapes
 
 | | `operator.install: true` (default) | `operator.install: false` |
@@ -144,7 +165,11 @@ architecture's `dashboards: grafana`).
 | `networkPolicy.enabled` / `.extraFrom` | `true` / `[]` | who may reach Grafana: the routers and this namespace, plus your peers |
 | `wait.enabled` / `.waitSeconds` / `.intervalSeconds` | `true` / `600` / `10` | the post-install gate |
 | `wait.image.repository` / `.tag` | `registry.redhat.io/openshift4/ose-cli` / `latest` | the `oc` image both hook Jobs run (the gate and the secrets mint) |
-| `wait.resources` | `50m` / `64Mi` requests, `256Mi` limit | for both hook Jobs — a namespace whose ResourceQuota requires requests refuses a pod without them and the install fails at the hook |
+| `wait.resources` | `50m` / `64Mi` requests, `256Mi` limit | for every hook Job (the gate, the secrets mint, the approver, the reclaim) — a namespace whose ResourceQuota requires requests refuses a pod without them and the install fails at the hook |
+| `operator.package` | `grafana-operator` | the package as the catalog names it: the Subscription's `spec.name` and the prefix every CSV match is anchored on; a mirrored catalog that renames it sets this |
+| `operator.installPlanApproval` | `Manual` | `Manual` renders the approver and the reclaim; `Automatic` renders neither |
+| `installPlanApprover.enabled` / `.waitSeconds` | `true` / `300` | approves the first plan; refuses one that does not name the package |
+| `csvReclaim.enabled` / `.waitSeconds` | `true` / `120` | clears the CSV an uninstall orphaned, after OLM reports `ResolutionFailed` |
 
 ## Argo CD, Flux, Kustomize — what each renderer does with this chart
 
@@ -155,7 +180,7 @@ differently (read from their sources on 2026-09-19: argo-cd `util/helm/cmd.go`, 
 | | Helm / **Flux** (a real install through the Helm SDK) | **Argo CD** (`helm template --api-versions <live list> --include-crds`, no cluster) | **Kustomize `helmCharts`** (bare `helm template`) |
 |---|---|---|---|
 | `crds/` | installed first | rendered (`--include-crds`), applied with the rest | rendered only with `includeCRDs: true` |
-| the wait gate (`helm.sh/hook` + `argocd.argoproj.io/hook: Sync`) | a Helm hook | an Argo Sync hook, in the Subscription's wave | a plain Job, applied once |
+| the hook Jobs — the gate, the secrets mint, the approver, the reclaim (`helm.sh/hook` + `argocd.argoproj.io/hook`) | Helm hooks | Argo Sync/PreSync hooks in the Subscription's wave | plain Jobs, applied once |
 | the generated Secrets (`<name>-admin`, `<name>-oauth-cookie`) — **minted on the cluster by a hook Job, only if absent; never in the manifest** | a pre-install/pre-upgrade hook | a PreSync hook | a plain Job, applied once (delete it before re-applying a changed chart: a Job's template is immutable) |
 
 The Secrets used to be the trap. The first draft rendered them with Helm's `lookup` reusing what
