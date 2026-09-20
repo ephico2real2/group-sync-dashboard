@@ -217,7 +217,38 @@ Outcome in one line: **#212 finished and #216 merged (the script's two managers,
   non-GET". Volunteered and taken: the picker's head counted the offered `(cluster-scoped)` as discovered;
   one retry ~1.5 s after a 429 (a viewer's own superseded preview can hold the slot). The independent-slot
   deviation from the issue's text noted on #143. Five of six new tests fail on the head without the fixes
-  (measured). Hermetic 3895 passed, 15 skipped; UI 462 passed. CI and the re-walk pending.
+  (measured). Hermetic 3895 passed, 15 skipped; UI 462 passed. Deployed and re-walked at `6c8b960`
+  (the same lines; `errors : []`); CI green on `6c8b960` and `1993111`; **merged** at `af5c269` (05:2x);
+  #143 closed with the evidence and the independent-slot deviation posted. `main` deployed to the lab
+  (`running : af5c269990 — verified in-pod`); the six merged branches and three worktrees deleted after.
+
+---
+
+## Part 8 — #153, the trailing tabs at the bar (05:4x → ) — PR #225 (open)
+
+- Before designing, the six mock tabs and the six live tabs were captured side by side: the live pages
+  were already on the token system (#152 had removed the inline styles — one `style=` left, a series
+  colour), so the uplift is the delta to the Namespace-audit bar, not the mock's skin. `43f1ee2` (05:5x):
+  Groups gains a KPI row from `/api/clusters`' whole-set counts (the Overview card's numbers, never the
+  rows a state filter narrows), rails on Empty/Unattributed, a `.drill` button for the name (the keyboard
+  reaches the drill-down; a row was click-only), the owner-dot rule under the table; Users: rails on the
+  two problem tiles when they hold anyone, provider chips; Access granted: the review rail; Usage: the
+  footnote as three paragraphs with lead words. Four tests. Walked at `06ef60e` (`reports/2026-09-20_tab-uplifts-153/`):
+  the KPIs equal `/api/clusters` (62/0/0) and hold under `state=empty` (rows 0), Enter drills, the rails
+  and chips, four tabs at 375 px with no overflow, `errors : []`.
+- **Found by CI** on `06ef60e` (the reviewers' sandboxes could not launch Chromium; my local run had
+  filtered by keyword and missed it): an existing test read the row's LAST chip for the identity
+  caveat's title, and the provider chip was last — the assertion reads the status cell; the provider chip
+  carries its own title.
+- `286c222` (06:3x) — **Grok and Codex xhigh**, both refuting M2, M6 and the owner-dot sentence,
+  **accepted**: a never-polled cluster (`status` null, integer zeros from an empty `group_state`) painted
+  0 / 0 / 0 → the tiles hidden while `status` is null; the tests' overflow line never set 375 px and the
+  hides, the rails at zero, the table inside `.scroll-x` and the footnote were unpinned → five tests;
+  `crSlot()` indexes the provider label in the sorted, flattened provider list, not the CR's position →
+  the sentence says so. Grok's leftover accepted: the Logins provider cell as a chip. Codex's M5
+  **accepted on the fact, snippet rejected** (the lead replaces the connective; saying both says it
+  twice). The three review tests fail on the page without the fixes; hermetic 3897 passed, 15 skipped; UI
+  471 passed; guards 526. `docs/REVIEW_tab_uplifts.md`. OB3 still running; CI and the re-walk pending.
 
 ---
 
