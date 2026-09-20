@@ -1,12 +1,24 @@
 {{- if and (eq (include "gsd.reportingEnabled" .) "true") .Values.reporting.persistence.enabled (not .Values.reporting.persistence.existingClaim) }}
-# Artefacts. No helm.sh/resource-policy: keep — unlike the data claim, nothing here is irreplaceable;
-# every document can be regenerated from a snapshot, and a stale artefact store is not history.
+# Artefacts. The first release carried no protection here ("nothing is irreplaceable; every
+# document can be regenerated from a snapshot") — no longer true since two-tier retention (#154,
+# #163): a scheduled report is generated ONCE from the snapshot of its day, and that snapshot is gone
+# the next day. The claim is protected like the data claim (the operator, 2026-09-19: "add no prune
+# annotation to the pvc").
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: {{ include "gsd.reportName" . }}-artifacts
   namespace: {{ .Release.Namespace }}
   labels: {{- include "gsd.reportLabels" . | nindent 4 }}
+  annotations:
+    # Survive `helm uninstall`; removing the report history is an explicit act:
+    #   oc delete pvc {{ include "gsd.reportName" . }}-artifacts -n {{ .Release.Namespace }}
+    helm.sh/resource-policy: keep
+    {{- if and .Values.argocd.enabled .Values.argocd.preservePVC }}
+    # The same three protections as the data claim (pvc.yaml explains each): not pruned when it
+    # leaves the source, not deleted with the Application, and last if ever pruned deliberately.
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false,PruneLast=true
+    {{- end }}
 spec:
   accessModes: [{{ .Values.reporting.persistence.accessMode | default "ReadWriteOnce" }}]
   {{- with .Values.reporting.persistence.storageClass }}
