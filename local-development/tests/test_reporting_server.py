@@ -1286,3 +1286,187 @@ class TestClusterAgnosticSchedulesAndOriginFormats:
         monkeypatch.setenv("GSD_REPORT_FORMATS_SCHEDULED", "html,pfd")
         with pytest.raises(SystemExit):
             _formats_env("GSD_REPORT_FORMATS_SCHEDULED", ("html",))
+
+
+class TestReportingStatus:
+    """#149 R5/R6: the status endpoint's three cards from what the service already holds, and the
+    history's server-side filters."""
+
+    SCHEDULES = [
+        {"name": "quarterly-compliance", "schedule": "0 6 1 1,4,7,10 *", "report": "compliance-snapshot",
+         "retention": {"keepPerSchedule": 12, "days": 2555}},
+        {"name": "biweekly-namespace-access", "schedule": "0 6 1,16 * *", "report": "namespace-access", "enabled": False},
+        {"name": "nightly", "schedule": "0 2 * * *", "report": "groups"},
+    ]
+
+    def _client(self, tmp_path, at=None, **over):
+        from gsd.reporting.window import ReportingWindow
+        snapshots, artifacts = seeded_dirs(tmp_path)
+        w = ReportingWindow.from_strings(enabled=True, timezone="America/New_York", start="02:00", end="06:00",
+                                         days=["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"])
+        clock = {"now": at or datetime(2026, 9, 20, 7, 30, tzinfo=UTC)}     # 03:30 EDT: the window is open
+        app = build_report_app(_settings(snapshots, artifacts, window=w, schedules=tuple(self.SCHEDULES), **over),
+                               secret=SECRET, clock=lambda: clock["now"])
+        return TestClient(app), clock
+
+    def test_the_three_cards_come_from_config_window_store_and_signals(self, tmp_path):
+        client, clock = self._client(tmp_path)
+        with client:
+            client.post(f"{REPORT_PREFIX}/api/runs", json={"report": "groups", "cluster": CLUSTER, "schedule": "nightly"}, headers=SERVICE)
+            for _ in range(50):
+                r = client.get(f"{REPORT_PREFIX}/api/runs", headers=SERVICE).json()
+                if r["runs"] and r["runs"][0]["status"] in ("done", "failed"):
+                    break
+                time.sleep(0.1)
+            s = client.get(f"{REPORT_PREFIX}/api/status", headers=SERVICE).json()
+        assert s["service"]["pdf"] == {"enabled": True, "variant": "pdf/a-2b"} and s["service"]["reports_enabled"] == 11
+        assert s["service"]["formats"] == {"scheduled": ["html", "json"], "manual": ["html", "pdf", "json"]}
+        assert s["window"]["open_now"] is True and s["window"]["next_change"] == "closes"
+        assert s["window"]["next_change_at"] == "2026-09-20T10:00:00Z"        # 06:00 EDT
+        assert s["window"]["days"] == ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+        assert s["retention"] == {"scheduled": {"keepPerSchedule": 2, "days": 90}, "manual": {"days": 3, "maxRuns": 500}}
+        by = {x["name"]: x for x in s["schedules"]}
+        q = by["quarterly-compliance"]
+        assert q["cadence"] == "Quarterly 06:00" and q["retention"] == {"keepPerSchedule": 12, "days": 2555, "overridden": True}
+        assert q["next_fire"] == "2026-10-01T10:00:00Z" and q["status"] == "never"      # no run of it yet
+        p = by["biweekly-namespace-access"]
+        assert p["enabled"] is False and p["next_fire"] is None and p["status"] == "disabled"
+        assert p["retention"] == {"keepPerSchedule": 2, "days": 90, "overridden": False}
+        n = by["nightly"]
+        assert n["cadence"] == "Daily 02:00" and n["last_success"] is not None and n["status"] == "ok"
+
+    def test_a_schedule_whose_last_fire_passed_without_a_success_is_late(self, tmp_path):
+        client, clock = self._client(tmp_path)
+        with client:
+            client.post(f"{REPORT_PREFIX}/api/runs", json={"report": "groups", "cluster": CLUSTER, "schedule": "nightly"}, headers=SERVICE)
+            for _ in range(50):
+                r = client.get(f"{REPORT_PREFIX}/api/runs", headers=SERVICE).json()
+                if r["runs"] and r["runs"][0]["status"] == "done":
+                    break
+                time.sleep(0.1)
+            clock["now"] = clock["now"] + timedelta(days=2)      # two fires later, no new success
+            s = client.get(f"{REPORT_PREFIX}/api/status", headers=SERVICE).json()
+        assert {x["name"]: x["status"] for x in s["schedules"]}["nightly"] == "late"
+
+    def test_a_disabled_window_reports_never_changing(self, tmp_path):
+        snapshots, artifacts = seeded_dirs(tmp_path)
+        app = build_report_app(_settings(snapshots, artifacts), secret=SECRET, clock=lambda: FROZEN)
+        with TestClient(app) as client:
+            s = client.get(f"{REPORT_PREFIX}/api/status", headers=SERVICE).json()
+        assert s["window"] == {"enabled": False, "open_now": True, "timezone": None, "start": None, "end": None,
+                               "days": [], "next_change": "never", "next_change_at": None, "refused_since_start": 0}
+        assert s["schedules"] == []
+
+    def test_the_history_filters_run_across_the_whole_history(self, tmp_path):
+        ticket = {TICKET_HEADER: mint(SECRET, "root", "all", 300, now=int(FROZEN.timestamp())), USER_HEADER: "root"}
+        snapshots, artifacts = seeded_dirs(tmp_path)
+        app = build_report_app(_settings(snapshots, artifacts, max_queued_runs=100), secret=SECRET, clock=lambda: FROZEN)
+        with TestClient(app) as client:
+            for i in range(3):
+                client.post(f"{REPORT_PREFIX}/api/runs", json={"report": "groups", "cluster": CLUSTER, "schedule": "nightly"}, headers=SERVICE)
+            client.post(f"{REPORT_PREFIX}/api/runs", json={"report": "users", "cluster": CLUSTER}, headers=ticket)
+            for _ in range(100):
+                r = client.get(f"{REPORT_PREFIX}/api/runs", headers=SERVICE).json()
+                if r["total"] == 4 and all(x["status"] in ("done", "failed") for x in r["runs"]):
+                    break
+                time.sleep(0.1)
+            sched = client.get(f"{REPORT_PREFIX}/api/runs?origin=schedule&limit=2", headers=SERVICE).json()
+            assert sched["total"] == 3 and len(sched["runs"]) == 2 and sched["truncated"] is True
+            person = client.get(f"{REPORT_PREFIX}/api/runs?origin=person", headers=SERVICE).json()
+            assert person["total"] == 1 and person["runs"][0]["report"] == "users"
+            assert client.get(f"{REPORT_PREFIX}/api/runs?status=done&cluster={CLUSTER}", headers=SERVICE).json()["total"] == 4
+            assert client.get(f"{REPORT_PREFIX}/api/runs?cluster=nope", headers=SERVICE).json()["total"] == 0
+            assert r["facets"] == {"reports": ["groups", "users"], "clusters": [CLUSTER]}
+            assert client.get(f"{REPORT_PREFIX}/api/runs?origin=robot", headers=SERVICE).status_code == 422
+
+    def test_the_schedules_env_is_validated(self, monkeypatch):
+        from gsd.reporting.config import _schedules_env
+        monkeypatch.setenv("GSD_REPORT_SCHEDULES", "")
+        assert _schedules_env() == ()
+        monkeypatch.setenv("GSD_REPORT_SCHEDULES", '[{"name":"n","schedule":"0 2 * * *","report":"groups"}]')
+        assert _schedules_env()[0]["name"] == "n"
+        monkeypatch.setenv("GSD_REPORT_SCHEDULES", '[{"name":"n"}]')
+        with pytest.raises(SystemExit):
+            _schedules_env()
+        monkeypatch.setenv("GSD_REPORT_SCHEDULES", "not json")
+        with pytest.raises(SystemExit):
+            _schedules_env()
+
+
+class TestReportingStatusReview:
+    """Review of #221 (OB3): the late predicate's grace sits after the fire; the per-schedule retention
+    override the page calls effective is the one the prune applies; the optional keys are validated at
+    startup like the required ones."""
+
+    NIGHTLY = ({"name": "nightly", "schedule": "0 2 * * *", "report": "groups"},)
+
+    @staticmethod
+    def _done(run_id, day, schedule="nightly"):
+        return Run(id=run_id, report="groups", cluster=CLUSTER, params={}, formats=["html"], generated_by=f"schedule:{schedule}",
+                   generated_by_note="unattended", schedule=schedule, origin="schedule", requested_at=f"{day}T02:00:00Z",
+                   started_at=f"{day}T02:00:01Z", finished_at=f"{day}T02:02:00Z", status="done", sha256="ab" * 32)
+
+    def _status(self, tmp_path, at, schedules=NIGHTLY, seed=(), in_flight=None, **over):
+        tmp_path.mkdir(exist_ok=True)
+        snapshots, artifacts = seeded_dirs(tmp_path)
+        store = ArtifactStore(str(artifacts))
+        for r in seed:
+            store.create(r)
+        app = build_report_app(_settings(snapshots, artifacts, schedules=schedules, max_queued_runs=0, **over), secret=SECRET, clock=lambda: at)
+        if in_flight is not None:
+            app.state.store.create(in_flight)
+        with TestClient(app) as client:
+            return client.get(f"{REPORT_PREFIX}/api/status", headers=SERVICE).json()
+
+    def test_a_schedule_that_just_fired_is_ok_while_its_run_renders_and_late_half_an_hour_on(self, tmp_path):
+        # Before the fix `last_success < previous_fire - 30 min` was true the instant the fire passed
+        # (yesterday's success is a day older), so every healthy schedule read `late` until its run
+        # finished — measured at fire + 1 s with the run in flight, and at fire + 5 min.
+        yesterday = self._done("20260919T020000.000000Z-aaaa", "2026-09-19")
+        running = Run(id="20260920T020000.000000Z-bbbb", report="groups", cluster=CLUSTER, params={}, formats=["html"],
+                      generated_by="schedule:nightly", generated_by_note="unattended", schedule="nightly", origin="schedule",
+                      requested_at="2026-09-20T02:00:00Z", started_at="2026-09-20T02:00:01Z", status="running")
+        by = lambda s: {x["name"]: x for x in s["schedules"]}["nightly"]  # noqa: E731
+        just_fired = by(self._status(tmp_path / "a", datetime(2026, 9, 20, 2, 0, 1, tzinfo=UTC), seed=[yesterday], in_flight=running))
+        assert just_fired["previous_fire"] == "2026-09-20T02:00:00Z" and just_fired["last_success"] == "2026-09-19T02:02:00Z"
+        assert just_fired["status"] == "ok", just_fired
+        assert by(self._status(tmp_path / "b", datetime(2026, 9, 20, 2, 29, tzinfo=UTC), seed=[yesterday]))["status"] == "ok"
+        assert by(self._status(tmp_path / "c", datetime(2026, 9, 20, 2, 31, tzinfo=UTC), seed=[yesterday]))["status"] == "late"
+        # a success after the fire is ok whatever the hour; no success ever is never
+        today = self._done("20260920T020000.000000Z-cccc", "2026-09-20")
+        assert by(self._status(tmp_path / "d", datetime(2026, 9, 20, 12, 0, tzinfo=UTC), seed=[yesterday, today]))["status"] == "ok"
+        assert by(self._status(tmp_path / "e", datetime(2026, 9, 20, 12, 0, tzinfo=UTC)))["status"] == "never"
+
+    def test_the_retention_override_the_page_reports_is_the_one_the_prune_applies(self, tmp_path):
+        # `ArtifactStore.prune(overrides=...)` has existed since the two-tier retention and nothing passed
+        # it; #221 is the first to declare an override (environments/crc.yaml) and to display it as the
+        # effective policy. Three runs of a quarterly schedule, all older than the global 90 days: the
+        # globals keep the newest 2, the override (12 newest, 2555 days) keeps all three.
+        quarterly = ({"name": "quarterly", "schedule": "0 6 1 1,4,7,10 *", "report": "groups", "retention": {"keepPerSchedule": 12, "days": 2555}},)
+        snapshots, artifacts = seeded_dirs(tmp_path)
+        store = ArtifactStore(str(artifacts))
+        for i, day in enumerate(("2026-01-01", "2026-04-01", "2026-07-01")):
+            store.create(self._done(f"{day.replace('-', '')}T060000.000000Z-q{i:03d}", day, schedule="quarterly"))
+        at = datetime(2026, 9, 20, 12, 0, tzinfo=UTC)
+        settings = _settings(snapshots, artifacts, schedules=quarterly, max_queued_runs=0)
+        app = build_report_app(settings, secret=SECRET, clock=lambda: at)
+        with TestClient(app) as client:
+            s = client.get(f"{REPORT_PREFIX}/api/status", headers=SERVICE).json()
+            assert s["schedules"][0]["retention"] == {"keepPerSchedule": 12, "days": 2555, "overridden": True}
+            app.state.runs._last_prune = -10**9            # the hourly gate: due now
+            app.state.runs._maybe_prune()
+            assert client.get(f"{REPORT_PREFIX}/api/runs", headers=SERVICE).json()["total"] == 3, "the prune applied the globals, not the override the page shows"
+        from gsd.reporting.config import retention_overrides            # the one reading both sides share
+        assert retention_overrides(settings) == {"quarterly": (12, 2555)}
+
+    def test_the_schedules_env_refuses_a_malformed_retention_or_enabled_at_startup(self, monkeypatch):
+        # Before: a `retention: {days: "twelve"}` passed startup and GET /report/api/status was a 500.
+        from gsd.reporting.config import _schedules_env
+        good = {"name": "n", "schedule": "0 2 * * *", "report": "groups"}
+        for bad in ({"retention": {"days": "twelve"}}, {"retention": {"keepPerSchedule": None}}, {"retention": [1, 2]},
+                    {"retention": {"days": -1}}, {"retention": {"weeks": 2}}, {"retention": {"days": True}}, {"enabled": "false"}, {"enabled": 0}):
+            monkeypatch.setenv("GSD_REPORT_SCHEDULES", json.dumps([good | bad]))
+            with pytest.raises(SystemExit, match="GSD_REPORT_SCHEDULES: schedule 'n'"):
+                _schedules_env()
+        monkeypatch.setenv("GSD_REPORT_SCHEDULES", json.dumps([good | {"retention": {"days": 12}, "enabled": False}]))
+        assert _schedules_env()[0]["retention"] == {"days": 12}

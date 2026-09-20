@@ -127,6 +127,32 @@ DNS-1123 label. The convention is **`<cadence>-<report>`** — `biweekly-complia
 `weekly-access-cert` — so the cadence and the report are both legible in the status page and the run
 history.
 
+## The Reporting status page
+
+`#page=reporting`, linked from the Reports catalogue ("Reporting status, schedules and history →"), is
+the report service's own account of itself — read from the service, no personnel data beyond the
+`generated_by` a run already carries:
+
+- **Reporting status** — the service (version, PDF variant, enabled reports, what a scheduled run
+  stores), the **run window** (open or closed now, its hours, zone and days, when it next opens or
+  closes), both **retention** tiers, and what is **in flight** (running, queued, how many automated
+  requests the window refused since the service started).
+- **Scheduled reports** — one row per `reporting.schedules[]` entry: the cadence in words with the
+  expression beneath (read in the CronJob's zone — the run window's when one is configured), the
+  effective retention (a per-schedule override is marked), **On** or **Paused**, the last success, the
+  next fire, and a state: `ok` — the last expected fire has a success after it, or is less than 30
+  minutes old (the grace for the queue and the render); `late` — the last expected fire is more than
+  30 minutes behind and nothing has succeeded since it (a fire the CronJob missed reads the same way);
+  `never` — no success recorded yet; `disabled` — paused. Every instant on the page is UTC, as the
+  service stamps it.
+- **Report history** — every run, newest first, with Report / Origin / Status / Cluster filters that
+  run on the service across the whole history, paged, with the artefact downloads.
+
+Next and previous fires are computed from the cron expression (a spring-forward gap fires nothing, a
+fall-back overlap fires twice, as Kubernetes' cron does), not read from kube-state-metrics — the
+values the chart renders already determine them, and a Prometheus read would need access and RBAC the
+service does not have.
+
 ## Formats and retention
 
 A report can be written as HTML, PDF and JSON; JSON is always written. On the Reports tab the operator

@@ -172,14 +172,32 @@ class ArtifactStore:
             return self._runs.get(run_id)
 
     def list(self, *, report: str | None = None, limit: int = 100, offset: int = 0,
-             generated_by: str | None = None) -> tuple[list[Run], int]:
+             generated_by: str | None = None, origin: str | None = None, status: str | None = None,
+             cluster: str | None = None) -> tuple[list[Run], int]:
+        """Newest first, filtered across the WHOLE history (the status page's Report / Origin / Status /
+        Cluster filters are server-side, #149 R5), then one page. `origin` is "schedule" or "person"
+        (a person's manual run, whatever their name); `total` counts the filtered set."""
         with self._lock:
             runs = sorted(self._runs.values(), key=lambda r: r.id, reverse=True)
         if report:
             runs = [r for r in runs if r.report == report]
         if generated_by:
             runs = [r for r in runs if r.generated_by == generated_by]
+        if origin == "schedule":
+            runs = [r for r in runs if r.generated_by.startswith("schedule:")]
+        elif origin == "person":
+            runs = [r for r in runs if not r.generated_by.startswith("schedule:")]
+        if status:
+            runs = [r for r in runs if r.status == status]
+        if cluster:
+            runs = [r for r in runs if r.cluster == cluster]
         return runs[offset:offset + limit], len(runs)
+
+    def facets(self) -> dict[str, list[str]]:
+        """The distinct reports and clusters across every run — what the history's filter menus offer."""
+        with self._lock:
+            runs = list(self._runs.values())
+        return {"reports": sorted({r.report for r in runs}), "clusters": sorted({r.cluster for r in runs})}
 
     def since(self, since_id: str | None, limit: int) -> list[Run]:
         """Finished runs with id > since_id, oldest first — the dashboard's usage pull.

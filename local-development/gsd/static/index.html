@@ -156,7 +156,10 @@ const STATES = {
 };
 
 const view = { page: "home", homeShow: {}, cluster: null, groupsync: null, groupFilter: "all", bindingFilter: "review",
-                report: null, reportLanded: null, reportFocusRow: null, reportForm: {}, reportRun: null, reportSubmitting: false, reportPreview: "",
+                report: null, reportLanded: null, reportFocusRow: null, reportForm: {},
+                /* #149 R5: the status page's history filters and page. Filters, not positions (the
+                   groupFilter reasoning): a shared link opens the page, not a filtered slice of it. */
+                historyFilter: { report: "", origin: "", status: "", cluster: "" }, historyPage: 0, reportRun: null, reportSubmitting: false, reportPreview: "",
                 reportPreviewNames: [], reportPreviewCount: null,   // #143: the names behind the count
                 /* Free-text group search. A FILTER, so it lives here rather than in POSITION_KEYS —
                    same reasoning as groupFilter: it narrows what a page shows, it is not a place, and
@@ -370,8 +373,10 @@ function goBack() {
       // entry: there was nothing behind it in this app, and a pushed entry would make the parent's own
       // back control point at the drill-down the reader just rose from.
       const toFleet = view.page === "overview" && view.cluster && !view.groupsync;
+      // #149: the Reporting status page's parent is the Reports page it is linked from.
+      const toReports = view.page === "reporting";
       navigate({ group: null, user: null, groupsync: null, ns: null, report: null,
-                 ...(toFleet ? { cluster: null } : {}) }, { replace: true });
+                 ...(toFleet ? { cluster: null } : {}), ...(toReports ? { page: "reports" } : {}) }, { replace: true });
   refresh();
 }
 
@@ -384,7 +389,7 @@ function goBack() {
 const PAGE_LABEL = {
   home: "home", overview: "overview", groups: "all groups", users: "all users", bindings: "access granted",
   policy: "RBAC policy", nsaudit: "namespace audit", logins: "logins", usage: "usage",
-  reports: "reports", lookup: "search", kpi: "KPIs",
+  reports: "reports", reporting: "reporting status", lookup: "search", kpi: "KPIs",
 };
 
 function backLabel() {
@@ -395,6 +400,7 @@ function backLabel() {
     // Nothing to return to — a pasted link. goBack() rises to the PARENT of where we are, so the
     // label has to describe that rather than a fixed string: on a GroupSync detail reached by
     // link, "all groups" named a page the button does not open.
+    if (view.page === "reporting") return "← reports";   // #149: the status page's parent
     if (view.report) return "← all reports";   // #173: the parent of a report is the catalogue
     return `← ${PAGE_LABEL[view.page] || "overview"}`;
   }
@@ -1056,7 +1062,7 @@ function renderFilters() {
   // keyboard user resting on a tab is dropped to <body> by every timed repaint, losing their place
   // in the tab order.
   const tab = (id, label) =>
-    `<button class="tab" id="tab-${id}" data-nav="${id}"${view.page === id ? ' aria-current="page"' : ""}>${label}</button>`;
+    `<button class="tab" id="tab-${id}" data-nav="${id}"${view.page === id || (id === "reports" && view.page === "reporting") ? ' aria-current="page"' : ""}>${label}</button>`;   // #149: the status page is Reports' child
   html += `<span class="spacer"></span>
     <nav class="tabs" aria-label="Dashboard sections">
       ${tab("home", "Home")}
@@ -2509,7 +2515,19 @@ function reportsPage() {
   // #173: the form is a position the reader opens — no report selected means the catalogue alone. A
   // key the catalogue does not carry (a stale link) opens nothing rather than the first report.
   const pick = reports.find((r) => r.name === view.report && r.enabled) || null;
-  return `${reportPickerCard(reports, pick, cat)}${pick ? reportFormCard(pick, cat) : ""}${reportRunsCard()}`;
+  return `${reportPickerCard(reports, pick, cat)}${pick ? reportFormCard(pick, cat) : ""}${reportHistoryLink()}`;
+}
+
+// #149 R5: recent runs and the whole history live on the Reporting status page, linked from here — the
+// catalogue is for choosing a report; the count says whether anything has run.
+function reportHistoryLink() {
+  const r = data.reportRuns;
+  if (!r || r.forbidden) return "";
+  const n = r.total != null ? r.total : (r.runs || []).length;
+  return `<section class="card" id="report-history-link"><div class="filterbar-note">
+    ${n === 0 ? "No report has been generated yet." : `${n} run${n === 1 ? "" : "s"} so far.`}
+    <button type="button" class="linkish" id="report-status-link">Reporting status, schedules and history →</button>
+  </div></section>`;
 }
 
 // The catalogue's title for a report key, for the back control ("← Namespace access report"); the key
@@ -2653,22 +2671,151 @@ function reportRunStatus(run) {
   </div>`;
 }
 
-function reportRunsCard() {
-  const r = data.reportRuns;
-  if (!r || r.forbidden) return "";
-  const rows = r.runs || [];
-  return `<section class="card" id="report-runs">
-    <h3>Recent runs</h3>
-    ${rows.length === 0 ? `<div class="empty-note">No report has been generated yet.</div>` : `<div class="scroll-x"><table>
-      <thead><tr><th>requested</th><th>report</th><th>cluster</th><th>by</th><th>status</th><th>sha256</th><th></th></tr></thead>
-      <tbody>${rows.map((x) => `<tr>
-        <td class="mono">${esc(x.requested_at)}</td><td>${esc(x.report)}</td><td>${esc(x.cluster)}</td>
-        <td>${esc(x.generated_by)}</td><td>${esc(x.status)}</td><td class="mono">${esc((x.sha256 || "").slice(0, 12))}</td>
-        <td>${x.status === "done" ? (x.formats || []).concat(["json"]).map((f) =>
-          `<button type="button" class="linkish" data-artifact="${esc(x.id)}" data-format="${esc(f)}">.${esc(f)}</button>`).join(" ") : ""}</td>
-      </tr>`).join("")}</tbody></table></div>`}
-    ${r.truncated ? `<div class="truncation-note">Showing ${rows.length} of ${r.total} runs.</div>` : ""}
+/* ─── #149 R5: the Reporting status page — three cards, docs/design/reporting-status-mock.html ──────
+   Everything here is what the report service says about itself (GET /report/api/status) and the
+   history it holds (GET /report/api/runs with server-side filters). No personnel data beyond the
+   `generated_by` a run already carries. */
+function historyQuery() {
+  const f = view.historyFilter, p = new URLSearchParams();
+  for (const k of ["report", "origin", "status", "cluster"]) if (f[k]) p.set(k, f[k]);
+  p.set("limit", String(HISTORY_PAGE)); p.set("offset", String(view.historyPage * HISTORY_PAGE));
+  return `/api/runs?${p.toString()}`;
+}
+const HISTORY_PAGE = 25;
+
+function stateBadge(state, label) {
+  // The app's badge vocabulary: a shape per state (the channel a colourblind reader has), the word
+  // beside it. Run and schedule states map onto it rather than growing a second one.
+  const shape = { done: "ok", ok: "ok", failed: "critical", late: "warning", running: "unknown",
+                  queued: "unknown", never: "unknown", disabled: "unknown" }[state] || "unknown";
+  return `<span class="badge ${shape} st-${esc(state)}"><span class="glyph" aria-hidden="true"></span>${esc(label || state)}</span>`;
+}
+
+function fmtStamp(iso) {                 // 2026-09-16T06:00:00Z → 2026-09-16 06:00 (UTC, as the service stamps)
+  return iso ? esc(iso.replace("T", " ").replace(/:\d\d(?:\.\d+)?Z$/, "").replace("Z", "")) : "—";
+}
+
+function untilShort(iso) {               // "in 3h 12m" / "in 15d" / "1h ago"
+  if (!iso) return "";
+  const secs = Math.round((new Date(iso).getTime() - Date.now()) / 1000);
+  const a = Math.abs(secs);
+  const span = a < 3600 ? `${Math.max(1, Math.round(a / 60))}m` : a < 86400 ? `${Math.floor(a / 3600)}h ${Math.floor((a % 3600) / 60)}m` : `${Math.round(a / 86400)}d`;
+  return secs >= 0 ? `in ${span}` : `${span} ago`;
+}
+
+function reportingPage() {
+  if (!reportingEnabled()) return `<section class="card"><div class="empty-note">Reporting is not enabled on this deployment.</div></section>`;
+  if (!readerTierKnown()) return `<section class="card"><div class="empty-note">Loading…</div></section>`;
+  if (narrowedOnHost()) return refusalCard("Reporting status", `The reporting service's status, schedules and history describe the cluster's own reporting surface.`);
+  const st = data.reportStatus, h = data.reportHistory;
+  if (!st || !h) return `<section class="card"><button class="back" id="back">${backLabel()}</button><div class="empty-note">Loading…</div></section>`;
+  if (st.forbidden || h.forbidden) return refusalCard("Reporting status", `The reporting service's status, schedules and history describe the cluster's own reporting surface.`);
+  return `${reportingStatusCard(st)}${reportingSchedulesCard(st)}${reportingHistoryCard(h, st)}`;
+}
+
+function reportingStatusCard(st) {
+  const w = st.window;
+  const windowV = !w.enabled ? "Always open" : w.open_now ? "Open now" : "Closed";
+  const windowD = !w.enabled ? "no run window is configured — automated runs fire whenever scheduled"
+    : `${esc(w.start)}–${esc(w.end)} ${esc(w.timezone)} · ${w.days.length === 7 ? "Mon–Sun" : w.days.map(esc).join(", ")} · ${esc(w.next_change)} ${esc(untilShort(w.next_change_at))}`;
+  const fmt = st.service.formats;
+  const inFlight = st.in_flight.running ? `${st.in_flight.running} running` : "idle";
+  return `<section class="card" id="reporting-status">
+    <button class="back" id="back">${backLabel()}</button>
+    <h2>Reporting status <span class="rp-chip rp-count">report service ${esc(st.service.version)}</span></h2>
+    <div class="filterbar-note">What the report service is configured to do, and whether it is doing it. Read from the service — no personnel data.</div>
+    <div class="status-strip">
+      <div class="kv"><span class="k">Service</span><span class="v">${stateBadge("ok", "On")}</span>
+        <span class="d">${st.service.pdf.enabled ? `PDF ${esc(st.service.pdf.variant)} + HTML` : "HTML only"} · ${st.service.reports_enabled} reports enabled · scheduled runs store ${fmt.scheduled.map(esc).join("+")}</span></div>
+      <div class="kv"><span class="k">Run window</span><span class="v">${stateBadge(!w.enabled || w.open_now ? "ok" : "never", windowV)}</span>
+        <span class="d">${windowD}</span></div>
+      <div class="kv"><span class="k">Retention</span><span class="v">2-tier</span>
+        <span class="d">scheduled: ${st.retention.scheduled.days}d or newest ${st.retention.scheduled.keepPerSchedule} per schedule (cap-exempt) · manual: ${st.retention.manual.days}d or newest ${st.retention.manual.maxRuns}</span></div>
+      <div class="kv"><span class="k">In flight</span><span class="v">${stateBadge(st.in_flight.running ? "running" : "ok", inFlight)}</span>
+        <span class="d">${st.in_flight.queued} queued · ${w.refused_since_start} refused by the window since the service started</span></div>
+    </div>
   </section>`;
+}
+
+function reportingSchedulesCard(st) {
+  const rows = st.schedules || [];
+  const paused = rows.filter((s) => !s.enabled).length;
+  return `<section class="card" id="reporting-schedules">
+    <h3>Scheduled reports <span class="rp-chip rp-count">${rows.length} schedule${rows.length === 1 ? "" : "s"}${paused ? ` · ${paused} paused` : ""}</span></h3>
+    <div class="filterbar-note">Declared in <code>reporting.schedules[]</code> and fired by their CronJobs inside the run window (<code>generated_by = schedule:&lt;name&gt;</code>).
+      <code>enabled: false</code> pauses one without deleting it; "Retention" is its effective policy — keep the N newest, or anything younger than the age, whichever keeps more.</div>
+    ${rows.length === 0 ? `<div class="empty-note">No schedule is configured. Add one under <code>reporting.schedules[]</code> in the chart's values.</div>` : `<div class="scroll-x"><table>
+      <thead><tr><th>Schedule</th><th>Report</th><th>Cadence${st.window.enabled ? ` <span class="muted">(${esc(st.window.timezone)})</span>` : ""}</th><th>Retention</th><th>Enabled</th><th>Last success <span class="muted">(UTC)</span></th><th>Next <span class="muted">(UTC)</span></th><th>Status</th></tr></thead>
+      <tbody>${rows.map((s) => `<tr class="${s.enabled ? "" : "paused"}" data-schedule="${esc(s.name)}">
+        <td class="mono">${esc(s.name)}</td><td class="mono">${esc(s.report)}</td>
+        <td>${esc(s.cadence)}${s.cadence !== s.schedule ? `<br><span class="mono muted">${esc(s.schedule)}</span>` : ""}</td>
+        <td class="mono${s.retention.overridden ? "" : " muted"}">${s.retention.keepPerSchedule} newest · ${s.retention.days} d</td>
+        <td>${stateBadge(s.enabled ? "ok" : "disabled", s.enabled ? "On" : "Paused")}</td>
+        <td class="mono" title="${esc(s.last_success || "")}">${s.last_success ? `${fmtStamp(s.last_success)} <span class="muted">(${esc(ago(s.last_success))})</span>` : "never"}</td>
+        <td class="mono${s.next_fire ? "" : " muted"}">${s.next_fire ? `${fmtStamp(s.next_fire)} <span class="muted">(${esc(untilShort(s.next_fire))})</span>` : "—"}</td>
+        <td>${stateBadge(s.status)}</td>
+      </tr>`).join("")}</tbody></table></div>
+    <div class="filterbar-note mt-3"><code>enabled: false</code> keeps a schedule's definition, history and audit trail — the CronJob is suspended (Paused, Next —). Remove the stanza only to retire it. A schedule names no cluster: the service runs it for every enabled cluster in its snapshot. The cadence is read in the CronJob's zone${st.window.enabled ? ` (the run window's, ${esc(st.window.timezone)})` : " (the cluster's)"}; every instant on this page is UTC, as the service stamps it.</div>`}
+  </section>`;
+}
+
+function reportingHistoryCard(h, st) {
+  const f = view.historyFilter;
+  const total = h.total || 0, from = total ? view.historyPage * HISTORY_PAGE + 1 : 0, to = Math.min(total, (view.historyPage + 1) * HISTORY_PAGE);
+  const pages = Math.max(1, Math.ceil(total / HISTORY_PAGE));
+  const facets = h.facets || { reports: [], clusters: [] };
+  const catalogue = (data.reportCatalog && data.reportCatalog.reports || []).map((r) => r.name);
+  const reports = Array.from(new Set([...catalogue, ...facets.reports])).sort();
+  const opt = (v, cur, label) => `<option value="${esc(v)}"${v === cur ? " selected" : ""}>${esc(label || v)}</option>`;
+  const artefacts = (x) => x.status === "done"
+    ? (x.formats || []).concat(["json"]).map((fm) => `<button type="button" class="linkish" data-artifact="${esc(x.id)}" data-format="${esc(fm)}">.${esc(fm)}</button>`).join(" ")
+    : `<span class="muted">—</span>`;
+  return `<section class="card" id="reporting-history">
+    <h3>Report history <span class="rp-chip rp-count" id="history-count">${total} run${total === 1 ? "" : "s"}</span></h3>
+    <div class="filterbar-note">Every generated report, newest first — manual and scheduled. Each filter runs across the whole history, on the service.</div>
+    <div class="ns-controls history-filters">
+      <label class="filterbar-note">Report <select id="history-report">${opt("", f.report, "All reports")}${reports.map((r) => opt(r, f.report)).join("")}</select></label>
+      <label class="filterbar-note">Origin <select id="history-origin">${opt("", f.origin, "Manual + scheduled")}${opt("person", f.origin, "Manual only")}${opt("schedule", f.origin, "Scheduled only")}</select></label>
+      <label class="filterbar-note">Status <select id="history-status">${opt("", f.status, "Any status")}${["done", "failed", "running", "queued"].map((v) => opt(v, f.status)).join("")}</select></label>
+      <label class="filterbar-note">Cluster <select id="history-cluster">${opt("", f.cluster, "All clusters")}${facets.clusters.map((c) => opt(c, f.cluster)).join("")}</select></label>
+      <span class="pager"><span id="history-range">${from}–${to} of ${total}</span>
+        <button type="button" id="history-prev"${view.historyPage === 0 ? " disabled" : ""}>‹ Prev</button>
+        <button type="button" id="history-next"${view.historyPage + 1 >= pages ? " disabled" : ""}>Next ›</button></span>
+    </div>
+    ${total === 0 ? `<div class="empty-note">${Object.values(f).some(Boolean) ? "No run matches these filters." : "No report has been generated yet."}</div>` : `<div class="scroll-x"><table>
+      <thead><tr><th>requested</th><th>report</th><th>cluster</th><th>by</th><th>status</th><th>sha256</th><th>artefacts</th></tr></thead>
+      <tbody>${(h.runs || []).map((x) => `<tr>
+        <td class="mono">${esc(x.requested_at)}</td><td class="mono">${esc(x.report)}</td><td>${esc(x.cluster)}</td>
+        <td>${x.generated_by.startsWith("schedule:") ? `<span class="mono">${esc(x.generated_by)}</span>` : esc(x.generated_by)}</td>
+        <td>${stateBadge(x.status)}</td><td class="mono">${esc((x.sha256 || "").slice(0, 12))}</td><td>${artefacts(x)}</td>
+      </tr>`).join("")}</tbody></table></div>
+    <div class="filterbar-note mt-3">Page ${view.historyPage + 1} of ${pages} · page size ${HISTORY_PAGE} · scheduled kept ${st.retention.scheduled.days}d / newest ${st.retention.scheduled.keepPerSchedule} per schedule (cap-exempt) · manual expires in ${st.retention.manual.days}d / newest ${st.retention.manual.maxRuns}</div>`}
+  </section>`;
+}
+
+function wireReporting() {
+  const back = $("back"); if (back) back.onclick = goBack;
+  // The page keeps its rows while the filtered reply is on its way — blanking to "Loading…" for a
+  // filter change made the controls jump under the reader's pointer.
+  // A reply describes the filters it was asked with: one asked before a filter change (this refetch,
+  // or a poll's) must not land under the new controls (review of #221, OB3 — a tiny window, closed).
+  const refetch = async () => {
+    const asked = historyQuery();
+    let got;
+    try { got = await guard403(reportGet(asked)); } catch (e) { got = { forbidden: true }; }
+    if (historyQuery() !== asked) return;
+    data.reportHistory = got; render();
+  };
+  for (const key of ["report", "origin", "status", "cluster"]) {
+    const el = $(`history-${key}`);
+    if (el) el.onchange = () => { view.historyFilter[key] = el.value; view.historyPage = 0; refetch(); };
+  }
+  const prev = $("history-prev"), next = $("history-next");
+  if (prev) prev.onclick = () => { view.historyPage = Math.max(0, view.historyPage - 1); refetch(); };
+  if (next) next.onclick = () => { view.historyPage += 1; refetch(); };
+  document.querySelectorAll("[data-artifact]").forEach((el) => {
+    el.onclick = () => downloadArtifact(el.dataset.artifact, el.dataset.format);
+  });
 }
 
 // A <select multiple> serialises its `value` as the FIRST option only; a report param that takes a list
@@ -2837,6 +2984,8 @@ function wireReports() {
       }
     };
   });
+  const link = $("report-status-link");
+  if (link) link.onclick = () => { navigate({ page: "reporting" }); render(); refresh(); };
   const back = $("report-back");
   // The catalogue that Back repaints has no #report-back, so render()'s by-id restore would drop the
   // keyboard reader's focus on <body>; the row this form belongs to is where it goes (review of #173).
@@ -2894,7 +3043,7 @@ async function generateReport(refocus = false) {
       view.reportRun = await reportGet(`/api/runs/${encodeURIComponent(view.reportRun.id)}`);
       render();
     }
-    data.reportRuns = await guard403(reportGet("/api/runs?limit=50"));
+    data.reportRuns = await guard403(reportGet("/api/runs?limit=1"));
   } catch (e) {
     view.reportRun = { id: "—", status: "failed", error: e.status === 422 ? "the parameters were refused (see the fields)" : e.message };
   } finally {
@@ -5173,6 +5322,9 @@ function render() {
       const row = view.report ? null : $(`report-pick-${view.reportFocusRow}`); view.reportFocusRow = null;
       if (row) row.focus();
     }
+  } else if (view.page === "reporting") {
+    main.innerHTML = reportingPage();
+    wireReporting();
   } else if (view.page === "usage") {
     main.innerHTML = usagePage();
   } else if (view.page === "bindings") {
@@ -5573,7 +5725,14 @@ async function refresh(opts = {}) {
       // Through the proxy to the REPORT SERVICE, with the ticket the dashboard minted. A 403 here
       // is the same designed refusal as everywhere else and renders as the same card.
       want.reportCatalog = guard403(reportGet("/api/reports"));
-      want.reportRuns = guard403(reportGet("/api/runs?limit=50"));
+      // limit=1: the catalogue shows the count (`total`) only; the runs live on the status page (#149 R5)
+      want.reportRuns = guard403(reportGet("/api/runs?limit=1"));
+    }
+    if (view.page === "reporting" && reportingEnabled() && !narrowedOnHost()) {
+      // #149 R5/R6: the status page — the service's own account of itself, and the history page the
+      // reader is on, filtered server-side (every filter runs across the whole history).
+      want.reportStatus = guard403(reportGet("/api/status"));
+      want.reportHistory = (async (asked) => { const r = await guard403(reportGet(asked)); return r && !r.forbidden ? { ...r, asked } : r; })(historyQuery());
     }
     if (view.page === "usage") {
       // 403 is the DESIGNED answer when the OAuth proxy is off: there is no authenticated
@@ -5664,18 +5823,33 @@ async function refresh(opts = {}) {
     if ("usage" in got) data.usage = got.usage;
     if ("reportCatalog" in got) data.reportCatalog = got.reportCatalog;
     if ("reportRuns" in got) data.reportRuns = got.reportRuns;
+    if ("reportStatus" in got) data.reportStatus = got.reportStatus;
+    if ("reportHistory" in got && got.reportHistory && historyQuery() === (got.reportHistory.asked || historyQuery())) data.reportHistory = got.reportHistory;
     // The report requests above were chosen on the PREVIOUS cycle's host tier, before this
     // cycle's whoami arrived — the same race the Access granted tab reconciles below. A reader
     // promoted mid-session otherwise saw "Loading…" for a whole cycle; a demoted one must not
     // keep the catalogue, nor lend a ticket minted under the old identity (review of D2, second
     // pass, Codex; measured: zero report calls on the promoting refresh).
+    if (view.page === "reporting" && reportingEnabled() && got.whoami) {
+      if (narrowedOnHost()) {
+        data.reportStatus = null; data.reportHistory = null; data.reportTicket = null;
+      } else if (got.whoami.authenticated && !("reportStatus" in got)) {
+        // The same catch-up as the Reports page below: the requests above were chosen on the previous
+        // cycle's tier, so a reader promoted mid-session saw "Loading…" for a whole cycle (review of
+        // #221, OB3 — measured: zero status calls on the promoting refresh).
+        data.reportTicket = null;
+        const [status, history] = await Promise.all([guard403(reportGet("/api/status")), guard403(reportGet(historyQuery()))]);
+        if (superseded()) return;
+        data.reportStatus = status; data.reportHistory = history;
+      }
+    }
     if (view.page === "reports" && reportingEnabled() && got.whoami) {
       if (narrowedOnHost()) {
         data.reportCatalog = null; data.reportRuns = null; data.reportTicket = null;
       } else if (got.whoami.authenticated && !("reportCatalog" in got)) {
         data.reportTicket = null;
         const [catalog, runs] = await Promise.all([
-          guard403(reportGet("/api/reports")), guard403(reportGet("/api/runs?limit=50")),
+          guard403(reportGet("/api/reports")), guard403(reportGet("/api/runs?limit=1")),
         ]);
         if (superseded()) return;
         data.reportCatalog = catalog; data.reportRuns = runs;
@@ -5730,6 +5904,10 @@ async function refresh(opts = {}) {
       data.groupsMeta, data.group, data.user, data.users, data.events, data.logins, data.access,
       data.usage, data.findings, data.operatorConfigs, data.userBindings, data.whoami, data.myAccess, data.home,
       data.reportCatalog, data.reportRuns, data.fleet,   // #172: the fleet tables render from it
+      // #149 R5: the status page's two payloads — a finished run must repaint it. Without `as_of`, the
+      // service's clock stamp that nothing renders: with it, no two polls ever matched and the page
+      // repainted every minute, dropping the reader's selection (review of #221, OB3 — measured).
+      data.reportStatus && { ...data.reportStatus, as_of: null }, data.reportHistory,
       data.kpi,   // #157 (review, Codex): left out, a poll whose only change was a KPI never repainted the page
       // #167: the namespace list and page ride the same wire (review, Codex — left out, a poll whose
       // only change was a label or a grant skipped the repaint the comment above forbids skipping).

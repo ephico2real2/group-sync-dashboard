@@ -18,7 +18,7 @@ from datetime import UTC, datetime
 from .. import TITLE
 from .artifacts import ArtifactStore, Run
 from .catalogue import REGISTRY, RunContext, ValidationError, validate_params
-from .config import ReportSettings
+from .config import ReportSettings, retention_overrides
 from .render_html import render_html
 from .snapshot import Snapshot, SnapshotError, newest_snapshot
 
@@ -127,7 +127,7 @@ class RunManager:
                              scheduled_days=self.settings.scheduled_retention_days,
                              manual_days=self.settings.manual_retention_days,
                              manual_max_runs=self.settings.manual_retention_max_runs,
-                             now=self._clock())
+                             now=self._clock(), overrides=retention_overrides(self.settings))
         except Exception:  # noqa: BLE001 — retention must never stop rendering
             log.exception("artifact prune failed")
 
