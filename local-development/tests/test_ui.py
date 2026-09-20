@@ -1125,7 +1125,7 @@ class TestTheShellAtPhoneWidth:
     """#166, measured on the live cluster before the fix: at 375 px the nine-tab bar was 676 px wide,
     `document.documentElement.scrollWidth` 696, and five tabs sat past the edge of a bar that could
     not scroll — unreachable. The shell owns the bar (#152), so the check runs on every tab."""
-    TABS = ["home", "overview", "kpi", "groups", "users", "bindings", "policy", "nsaudit", "logins", "usage"]
+    TABS = ["home", "overview", "kpi", "groups", "users", "bindings", "policy", "kyverno", "nsaudit", "logins", "usage"]
 
     @pytest.mark.parametrize("tab", TABS)
     def test_no_horizontal_overflow_and_every_tab_inside_the_viewport(self, dash, tab):
@@ -4154,6 +4154,8 @@ def scoped_server(tmp_path_factory):
     """The seeded app behind a simulated oauth proxy, restrictions ON (the D1 default)."""
     db = str(tmp_path_factory.mktemp("gsd-vis") / "ui.db")
     _seed(db)
+    global _SCOPED_DB
+    _SCOPED_DB = db   # the kyverno_store fixture writes the module's rows into this app's store (#170)
     settings = Settings(
         clusters=[
             ClusterConfig("crc-local", "https://api.crc.testing:6443", token_env="X"),
@@ -4185,6 +4187,18 @@ def scoped_server(tmp_path_factory):
     yield base
     srv.should_exit = True
     thread.join(timeout=5)
+
+
+_SCOPED_DB: str | None = None
+
+
+@pytest.fixture
+def kyverno_store(scoped_server):
+    """A second handle on the scoped app's store, for tests that write the Kyverno module's rows (#170)."""
+    s = Store(_SCOPED_DB)
+    yield s
+    s.replace_kyverno("crc-local", None, "2026-09-20T23:59:59Z")   # leave the cluster "looked, absent" for the next test
+    s.close()
 
 
 class TestSignOutControl:
@@ -6426,6 +6440,115 @@ class TestTabUplifts:
         assert review[1] == (review[0] != "0"), review     # the severity itself: the rails-at-zero test below
 
 
+class TestKyvernoPage:
+    """#170: the Kyverno page's three states, the deprecated-family and breaker notes, the visible
+    controlled-kind filter, the policy narrowing and the history — every number from the wire."""
+
+    def test_never_polled_and_not_installed_are_said_not_zeroed(self, page, scoped_server, kyverno_store):
+        store = kyverno_store
+        p = _open_as(page, scoped_server, "root")
+        p.click("#tab-kyverno")
+        p.wait_for_function("() => document.body.dataset.page === 'kyverno' && data.kyverno && data.kyverno.present === null && document.body.innerText.includes('Not polled yet')")
+        assert p.locator("#main .kpis").count() == 0, "never polled paints no tiles, not zeros"
+        # a stamp ahead of the browser's clock: ago() used to recurse on it until the stack blew and the page died
+        store.replace_kyverno("crc-local", None, (datetime.now(UTC) + timedelta(minutes=40)).strftime("%Y-%m-%dT%H:%M:%SZ"))
+        p.evaluate("() => { data.kyverno = null; refresh(); }")
+        p.wait_for_function("() => document.body.innerText.includes('No policy-report API group is served')")
+        assert "Last looked in 39m" in p.locator("#main").inner_text() or "Last looked in 40m" in p.locator("#main").inner_text()
+        assert p.locator("#main .kpis").count() == 0
+        # a narrowed reader gets the designed refusal, never a blank
+        a = _open_as(page, scoped_server, "alice")
+        a.click("#tab-kyverno")
+        a.wait_for_selector(".refusal, .card:has-text('For administrators only')", timeout=10_000)
+
+    def test_the_installed_state_shows_the_counts_the_notes_the_filter_and_the_history(self, page, scoped_server, kyverno_store):
+        from test_kyverno import _FakeClient, _lab_table, read
+        store = kyverno_store
+        store.replace_kyverno("crc-local", read(_FakeClient(_lab_table())), "2026-09-20T12:00:00Z")
+        table = _lab_table()
+        table["/apis/wgpolicyk8s.io/v1alpha2/clusterpolicyreports"]["items"][2]["results"][0]["result"] = "pass"
+        store.replace_kyverno("crc-local", read(_FakeClient(table)), "2026-09-20T12:05:00Z")
+        p = _open_as(page, scoped_server, "root")
+        p.click("#tab-kyverno")
+        p.wait_for_selector("#kyverno-legacy")
+        tiles = p.evaluate("() => [...document.querySelectorAll('#main .kpis .kpi')].map(k => [k.querySelector('.label').textContent, k.querySelector('.value').textContent, [...k.classList].filter(c => c.startsWith('flag-')).join('')])")
+        assert tiles == [["CEL policies", "1", ""], ["Failing", "1", "flag-critical"], ["Warnings", "1", "flag-warning"], ["Passing", "2", ""],
+                         ["Skipped", "0", ""], ["Not shown (deprecated family)", "2", "flag-warning"]], tiles
+        text = p.locator("#main").inner_text()
+        assert "2 results on this cluster come from the deprecated" in " ".join(text.split())
+        assert "unknown" in p.locator("#kyverno-breaker").inner_text() and "kyverno.metricsUrl" in p.locator("#kyverno-breaker").inner_text()
+        # the findings: controlled kinds hidden by default, said; the switch shows them, on the wire
+        kinds = lambda: p.locator("#main section.card:nth-of-type(3) tbody tr td:nth-child(3) .mono").all_inner_texts()
+        assert "Findings · 1" in " ".join(text.split()) and kinds() == ["Deployment"], kinds()
+        with p.expect_request(lambda r: "/kyverno?" in r.url and "controlled=true" in r.url):
+            p.click("#kyverno-controlled")
+        p.wait_for_function("() => document.body.innerText.includes('Findings · 2')")
+        assert sorted(kinds()) == ["Deployment", "Pod"], kinds()
+        # one policy's findings alone
+        with p.expect_request(lambda r: "/kyverno?" in r.url and "policy=restrict-nco-config-writers" in r.url):
+            p.click("[data-kyverno-policy='restrict-nco-config-writers']")
+        p.wait_for_selector("#kyverno-all-policies")
+        assert "some-policy" not in p.locator("#main section.card:nth-of-type(3) tbody").inner_text()
+        # the history: the NamespaceConfig's failure cleared between the two reads
+        hist = p.locator("#main section.card:nth-of-type(4)").inner_text()
+        assert "− cleared" in hist and "baseline-prod-rbac" in hist
+        assert p.evaluate("() => document.documentElement.scrollWidth <= innerWidth")
+        p.set_viewport_size({"width": 375, "height": 740}); p.wait_for_timeout(300)
+        assert p.evaluate("() => document.documentElement.scrollWidth <= innerWidth")
+
+    def test_the_switch_keeps_focus_and_a_kyverno_only_change_repaints_on_the_poll(self, page, scoped_server, kyverno_store):
+        # Review of #228 (Grok, Codex): nulling the payload and painting Loading… first destroyed #kyverno-controlled,
+        # so the by-id restore left a keyboard reader on <body>; and the auto-refresh fingerprint omitted
+        # data.kyverno, so a poll whose only change was Kyverno's updated memory and skipped the DOM.
+        from test_kyverno import _FakeClient, _lab_table, read
+        kyverno_store.replace_kyverno("crc-local", read(_FakeClient(_lab_table())), "2026-09-20T12:00:00Z")
+        p = _open_as(page, scoped_server, "root")
+        p.click("#tab-kyverno")
+        p.wait_for_selector("#kyverno-controlled")
+        p.focus("#kyverno-controlled")
+        with p.expect_request(lambda r: "/kyverno?" in r.url and "controlled=true" in r.url):
+            p.keyboard.press("Enter")
+        p.wait_for_function("() => document.body.innerText.includes('Findings · 2')")
+        assert p.evaluate("() => [document.activeElement.id, document.getElementById('kyverno-controlled').getAttribute('aria-checked')]") == ["kyverno-controlled", "true"]
+        kyverno_store.replace_kyverno("crc-local", None, "2026-09-20T12:05:00Z")
+        p.evaluate("() => refresh({ auto: true })")
+        p.wait_for_function("() => document.body.innerText.includes('No policy-report API group is served')")
+        assert p.locator("#main .kpis").count() == 0
+
+    def test_a_policy_button_keeps_focus_across_its_refetch(self, page, scoped_server, kyverno_store):
+        # OB3 (#228): the drill buttons carried no id, so the by-id restore had nothing to put a keyboard reader back on
+        from test_kyverno import _FakeClient, _lab_table, read
+        kyverno_store.replace_kyverno("crc-local", read(_FakeClient(_lab_table())), "2026-09-20T12:00:00Z")
+        p = _open_as(page, scoped_server, "root")
+        p.click("#tab-kyverno")
+        p.wait_for_selector("#kyverno-policy-0")
+        p.focus("#kyverno-policy-0")
+        with p.expect_request(lambda r: "policy=restrict-nco-config-writers" in r.url):
+            p.keyboard.press("Enter")
+        p.wait_for_selector("#kyverno-all-policies")
+        p.wait_for_function("() => !document.getElementById('main').classList.contains('stale')")
+        assert p.evaluate("() => document.activeElement.id") == "kyverno-policy-0"
+
+    def test_a_failing_condition_is_visible_text_and_the_breaker_note_names_its_cause(self, page, scoped_server, kyverno_store):
+        # OB3 (#228): the note was a muted aside after "no" — an RBAC gap the reports controller names must read as the
+        # error it is; and a null breaker has two causes, "kyverno.metricsUrl is not set" and "set, the scrape failed"
+        from gsd.kyverno.reader import KyvernoRead, PolicyView
+        gap = PolicyView("ValidatingPolicy", None, "scan-groups", True, True, ("Audit",), "Fail", False, False,
+                         "RBACPermissionsGranted: reports-controller is missing RBAC to list/watch groups.user.openshift.io")
+        kyverno_store.replace_kyverno("crc-local", KyvernoRead("wgpolicyk8s.io/v1alpha2", policies=[gap], policy_kinds_served=("ValidatingPolicy",)),
+                                      "2026-09-20T12:00:00Z")
+        p = _open_as(page, scoped_server, "root")
+        p.click("#tab-kyverno")
+        p.wait_for_selector("[data-kyverno-policy]")
+        cell = p.locator("#main section.card:nth-of-type(2) tbody tr td:nth-child(7)")
+        assert "no" in cell.inner_text() and "missing RBAC to list/watch groups.user.openshift.io" in cell.inner_text()
+        assert cell.locator(".err").count() == 2, "the note is not visible error text"
+        assert "is not set" in p.locator("#kyverno-breaker").inner_text()   # this server has no kyverno.metricsUrl
+        p.evaluate("() => { data.kyverno.breaker_configured = true; render(); }")   # the same nulls, with the URL configured
+        note = p.locator("#kyverno-breaker").inner_text()
+        assert "is set" in note and "scrape" in note and "is not set" not in note, note
+
+
 class TestReportsTab:
     def test_the_fixtures_report_service_keeps_wall_time(self, reporting_server):
         """The service verifies every ticket against ITS clock while the dashboard mints with wall time; a
@@ -6466,7 +6589,7 @@ class TestReportsTab:
             page.click("#tab-reports")
             page.wait_for_selector("#tab-reports[aria-current='page']")
             page.wait_for_timeout(300)
-            assert page.evaluate("() => document.querySelectorAll('button.tab').length") == 11   # Home joined the strip (#158); KPIs (#157)
+            assert page.evaluate("() => document.querySelectorAll('button.tab').length") == 12   # Home joined the strip (#158); KPIs (#157); Kyverno (#170)
             assert page.evaluate("() => [document.documentElement.scrollWidth <= innerWidth, [...document.querySelectorAll('button.tab')].filter(t => t.getBoundingClientRect().right > innerWidth).map(t => t.id)]") == [True, []]
             assert not errors
         finally:

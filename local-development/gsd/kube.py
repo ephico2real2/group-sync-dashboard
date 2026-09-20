@@ -1413,6 +1413,11 @@ class ClusterClient:
                     ))
         return out if any_crd_answered else None
 
+    def fetch_kyverno(self, metrics_url: str = ""):
+        """The Kyverno policy module's read (#170): None when no report API group is served."""
+        from .kyverno.reader import read
+        return read(self, metrics_url)
+
     def fetch_groups_of_user(self, user_name: str) -> list[str]:
         """Names of the OpenShift Groups this user belongs to, read FRESH from the cluster.
 

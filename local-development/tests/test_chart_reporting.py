@@ -377,6 +377,30 @@ class TestDerivations:
         assert _config_data(out)["namespaceMetadataLabels"] == ["company.net/mnemonic"], "already listed: not appended twice"
         ok, out = _render_text(reporting__namespaceGroupLabel="company.net/oud-group")
         assert not ok and "namespaceGroupLabel is set but rbac.namespaces is false" in out
+    def test_the_kyverno_module_grants_the_report_and_cel_policy_reads_and_switches_the_poller(self):
+        # #170: kyverno.enabled (default on) adds read-only rules for both report groups and the five CEL kinds
+        # with their namespaced twins — never the deprecated kyverno.io family, never /status, never a write —
+        # and hands the poller its switch, the breaker's scrape URL and the history window through the ConfigMap.
+        docs = _render()
+        role = next(d for d in docs if d.get("kind") == "ClusterRole" and d["metadata"]["name"].endswith("-reader"))
+        rules = {(tuple(r["apiGroups"]), tuple(r["resources"]), tuple(r["verbs"])) for r in role["rules"]}
+        assert (("wgpolicyk8s.io",), ("policyreports", "clusterpolicyreports"), ("list",)) in rules
+        assert (("openreports.io",), ("reports", "clusterreports"), ("list",)) in rules
+        cel = next(r for r in role["rules"] if r["apiGroups"] == ["policies.kyverno.io"])
+        assert set(cel["resources"]) == {"validatingpolicies", "mutatingpolicies", "generatingpolicies", "deletingpolicies",
+                                         "imagevalidatingpolicies", "namespacedvalidatingpolicies", "namespacedmutatingpolicies",
+                                         "namespacedgeneratingpolicies", "namespaceddeletingpolicies", "namespacedimagevalidatingpolicies"}
+        assert cel["verbs"] == ["list"], "list only: the reader never GETs one object"
+        assert not any("kyverno.io" == g for r in role["rules"] for g in r["apiGroups"]), "the deprecated family is never read"
+        assert not any(res.endswith("/status") for r in role["rules"] for res in r["resources"])
+        ok, out = _render_text()
+        assert ok and _config_data(out)["kyvernoEnabled"] is True and _config_data(out)["kyvernoMetricsUrl"] == "" \
+            and _config_data(out)["kyvernoEventsRetentionDays"] == 90
+        ok, out = _render_text(kyverno__enabled="false", kyverno__metricsUrl="http://kyverno-reports-controller-metrics.kyverno.svc:8000/metrics")
+        assert ok and _config_data(out)["kyvernoEnabled"] is False
+        off = next(d for d in _render("kyverno.enabled=false") if d.get("kind") == "ClusterRole" and d["metadata"]["name"].endswith("-reader"))
+        assert not any("policies.kyverno.io" in r["apiGroups"] or "wgpolicyk8s.io" in r["apiGroups"] for r in off["rules"])
+
     def test_a_quoted_false_pauses_the_cronjob_and_the_status_page_alike(self):
         # Review of #221 (OB3): report-cronjob.yaml suspends on the literal word false (a quoted "false" or a
         # --set-string is a non-empty string), and the service reads `enabled` as a boolean. Rendered as the

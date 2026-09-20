@@ -78,7 +78,7 @@ credential-less `curl`, so refusing the same per-CR identity behind login would 
 `ldap_filter` and `error_message`, both of which can embed directory DNs and the gate group.
 Administrators receive the full row, unchanged.
 
-**`bindings/findings`, `operator-configs` and `kpi` are the administrator tier** (`403` at self). The
+**`bindings/findings`, `operator-configs`, `kyverno` and `kpi` are the administrator tier** (`403` at self). The
 Access granted tab at the narrowed tier reads the reader's own path instead — `/users/{name}`
 for their own name, whose `bindings` carry `via_group` — which the gate never withheld.
 They describe objects too, but that is not the test. A binding row names which *group* holds
@@ -765,6 +765,43 @@ the cluster does not have.
 A CR is currently failing when `error_at` is set and is *later* than `success_at`. A
 `NamespaceConfig` that stops reconciling raises nothing on the cluster — both its conditions
 stay `True` — so new namespaces silently receive no RBAC and drift stops being corrected.
+
+### `GET /api/clusters/{cluster_id}/kyverno`
+
+The Kyverno policy module (#165, #170): the CEL policies (`ValidatingPolicy`, `MutatingPolicy`,
+`GeneratingPolicy`, `DeletingPolicy`, `ImageValidatingPolicy`) the poller listed, what their policy
+reports say about each resource, and the appeared/cleared history. **Administrator tier** (`403` at
+self): a finding names a resource cluster-wide and answers nothing a reader can ask about themselves.
+
+```json
+{
+  "cluster": "crc-local", "scope": "all", "viewer": "kubeadmin", "enabled": true, "breaker_configured": true,
+  "present": true, "api_group": "wgpolicyk8s.io/v1alpha2", "policy_kinds": ["ValidatingPolicy", "MutatingPolicy", "GeneratingPolicy", "DeletingPolicy", "ImageValidatingPolicy"],
+  "reports": 115, "legacy_results": 667, "other_results": 0,
+  "breaker_total": 3949, "breaker_drops": null, "observed_at": "2026-09-20T12:00:00Z",
+  "results": {"pass": 9, "fail": 0, "warn": 0, "error": 0, "skip": 0}, "policies": 1,
+  "policies_list": [{"kind": "ValidatingPolicy", "namespace": "", "name": "restrict-nco-config-writers",
+                     "admission": true, "background": false, "actions": ["Audit"], "failure_policy": "Fail",
+                     "ready": true, "results": {"pass": 9, "fail": 0, "warn": 0, "error": 0, "skip": 0}}],
+  "rows": [], "total": 0, "truncated": false, "events": [], "controlled_kinds": ["Pod", "ReplicaSet", "Job"]
+}
+```
+
+Three states, rendered distinctly: **`present: null`** — never polled since the module arrived;
+**`present: false`** — no policy-report API group is served, Kyverno is not installed (never
+"zero results"); **`present: true`** with **`legacy_results`** counting what the deprecated
+`ClusterPolicy`/`Policy` family wrote that this module does not read (a cluster carrying them is not a
+clean cluster), and **`breaker_drops`** — `kyverno_breaker_drops` as last scraped from the controllers'
+endpoints `kyverno.metricsUrl` names (the host cluster's only; a remote cluster's breaker is unmeasured);
+`null` is "no drop observed, or not scraped", never 0 — **`breaker_configured`** says whether a scrape is
+configured at all, so a null with it true is "the last scrape failed".
+`?problems=false` lists every result; `?controlled=true` includes Pods, ReplicaSets and Jobs (usually a
+controller's copies of one finding — off by default and said on the page); `?policy=` (the wire string —
+`namespace/name` for a namespaced policy) with `?kind=` narrows to one policy — a `ValidatingPolicy` and a
+`MutatingPolicy` may share a name; `total` and `truncated` say what `limit` cut. A result is keyed by policy and resource, never by
+rule: the CEL engine writes no rule name. `events` are the problems (fail/warn/error) that appeared or
+cleared between two polls, newest first — the reports themselves are owned by their resource and carry
+no history.
 
 ### `GET /api/kpi`
 

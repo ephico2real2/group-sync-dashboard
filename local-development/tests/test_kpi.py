@@ -64,6 +64,8 @@ class TestDefinitions:
             "gsd_process_cpu_throttled_seconds_total",
             "gsd_volume_disk_used_bytes", "gsd_volume_disk_total_bytes",
             "gsd_membership_changes_total", "gsd_login_attempts_total",
+            # the Kyverno policy module's families (#170): bounded labels, aggregate counts, no names
+            "gsd_kyverno_policies", "gsd_kyverno_results", "gsd_kyverno_legacy_results", "gsd_kyverno_report_breaker_drops",
         }
 
     def test_people_counts_are_internal(self):
@@ -526,7 +528,7 @@ class TestApi:
         assert set(body["kpis"]) == {k.name for k in defs.ALL_KPIS}
         trend = body["trends"]["c1"]
         assert trend["window_days"] == defs.TREND_DAYS
-        assert set(trend["history_retained_since"]) == {"membership_event", "sync_event", "binding_event"}
+        assert set(trend["history_retained_since"]) == {"membership_event", "sync_event", "binding_event", "kyverno_result_event"}
         assert set(trend["daily"]["series"]) == set(defs.ROLLUP_METRICS)
         assert body["kpis"]["users_total"]["privacy"] == INTERNAL
         assert body["kpis"]["report_runs_30d"]["samples"] == [{"cluster": "c1", "value": 0}, {"cluster": "c2", "value": 0}]

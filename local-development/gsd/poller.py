@@ -369,6 +369,16 @@ def _note_binding_changes(signals, cluster: str, subject_kind: str, counts: dict
                  cluster, counts.get("added", 0), subject_kind.lower(), counts.get("removed", 0))
 
 
+def kyverno_metrics_url_for(settings: Settings, cluster: ClusterConfig) -> str:
+    """The breaker endpoints to scrape for THIS cluster: `kyverno.metricsUrl` names in-cluster Services
+    (`…kyverno.svc:8000/metrics`, values.yaml), so it is the HOST cluster's controllers and nobody else's.
+    Handed to a remote cluster it would record the host's `kyverno_breaker_*` as that cluster's — "no drop
+    observed" printed for a breaker never read, or the host's drops charged to a remote (review of #228, OB3).
+    A remote cluster's breaker is unmeasured, which the page says, until the setting is per cluster."""
+    host = settings.host_cluster()
+    return settings.kyverno_metrics_url if host is not None and cluster.name == host.name else ""
+
+
 def refresh_bindings(
     store: StorageBackend,
     cluster: ClusterConfig,
@@ -378,6 +388,8 @@ def refresh_bindings(
     namespaces_read: bool = False,
     namespace_metadata_labels: list[str] | None = None,
     signals=None,
+    kyverno: bool = False,
+    kyverno_metrics_url: str = "",
 ) -> str:
     """Re-read RoleBindings/ClusterRoleBindings for one cluster.
 
@@ -486,6 +498,25 @@ def refresh_bindings(
         )
         if configs is not None:
             log.info("refreshed %d operator config(s) for %s", len(configs), cluster.name)
+
+    # The Kyverno policy module (#170) rides the binding cadence: policy reports change when policies
+    # or resources do, and the events history is a diff between two reads. Auto-detected per cluster
+    # — no report API group is "not installed", recorded as such and never as zero results. A refused
+    # or failed read leaves the previous state and says so, like the operator configs above.
+    if kyverno:
+        try:
+            read = client.fetch_kyverno(kyverno_metrics_url)
+        except ClusterError as exc:
+            log.warning("kyverno refresh for %s failed: %s — the previous state stands", cluster.name, exc.message)
+        else:
+            changes = store.replace_kyverno(cluster.name, read, now_iso())
+            if read is None:
+                log.debug("%s: no policy-report API group served — Kyverno is not installed", cluster.name)
+            else:
+                log.info("%s: kyverno — %d %s polic%s, %d CEL result(s) from %d report(s), %d legacy result(s) not shown, "
+                         "%d appeared / %d cleared", cluster.name, len(read.policies),
+                         "/".join(read.policy_kinds_served) or "no", "y" if len(read.policies) == 1 else "ies",
+                         len(read.results), read.reports, read.legacy_results, changes["appeared"], changes["cleared"])
 
     log.info("refreshed %d group bindings for %s", len(bindings), cluster.name)
 
@@ -688,6 +719,10 @@ class Poller:
             # thing to keep equal (docs/DESIGN_binding_events.md).
             ("binding_event", self.settings.membership_events_retention_days,
              self.store.prune_binding_events),
+            # The Kyverno appeared/cleared history (#170): its own window, because a policy finding's
+            # useful memory is shorter than a membership's and the table can grow per resource.
+            ("kyverno_result_event", self.settings.kyverno_events_retention_days,
+             self.store.prune_kyverno_events),
         )
         if all(days <= 0 for _, days, _ in windows):
             return
@@ -986,6 +1021,8 @@ class Poller:
                         namespaces_read=self.settings.namespaces_read_enabled,
                         namespace_metadata_labels=self.settings.namespace_metadata_labels,
                         signals=self.signals,
+                        kyverno=self.settings.kyverno_enabled,
+                        kyverno_metrics_url=kyverno_metrics_url_for(self.settings, cluster),
                     )
                 except Exception:  # noqa: BLE001
                     log.exception("unhandled error refreshing bindings for %s", cluster.name)
