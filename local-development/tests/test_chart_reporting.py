@@ -321,6 +321,24 @@ class TestDerivations:
                        "reporting.schedules[0].report=groups", "reporting.schedules[0].enabled=true")
         assert "suspend" not in _exact(docs, "CronJob", "t-group-sync-dashboard-report-live")["spec"]
 
+    def test_a_quoted_false_suspends_too_and_json_never_reaches_the_trigger(self):
+        # Review of PR #220 (Codex, Grok): `--set-string enabled=false` is a non-empty string, truthy to
+        # Go templates — `not` left the paused schedule firing (the window's own scar). The word false
+        # suspends whatever its type. And a `formats: [json]` entry is not a --format the trigger takes.
+        done = subprocess.run(["helm", "template", "t", str(CHART), "-n", "x", "--set", "ingress.host=h",
+                               "--set", "reporting.enabled=true", "--set", "reporting.schedules[0].name=paused",
+                               "--set", "reporting.schedules[0].schedule=0 2 * * *",
+                               "--set", "reporting.schedules[0].report=groups",
+                               "--set", "reporting.schedules[0].formats[0]=json", "--set", "reporting.schedules[0].formats[1]=html",
+                               "--set-string", "reporting.schedules[0].enabled=false"],
+                              capture_output=True, text=True, timeout=120)
+        assert done.returncode == 0, done.stderr
+        docs = [d for d in yaml.safe_load_all(done.stdout) if d]
+        cron = _exact(docs, "CronJob", "t-group-sync-dashboard-report-paused")
+        assert cron["spec"]["suspend"] is True
+        command = cron["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"][0]["command"]
+        assert command.count("--format") == 1 and "json" not in command and "html" in command
+
     def test_the_origin_formats_reach_the_report_pod(self):
         env = {e["name"]: e.get("value") for d in _render() if d.get("kind") == "Deployment" and d["metadata"]["name"].endswith("-report")
                for e in d["spec"]["template"]["spec"]["containers"][0]["env"]}

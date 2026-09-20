@@ -1194,6 +1194,44 @@ class TestClusterAgnosticSchedulesAndOriginFormats:
             for x in runs:
                 assert client.get(f"{REPORT_PREFIX}/api/runs/{x['id']}", headers=SERVICE).status_code == 200
 
+    def test_a_fan_out_is_one_queue_slot_all_or_nothing(self, tmp_path):
+        # Review of PR #220 (Codex, Grok): submitted one by one, a queue that filled mid-batch left some
+        # clusters queued and answered 429, and the Job's retry duplicated them. One slot: the batch is
+        # refused whole when the queue is full, and a fleet of many clusters is still one entry.
+        from gsd.reporting.runs import RunManager
+        with self._two_cluster_client(tmp_path, max_queued_runs=1) as client:
+            app = client.app
+            # fill the single slot with something the worker cannot drain in time: a paused worker
+            app.state.runs._stop.set(); app.state.runs._thread.join(timeout=5)
+            first = client.post(f"{REPORT_PREFIX}/api/runs", json={"report": "groups", "cluster": CLUSTER, "schedule": "one"}, headers=SERVICE)
+            assert first.status_code == 202
+            r = client.post(f"{REPORT_PREFIX}/api/runs", json={"report": "groups", "schedule": "nightly"}, headers=SERVICE)
+            assert r.status_code == 429, r.text
+            listed = client.get(f"{REPORT_PREFIX}/api/runs", headers=SERVICE).json()
+            nightly = [x for x in listed["runs"] if x["generated_by"] == "schedule:nightly"]
+            assert len(nightly) == 2 and {x["status"] for x in nightly} == {"failed"}, "neither cluster of the refused batch is queued"
+            assert listed["queued"] == 1
+        # with one free slot, a two-cluster fan-out fits as ONE entry
+        (tmp_path / "b").mkdir()
+        with self._two_cluster_client(tmp_path / "b", max_queued_runs=1) as client:
+            client.app.state.runs._stop.set(); client.app.state.runs._thread.join(timeout=5)
+            r = client.post(f"{REPORT_PREFIX}/api/runs", json={"report": "groups", "schedule": "nightly"}, headers=SERVICE)
+            assert r.status_code == 202 and len(r.json()["runs"]) == 2
+            assert client.get(f"{REPORT_PREFIX}/api/runs", headers=SERVICE).json()["queued"] == 2   # runs waiting, not slots
+
+    def test_a_fan_out_never_reuses_an_id_already_in_the_store(self, tmp_path, monkeypatch):
+        # Review of PR #220 (Codex): the store's create overwrites silently, so a draw that repeated an
+        # existing id would have replaced that run. The loop checks the store as well as the batch.
+        from gsd.reporting import server as srv
+        ids = iter(["20260920T000000.000000Z-aaaa", "20260920T000000.000000Z-aaaa", "20260920T000000.000000Z-bbbb",
+                    "20260920T000000.000000Z-aaaa", "20260920T000000.000000Z-cccc"])
+        monkeypatch.setattr(srv, "new_run_id", lambda now: next(ids))
+        with self._two_cluster_client(tmp_path) as client:
+            r = client.post(f"{REPORT_PREFIX}/api/runs", json={"report": "groups", "schedule": "nightly"}, headers=SERVICE).json()
+            assert sorted(x["id"] for x in r["runs"]) == ["20260920T000000.000000Z-aaaa", "20260920T000000.000000Z-bbbb"]
+            r = client.post(f"{REPORT_PREFIX}/api/runs", json={"report": "groups", "cluster": CLUSTER, "schedule": "again"}, headers=SERVICE).json()
+            assert r["id"] == "20260920T000000.000000Z-cccc", "the repeated aaaa was skipped: it is in the store"
+
     def test_a_pinned_cluster_keeps_the_single_run_shape(self, tmp_path):
         with self._two_cluster_client(tmp_path) as client:
             r = client.post(f"{REPORT_PREFIX}/api/runs", json={"report": "groups", "cluster": "prod-east", "schedule": "nightly"}, headers=SERVICE)
