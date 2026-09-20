@@ -75,18 +75,18 @@ reporting:
     - name: biweekly-compliance       # schedule name → CronJob name + generated_by=schedule:<name>
       schedule: "0 6 1,16 * *"        # standard 5-field cron — this is the cadence
       report: compliance-snapshot     # one of the standard report names above
-      # clusters: omitted → every enabled cluster the deployment monitors (see Clusters below)
+      # cluster: omitted → every enabled cluster in the report service's snapshot (see Clusters below)
       params: {}                      # that report's own parameters (optional)
-      formats: [html]                 # optional; see Formats below
+      formats: [html]                 # optional; the scheduled default is html+json (see Formats below)
     - name: nightly-dormant
       schedule: "0 3 * * *"
       report: dormant-access
-      clusters: [crc-local]           # a subset, by name from the chart's top-level `clusters` list
+      cluster: crc-local              # pins one cluster, by the id the dashboard names it
       params: {dormant_days: 30}
     - name: weekly-access-cert
       schedule: "0 7 * * 1"
       report: access-certification
-      clusters: [prod-east, prod-west]
+      enabled: false                  # paused: the CronJob stays, suspended, until this is removed or true
       params: {campaign: "Weekly access review", reviewer: "Security Team", scope: all}
 ```
 
@@ -94,21 +94,19 @@ reporting:
 
 ### Clusters
 
-A report runs against one cluster's data, but a schedule **never re-lists cluster names** — clusters are
-defined once, in the chart's top-level `clusters` list. A schedule targets them by reference:
+A report runs against one cluster's data, but a schedule is **cluster-agnostic** — clusters are defined
+once, in the chart's top-level `clusters` list, and the report service reads them from its snapshot:
 
-- **omit `clusters`** → the schedule runs for **every enabled cluster** the deployment monitors;
-- **`clusters: [name, name]`** → just those (names drawn from the `clusters` list).
+- **omit `cluster`** → the schedule runs for **every enabled cluster** in the snapshot, one run each;
+- **`cluster: name`** → that one cluster only (the id the dashboard names it).
 
-The chart renders **one CronJob per schedule** (not one per cluster). When it fires, the trigger enqueues
-**one run per target cluster** — all enabled, or the named subset — which the report service's queue paces.
-So five schedules are five CronJobs whether the deployment monitors one cluster or a hundred, and adding a
-cluster is picked up automatically with no schedule edits. Each run is tagged `generated_by = schedule:<name>`
-on its own cluster, retained per **(schedule, cluster)** so no single cluster's history crowds out another's.
-
-> Scale ([#149](https://github.com/ephico2real2/group-sync-dashboard/issues/149)): the multi-cluster
-> fan-out, per-(schedule, cluster) retention, and the throughput/failure-isolation behaviour above are
-> being finalised. Today a schedule names a single `cluster`.
+The chart renders **one CronJob per schedule** (not one per cluster). When it fires, the service queues the
+fan-out as **one queue slot** — all of its clusters or none — and the Job waits for every run, failing if
+any did. So five schedules are five CronJobs whether the deployment monitors one cluster or a hundred, and
+adding a cluster is picked up automatically with no schedule edits. Each run is tagged
+`generated_by = schedule:<name>` on its own cluster, retained per **(schedule, cluster)** so no single
+cluster's history crowds out another's. `enabled: false` keeps the CronJob and suspends it — its
+definition, history and audit trail stay; remove the entry to retire it.
 
 ### Cadence
 
@@ -134,9 +132,10 @@ history.
 A report can be written as HTML, PDF and JSON; JSON is always written. On the Reports tab the operator
 chooses HTML and/or PDF per run.
 
-> **Planned ([#149](https://github.com/ephico2real2/group-sync-dashboard/issues/149)):** scheduled runs
-> default to **HTML + JSON only** (no PDF — the HTML report has a print button, so a reviewer prints to
-> PDF on demand). Until then, a scheduled run stores whatever formats its schedule asks for.
+Formats default by **origin** (`reporting.formats`): a scheduled run stores **HTML + JSON** (no PDF — the
+HTML report has a print button, so a reviewer prints to PDF on demand), a manual run **HTML + JSON + PDF**.
+A schedule's `formats:` overrides its default; a defaulted PDF is dropped where PDF is off, an explicit one
+refused.
 
 Retention is **two-tier** ([#149](https://github.com/ephico2real2/group-sync-dashboard/issues/149) R2),
 so a burst of on-demand runs can never evict a scheduled report. A **scheduled** run is kept while

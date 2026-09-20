@@ -349,23 +349,23 @@ def build_report_app(settings: ReportSettings, *, secret: bytes | None = None, c
         created: list[Run] = []
         for cluster in targets:
             # One instant, one id per cluster: the suffix is four hex digits, so a fan-out over many
-            # clusters could repeat one (a hundred clusters: ~7 %); keep drawing until it is unique here.
+            # clusters could repeat one (a hundred clusters: ~7 %) — or repeat a run already in the store
+            # from the same second (review of PR #220: the store's create overwrites silently). Keep
+            # drawing until it is unique in both.
             run_id = new_run_id(requested)
-            while any(r.id == run_id for r in created):
+            while any(r.id == run_id for r in created) or store.get(run_id) is not None:
                 run_id = new_run_id(requested)
-            run = Run(id=run_id, report=body.report, cluster=cluster, params=params,
-                      formats=sorted(set(formats)), generated_by=by,
-                      generated_by_note="unattended (service token)" if p.kind == "service" else p.note,
-                      schedule=body.schedule, requested_at=requested.strftime("%Y-%m-%dT%H:%M:%SZ"), origin=origin)
-            try:
-                runs.submit(run)
-            except QueueFull as exc:
-                if created:   # the fan-out was cut short: say which ran and which did not
-                    raise HTTPException(status_code=429, detail="the render queue filled after "
-                                        f"{len(created)} of {len(targets)} clusters were queued: " +
-                                        ", ".join(r.cluster for r in created)) from exc
-                raise HTTPException(status_code=429, detail="the render queue is full; try again shortly") from exc
-            created.append(run)
+            created.append(Run(id=run_id, report=body.report, cluster=cluster, params=params,
+                               formats=sorted(set(formats)), generated_by=by,
+                               generated_by_note="unattended (service token)" if p.kind == "service" else p.note,
+                               schedule=body.schedule, requested_at=requested.strftime("%Y-%m-%dT%H:%M:%SZ"), origin=origin))
+        try:
+            if body.cluster is not None:
+                runs.submit(created[0])
+            else:
+                runs.submit_batch(created)     # one queue slot, all or nothing
+        except QueueFull as exc:
+            raise HTTPException(status_code=429, detail="the render queue is full; try again shortly") from exc
         # The single-cluster shape is unchanged (the page and the trigger read `id`); a fan-out answers
         # with every run it queued.
         return created[0].public() if body.cluster is not None else {"runs": [r.public() for r in created]}

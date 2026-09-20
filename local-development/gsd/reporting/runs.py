@@ -36,6 +36,10 @@ class RunManager:
         self.metrics = metrics
         self._clock = clock or (lambda: datetime.now(UTC))
         self._queue: queue.Queue[str] = queue.Queue(maxsize=settings.max_queued_runs)
+        # A schedule's fan-out (#149 R1) is ONE queue slot: the worker renders its clusters in turn.
+        # Keyed by the batch's slot id; the runs themselves are ordinary store entries.
+        self._batches: dict[str, list[str]] = {}
+        self._batch_lock = threading.Lock()
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._loop, name="report-worker", daemon=True)
         self._last_prune = 0.0
@@ -62,8 +66,38 @@ class RunManager:
         self.metrics.note_submitted(run.report)
         return run
 
+    def submit_batch(self, batch: list[Run]) -> list[Run]:
+        """Queue a fan-out as ONE slot, all or nothing (#149 R1, review of PR #220). Submitted one by one,
+        a queue that filled mid-batch left some clusters queued and answered 429 — the trigger's Job then
+        failed and its retry re-posted the whole schedule, duplicating the clusters already running. One
+        slot means the cap bounds SCHEDULES, not clusters: a fleet of forty clusters is one entry. On a
+        full queue every run is stamped failed, like a single refused run."""
+        if not batch:
+            return []
+        slot = "batch:" + batch[0].id
+        for run in batch:
+            self.store.create(run)
+        with self._batch_lock:
+            self._batches[slot] = [r.id for r in batch]
+        try:
+            self._queue.put_nowait(slot)
+        except queue.Full:
+            with self._batch_lock:
+                self._batches.pop(slot, None)
+            stamp = self._clock().strftime("%Y-%m-%dT%H:%M:%SZ")
+            for run in batch:
+                run.status, run.error, run.finished_at = "failed", "the render queue is full; try again shortly", stamp
+                self.store.update(run)
+            raise QueueFull()
+        for run in batch:
+            self.metrics.note_submitted(run.report)
+        return batch
+
     def queued(self) -> int:
-        return self._queue.qsize()
+        """Runs waiting, not slots: a fan-out's slot counts each of its clusters."""
+        with self._batch_lock:
+            slots, batched = len(self._batches), sum(len(ids) for ids in self._batches.values())
+        return self._queue.qsize() - slots + batched
 
     def _loop(self) -> None:
         while not self._stop.is_set():
@@ -72,10 +106,15 @@ class RunManager:
             except queue.Empty:
                 self._maybe_prune()
                 continue
-            run = self.store.get(run_id)
-            if run is None:
-                continue
-            self._render(run)
+            if run_id.startswith("batch:"):
+                with self._batch_lock:
+                    ids = self._batches.pop(run_id, [])
+            else:
+                ids = [run_id]
+            for one in ids:
+                run = self.store.get(one)
+                if run is not None:
+                    self._render(run)
             self._maybe_prune()
 
     def _maybe_prune(self) -> None:

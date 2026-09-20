@@ -15,7 +15,10 @@ metadata:
   labels: {{- include "gsd.reportScheduleLabels" $ | nindent 4 }}
 spec:
   schedule: {{ $s.schedule | quote }}
-  {{- if and (hasKey $s "enabled") (not $s.enabled) }}
+  # The literal word false, not Go-template truthiness: a quoted "false" or --set-string is a
+  # non-empty, truthy string, and `not` would leave a paused schedule firing (the window's own
+  # scar, P4 C6/F3; review of PR #220).
+  {{- if and (hasKey $s "enabled") (eq (toString $s.enabled) "false") }}
   suspend: true
   {{- end }}
   {{- $window := ($.Values.reporting | default dict).window | default dict }}
@@ -74,8 +77,11 @@ spec:
                 - {{ toJson . | quote }}
                 {{- end }}
                 {{- range $f := ($s.formats | default list) }}
+                {{- if ne (toString $f) "json" }}
+                # json is always written; the trigger's --format takes html and pdf only
                 - --format
                 - {{ $f | quote }}
+                {{- end }}
                 {{- end }}
                 {{- if $.Values.reporting.tls.enabled }}
                 - --ca-file

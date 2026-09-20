@@ -75,9 +75,17 @@ def main(argv: list[str] | None = None) -> int:
             print(f"refused: {r.status_code} {r.text}", file=sys.stderr)
             return 1
         answer = r.json()
-        pending = {x["id"]: x for x in (answer["runs"] if "runs" in answer else [answer])}
-        print(json.dumps({"submitted": sorted(pending), "report": a.report,
-                          "clusters": sorted(x.get("cluster", "") for x in pending.values())}))
+        fanned = "runs" in answer
+        pending = {x["id"]: x for x in (answer["runs"] if fanned else [answer])}
+        if not pending:
+            # A fan-out that reached no cluster is not a run that happened: the Job fails and says so.
+            print("the service queued no run (no enabled cluster in its snapshot?)", file=sys.stderr)
+            return 1
+        if fanned:
+            print(json.dumps({"submitted": sorted(pending), "report": a.report,
+                              "clusters": sorted(x.get("cluster", "") for x in pending.values())}))
+        else:
+            print(json.dumps({"submitted": next(iter(pending)), "report": a.report}))   # the single-run line, unchanged
         if not a.wait:
             return 0
         # Every run of the fan-out is waited for; the Job fails if ANY failed, and says which.

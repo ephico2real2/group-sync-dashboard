@@ -155,6 +155,19 @@ class TestTriggerClusterAgnosticAndFormats:
         assert '"clusters": ["crc-local", "prod-east"]' in out and '"status": "done"' in out and '"status": "failed"' in out
 
 
+    def test_the_single_run_line_is_unchanged_and_an_empty_fan_out_fails(self, monkeypatch, tmp_path, capsys):
+        # Review of PR #220 (Codex): the single-run path printed a list where it used to print the id;
+        # and {"runs": []} exited 0 — a schedule that reached no cluster is not a run that happened.
+        monkeypatch.setattr(trigger.httpx, "Client", _FakeClient)
+        rc = trigger.main(["--url", "https://x", "--report", "groups", "--schedule", "weekly", "--token-file", self._tok(tmp_path)])
+        assert rc == 0 and '"submitted": "r1"' in capsys.readouterr().out
+        class _Empty(_FakeClient):
+            def post(self, path, json=None): return _FakeResp(body={"runs": []})
+        monkeypatch.setattr(trigger.httpx, "Client", _Empty)
+        rc = trigger.main(["--url", "https://x", "--report", "groups", "--schedule", "weekly", "--token-file", self._tok(tmp_path)])
+        assert rc == 1 and "queued no run" in capsys.readouterr().err
+
+
 class _FakeResp409:
     status_code = 409
     text = "outside the reporting window"
