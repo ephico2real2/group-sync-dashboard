@@ -6969,6 +6969,10 @@ class TestReportsTab:
             assert seg.count() == 3 and page.locator('[data-seg="group_by"][aria-checked="true"]').get_attribute("data-value") == "mnemonic"
             page.click('[data-seg="group_by"][data-value="oud-group"]')
             page.wait_for_function("() => (view.reportForm['namespace-access'] || {}).group_by === 'oud-group'")
+            assert not errors, errors
+        finally:
+            ctx.close()
+
     def test_an_automatic_refresh_that_changed_nothing_leaves_the_status_page_alone(self, browser, reporting_server):
         # Review of #221 (OB3): the status payload carries `as_of`, the service's clock, which nothing
         # renders — and with it in the fingerprint no two polls ever matched, so the page repainted every
