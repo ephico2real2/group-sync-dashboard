@@ -7259,7 +7259,9 @@ class TestReportsTab:
             page.goto(base + "#page=reports&cluster=crc-local&report=access-certification")
             page.wait_for_selector("#report-form.r-compliance")
             assert page.locator("#report-param-access-certification-reviewer").input_value() == "root"
-            page.fill("#report-param-access-certification-reviewer", "  "); page.locator("#report-param-access-certification-reviewer").dispatch_event("change")
+            # value and change on ONE element: a repaint between a fill and a separate dispatch re-creates the input
+            # with the form's old value, and the change then writes "root" back (measured on CI, a flake)
+            page.locator("#report-param-access-certification-reviewer").evaluate("el => { el.value = '  '; el.dispatchEvent(new Event('change')); }")
             page.goto(base + "#page=reports&cluster=crc-local&report=groups")
             page.wait_for_selector("#report-form.r-identity")
             page.goto(base + "#page=reports&cluster=crc-local&report=access-certification")
