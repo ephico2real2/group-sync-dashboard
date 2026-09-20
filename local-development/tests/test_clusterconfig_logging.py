@@ -81,11 +81,18 @@ class TestTheEventShape:
     def test_detail_is_truncated_but_only_after_redaction(self, caplog):
         """The order is the whole point (#235's Fable seat): truncate first and a token straddling
         the cut survives, and every JWT is longer than the window."""
+        # THE TOKEN MUST STRADDLE THE CUT, or the test passes in both orders: the first version put
+        # it at offset 40 with a 300-character limit, well inside the window, so truncating first
+        # removed nothing and the mutation survived. It is placed to span the boundary now.
+        detail = "A" * 290 + TOKEN + "B" * 100
         with caplog.at_level(logging.WARNING):
             failure(logging.getLogger("gsd.test"), "e", phase="poll", outcome="unreachable",
-                    action="x", detail="A" * 40 + TOKEN + "B" * 400, secrets=[TOKEN])
+                    action="x", detail=detail, secrets=[TOKEN])
         line = caplog.messages[0]
         assert TOKEN not in line and "<redacted>" in line and line.endswith("…")
+        # A PREFIX is the real failure mode: truncate first and the cut leaves `sha256~t0k3n…`
+        # in the log, which is a credential fragment however short the survivor is.
+        assert TOKEN[:12] not in line, "a truncated fragment of the token survived"
 
     def test_the_evidence_goes_last_so_a_long_exception_cannot_bury_the_facts(self):
         """Order is part of the design: what and where, then which cluster, then the fix, then the
@@ -121,8 +128,14 @@ class TestTheEventShape:
 class TestRedaction:
     def test_the_longest_secret_goes_first_so_a_substring_cannot_fragment_it(self):
         """Replacing the short one first cuts the long one in half, and both halves are still the
-        credential. Sorting by length descending is what stops it."""
-        token, part = "sha256~abcdef123456", "abcdef"
+        credential. Sorting by length descending is what stops it.
+
+        BOTH VALUES MUST CLEAR `_MIN_SECRET`, or this tests nothing: the first version of this test
+        used a 6-character substring, which the length guard skips outright, so it passed with the
+        sort reversed. Caught by mutating the sort and watching the suite stay green.
+        """
+        token, part = "sha256~abcdefghijklmnop", "abcdefghijklmnop"
+        assert len(part) >= 8, "a value below the guard is never replaced, so the order is untested"
         assert redact(f"got {token}", [part, token]) == "got <redacted>"
 
     def test_a_value_too_short_to_be_a_secret_is_left_alone(self):
@@ -226,8 +239,14 @@ class TestTheFailureNamesTheFix:
 
     def test_a_cluster_with_its_own_ca_is_told_to_fix_its_own_secret(self, caplog):
         line = self._fail(caplog, ca_data="-----BEGIN CERTIFICATE-----\nx\n-----END CERTIFICATE-----")
-        assert "tls=caData" in line and "gsd-cluster-c" in line
-        assert "trustedCA.existingConfigMap" not in line, (
+        assert "tls=caData" in line
+        # ASSERT ON THE ACTION, NOT THE LINE. The first version checked `"gsd-cluster-c" in line`,
+        # which the `source=` field satisfies on its own — so deleting the caData branch entirely
+        # left the test green. Caught by mutating the branch away and watching the suite pass.
+        action = line.split('action="', 1)[1].split('"', 1)[0]
+        assert "caData" in action and "gsd-cluster-c" in action, (
+            f"the fix must name this cluster's own Secret and the field to change; got {action!r}")
+        assert "trustedCA.existingConfigMap" not in action, (
             "this cluster pins its own CA, so the fleet-wide bundle is not its fix")
 
     def test_an_insecure_cluster_is_not_told_to_fix_a_certificate(self, caplog):
