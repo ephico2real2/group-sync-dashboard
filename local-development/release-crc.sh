@@ -18,6 +18,10 @@
 #   ./local-development/release-crc.sh --argocd        build + push, then deploy through the Argo CD
 #                                                      Application at THIS commit with THIS image
 #   ./local-development/release-crc.sh --argocd main   the Application back on main (its chart's default image)
+#   ./local-development/release-crc.sh [--argocd] --values environments/other.yaml
+#                                                      a different values file, in BOTH modes: Helm's -f, and the
+#                                                      Application's valueFiles (the file must be committed and
+#                                                      pushed — Argo reads it from the repository, not this tree)
 #
 # TWO MANAGERS, ONE RELEASE, NEVER BOTH (#212). The release name and namespace are the same under
 # Helm and under Argo CD, so the modes hand over: Helm mode deletes the Argo Application first
@@ -48,18 +52,59 @@ BUILD_ONLY=false
 ALLOW_DIRTY=false
 ARGOCD=false
 ARGO_REVISION=""
+VALUES_FILE=""                                        # repository-relative, e.g. environments/crc.yaml
 APP_NAME="${APP_NAME:-group-sync-dashboard}"          # the Application in openshift-gitops
 ARGO_NAMESPACE="${ARGO_NAMESPACE:-openshift-gitops}"
-expect_revision=false
+expect=""
 for arg in "$@"; do
-  if [ "$expect_revision" = true ]; then ARGO_REVISION="$arg"; expect_revision=false; continue; fi
+  case "$expect" in
+    revision) [ "${arg#--}" = "$arg" ] && { ARGO_REVISION="$arg"; expect=""; continue; }; expect="" ;;
+    values) VALUES_FILE="$arg"; expect=""; continue ;;
+  esac
   case "$arg" in
     --build-only) BUILD_ONLY=true ;;
     --allow-dirty) ALLOW_DIRTY=true ;;
-    --argocd) ARGOCD=true; expect_revision=true ;;
+    --argocd) ARGOCD=true; expect=revision ;;
+    --values) expect=values ;;
     *) echo "unknown argument: $arg" >&2; exit 2 ;;
   esac
 done
+[ "$expect" = values ] && { echo "--values needs a path" >&2; exit 2; }
+
+# The values file, repository-relative (this script runs in local-development/). Helm reads it from
+# this tree; Argo reads it from the repository at the revision it tracks, as a path relative to the
+# chart directory — so in --argocd mode it must be committed and pushed, or the sync fails on a
+# file the repository does not have.
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+if [ -n "$VALUES_FILE" ]; then
+  RELEASE_VALUES="${REPO_ROOT}/${VALUES_FILE}"
+  ARGO_VALUES="../../${VALUES_FILE}"
+else
+  RELEASE_VALUES="${RELEASE_VALUES:-../environments/crc.yaml}"
+  ARGO_VALUES=""                                       # the Application's own default
+fi
+if [ "$ARGOCD" = true ] && [ -n "$VALUES_FILE" ]; then
+  # Checked here, at the top level: inside $(argo_values_patch) an exit would only leave the subshell.
+  if [ -n "$ARGO_REVISION" ]; then
+    # The Application will read the file from origin/<branch>, whatever this tree holds.
+    git fetch -q origin "$ARGO_REVISION" 2>/dev/null || true
+    if ! git cat-file -e "origin/${ARGO_REVISION}:${VALUES_FILE}" 2>/dev/null; then
+      echo "ERROR: --values ${VALUES_FILE} does not exist on origin/${ARGO_REVISION}; Argo CD reads it from there." >&2; exit 1
+    fi
+  else
+    if ! git ls-files --error-unmatch "${REPO_ROOT}/${VALUES_FILE}" >/dev/null 2>&1; then
+      echo "ERROR: --values ${VALUES_FILE} is not committed; Argo CD reads it from the repository." >&2; exit 1
+    fi
+    if [ -n "$(git status --porcelain -- "${REPO_ROOT}/${VALUES_FILE}")" ]; then
+      echo "ERROR: --values ${VALUES_FILE} has uncommitted changes; Argo CD would read the committed one." >&2; exit 1
+    fi
+  fi
+fi
+argo_values_patch() {
+  # A JSON-patch op for the Application's valueFiles, or nothing to leave the file's default.
+  [ -n "$ARGO_VALUES" ] || return 0
+  printf ',{"op":"replace","path":"/spec/source/helm/valueFiles","value":["%s"]}' "$ARGO_VALUES"
+}
 
 # --argocd <branch> with no build: point the Application at that revision and its chart's default
 # image, e.g. `--argocd main` after a merge. Any other --argocd use builds this commit first.
@@ -70,10 +115,12 @@ if [ "$ARGOCD" = true ] && [ -n "$ARGO_REVISION" ]; then
     helm uninstall "${IMAGE}" -n "${NAMESPACE}" --wait --timeout 5m
   fi
   oc apply -f ../gitops/argocd-application-dashboard.yaml >/dev/null
+  [ -n "$ARGO_VALUES" ] && echo "values  : ${VALUES_FILE} (the Application's valueFiles)"
   oc patch application "${APP_NAME}" -n "${ARGO_NAMESPACE}" --type json -p "[
     {\"op\": \"replace\", \"path\": \"/spec/source/targetRevision\", \"value\": \"${ARGO_REVISION}\"},
-    {\"op\": \"remove\", \"path\": \"/spec/source/helm/parameters\"}]" 2>/dev/null \
-  || oc patch application "${APP_NAME}" -n "${ARGO_NAMESPACE}" --type merge -p "{\"spec\":{\"source\":{\"targetRevision\":\"${ARGO_REVISION}\"}}}"
+    {\"op\": \"remove\", \"path\": \"/spec/source/helm/parameters\"}$(argo_values_patch)]" 2>/dev/null \
+  || oc patch application "${APP_NAME}" -n "${ARGO_NAMESPACE}" --type json -p "[
+    {\"op\": \"replace\", \"path\": \"/spec/source/targetRevision\", \"value\": \"${ARGO_REVISION}\"}$(argo_values_patch)]"
   exec ./argocd-wait.sh "${APP_NAME}" "${ARGO_NAMESPACE}"
 fi
 
@@ -83,7 +130,17 @@ BRANCH=$(git rev-parse --abbrev-ref HEAD)
 
 # A dirty tree means no commit reproduces this image. Say so in the tag rather than
 # stamping it with a commit whose content it does not match.
-if [ -n "$(git status --porcelain)" ]; then
+DIRTY="$(git status --porcelain)"
+if [ "$ARGOCD" != true ] && [ -n "$VALUES_FILE" ]; then
+  # A local variant of the values file does not dirty the IMAGE: the build context is this
+  # directory and its Containerfiles COPY named paths only, so a file elsewhere in the repository
+  # cannot reach the tag. (--argocd mode refused an uncommitted one above.)
+  case "$VALUES_FILE" in
+    local-development/*) ;;
+    *) DIRTY="$(printf '%s\n' "$DIRTY" | grep -v -- " ${VALUES_FILE}\$" || true)" ;;
+  esac
+fi
+if [ -n "$DIRTY" ]; then
   if [ "$ALLOW_DIRTY" != true ]; then
     echo "ERROR: working tree has uncommitted changes." >&2
     echo "       Commit them, or pass --allow-dirty to build a '-dirty' image." >&2
@@ -189,7 +246,6 @@ REPORT_INTERNAL="image-registry.openshift-image-registry.svc:5000/${NAMESPACE}/$
 #
 # Passing -f every time makes the upgrade declarative: the file is the desired state and --set
 # carries only what genuinely varies per invocation (the tag just built).
-RELEASE_VALUES="${RELEASE_VALUES:-../environments/crc.yaml}"
 if [ ! -f "$RELEASE_VALUES" ]; then
   echo "ERROR: no release values file at ${RELEASE_VALUES}" >&2
   echo "       Deploying without one resets the release to chart defaults and silently" >&2
@@ -212,13 +268,14 @@ if [ "$ARGOCD" = true ]; then
   fi
   oc apply -f ../gitops/argocd-application-dashboard.yaml >/dev/null
   echo "argocd  : ${APP_NAME} -> revision ${COMMIT}, image ${TAG}"
-  oc patch application "${APP_NAME}" -n "${ARGO_NAMESPACE}" --type merge -p "{\"spec\":{\"source\":{
-    \"targetRevision\":\"${COMMIT}\",
-    \"helm\":{\"parameters\":[
+  [ -n "$ARGO_VALUES" ] && echo "values  : ${VALUES_FILE} (the Application's valueFiles)"
+  oc patch application "${APP_NAME}" -n "${ARGO_NAMESPACE}" --type json -p "[
+    {\"op\":\"replace\",\"path\":\"/spec/source/targetRevision\",\"value\":\"${COMMIT}\"},
+    {\"op\":\"add\",\"path\":\"/spec/source/helm/parameters\",\"value\":[
       {\"name\":\"image.repository\",\"value\":\"${INTERNAL%:*}\"},
       {\"name\":\"image.tag\",\"value\":\"${TAG}\"},
       {\"name\":\"reporting.image.repository\",\"value\":\"${REPORT_INTERNAL%:*}\"},
-      {\"name\":\"reporting.image.tag\",\"value\":\"${TAG}\"}]}}}}"
+      {\"name\":\"reporting.image.tag\",\"value\":\"${TAG}\"}]}$(argo_values_patch)]"
   ./argocd-wait.sh "${APP_NAME}" "${ARGO_NAMESPACE}"
 else
   if oc get application "${APP_NAME}" -n "${ARGO_NAMESPACE}" >/dev/null 2>&1; then
