@@ -5,18 +5,33 @@
 #
 # Flux is the one renderer here that needs no caveat: helm-controller runs a REAL Helm install through
 # the Helm SDK — the hook Jobs run as hooks (the InstallPlan approver, the CSV reclaim, the secrets
-# mint), `lookup` sees the cluster, and crds/ are installed by Helm itself (`install.crds:
-# CreateReplace` also upgrades them later, which a plain `helm upgrade` never does). Argo CD renders
-# with `helm template` and Kustomize with its inflator; this path is the Helm loop, reconciled.
+# mint), `lookup` sees the cluster, and the openshift-grafana chart's crds/ are applied before the
+# render, only when absent (the default `crds: Create`, what `helm install` does). Not `CreateReplace`:
+# the crds/ are copies of grafana-operator v5.24.0's for the first install, and OLM owns them once the
+# operator is in — CreateReplace would re-apply the chart's copies over whatever OLM has upgraded them
+# to, on every Helm upgrade of this release. Argo CD renders with `helm template` and Kustomize with
+# its inflator; this path is the Helm loop, reconciled.
 #
 # The two releases are ordered: the dashboard's GrafanaDashboard CR needs the grafana-operator's CRD
 # to be served, so the dashboard release `dependsOn` the grafana one — Flux holds it until that
-# release is Ready. Drop the dependsOn and the grafana release on a cluster with no grafana-operator;
-# the dashboard chart then renders no CR (`.Capabilities.APIVersions` is the live list under a real
-# install, as under Argo).
+# release is Ready, which is after its crds/ are established and its gate has seen the operator's CSV
+# succeed. The order is load-bearing: helm-controller re-renders a deployed release only when its
+# chart or values change, never on the interval, so a CR the first install could not render appears
+# only on the next chart or values change, or on a forced release
+# (`flux reconcile helmrelease group-sync-dashboard -n group-sync-dashboard --force`). Drop the
+# dependsOn and the grafana release on a cluster with no grafana-operator; the dashboard chart then
+# renders no CR (`.Capabilities.APIVersions` is the live list under a real install, as under Argo).
 #
 # Pin the versions: helm-controller resolves a range on every reconcile, and a chart bump the
 # operator did not mean to take is how a fleet drifts. Bump them here, in one commit, per release.
+# The pins below are the versions PUBLISHED at https://ephico2real2.github.io/group-sync-dashboard
+# on 2026-09-20 — check the index; a version this repository carries but has not released yet
+# cannot be pulled.
+#
+# Needs cluster-scoped Flux ≥ 2.3 (helm-controller ≥ v1.0.0 serves helm.toolkit.fluxcd.io/v2, and it
+# must watch this namespace); OpenShift GitOps is Argo CD — use gitops/ there, and never apply this
+# over an Argo Application of the same release names, they fight. A namespace that already has an
+# OperatorGroup must set `operatorGroup.create: false` in the grafana values (OLM refuses a second).
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -38,6 +53,11 @@ metadata:
   namespace: group-sync-dashboard
 spec:
   interval: 10m
+  # What the chart's README gives `helm install`: helm-controller waits for each hook Job only up to
+  # this (5m by default) while the gate counts up to wait.waitSeconds (600 s) plus its own 120 s on a
+  # cluster that pulls the operator and Grafana images cold. At the default the release would fail,
+  # be uninstalled and retried three times while the gate was still counting.
+  timeout: 15m
   releaseName: grafana
   chart:
     spec:
@@ -47,15 +67,14 @@ spec:
         kind: HelmRepository
         name: group-sync-dashboard
   install:
-    crds: CreateReplace
     remediation:
       retries: 3
   upgrade:
-    crds: CreateReplace
     remediation:
       retries: 3
   # The chart's defaults: a Manual-approval Subscription with the approver hook, the CSV reclaim.
-  # `operator.package` names the package for a mirrored catalog (charts/openshift-grafana/README.md).
+  # `operator.source` and `operator.package` name a mirrored catalog and its package
+  # (charts/openshift-grafana/README.md).
   values: {}
 ---
 apiVersion: helm.toolkit.fluxcd.io/v2
