@@ -108,6 +108,10 @@ def _trusted_ca_context() -> ssl.SSLContext | None:
     return context
 
 
+SA_TOKEN_PATH = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+SA_CA_PATH = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+
+
 @dataclass(frozen=True)
 class ClusterConfig:
     """One observed cluster.
@@ -129,6 +133,45 @@ class ClusterConfig:
     # serves by default — the direction that matters is that it never widens.
     visibility: str | None = None
     identity: str | None = None
+    # A Secret-sourced cluster (docs/specs/SPEC_S1_cluster_secrets.md): the credential lives in the
+    # process's memory, read from the Secret each discovery — never on disk, never in a repr, never
+    # compared (two configs that differ only by a rotated token are the same cluster).
+    token_value: str | None = field(default=None, repr=False, compare=False)
+    ca_data: str | None = field(default=None, repr=False, compare=False)   # PEM text from tlsClientConfig.caData
+    oauth_username: str | None = field(default=None, repr=False, compare=False)
+    oauth_password: str | None = field(default=None, repr=False, compare=False)
+    source: str = "values"                       # values | secret:<metadata.name>
+    labels: tuple[tuple[str, str], ...] = ()     # the Secret's other labels, the fleet's metadata for the tab
+
+    @property
+    def tls_mode(self) -> dict:
+        """How this cluster's API server certificate is verified, for the wire (SPEC_S1 notes, the
+        operator's ruling of 2026-09-20): `insecure` — verification off; `ca` — `caData` (a Secret's own
+        bundle), `caBundleFile` (a values entry's named file), `serviceAccount` (the pod's SA CA path),
+        or `trusted-bundle` (the default: GSD_TRUSTED_CA_FILE — the chart's trustedCA bundles — plus the
+        system store). Never the PEM."""
+        if self.insecure_skip_verify:
+            return {"insecure": True, "ca": None}
+        if self.ca_data:
+            return {"insecure": False, "ca": "caData"}
+        if self.ca_bundle_file == SA_CA_PATH:
+            return {"insecure": False, "ca": "serviceAccount"}
+        if self.ca_bundle_file:
+            return {"insecure": False, "ca": "caBundleFile"}
+        return {"insecure": False, "ca": "trusted-bundle"}
+
+    @property
+    def credential_kind(self) -> str:
+        """What authenticates this cluster, as a word the API may say: in-cluster (the pod's SA token
+        path), file (a values entry's tokenFile/tokenEnv), bearer (a Secret's bearerToken), oauth (a
+        Secret's username/password — #119 P2, not resolvable yet). Never the value."""
+        if self.oauth_username is not None or self.oauth_password is not None:
+            return "oauth"
+        if self.token_value is not None:
+            return "bearer"
+        if self.token_file == SA_TOKEN_PATH:
+            return "in-cluster"
+        return "file"
 
     def resolve_token(self) -> str:
         """Read the token at the moment it is needed.
@@ -137,6 +180,16 @@ class ClusterConfig:
         the token is rotated, and a long-lived process that cached the value at startup
         would keep presenting the stale one until restarted (PLAN §13 Q1).
         """
+        if self.token_value is not None:
+            if not self.token_value.strip():
+                raise ConfigError(f"cluster {self.name!r}: the Secret's bearerToken is empty")
+            return self.token_value.strip()
+        if self.oauth_username is not None or self.oauth_password is not None:
+            # The kind parses and is listed so the tab can say what the Secret declares; exchanging it
+            # for a token against the remote OAuth server is #119 P2 and is not built.
+            raise ConfigError(
+                f"cluster {self.name!r}: username/password exchange against the OAuth server is #119 P2, not built"
+            )
         if self.token_file:
             try:
                 token = Path(self.token_file).read_text(encoding="utf-8").strip()
@@ -167,6 +220,14 @@ class ClusterConfig:
         """
         if self.insecure_skip_verify:
             return False
+
+        # A Secret-sourced cluster carries its CA as text (tlsClientConfig.caData, decoded at parse
+        # time — a bundle that does not load was refused there, so this cannot raise for a parsed one).
+        if self.ca_data:
+            try:
+                return ssl.create_default_context(cadata=self.ca_data)
+            except ssl.SSLError as exc:
+                raise ConfigError(f"cluster {self.name!r}: the Secret's caData does not load: {exc}") from exc
 
         # An explicit per-cluster bundle always wins.
         bundle = self.ca_bundle_file
@@ -202,6 +263,9 @@ class Settings:
     """Process-wide settings."""
 
     clusters: list[ClusterConfig] = field(default_factory=list)
+    """The values-declared clusters — the bootstrap source, strict at load. The runtime source is
+    `cluster_registry` (labelled Secrets, docs/specs/SPEC_S1_cluster_secrets.md); read the two merged
+    through `effective_clusters()` / `cluster()`, never this list alone, except for the host."""
     poll_interval_seconds: int = 60
     """PLAN §6: 60s, far finer than the fastest schedule seen in practice."""
 
@@ -399,6 +463,12 @@ class Settings:
     # cluster; empty = the breaker's truncation state is unknown). `kyverno_events_retention_days`
     # bounds the appeared/cleared history like the other event tables.
     kyverno_enabled: bool = True
+    # Clusters declared as labelled Secrets in the pod's own namespace, discovered on the binding
+    # cadence (SPEC_S1). The registry is the one mutable thing on Settings: the discovery thread
+    # replaces its contents, everything else reads. Excluded from equality and repr — it holds the
+    # in-memory credentials, and two Settings are the same configuration whatever was discovered.
+    cluster_secrets_enabled: bool = True
+    cluster_registry: "ClusterRegistry" = field(default_factory=lambda: _registry(), compare=False, repr=False)
     kyverno_metrics_url: str = ""
     kyverno_events_retention_days: int = 90
 
@@ -488,6 +558,40 @@ class Settings:
     visibility_usage_admin_sar_subresource: str = ""
     visibility_usage_admin_sar_verb: str = "update"
     visibility_usage_admin_sar_namespace: str = ""
+
+    # THE CLUSTER-CONFIGURATION TIER — two levels of its own (#230; the operator's ruling of
+    # 2026-09-20, "a new tier boss — look at how argocd does it"). Argo CD's RBAC carries a
+    # first-class `clusters` resource with `get` and `create/update/delete` actions, granted to
+    # roles bound to SSO groups, default-deny. We carry no policy file — every tier here is a
+    # SubjectAccessReview against the host cluster, so OpenShift groups and RoleBindings already
+    # ARE that mapping — so the tier is a named pair of SAR questions about the very objects this
+    # surface exposes, the cluster Secrets themselves:
+    #
+    #   clusterconfig:view    (Argo `clusters, get`)     — `get secrets` in the dashboard's namespace
+    #   clusterconfig:manage  (Argo `clusters, create…`) — `create secrets` in that namespace
+    #
+    # It reads as what it is: you may SEE cluster credentials if you may read the Secrets that hold
+    # them, and CHANGE them if you may create those Secrets. Measured on CRC 2026-09-20: the
+    # `cluster-reader` ClusterRole — the deliberate auditor persona, which passes the WIDE tier by
+    # design — has ZERO of its 172 rules covering core/`secrets`, and `oc auth can-i {get,list,
+    # create,update,delete} secrets` answers `no` for a non-admin; so the auditor fails both levels
+    # by construction and a cluster-admin passes both. No borrowed Usage-tab question and no new
+    # vocabulary for an operator to learn.
+    #
+    # Each level is asked SEPARATELY and has its own resolver and cache: `manage` does not imply
+    # `view` in code, so a site may grant them apart. An empty namespace here means THE POD'S OWN
+    # (the namespace the Secrets live in), not a cluster-scoped check — the opposite of the wide
+    # tier's empty, because these questions are namespaced by nature.
+    visibility_clusterconfig_view_sar_api_group: str = ""
+    visibility_clusterconfig_view_sar_resource: str = "secrets"
+    visibility_clusterconfig_view_sar_subresource: str = ""
+    visibility_clusterconfig_view_sar_verb: str = "get"
+    visibility_clusterconfig_view_sar_namespace: str = ""
+    visibility_clusterconfig_manage_sar_api_group: str = ""
+    visibility_clusterconfig_manage_sar_resource: str = "secrets"
+    visibility_clusterconfig_manage_sar_subresource: str = ""
+    visibility_clusterconfig_manage_sar_verb: str = "create"
+    visibility_clusterconfig_manage_sar_namespace: str = ""
     # How long a viewer's tier verdict may be reused before it is re-decided.
     #
     # THE WORST-CASE STALENESS WINDOW, stated where the number lives: the SAR evaluates live RBAC,
@@ -528,8 +632,13 @@ class Settings:
     # `namespaceMetadataLabels` (rendered with toJson), the same convention as the audit lists.
     namespace_metadata_labels: tuple[str, ...] = ()
 
+    def effective_clusters(self) -> list[ClusterConfig]:
+        """The values list with the Secret-sourced clusters merged (SPEC_S1 C2: a Secret shadows a
+        values entry of the same name; the host is never replaced)."""
+        return self.cluster_registry.merge(list(self.clusters))
+
     def cluster(self, name: str) -> ClusterConfig | None:
-        for c in self.clusters:
+        for c in self.effective_clusters():
             if c.name == name:
                 return c
         return None
@@ -852,6 +961,31 @@ def _usage_visibility_sar_setting(raw: dict) -> tuple[str, str, str, str, str]:
                         "update clusterrolebindings.rbac.authorization.k8s.io")
 
 
+_CLUSTERCONFIG_VIEW_SAR_DEFAULTS = {
+    "ApiGroup": "",
+    "Resource": "secrets",
+    "Verb": "get",
+    "Namespace": "",
+}
+
+_CLUSTERCONFIG_MANAGE_SAR_DEFAULTS = dict(_CLUSTERCONFIG_VIEW_SAR_DEFAULTS, Verb="create")
+
+
+def _clusterconfig_view_sar_setting(raw: dict) -> tuple[str, str, str, str, str]:
+    """`clusterconfig:view` (chart: visibility.clusterConfigViewSar) — Argo's `clusters, get`.
+    See Settings for the measurement behind the default."""
+    return _sar_setting(raw, "visibilityClusterConfigViewSar", _CLUSTERCONFIG_VIEW_SAR_DEFAULTS,
+                        "get secrets")
+
+
+def _clusterconfig_manage_sar_setting(raw: dict) -> tuple[str, str, str, str, str]:
+    """`clusterconfig:manage` (chart: visibility.clusterConfigManageSar) — Argo's `clusters,
+    create/update/delete`. Its own setting, never derived from the view one: a site may grant the
+    two apart, and one parser serving both would let a custom view question silently move manage."""
+    return _sar_setting(raw, "visibilityClusterConfigManageSar", _CLUSTERCONFIG_MANAGE_SAR_DEFAULTS,
+                        "create secrets")
+
+
 def _bool_setting(raw: dict, env_name: str, yaml_key: str, default: bool) -> bool:
     """Env wins over the ConfigMap. Accepts the YAML spellings, not Python truthiness.
 
@@ -1127,6 +1261,8 @@ def load_settings(path: str | Path) -> Settings:
 
     admin_sar = _visibility_sar_setting(raw)
     usage_admin_sar = _usage_visibility_sar_setting(raw)
+    clusterconfig_view_sar = _clusterconfig_view_sar_setting(raw)
+    clusterconfig_manage_sar = _clusterconfig_manage_sar_setting(raw)
     cookie_expire = _duration_setting(raw, "GSD_SESSION_COOKIE_EXPIRE", "sessionCookieExpire", 14400)
     idle_enabled, idle_seconds, idle_warning = _idle_timeout_setting(raw, cookie_expire)
     if raw.get("reportingUrl") and int(_num_setting(raw, "GSD_REPORTING_SNAPSHOT_INTERVAL_SECONDS", "reportingSnapshotIntervalSeconds", 300, int)) < 60:
@@ -1219,6 +1355,16 @@ def load_settings(path: str | Path) -> Settings:
         visibility_usage_admin_sar_subresource=usage_admin_sar[2],
         visibility_usage_admin_sar_verb=usage_admin_sar[3],
         visibility_usage_admin_sar_namespace=usage_admin_sar[4],
+        visibility_clusterconfig_view_sar_api_group=clusterconfig_view_sar[0],
+        visibility_clusterconfig_view_sar_resource=clusterconfig_view_sar[1],
+        visibility_clusterconfig_view_sar_subresource=clusterconfig_view_sar[2],
+        visibility_clusterconfig_view_sar_verb=clusterconfig_view_sar[3],
+        visibility_clusterconfig_view_sar_namespace=clusterconfig_view_sar[4],
+        visibility_clusterconfig_manage_sar_api_group=clusterconfig_manage_sar[0],
+        visibility_clusterconfig_manage_sar_resource=clusterconfig_manage_sar[1],
+        visibility_clusterconfig_manage_sar_subresource=clusterconfig_manage_sar[2],
+        visibility_clusterconfig_manage_sar_verb=clusterconfig_manage_sar[3],
+        visibility_clusterconfig_manage_sar_namespace=clusterconfig_manage_sar[4],
         visibility_tier_ttl_seconds=_num_setting(
             raw, "GSD_VISIBILITY_TIER_TTL_SECONDS", "visibilityTierTtlSeconds",
             VISIBILITY_TIER_TTL_DEFAULT, int
@@ -1246,8 +1392,14 @@ def load_settings(path: str | Path) -> Settings:
             raw, "GSD_SYNC_EVENTS_RETENTION_DAYS", "syncEventsRetentionDays", 730, int
         ),
         kyverno_enabled=_bool_setting(raw, "GSD_KYVERNO_ENABLED", "kyvernoEnabled", True),
+        cluster_secrets_enabled=_bool_setting(raw, "GSD_CLUSTER_SECRETS_ENABLED", "clusterSecretsEnabled", True),
         kyverno_metrics_url=str(os.environ.get("GSD_KYVERNO_METRICS_URL") or raw.get("kyvernoMetricsUrl") or "").strip(),
         kyverno_events_retention_days=_num_setting(
             raw, "GSD_KYVERNO_EVENTS_RETENTION_DAYS", "kyvernoEventsRetentionDays", 90, int
         ),
     )
+
+
+def _registry():
+    from .clusterconfig.registry import ClusterRegistry   # local: clusterconfig imports ClusterConfig from here
+    return ClusterRegistry()

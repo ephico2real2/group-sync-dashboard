@@ -36,7 +36,9 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS cluster (
     id                  TEXT PRIMARY KEY,   -- the configured name; used in API paths
     api_url             TEXT NOT NULL,
-    enabled             INTEGER NOT NULL DEFAULT 1
+    enabled             INTEGER NOT NULL DEFAULT 1,
+    source              TEXT NOT NULL DEFAULT 'values',   -- values | secret:<metadata.name> (SPEC_S1)
+    credential          TEXT NOT NULL DEFAULT ''          -- the KIND only: in-cluster | file | bearer | oauth
 );
 
 -- One row per OBSERVED sync, written only when lastSyncSuccessTime CHANGES (PLAN §6).
@@ -1073,6 +1075,14 @@ _MIGRATIONS: list[tuple[int, str, list[str]]] = [
             "CREATE INDEX IF NOT EXISTS kyverno_result_event_by_time ON kyverno_result_event(cluster_id, observed_at)",
         ],
     ),
+    (
+        19,
+        "cluster.source / cluster.credential: clusters declared as labelled Secrets (#230, SPEC_S1)",
+        [
+            "ALTER TABLE cluster ADD COLUMN source TEXT NOT NULL DEFAULT 'values'",
+            "ALTER TABLE cluster ADD COLUMN credential TEXT NOT NULL DEFAULT ''",
+        ],
+    ),
 ]
 
 
@@ -1839,36 +1849,47 @@ class Store:
 
     # -- configuration -----------------------------------------------------------------
 
-    def upsert_cluster(self, cluster_id: str, api_url: str, enabled: bool) -> None:
+    def upsert_cluster(self, cluster_id: str, api_url: str, enabled: bool, *,
+                       source: str = "values", credential: str = "") -> None:
         with self._tx() as conn:
             conn.execute(
-                """INSERT INTO cluster(id, api_url, enabled) VALUES(?,?,?)
+                """INSERT INTO cluster(id, api_url, enabled, source, credential) VALUES(?,?,?,?,?)
                    ON CONFLICT(id) DO UPDATE SET api_url=excluded.api_url,
-                                                 enabled=excluded.enabled""",
-                (cluster_id, api_url, int(enabled)),
+                                                 enabled=excluded.enabled,
+                                                 source=excluded.source,
+                                                 credential=excluded.credential""",
+                (cluster_id, api_url, int(enabled), source, credential),
             )
 
     def clusters(self) -> list[dict]:
         return self._rows(
-            """SELECT c.id, c.api_url, c.enabled,
+            """SELECT c.id, c.api_url, c.enabled, c.source, c.credential,
                       p.status, p.message, p.observed_at AS last_poll
                  FROM cluster c LEFT JOIN poll_outcome p ON p.cluster_id = c.id
                 ORDER BY c.id"""
         )
 
-    def retire_absent_clusters(self, configured_ids: list[str]) -> int:
+    def retire_absent_clusters(self, configured_ids: list[str], *, keep_sources: tuple[str, ...] = ()) -> int:
         """Retire — never delete — every stored cluster the configuration no longer names: set
         enabled=0 so its history and snapshot rows stay, but it leaves the served/active set (#96).
         A cluster disabled in config is already enabled=0 through upsert_cluster; this catches the
-        ones the config dropped entirely. Returns how many rows it retired."""
+        ones the config dropped entirely. Returns how many rows it retired.
+
+        `keep_sources` spares rows whose `source` starts with one of those prefixes, for the one
+        state where absence does not mean gone: the Secret discovery could not LIST (review of
+        #235, Grok C6). On a fresh process the registry has no previous set to stand on, so every
+        `secret:*` cluster would look absent and be retired by an outage we could not see past —
+        "we failed to look" must never read as "they were deleted"."""
         ids = list(configured_ids)
+        clauses, params = ["enabled=1"], []
+        if ids:
+            clauses.append(f"id NOT IN ({','.join('?' for _ in ids)})")
+            params += ids
+        for prefix in keep_sources:
+            clauses.append("(source IS NULL OR source NOT LIKE ?)")
+            params.append(f"{prefix}%")
         with self._tx() as conn:
-            if ids:
-                marks = ",".join("?" for _ in ids)
-                cur = conn.execute(
-                    f"UPDATE cluster SET enabled=0 WHERE enabled=1 AND id NOT IN ({marks})", ids)
-            else:
-                cur = conn.execute("UPDATE cluster SET enabled=0 WHERE enabled=1")
+            cur = conn.execute(f"UPDATE cluster SET enabled=0 WHERE {' AND '.join(clauses)}", params)
             return cur.rowcount
 
     # -- poll results ------------------------------------------------------------------

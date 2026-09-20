@@ -317,6 +317,8 @@ def build_app(
     run_poller: bool = True,
     tier_resolver: Callable[[str], str] | None = None,
     usage_tier_resolver: Callable[[str], str] | None = None,
+    clusterconfig_view_resolver: Callable[[str], str] | None = None,
+    clusterconfig_manage_resolver: Callable[[str], str] | None = None,
 ) -> FastAPI:
     """`tier_resolver` answers "which tier is this viewer?" — "all" or "self".
 
@@ -418,6 +420,56 @@ def build_app(
             # failure must not be read as the wide tier breaking, or vice versa.
             observe=functools.partial(signals.note_tier_check, "usage"),
         )
+    # THE CLUSTER-CONFIGURATION TIER, two levels, each its own instance (#230; the operator's
+    # ruling of 2026-09-20 — Argo CD's `clusters` resource with its get / create-update-delete
+    # actions, asked natively as SubjectAccessReviews about the Secrets this surface exposes).
+    # Two resolvers and not one, with separate caches and separate threshold labels, for the
+    # reason SPEC_usage_admin_tier states about the wide tier: one verdict must never answer
+    # another question, and `manage` must not imply `view` by construction.
+    #
+    # An empty namespace setting means THE POD'S OWN — where the cluster Secrets live — because
+    # these questions are namespaced by nature; the wide tier's empty means cluster-scoped.
+    #
+    # INDEPENDENT OF THE WIDE-VIEW SWITCH, deliberately (review of #235, Grok C2). Building these
+    # only when `visibility.enabled` is on — and widening when it is off, as the wide views do —
+    # would mean that turning cluster-DATA restrictions off hands every proxy-admitted reader, the
+    # auditor included, the fleet's wiring. The operator's ruling is not conditional. Usage already
+    # made this call (usage_scope stays self when restrictions are off); this surface goes one step
+    # further and still ASKS, so a cluster-admin keeps the tab either way.
+    #
+    # THE CONSEQUENCE, stated where it bites: with restrictions off a site may not have granted the
+    # auth-delegator role, so the SubjectAccessReview fails and the surface refuses everyone until
+    # that grant exists. That is the fail-closed direction for a view naming cluster credentials,
+    # and the chart's README says so beside the two values.
+    # The namespace the two questions are asked IN. Unknown (no ServiceAccount mount, no
+    # GSD_NAMESPACE) must not silently become a CLUSTER-SCOPED `get secrets` — a different and far
+    # broader question than the one the operator configured (review of #235, Codex C4). None here
+    # means "cannot ask", and the gate refuses rather than asking the wrong thing.
+    cc_namespace = own_namespace() or None
+    clusterconfig_view_tier: TierResolver | None = None
+    clusterconfig_manage_tier: TierResolver | None = None
+    if clusterconfig_view_resolver is None and local_cluster is not None:
+        clusterconfig_view_tier = TierResolver(
+            local_cluster,
+            verb=settings.visibility_clusterconfig_view_sar_verb,
+            resource=settings.visibility_clusterconfig_view_sar_resource,
+            api_group=settings.visibility_clusterconfig_view_sar_api_group,
+            namespace=settings.visibility_clusterconfig_view_sar_namespace or cc_namespace or "",
+            subresource=settings.visibility_clusterconfig_view_sar_subresource,
+            ttl_seconds=float(settings.visibility_tier_ttl_seconds),
+            observe=functools.partial(signals.note_tier_check, "clusterconfig_view"),
+        )
+    if clusterconfig_manage_resolver is None and local_cluster is not None:
+        clusterconfig_manage_tier = TierResolver(
+            local_cluster,
+            verb=settings.visibility_clusterconfig_manage_sar_verb,
+            resource=settings.visibility_clusterconfig_manage_sar_resource,
+            api_group=settings.visibility_clusterconfig_manage_sar_api_group,
+            namespace=settings.visibility_clusterconfig_manage_sar_namespace or cc_namespace or "",
+            subresource=settings.visibility_clusterconfig_manage_sar_subresource,
+            ttl_seconds=float(settings.visibility_tier_ttl_seconds),
+            observe=functools.partial(signals.note_tier_check, "clusterconfig_manage"),
+        )
     # ── Per-cluster authorization (docs/ACCESS_CONTROL.md §11) ──────────────────────────
     # One resolver PER remote cluster whose policy is remote-sar, constructed on THAT cluster's
     # ClusterConfig — so the review is created on the remote API with the remote token, and
@@ -444,7 +496,7 @@ def build_app(
                 ttl_seconds=float(settings.visibility_tier_ttl_seconds),
                 observe=functools.partial(signals.note_tier_check, "admin"),
             )
-    for c in settings.clusters:
+    for c in settings.effective_clusters():
         policy, identity = settings.cluster_policy(c.name)
         if c is local_cluster or policy == VISIBILITY_INHERIT:
             continue
@@ -453,7 +505,7 @@ def build_app(
         log.info("%s: per-cluster visibility policy %s, identity %s", c.name, policy, identity)
     if not settings.view_restrictions_enabled and any(
         settings.cluster_policy(c.name)[0] in (VISIBILITY_SELF_ONLY, VISIBILITY_REMOTE_SAR)
-        for c in settings.clusters
+        for c in settings.effective_clusters()
     ):
         log.warning(
             "clusters[].visibility policies are set but view restrictions are OFF, so every "
@@ -664,6 +716,87 @@ def build_app(
             )
         return viewer
 
+    def _clusterconfig_tier(request: Request, level: str) -> str:
+        """One level of the cluster-configuration tier, resolved and counted. Returns TIER_ALL or
+        TIER_SELF; never raises. FAIL CLOSED, which here means TIER_SELF — Argo's
+        `policy.default: deny` in our vocabulary: no identity, no resolver, or an API-server blip
+        all refuse. A blip must not widen a surface that names cluster credentials.
+
+        NO `restrict` SHORT-CIRCUIT (review of #235, Grok C2): the wide views widen when
+        `visibility.enabled` is off, and copying that here would re-admit the very persona this
+        tier exists to exclude. Without the proxy there is no trustworthy identity either, and
+        `trusted_viewer` returns None — which refuses, for the same reason.
+
+        AND NO COMPOSITION WITH ANOTHER TIER (the operator's ruling of 2026-09-20, which reversed an
+        earlier ordering): each level asks ITS OWN question and nothing else. RBAC is additive, so
+        holding the auditor role AND a namespace-admin grant is not a contradiction to resolve; the
+        SAR asks the action's own question, so whoever passes it can already read or create that
+        Secret with `oc` — refusing them here protects nothing, and because the question IS the
+        action, the ServiceAccount that performs the write is not a confused deputy. The auditor is
+        excluded by the plain question, measured: the pure auditor persona answers `no` to both."""
+        injected = (clusterconfig_view_resolver if level == "view" else clusterconfig_manage_resolver)
+        built = (clusterconfig_view_tier if level == "view" else clusterconfig_manage_tier)
+        state = getattr(app.state, f"clusterconfig_{level}_resolver", None)
+        label = f"clusterconfig_{level}"
+        viewer = trusted_viewer(request)
+        resolver = state if state is not None else (built if built is not None else injected)
+        # A question with no namespace is not this tier's question (Codex C4): refuse rather than
+        # widen it to the cluster. A substituted resolver (the test seam) carries its own scope.
+        if state is None and not (settings.visibility_clusterconfig_view_sar_namespace
+                                  or settings.visibility_clusterconfig_manage_sar_namespace
+                                  or cc_namespace):
+            log.warning("cluster-configuration tier: this pod's namespace is unknown and no "
+                        "visibility.clusterConfig*Sar.namespace is set, so the check cannot be "
+                        "asked in a namespace; refusing %s", level)
+            signals.note_decision(label, TIER_SELF)
+            return TIER_SELF
+        if not viewer or resolver is None:
+            signals.note_decision(label, TIER_SELF)
+            return TIER_SELF
+        try:
+            tier = resolver.resolve(viewer) if hasattr(resolver, "resolve") else resolver(viewer)
+        except Exception:  # noqa: BLE001
+            log.exception("cluster-configuration %s tier resolution failed for %r; refusing", level, viewer)
+            signals.note_decision(label, TIER_SELF)
+            return TIER_SELF
+        scope = TIER_ALL if tier == TIER_ALL else TIER_SELF
+        signals.note_decision(label, scope)
+        return scope
+
+    def require_clusterconfig_view(request: Request) -> str:
+        """`clusterconfig:view` — Argo's `clusters, get`, asked as `get secrets` in this pod's
+        namespace (Settings carries the measurement). Gates the read route, and in #230 S2 the
+        tab's very existence: a reader who fails it is not shown that the surface is there.
+
+        NOT the wide tier, deliberately. `require_admin_tier` admits cluster-reader — the auditor
+        persona — by design (see usage_scope), and this surface says which clusters this instance
+        reads, from which Secret, under which credential kind and trust mode. The operator's
+        ruling of 2026-09-20: the auditor may neither view nor change it."""
+        if _clusterconfig_tier(request, "view") != TIER_ALL:
+            signals.note_admin_refusal()
+            raise HTTPException(
+                status_code=403,
+                detail="For cluster-configuration administrators only. This view reports how this "
+                       "instance is wired to its clusters — which Secret configures each one, the "
+                       "kind of credential it holds and how its certificate is trusted.",
+            )
+        return TIER_ALL
+
+    def require_clusterconfig_manage(request: Request) -> str:
+        """`clusterconfig:manage` — Argo's `clusters, create/update/delete`, asked as `create
+        secrets` in this pod's namespace. Gates the write routes (#230 S2).
+
+        ASKED SEPARATELY, never inferred from view: a site may grant the two apart, so a reader
+        who may see the wiring is not thereby allowed to change it."""
+        if _clusterconfig_tier(request, "manage") != TIER_ALL:
+            signals.note_admin_refusal()
+            raise HTTPException(
+                status_code=403,
+                detail="Changing cluster configuration is reserved to cluster-configuration "
+                       "administrators. This view remains readable.",
+            )
+        return TIER_ALL
+
     def require_admin_tier(request: Request, cluster_id: str | None = None) -> str:
         """The administrator tier, or a refusal that names itself as one.
 
@@ -745,8 +878,9 @@ def build_app(
         else:
             # Still register configured clusters so the overview lists them as
             # never-polled rather than omitting them entirely.
-            for cluster in settings.clusters:
-                store.upsert_cluster(cluster.name, cluster.api_url, cluster.enabled)
+            for cluster in settings.effective_clusters():
+                store.upsert_cluster(cluster.name, cluster.api_url, cluster.enabled,
+                                     source=cluster.source, credential=cluster.credential_kind)
         activity.start()
         yield
         # Before the store closes: stop() does a final flush, and the buffer is only in
@@ -918,6 +1052,56 @@ def build_app(
             "builtin_bindings": counts.get("built_in", 0),
         }
 
+    @app.get("/api/clusterconfigs")
+    @consistent
+    def list_cluster_configs(request: Request) -> dict:
+        """Every cluster this instance knows with WHERE it came from (SPEC_S1 C5): the values list, a
+        labelled Secret (`secret:<name>`), the host; the credential's KIND and never its value; the
+        Secret's other labels; the D2 options; the poll outcome the cluster table holds; and the
+        current discovery cycle's findings. Administrator tier: the sources and the findings describe
+        how the fleet is wired, which is not a self reader's business. The Cluster Configurations
+        tab (#230 S2) is built on this payload; the writes are S2's too.
+
+        `clusterconfig:view`, NOT the wide tier: the wide one admits the auditor persona by design
+        and the operator's ruling of 2026-09-20 forbids it here. See require_clusterconfig_view."""
+        require_clusterconfig_view(request)
+        from .clusterconfig import LABEL_SELECTOR
+        registry = settings.cluster_registry
+        host = settings.host_cluster()
+        polled = {row["id"]: row for row in store.clusters()}
+        clusters = []
+        for c in settings.effective_clusters():
+            row = polled.get(c.name) or {}
+            visibility, identity = settings.cluster_policy(c.name)
+            clusters.append({
+                "id": c.name, "source": c.source, "host": host is not None and c.name == host.name,
+                "api_url": c.api_url, "enabled": c.enabled, "credential": c.credential_kind,
+                "labels": dict(c.labels), "visibility": visibility, "identity": identity, "tls": c.tls_mode,
+                "status": row.get("status"), "last_poll": row.get("last_poll"), "error": row.get("message"),
+                "retired": False,
+            })
+        # A cluster the store still holds but no source names any more — a Secret that vanished, a values
+        # entry removed — is retired (enabled=0, history kept, #96). The tab shows it as such rather than
+        # letting it disappear: its rows are still there, and the reader should know why.
+        named = {c["id"] for c in clusters}
+        for row in polled.values():
+            if row["id"] in named:
+                continue
+            clusters.append({
+                "id": row["id"], "source": row["source"], "host": False, "api_url": row["api_url"],
+                "enabled": False, "credential": row["credential"], "labels": {},
+                "visibility": None, "identity": None, "tls": None,
+                "status": row.get("status"), "last_poll": row.get("last_poll"), "error": row.get("message"),
+                "retired": True,
+            })
+        return {
+            "viewer": trusted_viewer(request), "scope": "all",
+            "secrets": {"enabled": settings.cluster_secrets_enabled, "namespace": registry.namespace,
+                        "label": LABEL_SELECTOR, "last_discovery": registry.last_discovery, "error": registry.error},
+            "clusters": clusters,
+            "findings": [f.public() for f in registry.findings()],
+        }
+
     @app.get("/api/clusters")
     @consistent
     def list_clusters(request: Request) -> list[dict]:
@@ -944,11 +1128,19 @@ def build_app(
             # A retired cluster (removed from config, marked enabled=0 at poll start) or one disabled
             # in config is not served: its history is kept but it leaves the selector, so it never
             # shows as `ok` with frozen data or stale alerts (#96).
-            if not row["enabled"]:
+            #
+            # THE PREDICATE, not two of its three limbs (review of #235, OB3 C6). A Secret-sourced
+            # cluster can now leave the CONFIGURATION while its row still says enabled=1 — the
+            # discovery replaces the registry first and retires the row second, and on a non-leader
+            # replica the row is not rewritten until the leader's own cycle. In that window
+            # `settings.cluster(id)` is None, and `cluster_policy`'s defensive default for an
+            # unknown id is the WIDEST one, so a cluster its Secret made `self-only` was served to a
+            # wide-tier reader as `inherit`/`all`. `is_served` owns the whole rule and its docstring
+            # predicted this: "the rule has four copies in this file and the fifth site forgot a
+            # limb". The other three sites already walk rows through it.
+            if not is_served(row["id"]):
                 continue
             policy, _ = settings.cluster_policy(row["id"])
-            if policy == VISIBILITY_HIDDEN:
-                continue
             # Decided PER CLUSTER (docs/ACCESS_CONTROL.md §11): a host administrator is not an
             # administrator of a self-only remote, and the card must not say otherwise.
             _, scope = viewer_scope(request, row["id"])
@@ -2407,7 +2599,7 @@ def build_app(
             clusters: dict[str, dict] = {}
             host = settings.host_cluster()
             scope = None
-            for c in settings.clusters:
+            for c in settings.effective_clusters():
                 # A disabled cluster is not served (#96): it must not appear in visibility.clusters
                 # either, or whoami would name a cluster the selector and every tab omit.
                 if not c.enabled:
@@ -2610,7 +2802,7 @@ def build_app(
             store.clusters()
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(status_code=503, detail=f"store unavailable: {exc}") from exc
-        return {"status": "ready", "clusters": len(settings.clusters)}
+        return {"status": "ready", "clusters": len(settings.effective_clusters())}
 
     # Served from the image, not from a CDN. Falls back to the CDN only when the vendored
     # bundle is absent — a source checkout that has never been through a container build —
@@ -2785,6 +2977,10 @@ def build_app(
     # instance: usage_scope reads only this one, so a test (and the live app) can hold a
     # cluster-reader at scope=all on the wide tier and scope=self on Usage in the same request.
     app.state.usage_tier_resolver = usage_resolver
+    # The two cluster-configuration levels, on their own seams so a test can substitute either
+    # without touching the other or the wide tier (#230).
+    app.state.clusterconfig_view_resolver = clusterconfig_view_tier or clusterconfig_view_resolver
+    app.state.clusterconfig_manage_resolver = clusterconfig_manage_tier or clusterconfig_manage_resolver
     # One resolver per remote-sar cluster, keyed by cluster id — the per-cluster seam. A test
     # installs `{"prod-east": stub}` here to decide a remote without a cluster; a remote with
     # no entry is never wide.

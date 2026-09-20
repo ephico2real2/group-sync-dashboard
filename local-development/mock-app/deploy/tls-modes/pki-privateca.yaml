@@ -1,0 +1,48 @@
+# mock-privateca: a NEW self-signed CA that nothing trusts signs the leaf. The default mode must FAIL
+# with the x509 error (a finding), and the OVERRIDE — the Secret's tlsClientConfig.caData carrying this
+# CA's PEM — must succeed: TLS mode 2. A private PKI that the enterprise bundle was never told about.
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: mock-privateca-bootstrap
+  namespace: group-sync-dashboard
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: mock-privateca-ca
+  namespace: group-sync-dashboard
+spec:
+  isCA: true
+  commonName: mock-privateca-root
+  secretName: mock-privateca-ca
+  duration: 43800h
+  renewBefore: 8760h
+  privateKey: {algorithm: ECDSA, size: 256}
+  issuerRef: {name: mock-privateca-bootstrap, kind: Issuer}
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: mock-privateca-issuer
+  namespace: group-sync-dashboard
+spec:
+  ca: {secretName: mock-privateca-ca}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: mock-privateca-tls
+  namespace: group-sync-dashboard
+spec:
+  secretName: mock-privateca-tls
+  duration: 2160h
+  renewBefore: 360h
+  dnsNames:
+    - mock-privateca
+    - mock-privateca.group-sync-dashboard.svc
+    - mock-privateca.group-sync-dashboard.svc.cluster.local
+  privateKey: {algorithm: ECDSA, size: 256}
+  issuerRef: {name: mock-privateca-issuer, kind: Issuer}

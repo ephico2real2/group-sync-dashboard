@@ -31,7 +31,7 @@ HEADER_ROW = re.compile(r"^\| (?P<key>Release|Version on release|Issue|Status) \
 
 def _index_rows() -> dict[str, dict[str, str]]:
     rows = {m["id"]: m.groupdict() for m in INDEX_ROW.finditer(INDEX.read_text())}
-    assert len(rows) == 14, f"expected fourteen index rows (the programme's thirteen and T1), matched {sorted(rows)}"
+    assert len(rows) == 15, f"expected fifteen index rows (the programme's thirteen, S1 and T1), matched {sorted(rows)}"
     return rows
 
 
