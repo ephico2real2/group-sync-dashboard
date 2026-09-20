@@ -35,10 +35,12 @@ def build(snap: Snapshot, ctx: RunContext, params: dict) -> Built:
         raise ValidationError("login-activity needs login capture (loginCapture.enabled); nothing writes login_event without it")
     cid = ctx.cluster["id"]
     since = window_start(ctx.now, params["window_days"])
-    summary = snap.login_summary(cid, since)      # by outcome and provider: the cluster's, not the scope's (said below)
-    # The subject scope: named users, and the members of named groups (#149 R7).
+    # The subject scope: named users, and the members of named groups (#149 R7). The summary by outcome
+    # and provider is the scope's too — a scoped pack whose totals counted the whole cluster's attempts
+    # beside its own users misread (review of #222, Codex M1).
     keep = set(params["users"]) | (snap.members_of_groups(cid, params["groups"]) if params["groups"] else set())
     scoped = bool(params["users"] or params["groups"])
+    summary = snap.login_summary(cid, since, keep if scoped else None)
     per_user = [r for r in snap.login_by_user(cid, since, None) if not scoped or r["user_name"] in keep]
     rejected = snap.rejected_attempts(cid, since)
     if scoped:
@@ -47,8 +49,7 @@ def build(snap: Snapshot, ctx: RunContext, params: dict) -> Built:
     gate = snap.access_group(cid)
     per_user_rows, t1 = cut([[u["user_name"], u["successes"], u["failures"], u["last_success"] or "", u["last_attempt"]] for u in per_user])
     rejected_rows, t2 = cut([[r["at"], r["user_name"], r["provider"] or "", _refusal(r)] for r in rejected])
-    scope_note = ([Section("Scope", [Note("Per user and the rejected attempts are narrowed to the named subjects: "
-                  + ", ".join(sorted(keep)) + ". The summary by outcome and provider counts the whole cluster's attempts.", "note")])]
+    scope_note = ([Section("Scope", [Note("Every figure is narrowed to the named subjects: " + ", ".join(sorted(keep)) + ".", "note")])]
                   if scoped else [])
     sections = scope_note + [
         Section("Summary", [

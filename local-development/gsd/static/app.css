@@ -1477,6 +1477,7 @@ td.state-cell { min-width: 210px; }
   background: color-mix(in srgb, var(--status-good) 12%, transparent); border-radius: var(--radius-sm); padding: 1px 6px; /* optical: a one-line badge */ font-weight: 500; margin-left: var(--space-3); }
 .rp-scope-top .and { font-size: var(--text-sm); }
 .rp-scope-foot { display: flex; align-items: center; gap: var(--space-5); margin-top: var(--space-4); font-size: var(--text-sm); color: var(--text-secondary); }
+.rp-count-live { font-family: var(--font-mono); color: var(--accent); font-weight: 500; }   /* the mock's live count: mono, accent */
 .rp-lookup { position: relative; }
 .rp-lookup .rp-tags { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; padding: var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-1); }
 .rp-lookup .rp-tags input { flex: 1 1 12ch; min-width: 12ch; border: 0; background: none; font: inherit; font-size: var(--text-sm); color: var(--text-primary); padding: var(--space-1) var(--space-2); }

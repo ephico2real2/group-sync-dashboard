@@ -342,6 +342,33 @@ class TestSubjectScopeAndLookups:
         assert {r[0] for r in table(by_user).rows} == {"alice"}
         assert len(table(everyone).rows) >= len(table(by_group).rows)
 
+    def test_a_scoped_login_pack_counts_the_scope_in_its_summary_too(self, snapshot):
+        # Review of #222 (Codex M1): the summary by outcome and provider — and the `attempts` total it feeds —
+        # counted the whole cluster's attempts on a pack whose users were narrowed (measured: users=alice gave
+        # attempts=3, users=1). Every figure on a scoped pack is the scope's.
+        scoped = self._built(snapshot, "login-activity", users="alice")
+        summary = next(b for s in scoped.sections if s.title == "Summary" for b in s.blocks if getattr(b, "title", "") == "Attempts by outcome and provider")
+        assert sum(int(r[2]) for r in summary.rows) == 1 and scoped.totals == {"attempts": 1, "users": 1, "rejected": 0}
+        everyone = self._built(snapshot, "login-activity")
+        assert everyone.totals["attempts"] == 3                       # alice, mallory, carol in the 30-day window; bob is 120 days out
+        empty = self._built(snapshot, "login-activity", groups="empty-group")   # a group with no members counts nothing
+        assert empty.totals == {"attempts": 0, "users": 0, "rejected": 0}
+
+    def test_a_damaged_table_read_degrades_the_lookups_not_500s(self, snapshot, monkeypatch):
+        # Review of #222 (Codex M4): a copy that opened cleanly can still raise sqlite3.Error from a later
+        # read; discovered() wraps it as SnapshotError like the other seam methods, so the route answers
+        # empty menus instead of a 500.
+        import sqlite3
+        from gsd.reporting.snapshot import Snapshot, SnapshotError
+        real = Snapshot._rows
+        def broken(self, sql, params=()):
+            if "FROM group_state" in sql:
+                raise sqlite3.OperationalError("simulated post-open damage")
+            return real(self, sql, params)
+        monkeypatch.setattr(Snapshot, "_rows", broken)
+        with pytest.raises(SnapshotError):
+            snapshot.discovered("crc-local", "company.net/mnemonic", "company.net/oud-group")
+
     def test_the_specs_carry_what_the_shell_renders(self):
         access, _ = REGISTRY["access-matrix"]
         j = {p["name"]: p for p in access.as_json(True)["params"]}
