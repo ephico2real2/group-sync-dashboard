@@ -684,6 +684,28 @@ clusters:
 #    `data.ca-bundle.crt` into it. Argo sees live data the manifest lacks, reports
 #    OutOfSync permanently, and with self-heal on will WIPE the CA bundle the pod depends
 #    on — turning every external cluster unreachable on a sync.
+# -----------------------------------------------------------------------------
+# The secrets-mint hook (templates/secrets-mint.yaml, #212)
+# The two generated-once Secrets — the oauth-proxy session key and the shared report token — are
+# created on the cluster by a hook Job, only if absent, never rendered: Helm's `lookup`, which
+# used to reuse them, is empty under `helm template` (Argo CD, Kustomize), so every render minted
+# fresh values and every sync rotated them. On the first upgrade from a chart before 0.37.0 the
+# hook carries the existing values over into the new names (-oauth-session, -shared-token), so
+# nobody is signed out. Off = you create both Secrets under those names yourself.
+# -----------------------------------------------------------------------------
+secretsMint:
+  enabled: true
+  # `oc` is all the Job needs: the in-cluster imagestream every OpenShift cluster ships (the
+  # authLogLevel note explains why not registry.redhat.io). Override on a cluster that mirrors
+  # elsewhere, or on plain Kubernetes.
+  image:
+    repository: image-registry.openshift-image-registry.svc:5000/openshift/cli
+    tag: latest
+    pullPolicy: IfNotPresent
+  resources:
+    requests: {cpu: 25m, memory: 64Mi}
+    limits: {memory: 128Mi}
+
 argocd:
   enabled: true
 
@@ -942,7 +964,8 @@ backup:
 # dashboard's API stays GET-only.
 #
 # DEFAULT ON. The chart supplies everything: the image (same appVersion as image.*, published by
-# the same workflow), a PVC for artefacts, the token Secret (generated once, reused), the Service,
+# the same workflow), a PVC for artefacts, the token Secret (minted on the cluster by the
+# secrets-mint hook, only if absent — never rendered), the Service,
 # the NetworkPolicy, the TLS certificate (service-ca). Refused at render with oauthProxy.enabled=false
 # (no proxy, no route in, no trusted identity), persistence.enabled=false (nothing a second pod can
 # mount), replicaCount>1 (each replica holds its own history), rbac.bindings=false (nine of eleven
@@ -1609,10 +1632,15 @@ oauthProxy:
   imagePullPolicy: IfNotPresent
   port: 8443
 
-  # Cookie signing key. Leave empty and the chart generates one, then REUSES it across
-  # upgrades by reading back the existing Secret. Generating inline in the container args
-  # instead — as some examples do — silently regenerates on every `helm upgrade` and logs
-  # every user out.
+  # Cookie signing key. Leave empty (the default) and the secrets-mint hook creates
+  # <fullname>-oauth-session ON THE CLUSTER, once, only if absent — never in a manifest, so no
+  # renderer (Helm, Flux, Argo CD, Kustomize) rotates it. A value here renders that Secret plainly
+  # instead — deterministic, so it does not drift either — and the mint is skipped for it. The
+  # rendered Secret carries helm.sh/resource-policy: keep (and Prune=false,Delete=false under Argo),
+  # so clearing the value later leaves the Secret — and every session — in place: the hook finds it
+  # and keeps it. The other way round, giving a value to a release whose key the hook minted, needs
+  # `oc delete secret <fullname>-oauth-session` first under Helm (Helm cannot adopt an object it did
+  # not create); the key changes, so every session is signed out once.
   cookieSecret: ""
 
   # Session lifetime: ONE absolute number, measured from login, deliberately NOT sliding.

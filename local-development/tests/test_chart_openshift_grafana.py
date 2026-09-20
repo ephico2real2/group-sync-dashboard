@@ -155,6 +155,7 @@ class TestInstance:
         for kind in ("ServiceAccount", "Role", "RoleBinding"):
             a = _one(docs, kind, "-secrets")["metadata"]["annotations"]
             assert a["helm.sh/hook"] == "pre-install,pre-upgrade" and a["helm.sh/hook-weight"] == "-10", "the identity is a hook ahead of the Job: a pre-hook runs before the manifest"
+            assert int(a["argocd.argoproj.io/sync-wave"]) < int(ann["argocd.argoproj.io/sync-wave"]), "Argo: the identity's wave below the Job's (review of #215, Grok M2)"
         assert ann["argocd.argoproj.io/hook-delete-policy"] == "BeforeHookCreation,HookSucceeded"
         env = {e["name"]: e["value"] for e in job["spec"]["template"]["spec"]["containers"][0]["env"]}
         assert env["MINT_ADMIN"] == "true" and env["MINT_COOKIE"] == "true" and env["ADMIN_USER"] == "kubeadmin"

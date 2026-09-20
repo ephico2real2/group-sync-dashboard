@@ -71,7 +71,7 @@ class TestSwitch:
         docs = _docs(out)
         for kind in ("CronJob", "ConfigMap", "ServiceAccount", "PersistentVolumeClaim"):
             _one(docs, kind)
-        assert len([d for d in docs if d.get("kind") == "Job"]) == 1, "plus the one-shot bind Job"
+        assert len([d for d in docs if d.get("kind") == "Job" and "backup" in d["metadata"]["name"]]) == 1, "plus the one-shot bind Job"
 
     def test_the_configmap_carries_the_script_verbatim(self):
         ok, out = render(**ON)
@@ -217,7 +217,7 @@ class TestPvcDestination:
         for values in ({**ON, "backup__offsite__destination__pvc__existingClaim": "mine"}, S3):
             ok, out = render(**values)
             assert ok, out
-            assert not [d for d in _docs(out) if d.get("kind") == "Job"], "nothing of ours to bind"
+            assert not [d for d in _docs(out) if d.get("kind") == "Job" and "backup" in d["metadata"]["name"]], "nothing of ours to bind"
 
     def test_an_existing_claim_is_referenced_not_created(self):
         ok, out = render(**ON, backup__offsite__destination__pvc__existingClaim="mine")

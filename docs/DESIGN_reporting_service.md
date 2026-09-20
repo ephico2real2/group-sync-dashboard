@@ -39,7 +39,7 @@ flowchart LR
   end
   pvcData[("PVC -data (RWX)<br/>/data/gsd.db  (dashboard, RW)<br/>/data/report/gsd-*.db  (snapshots)")]
   pvcArt[("PVC -report (RWO)<br/>/artifacts/&lt;run-id&gt;/")]
-  secret[["Secret -report-token<br/>generated once, mounted in both pods"]]
+  secret[["Secret -shared-token<br/>minted on the cluster once, mounted in both pods"]]
   ui -->|"session cookie + X-GSD-Report-Ticket"| proxy
   proxy -->|"/report/* (X-Forwarded-User stamped)"| rsvc
   app -->|"VACUUM INTO every 300 s (leader)"| pvcData
@@ -148,7 +148,7 @@ A **self-tier reader cannot fetch a report through the internal name**: they can
 
 ### 5.3 The service credential
 
-One Secret, `<fullname>-report-token`, generated once and reused across upgrades by the `lookup` pattern of `templates/oauth-secret.yaml#lookup` (a regenerated token would invalidate every outstanding ticket and the poller's pull for one restart — harmless, but the pattern exists and is used). It is mounted read-only in the dashboard container (`/etc/gsd/report/token`, to sign tickets and to authenticate the usage pull), in the report container (to verify both), and in the schedule Jobs (to trigger runs). Presented as `Authorization: Bearer <token>`, compared in constant time, it is the **service principal**: it may list runs, create runs (`generated_by` becomes `schedule:<name>` or `service`) and read `/report/api/usage`. It is never sent to a browser.
+One Secret, `<reportName>-shared-token`, minted on the cluster by the `secrets-mint` hook (`templates/secrets-mint.yaml`, 0.37.0) and never rendered; on the first upgrade to 0.37.0 the hook copies the bytes from the legacy `<fullname>-report-token` before Helm removes it, so outstanding tickets and the poller's pull survive. Before 0.37.0 the token was reused through Helm's `lookup`, which is empty under Argo CD's and Kustomize's `helm template` — every render minted a new one, which is why it moved. It is mounted read-only in the dashboard container (`/etc/gsd/report/token`, to sign tickets and to authenticate the usage pull), in the report container (to verify both), and in the schedule Jobs (to trigger runs). Presented as `Authorization: Bearer <token>`, compared in constant time, it is the **service principal**: it may list runs, create runs (`generated_by` becomes `schedule:<name>` or `service`) and read `/report/api/usage`. It is never sent to a browser.
 
 ### 5.4 Transport and reach
 

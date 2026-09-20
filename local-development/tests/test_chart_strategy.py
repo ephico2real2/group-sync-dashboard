@@ -152,10 +152,33 @@ class TestNoPatchVerbAtAnyAuditMode:
         rules = []
         for doc in yaml.safe_load_all(out):
             if doc and doc.get("kind") in ("ClusterRole", "Role"):
+                # The secrets-mint hook (0.37.0) is its own identity — a Role with `create secrets`,
+                # bound only to the hook's ServiceAccount, which runs for seconds at install and
+                # upgrade. It is not the application; test_the_mint_identity_is_not_the_dashboards
+                # holds its shape, and the application's own grants stay under this class's rule.
+                if doc["metadata"]["name"].endswith("-secrets-mint"):
+                    continue
                 for rule in doc.get("rules") or []:
                     rules.append((doc["metadata"]["name"], rule))
         assert rules, f"mode={mode!r} rendered no Role/ClusterRole rules at all"
         return rules
+
+    def test_the_mint_identity_is_not_the_dashboards(self):
+        """The one write outside the Lease belongs to a different ServiceAccount: the secrets-mint
+        hook's Role grants `create` on secrets (create cannot be name-scoped) and `get` on its four
+        names, is bound to `<fullname>-secrets-mint` only, and the dashboard's Deployment does not
+        run as that account."""
+        import yaml
+        ok, out = render()
+        assert ok, out
+        docs = [d for d in yaml.safe_load_all(out) if d]
+        role = next(d for d in docs if d["kind"] == "Role" and d["metadata"]["name"].endswith("-secrets-mint"))
+        assert [set(r["verbs"]) for r in role["rules"]] == [{"get"}, {"create"}]
+        assert all(r["resources"] == ["secrets"] for r in role["rules"])
+        binding = next(d for d in docs if d["kind"] == "RoleBinding" and d["metadata"]["name"].endswith("-secrets-mint"))
+        assert binding["subjects"] == [{"kind": "ServiceAccount", "name": "t-group-sync-dashboard-secrets-mint", "namespace": "default"}]
+        deployment = next(d for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"] == "t-group-sync-dashboard")
+        assert deployment["spec"]["template"]["spec"]["serviceAccountName"] != "t-group-sync-dashboard-secrets-mint"
 
     @pytest.mark.parametrize("mode", MODES)
     def test_no_write_verb_on_any_rbac_object(self, mode):

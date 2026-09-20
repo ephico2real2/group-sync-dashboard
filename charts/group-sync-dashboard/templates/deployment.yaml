@@ -488,7 +488,7 @@ spec:
         {{- if eq (include "gsd.reportingEnabled" .) "true" }}
         - name: report-token
           secret:
-            secretName: {{ include "gsd.reportName" . }}-token
+            secretName: {{ include "gsd.reportName" . }}-shared-token
             defaultMode: 288
         {{- if .Values.reporting.tls.enabled }}
         # The service-ca bundle every OpenShift namespace carries (the ServiceMonitor already trusts
@@ -506,6 +506,6 @@ spec:
             defaultMode: 420
         - name: oauth-cookie
           secret:
-            secretName: {{ include "gsd.fullname" . }}-oauth-cookie
+            secretName: {{ include "gsd.fullname" . }}-oauth-session
             defaultMode: 420
         {{- end }}

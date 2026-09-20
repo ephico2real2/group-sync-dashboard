@@ -54,8 +54,9 @@ def kinds(out: str) -> list[str]:
 def one(out: str, kind: str) -> dict:
     """The dashboard's own object of `kind`. Since chart 0.20.0 the report service adds a second
     Service, ServiceAccount, Deployment and PDB, all named `…-report`; these tests are about the
-    dashboard's, so the report service's are set aside first (C3)."""
-    found = [o for o in objects(out) if o["kind"] == kind and not o["metadata"]["name"].endswith("-report")]
+    dashboard's, so the report service's are set aside first (C3), and so is the secrets-mint
+    hook's identity (0.37.0)."""
+    found = [o for o in objects(out) if o["kind"] == kind and not o["metadata"]["name"].endswith(("-report", "-secrets-mint"))]
     assert len(found) == 1, f"expected exactly one {kind}, found {len(found)}"
     return found[0]
 
@@ -191,7 +192,7 @@ class TestTheServiceAccountFollowsTheExposure:
         assert ok, out
         # The DASHBOARD's ServiceAccount: the report service keeps its own (no grants, no token
         # mounted — templates/report-serviceaccount.yaml), which this switch does not govern (C3).
-        dashboard_sas = [o for o in objects(out) if o["kind"] == "ServiceAccount" and not o["metadata"]["name"].endswith("-report")]
+        dashboard_sas = [o for o in objects(out) if o["kind"] == "ServiceAccount" and not o["metadata"]["name"].endswith(("-report", "-secrets-mint"))]
         assert not dashboard_sas and "Route" in kinds(out)
 
     def test_with_the_proxy_off_neither_annotation_is_emitted(self):

@@ -5,7 +5,7 @@ description: >-
   (user-workload monitoring) through grafana-operator v5 — installable by any team, with no
   application-specific content. Deploy it before a chart that ships a GrafanaDashboard CR.
 type: application
-version: 0.2.0
+version: 0.2.1
 # grafana-operator's channel v5; the crds/ copies are from the CSV this was verified against.
 appVersion: "5.24.0"
 kubeVersion: ">=1.28.0-0"

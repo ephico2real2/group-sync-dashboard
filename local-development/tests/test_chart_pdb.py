@@ -72,7 +72,7 @@ class TestThePdbSelectsTheDeploymentOnly:
         deployment = _one(docs, "Deployment", "t-group-sync-dashboard")
         assert _matches(selector, deployment["spec"]["template"]["metadata"]["labels"])
         jobs = [d for d in docs if d.get("kind") == "Job"]
-        assert len(jobs) == 2, [d["metadata"]["name"] for d in jobs]
+        assert len(jobs) == 3, [d["metadata"]["name"] for d in jobs]   # the two auth-loglevel hooks and the secrets mint (0.37.0)
         for job in jobs:
             labels = job["spec"]["template"]["metadata"]["labels"]
             assert not _matches(selector, labels), (
@@ -81,7 +81,7 @@ class TestThePdbSelectsTheDeploymentOnly:
             )
             # Still identifiable as this release's pod, just not as the workload.
             assert labels["app.kubernetes.io/instance"] == "t"
-            assert labels["app.kubernetes.io/component"].startswith("auth-loglevel")
+            assert labels["app.kubernetes.io/component"] in ("auth-loglevel", "auth-loglevel-revert", "secrets-mint"), labels
 
     def test_a_pod_label_that_collides_with_a_selector_label_is_refused(self):
         """Second-pass review (Cursor): `podLabels.app=x` used to win by last-key-wins, so the

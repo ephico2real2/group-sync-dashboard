@@ -1142,7 +1142,7 @@ flowchart TB
     cr["ClusterRole + Binding<br/>read-only + own Lease"]
     cm["ConfigMap -config<br/>clusters.yaml"]
     tca["ConfigMap -trusted-ca<br/>empty; OpenShift fills it"]
-    sec["Secret -oauth-cookie<br/>generated once, reused"]
+    sec["Secret -oauth-session<br/>minted on the cluster once"]
     tls["Secret -tls<br/>issued by service-ca"]
     dep["Deployment<br/>replicas 1, Recreate"]
     pvc["PVC -data<br/>helm.sh/resource-policy: keep"]
@@ -1154,7 +1154,7 @@ flowchart TB
     rdep["Deployment -report<br/>replicas 1, Recreate (default on)"]
     rsvc["Service -report :8443<br/>service-ca certificate"]
     rpvc["PVC -report-artifacts<br/>no keep annotation"]
-    rsec["Secret -report-token<br/>generated once, mounted in both pods"]
+    rsec["Secret -shared-token<br/>minted on the cluster once, mounted in both pods"]
     rnp["NetworkPolicy -report<br/>ingress: dashboard pod, schedule Jobs, monitoring"]
   end
   dep --> cm & tca & sec & tls & pvc & sa
@@ -1268,10 +1268,14 @@ the Route by name (`oauth-redirectreference`) instead of a literal callback URL.
 set deliberately is used as given. That is what lets ArgoCD and Flux, which render with no
 cluster connection at all, deploy the chart with no per-cluster value.
 
-The oauth cookie secret (`templates/oauth-secret.yaml#lookup`) — generated once, then reused
-across upgrades by `lookup`ing the existing Secret. Generating it inline in the container
-args, as several published examples do, silently regenerates on every `helm upgrade` and logs
-every user out.
+The generated-once authentication Secrets are created by `templates/secrets-mint.yaml`, never by
+the renderer: a pre-/post-install and -upgrade hook creates `<fullname>-oauth-session` (the oauth
+cookie key) and `<reportName>-shared-token` only when absent, and on the first upgrade to 0.37.0
+copies the values from the legacy `-oauth-cookie` and `-report-token` before Helm removes those
+objects. Until 0.37.0 the cookie was reused through Helm's `lookup`, which is empty under Argo CD's
+and Kustomize's `helm template`, so every render minted a new key and every sync signed everyone
+out. A configured `oauthProxy.cookieSecret` renders the deterministic `-oauth-session` Secret
+directly instead.
 
 ### Probes
 
