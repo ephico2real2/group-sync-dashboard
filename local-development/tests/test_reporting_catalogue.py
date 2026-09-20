@@ -33,6 +33,27 @@ def snapshot(tmp_path_factory):
     snap.close()
 
 
+@pytest.fixture(scope="module")
+def labelled(tmp_path_factory):
+    """The module seed with namespace labels (it carries none): prod-ns pins team-a through the group label,
+    dev-ns carries the mnemonic only, alpha-prod pins a group nothing binds, gamma-dev pins nothing
+    (review of #222, OB3)."""
+    tmp = tmp_path_factory.mktemp("labelled")
+    store = seed_store(str(tmp / "writer.db"))
+    store.replace_namespaces(CLUSTER, [
+        {"name": "prod-ns", "phase": "Active", "metadata": {"company.net/mnemonic": "beta", "company.net/app-environment": "prod", "company.net/oud-group": "team-a"}},
+        {"name": "dev-ns", "phase": "Active", "metadata": {"company.net/mnemonic": "beta", "company.net/app-environment": "dev"}},
+        {"name": "alpha-prod", "phase": "Active", "metadata": {"company.net/mnemonic": "alpha", "company.net/app-environment": "prod", "company.net/oud-group": "bda-rbac-trino-alpha-users"}},
+        {"name": "gamma-dev", "phase": "Active", "metadata": {"company.net/mnemonic": "gamma", "company.net/app-environment": "dev"}},
+    ], NOW.strftime("%Y-%m-%dT%H:%M:%SZ"))
+    d = tmp / "snapshots"; d.mkdir()
+    path = write_snapshot(store, d)
+    store.close()
+    snap = Snapshot(path)
+    yield snap
+    snap.close()
+
+
 def _ctx(snap, **over) -> RunContext:
     settings = ReportSettings(pdf_enabled=True, pdf_variant="pdf/a-2b", font_regular=FONTS[0], font_bold=FONTS[1],
                               login_capture_enabled=over.pop("login_capture_enabled", True), namespaces_read_enabled=over.pop("namespaces_read_enabled", False),
@@ -327,9 +348,10 @@ class TestSubjectScopeAndLookups:
         assert self._names(one, "Group:") == ["Group: team-a"]
         # the provenance names the scope in words
         assert "groups: team-a" in str(one.sections[0].blocks[0].items)
-        # a mnemonic with no exact-group label captured names no group: nothing certified, not everything
-        none = self._built(snapshot, "access-certification", group_mnemonic="beta")
-        assert none.totals == {"groups": 0, "users": 0}
+        # a mnemonic with no exact-group label captured is a failed run with a reason, never a clean empty
+        # pack a reviewer could sign (review of #222, OB3; the first cut pinned totals 0/0 here)
+        with pytest.raises(ValidationError, match="no namespace-label capture|no namespace carries"):
+            self._built(snapshot, "access-certification", group_mnemonic="beta")
 
     def test_login_activity_users_and_groups(self, snapshot):
         spec, build = REGISTRY["login-activity"]
@@ -369,6 +391,51 @@ class TestSubjectScopeAndLookups:
         with pytest.raises(SnapshotError):
             snapshot.discovered("crc-local", "company.net/mnemonic", "company.net/oud-group")
 
+    def test_a_mnemonic_that_resolves_to_nothing_is_a_failed_run_not_an_empty_pack(self, labelled):
+        # Review of #222 (OB3): measured on 7fa4a6e, an unconfigured deployment, a pre-capture copy and a value
+        # no namespace carries each built a pack with totals 0/0 and nothing said — where namespace-access
+        # refuses the same selection with a reason. The resolved case, for contrast: beta → prod-ns → team-a,
+        # and the pack's Scope line names the resolved group.
+        beta = self._built(labelled, "access-certification", group_mnemonic="beta")
+        assert beta.totals == {"groups": 1, "users": 0}
+        assert ("Scope", "mnemonics: beta (team-a)") in beta.sections[0].blocks[0].items
+        # resolved to a group nothing binds: the header names it, so its absence below is readable
+        alpha = self._built(labelled, "access-certification", group_mnemonic="alpha")
+        assert alpha.totals == {"groups": 0, "users": 0}
+        assert ("Scope", "mnemonics: alpha (bda-rbac-trino-alpha-users)") in alpha.sections[0].blocks[0].items
+        with pytest.raises(ValidationError, match="no namespace carries company.net/mnemonic"):
+            self._built(labelled, "access-certification", group_mnemonic="nope")
+        with pytest.raises(ValidationError, match="pin no group through company.net/oud-group"):
+            self._built(labelled, "access-certification", group_mnemonic="gamma")
+        spec, build = REGISTRY["access-certification"]
+        params = validate_params(spec, {**DEFAULT_PARAMS["access-certification"], "group_mnemonic": "beta"})
+        with pytest.raises(ValidationError, match="not configured on this deployment"):
+            build(labelled, _ctx(labelled, namespace_selector_labels=(), namespace_group_label="company.net/oud-group"), params)
+        with pytest.raises(ValidationError, match="not configured on this deployment"):
+            build(labelled, _ctx(labelled, namespace_selector_labels=("company.net/mnemonic",), namespace_group_label=""), params)
+        # a copy from before the capture attests nothing, not zero (the same refusal as namespace-access)
+        import shutil, sqlite3
+        old = Path(labelled.path).parent.parent / "pre-capture"; old.mkdir()
+        copy = old / Path(labelled.path).name; shutil.copy(labelled.path, copy)
+        with sqlite3.connect(copy) as db:
+            db.execute("DROP TABLE cluster_namespace_label")
+            db.execute("PRAGMA user_version = 11")
+        with Snapshot(copy) as pre:
+            with pytest.raises(ValidationError, match="no namespace-label capture"):
+                build(pre, _ctx(pre, **self.LABELS), params)
+
+    def test_an_ungrouped_namespace_report_keeps_the_readers_order(self, snapshot, labelled):
+        # Review of #222 (OB3): on the base branch explicit names came out in the order the reader gave them;
+        # 7fa4a6e sorted them by name and forced (cluster-scoped) last even when no label grouped anything.
+        spec, build = REGISTRY["namespace-access"]
+        plain = dict(namespace_selector_labels=(), namespace_group_label="")
+        built = build(snapshot, _ctx(snapshot, **plain), validate_params(spec, {"namespaces": "(cluster-scoped),prod-ns,dev-ns"}))
+        titles = [s.title for s in built.sections if "Namespace:" in s.title or s.title == "Cluster-scoped bindings"]
+        assert titles == ["Cluster-scoped bindings", "Namespace: prod-ns", "Namespace: dev-ns"], titles
+        # with a grouping label captured the sections ARE sorted: bucket, then name, cluster scope last
+        grouped = build(labelled, _ctx(labelled, **self.LABELS), validate_params(spec, {"namespaces": "(cluster-scoped),prod-ns,dev-ns", "group_by": "mnemonic"}))
+        assert [s.title for s in grouped.sections if "Namespace:" in s.title or s.title == "Cluster-scoped bindings"][-1] == "Cluster-scoped bindings"
+
     def test_the_specs_carry_what_the_shell_renders(self):
         access, _ = REGISTRY["access-matrix"]
         j = {p["name"]: p for p in access.as_json(True)["params"]}
@@ -391,11 +458,11 @@ class TestSubjectScopeAndLookups:
     def test_namespace_access_groups_its_sections_by_a_label(self, snapshot, tmp_path):
         spec, build = REGISTRY["namespace-access"]
         # nothing captured for this cluster (the seed carries no namespace labels): the headings stay as
-        # they were — the default group_by must not rewrite every heading on a deployment without labels
-        # (review of #222, Grok)
+        # they were, in the reader's order — the default group_by must not rewrite every heading on a
+        # deployment without labels (review of #222, Grok), nor re-sort them (OB3)
         built = build(snapshot, _ctx(snapshot, **self.LABELS), validate_params(spec, {"namespaces": "prod-ns,dev-ns,(cluster-scoped)", "group_by": "oud-group"}))
         titles = [s.title for s in built.sections if "Namespace:" in s.title or s.title == "Cluster-scoped bindings"]
-        assert titles == ["Namespace: dev-ns", "Namespace: prod-ns", "Cluster-scoped bindings"]
+        assert titles == ["Namespace: prod-ns", "Namespace: dev-ns", "Cluster-scoped bindings"]
         # with the label captured on one namespace: that one bucketed first, the rest under "(no oud-group)"
         from reporting_seed import seed_store, write_snapshot
         store = seed_store(str(tmp_path / "w.db"))

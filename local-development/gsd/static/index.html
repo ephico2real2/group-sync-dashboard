@@ -2688,7 +2688,7 @@ function paramField(spec, p, form) {
     const val = raw !== undefined && raw !== "" ? raw : p.default;
     return `<div class="report-field">${label}
       <div class="rp-seg" role="radiogroup" id="${id}" aria-label="${esc(p.name)}">${p.choices.map((c) =>
-        `<button type="button" role="radio" aria-checked="${c === val}" class="${c === val ? "sel" : ""}" data-seg="${esc(p.name)}" data-value="${esc(c)}">${esc(c)}</button>`).join("")}</div>${hint}</div>`;
+        `<button type="button" id="${id}-${esc(c)}" role="radio" aria-checked="${c === val}" class="${c === val ? "sel" : ""}" data-seg="${esc(p.name)}" data-value="${esc(c)}">${esc(c)}</button>`).join("")}</div>${hint}</div>`;
   }
   if (p.type === "int") {
     const val = raw !== undefined && raw !== "" ? raw : p.default;
@@ -2732,18 +2732,27 @@ function lookupControl(spec, p, form) {
   const found = p.source && data.reportDiscovered && (view.cluster in data.reportDiscovered) && data.reportDiscovered[view.cluster][p.source];
   const values = found ? found.values : [];
   const typed = (view.reportLookupText || {})[id] || "";
-  const q = typed.toLowerCase();
-  const shown = values.filter((v) => !q || v.toLowerCase().includes(q));
+  const settled = !!(data.reportDiscovered && (view.cluster in data.reportDiscovered));   // the cluster's answer is in, whatever it held
   return `<div class="rp-lookup" data-lookup="${esc(p.name)}">
     <div class="rp-tags" data-lookup-tags="${esc(p.name)}">${chosen.map((v) => `<span class="rp-tag" data-name="${esc(v)}">${esc(v)} <button type="button" class="rp-tag-x" aria-label="remove ${esc(v)}" data-lookup-remove="${esc(p.name)}" data-value="${esc(v)}">×</button></span>`).join("")}
-      <input id="${id}" type="text" data-lookup-input="${esc(p.name)}" value="${esc(typed)}" placeholder="${p.source ? `pick ${esc(p.source)}…` : "type a value, Enter to add"}" autocomplete="off" spellcheck="false" aria-label="${esc(p.name)}"></div>
+      <input id="${id}" type="text" data-lookup-input="${esc(p.name)}" data-lookup-source="${esc(p.source || "")}" value="${esc(typed)}" placeholder="${p.source ? `pick ${esc(p.source)}…` : "type a value, Enter to add"}" autocomplete="off" spellcheck="false" aria-label="${esc(p.name)}"></div>
     ${p.source ? `<div class="rp-menu" id="${id}-menu" role="listbox" aria-label="${esc(LOOKUP_HEAD[p.source] || p.source)}">
-      <div class="rp-menu-head">${esc(LOOKUP_HEAD[p.source] || p.source)} · ${found ? `${values.length} discovered${found.truncated ? " (first 5000)" : ""}` : (p.source && !data.reportDiscovered ? "loading…" : "none discovered")}</div>
-      ${shown.slice(0, 200).map((v) => `<div class="rp-opt${chosen.includes(v) ? " sel" : ""}" role="option" aria-selected="${chosen.includes(v)}" tabindex="0" data-lookup-opt="${esc(p.name)}" data-value="${esc(v)}">${esc(v)}</div>`).join("")}
-      ${q && !shown.length ? `<div class="rp-nomatch">No match — press Enter to add “${esc(typed)}”</div>` : ""}
-      ${shown.length > 200 ? `<div class="rp-nomatch">${shown.length - 200} more — keep typing to narrow</div>` : ""}
+      <div class="rp-menu-head">${esc(LOOKUP_HEAD[p.source] || p.source)} · ${found ? `${values.length} discovered${found.truncated ? " (first 5000)" : ""}` : (settled ? "none discovered" : "loading…")}</div>
+      <div data-menu-body>${lookupMenuBody(p.name, values, chosen, typed)}</div>
     </div>` : ""}
   </div>`;
+}
+
+// The menu's options for one query — the first 200 matches of the discovered set. One function for the
+// paint and for typing: the first cut painted only the matches of the text typed so far, and a repaint
+// under a query that matched nothing left a menu with no option nodes for later typing to reveal
+// (review of #222, OB3 — measured: "zzz", a repaint, "kube" → no match, though kubeadmin was discovered).
+function lookupMenuBody(name, values, chosen, typed) {
+  const q = typed.toLowerCase();
+  const shown = values.filter((v) => !q || v.toLowerCase().includes(q));
+  return `${shown.slice(0, 200).map((v) => `<div class="rp-opt${chosen.includes(v) ? " sel" : ""}" role="option" aria-selected="${chosen.includes(v)}" tabindex="0" data-lookup-opt="${esc(name)}" data-value="${esc(v)}">${esc(v)}</div>`).join("")}
+      ${q && !shown.length ? `<div class="rp-nomatch">No match — press Enter to add “${esc(typed)}”</div>` : ""}
+      ${shown.length > 200 ? `<div class="rp-nomatch">${shown.length - 200} more — keep typing to narrow</div>` : ""}`;
 }
 
 // The discovered lookups for the cluster in the nav, fetched once per cluster when a form opens.
@@ -3142,14 +3151,13 @@ function wireReports() {
     const name = el.dataset.lookupInput;
     view.reportLookupText = view.reportLookupText || {};
     el.oninput = () => {
-      // narrow the menu in place — no repaint under a typing reader
+      // narrow the menu in place — no repaint under a typing reader; rebuilt from the discovered set,
+      // not from the nodes on screen (review of #222, OB3)
       view.reportLookupText[el.id] = el.value;
-      const q = el.value.trim().toLowerCase(); let shown = 0;
-      const menu = $(`${el.id}-menu`); if (!menu) return;
-      menu.querySelectorAll("[data-lookup-opt]").forEach((o) => { const hit = !q || o.dataset.value.toLowerCase().includes(q); o.hidden = !hit; if (hit) shown++; });
-      let nomatch = menu.querySelector(".rp-nomatch");
-      if (q && !shown) { if (!nomatch) { nomatch = document.createElement("div"); nomatch.className = "rp-nomatch"; menu.appendChild(nomatch); } nomatch.textContent = `No match — press Enter to add “${el.value.trim()}”`; nomatch.hidden = false; }
-      else if (nomatch) nomatch.hidden = true;
+      const body = document.querySelector(`#${CSS.escape(el.id)}-menu [data-menu-body]`); if (!body) return;
+      const found = data.reportDiscovered && (view.cluster in data.reportDiscovered) && data.reportDiscovered[view.cluster][el.dataset.lookupSource];
+      body.innerHTML = lookupMenuBody(name, found ? found.values : [], listOf(name), el.value.trim());
+      wireLookupOptions(body);
     };
     el.onkeydown = (e) => {
       if (e.key === "Enter") {
@@ -3161,25 +3169,33 @@ function wireReports() {
       }
     };
   });
-  document.querySelectorAll("[data-lookup-opt]").forEach((el) => {
+  // An option, a × and Clear have no id, so render()'s by-id restore would leave a keyboard reader on
+  // <body>; each puts focus back on the lookup's input (review of #222, Grok and OB3).
+  const refocusLookup = (name) => { const again = document.querySelector(`[data-lookup-input="${CSS.escape(name)}"]`); if (again) again.focus({ preventScroll: true }); };
+  const wireLookupOptions = (root) => root.querySelectorAll("[data-lookup-opt]").forEach((el) => {
     const pick = () => {
       const name = el.dataset.lookupOpt, v = el.dataset.value, list = listOf(name);
       formOf()[name] = list.includes(v) ? list.filter((x) => x !== v) : list.concat([v]);
       const input = document.querySelector(`[data-lookup-input="${CSS.escape(name)}"]`); if (input) view.reportLookupText[input.id] = "";
-      after(name);
-      // the option had no id, so render()'s by-id restore would leave a keyboard reader on <body>
-      const again = document.querySelector(`[data-lookup-input="${CSS.escape(name)}"]`); if (again) again.focus({ preventScroll: true });
+      after(name); refocusLookup(name);
     };
     el.onclick = pick;
     el.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(); } };
   });
+  wireLookupOptions(document);
   document.querySelectorAll("[data-lookup-remove]").forEach((el) => {
-    el.onclick = () => { const name = el.dataset.lookupRemove; formOf()[name] = listOf(name).filter((x) => x !== el.dataset.value); after(name); };
+    el.onclick = () => { const name = el.dataset.lookupRemove; formOf()[name] = listOf(name).filter((x) => x !== el.dataset.value); after(name); refocusLookup(name); };
   });
   const adv = $("report-advanced");
-  if (adv) adv.ontoggle = () => { view.reportAdvancedOpen = view.reportAdvancedOpen || {}; view.reportAdvancedOpen[view.report] = adv.open; };
+  if (adv) {
+    // Recorded on the summary's click, not only on `toggle`: the toggle event is queued as a task, so a
+    // repaint racing it read the old state (review of #222, OB3 — the reader's close was undone).
+    const rec = (open) => { view.reportAdvancedOpen = view.reportAdvancedOpen || {}; view.reportAdvancedOpen[view.report] = open; };
+    adv.querySelector("summary").onclick = () => rec(!adv.open);
+    adv.ontoggle = () => rec(adv.open);
+  }
   const clearSubject = $("report-subject-clear");
-  if (clearSubject) clearSubject.onclick = () => { const f = formOf(); delete f.users; delete f.groups; render(); };
+  if (clearSubject) clearSubject.onclick = () => { const f = formOf(); delete f.users; delete f.groups; render(); refocusLookup("users"); };
   const back = $("report-back");
   // The catalogue that Back repaints has no #report-back, so render()'s by-id restore would drop the
   // keyboard reader's focus on <body>; the row this form belongs to is where it goes (review of #173).
