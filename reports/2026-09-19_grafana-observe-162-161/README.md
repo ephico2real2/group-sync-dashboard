@@ -18,6 +18,7 @@ monitoring switched on that day.
 | `10-grafana-door-through-openshift-login-46ee06d.png` | The discovered Grafana door followed through the OpenShift login to the board (24 panels) |
 | `11-defaults-measurements.txt` | The Grafana release on `--reset-values` (no user values), the gate's `user-workload monitoring: ON`, no object left in `openshift-monitoring`, the objects the dashboard chart's defaults rendered, the CR synced, the pod's Route lookup and the discovered links |
 | `12-secrets-minted-on-the-cluster.txt` | The hook that mints the Grafana admin and proxy-cookie Secrets on the cluster instead of rendering them: the four upgrades it took to get there, measured (Helm's failed-revision diff base, the operator's datasource backoff), and the KEPT result from a deployed revision |
+| `13-manual-approval-reinstall.txt` | `helm uninstall` → `helm install` on the defaults (Manual approval): OLM left `grafana-operator.v5.24.0` unowned; the reclaim confirmed `ResolutionFailed` and deleted it, OLM staged `install-n9sl6`, the approver approved it and saw it Complete, the gate passed — 35 s of hooks, no hand step |
 | `observe_walk.py` | The Playwright walk (CONSOLE_USER / CONSOLE_PASSWORD / OBS_PATH) |
 | `03-measurements.txt` | The datasource's health (`OK`), an instant query through it returning both pods' `gsd_process_memory_bytes` from `openshift-user-workload-monitoring/user-workload`, the CR's `DashboardSynchronized=True`, `/api/kpi`'s `links`, and `console-public` read with the dashboard's own ServiceAccount |
 

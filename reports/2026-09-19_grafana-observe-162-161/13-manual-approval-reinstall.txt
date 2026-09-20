@@ -1,0 +1,36 @@
+# 2026-09-19 — uninstall, then reinstall from the chart's defaults (installPlanApproval: Manual), CRC
+## after helm uninstall grafana (OLM leaves the CSV, unowned):
+grafana-operator.v5.24.0   Succeeded   OWNERS=<none>   subscriptions=0
+## helm install grafana charts/openshift-grafana -n group-sync-dashboard --wait --timeout 15m
+install exit=0
+The post-install gate waits up to 600s (+120s): run helm install/upgrade with
+--timeout above that (13m); Helm's default of 5m gives up on the gate first.
+== csv-reclaim
+[csv-reclaim 00:50:01] namespace=group-sync-dashboard subscription=grafana-openshift-grafana-operator budget=120s
+[csv-reclaim 00:50:02] possible orphan present (grafana-operator.v5.24.0); confirming with OLM before deleting anything
+[csv-reclaim 00:50:02] Subscription reports ResolutionFailed — looking for an orphaned CSV to clear
+[csv-reclaim 00:50:02]   grafana-operator.v5.24.0: ORPHANED (no owner, unreferenced, not a copy) — deleting so OLM can resolve
+    clusterserviceversion.operators.coreos.com "grafana-operator.v5.24.0" deleted
+[csv-reclaim 00:50:02] reclaimed: grafana-operator.v5.24.0 — OLM will re-resolve the Subscription on its own
+== installplan-approver
+[installplan-approver] approving install-n9sl6
+installplan.operators.coreos.com/install-n9sl6 patched
+[installplan-approver] waiting for install-n9sl6 to reach Complete
+[installplan-approver] install-n9sl6 is Complete
+[installplan-approver] InstallPlans in group-sync-dashboard:
+  NAME            PHASE      APPROVED   CSV
+  install-n9sl6   Complete   true       grafana-operator.v5.24.0
+[installplan-approver] done — the operator's InstallPlan is approved and complete
+== wait
+00:50:22Z waiting for grafana-operator's CSV to succeed in group-sync-dashboard
+00:50:22Z csv phase: Installing; 600s left
+00:50:32Z csv Succeeded
+00:50:32Z waiting for Grafana/grafana-openshift-grafana to reconcile
+00:50:33Z Grafana reconciled and ready
+00:50:33Z checking the datasource
+00:50:33Z datasource synchronised
+00:50:33Z done
+NAME            PHASE      APPROVED   CSV
+install-n9sl6   Complete   true       grafana-operator.v5.24.0
+grafana-operator.v5.24.0                  Grafana Operator                              5.24.0              grafana-operator.v5.21.2                  Succeeded
+

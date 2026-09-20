@@ -47,7 +47,7 @@ class TestInstallModes:
         docs = _render()
         og, sub = _one(docs, "OperatorGroup"), _one(docs, "Subscription")
         assert og["spec"]["targetNamespaces"] == ["team-a"]
-        assert sub["spec"] == {"channel": "v5", "installPlanApproval": "Automatic", "name": "grafana-operator",
+        assert sub["spec"] == {"channel": "v5", "installPlanApproval": "Manual", "name": "grafana-operator",
                                "source": "community-operators", "sourceNamespace": "openshift-marketplace"}
 
     def test_reusing_a_platform_operator_renders_no_olm_objects(self):
@@ -379,7 +379,7 @@ class TestInstance:
             elif d["kind"] == "Job":
                 for c in d["spec"]["template"]["spec"]["containers"]:
                     seen[f"{d['metadata']['name']}/{c['name']}"] = c.get("resources")
-        assert set(seen) == {"Grafana/grafana", "Grafana/oauth-proxy", "obs-openshift-grafana-secrets/mint", "obs-openshift-grafana-wait/wait"}, seen
+        assert set(seen) == {"Grafana/grafana", "Grafana/oauth-proxy", "obs-openshift-grafana-secrets/mint", "obs-openshift-grafana-wait/wait", "obs-openshift-grafana-installplan-approver/approve-install-plan", "obs-openshift-grafana-csv-reclaim/reclaim"}, seen
         for name, res in seen.items():
             assert res and res.get("requests", {}).get("memory") and res.get("limits", {}).get("memory"), (name, res)
         assert seen["obs-openshift-grafana-secrets/mint"] == seen["obs-openshift-grafana-wait/wait"] == {"requests": {"cpu": "50m", "memory": "64Mi"}, "limits": {"memory": "256Mi"}}
@@ -427,6 +427,125 @@ class TestInstance:
 
     def test_the_datasource_resyncs_every_two_minutes(self):
         assert _one(_render(), "GrafanaDatasource")["spec"]["resyncPeriod"] == "2m"
+
+
+def _hook_script(docs: list[dict], suffix: str) -> tuple[list[str], dict]:
+    job = _one(docs, "Job", suffix)
+    c = job["spec"]["template"]["spec"]["containers"][0]
+    return [*c["command"], c["args"][0]], {e["name"]: e["value"] for e in c.get("env", [])}
+
+
+def _run_with_shim(tmp_path, argv, env, shim_body: str, timeout=120):
+    """Run a rendered hook script under bash with an `oc` shim: a bash `case "$*"` over the call's
+    arguments, one line per pattern, logging every call to `calls`."""
+    shim = tmp_path / "bin"
+    shim.mkdir(exist_ok=True)
+    calls = tmp_path / "calls"
+    (shim / "oc").write_text("#!/bin/bash\n" f"echo \"$*\" >> {calls}\n" f"STATE={tmp_path}/state\n" "case \"$*\" in\n" + shim_body + "\n  *) exit 0 ;;\nesac\n")
+    (shim / "oc").chmod(0o755)
+    env = {**env, "PATH": f"{shim}:{os.environ['PATH']}"}
+    done = subprocess.run(argv, env=env, capture_output=True, text=True, timeout=timeout)
+    return done, (calls.read_text().splitlines() if calls.exists() else [])
+
+
+@needs_helm
+class TestApproverAndReclaim:
+    """The two Manual-approval hooks ported from the group-sync-operator chart, on this chart's names:
+    the Subscription object is obs-openshift-grafana-operator, the package grafana-operator, and
+    every CSV match is anchored on the PACKAGE (`grafana-operator.v`)."""
+
+    def test_render_only_for_manual_with_the_operator_installed_here(self):
+        docs = _render()
+        for suffix in ("-installplan-approver", "-csv-reclaim"):
+            job = _one(docs, "Job", suffix)
+            ann = job["metadata"]["annotations"]
+            assert ann["helm.sh/hook"] == "post-install,post-upgrade" and ann["argocd.argoproj.io/hook"] == "Sync"
+            assert ann["argocd.argoproj.io/sync-wave"] == "-1", "the Subscription's own wave — one wave later deadlocks a first Argo sync"
+            assert job["spec"]["template"]["spec"]["containers"][0]["resources"]["limits"]["memory"] == "256Mi"
+            for kind in ("ServiceAccount", "Role", "RoleBinding"):
+                assert _one(docs, kind, suffix)["metadata"]["annotations"]["argocd.argoproj.io/sync-wave"] == "-2"
+        weights = {s: _one(docs, "Job", s)["metadata"]["annotations"]["helm.sh/hook-weight"] for s in ("-csv-reclaim", "-installplan-approver", "-wait")}
+        assert weights == {"-csv-reclaim": "-2", "-installplan-approver": "-1", "-wait": "0"}, "reclaim, then approve, then the gate"
+        assert _one(docs, "Subscription")["spec"]["installPlanApproval"] == "Manual" and _one(docs, "Subscription")["spec"]["name"] == "grafana-operator"
+        role = _one(docs, "Role", "-installplan-approver")
+        assert role["kind"] == "Role" and any("patch" in r["verbs"] and r["resources"] == ["installplans"] for r in role["rules"])
+        reclaim_role = _one(docs, "Role", "-csv-reclaim")
+        assert any("delete" in r["verbs"] and r["resources"] == ["clusterserviceversions"] for r in reclaim_role["rules"])
+        for off in ("operator.installPlanApproval=Automatic", "operator.install=false"):
+            assert not [d for d in _render(off) if d["metadata"]["name"].endswith(("-installplan-approver", "-csv-reclaim"))], off
+        assert _one(_render("operator.package=my-grafana-operator"), "Subscription")["spec"]["name"] == "my-grafana-operator"
+
+    def test_the_approver_approves_the_plan_the_subscription_references_and_waits_for_complete(self, tmp_path):
+        argv, env = _hook_script(_render("installPlanApprover.waitSeconds=20"), "-installplan-approver")
+        done, calls = _run_with_shim(tmp_path, argv, env, """
+  'get subscriptions.operators.coreos.com obs-openshift-grafana-operator '*installPlanRef*) printf 'install-abc' ;;
+  'get installplans.operators.coreos.com install-abc '*spec.approved*) [ -f $STATE ] && printf 'true' || printf 'false' ;;
+  'get installplans.operators.coreos.com install-abc '*status.phase*) [ -f $STATE ] && printf 'Complete' || printf 'RequiresApproval' ;;
+  'get installplans.operators.coreos.com install-abc '*clusterServiceVersionNames*) printf 'grafana-operator.v5.24.0' ;;
+  'patch installplans.operators.coreos.com install-abc '*) touch $STATE ;;""")
+        assert done.returncode == 0, done.stdout + done.stderr
+        assert len([c for c in calls if c.startswith("patch installplans")]) == 1
+        assert "approving install-abc" in done.stdout and "install-abc is Complete" in done.stdout
+
+    def test_the_approver_refuses_a_plan_for_another_package(self, tmp_path):
+        argv, env = _hook_script(_render("installPlanApprover.waitSeconds=20"), "-installplan-approver")
+        done, calls = _run_with_shim(tmp_path, argv, env, """
+  'get subscriptions.operators.coreos.com obs-openshift-grafana-operator '*installPlanRef*) printf 'install-x' ;;
+  'get installplans.operators.coreos.com install-x '*spec.approved*) printf 'false' ;;
+  'get installplans.operators.coreos.com install-x '*clusterServiceVersionNames*) printf 'grafana-operator-community.v9.9.9' ;;""")
+        assert done.returncode == 1 and "does not mention grafana-operator" in done.stderr
+        assert not [c for c in calls if c.startswith("patch")], "never approves a plan this chart did not cause"
+
+    def test_the_approver_has_nothing_to_do_when_olm_reports_the_csv_installed(self, tmp_path):
+        argv, env = _hook_script(_render("installPlanApprover.waitSeconds=20"), "-installplan-approver")
+        done, calls = _run_with_shim(tmp_path, argv, env, """
+  'get subscriptions.operators.coreos.com obs-openshift-grafana-operator '*installPlanRef*) printf '' ;;
+  'get subscriptions.operators.coreos.com obs-openshift-grafana-operator '*installedCSV*) printf 'grafana-operator.v5.24.0' ;;
+  'get clusterserviceversions.operators.coreos.com -n '*) printf 'grafana-operator.v5.24.0|Succeeded\\n' ;;""")
+        assert done.returncode == 0 and "nothing to approve" in done.stdout, done.stdout + done.stderr
+
+    def test_the_approver_reports_a_resolution_failure_with_the_orphan_to_delete(self, tmp_path):
+        """With the reclaim enabled it waits (the reclaim is about to clear the orphan); at the deadline it
+        reports OLM's verdict with the exact `oc delete`, anchored on the package."""
+        argv, env = _hook_script(_render("installPlanApprover.waitSeconds=5"), "-installplan-approver")
+        done, calls = _run_with_shim(tmp_path, argv, env, """
+  'get subscriptions.operators.coreos.com obs-openshift-grafana-operator '*installPlanRef*) printf '' ;;
+  'get subscriptions.operators.coreos.com obs-openshift-grafana-operator '*ResolutionFailed*) printf 'True|constraints not satisfiable: @existing/x//grafana-operator.v5.24.0 is not referenced by a subscription' ;;
+  'get subscriptions.operators.coreos.com obs-openshift-grafana-operator '*installedCSV*) printf '' ;;
+  'get clusterserviceversions.operators.coreos.com -n team-a --ignore-not-found=true -o name'*) printf 'clusterserviceversion.operators.coreos.com/grafana-operator.v5.24.0\\nclusterserviceversion.operators.coreos.com/other-grafana-operator.v1\\n' ;;
+  'get clusterserviceversions.operators.coreos.com -n '*) printf 'grafana-operator.v5.24.0|Failed\\n' ;;""", timeout=60)
+        assert done.returncode == 1, done.stdout + done.stderr
+        assert "waiting for OLM to re-resolve" in done.stdout, "the reclaim is enabled: ResolutionFailed is waited on first"
+        assert "oc delete -n team-a clusterserviceversion.operators.coreos.com/grafana-operator.v5.24.0" in done.stderr
+        assert "other-grafana-operator" not in done.stderr, "the remedy is anchored on /<package>.v"
+
+    def test_the_reclaim_exits_at_once_with_no_candidate_and_deletes_only_a_settled_orphan_of_this_package(self, tmp_path):
+        argv, env = _hook_script(_render("csvReclaim.waitSeconds=10"), "-csv-reclaim")
+        # (a) nothing in the namespace: no wait, no delete
+        done, calls = _run_with_shim(tmp_path, argv, env, "  'get clusterserviceversions.operators.coreos.com -n team-a -o name'*) printf '' ;;")
+        assert done.returncode == 0 and "nothing could be orphaned, not waiting" in done.stdout and not [c for c in calls if c.startswith("delete")]
+        # (b) a CSV of ANOTHER package and an OLM copy of this one: no delete
+        (tmp_path / "calls").unlink()
+        done, calls = _run_with_shim(tmp_path, argv, env, """
+  'get clusterserviceversions.operators.coreos.com -n team-a -o name'*) printf 'clusterserviceversion.operators.coreos.com/grafana-operator-community.v9.9.9\\nclusterserviceversion.operators.coreos.com/grafana-operator.v5.24.0\\n' ;;
+  'get clusterserviceversion.operators.coreos.com/grafana-operator.v5.24.0 '*copiedFrom*) printf 'elsewhere' ;;""")
+        assert done.returncode == 0 and not [c for c in calls if c.startswith("delete")], done.stdout
+        # (c) a settled orphan of this package with ResolutionFailed: exactly one delete, by the full reference
+        (tmp_path / "calls").unlink()
+        done, calls = _run_with_shim(tmp_path, argv, env, """
+  'get clusterserviceversions.operators.coreos.com -n team-a -o name'*) printf 'clusterserviceversion.operators.coreos.com/grafana-operator.v5.24.0\\n' ;;
+  'get clusterserviceversion.operators.coreos.com/grafana-operator.v5.24.0 '*copiedFrom*) printf '' ;;
+  'get clusterserviceversion.operators.coreos.com/grafana-operator.v5.24.0 '*ownerReferences*) printf '' ;;
+  'get clusterserviceversion.operators.coreos.com/grafana-operator.v5.24.0 '*status.phase*) printf 'Succeeded' ;;
+  'get subscriptions.operators.coreos.com -n team-a -o name'*) printf 'subscription.operators.coreos.com/obs-openshift-grafana-operator\\n' ;;
+  'get subscription.operators.coreos.com/obs-openshift-grafana-operator '*installedCSV*) printf '' ;;
+  'get subscriptions.operators.coreos.com obs-openshift-grafana-operator '*installedCSV*) printf '' ;;
+  'get subscriptions.operators.coreos.com obs-openshift-grafana-operator '*ResolutionFailed*) printf 'True' ;;
+  'delete clusterserviceversion.operators.coreos.com/grafana-operator.v5.24.0 '*) printf 'deleted' ;;""")
+        assert done.returncode == 0, done.stdout + done.stderr
+        deletes = [c for c in calls if c.startswith("delete")]
+        assert deletes == ["delete clusterserviceversion.operators.coreos.com/grafana-operator.v5.24.0 -n team-a --wait=false"], calls
+        assert "ORPHANED" in done.stdout and "reclaimed: grafana-operator.v5.24.0" in done.stdout
 
 
 class TestReadme:
