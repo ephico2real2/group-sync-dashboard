@@ -268,7 +268,17 @@ class Snapshot:
         """The discovered lookups for one cluster: identity providers (from ocp_user.providers), role
         names (both binding tables), user names, group names, the mnemonic label's values and the
         exact-group label's values — each sorted, each cut at DISCOVERED_CAP with `truncated` said. One
-        read per set; a form load pays six small queries, not a scan per keystroke."""
+        read per set; a form load pays six small queries, not a scan per keystroke.
+
+        A sqlite3.Error from a table read after a clean open becomes SnapshotError HERE, the same wrap
+        as namespace_selector_dimensions, so GET /api/discovered degrades to empty menus instead of a
+        500 and sqlite3 is never named in server.py (review of #222, Codex M4; the storage seam)."""
+        try:
+            return self._discovered(cluster_id, mnemonic_key, group_key)
+        except sqlite3.Error as exc:
+            raise SnapshotError(f"cannot read snapshot {Path(self.path).name}: not readable SQLite data") from exc
+
+    def _discovered(self, cluster_id: str, mnemonic_key: str, group_key: str) -> dict:
         def cut(values: list[str]) -> dict:
             return {"values": values[:self.DISCOVERED_CAP], "truncated": len(values) > self.DISCOVERED_CAP}
         # Bounded reads (review of #222, Grok): LIMIT cap+1 on the two name lists, so a cluster with
@@ -526,10 +536,18 @@ class Snapshot:
 
     # -- login activity -----------------------------------------------------------------------
 
-    def login_summary(self, cluster_id: str, since_iso: str) -> list[dict]:
-        return self._rows("""SELECT outcome, COALESCE(provider, '') AS provider, COUNT(*) AS n
-                               FROM login_event WHERE cluster_id = ? AND at >= ?
-                              GROUP BY outcome, provider ORDER BY outcome, provider""", (cluster_id, since_iso))
+    def login_summary(self, cluster_id: str, since_iso: str, user_names: set[str] | None = None) -> list[dict]:
+        """Attempts by outcome and provider in the window; `user_names` narrows them to the subject scope
+        (an empty scope — named groups with no members — counts nothing), None counts the cluster."""
+        sql = "SELECT outcome, COALESCE(provider, '') AS provider, COUNT(*) AS n FROM login_event WHERE cluster_id = ? AND at >= ?"
+        params: list = [cluster_id, since_iso]
+        if user_names is not None:
+            if not user_names:
+                return []
+            names = sorted(user_names)
+            sql += " AND user_name IN (" + ",".join("?" for _ in names) + ")"
+            params.extend(names)
+        return self._rows(sql + " GROUP BY outcome, provider ORDER BY outcome, provider", params)
 
     def login_by_user(self, cluster_id: str, since_iso: str, user_name: str | None) -> list[dict]:
         sql = """SELECT user_name, SUM(CASE WHEN outcome='success' THEN 1 ELSE 0 END) AS successes,
