@@ -1576,3 +1576,107 @@ class TestPreviewAndNamespacePicker:
             r = client.post(f"{REPORT_PREFIX}/api/preview", json={"report": "groups", "cluster": CLUSTER}, headers=ticket)
             assert r.status_code == 503 and "not a readable SQLite database" in r.json()["detail"], r.text
             assert client.get(f"{REPORT_PREFIX}/readyz").status_code == 503                 # the same answer as the probe's
+
+
+class TestRetentionStanding:
+    """#229 (SPEC E1 §3): `store.retention()` prints the plan `prune()` deletes by — one ranking, two readers.
+    Every case holds the words beside a REAL prune at `expires_at − 1 s` (kept) and at `expires_at`
+    (deleted, unless the rank protects it), so the page can never say one thing and the prune do another."""
+    GLOBALS = dict(scheduled_keep=2, scheduled_days=90, manual_days=3, manual_max_runs=3)
+
+    @staticmethod
+    def _mk(store, run_id, finished, *, schedule=None, status="done", cluster=CLUSTER):
+        by = f"schedule:{schedule}" if schedule else "root"
+        store.create(Run(id=run_id, report="groups", cluster=cluster, params={}, formats=["html"], generated_by=by,
+                         generated_by_note="n", schedule=schedule, requested_at=finished, status=status, finished_at=finished))
+
+    @staticmethod
+    def _at(iso):
+        return datetime.strptime(iso, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+
+    def _prune_keeps(self, store, at, run_id, **over):
+        args = {**self.GLOBALS, **over}
+        store.prune(now=at, **args)
+        return store.get(run_id) is not None
+
+    def test_manual_within_the_cap_ages_from_completion_and_the_words_name_the_days(self, tmp_path):
+        store = ArtifactStore(str(tmp_path))
+        self._mk(store, "20260901T120000.000000Z-m1", "2026-09-01T12:00:00Z")
+        standing = store.retention(**self.GLOBALS)["20260901T120000.000000Z-m1"]
+        assert standing.retained_by == "manual:3d" and standing.expires_at == "2026-09-04T12:00:01Z"
+        assert self._prune_keeps(store, self._at(standing.expires_at) - timedelta(seconds=1), "20260901T120000.000000Z-m1")
+        assert not self._prune_keeps(store, self._at(standing.expires_at), "20260901T120000.000000Z-m1")
+
+    def test_manual_beyond_the_cap_is_doomed_now_and_says_cap(self, tmp_path):
+        store = ArtifactStore(str(tmp_path))
+        for j in range(4):
+            self._mk(store, f"20260901T12000{j}.000000Z-m{j}", f"2026-09-01T12:00:0{j}Z")
+        plan = store.retention(**self.GLOBALS)
+        assert plan["20260901T120000.000000Z-m0"] == (None, "manual:cap", plan["20260901T120000.000000Z-m0"].doomed_at)
+        assert plan["20260901T120003.000000Z-m3"].retained_by == "manual:3d", "the newest three are within the cap"
+        assert not self._prune_keeps(store, self._at("2026-09-01T12:00:05Z"), "20260901T120000.000000Z-m0"), "gone on the next prune"
+        assert store.get("20260901T120001.000000Z-m1") is not None
+
+    def test_manual_with_no_age_bound_is_held_by_the_cap_alone(self, tmp_path):
+        store = ArtifactStore(str(tmp_path))
+        self._mk(store, "20260901T120000.000000Z-m1", "2026-09-01T12:00:00Z")
+        standing = store.retention(**{**self.GLOBALS, "manual_days": 0})["20260901T120000.000000Z-m1"]
+        assert standing == (None, "manual:cap", None)
+        assert self._prune_keeps(store, self._at("2036-01-01T00:00:00Z"), "20260901T120000.000000Z-m1", manual_days=0)
+
+    def test_a_scheduled_run_among_the_newest_keep_is_kept_whatever_its_age_and_says_at_least_until(self, tmp_path):
+        store = ArtifactStore(str(tmp_path))
+        self._mk(store, "20260101T060000.000000Z-s1", "2026-01-01T06:00:00Z", schedule="weekly")
+        self._mk(store, "20260108T060000.000000Z-s2", "2026-01-08T06:00:00Z", schedule="weekly")
+        plan = store.retention(**self.GLOBALS)
+        assert plan["20260108T060000.000000Z-s2"] == ("2026-04-08T06:00:01Z", f"newest:1/2 of weekly on {CLUSTER}", None)
+        assert plan["20260101T060000.000000Z-s1"] == ("2026-04-01T06:00:01Z", f"newest:2/2 of weekly on {CLUSTER}", None)
+        # long past both age bounds, both survive: the rank protects them
+        assert self._prune_keeps(store, self._at("2027-01-01T00:00:00Z"), "20260101T060000.000000Z-s1")
+        assert store.get("20260108T060000.000000Z-s2") is not None
+
+    def test_a_scheduled_run_beyond_the_newest_keep_is_aged_and_the_words_say_so(self, tmp_path):
+        store = ArtifactStore(str(tmp_path))
+        for j, day in enumerate(("01", "08", "15")):
+            self._mk(store, f"202601{day}T060000.000000Z-s{j}", f"2026-01-{day}T06:00:00Z", schedule="weekly")
+        standing = store.retention(**self.GLOBALS)["20260101T060000.000000Z-s0"]
+        assert standing.retained_by == "age:90d" and standing.expires_at == "2026-04-01T06:00:01Z"
+        assert self._prune_keeps(store, self._at(standing.expires_at) - timedelta(seconds=1), "20260101T060000.000000Z-s0")
+        assert not self._prune_keeps(store, self._at(standing.expires_at), "20260101T060000.000000Z-s0")
+        assert store.get("20260108T060000.000000Z-s1") is not None, "the second newest stays"
+
+    def test_a_scheduled_run_beyond_keep_with_no_age_bound_is_kept_indefinitely(self, tmp_path):
+        store = ArtifactStore(str(tmp_path))
+        for j, day in enumerate(("01", "08", "15")):
+            self._mk(store, f"202601{day}T060000.000000Z-s{j}", f"2026-01-{day}T06:00:00Z", schedule="weekly")
+        plan = store.retention(**{**self.GLOBALS, "scheduled_days": 0})
+        assert plan["20260101T060000.000000Z-s0"] == (None, "age:0d", None)
+        assert plan["20260115T060000.000000Z-s2"] == (None, f"newest:1/2 of weekly on {CLUSTER}", None)
+        assert self._prune_keeps(store, self._at("2036-01-01T00:00:00Z"), "20260101T060000.000000Z-s0", scheduled_days=0)
+
+    def test_a_per_schedule_override_names_its_own_keep_and_days(self, tmp_path):
+        store = ArtifactStore(str(tmp_path))
+        self._mk(store, "20260101T060000.000000Z-q1", "2026-01-01T06:00:00Z", schedule="quarterly")
+        self._mk(store, "20260101T060000.000000Z-w1", "2026-01-01T06:00:00Z", schedule="weekly")
+        plan = store.retention(**self.GLOBALS, overrides={"quarterly": (12, 2555)})
+        assert plan["20260101T060000.000000Z-q1"] == ("2032-12-30T06:00:01Z", f"newest:1/12 of quarterly on {CLUSTER}", None)   # 2 555 days span two leap days
+        assert plan["20260101T060000.000000Z-w1"] == ("2026-04-01T06:00:01Z", f"newest:1/2 of weekly on {CLUSTER}", None)
+
+    def test_a_failed_run_ranks_like_a_done_one_and_a_queued_run_has_no_standing(self, tmp_path):
+        store = ArtifactStore(str(tmp_path))
+        self._mk(store, "20260108T060000.000000Z-f1", "2026-01-08T06:00:00Z", schedule="weekly", status="failed")
+        store.create(Run(id="20260109T060000.000000Z-q1", report="groups", cluster=CLUSTER, params={}, formats=["html"],
+                         generated_by="root", generated_by_note="n", schedule=None, requested_at="2026-01-09T06:00:00Z", status="queued"))
+        plan = store.retention(**self.GLOBALS)
+        assert plan["20260108T060000.000000Z-f1"].retained_by == f"newest:1/2 of weekly on {CLUSTER}"
+        assert "20260109T060000.000000Z-q1" not in plan
+
+    def test_the_api_carries_the_standing_on_the_list_and_on_one_run(self, service):
+        client, app, clock = service
+        r = client.post(f"{REPORT_PREFIX}/api/runs", json={"report": "groups", "cluster": CLUSTER, "formats": ["html"]}, headers=_viewer())
+        run = _wait_done(client, r.json()["id"], _viewer())
+        assert run["retained_by"] == "manual:3d" and run["expires_at"] == datetime.strptime(run["finished_at"], "%Y-%m-%dT%H:%M:%SZ") \
+            .replace(tzinfo=UTC).__add__(timedelta(days=3, seconds=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        listed = client.get(f"{REPORT_PREFIX}/api/runs", headers=_viewer()).json()["runs"][0]
+        assert (listed["expires_at"], listed["retained_by"]) == (run["expires_at"], run["retained_by"])
+        assert "expires_at" in listed and "retained_by" in listed

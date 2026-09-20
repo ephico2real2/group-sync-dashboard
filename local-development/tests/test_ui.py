@@ -6589,7 +6589,7 @@ class TestReportsTab:
             page.click("#tab-reports")
             page.wait_for_selector("#tab-reports[aria-current='page']")
             page.wait_for_timeout(300)
-            assert page.evaluate("() => document.querySelectorAll('button.tab').length") == 12   # Home joined the strip (#158); KPIs (#157); Kyverno (#170)
+            assert page.evaluate("() => document.querySelectorAll('button.tab').length") == 13   # Home joined the strip (#158); KPIs (#157); Kyverno (#170); Library (#229)
             assert page.evaluate("() => [document.documentElement.scrollWidth <= innerWidth, [...document.querySelectorAll('button.tab')].filter(t => t.getBoundingClientRect().right > innerWidth).map(t => t.id)]") == [True, []]
             assert not errors
         finally:
@@ -7890,3 +7890,131 @@ class TestRowlinkRailClearance:
 def test_no_reports_tab_when_the_feature_is_off(dash):
     assert dash.locator('button.tab:text-is("Reports")').count() == 0
     assert dash.evaluate("fetch('/api/report/ticket').then(r => r.status)") == 404
+
+
+class TestLibraryPage:
+    """#229 (SPEC E1): the Library tab — a new canvas beside the untouched Reports and Reporting-status pages.
+    One section per enabled report crossed with the fixture's schedules (`weekly` on groups, `paused-ns` on
+    namespace-access), headed by the service's cadence in words; each run with its formats, its failure reason
+    and the standing the SERVICE computed (`expires_at`/`retained_by`); a run is a position; the drawer never
+    blanks on an unknown id; 375 px without sideways scroll; focus survives the poll's repaint."""
+
+    @staticmethod
+    def _seed(report_app):
+        from gsd.reporting.artifacts import Run
+        store = report_app.state.store
+        if store.get("20990201T000000.000000Z-lib1") is None:
+            store.create(Run(id="20990201T000000.000000Z-lib1", report="groups", cluster="crc-local", params={"window_days": 30},
+                             formats=["html"], generated_by="schedule:weekly", generated_by_note="unattended", schedule="weekly",
+                             requested_at="2099-02-01T00:00:00Z", started_at="2099-02-01T00:00:00Z", finished_at="2099-02-01T00:00:01Z",
+                             status="done", sha256="ef" * 32, bytes={"html": 15880, "json": 21495}, render_seconds=0.035))
+            store.write("20990201T000000.000000Z-lib1", "html", b"<!doctype html><p>library</p>")
+            store.create(Run(id="20990131T000000.000000Z-lib0", report="groups", cluster="crc-local", params={},
+                             formats=["html"], generated_by="schedule:weekly", generated_by_note="unattended", schedule="weekly",
+                             requested_at="2099-01-31T00:00:00Z", started_at="2099-01-31T00:00:00Z", finished_at="2099-01-31T00:00:01Z",
+                             status="failed", error="no namespace matches company.net/mnemonic in (demo, beta)\nsecond line"))
+            store.create(Run(id="20990202T000000.000000Z-libm", report="users", cluster="crc-local", params={"providers": ["ldap"]},
+                             formats=["html", "pdf"], generated_by="jane.smith", generated_by_note="n", schedule=None,
+                             requested_at="2099-02-02T00:00:00Z", started_at="2099-02-02T00:00:00Z", finished_at="2099-02-02T00:00:02Z",
+                             status="done", sha256="ab" * 32, bytes={"html": 7456, "json": 7120, "pdf": 31715}, render_seconds=0.233))
+
+    def test_the_sections_are_the_catalogue_crossed_with_the_schedules_from_a_cold_url(self, browser, reporting_server):
+        base, _, report_app = reporting_server
+        self._seed(report_app)
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.goto(base + "#page=library&cluster=crc-local")
+            page.wait_for_selector("#library-lead")
+            assert page.locator("#tab-library[aria-current='page']").count() == 1
+            assert page.evaluate("() => document.querySelectorAll('button.tab').length") == 13   # Reports and Library, with reporting on
+            heads = page.evaluate("() => [...document.querySelectorAll('.lib-sec h2')].map(h => h.firstChild.textContent.trim())")
+            # the fixture's schedules: `weekly` (0 6 * * 1 → "Weekly Mon 06:00") on groups, `paused-ns` on namespace-access
+            assert "Weekly groups" in heads, heads   # the cadence's named word alone: "Weekly Mon" stays in the sub-line
+            assert any(h.startswith("Namespace access — ") and h.endswith(", paused") for h in heads), heads
+            assert "Users" in heads and "Compliance snapshot" in heads and len(heads) == 10, heads   # every enabled report, once
+            assert page.locator("#sec-paused-ns.paused").count() == 1
+            paused = page.locator("#sec-paused-ns").inner_text()
+            # the section says paused whether or not a manual run of the report exists (another test may have generated one)
+            assert "paused" in paused and ("Paused — CronJob suspended" in paused or "Manual runs" in paused or "1 manual" in paused), paused
+            weekly = page.locator("#sec-weekly")
+            assert "Manual runs" not in weekly.inner_text()
+            text = weekly.inner_text()
+            assert ".html · 16 KB" in text and ".json · 21 KB" in text, text
+            assert "no namespace matches company.net/mnemonic in (demo, beta)" in text and "second line" not in text
+            # the standing is the service's: the failed run is the second newest of `weekly`, kept whatever its age
+            cards = page.evaluate("() => [...document.querySelectorAll('#sec-weekly .run')].map(c => [c.id, c.querySelector('.expiry').textContent])")
+            assert cards[0][0] == "run-20990201T000000.000000Z-lib1" and cards[0][1].startswith("newest 1 of 2 · kept at least until · 2099-05-02 00:00"), cards
+            assert any(c[0] == "run-20990131T000000.000000Z-lib0" and c[1].startswith("newest 2 of 2") for c in cards), cards
+            users = page.locator("#sec-users").inner_text()
+            assert ".pdf · 31 KB" in users and "expires" in users and "1 manual" in users, users
+            assert page.locator("#lib-gen-users").inner_text() == "Generate another →"
+            # a report with no run at all — other tests generate access-matrix and namespace-access runs, dormant-access none
+            assert page.locator("#lib-gen-dormant-access").inner_text() == "Generate this report →"
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_a_run_is_a_position_the_drawer_opens_from_and_closes_back_to(self, browser, reporting_server):
+        base, _, report_app = reporting_server
+        self._seed(report_app)
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.goto(base + "#page=library&cluster=crc-local&run=20990131T000000.000000Z-lib0")
+            page.wait_for_selector("#library-drawer")
+            drawer = page.locator("#library-drawer").inner_text()
+            assert "Groups and membership changes" in drawer and "schedule:weekly" in drawer and "failed" in drawer
+            assert "no namespace matches company.net/mnemonic in (demo, beta)" in drawer and "second line" in drawer, "the whole error, in the drawer"
+            assert "newest 2 of 2 · kept at least until" in drawer and "no artefacts" in drawer
+            assert page.evaluate("() => document.activeElement.id") == "drawer-close"
+            page.click("#drawer-copy-link")
+            page.wait_for_function("() => document.getElementById('drawer-copy-link').textContent === 'Copied'")   # the clipboard write settles first
+            page.keyboard.press("Escape")
+            page.wait_for_function("() => !document.getElementById('library-drawer')")
+            assert page.evaluate("() => location.hash") == "#page=library&cluster=crc-local"
+            assert page.evaluate("() => document.activeElement.id") == "run-20990131T000000.000000Z-lib0", "focus returns to the card"
+            # a click opens the done run; its .html opens in a new tab through the ticket
+            page.click("[id='run-20990201T000000.000000Z-lib1']")   # a run id carries a dot: not a bare #selector
+            page.wait_for_selector("#drawer-open-html")
+            assert page.evaluate("() => location.hash") == "#page=library&cluster=crc-local&run=20990201T000000.000000Z-lib1"
+            with ctx.expect_page() as popup:
+                page.click("#drawer-open-html")
+            assert "library" in popup.value.content()
+            page.goto(base + "#page=library&cluster=crc-local&run=nope")   # a hash change on the open page: wait for the new drawer's words
+            page.wait_for_function("() => (document.getElementById('library-drawer') || {}).innerText?.includes('No run with that id is in the library.')")
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_phone_width_and_the_polls_repaint_keep_the_page_and_the_focus(self, browser, reporting_server):
+        base, _, report_app = reporting_server
+        self._seed(report_app)
+        ctx, page, errors = _reports_page(browser, base, "root", fake_clock=True)
+        try:
+            page.set_viewport_size({"width": 375, "height": 740})
+            page.goto(base + "#page=library&cluster=crc-local")
+            page.wait_for_selector("#sec-weekly")
+            assert page.evaluate("() => document.documentElement.scrollWidth <= innerWidth")
+            page.focus("[id='run-20990201T000000.000000Z-lib1']")
+            page.clock.fast_forward(61_000)
+            page.wait_for_timeout(500)
+            assert page.evaluate("() => document.activeElement.id") == "run-20990201T000000.000000Z-lib1", "the poll's repaint dropped the focus"
+            page.keyboard.press("Enter")
+            page.wait_for_selector("#library-drawer")
+            assert page.evaluate("() => document.documentElement.scrollWidth <= innerWidth")
+            assert page.evaluate("() => document.getElementById('library-drawer').scrollWidth <= document.getElementById('library-drawer').clientWidth")
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_a_narrowed_reader_gets_the_refusal_card(self, browser, reporting_server):
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "alice")
+        try:
+            page.goto(base + "#page=library&cluster=crc-local")
+            page.wait_for_selector("#main .card")
+            page.wait_for_function("() => document.querySelector('#main').innerText.includes('Library')")
+            text = page.locator("#main").inner_text()
+            assert "lib1" not in text and "jane.smith" not in text
+            assert not errors, errors
+        finally:
+            ctx.close()

@@ -109,6 +109,7 @@
   --tab-reports: #5b6470;      /* documents; 5.69:1 on --page (measured) */
   --tab-kpi: #4a55a3;          /* the KPI page (#157): instrument indigo; measured in tests/test_accessibility.py */
   --tab-kyverno: #0b6e7a;      /* the Kyverno page (#170): guard-rail teal; measured in tests/test_accessibility.py */
+  --tab-library: #7a2468;      /* the Library page (#229): bookmark magenta between policy and nsaudit; 8.74:1 on --page, measured */
   /* Report categories (#147 reports table): a chip label + a per-row rail/wash (--rk). NOT --tab-*
      (those are the active-tab label colours the contrast test audits); mid-tone on --surface-1. */
   --k-access: #4f6b57; --k-rbac: #8a5a3c; --k-identity: #4a5c7a; --k-activity: #7a5170; --k-compliance: #6a6440;
@@ -222,6 +223,7 @@
     --tab-reports: #98a2b3;      /* 7.55:1 on the dark --page (measured) */
     --tab-kpi: #9aa3e6;
     --tab-kyverno: #5cc4cf;
+    --tab-library: #d489c0;      /* 7.53:1 on the dark --page (measured) */
     --k-access: #7fae8b; --k-rbac: #c8946a; --k-identity: #8ea3c8; --k-activity: #c090b4; --k-compliance: #b3aa72;
   }
 }
@@ -273,6 +275,7 @@
   --tab-reports: #98a2b3;      /* 7.55:1 on the dark --page (measured) */
   --tab-kpi: #9aa3e6;
   --tab-kyverno: #5cc4cf;
+  --tab-library: #d489c0;      /* 7.53:1 on the dark --page (measured) */
   --k-access: #7fae8b; --k-rbac: #c8946a; --k-identity: #8ea3c8; --k-activity: #c090b4; --k-compliance: #b3aa72;
 }
 }
@@ -923,6 +926,7 @@ body[data-page="usage"]    { --accent: var(--tab-usage); }
 body[data-page="reports"]  { --accent: var(--tab-reports); }
 body[data-page="kpi"]      { --accent: var(--tab-kpi); }
 body[data-page="kyverno"]  { --accent: var(--tab-kyverno); }
+body[data-page="library"]  { --accent: var(--tab-library); }
 
 .tabs { display: inline-flex; gap: var(--space-2); flex-wrap: wrap; }
 .tab {
@@ -1510,3 +1514,78 @@ td.state-cell { min-width: 210px; }
 .rp-lookup .rp-opt.sel::before { background: var(--accent); border-color: var(--accent); box-shadow: inset 0 0 0 2px var(--surface-1); }
 .rp-lookup .rp-opt:hover, .rp-lookup .rp-opt:focus-visible { background: color-mix(in srgb, var(--accent) 10%, transparent); outline: none; }
 .rp-lookup .rp-nomatch { font-size: var(--text-sm); color: var(--text-muted); padding: var(--space-3) var(--space-5); }
+
+/* ─── #229 the Library page (docs/design/report-library-mock.html): one section per configured report, its
+   category colour as the rail (--rk, the Reports table's tokens), run cards never a wide table, the run
+   drawer as a position. ──────────────────────────────────────────────────────────────────────────────── */
+.lib-sec { --rk: var(--accent); border-left: 4px solid var(--rk); }
+.lib-sec.r-access { --rk: var(--k-access); }
+.lib-sec.r-rbac { --rk: var(--k-rbac); }
+.lib-sec.r-identity { --rk: var(--k-identity); }
+.lib-sec.r-activity { --rk: var(--k-activity); }
+.lib-sec.r-compliance { --rk: var(--k-compliance); }
+/* the drawer takes its rail from the report kind the same way (no inline style: the type-scale guard) */
+.drawer.r-access { --rk: var(--k-access); }
+.drawer.r-rbac { --rk: var(--k-rbac); }
+.drawer.r-identity { --rk: var(--k-identity); }
+.drawer.r-activity { --rk: var(--k-activity); }
+.drawer.r-compliance { --rk: var(--k-compliance); }
+.lib-sec.paused { opacity: 0.78; border-left-style: dashed; }
+.lib-sec.compact .empty-note { padding: var(--space-2) 0 0; }
+.lib-sec h2 { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
+.jumps { display: flex; flex-wrap: wrap; gap: var(--space-3); margin: var(--space-5) 0 0; }
+.jumps a {
+  font-family: var(--font-mono); font-size: var(--text-micro); color: var(--text-secondary);
+  text-decoration: none; border: 1px solid var(--border); border-radius: var(--radius-pill);
+  padding: 2px 9px; /* optical: the pill's own metrics, as .rp-chip */ background: var(--zebra);
+}
+.jumps a:hover { color: var(--text-primary); border-color: var(--accent); }
+.run {
+  display: block; width: 100%; text-align: left; font: inherit; color: inherit;
+  background: transparent; border: 1px solid var(--border); border-radius: var(--radius-md);
+  padding: var(--space-5) var(--space-6); margin: 0 0 var(--space-4);
+  cursor: pointer; min-width: 0; max-width: 100%;
+  transition: border-color 160ms ease, transform 160ms ease, background-color 160ms ease;
+}
+.run:hover { border-color: var(--rk, var(--accent)); transform: translateY(-1px); background: var(--zebra); }
+.run:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.run.featured {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--rk) 10%, transparent), transparent 56%);
+  padding: var(--space-6) var(--space-7);
+}
+.run .when { font-family: var(--font-mono); font-size: var(--text-md); font-weight: 600; overflow-wrap: anywhere; }
+.run .meta { font-size: var(--text-sm); color: var(--text-muted); margin-top: var(--space-1); overflow-wrap: anywhere; }
+.run .fmts { display: flex; flex-wrap: wrap; gap: var(--space-3); margin-top: var(--space-4); }
+.run .row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-4); margin-top: var(--space-4); }
+.sec-foot { margin-top: var(--space-4); }
+.cluster-head {
+  font-family: var(--font-mono); font-size: var(--text-xs); letter-spacing: .06em; text-transform: uppercase;
+  color: var(--text-muted); margin: var(--space-5) 0 var(--space-3);
+}
+.subh { font-size: var(--text-md); font-weight: 600; margin: var(--space-7) 0 var(--space-4); color: var(--text-secondary); }
+.subh::before {
+  content: ""; display: inline-block; width: 3px; height: 0.85em; margin-right: var(--space-3);
+  border-radius: var(--radius-xs); background: var(--rk); vertical-align: middle;
+}
+.expiry { font-size: var(--text-sm); color: var(--text-secondary); overflow-wrap: anywhere; }
+.reason { font-size: var(--text-sm); color: var(--status-critical); margin-top: var(--space-3); overflow-wrap: anywhere; }
+.overlay {
+  position: fixed; inset: 0; z-index: 30;
+  background: color-mix(in srgb, var(--page) 56%, transparent);
+  display: flex; justify-content: flex-end; align-items: stretch;
+}
+.drawer {
+  width: min(440px, 100%); max-width: 100%; height: 100%; overflow-x: hidden; overflow-y: auto;
+  background: var(--surface-1); border-left: 4px solid var(--rk, var(--accent));
+  box-shadow: var(--elev-1); padding: var(--space-8); min-width: 0;
+}
+.drawer h2 { margin: 0 0 var(--space-4); font-size: var(--text-lg); overflow-wrap: anywhere; }
+.drawer .back { display: inline-block; margin-bottom: var(--space-4); }
+.kv { display: grid; grid-template-columns: minmax(88px, 34%) 1fr; gap: var(--space-3) var(--space-5);
+  padding: var(--space-3) 0; border-bottom: 1px solid var(--gridline); font-size: var(--text-sm); }
+.kv .k { color: var(--text-muted); font-size: var(--text-xs); letter-spacing: .04em; text-transform: uppercase; overflow-wrap: anywhere; min-width: 0; }
+.kv .v { overflow-wrap: anywhere; min-width: 0; }
+.kv .v.err { white-space: pre-wrap; }   /* a failed run's error keeps its lines */
+.drawer .acts { display: flex; flex-wrap: wrap; gap: var(--space-4); margin-top: var(--space-6); }
+.btn-acc { background: var(--accent); color: var(--surface-1); border-color: var(--accent); font-weight: 600; }
+.note-found { padding: var(--space-6) 0; color: var(--text-secondary); }

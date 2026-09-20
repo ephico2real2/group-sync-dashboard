@@ -1004,9 +1004,18 @@ the three probe paths, which are reachable only on the report Service. One line 
 | `GET /report/api/reports` | ticket | the catalogue: each report, whether enabled, its values key and parameter specs |
 | `GET /report/api/snapshot` | ticket or token | the copy a run would read now: stamp, age, schema, bytes |
 | `POST /report/api/runs` | ticket or token | queue one run (`report`, `cluster`, `params`, `formats`); 202 with the run id — **the one write in either service's API, deliberately not on the dashboard** |
-| `GET /report/api/runs`, `GET /report/api/runs/{id}` | ticket or token | runs newest first; one run's status, timings, sha256 and artefact sizes |
+| `GET /report/api/runs`, `GET /report/api/runs/{id}` | ticket or token | runs newest first; one run's status, timings, sha256, artefact sizes and its standing under retention (`expires_at`, `retained_by`, below) |
 | `GET /report/api/runs/{id}/artifact?format=json\|html\|pdf` | ticket or token | the artefact, `Cache-Control: no-store`, `X-GSD-Report-SHA256`, as an attachment |
 | `GET /report/api/usage?since_id=&limit=` | **token only** | finished runs for the dashboard's pull; viewers read them from the dashboard at the usage tier |
+
+**A run's standing under retention** (#229, the Library tab): every run carries `expires_at` — the
+**earliest** instant it can be deleted, `finished_at` (whole second) + 1 s + the age bound, `null` when no
+age bound applies — and `retained_by`, why it is held now: `newest:<n>/<keep> of <schedule> on <cluster>`
+(one of the newest `keep` of its schedule on its cluster, kept whatever its age — so at least until
+`expires_at`, and longer while it stays among them), `age:<days>d` (a scheduled run beyond the newest
+`keep`, kept while younger; `age:0d` is kept indefinitely), `manual:<days>d`, `manual:cap` (beyond
+`manual.maxRuns`, or under the cap with no age bound), or `null` for a queued or running run. Both are
+computed by the ranking the prune deletes by — one plan, two readers — never by the page.
 
 ## Alerts
 

@@ -19,9 +19,11 @@ SPECS = REPO / "docs" / "specs"
 INDEX = SPECS / "README.md"
 
 # `| A1 | [`SPEC_A1_ui_tests_in_ci.md`](SPEC_A1_ui_tests_in_ci.md) — title | batch | R1 | version | [#56](url) | status |`
+# The programme's thirteen (A–D) carry a milestone R1–R7; a spec after the programme (E…) carries `—`
+# there and rides the next release instead (E1, #229).
 INDEX_ROW = re.compile(
-    r"^\| (?P<id>[A-D]\d) \| \[`(?P<file>SPEC_[A-Za-z0-9_]+\.md)`\]\([^)]+\)[^|]*\| [^|]+\| "
-    r"(?P<release>R\d) \| (?P<version>[^|]+?) \| \[#(?P<issue>\d+)\]\([^)]+\) \| (?P<status>[^|]+?) \|$",
+    r"^\| (?P<id>[A-E]\d) \| \[`(?P<file>SPEC_[A-Za-z0-9_]+\.md)`\]\([^)]+\)[^|]*\| [^|]+\| "
+    r"(?P<release>R\d|—) \| (?P<version>[^|]+?) \| \[#(?P<issue>\d+)\]\([^)]+\) \| (?P<status>[^|]+?) \|$",
     re.M,
 )
 HEADER_ROW = re.compile(r"^\| (?P<key>Release|Version on release|Issue|Status) \| (?P<value>.+?) \|$", re.M)
@@ -29,7 +31,8 @@ HEADER_ROW = re.compile(r"^\| (?P<key>Release|Version on release|Issue|Status) \
 
 def _index_rows() -> dict[str, dict[str, str]]:
     rows = {m["id"]: m.groupdict() for m in INDEX_ROW.finditer(INDEX.read_text())}
-    assert len(rows) == 13, f"expected thirteen index rows, matched {sorted(rows)}"
+    programme = sorted(fid for fid in rows if fid[0] in "ABCD")
+    assert len(programme) == 13, f"expected the programme's thirteen index rows, matched {programme}"
     return rows
 
 

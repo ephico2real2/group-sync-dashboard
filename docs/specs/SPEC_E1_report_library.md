@@ -4,8 +4,8 @@
 |---|---|
 | Programme | Feature programme 2026-09 — index and version ladder in `docs/specs/README.md` |
 | Batch | E — after the programme: the operator's asks of 2026-09-20 |
-| Release | with the next application release (Unreleased in `docs/CHANGELOG.md`) |
-| Version on release | app 0.25.0 (the page and the service payload change; the chart carries no new value) |
+| Release | — after the programme: with the next application release (Unreleased in `docs/CHANGELOG.md`) |
+| Version on release | app 0.25.0 |
 | Issue | [#229](https://github.com/ephico2real2/group-sync-dashboard/issues/229) |
 | Status | in progress |
 | Source | hand-written by the orchestrator from the agreed mock `docs/design/report-library-mock.html` (drafted by Cursor Grok on 2026-09-20, six render-check findings fixed before agreement) and from the code measured below; no design agent |
@@ -23,7 +23,19 @@ with the reason, under "Orchestrator's notes".
 
 ## Orchestrator's notes
 
-- (none yet)
+- Implementation (2026-09-20), the type-scale guards: the drawer took its report-kind rail from an inline
+  `style="--rk: …"`, which `test_inline_styles_carry_no_literal_at_all` refuses; it carries `class="drawer
+  r-<kind>"` and app.css sets `--rk` per kind, as `.report-panel.r-<kind>` and `.lib-sec.r-<kind>` do. The
+  accent button's `#fff` is `var(--surface-1)` (the pager's and the segment's shape); the jump pills' `2px 9px`
+  carries the optical note the badge rule carries. The spec index guard learns the E batch (ids `E\d`, release
+  `—`) without loosening the programme's thirteen.
+
+- Implementation (2026-09-20), decision 3 refined on the first render against the fixture's `weekly` schedule
+  (`0 6 * * 1`, cadence `Weekly Mon 06:00`): "Weekly Mon groups" is not how anyone says it. The heading takes the
+  cadence's NAMED word alone (Daily, Weekly, Weekdays, Monthly, Quarterly, Yearly), the whole cadence minus its
+  clock when it has no such word ("1st & 16th"), and the report's title alone when `describe()` could only echo
+  the cron expression; the weekday and the clock stay in the section's sub-line. The mock's rule (strip the
+  clock only) gives the same words for the lab's three schedules.
 
 ## Design
 
